@@ -46,6 +46,13 @@ func exempt(path string) bool {
 	case "/api/sync/enroll", "/api/sync/ping", "/api/sync/snapshot", "/api/sync/sales", "/api/sync/admin",
 		"/api/sync/stock", "/api/sync/plugins", "/api/sync/assets", "/api/sync/assets/file", "/api/setup/join",
 		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status",
+		// ut-docs#1092: the wizard's install-a-catalog-language action —
+		// same first-boot-only window as /api/setup itself (its handler's
+		// NeedsFirstBoot gate refuses once an operator exists), and like
+		// every /api/setup/* route above it can never be reached with a
+		// session because a first-boot till has no operators to mint one.
+		// TestSetupLanguageInstallExemptFromAuthMiddleware pins this entry.
+		"/api/setup/language",
 		// ut-docs#537: a joining replica has no session on the primary at
 		// all — it's a stranger LAN device sending its first-ever request
 		// there. The inbound pair request is unauthenticated by design
