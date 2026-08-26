@@ -23,6 +23,9 @@ type Config struct {
 	Device    string // device: character device path, e.g. /dev/usb/lp0
 	Charset   string // utf8 | ascii
 	AutoPrint bool
+	// DrawerPin is the drawer-kick connector pin: 2 (default) or 5
+	// (ut-docs#1136). See Doc.DrawerPin in escpos.go for the byte mapping.
+	DrawerPin int
 	// KitchenAddress routes kitchen tickets to a SEPARATE printer — a
 	// network host[:port] or a device path. Empty means kitchen printing is
 	// off (see arch/restaurant-phone-orders.md). Charset is shared.
