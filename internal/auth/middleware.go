@@ -54,6 +54,19 @@ func exempt(path string) bool {
 		"/api/sync/pair-request":
 		return true
 	}
+	// /api/settings/exit-to-os (ut-docs#1099): the manager's escape hatch off
+	// a locked-down kiosk window — and the login screen is exactly where a
+	// till with no signed-in operator is stuck, so a session requirement here
+	// locked the escape hatch behind the very screen it exists to escape.
+	// Same handler-authenticates-itself shape as /api/sync/pair-request
+	// above: the handler's own LIVE manager-PIN check (AuthorizeManager,
+	// sharing the device-wide keypad lockout) is the real gate, by product-
+	// owner requirement (#549 — a session cookie alone was never enough for
+	// this action anyway). TestExitToOSIsExemptButSettingsSurfaceStaysGated
+	// pins that the rest of /api/settings/* stays session-gated.
+	if path == "/api/settings/exit-to-os" {
+		return true
+	}
 	// /self-order (ADR-0020): the self-order kiosk flow is used by
 	// anonymous walk-up customers who can't PIN-login — the whole surface
 	// (landing page + its own future browse/cart/checkout API routes) is
