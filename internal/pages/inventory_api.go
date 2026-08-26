@@ -634,13 +634,18 @@ func GetLowStock(dp *common.Deps) http.HandlerFunc {
 			return
 		}
 
-		html := "<table class='table'><thead><tr><th>Item</th><th>SKU</th><th>Location</th><th>Current</th><th>Reorder Level</th></tr></thead><tbody>"
+		tableHTML := "<table class='table'><thead><tr><th>Item</th><th>SKU</th><th>Location</th><th>Current</th><th>Reorder Level</th></tr></thead><tbody>"
 		for _, item := range items {
-			html += fmt.Sprintf("<tr><td>%s</td><td>%s</td><td>%s</td><td class='low-stock'>%.2f</td><td>%d</td></tr>",
-				item.Name, item.SKU, item.LocationName, item.CurrentQty, item.ReorderLevel)
+			// item.Name/SKU/LocationName come from persisted catalog/location
+			// data (set via catalog admin or an import), not an immediate
+			// request-echo -- stored-XSS-shaped, so they must be escaped here
+			// same as every other interpolated value in this file (errorHTML,
+			// ut-docs#1000). ut-docs#1019.
+			tableHTML += fmt.Sprintf("<tr><td>%s</td><td>%s</td><td>%s</td><td class='low-stock'>%.2f</td><td>%d</td></tr>",
+				html.EscapeString(item.Name), html.EscapeString(item.SKU), html.EscapeString(item.LocationName), item.CurrentQty, item.ReorderLevel)
 		}
-		html += "</tbody></table>"
-		html += fmt.Sprintf("<script>document.getElementById('low-stock-badge').textContent = '%d';</script>", len(items))
-		writeHTML(w, http.StatusOK, html)
+		tableHTML += "</tbody></table>"
+		tableHTML += fmt.Sprintf("<script>document.getElementById('low-stock-badge').textContent = '%d';</script>", len(items))
+		writeHTML(w, http.StatusOK, tableHTML)
 	}
 }
