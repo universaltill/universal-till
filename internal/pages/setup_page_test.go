@@ -39,14 +39,23 @@ func initAuthTestI18n(t *testing.T) {
 // so it's safe to layer onto any hand-rolled schema. Shared by every fixture
 // in this package that registers the setup wizard (registerSetup), since
 // wizardCountries now queries this table on every render.
+//
+// Also applies 073 (ut-docs#1027, default_locale column) for the same
+// reason — 041 alone no longer matches the real, current table shape, and
+// any later migration that further alters country_settings needs adding
+// here too, or this fixture silently drifts from what production actually
+// runs (exactly the failure mode this helper's own doc comment guards
+// against for 041).
 func seedCountrySettingsTable(t *testing.T, db *sql.DB) {
 	t.Helper()
-	migrationSQL, err := os.ReadFile(filepath.Join("internal", "db", "migrations", "041_country_settings.sql"))
-	if err != nil {
-		t.Fatalf("read country_settings migration: %v", err)
-	}
-	if _, err := db.Exec(string(migrationSQL)); err != nil {
-		t.Fatalf("apply country_settings migration: %v", err)
+	for _, name := range []string{"041_country_settings.sql", "073_country_default_locale.sql"} {
+		migrationSQL, err := os.ReadFile(filepath.Join("internal", "db", "migrations", name))
+		if err != nil {
+			t.Fatalf("read %s: %v", name, err)
+		}
+		if _, err := db.Exec(string(migrationSQL)); err != nil {
+			t.Fatalf("apply %s: %v", name, err)
+		}
 	}
 }
 
@@ -235,6 +244,99 @@ func TestSetupWizardCurrencyConfirmedOnlyWhenOperatorTouchedCountrySelect(t *tes
 		}
 		if confirmed, ok, _ := d.Settings.Get(t.Context(), common.KeyCurrencyConfirmed); ok && confirmed == "true" {
 			t.Fatalf("an unrecognised currency code must not be accepted or marked confirmed")
+		}
+	})
+}
+
+// TestSetupWizardDerivesLocaleFromCountry is the regression test for
+// ut-docs#1027: the wizard prefilled currency/tax from the chosen country but
+// never derived store.locale, so a German shop shipped running en-US.
+// store.locale is derived server-side from the posted "country" against
+// country_settings — a posted "locale" field, if any, is ignored (review
+// finding: this endpoint is auth-exempt during first boot, so the value
+// must come from our own seeded data, never from client-supplied text).
+func TestSetupWizardDerivesLocaleFromCountry(t *testing.T) {
+	t.Run("DE derives de-DE (non-RTL, safe even with no language pack installed)", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		rec := postForm(mux, "/api/setup", url.Values{
+			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"country": {"DE"}, "currency": {"EUR"}, "tax_rate_pct": {"19"},
+		}, nil)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if got := d.CurrentState().Locale; got != "de-DE" {
+			t.Fatalf("store.locale = %q, want de-DE", got)
+		}
+	})
+	t.Run("GB derives en-GB", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		rec := postForm(mux, "/api/setup", url.Values{
+			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"country": {"GB"}, "currency": {"GBP"}, "tax_rate_pct": {"20"},
+		}, nil)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if got := d.CurrentState().Locale; got != "en-GB" {
+			t.Fatalf("store.locale = %q, want en-GB", got)
+		}
+	})
+	t.Run("AE derives ar-AE (RTL, but ar ships bundled — safe)", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		rec := postForm(mux, "/api/setup", url.Values{
+			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"country": {"AE"}, "currency": {"AED"}, "tax_rate_pct": {"5"},
+		}, nil)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if got := d.CurrentState().Locale; got != "ar-AE" {
+			t.Fatalf("store.locale = %q, want ar-AE", got)
+		}
+	})
+	t.Run("a posted locale field is ignored — server derives from country, not client text", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		rec := postForm(mux, "/api/setup", url.Values{
+			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"country": {"DE"}, "currency": {"EUR"}, "tax_rate_pct": {"19"}, "locale": {"xx-NOTREAL"},
+		}, nil)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if got := d.CurrentState().Locale; got != "de-DE" {
+			t.Fatalf("store.locale = %q, want de-DE (posted locale must be ignored)", got)
+		}
+	})
+	t.Run("PK derives ur-PK but ur is NOT bundled (RTL + unavailable) — leaves the existing locale untouched", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		// Seed a genuinely non-blank, non-PK-related locale so "untouched"
+		// is a real assertion (review finding: an empty-string baseline
+		// makes this pass even with the guard deleted).
+		d.UpdateState(func(s *common.RuntimeState) { s.Locale = "tr" })
+		rec := postForm(mux, "/api/setup", url.Values{
+			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"country": {"PK"}, "currency": {"PKR"}, "tax_rate_pct": {"18"},
+		}, nil)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if got := d.CurrentState().Locale; got != "tr" {
+			t.Fatalf("store.locale = %q, want unchanged \"tr\" (ur-PK is RTL and not installed, must not be preset)", got)
+		}
+	})
+	t.Run("OTHER (no mapped default) leaves the existing locale untouched", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		d.UpdateState(func(s *common.RuntimeState) { s.Locale = "tr" })
+		rec := postForm(mux, "/api/setup", url.Values{
+			"pin": {"2468"}, "pin_confirm": {"2468"},
+			"country": {"OTHER"}, "currency": {"USD"}, "tax_rate_pct": {"0"},
+		}, nil)
+		if rec.Code != http.StatusSeeOther {
+			t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
+		}
+		if got := d.CurrentState().Locale; got != "tr" {
+			t.Fatalf("store.locale = %q, want unchanged \"tr\"", got)
 		}
 	})
 }

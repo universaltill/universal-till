@@ -2,6 +2,7 @@ package pages
 
 import (
 	"net/http"
+	"slices"
 	"strconv"
 	"strings"
 	"time"
@@ -11,6 +12,24 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
+
+// localeSafeToPreset decides whether a country's own DefaultLocale
+// (country_settings.default_locale, ut-docs#1027) is safe to write into
+// store.locale WITHOUT the operator having explicitly chosen it or its
+// language pack being installed.
+//
+// Plain UI text is always safe to preset: I18n.T() gracefully falls back to
+// English for any key missing from a not-yet-installed language-pack
+// overlay. But store.locale also drives httpx.IsRTL (page direction) and
+// httpx.LocalizeDigits (number rendering) immediately and unconditionally —
+// neither has a translation-missing fallback. So an RTL locale (fa/ar/ur/…)
+// is only safe to preset once its base language is actually available
+// (bundled or an installed overlay); a non-RTL locale is always safe
+// (Latin digits, LTR either way), which is what lets DE/FR/ES/IT/NL —
+// ut-docs#1027's own headline case — preset unconditionally.
+func localeSafeToPreset(locale string) bool {
+	return locale != "" && (!httpx.IsRTL(locale) || slices.Contains(httpx.AvailableLocales(), baseLang(locale)))
+}
 
 // countryRow is one jurisdiction as the admin page lists it. ArchiveMinDays
 // is shown alongside the floor so the operator can see WHY a lower value is
@@ -172,11 +191,15 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
-		// Preserve the existing name key so an edit through this form doesn't
-		// blank the label a builtin country renders by.
+		// Preserve the existing name key and default locale (ut-docs#1027) so
+		// an edit through this form — this page has no field for either —
+		// doesn't blank the label a builtin country renders by, or the
+		// locale a fresh till derives from choosing it at setup.
 		nameKey := ""
+		defaultLocale := ""
 		if existing, found, gerr := countryRepo.Get(r.Context(), code); gerr == nil && found {
 			nameKey = existing.NameKey
+			defaultLocale = existing.DefaultLocale
 		}
 
 		cs := data.CountrySetting{
@@ -187,6 +210,7 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 			TaxRateBP:      taxBP,
 			TaxInclusive:   r.PostFormValue("tax_inclusive") == "1",
 			ArchiveMinDays: archiveDays,
+			DefaultLocale:  defaultLocale,
 		}
 		if err := countryRepo.Upsert(r.Context(), cs); err != nil {
 			key := "countrysettings.error.save"

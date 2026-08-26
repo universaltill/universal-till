@@ -1166,6 +1166,98 @@ func TestUpsertLocale_ReflectsIntoStateAndSurvivesLaterSave(t *testing.T) {
 	}
 }
 
+// TestSaveSettings_CountryChangeRederivesLocale is the Settings-side half of
+// ut-docs#1027's acceptance criteria: "changing country afterwards
+// re-derives the locale... never silently leaves a mismatched pair" — gated
+// by localeSafeToPreset (see its doc comment), so an RTL locale whose
+// language pack isn't installed yet doesn't switch the live UI's direction/
+// digit rendering out from under it.
+//
+// (Note: neither shipped Settings form actually posts "country" to this
+// handler today — see TestUpsertCountry_RederivesLocale below for the path
+// an operator can actually reach. This handler's own country handling is
+// exercised directly for defensiveness/API-shape correctness.)
+func TestSaveSettings_CountryChangeRederivesLocale(t *testing.T) {
+	t.Run("country changes to GB, no locale posted, en is available -> re-derives to en-GB", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		rec := postForm(mux, "/api/settings/save", url.Values{"country": {"GB"}}, &mgrUser)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("save = %d", rec.Code)
+		}
+		if got := d.CurrentState().Locale; got != "en-GB" {
+			t.Fatalf("Locale after country->GB = %q, want en-GB", got)
+		}
+	})
+	t.Run("country changes to DE, no locale posted, de is NOT available but non-RTL -> re-derives to de-DE anyway", func(t *testing.T) {
+		// de-DE is non-RTL (Latin digits, LTR either way), so localeSafeToPreset
+		// allows it even with no German pack installed — this is the card's own
+		// headline case (a German shop must not stay on en-US) and must not
+		// regress to "left untouched" the way an RTL locale correctly does below.
+		mux, _, d := newFullAuthDeps(t)
+		rec := postForm(mux, "/api/settings/save", url.Values{"country": {"DE"}}, &mgrUser)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("save = %d", rec.Code)
+		}
+		if got := d.CurrentState().Locale; got != "de-DE" {
+			t.Fatalf("Locale after country->DE = %q, want de-DE", got)
+		}
+	})
+	t.Run("country changes to PK, ur-PK is RTL and NOT available -> locale left untouched", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		d.UpdateState(func(s *common.RuntimeState) { s.Locale = "tr" })
+		rec := postForm(mux, "/api/settings/save", url.Values{"country": {"PK"}}, &mgrUser)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("save = %d", rec.Code)
+		}
+		if got := d.CurrentState().Locale; got != "tr" {
+			t.Fatalf("Locale after country->PK = %q, want unchanged tr (ur-PK is RTL and not installed)", got)
+		}
+	})
+	t.Run("country changes to GB AND an explicit locale is posted -> explicit locale wins, no re-derive", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		rec := postForm(mux, "/api/settings/save", url.Values{"country": {"GB"}, "locale": {"ar"}}, &mgrUser)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("save = %d", rec.Code)
+		}
+		if got := d.CurrentState().Locale; got != "ar" {
+			t.Fatalf("Locale after country->GB with explicit locale=ar = %q, want ar (explicit wins)", got)
+		}
+	})
+}
+
+// TestUpsertCountry_RederivesLocale is the regression test for ut-docs#1027
+// review finding 2: neither shipped Settings form posts "country" to
+// /api/settings/save, so the raw "All settings" key/value table
+// (POST /api/settings/upsert) is, today, the ONLY shipped UI path an
+// operator can use to change store.country after setup — this is where the
+// card's re-derive acceptance criterion has to actually live.
+func TestUpsertCountry_RederivesLocale(t *testing.T) {
+	t.Run("country -> GB, en available -> re-derives to en-GB and live-applies", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.country"}, "value": {"GB"}}, &mgrUser)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("upsert = %d body=%s", rec.Code, rec.Body.String())
+		}
+		if got := d.CurrentState().Locale; got != "en-GB" {
+			t.Fatalf("Locale after upsert country->GB = %q, want en-GB", got)
+		}
+		if got := httpx.DefaultLocale(); got != "en-GB" {
+			t.Fatalf("DefaultLocale after upsert country->GB = %q, want en-GB (live apply, no restart)", got)
+		}
+	})
+	t.Run("country -> PK, ur-PK is RTL and not installed -> locale left untouched", func(t *testing.T) {
+		mux, _, d := newFullAuthDeps(t)
+		d.UpdateState(func(s *common.RuntimeState) { s.Locale = "tr" })
+		rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.country"}, "value": {"PK"}}, &mgrUser)
+		if rec.Code != http.StatusNoContent {
+			t.Fatalf("upsert = %d body=%s", rec.Code, rec.Body.String())
+		}
+		if got := d.CurrentState().Locale; got != "tr" {
+			t.Fatalf("Locale after upsert country->PK = %q, want unchanged tr (ur-PK is RTL and not installed)", got)
+		}
+	})
+}
+
 // The claim-code / register-now / fleet enrol endpoints all refuse a non-manager
 // operator before ever touching the marketplace (offline-first, no network in
 // A high-density small touchscreen (e.g. a 10.1" 1920x1200 panel, ~224 PPI)
