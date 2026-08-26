@@ -85,6 +85,46 @@ func TestRenderKickDrawer(t *testing.T) {
 	}
 }
 
+// TestRenderKickDrawerPin covers ut-docs#1136: the drawer-kick connector pin
+// is a setting now, not a fixed constant. DrawerPin's zero value (an
+// unset/never-migrated Doc, same as every existing caller/test before this
+// setting existed) must still emit pin 2 -- that's the "preserves today's
+// behaviour for every existing install" requirement, not just pin 5's own
+// default.
+func TestRenderKickDrawerPin(t *testing.T) {
+	pin2 := []byte{0x1b, 0x70, 0x00, 0x19, 0xfa} // ESC p 0 25 250 -- connector pin 2
+	pin5 := []byte{0x1b, 0x70, 0x01, 0x19, 0xfa} // ESC p 1 25 250 -- connector pin 5
+
+	cases := []struct {
+		name string
+		pin  int
+		want []byte
+	}{
+		{"zero value defaults to pin 2", 0, pin2},
+		{"explicit pin 2", 2, pin2},
+		{"explicit pin 5", 5, pin5},
+		{"unrecognised value falls back to pin 2", 9, pin2},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			d := sampleDoc()
+			d.KickDrawer = true
+			d.DrawerPin = c.pin
+			out := Render(d)
+			if !bytes.Contains(out, c.want) {
+				t.Errorf("DrawerPin=%d: want kick bytes %x in output, not found", c.pin, c.want)
+			}
+			other := pin2
+			if bytes.Equal(c.want, pin2) {
+				other = pin5
+			}
+			if bytes.Contains(out, other) {
+				t.Errorf("DrawerPin=%d: unwanted kick bytes %x also present", c.pin, other)
+			}
+		})
+	}
+}
+
 func TestLongNameWraps(t *testing.T) {
 	out := string(Render(sampleDoc()))
 	if !strings.Contains(out, "A very long product name") {

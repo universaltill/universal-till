@@ -34,7 +34,12 @@ type Doc struct {
 	// cashier scans it to open the sale for a refund). ASCII only.
 	Barcode    string
 	KickDrawer bool
-	Charset    string // "utf8" (default) or "ascii"
+	// DrawerPin selects the drawer-kick connector pin: 2 (default) or 5.
+	// Any value other than 5 -- including the zero value, so every caller
+	// that predates this setting (ut-docs#1136) keeps today's behaviour --
+	// resolves to pin 2.
+	DrawerPin int
+	Charset   string // "utf8" (default) or "ascii"
 	// Logo is a pre-encoded GS v 0 raster block (RasterLogo), printed
 	// centered above the store name when present.
 	Logo []byte
@@ -56,15 +61,16 @@ type KV struct {
 
 // ESC/POS command sequences (Epson dialect — the de-facto standard).
 var (
-	cmdInit       = []byte{0x1b, 0x40}
-	cmdAlignLeft  = []byte{0x1b, 0x61, 0x00}
-	cmdAlignMid   = []byte{0x1b, 0x61, 0x01}
-	cmdBoldOn     = []byte{0x1b, 0x45, 0x01}
-	cmdBoldOff    = []byte{0x1b, 0x45, 0x00}
-	cmdDoubleOn   = []byte{0x1d, 0x21, 0x11}
-	cmdDoubleOff  = []byte{0x1d, 0x21, 0x00}
-	cmdFeedCut    = []byte{0x1d, 0x56, 0x42, 0x03} // feed 3 + partial cut
-	cmdKickDrawer = []byte{0x1b, 0x70, 0x00, 0x19, 0xfa}
+	cmdInit           = []byte{0x1b, 0x40}
+	cmdAlignLeft      = []byte{0x1b, 0x61, 0x00}
+	cmdAlignMid       = []byte{0x1b, 0x61, 0x01}
+	cmdBoldOn         = []byte{0x1b, 0x45, 0x01}
+	cmdBoldOff        = []byte{0x1b, 0x45, 0x00}
+	cmdDoubleOn       = []byte{0x1d, 0x21, 0x11}
+	cmdDoubleOff      = []byte{0x1d, 0x21, 0x00}
+	cmdFeedCut        = []byte{0x1d, 0x56, 0x42, 0x03}       // feed 3 + partial cut
+	cmdKickDrawer     = []byte{0x1b, 0x70, 0x00, 0x19, 0xfa} // ESC p 0 25 250 -- connector pin 2
+	cmdKickDrawerPin5 = []byte{0x1b, 0x70, 0x01, 0x19, 0xfa} // ESC p 1 25 250 -- connector pin 5
 
 	cmdBarcodeHeight  = []byte{0x1d, 0x68, 0x50} // GS h 80 dots
 	cmdBarcodeWidth   = []byte{0x1d, 0x77, 0x02} // GS w module 2
@@ -103,7 +109,11 @@ func Render(d Doc) []byte {
 
 	b.Write(cmdInit)
 	if d.KickDrawer {
-		b.Write(cmdKickDrawer)
+		if d.DrawerPin == 5 {
+			b.Write(cmdKickDrawerPin5)
+		} else {
+			b.Write(cmdKickDrawer)
+		}
 	}
 
 	b.Write(cmdAlignMid)
