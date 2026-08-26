@@ -112,9 +112,28 @@ func setupLanguageCatalogEntries(ctx context.Context, d *common.Deps) (entries [
 
 	fctx, cancel := context.WithTimeout(ctx, setupLanguageCatalogFetchTimeout)
 	defer cancel()
-	// Same client construction as resolveAndInstallBasePlugin — one
-	// marketplace access pattern, not a new one.
-	effCfg := enroll.EnsureRegistered(fctx, d.Cfg, d.Settings)
+	// enroll.Effective, NOT enroll.EnsureRegistered — the same split
+	// plugins_store_page.go's storeInstaller/handleInstallPlugin already
+	// makes, for two independent reasons:
+	//
+	//  1. ADR-0015 (lazy store registration, still governing — see its own
+	//     status note and ADR-0026's "decisions 2-3 still proposed"):
+	//     a till creates its cloud store identity on the first plugin
+	//     DOWNLOAD/INSTALL or an operator's explicit "Register now", never
+	//     just because a screen rendered. GET /setup is the very first
+	//     screen of every till that ever boots, so enrolling here is exactly
+	//     the "every download, demo, test boot and CI run mints a store org"
+	//     the ADR was written to stop. The install path below still calls
+	//     EnsureRegistered via resolveAndInstallBasePlugin — that IS the
+	//     ADR's trigger 1, and it is enough.
+	//  2. Offline-first: EnsureRegistered takes enroll's package-level
+	//     attemptMu, which the background enrolment retry loop holds across
+	//     its own 15s-timeout HTTP calls. sync.Mutex.Lock ignores fctx, so
+	//     the 3s bound below did not actually hold — measured 7.1s on a
+	//     first-boot render against an unreachable endpoint, worst case ~30s
+	//     (two 15s calls). Effective only takes a short RLock and never
+	//     touches the network, so the fetch timeout is the real bound again.
+	effCfg := enroll.Effective(d.Cfg)
 	client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
 	// No Locale filter: browsing wants every language listing. Capability is
 	// the server-side canonical-type filter; installableSetupLanguages still
@@ -167,7 +186,7 @@ func installableSetupLanguages(entries []marketplace.PluginSummary, available []
 		}
 		for _, loc := range e.AvailableLocales {
 			b := baseLang(strings.TrimSpace(loc))
-			if b == "" || covered[b] {
+			if b == "" || !isPlausibleLocale(b) || covered[b] {
 				continue
 			}
 			covered[b] = true // also dedups across listings
@@ -204,10 +223,13 @@ func nativeLanguageName(code string) string {
 	return code
 }
 
-// isPlausibleLocaleParam keeps the install_pending echo to something
-// locale-shaped — the value lands in a rendered attribute (template-escaped
-// anyway), but there's no reason to reflect arbitrary query strings at all.
-func isPlausibleLocaleParam(v string) bool {
+// isPlausibleLocale keeps a locale value to something actually locale-shaped.
+// Applied to both external sources this file has: the install_pending query
+// param it echoes back into a rendered attribute, and the marketplace
+// catalog's own availableLocales entries, which reach an HTML id= and a
+// JS querySelector via the tile markup ("validate all external input" —
+// plugins and the catalog included, not just operators).
+func isPlausibleLocale(v string) bool {
 	if len(v) < 2 || len(v) > 12 {
 		return false
 	}

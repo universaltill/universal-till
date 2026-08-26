@@ -305,7 +305,13 @@
            re-resolves the listing through the same server-side catalog cache,
            so the body can't pick an arbitrary listing. -->
       {{ range .installableLangs }}
-      <form method="post" action="/api/setup/language" id="lang-install-{{ .Locale }}" class="setup-lang-install">
+      <!-- hidden: .setup-card is `display:flex; flex-direction:column;
+           gap:.9rem` (app.css), so each of these empty forms would otherwise
+           be a zero-height flex ITEM contributing a full .9rem gap of dead
+           space under the wizard — once per catalog language, growing as the
+           catalog does. display:none does not affect submission: the visible
+           step-1 button owns this form via its form= attribute. -->
+      <form method="post" action="/api/setup/language" id="lang-install-{{ .Locale }}" class="setup-lang-install" hidden>
         <input type="hidden" name="locale" value="{{ .Locale }}">
       </form>
       {{ end }}

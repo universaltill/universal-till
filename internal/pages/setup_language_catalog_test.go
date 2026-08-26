@@ -71,6 +71,36 @@ func TestSetupWizardListsInstallableCatalogLanguagesAndCachesFetch(t *testing.T)
 	}
 }
 
+// ADR-0015 (lazy store registration, still governing — ADR-0026's eager
+// proposal was never accepted): rendering the wizard only BROWSES the
+// catalog, and browsing must never mint the shop's cloud store identity.
+// Only a plugin download/install (the POST below, via
+// resolveAndInstallBasePlugin) or an operator's explicit Settings →
+// "Register now" may enrol. Independent review caught GET /setup calling
+// enroll.EnsureRegistered, which enrolled every till that ever reached its
+// first screen — precisely the "every download, demo, test boot and CI run
+// mints a store org" the ADR exists to prevent.
+func TestSetupWizardCatalogBrowseDoesNotRegisterStore(t *testing.T) {
+	resetLangCatalogForTest(t)
+	mux, _, d := newFullAuthDeps(t)
+	mkt := newFakeMarketplace(t, nil)
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	d.Cfg.Marketplace = mkt.config()
+
+	rec := getSetup(mux, "?lang=en", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup?lang=en: code=%d", rec.Code)
+	}
+	// The browse really happened (otherwise "no register call" proves nothing).
+	if hits := mkt.catalogHits(); hits != 1 {
+		t.Fatalf("expected the catalog to be browsed once, got %d hits", hits)
+	}
+	if hits := mkt.storeRegisterHits(); hits != 0 {
+		t.Fatalf("GET /setup enrolled the shop's cloud store (%d POST /v1/stores/register) — "+
+			"ADR-0015 allows that only on a plugin download/install or an explicit Register now", hits)
+	}
+}
+
 // Catalog unreachable at GET /setup: bundled-only rendering, no error, no
 // hang — plus the "more languages once connected" note (mirrors
 // TestSetupWizardDE_OfflineCompletesAndLeavesPendingForRetry's dead-server
