@@ -1,6 +1,60 @@
 package auth
 
-import "testing"
+import (
+	"net/http"
+	"net/http/httptest"
+	"testing"
+)
+
+// ut-docs#1099: POST /api/settings/exit-to-os is the manager's escape hatch
+// off a locked-down kiosk window — and the login screen is exactly where a
+// till with no signed-in operator is stuck. The handler already carries its
+// own live manager-PIN gate (AuthorizeManager, sharing the device-wide
+// keypad lockout), which is the intended authorization; requiring a session
+// on top of it locked the escape hatch behind the very screen it exists to
+// escape. Same handler-authenticates-itself shape as /api/sync/pair-request.
+//
+// The exemption must stay exactly this one path: the rest of the
+// /api/settings/* surface is session-gated manager tooling, and lookalike
+// or deeper paths must not ride along.
+func TestExitToOSIsExemptButSettingsSurfaceStaysGated(t *testing.T) {
+	if !exempt("/api/settings/exit-to-os") {
+		t.Error("/api/settings/exit-to-os is not exempt — a till sitting at the " +
+			"login screen would be 401'd before the handler's own manager-PIN " +
+			"check ever runs, leaving a kiosk with no escape at all")
+	}
+	for _, p := range []string{
+		"/api/settings",
+		"/api/settings/window-mode",
+		"/api/settings/osk",
+		"/api/settings/exit-to-os/extra",
+		"/api/settings/exit-to-os-not-really",
+	} {
+		if exempt(p) {
+			t.Errorf("%s must NOT be exempt — only exit-to-os carries its own live PIN gate", p)
+		}
+	}
+}
+
+// The same fact proven through the real middleware, not just the exempt()
+// helper: a request with NO session cookie must reach the next handler
+// rather than being answered 401 by the middleware itself.
+func TestExitToOSReachableWithoutSessionCookie(t *testing.T) {
+	reached := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusNoContent)
+	})
+	// svc is only consulted when a session cookie is present; this request
+	// carries none, which is the whole point.
+	h := Middleware(next, nil)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/settings/exit-to-os", nil))
+	if !reached {
+		t.Fatalf("middleware answered %d itself — the exit-to-os handler (and its own PIN check) was never reached", rec.Code)
+	}
+}
 
 // /o/{token} (ut-docs#527): the customer order-tracking page is reached by
 // scanning a QR on the self-order confirmation screen from a personal phone —
