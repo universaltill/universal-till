@@ -34,6 +34,20 @@ Place `unitill-desktop`, the `unitill-pos` binary, and the `web/` folder in the
 same directory, then launch `unitill-desktop`. It runs the till on
 `127.0.0.1:8080` and opens the window.
 
+## Linux startup gate (ut-docs#1093)
+
+On Linux, the shell holds the window from opening until the machine is 60s
+into its boot (`waitForSafeStartup` in `startup_gate_linux.go`) — a
+mitigation for a WebKitGTK 2.52.6/Wayland defect where a window created too
+early in boot renders with a permanently corrupt compositing surface. Only a
+cold boot pays the cost; launched by hand on a running machine it's a no-op.
+
+Tune or disable it with `UT_SHELL_MIN_UPTIME_SECONDS` (seconds; `0` disables
+the gate entirely). Values outside `0..600` fall back to the 60s default
+rather than being honoured, so a units-confusion typo can't hold the window
+for hours or silently disable the gate. Windows and macOS use their own
+platform web views and are unaffected — the gate is a no-op there.
+
 ## Status & follow-ups
 
 Proof of concept — validated to build on macOS (arm64). Still to do:
