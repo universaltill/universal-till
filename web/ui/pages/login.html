@@ -128,7 +128,10 @@
           error: "{{ T "auth.exit_to_os.error" }}",
           unavailable: "{{ T "auth.exit_to_os.unavailable" }}",
           notConfirmed: "{{ T "auth.exit_to_os.not_confirmed" }}",
-          kioskAppliance: "{{ T "auth.exit_to_os.kiosk_appliance" }}"
+          kioskAppliance: "{{ T "auth.exit_to_os.kiosk_appliance" }}",
+          // ut-docs#1104: same device-wide lockout copy the main PIN pad
+          // above already uses via .errKey -- reused, not a new key.
+          locked: "{{ T "auth.error.locked" }}"
         };
         function show(isError, text) {
           msg.className = isError ? 'login-error' : 'muted';
@@ -157,6 +160,12 @@
                   show(true, T.unavailable);
                 }
               }).catch(function () { show(true, T.unavailable); });
+            } else if (r.status === 429) {
+              // ut-docs#1104: locked out by the device-wide PIN lockout
+              // (possibly someone else's failed attempts), not a wrong
+              // PIN -- this screen is reached only when already stuck on
+              // something, so the distinction matters most here.
+              show(true, T.locked);
             } else {
               show(true, T.error);
             }
