@@ -11,8 +11,8 @@ import (
 )
 
 // Coverage batch 8: the owner-intelligence/report group in POSRepo —
-// SalesByDay, SlowItems, DeadStock, TaxSummary, MarginByItem, DayTotal,
-// SeasonalUpcoming, SalesByWeekday/SalesByHour (busyBuckets), and
+// SalesByDay, SlowItems, DeadStock, SalesForTaxWindow, MarginByItem,
+// DayTotal, SeasonalUpcoming, SalesByWeekday/SalesByHour (busyBuckets), and
 // ItemDailySellRates. Real DB, real migrations, exact minor-unit assertions.
 
 // b8OpenDB opens a fresh migrated DB in a temp dir.
@@ -342,41 +342,74 @@ func TestPOSRepo_DeadStock_ValueMathAndExclusions(t *testing.T) {
 	}
 }
 
-func TestPOSRepo_TaxSummary_BandsReturnsSubtract(t *testing.T) {
-	d := b8OpenDB(t, "taxsummary.db")
+// TestPOSRepo_SalesForTaxWindow_FiltersAndAttachesLines is the raw-fetch
+// half of the ut-docs#1115 fix: SalesForTaxWindow (replacing the old
+// TaxSummary, which both fetched AND netted/banded in one raw-SQL query)
+// now does ONLY the fetch — status/window filtering and line attachment.
+// The netting (returns subtract) and banding (pos.VATBandsForSale, whole-
+// sale-discount/service-charge-aware) moved to internal/pages'
+// computeTaxSummary, which reuses computeEODTaxBandsFromSales and is
+// covered by TestTaxSummary_AgreesWithEODTaxBands_WholeSaleDiscountInclusive
+// there — this test only pins down what THIS layer owes that one: the
+// right sales, unmodified (a return sale comes back as-is, not
+// sign-flipped — that's the pages layer's job), each with its lines
+// attached, completed-only, in-window-only.
+func TestPOSRepo_SalesForTaxWindow_FiltersAndAttachesLines(t *testing.T) {
+	d := b8OpenDB(t, "taxwindow.db")
 	ctx := context.Background()
 	repo := NewPOSRepo(d.DB)
 
 	b8Item(t, d, "itm", 100, nil, 1)
 	now := b8At(time.Now().Add(-2 * time.Hour))
 
-	// Sale: 20% band net 1000 tax 200; zero band net 500 tax 0.
 	b8Sale(t, d, "s1", now, "completed", "sale", 200, 1700)
 	b8Line(t, d, "s1", 1, "itm", "", "Taxed", 1, 2000, 200, 1000, 1200)
 	b8Line(t, d, "s1", 2, "itm", "", "ZeroRated", 1, 0, 0, 500, 500)
-	// Return in the 20% band: subtracts net 300 tax 60.
+	// A return sale: must come back UNCHANGED (sign untouched) — netting is
+	// not this layer's job anymore.
 	b8Sale(t, d, "s2", now, "completed", "return", 60, 360)
 	b8Line(t, d, "s2", 1, "itm", "", "Taxed", 1, 2000, 60, 300, 360)
-	// Voided: ignored entirely.
+	// Voided: excluded.
 	b8Sale(t, d, "s3", now, "voided", "sale", 999, 999)
 	b8Line(t, d, "s3", 1, "itm", "", "Voided", 1, 2000, 999, 999, 999)
-	// Outside the 30-day window: ignored.
+	// Outside the 30-day window: excluded.
 	b8Sale(t, d, "s4", b8At(time.Now().Add(-40*24*time.Hour)), "completed", "sale", 111, 666)
 	b8Line(t, d, "s4", 1, "itm", "", "Ancient", 1, 2000, 111, 555, 666)
 
-	bands, err := repo.TaxSummary(ctx, winFrom(30), winTo())
+	sales, err := repo.SalesForTaxWindow(ctx, winFrom(30), winTo())
 	if err != nil {
-		t.Fatalf("TaxSummary: %v", err)
+		t.Fatalf("SalesForTaxWindow: %v", err)
 	}
-	if len(bands) != 2 {
-		t.Fatalf("expected 2 tax bands, got %d: %+v", len(bands), bands)
+	if len(sales) != 2 {
+		t.Fatalf("expected 2 sales (voided + out-of-window excluded), got %d: %+v", len(sales), sales)
 	}
-	// Ordered by rate DESC: 20% band first, net 1000-300, tax 200-60.
-	if bands[0].RateBP != 2000 || bands[0].Net != 700 || bands[0].Tax != 140 {
-		t.Fatalf("20%% band = %+v, want rate 2000 net 700 tax 140", bands[0])
+	byID := map[string]EODTaxBandSale{}
+	for _, s := range sales {
+		byID[s.ID] = s
 	}
-	if bands[1].RateBP != 0 || bands[1].Net != 500 || bands[1].Tax != 0 {
-		t.Fatalf("zero band = %+v, want rate 0 net 500 tax 0", bands[1])
+	s1, ok := byID["s1"]
+	if !ok {
+		t.Fatalf("s1 missing, got %+v", sales)
+	}
+	if s1.SaleType != "sale" || len(s1.Lines) != 2 {
+		t.Fatalf("s1 = %+v, want sale_type=sale with 2 lines", s1)
+	}
+	var s1Net, s1Tax int64
+	for _, l := range s1.Lines {
+		s1Net += l.LineTotal - l.TaxAmount
+		s1Tax += l.TaxAmount
+	}
+	if s1Net != 1500 || s1Tax != 200 {
+		t.Fatalf("s1 line totals = net %d tax %d, want 1500/200 ((1200-200)+(500-0))", s1Net, s1Tax)
+	}
+	s2, ok := byID["s2"]
+	if !ok {
+		t.Fatalf("s2 missing, got %+v", sales)
+	}
+	// s2 is a return: the fetch must not sign-flip anything -- it comes
+	// back as positive 300/60, exactly as stored.
+	if s2.SaleType != "return" || len(s2.Lines) != 1 || s2.Lines[0].LineTotal != 360 || s2.Lines[0].TaxAmount != 60 {
+		t.Fatalf("s2 = %+v, want sale_type=return, 1 line, LineTotal 360 TaxAmount 60 (unsigned)", s2)
 	}
 }
 
@@ -898,8 +931,8 @@ func TestPOSRepo_Reports_EmptyDB(t *testing.T) {
 	if rows, err := repo.DeadStock(ctx, winFrom(7), winTo(), 5); err != nil || len(rows) != 0 {
 		t.Fatalf("DeadStock empty = (%v, %v)", rows, err)
 	}
-	if rows, err := repo.TaxSummary(ctx, winFrom(7), winTo()); err != nil || len(rows) != 0 {
-		t.Fatalf("TaxSummary empty = (%v, %v)", rows, err)
+	if rows, err := repo.SalesForTaxWindow(ctx, winFrom(7), winTo()); err != nil || len(rows) != 0 {
+		t.Fatalf("SalesForTaxWindow empty = (%v, %v)", rows, err)
 	}
 	if rows, err := repo.MarginByItem(ctx, winFrom(7), winTo(), 5); err != nil || len(rows) != 0 {
 		t.Fatalf("MarginByItem empty = (%v, %v)", rows, err)
@@ -935,8 +968,8 @@ func TestPOSRepo_Reports_EmptyDB(t *testing.T) {
 	if _, err := repo.DeadStock(ctx, winFrom(7), winTo(), 5); err == nil {
 		t.Fatal("DeadStock on a closed DB must error")
 	}
-	if _, err := repo.TaxSummary(ctx, winFrom(7), winTo()); err == nil {
-		t.Fatal("TaxSummary on a closed DB must error")
+	if _, err := repo.SalesForTaxWindow(ctx, winFrom(7), winTo()); err == nil {
+		t.Fatal("SalesForTaxWindow on a closed DB must error")
 	}
 	if _, err := repo.MarginByItem(ctx, winFrom(7), winTo(), 5); err == nil {
 		t.Fatal("MarginByItem on a closed DB must error")
