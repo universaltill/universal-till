@@ -122,14 +122,29 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				methods = append(methods, p.Method)
 			}
 		}
+		// German TSE hard gate (ADR-0048, ut-docs#1001): the refund path is
+		// gated the same way the sale path is (enforceFiscalGate in the POST
+		// handler below), but until now only the sale screen carried the
+		// persistent override-active banner -- a cashier processing a refund
+		// under an active override got no warning until they submitted the
+		// form. Same read-only pattern as index_page.go: a gate read error
+		// just renders no banner, the real gate still runs on submit.
+		fiscalOverrideActive := false
+		fiscalOverrideUntil := ""
+		if g, gErr := evaluateFiscalGate(r.Context(), d); gErr == nil && g.Decision == fiscal.AllowedWithOverride {
+			fiscalOverrideActive = true
+			fiscalOverrideUntil = g.OverrideUntil.Local().Format("2006-01-02 15:04")
+		}
 		httpx.Render("ui/pages/refund.html", map[string]any{
-			"title":     "Refund",
-			"theme":     d.CurrentState().Theme,
-			"menuItems": d.MenuSnapshot(),
-			"Sale":      detail,
-			"Lines":     refundableLines(detail, returned),
-			"Methods":   methods,
-			"AuthOff":   authOff,
+			"title":                "Refund",
+			"theme":                d.CurrentState().Theme,
+			"menuItems":            d.MenuSnapshot(),
+			"Sale":                 detail,
+			"Lines":                refundableLines(detail, returned),
+			"Methods":              methods,
+			"AuthOff":              authOff,
+			"fiscalOverrideActive": fiscalOverrideActive,
+			"fiscalOverrideUntil":  fiscalOverrideUntil,
 		})(w, r)
 	})
 

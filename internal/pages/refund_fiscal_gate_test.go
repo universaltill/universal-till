@@ -172,6 +172,48 @@ func TestFiscalGate_RefundFailingTSEBlockedWithoutOverride(t *testing.T) {
 	}
 }
 
+// The refund screen carries the same persistent override-active banner as
+// the sale screen (fiscal_kiosk_banner_test.go's
+// TestFiscalGate_SaleScreenBannerDuringOverride) -- and none outside one.
+// Before this (ut-docs#1001), a cashier processing a refund under an
+// active override got no warning until they submitted the form.
+func TestFiscalGate_RefundScreenBannerDuringOverride(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newRefundFiscalTestDeps(t)
+	seedFailingConfiguredTSE(t, dp)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	get := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/refund/"+receiptNo, nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /refund/%s failed: %d %s", receiptNo, rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	// Blocked (no override): no banner -- the refusal itself rides the
+	// submit attempt, not the page.
+	if body := get(); strings.Contains(body, "fiscal-override-banner") {
+		t.Fatalf("no banner expected without an active override")
+	}
+
+	// Active override: banner present.
+	req := httptest.NewRequest(http.MethodPost, "/api/fiscal/tse-override", strings.NewReader(validOverrideBody("")))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req = auth.WithUser(req, auth.User{ID: "user1", Role: "admin"})
+	grantRec := httptest.NewRecorder()
+	mux.ServeHTTP(grantRec, req)
+	if grantRec.Code != http.StatusOK {
+		t.Fatalf("expected 200 for an admin grant, got %d: %s", grantRec.Code, grantRec.Body.String())
+	}
+	if body := get(); !strings.Contains(body, "fiscal-override-banner") {
+		t.Fatalf("expected the override banner on the refund screen, got: %s", body)
+	}
+}
+
 // An active admin override unblocks the refund and writes the same
 // per-completion unsigned_override audit marker completeTender writes for a
 // sale, attached to the RETURN sale row (not the original sale).
