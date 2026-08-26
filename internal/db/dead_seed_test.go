@@ -157,6 +157,7 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	rewindShiftCashRecon067(t, d)
 	rewindVoucherIssueTotal069(t, d)
 	rewindZReportNumbering070(t, d)
+	rewindPaymentsVoucherID072(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -332,6 +333,21 @@ func rewindZReportNumbering070(t *testing.T, d *DB) {
 	} {
 		if _, err := d.DB.Exec(q); err != nil {
 			t.Fatalf("rewind 070 (%s): %v", q, err)
+		}
+	}
+}
+
+// rewindPaymentsVoucherID072 undoes migration 072's non-idempotent DDL (the
+// payments/payments_archive voucher_id columns, ut-docs#1053) — same replay
+// problem as the rewind helpers above.
+func rewindPaymentsVoucherID072(t *testing.T, d *DB) {
+	t.Helper()
+	for _, q := range []string{
+		`ALTER TABLE payments DROP COLUMN voucher_id`,
+		`ALTER TABLE payments_archive DROP COLUMN voucher_id`,
+	} {
+		if _, err := d.DB.Exec(q); err != nil {
+			t.Fatalf("rewind 072 (%s): %v", q, err)
 		}
 	}
 }

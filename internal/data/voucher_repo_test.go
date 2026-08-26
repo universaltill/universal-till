@@ -52,7 +52,7 @@ func TestVoucherRepo_DebitValidatesBalanceAndStatus(t *testing.T) {
 	vSeedVoucher(t, ctx, repo, "GS-B", 1000)
 
 	// Overspend refused with the typed error, balance untouched.
-	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-B", 1500); !errors.Is(err, ErrVoucherInsufficientBalance) {
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-B", 1500, false); !errors.Is(err, ErrVoucherInsufficientBalance) {
 		t.Fatalf("overspend: err = %v, want ErrVoucherInsufficientBalance", err)
 	}
 	v, err := repo.GetVoucherBalance(ctx, "GS-B")
@@ -61,13 +61,13 @@ func TestVoucherRepo_DebitValidatesBalanceAndStatus(t *testing.T) {
 	}
 
 	// Partial debit keeps it active; draining flips to redeemed.
-	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-B", 400); err != nil {
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-B", 400, false); err != nil {
 		t.Fatalf("partial debit: %v", err)
 	}
 	if v, _ = repo.GetVoucherBalance(ctx, "GS-B"); v.BalanceMinor != 600 || v.Status != "active" {
 		t.Fatalf("after partial debit: balance=%d status=%q", v.BalanceMinor, v.Status)
 	}
-	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-B", 600); err != nil {
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-B", 600, false); err != nil {
 		t.Fatalf("draining debit: %v", err)
 	}
 	if v, _ = repo.GetVoucherBalance(ctx, "GS-B"); v.BalanceMinor != 0 || v.Status != "redeemed" {
@@ -75,11 +75,11 @@ func TestVoucherRepo_DebitValidatesBalanceAndStatus(t *testing.T) {
 	}
 
 	// A non-active voucher refuses further debits.
-	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-B", 1); !errors.Is(err, ErrVoucherNotActive) {
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-B", 1, false); !errors.Is(err, ErrVoucherNotActive) {
 		t.Fatalf("debit on redeemed voucher: err = %v, want ErrVoucherNotActive", err)
 	}
 	// Unknown voucher.
-	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-NONE", 1); !errors.Is(err, ErrVoucherNotFound) {
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-NONE", 1, false); !errors.Is(err, ErrVoucherNotFound) {
 		t.Fatalf("debit on unknown voucher: err = %v, want ErrVoucherNotFound", err)
 	}
 }
@@ -198,7 +198,7 @@ func TestVoucherRepo_ConcurrentDebitOnlyOneWins(t *testing.T) {
 			go func() {
 				defer wg.Done()
 				<-start
-				errs <- repo.DebitVoucherForRedemption(ctx, nil, id, 1000)
+				errs <- repo.DebitVoucherForRedemption(ctx, nil, id, 1000, false)
 			}()
 		}
 		close(start)
@@ -225,5 +225,78 @@ func TestVoucherRepo_ConcurrentDebitOnlyOneWins(t *testing.T) {
 		if v.BalanceMinor != 0 || v.Status != "redeemed" {
 			t.Fatalf("iteration %d: balance=%d status=%q after the race, want 0/'redeemed' (a negative balance means the guard clause is gone)", i, v.BalanceMinor, v.Status)
 		}
+	}
+}
+
+// ut-docs#1053: journal replay of a genuine offline double-spend must be able
+// to force the debit past the balance gate (the remote sale already happened
+// — same reasoning as pos.SaleInput.AllowNegativeInventory), leaving a
+// negative balance the caller surfaces as a Problem. force changes ONLY the
+// balance check: a voided/redeemed/unknown voucher stays a hard reject — a
+// nonexistent or dead voucher is a different, worse problem than a balance
+// race.
+func TestVoucherRepo_DebitForceAllowsOverdraft(t *testing.T) {
+	d := b8OpenDB(t, "voucher-force.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	vSeedVoucher(t, ctx, repo, "GS-FORCE", 500)
+
+	// Control: the non-replay path is unaffected — overdraft still rejected.
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-FORCE", 800, false); !errors.Is(err, ErrVoucherInsufficientBalance) {
+		t.Fatalf("force=false overspend: err = %v, want ErrVoucherInsufficientBalance", err)
+	}
+	if v, _ := repo.GetVoucherBalance(ctx, "GS-FORCE"); v.BalanceMinor != 500 {
+		t.Fatalf("balance after refused debit = %d, want 500", v.BalanceMinor)
+	}
+
+	// Replay path: the same debit force-applies and the balance goes negative.
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-FORCE", 800, true); err != nil {
+		t.Fatalf("force=true overspend: %v, want success (the remote sale already happened)", err)
+	}
+	v, err := repo.GetVoucherBalance(ctx, "GS-FORCE")
+	if err != nil {
+		t.Fatalf("read voucher: %v", err)
+	}
+	if v.BalanceMinor != -300 || v.Status != "active" {
+		t.Fatalf("after forced overdraft: balance=%d status=%q, want -300/'active'", v.BalanceMinor, v.Status)
+	}
+
+	// force does NOT bypass the not-found rejection.
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-NOWHERE", 100, true); !errors.Is(err, ErrVoucherNotFound) {
+		t.Fatalf("force on unknown voucher: err = %v, want ErrVoucherNotFound", err)
+	}
+
+	// force DOES bypass a 'redeemed' status — this is the exact-drain
+	// double-spend shape (review finding, ut-docs#1053): the first replica's
+	// replay drains the voucher to exactly zero, flipping status to
+	// 'redeemed', and the second replica's replay of the SAME voucher's
+	// redemption must still force-apply, not hard-reject with
+	// ErrVoucherNotActive — that would permanently wedge the second
+	// replica's journal on every subsequent sale (see the pages-layer
+	// TestApplyJournal_DoubleRedemptionRaceForceAppliesAndSurfacesProblem-
+	// style coverage for the exact-drain variant).
+	vSeedVoucher(t, ctx, repo, "GS-EXACTDRAIN", 400)
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-EXACTDRAIN", 400, false); err != nil {
+		t.Fatalf("drain GS-EXACTDRAIN to exactly zero: %v", err)
+	}
+	if v, _ := repo.GetVoucherBalance(ctx, "GS-EXACTDRAIN"); v.BalanceMinor != 0 || v.Status != "redeemed" {
+		t.Fatalf("after exact drain: balance=%d status=%q, want 0/'redeemed'", v.BalanceMinor, v.Status)
+	}
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-EXACTDRAIN", 100, true); err != nil {
+		t.Fatalf("force redemption of an already-'redeemed' (exact-drain) voucher: %v, want success", err)
+	}
+	if v, _ := repo.GetVoucherBalance(ctx, "GS-EXACTDRAIN"); v.BalanceMinor != -100 || v.Status != "redeemed" {
+		t.Fatalf("after second forced redemption: balance=%d status=%q, want -100/'redeemed'", v.BalanceMinor, v.Status)
+	}
+
+	// force still does NOT bypass 'void' — a voided voucher is a different,
+	// worse problem than a balance/status race caused by replay ordering.
+	vSeedVoucher(t, ctx, repo, "GS-VOIDED", 400)
+	if _, err := d.DB.ExecContext(ctx, `UPDATE vouchers SET status = 'void', balance = 0 WHERE id = ?`, "GS-VOIDED"); err != nil {
+		t.Fatalf("seed void GS-VOIDED: %v", err)
+	}
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-VOIDED", 100, true); !errors.Is(err, ErrVoucherNotActive) {
+		t.Fatalf("force on void voucher: err = %v, want ErrVoucherNotActive", err)
 	}
 }
