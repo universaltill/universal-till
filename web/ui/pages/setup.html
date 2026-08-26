@@ -62,12 +62,38 @@
           {{ if .detectedLangCode }}
             <p class="muted" data-detected-lang="{{ .detectedLangCode }}">{{ printf (T "setup.language.detected_coming_soon") .detectedLangCode }}</p>
           {{ end }}
+          <!-- ut-docs#1092: a language the operator picked but whose install
+               failed/timed out is now retrying in the background (the same
+               ut-docs#591 retry the Settings pending-chip shows) — say so,
+               driven purely by the redirect's query param, no stored state. -->
+          {{ if .installPendingLang }}
+            <p class="muted" data-install-pending="{{ .installPendingLang }}">{{ printf (T "setup.language.install_pending") .installPendingLang (locale) }}</p>
+          {{ end }}
           <div class="setup-langs">
             {{ $current := locale }}
             {{ range locales }}
               <a class="btn{{ if eq . $current }} primary{{ end }}" href="/setup?lang={{ . }}">{{ . }}</a>
             {{ end }}
+            <!-- ut-docs#1092: marketplace catalog languages not bundled yet.
+                 Each button submits its own plain POST form (this wizard is
+                 plain multi-page navigation, no htmx swaps) — the forms
+                 themselves live AFTER the wizard's main </form>, referenced
+                 via the button's form= attribute, because a <form> nested
+                 inside the wizard form would be dropped by the HTML parser
+                 and the button would submit the wizard instead. -->
+            {{ range .installableLangs }}
+              <button type="submit" class="btn setup-lang-install-btn" form="lang-install-{{ .Locale }}" data-install-locale="{{ .Locale }}">{{ .NativeName }}</button>
+            {{ end }}
           </div>
+          {{ if .installableLangs }}
+            <p class="muted">{{ T "setup.language.downloads_on_select" }}</p>
+          {{ end }}
+          <!-- Catalog unreachable and nothing cached: bundled-only, with the
+               same quiet-note styling as the detected_coming_soon case above
+               — never an error, never a blocker (offline-first). -->
+          {{ if .langCatalogUnavailable }}
+            <p class="muted" data-lang-catalog-unavailable>{{ T "setup.language.more_when_connected" }}</p>
+          {{ end }}
           <div class="setup-nav">
             <button type="button" class="btn primary" @click="step = 2">{{ T "setup.next" }}</button>
             <button type="button" class="btn secondary" @click="step = 99" style="margin-top:.4rem">{{ T "setup.join.title" }}</button>
@@ -272,6 +298,18 @@
         </section>
       </form>
 
+      <!-- ut-docs#1092: the install forms behind step 1's catalog-language
+           buttons. Outside the wizard's own <form> on purpose (nested forms
+           are dropped by the HTML parser); each step-1 button targets its
+           form via the form= attribute. locale is all the handler needs — it
+           re-resolves the listing through the same server-side catalog cache,
+           so the body can't pick an arbitrary listing. -->
+      {{ range .installableLangs }}
+      <form method="post" action="/api/setup/language" id="lang-install-{{ .Locale }}" class="setup-lang-install">
+        <input type="hidden" name="locale" value="{{ .Locale }}">
+      </form>
+      {{ end }}
+
       <!-- Alternate path: join an existing shop (ADR-0011 D2). The primary's
            QR code enrols this till and copies the whole shop over. -->
       <section x-show="step === 99" x-cloak>
@@ -345,6 +383,26 @@
         }
       });
     </script>
+
+    <!-- ut-docs#1092: submit feedback for the catalog-language install
+         buttons — a language pack download can take a while on shop WiFi, and
+         a button that sits inert invites a double-tap (same reasoning as the
+         join form's hx-disabled-elt above; these are plain forms, so the
+         equivalent is done by hand). Same template-populated i18n lookup
+         pattern as settings.html's data-reset-btn handler. -->
+    {{ if .installableLangs }}
+    <script>
+      (function () {
+        var T = { installing: "{{ T "setup.language.installing" }}" };
+        document.querySelectorAll('form.setup-lang-install').forEach(function (f) {
+          f.addEventListener('submit', function () {
+            var btn = document.querySelector('button[form="' + f.id + '"]');
+            if (btn) { btn.disabled = true; btn.textContent = T.installing; }
+          });
+        });
+      })();
+    </script>
+    {{ end }}
 
     <!-- ut-docs#289: first-boot LAN discovery for the join step. Modeled on
          tills.html's discover flow but written against the /api/setup/*
