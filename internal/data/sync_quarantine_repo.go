@@ -47,12 +47,24 @@ ON CONFLICT (sale_id) DO NOTHING
 	return nil
 }
 
+// CountJournalQuarantine reports how many quarantined entries exist, total
+// -- cheap enough (COUNT(*), no row materialization) for a per-page-render
+// banner (ut-docs#1133: the Settings page's Tills card, and the primary-side
+// sync chip) to poll without paying ListJournalQuarantine's row-scan cost
+// just to learn a length.
+func (r *POSRepo) CountJournalQuarantine(ctx context.Context) (int, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM sync_journal_quarantine`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count sync_journal_quarantine: %w", err)
+	}
+	return n, nil
+}
+
 // ListJournalQuarantine returns quarantined entries newest-first, capped at
 // limit -- the queryable side of ADR-0065's "record it somewhere queryable"
-// requirement. No admin page reads this yet (deliberately out of scope for
-// ut-docs#1127, see ADR-0065's "Not decided here" -- a follow-up card can add
-// one); this is the data-layer half ready for that follow-up, and what the
-// regression tests assert against today.
+// requirement. Read by the /sync-quarantine admin page (ut-docs#1133,
+// ADR-0065's own "Not decided here" follow-up) and by the regression tests
+// below.
 func (r *POSRepo) ListJournalQuarantine(ctx context.Context, limit int) ([]JournalQuarantineEntry, error) {
 	if limit <= 0 {
 		limit = 50

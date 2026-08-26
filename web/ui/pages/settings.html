@@ -1119,6 +1119,23 @@
   </form>
   <p class="muted">{{ T "settings.tills.help" }}</p>
   <a class="btn primary" href="/tills">{{ T "settings.tills.open" }}</a>
+  {{ if .ShowQuarantineSection }}
+  <!-- ut-docs#1133 (ADR-0065 follow-up): a quarantined LAN-sync journal
+       entry is a primary-only concept (see registerSyncQuarantinePage's
+       doc comment) -- shown only on the primary, same guard as the
+       till-name field above. Also hidden entirely on a single-till shop
+       that has never enrolled a replica (ShowQuarantineSection is false
+       there): it cannot structurally have a quarantine row yet, and
+       showing the button anyway is premature noise (independent review,
+       2026-08-26) -- ShowQuarantineSection stays true once QuarantineCount
+       is nonzero even after every replica is later revoked, so the
+       section never disappears while there's something real to see. -->
+  <p class="muted" style="margin-top:.6rem">
+    {{ T "sync.quarantine_settings_help" }}
+    {{ if gt .QuarantineCount 0 }}<strong>{{ .QuarantineCount }} {{ T "sync.chip_quarantined" }}</strong>{{ end }}
+  </p>
+  <a class="btn secondary" href="/sync-quarantine">{{ T "sync.quarantine_open" }}</a>
+  {{ end }}
 </div>
 <!-- ut-docs#866: invoice seller identity is elevation-wired — the card
      renders for every session (server-side checkOrElevate is the real

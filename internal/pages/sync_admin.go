@@ -151,7 +151,24 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		list, err := tills.ListTills(r.Context())
-		if err != nil || len(list) == 0 {
+		// ut-docs#1133 (ADR-0065 follow-up): read the quarantine count
+		// BEFORE the empty-roster early return below, and let a nonzero
+		// count alone justify rendering the chip. A quarantined entry
+		// outlives the till that caused it -- an operator revoking the
+		// misbehaving replica (the obvious response) leaves ListTills
+		// empty while the ledger gap the quarantine row records is still
+		// real, and the old ordering (early-return before this read) made
+		// the chip vanish in exactly that case, silently undoing the
+		// "standing, always-rendered signal" this feature exists to add
+		// (independent review, 2026-08-26). Best-effort like the rest of
+		// this handler: a read error just leaves quarantined at 0 rather
+		// than failing the whole chip render.
+		quarantined, qErr := posRepo.CountJournalQuarantine(r.Context())
+		if qErr != nil {
+			logging.L().Errorf("count sync journal quarantine: %v", qErr)
+			quarantined = 0
+		}
+		if (err != nil || len(list) == 0) && quarantined == 0 {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -162,16 +179,20 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 				break
 			}
 		}
+		if quarantined > 0 {
+			class = "warn"
+		}
 		// ut-docs#405: this used to show only a bare replica COUNT — there
 		// was nowhere else to read a name from before #396 added
 		// tillNameOrDefault. Now it shows the same "this till's own name"
 		// every other identity surface (Settings, /tills) already shows.
 		label := tillNameOrDefault(r.Context(), d, httpx.ResolveLocale(w, r))
 		httpx.RenderPartial("ui/partials/sync_chip.html", map[string]any{
-			"isReplica": false,
-			"class":     class,
-			"label":     label,
-			"count":     len(list),
+			"isReplica":   false,
+			"class":       class,
+			"label":       label,
+			"count":       len(list),
+			"quarantined": quarantined,
 		})(w, r)
 	})
 }
