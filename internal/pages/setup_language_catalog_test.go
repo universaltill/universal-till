@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -68,6 +69,79 @@ func TestSetupWizardListsInstallableCatalogLanguagesAndCachesFetch(t *testing.T)
 	}
 	if hits := mkt.catalogHits(); hits != 1 {
 		t.Fatalf("expected exactly one catalog fetch across two renders (TTL cache), got %d", hits)
+	}
+}
+
+// ut-docs#1108: ut-cloud's real ListPlugins paginates (defaultPageSize=20)
+// and setupLanguageCatalogEntries used to read only page 1, ignoring
+// next_page_token — invisible while the real catalog had 2 listings, but the
+// wizard's own requirement is "every language the product can run in." Five
+// language listings against a page size of 2 forces 3 requests; every one of
+// them must show up as an install tile, proving the fetch actually follows
+// next_page_token to the end rather than stopping after the first page.
+func TestSetupWizardCatalogFollowsPaginationAcrossMultiplePages(t *testing.T) {
+	resetLangCatalogForTest(t)
+	mux, _, d := newFullAuthDeps(t)
+	mkt := newFakeMarketplace(t, nil)
+	mkt.setCatalog(
+		deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"),
+		marketplace.PluginSummary{ID: "ut-plugin-language-es", ListingID: "listing-lang-es", Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"es"}},
+		marketplace.PluginSummary{ID: "ut-plugin-language-fr", ListingID: "listing-lang-fr", Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"fr"}},
+		marketplace.PluginSummary{ID: "ut-plugin-language-it", ListingID: "listing-lang-it", Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"it"}},
+		marketplace.PluginSummary{ID: "ut-plugin-language-nl", ListingID: "listing-lang-nl", Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"nl"}},
+	)
+	mkt.setCatalogPageSize(2)
+	d.Cfg.Marketplace = mkt.config()
+
+	rec := getSetup(mux, "?lang=en", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup?lang=en: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, locale := range []string{"de", "es", "fr", "it", "nl"} {
+		want := `name="locale" value="` + locale + `"`
+		if !strings.Contains(body, want) {
+			t.Errorf("missing install tile for catalog page 2/3's %q locale — pagination stopped early:\n%s", locale, body)
+		}
+	}
+	// 5 listings at page size 2 = 3 requests (2, 2, 1) to exhaust the catalog.
+	if hits := mkt.catalogHits(); hits != 3 {
+		t.Fatalf("expected 3 catalog requests to page through 5 listings at page size 2, got %d", hits)
+	}
+}
+
+// A server that keeps returning a non-empty nextPageToken forever (malformed
+// or hostile) must not hang GET /setup indefinitely — the loop is bounded by
+// setupLanguageCatalogMaxPages. With page size 1, an unbounded catalog never
+// terminates on its own; this proves the fetch still returns.
+func TestSetupWizardCatalogPaginationCapPreventsInfiniteLoop(t *testing.T) {
+	resetLangCatalogForTest(t)
+	mux, _, d := newFullAuthDeps(t)
+	mkt := newFakeMarketplace(t, nil)
+	entries := make([]marketplace.PluginSummary, 0, setupLanguageCatalogMaxPages+10)
+	for i := 0; i < setupLanguageCatalogMaxPages+10; i++ {
+		entries = append(entries, marketplace.PluginSummary{
+			ID: "listing-" + strconv.Itoa(i), ListingID: "listing-" + strconv.Itoa(i),
+			Version: "1.0.0", CanonicalType: "language",
+			AvailableLocales: []string{"zz" + strconv.Itoa(i)},
+		})
+	}
+	mkt.setCatalog(entries...)
+	mkt.setCatalogPageSize(1)
+	d.Cfg.Marketplace = mkt.config()
+
+	done := make(chan *httptest.ResponseRecorder, 1)
+	go func() { done <- getSetup(mux, "?lang=en", "") }()
+	select {
+	case rec := <-done:
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /setup?lang=en: code=%d", rec.Code)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("GET /setup hung — the catalog pagination loop did not terminate against a server that never stops paginating")
+	}
+	if hits := mkt.catalogHits(); hits != setupLanguageCatalogMaxPages {
+		t.Fatalf("catalog requests = %d, want exactly %d (setupLanguageCatalogMaxPages)", hits, setupLanguageCatalogMaxPages)
 	}
 }
 
