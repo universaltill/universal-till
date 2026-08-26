@@ -65,7 +65,10 @@ type fakeMarketplace struct {
 
 	mu        sync.Mutex
 	tokenHits int // POST /v1/downloads/tokens count — proves (non-)reinstall
-	listings  map[string]*fakeMktListing
+	// catHits counts GET /v1/catalog/plugins — proves the setup wizard's
+	// language-catalog TTL cache (ut-docs#1092) really avoids a refetch.
+	catHits  int
+	listings map[string]*fakeMktListing
 	// catalog backs GET /v1/catalog/plugins for the country base-plugin
 	// resolve step (ut-docs#591) — empty by default (a 404/unserved route
 	// would be indistinguishable from "no catalog entries"; an explicit
@@ -89,6 +92,12 @@ func (m *fakeMarketplace) downloadTokenHits() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.tokenHits
+}
+
+func (m *fakeMarketplace) catalogHits() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.catHits
 }
 
 // publishVersion adds a signed release for listingID/pluginID and makes it
@@ -209,6 +218,7 @@ func newFakeMarketplace(t *testing.T, pluginIDByListing map[string]string) *fake
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/catalog/plugins":
 			m.mu.Lock()
+			m.catHits++
 			entries := append([]marketplace.PluginSummary(nil), m.catalog...)
 			m.mu.Unlock()
 			// Serve the REAL ut-cloud catalog wire shape (see internal/plugins/
