@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/csv"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"mime"
 	"net/http"
@@ -50,6 +51,28 @@ var eodTimeRe = regexp.MustCompile(`^([01]\d|2[0-3]):[0-5]\d$`)
 // downloaded filename, which embeds from/to verbatim, free of path
 // separators.
 var eodDateRe = regexp.MustCompile(`^\d{4}-\d{2}-\d{2}$`)
+
+// validateEODAnnotation guards POST /api/reports/eod/run's optional
+// annotation field (ut-docs#1012, independent review finding): the raw
+// value reaches print.Render's ESC/POS output verbatim (buildEODDoc's
+// "Anmerkung: " footer line), and escpos.go's line-encoding does not
+// strip control bytes — an annotation containing one would be emitted as
+// a literal printer command, not text. Same bound/character-class
+// convention as internal/pos's validateVoucherID: a generous but bounded
+// length (long enough for a real note, short enough to stay sane), no
+// control characters (0x00-0x1f, 0x7f). CLAUDE.md requires validating all
+// external input; this is manager-gated but still external input.
+func validateEODAnnotation(s string) error {
+	if len(s) > 200 {
+		return errors.New("annotation must be at most 200 characters")
+	}
+	for _, r := range s {
+		if r < 0x20 || r == 0x7f {
+			return errors.New("annotation contains control characters")
+		}
+	}
+	return nil
+}
 
 // rateTableRows renders a set of VAT-rate rows (rate/net/tax/gross) with
 // the adaptive-width-then-tight-collapse layout: comfortable historical
@@ -252,6 +275,25 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Issued (%d)", rep.VouchersIssuedCount), money(rep.VouchersIssued)))
 		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Redeemed (%d)", rep.VouchersRedeemedCount), money(rep.VouchersRedeemed)))
 	}
+	// Cancellations (ut-docs#1012): a completed sale later VOIDED — e.g.
+	// a same-day correction — reported as its own STORNOS section,
+	// separate from Refunds (a formal return processed afterward).
+	// "STORNOS" is the reference day-close's own term for exactly this
+	// concept (a cancelled/reversed receipt), same fixed-vocabulary
+	// convention as GUTSCHEINE above; it is NOT a pre-tender abandoned-
+	// basket count — this till never persists an abandoned basket as a
+	// row at all (a live sale lives only in memory until tendered, or in
+	// held_sales if explicitly parked), so there is nothing to count
+	// before completion. A voided sale is already excluded from
+	// Gross/Net (status != 'completed'), so this is purely
+	// informational — never summed into doc.Totals, same reasoning as
+	// GUTSCHEINE's issued/redeemed lines. Omitted entirely on a day with
+	// none, same convention as GUTSCHEINE/TIPS: a permanent "-£0.00"
+	// line on every report would be worse than no line at all.
+	if rep.CancelCount > 0 {
+		doc.Footer = append(doc.Footer, "", "STORNOS (voided receipts, not in revenue)")
+		doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", fmt.Sprintf("Voided (%d)", rep.CancelCount), money(rep.CancelTotal)))
+	}
 	// Cash-drawer reconciliation (ut-docs#1006) — printed only when at
 	// least one shift was closed that day; a day-close without one still
 	// renders a complete report. Amounts stored negative (skim, pay-outs)
@@ -286,6 +328,21 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 	if rep.FirstReceipt != "" {
 		doc.Footer = append(doc.Footer, "", "Receipts "+rep.FirstReceipt+" - "+rep.LastReceipt)
 	}
+	// Who generated the close, plus an optional annotation (ut-docs#1012),
+	// matching the reference Z-Bon's own "Anmerkung / Erstellt von" —
+	// fixed vocabulary on the printed document, same convention as
+	// "GUTSCHEINE" above: this is a jurisdiction/fiscal-format label, not
+	// UI copy, so it is not routed through T() (an auditor reads the
+	// printed report regardless of the till's operator-UI locale).
+	// GeneratedBy is always set (generateEOD resolves it, falling back to
+	// the raw actor id, e.g. "system" for the unattended scheduler tick);
+	// Annotation is optional and omitted entirely when blank.
+	if rep.GeneratedBy != "" {
+		doc.Footer = append(doc.Footer, "", "Erstellt von: "+rep.GeneratedBy)
+	}
+	if rep.Annotation != "" {
+		doc.Footer = append(doc.Footer, "Anmerkung: "+rep.Annotation)
+	}
 	return doc
 }
 
@@ -301,7 +358,12 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 // elevated) plus blockedActorID (the originally-blocked session user, set
 // only when elevated) so the eod_generated entry gets the same dual
 // attribution every other checkOrElevate site already writes.
-func generateEOD(ctx context.Context, d *common.Deps, day, actor, blockedActorID string) (data.EODReport, bool, error) {
+//
+// annotation (ut-docs#1012) is an optional free-text note carried onto the
+// report itself (rep.Annotation) and printed on the Z-Bon — "" for the
+// unattended scheduler tick (same "no operator involved" convention as
+// actor="system" above), or whatever the manual run's form supplied.
+func generateEOD(ctx context.Context, d *common.Deps, day, actor, blockedActorID, annotation string) (data.EODReport, bool, error) {
 	repo := data.NewPOSRepo(d.Db)
 	rep, err := repo.EndOfDay(ctx, day)
 	if err != nil {
@@ -319,6 +381,23 @@ func generateEOD(ctx context.Context, d *common.Deps, day, actor, blockedActorID
 	if err := attachEODBands(ctx, repo, &rep); err != nil {
 		return rep, false, err
 	}
+	// Who generated it, plus the annotation (ut-docs#1012). GeneratedBy
+	// resolves actor (a user id) to its display name via the same
+	// users-table join precedent internal/data's audit/order-status
+	// lookups already use — this also covers the unattended scheduler's
+	// "system" actor, itself a real seeded user (migration
+	// 003_system_user.sql: id='system', display_name='System'), so it
+	// prints as "System" rather than the raw lowercase id. Falls back to
+	// the raw actor string only for a genuinely unresolvable id (a stale/
+	// deleted user) or a lookup error — never blocks report generation on
+	// a resolution failure.
+	rep.GeneratedBy = actor
+	if actor != "" {
+		if u, ok, lerr := data.NewAuthRepo(d.Db).GetUser(ctx, actor); lerr == nil && ok && u.DisplayName != "" {
+			rep.GeneratedBy = u.DisplayName
+		}
+	}
+	rep.Annotation = strings.TrimSpace(annotation)
 	raw, err := json.Marshal(rep)
 	if err != nil {
 		return rep, false, err
@@ -454,7 +533,7 @@ func eodSchedulerTick(ctx context.Context, d *common.Deps, repo *data.POSRepo) {
 	if !eodDue(time.Now(), enabled, hhmm, done) {
 		return
 	}
-	if _, created, err := generateEOD(ctx, d, day, "system", ""); err != nil {
+	if _, created, err := generateEOD(ctx, d, day, "system", "", ""); err != nil {
 		logging.L().Errorf("eod scheduled run: %v", err)
 	} else if created {
 		logging.L().Infof("end-of-day report generated for %s", day)
@@ -526,9 +605,26 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 			actorID = elev.ApproverID
 			blockedActorID = elev.ActorID
 		}
+		// actorID is who generateEOD's GeneratedBy (ut-docs#1012) prints
+		// on the Z-Bon. On an elevated run that's the APPROVING manager,
+		// not the originally-blocked cashier who triggered the request —
+		// same choice InsertAuditElevated already makes for the audit
+		// entry's primary actor (blockedActorID rides along there, but
+		// the printed report only ever shows the one name).
 		day := time.Now().Format("2006-01-02")
 		locale := httpx.ResolveLocale(w, r)
-		rep, created, err := generateEOD(r.Context(), d, day, actorID, blockedActorID)
+		// annotation (ut-docs#1012): an optional free-text form value —
+		// no dedicated UI input yet (see the issue's close-out note), but
+		// any client (a future UI, or a manual request) can already send
+		// it, and it's stored + printed the moment it does. Validated
+		// BEFORE generateEOD runs, not after: a rejected annotation must
+		// not consume the day's one-shot archive attempt.
+		annotation := r.FormValue("annotation")
+		if err := validateEODAnnotation(annotation); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		rep, created, err := generateEOD(r.Context(), d, day, actorID, blockedActorID, annotation)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
