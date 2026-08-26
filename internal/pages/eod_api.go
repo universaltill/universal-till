@@ -316,6 +316,16 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 		doc.Footer = append(doc.Footer, "", "CASH RECONCILIATION",
 			line("Opening float", signed(rc.OpeningFloat)),
 			line("Cash sales", signed(rc.CashSales)),
+		)
+		// Tips held out (ut-docs#1046): only printed when non-zero, same "no
+		// line at all beats a permanent -£0.00 line" convention as
+		// GUTSCHEINE/STORNOS above -- cash tipping is off today, so this never
+		// appears on a real report yet, but the figure is correct the moment
+		// it is turned on.
+		if rc.TipsHeldOut != 0 {
+			doc.Footer = append(doc.Footer, line("Tips held out", signed(rc.TipsHeldOut)))
+		}
+		doc.Footer = append(doc.Footer,
 			line("Pay-ins", signed(rc.PayIns)),
 			line("Pay-outs", signed(rc.PayOuts)),
 			line("Calculated", signed(rc.Calculated)),
