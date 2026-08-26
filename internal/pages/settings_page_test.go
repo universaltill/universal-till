@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -1891,5 +1892,83 @@ func TestSettingsDisplayWindowControlNoteTellsTheTruthInAllThreeCases(t *testing
 	}
 	if strings.Contains(body, noShellMarker) || strings.Contains(body, attachedMarker) {
 		t.Fatal("Pi-appliance Display card claims a desktop-app dependency it does not have")
+	}
+}
+
+// TestSettingsShowsFiscalSignerMissingBanner covers the Settings-page
+// visibility-only banner for a DE shop declared system-of-record with no
+// active fiscal.sign.ask signer: shown for that condition, absent for a
+// non-German shop, absent while system_of_record is unset, and gone again
+// once a signer plugin is active. Deliberately NOT dismissable — no
+// /api/settings/dismiss-fiscal-signer endpoint and no dismiss control inside
+// the banner's own markup.
+func TestSettingsShowsFiscalSignerMissingBanner(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	ctx := context.Background()
+
+	// newFullAuthDeps' schema is deliberately minimal (no other settings test
+	// needs a plugin registry); add just enough of the real plugins/
+	// plugin_hooks shape — column-identical to seedForPages' (ui_smoke_test.go)
+	// — for data.PluginRepo.ActiveHookOwner's join to run. NOT column-identical
+	// to 001_init.sql, which has more columns/constraints on both tables.
+	for _, stmt := range []string{
+		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, author TEXT, is_active INTEGER DEFAULT 1, trust_level TEXT DEFAULT 'untrusted', install_state TEXT DEFAULT 'installed', runtime TEXT DEFAULT 'go', entrypoint TEXT DEFAULT '', updated_at TEXT NOT NULL DEFAULT (datetime('now')));`,
+		`CREATE TABLE plugin_hooks (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, event TEXT NOT NULL, action TEXT NOT NULL, priority INTEGER NOT NULL DEFAULT 100, is_active INTEGER NOT NULL DEFAULT 1, config_json TEXT, UNIQUE(plugin_id, event, action));`,
+	} {
+		if _, err := d.Db.Exec(stmt); err != nil {
+			t.Fatalf("seed plugins schema: %v", err)
+		}
+	}
+
+	getSettings := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		req = auth.WithUser(req, mgrUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	// Non-German shop: absent regardless (default country is GB, no fiscal
+	// keys set at all).
+	if strings.Contains(getSettings(), `data-testid="fiscal-signer-missing"`) {
+		t.Fatal("banner shown for a non-German shop")
+	}
+
+	// DE but system_of_record still unset: absent. Country must go through
+	// the real upsert endpoint, not a direct Settings.Set — missingFiscalSigner
+	// reads country from d.CurrentState().Country (ut-docs review non-blocker
+	// 7), which only /api/settings/upsert keeps in sync with the DB.
+	if rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {"store.country"}, "value": {"DE"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("country upsert = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(getSettings(), `data-testid="fiscal-signer-missing"`) {
+		t.Fatal("banner shown with system_of_record unset")
+	}
+
+	// DE + system_of_record, no signer plugin: shown, and never dismissable.
+	if err := d.Settings.Set(ctx, fiscal.KeySystemOfRecord, "true"); err != nil {
+		t.Fatal(err)
+	}
+	body := getSettings()
+	if !strings.Contains(body, `data-testid="fiscal-signer-missing"`) {
+		t.Fatal("banner not shown for a DE system-of-record shop with no signer plugin")
+	}
+	if strings.Contains(body, "dismiss-fiscal-signer") {
+		t.Fatal("banner must not offer any dismiss endpoint/attribute")
+	}
+
+	// An active plugin holding fiscal.sign.ask: the banner disappears on its
+	// own, no dismiss involved.
+	if _, err := d.Db.ExecContext(ctx, `INSERT INTO plugins (id, name, version, install_state, entrypoint, runtime, is_active, trust_level) VALUES ('signer1','Signer','1.0.0','installed','./plugin.wasm','wasm',1,'trusted')`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.ExecContext(ctx, `INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active) VALUES ('hook-signer1','signer1','fiscal.sign.ask','fiscal.sign',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(getSettings(), `data-testid="fiscal-signer-missing"`) {
+		t.Fatal("banner still shown once a signer plugin is active")
 	}
 }

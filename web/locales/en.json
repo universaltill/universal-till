@@ -1709,5 +1709,8 @@
   "settings.tse.reason.not_configured": "TSE provisioning is not available on this marketplace yet",
   "settings.tse.reason.invalid_request": "the submitted business details were not accepted — check the tax number",
   "settings.tse.reason.rejected": "the request was declined",
-  "settings.tse.dismiss_btn": "Dismiss"
+  "settings.tse.dismiss_btn": "Dismiss",
+  "settings.fiscal_signer.missing.title": "No fiscal signer installed",
+  "settings.fiscal_signer.missing.message": "This shop is set up to trade as the legal system of record, but no fiscal-signing plugin is installed — sales are not being signed. Install the country's tax plugin to fix this.",
+  "settings.fiscal_signer.missing.install_btn": "Install plugin"
 }
