@@ -248,7 +248,7 @@ func TestPluginSummary_DecodesLiveWireFormat(t *testing.T) {
 			"paidListing":false
 		}],
 		"nextPageToken":"",
-		"snapshotVersion":1783463941
+		"snapshotVersion":"1783463941"
 	}`)
 
 	var resp ListPluginsResponse
@@ -279,6 +279,53 @@ func TestPluginSummary_DecodesLiveWireFormat(t *testing.T) {
 	}
 	if p.IconURL != "https://x/icon.png" {
 		t.Errorf("IconURL = %q (from iconUrl)", p.IconURL)
+	}
+	if resp.SnapshotVersion != 1783463941 {
+		t.Errorf("SnapshotVersion = %d, want 1783463941 (from live wire's camelCase snapshotVersion)", resp.SnapshotVersion)
+	}
+	if resp.NextPageToken != "" {
+		t.Errorf("NextPageToken = %q, want empty (last page)", resp.NextPageToken)
+	}
+}
+
+// TestListPluginsResponse_DecodesLiveWirePaginationFields is ut-docs#1108:
+// ListPluginsResponse's own struct tags only matched next_page_token/
+// snapshot_version (snake_case) — a shape the real, deployed marketplace has
+// never sent (see cloudv1.ListPluginsResponse's proto, camelCase-only on the
+// wire, confirmed against ut-cloud). A caller looping on NextPageToken to
+// page through a catalog bigger than one page would decode it as always ""
+// and silently stop after page one against the real server, even with the
+// loop itself implemented correctly — this pins the fix at the decode layer,
+// independent of any caller.
+func TestListPluginsResponse_DecodesLiveWirePaginationFields(t *testing.T) {
+	live := []byte(`{"plugins":[],"nextPageToken":"20","snapshotVersion":"42"}`)
+	var resp ListPluginsResponse
+	if err := json.Unmarshal(live, &resp); err != nil {
+		t.Fatalf("decode live wire format: %v", err)
+	}
+	if resp.NextPageToken != "20" {
+		t.Errorf("NextPageToken = %q, want %q (from live wire's camelCase nextPageToken)", resp.NextPageToken, "20")
+	}
+	if resp.SnapshotVersion != 42 {
+		t.Errorf("SnapshotVersion = %d, want 42", resp.SnapshotVersion)
+	}
+}
+
+// TestListPluginsResponse_DecodesLegacySnakeCasePaginationFields keeps the
+// older snake_case shape working too — this client encodes ListPluginsResponse
+// with these exact tags itself in a couple of existing tests/fixtures, and a
+// custom UnmarshalJSON must not break round-tripping its own MarshalJSON.
+func TestListPluginsResponse_DecodesLegacySnakeCasePaginationFields(t *testing.T) {
+	legacy := []byte(`{"plugins":[],"next_page_token":"7","snapshot_version":3}`)
+	var resp ListPluginsResponse
+	if err := json.Unmarshal(legacy, &resp); err != nil {
+		t.Fatalf("decode legacy snake_case format: %v", err)
+	}
+	if resp.NextPageToken != "7" {
+		t.Errorf("NextPageToken = %q, want %q (from legacy next_page_token)", resp.NextPageToken, "7")
+	}
+	if resp.SnapshotVersion != 3 {
+		t.Errorf("SnapshotVersion = %d, want 3", resp.SnapshotVersion)
 	}
 }
 

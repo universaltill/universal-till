@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -81,6 +82,12 @@ type fakeMarketplace struct {
 	// every pre-existing sync_plugins_test.go test that never calls
 	// setCatalog is unaffected.
 	catalog []marketplace.PluginSummary
+	// catalogPageSize splits the catalog handler's response into pages of
+	// this many listings (0 = the pre-existing behavior: serve everything in
+	// one page, nextPageToken always ""). ut-docs#1108: proves a caller
+	// actually follows next_page_token across multiple requests instead of
+	// stopping at page one, the way ut-cloud's real defaultPageSize=20 does.
+	catalogPageSize int
 }
 
 // setCatalog replaces the GET /v1/catalog/plugins response wholesale — the
@@ -91,6 +98,15 @@ func (m *fakeMarketplace) setCatalog(entries ...marketplace.PluginSummary) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	m.catalog = entries
+}
+
+// setCatalogPageSize turns on pagination for GET /v1/catalog/plugins,
+// splitting whatever setCatalog holds into pages of n listings apiece with a
+// real (non-empty until the last page) nextPageToken — see catalogPageSize.
+func (m *fakeMarketplace) setCatalogPageSize(n int) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.catalogPageSize = n
 }
 
 func (m *fakeMarketplace) downloadTokenHits() int {
@@ -231,7 +247,32 @@ func newFakeMarketplace(t *testing.T, pluginIDByListing map[string]string) *fake
 			m.mu.Lock()
 			m.catHits++
 			entries := append([]marketplace.PluginSummary(nil), m.catalog...)
+			pageSize := m.catalogPageSize
 			m.mu.Unlock()
+			// ut-docs#1108: page the response when a test has opted into
+			// pagination via setCatalogPageSize; page_token is a plain
+			// decimal offset into `entries` (encoding scheme is this fake's
+			// own choice — the real cursor's shape isn't the caller's
+			// concern, only that next_page_token gets echoed back verbatim).
+			page := entries
+			nextToken := ""
+			if pageSize > 0 {
+				offset := 0
+				if tok := r.URL.Query().Get("page_token"); tok != "" {
+					offset, _ = strconv.Atoi(tok)
+				}
+				if offset > len(entries) {
+					offset = len(entries)
+				}
+				end := offset + pageSize
+				if end > len(entries) {
+					end = len(entries)
+				}
+				page = entries[offset:end]
+				if end < len(entries) {
+					nextToken = strconv.Itoa(end)
+				}
+			}
 			// Serve the REAL ut-cloud catalog wire shape (see internal/plugins/
 			// marketplace/testdata/cloud_list_plugins_response.json): protojson
 			// lowerCamelCase keys, a plain `type`, and the per-listing
@@ -242,9 +283,12 @@ func newFakeMarketplace(t *testing.T, pluginIDByListing map[string]string) *fake
 			// locale match passed its tests while silently matching nothing in
 			// production (#1055). `listing_id` is a fake-only extra kept so
 			// tests keep modeling the listing-id / plugin-id distinction the
-			// download-token flow depends on.
-			wire := make([]map[string]any, 0, len(entries))
-			for _, e := range entries {
+			// download-token flow depends on. `nextPageToken` (camelCase, not
+			// `next_page_token`) mirrors the real server for the same reason —
+			// ut-docs#1108 found the client's own decode only matched the
+			// wrong (snake_case) key.
+			wire := make([]map[string]any, 0, len(page))
+			for _, e := range page {
 				wire = append(wire, map[string]any{
 					"id":               e.ID,
 					"listing_id":       e.ListingID,
@@ -255,7 +299,7 @@ func newFakeMarketplace(t *testing.T, pluginIDByListing map[string]string) *fake
 				})
 			}
 			w.Header().Set("Content-Type", "application/json")
-			_ = json.NewEncoder(w).Encode(map[string]any{"plugins": wire})
+			_ = json.NewEncoder(w).Encode(map[string]any{"plugins": wire, "nextPageToken": nextToken})
 		case r.Method == http.MethodPost && r.URL.Path == "/v1/downloads/tokens":
 			var req struct {
 				ListingID string `json:"listing_id"`
