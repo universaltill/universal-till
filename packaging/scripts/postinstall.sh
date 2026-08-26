@@ -200,12 +200,56 @@ if is_desktop_kiosk_overlay "${1:-}" "${2:-}"; then
         echo "Run this once as your desktop user to finish it: /opt/unitill/bin/unitill-desktop --install-autostart"
     else
         AUTOSTART_STAGED=false
+        # `runuser -u USER --` DOES reset $HOME/$SHELL/$USER/$LOGNAME to the
+        # target user's own by default (util-linux's `-m`/`--preserve-
+        # environment` is the opt-OUT, confirmed by measurement in the
+        # ut-docs#1094 review — an earlier draft of this fix wrongly assumed
+        # the opposite) — so $HOME is not the gap here. $XDG_CONFIG_HOME is:
+        # runuser does NOT reset it, and Go's os.UserConfigDir() checks it
+        # BEFORE falling back to $HOME/.config, so a stray inherited
+        # XDG_CONFIG_HOME (e.g. from `sudo -E`, pkexec, or some packaging
+        # harness) would still redirect the autostart entry to the wrong
+        # place while the command still reports success. Clearing it is
+        # cheap, closes that one real gap, and cannot regress the normal
+        # case (an unset XDG_CONFIG_HOME is already the common case).
+        #
+        # The exact root cause of the ut-docs#1094 report itself (exit 0,
+        # nothing written, the login user's OWN ~/.config/autostart/ present
+        # — created independently by the desktop session's XDG bootstrap —
+        # but empty) is NOT fully pinned: the leading remaining hypothesis
+        # is that the installed .deb carried cmd/unitill-desktop's `!desktop`
+        # BUILD-TAG STUB (stub.go), which ignores --install-autostart
+        # entirely and just prints two lines and exits 0 — matching the
+        # report exactly. .github/workflows/release.yml does build the
+        # shipped artifact with `-tags desktop`, so an official release .deb
+        # should carry the real binary; confirming this needs checking which
+        # binary was actually on the box
+        # (`strings /opt/unitill/bin/unitill-desktop | grep 'native desktop shell'`
+        # — present only in the real implementation, not the stub). Tracked
+        # on the issue, not claimed fixed here.
+        OVERLAY_HOME="$(getent passwd "$OVERLAY_USER" | cut -d: -f6)"
         # Can fail legitimately (e.g. installed with --no-install-recommends,
         # so the GTK/WebKit libs unitill-desktop links against are absent and
         # the dynamic linker refuses to exec it) — never fail the install
         # over it; the audit entry records the honest outcome either way.
-        if runuser -u "$OVERLAY_USER" -- /opt/unitill/bin/unitill-desktop --install-autostart; then
-            AUTOSTART_STAGED=true
+        if runuser -u "$OVERLAY_USER" -- env -u XDG_CONFIG_HOME /opt/unitill/bin/unitill-desktop --install-autostart; then
+            # Loud, named-path verification (ut-docs#1094): an exit-0 report
+            # is not, by itself, proof the file exists where the desktop
+            # session's autostart actually looks — the exact way this failed
+            # on real hardware (see above). Trust the filesystem, not the
+            # exit code. Only checkable when getent actually resolved a home
+            # directory (field 6 can be empty for an oddly-configured
+            # account) — without one there is no path to check, so fall back
+            # to trusting runuser's own exit code rather than failing a
+            # verification against a meaningless empty-prefixed path.
+            if [ -z "$OVERLAY_HOME" ]; then
+                AUTOSTART_STAGED=true
+            elif [ -f "$OVERLAY_HOME/.config/autostart/unitill.desktop" ]; then
+                AUTOSTART_STAGED=true
+            else
+                echo "Warning: unitill-desktop --install-autostart reported success, but $OVERLAY_HOME/.config/autostart/unitill.desktop does not exist." >&2
+                echo "Run this once as '$OVERLAY_USER' to finish it: /opt/unitill/bin/unitill-desktop --install-autostart" >&2
+            fi
         else
             echo "Warning: could not stage the till's autostart entry for user '$OVERLAY_USER'." >&2
             echo "Run this once as that user to finish it: /opt/unitill/bin/unitill-desktop --install-autostart" >&2
