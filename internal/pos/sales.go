@@ -95,7 +95,21 @@ type SaleInput struct {
 	// comment of their own, so the "why" is visible at every call site
 	// even though the field itself wasn't split.
 	AllowNegativeInventory bool
-	Offline                bool
+	// AllowVoucherOverdraft (ut-docs#1053), when true, lets a tracked
+	// voucher redemption debit past the voucher's balance (the balance goes
+	// negative) instead of failing ErrVoucherInsufficientBalance. It is set
+	// true ONLY by the LAN-sync journal replay path
+	// (internal/pages/sync_sales.go's applyJournal) — the exact
+	// AllowNegativeInventory precedent above: on a genuine offline
+	// double-spend of the same multi-purpose voucher across two tills, the
+	// money already moved at the remote till, so the replay must record the
+	// sale and surface the overdraft as a back-office Problem rather than
+	// poison that replica's journal forever. A voided/nonexistent voucher
+	// still hard-rejects even with this set (see
+	// data.DebitVoucherForRedemption). Every direct-sale path leaves it
+	// false — the live balance gate is unchanged.
+	AllowVoucherOverdraft bool
+	Offline               bool
 	// VoucherIssues (ut-docs#1008) are multi-purpose vouchers sold in this
 	// sale. A voucher is NOT an article: it never becomes a sale_lines row
 	// (the CHECK constraint there requires a catalog identity, and a fake
@@ -106,9 +120,9 @@ type SaleInput struct {
 	// INCLUDED in total, since the customer pays for it. Persisted as one
 	// vouchers row + one voucher_transactions 'issue' row in the same
 	// transaction as the sale, same precedent as sale_charges (ADR-0062).
-	// NOTE: the LAN-sync journal does not carry this field yet — same
-	// known-gap shape as ServiceChargeTaxBasisBP above; a replica must not
-	// issue tracked vouchers until the journal contract adds it.
+	// The LAN-sync journal carries these since contract 1.3.0
+	// (ut-docs#1053): data.SaleDetail.VoucherIssues rides the wire and
+	// applyJournal reconstructs this field on replay.
 	VoucherIssues []VoucherIssueInput
 }
 
@@ -722,7 +736,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					TerminalID: p.TerminalID,
 					TraceID:    p.TraceID,
 				}
-				if err := repo.InsertPayment(ctx, tx, uuid.NewString(), saleID, p.MethodID, p.Amount.Minor(), valueOrDefault(p.Currency, in.Currency), p.Reference, p.ChangeGiven.Minor(), p.TipAmount.Minor(), valueOrDefault(p.TipRecipient, TipRecipientEmployee), time.Now().UTC().Format(time.RFC3339), cardPresent); err != nil {
+				if err := repo.InsertPayment(ctx, tx, uuid.NewString(), saleID, p.MethodID, p.Amount.Minor(), valueOrDefault(p.Currency, in.Currency), p.Reference, p.ChangeGiven.Minor(), p.TipAmount.Minor(), valueOrDefault(p.TipRecipient, TipRecipientEmployee), p.VoucherID, time.Now().UTC().Format(time.RFC3339), cardPresent); err != nil {
 					return err
 				}
 				// Tracked voucher redemption (ut-docs#1008): debit the
@@ -730,9 +744,11 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				// insufficient — the whole sale rolls back) and record the
 				// redemption event alongside the payments row. The goods'
 				// own tax figures are untouched: only the payment method
-				// differs from a cash sale.
+				// differs from a cash sale. AllowVoucherOverdraft
+				// (ut-docs#1053, journal replay only) forces the debit past
+				// the balance check — unknown/inactive still roll back.
 				if p.VoucherID != "" {
-					if err := repo.DebitVoucherForRedemption(ctx, tx, p.VoucherID, p.Amount.Minor()); err != nil {
+					if err := repo.DebitVoucherForRedemption(ctx, tx, p.VoucherID, p.Amount.Minor(), in.AllowVoucherOverdraft); err != nil {
 						return err
 					}
 					if err := repo.RecordVoucherTransaction(ctx, tx, data.VoucherTransaction{

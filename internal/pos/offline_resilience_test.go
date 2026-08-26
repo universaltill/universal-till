@@ -385,6 +385,7 @@ func setupOfflineDB(t *testing.T) *sql.DB {
 			auth_code TEXT,
 			terminal_id TEXT,
 			trace_id TEXT,
+			voucher_id TEXT,
 			paid_at TEXT NOT NULL,
 			FOREIGN KEY (sale_id) REFERENCES sales(id)
 		)`,

@@ -36,11 +36,14 @@ func TestMigration071BackfillsEqualPairTakeawayRate(t *testing.T) {
 		t.Fatalf("seed no-takeaway tax code: %v", err)
 	}
 
-	// Rewind so 071 replays on reopen. 071 is pure DML (no ALTER TABLE) and
-	// is the current latest migration, so there's no later DDL to undo first.
+	// Rewind so 071 replays on reopen. 071 is pure DML (no ALTER TABLE), but
+	// 072 (payments voucher_id, ut-docs#1053) now sits after it and replays
+	// too — undo its non-idempotent DDL first, same as the other rewind
+	// tests' helpers.
 	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 71`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}
+	rewindPaymentsVoucherID072(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -96,6 +99,8 @@ func TestMigration071IsIdempotentOnCleanData(t *testing.T) {
 	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 71`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}
+	// 072's DDL replays with it — undo it first (see the sibling test above).
+	rewindPaymentsVoucherID072(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}

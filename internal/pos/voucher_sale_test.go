@@ -717,3 +717,90 @@ func TestCompleteSale_RedemptionVoucherIDValidation(t *testing.T) {
 		t.Fatalf("control-char redemption id: err = %v, want the control-characters error", err)
 	}
 }
+
+// ut-docs#1053: journal replay (internal/pages/sync_sales.go) must be able to
+// force a redemption past the balance gate — the remote sale already
+// happened, exactly AllowNegativeInventory's precedent for stock — while the
+// normal tender path stays fail-closed. AllowVoucherOverdraft is set true
+// only by applyJournal.
+func TestCompleteSale_VoucherOverdraftForceAllowedOnReplay(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupVoucherDB(t)
+
+	if _, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		VoucherIssues: []VoucherIssueInput{{VoucherID: "GS-REPLAY1", Amount: money.FromMinor(500)}},
+		Payments:      []PaymentInput{{MethodID: "cash", Amount: money.FromMinor(500)}},
+	}); err != nil {
+		t.Fatalf("issue sale: %v", err)
+	}
+
+	// Control: without the replay flag the overdraft is still rejected.
+	if _, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		Lines:    []SaleLineInput{articleLine()},
+		Payments: []PaymentInput{{MethodID: "voucher", VoucherID: "GS-REPLAY1", Amount: money.FromMinor(1000)}},
+	}); !errors.Is(err, data.ErrVoucherInsufficientBalance) {
+		t.Fatalf("non-replay overdraft: err = %v, want ErrVoucherInsufficientBalance", err)
+	}
+
+	// Replay: the same sale force-applies and the balance goes negative.
+	saleID, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		AllowVoucherOverdraft: true, // journal replay only — the remote sale already happened
+		Lines:                 []SaleLineInput{articleLine()},
+		Payments:              []PaymentInput{{MethodID: "voucher", VoucherID: "GS-REPLAY1", Amount: money.FromMinor(1000)}},
+	})
+	if err != nil {
+		t.Fatalf("replay overdraft: %v, want success", err)
+	}
+
+	var balance int64
+	var status string
+	if err := sqlDB.QueryRow(`SELECT balance, status FROM vouchers WHERE id = 'GS-REPLAY1'`).Scan(&balance, &status); err != nil {
+		t.Fatalf("read voucher: %v", err)
+	}
+	if balance != -500 || status != "active" {
+		t.Fatalf("after forced replay overdraft: balance=%d status=%q, want -500/'active'", balance, status)
+	}
+	var redAmount int64
+	if err := sqlDB.QueryRow(`SELECT amount FROM voucher_transactions WHERE voucher_id = 'GS-REPLAY1' AND type = 'redemption' AND sale_id = ?`, saleID).Scan(&redAmount); err != nil {
+		t.Fatalf("redemption tx row: %v", err)
+	}
+	if redAmount != 1000 {
+		t.Fatalf("redemption tx amount = %d, want 1000", redAmount)
+	}
+}
+
+// ut-docs#1053: the payments row now records WHICH voucher a tracked
+// redemption debited (payments.voucher_id, migration 072) — previously
+// PaymentInput.VoucherID drove the debit but was dropped before persistence,
+// so nothing could answer "which payment redeemed this voucher", locally or
+// over the LAN-sync journal.
+func TestCompleteSale_PersistsPaymentVoucherID(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupVoucherDB(t)
+
+	if _, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		VoucherIssues: []VoucherIssueInput{{VoucherID: "GS-PERSIST1", Amount: money.FromMinor(1500)}},
+		Payments:      []PaymentInput{{MethodID: "cash", Amount: money.FromMinor(1500)}},
+	}); err != nil {
+		t.Fatalf("issue sale: %v", err)
+	}
+	saleID, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		Lines:    []SaleLineInput{articleLine()},
+		Payments: []PaymentInput{{MethodID: "voucher", VoucherID: "GS-PERSIST1", Amount: money.FromMinor(1000)}},
+	})
+	if err != nil {
+		t.Fatalf("redemption sale: %v", err)
+	}
+	var got string
+	if err := sqlDB.QueryRow(`SELECT COALESCE(voucher_id, '') FROM payments WHERE sale_id = ?`, saleID).Scan(&got); err != nil {
+		t.Fatalf("read payment voucher_id: %v", err)
+	}
+	if got != "GS-PERSIST1" {
+		t.Fatalf("payments.voucher_id = %q, want GS-PERSIST1", got)
+	}
+}

@@ -3241,11 +3241,15 @@ type CardPresentFields struct {
 // tipRecipient (ADR-0061 Decision 3) records whose money the tip is
 // ("employee"/"business") as decided at capture time -- the caller
 // (pos.CompleteSale) validates and defaults it, this layer stores it as-is.
-func (r *POSRepo) InsertPayment(ctx context.Context, tx *sql.Tx, paymentID, saleID, methodID string, amount int64, currency, reference string, changeGiven int64, tipAmount int64, tipRecipient string, paidAt string, cardPresent CardPresentFields) error {
+// voucherID (ut-docs#1053, migration 072) records WHICH tracked voucher a
+// 'voucher'-method payment redeemed -- empty for every other payment. The
+// caller (pos.CompleteSale) validates it; this layer stores it as-is, a
+// soft reference with no FK (see migration 072's header).
+func (r *POSRepo) InsertPayment(ctx context.Context, tx *sql.Tx, paymentID, saleID, methodID string, amount int64, currency, reference string, changeGiven int64, tipAmount int64, tipRecipient string, voucherID string, paidAt string, cardPresent CardPresentFields) error {
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO payments (id, sale_id, method_id, amount, currency, reference, change_given, tip_amount, tip_recipient, masked_pan, auth_code, terminal_id, trace_id, paid_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, paymentID, saleID, methodID, amount, currency, nullIfEmpty(reference), changeGiven, tipAmount, tipRecipient,
+INSERT INTO payments (id, sale_id, method_id, amount, currency, reference, change_given, tip_amount, tip_recipient, voucher_id, masked_pan, auth_code, terminal_id, trace_id, paid_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, paymentID, saleID, methodID, amount, currency, nullIfEmpty(reference), changeGiven, tipAmount, tipRecipient, nullIfEmpty(voucherID),
 		nullIfEmpty(cardPresent.MaskedPAN), nullIfEmpty(cardPresent.AuthCode), nullIfEmpty(cardPresent.TerminalID), nullIfEmpty(cardPresent.TraceID), paidAt)
 	if err != nil {
 		return fmt.Errorf("insert payment: %w", err)
@@ -4466,6 +4470,25 @@ type SaleDetail struct {
 	// -- not a new code path, today's applyJournal logic kept as that
 	// fallback branch.
 	Charges []SaleCharge `json:"charges,omitempty"`
+	// VoucherIssues (ut-docs#1053) are the multi-purpose vouchers ISSUED in
+	// this sale, read from voucher_transactions (type='issue') joined to
+	// vouchers on the soft sale_id reference (migration 068's header — no FK
+	// to traverse). They ride the LAN-sync journal so applyJournal can
+	// reconstruct pos.SaleInput.VoucherIssues on the primary; omitempty
+	// keeps the wire additive, same convention as Charges above (a
+	// pre-1.3.0 peer's journal simply lacks the key, which is exactly what
+	// a voucher-free sale already looks like).
+	VoucherIssues []SaleDetailVoucherIssue `json:"voucher_issues,omitempty"`
+}
+
+// SaleDetailVoucherIssue is one voucher issued in the sale (ut-docs#1053):
+// the stable voucher id, the optional holder label, and the face value in
+// minor units (= the issue transaction's amount = the voucher's
+// original_amount and opening balance).
+type SaleDetailVoucherIssue struct {
+	VoucherID   string `json:"voucher_id"`
+	HolderLabel string `json:"holder_label,omitempty"`
+	Amount      int64  `json:"amount"`
 }
 
 type SaleDetailLine struct {
@@ -4499,7 +4522,14 @@ type SaleDetailPayment struct {
 	AuthCode   string `json:"auth_code,omitempty"`
 	TerminalID string `json:"terminal_id,omitempty"`
 	TraceID    string `json:"trace_id,omitempty"`
-	PaidAt     string `json:"paid_at"`
+	// VoucherID (ut-docs#1053, migration 072): the tracked voucher this
+	// 'voucher'-method payment redeemed -- empty for every other payment.
+	// omitempty keeps the LAN-sync journal wire additive, same convention
+	// as TipRecipient/the card-present fields above: a pre-1.3.0 peer's
+	// payload simply lacks the key, which is an untracked voucher payment,
+	// exactly the behaviour that peer had.
+	VoucherID string `json:"voucher_id,omitempty"`
+	PaidAt    string `json:"paid_at"`
 }
 
 // GetSaleDetailByID is GetSaleDetail keyed on the sale id (invoices store
@@ -4594,7 +4624,7 @@ ORDER BY sl.line_no, slm.rowid`, d.ID)
 	payRows, err := r.db.QueryContext(ctx, `
 SELECT method_id, amount, change_given, tip_amount, COALESCE(tip_recipient, 'employee'), COALESCE(reference, ''),
        COALESCE(masked_pan, ''), COALESCE(auth_code, ''), COALESCE(terminal_id, ''), COALESCE(trace_id, ''),
-       paid_at
+       COALESCE(voucher_id, ''), paid_at
 FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
 	if err != nil {
 		return SaleDetail{}, false, fmt.Errorf("get sale payments: %w", err)
@@ -4603,13 +4633,39 @@ FROM payments WHERE sale_id = ? ORDER BY paid_at`, d.ID)
 	for payRows.Next() {
 		var p SaleDetailPayment
 		if err := payRows.Scan(&p.Method, &p.Amount, &p.ChangeGiven, &p.TipAmount, &p.TipRecipient, &p.Reference,
-			&p.MaskedPAN, &p.AuthCode, &p.TerminalID, &p.TraceID, &p.PaidAt); err != nil {
+			&p.MaskedPAN, &p.AuthCode, &p.TerminalID, &p.TraceID, &p.VoucherID, &p.PaidAt); err != nil {
 			return SaleDetail{}, false, fmt.Errorf("scan sale payment: %w", err)
 		}
 		d.Payments = append(d.Payments, p)
 	}
 	if err := payRows.Err(); err != nil {
 		return SaleDetail{}, false, fmt.Errorf("iterate sale payments: %w", err)
+	}
+
+	// Vouchers issued in this sale (ut-docs#1053): voucher_transactions'
+	// sale_id is a deliberately FK-less soft reference (migration 068's
+	// header), so this is a plain WHERE sale_id = ? join, not an FK
+	// traversal. The issue transaction's amount IS the face value; the
+	// holder label lives on the vouchers row.
+	viRows, err := r.db.QueryContext(ctx, `
+SELECT vt.voucher_id, COALESCE(v.holder_label, ''), vt.amount
+FROM voucher_transactions vt
+JOIN vouchers v ON v.id = vt.voucher_id
+WHERE vt.sale_id = ? AND vt.type = 'issue'
+ORDER BY vt.rowid`, d.ID)
+	if err != nil {
+		return SaleDetail{}, false, fmt.Errorf("get sale voucher issues: %w", err)
+	}
+	defer viRows.Close()
+	for viRows.Next() {
+		var vi SaleDetailVoucherIssue
+		if err := viRows.Scan(&vi.VoucherID, &vi.HolderLabel, &vi.Amount); err != nil {
+			return SaleDetail{}, false, fmt.Errorf("scan sale voucher issue: %w", err)
+		}
+		d.VoucherIssues = append(d.VoucherIssues, vi)
+	}
+	if err := viRows.Err(); err != nil {
+		return SaleDetail{}, false, fmt.Errorf("iterate sale voucher issues: %w", err)
 	}
 
 	chargeRows, err := r.db.QueryContext(ctx, `
