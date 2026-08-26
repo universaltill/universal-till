@@ -185,6 +185,7 @@ func TestDemoCatalogueUpgradeKeepsTouchedItems(t *testing.T) {
 	rewindShiftCashRecon067(t, d)
 	rewindVoucherIssueTotal069(t, d)
 	rewindZReportNumbering070(t, d)
+	rewindPaymentsVoucherID072(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -335,6 +336,7 @@ func TestDemoCatalogueUpgradeRemovesAllWhenUntouched(t *testing.T) {
 	rewindShiftCashRecon067(t, d)
 	rewindVoucherIssueTotal069(t, d)
 	rewindZReportNumbering070(t, d)
+	rewindPaymentsVoucherID072(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -418,6 +420,7 @@ func TestDemoCatalogueUpgradeKeepsRenamedUntradedItem(t *testing.T) {
 	rewindShiftCashRecon067(t, d)
 	rewindVoucherIssueTotal069(t, d)
 	rewindZReportNumbering070(t, d)
+	rewindPaymentsVoucherID072(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -512,6 +515,7 @@ func TestDemoCustomersPromosUpgradeKeepsTouchedRows(t *testing.T) {
 	rewindShiftCashRecon067(t, d)
 	rewindVoucherIssueTotal069(t, d)
 	rewindZReportNumbering070(t, d)
+	rewindPaymentsVoucherID072(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -626,6 +630,7 @@ func TestDemoCustomersPromosUpgradeRemovesAllWhenUntouched(t *testing.T) {
 	rewindShiftCashRecon067(t, d)
 	rewindVoucherIssueTotal069(t, d)
 	rewindZReportNumbering070(t, d)
+	rewindPaymentsVoucherID072(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}

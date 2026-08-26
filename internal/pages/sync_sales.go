@@ -158,6 +158,25 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 		OrderType:              j.Sale.OrderType,
 		OriginalSaleID:         j.OriginalSaleID,
 		AllowNegativeInventory: true, // the remote sale already happened
+		// …and the same reasoning for a tracked voucher redemption
+		// (ut-docs#1053): on a genuine offline double-spend of one voucher
+		// across two tills, the second replay finds the balance already
+		// spent — the money moved at that till regardless, so force the
+		// debit (balance goes negative) and surface it as a Problem below
+		// (warnIfVoucherOverdrawn) rather than poison this replica's
+		// journal forever.
+		AllowVoucherOverdraft: true,
+	}
+	// Vouchers issued in the journaled sale (ut-docs#1053): reconstructed
+	// with their ORIGINAL ids/labels/amounts so the primary books the same
+	// liability rows (vouchers + voucher_transactions 'issue') the replica
+	// did, and voucher_issue_total/total re-derive identically.
+	for _, v := range j.Sale.VoucherIssues {
+		in.VoucherIssues = append(in.VoucherIssues, pos.VoucherIssueInput{
+			VoucherID:   v.VoucherID,
+			HolderLabel: v.HolderLabel,
+			Amount:      money.FromMinor(v.Amount),
+		})
 	}
 	for _, l := range j.Sale.Lines {
 		in.Lines = append(in.Lines, pos.SaleLineInput{
@@ -207,6 +226,11 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 			AuthCode:   p.AuthCode,
 			TerminalID: p.TerminalID,
 			TraceID:    p.TraceID,
+			// The tracked voucher this payment redeemed (ut-docs#1053) —
+			// drives the primary-side balance debit + 'redemption' row on
+			// replay. Empty (an untracked voucher payment, or a pre-1.3.0
+			// peer's journal) keeps the generic behaviour unchanged.
+			VoucherID: p.VoucherID,
 		})
 	}
 	if _, err := pos.CompleteSale(ctx, d.Db, in); err != nil {
@@ -217,6 +241,11 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 	// here, not stay silent (ut-docs#404, ADR-0036). Guarded by the
 	// SaleExists idempotency check above, so it fires at most once per sale.
 	warnIfStockNegative(ctx, repo, in, "journaled sale "+j.Sale.ReceiptNo+" from till "+tillID)
+	// Same shape for a force-applied voucher overdraft (ut-docs#1053): the
+	// debit already happened, so surface the negative balance as a Problem.
+	// Also guarded by the SaleExists idempotency check, so at most once per
+	// sale.
+	warnIfVoucherOverdrawn(ctx, repo, in, "journaled sale "+j.Sale.ReceiptNo+" from till "+tillID)
 	// This node's stock genuinely changed when replaying the remote sale, so
 	// mirror it to inventory connectors (best-effort, non-blocking). Guarded by
 	// the SaleExists idempotency check above, so it fires at most once per sale.
@@ -268,6 +297,33 @@ func warnIfStockNegative(ctx context.Context, repo *data.POSRepo, in pos.SaleInp
 		}
 		logging.L().Warnf("negative stock: %q went to %.2f (location %s) after %s (ADR-0036)",
 			name, post, l.LocationID, source)
+	}
+}
+
+// warnIfVoucherOverdrawn surfaces a voucher balance a journal replay forced
+// negative (ut-docs#1053) as a back-office Problem, mirroring
+// warnIfStockNegative above: applyJournal replays with AllowVoucherOverdraft
+// = true (the remote sale already happened), so a genuine offline
+// double-spend lands here with the voucher's balance below zero — one
+// Warn-level line naming the voucher, the resulting balance, and the source
+// (receipt + till). logging.Recent() already feeds the Problems panel, so
+// the Warnf IS the surfacing. Best-effort: the sale already committed, so a
+// failed read only skips the warning, never the sale. No transition
+// suppression (unlike stock's chronically-negative case): only a forced
+// replay can overdraw at all, it fires at most once per replayed sale (the
+// SaleExists idempotency guard), and each further forced overdraw of the
+// same voucher is a distinct double-spend the manager should see.
+func warnIfVoucherOverdrawn(ctx context.Context, repo *data.POSRepo, in pos.SaleInput, source string) {
+	for _, p := range in.Payments {
+		if p.VoucherID == "" {
+			continue
+		}
+		v, err := repo.GetVoucherBalance(ctx, p.VoucherID)
+		if err != nil || v.BalanceMinor >= 0 {
+			continue
+		}
+		logging.L().Warnf("voucher overdrawn: %q balance went to %s after %s — offline double-spend force-applied (ut-docs#1053)",
+			p.VoucherID, money.FromMinor(v.BalanceMinor), source)
 	}
 }
 

@@ -40,7 +40,7 @@ func TestPOSRepo_TipRecipient_RoundTrips(t *testing.T) {
 	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('sale-tiprec','R-TIPREC-1','completed','sale','GBP',370,0,0,370,datetime('now'))`)
 	mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax) VALUES ('line-tiprec','sale-tiprec',1,'itm-coffee','Flat White',1,370,0,0,0,370,370)`)
 
-	if err := repo.InsertPayment(ctx, nil, "pay-tiprec", "sale-tiprec", "card", 420, "GBP", "", 0, 50, "business", "2026-08-24T10:00:00Z", CardPresentFields{}); err != nil {
+	if err := repo.InsertPayment(ctx, nil, "pay-tiprec", "sale-tiprec", "card", 420, "GBP", "", 0, 50, "business", "", "2026-08-24T10:00:00Z", CardPresentFields{}); err != nil {
 		t.Fatalf("insert payment: %v", err)
 	}
 
