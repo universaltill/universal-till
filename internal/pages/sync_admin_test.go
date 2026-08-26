@@ -246,6 +246,53 @@ func TestSyncChip_PrimaryModeWithTills(t *testing.T) {
 	}
 }
 
+// ut-docs#1133: a quarantined LAN-sync journal entry is otherwise invisible
+// to both the replica's own sync chip (which correctly shows fully-synced)
+// and the primary's sale counts — the primary-side nav chip is the one
+// standing, always-rendered surface this fix adds a signal to. A healthy,
+// just-seen till still renders "ok" even with a quarantine present: the
+// warn class must come from the quarantine count, not merely coexist with
+// the pre-existing staleness check.
+func TestSyncChip_PrimaryModeWarnsAndLinksToQuarantineWhenEntriesExist(t *testing.T) {
+	dp := newMigratedSyncDeps(t, "primary-quarantine.db")
+	initPagesI18n(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "till.name", "Front Counter"); err != nil {
+		t.Fatalf("set till.name: %v", err)
+	}
+	tills := data.NewTillsRepo(dp.Db)
+	tillID, err := tills.InsertTill(ctx, "Replica 1", hashBearer("token-abc"))
+	if err != nil {
+		t.Fatalf("enrol till: %v", err)
+	}
+	// Freshen last_seen_at so staleness alone would render "ok" -- isolating
+	// the assertion below to the quarantine-driven warn path.
+	if _, ok, err := tills.TillByBearerHash(ctx, hashBearer("token-abc")); err != nil || !ok {
+		t.Fatalf("authenticate till: ok=%v err=%v", ok, err)
+	}
+	if err := data.NewPOSRepo(dp.Db).InsertJournalQuarantine(ctx, data.JournalQuarantineEntry{
+		TillID: tillID, SaleID: "sale-q1", ReceiptNo: "T2-Q001",
+		Reason: "unknown voucher on redemption replay", PayloadJSON: `{}`,
+		QuarantinedAt: "2026-08-26T10:00:00Z",
+	}); err != nil {
+		t.Fatalf("seed quarantine entry: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	registerSyncAdmin(mux, dp)
+	req := httptest.NewRequest(http.MethodGet, "/ui/sync-chip", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	if !strings.Contains(body, `sync-chip warn`) {
+		t.Fatalf("expected a nonzero quarantine count to force class=warn even with a fresh till, got %q", body)
+	}
+	if !strings.Contains(body, `<a href="/sync-quarantine"`) {
+		t.Fatalf("expected the chip to link to /sync-quarantine when quarantined entries exist, got %q", body)
+	}
+}
+
 // StartSyncPull must register its goroutine on the caller's wg (ut-docs#153),
 // same join shape as cloudsync.Start, so app.Run's shutdown drain can prove
 // it exited before database.Close() runs. This is a pure lifecycle test —

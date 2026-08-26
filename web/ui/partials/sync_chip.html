@@ -9,6 +9,10 @@
   {{/* ut-docs#405: was a bare replica count with no name at all — this
        till's own name (tillNameOrDefault, same source Settings/​/tills
        already use) now leads, the count stays as a secondary detail. */}}
-  <a href="/tills" title="{{ T "sync.chip_tills_title" }}">⇅ {{ .label }} · {{ .count }} {{ T "sync.chip_tills" }}{{ if eq .class "warn" }} ⚠{{ end }}</a>
+  {{/* ut-docs#1133: a quarantined entry is the one primary-side warn
+       condition worth its own link target -- send the operator straight to
+       the list that explains it rather than the tills roster, which has
+       nothing to say about it. */}}
+  <a href="{{ if .quarantined }}/sync-quarantine{{ else }}/tills{{ end }}" title="{{ T "sync.chip_tills_title" }}">⇅ {{ .label }} · {{ .count }} {{ T "sync.chip_tills" }}{{ if .quarantined }} · {{ .quarantined }} {{ T "sync.chip_quarantined" }}{{ end }}{{ if eq .class "warn" }} ⚠{{ end }}</a>
   {{- end }}
 </span>
