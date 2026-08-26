@@ -18,3 +18,4 @@ Prints receipts, invoices and end-of-day reports on a thermal receipt printer or
 3. A kitchen printer can be set separately so food orders print where they are prepared.
 4. Need more than one kitchen printer — a grill printer and a bar printer, say? See **Kitchen stations** to route categories or individual items to their own station.
 5. Kitchen tickets print the order type and station header in the till's configured language, rather than always in English. There's no separate kitchen-only language setting — it follows the till's one configured locale.
+6. Cash drawer not opening after a cash sale? Most drawers are wired to pin 2 (the default) — if yours needs pin 5, set it under **Cash drawer pin** in the printer settings.

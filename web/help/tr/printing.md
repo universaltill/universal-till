@@ -17,3 +17,4 @@ Fişleri, faturaları ve gün sonu raporlarını termal fiş yazıcısında veya
 3. Mutfak yazıcısı ayrı ayarlanabilir; yemek siparişleri hazırlandıkları yerde yazdırılır.
 4. Birden fazla mutfak yazıcısına mı ihtiyacınız var — bir ızgara yazıcısı ve bir bar yazıcısı gibi? Kategorileri veya tek tük ürünleri kendi istasyonlarına yönlendirmek için **Mutfak istasyonları**na bakın.
 5. Mutfak fişlerindeki sipariş türü ve istasyon başlığı, her zaman İngilizce yerine kasanın ayarlı dilinde basılır. Yalnızca mutfağa özel ayrı bir dil ayarı yoktur — kasanın tek ayarlı diline bağlıdır.
+6. Nakit satıştan sonra kasa çekmecesi açılmıyor mu? Çoğu çekmece pim 2'ye (varsayılan) bağlıdır — çekmeceniz pim 5 gerektiriyorsa yazıcı ayarlarındaki **Kasa çekmecesi pimi**nden değiştirin.

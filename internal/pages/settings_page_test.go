@@ -924,6 +924,48 @@ func TestSettingsPage_PrinterAddressFieldsAreLTR(t *testing.T) {
 	}
 }
 
+// TestSettingsPage_DrawerPinFieldRendersAndSelects (ut-docs#1136) covers the
+// template's actual `selected`-attribute output for the drawer-pin <select>,
+// the same GET /settings round-trip precedent as
+// TestWindowModeEndpoint/TestSettingsPage_TillRegisterPickerRendersAndSelects
+// — the earlier unit tests cover printerConfig/the handler/Render()'s byte
+// output but never the rendered HTML itself.
+func TestSettingsPage_DrawerPinFieldRendersAndSelects(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	get := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		req = auth.WithUser(req, mgrUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	// Default (no setting persisted yet): pin 2 selected.
+	if !regexp.MustCompile(`value="2"\s+selected`).MatchString(get()) {
+		t.Fatalf("expected pin 2 selected by default:\n%s", get())
+	}
+	if regexp.MustCompile(`value="5"\s+selected`).MatchString(get()) {
+		t.Fatalf("pin 5 must not be selected by default:\n%s", get())
+	}
+
+	// Persist pin 5 directly (registerPrintAPI's own POST endpoint isn't
+	// registered on this harness's mux) and confirm the template flips.
+	if err := d.Settings.Set(context.Background(), keyPrinterDrawerPin, "5"); err != nil {
+		t.Fatalf("Settings.Set: %v", err)
+	}
+	body := get()
+	if !regexp.MustCompile(`value="5"\s+selected`).MatchString(body) {
+		t.Fatalf("expected pin 5 selected after persisting the setting:\n%s", body)
+	}
+	if regexp.MustCompile(`value="2"\s+selected`).MatchString(body) {
+		t.Fatalf("pin 2 must not still show selected once pin 5 is persisted:\n%s", body)
+	}
+}
+
 // A cashier (and an unauthenticated/no-session request) is refused on both
 // mutating settings endpoints (ut-docs#179 — /save and /upsert were the two
 // exceptions that had none). Since ut-docs#796 the refusal is the in-place

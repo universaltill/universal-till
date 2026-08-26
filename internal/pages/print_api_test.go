@@ -70,6 +70,9 @@ func TestPrinterConfig_Defaults(t *testing.T) {
 	if cfg.Enabled() {
 		t.Fatal("expected a default (unconfigured) printer to report Enabled()=false")
 	}
+	if cfg.DrawerPin != 2 {
+		t.Fatalf("expected default drawer pin 2 (ut-docs#1136), got %d", cfg.DrawerPin)
+	}
 }
 
 // ut-docs#425: printReceiptAsync/printKitchenAsync fire best-effort
@@ -800,6 +803,47 @@ func TestPostSettingsPrinter_ValidatesModeAndCharset(t *testing.T) {
 	// storing garbage.
 	if cfg.Charset != "utf8" {
 		t.Fatalf("expected charset to fall back to utf8, got %q", cfg.Charset)
+	}
+}
+
+// TestPostSettingsPrinter_DrawerPin (ut-docs#1136): the drawer-kick
+// connector pin is a real setting now, persisted like mode/charset, with
+// the same "reject garbage, don't silently store it" treatment as an
+// unrecognized mode, plus the specific requirement that an omitted field
+// (a client built before this setting existed) keeps today's pin-2
+// behaviour rather than 400ing on every pre-existing form submission.
+func TestPostSettingsPrinter_DrawerPin(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPrintAPITestDeps(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/printer", strings.NewReader("mode=off&drawerPin=3"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an invalid drawerPin, got %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/settings/printer", strings.NewReader("mode=off"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 when drawerPin is omitted, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if cfg := printerConfig(context.Background(), dp); cfg.DrawerPin != 2 {
+		t.Fatalf("expected an omitted drawerPin to keep pin 2, got %d", cfg.DrawerPin)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/settings/printer", strings.NewReader("mode=off&drawerPin=5"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for drawerPin=5, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if cfg := printerConfig(context.Background(), dp); cfg.DrawerPin != 5 {
+		t.Fatalf("expected drawerPin=5 to persist, got %d", cfg.DrawerPin)
 	}
 }
 
