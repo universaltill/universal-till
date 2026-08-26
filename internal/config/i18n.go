@@ -128,11 +128,20 @@ type TranslationEntry struct {
 
 // Entries lists every known key (base fallback + locale base + plugin
 // overlays + shop overrides) with its effective value for the locale.
+//
+// baseLocale is always scanned too, the same way T's resolution chain
+// unconditionally falls back to it (ut-docs#995) — otherwise a shop whose
+// store.locale (ut-docs#861) is a non-English, overlay-only locale (a
+// language-pack plugin) missing a key that en.json has never gets that key
+// listed at all, so the translation editor has no row for a translator to
+// fill in (ut-docs#997). Shipped locales can't drift from en.json
+// (guard-i18n.sh), but a language-pack plugin legitimately can
+// (lang-pack-drift CI is advisory, not blocking, by design).
 func (i *I18n) Entries(locale string) []TranslationEntry {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
 	keys := map[string]bool{}
-	for _, loc := range []string{i.fallback, baseLang(i.fallback), locale, baseLang(locale)} {
+	for _, loc := range []string{i.fallback, baseLang(i.fallback), locale, baseLang(locale), baseLocale} {
 		for k := range i.messages[loc] {
 			keys[k] = true
 		}
@@ -145,7 +154,15 @@ func (i *I18n) Entries(locale string) []TranslationEntry {
 	}
 	out := make([]TranslationEntry, 0, len(keys))
 	for k := range keys {
-		e := TranslationEntry{Key: k, Reference: i.lookupLocked(i.fallback, k)}
+		ref := i.lookupLocked(i.fallback, k)
+		if ref == "" {
+			// i.fallback's own bundle can miss a key en.json has (same
+			// overlay-drift case as above) — fall back to baseLocale so the
+			// reference column isn't blank for a key that does exist in
+			// English, mirroring T()'s terminal fallback.
+			ref = i.lookupLocked(baseLocale, k)
+		}
+		e := TranslationEntry{Key: k, Reference: ref}
 		e.Value, e.Source = i.lookupWithSourceLocked(locale, k)
 		out = append(out, e)
 	}
