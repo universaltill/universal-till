@@ -21,8 +21,14 @@
     <!-- ut-docs#400: see web/public/autofill.js's own comment for why this
          can't be app.js. -->
     <script defer src="/public/autofill.js?v={{ assetv "public/autofill.js" }}"></script>
+    <!-- ut-docs#1096: kiosk Pis have no OS keyboard at all — the setup
+         wizard has 11 text inputs (shop name, TSE business details, admin
+         PIN) and was shipping keyboard-less. See web/public/osk.js's own
+         comment for why this can't be app.js (standalone document, no
+         layout to load it for us). -->
+    <script defer src="/public/osk.js?v={{ assetv "public/osk.js" }}"></script>
   </head>
-  <body class="login-screen{{ if kiosk }} kiosk{{ end }}">
+  <body class="login-screen{{ if kiosk }} kiosk{{ end }}" data-osk="{{ oskmode }}">
     <!-- ut-docs#590: country/currency/tax start pre-filled from the OS locale
          + timezone (Go side, setup_detect.go) instead of blank — still freely
          changeable via the select below, detection is a default, never a
