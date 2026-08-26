@@ -84,6 +84,15 @@ func VATBandsForSale(lines []VATLine, discountTotal int64, taxInclusive bool, se
 			if taxInclusive {
 				// Discount comes off the gross; re-derive net/tax at the
 				// band's rate (mirrors the engine: total = subtotal − d).
+				// NOTE (ut-docs#1035): this re-derivation TRUNCATES, while
+				// ComputeTaxBasisPoints (the undiscounted per-line path both
+				// callers otherwise share) rounds half-up -- so a discounted
+				// inclusive band's tax can differ by up to 1 minor unit from
+				// what the same figures would give undiscounted. Consistent
+				// across every caller of this function either way, and
+				// truncation is biased toward declaring slightly MORE tax,
+				// never less -- the safe direction -- so this is a known
+				// rounding-rule difference, not a defect.
 				out[i].Gross -= share
 				out[i].Net = out[i].Gross * 10000 / (10000 + int64(out[i].RateBP))
 				out[i].Tax = out[i].Gross - out[i].Net
