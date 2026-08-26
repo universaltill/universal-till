@@ -16,10 +16,11 @@ Bu sayfa, o ülke varsayılanlarının bulunduğu yerdir. **İlk kurulum sihirba
 
 ## Nasıl kullanılır
 
-1. Menüden **Ülke ayarları**'nı açın (yalnızca yönetici). Her ülke para birimi, vergi oranı ve arşiv saklama alt sınırıyla listelenir.
-2. Bir satırdaki değerleri düzenleyip **Kaydet**'e basın.
-3. Listede olmayan bir yeri eklemek için **Ülke ekle** bölümünü kendi seçeceğiniz kısa bir kodla (yalnızca harf/rakam, en fazla 8 karakter), para birimi ve vergi oranıyla doldurun.
-4. **Varsayılanlara dön**, yerleşik bir ülkeyi geldiği değerlere geri getirir. Kendi eklediğiniz bir ülke **Sil** ile tamamen kaldırılır.
+1. Menüden **Ülke ayarları**'nı açın (yalnızca yönetici). Varsayılan olarak yalnızca kendi dükkânınızın ülkesini, para birimi, vergi oranı ve arşiv saklama alt sınırıyla görürsünüz.
+2. Satırdaki değerleri düzenleyip **Kaydet**'e basın.
+3. Kasanın tanıdığı tüm ülkeleri görmek için — örneğin farklı bir ülkede çalışacak bir kasa için değerleri önceden ayarlamak istiyorsanız — **Tüm ülkeleri göster**'e tıklayın. **Yalnızca kendi ülkemi göster**, sizi yalnızca kendi ülkenize geri götürür.
+4. Listede olmayan bir yeri eklemek için **Ülke ekle** bölümünü kendi seçeceğiniz kısa bir kodla (yalnızca harf/rakam, en fazla 8 karakter), para birimi ve vergi oranıyla doldurun — bu form her iki görünümde de kullanılabilir.
+5. **Varsayılanlara dön**, yerleşik bir ülkeyi geldiği değerlere geri getirir. Kendi eklediğiniz bir ülke **Sil** ile tamamen kaldırılır.
 
 ## Bilmekte fayda var
 
@@ -28,3 +29,4 @@ Bu sayfa, o ülke varsayılanlarının bulunduğu yerdir. **İlk kurulum sihirba
 - **Arşiv saklama** burada artırabileceğiniz ama gösterilen alt sınırın altına indiremeyeceğiniz bir tabandır. Bu değer, bir sıfırlama arşivi grubunun (Ayarlar → Veri yönetimi → Sıfırlama arşivleri) ne zaman kalıcı silme için uygun hale geleceğini belirler: gerçek satış içeren bir grup, arşivlendiğinden bu yana bu kadar gün geçmeden silinemez. Değeri artırmak mevcut grupları hemen daha uzun süre korur; halihazırda geçerli olan korumayı asla kısaltmaz. Sıfırlama arşivleri listesinin kendisi, korunan her grubun saklama bitiş tarihini doğrudan gösterir ve o tarihe kadar Kalıcı olarak sil düğmesini gizler — böylece onay ifadesini yazıp yalnızca reddedilmezsiniz.
 - Burada bir ülkeyi düzenlemek, halihazırda kurulmuş bir dükkânı değiştirmez ve zaten aldığınız satışları yeniden yazmaz.
 - Kendi ülkenizin sizden neleri saklamanızı istediğinden emin değilseniz, burada gösterilen herhangi bir sayıyı bir uyumluluk garantisi saymadan önce mali müşavirinize danışın — bu sayfa hiçbir ülkenin kayıt tutma yasasına uyumu belgelemez.
+- Dükkânınızın ülke ayarı bu sayfadaki hiçbir şeyle eşleşmiyorsa (nadir bir durum — normalde bu olmamalıdır), sayfa neden olduğunu açıklayan bir notla birlikte tüm ülkeleri gösterir, alışılmış tek ülke görünümü yerine.

@@ -1569,6 +1569,10 @@
   "selforder.checkout.tax_unavailable": "برخی اقلام در حال حاضر از اینجا قابل سفارش نیستند — لطفاً در پیشخوان پرداخت کنید.",
   "countrysettings.title": "تنظیمات کشور",
   "countrysettings.intro": "واحد پول، نرخ مالیات و کف نگهداری بایگانی پیش‌فرض برای هر کشور. این مقادیر وقتی راه‌اندازی از این جدول بخواند، مقادیر شروع یک فروشگاه جدید خواهند شد؛ فعلاً ویرایش یک کشور در اینجا هیچ فروشگاه در حال کار را تغییر نمی‌دهد.",
+  "countrysettings.showing_mine": "تنظیمات کشور فروشگاه شما نمایش داده می‌شود.",
+  "countrysettings.show_all": "نمایش همه کشورها",
+  "countrysettings.show_mine": "فقط کشور من نمایش داده شود",
+  "countrysettings.unknown_country": "کشور تنظیم‌شدهٔ فروشگاه شما در این فهرست نیست — تا اصلاح آن، همهٔ کشورها نمایش داده می‌شوند.",
   "countrysettings.col.country": "کشور",
   "countrysettings.col.currency": "واحد پول",
   "countrysettings.col.symbol": "نماد",
@@ -1713,5 +1717,8 @@
   "settings.tse.reason.not_configured": "راه‌اندازی TSE هنوز در این فروشگاه در دسترس نیست",
   "settings.tse.reason.invalid_request": "مشخصات ارسال‌شدهٔ کسب‌وکار پذیرفته نشد — شمارهٔ مالیاتی را بررسی کنید",
   "settings.tse.reason.rejected": "درخواست رد شد",
-  "settings.tse.dismiss_btn": "نادیده بگیر"
+  "settings.tse.dismiss_btn": "نادیده بگیر",
+  "settings.fiscal_signer.missing.title": "امضاکنندهٔ مالیاتی نصب نشده است",
+  "settings.fiscal_signer.missing.message": "این فروشگاه برای فعالیت به‌عنوان سامانهٔ رسمی و قانونی ثبت فروش تنظیم شده، اما هیچ افزونهٔ امضای مالیاتی نصب نیست — فروش‌ها امضا نمی‌شوند. برای رفع این مشکل، افزونهٔ مالیاتی کشور را نصب کنید.",
+  "settings.fiscal_signer.missing.install_btn": "نصب افزونه"
 }
