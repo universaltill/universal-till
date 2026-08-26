@@ -66,6 +66,44 @@ func TestEntriesUnionAndSources(t *testing.T) {
 	}
 }
 
+// Mirrors TestT_MissingKeyInNonEnglishFallbackFallsBackToEnglish but for
+// Entries(): a shop's store.locale (ut-docs#861) can be a non-English,
+// entirely overlay-provided locale (a language-pack plugin) that's missing a
+// key en.json has (lang-pack-drift CI tolerates this drift). T() already
+// falls back to English for that key (ut-docs#995) — but before this fix,
+// Entries()'s key-collection loop only scanned {fallback, baseLang(fallback),
+// locale, baseLang(locale)}, never baseLocale unconditionally, so the
+// translation editor never listed the key as needing translation at all
+// (ut-docs#997).
+func TestEntries_MissingKeyInNonEnglishFallbackStillListed(t *testing.T) {
+	i := &I18n{
+		messages: map[string]map[string]string{
+			"en": {"basket.total": "Total", "only.en": "English only"},
+		},
+		overlays: map[string]map[string]string{
+			"de": {"basket.total": "Summe"},
+		},
+		shop:     map[string]map[string]string{},
+		fallback: "de", // shop's configured store.locale
+	}
+
+	entries := i.Entries("de")
+	bySrc := map[string]TranslationEntry{}
+	for _, e := range entries {
+		bySrc[e.Key] = e
+	}
+	e, ok := bySrc["only.en"]
+	if !ok {
+		t.Fatalf("Entries(de) missing %q entirely, want it listed as untranslated", "only.en")
+	}
+	if e.Source != "" || e.Value != "" {
+		t.Fatalf("only.en = %+v, want untranslated (no de/overlay value)", e)
+	}
+	if e.Reference != "English only" {
+		t.Fatalf("only.en.Reference = %q, want the English fallback text", e.Reference)
+	}
+}
+
 // SetOverlays (language-pack plugin translations) had zero direct test
 // coverage before this batch — only ever exercised transitively through T()
 // via a hand-built struct literal, never through the setter itself.
