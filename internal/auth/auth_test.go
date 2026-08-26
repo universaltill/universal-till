@@ -323,6 +323,10 @@ func TestMiddlewareExemptsFirstBootPairingRoutes(t *testing.T) {
 		"/api/setup/discover-primaries",
 		"/api/setup/pair-start",
 		"/api/setup/pair-status",
+		// ut-docs#1092: the wizard's install-a-catalog-language action —
+		// found missing from exempt() the same way as the routes above
+		// (every bare-mux test green, real app 401ing).
+		"/api/setup/language",
 	} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))

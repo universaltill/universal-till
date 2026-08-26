@@ -65,7 +65,15 @@ type fakeMarketplace struct {
 
 	mu        sync.Mutex
 	tokenHits int // POST /v1/downloads/tokens count — proves (non-)reinstall
-	listings  map[string]*fakeMktListing
+	// catHits counts GET /v1/catalog/plugins — proves the setup wizard's
+	// language-catalog TTL cache (ut-docs#1092) really avoids a refetch.
+	catHits int
+	// registerHits counts POST /v1/stores/register — proves a code path that
+	// only BROWSES the catalog never enrols the shop's cloud store identity
+	// (ADR-0015 lazy registration; only a download/install or an explicit
+	// "Register now" may do that).
+	registerHits int
+	listings     map[string]*fakeMktListing
 	// catalog backs GET /v1/catalog/plugins for the country base-plugin
 	// resolve step (ut-docs#591) — empty by default (a 404/unserved route
 	// would be indistinguishable from "no catalog entries"; an explicit
@@ -89,6 +97,18 @@ func (m *fakeMarketplace) downloadTokenHits() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.tokenHits
+}
+
+func (m *fakeMarketplace) catalogHits() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.catHits
+}
+
+func (m *fakeMarketplace) storeRegisterHits() int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.registerHits
 }
 
 // publishVersion adds a signed release for listingID/pluginID and makes it
@@ -209,6 +229,7 @@ func newFakeMarketplace(t *testing.T, pluginIDByListing map[string]string) *fake
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/catalog/plugins":
 			m.mu.Lock()
+			m.catHits++
 			entries := append([]marketplace.PluginSummary(nil), m.catalog...)
 			m.mu.Unlock()
 			// Serve the REAL ut-cloud catalog wire shape (see internal/plugins/
@@ -290,6 +311,14 @@ func newFakeMarketplace(t *testing.T, pluginIDByListing map[string]string) *fake
 			}
 			w.Header().Set("Content-Type", "application/gzip")
 			_, _ = w.Write(release.artifact)
+		case r.Method == http.MethodPost && r.URL.Path == "/v1/stores/register":
+			// Counted, then refused: enrolment is best-effort everywhere, so
+			// a 500 here keeps the till unenrolled (as a first-boot till is)
+			// while still recording that something tried.
+			m.mu.Lock()
+			m.registerHits++
+			m.mu.Unlock()
+			http.Error(w, "stub does not enrol", http.StatusInternalServerError)
 		default:
 			http.NotFound(w, r)
 		}
