@@ -147,6 +147,35 @@ test('a field added directly is NOT guarded while OSK is disabled (ut-docs#1022 
   assertClean();
 });
 
+test('a field disabled at sweep time gets guarded once it is enabled in place, with no further DOM mutation (ut-docs#1050)', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  await setOskMode(page, 'on');
+
+  await page.goto('/catalog');
+  // wantsOSK() correctly skips a disabled field at sweep time — but until
+  // this fix, nothing re-swept it if it was later flipped enabled via the
+  // `.disabled` IDL property alone (no childList mutation for the
+  // MutationObserver's own childList/subtree watch to catch), leaving it
+  // permanently unguarded for the life of the page.
+  await page.evaluate(() => {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.id = 'osk-test-disabled-then-enabled';
+    input.disabled = true;
+    document.body.appendChild(input);
+  });
+  const field = page.locator('#osk-test-disabled-then-enabled');
+  await expect(field).toHaveAttribute('disabled', '');
+  expect(await field.getAttribute('inputmode')).toBeNull(); // not guarded while disabled
+
+  await page.evaluate(() => {
+    (document.getElementById('osk-test-disabled-then-enabled') as HTMLInputElement).disabled = false;
+  });
+  await expect(field).toHaveAttribute('inputmode', 'none');
+
+  assertClean();
+});
+
 test('a non-numeric field is left alone on a locale osk.js has no layout for; a numeric field is still guarded (ut-docs#1022 review)', async ({ page }) => {
   const assertClean = watchConsole(page);
   await setOskMode(page, 'on');
