@@ -316,13 +316,35 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// card's warning line instead of failing the page.
 		isPrimaryTill := d.SyncPrimaryURL(r.Context()) == ""
 		var quarantineCount int
+		var hasEnrolledTills bool
 		if isPrimaryTill {
 			if n, qErr := data.NewPOSRepo(d.Db).CountJournalQuarantine(r.Context()); qErr != nil {
 				logging.L().Errorf("count sync journal quarantine: %v", qErr)
 			} else {
 				quarantineCount = n
 			}
+			// ut-docs#1133 review: a single-till shop that has never
+			// enrolled a replica cannot structurally have a quarantine row
+			// (InsertJournalQuarantine only ever fires while applying a
+			// REPLICA's pushed batch) — showing the quarantine help text
+			// and "View quarantined entries" button there is premature
+			// noise contradicting the nav chip's own "nothing to sync yet"
+			// design. Once a replica has ever joined, keep showing it even
+			// after every replica is later revoked: quarantineCount alone
+			// (checked in the template) still covers that case.
+			if list, tillsErr := data.NewTillsRepo(d.Db).ListTills(r.Context()); tillsErr != nil {
+				logging.L().Errorf("list tills: %v", tillsErr)
+			} else {
+				hasEnrolledTills = len(list) > 0
+			}
 		}
+		// ListTills only returns CURRENTLY enrolled tills, so this must be
+		// an OR, not hasEnrolledTills alone: a shop that revoked the one
+		// replica that ever produced a quarantine row would otherwise hide
+		// the section again right as it matters most (the same "signal
+		// vanishes when the misbehaving till is revoked" gap the nav chip
+		// fix above closes).
+		showQuarantineSection := hasEnrolledTills || quarantineCount > 0
 		// Barcode symbology checklist (ADR-0059 Decision §2, ut-docs#935):
 		// every internal/barcode registry entry, plus whether this shop
 		// currently has it enabled. Best-effort like the other reads on
@@ -371,6 +393,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"registers":             registers,
 			"IsPrimaryTill":         isPrimaryTill,
 			"QuarantineCount":       quarantineCount,
+			"ShowQuarantineSection": showQuarantineSection,
 			"reportRetentionMode":   reportRetentionMode,
 			"reportArchiveCoverage": reportArchiveCoverage,
 			"shopType":              shopType,
