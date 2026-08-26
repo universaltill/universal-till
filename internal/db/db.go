@@ -59,6 +59,21 @@ func Open(path string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
 	}
+	// Close the pool on every error path below (ut-docs#1094 review): every
+	// prior return here handed back nil on failure without closing sqlDB,
+	// leaking its pooled connections/file descriptors for the rest of the
+	// process's life. Harmless-ish for a single failed Open, but
+	// internal/app's openWithRetry (ut-docs#1094) now calls Open up to 8x in
+	// a row while a fresh install's own migration race settles — each
+	// failed attempt would otherwise leak its own pool of connections
+	// against the very database the retry is waiting on, working against
+	// the thing it's retrying for.
+	closeOnError := true
+	defer func() {
+		if closeOnError {
+			_ = sqlDB.Close()
+		}
+	}()
 	// Belt-and-braces for the first connection.
 	if _, err := sqlDB.Exec(`PRAGMA foreign_keys = ON`); err != nil {
 		return nil, fmt.Errorf("enable foreign_keys pragma: %w", err)
@@ -72,6 +87,7 @@ func Open(path string) (*DB, error) {
 		return nil, fmt.Errorf("run migrations: %w", err)
 	}
 
+	closeOnError = false
 	return db, nil
 }
 
