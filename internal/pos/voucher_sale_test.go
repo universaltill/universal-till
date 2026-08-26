@@ -625,6 +625,49 @@ func TestCompleteSale_VoucherIssueRejectsExcessiveAmount(t *testing.T) {
 	}
 }
 
+// ut-docs#1052, follow-up from the review above: the per-voucher ceiling
+// bounds each amount but not how many vouchers a sale can issue -- assert
+// that a sale over MaxVoucherIssuesPerSale is rejected before any DB work,
+// same shape as the excessive-amount case just above.
+func TestCompleteSale_VoucherIssueRejectsExcessiveCount(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupVoucherDB(t)
+
+	issues := make([]VoucherIssueInput, MaxVoucherIssuesPerSale+1)
+	payments := []PaymentInput{{MethodID: "cash", Amount: money.FromMinor(int64(len(issues)))}}
+	for i := range issues {
+		issues[i] = VoucherIssueInput{Amount: money.FromMinor(1)}
+	}
+
+	if _, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		VoucherIssues: issues,
+		Payments:      payments,
+	}); err == nil || !strings.Contains(err.Error(), "exceeding the maximum") {
+		t.Fatalf("over-count voucher issues: err = %v, want an exceeding-the-maximum error", err)
+	}
+
+	var count int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&count); err != nil {
+		t.Fatalf("count sales: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("rejected over-count voucher sale still persisted %d sale(s)", count)
+	}
+
+	// Exactly at the cap still succeeds -- this is a count guard, not an
+	// off-by-one ceiling lowered below what the ticket asked for.
+	okIssues := issues[:MaxVoucherIssuesPerSale]
+	okPayments := []PaymentInput{{MethodID: "cash", Amount: money.FromMinor(int64(len(okIssues)))}}
+	if _, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		VoucherIssues: okIssues,
+		Payments:      okPayments,
+	}); err != nil {
+		t.Fatalf("sale at exactly the cap should succeed: %v", err)
+	}
+}
+
 // F4: tendering a voucher for MORE than the sale needs is refused (change
 // and tips are forbidden for voucher redemptions, so the excess would be
 // silently confiscated from the voucher's balance) — and the balance stays
