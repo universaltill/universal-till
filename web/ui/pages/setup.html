@@ -74,17 +74,39 @@
           </div>
         </section>
 
-        <!-- Step 2 · country → prefills currency + tax (all editable later) -->
-        <section x-show="step === 2" x-cloak data-step="2">
+        <!-- Step 2 · country → prefills currency + tax (all editable later).
+             ut-docs#1095: was a native <select> — unusable with real effort
+             on a touchscreen (product owner, Pi 5 hardware). Now a grid of
+             large tappable tiles, same visual language as the sale screen's
+             product tiles (app.css .btn-tile/.grid), sized for a single-line
+             label instead of image+price (.picker-tile/.picker-grid). The
+             detected country (if any) is the only tile shown at first —
+             "Show all countries" reveals the rest; each tile still carries
+             the exact data-currency/data-tax/data-taxinc attributes the old
+             <option>s did, so setup_page_test.go's TestSetupWizard* country
+             assertions (data-currency, data-tax, value="<code>") keep
+             matching unchanged. showAllCountries starts true when nothing
+             was detected, so the picker never opens on an empty screen. -->
+        <section x-show="step === 2" x-cloak data-step="2" x-data="{ showAllCountries: {{ if .detectedCountry }}false{{ else }}true{{ end }} }">
           <h1>{{ T "setup.country.title" }}</h1>
           <p class="muted">{{ T "setup.country.hint" }}</p>
-          <select name="country" x-model="country"
-                  @change="const o = $event.target.selectedOptions[0]; currency = o.dataset.currency || currency; tax = o.dataset.tax ?? tax; taxinc = o.dataset.taxinc || taxinc; currencyTouched = true;">
-            <option value="">{{ T "setup.country.choose" }}</option>
+          <input type="hidden" name="country" :value="country">
+          <div class="picker-grid" role="group" aria-label="{{ T "setup.country.title" }}" x-ref="countryGrid">
             {{ range .countries }}
-            <option value="{{ .Code }}" data-currency="{{ .Currency }}" data-tax="{{ .TaxRatePct }}" data-taxinc="{{ if .TaxInclusive }}on{{ else }}off{{ end }}">{{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }}</option>
+            <button type="button" class="picker-tile" value="{{ .Code }}" data-currency="{{ .Currency }}" data-tax="{{ .TaxRatePct }}" data-taxinc="{{ if .TaxInclusive }}on{{ else }}off{{ end }}" :aria-pressed="country === '{{ .Code }}'" x-show="showAllCountries || country === '{{ .Code }}'" @click="const d = $event.currentTarget.dataset; country = '{{ .Code }}'; currency = d.currency || currency; tax = d.tax ?? tax; taxinc = d.taxinc || taxinc; currencyTouched = true;">{{ if .NameKey }}{{ T .NameKey }}{{ else }}{{ .Code }}{{ end }}</button>
             {{ end }}
-          </select>
+          </div>
+          <!-- Review finding (Should-fix 2): expanding used to leave focus
+               on this now-hidden button (dropped to <body>), so a keyboard/
+               switch-access operator had to tab from the top of the
+               document to reach the 13 tiles that just appeared, with no
+               aria-expanded to even announce that something changed.
+               $nextTick waits for the newly-shown tiles to actually be in
+               the DOM (x-show removes display:none synchronously, but
+               .focus() on a still-transitioning element is unreliable)
+               before moving focus onto the selected tile, or the first
+               tile if nothing's picked yet. -->
+          <button type="button" class="btn secondary" x-show="!showAllCountries" :aria-expanded="showAllCountries" @click="showAllCountries = true; $nextTick(() => ($refs.countryGrid.querySelector('[aria-pressed=true]') || $refs.countryGrid.querySelector('button')).focus())">{{ T "setup.country.show_all" }}</button>
           <input type="hidden" name="currency" :value="currency">
           <input type="hidden" name="tax_rate_pct" :value="tax">
           <input type="hidden" name="tax_inclusive" :value="taxinc">
@@ -93,7 +115,8 @@
                operator choice — completing the wizard without ever opening
                this step must not count as "the operator confirmed the
                currency" (the whole reason ut-docs#970's import gate exists).
-               currencyTouched only flips true on a genuine @change above. -->
+               currencyTouched only flips true on a genuine tile @click above
+               (was @change on the native select). -->
           <input type="hidden" name="currency_touched" :value="currencyTouched ? '1' : '0'">
           <p class="muted" x-show="currency"><span x-text="currency"></span> · <span x-text="tax"></span>% </p>
           <div class="setup-nav">
@@ -154,15 +177,20 @@
              per ADR-0026 — the same six options the marketing site's
              solutions pages use, not a new list). The starter catalogue is
              the same generic one whichever type is chosen. -->
-        <section x-show="step === 5" x-cloak data-step="5">
+        <!-- ut-docs#1095: was a native <select> — same touch problem as the
+             country step above. Only 6 options (ADR-0026), short enough to
+             show every tile directly, no "show all" toggle needed. Its own
+             local x-data (shopType), same nested-scope pattern step 6 below
+             already uses for `asking`/`choice`. -->
+        <section x-show="step === 5" x-cloak data-step="5" x-data="{ shopType: '' }">
           <h1>{{ T "setup.shop_type.title" }}</h1>
           <p class="muted">{{ T "setup.shop_type.hint" }}</p>
-          <select name="shop_type">
-            <option value="">{{ T "setup.shop_type.choose" }}</option>
+          <input type="hidden" name="shop_type" :value="shopType">
+          <div class="picker-grid" role="group" aria-label="{{ T "setup.shop_type.title" }}">
             {{ range .shopTypes }}
-            <option value="{{ . }}">{{ T (printf "setup.shop_type.%s" .) }}</option>
+            <button type="button" class="picker-tile" data-value="{{ . }}" :aria-pressed="shopType === '{{ . }}'" @click="shopType = '{{ . }}'">{{ T (printf "setup.shop_type.%s" .) }}</button>
             {{ end }}
-          </select>
+          </div>
           <label class="set-row" style="margin-top:.6rem">
             <input type="checkbox" name="demo_data">
             {{ T "setup.demo_data.label" }}

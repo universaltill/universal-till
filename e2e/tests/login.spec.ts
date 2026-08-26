@@ -104,7 +104,21 @@ test.describe.serial('first-boot setup and PIN login', () => {
     try {
       await p.goto('/setup');
       await p.locator('[data-step="1"] .setup-nav button', { hasText: 'Next' }).click();
-      await p.locator('select[name=country]').selectOption('GB');
+      // ut-docs#1095: country is a tile picker now, not a <select> — the
+      // detected tile may already be showing, or "Show all countries" may
+      // need a tap first (nothing detected on this headless run's host).
+      // Review finding (Blocker 1): wait for step 2 to actually be showing
+      // BEFORE the isVisible() check below — isVisible() does not
+      // auto-wait, so checking it in the same tick as the click above
+      // raced Alpine's x-show and always read false, silently skipping
+      // "Show all countries" on any host where a country WAS detected
+      // (verified against a DE-detecting till: reproduced 5/5, fixed by
+      // this wait 9/9).
+      const countryHeading = p.locator('[data-step="2"] h1');
+      await countryHeading.waitFor();
+      const showAllBtn = p.locator('[data-step="2"] button', { hasText: 'Show all countries' });
+      if (await showAllBtn.isVisible()) await showAllBtn.tap();
+      await p.locator('[data-step="2"] button.picker-tile[value="GB"]').tap();
       await p.locator('[data-step="2"] .setup-nav button', { hasText: 'Next' }).click();
 
       const storeName = p.locator('input[name=store_name]');
@@ -112,6 +126,179 @@ test.describe.serial('first-boot setup and PIN login', () => {
       await storeName.tap();
       await expect(p.locator('#osk')).toBeVisible();
       await expect(p.locator('#osk .osk-key').first()).toBeVisible();
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  // ut-docs#1095: the country and shop-type steps were native <select>
+  // elements — "so hard" to use on the real touchscreen this ships on
+  // (product owner, Pi 5, verbatim). Now a grid of large tappable tiles.
+  // Own isolated context, same convention as the two tests above — this
+  // must run before the shared wizard flow below completes first-boot,
+  // and must not disturb the shared `page`'s own progress through the
+  // wizard.
+  test('country and shop-type steps are touch tile pickers, not native selects', async ({ browser }) => {
+    // 1024x600 is this product's documented kiosk floor (universal-till/
+    // CLAUDE.md's offline-first/kiosk ergonomics; reused across e2e specs
+    // e.g. basket-no-horizontal-scroll-391.spec.ts).
+    const ctx = await browser.newContext({ hasTouch: true, viewport: { width: 1024, height: 600 } });
+    const p = await ctx.newPage();
+    try {
+      await p.goto('/setup');
+
+      // No native <select> anywhere in the wizard — the whole point of
+      // ut-docs#1095. Checked page-wide, not just within the two touched
+      // steps, so a regression anywhere in the document is caught.
+      await expect(p.locator('select')).toHaveCount(0);
+
+      await p.locator('[data-step="1"] .setup-nav button', { hasText: 'Next' }).click();
+
+      const countryStep = p.locator('[data-step="2"]');
+      // isVisible() does not auto-wait — wait for the step's own heading
+      // first, or this races Alpine's x-show and always reads false (see
+      // the on-screen-keyboard test above for the full incident note).
+      await countryStep.locator('h1').waitFor();
+      const showAllBtn = countryStep.locator('button', { hasText: 'Show all countries' });
+      // Whatever this host's locale detection did, "Show all countries"
+      // reveals every seeded country once tapped — the built-in list
+      // (setup_page.go's builtinSetupCountries) always includes GB.
+      if (await showAllBtn.isVisible()) await showAllBtn.tap();
+      const gbTile = countryStep.locator('button.picker-tile[value="GB"]');
+      await expect(gbTile).toBeVisible();
+      // A real touch target, not a collapsed control — same bar
+      // helpers.ts's expectStacked applies to labelled form fields.
+      const box = await gbTile.boundingBox();
+      expect(box?.height ?? 0, 'country tile must be a real, tappable height').toBeGreaterThan(20);
+
+      await gbTile.tap();
+      await expect(gbTile).toHaveAttribute('aria-pressed', 'true');
+      // Tapping the tile did the old <select>'s @change job: prefilled the
+      // hidden currency/tax fields client-side, no server round trip.
+      // Alpine's :value binding sets the live DOM property, not the HTML
+      // attribute — toHaveValue (not toHaveAttribute) is what actually
+      // reads that property, same distinction fieldGeometry-style specs
+      // elsewhere in this suite rely on for real form controls.
+      await expect(countryStep.locator('input[name=currency]')).toHaveValue('GBP');
+      await expect(countryStep.locator('input[name=currency_touched]')).toHaveValue('1');
+
+      // Keyboard operability is not a regression from the native <select>:
+      // a real <button> tile is independently focusable and Enter-activates,
+      // same as the France tile below proves by actually switching country.
+      const frTile = countryStep.locator('button.picker-tile[value="FR"]');
+      await frTile.focus();
+      await p.keyboard.press('Enter');
+      await expect(frTile).toHaveAttribute('aria-pressed', 'true');
+      await expect(gbTile).toHaveAttribute('aria-pressed', 'false');
+      await expect(countryStep.locator('input[name=currency]')).toHaveValue('EUR');
+
+      await countryStep.locator('.setup-nav button', { hasText: 'Next' }).click();
+      await p.locator('input[name=store_name]').fill('Tile Picker Test Shop');
+      await p.locator('[data-step="4"] .setup-nav button', { hasText: 'Next' }).click();
+
+      // Shop-type step: all six ADR-0026 tiles shown directly, no "show
+      // all" toggle needed for a list this short.
+      const shopTypeStep = p.locator('[data-step="5"]');
+      await expect(shopTypeStep.locator('button.picker-tile')).toHaveCount(6);
+      const cafeTile = shopTypeStep.locator('button.picker-tile[data-value="cafe"]');
+      await cafeTile.tap();
+      await expect(cafeTile).toHaveAttribute('aria-pressed', 'true');
+      await expect(shopTypeStep.locator('input[name=shop_type]')).toHaveValue('cafe');
+    } finally {
+      await ctx.close();
+    }
+  });
+
+  // ut-docs#1095 review finding (Blocker 1): the test above only ever
+  // exercises the "nothing detected, every tile already showing" branch —
+  // this CI host's OS locale never matches a seeded country, so
+  // showAllCountries starts true and "Show all countries" is never even
+  // rendered. That left the card's actual headline behaviour (a detected
+  // country shown ALONE at first, with an explicit toggle to see the rest)
+  // with no real coverage at all. Real OS locale detection can't be forced
+  // from here either (the till reads it from the process environment at
+  // Go-detectCountry time, not from anything Playwright controls) — but the
+  // PIN-error re-render path already re-renders with detectedCountry set to
+  // whatever country the operator just submitted (setup_page.go's
+  // renderWizard, POST branch — the same mechanism
+  // TestSetupWizardPINErrorRerenderKeepsOperatorCountryNotDetected covers
+  // server-side), which deterministically reproduces the exact same
+  // showAllCountries=false initial state a real detection would.
+  test('a detected country shows alone at first, with an explicit toggle to see the rest', async ({ browser }) => {
+    const ctx = await browser.newContext({ hasTouch: true, viewport: { width: 1024, height: 600 } });
+    const p = await ctx.newPage();
+    try {
+      const step = (n: number) => p.locator(`[data-step="${n}"]`);
+      await p.goto('/setup');
+      await step(1).locator('.setup-nav button', { hasText: 'Next' }).click();
+      await step(2).locator('h1').waitFor();
+      // Nothing detected yet on this host, so every tile already shows —
+      // pick GB deliberately, same as any operator would.
+      await step(2).locator('button.picker-tile[value="GB"]').tap();
+      await step(2).locator('.setup-nav button', { hasText: 'Next' }).click();
+      await p.locator('input[name=store_name]').fill('Rerender Test Shop');
+      await step(4).locator('.setup-nav button', { hasText: 'Next' }).click();
+      await step(5).locator('.setup-nav button', { hasText: 'Next' }).click();
+      await step(6).locator('.setup-nav button.primary', { hasText: 'No' }).click();
+      // A deliberately mismatched PIN forces a server re-render with
+      // detectedCountry='GB' (the operator's own prior pick, per the
+      // renderWizard POST branch) — never a real detection, but the exact
+      // same initial x-data shape a real one would produce.
+      await step(7).locator('input[name=pin]').fill('1234');
+      await step(7).locator('input[name=pin_confirm]').fill('9999');
+      // Step 7's "Next" only advances Alpine's `step` to 8 client-side —
+      // the actual POST (and therefore the mismatch validation) fires on
+      // step 8's real form submit button.
+      await step(7).locator('.setup-nav button', { hasText: 'Next' }).click();
+      await step(8).locator('button[type=submit]', { hasText: 'Start selling' }).click();
+      await p.waitForLoadState('networkidle');
+      await expect(p.locator('.login-error')).toContainText(/PIN/i);
+
+      // The re-rendered page opens on the PIN step (errStep=7); walk back
+      // to the country step through the real Back buttons — Alpine state,
+      // not a URL — so this exercises the actual navigation path, not a
+      // shortcut into internal state.
+      await step(7).locator('.setup-nav button', { hasText: 'Back' }).click(); // -> restore (6)
+      // Step 6 has TWO "Back" buttons in the DOM (the default panel's and
+      // the "Yes, restoring" sub-panel's, x-show-toggled) — :visible scopes
+      // to the one actually shown, avoiding a strict-mode violation.
+      await step(6).locator('.setup-nav button:visible', { hasText: 'Back' }).click(); // -> shop type (5)
+      await step(5).locator('.setup-nav button', { hasText: 'Back' }).click(); // -> shop name (4)
+      await step(4).locator('.setup-nav button', { hasText: 'Back' }).click(); // -> country (2), GB isn't DE
+
+      await step(2).locator('h1').waitFor();
+      const gbTile = step(2).locator('button.picker-tile[value="GB"]');
+      const showAllBtn = step(2).locator('button', { hasText: 'Show all countries' });
+
+      // The headline behaviour: ONLY the previously-picked country tile is
+      // visible, pre-selected, plus the toggle — not the whole list. x-show
+      // hides everything else via display:none but the elements stay IN
+      // the DOM, so a plain toHaveCount() on button.picker-tile would still
+      // count all 14 regardless of visibility — :visible scopes it to what
+      // is actually shown, same as everywhere else this test checks state.
+      await expect(gbTile).toBeVisible();
+      await expect(gbTile).toHaveAttribute('aria-pressed', 'true');
+      await expect(showAllBtn).toBeVisible();
+      await expect(step(2).locator('button.picker-tile[value="FR"]')).toBeHidden();
+      await expect(step(2).locator('button.picker-tile:visible')).toHaveCount(1);
+
+      // Tapping the toggle reveals the rest, GB retains its selection at
+      // its normal (alphabetical) position — not duplicated, not lost. Not
+      // a hardcoded count: assert "more than the single pinned tile", not a
+      // magic number that would drift with the seeded country list.
+      await showAllBtn.tap();
+      // expect.poll, not a one-shot .count() — Alpine's re-render after the
+      // tap is not guaranteed to have landed in the same tick the tap
+      // resolves, and .count() (unlike expect(locator).toHaveCount()) does
+      // not auto-retry.
+      await expect
+        .poll(() => step(2).locator('button.picker-tile:visible').count(), {
+          message: 'expanding must reveal more than just the pinned tile',
+        })
+        .toBeGreaterThan(1);
+      await expect(gbTile).toBeVisible();
+      await expect(gbTile).toHaveAttribute('aria-pressed', 'true');
+      await expect(showAllBtn).toBeHidden();
     } finally {
       await ctx.close();
     }
@@ -129,8 +316,15 @@ test.describe.serial('first-boot setup and PIN login', () => {
     // Step 1 · language — just advance.
     await step(1).locator('.setup-nav button', { hasText: 'Next' }).click();
 
-    // Step 2 · country (prefills currency/tax client-side).
-    await page.locator('select[name=country]').selectOption('GB');
+    // Step 2 · country (prefills currency/tax client-side). Tile picker,
+    // not a <select> (ut-docs#1095) — reveal the full list if the detected
+    // tile alone is showing, then tap GB. isVisible() doesn't auto-wait —
+    // wait for the step's own heading first (see the on-screen-keyboard
+    // test above for the full incident note).
+    await step(2).locator('h1').waitFor();
+    const showAllCountriesBtn = step(2).locator('button', { hasText: 'Show all countries' });
+    if (await showAllCountriesBtn.isVisible()) await showAllCountriesBtn.click();
+    await step(2).locator('button.picker-tile[value="GB"]').click();
     await step(2).locator('.setup-nav button', { hasText: 'Next' }).click();
 
     // Step 4 · shop name (step 3, business identity, is Germany-only —
@@ -146,11 +340,12 @@ test.describe.serial('first-boot setup and PIN login', () => {
     await storeName.fill('E2E Test Shop');
     await step(4).locator('.setup-nav button', { hasText: 'Next' }).click();
 
-    // Step 5 · shop type + sample-data opt-in (ut-docs#539). Pick a type;
-    // leave the sample-data checkbox at its unchecked default — the auth
-    // project is "a genuinely fresh install", and a fresh install must end
-    // up with an empty catalogue unless the operator opts in.
-    await page.locator('select[name=shop_type]').selectOption('cafe');
+    // Step 5 · shop type + sample-data opt-in (ut-docs#539). Pick a type
+    // (tile picker, not a <select> — ut-docs#1095); leave the sample-data
+    // checkbox at its unchecked default — the auth project is "a genuinely
+    // fresh install", and a fresh install must end up with an empty
+    // catalogue unless the operator opts in.
+    await step(5).locator('button.picker-tile[data-value="cafe"]').click();
     await expect(page.locator('input[name=demo_data]:visible')).not.toBeChecked();
     await step(5).locator('.setup-nav button', { hasText: 'Next' }).click();
 
