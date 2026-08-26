@@ -190,7 +190,16 @@ async function ensureOperator(page: Page) {
     // rather than trying to keep the flat sequence in sync by count.
     const step = (n: number) => page.locator(`[data-step="${n}"]`);
     await step(1).locator('.setup-nav button', { hasText: 'Next' }).click(); // language
-    await page.locator('select[name=country]').selectOption('GB');
+    // ut-docs#1095: country is a tile picker now, not a <select> — reveal
+    // the full list if only the detected tile is showing, then tap GB.
+    // isVisible() doesn't auto-wait — wait for the step's own heading
+    // first, or this races Alpine's x-show and always reads false
+    // (verified against a country-detecting till: reproduced 5/5, fixed by
+    // this wait 9/9 — see e2e/tests/login.spec.ts's own note on the fix).
+    await step(2).locator('h1').waitFor();
+    const showAllBtn = step(2).locator('button', { hasText: 'Show all countries' });
+    if (await showAllBtn.isVisible()) await showAllBtn.click();
+    await step(2).locator('button.picker-tile[value="GB"]').click();
     await step(2).locator('.setup-nav button', { hasText: 'Next' }).click(); // country
     await page.locator('input[name=store_name]').fill('Demo Shop');
     await step(4).locator('.setup-nav button', { hasText: 'Next' }).click(); // shop name (step 3 is the DE-only business-identity step — GB skips it)
