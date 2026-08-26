@@ -259,6 +259,14 @@ var receiptAllocator = func(ctx context.Context, tx *sql.Tx, repo *data.POSRepo)
 }
 
 func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucherIssueTotal, total money.Money, err error) {
+	// vatLines mirrors each line's recorded tax rate/gross/tax so taxTotal
+	// below can be derived from the SAME VATBandsForSale apportionment the
+	// invoice VAT table and day-close bands already use (eod_tax_bands.go,
+	// invoice_page.go), rather than a second, independent accumulation that
+	// can (and did, ut-docs#1035) silently drift from it: a flat per-line
+	// sum here never reduced for in.SaleDiscount, while VATBandsForSale
+	// correctly re-derives Tax per band for inclusive-priced sales.
+	vatLines := make([]VATLine, 0, len(in.Lines))
 	for _, l := range in.Lines {
 		if err := validateLine(l); err != nil {
 			return 0, 0, 0, 0, 0, err
@@ -268,9 +276,27 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 			return 0, 0, 0, 0, 0, fmt.Errorf("invalid line discount for item %s", l.ItemID)
 		}
 		lineNet := lineBase.Sub(l.LineDiscount)
-		lineTax, _ := ComputeTaxBasisPoints(lineNet, l.TaxRateBasisPoints, in.TaxInclusive)
+		// The second return is the line's GROSS amount either way (net+tax
+		// exclusive, unchanged-i.e.-already-gross inclusive) -- exactly what
+		// VATLine.LineTotal wants (see vat_breakdown.go's VATLine doc).
+		lineTax, lineGross := ComputeTaxBasisPoints(lineNet, l.TaxRateBasisPoints, in.TaxInclusive)
 		subtotal = subtotal.Add(lineNet)
-		taxTotal = taxTotal.Add(lineTax)
+		vatLines = append(vatLines, VATLine{RateBP: l.TaxRateBasisPoints, LineTotal: lineGross.Minor(), TaxAmount: lineTax.Minor()})
+	}
+	// serviceCharge=0 here deliberately: VATBandsForSale's discount
+	// apportionment never touches service-charge tax (it's added to bands
+	// in a separate step, after this one, in VATBandsForSale itself), so
+	// leaving it out keeps this call scoped to exactly the line+discount
+	// figure and orthogonal to the chargeTax fold below -- no double count.
+	for _, b := range VATBandsForSale(vatLines, in.SaleDiscount.Minor(), in.TaxInclusive, 0, 0) {
+		taxTotal = taxTotal.Add(money.FromMinor(b.Tax))
+	}
+	if taxTotal.IsNegative() {
+		// An over-discount (SaleDiscount exceeding subtotal) can drive a
+		// band's Gross negative -- total is already floored below for the
+		// same reason; mirror that here so a persisted sale never carries a
+		// negative tax_total.
+		taxTotal = 0
 	}
 	discountedSubtotal := subtotal.Sub(in.SaleDiscount)
 	if in.ServiceCharge.IsNegative() {

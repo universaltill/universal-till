@@ -3,8 +3,10 @@ package data
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 )
 
@@ -56,6 +58,56 @@ type ExportStockRow struct {
 	LocationName string  `json:"location_name"`
 	CurrentQty   float64 `json:"current_qty"`
 	ReorderLevel int     `json:"reorder_level"`
+}
+
+// EODCloseExport is one archived day-close's payment-method x VAT-rate
+// cross-tab (+ tips/vouchers/cash-skim), for an accounting-export plugin
+// (ut-docs#1005). Read from the ALREADY-ARCHIVED, immutable report
+// (ArchivedReportRow.Content, json-unmarshaled), never recomputed fresh,
+// so a generated batch can never disagree with the Z-report a merchant
+// already has in hand. ZNumber is the document key (DATEV Belegfeld1).
+type EODCloseExport struct {
+	ZNumber int64     `json:"z_number"`
+	Report  EODReport `json:"report"`
+}
+
+// EODClosesForExport returns every archived day-close ("eod" kind) whose
+// period falls in [from, to], oldest first, as export-payload closes —
+// ArchivedReportsInRange plus the EODClosesFromArchive conversion. Same
+// caller-bounds-the-range division of responsibility as
+// ArchivedReportsInRange itself.
+func (r *POSRepo) EODClosesForExport(ctx context.Context, from, to string) ([]EODCloseExport, error) {
+	rows, err := r.ArchivedReportsInRange(ctx, from, to)
+	if err != nil {
+		return nil, err
+	}
+	return EODClosesFromArchive(rows), nil
+}
+
+// EODClosesFromArchive converts archived report rows (any kind — e.g. an
+// ArchivedReportsInRange result) to export closes, keeping only
+// Kind=="eod" rows. A row whose Content fails to unmarshal is SKIPPED with
+// a warning log, never an error: one corrupt archive row must not take
+// every other close's export down with it (the export plugin sees, and can
+// refuse on, whatever gaps matter to its own format — e.g. a missing
+// Z-number in the sequence).
+func EODClosesFromArchive(rows []ArchivedReportRow) []EODCloseExport {
+	// Empty (not nil): the slice is JSON-encoded into the plugin payload,
+	// and "[]" vs "null" is a wire-visible difference — same reasoning as
+	// ArchivedReportsInRange's own non-nil result.
+	out := []EODCloseExport{}
+	for _, row := range rows {
+		if row.Kind != "eod" {
+			continue
+		}
+		var rep EODReport
+		if err := json.Unmarshal([]byte(row.Content), &rep); err != nil {
+			logging.L().Warnf("pos: eod closes for export: skipping archived report %s (period %s): content_json unparseable: %v", row.ID, row.Period, err)
+			continue
+		}
+		out = append(out, EODCloseExport{ZNumber: row.ZNumber, Report: rep})
+	}
+	return out
 }
 
 // exportToSentinel applies the "include the whole final day" trick

@@ -249,6 +249,35 @@ func TestVATBandsForSale_InclusiveGrossSumMatchesSaleTotal(t *testing.T) {
 // gross-inclusive invariant under a future edit, and neither of this file's
 // other Service-level tests exercises it: this one configures both a
 // service charge and a discount and switches order type across them.
+// TestBasketTax_InclusiveDiscountMatchesPersistedSaleTax closes the gap an
+// independent review of ut-docs#1035 found: computeSaleTotals (sales.go)
+// was fixed to derive taxTotal via VATBandsForSale, but recomputeTotals
+// (service.go) -- the live basket panel a cashier sees BEFORE tender --
+// still accumulated tax as a flat per-line sum. A cashier applying a
+// whole-sale discount to an inclusive-priced sale would see a DIFFERENT
+// tax figure on screen than what CompleteSale would persist and the
+// printed receipt would show. This pins the basket panel to the same
+// ticket reproduction sales_test.go uses: €11.90 inclusive @19% with a
+// €1.90 whole-sale discount, tax must read 1.60, not 1.90.
+func TestBasketTax_InclusiveDiscountMatchesPersistedSaleTax(t *testing.T) {
+	resolver := mapResolver{
+		"WIDGET": {SKU: "WIDGET", ItemID: "item-widget", TaxCodeID: "tax-std", Name: "Widget", Qty: 1, PriceCents: money.FromMinor(1190), TaxRateBP: 1900},
+	}
+	s := NewServiceWithResolver(Config{TaxInclusive: true}, resolver)
+	if _, err := s.ScanQty("WIDGET", 1); err != nil {
+		t.Fatalf("ScanQty: %v", err)
+	}
+	s.SetDiscount(money.FromMinor(190))
+
+	b := s.Basket()
+	if b.Total != money.FromMinor(1000) {
+		t.Fatalf("basket Total = %v, want 10.00 (11.90 - 1.90 discount)", b.Total)
+	}
+	if b.Tax != money.FromMinor(160) {
+		t.Fatalf("basket Tax = %v, want 1.60 (was 1.90 before ut-docs#1035's fix reached the live basket panel)", b.Tax)
+	}
+}
+
 func TestGrossInclusiveInvariant_WithDiscountAndServiceCharge(t *testing.T) {
 	resolver := mapResolver{
 		"CAPP": {SKU: "CAPP", ItemID: "item-capp", TaxCodeID: "tax-drink", Name: "Cappuccino", Qty: 1, PriceCents: money.FromMinor(480), TaxRateBP: 1900},
