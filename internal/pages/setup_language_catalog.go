@@ -52,6 +52,14 @@ const (
 	// fully offline till re-rendering /setup repeatedly must not pay the
 	// fetch timeout on every render either.
 	setupLanguageCatalogRetryInterval = 30 * time.Second
+	// setupLanguageCatalogMaxPages bounds how many pages
+	// setupLanguageCatalogEntries will follow before giving up. ut-cloud's
+	// ListPlugins defaults to a 20-listing page (internal/catalog/service.go
+	// defaultPageSize), so this generously covers many hundreds of listings —
+	// far beyond any real catalog today — while still guaranteeing the loop
+	// below terminates even against a malformed or hostile server that keeps
+	// returning a non-empty next_page_token forever.
+	setupLanguageCatalogMaxPages = 25
 )
 
 // setupLangCatalogCache is the package-level, mutex-guarded TTL cache behind
@@ -139,13 +147,34 @@ func setupLanguageCatalogEntries(ctx context.Context, d *common.Deps) (entries [
 	// the server-side canonical-type filter; installableSetupLanguages still
 	// re-checks CanonicalType client-side (the server-side filter isn't
 	// trusted alone — same posture as resolveAndInstallBasePlugin).
-	resp, err := client.ListPlugins(fctx, &marketplace.ListPluginsRequest{Capability: []string{"language"}})
-	if err != nil {
-		logging.L().Warnf("setup wizard: language catalog fetch failed (serving %s): %v",
-			map[bool]string{true: "stale cache", false: "bundled only"}[c.fetched], err)
-		return c.entries, c.fetched
+	//
+	// ut-docs#1108: ut-cloud paginates ListPlugins at 20 listings/page
+	// (internal/catalog/service.go defaultPageSize) and this call took only
+	// page 1, ignoring next_page_token — today's 2 published language packs
+	// fit on one page, so the gap was invisible, but the wizard's own
+	// requirement is "every language the product can run in," and that
+	// silently stops being true once the catalog grows past one page. Page
+	// through the full result under the SAME fctx deadline as a single page
+	// (offline-first: GET /setup must still render promptly regardless of
+	// catalog size — a slow/large catalog degrades to "serve what we got" via
+	// the ctx-cancellation branch below, not a longer hang), bounded by
+	// setupLanguageCatalogMaxPages so a malformed server can't loop forever.
+	var all []marketplace.PluginSummary
+	pageToken := ""
+	for page := 0; page < setupLanguageCatalogMaxPages; page++ {
+		resp, err := client.ListPlugins(fctx, &marketplace.ListPluginsRequest{Capability: []string{"language"}, PageToken: pageToken})
+		if err != nil {
+			logging.L().Warnf("setup wizard: language catalog fetch failed (serving %s): %v",
+				map[bool]string{true: "stale cache", false: "bundled only"}[c.fetched], err)
+			return c.entries, c.fetched
+		}
+		all = append(all, resp.Plugins...)
+		if resp.NextPageToken == "" {
+			break
+		}
+		pageToken = resp.NextPageToken
 	}
-	c.entries = resp.Plugins
+	c.entries = all
 	c.fetched = true
 	c.lastSuccess = now
 	return c.entries, true

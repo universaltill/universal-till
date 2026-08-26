@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -419,6 +420,85 @@ type ListPluginsResponse struct {
 	// Legacy fields for backward compatibility
 	NextPageToken   string `json:"next_page_token,omitempty"`
 	SnapshotVersion int64  `json:"snapshot_version,omitempty"`
+}
+
+// UnmarshalJSON maps the live catalog wire format's pagination fields
+// (protojson camelCase: nextPageToken, snapshotVersion — see
+// TestPluginSummary_DecodesLiveWireFormat's fixture and ut-cloud's own
+// cloudv1.ListPluginsResponse proto, which has no snake_case alternative on
+// the wire at all) onto ListPluginsResponse, same reasoning and pattern as
+// PluginSummary.UnmarshalJSON above. Without this, NextPageToken/
+// SnapshotVersion only ever populated from a response this client encoded
+// itself (tests), never from the real server — ut-docs#1108: a caller that
+// loops on NextPageToken to page through the full catalog would silently
+// stop after page one in production, believing there was nothing more.
+//
+// snapshotVersion is a STRING on the live wire, not a number: protojson
+// serializes int64/uint64 fields as JSON strings (avoiding precision loss in
+// JS's float64 numbers), confirmed by testdata/cloud_list_plugins_response.json
+// (captured from ut-cloud's real protojson output: "snapshotVersion":"0").
+// The legacy snake_case field predates protojson and has only ever appeared
+// as a bare number in this client's own tests/fixtures, so it stays int64.
+//
+// SnapshotVersionCamel decodes into json.RawMessage, not string: a plain
+// `string` field would make the WHOLE response fail to decode — including
+// Plugins and NextPageTokenCamel, the fields ut-docs#1108's pagination loop
+// actually depends on — if snapshotVersion ever arrived as a bare JSON
+// number (e.g. a future protojson option change, or some intermediate
+// gateway/proxy re-serializing the body) instead of the quoted string the
+// live wire sends today: encoding/json rejects a number into a string field
+// for the WHOLE struct, not just that one field. RawMessage defers parsing
+// so parseSnapshotVersionCamel below can accept either shape and the rest of
+// the response still decodes even if it can't.
+func (r *ListPluginsResponse) UnmarshalJSON(data []byte) error {
+	var w struct {
+		Plugins              []PluginSummary `json:"plugins"`
+		Pagination           *Pagination     `json:"pagination"`
+		NextPageTokenCamel   string          `json:"nextPageToken"`
+		NextPageToken        string          `json:"next_page_token"`
+		SnapshotVersionCamel json.RawMessage `json:"snapshotVersion"`
+		SnapshotVersion      int64           `json:"snapshot_version"`
+	}
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	r.Plugins = w.Plugins
+	r.Pagination = w.Pagination
+	r.NextPageToken = firstNonEmptyStr(w.NextPageTokenCamel, w.NextPageToken)
+	r.SnapshotVersion = w.SnapshotVersion
+	if v, ok := parseSnapshotVersionCamel(w.SnapshotVersionCamel); ok {
+		r.SnapshotVersion = v
+	}
+	return nil
+}
+
+// parseSnapshotVersionCamel accepts snapshotVersion in either shape actually
+// seen or plausible on the wire: a quoted string (the real, deployed
+// marketplace's protojson output today) or a bare number (never observed,
+// but a single intermediate proxy/gateway config change away) — see
+// ListPluginsResponse.UnmarshalJSON. ok=false (value left alone, caller keeps
+// the snake_case/zero fallback) covers both "field absent" and "present but
+// neither shape parses", the same silent-fallback posture the snake_case
+// legacy field already has.
+func parseSnapshotVersionCamel(raw json.RawMessage) (v int64, ok bool) {
+	if len(raw) == 0 {
+		return 0, false
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err == nil {
+		if s == "" {
+			return 0, false
+		}
+		if n, err := strconv.ParseInt(s, 10, 64); err == nil {
+			return n, true
+		}
+		return 0, false
+	}
+	var n int64
+	if err := json.Unmarshal(raw, &n); err == nil {
+		return n, true
+	}
+	return 0, false
 }
 
 // Pagination contains pagination metadata
