@@ -92,20 +92,32 @@
   // anything else (Alpine, plugin-served fragments) mutates the DOM —
   // same belt-and-braces pattern as autofill.js's suppress()/sweep(),
   // for the same reason: a per-template opt-in silently regresses the
-  // moment someone adds a 29th page that forgets it. childList/subtree
-  // only, not attributes: a field that fails wantsOSK() when first swept
-  // (readOnly/disabled/type="hidden" at that moment) and is later changed
-  // in place — not replaced — into an OSK-able one stays unguarded, same
-  // pre-existing gap as autofill.js's own observer. Nothing in this repo
-  // does that today (every runtime `.disabled`/`.type` write targets a
-  // <button>, not one of these fields) — noted here rather than added,
-  // since watching attributes too would re-run the sweep on every
-  // htmx-driven `hx-swap-oob` attribute tweak across the whole app.
+  // moment someone adds a 29th page that forgets it.
   document.addEventListener('htmx:afterSwap', function () { guardSweep(document); });
   if (window.MutationObserver) {
     new MutationObserver(function (mutations) {
       for (var i = 0; i < mutations.length; i++) {
-        var added = mutations[i].addedNodes;
+        var m = mutations[i];
+        if (m.type === 'attributes') {
+          // ut-docs#1050: a field that failed wantsOSK() when first swept
+          // (readOnly/disabled/type="hidden" at that moment) can be
+          // flipped into an OSK-able state later — via either the
+          // `.disabled`/`.readOnly`/`.type` IDL property or the reflected
+          // attribute — with no further childList mutation for the
+          // observer's own addedNodes branch, below, to ever catch.
+          // guardField() is idempotent (no-ops once a field is guarded,
+          // and no-ops again if it still isn't OSK-able), so re-running it
+          // on every such flip is safe and cheap. Scoped via
+          // attributeFilter, not a bare `attributes: true` — that would
+          // re-run the sweep on every htmx-driven `hx-swap-oob` attribute
+          // tweak anywhere in the app, the cost this same fix originally
+          // opted out of paying; `disabled`/`readonly`/`type` firing only
+          // on a genuine eligibility flip (independent review, ut-docs#1050)
+          // keeps that cost off the table for every other attribute write.
+          guardField(m.target);
+          continue;
+        }
+        var added = m.addedNodes;
         for (var j = 0; j < added.length; j++) {
           var node = added[j];
           if (node.nodeType !== 1) continue; // element nodes only
@@ -113,7 +125,12 @@
           if (node.querySelectorAll) guardSweep(node);
         }
       }
-    }).observe(document.documentElement, { childList: true, subtree: true });
+    }).observe(document.documentElement, {
+      childList: true,
+      subtree: true,
+      attributes: true,
+      attributeFilter: ['disabled', 'readonly', 'type']
+    });
   }
 
   var osk = null, current = null, shift = false, layer = '';
