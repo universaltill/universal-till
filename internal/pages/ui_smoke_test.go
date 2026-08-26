@@ -449,6 +449,12 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		// same drift rule as sale_charges above.
 		`CREATE TABLE vouchers (id TEXT PRIMARY KEY, holder_label TEXT, original_amount INTEGER NOT NULL, balance INTEGER NOT NULL, currency TEXT NOT NULL DEFAULT 'EUR', voucher_type TEXT NOT NULL DEFAULT 'multi_purpose' CHECK (voucher_type IN ('multi_purpose')), status TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active','redeemed','void')), issued_sale_id TEXT, created_at TEXT NOT NULL DEFAULT (datetime('now')));`,
 		`CREATE TABLE voucher_transactions (id TEXT PRIMARY KEY, voucher_id TEXT NOT NULL REFERENCES vouchers (id), sale_id TEXT, type TEXT NOT NULL CHECK (type IN ('issue','redemption')), amount INTEGER NOT NULL, created_at TEXT NOT NULL DEFAULT (datetime('now')));`,
+		// sync_journal_quarantine: column-identical to
+		// internal/db/migrations/074_sync_journal_quarantine.sql (ut-docs#1127,
+		// ADR-0065) — applyJournal's InsertJournalQuarantine/ListJournalQuarantine
+		// hit it directly on a permanently-failing LAN-sync journal entry, same
+		// drift rule as the comments above.
+		`CREATE TABLE sync_journal_quarantine (id TEXT PRIMARY KEY, till_id TEXT NOT NULL, sale_id TEXT NOT NULL, receipt_no TEXT NOT NULL, reason TEXT NOT NULL, payload_json TEXT NOT NULL, quarantined_at TEXT NOT NULL, UNIQUE (sale_id));`,
 		`CREATE TABLE sale_links (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, original_sale_id TEXT NOT NULL, reason TEXT);`,
 		`CREATE TABLE stock_movements (id TEXT PRIMARY KEY, item_id TEXT, variant_id TEXT, location_id TEXT NOT NULL, sale_line_id TEXT, type TEXT NOT NULL, quantity REAL NOT NULL, cost_price INTEGER, created_at TEXT NOT NULL);`,
 		// worker_allocations: column-identical to

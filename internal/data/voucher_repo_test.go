@@ -300,3 +300,37 @@ func TestVoucherRepo_DebitForceAllowsOverdraft(t *testing.T) {
 		t.Fatalf("force on void voucher: err = %v, want ErrVoucherNotActive", err)
 	}
 }
+
+// TestVoucherRepo_CreateDuplicateIDReturnsErrVoucherIDExists guards the
+// second LAN-sync poison-entry trigger path (ut-docs#1127, ADR-0065): two
+// tills can issue the same operator-supplied voucher code offline (vouchers.id
+// is a TEXT PRIMARY KEY, not a generated id), and the second one's journal
+// replay hits this PK conflict inside CompleteSale's transaction. Before this
+// change, CreateVoucher just wrapped and returned the raw SQLite "UNIQUE
+// constraint failed" error, giving applyJournal nothing to classify as
+// permanent (vs. transient) -- same isUniqueViolation pattern already used
+// for ErrPromotionCodeExists (pos_repo.go).
+func TestVoucherRepo_CreateDuplicateIDReturnsErrVoucherIDExists(t *testing.T) {
+	d := b8OpenDB(t, "voucher-dup-id.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	vSeedVoucher(t, ctx, repo, "GS-DUP", 1000)
+
+	// A second, unrelated voucher issue colliding on the same operator-typed
+	// code -- different amount/holder, same id.
+	err := repo.CreateVoucher(ctx, nil, Voucher{
+		ID: "GS-DUP", HolderLabel: "Someone Else", OriginalAmountMinor: 500,
+		BalanceMinor: 500, Currency: "EUR", IssuedSaleID: "sale-other",
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	})
+	if !errors.Is(err, ErrVoucherIDExists) {
+		t.Fatalf("duplicate voucher id: err = %v, want ErrVoucherIDExists", err)
+	}
+
+	// The original voucher is untouched by the failed second insert.
+	v, gerr := repo.GetVoucherBalance(ctx, "GS-DUP")
+	if gerr != nil || v.HolderLabel != "Sample Holder" || v.OriginalAmountMinor != 1000 {
+		t.Fatalf("original voucher after collision: %+v (err %v), want unchanged (Sample Holder/1000)", v, gerr)
+	}
+}
