@@ -240,7 +240,7 @@ func newEODTestDeps(t *testing.T) *common.Deps {
 func TestGenerateEOD_ArchivesOnceThenIdempotent(t *testing.T) {
 	dp := newEODTestDeps(t)
 
-	_, created, err := generateEOD(t.Context(), dp, "2026-01-01", "system", "")
+	_, created, err := generateEOD(t.Context(), dp, "2026-01-01", "system", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -251,7 +251,7 @@ func TestGenerateEOD_ArchivesOnceThenIdempotent(t *testing.T) {
 	// Running it again for the SAME day must not re-archive (idempotent —
 	// StartEODScheduler polls every 30s and must not spam a fresh report
 	// each tick).
-	_, created, err = generateEOD(t.Context(), dp, "2026-01-01", "system", "")
+	_, created, err = generateEOD(t.Context(), dp, "2026-01-01", "system", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -286,6 +286,65 @@ func TestGenerateEOD_ArchivesOnceThenIdempotent(t *testing.T) {
 	}
 	if rows[0].PrevZNumber != nil {
 		t.Fatalf("expected nil prev_z_number for the first close, got %v", *rows[0].PrevZNumber)
+	}
+}
+
+// ut-docs#1012 #2: generateEOD resolves the actor id to its display name
+// (same join precedent internal/data's audit/order-status lookups already
+// use — a raw user id printed on a Z-Bon would be meaningless to whoever
+// reads it) and carries an optional annotation straight onto the report.
+func TestGenerateEOD_ResolvesGeneratedByAndCarriesAnnotation(t *testing.T) {
+	dp := newEODTestDeps(t)
+	userID, err := data.NewAuthRepo(dp.Db).CreateUser(t.Context(), "mgr1", "Jane Manager", "manager")
+	if err != nil {
+		t.Fatalf("create user: %v", err)
+	}
+
+	rep, created, err := generateEOD(t.Context(), dp, "2026-01-01", userID, "", "  till reconciled against safe count  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !created {
+		t.Fatal("expected created=true for a fresh day")
+	}
+	if rep.GeneratedBy != "Jane Manager" {
+		t.Fatalf("GeneratedBy = %q, want the resolved display name %q", rep.GeneratedBy, "Jane Manager")
+	}
+	if rep.Annotation != "till reconciled against safe count" {
+		t.Fatalf("Annotation = %q, want the trimmed note", rep.Annotation)
+	}
+}
+
+// The unattended scheduler's literal "system" actor IS a real seeded user
+// (migration 003_system_user.sql: id='system', display_name='System') —
+// resolves the same way any other actor id does, printing "System" rather
+// than the raw lowercase id.
+func TestGenerateEOD_SystemActorResolvesToSeededDisplayName(t *testing.T) {
+	dp := newEODTestDeps(t)
+	rep, _, err := generateEOD(t.Context(), dp, "2026-01-01", "system", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.GeneratedBy != "System" {
+		t.Fatalf("GeneratedBy = %q, want the seeded system user's display name %q", rep.GeneratedBy, "System")
+	}
+	if rep.Annotation != "" {
+		t.Fatalf("Annotation = %q, want empty when none supplied", rep.Annotation)
+	}
+}
+
+// A genuinely unresolvable actor id (no matching user row at all — e.g. a
+// stale/deleted user) must fall back to the raw string rather than
+// erroring or leaving GeneratedBy empty — generateEOD must never fail
+// report generation over a display-name lookup miss.
+func TestGenerateEOD_UnresolvableActorFallsBackToRawString(t *testing.T) {
+	dp := newEODTestDeps(t)
+	rep, _, err := generateEOD(t.Context(), dp, "2026-01-01", "no-such-user-id", "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.GeneratedBy != "no-such-user-id" {
+		t.Fatalf("GeneratedBy = %q, want the raw actor (no matching user row)", rep.GeneratedBy)
 	}
 }
 
@@ -504,6 +563,62 @@ func TestPostEODRun_GeneratesThenReportsAlreadyExists(t *testing.T) {
 	}
 }
 
+// ut-docs#1012, independent review finding: an annotation reaches the
+// printed Z-Bon verbatim, so it must be rejected up front rather than
+// silently forwarded to the printer with control bytes intact.
+func TestValidateEODAnnotation(t *testing.T) {
+	if err := validateEODAnnotation(""); err != nil {
+		t.Errorf("empty annotation must be valid (it's optional), got %v", err)
+	}
+	if err := validateEODAnnotation("till reconciled against safe count"); err != nil {
+		t.Errorf("an ordinary note must be valid, got %v", err)
+	}
+	if err := validateEODAnnotation(strings.Repeat("a", 201)); err == nil {
+		t.Error("expected an error for an annotation over 200 characters")
+	}
+	if err := validateEODAnnotation(strings.Repeat("a", 200)); err != nil {
+		t.Errorf("exactly 200 characters must be valid, got %v", err)
+	}
+	for _, bad := range []string{"line1\nline2", "bell\x07", "escape\x1b[31m", "del\x7f"} {
+		if err := validateEODAnnotation(bad); err == nil {
+			t.Errorf("expected control characters in %q to be rejected", bad)
+		}
+	}
+}
+
+// POST /api/reports/eod/run must reject a control-character annotation
+// with 400 BEFORE calling generateEOD, not archive the day's report with
+// a rejected annotation and not silently strip the bad bytes.
+func TestPostEODRun_RejectsControlCharacterAnnotation(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newEODAPITestMux(t)
+
+	form := strings.NewReader("annotation=" + "escape%1B%5B31m") // ESC[31m, percent-encoded
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/run", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a control-character annotation, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// Confirm the rejected attempt did NOT consume the day's one-shot
+	// archive slot: a valid follow-up request for the same day must still
+	// succeed.
+	repo := data.NewPOSRepo(dp.Db)
+	today := time.Now().Format("2006-01-02")
+	if has, _ := repo.HasArchivedReport(t.Context(), "eod", today); has {
+		t.Fatal("a rejected annotation must not have archived a report")
+	}
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/reports/eod/run", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "✓") {
+		t.Fatalf("expected the day's real close to still succeed after the rejected attempt, got %d: %s",
+			rec.Code, rec.Body.String())
+	}
+}
+
 func TestPostEODPrint_NotFoundForUnknownPeriod(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newEODAPITestMux(t)
@@ -521,7 +636,7 @@ func TestPostEODPrint_RequiresManager(t *testing.T) {
 	// exist BEFORE elevating (don't burn a PIN entry on a request that
 	// 404s either way), so this test needs a real archived report or it
 	// 404s before ever reaching checkOrElevate — seed one directly.
-	if _, _, err := generateEOD(t.Context(), dp, "2026-01-01", "system", ""); err != nil {
+	if _, _, err := generateEOD(t.Context(), dp, "2026-01-01", "system", "", ""); err != nil {
 		t.Fatalf("setup: generateEOD: %v", err)
 	}
 
@@ -985,7 +1100,7 @@ func TestPostReportArchiveExport_JSONAndCSVDownloads(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newEODAPITestMux(t)
 
-	if _, _, err := generateEOD(t.Context(), dp, "2026-01-15", "system", ""); err != nil {
+	if _, _, err := generateEOD(t.Context(), dp, "2026-01-15", "system", "", ""); err != nil {
 		t.Fatalf("setup: generateEOD: %v", err)
 	}
 
@@ -1083,7 +1198,7 @@ func TestPostEODPrint_ListArchivedReportsErrorIsLocalized(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newEODAPITestMux(t)
 
-	if _, _, err := generateEOD(t.Context(), dp, "2026-01-01", "system", ""); err != nil {
+	if _, _, err := generateEOD(t.Context(), dp, "2026-01-01", "system", "", ""); err != nil {
 		t.Fatalf("setup: generateEOD: %v", err)
 	}
 	if _, err := dp.Db.Exec(`ALTER TABLE report_archive DROP COLUMN content_json`); err != nil {

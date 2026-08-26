@@ -65,6 +65,25 @@ longer be spent. If any part of the voucher has already been spent, the
 till refuses to void that sale: sort out the outstanding voucher with the
 customer first.
 
+## Cancellations, and who ran the close
+
+The printed day-end (Z) report shows a **STORNOS** section, separate from
+Refunds, on any day at least one sale was voided: a cancellation here
+means a completed sale that was voided/reversed afterwards (e.g. a
+same-day correction), while a refund is a formal return processed
+afterward. The two mean different things to an auditor, so they're never
+mixed into one figure — voiding a sale already carries no revenue and
+never changes the day's Net. The section is absent entirely on a day with
+none.
+
+The report also always prints **Erstellt von** (who ran the close) — the
+person's display name, or "System" for the automatic scheduled close — so
+there's a record of who closed the day even without checking the Audit
+page. An optional note can currently be attached to a close by whatever
+sends the request an `annotation` value; there's no on-screen field for it
+yet, so this is mainly useful to an integration or a future till update —
+it prints as **Anmerkung** immediately under Erstellt von when present.
+
 ## Payment method and VAT rate together on the day-end (Z) report
 
 The printed day-end report includes a **BY METHOD & VAT RATE** table: the
