@@ -87,6 +87,36 @@ test.describe.serial('first-boot setup and PIN login', () => {
     }
   });
 
+  // ut-docs#1096: setup.html is a standalone document that was shipping
+  // without web/public/osk.js at all — a shop owner on a keyboard-less
+  // touchscreen (the exact hardware this ships on) could not even reach
+  // the store-name field, let alone complete setup. Static presence
+  // (scripts/ci/guard-osk-loaded.sh) and a Go handler test
+  // (TestLoginAndSetupLoadOnScreenKeyboard) already prove the script tag
+  // ships; only a real browser can prove the keyboard actually opens on
+  // a tap, which is the entire point of the fix. Own touch-capable
+  // context (like the pairing-code test above), not the shared
+  // non-touch `page`, and runs before the shared wizard flow completes
+  // first-boot so /setup still renders the fresh-install form.
+  test('the on-screen keyboard actually appears when a touch device taps a setup field', async ({ browser }) => {
+    const ctx = await browser.newContext({ hasTouch: true });
+    const p = await ctx.newPage();
+    try {
+      await p.goto('/setup');
+      await p.locator('[data-step="1"] .setup-nav button', { hasText: 'Next' }).click();
+      await p.locator('select[name=country]').selectOption('GB');
+      await p.locator('[data-step="2"] .setup-nav button', { hasText: 'Next' }).click();
+
+      const storeName = p.locator('input[name=store_name]');
+      await expect(storeName).toBeVisible();
+      await storeName.tap();
+      await expect(p.locator('#osk')).toBeVisible();
+      await expect(p.locator('#osk .osk-key').first()).toBeVisible();
+    } finally {
+      await ctx.close();
+    }
+  });
+
   test('completing the wizard creates the admin PIN and logs in', async () => {
     // ut-docs#617 inserted a new step 5 whose default panel has no "Next"
     // button at all (No / Yes / Later instead) — the old flat click
