@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { watchConsole, fieldGeometry, expectStacked } from './helpers';
+import { ADMIN_PIN, watchConsole, fieldGeometry, expectStacked } from './helpers';
 
 // Drives the AUTH project's server (playwright.config.ts) — a genuinely
 // fresh install with auth ON, separate from every other spec's
@@ -474,5 +474,62 @@ test.describe.serial('first-boot setup and PIN login', () => {
     await page.locator('button[type=submit].pin-key').click();
     await expect(page.locator('.login-error')).toBeVisible();
     assertClean();
+  });
+
+  // ut-docs#1099: exit-to-OS used to live only on /settings — BEHIND the
+  // sign-in gate — so a kiosk till sitting at the login screen had no escape
+  // at all. The escape hatch now lives on /login itself, session-free (the
+  // endpoint's own live manager-PIN check is the gate; the auth middleware
+  // exempts it — TestExitToOSReachableWithoutSessionCookie pins the server
+  // side). Only a real browser proves the full path: the collapsed
+  // disclosure opens, the fetch actually fires without a session cookie,
+  // and the operator SEES the outcome. Own cookie-less context (the "no
+  // session" property is the point), so the shared serial page's login
+  // state is neither used nor disturbed; own watchConsole with the
+  // non-2xx exemption, since both submissions below deliberately drive
+  // real 4xx/5xx responses Chromium logs as console errors regardless of
+  // how the page handles them (see helpers.ts's extraExempt note).
+  test('the login screen itself offers a PIN-gated exit to OS, without a session', async ({ browser }) => {
+    const ctx = await browser.newContext();
+    const p = await ctx.newPage();
+    const assertOwnClean = watchConsole(p, /^Failed to load resource: .*(403|429|503)/);
+    try {
+      await p.goto('/login');
+      // Genuinely session-less: the PIN pad (not a redirect to /) shows.
+      await expect(p.locator('.pin-pad')).toBeVisible();
+
+      // Collapsed by default — a normal login stays uncluttered.
+      const details = p.locator('details.login-exit-os');
+      const form = p.locator('#login-exit-os-form');
+      await expect(details.locator('summary')).toBeVisible();
+      await expect(form).toBeHidden();
+      await details.locator('summary').click();
+      await expect(form).toBeVisible();
+
+      const msg = p.locator('#login-exit-os-msg');
+      const pinField = form.locator('[name="manager_pin"]');
+
+      // A wrong PIN must be visibly rejected (403 — or 429 if earlier
+      // specs already burned lockout budget; both render the same
+      // rejection). One attempt only: the failure count is shared
+      // device-wide with keypad login (5 failures = 30s lockout).
+      await pinField.fill('999999');
+      await form.locator('button[type=submit]').click();
+      await expect(msg).toContainText('Incorrect PIN');
+
+      // The real admin PIN passes BOTH gates (middleware exemption + the
+      // handler's own AuthorizeManager). This e2e server has no desktop
+      // shell attached, so the honest outcome is the 503 no_shell class —
+      // "window can't be reached", explicitly NOT the PIN rejection above.
+      // (Same no-shell expectation the Go-side
+      // TestExitToOSEndpoint_NoShellAttached503NoAudit codifies.)
+      await pinField.fill(ADMIN_PIN);
+      await form.locator('button[type=submit]').click();
+      await expect(msg).toContainText("can't be reached");
+      await expect(msg).not.toContainText('Incorrect PIN');
+      assertOwnClean();
+    } finally {
+      await ctx.close();
+    }
   });
 });
