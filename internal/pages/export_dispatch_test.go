@@ -1350,7 +1350,7 @@ func TestExportDispatch_OmitsEODClosesWhenEntityNotDeclared(t *testing.T) {
 		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
 	}
 	if payload.EODCloses != nil && string(payload.EODCloses) != "null" {
-		t.Fatalf("expected eod_closes omitted without a declared \"eod_closes\" entity, got %s", payload.EODCloses)
+		t.Fatalf("expected eod_closes null without a declared \"eod_closes\" entity, got %s", payload.EODCloses)
 	}
 }
 
@@ -1389,7 +1389,7 @@ func TestExportDispatch_OmitsEODClosesWithoutSalesReadPermission(t *testing.T) {
 		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
 	}
 	if payload.EODCloses != nil && string(payload.EODCloses) != "null" {
-		t.Fatalf("expected eod_closes omitted without sales:read, got %s", payload.EODCloses)
+		t.Fatalf("expected eod_closes null without sales:read, got %s", payload.EODCloses)
 	}
 }
 
