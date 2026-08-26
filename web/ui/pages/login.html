@@ -12,8 +12,14 @@
     <!-- ut-docs#400: the shared-till operator handover screen — see
          web/public/autofill.js's own comment for why this can't be app.js. -->
     <script defer src="/public/autofill.js?v={{ assetv "public/autofill.js" }}"></script>
+    <!-- ut-docs#1096: kiosk Pis have no OS keyboard at all — this page is
+         one of the two gates into the product (the other is setup.html)
+         and was shipping keyboard-less. See web/public/osk.js's own
+         comment for why this can't be app.js (standalone document, no
+         layout to load it for us). -->
+    <script defer src="/public/osk.js?v={{ assetv "public/osk.js" }}"></script>
   </head>
-  <body class="login-screen{{ if kiosk }} kiosk{{ end }}">
+  <body class="login-screen{{ if kiosk }} kiosk{{ end }}" data-osk="{{ oskmode }}">
     <main class="login-card">
       <img class="login-logo" src="/public/assets/logo/unitill-logo.svg" alt="Universal Till" />
       <p class="login-tagline">{{ T "auth.tagline" }}</p>
