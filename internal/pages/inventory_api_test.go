@@ -584,6 +584,46 @@ func TestGetLowStock_JSONAndHTML(t *testing.T) {
 	}
 }
 
+// TestGetLowStock_HTMLTableEscapesItemFields guards against ut-docs#1019:
+// GetLowStock's success-path HTML table interpolated item.Name/SKU/
+// LocationName with no escaping, unlike its error branches (ut-docs#1000,
+// TestGetLowStock_HTMLError_UsesErrorHTMLHelper). Unlike the error
+// branches, these values come from persisted catalog/location data — set
+// via catalog admin or an import — rather than an immediate request-echo,
+// making this stored-XSS-shaped: a markup-bearing item/location name would
+// render unescaped into an authenticated operator's low-stock table.
+func TestGetLowStock_HTMLTableEscapesItemFields(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	ctx := context.Background()
+
+	const payload = `<script>alert(1)</script>`
+	if _, err := dp.Db.ExecContext(ctx, `UPDATE items SET name = ?, sku = ?, reorder_level = 10 WHERE id = 'itm1'`, payload, payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `UPDATE stock_locations SET name = ? WHERE id = 'loc_main'`, payload); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `UPDATE inventory SET quantity = 1 WHERE item_id = 'itm1'`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/inventory/low-stock", nil)
+	// No "Accept: application/json" — this is the HTML/htmx branch.
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, payload) {
+		t.Fatalf("item/SKU/location name was interpolated into the HTML table unescaped: %s", body)
+	}
+	if got := strings.Count(body, "&lt;script&gt;"); got != 3 {
+		t.Fatalf("expected the item name, SKU and location name (3 occurrences) to be HTML-escaped, got %d in: %s", got, body)
+	}
+}
+
 // TestGetLowStock_JSONError_UsesDataErrorEnvelope covers the error branch of
 // the same handler: a query failure must still respond as { "data": null,
 // "error": "…" }, not a bare { "error": "…" } object.
