@@ -147,7 +147,7 @@ func TestSlowItemsAndDeadStock(t *testing.T) {
 	}
 
 	// Tax summary: both sales carry 0bp tax; net = 100+600, tax = 0, one band.
-	bands, err := repo.TaxSummary(ctx, pagesWinFrom(30), pagesWinTo())
+	bands, err := computeTaxSummary(ctx, repo, pagesWinFrom(30), pagesWinTo())
 	if err != nil {
 		t.Fatalf("tax: %v", err)
 	}

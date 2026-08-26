@@ -215,7 +215,8 @@ ORDER BY i.name, v.name, sl.name`)
 //
 // Only sale_type='sale' rows are returned — matching the existing
 // PaymentBreakdown/busyBuckets/MarginByItem precedent of excluding returns
-// outright, rather than TaxSummary's include-with-sign-flip convention.
+// outright, rather than the Tax tab's (SalesForTaxWindow/computeTaxSummary,
+// ut-docs#1115) include-with-sign-flip convention.
 // ExportSaleRow has no field to carry a return's sign, and a plugin needs to
 // tell a genuine sale from a refund unambiguously; a future card can add
 // returns as their own rows (with a SaleType field) if a real export format
