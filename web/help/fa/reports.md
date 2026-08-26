@@ -152,7 +152,10 @@ The printed end-of-day (Z) report gains a **CASH RECONCILIATION**
 section on any day at least one shift was closed: opening float, cash
 sales, pay-ins, pay-outs, calculated (what should be in the drawers),
 counted (what was in them), variance, skim to safe, and the new float
-carried to the next day. A non-zero variance is flagged with `!!` on the
+carried to the next day. Cash sales excludes any cash tip the same way
+tips are already held out of revenue elsewhere on the report — a
+separate "Tips held out" line appears only on a day that actually has
+one. A non-zero variance is flagged with `!!` on the
 printout, and the Day-end tab marks that day's row with a warning tag so
 a discrepancy is visible on screen without reprinting each period. A day
 with no closed shift still produces a complete report — the section is

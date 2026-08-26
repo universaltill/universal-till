@@ -1603,15 +1603,28 @@ type EODMethod struct {
 // day, summed. All amounts are minor units. Skim and PayOuts are stored as
 // the (negative) amounts recorded — cash that left the drawer.
 //
-// CashSales is taken from EODMethod{Method:"cash"}.In (see dateRangeSummary),
-// which — per EODTip's own doc comment below — is the full tendered amount
-// and so already includes any CASH tip_amount. The German pilot has cash
-// tipping disabled (ut-docs#1007's own context), so this is a currently-
-// dormant interaction, not an active bug: filed as ut-docs#1046 for
-// whoever enables cash tips first, rather than fixed here unreviewed.
+// CashSales is taken from EODMethod{Method:"cash"}.In (see dateRangeSummary)
+// MINUS any cash tip_amount for the day (ut-docs#1046) — EODTip's own doc
+// comment below explains why EODMethod.In on its own is the full tendered
+// amount and so would otherwise include a CASH tip, commingling it into the
+// drawer's expected cash exactly the way ut-docs#1007 already prevents for
+// revenue. The subtracted amount is surfaced separately as TipsHeldOut so
+// the two figures reconcile: CashSales + TipsHeldOut == EODMethod{cash}.In -
+// EODMethod{cash}.Out. Cash tipping is off in the German pilot today (no
+// current path writes tip_amount on a cash payment via the till UI), but
+// nothing at the API layer rejects one, so this holds correct as soon as it
+// is ever turned on rather than waiting to be noticed then.
 type CashReconciliation struct {
 	OpeningFloat int64 `json:"opening_float"`
 	CashSales    int64 `json:"cash_sales"`
+	// TipsHeldOut is the day's cash tip_amount, subtracted out of CashSales
+	// above (ut-docs#1046) — zero on every day with no cash tips, which is
+	// every day today. Held out of the drawer figure the same way #1007
+	// holds tips out of revenue; not itself part of Calculated/Counted
+	// (those come from the shift's own opening/closing cash counts, which
+	// already reflect whatever cash — tips included — actually sat in the
+	// drawer).
+	TipsHeldOut  int64 `json:"tips_held_out"`
 	PayIns       int64 `json:"pay_ins"`    // sum of positive non-skim adjustments
 	PayOuts      int64 `json:"pay_outs"`   // sum of negative non-skim adjustments (negative value)
 	Calculated   int64 `json:"calculated"` // sum of each closed shift's expected_cash
@@ -1992,6 +2005,18 @@ GROUP BY p.method_id ORDER BY p.method_id`, from, to)
 			for _, m := range rep.Methods {
 				if m.Method == "cash" {
 					rc.CashSales = m.In - m.Out
+					break
+				}
+			}
+			// Hold cash tips out of CashSales (ut-docs#1046), same as #1007
+			// already holds every method's tips out of revenue — rep.Tips
+			// is populated above from the same tip_amount query, keyed by
+			// method_id, so this is the report's own cash-tip figure, not a
+			// separate lookup that could disagree with it.
+			for _, tp := range rep.Tips {
+				if tp.Method == "cash" {
+					rc.TipsHeldOut = tp.Amount
+					rc.CashSales -= tp.Amount
 					break
 				}
 			}
