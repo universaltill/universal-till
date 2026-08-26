@@ -256,7 +256,12 @@
     error: "{{ T "settings.display.exit_to_os_error" }}",
     unavailable: "{{ T "settings.display.exit_to_os_unavailable" }}",
     notConfirmed: "{{ T "settings.display.exit_to_os_not_confirmed" }}",
-    kioskAppliance: "{{ T "settings.display.exit_to_os_kiosk_appliance" }}"
+    kioskAppliance: "{{ T "settings.display.exit_to_os_kiosk_appliance" }}",
+    // ut-docs#1104: the same device-wide PIN lockout keypad login uses
+    // (auth.error.locked) -- reused, not a new key, since it's the exact
+    // same fact ("too many attempts, wait 30s"), just reached via this
+    // form instead of the login screen.
+    locked: "{{ T "auth.error.locked" }}"
   };
   form.addEventListener('submit', function (ev) {
     ev.preventDefault();
@@ -288,6 +293,12 @@
             renderNotice(msg, 'error', T.unavailable);
           }
         }).catch(function () { renderNotice(msg, 'error', T.unavailable); });
+      } else if (r.status === 429) {
+        // ut-docs#1104: the device-wide PIN lockout (someone else's failed
+        // attempts, not necessarily this operator's) reads as "locked
+        // out," never the generic "incorrect PIN" -- misleading exactly
+        // when the operator is already stuck.
+        renderNotice(msg, 'error', T.locked);
       } else {
         renderNotice(msg, 'error', T.error);
       }
