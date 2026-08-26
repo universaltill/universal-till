@@ -23,6 +23,15 @@ import (
 // ErrVoucherNotFound is returned when a voucher id has no vouchers row.
 var ErrVoucherNotFound = errors.New("voucher not found")
 
+// ErrVoucherIDExists is returned by CreateVoucher when the id is already
+// taken (vouchers.id is the operator-supplied TEXT PRIMARY KEY -- ut-docs#1127,
+// ADR-0065). Distinct sentinel, same isUniqueViolation pattern already used
+// for ErrPromotionCodeExists (pos_repo.go), so a caller (applyJournal's LAN-
+// sync journal replay, in particular -- two tills can issue the same
+// operator-typed code offline) can classify this as a permanent, non-retryable
+// failure rather than surfacing a raw "UNIQUE constraint failed" string.
+var ErrVoucherIDExists = errors.New("voucher id already exists")
+
 // ErrVoucherNotActive is returned when a redemption targets a voucher whose
 // status is not 'active' (already fully redeemed, or voided).
 var ErrVoucherNotActive = errors.New("voucher is not active")
@@ -87,6 +96,9 @@ INSERT INTO vouchers (id, holder_label, original_amount, balance, currency, vouc
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, v.ID, nullIfEmpty(v.HolderLabel), v.OriginalAmountMinor, v.BalanceMinor, v.Currency, v.VoucherType, v.Status, nullIfEmpty(v.IssuedSaleID), v.CreatedAt)
 	if err != nil {
+		if isUniqueViolation(err) {
+			return fmt.Errorf("create voucher %q: %w", v.ID, ErrVoucherIDExists)
+		}
 		return fmt.Errorf("create voucher: %w", err)
 	}
 	return nil

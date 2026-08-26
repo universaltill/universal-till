@@ -94,7 +94,7 @@ func TestApplyJournal_ReplicatesVoucherIssueAndRedemption(t *testing.T) {
 
 	// Replay both, in order, on the primary.
 	for _, j := range []journalSale{j1, j2} {
-		applied, err := applyJournal(ctx, primaryDp, "till-2", j)
+		applied, _, err := applyJournal(ctx, primaryDp, "till-2", j)
 		if err != nil {
 			t.Fatalf("applyJournal %s: %v", j.Sale.ReceiptNo, err)
 		}
@@ -198,7 +198,7 @@ func TestApplyJournal_DoubleRedemptionRaceForceAppliesAndSurfacesProblem(t *test
 
 	// First replica's redemption replays cleanly: 8.00 of 10.00.
 	logging.ResetRecent()
-	applied, err := applyJournal(ctx, dp, "till-2", voucherRedemptionJournal("race-redeem-1", "T2-RACE-1", "GS-RACE", 800))
+	applied, _, err := applyJournal(ctx, dp, "till-2", voucherRedemptionJournal("race-redeem-1", "T2-RACE-1", "GS-RACE", 800))
 	if err != nil || !applied {
 		t.Fatalf("first redemption replay: applied=%v err=%v", applied, err)
 	}
@@ -216,7 +216,7 @@ func TestApplyJournal_DoubleRedemptionRaceForceAppliesAndSurfacesProblem(t *test
 
 	// Second replica's racing redemption: another 8.00 against the
 	// remaining 2.00. Must force-apply, not reject the batch.
-	applied, err = applyJournal(ctx, dp, "till-3", voucherRedemptionJournal("race-redeem-2", "T3-RACE-1", "GS-RACE", 800))
+	applied, _, err = applyJournal(ctx, dp, "till-3", voucherRedemptionJournal("race-redeem-2", "T3-RACE-1", "GS-RACE", 800))
 	if err != nil {
 		t.Fatalf("second (racing) redemption replay must force-apply, got err=%v", err)
 	}
@@ -272,7 +272,7 @@ func TestApplyJournal_ExactDrainThenRacingRedemptionForceApplies(t *testing.T) {
 
 	// First replica's redemption replays the FULL 10.00 — balance lands on
 	// exactly zero, which the repo layer flips to status='redeemed'.
-	applied, err := applyJournal(ctx, dp, "till-2", voucherRedemptionJournal("drain-redeem-1", "T2-DRAIN-1", "GS-DRAIN", 1000))
+	applied, _, err := applyJournal(ctx, dp, "till-2", voucherRedemptionJournal("drain-redeem-1", "T2-DRAIN-1", "GS-DRAIN", 1000))
 	if err != nil || !applied {
 		t.Fatalf("first (exact-drain) redemption replay: applied=%v err=%v", applied, err)
 	}
@@ -287,7 +287,7 @@ func TestApplyJournal_ExactDrainThenRacingRedemptionForceApplies(t *testing.T) {
 
 	// Second replica's racing redemption against the now-'redeemed' voucher
 	// must still force-apply, not hard-reject with ErrVoucherNotActive.
-	applied, err = applyJournal(ctx, dp, "till-3", voucherRedemptionJournal("drain-redeem-2", "T3-DRAIN-1", "GS-DRAIN", 500))
+	applied, _, err = applyJournal(ctx, dp, "till-3", voucherRedemptionJournal("drain-redeem-2", "T3-DRAIN-1", "GS-DRAIN", 500))
 	if err != nil {
 		t.Fatalf("second (racing) redemption of an exact-drained voucher must force-apply, got err=%v", err)
 	}

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -103,9 +104,85 @@ func buildJournal(ctx context.Context, repo *data.POSRepo, receiptNo string) (jo
 	return j, true, nil
 }
 
+// permanentJournalFailureReason classifies an error from pos.CompleteSale as
+// a permanent (non-retryable) failure of THIS journal entry, as opposed to a
+// transient one (a locked DB, an unrecognised condition that might be a real
+// bug) worth rejecting the whole batch for and retrying next tick, same as
+// today. A permanent failure would fail identically forever if retried
+// unchanged -- rejecting the whole batch for it just wedges the replica's
+// entire subsequent replication (ut-docs#1127, ADR-0065).
+//
+// Deliberately a small, explicit allowlist, not a catch-all: an error not
+// recognised here keeps the existing whole-batch-reject behaviour, since an
+// unrecognised failure might be real corruption or a bug that deserves the
+// loud, immediate 422 rather than being silently skipped. Both cases
+// currently known are voucher-shaped (ut-docs#1053 made them newly and
+// concretely reachable) but this is deliberately not a "voucher error"
+// special case -- a future fail-closed branch elsewhere in applyJournal adds
+// its own sentinel error here, not a parallel mechanism (ADR-0065).
+func permanentJournalFailureReason(err error) string {
+	switch {
+	case errors.Is(err, data.ErrVoucherNotFound):
+		// Unknown voucher on a redemption replay (ut-docs#1053 scenario 1):
+		// a pre-1.3.0 replica's voucher issue never journaled (the field
+		// didn't exist yet), so the primary has no vouchers row to debit.
+		// AllowVoucherOverdraft force-relaxes the balance/status checks but
+		// DebitVoucherForRedemption deliberately still hard-rejects an
+		// unknown id -- see that function's own comment: it's "a real data
+		// gap... not a race", so it can never resolve itself on retry.
+		return "unknown voucher on redemption replay"
+	case errors.Is(err, data.ErrVoucherIDExists):
+		// Colliding voucher code on an issue replay (ut-docs#1053 scenario
+		// 2): vouchers.id is an operator-supplied TEXT PRIMARY KEY, and two
+		// tills issuing the same code offline collide on replay. The PK
+		// conflict recurs identically on every retry.
+		return "voucher id collision on issue replay"
+	default:
+		return ""
+	}
+}
+
+// quarantineJournalEntry records a permanently-failing journal entry
+// (ut-docs#1127, ADR-0065) instead of letting its error wedge the whole
+// batch: a Warn-level Problem naming the receipt/sale/till/reason
+// (logging.Recent() already feeds the back-office Problems panel, same
+// plumbing as warnIfStockNegative/warnIfVoucherOverdrawn -- the Warnf IS the
+// surfacing, no extra plumbing), plus one row in sync_journal_quarantine --
+// the durable, queryable record a quarantined entry needs but a force-
+// applied Problem doesn't (that one has the sale row itself as its durable
+// record; a quarantined entry never gets one). Best-effort on the persist:
+// a failed insert only skips the durable record, never re-poisons the batch
+// this mechanism exists to unblock -- the Warnf already fired either way.
+func quarantineJournalEntry(ctx context.Context, repo *data.POSRepo, tillID string, j journalSale, reason string) {
+	logging.L().Warnf("journal entry quarantined: receipt %q (sale %s) from till %s — %s, skipping and continuing replication (ut-docs#1127)",
+		j.Sale.ReceiptNo, j.Sale.ID, tillID, reason)
+	payload, err := json.Marshal(j)
+	if err != nil {
+		// journalSale is plain Go primitives/strings decoded straight off
+		// the wire, so this should be unreachable -- but a silently-empty
+		// payload_json would quietly defeat the future manual-replay path
+		// the column exists for (ADR-0065 "Not decided here"), so surface
+		// it loudly rather than persisting a useless row (independent
+		// review, 2026-08-26).
+		logging.L().Errorf("journal quarantine %s: marshal payload failed: %v", j.Sale.ReceiptNo, err)
+	}
+	if err := repo.InsertJournalQuarantine(ctx, data.JournalQuarantineEntry{
+		TillID: tillID, SaleID: j.Sale.ID, ReceiptNo: j.Sale.ReceiptNo,
+		Reason: reason, PayloadJSON: string(payload),
+		QuarantinedAt: time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		logging.L().Errorf("journal quarantine %s: persist failed: %v", j.Sale.ReceiptNo, err)
+	}
+}
+
 // applyJournal replays a journaled sale on the primary. Returns
-// applied=false when the sale already exists (idempotent).
-func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalSale) (bool, error) {
+// applied=false when the sale already exists (idempotent) or when it was
+// quarantined (quarantineReason != ""; ut-docs#1127) -- a quarantined entry
+// is deliberately NOT an error: err stays nil so the caller (registerSyncSales)
+// keeps processing the rest of the batch and returns 200, letting the
+// replica's cursor advance past this entry instead of re-submitting it
+// forever.
+func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalSale) (applied bool, quarantineReason string, err error) {
 	// Guards the corruption path the snake_case wire-format rename opens
 	// (ut-docs#262): Go's json.Unmarshal matches a tagged field's incoming
 	// key case-insensitively, so a field whose OLD (PascalCase, untagged)
@@ -121,18 +198,18 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 	// guarantee this enforces (no cross-version peers; primary upgrades
 	// first).
 	if missing := missingJournalFields(j.Sale); missing != "" {
-		return false, fmt.Errorf("invalid journal entry (sale id %q): missing %s", j.Sale.ID, missing)
+		return false, "", fmt.Errorf("invalid journal entry (sale id %q): missing %s", j.Sale.ID, missing)
 	}
 	if invalid := invalidJournalFields(j.Sale, d.CurrentState().Currency); invalid != "" {
-		return false, fmt.Errorf("invalid journal entry (sale id %q): invalid %s", j.Sale.ID, invalid)
+		return false, "", fmt.Errorf("invalid journal entry (sale id %q): invalid %s", j.Sale.ID, invalid)
 	}
 	repo := data.NewPOSRepo(d.Db)
 	if exists, err := repo.SaleExists(ctx, j.Sale.ID); err != nil || exists {
-		return false, err
+		return false, "", err
 	}
 	locID, err := repo.EnsureStockLocation(ctx)
 	if err != nil {
-		return false, err
+		return false, "", err
 	}
 	// Refund over-guard re-check (ADR-0011): the money already moved at
 	// the till, so an over-refund is recorded but flagged for the manager.
@@ -234,7 +311,16 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 		})
 	}
 	if _, err := pos.CompleteSale(ctx, d.Db, in); err != nil {
-		return false, err
+		// ut-docs#1127, ADR-0065: a permanent (non-retryable) failure of
+		// THIS entry is quarantined -- skipped, not rejected -- so it can
+		// never wedge the rest of the batch or the replica's cursor.
+		// Anything not on the small allowlist keeps today's behaviour:
+		// reject the whole batch, retry next tick.
+		if reason := permanentJournalFailureReason(err); reason != "" {
+			quarantineJournalEntry(ctx, repo, tillID, j, reason)
+			return false, reason, nil
+		}
+		return false, "", err
 	}
 	// A replay is force-allowed to go negative (the remote sale already
 	// happened), so the resulting level must surface as a visible Problem
@@ -250,7 +336,7 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 	// mirror it to inventory connectors (best-effort, non-blocking). Guarded by
 	// the SaleExists idempotency check above, so it fires at most once per sale.
 	publishStockAdjustedForSale(ctx, d, in)
-	return true, repo.SetSaleProvenance(ctx, j.Sale.ID, tillID, j.Sale.CreatedAt)
+	return true, "", repo.SetSaleProvenance(ctx, j.Sale.ID, tillID, j.Sale.CreatedAt)
 }
 
 // warnIfStockNegative surfaces negative stock as a back-office Problem
@@ -344,27 +430,35 @@ func registerSyncSales(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusBadRequest, "sync.error.bad_batch")
 			return
 		}
-		applied, skipped := 0, 0
+		applied, skipped, quarantined := 0, 0, 0
 		for _, j := range batch {
-			ok, err := applyJournal(r.Context(), d, till.ID, j)
+			ok, quarantineReason, err := applyJournal(r.Context(), d, till.ID, j)
 			if err != nil {
 				logging.L().Errorf("sync apply %s from %s: %v", j.Sale.ReceiptNo, till.Name, err)
 				common.LocalizedError(w, r, http.StatusUnprocessableEntity, "sync.error.apply_failed")
 				return
 			}
-			if ok {
+			switch {
+			// ut-docs#1127, ADR-0065: a quarantined entry is neither applied
+			// nor a plain idempotent skip -- it counts on its own, and (unlike
+			// a rejected batch) still lets the response reach 200 below, so
+			// the replica's cursor advances past it instead of re-submitting
+			// it forever.
+			case quarantineReason != "":
+				quarantined++
+			case ok:
 				applied++
-			} else {
+			default:
 				skipped++
 			}
 		}
-		if applied > 0 {
+		if applied > 0 || quarantined > 0 {
 			_ = posRepo.InsertAudit(r.Context(), nil, "system", "till", till.ID, "sales_synced",
-				map[string]any{"applied": applied, "skipped": skipped},
+				map[string]any{"applied": applied, "skipped": skipped, "quarantined": quarantined},
 				time.Now().UTC().Format(time.RFC3339), "")
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"data": map[string]int{"applied": applied, "skipped": skipped}, "error": nil,
+			"data": map[string]int{"applied": applied, "skipped": skipped, "quarantined": quarantined}, "error": nil,
 		})
 	})
 }
