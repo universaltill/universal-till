@@ -25,6 +25,7 @@ Separate cashier and manager accounts with PIN login, and shift tracking so you 
 9. The setup wizard signs you in as this till's first admin — it doesn't connect the till to YOUR account online. For the online back-office (My stores, fleet view) and paid features, see [Store registration & claiming](/help/claim).
 10. Creating a user, setting someone's PIN, or activating/deactivating an account needs a manager's or admin's role. Signed in as a cashier and try one of these anyway? The screen doesn't just refuse — it opens an in-place PIN prompt a manager or admin can approve right there, the same as [other manager-approval prompts](/help/elevation) elsewhere in the till.
 11. Your own name in the top bar (👤) opens Change PIN; the Lock button next to it signs you straight out to the PIN pad.
+12. Stuck at the sign-in screen on a fullscreen or kiosk till? The login screen has a collapsed "Locked out? Return to desktop" link: open it and enter a manager PIN to leave the till and return to the OS desktop — no sign-in needed first. It's the same manager-PIN-gated Exit to OS window action as in Settings → Display; see [Languages & display](/help/display) for what it does on each kind of till.
 
 ## Changing your own PIN
 

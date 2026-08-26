@@ -50,6 +50,59 @@ const keyDesktopKioskOverlayProvisioned = "install.desktop_kiosk_overlay_provisi
 // like any other settings mutation.
 const auditActionDesktopKioskOverlayProvisioned = "desktop_kiosk_overlay_provisioned"
 
+// provisionOpenRetryAttempts/provisionOpenRetryDelay bound the db.Open
+// retry (ut-docs#1094): a genuinely fresh install is exactly the case
+// unitill-pos.service's own first-ever migration can still be mid-flight
+// when this subcommand's own db.Open races it (see the call site's
+// comment). 8 attempts x 750ms = up to ~5.25s of waiting, comfortably
+// under postinstall.sh's own patience and this ticket's own reproduction
+// (the service's migration is a handful of CREATE TABLE statements — well
+// under a second in practice), while still converging rather than
+// spinning forever against a genuinely broken database.
+const (
+	provisionOpenRetryAttempts = 8
+	provisionOpenRetryDelay    = 750 * time.Millisecond
+)
+
+// openWithRetry calls db.Open up to attempts times, sleeping delay between
+// tries, and returns the first success or the LAST error if every attempt
+// fails — so a caller sees the real, final failure reason, not the first
+// transient one.
+func openWithRetry(path string, attempts int, delay time.Duration) (*db.DB, error) {
+	var database *db.DB
+	err := retryOnError(attempts, delay, func() error {
+		var openErr error
+		database, openErr = db.Open(path)
+		return openErr
+	})
+	if err != nil {
+		return nil, err
+	}
+	return database, nil
+}
+
+// retryOnError calls fn up to attempts times (attempts < 1 is treated as
+// 1 — always try at least once), sleeping delay between failed attempts
+// (never after the last one), and returns nil on the first success or fn's
+// LAST error if every attempt fails. Generic and side-effect-free around
+// fn itself, so the retry/backoff behavior is testable without a real
+// database or real time (a fake fn + delay=0 in tests).
+func retryOnError(attempts int, delay time.Duration, fn func() error) error {
+	if attempts < 1 {
+		attempts = 1
+	}
+	var lastErr error
+	for i := 0; i < attempts; i++ {
+		if lastErr = fn(); lastErr == nil {
+			return nil
+		}
+		if i < attempts-1 {
+			time.Sleep(delay)
+		}
+	}
+	return lastErr
+}
+
 // ProvisionDesktopKioskDefaults is the `provision-desktop-kiosk-defaults`
 // subcommand body: resolves config the same way Run does (env file, then
 // config.Init), opens the real DB (running migrations if it's first), and
@@ -96,7 +149,38 @@ func ProvisionDesktopKioskDefaults(ctx context.Context, args []string) error {
 	// something that rewrites files in the data directory rather than rows in
 	// the database, that reasoning stops holding and the sequencing in
 	// postinstall.sh has to change with it.
-	database, err := db.Open(cfg.DBPath)
+	//
+	// RETRIED (ut-docs#1094): on a genuinely fresh install, this process and
+	// unitill-pos.service's own startup both race to migrate the SAME
+	// brand-new database — postinstall.sh restarts the service and invokes
+	// this subcommand back to back, and migrate() (internal/db/db.go) reads
+	// its "current version" once, unprotected, before applying each pending
+	// migration. _txlock=immediate + busy_timeout correctly serialize the two
+	// connections' BEGIN statements, but only that: if this process's own
+	// migrate() read a stale "current" a moment before the service's own
+	// migration committed, it still re-attempts a migration the service just
+	// applied — a genuine SQL error (most of this repo's migrations are
+	// CREATE TABLE IF NOT EXISTS, so in practice this is more likely an
+	// ALTER TABLE ... ADD COLUMN "duplicate column" or the
+	// INSERT INTO schema_migrations primary-key conflict, not literally
+	// "table already exists" — the mechanism, a stale version read causing
+	// a redundant apply, is what matters, not which specific statement
+	// trips over it), not a lock/timeout one, so busy_timeout cannot paper
+	// over it. A bare retry of the whole db.Open (which re-reads the
+	// current version fresh) converges once the service's own migration has
+	// actually landed — confirmed as the real failure by a first
+	// fresh-hardware install (ut-docs#1094).
+	//
+	// RESIDUAL RISK, not fixed here (independent review): the race is
+	// symmetric — migrate()'s unprotected version read can just as well
+	// make unitill-pos.service itself lose to a racing second connection,
+	// which would fail the SERVICE's own startup (a dead till on a fresh
+	// install, strictly worse than this subcommand failing). The real fix
+	// is reading the current version and applying inside one BEGIN
+	// IMMEDIATE in migrate() itself — out of scope for this change (every
+	// db.Open call in the app goes through migrate(), so that fix needs its
+	// own careful review); tracked on the issue instead of attempted here.
+	database, err := openWithRetry(cfg.DBPath, provisionOpenRetryAttempts, provisionOpenRetryDelay)
 	if err != nil {
 		return err
 	}
@@ -134,6 +218,22 @@ func provisionDesktopKioskDefaults(ctx context.Context, sqlDB *sql.DB, trigger s
 		return false, nil
 	}
 
+	// NOT re-read-back-verified after this write (independent review of
+	// ut-docs#1094 rejected an earlier draft that did): SetMany and any
+	// subsequent Get in this same function go through the same *sql.DB
+	// after a commit, so SQLite's own consistency guarantees make such a
+	// check dead code — it can never actually catch anything here. The
+	// symptom this ticket's failure 3 reports (window_mode reverting to
+	// "normal" well after a successful provisioning run) happens at a
+	// different layer and a later time — internal/pages/common.SaveState
+	// rewrites the WHOLE settings map from whatever RuntimeState a
+	// subsequent wizard/Settings save was built from, unconditionally
+	// including window_mode — which a same-function read-back cannot
+	// observe and, if it ever spuriously fired, would make worse: an error
+	// here propagates out of ProvisionDesktopKioskDefaults, causing
+	// postinstall.sh to skip systemctl try-restart (the step that makes
+	// seeding take effect at all), the audit row, AND the marker. Left
+	// genuinely open — see the ticket for the SaveState finding.
 	if err := settingsRepo.SetMany(ctx, map[string]string{
 		common.KeyWindowMode:      "kiosk",
 		common.KeyLaunchOnStartup: "true",

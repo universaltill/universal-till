@@ -58,6 +58,27 @@
       {{ if eq .next "kiosk" }}
       <a class="btn secondary" href="/self-order">← {{ T "selforder.back" }}</a>
       {{ end }}
+
+      <!-- ut-docs#1099: the manager's escape hatch must be reachable FROM
+           the login screen itself — a kiosk till sitting here has no
+           session and no OS chrome, so before this existed it had no way
+           out at all (the settings-page control is behind the very sign-in
+           gate the operator is stuck at). Collapsed by default so a normal
+           login stays uncluttered. Authorization is the endpoint's own
+           LIVE manager-PIN check (shared device-wide lockout with keypad
+           login), not a session — see internal/auth/middleware.go's
+           exemption note. -->
+      <details class="login-exit-os" style="margin-block-start:1rem; text-align:start">
+        <summary class="muted">{{ T "auth.exit_to_os.summary" }}</summary>
+        <p class="muted">{{ T "auth.exit_to_os.help" }}</p>
+        <form id="login-exit-os-form" class="login-setup">
+          <label>{{ T "auth.exit_to_os.pin_label" }}
+            <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off" />
+          </label>
+          <button class="btn secondary" type="submit" id="login-exit-os-btn">{{ T "auth.exit_to_os.btn" }}</button>
+          <div id="login-exit-os-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+        </form>
+      </details>
       {{ end }}
 
       <footer class="login-footer">
@@ -86,5 +107,62 @@
       })();
     </script>
     {{ end }}
+    <script>
+      // ut-docs#1099: exit-to-OS from the login screen. Same fetch +
+      // branch-on-response contract as settings.html's exit-to-os form
+      // (the reference implementation): 2xx → done; 503 → the PIN was
+      // RIGHT but nothing could (or could confirm to) act on the window,
+      // told apart honestly by the marker token in the body
+      // (kiosk_appliance / not_confirmed / no_shell — see the handler in
+      // internal/pages/settings_page.go); anything else → bad PIN or
+      // locked out. This standalone document doesn't load app.js, so no
+      // renderNotice here — the page's own .login-error/.muted classes
+      // carry the message instead, via textContent only (never markup).
+      (function () {
+        var form = document.getElementById('login-exit-os-form');
+        if (!form) return;
+        var msg = document.getElementById('login-exit-os-msg');
+        var btn = document.getElementById('login-exit-os-btn');
+        var T = {
+          success: "{{ T "auth.exit_to_os.success" }}",
+          error: "{{ T "auth.exit_to_os.error" }}",
+          unavailable: "{{ T "auth.exit_to_os.unavailable" }}",
+          notConfirmed: "{{ T "auth.exit_to_os.not_confirmed" }}",
+          kioskAppliance: "{{ T "auth.exit_to_os.kiosk_appliance" }}"
+        };
+        function show(isError, text) {
+          msg.className = isError ? 'login-error' : 'muted';
+          msg.textContent = text;
+        }
+        form.addEventListener('submit', function (ev) {
+          ev.preventDefault();
+          var pin = form.querySelector('[name="manager_pin"]').value;
+          btn.disabled = true; msg.textContent = '';
+          fetch('/api/settings/exit-to-os', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ manager_pin: pin }).toString()
+          }).then(function (r) {
+            btn.disabled = false;
+            if (r.ok) {
+              show(false, T.success);
+              form.querySelector('[name="manager_pin"]').value = '';
+            } else if (r.status === 503) {
+              r.text().then(function (body) {
+                if (body.indexOf('kiosk_appliance') !== -1) {
+                  show(true, T.kioskAppliance);
+                } else if (body.indexOf('not_confirmed') !== -1) {
+                  show(true, T.notConfirmed);
+                } else {
+                  show(true, T.unavailable);
+                }
+              }).catch(function () { show(true, T.unavailable); });
+            } else {
+              show(true, T.error);
+            }
+          }).catch(function () { btn.disabled = false; show(true, T.error); });
+        });
+      })();
+    </script>
   </body>
 </html>
