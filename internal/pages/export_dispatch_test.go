@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/plugins"
 )
 
@@ -1239,5 +1240,155 @@ func TestExportDispatch_RequiresManager(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// seedArchivedEODClose archives one day-close ("eod" kind) with a minimal
+// cross-tab content blob, via the real repo write path (so z_number is
+// assigned the same way generateEOD's archival assigns it).
+func seedArchivedEODClose(t *testing.T, db *sql.DB, period string) {
+	t.Helper()
+	if _, err := data.NewPOSRepo(db).ArchiveReport(context.Background(), "eod", period,
+		[]byte(`{"day":"`+period+`","gross":11900,"method_tax_bands":[{"method":"cash","rate_bp":1900,"net":10000,"tax":1900,"gross":11900}]}`),
+		"R-1", "R-9"); err != nil {
+		t.Fatalf("archive eod close %s: %v", period, err)
+	}
+}
+
+// TestExportDispatch_PayloadIncludesEODClosesData is ut-docs#1005's parity
+// test for TestExportDispatch_PayloadIncludesItemsData: an entry that
+// declares "eod_closes" and holds sales:read (the same ledger this data is
+// derived from — no new permission) gets every archived day-close in
+// [from, to] in the dispatched payload's "eod_closes" field, each with its
+// own Z-number.
+func TestExportDispatch_PayloadIncludesEODClosesData(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, "com.t.exp11", "datev", "DATEV Export", []string{"eod_closes"}, false)
+	grantExportPluginPermission(t, dp.Db, "com.t.exp11", "sales:read")
+	seedArchivedEODClose(t, dp.Db, "2026-08-21")
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp11", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-08-01"}, "to": {"2026-08-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		EODCloses []struct {
+			ZNumber int64 `json:"z_number"`
+			Report  struct {
+				Day            string `json:"day"`
+				MethodTaxBands []struct {
+					Method string `json:"method"`
+					Gross  int64  `json:"gross"`
+				} `json:"method_tax_bands"`
+			} `json:"report"`
+		} `json:"eod_closes"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if len(payload.EODCloses) != 1 {
+		t.Fatalf("expected 1 archived close in payload, got %+v", payload.EODCloses)
+	}
+	got := payload.EODCloses[0]
+	if got.ZNumber != 1 || got.Report.Day != "2026-08-21" {
+		t.Fatalf("unexpected close: %+v", got)
+	}
+	if len(got.Report.MethodTaxBands) != 1 || got.Report.MethodTaxBands[0].Gross != 11900 {
+		t.Fatalf("close should carry its archived cross-tab, got %+v", got.Report.MethodTaxBands)
+	}
+}
+
+// TestExportDispatch_OmitsEODClosesWhenEntityNotDeclared mirrors
+// TestExportDispatch_OmitsItemsWhenEntityNotDeclared: sales:read alone must
+// NOT deliver eod_closes — the entry has to declare the entity too, so
+// every export entry installed before ut-docs#1005 keeps getting exactly
+// today's payload.
+func TestExportDispatch_OmitsEODClosesWhenEntityNotDeclared(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, "com.t.exp12", "datev", "DATEV Export", nil, false)
+	grantExportPluginPermission(t, dp.Db, "com.t.exp12", "sales:read")
+	seedArchivedEODClose(t, dp.Db, "2026-08-21")
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp12", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-08-01"}, "to": {"2026-08-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		EODCloses json.RawMessage `json:"eod_closes"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if payload.EODCloses != nil && string(payload.EODCloses) != "null" {
+		t.Fatalf("expected eod_closes omitted without a declared \"eod_closes\" entity, got %s", payload.EODCloses)
+	}
+}
+
+// TestExportDispatch_OmitsEODClosesWithoutSalesReadPermission mirrors
+// TestExportDispatch_OmitsItemsWithoutItemsReadPermission on the other
+// axis: a declared "eod_closes" entity without the sales:read grant must
+// still omit — declaration and permission gate independently.
+func TestExportDispatch_OmitsEODClosesWithoutSalesReadPermission(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	seedExportPluginWithEntities(t, dp.Db, "com.t.exp13", "datev", "DATEV Export", []string{"eod_closes"}, false)
+	seedArchivedEODClose(t, dp.Db, "2026-08-21")
+
+	var captured plugins.Event
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	bus.SetEventMode("export.requested.ask", plugins.Blocking)
+	answer, _ := json.Marshal(map[string]any{"ok": true, "message": "ok"})
+	if _, err := bus.SubscribeWithHandler(t.Context(), "com.t.exp13", []string{"export.requested.ask"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			captured = ev
+			return answer, nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-08-01"}, "to": {"2026-08-31"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (missing sales:read must not fail the whole request), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var payload struct {
+		EODCloses json.RawMessage `json:"eod_closes"`
+	}
+	if err := json.Unmarshal(captured.Payload, &payload); err != nil {
+		t.Fatalf("parse captured payload %s: %v", captured.Payload, err)
+	}
+	if payload.EODCloses != nil && string(payload.EODCloses) != "null" {
+		t.Fatalf("expected eod_closes omitted without sales:read, got %s", payload.EODCloses)
 	}
 }
