@@ -323,6 +323,13 @@ func TestMiddlewareExemptsFirstBootPairingRoutes(t *testing.T) {
 		"/api/setup/discover-primaries",
 		"/api/setup/pair-start",
 		"/api/setup/pair-status",
+		// ut-docs#1092: the wizard's catalog-language install POST — same
+		// "no operator can possibly exist yet" shape as the rest of this
+		// list. Found by a real driven browser run, not a test: the
+		// httptest-level handler tests never exercise this middleware at
+		// all, so the route worked in isolation and 401'd for real on an
+		// actual fresh till.
+		"/api/setup/language",
 	} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))

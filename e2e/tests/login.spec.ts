@@ -45,6 +45,46 @@ test.describe.serial('first-boot setup and PIN login', () => {
     expect(bg, 'setup logo must have no backing plate').toBe('rgba(0, 0, 0, 0)');
   });
 
+  // ut-docs#1092: the wizard's language step must never block on (or hide)
+  // the marketplace language catalog. This till boots with the default
+  // marketplace endpoint (127.0.0.1:8081 — nothing listening), i.e. the
+  // catalog is genuinely unreachable, which is exactly the offline-first
+  // acceptance path: step 1 still renders, the four bundled locales are
+  // still one-tap links, no half-working catalog install tile appears, and
+  // the operator is told plainly that more languages arrive once connected
+  // rather than being left wondering where their language went. Runs in its
+  // own context (no session needed, first-boot only) before the shared
+  // wizard flow completes first boot.
+  test('the language step works offline: bundled locales plus an honest more-once-connected note', async ({ browser }) => {
+    const ctx = await browser.newContext();
+    const p = await ctx.newPage();
+    try {
+      await p.goto('/setup');
+      const step1 = p.locator('[data-step="1"]');
+      await expect(step1.locator('h1')).toContainText('Choose your language');
+
+      // Every bundled locale is a real, tappable link — never blocked by
+      // the unreachable catalog.
+      for (const lang of ['en', 'tr', 'fa', 'ar']) {
+        await expect(step1.locator(`a[href="/setup?lang=${lang}"]`)).toBeVisible();
+      }
+
+      // Catalog unreachable and nothing cached: no install tile is offered
+      // (it could not be honoured), and the note says more languages come
+      // once the till is connected.
+      await expect(step1.locator('[formaction="/api/setup/language"]')).toHaveCount(0);
+      await expect(step1.locator('[data-catalog-unavailable]')).toContainText('More languages');
+
+      // Tapping a bundled locale still drives the rest of the wizard
+      // immediately (the ?lang= cookie mechanism, unchanged).
+      await step1.locator('a[href="/setup?lang=tr"]').click();
+      await expect(p).toHaveURL(/lang=tr/);
+      await expect(p.locator('[data-step="1"] h1')).toContainText('Dilinizi seçin');
+    } finally {
+      await ctx.close();
+    }
+  });
+
   // ut-docs#344. Two defects, one screen, and only a real browser catches
   // either: the page never loaded htmx.min.js, so the hx-post was inert
   // markup and the Join button did nothing at all; and htmx 1.9 DISCARDS the

@@ -42,7 +42,7 @@
     <main class="setup-card" x-data="{ step: {{ if .errKey }}{{ .errStep }}{{ else }}1{{ end }}, last: 8,
                                        country: '{{ .detectedCountry }}', currency: '{{ .detectedCurrency }}',
                                        tax: '{{ .detectedTaxRatePct }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}',
-                                       currencyTouched: false }">
+                                       currencyTouched: false, installingLang: '' }">
       <img class="login-logo" src="/public/assets/logo/unitill-logo.svg" alt="Universal Till" />
       <div class="setup-dots" aria-hidden="true">
         <template x-for="i in last"><span class="setup-dot" :class="{ active: i <= step }"></span></template>
@@ -51,6 +51,23 @@
       {{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
 
       <form method="post" action="/api/setup">
+        <!-- ut-docs#1092 review finding: this form now holds a submit
+             button at EVERY step (the language-catalog install tiles added
+             below, one per step-1 language), because every step's
+             <section> lives in the DOM the whole time (x-show, not x-if) —
+             so the first submit button in the WHOLE form, regardless of
+             which step is visually active, becomes the browser's implicit
+             "press Enter in any text field" target (shop name, TSE fields,
+             the PIN). Without this guard, Enter on step 4+ silently fires
+             an unintended language install and discards whatever the
+             operator had typed. A disabled, hidden, always-first submit
+             button neutralizes implicit submission everywhere in the
+             wizard (per the HTML spec's default-button algorithm: a
+             disabled default button stops implicit submission rather than
+             falling through to the next one) while every EXPLICIT click —
+             a catalog tile, Finish — is untouched. -->
+        <button type="submit" disabled hidden aria-hidden="true" tabindex="-1"
+                data-implicit-submit-guard></button>
         <!-- Step 1 · language (reloads with the chosen locale) -->
         <section x-show="step === 1" x-cloak.important data-step="1">
           <h1>{{ T "setup.language.title" }}</h1>
@@ -62,12 +79,45 @@
           {{ if .detectedLangCode }}
             <p class="muted" data-detected-lang="{{ .detectedLangCode }}">{{ printf (T "setup.language.detected_coming_soon") .detectedLangCode }}</p>
           {{ end }}
+          {{ $current := locale }}
+          <!-- ut-docs#1092: a catalog-only language install failed or timed
+               out in the foreground (POST /api/setup/language) — it is now
+               in the background retry queue, and the wizard says so plainly
+               instead of silently continuing in the fallback. -->
+          {{ if .installPendingLang }}
+            <p class="muted" data-install-pending="{{ .installPendingLang }}">{{ printf (T "setup.language.install_pending") .installPendingLang $current }} {{ T "setup.language.install_retry_hint" }}</p>
+          {{ end }}
           <div class="setup-langs">
-            {{ $current := locale }}
             {{ range locales }}
               <a class="btn{{ if eq . $current }} primary{{ end }}" href="/setup?lang={{ . }}">{{ . }}</a>
             {{ end }}
+            <!-- ut-docs#1092: every marketplace language pack the till could
+                 run in, not just what's compiled in/installed. Each tile is a
+                 submit button re-targeting the wizard's own <form> at
+                 POST /api/setup/language (formaction — a nested <form> here
+                 would be invalid HTML inside the wizard form); the handler
+                 installs the pack (Ed25519-verified, the existing base-plugin
+                 path) and continues the wizard in that language. Deduped
+                 server-side against the locales already listed above. -->
+            {{ range .catalogLangs }}
+              <button type="submit" class="btn" name="locale" value="{{ . }}"
+                      formaction="/api/setup/language" formmethod="post" formnovalidate
+                      data-catalog-lang="{{ . }}"
+                      :aria-busy="installingLang === '{{ . }}' ? 'true' : 'false'"
+                      @click="installingLang = '{{ . }}'">{{ . }}</button>
+            {{ end }}
           </div>
+          <!-- Install-in-progress line: visible feedback while the pack
+               downloads (the POST is a full-page navigation, so this shows
+               from the tap until the redirect lands). aria-live so a screen
+               reader hears it too. -->
+          <p class="muted" x-show="installingLang" x-cloak aria-live="polite"><span x-text="installingLang"></span> · {{ T "setup.language.installing" }}</p>
+          {{ if .catalogUnavailable }}
+            <!-- Offline-first: the catalog being unreachable never blocks
+                 step 1 — bundled locales still work, and this says plainly
+                 that more arrive once the till is connected. -->
+            <p class="muted" data-catalog-unavailable>{{ T "setup.language.more_when_connected" }}</p>
+          {{ end }}
           <div class="setup-nav">
             <button type="button" class="btn primary" @click="step = 2">{{ T "setup.next" }}</button>
             <button type="button" class="btn secondary" @click="step = 99" style="margin-top:.4rem">{{ T "setup.join.title" }}</button>

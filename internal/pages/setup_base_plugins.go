@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"sync"
 	"time"
@@ -58,6 +59,159 @@ const (
 	basePluginRetryInterval     = 5 * time.Minute
 )
 
+// setupWizardLanguageInstallTimeout bounds POST /api/setup/language's
+// foreground install (ut-docs#1092). Deliberately a SEPARATE constant from
+// setupBasePluginAttemptTimeout: that one caps a silent, background,
+// best-effort attempt the operator never waits on, while this is a
+// user-initiated install the operator is actively watching — it gets room
+// for a real download before degrading to the background retry.
+const setupWizardLanguageInstallTimeout = 20 * time.Second
+
+// setupLanguageCatalogTTL / setupLanguageCatalogFetchTimeout shape the
+// wizard step-1 language-tile catalog cache (ut-docs#1092): the fetch is
+// time-boxed well under the page render's patience so GET /setup can never
+// hang on the catalog, and a successful response is reused for the TTL so
+// stepping back and forth through the wizard doesn't hammer the marketplace.
+const (
+	setupLanguageCatalogTTL          = 5 * time.Minute
+	setupLanguageCatalogFetchTimeout = 4 * time.Second
+)
+
+// setupLanguageCatalog is the package-level TTL cache behind
+// setupCatalogLanguageLocales. Process-global on purpose (the catalog is the
+// same for every request) and mutex-guarded; `locales` holds normalized
+// base-language tags, sorted, so renders are stable.
+var setupLanguageCatalog struct {
+	mu        sync.Mutex
+	fetchedAt time.Time
+	locales   []string
+	hasData   bool
+}
+
+// setupCatalogLanguageLocales returns every base-language tag some
+// marketplace canonical_type=language listing declares it serves — the
+// wizard's "languages you could have" browse list (ut-docs#1092). This is
+// deliberately looser than resolveAndInstallBasePlugin's identity match
+// (browsing wants everything, with no Locale filter on the request), but
+// still filters CanonicalType client-side — the server-side capability
+// filter isn't trusted alone, same posture as the resolve step above.
+//
+// Freshness: a fetch newer than setupLanguageCatalogTTL is served straight
+// from the cache; on a fetch error the stale cache (if any) is served rather
+// than dropping the tiles, and with nothing cached at all it reports
+// ok=false so the caller can degrade to bundled-only plus an honest
+// "more once connected" note. Never returns an error: offline-first means
+// the wizard render must not care why the catalog is missing.
+//
+// Uses enroll.Effective (not EnsureRegistered): catalog browsing needs no
+// store identity — same as plugins_store_page.go's storeInstaller — and a
+// lazy registration attempt on every first-boot render would be pure delay.
+func setupCatalogLanguageLocales(ctx context.Context, d *common.Deps) ([]string, bool) {
+	setupLanguageCatalog.mu.Lock()
+	if setupLanguageCatalog.hasData && time.Since(setupLanguageCatalog.fetchedAt) < setupLanguageCatalogTTL {
+		cached := append([]string(nil), setupLanguageCatalog.locales...)
+		setupLanguageCatalog.mu.Unlock()
+		return cached, true
+	}
+	setupLanguageCatalog.mu.Unlock()
+
+	// Nil-safe on Cfg (some auth-page test/tool deps run without one):
+	// no config means no catalog to ask, the same degrade as unreachable.
+	if d == nil || d.Cfg == nil {
+		return nil, false
+	}
+
+	fetchCtx, cancel := context.WithTimeout(ctx, setupLanguageCatalogFetchTimeout)
+	defer cancel()
+	effCfg := enroll.Effective(d.Cfg)
+	client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
+	resp, err := client.ListPlugins(fetchCtx, &marketplace.ListPluginsRequest{Capability: []string{"language"}})
+	if err != nil {
+		logging.L().Infof("setup wizard: language catalog unreachable: %v", err)
+		setupLanguageCatalog.mu.Lock()
+		defer setupLanguageCatalog.mu.Unlock()
+		if setupLanguageCatalog.hasData {
+			return append([]string(nil), setupLanguageCatalog.locales...), true
+		}
+		return nil, false
+	}
+
+	seen := map[string]bool{}
+	locales := []string{}
+	for i := range resp.Plugins {
+		p := &resp.Plugins[i]
+		if p.CanonicalType != "language" {
+			continue
+		}
+		for _, l := range p.AvailableLocales {
+			b := baseLang(strings.TrimSpace(l))
+			// The catalog is an UNSIGNED marketplace response — Ed25519
+			// only verifies the plugin artifact itself, never this listing
+			// metadata — and these values are cached and later rendered
+			// straight into Alpine JS-attribute expressions
+			// (setup.html's @click/:aria-busy). isBareLocaleCode is the
+			// same gate setup_page.go already applies to every other
+			// externally-influenced locale value; anything that fails it
+			// here must never reach the cache, let alone the template.
+			if !isBareLocaleCode(b) || seen[b] {
+				continue
+			}
+			seen[b] = true
+			locales = append(locales, b)
+		}
+	}
+	sort.Strings(locales)
+
+	setupLanguageCatalog.mu.Lock()
+	setupLanguageCatalog.locales = locales
+	setupLanguageCatalog.fetchedAt = time.Now()
+	setupLanguageCatalog.hasData = true
+	setupLanguageCatalog.mu.Unlock()
+	return append([]string(nil), locales...), true
+}
+
+// setupCatalogOnlyLanguages drops every catalog locale the till already
+// serves (base-language comparison, both directions region-agnostic — an
+// installed "de" covers a catalog "de-DE" and vice versa): those already get
+// a bundled/installed tile via {{ range locales }}, so a second tile would
+// just be the same language twice.
+func setupCatalogOnlyLanguages(catalog, available []string) []string {
+	out := []string{}
+	for _, c := range catalog {
+		covered := false
+		for _, a := range available {
+			if baseLang(strings.TrimSpace(a)) == baseLang(strings.TrimSpace(c)) {
+				covered = true
+				break
+			}
+		}
+		if !covered {
+			out = append(out, c)
+		}
+	}
+	return out
+}
+
+// addPendingBasePlugin merges ONE spec into the persisted pending list
+// (append-if-absent), unlike savePendingBasePlugins' wholesale replace —
+// the wizard's language step must join #1055's background retry without
+// clobbering whatever the country step already queued. An unreadable list
+// (corrupt JSON) is replaced rather than kept: persisting this spec matters
+// more than preserving bytes no reader can parse anyway.
+func addPendingBasePlugin(ctx context.Context, d *common.Deps, spec basePluginSpec) error {
+	pending, err := loadPendingBasePlugins(ctx, d)
+	if err != nil {
+		logging.L().Warnf("setup wizard: pending base plugins unreadable, resetting list: %v", err)
+		pending = nil
+	}
+	for _, s := range pending {
+		if s == spec {
+			return nil
+		}
+	}
+	return savePendingBasePlugins(ctx, d, append(pending, spec))
+}
+
 // installBasePluginsForSetup is POST /api/setup's hook (ut-docs#591): looks
 // up the confirmed country's free base plugins, persists them as pending
 // BEFORE any network attempt (so the list survives even if the process dies
@@ -72,23 +226,33 @@ func installBasePluginsForSetup(ctx context.Context, d *common.Deps, country str
 		return
 	}
 	pending := append([]basePluginSpec(nil), specs...)
-	if err := savePendingBasePlugins(ctx, d, pending); err != nil {
-		logging.L().Errorf("setup wizard: persist pending base plugins: %v", err)
+	// Merge (append-if-absent), never wholesale-replace: ut-docs#1092's
+	// wizard language step can already have queued an unrelated spec (e.g.
+	// a catalog-only language picked at step 1, still offline) before the
+	// country step ever runs. A plain savePendingBasePlugins here silently
+	// dropped that spec — found by independent review, TestInstallBase-
+	// PluginsForSetup_MergesWithLanguageStepPending pins the fix.
+	for _, spec := range pending {
+		if err := addPendingBasePlugin(ctx, d, spec); err != nil {
+			logging.L().Errorf("setup wizard: persist pending base plugins: %v", err)
+		}
 	}
 
 	attemptCtx, cancel := context.WithTimeout(ctx, setupBasePluginAttemptTimeout)
 	defer cancel()
-	remaining := make([]basePluginSpec, 0, len(pending))
 	for _, spec := range pending {
 		if err := resolveAndInstallBasePlugin(attemptCtx, d, spec); err != nil {
 			logging.L().Warnf("setup wizard: base plugin %s/%s not installed yet, will retry in background: %v",
 				spec.CanonicalType, spec.Locale, err)
-			remaining = append(remaining, spec)
+			continue
 		}
-	}
-	if len(remaining) != len(pending) {
-		if err := savePendingBasePlugins(ctx, d, remaining); err != nil {
-			logging.L().Errorf("setup wizard: persist pending base plugins after attempt: %v", err)
+		// Installed (or a no-op because an equivalent plugin was already
+		// active): drop just THIS spec from whatever else is pending —
+		// same reasoning as above, a wholesale replace here would erase an
+		// unrelated spec another step queued.
+		if err := dismissPendingBasePlugin(ctx, d, spec.CanonicalType, spec.Locale); err != nil {
+			logging.L().Errorf("setup wizard: clear installed pending base plugin %s/%s: %v",
+				spec.CanonicalType, spec.Locale, err)
 		}
 	}
 }

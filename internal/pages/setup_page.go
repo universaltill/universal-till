@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -39,6 +40,23 @@ func isValidShopType(v string) bool {
 		}
 	}
 	return false
+}
+
+// isBareLocaleCode reports whether v looks like a bare base-language tag
+// ("de", "fa", "ckb") — the only shape the wizard's install flow ever puts
+// in ?install_pending= or accepts in POST /api/setup/language's locale
+// field. Anything else (region tags included — the flow normalizes those
+// away before this point) is untrusted input to drop, not to echo.
+func isBareLocaleCode(v string) bool {
+	if len(v) < 2 || len(v) > 8 {
+		return false
+	}
+	for _, r := range v {
+		if r < 'a' || r > 'z' {
+			return false
+		}
+	}
+	return true
 }
 
 // wizardCountries reads the wizard's country list from country_settings
@@ -184,6 +202,22 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if langUnavailableCode != "" {
 			data["detectedLangCode"] = langUnavailableCode
 		}
+		// ut-docs#1092: step 1 lists every language the product can run in —
+		// the bundled/installed locales plus every marketplace language pack.
+		// TTL-cached and time-boxed (setupCatalogLanguageLocales), so this
+		// render never hangs on the catalog; unreachable-with-nothing-cached
+		// degrades to bundled-only plus an honest note, never an error.
+		catalogLangs, catalogOK := setupCatalogLanguageLocales(r.Context(), d)
+		data["catalogLangs"] = setupCatalogOnlyLanguages(catalogLangs, httpx.AvailableLocales())
+		data["catalogUnavailable"] = !catalogOK
+		// A failed/slow foreground install redirected back here with
+		// ?install_pending=<locale> (POST /api/setup/language below): tell
+		// the operator plainly that their language is still installing and
+		// the wizard is continuing in the fallback meanwhile — never a
+		// silent fallback. Only a plausible bare locale code is echoed.
+		if p := strings.ToLower(strings.TrimSpace(r.URL.Query().Get("install_pending"))); isBareLocaleCode(p) {
+			data["installPendingLang"] = p
+		}
 		// Which step an error re-render lands on: business-identity errors
 		// (setup.error.tse_*) belong to step 3, everything else (PIN, save)
 		// to the PIN step (7). On a POST re-render the identity fields the
@@ -230,7 +264,16 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				http.Redirect(w, r, "/setup?lang="+code, http.StatusSeeOther)
 				return
 			}
-			if code != "" {
+			// ut-docs#1092 review finding: a language the marketplace catalog
+			// already offers is NOT "genuinely unavailable" — it must never
+			// pair the "we don't have de yet" note with a working de install
+			// tile on the very same screen (the exact field report this card
+			// exists to fix, reproduced by a second mechanism). Checking here
+			// is a cache hit, not a second network round-trip:
+			// setupCatalogLanguageLocales's own TTL cache already serves the
+			// fetch renderWizard performs a few lines below.
+			catalogLangs, _ := setupCatalogLanguageLocales(r.Context(), d)
+			if code != "" && !localeInList(catalogLangs, code) {
 				langUnavailableCode = code
 				// Best-effort, per this wizard's standing pattern (see the
 				// demo-data seed below): a failed write here must never block
@@ -440,5 +483,78 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			redirectTo = "/import"
 		}
 		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
+	})
+
+	// ut-docs#1092: the wizard's step-1 install tiles. A catalog-only
+	// language is a plain form POST here (this wizard is plain multi-page
+	// navigation — no htmx partial-swaps to extend); the handler installs
+	// the pack through the SAME Ed25519-verified path as #1055's country
+	// auto-install (resolveAndInstallBasePlugin → cloudInstallPluginVersion),
+	// then continues the wizard in that language via the existing ?lang=
+	// mechanism — the redirect's ?lang= sets the ut_lang cookie exactly as
+	// picking a bundled locale does (httpx.ResolveLocale), so the two paths
+	// end in identical state. Same auth-exempt first-boot-only tier as
+	// POST /api/setup: pre-provisioning, no admin session exists yet.
+	mux.HandleFunc("POST /api/setup/language", func(w http.ResponseWriter, r *http.Request) {
+		firstBoot, err := svc.NeedsFirstBoot(r.Context())
+		if err != nil || !firstBoot {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		_ = r.ParseForm()
+
+		// Validate against the cached catalog fetch (the same cache the tile
+		// render came from): the POST body must not be able to pick an
+		// arbitrary listing. baseLang-normalized first, so the value compared
+		// is the value a tile could actually carry.
+		locale := baseLang(strings.TrimSpace(r.PostFormValue("locale")))
+		catalogLangs, _ := setupCatalogLanguageLocales(r.Context(), d)
+		if !isBareLocaleCode(locale) || !localeInList(catalogLangs, locale) {
+			http.Error(w, "unknown language", http.StatusBadRequest)
+			return
+		}
+
+		// Foreground, user-waited-on install: gets its own, longer timeout
+		// than the background attempt's setupBasePluginAttemptTimeout — see
+		// setupWizardLanguageInstallTimeout's doc comment.
+		spec := basePluginSpec{CanonicalType: "language", Locale: locale}
+		installCtx, cancel := context.WithTimeout(r.Context(), setupWizardLanguageInstallTimeout)
+		installErr := resolveAndInstallBasePlugin(installCtx, d, spec)
+		cancel()
+		if installErr == nil {
+			// Same resulting state as tapping a bundled tile: the ?lang=
+			// redirect sets the cookie and re-renders the wizard in the
+			// freshly-installed locale (install → ReloadPlugins → i18n
+			// overlays, atomic, no restart). The availability check guards
+			// the rare nil-and-nothing-installed case (listing vanished
+			// between the cached render and this POST) — but only where a
+			// plugin manager is actually wired to load overlays (production);
+			// bare test/tool deps without one can't observe availability.
+			if d.Pm == nil || localeInList(httpx.AvailableLocales(), locale) {
+				http.Redirect(w, r, "/setup?lang="+url.QueryEscape(locale), http.StatusSeeOther)
+				return
+			}
+		} else {
+			logging.L().Warnf("setup wizard: foreground language install %s failed, queueing background retry: %v", locale, installErr)
+		}
+
+		// Failure or timeout: never a silent fallback. The spec joins
+		// #1055's persisted pending list (background retry + Settings chip),
+		// and the redirect names both the still-installing locale and the
+		// fallback the wizard continues in (renderWizard's install_pending
+		// note).
+		if err := addPendingBasePlugin(r.Context(), d, spec); err != nil {
+			logging.L().Errorf("setup wizard: persist pending language install %s: %v", locale, err)
+		}
+		// baseLang-normalized: ResolveLocale can return a region-tagged value
+		// (e.g. the OS-detected default "en-US") that is never one of the
+		// wizard's own bare-code tiles/notes ("en", "tr", "fa", "ar", "de")
+		// — echoing it raw read as "continuing in en-US for now", which is
+		// inconsistent with every other locale surface in this wizard.
+		fallback := baseLang(httpx.ResolveLocale(w, r))
+		if !localeInList(httpx.AvailableLocales(), fallback) {
+			fallback = "en"
+		}
+		http.Redirect(w, r, "/setup?lang="+url.QueryEscape(fallback)+"&install_pending="+url.QueryEscape(locale), http.StatusSeeOther)
 	})
 }

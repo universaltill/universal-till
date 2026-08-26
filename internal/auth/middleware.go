@@ -46,6 +46,12 @@ func exempt(path string) bool {
 	case "/api/sync/enroll", "/api/sync/ping", "/api/sync/snapshot", "/api/sync/sales", "/api/sync/admin",
 		"/api/sync/stock", "/api/sync/plugins", "/api/sync/assets", "/api/sync/assets/file", "/api/setup/join",
 		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status",
+		// ut-docs#1092: the wizard's step-1 catalog-language install POST —
+		// same shape as the rest of this /api/setup/* group: it refuses
+		// once an operator exists (NeedsFirstBoot, checked in the handler
+		// itself), and a brand-new till has no operator to hold a session
+		// in the first place.
+		"/api/setup/language",
 		// ut-docs#537: a joining replica has no session on the primary at
 		// all — it's a stranger LAN device sending its first-ever request
 		// there. The inbound pair request is unauthenticated by design

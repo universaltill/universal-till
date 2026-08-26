@@ -88,7 +88,11 @@ Picking Germany or Spain in the first-boot setup wizard auto-installs that
 country's free language pack in the background — for every merchant,
 subscribed or not — through this same verified install path, offline-tolerant
 (it just retries once the network's back). No marketplace hunting required;
-declining/removing it is one tap in Settings.
+declining/removing it is one tap in Settings. The wizard's language screen
+itself also lists every marketplace language pack alongside the built-in
+locales: pick one and it downloads (same verified path) and the wizard simply
+continues in that language — offline, the built-in locales still work and the
+wizard says plainly that more become available once connected.
 
 Picking Germany also adds an optional business-details step (legal name,
 owner, tax number, address — never bank details) that kicks off managed
