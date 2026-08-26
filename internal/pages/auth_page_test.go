@@ -274,3 +274,50 @@ func TestUsersPagePermissions(t *testing.T) {
 		t.Error("deactivated user's session still resolves")
 	}
 }
+
+// ut-docs#1096: login.html and setup.html are standalone documents (their
+// own <html>, bypassing web/ui/layouts/base.html) and were shipping without
+// web/public/osk.js at all — a keyboard-less touchscreen till could
+// neither complete setup (11 text inputs) nor sign in (2) afterwards.
+// Static presence (scripts/ci/guard-osk-loaded.sh) catches "the tag is
+// missing"; this proves the actual rendered response carries it, same
+// split as guard-autofill-suppression.sh / autofill-suppression-400.spec.ts.
+// Also asserts body[data-osk] now reaches these two pages — before this
+// fix neither template set the attribute at all, so osk.js's own
+// `document.body.dataset.osk || 'auto'` read silently fell back to "auto"
+// regardless of the operator's forced Settings choice (osk_mode_test.go
+// covers that mechanism on base-layout pages; these two pages bypass the
+// layout the same way they bypass osk.js).
+func TestLoginAndSetupLoadOnScreenKeyboard(t *testing.T) {
+	withOSLocale(t, "", "")
+	mux, _, _ := newAuthTestMux(t)
+
+	assertOSK := func(label string, rec *httptest.ResponseRecorder) {
+		t.Helper()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: code=%d, want 200", label, rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `src="/public/osk.js`) {
+			t.Errorf("%s: response never loads osk.js — keyboard-less touchscreen till locked out", label)
+		}
+		if !strings.Contains(body, `data-osk="auto"`) {
+			t.Errorf("%s: <body> missing data-osk=\"auto\" — the OSK mode setting can't reach this page", label)
+		}
+	}
+
+	// Fresh DB: GET /setup renders login.html's sibling standalone document
+	// directly (first-boot wizard).
+	assertOSK("GET /setup (first boot)", get(t, mux, "/setup"))
+
+	// Complete first-boot setup so /login renders its normal PIN keypad
+	// (a fresh DB's GET /login redirects to /setup instead, per
+	// TestFirstBootSetupThenLogin above) — same route both real forms of
+	// login.html (first-boot admin-PIN-creation and the regular keypad)
+	// take through the one template, so this also covers the firstBoot
+	// branch implicitly.
+	if rec := postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}}, nil); rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	assertOSK("GET /login (keypad)", get(t, mux, "/login"))
+}
