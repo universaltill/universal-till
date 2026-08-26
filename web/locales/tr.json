@@ -1713,5 +1713,8 @@
   "settings.tse.reason.not_configured": "TSE kurulumu bu markette henüz kullanılamıyor",
   "settings.tse.reason.invalid_request": "gönderilen işletme bilgileri kabul edilmedi — vergi numarasını kontrol edin",
   "settings.tse.reason.rejected": "istek reddedildi",
-  "settings.tse.dismiss_btn": "Kapat"
+  "settings.tse.dismiss_btn": "Kapat",
+  "settings.fiscal_signer.missing.title": "Mali imzalayıcı yüklü değil",
+  "settings.fiscal_signer.missing.message": "Bu işletme, satışların yasal resmi kaydını tutan sistem olarak çalışacak şekilde ayarlanmış, ancak mali imzalama eklentisi yüklü değil — satışlar imzalanmıyor. Bunu düzeltmek için ülkenizin vergi eklentisini yükleyin.",
+  "settings.fiscal_signer.missing.install_btn": "Eklentiyi yükle"
 }
