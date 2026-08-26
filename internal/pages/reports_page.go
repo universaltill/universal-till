@@ -310,7 +310,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				"Margins":   margins,
 			})(w, r)
 		case "tax":
-			taxBands, _ := repo.TaxSummary(r.Context(), window.From, window.To)
+			taxBands, _ := computeTaxSummary(r.Context(), repo, window.From, window.To)
 			type taxRow struct {
 				Rate string
 				Net  int64

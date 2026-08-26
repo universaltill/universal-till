@@ -872,7 +872,8 @@ ORDER BY revenue DESC`, day)
 // (ut-docs#559). hh=mm=0 (the default, calendar-local-midnight) is a no-op
 // vs. the previous query when the host timezone is UTC.
 // Returns are excluded, matching DayTotal on the same dashboard (and
-// SlowItems/busyBuckets); TaxSummary is the fiscal view and nets them.
+// SlowItems/busyBuckets); the Reports "Tax" tab (computeTaxSummary,
+// ut-docs#1115) is the fiscal view and nets them.
 func (r *POSRepo) SalesByDay(ctx context.Context, from, to time.Time, hh, mm int) ([]DailySales, error) {
 	fromStr, toStr := windowArgs(from, to)
 	hourMod := fmt.Sprintf("%d hours", -hh)
@@ -1047,7 +1048,8 @@ WHERE status = 'completed' AND sale_type = 'sale'
 // summary an owner (or their accountant) needs per return period. JSON tags
 // are snake_case per this repo's API convention: EODReport.TaxBands
 // (ut-docs#1003) marshals these into the archived/downloaded Z-report;
-// TaxSummary's template-rendered use reads the Go fields directly and never
+// the Reports "Tax" tab's template-rendered use (internal/pages'
+// computeTaxSummary, ut-docs#1115) reads the Go fields directly and never
 // marshals, so the tags change no pre-existing wire format.
 type TaxBand struct {
 	RateBP int   `json:"rate_bp"` // basis points (2000 = 20%)
@@ -1068,33 +1070,78 @@ type MethodTaxBand struct {
 	Gross  int64  `json:"gross"`
 }
 
-// TaxSummary groups completed sales' lines by tax rate over [from, to).
-// Returns reduce the figures (sale_type='return' lines subtract).
-func (r *POSRepo) TaxSummary(ctx context.Context, from, to time.Time) ([]TaxBand, error) {
+// SalesForTaxWindow returns completed sales (with their lines) whose
+// created_at falls in the half-open window [from, to) — the raw fetch the
+// Reports "Tax" tab bands off of (ut-docs#1115, replacing the old
+// TaxSummary, which aggregated sale_lines directly and so — like the
+// pre-ut-docs#1003 Z-report — couldn't see a whole-sale discount or a
+// service charge, neither of which has a sale_lines row).
+//
+// Deliberately time.Time/windowArgs-based, not SalesForTaxBands' calendar-
+// day BETWEEN: the Tax tab takes an arbitrary rolling window (e.g. "last 30
+// days"), not a Z-report's single calendar day. Reuses EODTaxBandSale/
+// EODTaxBandLine and the same zero-value-line exclusion (see
+// SalesForTaxBands' own doc comment) so the pages layer can band these
+// sales with the exact same pos.VATBandsForSale call the day-close Z-report
+// bands with — the two banding math paths can never disagree over the SAME
+// set of sales. The window ITSELF can still differ from a Z-report's,
+// though: this uses windowArgs' raw datetime bounds with no business-day
+// shift, while EndOfDay/EndOfDayRange apply reports.business_day_start
+// (ut-docs#519) before picking a calendar day — same set at the default
+// midnight boundary, genuinely different sales for a shop that has pushed
+// it later. Payments aren't fetched here: nothing downstream of this
+// builds a MethodTaxBand cross-tab.
+func (r *POSRepo) SalesForTaxWindow(ctx context.Context, from, to time.Time) ([]EODTaxBandSale, error) {
 	fromStr, toStr := windowArgs(from, to)
-	rows, err := r.db.QueryContext(ctx, `
-SELECT sl.tax_rate_bp,
-       COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN -sl.total_before_tax ELSE sl.total_before_tax END), 0),
-       COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN -sl.tax_amount ELSE sl.tax_amount END), 0)
+	saleRows, err := r.db.QueryContext(ctx, `
+SELECT id, sale_type, subtotal, discount_total, tax_total, total,
+       service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total
+FROM sales
+WHERE status = 'completed'
+  AND datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)
+ORDER BY created_at, id`, fromStr, toStr)
+	if err != nil {
+		return nil, fmt.Errorf("tax window sales: %w", err)
+	}
+	defer saleRows.Close()
+	var out []EODTaxBandSale
+	idx := map[string]int{}
+	for saleRows.Next() {
+		var s EODTaxBandSale
+		if err := saleRows.Scan(&s.ID, &s.SaleType, &s.Subtotal, &s.DiscountTotal,
+			&s.TaxTotal, &s.Total, &s.ServiceCharge, &s.ServiceChargeTaxBasisBP, &s.VoucherIssueTotal); err != nil {
+			return nil, fmt.Errorf("scan tax window sale: %w", err)
+		}
+		idx[s.ID] = len(out)
+		out = append(out, s)
+	}
+	if err := saleRows.Err(); err != nil {
+		return nil, err
+	}
+
+	lineRows, err := r.db.QueryContext(ctx, `
+SELECT sl.sale_id, COALESCE(sl.tax_rate_bp, 0), sl.tax_amount, sl.total_after_tax
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
 WHERE s.status = 'completed'
   AND datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) < datetime(?)
-GROUP BY sl.tax_rate_bp ORDER BY sl.tax_rate_bp DESC`, fromStr, toStr)
+  AND (sl.total_before_tax != 0 OR sl.total_after_tax != 0)
+ORDER BY sl.sale_id, sl.line_no`, fromStr, toStr)
 	if err != nil {
-		return nil, fmt.Errorf("tax summary: %w", err)
+		return nil, fmt.Errorf("tax window lines: %w", err)
 	}
-	defer rows.Close()
-	var out []TaxBand
-	for rows.Next() {
-		var b TaxBand
-		if err := rows.Scan(&b.RateBP, &b.Net, &b.Tax); err != nil {
-			return nil, fmt.Errorf("scan tax band: %w", err)
+	defer lineRows.Close()
+	for lineRows.Next() {
+		var saleID string
+		var l EODTaxBandLine
+		if err := lineRows.Scan(&saleID, &l.RateBP, &l.TaxAmount, &l.LineTotal); err != nil {
+			return nil, fmt.Errorf("scan tax window line: %w", err)
 		}
-		b.Gross = b.Net + b.Tax
-		out = append(out, b)
+		if i, ok := idx[saleID]; ok {
+			out[i].Lines = append(out[i].Lines, l)
+		}
 	}
-	return out, rows.Err()
+	return out, lineRows.Err()
 }
 
 // MarginRow is one item's revenue vs cost over the reporting window (only
