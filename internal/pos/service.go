@@ -517,15 +517,34 @@ func (s *Service) recomputeTotals() {
 	// Per-line, not a single subtotal-wide rate: lines can carry different
 	// tax codes, and the order-type dine-in/takeaway switch (§12 UStG) only
 	// changes SOME lines' rate — a flat sub-wide engine can't represent that.
-	var tax, total money.Money
+	// ut-docs#1035 (basket surface): tax below is derived from
+	// VATBandsForSale, same as computeSaleTotals's persisted sales.tax_total
+	// -- a flat per-line sum here (the pre-fix shape) never reduced for
+	// `discount` on an inclusive-priced sale, so the live basket panel would
+	// show a different VAT figure than the receipt/invoice for exactly the
+	// sales that fix corrected.
+	var total money.Money
+	vatLines := make([]VATLine, 0, len(s.lines))
 	chargeTaxLines := make([]ChargeTaxLine, 0, len(s.lines))
 	for i := range s.lines {
 		l := &s.lines[i]
 		rateBP, _ := s.effectiveTaxRateBP(*l)
 		lineTax, lineTotal := ComputeTaxBasisPoints(l.LineTotal, rateBP, s.cfg.TaxInclusive)
-		tax = tax.Add(lineTax)
 		total = total.Add(lineTotal)
+		vatLines = append(vatLines, VATLine{RateBP: rateBP, LineTotal: lineTotal.Minor(), TaxAmount: lineTax.Minor()})
 		chargeTaxLines = append(chargeTaxLines, ChargeTaxLine{RateBP: rateBP, Net: l.LineTotal})
+	}
+	// serviceCharge=0: orthogonal to the chargeTax fold below, same
+	// reasoning as computeSaleTotals (internal/pos/sales.go).
+	var tax money.Money
+	for _, b := range VATBandsForSale(vatLines, discount.Minor(), s.cfg.TaxInclusive, 0, 0) {
+		tax = tax.Add(money.FromMinor(b.Tax))
+	}
+	if tax.IsNegative() {
+		// An over-discount (discount > subtotal) can drive a band's Gross
+		// negative -- total is already floored below; mirror that here so
+		// the panel never shows a negative tax figure.
+		tax = 0
 	}
 	// Service charge (ut-docs#72): same base as CompleteSale/pos_api.go use
 	// -- the pre-tax net subtotal, after discount -- so what's shown here,

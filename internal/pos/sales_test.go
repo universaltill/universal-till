@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/money"
 	_ "modernc.org/sqlite"
 )
 
@@ -582,6 +583,173 @@ func TestCompleteSale_ExclusiveLineTotalsUnchanged(t *testing.T) {
 	}
 	if before != 100 || after != 120 {
 		t.Fatalf("exclusive line totals = %d/%d, want 100/120", before, after)
+	}
+}
+
+// ut-docs#1035: computeSaleTotals used to accumulate taxTotal as a flat
+// per-line sum, never adjusted for in.SaleDiscount (a whole-sale discount) --
+// but VATBandsForSale (the shared function invoice_page.go/eod_tax_bands.go
+// use to reconstruct a sale's VAT bands) DOES apportion the discount and
+// re-derive Tax for inclusive-priced sales, so the two disagreed. This is
+// the ticket's own reproduction: €11.90 inclusive @19% with a €1.90
+// whole-sale discount -- pre-fix taxTotal was 190 (undiscounted); the
+// correct, VATBandsForSale-consistent figure is 160.
+func TestComputeSaleTotals_InclusiveSaleDiscountReducesTaxTotal(t *testing.T) {
+	in := SaleInput{
+		TaxInclusive: true,
+		SaleDiscount: 190,
+		Lines: []SaleLineInput{
+			{ItemID: "itm1", Name: "Widget", Qty: 1, UnitPrice: 1190, TaxRateBasisPoints: 1900, LocationID: "loc1"},
+		},
+	}
+	_, taxTotal, _, _, _, err := computeSaleTotals(in)
+	if err != nil {
+		t.Fatalf("computeSaleTotals: %v", err)
+	}
+	if taxTotal != 160 {
+		t.Fatalf("taxTotal = %d, want 160 (was 190 before ut-docs#1035's fix)", taxTotal)
+	}
+}
+
+// Multi-rate-band inclusive sale + a whole-sale discount: taxTotal must
+// equal sum(VATBandsForSale(...).Tax) computed independently here from the
+// same per-line facts -- a parity assertion rather than a hardcoded number,
+// so it stays correct regardless of the exact largest-remainder rounding
+// rule, and it proves computeSaleTotals is actually feeding VATBandsForSale
+// the right per-line bands (not just correct by coincidence for one rate).
+func TestComputeSaleTotals_InclusiveMultiRateDiscountMatchesVATBands(t *testing.T) {
+	in := SaleInput{
+		TaxInclusive: true,
+		SaleDiscount: 300,
+		Lines: []SaleLineInput{
+			// Qty=2 + a line discount here (not just Qty=1/no-line-discount,
+			// independent review F7): the reconstruction below must derive
+			// the same lineNet computeSaleTotals does -- AmountForQuantity
+			// then Sub(LineDiscount) -- or a qty/line-discount mistake in
+			// production wouldn't be caught by this parity check.
+			{ItemID: "itm1", Name: "Wine", Qty: 2, UnitPrice: 500, LineDiscount: 100, TaxRateBasisPoints: 1900, LocationID: "loc1"},
+			{ItemID: "itm2", Name: "Bread", Qty: 1, UnitPrice: 500, TaxRateBasisPoints: 700, LocationID: "loc1"},
+		},
+	}
+	_, taxTotal, _, _, _, err := computeSaleTotals(in)
+	if err != nil {
+		t.Fatalf("computeSaleTotals: %v", err)
+	}
+
+	// Independently reconstruct the same per-line VAT facts (via the same
+	// AmountForQuantity + LineDiscount path computeSaleTotals uses, not a
+	// shortcut off UnitPrice alone) and re-run the shared banding function,
+	// exactly as invoice_page.go's vatBreakdown does from persisted
+	// sale_lines rows.
+	var vatLines []VATLine
+	for _, l := range in.Lines {
+		lineNet := AmountForQuantity(l.UnitPrice, l.Qty).Sub(l.LineDiscount)
+		tax, gross := ComputeTaxBasisPoints(lineNet, l.TaxRateBasisPoints, in.TaxInclusive)
+		vatLines = append(vatLines, VATLine{RateBP: l.TaxRateBasisPoints, LineTotal: gross.Minor(), TaxAmount: tax.Minor()})
+	}
+	var wantTax money.Money
+	for _, b := range VATBandsForSale(vatLines, in.SaleDiscount.Minor(), true, 0, 0) {
+		wantTax = wantTax.Add(money.FromMinor(b.Tax))
+	}
+	if taxTotal != wantTax {
+		t.Fatalf("taxTotal = %d, want %d (sum of VATBandsForSale bands)", taxTotal, wantTax)
+	}
+	if wantTax != 139 {
+		t.Fatalf("test's own reference figure = %d, want 139 -- recheck the hand-derived expectation", wantTax)
+	}
+}
+
+// Exclusive pricing must be completely unaffected by this fix: VATBandsForSale
+// leaves Tax untouched under a discount for the exclusive path (only Net/Gross
+// move), so computeSaleTotals's taxTotal for an exclusive sale + a whole-sale
+// discount must be identical before and after ut-docs#1035.
+func TestComputeSaleTotals_ExclusiveSaleDiscountTaxUnchanged(t *testing.T) {
+	in := SaleInput{
+		TaxInclusive: false,
+		SaleDiscount: 200,
+		Lines: []SaleLineInput{
+			{ItemID: "itm1", Name: "Widget", Qty: 1, UnitPrice: 1000, TaxRateBasisPoints: 1900, LocationID: "loc1"},
+		},
+	}
+	_, taxTotal, _, _, total, err := computeSaleTotals(in)
+	if err != nil {
+		t.Fatalf("computeSaleTotals: %v", err)
+	}
+	if taxTotal != 190 {
+		t.Fatalf("taxTotal = %d, want 190 (exclusive tax must not move with the sale discount)", taxTotal)
+	}
+	if total != 990 {
+		t.Fatalf("total = %d, want 990 (1000-200 discounted subtotal + 190 tax)", total)
+	}
+}
+
+// Independent review (F4): an over-discount (SaleDiscount exceeding the
+// sale's subtotal) drives a VATBandsForSale band's Gross negative for an
+// inclusive-priced sale, which -- without a clamp -- would persist a
+// NEGATIVE sales.tax_total. total is already floored at 0 for the same
+// over-discount case (see the IsNegative check right after this call in
+// computeSaleTotals); taxTotal must be floored the same way.
+func TestComputeSaleTotals_OverDiscountClampsTaxTotalNonNegative(t *testing.T) {
+	in := SaleInput{
+		TaxInclusive: true,
+		SaleDiscount: 500, // exceeds the sale's 100-minor-unit gross
+		Lines: []SaleLineInput{
+			{ItemID: "itm1", Name: "Widget", Qty: 1, UnitPrice: 100, TaxRateBasisPoints: 1900, LocationID: "loc1"},
+		},
+	}
+	_, taxTotal, _, _, total, err := computeSaleTotals(in)
+	if err != nil {
+		t.Fatalf("computeSaleTotals: %v", err)
+	}
+	if taxTotal.IsNegative() {
+		t.Fatalf("taxTotal = %d, must never be negative", taxTotal)
+	}
+	if taxTotal != 0 {
+		t.Fatalf("taxTotal = %d, want 0 for a discount that consumes the whole sale", taxTotal)
+	}
+	if total != 0 {
+		t.Fatalf("total = %d, want 0 (already-floored case)", total)
+	}
+}
+
+// Integration-level: the fix must reach the persisted sales.tax_total column
+// through the real CompleteSale path, not just the pure function.
+func TestCompleteSale_InclusiveSaleDiscountReducesPersistedTaxTotal(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Widget', 1190, 1)`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',5,datetime('now'))`)
+
+	in := SaleInput{
+		SaleType:     "sale",
+		Currency:     "EUR",
+		TaxInclusive: true,
+		SaleDiscount: 190, // €1.90 whole-sale discount
+		Lines: []SaleLineInput{
+			{ItemID: "itm1", SKU: "SKU1", Name: "Widget", Qty: 1, UnitPrice: 1190, TaxRateBasisPoints: 1900, LocationID: "loc1"},
+		},
+		Payments: []PaymentInput{
+			{MethodID: "cash", Amount: 1000, Currency: "EUR"},
+		},
+	}
+
+	saleID, err := CompleteSale(ctx, db, in)
+	if err != nil {
+		t.Fatalf("CompleteSale error: %v", err)
+	}
+	var storedTotal, taxTotal int64
+	if err := db.QueryRow(`SELECT total, tax_total FROM sales WHERE id = ?`, saleID).Scan(&storedTotal, &taxTotal); err != nil {
+		t.Fatalf("read sale: %v", err)
+	}
+	if storedTotal != 1000 {
+		t.Fatalf("stored total = %d, want 1000 (1190 - 190 discount)", storedTotal)
+	}
+	if taxTotal != 160 {
+		t.Fatalf("persisted sales.tax_total = %d, want 160 (was 190 before ut-docs#1035's fix)", taxTotal)
 	}
 }
 
