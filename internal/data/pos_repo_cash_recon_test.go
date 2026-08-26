@@ -279,6 +279,118 @@ VALUES('pay-cr', 'sale-cr', 'cash', 41110, 'GBP', 0, ?)`, closedAt); err != nil 
 	}
 }
 
+// A cash payment carrying a tip (ut-docs#1046): CashSales must hold the tip
+// out, the same way ut-docs#1007 already holds every method's tips out of
+// revenue, rather than letting it inflate the drawer's expected cash. Cash
+// tipping is off in the till UI today, but nothing at the pos.CompleteSale
+// validation layer rejects a cash MethodID carrying TipAmount (only
+// negative tips and voucher-redemption payments are rejected), so this must
+// hold correct rather than rely on an invariant the API doesn't actually
+// enforce.
+func TestEndOfDay_CashReconciliation_ExcludesCashTips(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	anchor := cashReconAnchor()
+	day := b8ExpectedDay(t, dbx.d, anchor, 0, 0)
+	closedAt := b8At(anchor)
+
+	// One cash sale of 400.00 tendered with a 20.00 tip riding the cash
+	// payment (amount 420.00 = 400.00 sale + 20.00 tip, same
+	// amount-already-includes-tip convention InsertPayment/EODTip's own
+	// doc comment establish for every payment method).
+	if _, err := dbx.d.DB.ExecContext(ctx, `
+INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, register_id, created_at, completed_at)
+VALUES('sale-cr-tip', 'R-CR-TIP', 'completed', 'sale', 'GBP', 40000, 0, 0, 40000, 'reg1', ?, ?)`, closedAt, closedAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbx.d.DB.ExecContext(ctx, `
+INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, tip_amount, paid_at)
+VALUES('pay-cr-tip', 'sale-cr-tip', 'cash', 42000, 'GBP', 0, 2000, ?)`, closedAt); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := dbx.repo.InsertShift(ctx, nil, "shift-cr-tip", "reg1", "user1", 10000, b8At(anchor.Add(-3*time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.UpdateShiftClose(ctx, nil, "shift-cr-tip", 52000, 52000, 10000, "", "", closedAt); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := dbx.repo.EndOfDay(ctx, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.CashReconciliation == nil {
+		t.Fatal("expected a cash reconciliation")
+	}
+	// EODMethod{cash}.In is the full tendered 420.00 (sale + tip); CashSales
+	// must hold the 20.00 tip back out, leaving 400.00.
+	if rep.CashReconciliation.CashSales != 40000 {
+		t.Errorf("CashSales: want 40000 (tip held out), got %d", rep.CashReconciliation.CashSales)
+	}
+	if rep.CashReconciliation.TipsHeldOut != 2000 {
+		t.Errorf("TipsHeldOut: want 2000, got %d", rep.CashReconciliation.TipsHeldOut)
+	}
+	// The report's own Tips breakdown must show the same cash-tip figure
+	// CashReconciliation subtracted -- the two are read from the same
+	// underlying data, not permitted to disagree.
+	found := false
+	for _, tp := range rep.Tips {
+		if tp.Method == "cash" {
+			found = true
+			if tp.Amount != 2000 {
+				t.Errorf("Tips[cash].Amount: want 2000, got %d", tp.Amount)
+			}
+		}
+	}
+	if !found {
+		t.Error("expected a cash entry in rep.Tips")
+	}
+}
+
+// A day with no cash tips must show TipsHeldOut as the zero value and never
+// touch CashSales -- the ordinary case, covered separately from the
+// tip-bearing one above so a regression that always subtracts something
+// can't hide behind the happy-path totals matching by coincidence.
+func TestEndOfDay_CashReconciliation_ZeroTipsHeldOutWhenNoCashTip(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	anchor := cashReconAnchor()
+	day := b8ExpectedDay(t, dbx.d, anchor, 0, 0)
+	closedAt := b8At(anchor)
+
+	if _, err := dbx.d.DB.ExecContext(ctx, `
+INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, register_id, created_at, completed_at)
+VALUES('sale-cr-notip', 'R-CR-NOTIP', 'completed', 'sale', 'GBP', 41110, 0, 0, 41110, 'reg1', ?, ?)`, closedAt, closedAt); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbx.d.DB.ExecContext(ctx, `
+INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at)
+VALUES('pay-cr-notip', 'sale-cr-notip', 'cash', 41110, 'GBP', 0, ?)`, closedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertShift(ctx, nil, "shift-cr-notip", "reg1", "user1", 10000, b8At(anchor.Add(-3*time.Hour))); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.UpdateShiftClose(ctx, nil, "shift-cr-notip", 51110, 51110, 10000, "", "", closedAt); err != nil {
+		t.Fatal(err)
+	}
+
+	rep, err := dbx.repo.EndOfDay(ctx, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rep.CashReconciliation == nil {
+		t.Fatal("expected a cash reconciliation")
+	}
+	if rep.CashReconciliation.CashSales != 41110 {
+		t.Errorf("CashSales: want 41110, got %d", rep.CashReconciliation.CashSales)
+	}
+	if rep.CashReconciliation.TipsHeldOut != 0 {
+		t.Errorf("TipsHeldOut: want 0, got %d", rep.CashReconciliation.TipsHeldOut)
+	}
+}
+
 func TestLastClosedShiftCarryForward(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
