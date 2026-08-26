@@ -329,6 +329,32 @@ func TestListPluginsResponse_DecodesLegacySnakeCasePaginationFields(t *testing.T
 	}
 }
 
+// TestListPluginsResponse_TolerantOfUnquotedSnapshotVersion covers a shape
+// never actually observed on the wire but plausible from a future protojson
+// option change or an intermediate gateway re-serializing the body: a bare
+// JSON number for snapshotVersion instead of the quoted string the live
+// marketplace sends today. Before json.RawMessage, a plain string-typed
+// field here made the WHOLE response fail to decode (including Plugins and
+// NextPageToken — the fields the ut-docs#1108 pagination loop actually
+// depends on) because encoding/json rejects a number into a string field for
+// the entire struct, not just that one field; a caller mid-pagination would
+// have seen every remaining page error out instead of just losing
+// SnapshotVersion. This must still decode Plugins/NextPageToken correctly
+// and fall back to the snake_case/zero SnapshotVersion, not error.
+func TestListPluginsResponse_TolerantOfUnquotedSnapshotVersion(t *testing.T) {
+	data := []byte(`{"plugins":[],"nextPageToken":"20","snapshotVersion":42}`)
+	var resp ListPluginsResponse
+	if err := json.Unmarshal(data, &resp); err != nil {
+		t.Fatalf("decode with unquoted snapshotVersion: %v", err)
+	}
+	if resp.NextPageToken != "20" {
+		t.Errorf("NextPageToken = %q, want %q — an unrelated field's shape must not break decoding this one", resp.NextPageToken, "20")
+	}
+	if resp.SnapshotVersion != 42 {
+		t.Errorf("SnapshotVersion = %d, want 42 (bare number, not just the quoted-string shape)", resp.SnapshotVersion)
+	}
+}
+
 // TestPluginSummary_DecodesLegacySnakeCase keeps the older rich schema working
 // (listing_id, canonical_type, trust_tier, snake_case URLs).
 func TestPluginSummary_DecodesLegacySnakeCase(t *testing.T) {
