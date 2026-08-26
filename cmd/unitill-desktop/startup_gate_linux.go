@@ -5,17 +5,11 @@ package main
 import (
 	"fmt"
 	"os"
-	"strconv"
-	"strings"
 	"time"
 )
 
-// defaultMinUptime is how far into a boot the shell refuses to create its
-// window. 60s, chosen from measurement rather than taste — see waitForSafeStartup.
-const defaultMinUptime = 60 * time.Second
-
-// minUptimeEnv lets an operator tune or disable the gate. "0" disables it.
-const minUptimeEnv = "UT_SHELL_MIN_UPTIME_SECONDS"
+// procUptime is the real source; tests point readUptimeFrom at a fixture.
+const procUptime = "/proc/uptime"
 
 // waitForSafeStartup holds the shell back until the machine is far enough
 // into its boot for WebKitGTK to render correctly (ut-docs#1093).
@@ -62,51 +56,12 @@ func waitForSafeStartup() {
 		fmt.Fprintln(os.Stderr, "startup gate: cannot read uptime, starting immediately:", err)
 		return
 	}
-	if up >= min {
+	wait := holdFor(up, min)
+	if wait == 0 {
 		return
 	}
 
-	wait := min - up
 	fmt.Fprintf(os.Stderr, "startup gate: %s into boot, holding %s before opening the window (ut-docs#1093)\n",
 		up.Round(time.Second), wait.Round(time.Second))
 	time.Sleep(wait)
-}
-
-// procUptime is the real source; tests point readUptimeFrom at a fixture.
-const procUptime = "/proc/uptime"
-
-// gateDuration resolves the hold from the environment, falling back to the
-// default. A malformed or negative value falls back rather than disabling the
-// gate: a typo must not silently reintroduce the white screen. Only an
-// explicit "0" disables it.
-func gateDuration() time.Duration {
-	raw, ok := os.LookupEnv(minUptimeEnv)
-	if !ok {
-		return defaultMinUptime
-	}
-	secs, err := strconv.Atoi(strings.TrimSpace(raw))
-	if err != nil || secs < 0 {
-		fmt.Fprintf(os.Stderr, "%s=%q is not a non-negative integer; using default %s\n",
-			minUptimeEnv, raw, defaultMinUptime)
-		return defaultMinUptime
-	}
-	return time.Duration(secs) * time.Second
-}
-
-// readUptimeFrom returns how long the machine has been up, from a /proc/uptime
-// formatted file.
-func readUptimeFrom(path string) (time.Duration, error) {
-	raw, err := os.ReadFile(path)
-	if err != nil {
-		return 0, err
-	}
-	first, _, ok := strings.Cut(strings.TrimSpace(string(raw)), " ")
-	if !ok {
-		first = strings.TrimSpace(string(raw))
-	}
-	secs, err := strconv.ParseFloat(first, 64)
-	if err != nil {
-		return 0, fmt.Errorf("parse %q: %w", first, err)
-	}
-	return time.Duration(secs * float64(time.Second)), nil
 }

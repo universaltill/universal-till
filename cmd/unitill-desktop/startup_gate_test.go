@@ -1,5 +1,3 @@
-//go:build desktop && linux
-
 package main
 
 import (
@@ -55,9 +53,13 @@ func TestReadUptimeMissingFileErrors(t *testing.T) {
 }
 
 // TestGateDurationHonoursEnv covers the operator override, including the
-// documented "0 disables" case and rejection of nonsense (which must fall back
-// to the default, never to zero — a typo must not silently disable the gate
-// that stops a shop seeing an unescapable white screen, ut-docs#1093).
+// documented "0 disables" case and rejection of nonsense (which must fall
+// back to the default, never to zero — a typo must not silently disable the
+// gate that stops a shop seeing an unescapable white screen, ut-docs#1093),
+// AND the too-large case (independent review, same ticket): a
+// seconds/milliseconds mixup or an oversized value must fall back to the
+// default too, not hold for hours or (via Duration overflow) silently
+// disable the gate the same way a negative value would.
 func TestGateDurationHonoursEnv(t *testing.T) {
 	for _, tc := range []struct {
 		name string
@@ -71,6 +73,10 @@ func TestGateDurationHonoursEnv(t *testing.T) {
 		{"whitespace tolerated", true, "  30  ", 30 * time.Second},
 		{"negative falls back to default", true, "-5", defaultMinUptime},
 		{"garbage falls back to default", true, "soon", defaultMinUptime},
+		{"exactly at the cap is honoured", true, "600", 600 * time.Second},
+		{"one past the cap falls back to default", true, "601", defaultMinUptime},
+		{"units-confusion typo falls back to default", true, "60000", defaultMinUptime},
+		{"large enough to overflow Duration falls back to default", true, "9223372037", defaultMinUptime},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if tc.set {
@@ -80,6 +86,28 @@ func TestGateDurationHonoursEnv(t *testing.T) {
 			}
 			if got := gateDuration(); got != tc.want {
 				t.Errorf("gateDuration() with %s=%q = %v, want %v", minUptimeEnv, tc.val, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestHoldFor covers waitForSafeStartup's compare-and-sleep decision in
+// isolation (independent review, ut-docs#1093): it was previously untested
+// because it was entangled with the real clock and /proc/uptime.
+func TestHoldFor(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		up, min  time.Duration
+		wantWait time.Duration
+	}{
+		{"already past the threshold", 90 * time.Second, 60 * time.Second, 0},
+		{"exactly at the threshold", 60 * time.Second, 60 * time.Second, 0},
+		{"still short of the threshold", 20 * time.Second, 60 * time.Second, 40 * time.Second},
+		{"zero uptime, zero min", 0, 0, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := holdFor(tc.up, tc.min); got != tc.wantWait {
+				t.Errorf("holdFor(%v, %v) = %v, want %v", tc.up, tc.min, got, tc.wantWait)
 			}
 		})
 	}
