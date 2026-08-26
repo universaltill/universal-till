@@ -291,6 +291,13 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 	for _, b := range VATBandsForSale(vatLines, in.SaleDiscount.Minor(), in.TaxInclusive, 0, 0) {
 		taxTotal = taxTotal.Add(money.FromMinor(b.Tax))
 	}
+	if taxTotal.IsNegative() {
+		// An over-discount (SaleDiscount exceeding subtotal) can drive a
+		// band's Gross negative -- total is already floored below for the
+		// same reason; mirror that here so a persisted sale never carries a
+		// negative tax_total.
+		taxTotal = 0
+	}
 	discountedSubtotal := subtotal.Sub(in.SaleDiscount)
 	if in.ServiceCharge.IsNegative() {
 		return 0, 0, 0, 0, 0, fmt.Errorf("service charge must be >= 0")
