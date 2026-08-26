@@ -88,7 +88,10 @@ Picking Germany or Spain in the first-boot setup wizard auto-installs that
 country's free language pack in the background — for every merchant,
 subscribed or not — through this same verified install path, offline-tolerant
 (it just retries once the network's back). No marketplace hunting required;
-declining/removing it is one tap in Settings.
+declining/removing it is one tap in Settings. The wizard's language step also
+lists every catalog language pack alongside the bundled locales — pick one
+and it downloads and installs on the spot through the same verified path
+(falling back to the same background retry if the network drops mid-way).
 
 Picking Germany also adds an optional business-details step (legal name,
 owner, tax number, address — never bank details) that kicks off managed
@@ -408,7 +411,8 @@ Built into core (`web/locales/`), including full RTL layout:
 - Persian / Farsi (fa) — RTL
 - Turkish (tr)
 
-Available as install-time language plugins:
+Available as install-time language plugins (offered right on the setup
+wizard's language step, installing on selection):
 - German (de) — `ut-plugin-language-de`
 - Spanish (es) — `ut-plugin-language-es`
 

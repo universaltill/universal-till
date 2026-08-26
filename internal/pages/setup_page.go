@@ -184,6 +184,20 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if langUnavailableCode != "" {
 			data["detectedLangCode"] = langUnavailableCode
 		}
+		// ut-docs#1092: catalog languages installable from step 1. Served
+		// from the package-level TTL cache; the fetch itself is bounded
+		// (setupLanguageCatalogFetchTimeout), so this render never hangs on
+		// the marketplace, and an unreachable catalog degrades to
+		// bundled-only plus a "more languages once connected" note.
+		langs, catalogUnavailable := setupInstallableLanguages(r.Context(), d)
+		data["installableLangs"] = langs
+		data["langCatalogUnavailable"] = catalogUnavailable
+		// install_pending: set by POST /api/setup/language's failure redirect
+		// (query param, not stored state) — shows the "still installing in
+		// the background" note once, on the page that redirect lands on.
+		if p := r.URL.Query().Get("install_pending"); isPlausibleLocale(p) {
+			data["installPendingLang"] = p
+		}
 		// Which step an error re-render lands on: business-identity errors
 		// (setup.error.tse_*) belong to step 3, everything else (PIN, save)
 		// to the PIN step (7). On a POST re-render the identity fields the
@@ -230,7 +244,23 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				http.Redirect(w, r, "/setup?lang="+code, http.StatusSeeOther)
 				return
 			}
-			if code != "" {
+			// ut-docs#1110: a language the marketplace catalog already offers
+			// is NOT "genuinely unavailable" — it must never pair the "we
+			// don't have de yet" note with a working de install tile on the
+			// very same screen (the card's own headline scenario,
+			// reproduced by a second mechanism). Checking here is a cache
+			// hit, not a second network round-trip: setupInstallableLanguages
+			// serves the same TTL cache renderWizard reads from a few lines
+			// into its own call below.
+			langs, _ := setupInstallableLanguages(r.Context(), d)
+			catalogHasCode := false
+			for _, l := range langs {
+				if l.Locale == code {
+					catalogHasCode = true
+					break
+				}
+			}
+			if code != "" && !catalogHasCode {
 				langUnavailableCode = code
 				// Best-effort, per this wizard's standing pattern (see the
 				// demo-data seed below): a failed write here must never block
@@ -243,6 +273,12 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		renderWizard(w, r, "", langUnavailableCode)
 	})
+
+	// ut-docs#1092: install a marketplace catalog language from the wizard's
+	// step 1. Same auth-exempt, NeedsFirstBoot-gated tier as POST /api/setup
+	// (pre-provisioning — no admin session exists yet). Not a /self-order
+	// route, so the kiosk-engine guard doesn't apply.
+	mux.HandleFunc("POST /api/setup/language", setupLanguageInstallHandler(d, svc))
 
 	mux.HandleFunc("POST /api/setup", func(w http.ResponseWriter, r *http.Request) {
 		firstBoot, err := svc.NeedsFirstBoot(r.Context())
