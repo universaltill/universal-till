@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"math"
 	"strings"
 	"time"
 	"unicode"
@@ -251,6 +252,19 @@ func validateMaskedPAN(s string) error {
 // not CompleteSale's only caller.
 const MaxVoucherIssueAmount money.Money = 100_000_000
 
+// MaxVoucherIssuesPerSale (ut-docs#1052, follow-up from the ut-docs#1008
+// review) caps how many vouchers a single sale may issue. MaxVoucherIssueAmount
+// alone bounds each voucher's face value but not how many get summed
+// together in computeSaleTotals's accumulation loop -- money.Money.Add is
+// plain unchecked int64 arithmetic. Wrapping int64 at the ceiling needs
+// ~9.2×10¹⁰ vouchers in one request (a multi-terabyte JSON body that would
+// exhaust memory in json.Decode long before the running total could wrap),
+// so the count was never truly unbounded, only incidentally so (verified by
+// direct probe in the 2026-08-25 review round). This cap -- and the explicit
+// overflow check in the loop below -- makes the guarantee asserted rather
+// than accidental, at a threshold no real till gets near.
+const MaxVoucherIssuesPerSale = 50
+
 // ErrVoucherOvertender rejects a tracked voucher redemption whose amount
 // exceeds what the sale still needs (ut-docs#1008 review, major F4): a
 // voucher payment can never give change or carry a tip (netPayments), so
@@ -342,6 +356,13 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 	// summed face value is returned separately so CompleteSale can persist
 	// it on the sale header (sales.voucher_issue_total, migration 069) —
 	// InferTaxInclusive needs it on the other side of its identity.
+	// ut-docs#1052: the per-voucher ceiling below bounds each amount but
+	// not the count, so cap that too rather than lean on the incidental
+	// memory-exhaustion floor described on MaxVoucherIssuesPerSale.
+	if len(in.VoucherIssues) > MaxVoucherIssuesPerSale {
+		return 0, 0, 0, 0, 0, fmt.Errorf("sale issues %d vouchers, exceeding the maximum of %d per sale", len(in.VoucherIssues), MaxVoucherIssuesPerSale)
+	}
+	const maxMoney = money.Money(math.MaxInt64)
 	for i, v := range in.VoucherIssues {
 		if !v.Amount.IsPositive() {
 			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: amount must be > 0", i+1)
@@ -352,6 +373,14 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 		// caller (self-order, future plugin paths, journal replay).
 		if v.Amount > MaxVoucherIssueAmount {
 			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: amount %d exceeds the maximum of %d minor units", i+1, v.Amount.Minor(), MaxVoucherIssueAmount.Minor())
+		}
+		// ut-docs#1052: assert the running-total guarantee explicitly
+		// instead of relying on the count/amount ceilings above making it
+		// merely incidental -- this can't actually trip given those
+		// ceilings (50 * 100,000,000.00 is nowhere near 2^63-1), but it
+		// means the invariant is checked, not assumed.
+		if voucherIssueTotal > maxMoney-v.Amount || total > maxMoney-v.Amount {
+			return 0, 0, 0, 0, 0, fmt.Errorf("voucher issue %d: running total would overflow", i+1)
 		}
 		voucherIssueTotal = voucherIssueTotal.Add(v.Amount)
 		total = total.Add(v.Amount)
