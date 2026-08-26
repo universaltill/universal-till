@@ -68,6 +68,74 @@ func TestBuildEODDoc(t *testing.T) {
 	if strings.Contains(out, "BY VAT RATE") {
 		t.Error("no TaxBands set — VAT footer section must be omitted")
 	}
+	// ut-docs#1012: zero cancellations -> the STORNOS section is entirely
+	// absent, same "omitted rather than a permanent zero line" convention
+	// as GUTSCHEINE/TIPS — never a bare "STORNOS ... £0.00" on every report.
+	if strings.Contains(out, "STORNOS") {
+		t.Error("zero cancellations must omit the STORNOS section entirely")
+	}
+	// No GeneratedBy/Annotation set -> neither footer line prints.
+	if strings.Contains(out, "Erstellt von") || strings.Contains(out, "Anmerkung") {
+		t.Error("Z-report with no GeneratedBy/Annotation must not print either footer line")
+	}
+}
+
+// ut-docs#1012 #1: cancellations (a completed sale later voided/reversed —
+// a "Storno") print as their own STORNOS footer section, separate from
+// Refunds (a formal return processed afterward — "Retoure"), and OUTSIDE
+// doc.Totals — an independent review found the original Totals-row design
+// made a fiscal document's own top-to-bottom arithmetic look wrong (a
+// reader summing the visible signed figures above NET would get a
+// different number than NET actually shows).
+func TestBuildEODDoc_Cancellations(t *testing.T) {
+	rep := data.EODReport{
+		Day: "2026-08-20", GeneratedAt: "2026-08-20T21:30:00Z",
+		SalesCount: 5, Gross: 20000, RefundCount: 1, RefundTotal: 500,
+		CancelCount: 2, CancelTotal: 1000,
+		Net: 19500, TaxNet: 3000,
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	for _, want := range []string{"STORNOS", "Voided (2)", "£10.00"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Z-report missing %q in:\n%s", want, out)
+		}
+	}
+	// Never folded into the Totals block — NET must still read 195.00
+	// (200.00 gross - 5.00 refund; cancellations play no part), and the
+	// visible Totals lines must sum to that on their own.
+	if !strings.Contains(out, "£195.00") {
+		t.Errorf("NET must be unaffected by CancelTotal, got:\n%s", out)
+	}
+}
+
+// ut-docs#1012 #2: GeneratedBy/Annotation print as footer lines matching
+// the reference Z-Bon's own "Erstellt von" / "Anmerkung" vocabulary.
+// Annotation is optional — omitted entirely when blank, even when
+// GeneratedBy is set.
+func TestBuildEODDoc_GeneratedByAndAnnotation(t *testing.T) {
+	rep := data.EODReport{
+		Day: "2026-08-20", GeneratedAt: "2026-08-20T21:30:00Z",
+		SalesCount: 1, Gross: 500, Net: 500,
+		GeneratedBy: "Jane Manager",
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	if !strings.Contains(out, "Erstellt von: Jane Manager") {
+		t.Errorf("Z-report missing GeneratedBy footer line, got:\n%s", out)
+	}
+	if strings.Contains(out, "Anmerkung") {
+		t.Error("no Annotation set — that footer line must be omitted")
+	}
+
+	// Kept under print.Width (42 cols) -- a footer line is truncated to
+	// the printer's physical width like every other footer line in this
+	// file, not wrapped, so a longer note would legitimately clip here;
+	// that's a print-width constraint shared by the whole file, not
+	// something this test is about.
+	rep.Annotation = "till reconciled OK"
+	out = string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	if !strings.Contains(out, "Anmerkung: till reconciled OK") {
+		t.Errorf("Z-report missing Annotation footer line, got:\n%s", out)
+	}
 }
 
 // ut-docs#1008: voucher flows print as their own GUTSCHEINE footer section —

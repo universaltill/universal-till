@@ -1656,8 +1656,23 @@ type EODReport struct {
 	Gross       int64  `json:"gross"`
 	RefundCount int    `json:"refund_count"`
 	RefundTotal int64  `json:"refund_total"`
-	Net         int64  `json:"net"`
-	TaxNet      int64  `json:"tax_net"`
+	// CancelCount/CancelTotal (ut-docs#1012) are sales VOIDED (status =
+	// 'voided') in this window — a completed sale later cancelled/
+	// reversed (a "Storno" of a receipt), distinct from RefundCount/
+	// RefundTotal above (a formal return processed afterward — a
+	// "Retoure"). This is NOT a pre-tender abandoned-basket count: a
+	// live sale in this till lives only in memory until CompleteSale
+	// (the tender path, the only writer of a 'sales' row — see
+	// dateRangeSummary's own doc comment on this query) runs, or in
+	// held_sales if explicitly parked, so there is nothing in the
+	// 'sales' table to count before completion. A voided sale is
+	// excluded from Gross/Net entirely (dateRangeSummary only scans
+	// status = 'completed'), so this is purely informational — it never
+	// participates in the Net calculation below.
+	CancelCount int   `json:"cancel_count"`
+	CancelTotal int64 `json:"cancel_total"`
+	Net         int64 `json:"net"`
+	TaxNet      int64 `json:"tax_net"`
 	// TaxBands is the per-VAT-rate net/tax/gross breakdown (ut-docs#1003).
 	// Filled by internal/pages' attachEODTaxBands, NOT by EndOfDay/
 	// EndOfDayRange themselves — the banding math (discount proration +
@@ -1689,6 +1704,19 @@ type EODReport struct {
 	FirstReceipt          string `json:"first_receipt"`
 	LastReceipt           string `json:"last_receipt"`
 	GeneratedAt           string `json:"generated_at"`
+	// GeneratedBy/Annotation (ut-docs#1012) are filled by internal/pages'
+	// generateEOD, NOT by EndOfDay/EndOfDayRange themselves (same
+	// layering convention as TaxBands/MethodTaxBands above — the actor
+	// resolution and the annotation form value both come from the HTTP
+	// handler layer, which this package cannot import). GeneratedBy is
+	// the resolved operator display name ("system" for the unattended
+	// scheduler tick); Annotation is an optional free-text note supplied
+	// on a manual run. Both are embedded straight in content_json when
+	// the report is archived — no separate report_archive column, same
+	// as every other EODReport field that isn't one of the two
+	// ut-docs#1080 queryable columns (first/last receipt).
+	GeneratedBy string `json:"generated_by,omitempty"`
+	Annotation  string `json:"annotation,omitempty"`
 	// CashReconciliation is single-day only (same from==to gate as
 	// Departments/Tills): nil on range reports, and nil when no shift was
 	// closed that day — a day-close still completes without one.
@@ -1824,6 +1852,33 @@ WHERE status = 'completed' AND date(created_at, 'localtime') BETWEEN date(?) AND
 		return rep, fmt.Errorf("eod totals: %w", err)
 	}
 	rep.Net = rep.Gross - rep.RefundTotal
+
+	// Cancellations (ut-docs#1012) — a completed sale later voided/
+	// reversed (a "Storno"), a separate scan from the totals query above
+	// because a voided sale's status is 'voided', never 'completed', so
+	// it never matches that query's WHERE at all. This is NOT a
+	// pre-tender abandoned-basket count: see CancelCount's own doc
+	// comment on EODReport for why the 'sales' table has nothing to
+	// count before a sale completes. Matched on voided_at's local
+	// calendar day (not created_at): a sale can complete one day and be
+	// voided the next, and the cancellation as an audit event belongs to
+	// the day it was actually cancelled. COALESCE(voided_at, created_at)
+	// makes a legacy/hand-inserted row with a NULL voided_at fail
+	// visible (it still lands on SOME day) rather than silently
+	// vanishing from every window's count — every row this repo itself
+	// writes always stamps voided_at (UpdateSaleStatus's own CASE WHEN),
+	// so this only guards a row this codebase didn't create. Never
+	// folded into Gross/Net/RefundTotal above — a voided sale carries no
+	// revenue and this is purely an informational count/total, same as
+	// the reference day-close's separate "Stornos" column.
+	err = r.db.QueryRowContext(ctx, `
+SELECT COUNT(*), COALESCE(SUM(total), 0)
+FROM sales
+WHERE status = 'voided' AND date(COALESCE(voided_at, created_at), 'localtime') BETWEEN date(?) AND date(?)`,
+		from, to).Scan(&rep.CancelCount, &rep.CancelTotal)
+	if err != nil {
+		return rep, fmt.Errorf("eod cancellations: %w", err)
+	}
 
 	// Voucher flows (ut-docs#1008) — same local-calendar-day window as the
 	// totals query above, range-capable like Methods (not gated on from==to).
