@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -419,6 +420,47 @@ type ListPluginsResponse struct {
 	// Legacy fields for backward compatibility
 	NextPageToken   string `json:"next_page_token,omitempty"`
 	SnapshotVersion int64  `json:"snapshot_version,omitempty"`
+}
+
+// UnmarshalJSON maps the live catalog wire format's pagination fields
+// (protojson camelCase: nextPageToken, snapshotVersion — see
+// TestPluginSummary_DecodesLiveWireFormat's fixture and ut-cloud's own
+// cloudv1.ListPluginsResponse proto, which has no snake_case alternative on
+// the wire at all) onto ListPluginsResponse, same reasoning and pattern as
+// PluginSummary.UnmarshalJSON above. Without this, NextPageToken/
+// SnapshotVersion only ever populated from a response this client encoded
+// itself (tests), never from the real server — ut-docs#1108: a caller that
+// loops on NextPageToken to page through the full catalog would silently
+// stop after page one in production, believing there was nothing more.
+//
+// snapshotVersion is a STRING on the live wire, not a number: protojson
+// serializes int64/uint64 fields as JSON strings (avoiding precision loss in
+// JS's float64 numbers), confirmed by testdata/cloud_list_plugins_response.json
+// (captured from ut-cloud's real protojson output: "snapshotVersion":"0").
+// The legacy snake_case field predates protojson and has only ever appeared
+// as a bare number in this client's own tests/fixtures, so it stays int64.
+func (r *ListPluginsResponse) UnmarshalJSON(data []byte) error {
+	var w struct {
+		Plugins              []PluginSummary `json:"plugins"`
+		Pagination           *Pagination     `json:"pagination"`
+		NextPageTokenCamel   string          `json:"nextPageToken"`
+		NextPageToken        string          `json:"next_page_token"`
+		SnapshotVersionCamel string          `json:"snapshotVersion"`
+		SnapshotVersion      int64           `json:"snapshot_version"`
+	}
+	if err := json.Unmarshal(data, &w); err != nil {
+		return err
+	}
+	r.Plugins = w.Plugins
+	r.Pagination = w.Pagination
+	r.NextPageToken = firstNonEmptyStr(w.NextPageTokenCamel, w.NextPageToken)
+	r.SnapshotVersion = w.SnapshotVersion
+	if w.SnapshotVersionCamel != "" {
+		if v, err := strconv.ParseInt(w.SnapshotVersionCamel, 10, 64); err == nil {
+			r.SnapshotVersion = v
+		}
+	}
+	return nil
 }
 
 // Pagination contains pagination metadata
