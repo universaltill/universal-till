@@ -265,6 +265,42 @@ func TestSetupLanguageInstallFailureFallsBackToPendingRetry(t *testing.T) {
 	}
 }
 
+// The happy path again, but through the REAL auth middleware
+// (auth.Middleware), not the bare mux — setup_pairing_test.go's pattern,
+// same reasoning: /api/setup/language only works at all because
+// internal/auth/middleware.go exempts it (a first-boot till has no
+// operators, so no session can ever exist), and every bare-mux test in this
+// file would keep passing if that exemption were dropped. Tester reproduced
+// exactly that live: the route 401'd on the real app while all bare-mux
+// tests stayed green.
+func TestSetupLanguageInstallExemptFromAuthMiddleware(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	resetLangCatalogForTest(t)
+	mux, d := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	d.Cfg.Marketplace = mkt.config()
+	h := auth.Middleware(mux, auth.NewService(d.Db))
+
+	req := httptest.NewRequest(http.MethodPost, "/api/setup/language", strings.NewReader(url.Values{"locale": {"de"}}.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusUnauthorized {
+		t.Fatalf("POST /api/setup/language 401'd behind the real auth middleware — " +
+			"the route is missing from internal/auth/middleware.go's exempt() switch")
+	}
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup?lang=de" {
+		t.Fatalf("POST through real middleware: code=%d loc=%q, want 303 -> /setup?lang=de",
+			rec.Code, rec.Header().Get("Location"))
+	}
+	if active, err := data.NewPluginRepo(d.Db).PluginActive(t.Context(), "ut-plugin-language-de"); err != nil || !active {
+		t.Fatalf("expected the de language pack installed through the middleware-wrapped path: active=%v err=%v", active, err)
+	}
+}
+
 // The endpoint shares the wizard's first-boot window: once an operator
 // exists it must refuse (redirect to login), exactly like POST /api/setup.
 func TestSetupLanguageInstallRefusedAfterFirstBoot(t *testing.T) {
