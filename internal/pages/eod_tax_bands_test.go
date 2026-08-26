@@ -334,6 +334,50 @@ func TestEODTaxBands_WholeSaleDiscountThroughCompleteSale(t *testing.T) {
 	assertEODTaxBandIdentities(t, rep)
 }
 
+// The INCLUSIVE mirror of the test above (ut-docs#1035, independent review
+// F2): before that fix, sales.tax_total (which rep.TaxNet is built from)
+// never reduced for a whole-sale discount on an inclusive-priced sale, while
+// rep.TaxBands (built from VATBandsForSale) correctly did -- so
+// assertEODTaxBandIdentities' sum(band.Tax) == rep.TaxNet invariant failed
+// for exactly this shape. This is the fix's own load-bearing claim; it had
+// no test before this one.
+//
+// €11.90 @19% inclusive with a €1.90 whole-sale discount: gross stays 1000
+// (the discount lands inside the ticket price, not on top), tax reduces to
+// 160 (from the undiscounted line's 190) — matching ut-docs#1035's own
+// reproduction.
+func TestEODTaxBands_WholeSaleDiscountInclusiveThroughCompleteSale(t *testing.T) {
+	d := etbOpenDB(t, "eod-bands-discount-inclusive.db")
+	etbItem(t, d, "itm-disc-incl", 1190)
+
+	day := etbCompleteSale(t, d, pos.SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		SaleDiscount:           money.FromMinor(190),
+		AllowNegativeInventory: true,
+		Lines: []pos.SaleLineInput{{
+			ItemID: "itm-disc-incl", Name: "Widget", Qty: 1,
+			UnitPrice: money.FromMinor(1190), TaxRateBasisPoints: 1900, LocationID: "loc_main",
+		}},
+		Payments: []pos.PaymentInput{{MethodID: "cash", Amount: money.FromMinor(1000)}},
+	})
+
+	rep := etbEndOfDay(t, d, day)
+	if rep.TaxNet != 160 || rep.Net != 1000 {
+		t.Fatalf("engine totals moved: TaxNet=%d Net=%d, want 160/1000 (was 190/1000 before ut-docs#1035's fix)", rep.TaxNet, rep.Net)
+	}
+	if len(rep.TaxBands) != 1 {
+		t.Fatalf("expected 1 band, got %+v", rep.TaxBands)
+	}
+	if want := (data.TaxBand{RateBP: 1900, Net: 840, Tax: 160, Gross: 1000}); rep.TaxBands[0] != want {
+		t.Fatalf("band = %+v, want %+v (gross 1190-190=1000, tax re-derived at 19%%)", rep.TaxBands[0], want)
+	}
+	// The invariant this fix restores: the report-level TaxNet (sourced
+	// from sales.tax_total) must add up to the same figure the per-rate
+	// bands (sourced from VATBandsForSale) show -- this is the assertion
+	// that would have failed pre-fix (190 != 160).
+	assertEODTaxBandIdentities(t, rep)
+}
+
 // fmtRateBP is defensive on negatives (nothing validates tax_rate_bp >= 0
 // anywhere): -50 used to render as the garbage "0.-5%".
 func TestFmtRateBP(t *testing.T) {
