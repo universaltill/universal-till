@@ -13,8 +13,11 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
@@ -146,4 +149,121 @@ func TestProvisionDesktopKioskDefaults_RecordsAutostartNotStaged(t *testing.T) {
 	if payload["autostart_staged"] != false {
 		t.Errorf("audit payload autostart_staged = %v, want false", payload["autostart_staged"])
 	}
+}
+
+// retryOnError is the general-purpose retry/backoff (ut-docs#1094) that
+// openWithRetry wraps db.Open in — tested directly against a fake fn, with
+// delay=0, so it exercises the real retry LOGIC (attempt count, which
+// error surfaces, no-sleep-after-the-last-try) without depending on
+// SQLite's actual lock-contention behavior or real wall-clock time.
+
+func TestRetryOnError_SucceedsAfterTransientFailures(t *testing.T) {
+	calls := 0
+	err := retryOnError(5, 0, func() error {
+		calls++
+		if calls < 3 {
+			return errors.New("transient")
+		}
+		return nil
+	})
+	if err != nil {
+		t.Fatalf("retryOnError: %v", err)
+	}
+	if calls != 3 {
+		t.Errorf("calls = %d, want 3 (stop retrying the moment fn succeeds)", calls)
+	}
+}
+
+func TestRetryOnError_GivesUpAfterMaxAttemptsAndReturnsTheLastError(t *testing.T) {
+	calls := 0
+	err := retryOnError(4, 0, func() error {
+		calls++
+		return fmt.Errorf("attempt %d failed", calls)
+	})
+	if calls != 4 {
+		t.Errorf("calls = %d, want exactly 4 (never exceed the attempt budget)", calls)
+	}
+	if err == nil || err.Error() != "attempt 4 failed" {
+		t.Errorf("err = %v, want the LAST attempt's error (\"attempt 4 failed\"), not the first — a caller needs the real, current failure reason", err)
+	}
+}
+
+// retryOnErrorWithin runs retryOnError(attempts, delay, fn) on its own
+// goroutine and fails the test if it hasn't returned within timeout — used
+// by the two sleep-boundary tests below with a large delay (time.Hour) so
+// a regression that sleeps when it shouldn't fails FAST with a clear
+// message, instead of the test genuinely blocking for that same hour (a
+// real risk with a plain "assert on elapsed time after the call returns"
+// — independent review of ut-docs#1094 caught this in an earlier draft:
+// a mutated retryOnError that slept unconditionally hung until go test's
+// own timeout killed the whole package, dumping a goroutine trace instead
+// of a normal failure).
+func retryOnErrorWithin(t *testing.T, timeout time.Duration, attempts int, delay time.Duration, fn func() error) error {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- retryOnError(attempts, delay, fn) }()
+	select {
+	case err := <-done:
+		return err
+	case <-time.After(timeout):
+		t.Fatalf("retryOnError(attempts=%d, delay=%v) did not return within %v — it slept when it should not have", attempts, delay, timeout)
+		return nil // unreachable: t.Fatalf stops the goroutine
+	}
+}
+
+func TestRetryOnError_FirstTryAloneNeverSleeps(t *testing.T) {
+	// A single successful first attempt must return immediately — this
+	// guards against a future refactor accidentally sleeping BEFORE the
+	// first call (which would slow down the overwhelmingly common case:
+	// the database is ready and provisioning succeeds first try). delay is
+	// deliberately huge (time.Hour): if a regression sleeps even once, the
+	// 2s budget below fails the test fast rather than the goroutine
+	// blocking for a real hour.
+	if err := retryOnErrorWithin(t, 2*time.Second, 5, time.Hour, func() error { return nil }); err != nil {
+		t.Fatalf("retryOnError: %v", err)
+	}
+}
+
+func TestRetryOnError_NeverSleepsAfterTheFinalAttempt(t *testing.T) {
+	// Every attempt fails, so retryOnError gives up after the last one —
+	// it must not sleep AFTER that final failed attempt (nothing left to
+	// wait for), only BETWEEN attempts. With attempts=1 there is no
+	// "between" at all, so the same huge-delay/short-timeout technique as
+	// above catches an over-sleeping regression fast rather than hanging.
+	err := retryOnErrorWithin(t, 2*time.Second, 1, time.Hour, func() error { return errors.New("boom") })
+	if err == nil {
+		t.Fatal("expected the single attempt's error to surface")
+	}
+}
+
+// TestOpenWithRetry_SucceedsFirstTryAgainstAnAlreadyMigratedDatabase is a
+// real-database sanity check for openWithRetry's happy path (the
+// overwhelmingly common case — no race, nothing to retry): a second
+// db.Open against a database unitill-pos.service (simulated here by a
+// first, real db.Open) already fully migrated must succeed on the very
+// first attempt, migrate() applying nothing. The actual ut-docs#1094
+// migration RACE this retry exists for (two connections both reading
+// migrate()'s unprotected "current version" before either commits, so the
+// second re-applies a migration the first just did — a genuine SQL error,
+// not a lock busy_timeout could wait out) is a real multi-connection
+// timing race against SQLite's own file locking;
+// reproducing it deterministically here would mean a flaky test, which
+// this repo's own testing standard rules out. retryOnError's tests above
+// cover the actual retry/backoff logic (attempt count, which error
+// surfaces, sleep timing) generically and deterministically instead —
+// openWithRetry itself is a thin, direct wrapper around it plus db.Open.
+func TestOpenWithRetry_SucceedsFirstTryAgainstAnAlreadyMigratedDatabase(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "unitill-pos.db")
+
+	first, err := db.Open(dbPath)
+	if err != nil {
+		t.Fatalf("simulate the service's own already-completed migration: %v", err)
+	}
+	first.Close()
+
+	second, err := openWithRetry(dbPath, provisionOpenRetryAttempts, 0)
+	if err != nil {
+		t.Fatalf("openWithRetry against an already-migrated database: %v", err)
+	}
+	second.Close()
 }
