@@ -1,3 +1,5 @@
+//go:build desktop && linux
+
 package main
 
 import (
