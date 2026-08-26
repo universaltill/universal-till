@@ -1422,6 +1422,23 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if v := strings.TrimSpace(r.Form.Get("country")); v != "" {
 			st.Country = v
 			auditPayload["country"] = v
+			// ut-docs#1027: re-derive locale from the new country when the
+			// operator didn't explicitly post one in the same request —
+			// "changing country afterwards re-derives the locale... never
+			// silently leaves a mismatched pair." See localeSafeToPreset's
+			// own doc comment for why this is gated at all (RTL/digit
+			// rendering, not just translated text) and why a non-RTL
+			// locale doesn't need its pack installed first. If the
+			// country's default isn't safe yet, locale is left exactly as
+			// it was — a partial, not full, answer to "never mismatched,"
+			// but the safe one.
+			if strings.TrimSpace(r.Form.Get("locale")) == "" {
+				if cs, ok, csErr := data.NewCountrySettingsRepo(d.Db).Get(r.Context(), v); csErr == nil && ok &&
+					cs.DefaultLocale != st.Locale && localeSafeToPreset(cs.DefaultLocale) {
+					st.Locale = cs.DefaultLocale
+					auditPayload["locale"] = cs.DefaultLocale
+				}
+			}
 		}
 		if v := strings.TrimSpace(r.Form.Get("region")); v != "" {
 			st.Region = v
@@ -1645,6 +1662,20 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		// reflect into state for known keys
 		truthy := func(v string) bool { return strings.ToLower(v) == "true" || v == "1" || v == "on" }
+		// ut-docs#1027: this raw key/value table is, today, the ONLY shipped
+		// UI path that lets an operator change store.country after setup
+		// (neither Settings form posts "country" — see the currency-card
+		// handler above and the Language card below) — so it's where the
+		// card's "changing country afterwards re-derives the locale"
+		// acceptance criterion actually has to live. Looked up before
+		// UpdateState's closure, not inside it, so the DB read doesn't run
+		// under the state write lock.
+		var derivedLocale string
+		if key == common.KeyCountry {
+			if cs, ok, csErr := data.NewCountrySettingsRepo(d.Db).Get(r.Context(), value); csErr == nil && ok && localeSafeToPreset(cs.DefaultLocale) {
+				derivedLocale = cs.DefaultLocale
+			}
+		}
 		st := d.UpdateState(func(s *common.RuntimeState) {
 			switch key {
 			case common.KeyTheme:
@@ -1653,6 +1684,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				s.Currency = value
 			case common.KeyCountry:
 				s.Country = value
+				if derivedLocale != "" && derivedLocale != s.Locale {
+					s.Locale = derivedLocale
+				}
 			case common.KeyRegion:
 				s.Region = value
 			case common.KeyLocale:
@@ -1716,6 +1750,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// already recomputes it as 0, so the screen and the recorded sale
 			// would disagree as well. Leaving TR restores the still-stored
 			// rate by the same path (the suppression never erases it).
+			// ut-docs#1027: live-apply a country-derived locale change too
+			// (harmless no-op via SetDefaultLocale's own empty-guard when
+			// derivedLocale above didn't fire) — same reasoning as the
+			// KeyLocale case just above.
+			httpx.SetDefaultLocale(st.Locale)
 			newCfg := pos.Config{
 				TaxInclusive:                 st.TaxInclusive,
 				TaxRateBasisPoints:           st.TaxRatePct * 100,

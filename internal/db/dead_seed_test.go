@@ -158,6 +158,7 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	rewindVoucherIssueTotal069(t, d)
 	rewindZReportNumbering070(t, d)
 	rewindPaymentsVoucherID072(t, d)
+	rewindCountryDefaultLocale073(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -349,5 +350,15 @@ func rewindPaymentsVoucherID072(t *testing.T, d *DB) {
 		if _, err := d.DB.Exec(q); err != nil {
 			t.Fatalf("rewind 072 (%s): %v", q, err)
 		}
+	}
+}
+
+// rewindCountryDefaultLocale073 undoes migration 073's non-idempotent DDL
+// (country_settings.default_locale, ut-docs#1027) — same replay problem as
+// rewindPaymentsVoucherID072 above, same fix.
+func rewindCountryDefaultLocale073(t *testing.T, d *DB) {
+	t.Helper()
+	if _, err := d.DB.Exec(`ALTER TABLE country_settings DROP COLUMN default_locale`); err != nil {
+		t.Fatalf("rewind 073: %v", err)
 	}
 }

@@ -136,6 +136,9 @@
           <input type="hidden" name="currency" :value="currency">
           <input type="hidden" name="tax_rate_pct" :value="tax">
           <input type="hidden" name="tax_inclusive" :value="taxinc">
+          <!-- ut-docs#1027: no client-side locale field — POST /setup derives
+               it server-side from the posted country code against
+               country_settings, never from client-supplied text. -->
           <!-- ut-docs#970 review (F3): country/currency start PRE-FILLED from
                OS locale + timezone detection (ut-docs#590), not from an
                operator choice — completing the wizard without ever opening
