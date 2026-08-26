@@ -687,6 +687,7 @@ CREATE TABLE payments (
   auth_code TEXT,
   terminal_id TEXT,
   trace_id TEXT,
+  voucher_id TEXT,
   paid_at TEXT NOT NULL DEFAULT (datetime('now')),
   FOREIGN KEY (sale_id) REFERENCES sales (id),
   FOREIGN KEY (method_id) REFERENCES payment_methods (id)

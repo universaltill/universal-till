@@ -137,11 +137,30 @@ FROM vouchers WHERE id = ?`, id).
 // DebitVoucherForRedemption validates and debits one voucher's balance by
 // amountMinor inside the caller's transaction (tx may be nil for a direct
 // exec, e.g. in tests). Fail-closed, in order: unknown id ->
-// ErrVoucherNotFound; status != 'active' -> ErrVoucherNotActive; balance <
+// ErrVoucherNotFound; status == 'void' -> ErrVoucherNotActive; balance <
 // amountMinor -> ErrVoucherInsufficientBalance (overspend rejected outright,
 // never clamped). Draining the balance to exactly zero flips status to
 // 'redeemed'.
-func (r *POSRepo) DebitVoucherForRedemption(ctx context.Context, tx *sql.Tx, voucherID string, amountMinor int64) error {
+//
+// force (ut-docs#1053) relaxes the balance check AND, necessarily, the
+// status check: when true, an overdraft debits anyway and the balance goes
+// negative — the LAN-sync journal replay path's genuine-offline-double-spend
+// case, where the money already moved at the remote till, so rejecting here
+// would poison that replica's journal forever (same reasoning as
+// pos.SaleInput.AllowNegativeInventory for stock). Under force, a voucher
+// whose balance was already exactly drained by an earlier replay — status
+// 'redeemed', the single most likely double-spend shape (a customer spending
+// the whole face value at two tills before either synced) — is still
+// debitable; only 'void' stays a hard reject even under force, since a
+// voided voucher is a different, worse problem than a balance/status race
+// caused by replay ordering. The caller surfaces the resulting negative
+// balance as a back-office Problem. ErrVoucherNotFound always stays a hard
+// reject: an unknown id under force still needs a real fix (a pre-1.3.0
+// voucher never journaled, or a genuinely bad id), not a silent debit.
+// Every non-replay caller passes force=false, where status != 'active' still
+// rejects exactly as before (a redeemed/void voucher can't be redeemed
+// again from a live till).
+func (r *POSRepo) DebitVoucherForRedemption(ctx context.Context, tx *sql.Tx, voucherID string, amountMinor int64, force bool) error {
 	if amountMinor <= 0 {
 		return fmt.Errorf("debit voucher: amount must be > 0")
 	}
@@ -154,22 +173,40 @@ func (r *POSRepo) DebitVoucherForRedemption(ctx context.Context, tx *sql.Tx, vou
 	if err != nil {
 		return fmt.Errorf("debit voucher: %w", err)
 	}
-	if status != "active" {
+	// force widens the acceptable pre-read status from just 'active' to
+	// 'active' or 'redeemed' — 'void' is excluded either way, both here and
+	// in the UPDATE predicate below, so a genuinely voided voucher can never
+	// be force-debited.
+	statusOK := status == "active" || (force && status == "redeemed")
+	if !statusOK {
 		return fmt.Errorf("voucher %q (status %s): %w", voucherID, status, ErrVoucherNotActive)
 	}
-	if balance < amountMinor {
+	if !force && balance < amountMinor {
 		return fmt.Errorf("voucher %q (balance %d, tendered %d): %w", voucherID, balance, amountMinor, ErrVoucherInsufficientBalance)
 	}
 	// The guard predicates (balance >= ?, status = 'active') are repeated in
 	// the UPDATE itself so a concurrent debit between the read above and this
 	// write can never take the balance negative — the affected-rows check
 	// turns a lost race into a clean refusal instead of a silent overdraw.
-	res, err := r.exec(tx).ExecContext(ctx, `
+	// Under force the balance predicate is dropped (a negative balance is
+	// the point) and the status predicate widens to ('active','redeemed')
+	// to match the pre-read check above — 'void' stays excluded either way,
+	// so a concurrent void between read and write still loses cleanly.
+	query := `
 UPDATE vouchers
 SET balance = balance - ?,
     status = CASE WHEN balance - ? = 0 THEN 'redeemed' ELSE status END
-WHERE id = ? AND status = 'active' AND balance >= ?`,
-		amountMinor, amountMinor, voucherID, amountMinor)
+WHERE id = ? AND status = 'active' AND balance >= ?`
+	args := []any{amountMinor, amountMinor, voucherID, amountMinor}
+	if force {
+		query = `
+UPDATE vouchers
+SET balance = balance - ?,
+    status = CASE WHEN balance - ? = 0 THEN 'redeemed' ELSE status END
+WHERE id = ? AND status IN ('active', 'redeemed')`
+		args = []any{amountMinor, amountMinor, voucherID}
+	}
+	res, err := r.exec(tx).ExecContext(ctx, query, args...)
 	if err != nil {
 		return fmt.Errorf("debit voucher: %w", err)
 	}
@@ -182,6 +219,12 @@ WHERE id = ? AND status = 'active' AND balance >= ?`,
 		return fmt.Errorf("debit voucher: rows affected: %w", err)
 	}
 	if n != 1 {
+		if force {
+			// The only predicate left is status IN ('active','redeemed') —
+			// a concurrent void won the race between the read and this
+			// write (draining to 'redeemed' no longer excludes the row).
+			return fmt.Errorf("voucher %q: %w", voucherID, ErrVoucherNotActive)
+		}
 		return fmt.Errorf("voucher %q: %w", voucherID, ErrVoucherInsufficientBalance)
 	}
 	return nil
