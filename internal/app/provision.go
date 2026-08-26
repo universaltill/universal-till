@@ -83,6 +83,19 @@ func ProvisionDesktopKioskDefaults(ctx context.Context, args []string) error {
 	// service has ever created the DB and against a live one (the DSN's
 	// busy_timeout + _txlock=immediate serialize against the service's own
 	// writes, same as any second connection).
+	//
+	// Deliberately does NOT take db.AcquireDataDirLock (ut-docs#1097), and
+	// must not: packaging/scripts/postinstall.sh restarts unitill-pos.service
+	// well BEFORE it invokes this subcommand, so on a real .deb install the
+	// running service already holds that lock — acquiring it here would make
+	// every desktop-kiosk-overlay install fail. That is not a hole in #1097's
+	// guarantee: the lock exists to stop a second long-lived SERVER from
+	// owning the data, and this is a short, single-transaction settings write
+	// through the repository layer, exactly the "any second connection" case
+	// SQLite's own locking already serializes. If this ever grows into
+	// something that rewrites files in the data directory rather than rows in
+	// the database, that reasoning stops holding and the sequencing in
+	// postinstall.sh has to change with it.
 	database, err := db.Open(cfg.DBPath)
 	if err != nil {
 		return err
