@@ -195,7 +195,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// install_pending: set by POST /api/setup/language's failure redirect
 		// (query param, not stored state) — shows the "still installing in
 		// the background" note once, on the page that redirect lands on.
-		if p := r.URL.Query().Get("install_pending"); isPlausibleLocaleParam(p) {
+		if p := r.URL.Query().Get("install_pending"); isPlausibleLocale(p) {
 			data["installPendingLang"] = p
 		}
 		// Which step an error re-render lands on: business-identity errors
