@@ -12,7 +12,12 @@
   {{/* ut-docs#1133: a quarantined entry is the one primary-side warn
        condition worth its own link target -- send the operator straight to
        the list that explains it rather than the tills roster, which has
-       nothing to say about it. */}}
-  <a href="{{ if .quarantined }}/sync-quarantine{{ else }}/tills{{ end }}" title="{{ T "sync.chip_tills_title" }}">⇅ {{ .label }} · {{ .count }} {{ T "sync.chip_tills" }}{{ if .quarantined }} · {{ .quarantined }} {{ T "sync.chip_quarantined" }}{{ end }}{{ if eq .class "warn" }} ⚠{{ end }}</a>
+       nothing to say about it. The title must follow the same branch as
+       the href (independent review, 2026-08-26 caught these drifting: the
+       tooltip kept saying "open the Tills page" while the link pointed at
+       /sync-quarantine). .count can be 0 here (every till that ever pushed
+       a quarantined entry may since have been revoked) -- the "· N tills"
+       segment only renders when there's a roster to report. */}}
+  <a href="{{ if .quarantined }}/sync-quarantine{{ else }}/tills{{ end }}" title="{{ if .quarantined }}{{ T "sync.chip_quarantine_title" }}{{ else }}{{ T "sync.chip_tills_title" }}{{ end }}">⇅ {{ .label }}{{ if .count }} · {{ .count }} {{ T "sync.chip_tills" }}{{ end }}{{ if .quarantined }} · {{ .quarantined }} {{ T "sync.chip_quarantined" }}{{ end }}{{ if eq .class "warn" }} ⚠{{ end }}</a>
   {{- end }}
 </span>

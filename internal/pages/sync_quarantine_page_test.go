@@ -71,10 +71,17 @@ func TestSyncQuarantinePage_ManagerOnlyAndRendersRealData(t *testing.T) {
 		t.Fatalf("manager = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Front Counter", "T2-Q001", "unknown voucher on redemption replay"} {
+	// The Reason column is translated (ut-docs#1133 review) via
+	// quarantineReasonKeys -- the raw allowlisted string persisted by
+	// quarantineJournalEntry must NOT appear verbatim; en.json's own
+	// translation of that key is what should render instead.
+	for _, want := range []string{"Front Counter", "T2-Q001", "Unknown voucher on redemption replay"} {
 		if !strings.Contains(body, want) {
-			t.Fatalf("sync-quarantine page missing %q in rendered output", want)
+			t.Fatalf("sync-quarantine page missing %q in rendered output:\n%s", want, body)
 		}
+	}
+	if strings.Contains(body, "unknown voucher on redemption replay") {
+		t.Fatalf("sync-quarantine page rendered the raw untranslated reason string, want the translated sync.quarantine_reason.unknown_voucher_redemption key:\n%s", body)
 	}
 }
 

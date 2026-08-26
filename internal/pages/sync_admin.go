@@ -151,7 +151,24 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		list, err := tills.ListTills(r.Context())
-		if err != nil || len(list) == 0 {
+		// ut-docs#1133 (ADR-0065 follow-up): read the quarantine count
+		// BEFORE the empty-roster early return below, and let a nonzero
+		// count alone justify rendering the chip. A quarantined entry
+		// outlives the till that caused it -- an operator revoking the
+		// misbehaving replica (the obvious response) leaves ListTills
+		// empty while the ledger gap the quarantine row records is still
+		// real, and the old ordering (early-return before this read) made
+		// the chip vanish in exactly that case, silently undoing the
+		// "standing, always-rendered signal" this feature exists to add
+		// (independent review, 2026-08-26). Best-effort like the rest of
+		// this handler: a read error just leaves quarantined at 0 rather
+		// than failing the whole chip render.
+		quarantined, qErr := posRepo.CountJournalQuarantine(r.Context())
+		if qErr != nil {
+			logging.L().Errorf("count sync journal quarantine: %v", qErr)
+			quarantined = 0
+		}
+		if (err != nil || len(list) == 0) && quarantined == 0 {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -161,20 +178,6 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 				class = "warn"
 				break
 			}
-		}
-		// ut-docs#1133 (ADR-0065 follow-up): a quarantined LAN-sync journal
-		// entry never becomes a sale and both ends of that pull otherwise
-		// read as fully caught-up (see registerSyncQuarantinePage's doc
-		// comment) -- surfacing a nonzero count on the nav chip, which
-		// renders on every authenticated page, is a much stronger standing
-		// signal than the point-in-time Problems-panel Warnf that used to
-		// be the only trace. Best-effort like the rest of this handler: a
-		// read error just leaves the chip's healthy state unchanged rather
-		// than failing the whole chip render.
-		quarantined, qErr := posRepo.CountJournalQuarantine(r.Context())
-		if qErr != nil {
-			logging.L().Errorf("count sync journal quarantine: %v", qErr)
-			quarantined = 0
 		}
 		if quarantined > 0 {
 			class = "warn"

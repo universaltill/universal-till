@@ -27,6 +27,7 @@
       {{ end }}
     </tbody>
   </table>
+  {{ if .Truncated }}<p class="muted">{{ T "sync.quarantine_truncated" }}</p>{{ end }}
   {{ else }}
   <p class="muted">{{ T "sync.quarantine_none" }}</p>
   {{ end }}
