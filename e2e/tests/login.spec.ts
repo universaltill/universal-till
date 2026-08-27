@@ -304,6 +304,67 @@ test.describe.serial('first-boot setup and PIN login', () => {
     }
   });
 
+  // ut-docs#1126: setup.html was a "standalone document" (own <head>, never
+  // extends base.html — see that file's own comment), so it never got
+  // ut-docs#161's viewport-fluid root font-size — it hardcoded the OLD,
+  // pre-#161 mechanism instead (a FIXED px value, `uiscalepx`, unaffected by
+  // viewport size at all). app.css's `--fluid-fs` clamp resolves to ~17px at
+  // the 1024x600 kiosk floor and ~20px at 1920x1200 (this panel's exact
+  // reported hardware, ut-docs#1126's own measurement).
+  //
+  // A single test driving BOTH viewports (not two independent ones) is
+  // deliberate: independently asserting "!= 16" at each size would still
+  // pass for a broken fix that hardcodes any OTHER constant (e.g.
+  // `--ui-scale` wired to a literal instead of the template value) —
+  // that's not viewport-responsive either, just wrong in a different way.
+  // Asserting the two readings actually DIFFER from each other is the part
+  // a fixed value, whatever its constant, can never satisfy.
+  test("the setup wizard's root scales with the viewport, not a fixed size", async ({ browser }) => {
+    const measure = async (viewport: { width: number; height: number }) => {
+      const ctx = await browser.newContext({ hasTouch: true, viewport });
+      const p = await ctx.newPage();
+      try {
+        await p.goto('/setup');
+        const rootFontSize = parseFloat(await p.evaluate(() => getComputedStyle(document.documentElement).fontSize));
+
+        await p.locator('[data-step="1"] .setup-nav button', { hasText: 'Next' }).click();
+        const countryStep = p.locator('[data-step="2"]');
+        await countryStep.locator('h1').waitFor();
+        const showAllBtn = countryStep.locator('button', { hasText: 'Show all countries' });
+        if (await showAllBtn.isVisible()) await showAllBtn.tap();
+        // :visible, not just .first() — setup.html keeps every country tile
+        // in the DOM under x-show (display:none when hidden), so a plain
+        // DOM-order .first() can resolve to a permanently hidden tile on a
+        // host where OS-locale detection picks a non-alphabetically-first
+        // country (showAllCountries starts false there — see the "detected
+        // country" test above). toBeVisible() also auto-retries past the
+        // tap-to-Alpine-re-render race the same test's own comment warns
+        // about, unlike a one-shot boundingBox() on an unsettled element.
+        const tile = countryStep.locator('button.picker-tile:visible').first();
+        await expect(tile).toBeVisible();
+        const box = await tile.boundingBox();
+        return { rootFontSize, tileHeight: box?.height ?? 0 };
+      } finally {
+        await ctx.close();
+      }
+    };
+
+    const kiosk = await measure({ width: 1024, height: 600 });
+    const waveshare = await measure({ width: 1920, height: 1200 });
+
+    expect(kiosk.rootFontSize, 'root font-size at 1024x600 must not be the old fixed 16px').not.toBe(16);
+    expect(waveshare.rootFontSize, 'root font-size at 1920x1200 must not be the old fixed 16px').not.toBe(16);
+    expect(waveshare.rootFontSize, 'root font-size must actually respond to viewport size, not be a fixed value at both').toBeGreaterThan(kiosk.rootFontSize);
+
+    // 44px is the same touch-target minimum the sale screen holds to after
+    // ut-docs#161. Note: .picker-tile's own 3.2rem min-block-size already
+    // clears 44px even at the old fixed 16px root, so this doesn't by
+    // itself regression-guard the scaling fix — the font-size assertions
+    // above are what do that; this just documents the minimum still holds.
+    expect(kiosk.tileHeight, 'country tile at 1024x600 must meet the 44px touch-target minimum').toBeGreaterThanOrEqual(44);
+    expect(waveshare.tileHeight, 'country tile at 1920x1200 must meet the 44px touch-target minimum').toBeGreaterThanOrEqual(44);
+  });
+
   test('completing the wizard creates the admin PIN and logs in', async () => {
     // ut-docs#617 inserted a new step 5 whose default panel has no "Next"
     // button at all (No / Yes / Later instead) — the old flat click
@@ -474,6 +535,46 @@ test.describe.serial('first-boot setup and PIN login', () => {
     await page.locator('button[type=submit].pin-key').click();
     await expect(page.locator('.login-error')).toBeVisible();
     assertClean();
+  });
+
+  // ut-docs#1126: login.html has the exact same stale-viewport-scaling gap
+  // as setup.html (same standalone-document class, same old fixed
+  // `uiscalepx` mechanism) — reporter's "login especially" note when the
+  // wizard bug was filed. Own cookie-less context per viewport: the shared
+  // serial `page` is mid-session (locked, not logged out), and this only
+  // needs the PIN pad to render, not a real session. Requires the wizard to
+  // have already run (needs a configured PIN so /login renders the PIN pad
+  // rather than the first-boot form) — placed after that point in the file.
+  //
+  // One test driving both viewports, not two independent ones — same
+  // reasoning as the setup-wizard version above: asserting the two
+  // readings actually DIFFER is what a fixed value (whatever constant it
+  // hardcodes) can never satisfy, where two separate "!= 16" checks could
+  // both still pass against a differently-broken fix.
+  test("the login screen's root scales with the viewport, not a fixed size", async ({ browser }) => {
+    const measure = async (viewport: { width: number; height: number }) => {
+      const ctx = await browser.newContext({ hasTouch: true, viewport });
+      const p = await ctx.newPage();
+      try {
+        await p.goto('/login');
+        await expect(p.locator('.pin-pad')).toBeVisible();
+        const rootFontSize = parseFloat(await p.evaluate(() => getComputedStyle(document.documentElement).fontSize));
+        const box = await p.locator('.pin-key').first().boundingBox();
+        return { rootFontSize, keyHeight: box?.height ?? 0 };
+      } finally {
+        await ctx.close();
+      }
+    };
+
+    const kiosk = await measure({ width: 1024, height: 600 });
+    const waveshare = await measure({ width: 1920, height: 1200 });
+
+    expect(kiosk.rootFontSize, 'root font-size at 1024x600 must not be the old fixed 16px').not.toBe(16);
+    expect(waveshare.rootFontSize, 'root font-size at 1920x1200 must not be the old fixed 16px').not.toBe(16);
+    expect(waveshare.rootFontSize, 'root font-size must actually respond to viewport size, not be a fixed value at both').toBeGreaterThan(kiosk.rootFontSize);
+
+    expect(kiosk.keyHeight, 'PIN key at 1024x600 must meet the 44px touch-target minimum').toBeGreaterThanOrEqual(44);
+    expect(waveshare.keyHeight, 'PIN key at 1920x1200 must meet the 44px touch-target minimum').toBeGreaterThanOrEqual(44);
   });
 
   // ut-docs#1099: exit-to-OS used to live only on /settings — BEHIND the
