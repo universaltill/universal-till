@@ -345,6 +345,19 @@ func runDailyBackup(db *sql.DB, dbPath string) {
 // the configured port, then the next 20, then lets the OS pick any free port.
 // Returns the listener and the address actually bound. If the configured port
 // binds cleanly the behaviour is unchanged.
+//
+// ut-docs#1169: a wildcard configured host (the default ":8080" included) is
+// reachable off-device by design — self-order kiosk clients and till-to-till
+// pairing need that. But needing a FALLBACK means something else already
+// holds the configured port, almost always a second, unconfigured instance
+// racing this one at boot — and repeating the wildcard bind on the fallback
+// port turned that race into a real incident: an empty, un-provisioned till
+// silently reachable, and pairable, from the whole LAN. So any fallback bind
+// degrades a wildcard host to loopback-only instead — still reachable for
+// local diagnosis, never off-device — rather than silently re-exposing
+// whatever lost the race. A caller that genuinely wants a second
+// LAN-reachable instance on the same box sets UT_LISTEN_ADDR to its own
+// dedicated port instead of relying on this fallback.
 func listenWithFallback(addr string) (net.Listener, string, error) {
 	ln, err := net.Listen("tcp", addr)
 	if err == nil {
@@ -355,17 +368,40 @@ func listenWithFallback(addr string) (net.Listener, string, error) {
 	if serr != nil || aerr != nil {
 		return nil, "", err // unparseable addr — surface the original bind error
 	}
+	fallbackHost := host
+	if isWildcardHost(host) {
+		fallbackHost = "127.0.0.1"
+	}
 	for p := base + 1; p <= base+20; p++ {
-		cand := net.JoinHostPort(host, strconv.Itoa(p))
+		cand := net.JoinHostPort(fallbackHost, strconv.Itoa(p))
 		if l, e := net.Listen("tcp", cand); e == nil {
 			return l, l.Addr().String(), nil
 		}
 	}
-	// Last resort: port 0 → the OS hands us any free port.
-	if l, e := net.Listen("tcp", net.JoinHostPort(host, "0")); e == nil {
+	// Last resort: port 0 → the OS hands us any free port, still loopback-only
+	// when the configured host was wildcard, for the same reason as above.
+	if l, e := net.Listen("tcp", net.JoinHostPort(fallbackHost, "0")); e == nil {
 		return l, l.Addr().String(), nil
 	}
 	return nil, "", err // nothing free — report the original failure
+}
+
+// isWildcardHost reports whether host means "every interface": Go's own
+// all-interfaces shorthand (the empty host, as in ":8080"), or any IP literal
+// net.Listen also treats as all-interfaces. Delegates to net.IP.IsUnspecified
+// rather than hand-enumerating spellings — an independent review of this
+// change (ut-docs#1169) proved by direct probe that a string-literal switch
+// covering only "0.0.0.0"/"::" still leaks a wildcard bind for "::0",
+// "0:0:0:0:0:0:0:0" and "::ffff:0.0.0.0", all of which net.Listen also binds
+// to every interface. IsUnspecified (with ParseIP's built-in 4-in-6 handling)
+// covers every spelling net.Listen itself accepts as wildcard, so this can't
+// drift out of sync with what net.Listen actually does.
+func isWildcardHost(host string) bool {
+	if host == "" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsUnspecified()
 }
 
 // shouldOpenBrowser decides whether to auto-open the browser. UT_OPEN_BROWSER
