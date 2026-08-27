@@ -64,11 +64,10 @@ func baseCfg() *config.Config {
 		Theme:     "monarch",
 		StoreName: "My Store",
 		Locales: config.Locales{
-			Currency:       "GBP",
-			CurrencySymbol: "£",
-			Locale:         "en-GB",
-			TaxRate:        2000,
-			TaxInclusive:   false,
+			Currency:     "GBP",
+			Locale:       "en-GB",
+			TaxRate:      2000,
+			TaxInclusive: false,
 		},
 	}
 }
@@ -95,13 +94,12 @@ func TestLoadRuntimeConfig_OverridesFromStore(t *testing.T) {
 	ctx := context.Background()
 	s := newTestStore(t)
 	for k, v := range map[string]string{
-		"theme":                 "dark",
-		"store.name":            "Farshid's Shop",
-		"store.currency":        "EUR",
-		"store.currency_symbol": "€",
-		"store.locale":          "de-DE",
-		"store.tax_inclusive":   "true",
-		"store.tax_rate":        "1900",
+		"theme":               "dark",
+		"store.name":          "Farshid's Shop",
+		"store.currency":      "EUR",
+		"store.locale":        "de-DE",
+		"store.tax_inclusive": "true",
+		"store.tax_rate":      "1900",
 	} {
 		if err := s.Set(ctx, k, v); err != nil {
 			t.Fatalf("seed %s: %v", k, err)
@@ -120,9 +118,6 @@ func TestLoadRuntimeConfig_OverridesFromStore(t *testing.T) {
 	if cfg.Locales.Currency != "EUR" {
 		t.Errorf("Currency = %q, want %q", cfg.Locales.Currency, "EUR")
 	}
-	if cfg.Locales.CurrencySymbol != "€" {
-		t.Errorf("CurrencySymbol = %q, want %q", cfg.Locales.CurrencySymbol, "€")
-	}
 	if cfg.Locales.Locale != "de-DE" {
 		t.Errorf("Locale = %q, want %q", cfg.Locales.Locale, "de-DE")
 	}
@@ -131,40 +126,6 @@ func TestLoadRuntimeConfig_OverridesFromStore(t *testing.T) {
 	}
 	if cfg.Locales.TaxRate != 1900 {
 		t.Errorf("TaxRate = %d, want 1900", cfg.Locales.TaxRate)
-	}
-}
-
-// Regression: LoadRuntimeConfig used to gate the currency_symbol assignment
-// on whether "store.currency" was set, not "store.currency_symbol" — so a
-// symbol-only override (currency itself genuinely unset) was silently
-// dropped. Currency and its symbol are independent settings keys and must
-// be loaded independently.
-func TestLoadRuntimeConfig_CurrencySymbolIndependentOfCurrency(t *testing.T) {
-	ctx := context.Background()
-	d := openMigratedDB(t, "settings.db")
-	s := NewStore(d.DB)
-
-	// 001_init.sql seeds "store.currency"='GBP' by default — clear it so
-	// this test genuinely exercises "currency unset, symbol set" rather
-	// than accidentally passing because the seeded default is non-empty
-	// (which is exactly what let the original buggy `if curr != ""` guard
-	// slip through: curr is never actually empty in a fresh migrated DB).
-	repo := data.NewSettingsRepo(d.DB)
-	if err := repo.Delete(ctx, "store.currency"); err != nil {
-		t.Fatalf("clear seeded default: %v", err)
-	}
-	if err := s.Set(ctx, "store.currency_symbol", "kr"); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
-
-	cfg := baseCfg()
-	s.LoadRuntimeConfig(ctx, cfg)
-
-	if cfg.Locales.CurrencySymbol != "kr" {
-		t.Fatalf("CurrencySymbol = %q, want %q (a currency_symbol-only override must not be ignored)", cfg.Locales.CurrencySymbol, "kr")
-	}
-	if cfg.Locales.Currency != "GBP" {
-		t.Fatalf("Currency = %q, want unchanged default %q", cfg.Locales.Currency, "GBP")
 	}
 }
 
@@ -181,7 +142,6 @@ func TestSaveRuntimeConfig_RoundTripsThroughLoad(t *testing.T) {
 	cfg.Theme = "dark"
 	cfg.StoreName = "Farshid's Shop"
 	cfg.Locales.Currency = "EUR"
-	cfg.Locales.CurrencySymbol = "€"
 	cfg.Locales.Locale = "de-DE"
 	cfg.Locales.TaxInclusive = true
 	cfg.Locales.TaxRate = 1900
@@ -203,9 +163,6 @@ func TestSaveRuntimeConfig_RoundTripsThroughLoad(t *testing.T) {
 	if reloaded.Locales.Currency != cfg.Locales.Currency {
 		t.Errorf("Currency round-trip = %q, want %q", reloaded.Locales.Currency, cfg.Locales.Currency)
 	}
-	if reloaded.Locales.CurrencySymbol != cfg.Locales.CurrencySymbol {
-		t.Errorf("CurrencySymbol round-trip = %q, want %q", reloaded.Locales.CurrencySymbol, cfg.Locales.CurrencySymbol)
-	}
 	if reloaded.Locales.Locale != cfg.Locales.Locale {
 		t.Errorf("Locale round-trip = %q, want %q", reloaded.Locales.Locale, cfg.Locales.Locale)
 	}
@@ -220,9 +177,9 @@ func TestSaveRuntimeConfig_RoundTripsThroughLoad(t *testing.T) {
 // 001_init.sql seeds "store.name"='My Store' by default, and baseCfg() also
 // uses "My Store" — so TestLoadRuntimeConfig_EmptyStoreKeepsDefaults can't
 // actually distinguish "kept cfg.StoreName" from "read the seeded row" for
-// this field (an independent review of this batch caught the same blind
-// spot the currency_symbol test above was already fixed for). Clear the
-// seeded row and use a cfg value that couldn't be confused with it.
+// this field (an independent review of this batch caught this same class of
+// blind spot elsewhere). Clear the seeded row and use a cfg value that
+// couldn't be confused with it.
 func TestLoadRuntimeConfig_EmptyNameKeepsCfgDefault(t *testing.T) {
 	ctx := context.Background()
 	d := openMigratedDB(t, "settings.db")
@@ -261,12 +218,19 @@ func TestSaveRuntimeConfig_WritesExpectedKeys(t *testing.T) {
 		t.Fatalf("All: %v", err)
 	}
 	for _, k := range []string{
-		"theme", "store.name", "store.currency", "store.currency_symbol",
+		"theme", "store.name", "store.currency",
 		"store.locale", "store.tax_inclusive", "store.tax_rate",
 	} {
 		if _, ok := all[k]; !ok {
 			t.Errorf("SaveRuntimeConfig did not write expected key %q (all keys: %v)", k, all)
 		}
+	}
+	// ut-docs#1172: store.currency_symbol was a dead, drift-prone setting —
+	// never read by anything except this same load/save round-trip. Every
+	// live symbol display (receipts included) derives the symbol from
+	// store.currency alone via httpx's currency registry. Must not come back.
+	if _, ok := all["store.currency_symbol"]; ok {
+		t.Error("SaveRuntimeConfig wrote store.currency_symbol — this setting is dead and must not be persisted")
 	}
 }
 
@@ -281,7 +245,7 @@ func TestSaveRuntimeConfig_PropagatesRepoError(t *testing.T) {
 	}
 }
 
-// ut-docs#12: SaveRuntimeConfig writes 7 keys; a mid-way failure must leave
+// ut-docs#12: SaveRuntimeConfig writes 6 keys; a mid-way failure must leave
 // the settings table exactly as it was, not with a prefix of the new values.
 // A trigger aborts the insert of store.locale (which sorts after
 // store.currency), so a non-transactional save would already have committed
@@ -311,10 +275,5 @@ BEGIN SELECT RAISE(ABORT, 'injected failure'); END`); err != nil {
 	}
 	if curr != "GBP" {
 		t.Fatalf("store.currency = %q after failed save, want seeded %q (partial write not rolled back)", curr, "GBP")
-	}
-	// store.currency_symbol sorts between store.currency and store.locale,
-	// so a non-transactional save would have committed it before the abort.
-	if _, ok, _ := s.Get(ctx, "store.currency_symbol"); ok {
-		t.Fatal("store.currency_symbol was written despite the save failing; save must be all-or-nothing")
 	}
 }
