@@ -10,6 +10,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/testsupport"
@@ -56,7 +57,10 @@ func TestCatalogPage_FiltersInactive(t *testing.T) {
 // TestCatalogReplicaBannerNeverLinksAcrossDevices guards ut-docs#390: same
 // bug, same fix, as TestInventoryReplicaBannerNeverLinksAcrossDevices in
 // internal/pages — this is /catalog's own copy of the sync-banner block.
-// See that test's comment for the full field-report context.
+// See that test's comment for the full field-report context, including why
+// this stubs httpx.CrossDeviceLinkActionable rather than asserting the
+// host's own runtime.GOOS answer (ut-docs#1057: the old version of this
+// test failed on any Mac while passing on CI's Linux).
 func TestCatalogReplicaBannerNeverLinksAcrossDevices(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
@@ -83,27 +87,50 @@ func TestCatalogReplicaBannerNeverLinksAcrossDevices(t *testing.T) {
 	}
 	Register(mux, dp)
 
-	req := httptest.NewRequest(http.MethodGet, "/catalog", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /catalog = %d, want 200: %s", rec.Code, rec.Body.String())
+	render := func(t *testing.T) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/catalog", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /catalog = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
 	}
-	body := rec.Body.String()
 
-	if !strings.Contains(body, "sync-banner") {
-		t.Fatal("expected the replica sync-banner to render at all — did the {{ if .SyncPrimary }} block regress?")
-	}
-	// crossdevicelinkactionable is false on this (Linux) test runtime — the
-	// same platform this bug was field-reported on. The banner must not
-	// link the kiosk's own browser to the primary's origin under that
-	// condition, and must fall back to inert text instead.
-	if strings.Contains(body, `href="http://primary.till.local:8080/catalog"`) {
-		t.Fatal("ut-docs#390: replica catalog banner still links the kiosk's own browser to the primary till's origin — this strands the operator on a kiosk with no way back")
-	}
-	if !strings.Contains(body, "Edit this on the primary till") {
-		t.Fatal("ut-docs#390: replica banner should fall back to inert text (sync.banner_open_primary_unavailable) when crossdevicelinkactionable is false")
-	}
+	t.Run("inactionable (unix kiosk)", func(t *testing.T) {
+		orig := httpx.CrossDeviceLinkActionable
+		httpx.CrossDeviceLinkActionable = func() bool { return false }
+		t.Cleanup(func() { httpx.CrossDeviceLinkActionable = orig })
+
+		body := render(t)
+		if !strings.Contains(body, "sync-banner") {
+			t.Fatal("expected the replica sync-banner to render at all — did the {{ if .SyncPrimary }} block regress?")
+		}
+		if strings.Contains(body, `href="http://primary.till.local:8080/catalog"`) {
+			t.Fatal("ut-docs#390: replica catalog banner still links the kiosk's own browser to the primary till's origin — this strands the operator on a kiosk with no way back")
+		}
+		if !strings.Contains(body, "Edit this on the primary till") {
+			t.Fatal("ut-docs#390: replica banner should fall back to inert text (sync.banner_open_primary_unavailable) when crossdevicelinkactionable is false")
+		}
+	})
+
+	t.Run("actionable (windows/macOS desktop)", func(t *testing.T) {
+		orig := httpx.CrossDeviceLinkActionable
+		httpx.CrossDeviceLinkActionable = func() bool { return true }
+		t.Cleanup(func() { httpx.CrossDeviceLinkActionable = orig })
+
+		body := render(t)
+		if !strings.Contains(body, "sync-banner") {
+			t.Fatal("expected the replica sync-banner to render at all — did the {{ if .SyncPrimary }} block regress?")
+		}
+		if !strings.Contains(body, `href="http://primary.till.local:8080/catalog"`) {
+			t.Fatal("expected a clickable link to the primary till's origin when crossdevicelinkactionable is true")
+		}
+		if strings.Contains(body, "Edit this on the primary till") {
+			t.Fatal("did not expect the inert fallback text when crossdevicelinkactionable is true")
+		}
+	})
 }
 
 func TestCatalogCreateAndDeactivate(t *testing.T) {
