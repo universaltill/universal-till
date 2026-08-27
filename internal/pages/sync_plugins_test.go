@@ -88,6 +88,23 @@ type fakeMarketplace struct {
 	// actually follows next_page_token across multiple requests instead of
 	// stopping at page one, the way ut-cloud's real defaultPageSize=20 does.
 	catalogPageSize int
+	// onCatalogRequest, if set, fires synchronously the instant a GET
+	// /v1/catalog/plugins request lands on the fake server — before the
+	// response is written. ut-docs#1117: lets a test land a real concurrent
+	// write into shared state exactly inside the network round trip a
+	// caller (e.g. basePluginRetryTick) is blocked on, deterministically
+	// reproducing a "something else wrote in the meantime" race without
+	// timing-dependent goroutines/sleeps. nil (the default) is a no-op, so
+	// every pre-existing test that never sets it is unaffected.
+	onCatalogRequest func()
+}
+
+// setOnCatalogRequest installs the onCatalogRequest hook — see its own doc
+// comment. Guarded by the same mutex as every other mutable field here.
+func (m *fakeMarketplace) setOnCatalogRequest(fn func()) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.onCatalogRequest = fn
 }
 
 // setCatalog replaces the GET /v1/catalog/plugins response wholesale — the
@@ -248,7 +265,11 @@ func newFakeMarketplace(t *testing.T, pluginIDByListing map[string]string) *fake
 			m.catHits++
 			entries := append([]marketplace.PluginSummary(nil), m.catalog...)
 			pageSize := m.catalogPageSize
+			hook := m.onCatalogRequest
 			m.mu.Unlock()
+			if hook != nil {
+				hook()
+			}
 			// ut-docs#1108: page the response when a test has opted into
 			// pagination via setCatalogPageSize; page_token is a plain
 			// decimal offset into `entries` (encoding scheme is this fake's
