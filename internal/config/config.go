@@ -9,11 +9,18 @@ import (
 )
 
 type Locales struct {
-	Currency       string
-	CurrencySymbol string
-	Locale         string
-	TaxRate        int
-	TaxInclusive   bool
+	Currency     string
+	Locale       string
+	TaxRate      int
+	TaxInclusive bool
+
+	// CurrencySymbol was removed (ut-docs#1172): it was a dead, drift-prone
+	// setting that nothing but its own load/save round-trip ever touched —
+	// the wizard writes Currency (a code) but never this, so a shop that
+	// changed currency kept whatever symbol booted with it. Every live
+	// symbol display, receipts included, already derives the symbol from
+	// Currency alone via httpx's currency registry (internal/httpx/currency.go),
+	// so this second, independently-driftable copy just needed deleting.
 
 	// add more fields as needed (DB, SB, etc.)
 }
@@ -119,11 +126,10 @@ func Init() (*Config, error) {
 	tax_inclusive, _ := strconv.ParseBool(getenv("UT_TAX_INCLUSIVE", "true"))
 
 	locales := Locales{
-		Currency:       getenv("UT_CURRENCY", "GBP"),
-		CurrencySymbol: getenv("UT_CURRENCY_SYMBOL", "£"),
-		Locale:         getenv("UT_DEFAULT_LOCALE", "en-US"),
-		TaxRate:        taxRate,
-		TaxInclusive:   tax_inclusive,
+		Currency:     getenv("UT_CURRENCY", "GBP"),
+		Locale:       getenv("UT_DEFAULT_LOCALE", "en-US"),
+		TaxRate:      taxRate,
+		TaxInclusive: tax_inclusive,
 	}
 	cfg.Locales = locales
 	cfg.DefaultLocale = getenv("UT_MARKETPLACE_LOCALE", "en-US") // BCP 47 format for marketplace
