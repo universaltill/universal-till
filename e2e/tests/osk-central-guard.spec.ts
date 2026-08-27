@@ -180,15 +180,17 @@ test('a non-numeric field is left alone on a locale osk.js has no layout for; a 
   const assertClean = watchConsole(page);
   await setOskMode(page, 'on');
 
-  // LAYOUTS covers en/tr/fa/ar only — de ships as a language plugin and is
-  // the German pilot's own locale (CLAUDE.md). ?lang= sets <html lang>
-  // directly without requiring the plugin to actually be installed.
-  await page.goto('/catalog?lang=de');
+  // LAYOUTS covers en/tr/fa/ar/de/es only (ut-docs#1047 added de/es) — 'zz'
+  // is not a real locale and never will be, so this keeps exercising the
+  // fallback path itself rather than a specific locale that might one day
+  // gain a layout of its own. ?lang= sets <html lang> directly without
+  // requiring any matching language plugin to actually be installed.
+  await page.goto('/catalog?lang=zz');
   await expect(page.locator('body')).toHaveAttribute('data-osk', 'on');
 
   // Suppressing the native keyboard here, with no OSK layout able to
-  // replace it, would leave the operator with NO way to type "Käse" at
-  // all — strictly worse than the pre-fix double-keyboard bug.
+  // replace it, would leave the operator with NO way to type at all —
+  // strictly worse than the pre-fix double-keyboard bug.
   expect(await page.locator('#item-name').getAttribute('inputmode')).toBeNull();
 
   // Numeric entry is locale-independent (the 'num' layer is just digits),
@@ -199,6 +201,102 @@ test('a non-numeric field is left alone on a locale osk.js has no layout for; a 
   await expect(page.locator('#osk')).toBeVisible();
   const keyCount = await page.locator('#osk .osk-key').count();
   expect(keyCount, 'the numeric layout has far fewer keys than a full qwerty layout').toBeLessThan(20);
+
+  assertClean();
+});
+
+// ut-docs#1047: de/es ship as language plugins (ut-plugin-language-{de,es})
+// with no OSK layout of their own until this fix — LAYOUTS fell back to 'en'
+// (baseLayout()) and localeSupported() (ut-docs#1022) treated them as
+// unsupported, leaving Germany's pilot shops with no way to type ä/ö/ü/ß via
+// the OSK at all. These two tests drive real key taps, not just attribute
+// checks, because a wrong key POSITION (e.g. a QWERTY 'de' layout instead of
+// the real QWERTZ z/y swap) would pass an attribute-only test just as easily
+// as a correct layout.
+test('de OSK renders a real QWERTZ layout and types umlauts/ß (ut-docs#1047)', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  await setOskMode(page, 'on');
+
+  await page.goto('/catalog?lang=de');
+  // localeSupported() now recognises 'de', so the native keyboard goes back
+  // to being suppressed for non-numeric fields too (the opposite assertion
+  // from the 'zz' test above — this is the fix this locale used to lack).
+  const name = page.locator('#item-name');
+  await expect(name).toHaveAttribute('inputmode', 'none');
+
+  await name.click();
+  await expect(page.locator('#osk')).toBeVisible();
+  // QWERTZ, not just "z and y both exist somewhere": data-k lookups are
+  // positionless (press() reads whichever button was clicked regardless of
+  // where it sits), so asserting mere presence would pass even against an
+  // un-swapped QWERTY 'de' layout. Assert real row order instead — the top
+  // letter row must have 'z' where QWERTY has 'y' (between t and u), and the
+  // bottom letter row must have 'y' where QWERTY has 'z' (right after ⇧).
+  const rows = page.locator('#osk .osk-row');
+  const topRowKeys = await rows.nth(1).locator('button').evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.k));
+  expect(topRowKeys, 'top letter row must be real QWERTZ order').toEqual(
+    ['q', 'w', 'e', 'r', 't', 'z', 'u', 'i', 'o', 'p', 'ü'],
+  );
+  const shiftRowKeys = await rows.nth(3).locator('button').evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.k));
+  expect(shiftRowKeys, 'shift/bottom-letter row must be real QWERTZ order').toEqual(
+    ['⇧', 'y', 'x', 'c', 'v', 'b', 'n', 'm', 'ß', '⌫'],
+  );
+
+  await page.locator('#osk button[data-k="k"]').click();
+  await page.locator('#osk button[data-k="ä"]').click();
+  await page.locator('#osk button[data-k="s"]').click();
+  await page.locator('#osk button[data-k="e"]').click();
+  await expect(name).toHaveValue('käse');
+
+  // ß has no traditional single-character uppercase — the default (and
+  // German-locale) Unicode case mapping is the two-character "SS", verified
+  // directly in Node against this exact call: 'ß'.toLocaleUpperCase('de')
+  // === 'SS'. insert() already accepts multi-character strings via
+  // setRangeText, so no special-casing was needed to get this right.
+  await name.fill('');
+  await page.locator('#osk button[data-k="⇧"]').click();
+  await page.locator('#osk button[data-k="ß"]').click();
+  await expect(name).toHaveValue('SS');
+
+  assertClean();
+});
+
+test('es OSK renders accented vowels/ñ and types real Spanish characters (ut-docs#1047)', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  await setOskMode(page, 'on');
+
+  await page.goto('/catalog?lang=es');
+  const name = page.locator('#item-name');
+  await expect(name).toHaveAttribute('inputmode', 'none');
+
+  await name.click();
+  await expect(page.locator('#osk')).toBeVisible();
+  // Real row order (`tr`'s own precedent: append the extra glyphs to the
+  // ends of the base QWERTY rows), not just presence — see the `de` test
+  // above for why a mere-visibility check would be a weaker assertion.
+  const rows = page.locator('#osk .osk-row');
+  const topRowKeys = await rows.nth(1).locator('button').evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.k));
+  expect(topRowKeys, 'top letter row must end with the appended á/é').toEqual(
+    ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', 'á', 'é'],
+  );
+  const homeRowKeys = await rows.nth(2).locator('button').evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.k));
+  // ñ directly after l (its real physical/mobile-keyboard position), not
+  // after í — an earlier draft had these swapped (independent review,
+  // ut-docs#1047).
+  expect(homeRowKeys, 'home row must have ñ directly after l, then í').toEqual(
+    ['a', 's', 'd', 'f', 'g', 'h', 'j', 'k', 'l', 'ñ', 'í'],
+  );
+
+  await page.locator('#osk button[data-k="ñ"]').click();
+  await page.locator('#osk button[data-k="á"]').click();
+  await expect(name).toHaveValue('ñá');
+
+  // Spanish accented vowels uppercase to themselves-with-accent by default
+  // (á → Á), unlike German ß — no special-casing needed here either.
+  await name.fill('');
+  await page.locator('#osk button[data-k="⇧"]').click();
+  await page.locator('#osk button[data-k="á"]').click();
+  await expect(name).toHaveValue('Á');
 
   assertClean();
 });
