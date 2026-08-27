@@ -388,6 +388,17 @@ func TestSetupGETResumesStep3ForTaxCountry(t *testing.T) {
 	resetTaxCatalogForTest(t)
 	resetSetupLanguageCatalog()
 	t.Cleanup(resetSetupLanguageCatalog)
+	// A bare GET with no explicit ?lang= and no ut_lang cookie is what a real
+	// first-ever visit looks like, so it's also what triggers renderWizard's
+	// own OS-language-auto-detect redirect (setup_page.go) when the runtime's
+	// $LANG/$LC_ALL happens to resolve to a shipped locale — invisible in any
+	// sandbox where that env is unset, which is exactly how this slipped past
+	// local runs and review and only broke in CI (LANG=en_US.UTF-8 there).
+	// withOSLocale(t, "", "") is this file's own established way (see
+	// setup_page_test.go's other GET /setup tests) to make that redirect
+	// deterministically NOT fire, so this test verifies the resume behaviour
+	// itself rather than racing the runner's locale.
+	withOSLocale(t, "", "")
 	mux, dp := newRealDBDeps(t)
 	initTestPaths(t)
 	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
@@ -416,6 +427,7 @@ func TestSetupGETTaxCountryResumeIsNotForgeable(t *testing.T) {
 	resetTaxCatalogForTest(t)
 	resetSetupLanguageCatalog()
 	t.Cleanup(resetSetupLanguageCatalog)
+	withOSLocale(t, "", "") // see TestSetupGETResumesStep3ForTaxCountry's comment
 	mux, dp := newRealDBDeps(t)
 	initTestPaths(t)
 	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
@@ -437,6 +449,7 @@ func TestSetupGETResumeShowsTaxPluginPendingNote(t *testing.T) {
 	resetTaxCatalogForTest(t)
 	resetSetupLanguageCatalog()
 	t.Cleanup(resetSetupLanguageCatalog)
+	withOSLocale(t, "", "") // see TestSetupGETResumesStep3ForTaxCountry's comment
 	mux, dp := newRealDBDeps(t)
 	initTestPaths(t)
 	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
