@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // TestEODClosesForExport covers the ut-docs#1005 conversion from archived
@@ -17,20 +18,20 @@ func TestEODClosesForExport(t *testing.T) {
 	// Two real closes with the cross-tab fields the DATEV batch reads.
 	if _, err := repo.ArchiveReport(ctx, "eod", "2026-08-20",
 		[]byte(`{"day":"2026-08-20","gross":11900,"method_tax_bands":[{"method":"cash","rate_bp":1900,"net":10000,"tax":1900,"gross":11900}]}`),
-		"R-1", "R-9"); err != nil {
+		"R-1", "R-9", time.Time{}); err != nil {
 		t.Fatalf("archive close 1: %v", err)
 	}
 	if _, err := repo.ArchiveReport(ctx, "eod", "2026-08-21",
 		[]byte(`{"day":"2026-08-21","gross":23800,"method_tax_bands":[{"method":"card","rate_bp":1900,"net":20000,"tax":3800,"gross":23800}],"tips":[{"method":"card","count":1,"amount":320}]}`),
-		"R-10", "R-20"); err != nil {
+		"R-10", "R-20", time.Time{}); err != nil {
 		t.Fatalf("archive close 2: %v", err)
 	}
 	// A non-eod archived report in the same range — must be filtered out.
-	if _, err := repo.ArchiveReport(ctx, "weekly", "2026-08-21", []byte(`{"gross":1}`), "", ""); err != nil {
+	if _, err := repo.ArchiveReport(ctx, "weekly", "2026-08-21", []byte(`{"gross":1}`), "", "", time.Time{}); err != nil {
 		t.Fatalf("archive weekly: %v", err)
 	}
 	// Outside the range — excluded by ArchivedReportsInRange itself.
-	if _, err := repo.ArchiveReport(ctx, "eod", "2026-09-01", []byte(`{"day":"2026-09-01"}`), "", ""); err != nil {
+	if _, err := repo.ArchiveReport(ctx, "eod", "2026-09-01", []byte(`{"day":"2026-09-01"}`), "", "", time.Time{}); err != nil {
 		t.Fatalf("archive out-of-range close: %v", err)
 	}
 
@@ -65,13 +66,13 @@ func TestEODClosesForExport_CorruptContentSkippedNotFatal(t *testing.T) {
 	ctx := context.Background()
 	repo := dbx.repo
 
-	if _, err := repo.ArchiveReport(ctx, "eod", "2026-08-20", []byte(`{"day":"2026-08-20"}`), "", ""); err != nil {
+	if _, err := repo.ArchiveReport(ctx, "eod", "2026-08-20", []byte(`{"day":"2026-08-20"}`), "", "", time.Time{}); err != nil {
 		t.Fatalf("archive good close: %v", err)
 	}
-	if _, err := repo.ArchiveReport(ctx, "eod", "2026-08-21", []byte(`this is not json`), "", ""); err != nil {
+	if _, err := repo.ArchiveReport(ctx, "eod", "2026-08-21", []byte(`this is not json`), "", "", time.Time{}); err != nil {
 		t.Fatalf("archive corrupt close: %v", err)
 	}
-	if _, err := repo.ArchiveReport(ctx, "eod", "2026-08-22", []byte(`{"day":"2026-08-22"}`), "", ""); err != nil {
+	if _, err := repo.ArchiveReport(ctx, "eod", "2026-08-22", []byte(`{"day":"2026-08-22"}`), "", "", time.Time{}); err != nil {
 		t.Fatalf("archive second good close: %v", err)
 	}
 

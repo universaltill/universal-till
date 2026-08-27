@@ -89,10 +89,10 @@ func TestPruneReportArchive_TillModePastCutoffDeletesOldRows(t *testing.T) {
 	dp := newEODTestDeps(t)
 	repo := data.NewPOSRepo(dp.Db)
 
-	if _, err := repo.ArchiveReport(t.Context(), "eod", "2010-01-01", []byte(`{}`), "", ""); err != nil {
+	if _, err := repo.ArchiveReport(t.Context(), "eod", "2010-01-01", []byte(`{}`), "", "", time.Time{}); err != nil {
 		t.Fatalf("seed old archive: %v", err)
 	}
-	if _, err := repo.ArchiveReport(t.Context(), "eod", "2026-01-01", []byte(`{}`), "", ""); err != nil {
+	if _, err := repo.ArchiveReport(t.Context(), "eod", "2026-01-01", []byte(`{}`), "", "", time.Time{}); err != nil {
 		t.Fatalf("seed recent archive: %v", err)
 	}
 	// Default mode is till (unset) — explicit here for clarity.
@@ -117,7 +117,7 @@ func TestPruneReportArchive_TillModePastCutoffDeletesOldRows(t *testing.T) {
 
 	// A second call the same day is a no-op (gated by lastPruneDay) — seed
 	// another old row and confirm it's NOT pruned until a new day.
-	if _, err := repo.ArchiveReport(t.Context(), "eod", "2011-01-01", []byte(`{}`), "", ""); err != nil {
+	if _, err := repo.ArchiveReport(t.Context(), "eod", "2011-01-01", []byte(`{}`), "", "", time.Time{}); err != nil {
 		t.Fatalf("seed another old archive: %v", err)
 	}
 	pruneReportArchive(t.Context(), dp, repo, now, &lastPruneDay)
@@ -130,7 +130,7 @@ func TestPruneReportArchive_CloudModeIsNoOpThisCard(t *testing.T) {
 	dp := newEODTestDeps(t)
 	repo := data.NewPOSRepo(dp.Db)
 
-	if _, err := repo.ArchiveReport(t.Context(), "eod", "2010-01-01", []byte(`{}`), "", ""); err != nil {
+	if _, err := repo.ArchiveReport(t.Context(), "eod", "2010-01-01", []byte(`{}`), "", "", time.Time{}); err != nil {
 		t.Fatalf("seed old archive: %v", err)
 	}
 	if err := dp.Settings.Set(t.Context(), common.KeyReportRetentionMode, "cloud"); err != nil {
