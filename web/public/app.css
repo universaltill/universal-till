@@ -217,7 +217,17 @@ body.sale-screen .session-user { font-size: 1rem; padding: .3rem .5rem; }
 .catalog-row { cursor: pointer; }
 .catalog-row:hover td { background: var(--surface-2); }
 .catalog-name { font-weight: 600; }
-.draggable-tile { cursor: grab; }
+/* -webkit-user-drag: element (review finding, ut-docs#1170): this tile is
+   ALSO a .btn-tile, which this same change just gave an unconditional
+   `user-select: none`. WebKitGTK (the Linux desktop shell, ADR-0028,
+   guard-webkit-version.sh — not the Chromium kiosk shell, unaffected) has a
+   known behavior where user-select:none on a draggable="true" element can
+   suppress HTML5 drag-and-drop initiation. This tile's mouse-driven
+   REORDER gesture (buttons_admin.html's dragstart/dragover/drop) works
+   today and has no e2e coverage — this rule is the standard, Blink-inert
+   workaround, applied preventively rather than waiting to find out on
+   real desktop-shell hardware. */
+.draggable-tile { cursor: grab; -webkit-user-drag: element; }
 .draggable-tile.dragging { opacity: .4; }
 .journal-row { cursor: pointer; }
 .journal-row:hover td { background: var(--surface-2); }
