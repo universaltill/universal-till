@@ -1673,29 +1673,46 @@ type CashReconciliation struct {
 	// actually sat in the drawer). So the Z-report's printed CASH
 	// RECONCILIATION block still visibly closes once cash tipping is on:
 	// OpeningFloat + CashSales + TipsHeldOut + PayIns + PayOuts ==
-	// Calculated (ut-docs#1124; regression-tested in
-	// TestEndOfDay_CashReconciliation_ExcludesCashTips) -- ON A DAY WHOSE
-	// ONLY SKIM (if any) WAS RECORDED AT SHIFT CLOSE, which is every path
-	// the shipped operator UI offers (shifts.html's mid-shift adjustment
-	// form has no "skim" option). expected_cash is computed and persisted
-	// before THAT close-time skim audit row is written (pos.CloseShift), so
-	// a close-time skim never factors into Calculated, matching what
-	// CashReconciliationForLocalDay excludes when printing. A skim recorded
-	// WHILE THE SHIFT IS STILL OPEN is a different case: SumShiftAdjustments
-	// nets it into Calculated with no type filter (it already exists in
-	// audit_log by close time), while CashReconciliationForLocalDay still
-	// excludes every skim row from the printed sum regardless of when it
-	// was written -- so the identity above breaks by that amount. Not
-	// reachable via the shipped UI, but not guarded at the API layer
-	// (pos.RecordCashAdjustment accepts Type:"skim" on an open shift) --
-	// tracked, not yet fixed, as ut-docs#1146.
+	// Calculated always (ut-docs#1124, ut-docs#1146; regression-tested in
+	// TestEndOfDay_CashReconciliation_ExcludesCashTips and
+	// TestCashReconciliationForLocalDay_MidShiftSkimIncludedInPayOuts). Skim
+	// (below) is deliberately NOT part of that sum -- it reports only a
+	// CLOSE-TIME skim (pos.CloseShift's own skim-to-safe field, the only
+	// path the shipped operator UI offers: shifts.html's mid-shift
+	// adjustment form has no "skim" option). expected_cash is computed and
+	// persisted BEFORE that close-time skim audit row is written, so it
+	// never factors into Calculated.
+	//
+	// CashReconciliationForLocalDay identifies a close-time skim by an
+	// explicit `at_close: true` marker CloseShift stamps into that audit
+	// row's payload (ut-docs#1146 review finding F1) -- NOT by comparing
+	// timestamps. An earlier version of this fix tried to infer it from
+	// the skim row's created_at exactly matching the shift's own
+	// closed_at (both come from the same `now` in CloseShift, in the same
+	// transaction), but that string match is only second-precision
+	// (time.RFC3339): a skim recorded WHILE THE SHIFT IS STILL OPEN (via
+	// pos.RecordCashAdjustment, Type:"skim" -- not reachable via the
+	// shipped UI, but not guarded at the API layer either, and a
+	// deliberately valid mid-shift adjustment type per
+	// TestRecordCashAdjustment_SkimType) landing in the same wall-clock
+	// SECOND as its own shift's close would collide with that timestamp
+	// and be misclassified right back into the #1146 bug. The explicit
+	// flag has no such race: pos.RecordCashAdjustment never sets it, so a
+	// mid-shift skim is unambiguous regardless of timing, and
+	// CashReconciliationForLocalDay buckets anything without it into
+	// PayIns/PayOuts by sign, same as any other adjustment, keeping the
+	// identity whole. This intentionally does NOT fall back to the
+	// timestamp match for a skim row that predates this flag (there is no
+	// real production data yet to protect, matching this pipeline's
+	// standing "no real users yet" auto-push authorization) -- a schema
+	// migration would be the right fix if that ever stops being true.
 	TipsHeldOut  int64 `json:"tips_held_out"`
-	PayIns       int64 `json:"pay_ins"`    // sum of positive non-skim adjustments
-	PayOuts      int64 `json:"pay_outs"`   // sum of negative non-skim adjustments (negative value)
+	PayIns       int64 `json:"pay_ins"`    // sum of positive adjustments, excluding a close-time skim (a mid-shift skim counts as a payout, see Skim below)
+	PayOuts      int64 `json:"pay_outs"`   // sum of negative adjustments, excluding a close-time skim (a mid-shift skim counts as a payout, see Skim below)
 	Calculated   int64 `json:"calculated"` // sum of each closed shift's expected_cash
 	Counted      int64 `json:"counted"`    // sum of each closed shift's closing_cash
 	Variance     int64 `json:"variance"`   // Counted - Calculated
-	Skim         int64 `json:"skim"`       // sum of skim adjustments (negative value)
+	Skim         int64 `json:"skim"`       // sum of CLOSE-TIME skim adjustments only (negative value) -- a mid-shift skim is in PayIns/PayOuts instead, see the doc comment above
 	NewFloat     int64 `json:"new_float"`  // sum of each closed shift's new_float (fallback closing_cash)
 	ShiftsClosed int   `json:"shifts_closed"`
 }
@@ -1849,15 +1866,34 @@ FROM (
 	// "skim" (cash moved to the safe) apart from ordinary pay-ins/pay-outs,
 	// which split by sign — the same sign-over-label convention the
 	// manager-PIN gate uses (a row with no type at all is treated as a
-	// plain adjustment, not a skim).
+	// plain adjustment, not a skim). A "skim" row only counts as the
+	// close-time skim (excluded from this sum, see CashReconciliation's own
+	// doc comment) when it explicitly carries `at_close: true` — the
+	// marker pos.CloseShift stamps on the skim row it writes at close, and
+	// ONLY that path ever sets (ut-docs#1146 review finding F1: an earlier
+	// version of this fix compared created_at to closed_at instead, but
+	// that string match is only second-precision and could misclassify a
+	// mid-shift skim landing in the same wall-clock second as its own
+	// shift's close). A skim row without the flag — including one
+	// recorded while the shift was still open, via
+	// pos.RecordCashAdjustment, which never sets it — falls through to the
+	// plain sign-based split below, same as any other mid-shift
+	// adjustment, keeping Calculated and this sum in agreement regardless
+	// of timing. COALESCE guards both the type and the flag check against
+	// SQL's three-valued NULL logic: a missing `$.type` or `$.at_close`
+	// key must resolve to a definite false, never NULL, or the row would
+	// silently disappear from every bucket instead of landing in one.
 	err = r.db.QueryRowContext(ctx, `
 SELECT
   COALESCE(SUM(CASE WHEN COALESCE(json_extract(a.data_json, '$.type'), '') = 'skim'
+                     AND COALESCE(json_extract(a.data_json, '$.at_close') = 1, 0)
                     THEN CAST(json_extract(a.data_json, '$.amount') AS INTEGER) END), 0),
-  COALESCE(SUM(CASE WHEN COALESCE(json_extract(a.data_json, '$.type'), '') != 'skim'
+  COALESCE(SUM(CASE WHEN NOT (COALESCE(json_extract(a.data_json, '$.type'), '') = 'skim'
+                          AND COALESCE(json_extract(a.data_json, '$.at_close') = 1, 0))
                      AND CAST(json_extract(a.data_json, '$.amount') AS INTEGER) > 0
                     THEN CAST(json_extract(a.data_json, '$.amount') AS INTEGER) END), 0),
-  COALESCE(SUM(CASE WHEN COALESCE(json_extract(a.data_json, '$.type'), '') != 'skim'
+  COALESCE(SUM(CASE WHEN NOT (COALESCE(json_extract(a.data_json, '$.type'), '') = 'skim'
+                          AND COALESCE(json_extract(a.data_json, '$.at_close') = 1, 0))
                      AND CAST(json_extract(a.data_json, '$.amount') AS INTEGER) < 0
                     THEN CAST(json_extract(a.data_json, '$.amount') AS INTEGER) END), 0)
 FROM audit_log a
