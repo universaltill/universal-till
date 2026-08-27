@@ -313,3 +313,22 @@ F1 was a real user-visible defect in the feature's own happy path and is fixed
 and test-pinned; F2–F4 and F7 are fixed; F5 and F6 are noted for follow-up
 cards and neither blocks this change; F8 (CI-only, environment-dependent) is
 fixed and re-verified under the exact condition that exposed it.
+
+## Addendum, 2026-08-27 (retracted): auto-install detour
+
+A product-owner review comment on the PR ("why is this plugin optional") led
+this session to write [ADR-0067](https://github.com/universaltill/ut-docs/pull/1192),
+merge it, and push a commit (`0d7e477`) auto-installing the plugin at wizard
+completion instead of only prompting for it. The product owner retracted
+that comment a few minutes after posting it — before anyone acted on it —
+having checked further and found ADR-0025 Decision 4 already correctly
+answers this tradeoff (offline-first, non-negotiable). This session's PR
+subscription queued the retraction, but the notification carrying it wasn't
+actually delivered until after the ADR had merged and the code had shipped.
+`0d7e477` was reverted (`2679189`) the moment the retraction was seen — this
+PR is back to the prompt-then-click design the product owner confirmed is
+correct, unchanged from the "Verdict" above. ADR-0067 is marked retracted
+(kept, not deleted) in `universaltill/ut-docs#1193`. The real gap the
+retraction surfaced — ADR-0025 Decision 1's core-config VAT rate table was
+never implemented — is tracked separately as ut-docs#1191, out of scope for
+this PR.
