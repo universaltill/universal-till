@@ -1599,6 +1599,25 @@ WHERE pe.type = 'payment' AND pe.is_active = 1 AND p.is_active = 1
 // that contention test does not detect removal of _txlock=immediate, so it
 // is evidence about THIS path's behaviour under load, not a regression test
 // for the DSN flag. Keep both.
+//
+// ut-docs#1151 (2026-08-27): the real repeat CI failures (#979 x2, #1151
+// x2, all on commits touching nothing near this path) were never directly
+// reproduced with a measured elapsed-time-to-SQLITE_BUSY — attempts to force
+// it via artificial CPU starvation (this test pinned to a single core
+// shared with busy-loop CPU hogs, standing in for a slow shared CI vCPU)
+// did not reliably reproduce SQLITE_BUSY on this path at all in that
+// exercise. Absent a direct reproduction, the #775 conclusion stands on its
+// own already-independently-reviewed evidence (no lock-promotion-gap defect
+// on this path; genuine non-error parking up to ~2s observed under massive
+// synthetic load) plus the fact that all 4 real failures were SQLITE_BUSY
+// specifically, never an unrelated error — consistent with slow-runner
+// busy_timeout exhaustion, not with the instant (~1ms) failure the actual
+// #311-class defect produces. The contention test now classifies BUSY by
+// elapsed time instead of hard-failing on the first one, so it can tolerate
+// a genuinely slow exhaustion without masking a fast one — see that test's
+// own comments for the full reasoning and for a related, separate flake
+// mode (the test's publisher-completion floor, not this statement) found
+// but not fixed during this investigation.
 func (r *PluginRepo) SyncPluginPaymentMethods(ctx context.Context) error {
 	// Standing invariant, re-asserted EVERY run (not just migration 021):
 	// the seeded built-ins are never plugin-owned. Damage can re-enter a
