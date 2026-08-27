@@ -270,6 +270,39 @@ does not serve.
 
 Test count in `setup_tax_catalog_test.go`: 13 → **16**.
 
+## Post-review CI failure (F8) — fixed
+
+The `build` check failed on 0362798 in CI, invisible in every local/subagent
+environment used up to that point (this sandbox and both reviewers' worktrees
+all run with `$LANG`/`$LC_ALL` unset). Root cause: `GET /setup`'s pre-existing
+OS-language-auto-detect redirect (`setup_page.go`, ut-docs#590) rebuilt the
+target as a bare `"/setup?lang="+code`, discarding every other query param —
+including this feature's new `?tax_country=`/`?tax_plugin_pending=1` resume
+params. `detectLanguage()` only takes that branch when `$LANG`/`$LC_ALL`
+resolves to a shipped locale; GitHub's runner sets `LANG=en_US.UTF-8`, so the
+branch fires on literally the first `GET /setup` there, while it silently
+never fires in a sandbox with no locale env set — which is exactly why this
+survived Dev, Tester, and this independent review without being caught, and
+only broke in CI.
+
+Reproduced locally with `LANG=en_US.UTF-8 go test ./internal/pages/... -run
+'TestSetupGETResumesStep3ForTaxCountry|TestSetupGETTaxCountryResumeIsNotForgeable|TestSetupGETResumeShowsTaxPluginPendingNote'`
+— same three tests CI named, same failure. Fixed by preserving
+`r.URL.Query()` across the redirect and only setting/overwriting `lang`
+(9b465c8). Also fixed the three new tests to call `withOSLocale(t, "", "")` —
+this repo's own established convention (used throughout
+`setup_page_test.go`/`auth_page_test.go`) for making that redirect branch
+deterministic — which is the actual reason they didn't catch this themselves;
+the production fix and the test fix are both needed; either alone leaves a
+gap (test-only would still ship the real bug with masked coverage; fix-only
+would leave the same class of regression uncaught next time).
+
+Re-verified green under both `LANG=en_US.UTF-8` (the CI-reproducing case) and
+an unset `LANG` (the sandbox-default case): `gofmt -l .` clean, `go build
+./...` / `go vet ./...` clean, `go test ./internal/pages/...` and the full
+`go test ./...` both green under `LANG=en_US.UTF-8`, all CI-blocking guards
+re-run and pass.
+
 ## Verdict
 
 **Safe to merge.** The architectural call is right — this is the ADR-0025 D4
@@ -278,4 +311,5 @@ preserved and now additionally protected by a comment on `countryTaxLocale`.
 The shipped tests are genuine (mutation-verified in two independent places).
 F1 was a real user-visible defect in the feature's own happy path and is fixed
 and test-pinned; F2–F4 and F7 are fixed; F5 and F6 are noted for follow-up
-cards and neither blocks this change.
+cards and neither blocks this change; F8 (CI-only, environment-dependent) is
+fixed and re-verified under the exact condition that exposed it.
