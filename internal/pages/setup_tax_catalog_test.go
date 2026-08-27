@@ -9,6 +9,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
 
@@ -158,6 +159,72 @@ func TestSetupInstallableTaxPlugin_CatalogUnreachableReportsUnavailable(t *testi
 	}
 	if !unavailable {
 		t.Fatal("expected catalogUnavailable=true when the catalog cannot be reached and nothing is cached")
+	}
+}
+
+// --- installMandatedTaxPluginForSetup (ADR-0067) ---
+
+// The happy path: a reachable catalog with a matching DE tax listing means
+// the mandated plugin is installed synchronously at wizard-completion time,
+// with nothing left pending — no operator action required.
+func TestInstallMandatedTaxPluginForSetup_DEHappyPathInstallsSynchronously(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	_, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	installMandatedTaxPluginForSetup(t.Context(), dp, "DE")
+
+	if active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); err != nil || !active {
+		t.Fatalf("expected the mandated DE tax plugin installed synchronously: active=%v err=%v", active, err)
+	}
+	if pending, _ := loadPendingBasePlugins(t.Context(), dp); len(pending) != 0 {
+		t.Fatalf("expected nothing left pending after a successful synchronous install, got %+v", pending)
+	}
+}
+
+// A country with no entry in countryTaxLocale is a clean no-op — no pending
+// spec queued, no network attempt (an unconfigured marketplace would error
+// if this touched the network at all).
+func TestInstallMandatedTaxPluginForSetup_NonMandatedCountryIsNoOp(t *testing.T) {
+	_, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	// No Marketplace endpoint configured — same "must not even try" posture
+	// as TestInstallBasePluginsForSetup_NoMappingIsNoOp.
+
+	installMandatedTaxPluginForSetup(t.Context(), dp, "US")
+
+	if _, ok, _ := dp.Settings.Get(t.Context(), common.KeyPendingBasePlugins); ok {
+		t.Fatal("expected no pending base plugins for a non-mandated country")
+	}
+}
+
+// Offline at wizard-completion time: the attempt must still return promptly
+// (never block the wizard's own response) and leave the spec pending for
+// the existing background retry (StartBasePluginRetry) — same mechanism the
+// free-content-pack install already relies on, no second retry path.
+func TestInstallMandatedTaxPluginForSetup_OfflineLeavesPendingForRetry(t *testing.T) {
+	_, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	dp.Cfg.Marketplace.EndpointURL = dead.URL
+	dp.Cfg.Marketplace.ClientID = "merchant-1"
+	dp.Cfg.Marketplace.StoreID = "store-1"
+	dead.Close()
+
+	installMandatedTaxPluginForSetup(t.Context(), dp, "DE")
+
+	pending, err := loadPendingBasePlugins(t.Context(), dp)
+	if err != nil {
+		t.Fatalf("loadPendingBasePlugins: %v", err)
+	}
+	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "tax", Locale: "de"}) {
+		t.Fatalf("expected the mandated DE tax spec left pending, got %+v", pending)
+	}
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); active {
+		t.Fatal("nothing should be installed while offline")
 	}
 }
 

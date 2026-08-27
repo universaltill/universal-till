@@ -313,3 +313,89 @@ F1 was a real user-visible defect in the feature's own happy path and is fixed
 and test-pinned; F2–F4 and F7 are fixed; F5 and F6 are noted for follow-up
 cards and neither blocks this change; F8 (CI-only, environment-dependent) is
 fixed and re-verified under the exact condition that exposed it.
+
+## Addendum, 2026-08-27: product owner review comment reverses the "prompted, never silent" call (ADR-0067)
+
+After the above round landed, the product owner reviewed the PR directly and
+raised a blocking concern, quoted verbatim: *"Why that plugin should be
+optional when it is a rule and legislation in germany?"* — the point being
+that ADR-0025 Decision 4's reasoning (an optional prompt, offline-first)
+doesn't transfer to a plugin a country's own law mandates: skipping a
+language pack costs English instead of German, but skipping this plugin means
+every sale rings up at one flat VAT rate, a silent §12 UStG violation from the
+moment setup finishes — reproducing the exact ut-docs#1055/#1026 pattern this
+project already burned itself on.
+
+This is a genuine business/compliance decision (per this pipeline's own
+standing rules, exactly the class that needs the product owner's sign-off,
+not an engineering call to make unilaterally) — and the product owner has now
+made it, explicitly, on the PR. Per ADR-0007 (document-first), the call is
+recorded **before** the code that implements it:
+[ADR-0067](https://github.com/universaltill/ut-docs/pull/1192) amends
+ADR-0025 Decision 4 narrowly — a `tax`-type plugin a country's own law
+mandates (today: only `ut-plugin-tax-de`/DE) is auto-installed at wizard
+completion, not merely prompted; an optional tax-rate plugin with no legal
+mandate stays governed by Decision 4 as originally written.
+
+**Implementation, reusing existing mechanisms wherever possible:**
+
+- `installMandatedTaxPluginForSetup` (`setup_tax_catalog.go`) — same
+  best-effort, persist-pending-before-network-attempt shape as
+  `installBasePluginsForSetup`, called separately (not folded into
+  `setupBasePlugins`) so "free content pack" and "legal mandate" stay two
+  visibly different lists. Wired into `POST /api/setup`'s completion handler
+  alongside the existing language-pack auto-install call. Reuses the SAME
+  pending list and background retry (`StartBasePluginRetry`) — no second
+  retry mechanism.
+- The wizard's install tile (from the original PR) stays, repurposed from
+  primary trigger to fallback/early-nudge: whichever of the two — an
+  operator's explicit tap, or the completion-time auto-install — gets there
+  first, the other is a safe no-op (both go through the same
+  `resolveAndInstallBasePlugin` idempotency check). Its copy changed from
+  "Optional — install it now, or any time later" to "This installs
+  automatically when you finish setup — tap Install if you'd like it ready
+  sooner", so the UI stops promising something no longer true.
+- New persistent Settings warning (`missingMandatedTaxPlugin`,
+  `mandated_tax_plugin_banner.go`) for the fallback case — mirrors the
+  existing `missingFiscalSigner` banner field-for-field (same
+  `ActiveHookOwner`/`HasBrokenActivePluginForEvent` broken-plugin-detection
+  pattern, ut-docs#368; same non-dismissable, checks-itself-every-render
+  posture), keyed on `countryTaxLocale` rather than
+  `fiscal.RequiresHardGate`/system-of-record — the VAT-split obligation
+  doesn't depend on who the fiscal system of record is (ADR-0050's
+  boundary test), so this banner has no such gate.
+- Offline-first is unaffected: `installMandatedTaxPluginForSetup` is
+  best-effort like everything else in `POST /api/setup`'s completion
+  handler — a slow/unreachable catalog never blocks the wizard's own
+  response, it just joins the pending/retry queue, exactly like the
+  original PR's own offline handling.
+
+**Verification for this addendum:**
+
+- Existing test that assumed only the language spec goes pending for a
+  DE wizard run offline (`TestSetupWizardDE_OfflineCompletesAndLeavesPendingForRetry`)
+  updated to expect both specs (membership check, not position — two
+  independent calls, no ordering guarantee) — confirmed it was a real,
+  necessary update (the test failed before the update, on the actual new
+  behavior, then passed after).
+- New tests: `TestInstallMandatedTaxPluginForSetup_{DEHappyPathInstallsSynchronously,NonMandatedCountryIsNoOp,OfflineLeavesPendingForRetry}`,
+  `TestMissingMandatedTaxPlugin` (5 sub-cases: non-mandated country, no
+  plugin, active plugin, broken-but-active plugin, and a countryTaxLocale
+  cross-check), `TestSettingsShowsMissingMandatedTaxPluginBanner`.
+- Mutation-tested independently: inverted the `countryTaxLocale` mandate
+  check in `missingMandatedTaxPlugin` — `TestMissingMandatedTaxPlugin` and
+  `TestSettingsShowsMissingMandatedTaxPluginBanner` both failed with real
+  assertion mismatches; restored, both green again.
+- Full gate re-run: `gofmt -l .` clean, `go build ./...` / `go vet ./...`
+  clean, `go test ./internal/pages/...` and repo-wide `go test ./...` both
+  green, all 18 CI-blocking guards pass, `make docs-shots` regenerated
+  (surface `f069341d3531…`) for the updated `users.md`/`sell.md` prose.
+- i18n: new `settings.tax_plugin.missing.*` keys and the revised
+  `setup.tax_plugin.description` added to all four locale files with real
+  (not English-copy) `ar`/`fa`/`tr` translations; manual prose
+  (`web/help/{en,ar,fa,tr}/{users,sell}.md`) updated to match in all four
+  locales.
+
+**Revised verdict: still safe to merge**, now implementing the product
+owner's explicit, documented (ADR-0067) decision rather than the original
+PR's own reading of Decision 4.

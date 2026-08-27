@@ -240,6 +240,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if missingSignerErr != nil {
 			logging.L().Errorf("missing-fiscal-signer check: %v", missingSignerErr)
 		}
+		// Missing MANDATED tax plugin (ADR-0067 amending ADR-0025 Decision
+		// 4): a country whose own law requires a tax-rate plugin (today:
+		// DE's §12 UStG split) with no active tax.rate.ask plugin gets the
+		// same persistent, non-dismissable banner treatment as the fiscal-
+		// signer one above — same reasoning (missingMandatedTaxPlugin's own
+		// doc comment), same best-effort-on-read-error posture.
+		missingTaxPlugin, missingTaxPluginErr := missingMandatedTaxPlugin(r.Context(), d, d.CurrentState().Country)
+		if missingTaxPluginErr != nil {
+			logging.L().Errorf("missing-mandated-tax-plugin check: %v", missingTaxPluginErr)
+		}
 		exportEntries, exportEntriesErr := data.NewPluginRepo(d.Db).ListExportEntries(r.Context())
 		if exportEntriesErr != nil {
 			// Non-fatal: the settings page still renders without the
@@ -402,6 +412,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"pendingBasePlugins":    pendingBasePluginViews(pendingBasePlugins),
 			"tseProvisioning":       tseProvisioningViewFor(tseState),
 			"missingFiscalSigner":   missingSigner,
+			"missingTaxPlugin":      missingTaxPlugin,
 			"resetBatches":          resetBatches,
 			"sampleCount":           sampleCount,
 			"windowMode":            st.WindowMode,

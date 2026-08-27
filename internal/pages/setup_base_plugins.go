@@ -18,10 +18,16 @@ import (
 )
 
 // basePluginSpec identifies a free base plugin to auto-install once a
-// merchant confirms their country in the setup wizard. ONLY canonical
-// type "language" belongs in setupBasePlugins — a fiscal/tax entry would
-// contradict ADR-0025 decision 4 (fiscal plugins are prompted, never
-// silently auto-installed) and needs a superseding ADR first.
+// merchant confirms their country in the setup wizard. ONLY canonical type
+// "language" belongs in setupBasePlugins — a fiscal/tax entry here would
+// still contradict ADR-0025 decision 4 (an optional/non-mandated fiscal
+// plugin is prompted, never silently auto-installed). A plugin a country's
+// own law MANDATES (today: ut-plugin-tax-de for DE, §12 UStG) is a narrow,
+// explicitly-authorized exception — ADR-0067 — but lives in its own
+// countryTaxLocale/installMandatedTaxPluginForSetup mechanism
+// (setup_tax_catalog.go), not here, so "free content pack" and "legal
+// mandate this till must not silently operate without" stay two visibly
+// different lists rather than one a reader has to pick apart.
 type basePluginSpec struct {
 	CanonicalType string // ADR-0002 canonical plugin type
 	Locale        string // catalog locale filter, e.g. "de"

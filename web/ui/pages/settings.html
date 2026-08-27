@@ -617,6 +617,18 @@
   <a class="btn secondary" href="/plugins">{{ T "settings.fiscal_signer.missing.install_btn" }}</a>
   {{ end }}
 
+  {{ if .missingTaxPlugin }}
+  <!-- ADR-0067 (amends ADR-0025 D4): a country-mandated tax-rate plugin
+       (today: DE's §12 UStG dine-in/takeaway split) missing or broken gets
+       the exact same persistent, non-dismissable treatment as the fiscal-
+       signer banner above — same component, same reasoning (that block's
+       own comment), deliberately not a `.chip`. -->
+  <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
+  <h3 style="margin:0 0 .3rem">{{ T "settings.tax_plugin.missing.title" }} {{ helpLink "sell" }}</h3>
+  <p class="notice-block-warn" data-testid="mandated-tax-plugin-missing"><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T "settings.tax_plugin.missing.message" }}</p>
+  <a class="btn secondary" href="/plugins">{{ T "settings.tax_plugin.missing.install_btn" }}</a>
+  {{ end }}
+
   {{ if gt .sampleCount 0 }}
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
   <h3 style="margin:0 0 .3rem">{{ T "settings.data.demo_title" }}</h3>
