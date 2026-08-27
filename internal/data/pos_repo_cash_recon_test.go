@@ -73,8 +73,11 @@ func TestCashReconciliationForLocalDay_ReferenceFigures(t *testing.T) {
 	if err := dbx.repo.UpdateShiftClose(ctx, nil, "shift1", 51110, 51110, 10000, "", `{"5000":10,"100":11,"10":1}`, closedAt); err != nil {
 		t.Fatal(err)
 	}
+	// at_close: true marks this as the real CloseShift skim-to-safe path
+	// (ut-docs#1146) — without it, this row would fall into PayOuts
+	// instead of Skim, same as a genuine mid-shift skim.
 	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "shift", "shift1", "cash_adjustment",
-		map[string]any{"shift_id": "shift1", "type": "skim", "amount": -41110, "reason": "skim to safe"}, closedAt, ""); err != nil {
+		map[string]any{"shift_id": "shift1", "type": "skim", "amount": -41110, "reason": "skim to safe", "at_close": true}, closedAt, ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -152,7 +155,7 @@ UPDATE shifts SET closed_at = ?, closing_cash = 6000, expected_cash = 5900 WHERE
 		t.Fatal(err)
 	}
 	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "shift", "s1b", "cash_adjustment",
-		map[string]any{"shift_id": "s1b", "type": "skim", "amount": -400, "reason": "skim to safe"}, b8At(anchor.Add(-1*time.Hour)), ""); err != nil {
+		map[string]any{"shift_id": "s1b", "type": "skim", "amount": -400, "reason": "skim to safe", "at_close": true}, b8At(anchor.Add(-1*time.Hour)), ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -170,7 +173,7 @@ UPDATE shifts SET closed_at = ?, closing_cash = 6000, expected_cash = 5900 WHERE
 		t.Fatal(err)
 	}
 	if err := dbx.repo.InsertAudit(ctx, nil, "user2", "shift", "s2", "cash_adjustment",
-		map[string]any{"shift_id": "s2", "type": "skim", "amount": -2500, "reason": "skim to safe"}, b8At(anchor), ""); err != nil {
+		map[string]any{"shift_id": "s2", "type": "skim", "amount": -2500, "reason": "skim to safe", "at_close": true}, b8At(anchor), ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -222,6 +225,212 @@ UPDATE shifts SET closed_at = ?, closing_cash = 6000, expected_cash = 5900 WHERE
 	// NOT be added on top of it. reg2's only close (s2) adds 500.
 	if rec.NewFloat != 600+500 {
 		t.Errorf("NewFloat: want 1100 (s1b's 600 + s2's 500, NOT s1+s1b+s2), got %d", rec.NewFloat)
+	}
+}
+
+// A skim recorded WHILE THE SHIFT IS STILL OPEN (ut-docs#1146, via
+// pos.RecordCashAdjustment — not reachable through the shipped UI, but valid
+// at the API layer per TestRecordCashAdjustment_SkimType) already sits in
+// audit_log by close time, so SumShiftAdjustments/ComputeExpectedCash nets it
+// into Calculated the same as any other mid-shift adjustment. Before this
+// fix, CashReconciliationForLocalDay bucketed EVERY type='skim' row into
+// rec.Skim regardless of when it was written, excluding it from
+// PayIns/PayOuts — so the printed identity (OpeningFloat + CashSales +
+// TipsHeldOut + PayIns + PayOuts == Calculated) broke by exactly the
+// mid-shift skim amount. The fix distinguishes a close-time skim by an
+// explicit `at_close: true` marker pos.CloseShift stamps on the row it
+// writes (ut-docs#1146 review finding F1 — an earlier version of this fix
+// compared created_at to closed_at instead, but that string match is only
+// second-precision and could misclassify a mid-shift skim landing in the
+// same wall-clock second as its own shift's close; see
+// TestCashReconciliationForLocalDay_MidShiftSkimSameSecondAsClose below for
+// that exact scenario). Only a row carrying the flag lands in Skim; every
+// other skim row now falls into PayOuts like any other negative adjustment,
+// keeping the identity whole. shift-mid-skim has NO close-time skim at all,
+// so rec.Skim must be zero and the entire -3000 lands in PayOuts.
+func TestCashReconciliationForLocalDay_MidShiftSkimIncludedInPayOuts(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	anchor := cashReconAnchor()
+	day := b8ExpectedDay(t, dbx.d, anchor, 0, 0)
+	openedAt := b8At(anchor.Add(-3 * time.Hour))
+	midShiftAt := b8At(anchor.Add(-2 * time.Hour)) // well before closedAt
+	closedAt := b8At(anchor)
+
+	if err := dbx.repo.InsertShift(ctx, nil, "shift-mid-skim", "reg1", "user1", 10000, openedAt); err != nil {
+		t.Fatal(err)
+	}
+	// Mid-shift skim of -30.00, recorded while the shift was still open —
+	// no at_close marker, unlike the close-time skim fixture in
+	// TestCashReconciliationForLocalDay_ReferenceFigures.
+	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "shift", "shift-mid-skim", "cash_adjustment",
+		map[string]any{"shift_id": "shift-mid-skim", "type": "skim", "amount": -3000, "reason": "midday skim"}, midShiftAt, ""); err != nil {
+		t.Fatal(err)
+	}
+	// No cash sales in this fixture, so ComputeExpectedCash = opening
+	// (10000) + adjustments (-3000) = 7000 — the mid-shift skim is already
+	// netted in, same as pos.CloseShift's own real call sequence.
+	expectedCash, err := dbx.repo.ComputeExpectedCash(ctx, "shift-mid-skim", 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expectedCash != 7000 {
+		t.Fatalf("ComputeExpectedCash: want 7000 (10000 opening - 3000 mid-shift skim), got %d", expectedCash)
+	}
+	// Close with no further skim: counted matches expected (variance 0),
+	// so new_float falls back to closing_cash (ut-docs#1146 review finding
+	// F2 — a real CloseShift can never produce new_float > closing_cash,
+	// since new_float = closing_cash - skim and skim is always >= 0).
+	if err := dbx.repo.UpdateShiftClose(ctx, nil, "shift-mid-skim", expectedCash, expectedCash, expectedCash, "", "", closedAt); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, err := dbx.repo.CashReconciliationForLocalDay(ctx, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec == nil {
+		t.Fatal("expected a reconciliation")
+	}
+	if rec.Skim != 0 {
+		t.Errorf("Skim: want 0 (no close-time skim on this shift), got %d", rec.Skim)
+	}
+	if rec.PayOuts != -3000 {
+		t.Errorf("PayOuts: want -3000 (the mid-shift skim), got %d", rec.PayOuts)
+	}
+	if rec.PayIns != 0 {
+		t.Errorf("PayIns: want 0, got %d", rec.PayIns)
+	}
+	if rec.Calculated != 7000 {
+		t.Errorf("Calculated: want 7000, got %d", rec.Calculated)
+	}
+	if sum := rec.OpeningFloat + rec.CashSales + rec.TipsHeldOut + rec.PayIns + rec.PayOuts; sum != rec.Calculated {
+		t.Errorf("reconciliation identity broken: OpeningFloat(%d)+CashSales(%d)+TipsHeldOut(%d)+PayIns(%d)+PayOuts(%d) = %d, want Calculated %d",
+			rec.OpeningFloat, rec.CashSales, rec.TipsHeldOut, rec.PayIns, rec.PayOuts, sum, rec.Calculated)
+	}
+}
+
+// A shift can carry BOTH a mid-shift skim and a close-time skim — the two
+// must not be conflated: only the close-time one (the row carrying
+// at_close: true) counts toward Skim, and only the mid-shift one (no flag)
+// falls into PayOuts.
+func TestCashReconciliationForLocalDay_MidShiftAndCloseTimeSkimBothPresent(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	anchor := cashReconAnchor()
+	day := b8ExpectedDay(t, dbx.d, anchor, 0, 0)
+	openedAt := b8At(anchor.Add(-3 * time.Hour))
+	midShiftAt := b8At(anchor.Add(-2 * time.Hour))
+	closedAt := b8At(anchor)
+
+	if err := dbx.repo.InsertShift(ctx, nil, "shift-both-skims", "reg1", "user1", 10000, openedAt); err != nil {
+		t.Fatal(err)
+	}
+	// Mid-shift skim of -20.00 while open.
+	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "shift", "shift-both-skims", "cash_adjustment",
+		map[string]any{"shift_id": "shift-both-skims", "type": "skim", "amount": -2000, "reason": "midday skim"}, midShiftAt, ""); err != nil {
+		t.Fatal(err)
+	}
+	// expected_cash computed BEFORE the close-time skim below is written,
+	// same call order pos.CloseShift itself uses.
+	expectedCash, err := dbx.repo.ComputeExpectedCash(ctx, "shift-both-skims", 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expectedCash != 8000 {
+		t.Fatalf("ComputeExpectedCash: want 8000 (10000 - 2000 mid-shift skim), got %d", expectedCash)
+	}
+	// Close counting 8000 (matches expected, so variance 0), skimming a
+	// further -50.00 to the safe at close — new_float = 8000 - 5000 = 3000.
+	if err := dbx.repo.UpdateShiftClose(ctx, nil, "shift-both-skims", 8000, expectedCash, 3000, "", "", closedAt); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "shift", "shift-both-skims", "cash_adjustment",
+		map[string]any{"shift_id": "shift-both-skims", "type": "skim", "amount": -5000, "reason": "close skim to safe", "at_close": true}, closedAt, ""); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, err := dbx.repo.CashReconciliationForLocalDay(ctx, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec == nil {
+		t.Fatal("expected a reconciliation")
+	}
+	if rec.Skim != -5000 {
+		t.Errorf("Skim: want -5000 (only the close-time skim), got %d", rec.Skim)
+	}
+	if rec.PayOuts != -2000 {
+		t.Errorf("PayOuts: want -2000 (only the mid-shift skim), got %d", rec.PayOuts)
+	}
+	if rec.Calculated != 8000 {
+		t.Errorf("Calculated: want 8000, got %d", rec.Calculated)
+	}
+	if sum := rec.OpeningFloat + rec.CashSales + rec.TipsHeldOut + rec.PayIns + rec.PayOuts; sum != rec.Calculated {
+		t.Errorf("reconciliation identity broken: OpeningFloat(%d)+CashSales(%d)+TipsHeldOut(%d)+PayIns(%d)+PayOuts(%d) = %d, want Calculated %d",
+			rec.OpeningFloat, rec.CashSales, rec.TipsHeldOut, rec.PayIns, rec.PayOuts, sum, rec.Calculated)
+	}
+}
+
+// The exact race ut-docs#1146 review finding F1 identified: a mid-shift skim
+// landing in the SAME wall-clock second as its own shift's close. An earlier
+// version of this fix identified a close-time skim by comparing the skim
+// row's created_at to the shift's closed_at — both stamped from pos.
+// CloseShift's own `now` in one transaction, so a real close-time skim's
+// created_at always exactly equals closed_at. But time.RFC3339 (what both
+// pos.CloseShift and pos.RecordCashAdjustment format `now` with) is only
+// second-precision, so a mid-shift skim recorded in that same second would
+// ALSO have created_at == closed_at by pure coincidence — misclassifying it
+// as the close-time skim and reproducing the #1146 bug verbatim. The fixed
+// query never compares timestamps at all: only pos.CloseShift's own skim row
+// carries at_close: true, and pos.RecordCashAdjustment never sets it, so
+// this mid-shift skim is unambiguous regardless of timing — same-second or
+// not — and must still land in PayOuts, not Skim.
+func TestCashReconciliationForLocalDay_MidShiftSkimSameSecondAsClose(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+	anchor := cashReconAnchor()
+	day := b8ExpectedDay(t, dbx.d, anchor, 0, 0)
+	openedAt := b8At(anchor.Add(-3 * time.Hour))
+	closedAt := b8At(anchor)
+
+	if err := dbx.repo.InsertShift(ctx, nil, "shift-same-second", "reg1", "user1", 10000, openedAt); err != nil {
+		t.Fatal(err)
+	}
+	// Mid-shift skim of -30.00 recorded at the EXACT same created_at string
+	// as the close below — no at_close marker, since RecordCashAdjustment
+	// never sets it, regardless of timing.
+	if err := dbx.repo.InsertAudit(ctx, nil, "user1", "shift", "shift-same-second", "cash_adjustment",
+		map[string]any{"shift_id": "shift-same-second", "type": "skim", "amount": -3000, "reason": "midday skim"}, closedAt, ""); err != nil {
+		t.Fatal(err)
+	}
+	expectedCash, err := dbx.repo.ComputeExpectedCash(ctx, "shift-same-second", 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expectedCash != 7000 {
+		t.Fatalf("ComputeExpectedCash: want 7000 (10000 opening - 3000 mid-shift skim), got %d", expectedCash)
+	}
+	if err := dbx.repo.UpdateShiftClose(ctx, nil, "shift-same-second", expectedCash, expectedCash, expectedCash, "", "", closedAt); err != nil {
+		t.Fatal(err)
+	}
+
+	rec, err := dbx.repo.CashReconciliationForLocalDay(ctx, day)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if rec == nil {
+		t.Fatal("expected a reconciliation")
+	}
+	if rec.Skim != 0 {
+		t.Errorf("Skim: want 0 — a same-second mid-shift skim must not be misread as the close-time skim, got %d", rec.Skim)
+	}
+	if rec.PayOuts != -3000 {
+		t.Errorf("PayOuts: want -3000 (the same-second mid-shift skim), got %d", rec.PayOuts)
+	}
+	if sum := rec.OpeningFloat + rec.CashSales + rec.TipsHeldOut + rec.PayIns + rec.PayOuts; sum != rec.Calculated {
+		t.Errorf("reconciliation identity broken: OpeningFloat(%d)+CashSales(%d)+TipsHeldOut(%d)+PayIns(%d)+PayOuts(%d) = %d, want Calculated %d",
+			rec.OpeningFloat, rec.CashSales, rec.TipsHeldOut, rec.PayIns, rec.PayOuts, sum, rec.Calculated)
 	}
 }
 
@@ -351,11 +560,9 @@ VALUES('pay-cr-tip', 'sale-cr-tip', 'cash', 42000, 'GBP', 0, 2000, ?)`, closedAt
 	// tips out of CashSales without also accounting for them in Calculated
 	// -- or vice versa -- would break this while each field's own value
 	// still looked individually plausible. This shift records no skim at
-	// all, so it does NOT cover the separate mid-shift-skim gap tracked as
-	// ut-docs#1146 (a skim recorded while the shift is still open nets into
-	// Calculated but is still excluded from this sum when printed) -- that
-	// needs its own fixture once #1146 is fixed, not a claim this test
-	// doesn't back.
+	// all, so it does NOT cover the separate mid-shift-skim case (ut-docs#1146)
+	// -- see TestCashReconciliationForLocalDay_MidShiftSkimIncludedInPayOuts
+	// and its close-time-skim-too sibling for that fixture.
 	if sum := rc.OpeningFloat + rc.CashSales + rc.TipsHeldOut + rc.PayIns + rc.PayOuts; sum != rc.Calculated {
 		t.Errorf("reconciliation identity broken: OpeningFloat(%d)+CashSales(%d)+TipsHeldOut(%d)+PayIns(%d)+PayOuts(%d) = %d, want Calculated %d",
 			rc.OpeningFloat, rc.CashSales, rc.TipsHeldOut, rc.PayIns, rc.PayOuts, sum, rc.Calculated)
