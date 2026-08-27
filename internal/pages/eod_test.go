@@ -258,19 +258,32 @@ func TestBuildEODDoc_CashReconciliation(t *testing.T) {
 // A cash tip held out of CashSales (ut-docs#1046) prints its own "Tips held
 // out" line inside CASH RECONCILIATION, positioned right after Cash sales.
 func TestBuildEODDoc_CashReconciliation_TipsHeldOut(t *testing.T) {
+	rc := data.CashReconciliation{
+		OpeningFloat: 10000,
+		CashSales:    40000,
+		TipsHeldOut:  2000,
+		Calculated:   52000,
+		Counted:      52000,
+		ShiftsClosed: 1,
+	}
+	// ut-docs#1124: guard the fixture itself, not just the render -- these
+	// are exactly the line items buildEODDoc prints top-to-bottom above
+	// "Calculated" (Skim excepted, printed separately below Variance -- true
+	// for a close-time skim, since expected_cash is computed before that
+	// audit row exists; NOT true for a skim recorded mid-shift, see
+	// ut-docs#1146 -- this fixture has no skim at all, so it doesn't reach
+	// that gap either way). If these didn't already sum to Calculated here,
+	// the assertions below would be checking a scenario that can't occur
+	// against real data.
+	if sum := rc.OpeningFloat + rc.CashSales + rc.TipsHeldOut + rc.PayIns + rc.PayOuts; sum != rc.Calculated {
+		t.Fatalf("test fixture doesn't satisfy the reconciliation identity: %d != Calculated %d", sum, rc.Calculated)
+	}
 	rep := data.EODReport{
 		Day: "2026-07-14", GeneratedAt: "2026-07-14T21:30:00Z",
 		SalesCount: 1, Gross: 40000, Net: 40000,
-		Methods: []data.EODMethod{{Method: "cash", In: 42000}},
-		Tips:    []data.EODTip{{Method: "cash", Count: 1, Amount: 2000}},
-		CashReconciliation: &data.CashReconciliation{
-			OpeningFloat: 10000,
-			CashSales:    40000,
-			TipsHeldOut:  2000,
-			Calculated:   52000,
-			Counted:      52000,
-			ShiftsClosed: 1,
-		},
+		Methods:            []data.EODMethod{{Method: "cash", In: 42000}},
+		Tips:               []data.EODTip{{Method: "cash", Count: 1, Amount: 2000}},
+		CashReconciliation: &rc,
 	}
 	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
 	if !strings.Contains(out, "Tips held out") || !strings.Contains(out, "£20.00") {

@@ -1667,10 +1667,28 @@ type CashReconciliation struct {
 	// TipsHeldOut is the day's cash tip_amount, subtracted out of CashSales
 	// above (ut-docs#1046) — zero on every day with no cash tips, which is
 	// every day today. Held out of the drawer figure the same way #1007
-	// holds tips out of revenue; not itself part of Calculated/Counted
-	// (those come from the shift's own opening/closing cash counts, which
-	// already reflect whatever cash — tips included — actually sat in the
-	// drawer).
+	// holds tips out of revenue; not itself a separate stored component of
+	// Calculated/Counted (those come from the shift's own opening/closing
+	// cash counts, which already reflect whatever cash — tips included —
+	// actually sat in the drawer). So the Z-report's printed CASH
+	// RECONCILIATION block still visibly closes once cash tipping is on:
+	// OpeningFloat + CashSales + TipsHeldOut + PayIns + PayOuts ==
+	// Calculated (ut-docs#1124; regression-tested in
+	// TestEndOfDay_CashReconciliation_ExcludesCashTips) -- ON A DAY WHOSE
+	// ONLY SKIM (if any) WAS RECORDED AT SHIFT CLOSE, which is every path
+	// the shipped operator UI offers (shifts.html's mid-shift adjustment
+	// form has no "skim" option). expected_cash is computed and persisted
+	// before THAT close-time skim audit row is written (pos.CloseShift), so
+	// a close-time skim never factors into Calculated, matching what
+	// CashReconciliationForLocalDay excludes when printing. A skim recorded
+	// WHILE THE SHIFT IS STILL OPEN is a different case: SumShiftAdjustments
+	// nets it into Calculated with no type filter (it already exists in
+	// audit_log by close time), while CashReconciliationForLocalDay still
+	// excludes every skim row from the printed sum regardless of when it
+	// was written -- so the identity above breaks by that amount. Not
+	// reachable via the shipped UI, but not guarded at the API layer
+	// (pos.RecordCashAdjustment accepts Type:"skim" on an open shift) --
+	// tracked, not yet fixed, as ut-docs#1146.
 	TipsHeldOut  int64 `json:"tips_held_out"`
 	PayIns       int64 `json:"pay_ins"`    // sum of positive non-skim adjustments
 	PayOuts      int64 `json:"pay_outs"`   // sum of negative non-skim adjustments (negative value)
