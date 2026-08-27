@@ -333,7 +333,13 @@
     document.getElementById('table-add-x').value = clamp(Math.round(p.x));
     document.getElementById('table-add-y').value = clamp(Math.round(p.y));
     var dlg = document.getElementById('table-add-modal');
-    dlg.showModal();
+    // .show(), not .showModal() -- Tester (ut-docs#1025) confirmed showModal()
+    // makes everything outside the dialog inert, including the custom OSK
+    // (#osk, appended to <body>, not inside the dialog) a kiosk touchscreen
+    // depends on: an operator could not type a label at all. Same fix as
+    // #hold-modal/#pfand-modal/the manager-elevation dialog already apply,
+    // for the identical reason (see app.css's #hold-modal comment).
+    dlg.show();
     document.getElementById('table-add-label').focus();
   });
 
