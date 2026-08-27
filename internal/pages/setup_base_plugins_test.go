@@ -415,26 +415,9 @@ func TestSetupWizardDE_OfflineCompletesAndLeavesPendingForRetry(t *testing.T) {
 	if err != nil {
 		t.Fatalf("loadPendingBasePlugins: %v", err)
 	}
-	// ADR-0067: a DE wizard run now queues BOTH the free language pack
-	// (setupBasePlugins) and the country-mandated tax plugin
-	// (installMandatedTaxPluginForSetup) — same offline-safe, pending-list-
-	// backed mechanism, so both land here when the marketplace is
-	// unreachable. Order isn't guaranteed (two independent calls each doing
-	// their own persist-then-attempt), so check membership, not position.
-	wantLanguage := basePluginSpec{CanonicalType: "language", Locale: "de"}
-	wantTax := basePluginSpec{CanonicalType: "tax", Locale: "de"}
-	if len(pending) != 2 || !containsBasePluginSpec(pending, wantLanguage) || !containsBasePluginSpec(pending, wantTax) {
-		t.Fatalf("expected both the DE language spec and the mandated tax spec left pending, got %+v", pending)
+	if len(pending) != 1 || pending[0].CanonicalType != "language" || pending[0].Locale != "de" {
+		t.Fatalf("expected the DE language spec left pending, got %+v", pending)
 	}
-}
-
-func containsBasePluginSpec(specs []basePluginSpec, want basePluginSpec) bool {
-	for _, s := range specs {
-		if s == want {
-			return true
-		}
-	}
-	return false
 }
 
 // --- StartBasePluginRetry lifecycle ---

@@ -1714,7 +1714,7 @@
   "catalog.item_form.saved": "Kaydedildi",
   "catalog.keypad.failed_generic": "Eşleme başarısız",
   "setup.tax_plugin.title": "Almanya vergi eklentisi",
-  "setup.tax_plugin.description": "Almanya'nın orada yeme/paket servis KDV oranlarını (§12 UStG) uygular ve her satışı yapılandırdığınız TSE ile imzalar. Kurulumu bitirdiğinizde otomatik olarak kurulur — daha önceden hazır olmasını isterseniz Kur'a dokunun.",
+  "setup.tax_plugin.description": "Almanya'nın orada yeme/paket servis KDV oranlarını (§12 UStG) uygular ve her satışı yapılandırdığınız TSE ile imzalar. İsteğe bağlıdır — şimdi veya daha sonra eklenti kataloğundan kurabilirsiniz.",
   "setup.tax_plugin.install_btn": "Kur",
   "setup.tax_plugin.install_pending": "Vergi eklentisi arka planda kurulmaya devam ediyor — devam edebilirsiniz.",
   "setup.tse.title": "İşletme bilgileriniz (TSE)",
@@ -1741,8 +1741,5 @@
   "settings.tse.dismiss_btn": "Kapat",
   "settings.fiscal_signer.missing.title": "Mali imzalayıcı yüklü değil",
   "settings.fiscal_signer.missing.message": "Bu işletme, satışların yasal resmi kaydını tutan sistem olarak çalışacak şekilde ayarlanmış, ancak mali imzalama eklentisi yüklü değil — satışlar imzalanmıyor. Bunu düzeltmek için ülkenizin vergi eklentisini yükleyin.",
-  "settings.fiscal_signer.missing.install_btn": "Eklentiyi yükle",
-  "settings.tax_plugin.missing.title": "Vergi oranı eklentisi yüklü değil",
-  "settings.tax_plugin.missing.message": "Bu işletmenin ülkesi yasal olarak bir vergi oranı eklentisi gerektiriyor, ancak hiçbiri yüklü değil — tüm satışlar tek bir sabit oranla hesaplanıyor. Bunu düzeltmek için ülkenizin vergi eklentisini yükleyin.",
-  "settings.tax_plugin.missing.install_btn": "Eklentiyi yükle"
+  "settings.fiscal_signer.missing.install_btn": "Eklentiyi yükle"
 }

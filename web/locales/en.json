@@ -1714,7 +1714,7 @@
   "catalog.item_form.saved": "Saved",
   "catalog.keypad.failed_generic": "Mapping failed",
   "setup.tax_plugin.title": "Germany tax plugin",
-  "setup.tax_plugin.description": "Applies Germany's dine-in/takeaway VAT rates (§12 UStG) and signs each sale with your configured TSE. This installs automatically when you finish setup — tap Install if you'd like it ready sooner.",
+  "setup.tax_plugin.description": "Applies Germany's dine-in/takeaway VAT rates (§12 UStG) and signs each sale with your configured TSE. Optional — install it now, or any time later from the plugin catalog.",
   "setup.tax_plugin.install_btn": "Install",
   "setup.tax_plugin.install_pending": "Still installing the tax plugin in the background — you can continue.",
   "setup.tse.title": "Your business details (TSE)",
@@ -1741,8 +1741,5 @@
   "settings.tse.dismiss_btn": "Dismiss",
   "settings.fiscal_signer.missing.title": "No fiscal signer installed",
   "settings.fiscal_signer.missing.message": "This shop is set up to trade as the legal system of record, but no fiscal-signing plugin is installed — sales are not being signed. Install the country's tax plugin to fix this.",
-  "settings.fiscal_signer.missing.install_btn": "Install plugin",
-  "settings.tax_plugin.missing.title": "No tax-rate plugin installed",
-  "settings.tax_plugin.missing.message": "This shop's country legally requires a tax-rate plugin, but none is installed — sales are ringing up at one flat rate. Install the country's tax plugin to fix this.",
-  "settings.tax_plugin.missing.install_btn": "Install plugin"
+  "settings.fiscal_signer.missing.install_btn": "Install plugin"
 }

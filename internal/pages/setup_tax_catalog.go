@@ -208,50 +208,6 @@ func setupInstallableTaxPlugin(ctx context.Context, d *common.Deps, country stri
 	return &installableTaxPlugin{Country: strings.ToUpper(strings.TrimSpace(country)), ListingID: listingID}, false
 }
 
-// installMandatedTaxPluginForSetup is POST /api/setup's hook (ADR-0067,
-// amending ADR-0025 Decision 4): unlike setupBasePlugins (setup_base_plugins.go
-// — free content packs a merchant loses nothing legally by skipping),
-// countryTaxLocale entries are plugins a country's own law MANDATES — today,
-// exactly ut-plugin-tax-de for DE's §12 UStG dine-in/takeaway VAT split. A
-// German shop that finishes setup without it is silently trading out of
-// compliance, which is the precise gap ut-docs#1180 exists to close and the
-// reason the product owner rejected leaving this purely opt-in
-// (universal-till#586 review). So this is auto-installed at wizard
-// completion, not merely offered — but kept as its own explicit call rather
-// than folded into setupBasePlugins, so "free content pack" and "legal
-// mandate this till must not silently operate without" stay two visibly
-// different lists, never one the next reader has to infer.
-//
-// Mechanically this is installBasePluginsForSetup's exact same best-effort
-// shape (persist pending BEFORE any network attempt, one time-boxed
-// synchronous attempt, silent-and-swallowed failure) reusing the SAME
-// pending list and background retry (StartBasePluginRetry) — no second
-// install or retry mechanism — which is also what keeps the wizard's own
-// install tile (setupTaxPluginInstallHandler above) a safe, idempotent
-// fallback: whichever of the two — an operator's explicit tap, or this
-// completion-time call — gets there first, the other is a no-op.
-func installMandatedTaxPluginForSetup(ctx context.Context, d *common.Deps, country string) {
-	locale, mandated := countryTaxLocale[strings.ToUpper(strings.TrimSpace(country))]
-	if !mandated {
-		return
-	}
-	spec := basePluginSpec{CanonicalType: "tax", Locale: locale}
-	if err := addPendingBasePlugins(ctx, d, []basePluginSpec{spec}); err != nil {
-		logging.L().Errorf("setup wizard: persist pending mandated tax plugin: %v", err)
-	}
-
-	attemptCtx, cancel := context.WithTimeout(ctx, setupBasePluginAttemptTimeout)
-	defer cancel()
-	if err := resolveAndInstallBasePlugin(attemptCtx, d, spec); err != nil {
-		logging.L().Warnf("setup wizard: mandated tax plugin %s/%s not installed yet, will retry in background: %v",
-			spec.CanonicalType, spec.Locale, err)
-		return
-	}
-	if err := dismissPendingBasePlugin(ctx, d, spec.CanonicalType, spec.Locale); err != nil {
-		logging.L().Errorf("setup wizard: clear installed pending mandated tax plugin: %v", err)
-	}
-}
-
 // setupTaxPluginInstallHandler is POST /api/setup/tax-plugin (ut-docs#1180):
 // the wizard's explicit "install the fiscal plugin" action. Auth-exempt on
 // the same first-boot-only window as POST /api/setup/language —
