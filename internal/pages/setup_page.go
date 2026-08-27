@@ -561,14 +561,6 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// wizard's own response. A no-op for a country with nothing mapped.
 		installBasePluginsForSetup(r.Context(), d, st.Country)
 
-		// Country-MANDATED tax plugin auto-install (ADR-0067, amending
-		// ADR-0025 Decision 4, ut-docs#1180): same best-effort posture as the
-		// free-content-pack install just above, but a separate call — see
-		// installMandatedTaxPluginForSetup's own doc comment for why this
-		// isn't folded into setupBasePlugins. A no-op for a country with
-		// nothing in countryTaxLocale.
-		installMandatedTaxPluginForSetup(r.Context(), d, st.Country)
-
 		// German TSE provisioning kickoff (ADR-0053, ut-docs#802): same
 		// best-effort posture as the base-plugin install above — the pending
 		// state is persisted BEFORE the one time-boxed network attempt, so
