@@ -312,7 +312,19 @@ VALUES('pay-cr-tip', 'sale-cr-tip', 'cash', 42000, 'GBP', 0, 2000, ?)`, closedAt
 	if err := dbx.repo.InsertShift(ctx, nil, "shift-cr-tip", "reg1", "user1", 10000, b8At(anchor.Add(-3*time.Hour))); err != nil {
 		t.Fatal(err)
 	}
-	if err := dbx.repo.UpdateShiftClose(ctx, nil, "shift-cr-tip", 52000, 52000, 10000, "", "", closedAt); err != nil {
+	// Calculated must come from the real ComputeExpectedCash path (opening
+	// float + the tip-inclusive tendered cash, same as pos.CloseShift calls
+	// at close time), not a hand-picked literal — a hardcoded expected_cash
+	// here would let CashSales/TipsHeldOut drift out of sync with Calculated
+	// without this test noticing (ut-docs#1124).
+	expectedCash, err := dbx.repo.ComputeExpectedCash(ctx, "shift-cr-tip", 10000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if expectedCash != 52000 {
+		t.Fatalf("ComputeExpectedCash: want 52000 (10000 float + 42000 tip-inclusive cash), got %d", expectedCash)
+	}
+	if err := dbx.repo.UpdateShiftClose(ctx, nil, "shift-cr-tip", expectedCash, expectedCash, 10000, "", "", closedAt); err != nil {
 		t.Fatal(err)
 	}
 
@@ -323,13 +335,30 @@ VALUES('pay-cr-tip', 'sale-cr-tip', 'cash', 42000, 'GBP', 0, 2000, ?)`, closedAt
 	if rep.CashReconciliation == nil {
 		t.Fatal("expected a cash reconciliation")
 	}
+	rc := rep.CashReconciliation
 	// EODMethod{cash}.In is the full tendered 420.00 (sale + tip); CashSales
 	// must hold the 20.00 tip back out, leaving 400.00.
-	if rep.CashReconciliation.CashSales != 40000 {
-		t.Errorf("CashSales: want 40000 (tip held out), got %d", rep.CashReconciliation.CashSales)
+	if rc.CashSales != 40000 {
+		t.Errorf("CashSales: want 40000 (tip held out), got %d", rc.CashSales)
 	}
-	if rep.CashReconciliation.TipsHeldOut != 2000 {
-		t.Errorf("TipsHeldOut: want 2000, got %d", rep.CashReconciliation.TipsHeldOut)
+	if rc.TipsHeldOut != 2000 {
+		t.Errorf("TipsHeldOut: want 2000, got %d", rc.TipsHeldOut)
+	}
+	// ut-docs#1124: the printed CASH RECONCILIATION block's own visible line
+	// items -- opening float, cash sales, tips held out, pay-ins, pay-outs --
+	// must sum to Calculated once a cash tip is held out, the same identity
+	// eod_api.go's buildEODDoc prints top-to-bottom. A regression that held
+	// tips out of CashSales without also accounting for them in Calculated
+	// -- or vice versa -- would break this while each field's own value
+	// still looked individually plausible. This shift records no skim at
+	// all, so it does NOT cover the separate mid-shift-skim gap tracked as
+	// ut-docs#1146 (a skim recorded while the shift is still open nets into
+	// Calculated but is still excluded from this sum when printed) -- that
+	// needs its own fixture once #1146 is fixed, not a claim this test
+	// doesn't back.
+	if sum := rc.OpeningFloat + rc.CashSales + rc.TipsHeldOut + rc.PayIns + rc.PayOuts; sum != rc.Calculated {
+		t.Errorf("reconciliation identity broken: OpeningFloat(%d)+CashSales(%d)+TipsHeldOut(%d)+PayIns(%d)+PayOuts(%d) = %d, want Calculated %d",
+			rc.OpeningFloat, rc.CashSales, rc.TipsHeldOut, rc.PayIns, rc.PayOuts, sum, rc.Calculated)
 	}
 	// The report's own Tips breakdown must show the same cash-tip figure
 	// CashReconciliation subtracted -- the two are read from the same
