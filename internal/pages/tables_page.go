@@ -170,10 +170,20 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 			http.Redirect(w, r, "/tables?err="+errKey, http.StatusSeeOther)
 			return
 		}
-		// New tables land at the canvas centre; the operator drags them into
-		// place. The repo clamps, so no client value can land off-plan.
-		id, err := posRepo.CreateTable(r.Context(), label, zone, seats, shape,
-			data.TableCanvasSize/2, data.TableCanvasSize/2)
+		// Position: the tap-to-place dialog (ut-docs#1025) sends the tapped
+		// canvas coordinates as optional pos_x/pos_y. When absent, empty or
+		// unparseable, fall back to the canvas centre — exactly the pre-#1025
+		// behaviour the bottom-of-page add form (which never sends these
+		// fields) still relies on; the operator drags from there. The repo
+		// clamps either way, so no client value can land off-plan.
+		posX, posY := data.TableCanvasSize/2, data.TableCanvasSize/2
+		if v, err := strconv.Atoi(strings.TrimSpace(r.PostFormValue("pos_x"))); err == nil {
+			posX = v
+		}
+		if v, err := strconv.Atoi(strings.TrimSpace(r.PostFormValue("pos_y"))); err == nil {
+			posY = v
+		}
+		id, err := posRepo.CreateTable(r.Context(), label, zone, seats, shape, posX, posY)
 		if err != nil {
 			http.Redirect(w, r, "/tables?err=tables.error.create", http.StatusSeeOther)
 			return
