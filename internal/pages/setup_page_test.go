@@ -199,6 +199,37 @@ func TestSetupWizardHappyPath(t *testing.T) {
 	}
 }
 
+// TestSetupWizardDrivesDisplayedSymbolFromCurrencyCodeAlone is the regression
+// test for ut-docs#1172: a live German till's DB showed a wizard-committed
+// "store.currency"="EUR" alongside a stale "store.currency_symbol"="£" left
+// over from the GB boot default, because the wizard set the former but never
+// the latter. The fix is not to also start writing the symbol — every real
+// symbol display (the {{ money }} template func, receipts included) already
+// derives it from httpx.ActiveCurrency(), keyed off store.currency alone via
+// httpx's currency registry (internal/httpx/currency.go) — so the field
+// itself is dead and removed. Prove both halves: the wizard-derived symbol
+// is correct end to end for a non-GB country, and the dead setting never
+// gets persisted at all.
+func TestSetupWizardDrivesDisplayedSymbolFromCurrencyCodeAlone(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	t.Cleanup(func() { httpx.InitCurrency("GBP") }) // process-global, reset for later tests in this package
+
+	rec := postForm(mux, "/api/setup", url.Values{
+		"pin": {"2468"}, "pin_confirm": {"2468"},
+		"country": {"DE"}, "currency": {"EUR"}, "currency_touched": {"1"},
+		"tax_rate_pct": {"19"}, "store_name": {"Bäckerei Berlin"},
+	}, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("wizard setup: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := httpx.ActiveCurrency().Display; got != "€" {
+		t.Fatalf("httpx.ActiveCurrency().Display = %q after a DE/EUR wizard commit, want %q — this is what every real money display (receipts included) actually renders", got, "€")
+	}
+	if _, ok, _ := d.Settings.Get(t.Context(), "store.currency_symbol"); ok {
+		t.Fatal("wizard commit wrote store.currency_symbol — this setting is dead (ut-docs#1172) and must never be persisted, live or stale")
+	}
+}
+
 // TestSetupWizardCurrencyConfirmedOnlyWhenOperatorTouchedCountrySelect is the
 // regression test for ut-docs#970 review finding F3: country/currency start
 // PRE-FILLED from OS locale + timezone detection (ut-docs#590), not from an
