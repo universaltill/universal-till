@@ -49,10 +49,13 @@ async function deactivateAllTables(page) {
 }
 
 async function createTable(page, label: string) {
-  await page.locator('form[action="/api/tables"] input[name="label"]').fill(label);
+  // Scoped to the bottom-of-page card: since ut-docs#1025 the tap-to-add
+  // dialog is a second form[action="/api/tables"], so the bare selector
+  // would be a strict-mode violation.
+  await page.locator('.users-form form[action="/api/tables"] input[name="label"]').fill(label);
   await Promise.all([
     page.waitForURL((u) => u.pathname === '/tables'),
-    page.locator('form[action="/api/tables"] button[type=submit]').click(),
+    page.locator('.users-form form[action="/api/tables"] button[type=submit]').click(),
   ]);
 }
 

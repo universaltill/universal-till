@@ -9,7 +9,16 @@
   /* Floor plan (ut-docs#814, ADR-0054): first SVG positional editor in the
      product. Colors ride the theme tokens so every curated theme works. */
   #floorplan-section .card { padding: 0.75rem; }
-  #floorplan-wrap svg { display: block; inline-size: 100%; block-size: auto; touch-action: none; }
+  #floorplan-wrap svg { display: block; inline-size: 100%; block-size: auto; }
+  /* touch-action gates on edit mode (ut-docs#1025): the rule used to be
+     unconditional, so the plan swallowed native touch panning even in the
+     live view — this page's contribution to the cross-page touch-scroll
+     report ut-docs#1021 (which stays open for hardware verification; this
+     fixes only this page's bug, not #1021 wholesale). Drag correctness in
+     edit mode never depended on this rule — pointerdown's preventDefault +
+     setPointerCapture own the gesture — it only stops the browser from
+     ALSO panning the page underneath a drag. */
+  #floorplan-section.editing #floorplan-wrap svg { touch-action: none; }
   .floorplan-bg { fill: var(--surface-2); stroke: var(--border); stroke-width: 2; }
   .table-shape { fill: var(--surface); stroke-width: 4; }
   .table-free .table-shape { stroke: var(--success); }
@@ -62,6 +71,36 @@
   </div>
   {{ end }}
 </div>
+
+{{/* Tap-to-place (ut-docs#1025): in edit mode, tapping empty canvas opens
+     this mini-form with the tapped position pre-filled — same
+     <dialog class="modifier-modal"> shape as index.html's #hold-modal, but
+     submitted as a PLAIN full-page POST (method/action), exactly like the
+     add-table card below: /api/tables reads the hidden pos_x/pos_y (set by
+     the click handler in this page's script) and falls back to canvas
+     centre when they're absent, so the card's form is untouched. */}}
+<dialog id="table-add-modal" class="modifier-modal" aria-labelledby="table-add-title">
+  <form method="post" action="/api/tables" autocomplete="off">
+    <h3 id="table-add-title">{{ T "tables.new.title" }}</h3>
+    <input type="hidden" name="pos_x" id="table-add-x" />
+    <input type="hidden" name="pos_y" id="table-add-y" />
+    <label>{{ T "tables.col.name" }} <input type="text" id="table-add-label" name="label" maxlength="64" required autofocus /></label>
+    <label>{{ T "tables.col.zone" }} <input type="text" name="area_zone" maxlength="64" /></label>
+    <label>{{ T "tables.col.seats" }} <input type="number" name="seat_count" min="0" max="999" value="4" /></label>
+    <label>{{ T "tables.col.shape" }}
+      <select name="shape">
+        <option value="rect">{{ T "tables.shape.rect" }}</option>
+        <option value="round">{{ T "tables.shape.round" }}</option>
+      </select>
+    </label>
+    <div class="modifier-actions">
+      <button type="button" class="btn secondary"
+              onclick="var m = document.getElementById('table-add-modal'); m.close(); m.querySelector('form').reset();">
+        {{ T "common.cancel" }}</button>
+      <button type="submit" class="btn primary">{{ T "tables.new.submit" }}</button>
+    </div>
+  </form>
+</dialog>
 
 <div class="users-layout" style="margin-block-start:1rem">
   <div class="card users-list">
@@ -274,6 +313,34 @@
     // swipe) — without it the table follows the pointer forever.
     document.addEventListener('pointercancel', endDrag);
     node.addEventListener('lostpointercapture', endDrag, { once: true });
+  });
+
+  // Tap-to-place (ut-docs#1025): in edit mode, a click on empty canvas — the
+  // .floorplan-bg rect — opens the add-table dialog with the tapped position
+  // pre-filled in its hidden pos_x/pos_y inputs. A `click` (not pointerdown),
+  // DELEGATED to the section like the drag handler above and for the same
+  // reason (every HTMX state refresh replaces the whole <svg>). No collision
+  // with drag: a click landing on .floorplan-bg is never inside a
+  // .table-node, and a drag's click (post-pointerup) targets the captured
+  // .table-node, so each gesture reaches exactly one of the two handlers.
+  section.addEventListener('click', function (e) {
+    if (!window.tablesEditing) return;
+    var bg = e.target.closest ? e.target.closest('.floorplan-bg') : null;
+    if (!bg || !bg.ownerSVGElement) return;
+    var p = svgPoint(bg.ownerSVGElement, e);
+    // clamp() here is cosmetic parity with drag (the server re-clamps on
+    // create) — a tap right at the edge places the table fully on-plan.
+    document.getElementById('table-add-x').value = clamp(Math.round(p.x));
+    document.getElementById('table-add-y').value = clamp(Math.round(p.y));
+    var dlg = document.getElementById('table-add-modal');
+    // .show(), not .showModal() -- Tester (ut-docs#1025) confirmed showModal()
+    // makes everything outside the dialog inert, including the custom OSK
+    // (#osk, appended to <body>, not inside the dialog) a kiosk touchscreen
+    // depends on: an operator could not type a label at all. Same fix as
+    // #hold-modal/#pfand-modal/the manager-elevation dialog already apply,
+    // for the identical reason (see app.css's #hold-modal comment).
+    dlg.show();
+    document.getElementById('table-add-label').focus();
   });
 
   // Keyboard reposition (ut-docs#826): a focused table (tabIndex is 0 only

@@ -713,6 +713,15 @@ a.btn, a.btn:hover { text-decoration: none; }
    physical keyboard. */
 #elevation-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
 .elevation-summary { font-weight: 600; margin-block: .4rem .6rem; }
+/* Tap-to-add table dialog (ut-docs#1025): same non-modal treatment as
+   #hold-modal/#pfand-modal/#elevation-modal above and for the identical
+   reason — its label field is what a kiosk operator types the new table's
+   name into, and showModal()'s native top-layer/inert-outside behaviour
+   both hid the custom OSK and (observed in review) diverged the dialog's
+   painted position from its own measured geometry under dir="rtl". This
+   explicit fixed position replaces reliance on the browser's native
+   top-layer centering, which fixes both. */
+#table-add-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
 .modifier-group { border: 1px solid var(--border); border-radius: var(--radius);
                    padding: .6rem .75rem; margin-block-end: .75rem; }
 .modifier-group legend { font-weight: 600; padding-inline: .25rem; }
