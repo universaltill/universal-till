@@ -2,9 +2,9 @@
 // Self-contained, offline (ADR-0003). Modes via <body data-osk>:
 //   auto (default) — only when the device reports a coarse pointer (touch)
 //   on / off       — force / disable
-// Layouts follow the page locale (<html lang>): en, tr, fa, ar; a numeric
-// pad serves number/tel/numeric-inputmode fields. Keys write into the
-// focused input and fire an `input` event so HTMX/Alpine listeners run;
+// Layouts follow the page locale (<html lang>): en, tr, fa, ar, de, es; a
+// numeric pad serves number/tel/numeric-inputmode fields. Keys write into
+// the focused input and fire an `input` event so HTMX/Alpine listeners run;
 // Enter submits the input's form (requestSubmit → normal submit handlers).
 (function () {
   'use strict';
@@ -46,6 +46,38 @@
       ['ش','س','ي','ب','ل','ا','ت','ن','م','ك','ط'],
       ['ئ','ء','ؤ','ر','لا','ى','ة','و','ز','ظ','⌫'],
       ['?123','،','SPACE','.','↵']
+    ],
+    // QWERTZ, not QWERTY — z and y are swapped vs `en` (real German physical
+    // keyboards), plus ü/ö/ä/ß where the real keyboard has them (ut-docs#1047).
+    // Shift+ß has no traditional single-character uppercase: the Unicode
+    // default (and 'de'-locale) case mapping is the two-character "SS" —
+    // verified directly: 'ß'.toLocaleUpperCase('de') === 'SS' — and insert()
+    // already accepts multi-character strings via setRangeText, so the
+    // existing `k.toLocaleUpperCase(baseLayout())` call in press()/render()
+    // needs no special-casing to produce this correctly.
+    de: [
+      ['1','2','3','4','5','6','7','8','9','0'],
+      ['q','w','e','r','t','z','u','i','o','p','ü'],
+      ['a','s','d','f','g','h','j','k','l','ö','ä'],
+      ['⇧','y','x','c','v','b','n','m','ß','⌫'],
+      ['?123',',','SPACE','.','↵']
+    ],
+    // QWERTY base + the accented vowels and ñ needed for real Spanish words
+    // (ut-docs#1047) — same "append the extra glyphs to the ends of the
+    // existing rows" shape `tr` already uses above, not a new dead-key/
+    // accent-layer mechanism. toLocaleUpperCase already maps each of these
+    // to its own accented uppercase (á → Á, ñ → Ñ, …) with no special-casing.
+    // ñ sits directly after l (not after í) — that's its real position on
+    // both the physical Spanish ISO keyboard and the ES mobile keyboards,
+    // and the single most position-critical key for a Spanish operator
+    // (independent review, ut-docs#1047: an earlier draft put í between l
+    // and ñ, displacing it).
+    es: [
+      ['1','2','3','4','5','6','7','8','9','0'],
+      ['q','w','e','r','t','y','u','i','o','p','á','é'],
+      ['a','s','d','f','g','h','j','k','l','ñ','í'],
+      ['⇧','z','x','c','v','b','n','m','ó','ú','⌫'],
+      ['?123',',','SPACE','.','↵']
     ],
     sym: [
       ['1','2','3','4','5','6','7','8','9','0'],
