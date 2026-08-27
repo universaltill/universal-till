@@ -217,7 +217,17 @@ body.sale-screen .session-user { font-size: 1rem; padding: .3rem .5rem; }
 .catalog-row { cursor: pointer; }
 .catalog-row:hover td { background: var(--surface-2); }
 .catalog-name { font-weight: 600; }
-.draggable-tile { cursor: grab; }
+/* -webkit-user-drag: element (review finding, ut-docs#1170): this tile is
+   ALSO a .btn-tile, which this same change just gave an unconditional
+   `user-select: none`. WebKitGTK (the Linux desktop shell, ADR-0028,
+   guard-webkit-version.sh — not the Chromium kiosk shell, unaffected) has a
+   known behavior where user-select:none on a draggable="true" element can
+   suppress HTML5 drag-and-drop initiation. This tile's mouse-driven
+   REORDER gesture (buttons_admin.html's dragstart/dragover/drop) works
+   today and has no e2e coverage — this rule is the standard, Blink-inert
+   workaround, applied preventively rather than waiting to find out on
+   real desktop-shell hardware. */
+.draggable-tile { cursor: grab; -webkit-user-drag: element; }
 .draggable-tile.dragging { opacity: .4; }
 .journal-row { cursor: pointer; }
 .journal-row:hover td { background: var(--surface-2); }
@@ -579,6 +589,16 @@ label:has(> textarea) { display: flex; flex-direction: column; gap: .2rem; }
 .stacked-form > button { align-self: start; }
 
 /* ---------- Buttons ---------- */
+/* user-select/touch-action here are UNCONDITIONAL (ut-docs#1170) — the only
+   place they previously existed for .btn was gated behind `body.kiosk`
+   (below), which never applies on a windowed desktop-shell install
+   (ut-docs#1021's own confirmed hardware finding: kiosk service inactive,
+   display.window_mode=normal on the reporting till). A tap on any .btn on
+   that class of device could be swallowed as a text-selection drag instead
+   of dispatching its click — confirmed live for the Designer's search-result
+   "add" button (web/ui/partials/buttons_admin.html), whose hx-post silently
+   never fired. Buttons are never meant to be text-selected, so this is safe
+   everywhere, not just in kiosk mode. */
 .btn {
   display: inline-flex; align-items: center; justify-content: center; gap: .4rem;
   background: var(--accent); color: var(--accent-contrast);
@@ -586,6 +606,7 @@ label:has(> textarea) { display: flex; flex-direction: column; gap: .2rem; }
   cursor: pointer; font: inherit; font-size: 1rem; font-weight: 600; min-height: 3rem;
   text-decoration: none; line-height: 1.2;
   transition: background .12s ease, transform .05s ease;
+  user-select: none; touch-action: manipulation;
 }
 /* display:inline-flex above would defeat the hidden attribute's UA rule —
    hidden buttons (osk-toggle, ai-identify-open) must actually disappear. */
@@ -631,12 +652,15 @@ a.btn, a.btn:hover { text-decoration: none; }
 /* ---------- Product tiles ----------
    The whole tile is one touch target: image, name, price. */
 .grid { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fill, minmax(8.8rem, 1fr)); }
+/* user-select/touch-action unconditional here too (ut-docs#1170) — same
+   reasoning as .btn above, previously gated behind body.kiosk only. */
 .btn-tile {
   display: flex; flex-direction: column; align-items: stretch; gap: .3rem;
   padding: .55rem .5rem .6rem; min-height: 8.5rem; border: 1px solid var(--border);
   border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow);
   font: inherit; color: var(--text); cursor: pointer; text-align: center;
   transition: border-color .12s ease, box-shadow .12s ease, transform .05s ease;
+  user-select: none; touch-action: manipulation;
 }
 .btn-tile:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15, 23, 42, .12); }
 .btn-tile:active { transform: scale(.97); }
