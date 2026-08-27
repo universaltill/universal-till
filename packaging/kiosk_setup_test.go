@@ -317,6 +317,13 @@ func TestRemovalScriptsCleanUpKioskUnits(t *testing.T) {
 	if !anyLineContains(post, "set-default multi-user.target") {
 		t.Error("postremove.sh no longer hands the console back to getty on removal")
 	}
+	// ut-docs#1082: the drop-in directory (e.g. 10-portal.conf, the
+	// screencast-portal wiring) is as un-package-owned as the unit files
+	// themselves — same class as the ut-docs#257 .bak cleanup this script's
+	// own comment cites — and must not survive a removal/purge either.
+	if !anyLineContains(post, "rm -rf /etc/systemd/system/unitill-kiosk.service.d") {
+		t.Error("postremove.sh does not remove /etc/systemd/system/unitill-kiosk.service.d — a drop-in written there (e.g. by the screencast-portal wiring) survives apt remove/purge")
+	}
 }
 
 // TestPostremovePurgeCleansSelfUpdateBackups guards ut-docs#257: self-update
