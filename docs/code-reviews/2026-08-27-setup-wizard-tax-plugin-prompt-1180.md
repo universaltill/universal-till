@@ -332,3 +332,25 @@ correct, unchanged from the "Verdict" above. ADR-0067 is marked retracted
 retraction surfaced — ADR-0025 Decision 1's core-config VAT rate table was
 never implemented — is tracked separately as ut-docs#1191, out of scope for
 this PR.
+
+## Addendum, 2026-08-27: F8's actual root cause was this PR's own diff
+
+F8 (the `TestSetupWizardListsInstallableCatalogLanguagesAndCachesFetch`
+CI failure) was originally root-caused as a pre-existing net/http
+connection-reuse race, unrelated to this PR, and fixed separately as
+ut-docs#1196 (merged to `main` as `universal-till#589`). That diagnosis was
+wrong: re-verified after merging `#589`'s fix into this branch, the same
+test still failed, 100% deterministically, under `LANG=de_DE.UTF-8` alone —
+because THIS PR's own `setupInstallableTaxPlugin` fetch (step 3's tile)
+runs on every `GET /setup` render, and `detectCountry` resolves `"DE"` from
+the OS locale's region when CI's `LANG=de_DE.UTF-8` run has no matching
+timezone — triggering a second, legitimate `capability=tax` marketplace
+fetch that a pre-existing test's exact-hit-count assertion didn't expect.
+Full corrected root cause and fix (capability-scoped hit counting in the
+fake marketplace) recorded in
+`docs/code-reviews/2026-08-27-catalog-hit-count-transport-retry-1196.md`'s
+own "Correction" section. Fixed in this PR
+(`internal/pages/sync_plugins_test.go`,
+`internal/pages/setup_language_catalog_test.go`); re-verified with the
+exact `en_GB`-then-`de_DE` double run repeated 3× plus two full-package
+runs under each locale, all clean.
