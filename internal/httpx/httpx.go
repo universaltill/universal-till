@@ -25,6 +25,17 @@ import (
 	uiassets "github.com/universaltill/universal-till/web"
 )
 
+// CrossDeviceLinkActionable is the platform seam behind the
+// crossdevicelinkactionable template func (ut-docs#390/#1057): defaults to
+// the real selfupdate.DownloadLinkActionableNow() predicate (windows/darwin
+// = true, unix kiosk = false), but is a var — not a direct call — so a test
+// in another package that renders one of these templates can stub it to
+// exercise BOTH the actionable and inactionable render paths regardless of
+// the OS the test suite happens to run on, rather than only ever asserting
+// whichever answer the test runner's own GOOS gives. Restore the original
+// value (e.g. via t.Cleanup) after overriding it.
+var CrossDeviceLinkActionable = selfupdate.DownloadLinkActionableNow
+
 var baseFuncs = template.FuncMap{
 	"div100":          func(cents int64) float64 { return float64(cents) / 100.0 },
 	"bpPercent":       func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
@@ -47,8 +58,12 @@ var baseFuncs = template.FuncMap{
 	// a call site that has nothing to do with updates); both wrap the one
 	// shared selfupdate.DownloadLinkActionable predicate so there is still
 	// only one place that decides "does this install have real, recoverable
-	// browser chrome."
-	"crossdevicelinkactionable": func() bool { return selfupdate.DownloadLinkActionableNow() },
+	// browser chrome." Indirected through the CrossDeviceLinkActionable var
+	// below rather than calling selfupdate.DownloadLinkActionableNow()
+	// directly, so callers rendering this template from another package can
+	// stub the platform seam instead of asserting whatever runtime.GOOS the
+	// test happens to run on (ut-docs#1057).
+	"crossdevicelinkactionable": func() bool { return CrossDeviceLinkActionable() },
 	"enrolled":                  func() bool { return enroll.CurrentStatus().Registered },
 	"enrolstore":                func() string { return enroll.CurrentStatus().StoreID },
 	"enroldevice":               func() string { return enroll.CurrentStatus().DeviceID },
