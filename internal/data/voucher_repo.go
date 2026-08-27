@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // Voucher liability (ut-docs#1008): a multi-purpose voucher's issue is a 0%
@@ -366,6 +367,50 @@ GROUP BY vt.type`, from, to)
 	}
 	if err := rows.Err(); err != nil {
 		return out, fmt.Errorf("vouchers issued/redeemed for range: %w", err)
+	}
+	return out, nil
+}
+
+// VouchersIssuedRedeemedForInstantWindow is VouchersIssuedRedeemedForRange's
+// close-to-close sibling (ADR-0066 Decision 2, ut-docs#1140): the same
+// issue/redemption aggregation with the same voided-sale exclusion (LEFT
+// JOIN, permissive on a MISSING sale row — see the range function's doc
+// comment for why an archived-away sale must keep counting while a voided
+// one must not), over a half-open [from, to) INSTANT window — see
+// pos_repo.go's instantWindow for the comparison form and the zero-`from`
+// (till's first-ever close) unbounded case. Called out explicitly by the
+// ADR precisely because it lives in a different file than the fragments
+// inside dateRangeSummaryInstant itself and is easy to miss.
+func (r *POSRepo) VouchersIssuedRedeemedForInstantWindow(ctx context.Context, from, to time.Time) (VoucherRangeSummary, error) {
+	win, args := instantWindow("vt.created_at", from, to)
+	var out VoucherRangeSummary
+	rows, err := r.db.QueryContext(ctx, `
+SELECT vt.type, COUNT(*), COALESCE(SUM(vt.amount), 0)
+FROM voucher_transactions vt
+LEFT JOIN sales s ON s.id = vt.sale_id
+WHERE `+win+`
+  AND (s.id IS NULL OR s.status != 'voided')
+GROUP BY vt.type`, args...)
+	if err != nil {
+		return out, fmt.Errorf("vouchers issued/redeemed for instant window: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var txType string
+		var count int
+		var amount int64
+		if err := rows.Scan(&txType, &count, &amount); err != nil {
+			return out, fmt.Errorf("vouchers issued/redeemed for instant window: scan: %w", err)
+		}
+		switch txType {
+		case "issue":
+			out.IssuedCount, out.IssuedMinor = count, amount
+		case "redemption":
+			out.RedeemedCount, out.RedeemedMinor = count, amount
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return out, fmt.Errorf("vouchers issued/redeemed for instant window: %w", err)
 	}
 	return out, nil
 }

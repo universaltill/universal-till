@@ -6,6 +6,7 @@ import (
 	"sort"
 	"sync"
 	"testing"
+	"time"
 )
 
 // Z-number chaining on report_archive (ut-docs#1080). These tests assert the
@@ -34,7 +35,7 @@ func TestArchiveReport_FirstCloseGetsZNumberOneNoPredecessor(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
 
-	created, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{}`), "R001", "R009")
+	created, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{}`), "R001", "R009", time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -60,10 +61,10 @@ func TestArchiveReport_SecondCloseChainsToFirst(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
 
-	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{}`), "", ""); err != nil {
+	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{}`), "", "", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-02", []byte(`{}`), "", ""); err != nil {
+	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-02", []byte(`{}`), "", "", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -85,15 +86,15 @@ func TestArchiveReport_DuplicatePeriodConsumesNoNumber(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
 
-	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{}`), "", ""); err != nil {
+	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{}`), "", "", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-02", []byte(`{}`), "", ""); err != nil {
+	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-02", []byte(`{}`), "", "", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 
 	// Re-archiving an existing (kind, period) is a no-op...
-	created, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-02", []byte(`{"clobber":true}`), "", "")
+	created, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-02", []byte(`{"clobber":true}`), "", "", time.Time{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -103,7 +104,7 @@ func TestArchiveReport_DuplicatePeriodConsumesNoNumber(t *testing.T) {
 
 	// ...and it must not have consumed a number: the next genuinely new
 	// period continues the sequence right after the last real row.
-	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-03", []byte(`{}`), "", ""); err != nil {
+	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-03", []byte(`{}`), "", "", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	third := findArchived(t, dbx.repo, "eod", "2026-01-03")
@@ -131,7 +132,7 @@ func TestArchiveReport_ConcurrentClosesAreGaplessAndUnique(t *testing.T) {
 		go func() {
 			defer wg.Done()
 			period := fmt.Sprintf("2026-02-%02d", i+1)
-			_, errs[i] = dbx.repo.ArchiveReport(context.Background(), "eod", period, []byte(`{}`), "", "")
+			_, errs[i] = dbx.repo.ArchiveReport(context.Background(), "eod", period, []byte(`{}`), "", "", time.Time{})
 		}()
 	}
 	wg.Wait()
@@ -164,7 +165,7 @@ func TestArchiveReport_ReceiptRangeRoundTrips(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
 
-	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{}`), "R010", "R042"); err != nil {
+	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{}`), "R010", "R042", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -205,7 +206,7 @@ VALUES ('legacy1', 'eod', '2025-12-30', '{}'), ('legacy2', 'eod', '2025-12-31', 
 	// A new numbered close starts the sequence at 1 and does NOT treat the
 	// legacy (unnumbered) rows as a predecessor -- prev_closed_at must stay
 	// nil even though older kind='eod' rows exist.
-	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{}`), "", ""); err != nil {
+	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{}`), "", "", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	numbered := findArchived(t, dbx.repo, "eod", "2026-01-01")
@@ -236,7 +237,7 @@ func TestArchiveReport_ZNumberUniquenessIsEnforcedByTheDatabase(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
 
-	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{}`), "", ""); err != nil {
+	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{}`), "", "", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dbx.d.DB.ExecContext(ctx, `
@@ -263,11 +264,11 @@ func TestArchiveReport_SequenceIsScopedPerKind(t *testing.T) {
 	ctx := context.Background()
 
 	for _, p := range []string{"2026-01-01", "2026-01-02"} {
-		if _, err := dbx.repo.ArchiveReport(ctx, "eod", p, []byte(`{}`), "", ""); err != nil {
+		if _, err := dbx.repo.ArchiveReport(ctx, "eod", p, []byte(`{}`), "", "", time.Time{}); err != nil {
 			t.Fatal(err)
 		}
 	}
-	if _, err := dbx.repo.ArchiveReport(ctx, "weekly", "2026-W01", []byte(`{}`), "", ""); err != nil {
+	if _, err := dbx.repo.ArchiveReport(ctx, "weekly", "2026-W01", []byte(`{}`), "", "", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 
