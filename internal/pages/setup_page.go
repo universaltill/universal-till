@@ -166,9 +166,38 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		//     deliberate "France, 20%" for "Germany, 19%" behind an operator who
 		//     is only retyping a mistyped PIN, and the retry would then save the
 		//     wrong tax rate without ever showing them the country step again.
+		//   - GET carrying ?tax_country= → the country POST
+		//     /api/setup/tax-plugin just acted on (see resumeTaxCountry
+		//     below). Same "never re-detect over the operator's own pick"
+		//     reasoning as the POST branch.
 		code := detectCountry(wizardCountryCodes(countries))
 		if r.Method == http.MethodPost {
 			code = strings.ToUpper(strings.TrimSpace(r.PostFormValue("country")))
+		}
+		// ut-docs#1180 (review): POST /api/setup/tax-plugin redirects back
+		// here after an explicit install tap. Its tile lives on step 3, not
+		// step 1 like the language tiles, so a bare /setup redirect would
+		// drop the operator at step 1 with the country re-derived from OS
+		// detection — silently discarding the country they picked themselves
+		// (a Pi imaged in English whose operator chose DE by hand loses it)
+		// along with anything typed on step 3. Carry it back over the
+		// redirect as a query param instead — no stored state, same posture
+		// as install_pending — and resume on the step the button lives on.
+		// Only a country that is BOTH tax-mapped and a real wizard country is
+		// honoured, so the param can't steer the wizard anywhere the tile
+		// itself couldn't.
+		resumeTaxCountry := ""
+		if r.Method == http.MethodGet {
+			if q := strings.ToUpper(strings.TrimSpace(r.URL.Query().Get("tax_country"))); q != "" {
+				if _, mapped := countryTaxLocale[q]; mapped {
+					for _, c := range wizardCountryCodes(countries) {
+						if c == q {
+							code, resumeTaxCountry = q, q
+							break
+						}
+					}
+				}
+			}
 		}
 		if code != "" {
 			for _, c := range countries {
@@ -203,9 +232,16 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// Uses this same final `code` (the operator's own pick on a POST
 		// re-render, never an earlier draft), same TTL-cached-catalog
 		// posture as installableLangs just above.
-		taxPlugin, taxCatalogUnavailable := setupInstallableTaxPlugin(r.Context(), d, code)
+		//
+		// The second return (catalogUnavailable) is deliberately NOT put in
+		// data: unlike langCatalogUnavailable there is no "…once connected"
+		// note to drive with it yet, and an unread template key reads as if
+		// there were. Wiring that note is a follow-up (see the code-review
+		// record for ut-docs#1180) — it needs product sign-off on whether an
+		// unreachable catalog should say anything at all about a *fiscal*
+		// plugin during setup, plus copy in every locale.
+		taxPlugin, _ := setupInstallableTaxPlugin(r.Context(), d, code)
 		data["installableTaxPlugin"] = taxPlugin
-		data["taxCatalogUnavailable"] = taxCatalogUnavailable
 		// tax_plugin_pending: set by POST /api/setup/tax-plugin's failure
 		// redirect (query param, not stored state) — shows the "still
 		// installing in the background" note once, on the page that
@@ -219,10 +255,23 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// operator already typed are echoed back so a tax-number typo
 		// doesn't cost them the whole step (the template attribute-escapes
 		// these; same trust level as the country echo above).
-		data["errStep"] = 7
+		errStep := 7
 		if strings.HasPrefix(errKey, "setup.error.tse_") {
-			data["errStep"] = 3
+			errStep = 3
 		}
+		data["errStep"] = errStep
+		// startStep is the step the wizard actually opens on: an error
+		// re-render lands on errStep, a tax-plugin install round-trip returns
+		// to step 3 (the Germany-only business-identity step its tile lives
+		// on), and everything else starts at 1.
+		startStep := 1
+		switch {
+		case errKey != "":
+			startStep = errStep
+		case resumeTaxCountry != "":
+			startStep = 3
+		}
+		data["startStep"] = startStep
 		if r.Method == http.MethodPost {
 			data["tseLegalName"] = strings.TrimSpace(r.PostFormValue("tse_legal_name"))
 			data["tseOwnerName"] = strings.TrimSpace(r.PostFormValue("tse_owner_name"))
