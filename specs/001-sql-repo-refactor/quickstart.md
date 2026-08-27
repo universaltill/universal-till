@@ -26,4 +26,4 @@
 - Lint: ensure no SQL strings remain outside `internal/data/`.  
 - Tests: `go test ./...` with focus on moved repos and integration paths.  
 - Smoke: exercise a representative sale/inventory/plugin flow to confirm transactional behavior unchanged.
-- SQL sweep: `rg "SELECT|INSERT|UPDATE|DELETE" internal corepos` should only flag repo files and tests/fixtures.
+- SQL sweep: `rg "SELECT|INSERT|UPDATE|DELETE" internal` should only flag repo files and tests/fixtures. (The `corepos` package this once also covered was removed as vestigial dead code — ut-docs#1116 — the real mobile strategy in ADR-0023 embeds `internal/server`/`internal/app` directly via `mobile/`, not a separate package.)
