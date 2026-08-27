@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
 )
@@ -16,11 +17,15 @@ import (
 // origin. On the kiosk shell (fullscreen, no chrome, no tabs — the
 // platform crossdevicelinkactionable is false for) that's a permanent
 // dead end: field-reported as the operator getting stranded on till 1
-// with no way back to till 2. This asserts the real, current-runtime
-// behaviour of the rendered page, not just the template source: on this
-// (non-Windows/macOS) test runtime, a replica's inventory page must
-// contain NO clickable link to the primary's origin, only the inert,
-// informational text.
+// with no way back to till 2.
+//
+// This asserts the real, current-runtime behaviour of the rendered page,
+// not just the template source — but the actionable/inactionable choice is
+// itself a runtime.GOOS predicate (windows/darwin = true, unix = false), so
+// asserting only the host's own answer made this test fail on any Mac while
+// passing on CI's Linux (ut-docs#1057). Stubbing httpx.CrossDeviceLinkActionable
+// exercises the banner's OWN branching logic against both possible answers,
+// independent of whatever OS the suite happens to run on.
 func TestInventoryReplicaBannerNeverLinksAcrossDevices(t *testing.T) {
 	chdirRoot(t)
 	db := openPagesTestDB(t)
@@ -36,27 +41,50 @@ func TestInventoryReplicaBannerNeverLinksAcrossDevices(t *testing.T) {
 	mux := http.NewServeMux()
 	registerInventoryPage(mux, d)
 
-	req := httptest.NewRequest(http.MethodGet, "/inventory", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /inventory = %d, want 200: %s", rec.Code, rec.Body.String())
+	render := func(t *testing.T) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/inventory", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /inventory = %d, want 200: %s", rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
 	}
-	body := rec.Body.String()
 
-	if !strings.Contains(body, "sync-banner") {
-		t.Fatal("expected the replica sync-banner to render at all — did the {{ if .SyncPrimary }} block regress?")
-	}
-	// crossdevicelinkactionable is false on this (Linux) test runtime — the
-	// same platform this bug was field-reported on. The banner must not
-	// contain an <a href="...primary.till.local..."> under that condition,
-	// and must fall back to inert text instead.
-	if strings.Contains(body, `href="http://primary.till.local:8080/inventory"`) {
-		t.Fatal("ut-docs#390: replica inventory banner still links the kiosk's own browser to the primary till's origin — this strands the operator on a kiosk with no way back")
-	}
-	if !strings.Contains(body, "Edit this on the primary till") {
-		t.Fatal("ut-docs#390: replica banner should fall back to inert text (sync.banner_open_primary_unavailable) when crossdevicelinkactionable is false")
-	}
+	t.Run("inactionable (unix kiosk)", func(t *testing.T) {
+		orig := httpx.CrossDeviceLinkActionable
+		httpx.CrossDeviceLinkActionable = func() bool { return false }
+		t.Cleanup(func() { httpx.CrossDeviceLinkActionable = orig })
+
+		body := render(t)
+		if !strings.Contains(body, "sync-banner") {
+			t.Fatal("expected the replica sync-banner to render at all — did the {{ if .SyncPrimary }} block regress?")
+		}
+		if strings.Contains(body, `href="http://primary.till.local:8080/inventory"`) {
+			t.Fatal("ut-docs#390: replica inventory banner still links the kiosk's own browser to the primary till's origin — this strands the operator on a kiosk with no way back")
+		}
+		if !strings.Contains(body, "Edit this on the primary till") {
+			t.Fatal("ut-docs#390: replica banner should fall back to inert text (sync.banner_open_primary_unavailable) when crossdevicelinkactionable is false")
+		}
+	})
+
+	t.Run("actionable (windows/macOS desktop)", func(t *testing.T) {
+		orig := httpx.CrossDeviceLinkActionable
+		httpx.CrossDeviceLinkActionable = func() bool { return true }
+		t.Cleanup(func() { httpx.CrossDeviceLinkActionable = orig })
+
+		body := render(t)
+		if !strings.Contains(body, "sync-banner") {
+			t.Fatal("expected the replica sync-banner to render at all — did the {{ if .SyncPrimary }} block regress?")
+		}
+		if !strings.Contains(body, `href="http://primary.till.local:8080/inventory"`) {
+			t.Fatal("expected a clickable link to the primary till's origin when crossdevicelinkactionable is true")
+		}
+		if strings.Contains(body, "Edit this on the primary till") {
+			t.Fatal("did not expect the inert fallback text when crossdevicelinkactionable is true")
+		}
+	})
 }
 
 // TestInventoryNonReplicaHasNoSyncBanner is the negative control: a

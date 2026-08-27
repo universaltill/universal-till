@@ -239,7 +239,19 @@ nano pos.env
 
 ```bash
 # Server configuration
-UT_LISTEN_ADDR=:8080                  # Port to listen on
+UT_LISTEN_ADDR=:8080                  # Port to listen on. If this is already
+                                       # taken (e.g. a second instance racing
+                                       # this one at boot), the till still
+                                       # starts on the next free port — but if
+                                       # the configured host was a wildcard
+                                       # (":8080" included), the fallback binds
+                                       # loopback-only (127.0.0.1) instead of
+                                       # repeating the wildcard, so a degraded
+                                       # instance is never LAN-reachable
+                                       # (ut-docs#1169). Self-order kiosk
+                                       # clients and till-to-till pairing need
+                                       # the till on its real, non-fallback
+                                       # address to work.
 UT_DEFAULT_LOCALE=en                  # Default language
 
 # Database
