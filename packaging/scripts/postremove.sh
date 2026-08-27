@@ -13,6 +13,7 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
     fi
     rm -f /etc/systemd/system/unitill-kiosk.service \
           /etc/systemd/system/unitill-kiosk-firstboot.service
+    rm -rf /etc/systemd/system/unitill-kiosk.service.d
     if [ -d /run/systemd/system ]; then
         systemctl daemon-reload >/dev/null 2>&1 || true
     fi
