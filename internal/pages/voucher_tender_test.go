@@ -193,6 +193,52 @@ func TestPOSTender_VoucherInputBounds(t *testing.T) {
 	}
 }
 
+// ut-docs#1137: the pos_api.go voucher-issue loop only checked each item's
+// amount, not the count, so an over-count request did full basket-total
+// work (including EnsureStockLocation's DB round-trip) before
+// pos.computeSaleTotals correctly rejected it via MaxVoucherIssuesPerSale,
+// instead of failing fast at the HTTP boundary the way MaxVoucherIssueAmount
+// already does. Proven here the same way
+// TestTenderHandler_EnsureStockLocationFailureShowsLocalizedMessageNotRawError
+// isolates EnsureStockLocation's own failure path: drop stock_locations out
+// from under a live request, so any code path that reaches
+// EnsureStockLocation surfaces as a 500 "could not be completed", not the
+// boundary's 400 "invalid voucher issue". Before the fix this request got a
+// 500 (it ran the whole per-item loop, reached EnsureStockLocation, and only
+// then would computeSaleTotals's own count check have fired, had it ever
+// gotten that far); after the fix it's rejected before EnsureStockLocation
+// is ever called, cap or no cap on the table underneath it.
+func TestPOSTender_VoucherIssueCountCapFailsFastAtAPIBoundary(t *testing.T) {
+	mux, dp := newVoucherTenderDeps(t)
+	if _, err := dp.Db.Exec(`DROP TABLE stock_locations`); err != nil {
+		t.Fatalf("drop stock_locations: %v", err)
+	}
+
+	var issues strings.Builder
+	for i := 0; i < pos.MaxVoucherIssuesPerSale+1; i++ {
+		if i > 0 {
+			issues.WriteString(",")
+		}
+		issues.WriteString(`{"amount":100}`)
+	}
+	body := fmt.Sprintf(`{"payments":[{"method":"cash","amount":100}],"issue_vouchers":[%s]}`, issues.String())
+
+	rec := postTenderJSON(t, mux, body)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("over-cap voucher issue count: code %d, want 400 (body %s)", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "could not be completed") {
+		t.Fatalf("rejection reached EnsureStockLocation instead of failing fast at the API boundary: %s", rec.Body.String())
+	}
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM vouchers`).Scan(&count); err != nil {
+		t.Fatalf("count vouchers: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("rejected over-cap issue still wrote %d vouchers row(s)", count)
+	}
+}
+
 // ut-docs#1008 review F9: classifyTenderError matches voucher failures by
 // errors.Is against the exported sentinels, not by message substring — a
 // wrapped-and-reworded error still classifies, which the old substring
