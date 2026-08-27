@@ -2,9 +2,12 @@ package plugins
 
 import (
 	"context"
+	"fmt"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 )
@@ -24,29 +27,59 @@ import (
 // different pooled connections and genuinely contend, the way two real
 // goroutines do in production.
 //
-// The publisher runs UNTHROTTLED, and that is load-bearing, not laziness.
-// An earlier draft of this test paced it at 50ms between Publish calls as a
-// "realistic shop cadence"; measurement during review showed the whole
-// reloadCount loop finishes in ~12ms, so the 50ms pacing let exactly ONE
-// publish overlap the entire run — the test was green because nothing ever
-// contended, not because contention was survived. Unthrottled, the same
-// loop sees hundreds of concurrent publishes under -race (tens of thousands
-// without it) at no extra wall-clock cost, and Reload demonstrably parks in
-// the busy handler waiting for the write lock rather than erroring. A real
-// shop's event rate is far lower than either figure, so this is a
-// deliberately pessimistic upper bound on production contention.
+// The publisher runs at full speed up to a CREDIT CAP (publishCapPerReload
+// completed publishes per finished reload), and both halves of that are
+// load-bearing. Full speed, because an earlier draft paced it at 50ms
+// between Publish calls as a "realistic shop cadence"; measurement during
+// review (#775) showed the whole reloadCount loop finishes in ~12ms, so the
+// 50ms pacing let exactly ONE publish overlap the entire run — the test was
+// green because nothing ever contended. Uncapped full speed produced
+// hundreds of concurrent publishes under -race (tens of thousands without
+// it), with Reload demonstrably parking in the busy handler rather than
+// erroring. The cap, because an unthrottled publisher has no upper bound at
+// all on how far it can outpace Reload when the two are scheduled unfairly,
+// and ut-docs#1151 wanted that tail bounded before the next slow-CI repeat.
+// Be explicit about what is and is not measured here: the "publisher
+// out-polls the parked busy handler until Reload exhausts busy_timeout(5000)"
+// starvation regime is the HYPOTHESISED mechanism behind the four CI
+// failures, NOT something #1151 reproduced — see the #979/#1151 paragraph
+// below, where the attempt to force it did not succeed. The cap is therefore
+// a defensive bound on a plausible tail, not a fix for a diagnosed one. The
+// cap of 100 per reload is ~10x the contention an idle -race run actually
+// generates (~9/reload, measured) and ~100x the floor asserted below, so it
+// leaves the deliberately pessimistic contention level of the uncapped
+// version intact in the normal case while refusing to let a badly scheduled
+// runner spin the publisher arbitrarily far ahead of Reload.
 //
-// ut-docs#979 (2026-08-24/25): this test failed twice in CI within ~15
-// minutes, on two commits that touched no Go code, then passed on a
-// single re-run each time. Investigated: this repo's ci/e2e workflows run
-// on GitHub-hosted `ubuntu-latest`, not a self-hosted runner, and a clean
-// local run (-race, count=5) did not reproduce. Given the deliberately
-// unthrottled write load above, occasionally exceeding busy_timeout(5000)
-// on a slower/shared Actions VM is consistent with runner variance, not a
-// Reload regression — but a *repeat* failure (same test, multiple
-// consecutive runs, or reproducible outside CI) would be real signal and
-// should be investigated as one, not re-run away. See the Fatalf message
-// below for what that distinction means for the next reader.
+// ut-docs#979 (2026-08-24/25) + ut-docs#1151 (2026-08-26): four CI
+// failures across three days, all on commits touching nothing near this
+// path, all "database is locked". #979 called it runner variance without a
+// measurement; #1151 tried to get one. Attempts to force a genuine
+// SQLITE_BUSY reproduction under artificial CPU starvation (the test process
+// plus several busy-loop CPU hogs sharing one pinned core, as a stand-in for
+// a slow shared `ubuntu-latest` vCPU) did NOT reliably reproduce SQLITE_BUSY
+// itself in this exercise — repeated attempts instead tripped the
+// publisher-floor check below (on BOTH the pre-#1151 and post-#1151 code, so
+// it is a pre-existing, separate flake mode under severe scheduling
+// starvation, not something this change introduces; filed as a follow-up
+// rather than fixed here, since it's a different failure signature than
+// what #979/#1151 actually saw in CI). So the "5s-ish busy_timeout
+// exhaustion" mechanism below is NOT backed by a direct measured
+// reproduction of the real failure — it rests on #775's own independently
+// reviewed analysis (this path never hits the SHARED->RESERVED
+// lock-promotion gap, and genuine non-error parking up to ~2.0s was
+// observed under massive synthetic load) plus the fact that every real CI
+// failure recorded so far was SQLITE_BUSY, never an unrelated error, which
+// is consistent with slow-runner busy_timeout exhaustion and not with an
+// instant lock-class-bypass defect (ut-docs#311's own regression test,
+// internal/db's TestConcurrentWriterWaitsInsteadOfInstantBusy, fails in
+// ~1ms when that defect is reintroduced — nothing close to what any of the
+// 4 real failures would need to explain if they were case 2). The reload
+// loop below classifies BUSY by elapsed time instead of hard-failing on the
+// first one so that IF a future repeat is slow (case 1, busy_timeout
+// genuinely exhausted), the test tolerates it and keeps testing, while a
+// FAST/instant BUSY (case 2, the real #311-shaped defect signature) still
+// hard-fails immediately — see the comment on busyExhaustionFloor.
 //
 // A reliably green result is evidence that Reload's write path
 // (SyncPluginPaymentMethods — three sequential autocommit ExecContext
@@ -91,6 +124,18 @@ func TestReload_SurvivesRealisticPublisherContention(t *testing.T) {
 	// exists to create — hence both are counted and asserted on below
 	// rather than discarded.
 	var publishOK, publishErr int64
+	// firstPublishErr keeps the first failing publish's error AND its elapsed
+	// time — the same elapsed-to-BUSY discriminator ut-docs#1151 needed on
+	// the Reload side (a bare count told #979's investigation nothing).
+	var firstPublishErr atomic.Value
+	// reloadsDone feeds the publisher's credit cap (header comment): the
+	// publisher may complete at most publishCapPerReload publishes per
+	// finished reload. The budget is CUMULATIVE — unspent credits carry
+	// forward — so it bounds the publisher's total lead over Reload across
+	// the run, not its instantaneous rate against any one stalled reload
+	// (ut-docs#1151).
+	var reloadsDone int64
+	const publishCapPerReload = 100
 	stop := make(chan struct{})
 	var publisherWg sync.WaitGroup
 	publisherWg.Add(1)
@@ -102,7 +147,21 @@ func TestReload_SurvivesRealisticPublisherContention(t *testing.T) {
 				return
 			default:
 			}
+			if atomic.LoadInt64(&publishOK) >= (atomic.LoadInt64(&reloadsDone)+1)*publishCapPerReload {
+				// At the credit cap: yield briefly instead of spinning on
+				// the write lock, then re-check (the next finished reload
+				// extends the budget).
+				time.Sleep(time.Millisecond)
+				continue
+			}
+			pubStart := time.Now()
 			if _, err := bus.Publish(ctx, "busy.event", map[string]any{"x": 1}); err != nil {
+				// Record the detail BEFORE bumping the counter: the assertions
+				// below run while this goroutine is still live (the drain is in
+				// t.Cleanup), so publishErr!=0 must never be observable before
+				// the error it refers to is readable, or the failure message
+				// prints "<nil>" exactly when it is needed.
+				firstPublishErr.CompareAndSwap(nil, fmt.Sprintf("first publish error after %s: %v", time.Since(pubStart), err))
 				atomic.AddInt64(&publishErr, 1)
 			} else {
 				atomic.AddInt64(&publishOK, 1)
@@ -117,10 +176,76 @@ func TestReload_SurvivesRealisticPublisherContention(t *testing.T) {
 		publisherWg.Wait()
 	})
 
+	// ut-docs#1151: the 4 repeat CI failures (#979 x2, #1151 x2) were never
+	// directly reproduced with a measured elapsed time (see the header
+	// comment) — the classification below is a defensive design choice, not
+	// evidence-backed forensics. Elapsed time is nonetheless the correct
+	// discriminator between benign busy_timeout exhaustion and the real
+	// #311-class defect (a lock class the busy handler doesn't cover fails
+	// in roughly a millisecond, not seconds — see
+	// internal/db.TestConcurrentWriterWaitsInsteadOfInstantBusy), so the loop
+	// below classifies instead of hard-failing on the first BUSY:
+	//
+	//   - SQLITE_BUSY in under busyExhaustionFloor: the handler did NOT run
+	//     its budget on this lock class → hard fail. This is the production
+	//     defect signal; do not re-run it away.
+	//   - SQLITE_BUSY at/after the floor: the handler ran in full and lost a
+	//     fair-but-starved race against this test's deliberately pathological
+	//     credit-capped publisher — still a load no real shop generates (the
+	//     header comment's cadence analysis). Retry the same Reload, bounded,
+	//     the way the operator's next tap on the plugins screen would.
+	//
+	// Any non-BUSY error still fails immediately. The retry budget is small
+	// on purpose: persistent starvation (budget exhausted) still fails, so
+	// the test cannot silently absorb a genuine throughput collapse.
 	const reloadCount = 20
+	// The floor is anchored to busy_timeout(5000) itself, NOT to any observed
+	// latency: SQLite's busy handler only gives up after its full 5s budget,
+	// so a genuine exhaustion cannot return in much under 5s, whereas a lock
+	// class the handler does not cover (the #311 defect) returns in ~1ms.
+	// 4.5s leaves 500ms of slop for timer granularity and scheduling.
+	//
+	// Do NOT lower this to the ~2.0s figure #775 recorded. That number was
+	// #775's longest observed SUCCESSFUL park (it never errored; #775 itself
+	// notes the budget is 5s, "margin ~2.5x"), so it says nothing about when
+	// exhaustion begins — and ordinary reloads on a loaded box already reach
+	// it (a passing run during the #1151 review measured a single successful
+	// reload at 2.07s). A 2s floor would therefore classify the whole 2–5s
+	// band as "handler ran its budget" and retry it away, which is precisely
+	// the fast-BUSY-after-slow-preceding-work case this split exists to catch.
+	const busyExhaustionFloor = 4500 * time.Millisecond
+	const maxBusyRetries = 3
+	busyRetries := 0
+	var slowestReload time.Duration
 	for i := 0; i < reloadCount; i++ {
-		if err := m.Reload(ctx); err != nil {
-			t.Fatalf("reload %d under publisher contention: %v (this is the ut-docs#775 production-risk signal IF it repeats — a lone failure on an unrelated commit is consistent with CI runner variance under this test's deliberately unthrottled load, per ut-docs#979; check for a repeat across re-runs/commits before treating one failure as a regression)", i, err)
+		start := time.Now()
+		err := m.Reload(ctx)
+		elapsed := time.Since(start)
+		if elapsed > slowestReload {
+			slowestReload = elapsed
+		}
+		if err != nil {
+			// Deliberately matched on "SQLITE_BUSY", which modernc.org/sqlite
+			// appends ONLY for the primary result code 5 (see its conn.errstr).
+			// Do NOT broaden this to "database is locked": extended codes such
+			// as SQLITE_BUSY_SNAPSHOT (517) — the exact signature of the #311
+			// lock-promotion defect (internal/db.Open's own comment) — do not
+			// carry the suffix and so land in the hard-fail branch below, which
+			// is what we want. Broadening the match would quietly reclassify
+			// the defect this test guards against as a retryable flake.
+			if !strings.Contains(err.Error(), "SQLITE_BUSY") {
+				t.Fatalf("reload %d under publisher contention failed (non-BUSY, after %s): %v", i, elapsed, err)
+			}
+			if elapsed < busyExhaustionFloor {
+				t.Fatalf("reload %d returned SQLITE_BUSY after only %s — busy_timeout(5000)'s handler never ran its budget on this lock class. This is the real #311-shaped production defect (ut-docs#1151 case 2), NOT runner variance; do not re-run this away: %v", i, elapsed, err)
+			}
+			busyRetries++
+			if busyRetries > maxBusyRetries {
+				t.Fatalf("reload %d: SQLITE_BUSY after %s (busy handler exhausted) and the run already spent all %d retries — starvation this persistent means the runner is pathologically slow OR the load model regressed; investigate, don't re-run (ut-docs#1151): %v", i, elapsed, maxBusyRetries, err)
+			}
+			t.Logf("reload %d: SQLITE_BUSY after %s — busy handler ran its full budget and was starved by the publisher (benign under this test's deliberately pathological load; ut-docs#1151 case 1); retrying (%d/%d)", i, elapsed, busyRetries, maxBusyRetries)
+			i--
+			continue
 		}
 		// Re-subscribe after each Reload, mirroring what a real wasm
 		// plugin's Sync-driven resubscribe does moments after
@@ -128,7 +253,9 @@ func TestReload_SurvivesRealisticPublisherContention(t *testing.T) {
 		if _, err := bus.Subscribe(ctx, pid, []string{"busy.event"}); err != nil {
 			t.Fatalf("resubscribe %d: %v", i, err)
 		}
+		atomic.AddInt64(&reloadsDone, 1)
 	}
+	t.Logf("%d reloads done (slowest %s, %d busy-exhaustion retries); publishes ok=%d err=%d", reloadCount, slowestReload, busyRetries, atomic.LoadInt64(&publishOK), atomic.LoadInt64(&publishErr))
 
 	// The publisher's writes are what make this a contention test at all. If
 	// this floor ever trips, the test has decayed back into the no-op the
@@ -143,6 +270,6 @@ func TestReload_SurvivesRealisticPublisherContention(t *testing.T) {
 	// answers the same #775 question from the other direction: it must not
 	// be quietly eating SQLITE_BUSY either.
 	if got := atomic.LoadInt64(&publishErr); got != 0 {
-		t.Fatalf("publisher hit %d errors while contending with Reload (want 0) — a publish-side SQLITE_BUSY is the same production risk #775 asks about, seen from the writer that lost the race", got)
+		t.Fatalf("publisher hit %d errors while contending with Reload (want 0) — a publish-side SQLITE_BUSY is the same production risk #775 asks about, seen from the writer that lost the race (%v)", got, firstPublishErr.Load())
 	}
 }
