@@ -32,8 +32,17 @@ test:
 # risking the bare default timeout. Same shape as the internal/plugins fix
 # (ut-docs#643): a longer, explicit timeout instead of raising it globally,
 # so a genuine hang elsewhere still fails within the normal default.
+#
+# The 30m timeout this target originally shipped with (ut-docs#1003) already
+# had no real margin left: ut-docs#1034/#1119 measured a clean run at
+# 1531s (~25.5min) — ~85% of that budget — after the TestFiscalSignAsk_*
+# WASM-plugin suite (each subtest loads a real wazero module) grew the
+# package further. 60m gives ~2.4x that measured runtime, matching the
+# generous-margin shape of the internal/plugins precedent above (that
+# package's own ~85-90s runtime against a 20m/1200s budget) instead of
+# re-creating the same near-the-wire margin one test class later.
 test-race-pages:
-	go test -race -timeout 30m ./internal/pages/...
+	go test -race -timeout 60m ./internal/pages/...
 
 e2e-seed:
 	UT_DB_PATH=./data/e2e.db go run ./scripts/e2e_seed/main.go
