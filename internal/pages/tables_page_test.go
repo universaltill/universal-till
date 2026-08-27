@@ -18,6 +18,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -181,6 +182,58 @@ func TestTablesPage_CreateEditPositionDeactivateAndRender(t *testing.T) {
 	rec = postForm(mux, "/api/tables/"+id+"/active", url.Values{"active": {"1"}}, &manager)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("reactivate: code=%d", rec.Code)
+	}
+}
+
+// Tap-to-place (ut-docs#1025): POST /api/tables optionally carries the
+// tapped canvas position as pos_x/pos_y. Present-and-valid → the table is
+// created there (repo-clamped to the canvas); absent, empty, or garbage →
+// the pre-#1025 behaviour, canvas centre — which is exactly what the
+// bottom-of-page add form (which never sends these fields) relies on.
+func TestTablesPageCreate_TapToPlacePosition(t *testing.T) {
+	mux, d := newTablesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	posOf := func(label string) (x, y int) {
+		t.Helper()
+		if err := d.Db.QueryRow(`SELECT pos_x, pos_y FROM tables WHERE label = ?`, label).Scan(&x, &y); err != nil {
+			t.Fatalf("lookup %q: %v", label, err)
+		}
+		return x, y
+	}
+	create := func(form url.Values) {
+		t.Helper()
+		rec := postForm(mux, "/api/tables", form, &manager)
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/tables" {
+			t.Fatalf("create %v: code=%d loc=%q", form, rec.Code, rec.Header().Get("Location"))
+		}
+	}
+	centre := data.TableCanvasSize / 2
+
+	// Tapped position is used verbatim (in-canvas, so unclamped).
+	create(url.Values{"label": {"Tapped"}, "shape": {"rect"}, "pos_x": {"200"}, "pos_y": {"300"}})
+	if x, y := posOf("Tapped"); x != 200 || y != 300 {
+		t.Fatalf("tapped position: got %d,%d want 200,300", x, y)
+	}
+
+	// Off-plan values are clamped by the repo (clampToCanvas), never trusted.
+	create(url.Values{"label": {"Clamped"}, "shape": {"rect"}, "pos_x": {"-50"}, "pos_y": {"5000"}})
+	wantX, wantY := data.TableEdgeInset, data.TableCanvasSize-data.TableEdgeInset
+	if x, y := posOf("Clamped"); x != wantX || y != wantY {
+		t.Fatalf("clamped position: got %d,%d want %d,%d", x, y, wantX, wantY)
+	}
+
+	// No pos fields at all (the existing bottom-of-page form) → canvas centre,
+	// byte-for-byte the pre-#1025 behaviour.
+	create(url.Values{"label": {"Centre"}, "shape": {"rect"}})
+	if x, y := posOf("Centre"); x != centre || y != centre {
+		t.Fatalf("no pos fields: got %d,%d want %d,%d", x, y, centre, centre)
+	}
+
+	// Unparseable values fall back to centre too — never an error, never 0,0.
+	create(url.Values{"label": {"Garbage"}, "shape": {"rect"}, "pos_x": {"abc"}, "pos_y": {""}})
+	if x, y := posOf("Garbage"); x != centre || y != centre {
+		t.Fatalf("garbage pos fields: got %d,%d want %d,%d", x, y, centre, centre)
 	}
 }
 
