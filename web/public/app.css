@@ -49,13 +49,15 @@
    vertical budget (independent review of ut-docs#161 caught this live:
    width-only growth clipped the Cash/Card/Gift Card buttons on exactly
    that class of screen) — height, not just width, bounds the growth.
-   Composed with --ui-scale (base.html, from the operator's Settings > UI
-   scale choice, default 1) so that existing manual scale-up still layers
-   on top of the automatic viewport fit instead of replacing it. --ui-scale
-   is unset on the few standalone screens (login/setup/self-order) that
-   still set an inline px font-size directly — that inline value always
-   wins over this rule there, so the "1" fallback below is inert for them,
-   not load-bearing. */
+   Composed with --ui-scale (base.html, login.html, setup.html — from the
+   operator's Settings > UI scale choice, default 1) so that existing
+   manual scale-up still layers on top of the automatic viewport fit
+   instead of replacing it. --ui-scale is still unset on the remaining
+   standalone kiosk screens (self_order.html, self_order_shop.html,
+   order_tracking.html — ut-docs#1126 found and fixed login/setup, ut-docs#1175
+   tracks these three) that still set an inline px font-size directly —
+   that inline value always wins over this rule there, so the "1" fallback
+   below is inert for them, not load-bearing. */
 :root { --fluid-fs: clamp(17px, min(13.57px + 0.335vw, 13.25px + 0.625vh), 20px); }
 html { font-size: calc(var(--ui-scale, 1) * var(--fluid-fs)); }
 body {
