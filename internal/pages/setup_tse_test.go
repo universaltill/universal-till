@@ -635,8 +635,17 @@ func TestSettingsShowsTSEProvisioningChipAndDismiss(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(getSettings(), `data-testid="tse-provisioning"`) {
+	settingsBody := getSettings()
+	if !strings.Contains(settingsBody, `data-testid="tse-provisioning"`) {
 		t.Fatal("TSE chip not shown for a rejected kickoff")
+	}
+
+	// ut-docs#1112: the message must render in the wrapping .notice-block-warn
+	// component (which wraps long text), not the nowrap-by-design .chip that
+	// silently clipped it at the card edge — same regression class #1026
+	// fixed for the sibling missingFiscalSigner banner.
+	if !strings.Contains(settingsBody, "notice-block-warn") {
+		t.Fatal("TSE provisioning message not wrapped in .notice-block-warn — regressed to the clipping .chip layout (ut-docs#1112)")
 	}
 
 	// Dismiss is manager-gated and clears the state.
