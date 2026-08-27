@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"net/http"
+	"net/url"
 	"strings"
 	"sync"
 	"time"
@@ -35,6 +36,13 @@ import (
 // minimal — DE only, not every country ADR-0025 will eventually cover; an
 // audit of which other countries need a fiscal plugin listing is an
 // explicit non-goal here, tracked separately.
+//
+// NOTE when adding a country here: the tile itself lives in setup.html's
+// step 3, which step 2's Next only routes to for DE
+// (`country === 'DE' ? 3 : 4`), and renderWizard resumes a tax-plugin
+// install round-trip on step 3 for the same reason. Adding e.g. "FR" to
+// this map alone would resolve a listing that no operator can ever see —
+// the step gating has to move too.
 var countryTaxLocale = map[string]string{
 	"DE": "de",
 }
@@ -220,9 +228,16 @@ func setupTaxPluginInstallHandler(d *common.Deps, svc *auth.Service) http.Handle
 		country := strings.ToUpper(strings.TrimSpace(r.PostFormValue("country")))
 		locale, ok := countryTaxLocale[country]
 		if !ok {
+			// Genuinely forged — no country to resume the wizard on.
 			http.Redirect(w, r, "/setup", http.StatusSeeOther)
 			return
 		}
+		// Every redirect below carries the country back so renderWizard
+		// resumes on step 3 with the operator's own pick intact, instead of
+		// bouncing them to step 1 with the country re-detected from the OS.
+		// This tile is not on step 1 like the language ones, so a bare
+		// /setup would lose real work.
+		resume := "/setup?tax_country=" + url.QueryEscape(country)
 
 		// Re-check via the SAME resolution the real UI's tile is rendered
 		// from that this country genuinely has an installable match right
@@ -231,7 +246,7 @@ func setupTaxPluginInstallHandler(d *common.Deps, svc *auth.Service) http.Handle
 		// or one already installed since the tile rendered) is rejected
 		// clean, same posture as the language handler's `known` check.
 		if match, _ := setupInstallableTaxPlugin(r.Context(), d, country); match == nil {
-			http.Redirect(w, r, "/setup", http.StatusSeeOther)
+			http.Redirect(w, r, resume, http.StatusSeeOther)
 			return
 		}
 
@@ -240,7 +255,7 @@ func setupTaxPluginInstallHandler(d *common.Deps, svc *auth.Service) http.Handle
 		err = resolveAndInstallBasePlugin(ctx, d, spec)
 		cancel()
 		if err == nil {
-			http.Redirect(w, r, "/setup", http.StatusSeeOther)
+			http.Redirect(w, r, resume, http.StatusSeeOther)
 			return
 		}
 		logging.L().Warnf("setup wizard: foreground install of tax/%s failed, joining background retry: %v", locale, err)
@@ -267,6 +282,6 @@ func setupTaxPluginInstallHandler(d *common.Deps, svc *auth.Service) http.Handle
 			}
 		}
 
-		http.Redirect(w, r, "/setup?tax_plugin_pending=1", http.StatusSeeOther)
+		http.Redirect(w, r, resume+"&tax_plugin_pending=1", http.StatusSeeOther)
 	}
 }

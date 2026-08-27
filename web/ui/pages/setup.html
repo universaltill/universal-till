@@ -38,8 +38,10 @@
          step 2's Next jumps straight to 4 unless country === 'DE'. On an
          error re-render the server picks which step to land on (errStep):
          business-identity validation errors return to 3, everything else to
-         the PIN step. -->
-    <main class="setup-card" x-data="{ step: {{ if .errKey }}{{ .errStep }}{{ else }}1{{ end }}, last: 8,
+         the PIN step. The server resolves that, a tax-plugin install
+         round-trip (ut-docs#1180 — back to step 3, not step 1) and the
+         plain first-render case into one startStep. -->
+    <main class="setup-card" x-data="{ step: {{ .startStep }}, last: 8,
                                        country: '{{ .detectedCountry }}', currency: '{{ .detectedCurrency }}',
                                        tax: '{{ .detectedTaxRatePct }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}',
                                        currencyTouched: false }">
@@ -164,6 +166,8 @@
              plainly that Universal Till holds this device's admin credential
              (PUK), assigned to this step by ut-docs#802. -->
         <section x-show="step === 3" x-cloak data-step="3">
+          <h1>{{ T "setup.tse.title" }}</h1>
+          <p class="muted">{{ T "setup.tse.hint" }}</p>
           <!-- ut-docs#1180: ADR-0025 decision 4 — a marketplace tax-capability
                plugin for this country (ut-plugin-tax-de: §12 UStG dine-in/
                takeaway VAT-rate switching plus TSE signing/DSFinV-K export)
@@ -174,7 +178,9 @@
                Same out-of-band-form pattern as step 1's catalog-language
                buttons: the real <form> lives AFTER the wizard's closing
                </form> (nested forms are dropped by the HTML parser), this
-               button targets it via form=. -->
+               button targets it via form=. Sits BELOW the step's own <h1>
+               so its <h2> nests under a heading rather than preceding one,
+               and so the step still reads as "business details" first. -->
           {{ if .installableTaxPlugin }}
           <div class="setup-tax-plugin-prompt">
             <h2>{{ T "setup.tax_plugin.title" }}</h2>
@@ -185,8 +191,6 @@
             <button type="submit" class="btn secondary setup-tax-plugin-install-btn" form="tax-plugin-install">{{ T "setup.tax_plugin.install_btn" }}</button>
           </div>
           {{ end }}
-          <h1>{{ T "setup.tse.title" }}</h1>
-          <p class="muted">{{ T "setup.tse.hint" }}</p>
           <label>{{ T "setup.tse.legal_name" }}
             <input type="text" class="tse-field" name="tse_legal_name" maxlength="200" value="{{ .tseLegalName }}">
           </label>

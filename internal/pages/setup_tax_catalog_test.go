@@ -171,9 +171,11 @@ func TestSetupTaxPluginInstallHappyPath(t *testing.T) {
 	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
 	dp.Cfg.Marketplace = mkt.config()
 
+	// The redirect carries the country back so the wizard resumes on step 3
+	// (where the tile lives) instead of restarting at step 1.
 	rec := postForm(mux, "/api/setup/tax-plugin", url.Values{"country": {"DE"}}, nil)
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup" {
-		t.Fatalf("POST /api/setup/tax-plugin: code=%d loc=%q, want 303 -> /setup",
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup?tax_country=DE" {
+		t.Fatalf("POST /api/setup/tax-plugin: code=%d loc=%q, want 303 -> /setup?tax_country=DE",
 			rec.Code, rec.Header().Get("Location"))
 	}
 	if active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); err != nil || !active {
@@ -227,8 +229,8 @@ func TestSetupTaxPluginInstallRejectsAlreadyInstalled(t *testing.T) {
 	resetTaxCatalogForTest(t) // clear the TTL cache so the re-check below hits the DB, not a stale cached "installable" answer
 
 	rec := postForm(mux, "/api/setup/tax-plugin", url.Values{"country": {"DE"}}, nil)
-	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup" {
-		t.Fatalf("POST for an already-installed plugin: code=%d loc=%q, want 303 -> /setup",
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup?tax_country=DE" {
+		t.Fatalf("POST for an already-installed plugin: code=%d loc=%q, want 303 -> /setup?tax_country=DE",
 			rec.Code, rec.Header().Get("Location"))
 	}
 	if hits := mkt.downloadTokenHits(); hits != 1 {
@@ -264,8 +266,8 @@ func TestSetupTaxPluginInstallFailureJoinsPendingList(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("POST with install failing: code=%d, want 303", rec.Code)
 	}
-	if loc := rec.Header().Get("Location"); loc != "/setup?tax_plugin_pending=1" {
-		t.Fatalf("failure redirect = %q, want /setup?tax_plugin_pending=1", loc)
+	if loc := rec.Header().Get("Location"); loc != "/setup?tax_country=DE&tax_plugin_pending=1" {
+		t.Fatalf("failure redirect = %q, want /setup?tax_country=DE&tax_plugin_pending=1", loc)
 	}
 	pending, err := loadPendingBasePlugins(t.Context(), dp)
 	if err != nil {
@@ -372,6 +374,81 @@ func TestSetupWizardTaxPluginTileGoneAfterInstall(t *testing.T) {
 	rec = postFormRaw(mux, "/api/setup", form)
 	if strings.Contains(rec.Body.String(), `action="/api/setup/tax-plugin"`) {
 		t.Error("the tax-plugin install tile must be gone once the plugin is actually installed")
+	}
+}
+
+// --- Review follow-up: the install round-trip resumes step 3 ---
+
+// The tax tile lives on step 3, not step 1 like the language tiles, so the
+// install redirect has to bring the operator back to step 3 with the country
+// they picked — a bare /setup would open the wizard at step 1 and re-derive
+// the country from OS detection, silently discarding a hand-picked DE (and
+// anything typed on step 3).
+func TestSetupGETResumesStep3ForTaxCountry(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	resetSetupLanguageCatalog()
+	t.Cleanup(resetSetupLanguageCatalog)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	body := getSetup(mux, "?tax_country=DE", "").Body.String()
+	if !strings.Contains(body, "step: 3,") {
+		t.Errorf("GET /setup?tax_country=DE must open the wizard on step 3, got:\n%s", body)
+	}
+	// ...and with the country restored, so step 3 is reachable at all and the
+	// hidden currency/tax inputs bound to it aren't reset.
+	if !strings.Contains(body, "country: 'DE'") {
+		t.Error("GET /setup?tax_country=DE must restore country=DE in the wizard's x-data")
+	}
+	// The tile is still there to install (nothing installed yet).
+	if !strings.Contains(body, `action="/api/setup/tax-plugin"`) {
+		t.Error("expected the tax-plugin install tile on the resumed step 3")
+	}
+}
+
+// A bare GET (no tax_country) still opens on step 1, and a tax_country the
+// wizard has no business honouring — not tax-mapped, or not a real wizard
+// country — is ignored rather than steering the wizard.
+func TestSetupGETTaxCountryResumeIsNotForgeable(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	resetSetupLanguageCatalog()
+	t.Cleanup(resetSetupLanguageCatalog)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	for _, q := range []string{"", "?tax_country=", "?tax_country=FR", "?tax_country=ZZ", "?tax_country=OTHER"} {
+		body := getSetup(mux, q, "").Body.String()
+		if !strings.Contains(body, "step: 1,") {
+			t.Errorf("GET /setup%s must open on step 1, got:\n%s", q, body)
+		}
+	}
+}
+
+// The failure path resumes step 3 too, and shows the "still installing"
+// note there — the note is inside the tile, so landing on step 1 would have
+// hidden it entirely.
+func TestSetupGETResumeShowsTaxPluginPendingNote(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	resetSetupLanguageCatalog()
+	t.Cleanup(resetSetupLanguageCatalog)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	body := getSetup(mux, "?tax_country=DE&tax_plugin_pending=1", "").Body.String()
+	if !strings.Contains(body, "step: 3,") {
+		t.Error("the failure redirect's target must also resume on step 3")
+	}
+	if !strings.Contains(body, "data-tax-plugin-pending") {
+		t.Errorf("expected the background-install note on the resumed page, got:\n%s", body)
 	}
 }
 
