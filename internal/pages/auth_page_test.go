@@ -321,3 +321,49 @@ func TestLoginAndSetupLoadOnScreenKeyboard(t *testing.T) {
 	}
 	assertOSK("GET /login (keypad)", get(t, mux, "/login"))
 }
+
+// ut-docs#1126 review finding F2: the e2e coverage added alongside this fix
+// (e2e/tests/login.spec.ts) drives a real browser at UT_UI_SCALE's default
+// (1.0), where "--ui-scale: 1" and no --ui-scale attribute at all are
+// indistinguishable once app.css's calc(var(--ui-scale, 1) * ...) fallback
+// kicks in — so a broken "fix" that just deletes the inline style entirely
+// would still pass every browser assertion. Only a non-default scale value
+// makes the attribute's actual presence and content observable, and that's
+// exactly what a Go-level render test (no browser, no CSS evaluation) can
+// assert directly on the response body — this is the property the e2e
+// suite structurally cannot see. Mirrors TestLoginAndSetupLoadOnScreenKeyboard
+// just above (same two-page, first-boot-then-login shape).
+func TestLoginAndSetupUseFluidUIScaleCSSVariable(t *testing.T) {
+	httpx.InitUIScale(1.3)
+	t.Cleanup(func() { httpx.InitUIScale(1.0) })
+	withOSLocale(t, "", "")
+	mux, _, _ := newAuthTestMux(t)
+
+	assertUIScale := func(label string, rec *httptest.ResponseRecorder) {
+		t.Helper()
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: code=%d, want 200", label, rec.Code)
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `style="--ui-scale: 1.3"`) {
+			t.Errorf("%s: <html> missing style=\"--ui-scale: 1.3\" — the operator's Settings > UI scale choice can't reach this page, or the fluid viewport mechanism was dropped instead of wired", label)
+		}
+		// Locks in the actual regression this card fixed: the OLD mechanism
+		// rendered a fixed "font-size: <n>px" on <html> instead, independent
+		// of viewport. If this ever reappears, --ui-scale was removed rather
+		// than added alongside it.
+		if strings.Contains(body, `style="font-size:`) {
+			t.Errorf("%s: <html> still sets a fixed inline font-size — the pre-ut-docs#161 mechanism regressed back in", label)
+		}
+	}
+
+	// Fresh DB: GET /setup renders login.html's sibling standalone document
+	// directly (first-boot wizard).
+	assertUIScale("GET /setup (first boot)", get(t, mux, "/setup"))
+
+	// Complete first-boot setup so /login renders its normal PIN keypad.
+	if rec := postForm(mux, "/api/auth/setup", url.Values{"pin": {"2468"}, "pin_confirm": {"2468"}}, nil); rec.Code != http.StatusSeeOther {
+		t.Fatalf("setup: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	assertUIScale("GET /login (keypad)", get(t, mux, "/login"))
+}
