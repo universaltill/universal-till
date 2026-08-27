@@ -1415,6 +1415,24 @@ body.login-screen {
 .setup-dot { inline-size: .6rem; block-size: .6rem; border-radius: 50%; background: var(--border); }
 .setup-dot.active { background: var(--accent); }
 .setup-langs { display: flex; gap: .5rem; justify-content: center; flex-wrap: wrap; }
+/* ut-docs#1180: the wizard's optional tax-plugin install prompt (step 3,
+   Germany today). A subtle well inside the step so it reads as an aside to
+   the business-details form rather than another field of it — the shipped
+   markup carried no rule at all and ran straight into the TSE inputs.
+   Existing :root tokens only (no new hex/px colour), fully logical
+   properties so the RTL locales lay out unmodified, and rem sizing so it
+   stays inside the fluid touch-target scaling. The button goes full-width:
+   "Install" is three letters in English and a good deal longer in de/tr. */
+.setup-tax-plugin-prompt {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding-block: .7rem; padding-inline: .8rem;
+  margin-block: .7rem;
+}
+.setup-tax-plugin-prompt h2 { font-size: 1.05rem; margin-block: 0 .3rem; }
+.setup-tax-plugin-prompt p { margin-block: 0 .5rem; }
+.setup-tax-plugin-prompt .btn { inline-size: 100%; }
 .setup-nav { display: flex; gap: .6rem; justify-content: center; margin-block-start: .4rem; flex-wrap: wrap; }
 
 /* Touch-first tile picker (setup wizard country/shop-type, ut-docs#1095) —

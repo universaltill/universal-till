@@ -101,6 +101,18 @@ problem surface in Settings, and the wizard states plainly that Universal
 Till holds the device's admin credential (PUK) on the merchant's behalf,
 requestable at any time (ADR-0045/ADR-0053).
 
+Unlike the free language packs above, a country's *fiscal* plugin (e.g.
+[ut-plugin-tax-de](https://github.com/universaltill/ut-plugin-tax-de) —
+§12 UStG dine-in/takeaway VAT-rate switching plus TSE signing/DSFinV-K
+export) is never auto-installed: the same business-identity step only
+*prompts* to install it when the marketplace actually has a matching
+listing, and only installs on an explicit tap
+([ADR-0025](https://github.com/universaltill/ut-docs/blob/main/adr/0025-country-tax-and-fiscal-compliance.md)
+decision 4) — offline-first means a required fiscal plugin can never be a
+silent hard dependency. Declining costs nothing: the till still runs
+(sales, receipts, config-layer tax rates) with just fiscal export
+unavailable until installed.
+
 Categories the taxonomy supports and welcomes contributions for: more
 payment processors (Square, PayPal, regional providers), marketplaces
 (eBay, Amazon, Shopify), delivery services (Uber Eats, DoorDash,

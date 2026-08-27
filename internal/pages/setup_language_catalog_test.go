@@ -39,21 +39,26 @@ func TestSetupWizardListsInstallableCatalogLanguagesAndCachesFetch(t *testing.T)
 	mkt := newFakeMarketplace(t, nil)
 	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
 	d.Cfg.Marketplace = mkt.config()
-	// ut-docs#1196: this test asserts an EXACT hit count, so it must not be
-	// exposed to net/http.Transport's own documented, silent behavior —
-	// retrying a GET once when it was issued on a pooled idle connection the
-	// server had just closed (a real race, not an app bug). That race is rare
-	// in isolation but became reliably reproducible as the SECOND of two
-	// back-to-back full-package `go test` runs on a loaded CI runner
-	// (ci.yml's en_GB-then-de_DE internal/pages double-run) — confirmed by
-	// local reproduction of the exact pattern, see the linked issue.
-	// Disabling keep-alives on the fake server closes every connection after
-	// one response, which removes the race outright rather than loosening
-	// the assertion (a wider threshold couldn't distinguish "one retried
-	// fetch" from "caching doesn't work at all" in a two-render test — both
-	// would show the same count). Test-infrastructure-only: no production
-	// code changes, and every other test sharing newFakeMarketplace is
-	// unaffected (this is scoped to this test's own server instance).
+	// ut-docs#1196 correction: this test's hit-count assertion below is now
+	// scoped to capability=language via catalogHitsFor, not the raw
+	// catalogHits() total. The original CI failures here ("got 2") were
+	// misdiagnosed as a net/http.Transport idle-connection-retry race
+	// (fixed, at the time, by disabling keep-alives below) — that race is
+	// real and rare, but it was NOT what CI was hitting. The actual cause:
+	// ut-docs#1180 (this same PR) made GET /setup also browse the
+	// capability=tax catalog on step 3's behalf whenever the render's
+	// resolved country is DE (setupInstallableTaxPlugin) — and
+	// detectCountry falls back to the OS locale's region when the timezone
+	// doesn't resolve one, so CI's `LANG=de_DE.UTF-8` run deterministically
+	// detects country=DE and triggers a second, legitimate marketplace
+	// fetch alongside the language one. Not a race: 100% reproducible in
+	// isolation under LANG=de_DE.UTF-8, not just as CI's second back-to-back
+	// run. catalogHitsFor("language") narrows the assertion back to what
+	// this test actually proves (the language catalog's own TTL cache),
+	// immune to whatever other capabilities a render also happens to
+	// browse. SetKeepAlivesEnabled(false) is left in place below — it's a
+	// harmless, real defensive fix for the (distinct, genuine) connection
+	// race its own doc explains — but it is not what makes this test pass.
 	mkt.server.Config.SetKeepAlivesEnabled(false)
 
 	rec := getSetup(mux, "?lang=en", "")
@@ -83,8 +88,8 @@ func TestSetupWizardListsInstallableCatalogLanguagesAndCachesFetch(t *testing.T)
 	if !strings.Contains(rec.Body.String(), `name="locale" value="de"`) {
 		t.Error("second render lost the install tile")
 	}
-	if hits := mkt.catalogHits(); hits != 1 {
-		t.Fatalf("expected exactly one catalog fetch across two renders (TTL cache), got %d", hits)
+	if hits := mkt.catalogHitsFor("language"); hits != 1 {
+		t.Fatalf("expected exactly one language-catalog fetch across two renders (TTL cache), got %d", hits)
 	}
 }
 
@@ -121,8 +126,8 @@ func TestSetupWizardCatalogFollowsPaginationAcrossMultiplePages(t *testing.T) {
 		}
 	}
 	// 5 listings at page size 2 = 3 requests (2, 2, 1) to exhaust the catalog.
-	if hits := mkt.catalogHits(); hits != 3 {
-		t.Fatalf("expected 3 catalog requests to page through 5 listings at page size 2, got %d", hits)
+	if hits := mkt.catalogHitsFor("language"); hits != 3 {
+		t.Fatalf("expected 3 language-catalog requests to page through 5 listings at page size 2, got %d", hits)
 	}
 }
 
@@ -156,8 +161,8 @@ func TestSetupWizardCatalogPaginationCapPreventsInfiniteLoop(t *testing.T) {
 	case <-time.After(10 * time.Second):
 		t.Fatal("GET /setup hung — the catalog pagination loop did not terminate against a server that never stops paginating")
 	}
-	if hits := mkt.catalogHits(); hits != setupLanguageCatalogMaxPages {
-		t.Fatalf("catalog requests = %d, want exactly %d (setupLanguageCatalogMaxPages)", hits, setupLanguageCatalogMaxPages)
+	if hits := mkt.catalogHitsFor("language"); hits != setupLanguageCatalogMaxPages {
+		t.Fatalf("language-catalog requests = %d, want exactly %d (setupLanguageCatalogMaxPages)", hits, setupLanguageCatalogMaxPages)
 	}
 }
 
@@ -182,8 +187,8 @@ func TestSetupWizardCatalogBrowseDoesNotRegisterStore(t *testing.T) {
 		t.Fatalf("GET /setup?lang=en: code=%d", rec.Code)
 	}
 	// The browse really happened (otherwise "no register call" proves nothing).
-	if hits := mkt.catalogHits(); hits != 1 {
-		t.Fatalf("expected the catalog to be browsed once, got %d hits", hits)
+	if hits := mkt.catalogHitsFor("language"); hits != 1 {
+		t.Fatalf("expected the language catalog to be browsed once, got %d hits", hits)
 	}
 	if hits := mkt.storeRegisterHits(); hits != 0 {
 		t.Fatalf("GET /setup enrolled the shop's cloud store (%d POST /v1/stores/register) — "+
