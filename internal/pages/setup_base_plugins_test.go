@@ -311,6 +311,55 @@ func TestInstallBasePluginsForSetup_OfflineThenBackgroundRetryInstalls(t *testin
 	}
 }
 
+// The exact clobber pattern ut-docs#1110 already fixed in
+// installBasePluginsForSetup (ut-docs#1117, a narrower first-boot-only
+// window there): basePluginRetryTick's own read (loadPendingBasePlugins)
+// and its own write sit either side of a real network round trip per spec
+// — the resolve+install attempt. A spec another writer queues DURING that
+// round trip (e.g. POST /api/setup racing the 5-minute tick) must survive
+// the tick's write, not get silently dropped by a save of the tick's own
+// now-stale snapshot. Reproduced deterministically (no goroutines/sleeps)
+// via the fake marketplace's onCatalogRequest hook, which fires exactly
+// inside the window the old wholesale-replace got wrong.
+func TestBasePluginRetryTick_DoesNotClobberConcurrentlyQueuedSpec(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	// Seed exactly what the tick will read: one installable spec.
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{
+		{CanonicalType: "language", Locale: "de"},
+	}); err != nil {
+		t.Fatalf("seed pending: %v", err)
+	}
+
+	// The "another writer" race: lands a second, unrelated spec into the
+	// persisted list the instant the tick's own catalog request is in
+	// flight — after the tick's initial loadPendingBasePlugins, before its
+	// write.
+	mkt.setOnCatalogRequest(func() {
+		if err := addPendingBasePlugins(t.Context(), dp, []basePluginSpec{
+			{CanonicalType: "language", Locale: "es"},
+		}); err != nil {
+			t.Errorf("concurrent addPendingBasePlugins: %v", err)
+		}
+	})
+
+	basePluginRetryTick(t.Context(), dp)
+
+	pending, err := loadPendingBasePlugins(t.Context(), dp)
+	if err != nil {
+		t.Fatalf("loadPendingBasePlugins after tick: %v", err)
+	}
+	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "language", Locale: "es"}) {
+		t.Fatalf("expected the concurrently-queued es spec to survive the tick's write untouched, got %+v", pending)
+	}
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-de"); !active {
+		t.Fatal("expected the de spec to have installed despite the concurrent write")
+	}
+}
+
 // --- POST /api/setup end to end ---
 
 func TestSetupWizardDE_HappyPathInstallsBasePluginSynchronously(t *testing.T) {
