@@ -15,7 +15,7 @@ var configEnvKeys = []string{
 	"UT_MARKETPLACE_CLIENT_ID", "UT_MARKETPLACE_CLIENT_SECRET", "UT_MARKETPLACE_API_VERSION",
 	"UT_MARKETPLACE_TELEMETRY_OPT_IN", "UT_MARKETPLACE_DEV_OVERRIDE_URL",
 	"UT_MARKETPLACE_HEALTH_CHECK_TIMEOUT_SEC", "UT_MARKETPLACE_FALLBACK_TIMEOUT_SEC",
-	"UT_TAX_RATE", "UT_TAX_INCLUSIVE", "UT_CURRENCY", "UT_CURRENCY_SYMBOL",
+	"UT_TAX_RATE", "UT_TAX_INCLUSIVE", "UT_CURRENCY",
 	"UT_DEFAULT_LOCALE", "UT_MARKETPLACE_LOCALE",
 }
 
@@ -98,7 +98,7 @@ func TestInitDefaults(t *testing.T) {
 	if m.RequestTimeoutSec != 30 {
 		t.Errorf("RequestTimeoutSec = %d, want 30 (not env-driven)", m.RequestTimeoutSec)
 	}
-	if cfg.Locales.Currency != "GBP" || cfg.Locales.CurrencySymbol != "£" {
+	if cfg.Locales.Currency != "GBP" {
 		t.Errorf("Locales currency = %+v", cfg.Locales)
 	}
 	if cfg.Locales.TaxRate != 20 {
@@ -145,7 +145,6 @@ func TestInitHonorsEnvOverrides(t *testing.T) {
 	t.Setenv("UT_TAX_RATE", "19")
 	t.Setenv("UT_TAX_INCLUSIVE", "false")
 	t.Setenv("UT_CURRENCY", "EUR")
-	t.Setenv("UT_CURRENCY_SYMBOL", "€")
 	t.Setenv("UT_DEFAULT_LOCALE", "de-DE")
 	t.Setenv("UT_MARKETPLACE_LOCALE", "de-DE")
 
@@ -205,7 +204,7 @@ func TestInitHonorsEnvOverrides(t *testing.T) {
 	if m.FallbackTimeoutSec != 42 {
 		t.Errorf("FallbackTimeoutSec = %d", m.FallbackTimeoutSec)
 	}
-	if cfg.Locales.Currency != "EUR" || cfg.Locales.CurrencySymbol != "€" {
+	if cfg.Locales.Currency != "EUR" {
 		t.Errorf("Locales currency = %+v", cfg.Locales)
 	}
 	if cfg.Locales.TaxRate != 19 {
