@@ -262,10 +262,19 @@ func savePendingBasePlugins(ctx context.Context, d *common.Deps, specs []basePlu
 }
 
 // basePluginRetryTick is one pass of the background retry: read whatever is
-// still pending, attempt each once more, and persist whatever's left.
+// still pending, attempt each once more, and remove exactly what installed.
 // Silent-and-retry on failure, same posture as internal/updates' checkOnce —
 // this never surfaces an error to a caller, only to the log and the
 // Settings chip (via the persisted pending list itself).
+//
+// Removes via removePendingBasePlugins rather than a wholesale
+// savePendingBasePlugins(remaining) (ut-docs#1117, the same clobber pattern
+// ut-docs#1110 already fixed in installBasePluginsForSetup — just a wider
+// window: a full catalog fetch + install per spec sits between this tick's
+// own read and write, versus a single in-process call). A spec another
+// writer queues while this tick is mid-flight (e.g. POST /api/setup racing
+// the 5-minute tick) must survive the tick's write, not get silently wiped
+// by a save of this tick's now-stale snapshot.
 func basePluginRetryTick(ctx context.Context, d *common.Deps) {
 	pending, err := loadPendingBasePlugins(ctx, d)
 	if err != nil {
@@ -275,18 +284,54 @@ func basePluginRetryTick(ctx context.Context, d *common.Deps) {
 	if len(pending) == 0 {
 		return
 	}
-	remaining := make([]basePluginSpec, 0, len(pending))
+	var installed []basePluginSpec
 	for _, spec := range pending {
 		if err := resolveAndInstallBasePlugin(ctx, d, spec); err != nil {
 			logging.L().Infof("base plugin retry: %s/%s still pending: %v", spec.CanonicalType, spec.Locale, err)
-			remaining = append(remaining, spec)
+			continue
 		}
+		installed = append(installed, spec)
 	}
-	if len(remaining) != len(pending) {
-		if err := savePendingBasePlugins(ctx, d, remaining); err != nil {
+	if len(installed) > 0 {
+		if err := removePendingBasePlugins(ctx, d, installed); err != nil {
 			logging.L().Errorf("base plugin retry: persist pending list: %v", err)
 		}
 	}
+}
+
+// removePendingBasePlugins drops exactly the given specs from the persisted
+// pending list — re-reading it fresh first so a spec another writer queued
+// between the caller's own read and this write (see basePluginRetryTick)
+// is preserved rather than clobbered, the same merge-safe-write reasoning
+// addPendingBasePlugins already applies on the add side. Symmetric with
+// dismissPendingBasePlugin, just batched: dismiss removes one spec a
+// merchant chose from Settings; this removes every spec a retry pass
+// actually installed in one call.
+func removePendingBasePlugins(ctx context.Context, d *common.Deps, installed []basePluginSpec) error {
+	if len(installed) == 0 {
+		return nil
+	}
+	pending, err := loadPendingBasePlugins(ctx, d)
+	if err != nil {
+		return err
+	}
+	drop := make(map[basePluginSpec]bool, len(installed))
+	for _, s := range installed {
+		drop[s] = true
+	}
+	remaining := make([]basePluginSpec, 0, len(pending))
+	changed := false
+	for _, s := range pending {
+		if drop[s] {
+			changed = true
+			continue
+		}
+		remaining = append(remaining, s)
+	}
+	if !changed {
+		return nil
+	}
+	return savePendingBasePlugins(ctx, d, remaining)
 }
 
 // pendingBasePluginView is the Settings-page display shape for one still-
