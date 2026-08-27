@@ -305,7 +305,24 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if !hasQueryLang && cookieErr != nil {
 			code, available := detectLanguage()
 			if available {
-				http.Redirect(w, r, "/setup?lang="+code, http.StatusSeeOther)
+				// ut-docs#1180 (CI-discovered): this used to redirect to a
+				// bare "/setup?lang="+code, discarding every other query
+				// param on the request — invisible in any environment where
+				// $LANG/$LC_ALL is unset (detectLanguage returns
+				// available=false and this branch never runs at all), which
+				// is why it passed locally and in review but failed in CI's
+				// runner (LANG=en_US.UTF-8, so this branch fires on the very
+				// first GET). It silently dropped ?tax_country=/
+				// ?tax_plugin_pending=1 on a first-ever visit with no
+				// ut_lang cookie yet — exactly a fresh install's first click
+				// of the new tax-plugin install button. Preserve the
+				// original query string and only set/overwrite lang, so this
+				// redirect stays transparent to tax_country today and to
+				// whatever else a future step round-trips through GET
+				// /setup tomorrow.
+				q := r.URL.Query()
+				q.Set("lang", code)
+				http.Redirect(w, r, "/setup?"+q.Encode(), http.StatusSeeOther)
 				return
 			}
 			// ut-docs#1110: a language the marketplace catalog already offers
