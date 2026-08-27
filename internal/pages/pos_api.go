@@ -691,7 +691,18 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// pos.MaxVoucherIssueAmount sanity ceiling — review F3: unbounded
 		// amounts near 2^62 overflowed the int64 total negative and slipped
 		// past the payment-coverage check) or an oversized code/label is a
-		// caller bug, refused before any DB work.
+		// caller bug, refused before any DB work. ut-docs#1137: the count
+		// itself is checked here too, mirroring MaxVoucherIssueAmount's own
+		// boundary+domain dual-enforcement pattern — computeSaleTotals
+		// already rejects an over-cap request via MaxVoucherIssuesPerSale,
+		// but only after this handler had done a full basket-total pass
+		// (including EnsureStockLocation's DB round-trip). Failing fast here
+		// is a consistency fix, not a security fix: nothing persists either
+		// way.
+		if len(in.IssueVouchers) > pos.MaxVoucherIssuesPerSale {
+			http.Error(w, "invalid voucher issue", http.StatusBadRequest)
+			return
+		}
 		var voucherIssues []pos.VoucherIssueInput
 		var voucherIssueTotal money.Money
 		for _, v := range in.IssueVouchers {
