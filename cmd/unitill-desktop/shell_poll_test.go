@@ -283,11 +283,14 @@ func TestWatchShellMode_SurvivesConnectionFailure(t *testing.T) {
 // applyWindowMode may claim control=live (window_mode_linux.go's init sets
 // it) — an untagged build, like macOS and Windows today, must NOT advertise
 // a capability it lacks, or the server would serve it a chrome-hiding mode
-// it can never leave.
+// it can never leave. The value shellAppliesWindowMode itself must take is
+// platform-dependent (true only under desktop&&linux), so that half of the
+// assertion lives behind the build-tag-selected helper in
+// window_mode_gate_other_test.go / window_mode_gate_linux_test.go — the
+// rest of this test (the HTTP round trip) is genuinely platform-independent
+// and stays here, common to both builds.
 func TestShellAppliesWindowModeGatesTheAdvertise(t *testing.T) {
-	if shellAppliesWindowMode {
-		t.Fatal("shellAppliesWindowMode = true in an untagged build — only desktop&&linux may set it")
-	}
+	assertShellAppliesWindowModeForBuild(t)
 	var gotQuery string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotQuery = r.URL.RawQuery
