@@ -12,6 +12,7 @@ import (
 	"net/url"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -1250,7 +1251,7 @@ func seedArchivedEODClose(t *testing.T, db *sql.DB, period string) {
 	t.Helper()
 	if _, err := data.NewPOSRepo(db).ArchiveReport(context.Background(), "eod", period,
 		[]byte(`{"day":"`+period+`","gross":11900,"method_tax_bands":[{"method":"cash","rate_bp":1900,"net":10000,"tax":1900,"gross":11900}]}`),
-		"R-1", "R-9"); err != nil {
+		"R-1", "R-9", time.Time{}); err != nil {
 		t.Fatalf("archive eod close %s: %v", period, err)
 	}
 }

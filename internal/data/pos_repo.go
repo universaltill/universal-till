@@ -719,6 +719,36 @@ func windowArgs(from, to time.Time) (string, string) {
 	return from.UTC().Format(reportWindowFmt), to.UTC().Format(reportWindowFmt)
 }
 
+// instantWindow renders the close-to-close [from, to) comparison for one
+// timestamp column (ADR-0066 Decision 2, ut-docs#1140):
+// datetime(col) >= datetime(?) AND datetime(col) < datetime(?) — a true
+// half-open INSTANT compare, never the date(...) calendar-day bucketing the
+// date-string sibling queries use. Both sides go through SQLite's
+// datetime(...) because created_at is not stored in one canonical text form
+// (see reportWindowFmt's doc comment: schema default vs RFC3339 insert
+// paths); datetime(...) normalizes the form without bucketing to a day.
+// Bound params are rendered by windowArgs, same as every other window query
+// in this file.
+//
+// A zero `from` is the till's first-ever close (ADR-0066 Decision 3): the
+// lower bound is omitted ENTIRELY — "since the beginning of recorded
+// history" — never backfilled with a synthetic epoch/install date, so every
+// completed sale not covered by a previous close is in scope for the first
+// one. Returns the WHERE fragment (no leading AND) and its args, ready to
+// splice into the "eod" kind's instant-windowed queries.
+func instantWindow(col string, from, to time.Time) (string, []any) {
+	fromStr, toStr := windowArgs(from, to)
+	if from.IsZero() {
+		return "datetime(" + col + ") < datetime(?)", []any{toStr}
+	}
+	// Parenthesized even though every current call site splices this into
+	// an all-AND WHERE (review finding N5, ut-docs#1140): free insurance
+	// against a future caller splicing it after an OR and silently getting
+	// wrong precedence.
+	return "(datetime(" + col + ") >= datetime(?) AND datetime(" + col + ") < datetime(?))",
+		[]any{fromStr, toStr}
+}
+
 type DailySales struct {
 	Day      string `json:"day"`
 	Count    int    `json:"count"`
@@ -855,6 +885,43 @@ ORDER BY revenue DESC`, day)
 		var d DeptSales
 		if err := rows.Scan(&d.Department, &d.Qty, &d.Revenue); err != nil {
 			return nil, fmt.Errorf("scan dept day: %w", err)
+		}
+		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// DepartmentsForInstantWindow is DepartmentsForDay's close-to-close sibling
+// (ADR-0066 Decision 2, ut-docs#1140): the same deptRootsCTE department
+// rollup over a half-open [from, to) INSTANT window instead of one local
+// calendar day — see instantWindow's doc comment for the comparison form
+// and the zero-`from` (till's first-ever close) unbounded case. A genuinely
+// parallel query, not a wrapper: DepartmentsForDay stays calendar-day
+// untouched for EndOfDayRange, per the ADR's "parallel siblings, not a
+// retrofit" decision.
+func (r *POSRepo) DepartmentsForInstantWindow(ctx context.Context, from, to time.Time) ([]DeptSales, error) {
+	win, args := instantWindow("s.created_at", from, to)
+	rows, err := r.db.QueryContext(ctx, deptRootsCTE+`
+SELECT COALESCE(dr.root_name, '') AS department,
+       SUM(sl.quantity) AS qty,
+       COALESCE(SUM(sl.total_after_tax), 0) AS revenue
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+LEFT JOIN item_variants iv ON iv.id = sl.variant_id
+LEFT JOIN items it ON it.id = COALESCE(sl.item_id, iv.item_id)
+LEFT JOIN dept_roots dr ON dr.id = it.category_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND `+win+`
+GROUP BY department
+ORDER BY revenue DESC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("departments for instant window: %w", err)
+	}
+	defer rows.Close()
+	var out []DeptSales
+	for rows.Next() {
+		var d DeptSales
+		if err := rows.Scan(&d.Department, &d.Qty, &d.Revenue); err != nil {
+			return nil, fmt.Errorf("scan dept instant window: %w", err)
 		}
 		out = append(out, d)
 	}
@@ -1907,6 +1974,83 @@ WHERE a.entity_type = 'shift' AND a.action = 'cash_adjustment'
 	return &rec, nil
 }
 
+// CashReconciliationForInstantWindow is CashReconciliationForLocalDay's
+// close-to-close sibling (ADR-0066 Decision 2, ut-docs#1140): the same
+// three-query aggregation (shift totals, latest-close-per-register new
+// float, adjustments split), matched on shifts.closed_at over a half-open
+// [from, to) INSTANT window instead of one local calendar day — see
+// instantWindow's doc comment for the form and the zero-`from` unbounded
+// case. Windowing shift CLOSURES by an arbitrary instant range is a genuine
+// semantic shift the ADR calls out as intended, not a bug: a shift closed
+// at 19:25 after a 19:19 EOD close falls into the NEXT Z-Bon's
+// reconciliation, because its close is after this period ended. Same
+// nil, nil on zero shifts closed in the window: EOD generation must never
+// fail or block because nobody closed a shift (offline-first /
+// never-block-day-close), and CashSales is likewise NOT filled here — the
+// caller takes it from the report's own payment-method breakdown so the two
+// figures can never disagree on the same report.
+func (r *POSRepo) CashReconciliationForInstantWindow(ctx context.Context, from, to time.Time) (*CashReconciliation, error) {
+	win, args := instantWindow("closed_at", from, to)
+	var rec CashReconciliation
+	err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*),
+  COALESCE(SUM(opening_cash), 0),
+  COALESCE(SUM(closing_cash), 0),
+  COALESCE(SUM(expected_cash), 0)
+FROM shifts
+WHERE closed_at IS NOT NULL AND `+win, args...).
+		Scan(&rec.ShiftsClosed, &rec.OpeningFloat, &rec.Counted, &rec.Calculated)
+	if err != nil {
+		return nil, fmt.Errorf("cash reconciliation shifts (instant): %w", err)
+	}
+	if rec.ShiftsClosed == 0 {
+		return nil, nil
+	}
+	rec.Variance = rec.Counted - rec.Calculated
+
+	// Same latest-close-per-register rule as CashReconciliationForLocalDay
+	// (ut-docs#1006 review finding 3): a register that closed twice in one
+	// window physically holds only its LAST close's new float.
+	if err := r.db.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(new_float_or_closing), 0)
+FROM (
+  SELECT COALESCE(new_float, closing_cash) AS new_float_or_closing,
+         ROW_NUMBER() OVER (PARTITION BY register_id ORDER BY closed_at DESC) AS rn
+  FROM shifts
+  WHERE closed_at IS NOT NULL AND `+win+`
+) WHERE rn = 1`, args...).Scan(&rec.NewFloat); err != nil {
+		return nil, fmt.Errorf("cash reconciliation new float (instant): %w", err)
+	}
+
+	// Adjustments against those shifts, split exactly as
+	// CashReconciliationForLocalDay does (close-time skim apart via the
+	// explicit at_close marker, ut-docs#1146 review finding F1; everything
+	// else by sign) — only the shift-selection window differs.
+	swin, sargs := instantWindow("s.closed_at", from, to)
+	err = r.db.QueryRowContext(ctx, `
+SELECT
+  COALESCE(SUM(CASE WHEN COALESCE(json_extract(a.data_json, '$.type'), '') = 'skim'
+                     AND COALESCE(json_extract(a.data_json, '$.at_close') = 1, 0)
+                    THEN CAST(json_extract(a.data_json, '$.amount') AS INTEGER) END), 0),
+  COALESCE(SUM(CASE WHEN NOT (COALESCE(json_extract(a.data_json, '$.type'), '') = 'skim'
+                          AND COALESCE(json_extract(a.data_json, '$.at_close') = 1, 0))
+                     AND CAST(json_extract(a.data_json, '$.amount') AS INTEGER) > 0
+                    THEN CAST(json_extract(a.data_json, '$.amount') AS INTEGER) END), 0),
+  COALESCE(SUM(CASE WHEN NOT (COALESCE(json_extract(a.data_json, '$.type'), '') = 'skim'
+                          AND COALESCE(json_extract(a.data_json, '$.at_close') = 1, 0))
+                     AND CAST(json_extract(a.data_json, '$.amount') AS INTEGER) < 0
+                    THEN CAST(json_extract(a.data_json, '$.amount') AS INTEGER) END), 0)
+FROM audit_log a
+JOIN shifts s ON s.id = a.entity_id
+WHERE a.entity_type = 'shift' AND a.action = 'cash_adjustment'
+  AND s.closed_at IS NOT NULL AND `+swin, sargs...).
+		Scan(&rec.Skim, &rec.PayIns, &rec.PayOuts)
+	if err != nil {
+		return nil, fmt.Errorf("cash reconciliation adjustments (instant): %w", err)
+	}
+	return &rec, nil
+}
+
 // EndOfDay aggregates one day's completed sales and returns.
 func (r *POSRepo) EndOfDay(ctx context.Context, day string) (EODReport, error) {
 	rep, err := r.dateRangeSummary(ctx, day, day)
@@ -2160,6 +2304,193 @@ GROUP BY s.till_id ORDER BY 4 DESC`, from)
 	return rep, nil
 }
 
+// dateRangeSummaryInstant is dateRangeSummary's close-to-close sibling
+// (ADR-0066 Decision 2, ut-docs#1140), the aggregation body behind the
+// "eod" kind's archived/printed/Z-numbered report once its window becomes
+// [previous close, this close). Same aggregation shape, but every
+// date(..., 'localtime') BETWEEN date(?) AND date(?) fragment becomes the
+// half-open datetime(...) INSTANT compare — see instantWindow's doc comment
+// for the form and the zero-`from` (till's first-ever close, Decision 3)
+// unbounded case. Deliberately a genuinely parallel query body, NOT a
+// refactor of dateRangeSummary into shared code: that function stays
+// calendar-day for EndOfDay/EndOfDayRange, and the ADR is explicit that a
+// wrapper formatting the instants back into date strings would silently
+// re-introduce calendar-day bucketing.
+//
+// Two deliberate differences from dateRangeSummary beyond the comparison
+// form:
+//   - The cancellations query still windows on COALESCE(voided_at,
+//     created_at) — a sale completed one day and voided the next belongs,
+//     as a Storno, to the close in which it was VOIDED. Only the comparison
+//     form changes; the column choice is an existing decision the ADR does
+//     not revisit.
+//   - Departments, cash reconciliation and the per-till breakdown are
+//     ALWAYS computed — no from==to gate. That gate exists in
+//     dateRangeSummary only because it is shared with EndOfDayRange's
+//     multi-day ranges; the "eod" kind has exactly one instant window per
+//     close, the moral equivalent of the single-day path, so the gate has
+//     nothing to guard here. (Tills still only populate with >1 register,
+//     same as the single-day path.)
+//
+// TaxBands/MethodTaxBands are NOT computed here (same layering as
+// dateRangeSummary — the banding math lives in internal/pos, one layer up);
+// the "eod" generation path must feed them from SalesForTaxBandsInstant
+// directly, never through the rep.Day == "" fallback to the date-string
+// SalesForTaxBands (ADR-0066 Decision 6: date(...) parses an RFC3339
+// timestamp without error, so that fallback would silently degrade to
+// calendar-day banding).
+func (r *POSRepo) dateRangeSummaryInstant(ctx context.Context, from, to time.Time) (EODReport, error) {
+	rep := EODReport{GeneratedAt: time.Now().UTC().Format(time.RFC3339)}
+	win, args := instantWindow("created_at", from, to)
+	err := r.db.QueryRowContext(ctx, `
+SELECT
+  COALESCE(SUM(CASE WHEN sale_type = 'sale'   THEN 1 END), 0),
+  COALESCE(SUM(CASE WHEN sale_type = 'sale'   THEN total END), 0),
+  COALESCE(SUM(CASE WHEN sale_type = 'return' THEN 1 END), 0),
+  COALESCE(SUM(CASE WHEN sale_type = 'return' THEN total END), 0),
+  COALESCE(SUM(CASE WHEN sale_type = 'sale' THEN tax_total ELSE -tax_total END), 0),
+  COALESCE(MIN(receipt_no), ''), COALESCE(MAX(receipt_no), '')
+FROM sales
+WHERE status = 'completed' AND `+win, args...).
+		Scan(&rep.SalesCount, &rep.Gross, &rep.RefundCount, &rep.RefundTotal,
+			&rep.TaxNet, &rep.FirstReceipt, &rep.LastReceipt)
+	if err != nil {
+		return rep, fmt.Errorf("eod instant totals: %w", err)
+	}
+	rep.Net = rep.Gross - rep.RefundTotal
+
+	// Cancellations (ut-docs#1012) — same separate 'voided' scan as
+	// dateRangeSummary (see its inline comment and CancelCount's doc
+	// comment on EODReport), windowed on COALESCE(voided_at, created_at)
+	// per the note above.
+	vwin, vargs := instantWindow("COALESCE(voided_at, created_at)", from, to)
+	err = r.db.QueryRowContext(ctx, `
+SELECT COUNT(*), COALESCE(SUM(total), 0)
+FROM sales
+WHERE status = 'voided' AND `+vwin, vargs...).Scan(&rep.CancelCount, &rep.CancelTotal)
+	if err != nil {
+		return rep, fmt.Errorf("eod instant cancellations: %w", err)
+	}
+
+	// Voucher flows (ut-docs#1008) — the instant sibling lives in
+	// voucher_repo.go, called out explicitly by ADR-0066 precisely because
+	// it is easy to miss next to the fragments inline in this function.
+	vouchers, err := r.VouchersIssuedRedeemedForInstantWindow(ctx, from, to)
+	if err != nil {
+		return rep, fmt.Errorf("eod instant vouchers: %w", err)
+	}
+	rep.VouchersIssuedCount = vouchers.IssuedCount
+	rep.VouchersIssued = vouchers.IssuedMinor
+	rep.VouchersRedeemedCount = vouchers.RedeemedCount
+	rep.VouchersRedeemed = vouchers.RedeemedMinor
+
+	mwin, margs := instantWindow("s.created_at", from, to)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT p.method_id,
+  COALESCE(SUM(CASE WHEN s.sale_type = 'sale'   THEN p.amount - p.change_given END), 0),
+  COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN p.amount - p.change_given END), 0)
+FROM payments p
+JOIN sales s ON s.id = p.sale_id
+WHERE s.status = 'completed' AND `+mwin+`
+GROUP BY p.method_id ORDER BY 2 DESC`, margs...)
+	if err != nil {
+		return rep, fmt.Errorf("eod instant methods: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var m EODMethod
+		if err := rows.Scan(&m.Method, &m.In, &m.Out); err != nil {
+			return rep, fmt.Errorf("scan eod instant method: %w", err)
+		}
+		rep.Methods = append(rep.Methods, m)
+	}
+	if err := rows.Err(); err != nil {
+		return rep, err
+	}
+
+	// Tips by payment method (ut-docs#1007), held OUT of revenue — same
+	// query shape and conventions as dateRangeSummary's tips query (see its
+	// inline comment), instant-windowed.
+	tipRows, err := r.db.QueryContext(ctx, `
+SELECT p.method_id, COUNT(*), COALESCE(SUM(p.tip_amount), 0)
+FROM payments p
+JOIN sales s ON s.id = p.sale_id
+WHERE p.tip_amount > 0 AND s.status = 'completed' AND `+mwin+`
+GROUP BY p.method_id ORDER BY p.method_id`, margs...)
+	if err != nil {
+		return rep, fmt.Errorf("eod instant tips: %w", err)
+	}
+	defer tipRows.Close()
+	for tipRows.Next() {
+		var tp EODTip
+		if err := tipRows.Scan(&tp.Method, &tp.Count, &tp.Amount); err != nil {
+			return rep, fmt.Errorf("scan eod instant tip: %w", err)
+		}
+		rep.Tips = append(rep.Tips, tp)
+	}
+	if err := tipRows.Err(); err != nil {
+		return rep, err
+	}
+
+	// Departments and cash reconciliation: always computed (see the doc
+	// comment above), best-effort on the same swallow-the-error pattern as
+	// dateRangeSummary — a breakdown query failure must not sink the whole
+	// Z-report (day-close still completes; the section is simply absent).
+	if depts, err := r.DepartmentsForInstantWindow(ctx, from, to); err == nil {
+		rep.Departments = depts
+	}
+	if rc, rcErr := r.CashReconciliationForInstantWindow(ctx, from, to); rcErr == nil && rc != nil {
+		// CashSales comes from the report's own payment-method breakdown
+		// (net cash: sales in minus refunds out), so the two figures on one
+		// report can never disagree.
+		for _, m := range rep.Methods {
+			if m.Method == "cash" {
+				rc.CashSales = m.In - m.Out
+				break
+			}
+		}
+		// Hold cash tips out of CashSales (ut-docs#1046), from the report's
+		// own Tips figure — same as dateRangeSummary.
+		for _, tp := range rep.Tips {
+			if tp.Method == "cash" {
+				rc.TipsHeldOut = tp.Amount
+				rc.CashSales -= tp.Amount
+				break
+			}
+		}
+		rep.CashReconciliation = rc
+	}
+
+	// Per-till (register) breakdown — always computed for the "eod" kind
+	// (see the doc comment above), still only populated with >1 till, same
+	// as the single-day path.
+	tillRows, err := r.db.QueryContext(ctx, `
+SELECT s.till_id, COALESCE(t.name, ''), COUNT(*), COALESCE(SUM(s.total), 0)
+FROM sales s
+LEFT JOIN tills t ON t.id = s.till_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND `+mwin+`
+GROUP BY s.till_id ORDER BY 4 DESC`, margs...)
+	if err != nil {
+		return rep, fmt.Errorf("eod instant tills: %w", err)
+	}
+	defer tillRows.Close()
+	var tills []TillSales
+	for tillRows.Next() {
+		var ts TillSales
+		if err := tillRows.Scan(&ts.TillID, &ts.Name, &ts.Count, &ts.Revenue); err != nil {
+			return rep, fmt.Errorf("scan eod instant till: %w", err)
+		}
+		tills = append(tills, ts)
+	}
+	if err := tillRows.Err(); err != nil {
+		return rep, err
+	}
+	if len(tills) > 1 {
+		rep.Tills = tills
+	}
+	return rep, nil
+}
+
 // EODTaxBandLine is one sale line's input to the day-close VAT banding
 // (ut-docs#1003): the recorded rate, tax and tax-inclusive line total —
 // the same three figures data.SaleDetailLine carries for the invoice's
@@ -2304,6 +2635,97 @@ GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, from, to)
 	return out, payRows.Err()
 }
 
+// SalesForTaxBandsInstant is SalesForTaxBands' close-to-close sibling
+// (ADR-0066 Decision 2, ut-docs#1140): the same three fixed queries (sales
+// header, non-zero lines, payments; no N+1, grouped per sale in Go) over a
+// half-open [from, to) INSTANT window — see instantWindow's doc comment for
+// the comparison form and the zero-`from` unbounded case. The "eod" kind's
+// generation path must call this DIRECTLY with the time.Time window, never
+// the rep.Day == "" fallback into the date-string SalesForTaxBands: SQLite's
+// date(...) parses an RFC3339 timestamp without error, so that route would
+// silently degrade to calendar-day banding on a close-to-close report
+// (ADR-0066 Decision 6). Same zero-value "note" line exclusion as
+// SalesForTaxBands so a rate-carrying zero-money line can't invent a
+// spurious band.
+func (r *POSRepo) SalesForTaxBandsInstant(ctx context.Context, from, to time.Time) ([]EODTaxBandSale, error) {
+	win, args := instantWindow("created_at", from, to)
+	saleRows, err := r.db.QueryContext(ctx, `
+SELECT id, sale_type, subtotal, discount_total, tax_total, total,
+       service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total
+FROM sales
+WHERE status = 'completed' AND `+win+`
+ORDER BY created_at, id`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("eod instant band sales: %w", err)
+	}
+	defer saleRows.Close()
+	var out []EODTaxBandSale
+	idx := map[string]int{}
+	for saleRows.Next() {
+		var s EODTaxBandSale
+		if err := saleRows.Scan(&s.ID, &s.SaleType, &s.Subtotal, &s.DiscountTotal,
+			&s.TaxTotal, &s.Total, &s.ServiceCharge, &s.ServiceChargeTaxBasisBP, &s.VoucherIssueTotal); err != nil {
+			return nil, fmt.Errorf("scan eod instant band sale: %w", err)
+		}
+		idx[s.ID] = len(out)
+		out = append(out, s)
+	}
+	if err := saleRows.Err(); err != nil {
+		return nil, err
+	}
+
+	swin, sargs := instantWindow("s.created_at", from, to)
+	lineRows, err := r.db.QueryContext(ctx, `
+SELECT sl.sale_id, COALESCE(sl.tax_rate_bp, 0), sl.tax_amount, sl.total_after_tax
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed' AND `+swin+`
+  AND (sl.total_before_tax != 0 OR sl.total_after_tax != 0)
+ORDER BY sl.sale_id, sl.line_no`, sargs...)
+	if err != nil {
+		return nil, fmt.Errorf("eod instant band lines: %w", err)
+	}
+	defer lineRows.Close()
+	for lineRows.Next() {
+		var saleID string
+		var l EODTaxBandLine
+		if err := lineRows.Scan(&saleID, &l.RateBP, &l.TaxAmount, &l.LineTotal); err != nil {
+			return nil, fmt.Errorf("scan eod instant band line: %w", err)
+		}
+		if i, ok := idx[saleID]; ok {
+			out[i].Lines = append(out[i].Lines, l)
+		}
+	}
+	if err := lineRows.Err(); err != nil {
+		return nil, err
+	}
+
+	// Payments per sale (ut-docs#1004): tendered REVENUE only — same change
+	// and tip exclusions and the same stable method_id ordering as
+	// SalesForTaxBands (see its inline comment).
+	payRows, err := r.db.QueryContext(ctx, `
+SELECT p.sale_id, p.method_id, COALESCE(SUM(p.amount - p.change_given - p.tip_amount), 0)
+FROM payments p
+JOIN sales s ON s.id = p.sale_id
+WHERE s.status = 'completed' AND `+swin+`
+GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, sargs...)
+	if err != nil {
+		return nil, fmt.Errorf("eod instant band payments: %w", err)
+	}
+	defer payRows.Close()
+	for payRows.Next() {
+		var saleID string
+		var p EODTaxBandPayment
+		if err := payRows.Scan(&saleID, &p.Method, &p.Amount); err != nil {
+			return nil, fmt.Errorf("scan eod instant band payment: %w", err)
+		}
+		if i, ok := idx[saleID]; ok {
+			out[i].Payments = append(out[i].Payments, p)
+		}
+	}
+	return out, payRows.Err()
+}
+
 // ArchiveReport stores a generated report; kind+period is unique so the
 // scheduled job is idempotent. Returns false when it already existed.
 //
@@ -2342,11 +2764,38 @@ GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, from, to)
 // cancelled ctx, a schema mismatch -- are not masked by it: every attempt
 // fails identically and the original error is returned wrapped after the
 // third.
-func (r *POSRepo) ArchiveReport(ctx context.Context, kind, period string, content []byte, firstReceipt, lastReceipt string) (bool, error) {
+//
+// closedAt (ADR-0066 Decisions 4 and 5, ut-docs#1140) is the close instant
+// the caller's whole close is keyed on. Zero value = legacy behavior,
+// byte-for-byte: created_at takes the schema default (datetime('now')) and
+// no guard beyond (kind, period) uniqueness applies. Non-zero, it is
+// written INTO created_at (closedAt.UTC() in archiveTimestampFmt, the same
+// text form the schema default emits) so the NEXT close's `from` — read
+// back via LatestArchivedAt — is byte-identical to this close's `to`;
+// letting SQLite stamp a second, independent datetime('now') would leave a
+// sub-second gap or overlap between consecutive close windows (the ADR's
+// clock-skew fix, load-bearing for gaplessness).
+//
+// Non-zero closedAt on kind='eod' additionally arms the atomic double-close
+// guard: once period is a close INSTANT, two closes seconds apart no longer
+// collide on (kind, period), so that uniqueness stops serialising anything
+// and a lost race would burn a real, gapless Z-number on a near-empty
+// duplicate Z-Bon. The replacement predicate — no kind='eod' row already
+// exists whose created_at falls on the same LOCAL calendar day as closedAt
+// — is folded into this SAME autocommit INSERT...SELECT (the write-lock
+// property above is exactly what makes it race-free; a separate pre-check
+// would be the TOCTOU the ADR calls out), and a hit behaves like a (kind,
+// period) conflict: created=false, no number consumed, no error. It rides
+// in a HAVING clause, NOT the WHERE: an aggregate SELECT with no GROUP BY
+// always yields exactly one row even when WHERE filters out every input row
+// (the same property the first-close z_number=1 case above relies on), so
+// a false predicate in the WHERE would not suppress the insert at all —
+// HAVING is evaluated against the single aggregate row and can actually
+// eliminate it. The guard never applies to other kinds (the `? != 'eod'`
+// arm) or to a zero closedAt (legacy statement, no HAVING).
+func (r *POSRepo) ArchiveReport(ctx context.Context, kind, period string, content []byte, firstReceipt, lastReceipt string, closedAt time.Time) (bool, error) {
 	id := uuid.NewString()
-	var lastErr error
-	for range 3 {
-		res, err := r.db.ExecContext(ctx, `
+	query := `
 INSERT INTO report_archive (id, kind, period, content_json, z_number, prev_z_number, prev_closed_at, first_receipt, last_receipt)
 SELECT ?, ?, ?, ?,
   COALESCE(MAX(z_number), 0) + 1,
@@ -2356,8 +2805,31 @@ SELECT ?, ?, ?, ?,
      ORDER BY z_number DESC LIMIT 1),
   ?, ?
 FROM report_archive WHERE kind = ?
-ON CONFLICT (kind, period) DO NOTHING`,
-			id, kind, period, string(content), kind, firstReceipt, lastReceipt, kind)
+ON CONFLICT (kind, period) DO NOTHING`
+	args := []any{id, kind, period, string(content), kind, firstReceipt, lastReceipt, kind}
+	if !closedAt.IsZero() {
+		closedAtStr := closedAt.UTC().Format(archiveTimestampFmt)
+		query = `
+INSERT INTO report_archive (id, kind, period, content_json, z_number, prev_z_number, prev_closed_at, first_receipt, last_receipt, created_at)
+SELECT ?, ?, ?, ?,
+  COALESCE(MAX(z_number), 0) + 1,
+  MAX(z_number),
+  (SELECT created_at FROM report_archive
+     WHERE kind = ? AND z_number IS NOT NULL
+     ORDER BY z_number DESC LIMIT 1),
+  ?, ?, ?
+FROM report_archive WHERE kind = ?
+HAVING (? != 'eod' OR NOT EXISTS (
+  SELECT 1 FROM report_archive ra2
+  WHERE ra2.kind = 'eod'
+    AND date(ra2.created_at, 'localtime') = date(?, 'localtime')))
+ON CONFLICT (kind, period) DO NOTHING`
+		args = []any{id, kind, period, string(content), kind, firstReceipt, lastReceipt,
+			closedAtStr, kind, kind, closedAtStr}
+	}
+	var lastErr error
+	for range 3 {
+		res, err := r.db.ExecContext(ctx, query, args...)
 		if err == nil {
 			n, _ := res.RowsAffected()
 			return n > 0, nil
@@ -2417,13 +2889,28 @@ func scanArchivedReport(rows *sql.Rows) (ArchivedReportRow, error) {
 	return a, nil
 }
 
-// formatArchiveTimestamp converts report_archive.created_at (SQLite
-// `datetime('now')`, "YYYY-MM-DD HH:MM:SS", implicitly UTC) to ISO-8601
-// (CLAUDE.md's API format rule) for both the Reports page and the export.
-// Falls back to the raw value on an unexpected format rather than blanking
-// it -- a slightly-off timestamp is better than a silently dropped one.
+// archiveTimestampFmt is the one text form report_archive.created_at ever
+// holds: the schema default datetime('now') emits it (space-separated,
+// implicitly UTC), and ArchiveReport's explicit closedAt write formats to
+// the SAME layout and timezone convention deliberately (ADR-0066,
+// ut-docs#1140) so every reader — formatArchiveTimestamp, LatestArchivedAt,
+// the double-close guard's date(..., 'localtime') — parses one form, never
+// two. Deliberately equal to reportWindowFmt, not just coincidentally the
+// same literal (review finding, ut-docs#1140): ArchiveReport's closedAt
+// write and windowArgs' bound-param rendering must stay byte-identical, or
+// the "next close's from is byte-identical to this close's to" gaplessness
+// guarantee (ADR-0066 Decision 5) silently stops holding.
+const archiveTimestampFmt = reportWindowFmt
+
+// formatArchiveTimestamp converts report_archive.created_at
+// (archiveTimestampFmt, implicitly UTC) to ISO-8601 (CLAUDE.md's API format
+// rule) for both the Reports page and the export. Falls back to the raw
+// value on an unexpected format rather than blanking it -- a slightly-off
+// timestamp is better than a silently dropped one. (LatestArchivedAt, which
+// feeds correctness-critical window boundaries rather than display, makes
+// the opposite call and errors instead.)
 func formatArchiveTimestamp(raw string) string {
-	t, err := time.Parse("2006-01-02 15:04:05", raw)
+	t, err := time.Parse(archiveTimestampFmt, raw)
 	if err != nil {
 		return raw
 	}
@@ -2449,6 +2936,41 @@ FROM report_archive ORDER BY period DESC LIMIT ?`, limit)
 		out = append(out, a)
 	}
 	return out, rows.Err()
+}
+
+// LatestArchivedAt returns the greatest created_at among kind's archived
+// rows — for the "eod" kind, the previous close instant: the next close's
+// window `from` and eodDue's cheap "already ran today" pre-check (ADR-0066
+// Decision 5, ut-docs#1140). MAX(created_at), deliberately NOT ORDER BY
+// period: once "eod" periods become RFC3339 close instants, period mixes
+// calendar-date and RFC3339 forms across the cutover and no longer orders
+// chronologically within a day; created_at stays a single text form
+// (archiveTimestampFmt) whose text MAX is its chronological MAX. nil, nil
+// when no rows exist — the till's first-ever close, which the caller runs
+// with an unbounded lower bound (Decision 3).
+//
+// The stored value is UTC-naive text, parsed with time.Parse — never
+// time.ParseInLocation(..., time.Local), which would silently reproduce
+// ADR-0057's bug class on any non-UTC host (CI's TZ=UTC can't catch that
+// mistake; the regression test overrides time.Local for exactly this
+// reason). Unlike the display-only formatArchiveTimestamp, a parse failure
+// here is an ERROR: this value becomes a fiscal window boundary, and a
+// silent fallback would corrupt the close window rather than merely render
+// an odd string.
+func (r *POSRepo) LatestArchivedAt(ctx context.Context, kind string) (*time.Time, error) {
+	var raw sql.NullString
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT MAX(created_at) FROM report_archive WHERE kind = ?`, kind).Scan(&raw); err != nil {
+		return nil, fmt.Errorf("latest archived at: %w", err)
+	}
+	if !raw.Valid {
+		return nil, nil
+	}
+	ts, err := time.Parse(archiveTimestampFmt, raw.String)
+	if err != nil {
+		return nil, fmt.Errorf("latest archived at: parse created_at %q: %w", raw.String, err)
+	}
+	return &ts, nil
 }
 
 // HasArchivedReport reports whether kind+period was already generated.
