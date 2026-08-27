@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"database/sql"
 	"os"
 	"os/exec"
 	"strings"
@@ -414,20 +415,45 @@ func TestArchiveReport_ConcurrentSameLocalDayDoubleClose(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	anchor := iwAnchor()
 
-	const n = 10
+	// n=16 goroutines racing through a genuine start barrier, against a
+	// pre-warmed connection pool (open+close n connections first). Without
+	// both of these, opening a modernc.org/sqlite connection costs far more
+	// than the statement itself, so a bare "fire n goroutines" loop queues
+	// on connection creation rather than actually racing on the DB write
+	// lock — measured to let a non-atomic TOCTOU pre-check-then-write
+	// guard pass this test 4/4, which defeats the point of the test.
+	const n = 16
 	var wg sync.WaitGroup
 	createds := make([]bool, n)
 	errs := make([]error, n)
+	warm := make([]*sql.Conn, n)
+	for i := range n {
+		c, err := dbx.d.DB.Conn(context.Background())
+		if err != nil {
+			t.Fatal(err)
+		}
+		warm[i] = c
+	}
+	for _, c := range warm {
+		_ = c.Close()
+	}
+	start := make(chan struct{})
+	var ready sync.WaitGroup
+	ready.Add(n)
 	for i := range n {
 		wg.Add(1)
 		go func() {
 			defer wg.Done()
-			closedAt := anchor.Add(time.Duration(i) * time.Minute) // all within local noon..noon+9m: one local day
+			closedAt := anchor.Add(time.Duration(i) * time.Minute) // all within local noon..noon+15m: one local day
 			period := closedAt.UTC().Format(time.RFC3339)
+			ready.Done()
+			<-start
 			createds[i], errs[i] = dbx.repo.ArchiveReport(context.Background(), "eod", period,
 				[]byte(`{}`), "", "", closedAt)
 		}()
 	}
+	ready.Wait()
+	close(start)
 	wg.Wait()
 
 	wins := 0
