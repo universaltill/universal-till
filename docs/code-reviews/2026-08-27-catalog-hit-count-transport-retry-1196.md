@@ -81,3 +81,65 @@ keeps the test able to catch a real regression.
 **Safe to merge.** Test-only, root-cause fix (not a threshold loosening),
 verified against the exact reproduction of what CI observed. No
 production code path is touched.
+
+## Correction (same day, while driving universal-till#586 to green)
+
+The diagnosis above was **wrong about what CI was actually hitting**, found
+while merging this fix into `universal-till#586`'s branch and re-running the
+exact `en_GB`-then-`de_DE` double-run against that branch's own head: the
+failure reproduced again, deterministically, 1/1 — not intermittently, and
+not only as the *second* run in a pair. Isolating it further:
+
+- `LANG=de_DE.UTF-8 go test ./internal/pages/... -run
+  TestSetupWizardListsInstallableCatalogLanguagesAndCachesFetch` fails
+  every time, alone, cold, no prior run in the same process — impossible
+  for a connection-reuse race, which needs a pooled idle connection from a
+  *prior* request to race against.
+- The failing render's own debug log shows two DIFFERENT marketplace
+  requests, not one retried twice: `capability=language` and
+  `capability=tax`.
+- Root cause: `universal-till#586` (this same PR, ut-docs#1180) added a
+  tax-plugin tile to the setup wizard's step 3, fetched on every `GET
+  /setup` render via `setupInstallableTaxPlugin(ctx, d, code)` — and `code`
+  is `detectCountry(...)`, which falls back to the OS locale's own region
+  when the timezone doesn't resolve one. Under CI's `LANG=de_DE.UTF-8`
+  run, `detectCountry` resolves `"DE"` from the locale alone, which IS in
+  `countryTaxLocale`, so the render fetches the tax catalog too — a second,
+  legitimate `GET /v1/catalog/plugins?capability=tax` alongside the
+  existing `capability=language` one. `catalogHits()` counts both
+  indiscriminately, so a test asserting "exactly one fetch, proving the
+  language cache works" started seeing 2 — correctly, given what the render
+  now actually does — the moment this PR's own diff landed in the same
+  branch as this test.
+  The earlier investigation ran its reproduction on a fix branch created
+  from `main` *before* `universal-till#586` merged into it, so
+  `setupInstallableTaxPlugin` didn't exist there yet — the "1/1 reproduced,
+  2/2 clean after the fix" result recorded above was real, but reproducing
+  a different, genuine (if rarer) net/http race, not the one CI's `build`
+  check was actually failing on for this PR.
+- This was never a flake. It is 100% deterministic under
+  `LANG=de_DE.UTF-8`, with or without a prior run in the same process,
+  with or without `SetKeepAlivesEnabled(false)`.
+
+**Real fix** (in `universal-till#586`, `internal/pages/sync_plugins_test.go`
++ `setup_language_catalog_test.go`): `fakeMarketplace` now tracks catalog
+hits per `capability` query value (`catHitsByCapability` /
+`catalogHitsFor(capability)`), and the four exact-count assertions in
+`setup_language_catalog_test.go` that only ever meant to test the language
+catalog now call `catalogHitsFor("language")` instead of the raw
+`catalogHits()` total — immune to whatever *other* capability catalogs a
+render also happens to browse, now or in the future. Verified: the exact
+`en_GB`-then-`de_DE` double run, repeated 3× in a row plus two full
+`go test ./internal/pages/...` passes under each locale, all clean.
+
+`SetKeepAlivesEnabled(false)` is left in place — it is a real, defensible
+guard against the connection-reuse race its own comment describes, costs
+nothing, and does no harm — but it is no longer the load-bearing part of
+why this test passes, and the file comment has been corrected to say so.
+
+**Lesson**: "confirmed by local reproduction" is only as good as what the
+reproduction branch actually contains. The original investigation reproduced
+a real bug, just not the one CI's failure was pointing at, because the
+repro branch was missing the very diff (`universal-till#586`'s own tax-catalog
+fetch) that made the assertion wrong. Re-diagnosing against the actual
+failing branch — not a same-shaped clean-room branch — surfaced this.
