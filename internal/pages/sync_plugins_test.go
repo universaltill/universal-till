@@ -69,6 +69,18 @@ type fakeMarketplace struct {
 	// catHits counts GET /v1/catalog/plugins — proves the setup wizard's
 	// language-catalog TTL cache (ut-docs#1092) really avoids a refetch.
 	catHits int
+	// catHitsByCapability counts the same requests, keyed by the request's
+	// own `capability` query param ("language", "tax", ...). ut-docs#1180
+	// (review): the wizard now browses more than one capability on a single
+	// GET /setup render (language for step 1, tax for step 3 when the
+	// resolved country is DE) — a hit-count assertion scoped to just one of
+	// them needs to say which, or it silently starts asserting on the SUM of
+	// unrelated catalogs and breaks the moment another capability starts
+	// being browsed too (exactly what happened here: an exact-count test
+	// written when "the catalog" meant only the language one broke — not
+	// flakily, but deterministically under a DE-detected locale — once the
+	// tax-catalog fetch landed alongside it).
+	catHitsByCapability map[string]int
 	// registerHits counts POST /v1/stores/register — proves a code path that
 	// only BROWSES the catalog never enrols the shop's cloud store identity
 	// (ADR-0015 lazy registration; only a download/install or an explicit
@@ -136,6 +148,15 @@ func (m *fakeMarketplace) catalogHits() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.catHits
+}
+
+// catalogHitsFor returns the GET /v1/catalog/plugins hit count for a single
+// `capability` query value — see catHitsByCapability's doc comment for why
+// this exists alongside the total.
+func (m *fakeMarketplace) catalogHitsFor(capability string) int {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	return m.catHitsByCapability[capability]
 }
 
 func (m *fakeMarketplace) storeRegisterHits() int {
@@ -263,6 +284,10 @@ func newFakeMarketplace(t *testing.T, pluginIDByListing map[string]string) *fake
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/catalog/plugins":
 			m.mu.Lock()
 			m.catHits++
+			if m.catHitsByCapability == nil {
+				m.catHitsByCapability = map[string]int{}
+			}
+			m.catHitsByCapability[r.URL.Query().Get("capability")]++
 			entries := append([]marketplace.PluginSummary(nil), m.catalog...)
 			pageSize := m.catalogPageSize
 			hook := m.onCatalogRequest

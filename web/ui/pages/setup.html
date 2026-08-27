@@ -38,8 +38,10 @@
          step 2's Next jumps straight to 4 unless country === 'DE'. On an
          error re-render the server picks which step to land on (errStep):
          business-identity validation errors return to 3, everything else to
-         the PIN step. -->
-    <main class="setup-card" x-data="{ step: {{ if .errKey }}{{ .errStep }}{{ else }}1{{ end }}, last: 8,
+         the PIN step. The server resolves that, a tax-plugin install
+         round-trip (ut-docs#1180 — back to step 3, not step 1) and the
+         plain first-render case into one startStep. -->
+    <main class="setup-card" x-data="{ step: {{ .startStep }}, last: 8,
                                        country: '{{ .detectedCountry }}', currency: '{{ .detectedCurrency }}',
                                        tax: '{{ .detectedTaxRatePct }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}',
                                        currencyTouched: false }">
@@ -166,6 +168,29 @@
         <section x-show="step === 3" x-cloak data-step="3">
           <h1>{{ T "setup.tse.title" }}</h1>
           <p class="muted">{{ T "setup.tse.hint" }}</p>
+          <!-- ut-docs#1180: ADR-0025 decision 4 — a marketplace tax-capability
+               plugin for this country (ut-plugin-tax-de: §12 UStG dine-in/
+               takeaway VAT-rate switching plus TSE signing/DSFinV-K export)
+               is PROMPTED, never silently auto-installed. The tile only
+               appears when setupInstallableTaxPlugin actually found a
+               not-yet-installed match; it's gone once installed, and stays
+               gone for a country with nothing mapped (countryTaxLocale).
+               Same out-of-band-form pattern as step 1's catalog-language
+               buttons: the real <form> lives AFTER the wizard's closing
+               </form> (nested forms are dropped by the HTML parser), this
+               button targets it via form=. Sits BELOW the step's own <h1>
+               so its <h2> nests under a heading rather than preceding one,
+               and so the step still reads as "business details" first. -->
+          {{ if .installableTaxPlugin }}
+          <div class="setup-tax-plugin-prompt">
+            <h2>{{ T "setup.tax_plugin.title" }}</h2>
+            <p class="muted">{{ T "setup.tax_plugin.description" }}</p>
+            {{ if .taxPluginPending }}
+              <p class="muted" data-tax-plugin-pending>{{ T "setup.tax_plugin.install_pending" }}</p>
+            {{ end }}
+            <button type="submit" class="btn secondary setup-tax-plugin-install-btn" form="tax-plugin-install">{{ T "setup.tax_plugin.install_btn" }}</button>
+          </div>
+          {{ end }}
           <label>{{ T "setup.tse.legal_name" }}
             <input type="text" class="tse-field" name="tse_legal_name" maxlength="200" value="{{ .tseLegalName }}">
           </label>
@@ -316,6 +341,18 @@
            step-1 button owns this form via its form= attribute. -->
       <form method="post" action="/api/setup/language" id="lang-install-{{ .Locale }}" class="setup-lang-install" hidden>
         <input type="hidden" name="locale" value="{{ .Locale }}">
+      </form>
+      {{ end }}
+
+      <!-- ut-docs#1180: step 3's tax-plugin install button's own form — same
+           outside-the-wizard-form placement and reasoning as the language
+           install forms just above (nested forms are dropped by the HTML
+           parser). country is all the handler needs — it re-resolves the
+           listing server-side through the same countryTaxLocale mapping and
+           catalog cache, so the body can't pick an arbitrary listing. -->
+      {{ if .installableTaxPlugin }}
+      <form method="post" action="/api/setup/tax-plugin" id="tax-plugin-install" hidden>
+        <input type="hidden" name="country" value="{{ .installableTaxPlugin.Country }}">
       </form>
       {{ end }}
 
