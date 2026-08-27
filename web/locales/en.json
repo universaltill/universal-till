@@ -1714,7 +1714,7 @@
   "catalog.item_form.saved": "Saved",
   "catalog.keypad.failed_generic": "Mapping failed",
   "setup.tax_plugin.title": "Germany tax plugin",
-  "setup.tax_plugin.description": "Applies Germany's dine-in/takeaway VAT rates (§12 UStG) and signs each sale with your configured TSE. Optional — install it now, or any time later from the plugin catalog.",
+  "setup.tax_plugin.description": "Applies Germany's dine-in/takeaway VAT rates (§12 UStG) and signs each sale with your configured TSE. Required before you can complete any real sale in Germany — install now if you're online, or we'll keep retrying in the background until you are.",
   "setup.tax_plugin.install_btn": "Install",
   "setup.tax_plugin.install_pending": "Still installing the tax plugin in the background — you can continue.",
   "setup.tse.title": "Your business details (TSE)",

@@ -341,6 +341,17 @@ func TestSetupWizardShowsTaxPluginInstallTileForDEOnly(t *testing.T) {
 	if !strings.Contains(body, `name="country" value="DE"`) {
 		t.Error("tax-plugin install form is missing its hidden country=DE input")
 	}
+	// ut-docs#1180 review finding (2026-08-27): the tile's copy previously
+	// called this plugin "Optional — install it now, or any time later from
+	// the plugin catalog", which is misleading — ADR-0048's hard sales gate
+	// means a live German shop cannot complete any real sale without it.
+	// Checks the exact old phrase (not a bare "Optional" substring — the
+	// shop-type step's own, unrelated "Optional — helps tailor..." hint is
+	// legitimately present elsewhere in this same rendered body, since
+	// Alpine's x-show keeps every step in the DOM).
+	if strings.Contains(body, "Optional — install it now, or any time later from the plugin catalog") {
+		t.Error("tax-plugin tile must not call this 'Optional' — it is required before any real sale can complete (ADR-0048)")
+	}
 
 	// A non-DE country must not show the tile at all.
 	form["country"] = []string{"FR"}
