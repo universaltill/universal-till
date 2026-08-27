@@ -102,6 +102,29 @@ window.utCurrency = (function(){
     timeout = setTimeout(function(){ buf = ""; }, 300);
   });
 
+  // Clear the scan code field after ANY submission of the scan form, not
+  // only the hardware/wedge path above (ut-docs#1177). osk.js's own '↵' key
+  // (press('↵') -> form.requestSubmit()) and a direct tap on the visible
+  // "Add" submit button both bypass submit() entirely, so neither cleared
+  // the field — the next scan concatenated onto the stale value instead of
+  // replacing it (reproduced live: two OSK-driven scans in a row produced
+  // a garbled 27-digit code and "item not found", exactly the reported
+  // symptom — SSH-injecting a real Enter keydown always took the hardware
+  // path above and cleared the field, which is why that reproduction
+  // step alone never showed the bug). Delegated at the document level on
+  // the native 'submit' event so it fires regardless of trigger (a plain
+  // click, htmx.trigger(), form.requestSubmit()) with no per-trigger-path
+  // wiring needed — matches submit()'s own setTimeout(...,0): after the
+  // value has already been read and sent, never before. A harmless no-op
+  // duplicate of submit()'s own clear on the hardware/wedge/camera paths,
+  // all of which already go through submit() above.
+  document.addEventListener('submit', function (e) {
+    var input = scanCodeInput();
+    if (input && e.target === input.form) {
+      setTimeout(function(){ input.value = ""; }, 0);
+    }
+  });
+
   // Exposed so other on-page scan sources (ut-docs#548's camera scan) submit
   // through the exact same path a wedge scan does, rather than duplicating
   // scanCodeInput()/submit()'s form-lookup and focus-safe-clear logic.
