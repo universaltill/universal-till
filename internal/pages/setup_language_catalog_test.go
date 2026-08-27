@@ -39,6 +39,22 @@ func TestSetupWizardListsInstallableCatalogLanguagesAndCachesFetch(t *testing.T)
 	mkt := newFakeMarketplace(t, nil)
 	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
 	d.Cfg.Marketplace = mkt.config()
+	// ut-docs#1196: this test asserts an EXACT hit count, so it must not be
+	// exposed to net/http.Transport's own documented, silent behavior —
+	// retrying a GET once when it was issued on a pooled idle connection the
+	// server had just closed (a real race, not an app bug). That race is rare
+	// in isolation but became reliably reproducible as the SECOND of two
+	// back-to-back full-package `go test` runs on a loaded CI runner
+	// (ci.yml's en_GB-then-de_DE internal/pages double-run) — confirmed by
+	// local reproduction of the exact pattern, see the linked issue.
+	// Disabling keep-alives on the fake server closes every connection after
+	// one response, which removes the race outright rather than loosening
+	// the assertion (a wider threshold couldn't distinguish "one retried
+	// fetch" from "caching doesn't work at all" in a two-render test — both
+	// would show the same count). Test-infrastructure-only: no production
+	// code changes, and every other test sharing newFakeMarketplace is
+	// unaffected (this is scoped to this test's own server instance).
+	mkt.server.Config.SetKeepAlivesEnabled(false)
 
 	rec := getSetup(mux, "?lang=en", "")
 	if rec.Code != http.StatusOK {
