@@ -203,6 +203,14 @@ func CloseShift(ctx context.Context, sqlDB *sql.DB, in ShiftCloseInput) error {
 				"type":     "skim",
 				"amount":   (-in.Skim).Minor(),
 				"reason":   reason,
+				// at_close (ut-docs#1146 review finding F1) marks this row as
+				// THE close-time skim explicitly, rather than leaving
+				// data.CashReconciliationForLocalDay to infer it from
+				// created_at == closed_at alone -- both are stamped from this
+				// same `now`, but only to second precision (time.RFC3339), so
+				// a mid-shift skim landing in the same wall-clock second as
+				// this close would otherwise be misclassified as this one.
+				"at_close": true,
 			}
 			if err := repo.InsertAudit(ctx, tx, in.SkimApproverID, "shift", in.ShiftID, "cash_adjustment", skimPayload, now, ""); err != nil {
 				return err
