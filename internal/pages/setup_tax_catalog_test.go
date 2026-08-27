@@ -1,0 +1,387 @@
+package pages
+
+import (
+	"net/http"
+	"net/http/httptest"
+	"net/url"
+	"strings"
+	"testing"
+
+	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/plugins/marketplace"
+)
+
+// ut-docs#1180: ADR-0025 decision 4 — a fiscal ("tax") plugin like
+// ut-plugin-tax-de must be PROMPTED at wizard time, never silently
+// auto-installed. setupInstallableTaxPlugin resolves whether the wizard's
+// current country has an installable-and-not-yet-installed tax plugin;
+// setupTaxPluginInstallHandler is the explicit-click install action.
+
+// resetTaxCatalogForTest isolates each test from the package-level TTL cache
+// — mirrors resetLangCatalogForTest.
+func resetTaxCatalogForTest(t *testing.T) {
+	t.Helper()
+	resetSetupTaxCatalog()
+	t.Cleanup(resetSetupTaxCatalog)
+}
+
+// deTaxCatalogEntry is the DE fiscal-plugin listing a real marketplace would
+// serve: canonical type "tax", availableLocales ["de"] — mirrors
+// deLanguageCatalogEntry (setup_base_plugins_test.go) for the tax capability.
+func deTaxCatalogEntry(listingID, pluginID, version string) marketplace.PluginSummary {
+	return marketplace.PluginSummary{
+		ID: pluginID, ListingID: listingID, Name: "German fiscal plugin",
+		Version: version, CanonicalType: "tax", AvailableLocales: []string{"de"},
+	}
+}
+
+// --- setupInstallableTaxPlugin ---
+
+func TestSetupInstallableTaxPlugin_DEMatchesCatalog(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	dp := newBasePluginTestDeps(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	plugin, unavailable := setupInstallableTaxPlugin(t.Context(), dp, "DE")
+	if unavailable {
+		t.Fatal("catalog was reachable, must not report unavailable")
+	}
+	if plugin == nil {
+		t.Fatal("expected a DE tax plugin match, got nil")
+	}
+	if plugin.Country != "DE" || plugin.ListingID != "listing-tax-de" {
+		t.Fatalf("plugin = %+v, want Country=DE ListingID=listing-tax-de", plugin)
+	}
+}
+
+// A country with nothing in countryTaxLocale (this is a deliberately minimal
+// table — not every country) returns nil, false: nothing to prompt, but NOT
+// "catalog unavailable" (which would show a misleading note).
+func TestSetupInstallableTaxPlugin_UnmappedCountryReturnsNilNotUnavailable(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	dp := newBasePluginTestDeps(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	plugin, unavailable := setupInstallableTaxPlugin(t.Context(), dp, "US")
+	if plugin != nil {
+		t.Fatalf("expected no match for an unmapped country, got %+v", plugin)
+	}
+	if unavailable {
+		t.Fatal("an unmapped country is not a catalog-unavailable case")
+	}
+}
+
+// Once the matching listing is already installed and active, the tile must
+// disappear — this is what makes the wizard stop prompting after a real
+// install.
+func TestSetupInstallableTaxPlugin_AlreadyActiveReturnsNil(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	dp := newBasePluginTestDeps(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	spec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("seed install: %v", err)
+	}
+	if active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); err != nil || !active {
+		t.Fatalf("seed install did not land: active=%v err=%v", active, err)
+	}
+
+	plugin, unavailable := setupInstallableTaxPlugin(t.Context(), dp, "DE")
+	if plugin != nil {
+		t.Fatalf("expected nil once the listing is already active, got %+v", plugin)
+	}
+	if unavailable {
+		t.Fatal("an already-installed plugin is not a catalog-unavailable case")
+	}
+}
+
+// Among several matching listings, the highest semver wins (mirrors
+// TestResolveAndInstallBasePlugin_PicksHighestSemverVersion).
+func TestSetupInstallableTaxPlugin_PicksHighestSemverVersion(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	dp := newBasePluginTestDeps(t)
+	mkt := newFakeMarketplace(t, map[string]string{
+		"listing-tax-de-old": "ut-plugin-tax-de-old",
+		"listing-tax-de-new": "ut-plugin-tax-de-new",
+	})
+	mkt.publishVersion(t, "listing-tax-de-old", "ut-plugin-tax-de-old", "1.0.0")
+	mkt.publishVersion(t, "listing-tax-de-new", "ut-plugin-tax-de-new", "1.2.0")
+	mkt.setCatalog(
+		deTaxCatalogEntry("listing-tax-de-old", "ut-plugin-tax-de-old", "1.0.0"),
+		deTaxCatalogEntry("listing-tax-de-new", "ut-plugin-tax-de-new", "1.2.0"),
+	)
+	dp.Cfg.Marketplace = mkt.config()
+
+	plugin, _ := setupInstallableTaxPlugin(t.Context(), dp, "DE")
+	if plugin == nil || plugin.ListingID != "listing-tax-de-new" {
+		t.Fatalf("expected the higher-semver listing, got %+v", plugin)
+	}
+}
+
+// A non-tax listing (e.g. a language pack) declaring the de locale must
+// never surface as a tax-plugin tile — CanonicalType must match exactly.
+func TestSetupInstallableTaxPlugin_IgnoresNonTaxListings(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	dp := newBasePluginTestDeps(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	plugin, _ := setupInstallableTaxPlugin(t.Context(), dp, "DE")
+	if plugin != nil {
+		t.Fatalf("a language listing must never match the tax prompt, got %+v", plugin)
+	}
+}
+
+// Catalog unreachable with nothing cached: catalogUnavailable=true (distinct
+// from the unmapped-country case above), and no match.
+func TestSetupInstallableTaxPlugin_CatalogUnreachableReportsUnavailable(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	dp := newBasePluginTestDeps(t)
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	dp.Cfg.Marketplace.EndpointURL = dead.URL
+	dp.Cfg.Marketplace.ClientID = "merchant-1"
+	dp.Cfg.Marketplace.StoreID = "store-1"
+	dead.Close()
+
+	plugin, unavailable := setupInstallableTaxPlugin(t.Context(), dp, "DE")
+	if plugin != nil {
+		t.Fatalf("expected no match while unreachable, got %+v", plugin)
+	}
+	if !unavailable {
+		t.Fatal("expected catalogUnavailable=true when the catalog cannot be reached and nothing is cached")
+	}
+}
+
+// --- setupTaxPluginInstallHandler (POST /api/setup/tax-plugin) ---
+
+func TestSetupTaxPluginInstallHappyPath(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	rec := postForm(mux, "/api/setup/tax-plugin", url.Values{"country": {"DE"}}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup" {
+		t.Fatalf("POST /api/setup/tax-plugin: code=%d loc=%q, want 303 -> /setup",
+			rec.Code, rec.Header().Get("Location"))
+	}
+	if active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); err != nil || !active {
+		t.Fatalf("expected the tax plugin installed: active=%v err=%v", active, err)
+	}
+	if pending, _ := loadPendingBasePlugins(t.Context(), dp); len(pending) != 0 {
+		t.Fatalf("nothing should be pending after a successful foreground install, got %+v", pending)
+	}
+}
+
+// A forged/stale country (no catalog match, or not in countryTaxLocale at
+// all) must be rejected — no install attempt, clean redirect back to the
+// wizard. The request body must never get to pick an arbitrary listing.
+func TestSetupTaxPluginInstallRejectsCountryWithNoMatch(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	for _, country := range []string{"US", "FR"} {
+		rec := postForm(mux, "/api/setup/tax-plugin", url.Values{"country": {country}}, nil)
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup" {
+			t.Fatalf("POST with country=%s: code=%d loc=%q, want 303 -> /setup",
+				country, rec.Code, rec.Header().Get("Location"))
+		}
+	}
+	if hits := mkt.downloadTokenHits(); hits != 0 {
+		t.Fatalf("a rejected country must never trigger an install attempt, got %d download-token hits", hits)
+	}
+	if pending, _ := loadPendingBasePlugins(t.Context(), dp); len(pending) != 0 {
+		t.Fatalf("a rejected country must not be queued for retry, got %+v", pending)
+	}
+}
+
+// A stale request for a listing that's already installed+active is also a
+// clean no-op redirect, never a duplicate install.
+func TestSetupTaxPluginInstallRejectsAlreadyInstalled(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	spec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("seed install: %v", err)
+	}
+	resetTaxCatalogForTest(t) // clear the TTL cache so the re-check below hits the DB, not a stale cached "installable" answer
+
+	rec := postForm(mux, "/api/setup/tax-plugin", url.Values{"country": {"DE"}}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup" {
+		t.Fatalf("POST for an already-installed plugin: code=%d loc=%q, want 303 -> /setup",
+			rec.Code, rec.Header().Get("Location"))
+	}
+	if hits := mkt.downloadTokenHits(); hits != 1 {
+		t.Fatalf("expected exactly the one seed download-token hit, no second install attempt, got %d", hits)
+	}
+}
+
+// Install failure/timeout: the spec joins the EXISTING ut-docs#591 pending
+// list (no second retry mechanism), and the redirect carries
+// tax_plugin_pending=1 so the wizard can say so.
+func TestSetupTaxPluginInstallFailureJoinsPendingList(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	// Prime the cache while online...
+	if plugin, unavailable := setupInstallableTaxPlugin(t.Context(), dp, "DE"); unavailable || plugin == nil {
+		t.Fatalf("priming the catalog cache: plugin=%+v unavailable=%v", plugin, unavailable)
+	}
+
+	// ...then the network goes away before the operator taps the button. A
+	// closed local server fails immediately, so this doesn't wait out
+	// setupWizardTaxInstallTimeout's real 20s.
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	deadURL := dead.URL
+	dead.Close()
+	dp.Cfg.Marketplace.EndpointURL = deadURL
+
+	rec := postForm(mux, "/api/setup/tax-plugin", url.Values{"country": {"DE"}}, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST with install failing: code=%d, want 303", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/setup?tax_plugin_pending=1" {
+		t.Fatalf("failure redirect = %q, want /setup?tax_plugin_pending=1", loc)
+	}
+	pending, err := loadPendingBasePlugins(t.Context(), dp)
+	if err != nil {
+		t.Fatalf("loadPendingBasePlugins: %v", err)
+	}
+	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "tax", Locale: "de"}) {
+		t.Fatalf("expected the tax/de spec pending for the background retry, got %+v", pending)
+	}
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); active {
+		t.Fatal("nothing should be installed while the marketplace is unreachable")
+	}
+
+	// Network returns: the EXISTING background retry finishes the job.
+	dp.Cfg.Marketplace = mkt.config()
+	basePluginRetryTick(t.Context(), dp)
+	if pending, _ := loadPendingBasePlugins(t.Context(), dp); len(pending) != 0 {
+		t.Fatalf("expected the pending list cleared after the retry tick, got %+v", pending)
+	}
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); !active {
+		t.Fatal("expected the tax plugin installed by the existing retry tick")
+	}
+}
+
+// Same first-boot-only window as POST /api/setup/language and POST /api/setup.
+func TestSetupTaxPluginInstallRefusedAfterFirstBoot(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, svc, _ := newFullAuthDeps(t)
+	id, err := svc.Repo().CreateUser(t.Context(), "boss", "Boss", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashPIN("1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Repo().SetUserPIN(t.Context(), id, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postForm(mux, "/api/setup/tax-plugin", url.Values{"country": {"DE"}}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("POST /api/setup/tax-plugin after first boot: code=%d loc=%q, want 303 -> /login",
+			rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// --- Wizard render: install tile appears/disappears ---
+
+// The install tile appears for DE with a matching catalog listing, and does
+// NOT appear for a country with no mapping.
+func TestSetupWizardShowsTaxPluginInstallTileForDEOnly(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	// DE re-render via a PIN-mismatch POST (renderWizard's own re-render
+	// path — see TestSetupWizardPINErrorRerenderKeepsOperatorCountryNotDetected
+	// for the same pattern), which sets code = the posted country.
+	form := url.Values{
+		"pin": {"1234"}, "pin_confirm": {"9999"}, // mismatch -> error re-render
+		"country": {"DE"}, "currency": {"EUR"},
+	}
+	rec := postFormRaw(mux, "/api/setup", form)
+	body := rec.Body.String()
+	if !strings.Contains(body, `action="/api/setup/tax-plugin"`) {
+		t.Fatalf("DE re-render missing the tax-plugin install form:\n%s", body)
+	}
+	if !strings.Contains(body, `name="country" value="DE"`) {
+		t.Error("tax-plugin install form is missing its hidden country=DE input")
+	}
+
+	// A non-DE country must not show the tile at all.
+	form["country"] = []string{"FR"}
+	rec = postFormRaw(mux, "/api/setup", form)
+	if strings.Contains(rec.Body.String(), `action="/api/setup/tax-plugin"`) {
+		t.Error("a non-DE country must not show the tax-plugin install tile")
+	}
+}
+
+// After a real install, the tile is gone on the next render.
+func TestSetupWizardTaxPluginTileGoneAfterInstall(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	rec := postForm(mux, "/api/setup/tax-plugin", url.Values{"country": {"DE"}}, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("install: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); !active {
+		t.Fatal("expected the tax plugin installed")
+	}
+
+	form := url.Values{
+		"pin": {"1234"}, "pin_confirm": {"9999"},
+		"country": {"DE"}, "currency": {"EUR"},
+	}
+	rec = postFormRaw(mux, "/api/setup", form)
+	if strings.Contains(rec.Body.String(), `action="/api/setup/tax-plugin"`) {
+		t.Error("the tax-plugin install tile must be gone once the plugin is actually installed")
+	}
+}
+
+// postFormRaw posts to POST /api/setup directly (unlike postForm, no
+// pre-auth user context is needed here — the wizard's own handler is
+// auth-exempt during first boot).
+func postFormRaw(mux *http.ServeMux, path string, form url.Values) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
