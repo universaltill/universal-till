@@ -198,6 +198,21 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if p := r.URL.Query().Get("install_pending"); isPlausibleLocale(p) {
 			data["installPendingLang"] = p
 		}
+		// ut-docs#1180: ADR-0025 decision 4 — a fiscal (tax) plugin match
+		// for the now-resolved country, PROMPTED never silently installed.
+		// Uses this same final `code` (the operator's own pick on a POST
+		// re-render, never an earlier draft), same TTL-cached-catalog
+		// posture as installableLangs just above.
+		taxPlugin, taxCatalogUnavailable := setupInstallableTaxPlugin(r.Context(), d, code)
+		data["installableTaxPlugin"] = taxPlugin
+		data["taxCatalogUnavailable"] = taxCatalogUnavailable
+		// tax_plugin_pending: set by POST /api/setup/tax-plugin's failure
+		// redirect (query param, not stored state) — shows the "still
+		// installing in the background" note once, on the page that
+		// redirect lands on. Mirrors install_pending above.
+		if r.URL.Query().Get("tax_plugin_pending") == "1" {
+			data["taxPluginPending"] = true
+		}
 		// Which step an error re-render lands on: business-identity errors
 		// (setup.error.tse_*) belong to step 3, everything else (PIN, save)
 		// to the PIN step (7). On a POST re-render the identity fields the
@@ -279,6 +294,12 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	// (pre-provisioning — no admin session exists yet). Not a /self-order
 	// route, so the kiosk-engine guard doesn't apply.
 	mux.HandleFunc("POST /api/setup/language", setupLanguageInstallHandler(d, svc))
+
+	// ut-docs#1180: install a marketplace tax-capability plugin from the
+	// wizard's Germany-only business-identity step (ADR-0025 decision 4 —
+	// prompted, never silent). Same auth-exempt, NeedsFirstBoot-gated tier as
+	// POST /api/setup/language above.
+	mux.HandleFunc("POST /api/setup/tax-plugin", setupTaxPluginInstallHandler(d, svc))
 
 	mux.HandleFunc("POST /api/setup", func(w http.ResponseWriter, r *http.Request) {
 		firstBoot, err := svc.NeedsFirstBoot(r.Context())
