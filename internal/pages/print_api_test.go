@@ -496,7 +496,18 @@ func TestAsyncPrintFailureIsRecordedWhenPrintCtxExpired(t *testing.T) {
 	t.Cleanup(func() {
 		printAsyncTimeout, printReceiptFn, printKitchenFn = restoreTimeout, restoreReceipt, restoreKitchen
 	})
-	printAsyncTimeout = 50 * time.Millisecond
+	// ut-docs#1018: 50ms flaked deterministically under `go test -race`. The
+	// outer budget covers BOTH the settings read that happens before the
+	// simulated hang (printerConfig/kitchenPrintingEnabled, real DB calls)
+	// AND the hang itself — under -race's scheduling/instrumentation
+	// overhead, the settings read alone could burn the whole 50ms, so
+	// printerConfig/kitchenPrintingEnabled saw an already-expired ctx and
+	// returned early via the "no attempt" path before hang/hangKitchen ever
+	// ran, silently skipping the very failure this test exists to check.
+	// 400ms is generous headroom for that read while still keeping the test
+	// fast (WaitForAsyncWork below only waits for the slower of two
+	// goroutines run in parallel, not the sum).
+	printAsyncTimeout = 400 * time.Millisecond
 	printReceiptFn, printKitchenFn = hang, hangKitchen
 
 	printReceiptAsync(dp, "R-EXP1", "")
