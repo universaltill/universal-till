@@ -369,8 +369,12 @@
              expired?" and they are worse off than when they started. -->
         <form hx-post="/api/setup/join" hx-target="#setup-join-msg" hx-swap="innerHTML"
               hx-indicator="#setup-join-msg" hx-disabled-elt="find button[type=submit]">
+          <!-- ut-docs#1179: was a raw '{"token":"…","url":"http://…"}' placeholder — the
+               wire shape, not something an operator can type or recognise. Reuse the same
+               friendly hint tills.html's join form already uses, so both screens read
+               consistently. -->
           <label>{{ T "tills.join_code" }}
-            <input type="text" name="code" placeholder='{"token":"…","url":"http://…"}' required>
+            <input type="text" name="code" placeholder="{{ T "tills.join_code_ph" }}" required>
           </label>
           <label>{{ T "tills.join_name" }}
             <input type="text" name="name" placeholder="Till 2">
