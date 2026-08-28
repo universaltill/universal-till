@@ -145,6 +145,13 @@ the same approval a refund or a bottle-deposit (Pfandrückgabe) payout
 needs, since it's the same risk (cash leaving the drawer unapproved).
 Adding cash (a positive amount, e.g. a float top-up) doesn't need one.
 
+On a German shop in system-of-record mode, an adjustment that removes cash
+— and a Pfandrückgabe payout — also goes through the same TSE check a sale
+or a refund does, so it is refused while no TSE is set up or the TSE is
+failing. See **Selling** → "German shops: TSE and real sales" for what that
+message means and how an owner can grant a temporary override. Adding cash
+is never affected.
+
 A bottle-deposit (Pfandrückgabe) payout is recorded against **this till's
 own register's** open shift — even when another register's shift is open
 at the same time, it never lands on the other drawer. On a shop with more

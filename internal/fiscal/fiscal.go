@@ -7,16 +7,35 @@
 //
 // This package owns the policy only. Enforcement lives behind one shared
 // helper, internal/pages.enforceFiscalGate, called by every money-moving
-// completion path: the shared cashier/kiosk tender path
-// (internal/pages.completeTender), the till's own refund screen
-// (POST /api/refund, refund_page.go) and the inventory page's return form
-// (POST /api/inventory/return, inventory_api.go) — a refund/return is
-// aufzeichnungspflichtig under KassenSichV the same as a sale
-// (ut-docs#731). A replica->primary journal replay
-// (internal/pages/sync_sales.go) is deliberately NOT gated: that sale was
-// already gated where it was rung. The owner override that can temporarily
-// lift a configured-but-failing block is granted via
-// POST /api/fiscal/tse-override (internal/pages/fiscal_api.go).
+// completion path:
+//
+//   - the shared cashier/kiosk tender path (internal/pages.completeTender);
+//   - the till's own refund screen (POST /api/refund, refund_page.go);
+//   - the inventory page's return form (POST /api/inventory/return,
+//     inventory_api.go) — a refund/return is aufzeichnungspflichtig under
+//     KassenSichV the same as a sale (ut-docs#731);
+//   - the Shifts page's cash adjustment/payout form
+//     (POST /api/shifts/adjustment, shifts_api.go), on a negative amount
+//     only — cash actually leaving the drawer, the same scope its
+//     manager-PIN gate uses;
+//   - the bottle-deposit payout (POST /api/shifts/pfandrueckgabe,
+//     shifts_api.go), unconditionally — it is always a payout
+//     (ut-docs#998). Both go through shifts_api.go's
+//     enforceCashAdjustmentFiscalGate wrapper, which is this same helper
+//     plus the shared localized refusal copy.
+//
+// These last two never call pos.CompleteSale, which is exactly why
+// ut-docs#731's sweep missed them; internal/pages'
+// TestFiscalGate_EveryRecordCashAdjustmentCallSiteIsGated now fails loudly
+// if a pos.RecordCashAdjustment call site is added without the gate.
+//
+// A replica->primary journal replay (internal/pages/sync_sales.go) is
+// deliberately NOT gated: that sale was already gated where it was rung.
+// A skim recorded at shift close (pos.CloseShift) also moves cash out of
+// the drawer but is NOT gated today — see ut-docs#998's review record.
+// The owner override that can temporarily lift a configured-but-failing
+// block is granted via POST /api/fiscal/tse-override
+// (internal/pages/fiscal_api.go).
 package fiscal
 
 import (
