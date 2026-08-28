@@ -217,7 +217,10 @@ func (r *CatalogRepo) ItemExists(ctx context.Context, itemID string) (bool, erro
 }
 
 func (r *CatalogRepo) ListItems(ctx context.Context) ([]catalogtypes.ItemInput, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data FROM items WHERE is_active = 1 ORDER BY name`)
+	// COALESCE(sku, '') — ut-docs#1176: sku is nullable (no real SKU stores
+	// NULL, not a UUID), and itm.SKU below is a plain string, so scanning a
+	// NULL directly would error on every item that has no real SKU.
+	rows, err := r.db.QueryContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data FROM items WHERE is_active = 1 ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -861,9 +864,15 @@ func (r *CatalogRepo) CreateItem(ctx context.Context, in catalogtypes.ItemInput)
 	if in.ID == "" {
 		in.ID = uuid.NewString()
 	}
-	if in.SKU == "" {
-		in.SKU = in.ID
-	}
+	// ut-docs#1176: an item with no source SKU used to get its own internal
+	// UUID copied into the sku column here, which then leaked verbatim into
+	// every staff-facing surface that displays SKU (inventory grid, item
+	// search, receipts) — meaningless and confusing, and it defeated
+	// SKU-based search since nobody types a UUID. sku is a nullable UNIQUE
+	// column (001_init.sql); storing NULL for "no real SKU" is enough to
+	// satisfy uniqueness (SQLite treats NULLs as distinct from each other
+	// under UNIQUE, unlike duplicate empty strings) without inventing a
+	// display value. nullableString leaves in.SKU as "" for the caller.
 	active := 1
 	if !in.IsActive {
 		active = 0
@@ -871,7 +880,7 @@ func (r *CatalogRepo) CreateItem(ctx context.Context, in catalogtypes.ItemInput)
 	_, err := r.db.ExecContext(ctx, `
 INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, in.ID, in.SKU, in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed))
+`, in.ID, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return "", ErrSKUExists
@@ -958,9 +967,8 @@ func (r *CatalogRepo) CreateItemTx(ctx context.Context, tx *sql.Tx, in catalogty
 	if in.ID == "" {
 		in.ID = uuid.NewString()
 	}
-	if in.SKU == "" {
-		in.SKU = in.ID
-	}
+	// ut-docs#1176: see CreateItem's identical comment — don't fall back to
+	// the item's own UUID as a display SKU, store NULL instead.
 	active := 1
 	if !in.IsActive {
 		active = 0
@@ -968,7 +976,7 @@ func (r *CatalogRepo) CreateItemTx(ctx context.Context, tx *sql.Tx, in catalogty
 	_, err := tx.ExecContext(ctx, `
 INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed)
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, in.ID, in.SKU, in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed))
+`, in.ID, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed))
 	if err != nil {
 		return "", fmt.Errorf("insert item: %w", err)
 	}
