@@ -27,6 +27,13 @@
       <h3 id="hold-modal-title">{{ T "hold.modal.title" }}</h3>
       <input type="text" id="hold-label-input" name="label" maxlength="64"
              aria-labelledby="hold-modal-title" placeholder="{{ T "hold.modal.placeholder" }}" autofocus>
+      <!-- ut-docs#1048: autofocus above no longer pops a keyboard at all
+           once ut-docs#1022 suppressed the native fallback (per ut-docs#155,
+           the custom OSK never auto-opens on programmatic focus either) —
+           this toggle is the operator's only way to open one. Same markup
+           as the scan-row's toggle (index.html's own .scan-row, above). -->
+      <button class="btn secondary osk-toggle" type="button" data-osk-toggle hidden
+              title="{{ T "osk.toggle" }}" aria-label="{{ T "osk.toggle" }}">⌨️</button>
       <div class="modifier-actions">
         <button type="button" class="btn secondary"
                 onclick="document.getElementById('hold-modal').close(); document.getElementById('hold-label-input').value='';">
