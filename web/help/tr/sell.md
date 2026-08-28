@@ -19,7 +19,7 @@ Ana kasa ekranı: ürünleri okutun veya seçin, ödemeyi alın, fişi yazdırı
 3. Sepette adedi değiştirin veya satırı silin, sonra Öde'ye geçin.
 4. Sepeti beklet ile sıradaki müşteriye geçin, sonra geri çağırın; iadeler satış geçmişindedir.
 5. Masalar kurduysanız (bkz. **Masalar ve kat planı**), geçerli sepeti sipariş türü düğmesinin altındaki masa seçiciden bir masaya atayın — kaldırmak için "Masa yok"u seçin. Bekletilen bir sipariş masasını korur ve bu, bekletilen siparişler şeridinde bir rozet olarak gösterilir; bekletilen bir siparişi kaybetmeden veya devam ettirmeden başka bir boş masaya taşımak için şerit üzerindeki **Masayı taşı**'ya dokunun.
-6. Tamamlanmış bir satışı iade etmek için Journal → satış geçmişinden açın: hangi satırların ne kadarının iade edileceğini seçin (daha önce iade edilen miktar izlenir, satılandan fazlasını iade edemezsiniz), ardından nakit mi yoksa orijinal ödeme yöntemine mi iade edileceğini seçin.
+6. Tamamlanmış bir satışı iade etmek için Journal → satış geçmişinden açın: hangi satırların ne kadarının iade edileceğini seçin (daha önce iade edilen miktar izlenir, satılandan fazlasını iade edemezsiniz), ardından nakit mi yoksa orijinal ödeme yöntemine mi iade edileceğini seçin. Orijinal satışta bir servis ücreti varsa, iade ettiğiniz kısmın oranına göre bu ücretin payı da otomatik olarak geri ödenir — satışın tamamını iade ederseniz servis ücretinin tamamı da geri döner.
 
 ## Almanya'daki mağazalar: TSE ve gerçek satışlar
 
