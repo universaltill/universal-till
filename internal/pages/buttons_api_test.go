@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/ui"
 )
@@ -103,16 +104,27 @@ func TestButtonsAddValidatesPersistsAndNormalizesImage(t *testing.T) {
 	mux, d := newButtonsMux(t)
 
 	// Missing required fields -> 400 from the store's validation, with a
-	// non-blank localized HTML body an htmx:responseError listener can
-	// show the operator (ut-docs#1220: a bare http.Error text body here
-	// used to leave the failure completely invisible on the Designer
-	// screen — the dropdown just closed with nothing else happening).
+	// localized HTML body an htmx:responseError listener can show the
+	// operator (ut-docs#1220: a bare http.Error text body here used to
+	// leave the failure completely invisible on the Designer screen — the
+	// dropdown just closed with nothing else happening).
+	//
+	// Assert the localized copy, not merely a non-empty body: the reverted
+	// http.Error(w, err.Error(), 400) also wrote a non-empty body, so a
+	// blank-check alone passes against the very regression it claims to
+	// pin. This also mechanically ties ui.designerErrorServerKey (which
+	// internal/ui has to duplicate — internal/pages/common imports
+	// internal/ui, so the reverse import is a cycle) to this file's
+	// buttonsErrorKey: if either drifts, this assertion fails.
 	rec := postForm(mux, "/api/buttons/add", url.Values{"label": {"No Code"}}, nil)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("add without code/itemId = %d, want 400", rec.Code)
 	}
-	if strings.TrimSpace(rec.Body.String()) == "" {
-		t.Fatalf("expected a non-empty HTML error body, got blank response")
+	if strings.Contains(rec.Body.String(), "label, code, and itemId are required") {
+		t.Fatalf("raw Go validation error text leaked into the operator-facing response: %s", rec.Body.String())
+	}
+	if want := httpx.T("en", buttonsErrorKey); !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("add error body = %q, want the localized %s copy %q", rec.Body.String(), buttonsErrorKey, want)
 	}
 
 	// A bare image filename is normalized into /public/images/.

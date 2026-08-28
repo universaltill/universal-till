@@ -14,6 +14,9 @@ import (
 // posting it to /api/buttons/add.
 var hxValsRe = regexp.MustCompile(`hx-vals='([^']*)'`)
 
+// hxOnRe extracts the hx-on attribute on the same search-result button.
+var hxOnRe = regexp.MustCompile(`hx-on="([^"]*)"`)
+
 // TestButtonsSearchHxValsSurvivesQuotedNames guards the add-as-button flow
 // for items whose name (or barcode/image path) contains a double quote:
 // the template interpolates the raw name into a JSON literal inside an
@@ -100,5 +103,43 @@ func TestButtonsSearchHxValsFallsBackToSKUForBarcodeLessItem(t *testing.T) {
 	}
 	if !strings.Contains(addRec.Body.String(), "Loose Screw") {
 		t.Fatalf("admin grid response missing added SKU-only tile: %s", addRec.Body.String())
+	}
+}
+
+// TestButtonsSearchResultHidesDropdownOnlyOnSuccess (ut-docs#1220) pins the
+// client half of the fix, which no Go test otherwise reaches. The reported
+// symptom was not the 400 itself but that the 400 looked like a success:
+// the search-result button's hx-on hid the dropdown on htmx:afterRequest
+// unconditionally, so a rejected add closed the dropdown, showed nothing,
+// and read as a dead tap. The hide must now be gated on
+// event.detail.successful (htmx sets it on the afterRequest detail — false
+// for a 4xx/5xx, undefined on a transport failure, both falsy), so on a
+// failure the dropdown stays open next to the error message.
+func TestButtonsSearchResultHidesDropdownOnlyOnSuccess(t *testing.T) {
+	mux, d := newButtonsMux(t)
+
+	if _, err := d.Db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm-hide','HIDE-1','Hide Probe', 5, 1)`); err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+
+	rec := postForm(mux, "/api/buttons/search", url.Values{"q": {"Hide Probe"}}, nil)
+	if rec.Code != 200 {
+		t.Fatalf("search = %d (%s)", rec.Code, rec.Body.String())
+	}
+	m := hxOnRe.FindStringSubmatch(rec.Body.String())
+	if m == nil {
+		t.Fatalf("no hx-on attribute on the search result: %s", rec.Body.String())
+	}
+	handler := html.UnescapeString(m[1])
+	gate := strings.Index(handler, "event.detail.successful")
+	if gate == -1 {
+		t.Fatalf("hx-on does not gate on event.detail.successful: %q", handler)
+	}
+	hide := strings.Index(handler, "display='none'")
+	if hide == -1 {
+		t.Fatalf("hx-on no longer hides the search dropdown at all: %q", handler)
+	}
+	if hide < gate {
+		t.Fatalf("hx-on hides the dropdown before checking event.detail.successful — a failed add would close it silently again: %q", handler)
 	}
 }

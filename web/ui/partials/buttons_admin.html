@@ -115,12 +115,32 @@ document.body.addEventListener('htmx:afterRequest', function(evt) {
 // failed add (e.g. ut-docs#1220's since-fixed empty-code 400) needs its
 // own listener -- same "swap the server's localized fragment into a
 // dedicated error element" pattern as shifts.html's #shift-result.
-document.body.addEventListener('htmx:responseError', function(evt) {
-  var elt = evt.detail && evt.detail.elt;
-  if (!elt || !elt.classList || !elt.classList.contains('result')) return;
-  var err = document.getElementById('buttons-add-error');
-  if (err) err.innerHTML = (evt.detail.xhr && evt.detail.xhr.responseText) || '';
-});
+(function () {
+  // A transport failure (the back-office tablet dropping off the shop LAN
+  // mid-tap) never reaches htmx:responseError: htmx fires htmx:sendError
+  // instead, and there is no response body to show. Without this the tap
+  // is a dead tap all over again -- afterRequest's `successful` is
+  // undefined on that path, so the dropdown correctly stays open, but
+  // nothing says why the tile never appeared. Reuse the same key the
+  // server sends on a 4xx/5xx rather than adding a second one.
+  var T = { serverError: "{{ T "designer.error.server" }}" };
+
+  function target(evt) {
+    var elt = evt.detail && evt.detail.elt;
+    if (!elt || !elt.classList || !elt.classList.contains('result')) return null;
+    return document.getElementById('buttons-add-error');
+  }
+
+  document.body.addEventListener('htmx:responseError', function(evt) {
+    var err = target(evt);
+    if (err) err.innerHTML = (evt.detail.xhr && evt.detail.xhr.responseText) || '';
+  });
+
+  document.body.addEventListener('htmx:sendError', function(evt) {
+    var err = target(evt);
+    if (err) err.textContent = T.serverError;
+  });
+})();
 </script>
 {{ end }}
 
