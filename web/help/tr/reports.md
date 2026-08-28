@@ -109,6 +109,14 @@ iade veya depozito iadesi (Pfandrückgabe) çıkışının gerektirdiği aynı o
 çünkü risk aynıdır (kasadan onaysız nakit çıkışı). Nakit eklemek (pozitif
 bir tutar, örn. bozukluk takviyesi) buna gerek duymaz.
 
+Resmi kayıt modundaki bir Alman mağazasında, nakdi azaltan bir düzeltme —
+ve bir Pfandrückgabe çıkışı — bir satışın veya iadenin geçtiği aynı TSE
+denetiminden geçer; bu yüzden kurulu bir TSE yokken veya TSE arızalıyken
+reddedilir. Bu mesajın ne anlama geldiğini ve mağaza sahibinin nasıl geçici
+bir geçersiz kılma verebileceğini **Satış** → "Almanya'daki mağazalar: TSE
+ve gerçek satışlar" bölümünde bulabilirsiniz. Nakit eklemek bundan hiçbir
+zaman etkilenmez.
+
 Depozito iadesi (Pfandrückgabe) çıkışı **bu cihazın kendi kasasının** açık
 vardiyasına kaydedilir — aynı anda başka bir kasanın vardiyası açık olsa
 bile asla diğer çekmeceye düşmez. Birden fazla kasası olan bir mağazada
