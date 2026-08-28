@@ -34,6 +34,7 @@ import (
 	"net"
 	"net/http"
 	"os"
+	"path/filepath"
 	"sync"
 	"time"
 
@@ -113,6 +114,33 @@ func Start(dataDir string) (string, error) {
 
 	if err := os.Setenv("UT_DATA_DIR", dataDir); err != nil {
 		return "", fmt.Errorf("mobile: set UT_DATA_DIR: %w", err)
+	}
+	// ut-docs#1239 (real device, 2026-08-28): an unrooted Android app has
+	// no writable default temp directory — TMPDIR is unset and Go's
+	// os.TempDir() fallback (/data/local/tmp) is not writable by an app
+	// uid — so the Go-side os.CreateTemp callers (CSV/catalogue upload
+	// staging, .bkp import, self-update) all die with an I/O error. Give
+	// the process a temp dir inside its own sandbox. SQLite is NOT what
+	// this protects: its temp-table needs are closed at the source by
+	// temp_store=MEMORY in internal/db, and modernc's libc snapshots the
+	// environment on first use, so a TMPDIR exported here may never reach
+	// it anyway (independent review, 2026-08-28).
+	//
+	// A TMPDIR pointing at a directory that no longer exists counts as
+	// unset — both for a host that rotated its dirs and for this very
+	// export gone stale after a Stop/Start against a new dataDir (the
+	// first draft's ==""-only guard left that stale path in place, and on
+	// a TMPDIR-less machine it also poisoned os.TempDir() for the whole
+	// process — every later os.CreateTemp/testing.TempDir failed with
+	// ENOENT; same review).
+	if cur := os.Getenv("TMPDIR"); cur == "" || !isDir(cur) {
+		tmpDir := filepath.Join(dataDir, "tmp")
+		if err := os.MkdirAll(tmpDir, 0o700); err != nil {
+			return "", fmt.Errorf("mobile: create temp dir: %w", err)
+		}
+		if err := os.Setenv("TMPDIR", tmpDir); err != nil {
+			return "", fmt.Errorf("mobile: set TMPDIR: %w", err)
+		}
 	}
 	if err := os.Setenv("UT_LISTEN_ADDR", addr); err != nil {
 		return "", fmt.Errorf("mobile: set UT_LISTEN_ADDR: %w", err)
@@ -254,4 +282,11 @@ func waitUntilReady(addr string, timeout time.Duration, inst *instance) error {
 		time.Sleep(100 * time.Millisecond)
 	}
 	return fmt.Errorf("mobile: server did not become ready within %s", timeout)
+}
+
+// isDir reports whether path exists and is a directory — the TMPDIR
+// validity check Start uses to treat a stale export as unset.
+func isDir(path string) bool {
+	st, err := os.Stat(path)
+	return err == nil && st.IsDir()
 }
