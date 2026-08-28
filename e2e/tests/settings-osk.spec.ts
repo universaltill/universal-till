@@ -134,6 +134,57 @@ test('the hold-sale dialog has its own OSK toggle for the label field', async ({
   assertClean();
 });
 
+// ut-docs#1219: keys/toggle activated on `click`, but the kiosk's real
+// browser (WebKitGTK, Wayland/labwc, raw touch) never synthesizes a click
+// after the pointerdown these deliberately preventDefault() — so every key
+// and the toggle were dead under touch on the actual device, even though
+// mouse-driven e2e (below and elsewhere in this file) never caught it,
+// because desktop Chromium/WebKit both still fire click there regardless.
+//
+// HONESTY NOTE, same pattern as tables-touch-drag-1170.spec.ts: this
+// dispatches a synthetic pointerdown+pointerup pair via Playwright's
+// dispatchEvent WITHOUT the .click()/.tap() helpers that follow with a
+// synthesized `click` — reproducing the exact WebKitGTK event sequence
+// (pointerdown -> pointerup, no click) rather than proving the fix against
+// an emulated-touch Chromium/WebKit that would fire click anyway and mask
+// a regression back to the old click-bound code.
+test('OSK keys activate on pointerup alone, with no click event (ut-docs#1219)', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  await setOskMode(page, 'on');
+
+  await page.goto('/');
+  const field = page.getByRole('textbox').first();
+  await field.click(); // opening a field stays click-bound and already works
+  await expect(page.locator('#osk')).toBeVisible();
+
+  const key = page.locator('#osk button[data-k="1"]');
+  await key.dispatchEvent('pointerdown', { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0 });
+  await key.dispatchEvent('pointerup', { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0 });
+  await expect(field).toHaveValue('1');
+
+  assertClean();
+});
+
+test('the scan-row toggle activates on pointerup alone, with no click event (ut-docs#1219)', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  await setOskMode(page, 'on');
+
+  await page.goto('/');
+  const toggle = page.locator('.scan-row [data-osk-toggle]');
+  await expect(toggle).toBeVisible();
+
+  await toggle.dispatchEvent('pointerdown', { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0 });
+  await toggle.dispatchEvent('pointerup', { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0 });
+  await expect(page.locator('#osk')).toBeVisible();
+  await expect(page.locator('input[name=code]')).toBeFocused();
+
+  await toggle.dispatchEvent('pointerdown', { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0 });
+  await toggle.dispatchEvent('pointerup', { pointerId: 1, pointerType: 'touch', isPrimary: true, button: 0 });
+  await expect(page.locator('#osk')).toBeHidden();
+
+  assertClean();
+});
+
 // With the OSK disabled in settings, the toggle must not appear at all.
 test('OSK mode off hides the scan-row toggle', async ({ page }) => {
   const assertClean = watchConsole(page);
