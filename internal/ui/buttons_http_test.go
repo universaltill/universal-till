@@ -112,6 +112,44 @@ func TestButtonsHTTPAdd_ErrorPaths(t *testing.T) {
 	}
 }
 
+// TestButtonsHTTPAdd_StoreValidationErrorRendersNonEmptyHTMLBody
+// (ut-docs#1220): a bare http.Error(w, err.Error(), 400) here used to leave
+// the response body as a raw Go error string with Content-Type text/plain
+// -- and, worse, buttons_admin.html's search-result button unconditionally
+// hid the search dropdown on htmx:afterRequest (success or not) with
+// nothing else listening for the failure, so the 400 was completely
+// invisible to the operator: tap a SKU-only result, dropdown closes, no
+// tile appears, no error shown anywhere. This pins the mechanically
+// checkable half of the fix: the failure response must carry a non-empty,
+// non-raw-error HTML body a page-level htmx:responseError listener can
+// swap into view (see buttons_admin.html's own listener + #buttons-add-error
+// for the client half).
+func TestButtonsHTTPAdd_StoreValidationErrorRendersNonEmptyHTMLBody(t *testing.T) {
+	h, _ := newButtonsHTTP(t, "buttons_admin.html")
+
+	// Missing code -> ButtonStore.Add's "label, code, and itemId are
+	// required" validation error.
+	form := url.Values{"label": {"X"}, "itemId": {"i1"}}
+	req := httptest.NewRequest("POST", "/api/buttons/add", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	h.Add(rec, req)
+
+	if rec.Code != 400 {
+		t.Fatalf("Add with missing code = %d, want 400", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.TrimSpace(body) == "" {
+		t.Fatalf("expected a non-empty HTML error body, got blank response")
+	}
+	if strings.Contains(body, "label, code, and itemId are required") {
+		t.Fatalf("raw Go validation error text leaked into the operator-facing response: %s", body)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("Content-Type = %q, want text/html (so the client's innerHTML swap renders it as markup)", ct)
+	}
+}
+
 func TestButtonsHTTPRemove_DeletesAndRerenders(t *testing.T) {
 	h, store := newButtonsHTTP(t, "buttons_admin.html")
 	if err := store.Add(Button{Label: "Coffee", Code: "C1", ItemID: "i1"}); err != nil {

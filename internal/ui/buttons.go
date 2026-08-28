@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"hash/fnv"
+	"html"
 	"html/template"
 	"net/http"
 	"path/filepath"
@@ -14,11 +15,22 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 	pos "github.com/universaltill/universal-till/internal/pos"
 	uiassets "github.com/universaltill/universal-till/web"
 )
+
+// designerErrorServerKey mirrors internal/pages/buttons_api.go's
+// buttonsErrorKey ("designer.error.server"). internal/pages/common imports
+// internal/ui (common.Deps.BtnStore is a *ButtonStore), so internal/ui
+// importing back into internal/pages/common (where
+// common.LogAndLocalizedError lives) would be an import cycle -- this key
+// is duplicated here rather than shared. Keep both literals in sync if the
+// key ever changes; both are covered by guard-i18n.sh either way since it
+// scans web/locales, not these Go constants.
+const designerErrorServerKey = "designer.error.server"
 
 // Button represents a shortcut button backed by the shortcut_buttons table.
 type Button struct {
@@ -225,6 +237,7 @@ type SearchResult struct {
 	ItemID  string
 	Name    string
 	Barcode string
+	SKU     string
 	Image   string
 }
 
@@ -234,17 +247,30 @@ type SearchResult struct {
 // double quote or backslash survives the HTML-attribute round trip —
 // interpolating the raw fields into a JSON literal inside the template
 // produced invalid JSON for any quoted name, silently breaking add.
+//
+// "code" prefers Barcode, falling back to SKU when Barcode is empty
+// (ut-docs#1220): a SKU-only item — loose produce, services, anything with
+// no barcode row — otherwise posts code="", which ButtonStore.Add rejects
+// as a 400, silently breaking "add as button" for exactly the items an
+// operator is most likely to search up by SKU. The button-code resolution
+// chain (PriceResolverAdapter) already accepts either a barcode or a SKU as
+// "code", so this fallback changes nothing about how a code resolves —
+// only which identifier gets sent when both exist for the same item.
 func (r SearchResult) AddVals() string {
+	code := r.Barcode
+	if code == "" {
+		code = r.SKU
+	}
 	b, _ := json.Marshal(map[string]string{
 		"label":    r.Name,
-		"code":     r.Barcode,
+		"code":     code,
 		"itemId":   r.ItemID,
 		"imageUrl": r.Image,
 	})
 	return string(b)
 }
 
-// SearchItems finds items (and primary barcodes) to add as shortcuts.
+// SearchItems finds items (and primary barcodes/SKUs) to add as shortcuts.
 func (s *ButtonStore) SearchItems(ctx context.Context, q string, offset, limit int) ([]SearchResult, error) {
 	repoResults, err := s.posRepo.SearchItemsForShortcuts(ctx, q, offset, limit)
 	if err != nil {
@@ -256,6 +282,7 @@ func (s *ButtonStore) SearchItems(ctx context.Context, q string, offset, limit i
 			ItemID:  r.ItemID,
 			Name:    r.Name,
 			Barcode: r.Barcode,
+			SKU:     r.SKU,
 			Image:   r.Image,
 		})
 	}
@@ -406,7 +433,20 @@ func (h *ButtonsHTTP) Add(w http.ResponseWriter, r *http.Request) {
 		ImageURL: img,
 	})
 	if err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		// ut-docs#1220: a raw http.Error(w, err.Error(), 400) here was
+		// invisible to the operator -- buttons_admin.html's search-result
+		// button hides the search dropdown on htmx:afterRequest regardless
+		// of success (fixed alongside this), and htmx never swaps a
+		// non-2xx response into hx-target by default, so the failure had
+		// nowhere to go. Render the same "localized HTML fragment +
+		// htmx:responseError listener" pattern shifts.html/
+		// plugin_settings.html already use, so the page's own script can
+		// swap it into a dedicated error element instead.
+		logging.L().Infof("[buttons] add: %v", err)
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`<div class="error">` + html.EscapeString(httpx.T(locale, designerErrorServerKey)) + `</div>`))
 		return
 	}
 	// Re-render admin grid so htmx swaps only the grid in designer

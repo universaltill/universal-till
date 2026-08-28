@@ -55,3 +55,33 @@ func TestSearchItemsForShortcuts_PaginationAndOrder(t *testing.T) {
 		}
 	}
 }
+
+// TestSearchItemsForShortcuts_SKUOnlyItemCarriesSKU (ut-docs#1220): an item
+// with no barcode row (loose produce, services) is still findable — its SKU
+// matches the WHERE clause's "i.sku LIKE ?" arm — but the SELECT never
+// projected i.sku, so a barcode-less result came back with Barcode == "" and
+// no other identifier the Designer's add-as-button flow could fall back to,
+// silently breaking add for exactly this kind of item.
+func TestSearchItemsForShortcuts_SKUOnlyItemCarriesSKU(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "item-sku-only", SKU: "SKU-ONLY-1", Name: "Loose Screw", BasePrice: 5, IsActive: true})
+
+	repo := NewPOSRepo(db)
+	ctx := context.Background()
+
+	res, err := repo.SearchItemsForShortcuts(ctx, "SKU-ONLY-1", 0, 10)
+	if err != nil {
+		t.Fatalf("search shortcuts sku-only: %v", err)
+	}
+	if len(res) != 1 {
+		t.Fatalf("expected 1 result, got %d: %+v", len(res), res)
+	}
+	if res[0].Barcode != "" {
+		t.Fatalf("expected no barcode for a barcode-less item, got %q", res[0].Barcode)
+	}
+	if res[0].SKU != "SKU-ONLY-1" {
+		t.Fatalf("SKU = %q, want %q (SKU must be projected even when Barcode is empty)", res[0].SKU, "SKU-ONLY-1")
+	}
+}
