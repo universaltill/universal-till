@@ -827,7 +827,27 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				fmt.Sprintf(htmlEscape(T("import.warning.currency_unconfirmed")), htmlEscape(httpx.ActiveCurrency().Code)))
 		}
 		if commit {
-			fmt.Fprintf(&b, `<p><strong>✓ %s: %d — %s: %d — %s: %d</strong>`,
+			// ut-docs#1171: the product owner, importing a real 217-item .bkp
+			// on the Pi till, couldn't tell the commit had actually happened
+			// — the result looked like just another preview. A distinct
+			// block (vs. the preview's plain <p>/amber warning) plus a big
+			// "Imported N ✓" headline and a View catalog button make the
+			// post-commit state unmistakable at a glance.
+			// ut-docs#1171 review: an unconditional green .notice-block-
+			// success would read as unambiguous success even when rows hit
+			// a real, non-duplicate failure (item/category/tax-code
+			// creation errors, tallied in `failed`, as opposed to an
+			// expected "already in catalog" skip) — false confidence in
+			// exactly the state this card exists to make trustworthy. Stay
+			// amber (the same treatment a partial preview issue already
+			// gets) whenever any row actually failed.
+			successClass := "notice-block-success"
+			if failed > 0 {
+				successClass = "notice-block-warn"
+			}
+			fmt.Fprintf(&b, `<div class="%s">`, successClass)
+			fmt.Fprintf(&b, `<p><strong>%s</strong></p>`, fmt.Sprintf(htmlEscape(T("import.commit_success")), created))
+			fmt.Fprintf(&b, `<p>%s: %d — %s: %d — %s: %d`,
 				T("import.created"), created, T("import.warned"), warned,
 				T("import.skipped"), len(rows)-created)
 			if overridesFailed {
@@ -838,6 +858,8 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					T("import.status.tax_overrides_plugin_disabled"))
 			}
 			b.WriteString(`</p>`)
+			fmt.Fprintf(&b, `<a class="btn primary" href="/catalog">%s</a>`, htmlEscape(T("import.view_catalog")))
+			b.WriteString(`</div>`)
 		} else {
 			fmt.Fprintf(&b, `<p><strong>%s: %s · %d %s, %d %s</strong></p>`,
 				T("import.detected"), res.Format, importable, T("import.ready"), len(rows)-importable, T("import.with_issues"))
@@ -934,6 +956,21 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(&b, `<tr><td colspan="5" class="muted">… %d more</td></tr>`, len(plainRows)-plainShown)
 		}
 		b.WriteString(`</tbody></table>`)
+		if !commit {
+			// ut-docs#1171: a long preview (the product owner's real
+			// 217-item .bkp ran to 209+ rows plus this "… N more"
+			// truncation) otherwise strands the operator at the bottom
+			// with the only Import control back up at the top of the
+			// page. Repeat it here, touch-target sized. type="submit"
+			// form="import-form": this button lives outside <form
+			// id="import-form"> (rendered into the swapped #import-result
+			// div), but form-associating it makes clicking it a genuine
+			// submit of that form — same htmx hx-post/multipart encoding
+			// the top Import button already triggers, no hx-include/
+			// hx-encoding duplication needed.
+			fmt.Fprintf(&b, `<div style="margin-block-start:.8rem"><button class="btn primary" type="submit" form="import-form" onclick="document.getElementById('import-commit').value='1'">%s</button></div>`,
+				htmlEscape(T("import.import")))
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(b.String()))
 	})
