@@ -1,17 +1,22 @@
 package pages
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"html"
+	"log"
 	"net/http"
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fiscal"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -309,6 +314,65 @@ type CashAdjustmentResponse struct {
 	Message      string `json:"message,omitempty"`
 }
 
+// enforceCashAdjustmentFiscalGate applies ADR-0048's German TSE hard gate to
+// a cash-leaving-the-till completion (RecordCashAdjustment/PfandRueckgabe) —
+// the same gate #731 applied to the refund/return paths (ut-docs#998):
+// `RecordCashAdjustment` takes cash physically out of the drawer, the same
+// aufzeichnungspflichtig event under KassenSichV a refund is, and had never
+// been swept into the gate because it doesn't call pos.CompleteSale. On a
+// block, writes the refusal response itself and returns ok=false so the
+// caller can just `return`. Localized copy, not raw sentinel text — reuses
+// CreateReturn's own fix for the same defect class (ut-docs#731 review
+// finding B1: a settings-store read failure inside EvaluateGate is an
+// internal fault, not a fiscal posture, so it gets the honest 500/server
+// copy, not "no TSE configured").
+func enforceCashAdjustmentFiscalGate(dp *common.Deps, w http.ResponseWriter, r *http.Request) (fiscal.Gate, bool) {
+	gate, err := enforceFiscalGate(r.Context(), dp)
+	if err != nil {
+		locale := httpx.ResolveLocale(w, r)
+		var fiscalNC *fiscalNeverConfiguredError
+		var fiscalTF *fiscalTSEFailingError
+		switch {
+		case errors.As(err, &fiscalTF):
+			log.Printf("cash adjustment rejected: %v (ADR-0048 fiscal hard gate)", err)
+			respondAdjustmentError(w, r, http.StatusConflict, httpx.T(locale, "refund.error.fiscal_tse_failing"))
+		case errors.As(err, &fiscalNC):
+			log.Printf("cash adjustment rejected: %v (ADR-0048 fiscal hard gate)", err)
+			respondAdjustmentError(w, r, http.StatusConflict, httpx.T(locale, "refund.error.fiscal_never_configured"))
+		default:
+			log.Printf("cash adjustment: fiscal gate evaluation failed: %v", err)
+			respondAdjustmentError(w, r, http.StatusInternalServerError, httpx.T(locale, "refund.error.server"))
+		}
+		return gate, false
+	}
+	return gate, true
+}
+
+// auditCashAdjustmentOverride writes the same per-completion
+// unsigned_override audit marker completeTender/CreateReturn write for a
+// sale/return taken during an active TSE-override window (ADR-0048
+// Decision 3) — the journal must show exactly which money-moving
+// completions, payouts included, were taken unsigned. Best-effort after the
+// fact: the adjustment is already committed, so a failed marker write is
+// logged, never unwinds it. entity_type "shift_adjustment" (not "shift",
+// which pos.RecordCashAdjustment's own cash_adjustment audit row already
+// uses for the shift as a whole) keyed on the specific adjustmentID, so
+// this marker identifies the one payout taken under override, not the
+// shift.
+func auditCashAdjustmentOverride(ctx context.Context, dp *common.Deps, gate fiscal.Gate, actorID, adjustmentID string) {
+	if gate.Decision != fiscal.AllowedWithOverride {
+		return
+	}
+	repo := data.NewPOSRepo(dp.Db)
+	if auditErr := repo.InsertAudit(ctx, nil, actorID, "shift_adjustment", adjustmentID, "unsigned_override", map[string]any{
+		"override_actor":  gate.OverrideActor,
+		"override_reason": gate.OverrideReason,
+		"override_until":  gate.OverrideUntil.UTC().Format(time.RFC3339),
+	}, time.Now().UTC().Format(time.RFC3339), ""); auditErr != nil {
+		log.Printf("fiscal gate: unsigned_override audit marker for cash adjustment %s failed: %v", adjustmentID, auditErr)
+	}
+}
+
 // RecordCashAdjustment handles POST /api/shifts/adjustment
 func RecordCashAdjustment(dp *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
@@ -420,6 +484,22 @@ func RecordCashAdjustment(dp *common.Deps) http.HandlerFunc {
 			}
 		}
 
+		// German TSE hard gate (ADR-0048, ut-docs#998): same scope as the
+		// manager-approval gate just above — cash actually LEAVING the till
+		// (a negative amount), not every adjustment. A positive adjustment
+		// (float top-up) isn't the payout this gate exists for. Checked
+		// after the manager PIN (an unapproved payout should fail on
+		// authorization first, not leak fiscal state to an unapproved
+		// request) and before the money-moving call itself.
+		var gate fiscal.Gate
+		if req.Amount < 0 {
+			var ok bool
+			gate, ok = enforceCashAdjustmentFiscalGate(dp, w, r)
+			if !ok {
+				return
+			}
+		}
+
 		// Record adjustment
 		adjustmentID, err := pos.RecordCashAdjustment(ctx, dp.Db, pos.CashAdjustmentInput{
 			ShiftID: req.ShiftID,
@@ -432,6 +512,7 @@ func RecordCashAdjustment(dp *common.Deps) http.HandlerFunc {
 			respondAdjustmentError(w, r, http.StatusInternalServerError, err.Error())
 			return
 		}
+		auditCashAdjustmentOverride(ctx, dp, gate, actorID, adjustmentID)
 
 		respondAdjustmentSuccess(w, r, CashAdjustmentResponse{AdjustmentID: adjustmentID, Success: true})
 	}
@@ -533,6 +614,15 @@ func PfandRueckgabe(dp *common.Deps) http.HandlerFunc {
 			return
 		}
 
+		// German TSE hard gate (ADR-0048, ut-docs#998) — a PfandRueckgabe is
+		// ALWAYS cash leaving the till (validated `req.Amount > 0` above,
+		// then negated below), so unlike RecordCashAdjustment's own gate
+		// this one applies unconditionally, not on a sign check.
+		gate, ok := enforceCashAdjustmentFiscalGate(dp, w, r)
+		if !ok {
+			return
+		}
+
 		adjustmentID, err := pos.RecordCashAdjustment(ctx, dp.Db, pos.CashAdjustmentInput{
 			ShiftID: current.ID,
 			Type:    "payout",
@@ -544,6 +634,7 @@ func PfandRueckgabe(dp *common.Deps) http.HandlerFunc {
 			respondAdjustmentError(w, r, http.StatusInternalServerError, err.Error())
 			return
 		}
+		auditCashAdjustmentOverride(ctx, dp, gate, actorID, adjustmentID)
 
 		respondAdjustmentSuccess(w, r, CashAdjustmentResponse{AdjustmentID: adjustmentID, Success: true})
 	}
