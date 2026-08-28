@@ -294,6 +294,21 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 	// can (and did, ut-docs#1035) silently drift from it: a flat per-line
 	// sum here never reduced for in.SaleDiscount, while VATBandsForSale
 	// correctly re-derives Tax per band for inclusive-priced sales.
+	//
+	// Known historical gap, deliberately not migrated (ut-docs#1114): a
+	// sale row persisted by a PRE-#1035 build still carries the old flat
+	// (undiscounted) tax_total for this one shape, so
+	// sum(VATBandsForSale(...).Tax) for that row no longer equals its
+	// stored tax_total once re-read by this fixed build — eod_tax_bands.go
+	// documents the same gap at the identity it breaks. Not fixed by a
+	// background UPDATE: for a German shop, a TSE-signed sale row is meant
+	// to stay immutable together with its signed record (GoBD), so
+	// silently rewriting a persisted tax_total after the fact is itself in
+	// tension with that — arguably worse than the documented gap. Current
+	// product-owner call (2026-08-27, no real shop live yet): leave
+	// historical rows as-is unless concrete evidence surfaces that a real
+	// filed VAT return was affected. Re-read ut-docs#1114 before adding a
+	// reconciliation pass here.
 	vatLines := make([]VATLine, 0, len(in.Lines))
 	for _, l := range in.Lines {
 		if err := validateLine(l); err != nil {

@@ -25,6 +25,16 @@ import (
 // GUTSCHEINE section supplies exactly that reconciling delta. This is the
 // SAME shared pos.VATBandsForSale the invoice's VAT table uses, so the
 // day-close can never disagree with the invoices issued for its sales.
+//
+// sum(band.Tax) == TaxNet holds for every sale persisted by a build
+// carrying ut-docs#1035's fix onward. A sale row written by an OLDER build
+// can still violate it for exactly one shape (inclusive pricing + a
+// whole-sale discount) — pos.computeSaleTotals's own doc comment carries
+// the full explanation. ut-docs#1114 is the product-owner decision on
+// what to do about those historical rows: for now, a documented known-gap
+// (no evidence any wrong figure ever reached a filed VAT return), not a
+// migration — see that ticket before writing one. Not this function's bug
+// to fix; noted here because this is where the identity it breaks lives.
 
 // computeEODTaxBands aggregates per-sale VAT bands over the SAME
 // local-calendar-day window dateRangeSummary uses (ut-docs#869), one
