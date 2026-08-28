@@ -240,6 +240,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if missingSignerErr != nil {
 			logging.L().Errorf("missing-fiscal-signer check: %v", missingSignerErr)
 		}
+		// Missing tax-rate switcher (ADR-0068): a mandated country (today:
+		// DE) with no active, working tax.rate.ask answerer gets a
+		// persistent Settings banner — detection-and-visibility only,
+		// never touches tax_hook.go's actual rate-switching behaviour.
+		// Best-effort like missingSigner above: a read error just renders
+		// with the banner absent.
+		missingSwitcher, missingSwitcherErr := missingTaxRateSwitcher(r.Context(), d, d.CurrentState().Country)
+		if missingSwitcherErr != nil {
+			logging.L().Errorf("missing-tax-rate-switcher check: %v", missingSwitcherErr)
+		}
 		exportEntries, exportEntriesErr := data.NewPluginRepo(d.Db).ListExportEntries(r.Context())
 		if exportEntriesErr != nil {
 			// Non-fatal: the settings page still renders without the
@@ -372,40 +382,41 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			barcodeSymbologies = append(barcodeSymbologies, symbologyRow{ID: sym.ID, NameKey: sym.NameKey, Enabled: enabledSymbologySet[id]})
 		}
 		data := map[string]any{
-			"title":                 "Settings",
-			"theme":                 st.Theme,
-			"themes":                availableThemes(r.Context(), d),
-			"settings":              st,
-			"settingsMap":           all,
-			"menuItems":             d.MenuSnapshot(),
-			"uiScale":               strconv.FormatFloat(scale, 'f', -1, 64),
-			"isManager":             canPerform(d, r, "settings"),
-			"printer":               printerConfig(r.Context(), d),
-			"backups":               listBackupsForUI(d),
-			"payMethods":            payMethods,
-			"payDefault":            payDefault,
-			"payFees":               feeRows,
-			"exportEntries":         exportEntries,
-			"autoUpdateEnabled":     autoUpdateEnabled == "true",
-			"autoUpdateTime":        autoUpdateTime,
-			"TillName":              tillNameOrDefault(r.Context(), d, locale),
-			"TillRegisterID":        tillRegisterID,
-			"registers":             registers,
-			"IsPrimaryTill":         isPrimaryTill,
-			"QuarantineCount":       quarantineCount,
-			"ShowQuarantineSection": showQuarantineSection,
-			"reportRetentionMode":   reportRetentionMode,
-			"reportArchiveCoverage": reportArchiveCoverage,
-			"shopType":              shopType,
-			"shopTypes":             setupShopTypes,
-			"restorePromptDeferred": restorePromptStatus == common.RestorePromptStatusDeferred,
-			"pendingBasePlugins":    pendingBasePluginViews(pendingBasePlugins),
-			"tseProvisioning":       tseProvisioningViewFor(tseState),
-			"missingFiscalSigner":   missingSigner,
-			"resetBatches":          resetBatches,
-			"sampleCount":           sampleCount,
-			"windowMode":            st.WindowMode,
-			"launchOnStartup":       st.LaunchOnStartup,
+			"title":                  "Settings",
+			"theme":                  st.Theme,
+			"themes":                 availableThemes(r.Context(), d),
+			"settings":               st,
+			"settingsMap":            all,
+			"menuItems":              d.MenuSnapshot(),
+			"uiScale":                strconv.FormatFloat(scale, 'f', -1, 64),
+			"isManager":              canPerform(d, r, "settings"),
+			"printer":                printerConfig(r.Context(), d),
+			"backups":                listBackupsForUI(d),
+			"payMethods":             payMethods,
+			"payDefault":             payDefault,
+			"payFees":                feeRows,
+			"exportEntries":          exportEntries,
+			"autoUpdateEnabled":      autoUpdateEnabled == "true",
+			"autoUpdateTime":         autoUpdateTime,
+			"TillName":               tillNameOrDefault(r.Context(), d, locale),
+			"TillRegisterID":         tillRegisterID,
+			"registers":              registers,
+			"IsPrimaryTill":          isPrimaryTill,
+			"QuarantineCount":        quarantineCount,
+			"ShowQuarantineSection":  showQuarantineSection,
+			"reportRetentionMode":    reportRetentionMode,
+			"reportArchiveCoverage":  reportArchiveCoverage,
+			"shopType":               shopType,
+			"shopTypes":              setupShopTypes,
+			"restorePromptDeferred":  restorePromptStatus == common.RestorePromptStatusDeferred,
+			"pendingBasePlugins":     pendingBasePluginViews(pendingBasePlugins),
+			"tseProvisioning":        tseProvisioningViewFor(tseState),
+			"missingFiscalSigner":    missingSigner,
+			"missingTaxRateSwitcher": missingSwitcher,
+			"resetBatches":           resetBatches,
+			"sampleCount":            sampleCount,
+			"windowMode":             st.WindowMode,
+			"launchOnStartup":        st.LaunchOnStartup,
 			// shellAttached + piKioskAppliance (ADR-0064, ut-docs#1039;
 			// finding 8 of its review): which of the three window-control
 			// topologies this till is actually in, so the Display card can
