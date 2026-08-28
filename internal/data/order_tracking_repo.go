@@ -92,6 +92,51 @@ func (r *POSRepo) EnsureOrderTrackingToken(ctx context.Context, receiptNo string
 	return tok, nil
 }
 
+// LiveTrackedOrder is a TrackedOrder plus its tracking token — the row shape
+// the cloud relay push (ADR-0070, ut-docs#907) reports upstream. The token
+// rides along here (unlike TrackedOrder, which the anonymous page renders
+// AFTER the token already authenticated the request) because the cloud
+// stores it as the lookup key for its own read-through cache.
+type LiveTrackedOrder struct {
+	Token string
+	TrackedOrder
+}
+
+// ListLiveTrackedOrders returns every sale holding a tracking token whose
+// status view the visible callback still considers live. The liveness rule
+// (pos.OrderTrackingVisible — terminal statuses expire 2h after their last
+// write) reaches this method as a callback rather than a direct import,
+// exactly like ApplyOrderStatus's allowed callback and for the same reason:
+// internal/pos imports internal/data, so importing it back would be a cycle.
+// Ordering is deterministic (created_at, then receipt_no) so the caller's
+// content-hash push gate never sees phantom changes from row order.
+func (r *POSRepo) ListLiveTrackedOrders(ctx context.Context, visible func(TrackedOrder) bool) ([]LiveTrackedOrder, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT tracking_token, receipt_no, order_status, COALESCE(order_status_updated_at, ''), created_at
+FROM sales
+WHERE tracking_token IS NOT NULL AND tracking_token != ''
+ORDER BY created_at ASC, receipt_no ASC
+`)
+	if err != nil {
+		return nil, fmt.Errorf("list live tracked orders: %w", err)
+	}
+	defer rows.Close()
+	out := []LiveTrackedOrder{}
+	for rows.Next() {
+		var o LiveTrackedOrder
+		if err := rows.Scan(&o.Token, &o.ReceiptNo, &o.Status, &o.StatusUpdatedAt, &o.CreatedAt); err != nil {
+			return nil, fmt.Errorf("scan live tracked order: %w", err)
+		}
+		if visible(o.TrackedOrder) {
+			out = append(out, o)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list live tracked orders: %w", err)
+	}
+	return out, nil
+}
+
 // LookupOrderByTrackingToken resolves a token to its status-only order view.
 // Unknown, malformed and empty tokens all return found=false with NO error —
 // on an anonymous surface a guessed token must be indistinguishable from a
