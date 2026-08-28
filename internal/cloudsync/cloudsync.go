@@ -28,6 +28,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/pos"
 )
 
 var (
@@ -122,6 +123,13 @@ func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) erro
 	if v, _, _ := data.NewSettingsRepo(db).Get(ctx, "sync.primary_url"); strings.TrimSpace(v) == "" {
 		if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
 			logging.L().Warnf("cloudsync: snapshot push failed (will retry): %v", err)
+		}
+		// Order-tracking rows ride the same primary-only gate (ADR-0070):
+		// sales made on any till journal to the primary (ADR-0011 §2), so
+		// the primary's tracked-order set IS the shop's set — a replica
+		// pushing its mirror would only duplicate it.
+		if err := pushOrderTrackingIfChanged(ctx, cfg, db); err != nil {
+			logging.L().Warnf("cloudsync: order tracking push failed (will retry): %v", err)
 		}
 	}
 	for _, d := range dirs {
@@ -417,6 +425,50 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 	}
 	logging.L().Infof("cloudsync: catalog snapshot pushed (%d items)", len(rows))
 	return settings.Set(ctx, "cloudsync.snapshot_hash", hash)
+}
+
+// pushOrderTrackingIfChanged uploads the shop's currently-visible order
+// tracking rows (ADR-0070: token, receipt_no, status, status_updated_at —
+// exactly data.TrackedOrder's shape, nothing added) when they differ from
+// what the cloud already has, tracked via a content hash in settings like
+// pushSnapshotIfChanged. An empty orders ARRAY (never null/absent) is a
+// meaningful payload: the cloud replaces-on-push, so it's the delete signal
+// that clears aged-out tokens within one tick. The liveness rule is the LAN
+// page's own (pos.OrderTrackingVisible), applied via ListLiveTrackedOrders'
+// callback.
+func pushOrderTrackingIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) error {
+	eff := enroll.Effective(cfg)
+	m := eff.Marketplace
+
+	now := time.Now().UTC()
+	live, err := data.NewPOSRepo(db).ListLiveTrackedOrders(ctx, func(o data.TrackedOrder) bool {
+		return pos.OrderTrackingVisible(o.Status, o.StatusUpdatedAt, now)
+	})
+	if err != nil {
+		return err
+	}
+	orders := make([]map[string]any, 0, len(live))
+	for _, o := range live {
+		orders = append(orders, map[string]any{
+			"token":             o.Token,
+			"receipt_no":        o.ReceiptNo,
+			"status":            o.Status,
+			"status_updated_at": o.StatusUpdatedAt,
+		})
+	}
+	payload, _ := json.Marshal(map[string]any{"store_id": m.StoreID, "orders": orders})
+
+	sum := sha256.Sum256(payload)
+	hash := hex.EncodeToString(sum[:])
+	settings := data.NewSettingsRepo(db)
+	if prev, _, _ := settings.Get(ctx, "cloudsync.order_tracking_hash"); prev == hash {
+		return nil // unchanged since the last successful push
+	}
+	if _, err := post(ctx, cfg, "/v1/stores/order-tracking-snapshot", payload); err != nil {
+		return err
+	}
+	logging.L().Infof("cloudsync: order tracking snapshot pushed (%d orders)", len(orders))
+	return settings.Set(ctx, "cloudsync.order_tracking_hash", hash)
 }
 
 // postResult reports one directive outcome.
