@@ -159,3 +159,29 @@ func TestKioskUserSeeded(t *testing.T) {
 		t.Fatalf("unexpected kiosk user: role=%q active=%d, want role=cashier active=1", role, active)
 	}
 }
+
+// ut-docs#1239: migration 036 was the first to use CREATE TEMP TABLE, and
+// with SQLite's default temp_store a temp table is backed by a file in the
+// system temp directory. An unrooted Android app has no writable default
+// temp dir (TMPDIR unset, /tmp absent), so the very first real-device boot
+// died with SQLITE_IOERR_GETTEMPPATH (6410) inside migration 36 and the
+// till showed a bare white screen. temp_store=MEMORY keeps temp tables and
+// indices off the filesystem entirely, on every pooled connection, on every
+// platform — a desktop till gains a little speed, the Android till gains
+// the ability to boot. (mobile.Start additionally exports a writable TMPDIR
+// as a backstop for non-temp-table spills such as VACUUM.)
+func TestOpenTempStoreMemory(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "temp_store.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer d.Close()
+
+	var mode int
+	if err := d.QueryRow(`PRAGMA temp_store`).Scan(&mode); err != nil {
+		t.Fatalf("read temp_store: %v", err)
+	}
+	if mode != 2 { // 0=default, 1=file, 2=memory
+		t.Fatalf("temp_store = %d, want 2 (memory)", mode)
+	}
+}
