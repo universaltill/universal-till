@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { watchConsole, ensureOperator } from './helpers';
+import { watchConsole, deactivateAllTables, createTable } from './helpers';
 
 // GET /tables (internal/pages/tables_page.go) used to requireManager-gate
 // every route this spec drives with no UT_AUTH=off bypass, so the default
@@ -37,28 +37,9 @@ import { watchConsole, ensureOperator } from './helpers';
 // re-run against a reused server, see playwright.config.ts's
 // reuseExistingServer) left behind makes that true regardless of run order,
 // rather than relying on the two tests' labels happening to sort a
-// particular way.
-async function deactivateAllTables(page) {
-  await ensureOperator(page); // fresh Playwright context per test -> log in each time
-  await page.goto('/tables');
-  for (;;) {
-    const btn = page.locator('form[action$="/active"] button', { hasText: 'Deactivate' }).first();
-    if ((await btn.count()) === 0) break;
-    await Promise.all([page.waitForURL((u) => u.pathname === '/tables'), btn.click()]);
-  }
-}
-
-async function createTable(page, label: string) {
-  // Scoped to the bottom-of-page card: since ut-docs#1025 the tap-to-add
-  // dialog is a second form[action="/api/tables"], so the bare selector
-  // would be a strict-mode violation.
-  await page.locator('.users-form form[action="/api/tables"] input[name="label"]').fill(label);
-  await Promise.all([
-    page.waitForURL((u) => u.pathname === '/tables'),
-    page.locator('.users-form form[action="/api/tables"] button[type=submit]').click(),
-  ]);
-}
-
+// particular way. deactivateAllTables/createTable now live in helpers.ts
+// (ut-docs#1173 review finding: this exact pair was duplicated verbatim
+// across four spec files).
 async function addTable(page, label: string) {
   await deactivateAllTables(page);
   await createTable(page, label);

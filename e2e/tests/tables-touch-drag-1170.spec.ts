@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { watchConsole, ensureOperator } from './helpers';
+import { watchConsole, deactivateAllTables, createTable } from './helpers';
 
 // ut-docs#1170: the operator reported the floor-plan editor's table-drag
 // gesture doesn't work by touch at all ("in the table design ... cannot
@@ -24,28 +24,14 @@ import { watchConsole, ensureOperator } from './helpers';
 // out of scope here — this test only proves the app's own drag handling
 // still works when a touch pointer sequence actually reaches it.
 
-async function deactivateAllTables(page) {
-  await ensureOperator(page);
-  await page.goto('/tables');
-  for (;;) {
-    const btn = page.locator('form[action$="/active"] button', { hasText: 'Deactivate' }).first();
-    if ((await btn.count()) === 0) break;
-    await Promise.all([page.waitForURL((u) => u.pathname === '/tables'), btn.click()]);
-  }
-}
-
-async function createTableViaCard(page, label: string) {
-  await page.locator('.users-form form[action="/api/tables"] input[name="label"]').fill(label);
-  await Promise.all([
-    page.waitForURL((u) => u.pathname === '/tables'),
-    page.locator('.users-form form[action="/api/tables"] button[type=submit]').click(),
-  ]);
-}
+// deactivateAllTables/createTable now live in helpers.ts (ut-docs#1173
+// review finding: this exact pair was duplicated verbatim across four spec
+// files).
 
 test('dragging a table by touch moves and persists its position (ut-docs#1170)', async ({ page }) => {
   const assertClean = watchConsole(page);
   await deactivateAllTables(page);
-  await createTableViaCard(page, 'E2E Touch Drag 1170');
+  await createTable(page, 'E2E Touch Drag 1170');
 
   await page.locator('#tables-edit-toggle').click();
   const node = page.locator('.table-node', { hasText: 'E2E Touch Drag 1170' });
