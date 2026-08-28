@@ -102,13 +102,21 @@ func TestButtonsUIFragment_HxValsSurvivesQuotedCode(t *testing.T) {
 func TestButtonsAddValidatesPersistsAndNormalizesImage(t *testing.T) {
 	mux, d := newButtonsMux(t)
 
-	// Missing required fields -> 400 from the store's validation.
-	if rec := postForm(mux, "/api/buttons/add", url.Values{"label": {"No Code"}}, nil); rec.Code != http.StatusBadRequest {
+	// Missing required fields -> 400 from the store's validation, with a
+	// non-blank localized HTML body an htmx:responseError listener can
+	// show the operator (ut-docs#1220: a bare http.Error text body here
+	// used to leave the failure completely invisible on the Designer
+	// screen — the dropdown just closed with nothing else happening).
+	rec := postForm(mux, "/api/buttons/add", url.Values{"label": {"No Code"}}, nil)
+	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("add without code/itemId = %d, want 400", rec.Code)
+	}
+	if strings.TrimSpace(rec.Body.String()) == "" {
+		t.Fatalf("expected a non-empty HTML error body, got blank response")
 	}
 
 	// A bare image filename is normalized into /public/images/.
-	rec := postForm(mux, "/api/buttons/add", url.Values{
+	rec = postForm(mux, "/api/buttons/add", url.Values{
 		"label":    {"Apple"},
 		"code":     {"ABC"},
 		"itemId":   {"itm1"},

@@ -77,6 +77,7 @@
       display:none;
     "></div>
   </div>
+  <div id="buttons-add-error" class="muted" aria-live="polite"></div>
 
   {{ template "buttons_admin_grid" . }}
 </div>
@@ -109,6 +110,17 @@ document.body.addEventListener('htmx:afterRequest', function(evt) {
     if (box) box.style.display = 'block';
   }
 });
+
+// htmx never swaps a non-2xx response into hx-target by default, so a
+// failed add (e.g. ut-docs#1220's since-fixed empty-code 400) needs its
+// own listener -- same "swap the server's localized fragment into a
+// dedicated error element" pattern as shifts.html's #shift-result.
+document.body.addEventListener('htmx:responseError', function(evt) {
+  var elt = evt.detail && evt.detail.elt;
+  if (!elt || !elt.classList || !elt.classList.contains('result')) return;
+  var err = document.getElementById('buttons-add-error');
+  if (err) err.innerHTML = (evt.detail.xhr && evt.detail.xhr.responseText) || '';
+});
 </script>
 {{ end }}
 
@@ -121,7 +133,7 @@ document.body.addEventListener('htmx:afterRequest', function(evt) {
             hx-target="#buttons-grid-admin"
             hx-swap="outerHTML"
             hx-vals='{{ .AddVals }}'
-            hx-on="htmx:afterRequest: document.getElementById('search-results').style.display='none'">
+            hx-on="htmx:afterRequest: if(event.detail.successful){document.getElementById('search-results').style.display='none'; var e=document.getElementById('buttons-add-error'); if(e) e.innerHTML='';}">
       {{ if .Image }}<img class="thumb" src="{{ .Image }}" alt="{{ .Name }}" />{{ end }}
       <span class="text">
         <strong>{{ .Name }}</strong><br/>
