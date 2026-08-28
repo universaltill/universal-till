@@ -432,4 +432,78 @@ func TestSelfOrderExit_ExistingSessionCookieStillRequiresPIN(t *testing.T) {
 	if postRec.Code != http.StatusSeeOther || postRec.Header().Get("Location") != "/settings" {
 		t.Fatalf("PIN re-entry via the kiosk exit = %d → %q, want 303 → /settings", postRec.Code, postRec.Header().Get("Location"))
 	}
+
+	// And, once through, the session genuinely reaches the real till surface
+	// for a plain operator too — not role-gated at the route (individual
+	// mutating actions are, via canPerform/elevation; that's out of scope
+	// for this ticket, which is about reaching the page at all, not what a
+	// cashier can do once there).
+	settingsRec := httptest.NewRecorder()
+	settingsReq := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	var freshCookie *http.Cookie
+	for _, c := range postRec.Result().Cookies() {
+		if c.Name == auth.CookieName {
+			freshCookie = c
+		}
+	}
+	if freshCookie == nil {
+		t.Fatal("PIN re-entry via the kiosk exit did not set a fresh session cookie")
+	}
+	settingsReq.AddCookie(freshCookie)
+	h.ServeHTTP(settingsRec, settingsReq)
+	if settingsRec.Code != http.StatusOK {
+		t.Fatalf("GET /settings with the re-entered session = %d: %s", settingsRec.Code, settingsRec.Body.String())
+	}
+}
+
+// Regression guard for the convenience path this fix deliberately preserves
+// (review finding on ut-docs#1253): a plain register — NOT the self-order
+// kiosk — revisiting /login with a still-valid session must keep skipping
+// straight past the PIN form. Only next=="kiosk" gets the always-prompt
+// treatment; nothing else should.
+func TestLogin_ExistingSessionStillSkipsFormWhenNotKioskExit(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	svc := auth.NewService(d.DB)
+	cashierID, err := svc.Repo().CreateUser(t.Context(), "cash2", "Cashier Two", "cashier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashPIN("5678")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Repo().SetUserPIN(t.Context(), cashierID, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerIndex(mux, dp)
+	registerSettings(mux, dp)
+	registerSelfOrder(mux, dp)
+	registerSelfOrderShop(mux, dp)
+	registerAuth(mux, dp, svc)
+	h := auth.Middleware(mux, svc)
+
+	loginRec := httptest.NewRecorder()
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+		strings.NewReader(url.Values{"pin": {"5678"}}.Encode()))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(loginRec, loginReq)
+	var cookie *http.Cookie
+	for _, c := range loginRec.Result().Cookies() {
+		if c.Name == auth.CookieName {
+			cookie = c
+		}
+	}
+	if cookie == nil {
+		t.Fatal("setup: login did not set a session cookie")
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	req.AddCookie(cookie)
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
+		t.Fatalf("bare /login with an existing session = %d → %q, want 303 → / (unchanged convenience path)", rec.Code, rec.Header().Get("Location"))
+	}
 }
