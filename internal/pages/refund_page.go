@@ -275,6 +275,17 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if detail.DiscountTotal > 0 && origGross > 0 {
 			saleDiscount = detail.DiscountTotal * refundGross / origGross
 		}
+		// Service charge (ut-docs#243): prorated by the SAME refunded-share
+		// fraction as the discount above, not "never refunded" -- a full
+		// refund of every line (refundGross == origGross) returns the exact
+		// original amount back (integer division is exact in that case),
+		// and a partial refund returns its proportional share. Before this,
+		// the charge was silently kept by the shop on every refund because
+		// this SaleInput never carried it at all.
+		var serviceChargeRefund int64
+		if detail.ServiceCharge > 0 && origGross > 0 {
+			serviceChargeRefund = detail.ServiceCharge * refundGross / origGross
+		}
 
 		method := strings.TrimSpace(r.Form.Get("method"))
 		if method == "" {
@@ -291,7 +302,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		inclusive := saleIsTaxInclusive(detail)
 		// Engine computes the refund total from the same inputs as the
 		// original sale; the payment must cover it exactly.
-		refundTotal := computeRefundTotal(lines, money.FromMinor(saleDiscount), inclusive)
+		refundTotal := computeRefundTotal(lines, money.FromMinor(saleDiscount), money.FromMinor(serviceChargeRefund), detail.ServiceChargeTaxBasisBP, inclusive)
 
 		// Payment-provider refund (payment-provider contract): if the refund
 		// method belongs to a payment plugin that hooks `payment.<key>.refund`,
@@ -318,17 +329,19 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			return
 		}
 		saleInput := pos.SaleInput{
-			SaleType:               "return",
-			CashierID:              actorID,
-			ActorID:                actorID,
-			Currency:               detail.Currency,
-			TaxInclusive:           inclusive,
-			SaleDiscount:           money.FromMinor(saleDiscount),
-			Lines:                  lines,
-			Payments:               []pos.PaymentInput{{MethodID: method, Amount: refundTotal, Currency: detail.Currency}},
-			OriginalSaleID:         detail.ID,
-			Note:                   "refund of " + detail.ReceiptNo,
-			AllowNegativeInventory: true, // returns only add stock back
+			SaleType:                "return",
+			CashierID:               actorID,
+			ActorID:                 actorID,
+			Currency:                detail.Currency,
+			TaxInclusive:            inclusive,
+			SaleDiscount:            money.FromMinor(saleDiscount),
+			ServiceCharge:           money.FromMinor(serviceChargeRefund),
+			ServiceChargeTaxBasisBP: detail.ServiceChargeTaxBasisBP,
+			Lines:                   lines,
+			Payments:                []pos.PaymentInput{{MethodID: method, Amount: refundTotal, Currency: detail.Currency}},
+			OriginalSaleID:          detail.ID,
+			Note:                    "refund of " + detail.ReceiptNo,
+			AllowNegativeInventory:  true, // returns only add stock back
 		}
 		saleID, err := pos.CompleteSale(r.Context(), d.Db, saleInput)
 		if err != nil {
@@ -417,8 +430,18 @@ func blockingPaymentEventWithResponse(ctx context.Context, d *common.Deps, metho
 }
 
 // computeRefundTotal mirrors the engine's total math so the refund payment
-// covers the return exactly (CompleteSale enforces coverage).
-func computeRefundTotal(lines []pos.SaleLineInput, saleDiscount money.Money, inclusive bool) money.Money {
+// covers the return exactly (CompleteSale enforces coverage). serviceCharge
+// is the (already-prorated, ut-docs#243) share of the original sale's
+// service charge this refund is returning, and chargeTaxBasisBP is the
+// original sale's own basis (0 = apportion at the sale's own per-line
+// rates) — both threaded straight from data.SaleDetail, same shape as
+// saleDiscount above. Ordering mirrors pos.CompleteSale's own
+// computeSaleTotals exactly (internal/pos/sales.go): the discount reduces
+// subtotal BEFORE the charge is added (a sale discount never eats into the
+// service charge), and the charge's own tax is folded into `tax` the same
+// way a line's tax is -- exclusive adds it on top, inclusive keeps it
+// embedded in the charge amount already counted in `total`.
+func computeRefundTotal(lines []pos.SaleLineInput, saleDiscount, serviceCharge money.Money, chargeTaxBasisBP int, inclusive bool) money.Money {
 	var subtotal, tax money.Money
 	for _, l := range lines {
 		net := pos.AmountForQuantity(l.UnitPrice, l.Qty).Sub(l.LineDiscount)
@@ -426,7 +449,8 @@ func computeRefundTotal(lines []pos.SaleLineInput, saleDiscount money.Money, inc
 		subtotal = subtotal.Add(net)
 		tax = tax.Add(t)
 	}
-	total := subtotal.Sub(saleDiscount)
+	tax = tax.Add(pos.ServiceChargeTax(serviceCharge, pos.ChargeTaxLinesFromSale(lines), inclusive, chargeTaxBasisBP))
+	total := subtotal.Sub(saleDiscount).Add(serviceCharge)
 	if !inclusive {
 		total = total.Add(tax)
 	}

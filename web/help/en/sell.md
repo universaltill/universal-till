@@ -19,7 +19,7 @@ The main register screen: scan or pick items, take payment, print or skip the re
 3. Adjust quantity or remove lines in the basket, then choose Pay.
 4. Hold a basket to serve the next customer and recall it later; refunds are under the sale history.
 5. If you've set up tables (see **Tables & floor plan**), assign the current basket to one from the table picker under the order-type toggle — pick "No table" to clear it. A held order keeps its table, shown as a chip on the held-orders strip; tap **Move table** on the strip to move a held order onto a different free table without losing it or resuming it.
-6. To refund a completed sale, open it from Journal → sale history: pick which lines and how much of each to return (already-refunded quantity is tracked, so you can't return more than was sold), then choose cash or the original payment method to refund into.
+6. To refund a completed sale, open it from Journal → sale history: pick which lines and how much of each to return (already-refunded quantity is tracked, so you can't return more than was sold), then choose cash or the original payment method to refund into. If the original sale carried a service charge, your share of it comes back automatically, in proportion to how much of the sale you're refunding — refund everything and the whole service charge comes back too.
 
 ## Item customization
 
