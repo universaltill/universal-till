@@ -243,6 +243,31 @@ func isDescendantOfTag(n *html.Node, tag string) bool {
 	return false
 }
 
+// findByAttr returns the first descendant of n (n included) carrying the
+// given attribute key, or nil.
+func findByAttr(n *html.Node, key string) *html.Node {
+	if n.Type == html.ElementNode && hasAttr(n, key) {
+		return n
+	}
+	for c := n.FirstChild; c != nil; c = c.NextSibling {
+		if found := findByAttr(c, key); found != nil {
+			return found
+		}
+	}
+	return nil
+}
+
+// findAncestorTag returns the nearest ancestor of n with the given tag, or
+// nil (n itself doesn't count).
+func findAncestorTag(n *html.Node, tag string) *html.Node {
+	for p := n.Parent; p != nil; p = p.Parent {
+		if p.Type == html.ElementNode && p.Data == tag {
+			return p
+		}
+	}
+	return nil
+}
+
 // TestElevationPrompt_OldNestedRenderLosesInnerForm pins down the BUG Fix 1
 // corrects: the pre-fix shape (the dialog's <form> rendered straight inside
 // the triggering hx-target, itself inside the page's own outer <form>)
@@ -366,5 +391,60 @@ func TestCheckOrElevate_NilAuthSvc_FailsClosed(t *testing.T) {
 	}
 	if got.Err == nil {
 		t.Fatal("Err = nil, want an error — a nil AuthSvc must fail closed, not silently mint a fresh auth.Service")
+	}
+}
+
+// ut-docs#1048: ut-docs#1022 suppressed the native keyboard everywhere the
+// custom OSK is active, which left this dialog's autofocused override_pin
+// field with no visible way to open a keyboard (per ut-docs#155, the OSK
+// never auto-opens on programmatic focus). Product owner's answer
+// (2026-08-27): add a data-osk-toggle button matching the existing
+// sale-screen pattern (index.html's scan-row ⌨️ button). Assert the
+// rendered dialog actually carries it — same osk.toggle i18n key, same
+// hidden-by-default/revealed-by-osk.js contract.
+func TestElevationPrompt_CarriesOSKToggleForOverridePIN(t *testing.T) {
+	dp := newElevationTestDeps(t)
+	r := elevationRequest(auth.User{ID: "cash-session", Role: "cashier"})
+	check := checkOrElevate(dp, r, "sync_management", "")
+
+	rec := httptest.NewRecorder()
+	renderElevationPrompt(rec, r, "/api/sync/promote", "#promote-msg",
+		"Promote this till to a standalone primary.", nil, check)
+	body := rec.Body.String()
+
+	if !strings.Contains(body, "data-osk-toggle") {
+		t.Fatalf("expected an OSK toggle button (data-osk-toggle) so the operator can open the keyboard for override_pin, got: %s", body)
+	}
+	if !strings.Contains(body, `class="btn secondary osk-toggle"`) {
+		t.Fatalf("expected the toggle to reuse the existing .osk-toggle styling class, got: %s", body)
+	}
+	if !strings.Contains(body, "hidden") {
+		t.Fatalf("expected the toggle to ship hidden by default (osk.js's updateToggles reveals it), got: %s", body)
+	}
+
+	bodyCtx := &html.Node{Type: html.ElementNode, Data: "body", DataAtom: atom.Body}
+	frag, err := html.ParseFragment(strings.NewReader(body), bodyCtx)
+	if err != nil {
+		t.Fatalf("parse fragment: %v", err)
+	}
+	var toggle *html.Node
+	for _, n := range frag {
+		toggle = findByAttr(n, "data-osk-toggle")
+		if toggle != nil {
+			break
+		}
+	}
+	if toggle == nil {
+		t.Fatalf("no element carrying data-osk-toggle found in the rendered dialog:\n%s", body)
+	}
+	// The toggle's click handler (osk.js) walks t.form.elements to find the
+	// first OSK-able field — it must sit inside the SAME <form> as
+	// override_pin, or it would target nothing.
+	form := findAncestorTag(toggle, "form")
+	if form == nil {
+		t.Fatal("the OSK toggle must be inside the dialog's <form>")
+	}
+	if !hasDescendantInput(form, "override_pin") {
+		t.Fatal("the OSK toggle's enclosing <form> must be the one containing override_pin")
 	}
 }
