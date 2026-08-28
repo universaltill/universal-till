@@ -1558,6 +1558,7 @@
   "import.status.source_deleted": "kaynak dosyada silinmiş",
   "import.status.not_sellable": "satılabilir bir ürün değil (sipariş türü anahtarı)",
   "import.status.duplicate_sku_in_file": "bu dosyada tekrarlanan ürün numarası",
+  "import.status.sku_reused_in_file": "\"%s\" ürün numarası bu dosyada tekrarlanmış — yeni bir numarayla içe aktarıldı",
   "import.error.no_name_column": "İsim sütunu tanınmadı — bu bir katalog dışa aktarımı mı?",
   "import.error.invalid_file": "Bu dosya katalog dışa aktarımı olarak okunamadı.",
   "import.error.bkp_unrecognised": "Bu dosya tanınan bir yedek dosyasına benzemiyor.",

@@ -237,6 +237,12 @@ func TestParseBkp_MultiLineNameCollapsed(t *testing.T) {
 	}
 }
 
+// TestParseBkp_DuplicateProductNumber is ut-docs#1222: a reused source PLU
+// used to mean every row after the first was silently dropped
+// (IssueDuplicateSKUInFile, non-forceable) — 11 of 229 real pilot products
+// lost this way, one PLU shared by six distinct items. Every clean row must
+// now import, the first under the bare PLU and each later one under a
+// synthesized "-N" suffix, flagged (not silently) via SKUIssue.
 func TestParseBkp_DuplicateProductNumber(t *testing.T) {
 	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
 		{ProductNumber: "555", ProductTextShort: "Latte", SalesPrice: 3.00, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
@@ -251,11 +257,140 @@ func TestParseBkp_DuplicateProductNumber(t *testing.T) {
 	if len(res.Items) != 2 {
 		t.Fatalf("items = %d, want 2", len(res.Items))
 	}
-	if res.Items[0].Issue != "" {
-		t.Errorf("first occurrence must import normally, got Issue %q", res.Items[0].Issue)
+	if res.Items[0].Issue != "" || res.Items[0].SKUIssue != "" {
+		t.Errorf("first occurrence must import cleanly with no issue, got Issue %q SKUIssue %q", res.Items[0].Issue, res.Items[0].SKUIssue)
 	}
-	if res.Items[1].Issue != IssueDuplicateSKUInFile {
-		t.Errorf("second occurrence Issue = %q, want %q (not the DB-level sku_already_in_catalog code)", res.Items[1].Issue, IssueDuplicateSKUInFile)
+	if res.Items[0].SKU != "555" {
+		t.Errorf("first occurrence SKU = %q, want the bare PLU %q", res.Items[0].SKU, "555")
+	}
+	if res.Items[1].Issue != "" {
+		t.Errorf("second occurrence must NOT be dropped, got Issue %q", res.Items[1].Issue)
+	}
+	if res.Items[1].SKU != "555-2" {
+		t.Errorf("second occurrence SKU = %q, want a synthesized %q", res.Items[1].SKU, "555-2")
+	}
+	if res.Items[1].SKUIssue != SKUIssueDuplicateInFile {
+		t.Errorf("second occurrence SKUIssue = %q, want %q", res.Items[1].SKUIssue, SKUIssueDuplicateInFile)
+	}
+	if res.Items[1].SKUIssueRaw != "555" {
+		t.Errorf("second occurrence SKUIssueRaw = %q, want the original PLU %q", res.Items[1].SKUIssueRaw, "555")
+	}
+}
+
+// TestParseBkp_ProductNumberSharedBySixItems is the real pilot shape
+// (ut-docs#1222): PLU 30006 was shared by six distinct products in the real
+// backup. Every one must import, each under a distinct synthesized SKU.
+func TestParseBkp_ProductNumberSharedBySixItems(t *testing.T) {
+	names := []string{"Slush Matcha", "Affogato", "ICE cream", "3 ICE cream", "Orangensaft", "Limonade"}
+	var rows []bkpProductRow
+	for _, n := range names {
+		rows = append(rows, bkpProductRow{ProductNumber: "30006", ProductTextShort: n, SalesPrice: 2.50, ProductGroupText: "Drinks", Status: 1, ProductType: 1})
+	}
+	dbBytes := buildBkpDBBytes(t, rows)
+	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != len(names) {
+		t.Fatalf("items = %d, want %d — none of the six products may be dropped", len(res.Items), len(names))
+	}
+	wantSKUs := []string{"30006", "30006-2", "30006-3", "30006-4", "30006-5", "30006-6"}
+	seenSKU := map[string]bool{}
+	for i, it := range res.Items {
+		if it.Issue != "" {
+			t.Errorf("item %d (%s) got a blocking Issue %q, want none", i, it.Name, it.Issue)
+		}
+		if it.SKU != wantSKUs[i] {
+			t.Errorf("item %d (%s) SKU = %q, want %q", i, it.Name, it.SKU, wantSKUs[i])
+		}
+		if seenSKU[it.SKU] {
+			t.Fatalf("item %d (%s) SKU %q collides with an earlier row", i, it.Name, it.SKU)
+		}
+		seenSKU[it.SKU] = true
+	}
+}
+
+// TestParseBkp_SynthesizedSuffixNeverCollidesWithARealPLU is the review
+// finding (ut-docs#1222): a naive "PLU-2" synthesis for the second row on a
+// reused PLU can collide with a THIRD row's own, genuine, distinct PLU that
+// happens to read the same as the candidate suffix — dropping that row with
+// a bare UNIQUE-constraint failure instead of the reused one. All three
+// products here are real and distinct; none may be lost or collide.
+func TestParseBkp_SynthesizedSuffixNeverCollidesWithARealPLU(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "555", ProductTextShort: "Alpha", SalesPrice: 1.00, ProductGroupText: "Misc", Status: 1, ProductType: 1},
+		{ProductNumber: "555", ProductTextShort: "Beta", SalesPrice: 2.00, ProductGroupText: "Misc", Status: 1, ProductType: 1},
+		// A genuine, distinct PLU that happens to read exactly like the
+		// naive synthesis for Beta ("555" + "-2").
+		{ProductNumber: "555-2", ProductTextShort: "Gamma", SalesPrice: 3.00, ProductGroupText: "Misc", Status: 1, ProductType: 1},
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != 3 {
+		t.Fatalf("items = %d, want 3 — none of Alpha/Beta/Gamma may be dropped", len(res.Items))
+	}
+	skus := map[string]string{} // sku -> name, to also catch a collision directly
+	for _, it := range res.Items {
+		if it.Issue != "" {
+			t.Errorf("item %q got a blocking Issue %q, want none", it.Name, it.Issue)
+		}
+		if existing, dup := skus[it.SKU]; dup {
+			t.Fatalf("SKU %q claimed by both %q and %q", it.SKU, existing, it.Name)
+		}
+		skus[it.SKU] = it.Name
+	}
+	if skus["555"] != "Alpha" {
+		t.Errorf(`SKU "555" = %q, want "Alpha"`, skus["555"])
+	}
+	if skus["555-2"] != "Gamma" {
+		t.Errorf(`SKU "555-2" = %q, want "Gamma" (Beta must be pushed to a different suffix, not steal Gamma's real PLU)`, skus["555-2"])
+	}
+	// Beta must have landed under SOME other, non-colliding SKU.
+	betaFound := false
+	for sku, name := range skus {
+		if name == "Beta" {
+			betaFound = true
+			if sku == "555" || sku == "555-2" {
+				t.Errorf("Beta landed under %q, which belongs to Alpha/Gamma", sku)
+			}
+		}
+	}
+	if !betaFound {
+		t.Fatal("Beta not found among the imported items")
+	}
+}
+
+// TestParseBkp_WhitespaceOnlyProductNumberTreatedAsEmpty is ut-docs#1222's
+// second acceptance criterion: a whitespace-only ProductNumber must behave
+// exactly like an absent one (empty SKU, no duplicate flagging against
+// another whitespace-only row), not import as a literal blank-looking SKU.
+func TestParseBkp_WhitespaceOnlyProductNumberTreatedAsEmpty(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "  ", ProductTextShort: "weisser Schoko Kuchen", SalesPrice: 2.90, ProductGroupText: "Cake", Status: 1, ProductType: 1},
+		{ProductNumber: " ", ProductTextShort: "Almond Caramel Glutenfrei", SalesPrice: 3.10, ProductGroupText: "Cake", Status: 1, ProductType: 1},
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("items = %d, want 2 — neither whitespace-only-PLU row may be dropped", len(res.Items))
+	}
+	for i, it := range res.Items {
+		if it.Issue != "" || it.SKUIssue != "" {
+			t.Errorf("item %d (%s): whitespace-only PLU must not be treated as a duplicate, got Issue %q SKUIssue %q", i, it.Name, it.Issue, it.SKUIssue)
+		}
+		if it.SKU != "" {
+			t.Errorf("item %d (%s): whitespace-only PLU must import with an empty SKU, got %q", i, it.Name, it.SKU)
+		}
 	}
 }
 

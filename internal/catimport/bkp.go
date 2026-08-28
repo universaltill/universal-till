@@ -218,10 +218,31 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int) (Result, error) {
 
 	res := Result{Format: "speedy-kasse"}
 	seen := map[string]bool{}
+	dupSuffix := map[string]int{}
+	// Every trimmed product number appearing ANYWHERE in the file — not
+	// just the ones that end up importing — so a synthesized suffix (below)
+	// can never squat on a number that turns out to genuinely belong to a
+	// later row (review finding, ut-docs#1222: PLUs 555, 555, 555-2 — a
+	// same-file collision by convenience only, not signalled by anything a
+	// single forward pass over `products` can see before reaching row 3).
+	allPLUs := map[string]bool{}
+	for _, p := range products {
+		if plu := strings.TrimSpace(p.ProductNumber); plu != "" {
+			allPLUs[plu] = true
+		}
+	}
 	for _, p := range products {
 		name := collapseWhitespace(p.ProductTextShort)
+		// A whitespace-only product number (ut-docs#1222) is treated
+		// exactly like an absent one: TrimSpace before it's used as a SKU
+		// or a duplicate-detection key at all, so it never becomes a
+		// visible garbage SKU and never collides with another
+		// whitespace-only row. An item with no real SKU already stores
+		// NULL, not the empty string (ut-docs#1176) — nothing further
+		// needed here for the empty case.
+		plu := strings.TrimSpace(p.ProductNumber)
 		item := ImportItem{
-			SKU:      p.ProductNumber,
+			SKU:      plu,
 			Name:     name,
 			Category: p.ProductGroupText,
 			// Barcode is deliberately left empty: the source carries no
@@ -256,17 +277,6 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int) (Result, error) {
 			item.Issue = IssueSourceDeleted
 		case p.ProductType == bkpProductTypeOrderMode:
 			item.Issue = IssueNotSellable
-		case p.ProductNumber != "" && seen[p.ProductNumber]:
-			// Distinct from import_page.go's DB-level
-			// import.status.sku_already_in_catalog: this fires purely on a
-			// collision within THIS uploaded file, before the DB is ever
-			// consulted. Checked BEFORE missing-name (ut-docs#601 review F1):
-			// a row that both misses a name and duplicates an already-
-			// registered PLU can never import no matter what name it's given,
-			// and missing_name is a forceable issue while duplicate is not —
-			// reporting the forceable one would invite an "Import anyway"
-			// override that the duplicate condition must always veto.
-			item.Issue = IssueDuplicateSKUInFile
 		case name == "":
 			item.Issue = IssueMissingName
 		default:
@@ -286,11 +296,58 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int) (Result, error) {
 		// either: if it did, a later row with the same PLU that would
 		// otherwise import cleanly gets wrongly marked as a duplicate of a
 		// row that itself never actually imported, silently losing a real
-		// product the operator never sees a path to recover. A true
-		// same-file duplicate (both rows otherwise clean) is still caught:
-		// the first clean row registers, the second is flagged.
-		if p.ProductNumber != "" && item.Issue == "" {
-			seen[p.ProductNumber] = true
+		// product the operator never sees a path to recover.
+		//
+		// A true same-file duplicate — two otherwise-clean rows sharing one
+		// PLU — used to mean only the first landed and every later one was
+		// silently dropped (ut-docs#1222: 11 of 229 real pilot products lost
+		// this way, one PLU shared by six distinct items). Now the first
+		// still claims the bare PLU; each later one gets a synthesized,
+		// unique SKU (PLU-2, PLU-3, ...) instead of being dropped, flagged
+		// with SKUIssue so the operator sees the number was reused. A row
+		// that ALSO carries a blocking Issue (missing name/bad price/not
+		// sellable/deleted) is deliberately left alone here — two nameless
+		// rows sharing a PLU stay genuinely ambiguous, and are still
+		// resolved by import_page.go's forced-correction in-file-duplicate
+		// veto (ut-docs#601 review F1), not auto-deduped.
+		if plu != "" && item.Issue == "" {
+			if seen[plu] {
+				// The synthesized suffix must dodge any SKU already claimed
+				// in this file — including another genuine PLU that happens
+				// to collide with the candidate suffix (review finding,
+				// ut-docs#1222: a file containing PLUs 555, 555, 555-2 used
+				// to synthesize "555-2" for the second 555 with no check,
+				// racing the THIRD row's real, distinct PLU to the DB's
+				// items.sku UNIQUE constraint — the exact "baffling
+				// item_failed" outcome ut-docs#601 review F1 exists to rule
+				// out, just relocated from the parser to the DB write).
+				// dupSuffix starts the search one past the last suffix this
+				// PLU has already used, so the common case (no such
+				// collision) still costs one map lookup, not a scan.
+				var candidate string
+				for {
+					dupSuffix[plu]++
+					candidate = fmt.Sprintf("%s-%d", plu, dupSuffix[plu]+1)
+					// Skip a candidate already claimed in this file AND one
+					// that is itself a real product number appearing
+					// anywhere in the file (allPLUs) — the latter is what
+					// keeps a synthesized suffix from ever shadowing a
+					// distinct row's own genuine PLU, whichever order the
+					// two rows come in.
+					if !seen[candidate] && !allPLUs[candidate] {
+						break
+					}
+				}
+				item.SKU = candidate
+				item.SKUIssue = SKUIssueDuplicateInFile
+				item.SKUIssueRaw = plu
+			}
+			// Register whichever SKU this row actually ends up claiming —
+			// the bare PLU on first occurrence, the synthesized candidate on
+			// a dedup — so a later row can never silently reuse it, whether
+			// that later row is another dedup candidate or a genuine PLU
+			// that happens to read the same as one.
+			seen[item.SKU] = true
 		}
 		res.Items = append(res.Items, item)
 	}
