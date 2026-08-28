@@ -679,8 +679,21 @@ jobs:
               fail=1
               return
             fi
-            if ! grep -qF -- "-X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION}" <<< "$ldflags"; then
-              echo "::error::$label's -ldflags does not stamp buildinfo.Version=$VERSION: $ldflags"
+            # Pull the stamped value out and compare it EXACTLY, rather than
+            # asking whether "...Version=$VERSION" appears as a substring:
+            # a substring test also accepts any LONGER version that merely
+            # starts with the expected one (a lib stamped 0.6.160 satisfies
+            # a check for 0.6.16 — verified against a synthetic build during
+            # review), which is precisely the silent mis-stamp this gate
+            # exists to catch. Exact comparison also keeps $VERSION out of
+            # any regex, so a tag containing regex metacharacters can't
+            # quietly change what is being matched. The value ends at the
+            # closing quote `go version -m` prints around a multi-token
+            # -ldflags, or at end-of-line if it was a single bare token.
+            local got
+            got="$(sed -n 's|.*-X github\.com/universaltill/universal-till/internal/buildinfo\.Version=\([^" ]*\).*|\1|p' <<< "$ldflags")"
+            if [ "$got" != "$VERSION" ]; then
+              echo "::error::$label stamps buildinfo.Version='$got', expected '$VERSION': $ldflags"
               fail=1
               return
             fi
