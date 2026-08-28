@@ -64,6 +64,38 @@ func TestSearchResultAddVals_QuotesAndBackslashesSurvive(t *testing.T) {
 	}
 }
 
+// TestSearchResultAddVals_FallsBackToSKUWhenBarcodeEmpty (ut-docs#1220): a
+// SKU-only item (loose produce, services — no barcode row) previously
+// carried Barcode == "" into "code" here, and ButtonStore.Add rejects an
+// empty code outright, so the Designer's add-as-button flow 400'd for any
+// item found only via SKU search. The button-code resolution chain
+// (PriceResolverAdapter) already accepts a SKU as "code", so falling back
+// to it here is a pure fix, not a behavior change to that chain.
+func TestSearchResultAddVals_FallsBackToSKUWhenBarcodeEmpty(t *testing.T) {
+	r := SearchResult{ItemID: "i2", Name: "Loose Screw", Barcode: "", SKU: "SKU-ONLY-1", Image: ""}
+	var vals map[string]string
+	if err := json.Unmarshal([]byte(r.AddVals()), &vals); err != nil {
+		t.Fatalf("AddVals not valid JSON: %v (%s)", err, r.AddVals())
+	}
+	if vals["code"] != "SKU-ONLY-1" {
+		t.Fatalf("code = %q, want SKU fallback %q", vals["code"], "SKU-ONLY-1")
+	}
+}
+
+// TestSearchResultAddVals_PrefersBarcodeOverSKU pins that the fallback only
+// kicks in when Barcode is empty — an item with both must still post its
+// barcode as "code" (unchanged behavior for the common case).
+func TestSearchResultAddVals_PrefersBarcodeOverSKU(t *testing.T) {
+	r := SearchResult{ItemID: "i1", Name: "Apple", Barcode: "BAR1", SKU: "SKU1"}
+	var vals map[string]string
+	if err := json.Unmarshal([]byte(r.AddVals()), &vals); err != nil {
+		t.Fatalf("AddVals not valid JSON: %v (%s)", err, r.AddVals())
+	}
+	if vals["code"] != "BAR1" {
+		t.Fatalf("code = %q, want barcode %q (barcode must win over SKU)", vals["code"], "BAR1")
+	}
+}
+
 func TestButtonStoreLoad_ThumbnailFallbackPriceOrderAndModifiers(t *testing.T) {
 	db := setupFullTestDB(t)
 	defer db.Close()
@@ -224,12 +256,18 @@ func TestSearchItems_MatchesNameSkuBarcodeWithPaging(t *testing.T) {
 	// SKU match — i2 deliberately has NO barcode rows: an item without a
 	// barcode (loose produce, services) must still be searchable, with an
 	// empty barcode, not fail the whole result set with a NULL-scan error.
+	// It must also carry its SKU through (ut-docs#1220) so AddVals can fall
+	// back to it as the button's "code" — without this, adding a
+	// barcode-less item as a sale-screen button posts code="" and 400s.
 	res, err = store.SearchItems(ctx, "ORG-01", 0, 10)
 	if err != nil {
 		t.Fatalf("sku search errored (barcode-less item broke the scan): %v", err)
 	}
 	if len(res) != 1 || res[0].ItemID != "i2" || res[0].Barcode != "" {
 		t.Fatalf("sku match failed: %+v", res)
+	}
+	if res[0].SKU != "ORG-01" {
+		t.Fatalf("SKU = %q, want %q (SKU must be carried through even when Barcode is empty)", res[0].SKU, "ORG-01")
 	}
 	if res, _ = store.SearchItems(ctx, "111", 0, 10); len(res) != 1 || res[0].ItemID != "i1" {
 		t.Fatalf("barcode match failed: %+v", res)

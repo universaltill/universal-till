@@ -38,6 +38,7 @@ type ShortcutSearchResult struct {
 	ItemID  string
 	Name    string
 	Barcode string
+	SKU     string
 	Image   string
 }
 
@@ -5543,6 +5544,7 @@ SELECT i.id,
          ORDER BY ib.is_primary DESC
          LIMIT 1
        ), '') AS barcode,
+       COALESCE(i.sku, ''),
        COALESCE(img.path, '')
 FROM items i
 LEFT JOIN item_images img ON img.item_id = i.id AND img.role = 'thumbnail'
@@ -5561,7 +5563,7 @@ LIMIT ? OFFSET ?
 	var res []ShortcutSearchResult
 	for rows.Next() {
 		var rres ShortcutSearchResult
-		if err := rows.Scan(&rres.ItemID, &rres.Name, &rres.Barcode, &rres.Image); err != nil {
+		if err := rows.Scan(&rres.ItemID, &rres.Name, &rres.Barcode, &rres.SKU, &rres.Image); err != nil {
 			return nil, err
 		}
 		res = append(res, rres)
