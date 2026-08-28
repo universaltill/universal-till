@@ -33,32 +33,21 @@ import (
 // only pattern-matches /self-order routes, so it won't flag this file;
 // hold the line anyway, it is the same class of risk.
 
-// orderTrackingExpiry is how long a tracking link keeps answering after the
-// order reaches a terminal status. Computed in Go from the timestamp the
-// lookup already returns — no cron, no extra writes, nothing stored.
-const orderTrackingExpiry = 2 * time.Hour
-
-// orderTrackingVisible reports whether a token should still resolve. A live
-// order (anything not collected/cancelled, including the untracked "") is
-// always visible; a terminal one expires orderTrackingExpiry after its last
-// status write. An unparseable terminal timestamp fails closed — on an
-// anonymous surface a broken row must read as "gone", not "visible forever".
+// orderTrackingVisible reports whether a token should still resolve. The
+// rule itself (terminal statuses expire pos.OrderTrackingExpiry after their
+// last status write; unparseable terminal timestamps fail closed) moved to
+// internal/pos with the cloud relay (ADR-0070, ut-docs#907) so the cloudsync
+// push applies the identical liveness the LAN page does — this wrapper just
+// adapts data.TrackedOrder to it.
 func orderTrackingVisible(o data.TrackedOrder, now time.Time) bool {
-	if o.Status != pos.OrderStatusCollected && o.Status != pos.OrderStatusCancelled {
-		return true
-	}
-	at, err := time.Parse(time.RFC3339, o.StatusUpdatedAt)
-	if err != nil {
-		return false
-	}
-	return now.Sub(at) <= orderTrackingExpiry
+	return pos.OrderTrackingVisible(o.Status, o.StatusUpdatedAt, now)
 }
 
 // orderTrackingStatusData is the template data both the full page and the
 // poll fragment render the status block from (the shared
 // order_tracking_status define).
 func orderTrackingStatusData(o data.TrackedOrder, token string) map[string]any {
-	terminal := o.Status == pos.OrderStatusCollected || o.Status == pos.OrderStatusCancelled
+	terminal := pos.OrderTrackingTerminal(o.Status)
 	return map[string]any{
 		"Token":     token,
 		"ReceiptNo": o.ReceiptNo,

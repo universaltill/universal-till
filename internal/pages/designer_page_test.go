@@ -9,6 +9,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	appdb "github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -118,5 +119,41 @@ func TestDesigner_SearchBoxTriggerFiresOnSyntheticInputEvent(t *testing.T) {
 	tag := body[tagStart : idx+tagEnd]
 	if !strings.Contains(tag, `hx-trigger="input`) {
 		t.Fatalf("search box hx-trigger must fire on the \"input\" event (OSK-compatible), got: %s", tag)
+	}
+}
+
+// TestDesigner_RendersAddErrorSurface (ut-docs#1220) guards the Designer's
+// only channel for telling an operator that "add as button" failed. htmx
+// swaps nothing into hx-target for a non-2xx, so without the dedicated
+// #buttons-add-error element plus a page-level htmx:responseError listener,
+// a rejected add is invisible — the exact silent failure the card reports.
+// htmx:sendError covers the transport half (tablet off the LAN), which
+// never reaches responseError and carries no response body, so it needs the
+// locale copy rendered into the page rather than read off the xhr.
+func TestDesigner_RendersAddErrorSurface(t *testing.T) {
+	dp := newDesignerTestDeps(t)
+	mux := http.NewServeMux()
+	registerDesigner(mux, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/designer", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /designer: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	if !strings.Contains(body, `id="buttons-add-error"`) {
+		t.Fatalf("designer page has no #buttons-add-error element for a failed add to render into")
+	}
+	for _, ev := range []string{"htmx:responseError", "htmx:sendError"} {
+		if !strings.Contains(body, ev) {
+			t.Fatalf("designer page registers no %s listener — a failed add on that path stays invisible", ev)
+		}
+	}
+	// The sendError arm has no response body to show, so its copy must be
+	// the rendered locale string, not a hardcoded literal or an empty one.
+	if want := httpx.T("en", buttonsErrorKey); !strings.Contains(body, want) {
+		t.Fatalf("designer page does not render the localized %s copy %q for the transport-failure message", buttonsErrorKey, want)
 	}
 }

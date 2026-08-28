@@ -54,7 +54,14 @@ func Open(path string) (*DB, error) {
 	// it: WAL's MVCC means readers no longer block on the writer at all.
 	// Requesting WAL is safe for the ":memory:" DSNs tests use — SQLite
 	// reports journal_mode=memory there instead of erroring.
-	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_txlock=immediate", path)
+	//
+	// temp_store(2) = MEMORY (ut-docs#1239): CREATE TEMP TABLE is otherwise
+	// backed by a file in the system temp directory, and an unrooted
+	// Android app has none it can write (TMPDIR unset, /tmp absent) — the
+	// first real-device boot died with SQLITE_IOERR_GETTEMPPATH (6410) in
+	// migration 036, the first migration to use a temp table. In-memory
+	// temp storage removes the dependency on a temp dir for every platform.
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=temp_store(2)&_txlock=immediate", path)
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)

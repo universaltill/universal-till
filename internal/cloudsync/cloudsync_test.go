@@ -58,6 +58,7 @@ type fakeCloud struct {
 	results    []map[string]string
 	directives []map[string]any
 	snapshots  []map[string]any
+	tracking   []map[string]any
 }
 
 func (f *fakeCloud) handler() http.Handler {
@@ -83,6 +84,14 @@ func (f *fakeCloud) handler() http.Handler {
 		_ = json.NewDecoder(r.Body).Decode(&body)
 		f.mu.Lock()
 		f.snapshots = append(f.snapshots, body)
+		f.mu.Unlock()
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"ok": true}})
+	})
+	mux.HandleFunc("/v1/stores/order-tracking-snapshot", func(w http.ResponseWriter, r *http.Request) {
+		var body map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&body)
+		f.mu.Lock()
+		f.tracking = append(f.tracking, body)
 		f.mu.Unlock()
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]any{"ok": true}})
 	})
@@ -775,6 +784,182 @@ func TestPushSnapshotIfChangedIncludesRealStockQty(t *testing.T) {
 	}
 	if row["qty"] != 7.5 {
 		t.Fatalf("qty = %v, want 7.5", row["qty"])
+	}
+}
+
+// --- order-tracking cloud relay push (ADR-0070, ut-docs#907) ---
+
+// seedTrackedSale inserts a completed sale, mints its tracking token and
+// applies a status, returning the token — the exact state the self-order
+// confirmation + kitchen flow leaves behind.
+func seedTrackedSale(t *testing.T, sqlDB *sql.DB, saleID, receiptNo, status, statusAt string) string {
+	t.Helper()
+	if _, err := sqlDB.Exec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES (?,?,'completed','sale','GBP',370,0,0,370,datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatalf("seed sale %s: %v", receiptNo, err)
+	}
+	repo := data.NewPOSRepo(sqlDB)
+	tok, err := repo.EnsureOrderTrackingToken(context.Background(), receiptNo)
+	if err != nil {
+		t.Fatalf("token %s: %v", receiptNo, err)
+	}
+	if status != "" {
+		applied, _, err := repo.ApplyOrderStatus(context.Background(), receiptNo, status, "", statusAt, func(string) bool { return true })
+		if err != nil || !applied {
+			t.Fatalf("status %s: applied=%v err=%v", receiptNo, applied, err)
+		}
+	}
+	return tok
+}
+
+// The push carries ADR-0070's exact payload shape — {store_id, orders:
+// [{token, receipt_no, status, status_updated_at}]} — and is hash-gated like
+// the catalog snapshot: no re-push while nothing changed, a status change
+// pushes again, and an order aging past the 2h terminal expiry pushes an
+// EMPTY array (the cloud's replace-on-push delete signal).
+func TestOrderTrackingPushGatedByHash(t *testing.T) {
+	cloud := &fakeCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	d := openMigratedDB(t, "cloudsync-tracking.db")
+	ctx := context.Background()
+	cfg := testCfg(srv.URL)
+
+	tok := seedTrackedSale(t, d.DB, "sale-t1", "R-9001", "preparing", "2026-08-28T10:00:00Z")
+
+	if err := Tick(ctx, cfg, d.DB, Hooks{}); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(cloud.tracking) != 1 {
+		t.Fatalf("tracking pushes after first tick = %d, want 1", len(cloud.tracking))
+	}
+	body := cloud.tracking[0]
+	if body["store_id"] != "store-1" {
+		t.Fatalf("store_id = %v", body["store_id"])
+	}
+	orders, ok := body["orders"].([]any)
+	if !ok || len(orders) != 1 {
+		t.Fatalf("orders = %#v, want exactly one row", body["orders"])
+	}
+	row := orders[0].(map[string]any)
+	if row["token"] != tok || row["receipt_no"] != "R-9001" || row["status"] != "preparing" || row["status_updated_at"] != "2026-08-28T10:00:00Z" {
+		t.Fatalf("order row = %+v", row)
+	}
+
+	// Unchanged → gated, no second push.
+	if err := Tick(ctx, cfg, d.DB, Hooks{}); err != nil {
+		t.Fatalf("tick2: %v", err)
+	}
+	if len(cloud.tracking) != 1 {
+		t.Fatalf("tracking re-pushed without changes (%d)", len(cloud.tracking))
+	}
+
+	// A status change → pushed again with the new status.
+	repo := data.NewPOSRepo(d.DB)
+	if applied, _, err := repo.ApplyOrderStatus(ctx, "R-9001", "ready", "", "2026-08-28T10:10:00Z", func(string) bool { return true }); err != nil || !applied {
+		t.Fatalf("status change: applied=%v err=%v", applied, err)
+	}
+	if err := Tick(ctx, cfg, d.DB, Hooks{}); err != nil {
+		t.Fatalf("tick3: %v", err)
+	}
+	if len(cloud.tracking) != 2 {
+		t.Fatalf("tracking not re-pushed after status change (%d)", len(cloud.tracking))
+	}
+	row = cloud.tracking[1]["orders"].([]any)[0].(map[string]any)
+	if row["status"] != "ready" || row["status_updated_at"] != "2026-08-28T10:10:00Z" {
+		t.Fatalf("updated row = %+v", row)
+	}
+
+	// Terminal past the 2h expiry → the order drops out and the push sends
+	// an EMPTY orders array (not null, not absent) as the delete signal.
+	oldAt := time.Now().UTC().Add(-3 * time.Hour).Format(time.RFC3339)
+	if applied, _, err := repo.ApplyOrderStatus(ctx, "R-9001", "collected", "", oldAt, func(string) bool { return true }); err != nil || !applied {
+		t.Fatalf("terminal status: applied=%v err=%v", applied, err)
+	}
+	if err := Tick(ctx, cfg, d.DB, Hooks{}); err != nil {
+		t.Fatalf("tick4: %v", err)
+	}
+	if len(cloud.tracking) != 3 {
+		t.Fatalf("tracking not re-pushed after expiry (%d)", len(cloud.tracking))
+	}
+	empty, ok := cloud.tracking[2]["orders"].([]any)
+	if !ok {
+		t.Fatalf("orders after expiry = %#v, want an empty JSON array, not null/absent", cloud.tracking[2]["orders"])
+	}
+	if len(empty) != 0 {
+		t.Fatalf("orders after expiry = %+v, want empty", empty)
+	}
+
+	// And the empty state is itself hash-gated: no fourth push.
+	if err := Tick(ctx, cfg, d.DB, Hooks{}); err != nil {
+		t.Fatalf("tick5: %v", err)
+	}
+	if len(cloud.tracking) != 3 {
+		t.Fatalf("empty tracking state re-pushed (%d)", len(cloud.tracking))
+	}
+}
+
+// A terminal order still inside the 2h window stays in the payload — the
+// customer's phone keeps getting the final status for a while, exactly like
+// the LAN page (pages.orderTrackingVisible via pos.OrderTrackingVisible).
+func TestOrderTrackingPushKeepsRecentTerminalOrders(t *testing.T) {
+	cloud := &fakeCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	d := openMigratedDB(t, "cloudsync-tracking-terminal.db")
+
+	recentAt := time.Now().UTC().Add(-30 * time.Minute).Format(time.RFC3339)
+	tok := seedTrackedSale(t, d.DB, "sale-t2", "R-9002", "collected", recentAt)
+
+	if err := Tick(context.Background(), testCfg(srv.URL), d.DB, Hooks{}); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(cloud.tracking) != 1 {
+		t.Fatalf("tracking pushes = %d, want 1", len(cloud.tracking))
+	}
+	orders := cloud.tracking[0]["orders"].([]any)
+	if len(orders) != 1 || orders[0].(map[string]any)["token"] != tok {
+		t.Fatalf("orders = %+v, want the recent collected order", orders)
+	}
+}
+
+// Replicas skip the order-tracking push, same primary-only gate as the
+// catalog snapshot: sales made anywhere journal to the primary (ADR-0011),
+// so the primary's tracked-order set is the shop's set.
+func TestOrderTrackingPushSkippedOnReplica(t *testing.T) {
+	cloud := &fakeCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	d := openMigratedDB(t, "cloudsync-tracking-replica.db")
+
+	seedTrackedSale(t, d.DB, "sale-t3", "R-9003", "preparing", "2026-08-28T10:00:00Z")
+	if err := data.NewSettingsRepo(d.DB).Set(context.Background(), "sync.primary_url", "http://10.0.0.2:8080"); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Tick(context.Background(), testCfg(srv.URL), d.DB, Hooks{}); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(cloud.tracking) != 0 {
+		t.Fatalf("replica pushed order tracking (%d), want 0", len(cloud.tracking))
+	}
+}
+
+// The upload failing must surface as an error (the caller logs and retries
+// next tick) and must NOT record the hash — otherwise the next tick would
+// consider the failed state already pushed and never retry.
+func TestPushOrderTrackingIfChangedUploadFails(t *testing.T) {
+	d := openMigratedDB(t, "cloudsync-tracking-fail.db")
+	seedTrackedSale(t, d.DB, "sale-t4", "R-9004", "preparing", "2026-08-28T10:00:00Z")
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	if err := pushOrderTrackingIfChanged(context.Background(), testCfg(srv.URL), d.DB); err == nil {
+		t.Fatal("want error when the order-tracking upload fails")
+	}
+	if v, _, _ := data.NewSettingsRepo(d.DB).Get(context.Background(), "cloudsync.order_tracking_hash"); v != "" {
+		t.Fatalf("hash recorded despite failed upload: %q", v)
 	}
 }
 
