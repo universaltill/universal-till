@@ -829,11 +829,23 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		if commit {
 			// ut-docs#1171: the product owner, importing a real 217-item .bkp
 			// on the Pi till, couldn't tell the commit had actually happened
-			// — the result looked like just another preview. .notice-block-
-			// success (distinct green, vs. the preview's plain <p>/amber
-			// warning) plus a big "Imported N ✓" headline and a View catalog
-			// button make the post-commit state unmistakable at a glance.
-			b.WriteString(`<div class="notice-block-success">`)
+			// — the result looked like just another preview. A distinct
+			// block (vs. the preview's plain <p>/amber warning) plus a big
+			// "Imported N ✓" headline and a View catalog button make the
+			// post-commit state unmistakable at a glance.
+			// ut-docs#1171 review: an unconditional green .notice-block-
+			// success would read as unambiguous success even when rows hit
+			// a real, non-duplicate failure (item/category/tax-code
+			// creation errors, tallied in `failed`, as opposed to an
+			// expected "already in catalog" skip) — false confidence in
+			// exactly the state this card exists to make trustworthy. Stay
+			// amber (the same treatment a partial preview issue already
+			// gets) whenever any row actually failed.
+			successClass := "notice-block-success"
+			if failed > 0 {
+				successClass = "notice-block-warn"
+			}
+			fmt.Fprintf(&b, `<div class="%s">`, successClass)
 			fmt.Fprintf(&b, `<p><strong>%s</strong></p>`, fmt.Sprintf(htmlEscape(T("import.commit_success")), created))
 			fmt.Fprintf(&b, `<p>%s: %d — %s: %d — %s: %d`,
 				T("import.created"), created, T("import.warned"), warned,

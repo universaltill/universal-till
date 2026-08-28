@@ -292,6 +292,55 @@ func TestImport_CommitShowsDistinctSuccessSummaryWithCatalogLink(t *testing.T) {
 	}
 }
 
+// TestImport_CommitWithRowFailuresUsesWarnBannerNotSuccess covers a review
+// finding on ut-docs#1171: an unconditionally green .notice-block-success
+// banner would read as unambiguous success even when a row hit a genuine,
+// non-duplicate failure (item/category/tax-code creation erroring, tallied
+// in `failed` — as opposed to an expected "already in catalog" skip), which
+// is exactly the false-confidence problem this card exists to fix. A commit
+// with a real row failure must render the amber warn treatment instead.
+func TestImport_CommitWithRowFailuresUsesWarnBannerNotSuccess(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	// Same deterministic failure-injection pattern as
+	// TestImport_UnexpectedItemInsertFailureRollsBackWholeRow: force one
+	// specific row's item insert to fail, simulating a genuine unexpected
+	// DB-level error rather than an expected business-rule skip.
+	if _, err := dp.Db.Exec(`
+CREATE TRIGGER import_test_banner_fail BEFORE INSERT ON items
+WHEN NEW.sku = 'FORCE-FAIL'
+BEGIN SELECT RAISE(ABORT, 'simulated item insert failure'); END;`); err != nil {
+		t.Fatalf("install failure trigger: %v", err)
+	}
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	csv := "Name,SKU,Barcode,Price,Category,In stock\n" +
+		"Widget,W1,5012345678900,1.50,Snacks,7\n" +
+		"Broken,FORCE-FAIL,,2.00,,0\n"
+	body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	got := rec.Body.String()
+	if strings.Contains(got, `class="notice-block-success"`) {
+		t.Fatalf("a commit with a genuine row failure must not show the unqualified success banner, got: %s", got)
+	}
+	if !strings.Contains(got, `class="notice-block-warn"`) {
+		t.Fatalf("a commit with a genuine row failure must show the warn banner instead, got: %s", got)
+	}
+	// The rest of the summary + catalog link must still render — only the
+	// severity of the block itself changes.
+	if !strings.Contains(got, `href="/catalog"`) {
+		t.Fatalf("commit response must still offer a View catalog link, got: %s", got)
+	}
+}
+
 // TestImport_BarcodeAttachFailureStillImportsStock covers ut-docs#293's
 // second bug: a row whose barcode fails to attach must still have its item
 // created and its opening stock imported, and the failure reason must
