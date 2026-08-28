@@ -218,10 +218,19 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int) (Result, error) {
 
 	res := Result{Format: "speedy-kasse"}
 	seen := map[string]bool{}
+	dupSuffix := map[string]int{}
 	for _, p := range products {
 		name := collapseWhitespace(p.ProductTextShort)
+		// A whitespace-only product number (ut-docs#1222) is treated
+		// exactly like an absent one: TrimSpace before it's used as a SKU
+		// or a duplicate-detection key at all, so it never becomes a
+		// visible garbage SKU and never collides with another
+		// whitespace-only row. An item with no real SKU already stores
+		// NULL, not the empty string (ut-docs#1176) — nothing further
+		// needed here for the empty case.
+		plu := strings.TrimSpace(p.ProductNumber)
 		item := ImportItem{
-			SKU:      p.ProductNumber,
+			SKU:      plu,
 			Name:     name,
 			Category: p.ProductGroupText,
 			// Barcode is deliberately left empty: the source carries no
@@ -256,17 +265,6 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int) (Result, error) {
 			item.Issue = IssueSourceDeleted
 		case p.ProductType == bkpProductTypeOrderMode:
 			item.Issue = IssueNotSellable
-		case p.ProductNumber != "" && seen[p.ProductNumber]:
-			// Distinct from import_page.go's DB-level
-			// import.status.sku_already_in_catalog: this fires purely on a
-			// collision within THIS uploaded file, before the DB is ever
-			// consulted. Checked BEFORE missing-name (ut-docs#601 review F1):
-			// a row that both misses a name and duplicates an already-
-			// registered PLU can never import no matter what name it's given,
-			// and missing_name is a forceable issue while duplicate is not —
-			// reporting the forceable one would invite an "Import anyway"
-			// override that the duplicate condition must always veto.
-			item.Issue = IssueDuplicateSKUInFile
 		case name == "":
 			item.Issue = IssueMissingName
 		default:
@@ -286,11 +284,29 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int) (Result, error) {
 		// either: if it did, a later row with the same PLU that would
 		// otherwise import cleanly gets wrongly marked as a duplicate of a
 		// row that itself never actually imported, silently losing a real
-		// product the operator never sees a path to recover. A true
-		// same-file duplicate (both rows otherwise clean) is still caught:
-		// the first clean row registers, the second is flagged.
-		if p.ProductNumber != "" && item.Issue == "" {
-			seen[p.ProductNumber] = true
+		// product the operator never sees a path to recover.
+		//
+		// A true same-file duplicate — two otherwise-clean rows sharing one
+		// PLU — used to mean only the first landed and every later one was
+		// silently dropped (ut-docs#1222: 11 of 229 real pilot products lost
+		// this way, one PLU shared by six distinct items). Now the first
+		// still claims the bare PLU; each later one gets a synthesized,
+		// unique SKU (PLU-2, PLU-3, ...) instead of being dropped, flagged
+		// with SKUIssue so the operator sees the number was reused. A row
+		// that ALSO carries a blocking Issue (missing name/bad price/not
+		// sellable/deleted) is deliberately left alone here — two nameless
+		// rows sharing a PLU stay genuinely ambiguous, and are still
+		// resolved by import_page.go's forced-correction in-file-duplicate
+		// veto (ut-docs#601 review F1), not auto-deduped.
+		if plu != "" && item.Issue == "" {
+			if seen[plu] {
+				dupSuffix[plu]++
+				item.SKU = fmt.Sprintf("%s-%d", plu, dupSuffix[plu]+1)
+				item.SKUIssue = SKUIssueDuplicateInFile
+				item.SKUIssueRaw = plu
+			} else {
+				seen[plu] = true
+			}
 		}
 		res.Items = append(res.Items, item)
 	}

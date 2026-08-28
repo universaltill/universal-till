@@ -1558,6 +1558,7 @@
   "import.status.source_deleted": "در فایل مبدأ حذف شده",
   "import.status.not_sellable": "کالای قابل‌فروش نیست (دکمهٔ نوع سفارش)",
   "import.status.duplicate_sku_in_file": "شمارهٔ کالا در این فایل تکراری است",
+  "import.status.sku_reused_in_file": "شمارهٔ کالای «%s» در این فایل تکراری است — با شمارهٔ جدیدی وارد شد",
   "import.error.no_name_column": "ستون «نام» شناسایی نشد — آیا این یک خروجی کاتالوگ است؟",
   "import.error.invalid_file": "این فایل به‌عنوان خروجی کاتالوگ خوانده نشد.",
   "import.error.bkp_unrecognised": "این فایل به‌نظر یک فایل پشتیبان شناخته‌شده نیست.",

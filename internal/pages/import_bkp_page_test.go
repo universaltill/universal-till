@@ -363,3 +363,65 @@ func TestImport_BkpUploadCarriesTaxColumnsThrough(t *testing.T) {
 		t.Fatalf("overrides JSON %s should contain Cappuccino's tax code %s", overridesJSON, cappCode)
 	}
 }
+
+// TestImport_BkpCommitDedupesReusedProductNumberInsteadOfDropping is
+// ut-docs#1222's end-to-end regression pin: a real pilot backup reused one
+// PLU (30006) across six distinct products and 11 of 229 total products
+// were silently dropped as a result. All three rows sharing a PLU here must
+// land in the catalog, and the operator must see why the SKUs differ from
+// the source numbers.
+func TestImport_BkpCommitDedupesReusedProductNumberInsteadOfDropping(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	initAuthTestI18n(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	zipBytes := buildBkpZipForPagesTestWithTaxRows(t, []bkpTaxRow{
+		{ProductNumber: "30006", Name: "Slush Matcha", Category: "Drinks", Price: 2.50},
+		{ProductNumber: "30006", Name: "Affogato", Category: "Drinks", Price: 3.00},
+		{ProductNumber: "30006", Name: "ICE cream", Category: "Drinks", Price: 2.80},
+	})
+	body, ct := multipartFile(t, "Backup 2026-08-09.bkp", zipBytes, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	resp := rec.Body.String()
+
+	// None of the three real products may be lost — this is the exact
+	// defect: previously only "Slush Matcha" (the first row on PLU 30006)
+	// would have landed.
+	for _, want := range []struct{ sku, name string }{
+		{"30006", "Slush Matcha"},
+		{"30006-2", "Affogato"},
+		{"30006-3", "ICE cream"},
+	} {
+		var name string
+		if err := dp.Db.QueryRow(`SELECT name FROM items WHERE sku = ?`, want.sku).Scan(&name); err != nil {
+			t.Fatalf("item with SKU %q not created (product %q lost): %v", want.sku, want.name, err)
+		}
+		if name != want.name {
+			t.Fatalf("SKU %q landed as %q, want %q", want.sku, name, want.name)
+		}
+	}
+	var totalOn30006 int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE sku LIKE '30006%'`).Scan(&totalOn30006); err != nil || totalOn30006 != 3 {
+		t.Fatalf("expected exactly 3 items descending from PLU 30006, got %d (err=%v)", totalOn30006, err)
+	}
+
+	// The reuse is reported, not silent (acceptance criterion 3): the
+	// summary/status text names the original PLU for at least the
+	// deduped rows.
+	if !strings.Contains(resp, "30006") {
+		t.Fatalf("response should surface the reused product number 30006 in a row status, got: %s", resp)
+	}
+	// 4 = the base fixture's Latte (20001) + the 3 rows sharing PLU 30006 —
+	// the base fixture's deleted row (20002, Status=3) never counts.
+	if !strings.Contains(resp, "Imported: 4") {
+		t.Fatalf("summary should report all 4 rows as imported (deduped, not dropped), got: %s", resp)
+	}
+}
