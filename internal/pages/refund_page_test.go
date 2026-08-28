@@ -113,7 +113,7 @@ func TestComputeRefundTotal_ExclusiveAddsTaxOnTop(t *testing.T) {
 	lines := []pos.SaleLineInput{
 		{UnitPrice: money.FromMinor(100), Qty: 2, TaxRateBasisPoints: 2000}, // net 200, tax 40 (exclusive)
 	}
-	total := computeRefundTotal(lines, 0, false)
+	total := computeRefundTotal(lines, 0, 0, 0, false)
 	if total.Minor() != 240 {
 		t.Fatalf("expected 200 + 40 tax = 240, got %d", total.Minor())
 	}
@@ -123,7 +123,7 @@ func TestComputeRefundTotal_InclusiveDoesNotAddTaxOnTop(t *testing.T) {
 	lines := []pos.SaleLineInput{
 		{UnitPrice: money.FromMinor(120), Qty: 1, TaxRateBasisPoints: 2000}, // 120 already includes tax
 	}
-	total := computeRefundTotal(lines, 0, true)
+	total := computeRefundTotal(lines, 0, 0, 0, true)
 	if total.Minor() != 120 {
 		t.Fatalf("expected the inclusive total to stay 120 (tax already inside), got %d", total.Minor())
 	}
@@ -133,7 +133,7 @@ func TestComputeRefundTotal_SubtractsSaleDiscount(t *testing.T) {
 	lines := []pos.SaleLineInput{
 		{UnitPrice: money.FromMinor(100), Qty: 1, TaxRateBasisPoints: 0},
 	}
-	total := computeRefundTotal(lines, money.FromMinor(30), false)
+	total := computeRefundTotal(lines, money.FromMinor(30), 0, 0, false)
 	if total.Minor() != 70 {
 		t.Fatalf("expected 100 - 30 discount = 70, got %d", total.Minor())
 	}
@@ -146,7 +146,7 @@ func TestComputeRefundTotal_NeverNegative(t *testing.T) {
 	// A discount larger than the line total must clamp to zero, not swing
 	// negative (which would mean the shop pays the customer to return an
 	// already-discounted item).
-	total := computeRefundTotal(lines, money.FromMinor(999), false)
+	total := computeRefundTotal(lines, money.FromMinor(999), 0, 0, false)
 	if total.Minor() != 0 {
 		t.Fatalf("expected a clamped-to-zero refund total, got %d", total.Minor())
 	}
@@ -156,9 +156,58 @@ func TestComputeRefundTotal_LineDiscountReducesNet(t *testing.T) {
 	lines := []pos.SaleLineInput{
 		{UnitPrice: money.FromMinor(100), Qty: 1, LineDiscount: money.FromMinor(20), TaxRateBasisPoints: 0},
 	}
-	total := computeRefundTotal(lines, 0, false)
+	total := computeRefundTotal(lines, 0, 0, 0, false)
 	if total.Minor() != 80 {
 		t.Fatalf("expected 100 - 20 line discount = 80, got %d", total.Minor())
+	}
+}
+
+// ut-docs#243: before this, computeRefundTotal had no service-charge
+// parameter at all, so a refund never credited the customer's share of the
+// original sale's service charge back -- the shop silently kept it.
+
+func TestComputeRefundTotal_ExclusiveServiceChargeAddsChargeAndItsTaxOnTop(t *testing.T) {
+	lines := []pos.SaleLineInput{
+		{UnitPrice: money.FromMinor(100), Qty: 2, TaxRateBasisPoints: 0}, // net 200, no line tax
+	}
+	// A flat 10% basis on a 100 charge: 10 tax, added on top since exclusive.
+	total := computeRefundTotal(lines, 0, money.FromMinor(100), 1000, false)
+	if total.Minor() != 310 {
+		t.Fatalf("expected 200 (lines) + 100 (charge) + 10 (charge tax) = 310, got %d", total.Minor())
+	}
+}
+
+func TestComputeRefundTotal_InclusiveServiceChargeFoldsTaxIn(t *testing.T) {
+	lines := []pos.SaleLineInput{
+		{UnitPrice: money.FromMinor(100), Qty: 2, TaxRateBasisPoints: 0},
+	}
+	// Inclusive: the charge's tax is already embedded in the charge amount,
+	// so it must NOT be added a second time on top of the total.
+	total := computeRefundTotal(lines, 0, money.FromMinor(100), 1000, true)
+	if total.Minor() != 300 {
+		t.Fatalf("expected 200 (lines) + 100 (charge, tax already inside) = 300, got %d", total.Minor())
+	}
+}
+
+func TestComputeRefundTotal_DiscountAppliesBeforeServiceChargeIsAdded(t *testing.T) {
+	lines := []pos.SaleLineInput{
+		{UnitPrice: money.FromMinor(100), Qty: 1, TaxRateBasisPoints: 0},
+	}
+	// Mirrors pos.CompleteSale's own ordering: a whole-sale discount reduces
+	// the line subtotal but never eats into the service charge.
+	total := computeRefundTotal(lines, money.FromMinor(30), money.FromMinor(10), 0, false)
+	if total.Minor() != 80 {
+		t.Fatalf("expected (100-30 discount)+10 charge = 80, got %d", total.Minor())
+	}
+}
+
+func TestComputeRefundTotal_ZeroServiceChargeIsARegressionNoOp(t *testing.T) {
+	lines := []pos.SaleLineInput{
+		{UnitPrice: money.FromMinor(100), Qty: 2, TaxRateBasisPoints: 2000},
+	}
+	total := computeRefundTotal(lines, 0, 0, 0, false)
+	if total.Minor() != 240 {
+		t.Fatalf("a zero service charge must behave exactly as before this change: expected 240, got %d", total.Minor())
 	}
 }
 
@@ -230,6 +279,150 @@ VALUES('line-refund-1', ?, 1, 'itm1', 'Apple', 'ABC', 2, 100, 2000, 40, 200, 240
 		t.Fatal(err)
 	}
 	return saleID, receiptNo
+}
+
+// seedCompletedSaleWithServiceChargeForRefund seeds a completed sale carrying
+// a service charge (ut-docs#243's fixture): 2 units @ 100 (subtotal 200,
+// no line tax to keep the arithmetic isolated to the charge itself) plus a
+// 20 service charge, total 220.
+func seedCompletedSaleWithServiceChargeForRefund(t *testing.T, dp *common.Deps) (saleID, receiptNo string) {
+	t.Helper()
+	ctx := context.Background()
+	saleID, receiptNo = "sale-refund-charge-1", "R-REFUND-CHARGE-1"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 200, 0, 0, 220, 20, 0, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-charge-1', ?, 1, 'itm1', 'Apple', 'ABC', 2, 100, 0, 0, 200, 200)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-charge-1', ?, 'cash', 220, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	return saleID, receiptNo
+}
+
+// TestPostRefund_FullRefundReturnsFullServiceCharge is the end-to-end case
+// for ut-docs#243: before the fix, computeRefundTotal and the return's
+// pos.SaleInput never carried any service-charge component at all, so a
+// fully-refunded sale returned only the goods (200) and the shop silently
+// kept the 20 service charge. A full refund of every line must now return
+// the whole original service charge back exactly.
+func TestPostRefund_FullRefundReturnsFullServiceCharge(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleWithServiceChargeForRefund(t, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refund failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var returnTotal, returnCharge, returnPaid int64
+	if err := dp.Db.QueryRow(`SELECT total, service_charge_amount FROM sales WHERE sale_type = 'return'`).Scan(&returnTotal, &returnCharge); err != nil {
+		t.Fatalf("read return sale: %v", err)
+	}
+	if err := dp.Db.QueryRow(`SELECT p.amount FROM payments p JOIN sales s ON s.id = p.sale_id WHERE s.sale_type = 'return'`).Scan(&returnPaid); err != nil {
+		t.Fatalf("read return payment: %v", err)
+	}
+	if returnCharge != 20 {
+		t.Fatalf("expected the full 20 service charge refunded, got %d", returnCharge)
+	}
+	if returnTotal != 220 || returnPaid != 220 {
+		t.Fatalf("expected total/paid = 220/220 (200 goods + 20 service charge), got %d/%d", returnTotal, returnPaid)
+	}
+}
+
+// TestPostRefund_PartialRefundProratesServiceCharge: refunding only 1 of the
+// 2 units (half the original gross) must return half the service charge —
+// the same proration fraction (refundGross/origGross) already used for
+// SaleDiscount, not "all or nothing."
+func TestPostRefund_PartialRefundProratesServiceCharge(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleWithServiceChargeForRefund(t, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refund failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var returnTotal, returnCharge int64
+	if err := dp.Db.QueryRow(`SELECT total, service_charge_amount FROM sales WHERE sale_type = 'return'`).Scan(&returnTotal, &returnCharge); err != nil {
+		t.Fatalf("read return sale: %v", err)
+	}
+	// refundGross=100, origGross=200 -> half the 20 charge = 10.
+	if returnCharge != 10 {
+		t.Fatalf("expected half the service charge (10) prorated for a half-quantity refund, got %d", returnCharge)
+	}
+	if returnTotal != 110 {
+		t.Fatalf("expected total = 100 (1 unit) + 10 (prorated charge) = 110, got %d", returnTotal)
+	}
+}
+
+// TestPostRefund_ZeroServiceChargeSaleIsUnaffected is the explicit
+// regression guard: a sale with no service charge at all (the common case,
+// and every fixture predating ut-docs#243) must refund exactly as before —
+// no charge appears on the return, no accidental non-zero leaked in.
+func TestPostRefund_ZeroServiceChargeSaleIsUnaffected(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refund failed: %d %s", rec.Code, rec.Body.String())
+	}
+
+	var returnCharge int64
+	if err := dp.Db.QueryRow(`SELECT service_charge_amount FROM sales WHERE sale_type = 'return'`).Scan(&returnCharge); err != nil {
+		t.Fatalf("read return sale: %v", err)
+	}
+	if returnCharge != 0 {
+		t.Fatalf("expected no service charge on a sale that never had one, got %d", returnCharge)
+	}
+}
+
+// TestPostRefund_TwoSequentialPartialRefundsSumToTheFullServiceCharge guards
+// against the double-refund risk this proration formula would have if it
+// were based on the ORIGINAL sale's full gross on every call: since each
+// refund's fraction is refundGross-of-THIS-request/origGross, and the
+// existing double-refund pool guard (refundLinePool) already prevents any
+// unit from being refunded twice, two sequential partial refunds covering
+// all units must sum to exactly the original charge -- never more, never
+// less.
+func TestPostRefund_TwoSequentialPartialRefundsSumToTheFullServiceCharge(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleWithServiceChargeForRefund(t, dp)
+
+	for _, qty := range []string{"1", "1"} {
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0="+qty))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("refund failed: %d %s", rec.Code, rec.Body.String())
+		}
+	}
+
+	var totalCharge int64
+	if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(service_charge_amount), 0) FROM sales WHERE sale_type = 'return'`).Scan(&totalCharge); err != nil {
+		t.Fatalf("sum return service charges: %v", err)
+	}
+	if totalCharge != 20 {
+		t.Fatalf("two sequential half-refunds must sum to the full original 20 service charge, got %d", totalCharge)
+	}
 }
 
 func TestRefundPage_ShowsRefundableLines(t *testing.T) {
