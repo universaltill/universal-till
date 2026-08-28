@@ -446,17 +446,57 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
   /* ut-docs#213: the basket is a full-height first-class column (the
      operator must see what's rung up — the old stacked basket/tender
      split left ~1 visible line at 1280x800). The tender panel sits under
-     the products grid, sized to its content. The products row carries an
-     8rem floor — an auto row is maximized BEFORE an fr row gets leftover
-     space, so without the floor every pixel of vertical pressure (OSK's
-     15.5rem body padding, ui-scale 2 on a short screen) would come out of
-     the products grid until it rendered at zero height, the exact
-     invisible-not-clipped failure class .basket-scroll's and .tab-panel's
-     6rem floors exist for. With the floor, the tender panel compresses
-     first and scrolls internally (shared overflow-y: auto below), which
-     keeps every payment button reachable (see
-     e2e/tests/tender-panel-reachable.spec.ts). */
-  grid-template-rows: minmax(8rem, 1fr) minmax(0, auto);
+     the products grid. Products keeps its 8rem floor (.basket-scroll's
+     and .tab-panel's 6rem floors guard the same invisible-not-clipped
+     class); tender deliberately has NO grid-level floor of its own — a
+     first attempt gave it one to match products, which raised their
+     combined minimum from 8rem to 16rem and, at 1920x800 + a 2x manual
+     ui-scale, was enough to push the page past 100dvh and trigger the
+     sticky `.statusbar`'s bottom pin over the still-unscrolled Cash/Card
+     row (caught live by e2e/tests/tender-panel-reachable.spec.ts's own
+     high-ui-scale case). `minmax(0, 2fr)` keeps tender free to compress
+     under pressure exactly as far as plain `auto` always could (down to
+     whatever its own content needs, ultimately `.tab-panel`'s 6rem floor
+     for the Pay tab specifically) — this rule only changes how the
+     LEFTOVER space is split once nothing is under pressure.
+     ut-docs#1231: products was previously `1fr` against tender's plain
+     `auto`, and an `auto` (non-flexible) row is maximized to its own
+     max-content size BEFORE an `fr` row gets any leftover space at all,
+     so tender (scan row + held sales + tab bar + full pay grid + footer)
+     silently claimed roughly half the screen regardless of need, leaving
+     products squeezed near its bare 8rem floor — confirmed live on the
+     1280x800 reference till: the very first product tile rendered clipped
+     mid-tile, no visible scroll affordance. Making tender's max a real
+     flex factor puts both rows on the same ratio-based distribution, so
+     products — the screen's primary purpose — gets the dominant share at
+     any viewport height instead of "whatever tender didn't want" (4fr:3fr,
+     tuned rather than an arbitrary round ratio — see
+     docs/code-reviews/2026-08-28-sale-screen-products-dominant-space-1231.md
+     F1: a 2:1 split scrolled Cash/Card off-panel at both reference
+     resolutions, an even 1:1 split still scrolled every OTHER payment
+     button off; 4:3 is the loosest split that keeps Cash/Card — every
+     shop's always-present fallback methods — on screen at 1280x800 AND
+     1024x600 with no scroll, while still comfortably favouring products).
+     Every payment button stays reachable via tender's own internal
+     scroll exactly as before (e2e/tests/tender-panel-reachable.spec.ts).
+     A flexible tender row does mean its rendered height now tracks
+     `.pos-container`'s own available height (plain `auto` never did),
+     which moves the scan-row/"Add"-button boundary whenever that height
+     changes — most visibly `body.osk-padded`'s 15.5rem reservation while
+     the on-screen keyboard opens/closes. That surfaced a real, PRE-
+     EXISTING race in osk.js: closing the keyboard (focusin's hide())
+     reflows the page synchronously, and a reflow landing between a
+     click's mousedown and mouseup means the browser never synthesizes the
+     click at all — confirmed live, tapping the scan-row's "Add" button
+     while the OSK was open. Main never surfaced it because products
+     (pinned at its floor, the bug fixed here) meant tender's position
+     never moved regardless of osk-padded — latent, not absent. Fixed at
+     the source in osk.js (focusin's hide() deferred one tick, same
+     pattern its focusout sibling already used), not by keeping this
+     layout static — every other cause of `.pos-container` resizing
+     (window resize, ui-scale, basket receipt-view toggling) reflows
+     tender the same way and was never guarded against before either. */
+  grid-template-rows: minmax(8rem, 4fr) minmax(0, 3fr);
   grid-template-areas:
     "basket products"
     "basket tender";
