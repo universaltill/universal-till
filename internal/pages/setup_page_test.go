@@ -850,6 +850,37 @@ func TestSetupPageLoadsHTMXForTheJoinForm(t *testing.T) {
 	}
 }
 
+// The manual pairing-code textbox's placeholder used to be the raw wire
+// shape (`{"token":"…","url":"http://…"}`) — a shop owner is never going to
+// hand-type or recognise that, and the screen's own copy already says
+// "scan or paste the code here", implying the QR/scan path is the real
+// primary route. The sibling settings-page join form (tills.html) already
+// uses the friendly "tills.join_code_ph" key ("Paste the code shown on the
+// other till"); this page just never got the same treatment
+// (ut-docs#1179, reported on a real Pi 5 second-till setup).
+func TestSetupJoinCodeFieldHasNoRawJSONPlaceholder(t *testing.T) {
+	withOSLocale(t, "", "")
+	mux, _, _ := newFullAuthDeps(t)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/setup", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	if strings.Contains(body, `{&#34;token&#34;`) || strings.Contains(body, `{"token"`) {
+		t.Error("setup page's join-code field still shows the raw pairing-token JSON shape " +
+			"as its placeholder — an operator can't hand-type or recognise that (ut-docs#1179)")
+	}
+	// Same non-technical hint the settings-page join form (tills.html) already
+	// uses, so both screens read consistently.
+	if !strings.Contains(body, `name="code" placeholder="Paste the code shown on the other till"`) {
+		t.Error("setup page's join-code field should use the same friendly placeholder " +
+			`as tills.html ("tills.join_code_ph"), not a technical one (ut-docs#1179)`)
+	}
+}
+
 // POST /api/setup/join is middleware-exempt (internal/auth/middleware.go), so
 // the ONLY thing stopping an unauthenticated stranger from re-enrolling a
 // live till — wiping it and pulling another shop's whole database over the
