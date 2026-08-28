@@ -451,7 +451,32 @@
     if (!enabled) return;
     // Focus moving somewhere non-OSK-able closes the keyboard; opening is
     // click-only (above).
-    if (!wantsOSK(ev.target) && (!osk || !osk.contains(ev.target))) hide();
+    if (wantsOSK(ev.target) || (osk && osk.contains(ev.target))) return;
+    // Deferred one tick (ut-docs#1231), not called synchronously like it
+    // used to be: focusin fires as part of mousedown, i.e. BEFORE mouseup —
+    // hide() removes body.osk-padded, which on the sale screen reflows the
+    // tender panel (ut-docs#1231's products/tender rebalance made that
+    // reflow large enough to matter: confirmed live, tapping the scan-row's
+    // "Add" submit button — a non-OSK-able target — moved the button up to
+    // ~200px between mousedown and mouseup). A real mouse/pointer click only
+    // fires `click` when mousedown and mouseup share the same target
+    // element, so a reflow landing in that window can silently turn a
+    // tap into a no-op — reproduced with zero other specs running
+    // (e2e/tests/sale-screen-osk-scan-submit-1177.spec.ts). Deferring
+    // mirrors the same pattern focusout already uses just below: `setTimeout`
+    // pushes the reflow to its own macrotask, after the current mousedown
+    // -> mouseup -> click (-> submit) sequence has already dispatched
+    // synchronously against the pre-reflow layout, so the click that
+    // triggered the close is never the one it breaks.
+    // Re-check at fire time (same guard focusout already applies), don't
+    // just hide() unconditionally: focus can legitimately move AGAIN before
+    // this timer fires — e.g. the data-osk-toggle path (pointerdown here,
+    // pointerup re-focuses an OSK-able field) — and an unconditional hide()
+    // would undo that second, more current focus change.
+    setTimeout(function () {
+      var a = document.activeElement;
+      if (!wantsOSK(a) && (!osk || !osk.contains(a))) hide();
+    }, 0);
   });
   document.addEventListener('focusout', function (ev) {
     // If focus lands on another OSK-able field, its click re-shows it.
