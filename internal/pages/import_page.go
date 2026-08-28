@@ -743,6 +743,14 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				if it.TakeawayTaxIssue != "" {
 					warnings = append(warnings, translateTaxIssue(T, it.TakeawayTaxIssue, it.TakeawayTaxIssueRaw))
 				}
+				// A reused source product number was de-duplicated with a
+				// suffix, not dropped (ut-docs#1222) — surfaced the same
+				// non-blocking way as a dropped barcode/tax rate above, so
+				// the operator sees the number was reused rather than
+				// silently getting a "-2" SKU with no explanation.
+				if it.SKUIssue != "" {
+					warnings = append(warnings, translateSKUIssue(T, it.SKUIssue, it.SKUIssueRaw))
+				}
 				if takeawayOnlyNoDineIn {
 					warnings = append(warnings, T("import.status.tax_takeaway_only"))
 				}
@@ -1204,6 +1212,18 @@ func translateTaxIssue(T func(string) string, code, raw string) string {
 		return fmt.Sprintf(T("import.status.tax_unparseable"), raw)
 	default:
 		log.Printf("[import] unrecognised tax issue reason code %q", code)
+		return T("import.status.unknown_issue")
+	}
+}
+
+// translateSKUIssue is translateBarcodeIssue's counterpart for the
+// (non-blocking) SKUIssue reason code (ut-docs#1222).
+func translateSKUIssue(T func(string) string, code, raw string) string {
+	switch code {
+	case catimport.SKUIssueDuplicateInFile:
+		return fmt.Sprintf(T("import.status.sku_reused_in_file"), raw)
+	default:
+		log.Printf("[import] unrecognised SKU issue reason code %q", code)
 		return T("import.status.unknown_issue")
 	}
 }

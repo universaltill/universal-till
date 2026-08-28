@@ -64,6 +64,16 @@ const (
 	// stock (silently optional), a dropped tax rate is compliance-sensitive
 	// (ut-docs#512), so the drop is reported rather than swallowed.
 	TaxIssueUnparseable = "unparseable"
+
+	// SKUIssueDuplicateInFile: an otherwise-clean row's source product
+	// number was already claimed by an earlier row in this same file
+	// (ut-docs#1222) — the source reused one PLU across several distinct
+	// products (verified against a real pilot backup: one PLU shared by
+	// six different products). Non-blocking, like BarcodeIssue/TaxIssue:
+	// the row still imports, under a synthesized SKU (the original PLU
+	// plus a "-N" suffix), rather than being silently dropped the way
+	// IssueDuplicateSKUInFile used to drop it.
+	SKUIssueDuplicateInFile = "duplicate_in_file"
 )
 
 // ImportItem is one parsed catalog row, prices in minor units.
@@ -123,6 +133,15 @@ type ImportItem struct {
 	TaxIssueRaw         string
 	TakeawayTaxIssue    string
 	TakeawayTaxIssueRaw string
+	// SKUIssue/SKUIssueRaw mirror BarcodeIssue/TaxIssue for the source
+	// product number (ut-docs#1222): set (with the original PLU alongside)
+	// when a reused source number was de-duplicated with a suffix rather
+	// than dropped. Never blocks the row — it imports under the suffixed
+	// SKU — but the pages layer surfaces it as a per-row warning so the
+	// operator knows the number was reused, same reasoning as the other
+	// two non-blocking Issue pairs above.
+	SKUIssue    string
+	SKUIssueRaw string
 }
 
 // Result is a parsed file.
