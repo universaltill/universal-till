@@ -8,7 +8,7 @@
       {{ T "kiosk.checkout_start" }}</button>
     <a class="btn secondary" data-testid="kiosk-inventory-link" href="/inventory">{{ T "kiosk.inventory" }}</a>
     <button class="btn secondary" type="button" data-testid="kiosk-pfand-open"
-            onclick="document.getElementById('pfand-result').textContent=''; var prev=document.activeElement; var m=document.getElementById('pfand-modal'); m.show(); if (m.contains(document.activeElement)) { document.activeElement.blur(); if (prev && prev!==document.body && prev.focus) prev.focus(); }">{{ T "pfand.action" }}</button>
+            onclick="document.getElementById('pfand-result').textContent=''; var prev=document.activeElement; document.getElementById('pfand-modal').show(); if (document.getElementById('pfand-modal').contains(document.activeElement)) { document.activeElement.blur(); if (prev && prev!==document.body && prev.focus) prev.focus(); }">{{ T "pfand.action" }}</button>
     <div class="status-pill" data-testid="status-indicator">{{ T "status.online" }}</div>
   </div>
 </div>
