@@ -82,6 +82,82 @@ func TestEnsureOrderTrackingToken_UnknownReceiptErrors(t *testing.T) {
 	}
 }
 
+// ListLiveTrackedOrders feeds the cloud relay push (ADR-0070): every sale
+// holding a tracking token, filtered through the caller's visibility rule
+// (a callback, per order_status_repo.go's header — internal/pos imports
+// internal/data, so the rule can't be imported here directly). Tokenless
+// sales never appear; the callback decides liveness; ordering is stable so
+// the push's hash gate doesn't see phantom changes.
+func TestListLiveTrackedOrders(t *testing.T) {
+	d := openOrderStatusDB(t, "tracking_list_live.db")
+	seedOrderStatusSale(t, d, "sale-1", "R-0001")
+	seedOrderStatusSale(t, d, "sale-2", "R-0002")
+	seedOrderStatusSale(t, d, "sale-3", "R-0003") // never gets a token
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	tok1, err := repo.EnsureOrderTrackingToken(ctx, "R-0001")
+	if err != nil {
+		t.Fatalf("token R-0001: %v", err)
+	}
+	tok2, err := repo.EnsureOrderTrackingToken(ctx, "R-0002")
+	if err != nil {
+		t.Fatalf("token R-0002: %v", err)
+	}
+	if applied, _, err := repo.ApplyOrderStatus(ctx, "R-0001", "preparing", "u-alice", "2026-08-28T10:00:00Z",
+		func(string) bool { return true }); err != nil || !applied {
+		t.Fatalf("seed status R-0001: applied=%v err=%v", applied, err)
+	}
+	if applied, _, err := repo.ApplyOrderStatus(ctx, "R-0002", "collected", "u-alice", "2026-08-28T10:05:00Z",
+		func(string) bool { return true }); err != nil || !applied {
+		t.Fatalf("seed status R-0002: applied=%v err=%v", applied, err)
+	}
+
+	// Callback sees exactly the tokened sales' status views.
+	var seen []TrackedOrder
+	all, err := repo.ListLiveTrackedOrders(ctx, func(o TrackedOrder) bool {
+		seen = append(seen, o)
+		return true
+	})
+	if err != nil {
+		t.Fatalf("ListLiveTrackedOrders: %v", err)
+	}
+	if len(all) != 2 || len(seen) != 2 {
+		t.Fatalf("got %d rows (%d callback calls), want 2 — tokenless R-0003 must not appear: %+v", len(all), len(seen), all)
+	}
+	byToken := map[string]LiveTrackedOrder{}
+	for _, o := range all {
+		byToken[o.Token] = o
+	}
+	if o := byToken[tok1]; o.ReceiptNo != "R-0001" || o.Status != "preparing" || o.StatusUpdatedAt != "2026-08-28T10:00:00Z" {
+		t.Fatalf("R-0001 row = %+v", o)
+	}
+	if o := byToken[tok2]; o.ReceiptNo != "R-0002" || o.Status != "collected" {
+		t.Fatalf("R-0002 row = %+v", o)
+	}
+
+	// The callback's verdict is honored: filtering out terminal statuses
+	// drops R-0002 from the result.
+	live, err := repo.ListLiveTrackedOrders(ctx, func(o TrackedOrder) bool {
+		return o.Status != "collected" && o.Status != "cancelled"
+	})
+	if err != nil {
+		t.Fatalf("ListLiveTrackedOrders filtered: %v", err)
+	}
+	if len(live) != 1 || live[0].Token != tok1 {
+		t.Fatalf("filtered rows = %+v, want only R-0001's token", live)
+	}
+
+	// Nothing visible → empty, no error (the push's delete signal).
+	none, err := repo.ListLiveTrackedOrders(ctx, func(TrackedOrder) bool { return false })
+	if err != nil {
+		t.Fatalf("ListLiveTrackedOrders none: %v", err)
+	}
+	if len(none) != 0 {
+		t.Fatalf("want no rows, got %+v", none)
+	}
+}
+
 // Lookup by a valid token returns status-only order data; an unknown or
 // empty token returns found=false with NO error — a guessed token must get
 // the exact same not-found response as a malformed one, never a
