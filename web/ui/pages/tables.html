@@ -9,7 +9,18 @@
   /* Floor plan (ut-docs#814, ADR-0054): first SVG positional editor in the
      product. Colors ride the theme tokens so every curated theme works. */
   #floorplan-section .card { padding: 0.75rem; }
-  #floorplan-wrap svg { display: block; inline-size: 100%; block-size: auto; }
+  /* ut-docs#1173: the plan's viewBox is square, and sizing it to
+     inline-size:100% with block-size:auto made it render as tall as it is
+     wide -- fine on a portrait/desktop screen, but on the real till's
+     landscape 1280x800 panel that pushed the edit toggle, the add-table
+     form and the table list off the bottom with no way back (reported
+     against the touch-scroll bug #1170, but a real layout bug distinct
+     from it). Bounding block-size too -- same min(rem, vh) convention
+     already used for .catalog-list #catalog-table -- lets the plan
+     letterbox to whichever dimension is tighter instead of dictating the
+     whole page's height by itself. */
+  #floorplan-wrap svg { display: block; max-inline-size: 100%; max-block-size: min(30rem, 55vh);
+    inline-size: auto; block-size: auto; margin-inline: auto; }
   /* touch-action gates on edit mode (ut-docs#1025): the rule used to be
      unconditional, so the plan swallowed native touch panning even in the
      live view — this page's contribution to the cross-page touch-scroll

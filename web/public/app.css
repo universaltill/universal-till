@@ -1308,6 +1308,17 @@ body.login-screen {
 
 /* Users admin page */
 .users-layout { display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; align-items: start; }
+/* ut-docs#1173: a grid item's default min-inline-size is auto, i.e. it won't
+   shrink below its content's own intrinsic width -- a row with several
+   inline-editable fields (tables.html's rename/zone/seats/shape + two
+   buttons per row is the widest of this class's 8 consumers) can be wider
+   than the 2fr track ever allocates it, which blows the WHOLE grid out
+   past the viewport instead of just that one card scrolling. Same fix,
+   same reasoning, as the already-reviewed .settings-grid .card /
+   .settings-grid .card .table pair just below (ut-docs#251) -- let the
+   table scroll inside its own card rather than stretch the page. */
+.users-list { min-inline-size: 0; }
+.users-list .table { display: block; overflow-x: auto; }
 .users-actions { display: flex; gap: .5rem; flex-wrap: wrap; }
 .users-inline { display: inline-flex; gap: .35rem; margin: 0; }
 .users-inline input { width: 7.5rem; }
