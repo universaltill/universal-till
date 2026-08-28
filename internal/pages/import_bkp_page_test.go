@@ -414,10 +414,12 @@ func TestImport_BkpCommitDedupesReusedProductNumberInsteadOfDropping(t *testing.
 	}
 
 	// The reuse is reported, not silent (acceptance criterion 3): the
-	// summary/status text names the original PLU for at least the
-	// deduped rows.
-	if !strings.Contains(resp, "30006") {
-		t.Fatalf("response should surface the reused product number 30006 in a row status, got: %s", resp)
+	// rendered status text itself, not merely something containing "30006"
+	// (which a broken translation key falling through to Sprintf's
+	// %!(EXTRA ...) default-verb output would also satisfy — review
+	// finding N5).
+	if !strings.Contains(resp, `item number &quot;30006&quot; reused in this file`) {
+		t.Fatalf("response should render the reused-number status for PLU 30006, got: %s", resp)
 	}
 	// 4 = the base fixture's Latte (20001) + the 3 rows sharing PLU 30006 —
 	// the base fixture's deleted row (20002, Status=3) never counts.

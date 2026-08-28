@@ -219,6 +219,18 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int) (Result, error) {
 	res := Result{Format: "speedy-kasse"}
 	seen := map[string]bool{}
 	dupSuffix := map[string]int{}
+	// Every trimmed product number appearing ANYWHERE in the file — not
+	// just the ones that end up importing — so a synthesized suffix (below)
+	// can never squat on a number that turns out to genuinely belong to a
+	// later row (review finding, ut-docs#1222: PLUs 555, 555, 555-2 — a
+	// same-file collision by convenience only, not signalled by anything a
+	// single forward pass over `products` can see before reaching row 3).
+	allPLUs := map[string]bool{}
+	for _, p := range products {
+		if plu := strings.TrimSpace(p.ProductNumber); plu != "" {
+			allPLUs[plu] = true
+		}
+	}
 	for _, p := range products {
 		name := collapseWhitespace(p.ProductTextShort)
 		// A whitespace-only product number (ut-docs#1222) is treated
@@ -300,13 +312,42 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int) (Result, error) {
 		// veto (ut-docs#601 review F1), not auto-deduped.
 		if plu != "" && item.Issue == "" {
 			if seen[plu] {
-				dupSuffix[plu]++
-				item.SKU = fmt.Sprintf("%s-%d", plu, dupSuffix[plu]+1)
+				// The synthesized suffix must dodge any SKU already claimed
+				// in this file — including another genuine PLU that happens
+				// to collide with the candidate suffix (review finding,
+				// ut-docs#1222: a file containing PLUs 555, 555, 555-2 used
+				// to synthesize "555-2" for the second 555 with no check,
+				// racing the THIRD row's real, distinct PLU to the DB's
+				// items.sku UNIQUE constraint — the exact "baffling
+				// item_failed" outcome ut-docs#601 review F1 exists to rule
+				// out, just relocated from the parser to the DB write).
+				// dupSuffix starts the search one past the last suffix this
+				// PLU has already used, so the common case (no such
+				// collision) still costs one map lookup, not a scan.
+				var candidate string
+				for {
+					dupSuffix[plu]++
+					candidate = fmt.Sprintf("%s-%d", plu, dupSuffix[plu]+1)
+					// Skip a candidate already claimed in this file AND one
+					// that is itself a real product number appearing
+					// anywhere in the file (allPLUs) — the latter is what
+					// keeps a synthesized suffix from ever shadowing a
+					// distinct row's own genuine PLU, whichever order the
+					// two rows come in.
+					if !seen[candidate] && !allPLUs[candidate] {
+						break
+					}
+				}
+				item.SKU = candidate
 				item.SKUIssue = SKUIssueDuplicateInFile
 				item.SKUIssueRaw = plu
-			} else {
-				seen[plu] = true
 			}
+			// Register whichever SKU this row actually ends up claiming —
+			// the bare PLU on first occurrence, the synthesized candidate on
+			// a dedup — so a later row can never silently reuse it, whether
+			// that later row is another dedup candidate or a genuine PLU
+			// that happens to read the same as one.
+			seen[item.SKU] = true
 		}
 		res.Items = append(res.Items, item)
 	}
