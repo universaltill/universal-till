@@ -78,11 +78,24 @@ android {
     }
 }
 
-// Same version CI stamps into defaultConfig.versionName above (via
-// -PversionName=$VERSION; "0.1.0-dev" for an unconfigured local build) —
-// read independently here rather than back through android.defaultConfig
-// because this Exec task is registered before that block is guaranteed to
-// have evaluated in Gradle's configuration order.
+// The version CI stamps into defaultConfig.versionName above, read from the
+// same -PversionName=$VERSION Gradle property that block reads ("0.1.0-dev"
+// for an unconfigured local build), so the Go library and the APK manifest
+// can never report different versions for the same build.
+//
+// Read from the project property rather than back out of
+// android.defaultConfig.versionName purely to keep this Exec task
+// independent of AGP's extension model — NOT for configuration-ordering
+// reasons: the android { } block above is evaluated before this line (build
+// scripts run top-to-bottom), and commandLine(...) below runs later still,
+// inside tasks.register's lazy configuration action. Either read would work.
+//
+// The one cost of that choice is that the "0.1.0-dev" fallback is spelled
+// twice; keep it identical to defaultConfig.versionName's above. Only
+// unconfigured local builds can ever observe a drift — every CI/release
+// build passes -PversionName explicitly, and verify-versions in
+// .github/workflows/release.yml fails the release if the .so's stamped
+// version is not exactly the release version.
 val goVersionForLdflags = (project.findProperty("versionName") as String?) ?: "0.1.0-dev"
 
 // Regenerates libs/unitill-mobile.aar from the Go source (../mobile) on every
