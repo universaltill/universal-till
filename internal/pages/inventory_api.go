@@ -525,6 +525,18 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			Currency:               "GBP",
 			AllowNegativeInventory: true, // Returns add inventory
 		}
+
+		// fiscal.sign.ask (ADR-0044 Decision 1, ut-docs#999): a return moves
+		// real money and is aufzeichnungspflichtig under KassenSichV exactly
+		// like a sale, same reasoning as the ADR-0048 gate just above — so
+		// it gets a real signing attempt too, mirroring completeTender's
+		// ordering (pos_api.go): after any payment-provider interaction (none
+		// on this path — the return always pays via the fixed "cash" method
+		// above, so there is no provider webhook to wait on), before
+		// CompleteSale persists. Never blocks or refuses the return — any
+		// failure lands on the proceed-and-declare surface below.
+		signRes := dispatchFiscalSignAsk(ctx, dp, &returnInput)
+
 		returnSaleID, err := pos.CompleteSale(ctx, dp.Db, returnInput)
 		if err != nil {
 			respondReturnError(w, r, http.StatusInternalServerError, err.Error())
@@ -545,6 +557,22 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			}, time.Now().UTC().Format(time.RFC3339), ""); auditErr != nil {
 				log.Printf("fiscal gate: unsigned_override audit marker for return %s failed: %v", returnSaleID, auditErr)
 			}
+		}
+		// fiscal.sign.ask proceed-and-declare (ADR-0044/ADR-0041 Decision E,
+		// ut-docs#999): the return is already committed — a failed (or
+		// known-offline-skipped) signing dispatch is now DECLARED, never
+		// unwound, exactly the way completeTender declares a sale's own
+		// signing gap. Never re-attempted for a completed return (ADR-0056,
+		// ut-docs#839). Best-effort, log-only on failure, same as the
+		// unsigned_override block above.
+		if signRes.Outcome.isFailure() || signRes.Outcome == fiscalSignSkippedOffline {
+			declareUnsignedFiscalSale(ctx, repo, returnSaleID, actorID, signRes)
+		}
+		// ut-docs#585 (contract v1.1.0): an approved answer that carried the
+		// §6 KassenSichV evidence gets it persisted against the return's own
+		// sale row, same as completeTender does for a sale.
+		if signRes.Outcome == fiscalSignApproved {
+			recordFiscalTSEEvidence(ctx, repo, returnSaleID, actorID, signRes.Evidence)
 		}
 		// Mirror the restock to inventory connectors (best-effort, non-blocking).
 		publishStockAdjustedForSale(ctx, dp, returnInput)
