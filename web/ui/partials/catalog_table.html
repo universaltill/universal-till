@@ -21,7 +21,7 @@
             <td class="muted">{{ .SKU }}</td>
             <td>{{ money .BasePrice }}</td>
             <td>{{ if .Unit }}{{ .Unit }}{{ else }}each{{ end }}{{ if .IsWeighed }} ⚖{{ end }}</td>
-            <td>{{ with .TaxCodeID }}{{ . }}{{ else }}—{{ end }}</td>
+            <td>{{ $name := taxCodeName .TaxCodeID }}{{ if $name }}{{ $name }}{{ else }}—{{ end }}</td>
             <td class="btn-actions">
               <button class="btn secondary catalog-edit" type="button">{{ T "common.edit" }}</button>
               <button class="btn danger" type="button"

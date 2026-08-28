@@ -152,6 +152,8 @@
   "catalog.search_placeholder": "Ürünlerde ara…",
   "catalog.sold_by_weight": "Ağırlığa göre satılır",
   "catalog.tax_code": "Vergi kodu",
+  "catalog.tax_code.inactive": "pasif",
+  "catalog.tax_code.none": "— yok —",
   "catalog.upload_image": "Görsel yükle",
   "catalog.variants": "Varyantlar",
   "catalog.variants.add": "Varyant ekle",
