@@ -1189,6 +1189,12 @@ tr.row-warn td { background: rgba(217, 119, 6, .12); }
    text. Same amber palette as the row variant, block-shaped instead. */
 .notice-block-warn { background: rgba(217, 119, 6, .12); border: 1px solid rgba(217, 119, 6, .35);
   border-radius: var(--radius); padding: .7rem .9rem; margin-block-end: .6rem; }
+/* Block-level success notice (ut-docs#1171): same shape as .notice-block-warn
+   above, --success palette instead of --warning — the catalogue import's
+   post-commit summary needs to read as unmistakably "done", distinct at a
+   glance from the (amber) preview/warning state, not just a plain <p>. */
+.notice-block-success { background: rgba(22, 163, 74, .12); border: 1px solid rgba(22, 163, 74, .35);
+  border-radius: var(--radius); padding: .7rem .9rem; margin-block-end: .6rem; }
 
 /* ---------- Kiosk mode (dedicated till: UT_KIOSK=1) ----------
    Touch-first: bigger targets, no text selection or tap highlights, no

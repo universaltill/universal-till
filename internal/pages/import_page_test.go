@@ -150,6 +150,42 @@ func TestImport_PreviewDoesNotWrite(t *testing.T) {
 	}
 }
 
+// TestImport_PreviewEndsWithReachableImportButton covers ut-docs#1171: a
+// long preview (the product owner's real 217-item .bkp ran to 209+ rows plus
+// a "… N more" truncation) must not strand the operator at the bottom of the
+// page with the only Import control back up at the top — the response
+// itself (the #import-result div this test's body actually is) has to carry
+// its own reachable, form-associated Import control after the grid.
+func TestImport_PreviewEndsWithReachableImportButton(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	body, ct := multipartCSV(t, importCSV, nil) // no commit — preview
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview: code %d body %s", rec.Code, rec.Body.String())
+	}
+	got := rec.Body.String()
+	if !strings.Contains(got, `type="submit" form="import-form"`) {
+		t.Fatalf("preview response must repeat a form-associated submit control after the grid, got: %s", got)
+	}
+	// Must come after the table, not instead of it — the grid itself is
+	// still the point of a preview. (The hidden staged_id input is also
+	// form="import-form" and sits BEFORE the table, so this checks for the
+	// submit button specifically, not any form="import-form" occurrence.)
+	tableEnd := strings.Index(got, "</table>")
+	buttonAt := strings.Index(got, `type="submit" form="import-form"`)
+	if tableEnd == -1 || buttonAt == -1 || buttonAt < tableEnd {
+		t.Fatalf("repeated Import control must appear after the preview grid, got: %s", got)
+	}
+}
+
 func TestImport_CommitCreatesCatalog(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	dp := newImportTestDeps(t)
@@ -216,6 +252,43 @@ func TestImport_CommitCreatesCatalog(t *testing.T) {
 	}
 	if total != 2 {
 		t.Fatalf("re-import created duplicates: %d items, want 2", total)
+	}
+}
+
+// TestImport_CommitShowsDistinctSuccessSummaryWithCatalogLink covers
+// ut-docs#1171: the product owner, importing a real 217-item .bkp on the Pi
+// till, couldn't tell the commit had actually happened — the result read
+// exactly like another preview. The commit response must carry a visually
+// distinct (.notice-block-success, not a plain <p>) "Imported N ✓" headline
+// and a View catalog link, and must NOT carry the preview's own repeated
+// Import control (a commit response isn't itself importable again).
+func TestImport_CommitShowsDistinctSuccessSummaryWithCatalogLink(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	body, ct := multipartCSV(t, importCSV, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	got := rec.Body.String()
+	if !strings.Contains(got, `class="notice-block-success"`) {
+		t.Fatalf("commit response must render a visually distinct success block, got: %s", got)
+	}
+	if !strings.Contains(got, "Imported 2 item(s) ✓") {
+		t.Fatalf("commit response must show an explicit \"Imported N ✓\" headline, got: %s", got)
+	}
+	if !strings.Contains(got, `href="/catalog"`) {
+		t.Fatalf("commit response must offer a View catalog link, got: %s", got)
+	}
+	if strings.Contains(got, `form="import-form"`) {
+		t.Fatalf("commit response must not repeat the preview's own Import control, got: %s", got)
 	}
 }
 
