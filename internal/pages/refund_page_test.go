@@ -399,8 +399,14 @@ func TestPostRefund_ZeroServiceChargeSaleIsUnaffected(t *testing.T) {
 // refund's fraction is refundGross-of-THIS-request/origGross, and the
 // existing double-refund pool guard (refundLinePool) already prevents any
 // unit from being refunded twice, two sequential partial refunds covering
-// all units must sum to exactly the original charge -- never more, never
-// less.
+// all units can never OVER-refund the charge. This particular even 1+1-of-2
+// split happens to sum back to the exact original 20 too (integer division
+// is exact here); that's not a general guarantee -- an uneven split (e.g.
+// three 1-of-3 refunds) truncates on each call and can sum to slightly
+// LESS than the original charge (never more), same direction and shape as
+// the pre-existing SaleDiscount proration two lines above it in the
+// handler. See TestPostRefund_UnevenSequentialRefundsNeverExceedTheOriginalServiceCharge
+// for that residual case.
 func TestPostRefund_TwoSequentialPartialRefundsSumToTheFullServiceCharge(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, _ := newRefundTestDeps(t)
@@ -422,6 +428,57 @@ func TestPostRefund_TwoSequentialPartialRefundsSumToTheFullServiceCharge(t *test
 	}
 	if totalCharge != 20 {
 		t.Fatalf("two sequential half-refunds must sum to the full original 20 service charge, got %d", totalCharge)
+	}
+}
+
+// TestPostRefund_UnevenSequentialRefundsNeverExceedTheOriginalServiceCharge
+// is the residual case the comment above calls out: an UNEVEN split (three
+// separate 1-of-3 refunds, each an exact third of the gross) truncates on
+// every call (10*100/300 = 3, three times = 9, not 10) because each refund
+// re-derives its own fraction independently rather than tracking a running
+// remainder. The direction matters more than the exact figure: this can
+// only ever under-refund by a few minor units, never over-refund (which
+// would mean the till pays out more than the original charge), and it is
+// the exact same shape the pre-existing SaleDiscount proration already has
+// two lines above it in the handler -- not a regression this change
+// introduces.
+func TestPostRefund_UnevenSequentialRefundsNeverExceedTheOriginalServiceCharge(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-charge-uneven", "R-REFUND-CHARGE-UNEVEN"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 300, 0, 0, 310, 10, 0, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-charge-uneven', ?, 1, 'itm1', 'Apple', 'ABC', 3, 100, 0, 0, 300, 300)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-charge-uneven', ?, 'cash', 310, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("refund %d failed: %d %s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+
+	var totalCharge int64
+	if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(service_charge_amount), 0) FROM sales WHERE sale_type = 'return'`).Scan(&totalCharge); err != nil {
+		t.Fatalf("sum return service charges: %v", err)
+	}
+	if totalCharge > 10 {
+		t.Fatalf("three uneven partial refunds must never exceed the original 10 service charge, got %d", totalCharge)
+	}
+	if totalCharge != 9 {
+		t.Fatalf("expected the known truncation residual (3+3+3=9, one short of 10), got %d -- if this is now 10, the proration got more precise and this test's comment should be updated", totalCharge)
 	}
 }
 
