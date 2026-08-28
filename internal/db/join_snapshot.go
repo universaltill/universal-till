@@ -86,7 +86,11 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 	// connection that ran it, which this single-use short-lived handle
 	// happens to avoid, but the DSN form is the same guarantee openDB
 	// already relies on elsewhere and costs nothing extra here.
-	cdb, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=secure_delete(1)", copyPath))
+	// temp_store(2) keeps this handle inside db.go's temp-dir-free
+	// invariant (ut-docs#1239) — its current statements need no temp
+	// b-tree, but Android has no writable temp dir to fall back on if
+	// that ever changes.
+	cdb, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=secure_delete(1)&_pragma=temp_store(2)", copyPath))
 	if err != nil {
 		cleanup()
 		return "", nil, fmt.Errorf("open join snapshot copy: %w", err)

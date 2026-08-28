@@ -26,6 +26,20 @@ import (
 // t.TempDir()'s own (single-attempt) removal.
 func mobileTestEnv(t *testing.T) string {
 	t.Helper()
+	// ut-docs#1239: Start may export TMPDIR into a test's (later-deleted)
+	// dataDir on machines where TMPDIR isn't set — e.g. ubuntu CI runners;
+	// macOS always sets it. A stale export poisons os.TempDir() for the
+	// whole process, so every later t.TempDir() call — including the ones
+	// below — fails with ENOENT before the test body even runs. Clear a
+	// dangling TMPDIR first (so t.TempDir() resolves somewhere real), then
+	// pin a per-test one so Start's own-export branch only runs in the
+	// tests that opt in by re-clearing it.
+	if cur := os.Getenv("TMPDIR"); cur != "" {
+		if _, err := os.Stat(cur); err != nil {
+			t.Setenv("TMPDIR", "")
+		}
+	}
+	t.Setenv("TMPDIR", t.TempDir())
 	t.Setenv("UT_AUTH", "off")
 	t.Setenv("UT_ENV_FILE", t.TempDir()+"/does-not-exist.env") // don't pick up a stray local pos.env
 	dataDir := t.TempDir()
@@ -172,5 +186,62 @@ func TestStop_SafeWhenNotRunning(t *testing.T) {
 	Stop() // must not panic
 	if IsRunning() {
 		t.Fatal("IsRunning() should be false when Start was never called")
+	}
+}
+
+// ut-docs#1239: on Android TMPDIR is unset and Go's os.TempDir() fallback
+// is unwritable for an app uid, so anything spilling to temp files (SQLite
+// VACUUM/backup, os.CreateTemp) dies with an I/O error. Start must give the
+// process a writable temp dir inside its own sandbox — unless the host
+// already configured one, which it must respect.
+func TestStart_SetsWritableTMPDIRWhenUnset(t *testing.T) {
+	dataDir := mobileTestEnv(t)
+	t.Setenv("TMPDIR", "") // simulate Android: no temp dir configured
+
+	if _, err := Start(dataDir); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	got := os.Getenv("TMPDIR")
+	want := filepath.Join(dataDir, "tmp")
+	if got != want {
+		t.Fatalf("TMPDIR = %q, want %q", got, want)
+	}
+	f, err := os.CreateTemp("", "probe-*")
+	if err != nil {
+		t.Fatalf("os.CreateTemp in the exported TMPDIR: %v", err)
+	}
+	f.Close()
+	os.Remove(f.Name())
+}
+
+// The counterpart guard: a host-configured TMPDIR is never overridden.
+func TestStart_RespectsExistingTMPDIR(t *testing.T) {
+	dataDir := mobileTestEnv(t)
+	preset := t.TempDir()
+	t.Setenv("TMPDIR", preset)
+
+	if _, err := Start(dataDir); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if got := os.Getenv("TMPDIR"); got != preset {
+		t.Fatalf("TMPDIR = %q, want the preset %q left untouched", got, preset)
+	}
+}
+
+// Review follow-up on ut-docs#1239: a TMPDIR pointing at a directory that
+// no longer exists (a prior Start's own export after its dataDir was
+// removed, or a host that rotated its dirs) must be treated as unset and
+// re-exported — leaving it dangling reproduces exactly the ENOENT failure
+// class the export exists to remove.
+func TestStart_ReplacesStaleTMPDIR(t *testing.T) {
+	dataDir := mobileTestEnv(t)
+	t.Setenv("TMPDIR", filepath.Join(t.TempDir(), "deleted", "gone"))
+
+	if _, err := Start(dataDir); err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+	if got, want := os.Getenv("TMPDIR"), filepath.Join(dataDir, "tmp"); got != want {
+		t.Fatalf("TMPDIR = %q, want the fresh export %q", got, want)
 	}
 }
