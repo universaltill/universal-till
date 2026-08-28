@@ -51,7 +51,14 @@
       <label>{{ T "catalog.description" }} <input type="text" name="description" id="item-description"></label>
       <div class="field-pair">
         <label>{{ T "catalog.col.unit" }} <input type="text" name="unit" id="item-unit" value="each"></label>
-        <label>{{ T "catalog.tax_code" }} <input type="text" name="taxCode" id="item-tax" list="taxcodes-list" placeholder="tax_std"></label>
+        <!-- .TaxCodes carries ALL tax codes here, active and inactive alike
+             (ut-docs#1178 review finding F1) — unlike a text input, a
+             <select> reset to unselected (selectedIndex -1) contributes
+             NOTHING to the submitted form, so if this list only offered
+             active codes, saving any other field on an item still assigned
+             a since-deactivated code would silently null out its tax_code_id.
+             Inactive codes are kept selectable, just labeled. -->
+        <label>{{ T "catalog.tax_code" }} <select name="taxCode" id="item-tax"><option value="">{{ T "catalog.tax_code.none" }}</option>{{ range .TaxCodes }}<option value="{{ .ID }}">{{ .Name }}{{ if not .IsActive }} ({{ T "catalog.tax_code.inactive" }}){{ end }}</option>{{ end }}</select></label>
       </div>
       <div class="field-pair">
         <label>{{ T "catalog.category" }} <input type="text" name="categoryId" id="item-category" list="categories-list"></label>
