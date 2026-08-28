@@ -1,5 +1,5 @@
 import { test, expect, Page } from '@playwright/test';
-import { ADMIN_PIN, watchConsole, fieldGeometry, expectStacked } from './helpers';
+import { ADMIN_PIN, watchConsole, fieldGeometry, expectStacked, setOskMode } from './helpers';
 
 // Drives the AUTH project's server (playwright.config.ts) — a genuinely
 // fresh install with auth ON, separate from every other spec's
@@ -492,6 +492,33 @@ test.describe.serial('first-boot setup and PIN login', () => {
     // Leave the session where the next serial test expects it.
     await page.goto('/');
     await expect(page.locator('#basket')).toBeVisible();
+  });
+
+  // ut-docs#1048: this form's current_pin field is autofocused, and after
+  // ut-docs#1022 suppressed the native keyboard everywhere the custom OSK
+  // is active, that autofocus left no visible way to open a keyboard (per
+  // ut-docs#155, the OSK never auto-opens on programmatic focus). Product
+  // owner's answer: add a data-osk-toggle button matching the scan-row
+  // pattern. Checked here (not settings-osk.spec.ts) for the same reason
+  // as the stacking test above -- /pin needs a real authenticated session.
+  test('the change-PIN form has an OSK toggle for the autofocused current-PIN field', async () => {
+    const assertClean = watchConsole(page);
+    await setOskMode(page, 'on');
+
+    await page.goto('/pin');
+    await page.waitForSelector('form[action="/api/pin/change"]');
+
+    const toggle = page.locator('form[action="/api/pin/change"] [data-osk-toggle]');
+    await expect(toggle).toBeVisible();
+    await toggle.click();
+    await expect(page.locator('#osk')).toBeVisible();
+    await expect(page.locator('input[name=current_pin]')).toBeFocused();
+
+    await setOskMode(page, 'auto');
+    // Leave the session where the next serial test expects it.
+    await page.goto('/');
+    await expect(page.locator('#basket')).toBeVisible();
+    assertClean();
   });
 
   test('a protected page is unreachable while locked, then the PIN logs back in', async () => {
