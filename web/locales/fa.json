@@ -1741,5 +1741,8 @@
   "settings.tse.dismiss_btn": "نادیده بگیر",
   "settings.fiscal_signer.missing.title": "امضاکنندهٔ مالیاتی نصب نشده است",
   "settings.fiscal_signer.missing.message": "این فروشگاه برای فعالیت به‌عنوان سامانهٔ رسمی و قانونی ثبت فروش تنظیم شده، اما هیچ افزونهٔ امضای مالیاتی نصب نیست — فروش‌ها امضا نمی‌شوند. برای رفع این مشکل، افزونهٔ مالیاتی کشور را نصب کنید.",
-  "settings.fiscal_signer.missing.install_btn": "نصب افزونه"
+  "settings.fiscal_signer.missing.install_btn": "نصب افزونه",
+  "settings.tax_rate_switcher.missing.title": "افزونهٔ نرخ مالیات نصب نشده است",
+  "settings.tax_rate_switcher.missing.message": "این کشور به اعمال درست نرخ‌های مالیات بر ارزش افزوده برای سرو در محل و بیرون‌بر نیاز دارد، اما در حال حاضر هیچ افزونهٔ نرخ مالیاتی فعال و کارآمدی وجود ندارد — نرخ‌های سرو در محل/بیرون‌بر به‌درستی اعمال نمی‌شوند. برای رفع این مشکل، افزونهٔ مالیاتی کشور را نصب کنید.",
+  "settings.tax_rate_switcher.missing.install_btn": "نصب افزونه"
 }
