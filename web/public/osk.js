@@ -252,9 +252,18 @@
     osk = document.createElement('div');
     osk.id = 'osk';
     osk.setAttribute('dir', 'ltr');
-    // Keys must never steal focus from the input.
+    // Keys must never steal focus from the input, so pointerdown is always
+    // preventDefault-ed here — but that means activation can't bind to
+    // `click`: WebKitGTK (the kiosk's real browser, Wayland/labwc, raw
+    // touch) never synthesizes a `click` after a canceled `pointerdown`,
+    // even though the Pointer Events spec says it SHOULD (ut-docs#1219,
+    // verified live on Pi5-1) — so a click-bound key is dead under touch on
+    // the actual device. Desktop Chromium/WebKit both still fire click
+    // there, which is why e2e (mouse-driven) and desktop testing never
+    // caught this. `pointerup` is the one event that fires reliably for
+    // both touch and mouse on every tested engine.
     osk.addEventListener('pointerdown', function (ev) { ev.preventDefault(); });
-    osk.addEventListener('click', function (ev) {
+    osk.addEventListener('pointerup', function (ev) {
       var btn = ev.target.closest('button[data-k]');
       if (btn) press(btn.dataset.k);
     });
@@ -398,30 +407,44 @@
   // already-focused scan input — which fires no focusin — still opens it.
   // The toggle must never steal focus (same rule as the OSK's own keys):
   // a button takes focus on pointerdown, which fires focusin -> hide()
-  // BEFORE the click handler runs — the handler then sees "closed" and
-  // re-opens, so the toggle races itself and "close" only wins on lucky
-  // timing (caught as an e2e flake in settings-osk.spec.ts once
-  // ut-docs#213 moved the tender panel and shifted that timing).
+  // BEFORE the toggle's own activation handler runs (ut-docs#1219: that
+  // handler is now bound to pointerup, not click — see below) — the
+  // handler then sees "closed" and re-opens, so the toggle races itself
+  // and "close" only wins on lucky timing (caught as an e2e flake in
+  // settings-osk.spec.ts once ut-docs#213 moved the tender panel and
+  // shifted that timing).
   document.addEventListener('pointerdown', function (ev) {
     var t = ev.target.closest ? ev.target.closest('[data-osk-toggle]') : null;
     if (t) ev.preventDefault();
   });
-  document.addEventListener('click', function (ev) {
+  // Toggle activation binds to `pointerup`, same reasoning and same
+  // WebKitGTK gap as the keys in build() above — its own pointerdown is
+  // always preventDefault-ed (just above) so it can never rely on `click`.
+  // Field-tap opening deliberately stays on `click` below (ut-docs#155's
+  // deliberate-action rule): a plain input's pointerdown is never
+  // preventDefault-ed, so its click survives untouched on every platform.
+  document.addEventListener('pointerup', function (ev) {
     if (!enabled) return;
     var t = ev.target.closest ? ev.target.closest('[data-osk-toggle]') : null;
-    if (t) {
-      // Note: a toggle outside a <form> has no target and no-ops by design.
-      var target = null, els = t.form ? t.form.elements : [];
-      for (var i = 0; i < els.length; i++) {
-        if (wantsOSK(els[i])) { target = els[i]; break; }
-      }
-      var open = osk && osk.classList.contains('osk-open');
-      // Open for a DIFFERENT field (e.g. the qty pad): retarget to this
-      // form's field instead of making the operator tap twice.
-      if (open && (!target || current === target)) { hide(); return; }
-      if (target) { target.focus(); show(target); }
-      return;
+    if (!t) return;
+    // Note: a toggle outside a <form> has no target and no-ops by design.
+    var target = null, els = t.form ? t.form.elements : [];
+    for (var i = 0; i < els.length; i++) {
+      if (wantsOSK(els[i])) { target = els[i]; break; }
     }
+    var open = osk && osk.classList.contains('osk-open');
+    // Open for a DIFFERENT field (e.g. the qty pad): retarget to this
+    // form's field instead of making the operator tap twice.
+    if (open && (!target || current === target)) { hide(); return; }
+    if (target) { target.focus(); show(target); }
+  });
+  document.addEventListener('click', function (ev) {
+    if (!enabled) return;
+    // The toggle no longer activates here (moved to pointerup, above) —
+    // removing its click binding entirely is what keeps a platform that
+    // DOES still fire click after pointerup (Android WebView) from
+    // double-toggling; a toggle <button> never matches wantsOSK() anyway,
+    // so this guard is really just documentation of that invariant.
     if (wantsOSK(ev.target)) show(ev.target);
   });
   document.addEventListener('focusin', function (ev) {
