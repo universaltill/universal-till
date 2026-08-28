@@ -124,10 +124,19 @@ func Tick(ctx context.Context, cfg *config.Config, db *sql.DB, hooks Hooks) erro
 		if err := pushSnapshotIfChanged(ctx, cfg, db); err != nil {
 			logging.L().Warnf("cloudsync: snapshot push failed (will retry): %v", err)
 		}
-		// Order-tracking rows ride the same primary-only gate (ADR-0070):
-		// sales made on any till journal to the primary (ADR-0011 §2), so
-		// the primary's tracked-order set IS the shop's set — a replica
-		// pushing its mirror would only duplicate it.
+		// Order-tracking rows ride the same primary-only gate (ADR-0070),
+		// but for the CLOUD's storage model, not the shop's data model:
+		// the relay replaces a store's whole row set on every push
+		// (ADR-0070 decision 2) and every till of a shop shares one
+		// marketplace StoreID, so a second pusher would delete the first's
+		// rows every tick. Exactly one till per shop may push; the primary
+		// is that till. Known consequence, deliberately NOT claimed away:
+		// tracking_token and order_status do not travel on the LAN sale
+		// journal (data.SaleDetail carries neither), so a self-order sale
+		// taken on a REPLICA is not relayed — its /o/{token} keeps working
+		// on the shop's LAN, it just gets no off-LAN fallback. Widening
+		// that needs a per-till key on the cloud row set — a follow-up
+		// card, not something this gate quietly covers.
 		if err := pushOrderTrackingIfChanged(ctx, cfg, db); err != nil {
 			logging.L().Warnf("cloudsync: order tracking push failed (will retry): %v", err)
 		}
