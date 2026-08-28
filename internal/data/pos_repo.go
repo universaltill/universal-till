@@ -234,7 +234,7 @@ func (r *POSRepo) SearchActiveItems(ctx context.Context, q string, offset, limit
 		offset = 0
 	}
 	rows, err := r.db.QueryContext(ctx, `
-SELECT i.id, i.sku, i.name, i.description, i.category_id, i.brand_id, i.unit, i.base_price, i.tax_code_id, i.is_active, i.is_weighed
+SELECT i.id, COALESCE(i.sku, ''), i.name, i.description, i.category_id, i.brand_id, i.unit, i.base_price, i.tax_code_id, i.is_active, i.is_weighed
 FROM items i
 WHERE i.is_active = 1 AND (
       i.name LIKE ?
