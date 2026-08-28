@@ -44,12 +44,19 @@ test('opening the deposit-refund dialog focuses nothing — no field is auto-foc
   expect(active, 'no field should be focused until the operator deliberately taps one').not.toBe('manager_pin');
 });
 
-test('deposit-refund dialog: only one keyboard ever opens, one field at a time', async ({ page }) => {
+// Companion coverage, not itself a regression guard for THIS bug: osk.js's
+// custom keyboard only ever opens from a `click` (never from `focus`/
+// `focusin` — see osk.js's own ut-docs#155 comment), so it was never going
+// to react to the accidental programmatic focus the fix above removes, and
+// this test passes identically before and after that fix. What it does
+// guard is the singleton assumption the bug report's "2 keyboards" reading
+// depended on: that this app's OWN keyboard component can never itself
+// render twice, however the fields are tapped.
+test('deposit-refund dialog: the custom OSK stays a singleton across both fields', async ({ page }) => {
   await setOskMode(page, 'on');
   await openPfand(page);
 
-  // Never opened at all before a deliberate tap — the regression this
-  // ticket is about.
+  // Never opened at all before a deliberate tap.
   expect(await page.locator('#osk').count()).toBe(0);
 
   await page.locator('#pfand-amount').click();
