@@ -341,3 +341,95 @@ func TestSelfOrderExit_PinLoginReachesTillSettingsNotKioskLoop(t *testing.T) {
 		t.Fatalf("GET /settings with the new session = %d: %s", settingsRec.Code, settingsRec.Body.String())
 	}
 }
+
+// ut-docs#1253: a customer at the self-order kiosk who taps the lock icon
+// must always be met with a fresh PIN prompt, never walked straight into
+// Settings — even when the browser this kiosk is running in still carries a
+// perfectly valid session cookie. That's the real-world case: entering
+// self-order mode (display.mode=self_order) never logs the till out, it
+// only changes what "/" redirects to (TestSelfOrderModeRedirectsEverySession
+// above) — so a staff member who put the till into kiosk mode without first
+// logging out left this exact live session sitting in that browser. Before
+// the fix, GET /login's own "already authenticated? skip the form" shortcut
+// (meant for a plain register re-visiting /login) applied identically to
+// next=kiosk, so the exit link's PIN gate was a no-op for as long as that
+// staff session stayed alive — reported live on a real kiosk (ut-docs#1253).
+func TestSelfOrderExit_ExistingSessionCookieStillRequiresPIN(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	if _, err := d.DB.Exec(`INSERT INTO settings(key, value) VALUES ('display.mode', 'self_order')`); err != nil {
+		t.Fatal(err)
+	}
+	svc := auth.NewService(d.DB)
+	cashierID, err := svc.Repo().CreateUser(t.Context(), "cash", "Cashier", "cashier")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashPIN("1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Repo().SetUserPIN(t.Context(), cashierID, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerIndex(mux, dp)
+	registerSettings(mux, dp)
+	registerSelfOrder(mux, dp)
+	registerSelfOrderShop(mux, dp)
+	registerAuth(mux, dp, svc)
+	h := auth.Middleware(mux, svc)
+
+	// Mint a real, still-valid session the till's own browser is carrying —
+	// e.g. left over from whoever put the till into self-order mode, never
+	// having logged out. Not via the kiosk exit itself: this stands in for
+	// any pre-existing session, exactly as a customer would find it.
+	loginRec := httptest.NewRecorder()
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+		strings.NewReader(url.Values{"pin": {"1234"}}.Encode()))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(loginRec, loginReq)
+	var cookie *http.Cookie
+	for _, c := range loginRec.Result().Cookies() {
+		if c.Name == auth.CookieName {
+			cookie = c
+		}
+	}
+	if cookie == nil || cookie.Value == "" {
+		t.Fatal("setup: cashier login did not set a session cookie")
+	}
+	if _, ok := svc.Resolve(t.Context(), cookie.Value); !ok {
+		t.Fatal("setup: session cookie does not resolve")
+	}
+
+	// The exploit path: same browser (same cookie) follows the kiosk's own
+	// exit link.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/login?next=kiosk", nil)
+	req.AddCookie(cookie)
+	h.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusSeeOther {
+		t.Fatalf("existing session cookie let /login?next=kiosk skip straight to %q with no PIN prompt — must render the PIN form instead", rec.Header().Get("Location"))
+	}
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /login?next=kiosk with an existing session = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `action="/api/auth/login"`) {
+		t.Fatalf("expected the PIN entry form, got: %s", rec.Body.String())
+	}
+
+	// And the PIN form that IS rendered must still actually require a PIN —
+	// posting it (with next=kiosk, as the template does) reaches /settings
+	// only via a fresh, correctly-authorized login, same as the no-existing-
+	// cookie path already covered above.
+	postRec := httptest.NewRecorder()
+	postReq := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+		strings.NewReader(url.Values{"pin": {"1234"}, "next": {"kiosk"}}.Encode()))
+	postReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	postReq.AddCookie(cookie)
+	h.ServeHTTP(postRec, postReq)
+	if postRec.Code != http.StatusSeeOther || postRec.Header().Get("Location") != "/settings" {
+		t.Fatalf("PIN re-entry via the kiosk exit = %d → %q, want 303 → /settings", postRec.Code, postRec.Header().Get("Location"))
+	}
+}
