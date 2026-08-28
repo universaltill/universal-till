@@ -244,3 +244,33 @@ export async function ensureOperator(page: Page) {
     await page.waitForURL((u) => !u.pathname.includes('/login'));
   }
 }
+
+// /tables floor-plan test hygiene (ut-docs#826/#1025/#1170/#1173): every one
+// of these specs assumes theirs is the ONLY active table on the plan (so
+// `.table-node` / a `.users-list` row unambiguously means "the one this test
+// just created"), regardless of run order or a reused server across spec
+// files (playwright.config.ts's reuseExistingServer) — deactivating
+// whatever an earlier test left behind makes that true. Was duplicated
+// verbatim across four spec files before this extraction (ut-docs#1173
+// review finding); consolidated here rather than fixed a fifth time.
+export async function deactivateAllTables(page: Page) {
+  await ensureOperator(page); // fresh Playwright context per test -> log in each time
+  await page.goto('/tables');
+  for (;;) {
+    const btn = page.locator('form[action$="/active"] button', { hasText: 'Deactivate' }).first();
+    if ((await btn.count()) === 0) break;
+    await Promise.all([page.waitForURL((u) => u.pathname === '/tables'), btn.click()]);
+  }
+}
+
+// The bottom-of-page card form — the pre-#1025 add path. Scoped to it
+// specifically: since ut-docs#1025 the tap-to-add dialog is a second
+// form[action="/api/tables"], so the bare selector would be a strict-mode
+// violation.
+export async function createTable(page: Page, label: string) {
+  await page.locator('.users-form form[action="/api/tables"] input[name="label"]').fill(label);
+  await Promise.all([
+    page.waitForURL((u) => u.pathname === '/tables'),
+    page.locator('.users-form form[action="/api/tables"] button[type=submit]').click(),
+  ]);
+}

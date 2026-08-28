@@ -17,7 +17,9 @@
 
 <div class="users-layout">
   <div class="card users-list">
-    <div style="overflow-x:auto">
+    {{/* ut-docs#1173: .users-list .table now carries its own overflow-x:auto
+         (app.css) so this page's own wrapper div is redundant -- a nested
+         scroller, harmless but confusing to debug later. */}}
     <table class="table">
       <thead>
         <tr>
@@ -70,7 +72,6 @@
         {{ end }}
       </tbody>
     </table>
-    </div>
   </div>
 
   <div class="card users-form">

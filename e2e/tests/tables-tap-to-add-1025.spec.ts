@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { watchConsole, ensureOperator } from './helpers';
+import { watchConsole, deactivateAllTables, createTable } from './helpers';
 
 // ut-docs#1025: two bounded floor-plan editor fixes.
 //
@@ -22,31 +22,16 @@ import { watchConsole, ensureOperator } from './helpers';
 // Same single-active-table hygiene as tables-keyboard-reposition-826.spec.ts:
 // deactivate whatever earlier tests left behind so `.table-node` counts are
 // deterministic regardless of run order / a reused server.
-async function deactivateAllTables(page) {
-  await ensureOperator(page); // fresh Playwright context per test -> log in each time
-  await page.goto('/tables');
-  for (;;) {
-    const btn = page.locator('form[action$="/active"] button', { hasText: 'Deactivate' }).first();
-    if ((await btn.count()) === 0) break;
-    await Promise.all([page.waitForURL((u) => u.pathname === '/tables'), btn.click()]);
-  }
-}
-
-// The bottom-of-page card form — the pre-#1025 add path, unchanged.
-async function createTableViaCard(page, label: string) {
-  await page.locator('.users-form form[action="/api/tables"] input[name="label"]').fill(label);
-  await Promise.all([
-    page.waitForURL((u) => u.pathname === '/tables'),
-    page.locator('.users-form form[action="/api/tables"] button[type=submit]').click(),
-  ]);
-}
+// deactivateAllTables/createTable now live in helpers.ts (ut-docs#1173
+// review finding: this exact pair was duplicated verbatim across four spec
+// files).
 
 test.describe('Tables floor plan: tap-to-add + touch-action scoping (ut-docs#1025)', () => {
   test('touch-action on the plan SVG is none only while editing (CSS scoping, not hardware scroll)', async ({ page }) => {
     const assertClean = watchConsole(page);
     await deactivateAllTables(page);
     // The floor-plan card only renders when at least one table exists.
-    await createTableViaCard(page, 'E2E Touch 1025');
+    await createTable(page, 'E2E Touch 1025');
 
     const svg = page.locator('#floorplan');
     await expect(svg).toBeVisible();
@@ -68,7 +53,7 @@ test.describe('Tables floor plan: tap-to-add + touch-action scoping (ut-docs#102
   test('clicking empty canvas outside edit mode does nothing', async ({ page }) => {
     const assertClean = watchConsole(page);
     await deactivateAllTables(page);
-    await createTableViaCard(page, 'E2E NoEdit 1025');
+    await createTable(page, 'E2E NoEdit 1025');
 
     await expect(page.locator('#floorplan')).toBeVisible();
     await page.locator('.floorplan-bg').click({ position: { x: 30, y: 30 } });
@@ -80,7 +65,7 @@ test.describe('Tables floor plan: tap-to-add + touch-action scoping (ut-docs#102
   test('in edit mode, tapping empty canvas opens the dialog and creates the table at the tapped spot', async ({ page }) => {
     const assertClean = watchConsole(page);
     await deactivateAllTables(page);
-    await createTableViaCard(page, 'E2E Seed 1025');
+    await createTable(page, 'E2E Seed 1025');
     await expect(page.locator('.table-node')).toHaveCount(1);
 
     await page.locator('#tables-edit-toggle').click();
@@ -126,7 +111,7 @@ test.describe('Tables floor plan: tap-to-add + touch-action scoping (ut-docs#102
   test('cancelling the dialog closes it and creates nothing', async ({ page }) => {
     const assertClean = watchConsole(page);
     await deactivateAllTables(page);
-    await createTableViaCard(page, 'E2E Cancel 1025');
+    await createTable(page, 'E2E Cancel 1025');
     await expect(page.locator('.table-node')).toHaveCount(1);
 
     await page.locator('#tables-edit-toggle').click();
