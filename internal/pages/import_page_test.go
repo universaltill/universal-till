@@ -150,6 +150,46 @@ func TestImport_PreviewDoesNotWrite(t *testing.T) {
 	}
 }
 
+// TestImport_PreviewEndsWithReachableImportControl covers ut-docs#1171: a
+// preview's result table renders below the page's only Import button (at the
+// top, next to the file field), so on a long file the operator scrolled to
+// the bottom with no action in sight. The primary action must be repeated
+// after the table — form-associated (form="import-form") since it renders
+// into #import-result, outside <form id="import-form"> — and wired to the
+// same commit flag the top button sets.
+func TestImport_PreviewEndsWithReachableImportControl(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	body, ct := multipartCSV(t, importCSV, nil) // no commit: preview
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview: code %d body %s", rec.Code, rec.Body.String())
+	}
+	resp := rec.Body.String()
+
+	tableEnd := strings.LastIndex(resp, "</table>")
+	if tableEnd == -1 {
+		t.Fatalf("expected a result table, got: %s", resp)
+	}
+	after := resp[tableEnd:]
+	if !strings.Contains(after, `form="import-form"`) {
+		t.Fatalf("no reachable control after the table (must be form-associated to import-form), got tail: %s", after)
+	}
+	if !strings.Contains(after, `document.getElementById('import-commit').value='1'`) {
+		t.Fatalf("the trailing control must set commit=1 the same way the top Import button does, got tail: %s", after)
+	}
+	if !strings.Contains(after, `class="btn primary"`) {
+		t.Fatalf("the trailing control must be a primary, touch-target sized button, got tail: %s", after)
+	}
+}
+
 func TestImport_CommitCreatesCatalog(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	dp := newImportTestDeps(t)
@@ -216,6 +256,49 @@ func TestImport_CommitCreatesCatalog(t *testing.T) {
 	}
 	if total != 2 {
 		t.Fatalf("re-import created duplicates: %d items, want 2", total)
+	}
+}
+
+// TestImport_CommitEndsWithSuccessSummaryAndCatalogLink covers ut-docs#1171's
+// other half: a commit result must be visually distinct from a preview (the
+// product owner couldn't tell whether an import had happened by looking at
+// the screen) and, on a long file, the operator must not be stranded at the
+// bottom of the results table with no way back to the catalog.
+func TestImport_CommitEndsWithSuccessSummaryAndCatalogLink(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	body, ct := multipartCSV(t, importCSV, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	resp := rec.Body.String()
+
+	// Visually distinct: the success block's own CSS class, not just prose
+	// an operator skimming a long page could miss.
+	if n := strings.Count(resp, `notice-block-success`); n < 2 {
+		t.Fatalf("expected the success block (top summary + trailing recap) to carry notice-block-success twice, got %d in: %s", n, resp)
+	}
+	if n := strings.Count(resp, `href="/catalog"`); n < 2 {
+		t.Fatalf("expected a View catalog link both at the top summary and after the table, got %d in: %s", n, resp)
+	}
+	tableEnd := strings.LastIndex(resp, "</table>")
+	if tableEnd == -1 {
+		t.Fatalf("expected a result table, got: %s", resp)
+	}
+	after := resp[tableEnd:]
+	if !strings.Contains(after, `href="/catalog"`) {
+		t.Fatalf("the trailing catalog link must come after the table, got tail: %s", after)
+	}
+	if !strings.Contains(after, `notice-block-success`) {
+		t.Fatalf("the trailing recap must carry the success visual treatment, got tail: %s", after)
 	}
 }
 

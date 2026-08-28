@@ -827,6 +827,12 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				fmt.Sprintf(htmlEscape(T("import.warning.currency_unconfirmed")), htmlEscape(httpx.ActiveCurrency().Code)))
 		}
 		if commit {
+			// notice-block-success (ut-docs#1171): the post-commit summary must
+			// read as visually distinct from a preview at a glance — before this
+			// card both states rendered as plain body text above an identical
+			// table, and the product owner couldn't tell from the screen alone
+			// whether an import had actually happened.
+			b.WriteString(`<div class="notice-block-success">`)
 			fmt.Fprintf(&b, `<p><strong>✓ %s: %d — %s: %d — %s: %d</strong>`,
 				T("import.created"), created, T("import.warned"), warned,
 				T("import.skipped"), len(rows)-created)
@@ -838,6 +844,8 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					T("import.status.tax_overrides_plugin_disabled"))
 			}
 			b.WriteString(`</p>`)
+			fmt.Fprintf(&b, `<a class="btn primary" href="/catalog">%s</a>`, T("import.view_catalog"))
+			b.WriteString(`</div>`)
 		} else {
 			fmt.Fprintf(&b, `<p><strong>%s: %s · %d %s, %d %s</strong></p>`,
 				T("import.detected"), res.Format, importable, T("import.ready"), len(rows)-importable, T("import.with_issues"))
@@ -934,6 +942,22 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(&b, `<tr><td colspan="5" class="muted">… %d more</td></tr>`, len(plainRows)-plainShown)
 		}
 		b.WriteString(`</tbody></table>`)
+		// ut-docs#1171: a long preview/result table left the operator stranded
+		// at the bottom of the page with no reachable action — the only Import
+		// button lived at the TOP, next to the file field. Repeat the primary
+		// action (preview → Import; commit → View catalog) right after the
+		// table, touch-target sized (.btn), so it's reachable without
+		// scrolling back up. Preview's button is form-associated
+		// (form="import-form") because it renders into #import-result,
+		// outside <form id="import-form"> — same pattern the problem-grid's
+		// own controls already use.
+		if commit {
+			fmt.Fprintf(&b, `<p class="notice-block-success" style="margin-block-start:.8rem"><a class="btn primary" href="/catalog">%s</a></p>`,
+				T("import.view_catalog"))
+		} else {
+			fmt.Fprintf(&b, `<button class="btn primary" type="submit" form="import-form" onclick="document.getElementById('import-commit').value='1'" style="margin-block-start:.8rem">%s</button>`,
+				T("import.import"))
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		_, _ = w.Write([]byte(b.String()))
 	})
