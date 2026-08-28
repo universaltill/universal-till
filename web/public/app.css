@@ -446,17 +446,64 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
   /* ut-docs#213: the basket is a full-height first-class column (the
      operator must see what's rung up — the old stacked basket/tender
      split left ~1 visible line at 1280x800). The tender panel sits under
-     the products grid, sized to its content. The products row carries an
-     8rem floor — an auto row is maximized BEFORE an fr row gets leftover
-     space, so without the floor every pixel of vertical pressure (OSK's
-     15.5rem body padding, ui-scale 2 on a short screen) would come out of
-     the products grid until it rendered at zero height, the exact
-     invisible-not-clipped failure class .basket-scroll's and .tab-panel's
-     6rem floors exist for. With the floor, the tender panel compresses
-     first and scrolls internally (shared overflow-y: auto below), which
-     keeps every payment button reachable (see
-     e2e/tests/tender-panel-reachable.spec.ts). */
-  grid-template-rows: minmax(8rem, 1fr) minmax(0, auto);
+     the products grid. Products keeps its 8rem floor so it can never be
+     squeezed to invisible (the same invisible-not-clipped failure class
+     .basket-scroll's and .tab-panel's 6rem floors exist for); tender
+     deliberately does NOT get an equivalent grid-level floor — it already
+     has one two layers down (.tab-panel's own 6rem floor, further in), and
+     a SECOND floor at the row level actively hurts under real pressure: a
+     first version of this fix gave tender an 8rem floor to match products,
+     which raised the pair's combined minimum demand from 8rem (products
+     only — tender's old `auto` had an implicit 0 floor) to 16rem, and at
+     1920x800 + a 2x manual ui-scale that was enough to push the page's
+     total content past 100dvh, triggering the sticky `.statusbar`'s
+     bottom-of-viewport pin over the still-unscrolled Cash/Card row
+     (e2e/tests/tender-panel-reachable.spec.ts's own high-ui-scale case,
+     reproduced live). `minmax(0, 1fr)` keeps tender free to compress all
+     the way down to its content's real floor (.tab-panel's 6rem) under
+     that same pressure, exactly like `auto` always could — this rule
+     only changes how much of the LEFTOVER space (once nothing is under
+     pressure) goes to tender, not what happens when there isn't enough
+     to go around. Past products' floor, the leftover is split 2fr:1fr in
+     the products row's favour — ut-docs#1231: products was previously `1fr` against tender's
+     plain `auto`, and an `auto` (non-flexible) row is maximized to its own
+     max-content size BEFORE an `fr` row gets any leftover space at all, so
+     tender (scan row + held sales + tab bar + full pay grid + footer, a
+     lot of intrinsic content) silently claimed roughly half the screen
+     regardless of need, leaving products pinned at its bare 8rem floor —
+     confirmed live on the 1280x800 reference till: the very first product
+     tile rendered clipped mid-tile with no visible scroll affordance.
+     Making tender's max a real flex factor (1fr, not auto) puts both rows
+     on the same ratio-based distribution, so products — the screen's
+     primary purpose — gets the dominant share at any viewport height
+     instead of "whatever tender didn't want": measured 394.6px vs. 181.7px
+     pre-fix on the 1280x800 reference catalog, tender compacting to 197px.
+     Tender still compresses below its natural content size at small
+     viewports / high ui-scale and scrolls internally (shared overflow-y:
+     auto below, .tab-panel's own 6rem floor) exactly as before — every
+     payment button stays reachable (see
+     e2e/tests/tender-panel-reachable.spec.ts), it just no longer gets
+     first claim on space it doesn't need.
+     A flexible tender row does mean tender's rendered height now tracks
+     `.pos-container`'s own available height (it didn't when tender was
+     plain `auto`), which moves the scan-row/"Add"-button boundary whenever
+     that available height changes — most visibly, `body.osk-padded`'s
+     15.5rem reservation while the on-screen keyboard is open/closed. That
+     surfaced a real, PRE-EXISTING race in osk.js: closing the keyboard
+     (its focusin-triggered hide(), see osk.js) reflows the page
+     synchronously, and if that reflow lands between a click's mousedown
+     and mouseup, the browser never synthesizes the click at all (mousedown
+     and mouseup must share a target) — confirmed live, tapping the
+     scan-row's "Add" submit button while the OSK was open. Main never
+     surfaced it because products (pinned at its floor, the very bug fixed
+     here) meant tender's position never moved regardless of osk-padded —
+     the race was latent, not absent. Fixed at the source in osk.js
+     (focusin's hide() now deferred one tick, same pattern its focusout
+     sibling already uses), not by keeping this layout static — every
+     other cause of `.pos-container` resizing (window resize, ui-scale,
+     basket receipt-view toggling) reflows tender exactly the same way and
+     was never guarded against before either. */
+  grid-template-rows: minmax(8rem, 2fr) minmax(0, 1fr);
   grid-template-areas:
     "basket products"
     "basket tender";
