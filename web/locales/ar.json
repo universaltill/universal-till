@@ -152,6 +152,8 @@
   "catalog.search_placeholder": "ابحث عن الأصناف…",
   "catalog.sold_by_weight": "يُباع بالوزن",
   "catalog.tax_code": "رمز الضريبة",
+  "catalog.tax_code.inactive": "غير نشط",
+  "catalog.tax_code.none": "— بدون —",
   "catalog.upload_image": "رفع صورة",
   "catalog.variants": "المتغيّرات",
   "catalog.variants.add": "إضافة متغيّر",

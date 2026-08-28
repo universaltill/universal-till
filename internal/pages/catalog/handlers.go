@@ -80,7 +80,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		items, _ := repo.ListItems(r.Context())
 		barcodes, _ := repo.ItemBarcodes(r.Context())
 		variants, _ := repo.ItemVariants(r.Context())
+		taxCodes, _ := repo.ListAllTaxCodes(r.Context())
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		funcs["taxCodeName"] = taxCodeNameFunc(taxCodes)
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
 		), funcs)("catalog_table", map[string]any{"Items": items, "Barcodes": barcodes, "Variants": variants})(w, r)
@@ -129,6 +131,8 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			items, _ := repo.ListItems(r.Context())
 			barcodes, _ := repo.ItemBarcodes(r.Context())
 			variants, _ := repo.ItemVariants(r.Context())
+			taxCodes, _ := repo.ListAllTaxCodes(r.Context())
+			funcs["taxCodeName"] = taxCodeNameFunc(taxCodes)
 			bw := newBufResponseWriter(&buf)
 			httpx.RenderWith(files(
 				filepath.Join("web", "ui", "partials", "catalog_table.html"),
@@ -239,11 +243,17 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
-		cats, brands, taxCodes, err := listLookups(r.Context(), repo)
+		cats, brands, err := listLookups(r.Context(), repo)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}
+		taxCodes, err := repo.ListAllTaxCodes(r.Context())
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+			return
+		}
+		funcs["taxCodeName"] = taxCodeNameFunc(taxCodes)
 		barcodes, _ := repo.ItemBarcodes(r.Context())
 		variants, _ := repo.ItemVariants(r.Context())
 		data := map[string]any{
@@ -842,20 +852,16 @@ type lookup struct {
 	Name string
 }
 
-func listLookups(ctx context.Context, repo *data.CatalogRepo) ([]lookup, []lookup, []lookup, error) {
+func listLookups(ctx context.Context, repo *data.CatalogRepo) ([]lookup, []lookup, error) {
 	catsRaw, err := repo.ReadLookup(ctx, "categories")
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
 	brandsRaw, err := repo.ReadLookup(ctx, "brands")
 	if err != nil {
-		return nil, nil, nil, err
+		return nil, nil, err
 	}
-	taxCodesRaw, err := repo.ReadLookup(ctx, "tax_codes")
-	if err != nil {
-		return nil, nil, nil, err
-	}
-	return convertLookups(catsRaw), convertLookups(brandsRaw), convertLookups(taxCodesRaw), nil
+	return convertLookups(catsRaw), convertLookups(brandsRaw), nil
 }
 
 func convertLookups(in []data.Lookup) []lookup {
@@ -864,6 +870,35 @@ func convertLookups(in []data.Lookup) []lookup {
 		out = append(out, lookup{ID: l.ID, Name: l.Name})
 	}
 	return out
+}
+
+// taxCodeNameFunc returns a "taxCodeName" template func that resolves a
+// stored tax_code_id to its display name (ut-docs#1178) instead of letting
+// the raw id render — used by both the full /catalog page and the
+// catalog_table.html partial re-rendered after every mutation.
+//
+// Takes *string, not string: Item.TaxCodeID is a *string (nil when the item
+// has no tax code, the common case), and while html/template auto-derefs a
+// *non-nil* *string when it flows straight into a func(string) parameter, a
+// *nil* one panics the whole render with "dereference of nil pointer" — and
+// map `index` rejects a *string key outright, nil or not. Handling the nil
+// case here, once, is simpler than requiring every call site to guard it.
+//
+// Built from taxCodes' full set (active AND inactive, ut-docs#1178 review
+// finding F1) so a retired tax code still resolves to its real name instead
+// of falling back to "—" — see the matching note on the item-edit <select>
+// in catalog.html for why inactive codes can't just be dropped here.
+func taxCodeNameFunc(taxCodes []data.TaxCodeView) func(id *string) string {
+	names := make(map[string]string, len(taxCodes))
+	for _, tc := range taxCodes {
+		names[tc.ID] = tc.Name
+	}
+	return func(id *string) string {
+		if id == nil {
+			return ""
+		}
+		return names[*id]
+	}
 }
 
 func validateLookups(ctx context.Context, repo *data.CatalogRepo, in pos.ItemInput) error {
