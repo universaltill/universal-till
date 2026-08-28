@@ -312,6 +312,60 @@ func TestParseBkp_ProductNumberSharedBySixItems(t *testing.T) {
 	}
 }
 
+// TestParseBkp_SynthesizedSuffixNeverCollidesWithARealPLU is the review
+// finding (ut-docs#1222): a naive "PLU-2" synthesis for the second row on a
+// reused PLU can collide with a THIRD row's own, genuine, distinct PLU that
+// happens to read the same as the candidate suffix — dropping that row with
+// a bare UNIQUE-constraint failure instead of the reused one. All three
+// products here are real and distinct; none may be lost or collide.
+func TestParseBkp_SynthesizedSuffixNeverCollidesWithARealPLU(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "555", ProductTextShort: "Alpha", SalesPrice: 1.00, ProductGroupText: "Misc", Status: 1, ProductType: 1},
+		{ProductNumber: "555", ProductTextShort: "Beta", SalesPrice: 2.00, ProductGroupText: "Misc", Status: 1, ProductType: 1},
+		// A genuine, distinct PLU that happens to read exactly like the
+		// naive synthesis for Beta ("555" + "-2").
+		{ProductNumber: "555-2", ProductTextShort: "Gamma", SalesPrice: 3.00, ProductGroupText: "Misc", Status: 1, ProductType: 1},
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != 3 {
+		t.Fatalf("items = %d, want 3 — none of Alpha/Beta/Gamma may be dropped", len(res.Items))
+	}
+	skus := map[string]string{} // sku -> name, to also catch a collision directly
+	for _, it := range res.Items {
+		if it.Issue != "" {
+			t.Errorf("item %q got a blocking Issue %q, want none", it.Name, it.Issue)
+		}
+		if existing, dup := skus[it.SKU]; dup {
+			t.Fatalf("SKU %q claimed by both %q and %q", it.SKU, existing, it.Name)
+		}
+		skus[it.SKU] = it.Name
+	}
+	if skus["555"] != "Alpha" {
+		t.Errorf(`SKU "555" = %q, want "Alpha"`, skus["555"])
+	}
+	if skus["555-2"] != "Gamma" {
+		t.Errorf(`SKU "555-2" = %q, want "Gamma" (Beta must be pushed to a different suffix, not steal Gamma's real PLU)`, skus["555-2"])
+	}
+	// Beta must have landed under SOME other, non-colliding SKU.
+	betaFound := false
+	for sku, name := range skus {
+		if name == "Beta" {
+			betaFound = true
+			if sku == "555" || sku == "555-2" {
+				t.Errorf("Beta landed under %q, which belongs to Alpha/Gamma", sku)
+			}
+		}
+	}
+	if !betaFound {
+		t.Fatal("Beta not found among the imported items")
+	}
+}
+
 // TestParseBkp_WhitespaceOnlyProductNumberTreatedAsEmpty is ut-docs#1222's
 // second acceptance criterion: a whitespace-only ProductNumber must behave
 // exactly like an absent one (empty SKU, no duplicate flagging against
