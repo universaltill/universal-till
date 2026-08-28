@@ -91,6 +91,49 @@ body > main.container { flex: 1 0 auto; }
 body.sale-screen { height: 100dvh; overflow: hidden; }
 body.sale-screen > main.container { flex: 1 1 auto; min-height: 0; display: flex;
   flex-direction: column; padding-top: .6rem; padding-bottom: 0; }
+/* ---------- Touch: the till is an operator surface, not a document ----------
+   ut-docs#1021 — root-caused on the physical Pi 5 till (WebKitGTK 2.52,
+   labwc/Wayland), where the full input stack was verified healthy layer by
+   layer (libinput: touch caps OK; compositor: native wl_touch confirmed with
+   a raw client; plain pages: kinetic touch panning works in the SAME shell).
+   The reported "cannot scroll anywhere, dragging highlights text" is a
+   WebKit gesture-arbitration fall-through: when a touch drag has nothing to
+   pan in its direction — most commonly a downward drag while already at the
+   top of the page, which is many operators' first gesture — WebKit falls
+   back to treating the drag as a mouse selection drag. Once a selection
+   exists, subsequent drags EXTEND it instead of panning, so the whole page
+   feels unscrollable (reproduced deterministically with synthetic evdev
+   gestures: up-drag pans, down-drag-at-top selects).
+   The cure is the one ut-docs#1170 already applied to .btn, widened to what
+   a POS actually is: nothing outside editable fields is ever meant to be
+   text-selected. With no selection to fall into, an unpannable drag simply
+   does nothing (standard touch-UI feel) and panning is unaffected —
+   verified on the same device: down-drag-at-top selects nothing, up-drag
+   still pans. Editable/copyable content opts back in below; -webkit- prefix
+   because WebKitGTK is the engine this was proven on. */
+body { -webkit-user-select: none; user-select: none; }
+/* Editing surfaces always keep native selection — caret/selection inside a
+   field is part of typing, on every input kind. */
+input, textarea, [contenteditable] {
+  -webkit-user-select: text; user-select: text;
+}
+/* Copyable ID-shaped values (<code>/<pre>: store/device IDs, audit JSON,
+   translation keys, enrol codes) stay selectable ONLY where a precise
+   pointer exists (independent review finding): on the touch till a <code>
+   chip at the top of /settings would otherwise re-open the exact
+   selection-drag fall-through this block exists to close — the canonical
+   down-drag-at-top starting on it. A till has no clipboard destination
+   anyway; desktops keep copyability. */
+@media (pointer: fine) {
+  code, pre { -webkit-user-select: text; user-select: text; }
+}
+/* The customer order-tracking page is an anonymous customer's OWN PHONE,
+   not an operator surface (order_tracking.html's own header, ut-docs#527)
+   — a customer may legitimately select/copy their receipt number. The
+   operator-surface rationale above deliberately does not apply there
+   (independent review finding). */
+body.tracking-screen { -webkit-user-select: text; user-select: text; }
+
 .muted { color: var(--muted); }
 .empty { text-align: center; color: var(--muted); padding: .75rem 0; }
 .tag {
