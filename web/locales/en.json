@@ -152,6 +152,8 @@
   "catalog.search_placeholder": "Search items…",
   "catalog.sold_by_weight": "Sold by weight",
   "catalog.tax_code": "Tax code",
+  "catalog.tax_code.inactive": "inactive",
+  "catalog.tax_code.none": "— none —",
   "catalog.upload_image": "Upload Image",
   "catalog.variants": "Variants",
   "catalog.variants.add": "Add variant",

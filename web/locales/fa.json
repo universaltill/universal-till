@@ -152,6 +152,8 @@
   "catalog.search_placeholder": "جستجوی کالا…",
   "catalog.sold_by_weight": "فروش وزنی",
   "catalog.tax_code": "کد مالیات",
+  "catalog.tax_code.inactive": "غیرفعال",
+  "catalog.tax_code.none": "— هیچ‌کدام —",
   "catalog.upload_image": "بارگذاری تصویر",
   "catalog.variants": "گونه‌ها",
   "catalog.variants.add": "افزودن گونه",
