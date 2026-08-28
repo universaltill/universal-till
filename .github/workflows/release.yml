@@ -503,7 +503,11 @@ jobs:
   # process that session, not this) — this job makes sure that if it ever
   # IS the real bug, the release fails loudly instead of shipping quietly.
   verify-versions:
-    needs: [prepare, goreleaser, macos-app]
+    # android-app added (ut-docs#1260) alongside the new Android check below —
+    # without it this job could race android-app's own APK upload and either
+    # download nothing (gh release download finding no matching asset yet) or
+    # a stale one left over from a previous run's --clobber.
+    needs: [prepare, goreleaser, macos-app, android-app]
     if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: macos-14 # hdiutil for the .dmg, plus tar/unzip for the rest — one runner covers every format
     permissions:
@@ -520,6 +524,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ needs.prepare.outputs.tag }}
+      # Only needed for the Android check below (`go version -m` reads a Go
+      # binary's embedded build-info section — works against any target
+      # GOOS/GOARCH from any host, no cross-compiler needed, just a `go`
+      # binary on PATH). Every other check in this job is a prebuilt-artifact
+      # inspection that doesn't touch Go tooling at all.
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
       - name: Wait for the GitHub release to exist
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
@@ -544,6 +556,7 @@ jobs:
             --pattern "unitill-pos_*_windows_amd64.zip" \
             --pattern "unitill-pos_*_darwin_arm64.tar.gz" \
             --pattern "unitill-pos-*-macOS-arm64.dmg" \
+            --pattern "unitill-pos_*_android.apk" \
             --pattern "checksums.txt"
       # Regression gate for the macos-app job's "append the .dmg's SHA-256"
       # step (packaging/macos/update-checksums.sh): internal/selfupdate's mac
@@ -624,5 +637,60 @@ jobs:
           check "extracted/Universal Till.app/Contents/MacOS/unitill-pos" "macOS .app unitill-pos"
           check "extracted/Universal Till.app/Contents/MacOS/unitill-desktop" "macOS .app unitill-desktop"
           hdiutil detach -quiet -force extracted || true
+
+          exit $fail
+      # ut-docs#1260: the Android APK never had a version check at all, so
+      # gomobile bind shipping with no -ldflags (buildinfo.Version stuck on
+      # its hardcoded "dev" default) went unnoticed on every release to date
+      # — same bug class as the check() step above, just never gated for
+      # this platform.
+      #
+      # Deliberately NOT the same strings-based `check()` helper used above:
+      # verified empirically against the real, currently-shipping (buggy)
+      # v0.6.15 APK that a plain `strings -a`+exact-whole-line-match (the
+      # approach `check()` uses) does not reliably isolate a short embedded
+      # string in this .so's densely-packed rodata — Go doesn't null-
+      # terminate string literals, and gomobile's cgo/JNI shared library has
+      # thousands of them packed back-to-back with no separators, unlike the
+      # statically-linked desktop binaries `check()` was written for, where
+      # it happens to work. `go version -m` instead reads the binary's
+      # structured build-info section directly (one directive per line,
+      # e.g. `build	-ldflags="-X pkg.Version=1.2.3"`) — confirmed working
+      # cross-platform (this step's own host is linux/amd64 reading an
+      # android/arm64 ELF .so) and confirmed to correctly flag the real,
+      # currently-shipping unfixed artifact (no -ldflags recorded at all).
+      - name: Android APK's embedded .so libraries must be built with buildinfo.Version stamped, never left as "dev"
+        env:
+          VERSION: ${{ needs.prepare.outputs.version }}
+        run: |
+          set -euo pipefail
+          fail=0
+          checkAndroidLib() {
+            local file="$1" label="$2"
+            if [ ! -f "$file" ]; then
+              echo "::error::missing $label ($file)"
+              fail=1
+              return
+            fi
+            local ldflags
+            ldflags="$(go version -m "$file" 2>/dev/null | grep -- '-ldflags=' || true)"
+            if [ -z "$ldflags" ]; then
+              echo "::error::$label was built with no -ldflags at all — gomobile bind's ldflags injection is missing/broken for this build (the ut-docs#1260 regression)"
+              fail=1
+              return
+            fi
+            if ! grep -qF -- "-X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION}" <<< "$ldflags"; then
+              echo "::error::$label's -ldflags does not stamp buildinfo.Version=$VERSION: $ldflags"
+              fail=1
+              return
+            fi
+            echo "ok: $label carries version $VERSION"
+          }
+
+          cd dist-check
+          rm -rf extracted && mkdir extracted
+          unzip -q "unitill-pos_${VERSION}_android.apk" -d extracted
+          checkAndroidLib extracted/lib/arm64-v8a/libgojni.so "android arm64-v8a libgojni.so (the omission that caused the real bug)"
+          checkAndroidLib extracted/lib/armeabi-v7a/libgojni.so "android armeabi-v7a libgojni.so (the omission that caused the real bug)"
 
           exit $fail

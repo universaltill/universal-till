@@ -78,6 +78,13 @@ android {
     }
 }
 
+// Same version CI stamps into defaultConfig.versionName above (via
+// -PversionName=$VERSION; "0.1.0-dev" for an unconfigured local build) —
+// read independently here rather than back through android.defaultConfig
+// because this Exec task is registered before that block is guaranteed to
+// have evaluated in Gradle's configuration order.
+val goVersionForLdflags = (project.findProperty("versionName") as String?) ?: "0.1.0-dev"
+
 // Regenerates libs/unitill-mobile.aar from the Go source (../mobile) on every
 // build, via `gomobile bind` — the .aar itself is NOT committed to git (it
 // was a ~90MB build artifact when this task built all 4 gomobile-default
@@ -118,6 +125,14 @@ val generateAar =
             // 180MB install on a real device, 2026-07-28).
             "-target=android/arm64,android/arm",
             "-androidapi", "24",
+            // ut-docs#1260: without this, internal/buildinfo.Version keeps its
+            // hardcoded "dev" default in every Android build — including
+            // signed release APKs, which have shipped that way on every
+            // release to date. Same -X path desktop/goreleaser already stamps
+            // (.goreleaser.yaml, internal/buildinfo/buildinfo.go) via the same
+            // versionName property release.yml's android-app job passes as
+            // -PversionName="$VERSION".
+            "-ldflags", "-X github.com/universaltill/universal-till/internal/buildinfo.Version=$goVersionForLdflags",
             "-o", "android/app/libs/unitill-mobile.aar",
             "./mobile",
         )
