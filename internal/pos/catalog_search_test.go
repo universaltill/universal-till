@@ -52,6 +52,31 @@ func TestSearchActiveItems_FiltersInactive(t *testing.T) {
 	}
 }
 
+// TestSearchActiveItems_NullSKUDoesNotError is ut-docs#1176's regression:
+// an item with no real SKU now stores sku = NULL (not its own UUID, see
+// CatalogRepo.CreateItem), so this query must tolerate a NULL sku column —
+// a bare `i.sku` scanned into a non-nullable string field would error on
+// every such row. It must also come back as "", never a UUID.
+func TestSearchActiveItems_NullSKUDoesNotError(t *testing.T) {
+	db := setupCatalogSearchDB(t)
+	defer db.Close()
+	ctx := context.Background()
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('noSku1', NULL, 'No SKU Item', 150, 1)`)
+
+	repo := data.NewPOSRepo(db)
+	cs := NewCatalogSearcher(repo)
+	results, err := cs.SearchActiveItems(ctx, "No SKU", 0, 10)
+	if err != nil {
+		t.Fatalf("SearchActiveItems must tolerate a NULL sku column, got: %v", err)
+	}
+	if len(results) != 1 || results[0].ID != "noSku1" {
+		t.Fatalf("expected the no-SKU item, got %+v", results)
+	}
+	if results[0].SKU != "" {
+		t.Fatalf("expected empty SKU for an item with no real SKU, got %q", results[0].SKU)
+	}
+}
+
 func TestLookupActiveVariant(t *testing.T) {
 	db := setupCatalogSearchDB(t)
 	defer db.Close()
