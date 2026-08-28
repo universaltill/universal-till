@@ -1558,6 +1558,7 @@
   "import.status.source_deleted": "أُزيل من ملف المصدر",
   "import.status.not_sellable": "ليس صنفًا قابلًا للبيع (مفتاح نوع الطلب)",
   "import.status.duplicate_sku_in_file": "رقم الصنف مكرر داخل هذا الملف",
+  "import.status.sku_reused_in_file": "رقم الصنف \"%s\" مكرر داخل هذا الملف — تم الاستيراد برقم جديد",
   "import.error.no_name_column": "لم يتم التعرف على عمود الاسم — هل هذا تصدير كتالوج؟",
   "import.error.invalid_file": "تعذرت قراءة هذا الملف كتصدير كتالوج.",
   "import.error.bkp_unrecognised": "هذا الملف لا يبدو ملف نسخة احتياطية معروفًا.",
