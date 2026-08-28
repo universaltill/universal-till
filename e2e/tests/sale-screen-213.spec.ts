@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test';
-import { watchConsole, waitForStableLayout } from './helpers';
+import { watchConsole, waitForStableLayout, setOskMode } from './helpers';
 
 // ut-docs#213: the basket is a full-height first-class panel (>=4 line
 // items visible at 1280x800 with no scrolling), carries an always-visible
@@ -40,6 +40,15 @@ test.describe('sale screen basket layout + count + notices (ut-docs#213)', () =>
   // layout failure into three red specs on the first PR run).
   test.afterEach(async ({ page }) => {
     await page.request.post('/api/pos/reset');
+    // The OSK mode is a SERVER-side setting shared by every spec on this
+    // till (helpers.ts's own warning on setOskMode): the ut-docs#1231
+    // OSK test below restores 'auto' at the end of its body, which never
+    // runs if one of its assertions fails first — leaking osk=on into
+    // every later spec on this server. Restore here too, where a failed
+    // body can't skip it. Idempotent and cheap for the specs that never
+    // touch the OSK. (Same pattern as sale-screen-osk-scan-submit-1177
+    // .spec.ts's own afterEach.)
+    await setOskMode(page, 'auto');
   });
 
   test('>=4 basket lines visible without scrolling at 1280x800', async ({ page }) => {
@@ -222,6 +231,48 @@ test.describe('sale screen basket layout + count + notices (ut-docs#213)', () =>
     assertClean();
   });
 
+  test('the scan-row Add button stays above the OSK, not squeezed under it (ut-docs#1231)', async ({ page }) => {
+    // Found by independent review of the ut-docs#1231 fix: `.pos-container`'s
+    // row floors were widened to keep products from clipping (see app.css),
+    // sized for the FULL 1280x800 viewport with no OSK open. `body.osk-padded`
+    // (osk.js) doesn't shrink the viewport — it adds 15.5rem of bottom
+    // padding — so the `max-height` fallback that protects the genuinely
+    // short 1024x600 case never fires for it. Without a matching
+    // `body.osk-padded` override, those widened floors overflowed the
+    // OSK-squeezed box and pushed `.tender`'s scan row (and its Add button)
+    // down UNDER the keyboard itself — not merely hard to find, entirely
+    // off-screen. Confirmed live before the fix: sale-screen-osk-scan-
+    // submit-1177.spec.ts's Add-button specs timed out waiting for a scan
+    // that never fired, because the button they tapped no longer existed
+    // anywhere on screen.
+    const assertClean = watchConsole(page);
+    await setOskMode(page, 'on');
+    await page.goto('/');
+    await page.waitForSelector('.pos-container .products .btn-tile');
+
+    const input = page.locator('form.scan-row input[name="code"]');
+    await input.click();
+    await expect(page.locator('#osk')).toBeVisible();
+
+    const addBtn = page.locator('form.scan-row button[type="submit"]');
+    const box = await addBtn.boundingBox();
+    expect(box, 'the Add button must still have a real, measurable box with the OSK open').not.toBeNull();
+    expect(
+      box!.y + box!.height,
+      `Add button must stay within the viewport, above the OSK — got bottom=${box!.y + box!.height}`,
+    ).toBeLessThanOrEqual(page.viewportSize()!.height);
+
+    const hit = await addBtn.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return !!at && (at === el || el.contains(at));
+    });
+    expect(hit, 'Add must be the real hit-test target, not hidden under the keyboard').toBe(true);
+
+    await setOskMode(page, 'auto');
+    assertClean();
+  });
+
   test('tender panel sits under products; basket owns the full left column', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/');
@@ -234,6 +285,58 @@ test.describe('sale screen basket layout + count + notices (ut-docs#213)', () =>
     });
     expect(boxes.tender.top, 'tender starts below the products grid').toBeGreaterThan(boxes.products.bottom - 2);
     expect(boxes.basket.bottom, 'basket reaches down past the tender top').toBeGreaterThan(boxes.tender.top);
+    assertClean();
+  });
+
+  test('products grid gets the dominant share and the first tile is never clipped (ut-docs#1231)', async ({ page }) => {
+    // Live report (product owner, Pi5-1, 1280x800): with exactly one
+    // configured product, the PRODUCTS panel got only ~280px total (search
+    // box + category header included) while the payment area (Card/Cash/
+    // Gift Card/Hold Sale/New Customer) permanently took roughly half the
+    // vertical space even with an empty basket — so the very first product
+    // tile rendered clipped mid-tile, reading as "the button isn't there."
+    // Root cause: both `.pos-container` rows used to be `minmax(8rem, 1fr)
+    // minmax(0, auto)` — an `auto` max track is maximized to its own
+    // content BEFORE an `fr` track gets any leftover space, so tender
+    // always won the fight for height first. Fixed in app.css by making
+    // both rows `fr` tracks weighted toward products.
+    const assertClean = watchConsole(page);
+    await page.goto('/');
+    await page.waitForSelector('.pos-container .products .btn-tile');
+
+    const geometry = await page.evaluate(() => {
+      const products = document.querySelector('.pos-container > .products') as HTMLElement;
+      const tender = document.querySelector('.pos-container > .tender') as HTMLElement;
+      const firstTile = document.querySelector('.pos-container .products .btn-tile') as HTMLElement;
+      const p = products.getBoundingClientRect();
+      const t = tender.getBoundingClientRect();
+      const r = firstTile.getBoundingClientRect();
+      return {
+        productsHeight: p.height,
+        tenderHeight: t.height,
+        tileTop: r.top,
+        tileBottom: r.bottom,
+        panelTop: p.top,
+        panelBottom: p.bottom,
+      };
+    });
+
+    expect(
+      geometry.productsHeight,
+      'products must get the dominant share of .pos-container — got products=' +
+        geometry.productsHeight + ' tender=' + geometry.tenderHeight,
+    ).toBeGreaterThan(geometry.tenderHeight);
+
+    expect(
+      geometry.tileTop >= geometry.panelTop - 1 && geometry.tileBottom <= geometry.panelBottom + 1,
+      'the first product tile must render fully within the products panel, not clipped mid-tile — ' +
+        JSON.stringify(geometry),
+    ).toBe(true);
+
+    // The tradeoff this fix accepts: tender may now need its own internal
+    // scroll to reach every payment button even at a comfortable viewport
+    // (covered end-to-end by tender-panel-reachable.spec.ts) — not
+    // re-asserted here, this test's job is only the products-panel half.
     assertClean();
   });
 });

@@ -394,8 +394,44 @@
     // nothing left to restore there.
     current = null;
     if (!osk) return;
-    osk.classList.remove('osk-open');
-    document.body.classList.remove('osk-padded');
+    // ut-docs#1231: closing the OSK removes 15.5rem of body padding, and
+    // since ut-docs#1231 gave the sale screen's products grid the
+    // dominant share of `.pos-container`'s vertical space (app.css), that
+    // reflow now visibly moves the tender panel's own controls — the
+    // scan-row's Add button among them. hide() is reached SYNCHRONOUSLY
+    // from `focusin` (below), which a button's own mousedown/pointerdown
+    // fires BEFORE the browser dispatches that same gesture's mouseup and
+    // click — so an operator (or a test) tapping Add was having the
+    // button visibly slide out from under their finger between touch-down
+    // and touch-up: mousedown->focusin->hide() reflows the layout, then
+    // mouseup/click hit-tests at the ORIGINAL screen coordinates against
+    // the NEW layout and can miss the button entirely, silently dropping
+    // the tap (confirmed live: e2e/tests/sale-screen-osk-scan-submit-
+    // 1177.spec.ts's Add-button specs, timing out waiting for a scan that
+    // never fires). Deferring the layout-affecting classList changes to
+    // the next animation frame — after the browser has already resolved
+    // mouseup/click for the gesture that triggered this hide() — keeps
+    // the tap landing on the button it was aimed at; the keyboard still
+    // closes immediately afterward, same as before. `current` above stays
+    // synchronous — it is state, not layout, and other code (show(),
+    // the pointerup toggle handler) reads it needing the fresh value
+    // right away, not one frame later.
+    requestAnimationFrame(function () {
+      // Independent review (ut-docs#1231): `current` is the one thing that
+      // can legitimately change between this hide() and the frame that
+      // completes it — show() is its only non-null setter. If something
+      // re-opened the keyboard in the meantime (pointerdown on a plain
+      // focusable element fires focusin -> hide(), and the SAME gesture's
+      // pointerup can still land on a [data-osk-toggle], which re-shows
+      // synchronously), completing the removal here would leave the OSK
+      // hidden while `current` says it is open — invisible until the next
+      // tap on the field re-adds the classes. Bail instead: a live
+      // `current` means the keyboard is wanted, so there is nothing to
+      // close.
+      if (current) return;
+      osk.classList.remove('osk-open');
+      document.body.classList.remove('osk-padded');
+    });
   }
 
   // ut-docs#155: the OSK opens ONLY from a deliberate user action — a click/
