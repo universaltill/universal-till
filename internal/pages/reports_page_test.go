@@ -952,6 +952,34 @@ func TestReportsPage_TipsTabRecordFormGatedOnWorkerAllocationPermission(t *testi
 	}
 }
 
+// ut-docs#1273: the record-payout form targets #report-tab-panel (a full
+// tab re-render on success), so htmx's default "never swap a non-2xx
+// response" behavior would otherwise drop every validation/save error
+// silently instead of surfacing it — the button would appear to do
+// nothing. Pins the rendered wiring that fixes this: a dedicated result
+// element plus a `htmx:responseError` listener scoped to the form itself.
+func TestReportsPage_TipsTabRecordFormWiresResponseErrorHandler(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, _ := newReportsPageTestDeps(t)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/reports/tab/tips", nil), auth.User{ID: "m1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="tips-record-form"`) {
+		t.Fatalf("expected the record-payout form to carry a stable id for the error handler to bind to, got: %s", body)
+	}
+	if !strings.Contains(body, `id="tips-result"`) {
+		t.Fatalf("expected a dedicated result element for surfacing a save/validation error, got: %s", body)
+	}
+	if !strings.Contains(body, "htmx:responseError") {
+		t.Fatalf("expected a htmx:responseError handler wired for the record-payout form, got: %s", body)
+	}
+}
+
 // Independent review, ut-docs#964 blocker 2: a role holding `reports` but
 // not `worker_allocation` must NOT be able to read one named worker's
 // totals via ?cashier=, even though the tab renders a worker picker
