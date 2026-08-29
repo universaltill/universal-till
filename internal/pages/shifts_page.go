@@ -2,7 +2,6 @@ package pages
 
 import (
 	"errors"
-	"fmt"
 	"net/http"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -58,8 +57,11 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 			"TillRegisterID": tillRegisterID,
 			// Minor units plus a pre-formatted decimal for the number input
 			// (templates shouldn't do float math on money).
-			"CarryForwardMinor":   carryMinor,
-			"CarryForwardDisplay": fmt.Sprintf("%d.%02d", carryMinor/100, carryMinor%100),
+			"CarryForwardMinor": carryMinor,
+			// ut-docs#1274: was hardcoded %d.%02d against /100, silently
+			// wrong on a 0-decimal currency (IRR/IRT/IQD/AFN/JPY) — 500
+			// minor units rendered as "5.00" instead of "500".
+			"CarryForwardDisplay": httpx.FormatMajorPlain(carryMinor, httpx.ActiveCurrency().Decimals),
 			"HasCarryForward":     carryMinor > 0,
 		}
 		httpx.Render("ui/pages/shifts.html", data)(w, r)

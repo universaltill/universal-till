@@ -898,6 +898,41 @@ func TestReportsPage_TipsTabShowsReceivedVsAllocated(t *testing.T) {
 	}
 }
 
+// ut-docs#1274: reports_tab_tips.html's #tips-amount field hardcoded a fixed
+// 2-decimal pattern/placeholder regardless of the shop's real configured
+// currency, same defect class as shifts.html (see
+// TestShiftsPage_LabelsAndPatternsAreCurrencyAware) -- on a 0-decimal
+// currency the old pattern rejected a valid integer amount like "500".
+func TestReportsPage_TipsTabRecordFieldPatternIsCurrencyAware(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newReportsPageTestDeps(t)
+
+	httpx.InitCurrency("GBP")
+	body := getReportsTab(t, mux, "tips", "?days=14").Body.String()
+	if !strings.Contains(body, `pattern="[0-9]+(\.[0-9]{1,2})?"`) {
+		t.Fatalf("expected the 2-decimal pattern for GBP, got:\n%s", body)
+	}
+	if !strings.Contains(body, `placeholder="0.00"`) {
+		t.Fatalf("expected the 2-decimal placeholder for GBP, got:\n%s", body)
+	}
+
+	httpx.InitCurrency("IRT")
+	t.Cleanup(func() { httpx.InitCurrency("GBP") }) // ut-docs#970 convention: process-global, reset for later tests in this package.
+	body = getReportsTab(t, mux, "tips", "?days=14").Body.String()
+	if !strings.Contains(body, `pattern="[0-9]+"`) {
+		t.Fatalf("expected the 0-decimal (integer-only) pattern for IRT, got:\n%s", body)
+	}
+	if strings.Contains(body, `pattern="[0-9]+(\.[0-9]{1,2})?"`) {
+		t.Fatalf("expected NO 2-decimal pattern left over once currency is 0-decimal, got:\n%s", body)
+	}
+	if !strings.Contains(body, `placeholder="0"`) {
+		t.Fatalf("expected the 0-decimal placeholder for IRT, got:\n%s", body)
+	}
+	if strings.Contains(body, `placeholder="0.00"`) {
+		t.Fatalf("expected NO 2-decimal placeholder left over once currency is 0-decimal, got:\n%s", body)
+	}
+}
+
 // A role holding `reports` but not `worker_allocation` (the cashier default)
 // must still see the tab's totals — same visibility split EOD's own
 // IsManager/CanRunEOD gating uses — but not the row-level detail table, the
