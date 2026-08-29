@@ -77,6 +77,82 @@ func TestRenderBarcode(t *testing.T) {
 	}
 }
 
+// ut-docs#1245: the §6 KassenSichV TSE evidence QR prints as a centered
+// GS v 0 raster between the barcode block and the footer. Same pattern as
+// TestRenderIncludesLogo — the raster is pre-encoded by RasterLogo, so this
+// layer only places the bytes.
+func TestRenderIncludesTSEQR(t *testing.T) {
+	qr := RasterLogo(pngBytes(t, 16, 8))
+	if qr == nil {
+		t.Fatal("test raster failed to encode")
+	}
+	d := sampleDoc()
+	d.Barcode = "000000042"
+	d.TSEQR = qr
+	out := Render(d)
+
+	qrIdx := bytes.Index(out, qr)
+	if qrIdx < 0 {
+		t.Fatal("rendered document does not contain the TSE QR raster")
+	}
+	// Centered: the raster bytes are written directly after ESC a 1.
+	if qrIdx < len(cmdAlignMid) || !bytes.Equal(out[qrIdx-len(cmdAlignMid):qrIdx], cmdAlignMid) {
+		t.Error("TSE QR raster is not preceded by align-centre")
+	}
+	// Placed after the barcode block…
+	bcIdx := bytes.Index(out, cmdBarcodeCode128)
+	if bcIdx < 0 {
+		t.Fatal("barcode block missing from sample render")
+	}
+	if qrIdx < bcIdx {
+		t.Error("TSE QR must print after the barcode block")
+	}
+	// …and before the footer.
+	ftIdx := bytes.Index(out, []byte("Thank you!"))
+	if ftIdx < 0 {
+		t.Fatal("footer missing from sample render")
+	}
+	if qrIdx > ftIdx {
+		t.Error("TSE QR must print before the footer")
+	}
+}
+
+func TestRenderNoTSEQRBlockWhenUnset(t *testing.T) {
+	// sampleDoc has neither logo nor TSE QR, so no GS v 0 raster header may
+	// appear anywhere in the stream — nil/empty TSEQR is a no-op.
+	out := Render(sampleDoc())
+	if bytes.Contains(out, []byte{0x1d, 0x76, 0x30, 0x00}) {
+		t.Error("GS v 0 raster block present with no logo and no TSE QR")
+	}
+}
+
+// ut-docs#1245 review (B2): RenderText backs two real callers, not just the
+// receipt-designer preview — system.go's PrintDoc pipes this exact string to
+// `lp` for a "system"-mode (CUPS/office) printer, which cannot render a
+// raster at all. An earlier version of this change printed a fixed
+// "[TSE QR]" placeholder there, which meant a real customer's TSE-signed
+// receipt would print that literal placeholder text in place of the actual
+// evidence on that printer type — worse than showing nothing, and exactly
+// the "never placeholders" policy this codebase already applies to the TSE
+// text lines (print_api.go). TSEQR must therefore have NO representation in
+// RenderText at all, matching Logo (the other raster-only Doc field, which
+// RenderText also never touches) — the evidence itself isn't lost on this
+// path, since doc.Meta's text lines (serial/transaction/counter/algorithm/
+// signature) print unchanged; only the scannable form is thermal-only.
+func TestRenderTextIgnoresTSEQR(t *testing.T) {
+	d := sampleDoc()
+	d.Barcode = "000000042"
+	d.TSEQR = RasterLogo(pngBytes(t, 16, 8))
+	out := RenderText(d)
+	if strings.Contains(out, "TSE QR") {
+		t.Error("RenderText must not represent TSEQR in any form — it cannot honestly render a raster as plain text (ut-docs#1245 review B2)")
+	}
+	// The rest of the preview must still render normally around it.
+	if !strings.Contains(out, "║█║") || !strings.Contains(out, "000000042") {
+		t.Fatal("barcode preview broken by the TSEQR change")
+	}
+}
+
 func TestRenderKickDrawer(t *testing.T) {
 	d := sampleDoc()
 	d.KickDrawer = true

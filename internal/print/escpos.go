@@ -43,6 +43,10 @@ type Doc struct {
 	// Logo is a pre-encoded GS v 0 raster block (RasterLogo), printed
 	// centered above the store name when present.
 	Logo []byte
+	// TSEQR is a pre-encoded GS v 0 raster block (RasterLogo) of the §6
+	// KassenSichV TSE evidence QR (ut-docs#585/#1245), printed centered
+	// after the barcode and before the footer when present.
+	TSEQR []byte
 }
 
 // Line is one sale line.
@@ -161,6 +165,14 @@ func Render(d Doc) []byte {
 		line("")
 		b.Write(cmdAlignMid)
 		barcode(&b, d.Barcode)
+		b.Write(cmdAlignLeft)
+	}
+
+	if len(d.TSEQR) > 0 {
+		line("")
+		b.Write(cmdAlignMid)
+		b.Write(d.TSEQR) // pre-encoded GS v 0 raster (RasterLogo)
+		b.WriteByte('\n')
 		b.Write(cmdAlignLeft)
 	}
 
@@ -304,6 +316,22 @@ func RenderText(d Doc) string {
 		center("║█║▌║█║▌║▌█║█║▌║")
 		center(d.Barcode)
 	}
+	// TSEQR is deliberately NOT represented here (ut-docs#1245 review, B2):
+	// RenderText backs two different callers — the receipt-designer preview
+	// AND system.go's real plain-text CUPS/office-printer path (PrintDoc's
+	// "system" mode literally pipes this string to `lp`; it cannot render a
+	// raster at all, ESC/POS or otherwise). A fixed "[TSE QR]" placeholder
+	// here isn't a preview stand-in on that path — it's exactly what would
+	// print on a real customer's TSE-signed receipt, in place of the actual
+	// evidence. This mirrors Logo, the other raster-only Doc field: Logo has
+	// no RenderText representation either, precisely because there's no
+	// honest way to show a raster as plain text. The TSE evidence itself
+	// isn't lost on this printer type — doc.Meta's text lines (serial,
+	// transaction no., counter, algorithm, signature) print exactly as they
+	// did before this ticket; only the *scannable* form is thermal/raster-
+	// only. This project's own placeholder policy already forbids this
+	// (print_api.go: "fields the signer didn't return are skipped — never
+	// placeholders").
 	if len(d.Footer) > 0 {
 		b.WriteString("\n")
 		for _, f := range d.Footer {
