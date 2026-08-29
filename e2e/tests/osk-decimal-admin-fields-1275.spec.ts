@@ -163,13 +163,17 @@ test.describe('admin-screen decimal fields survive typing via the on-screen keyb
   // inventory.html's `quantity` field must keep accepting a leading '-'
   // (Quantity is "positive for receive, +/- for adjust",
   // internal/pages/inventory_api.go) -- the pattern fix must not narrow
-  // this. osk.js's numeric layer has no '-' key at all (ut-docs#1276, a
-  // separate open card), so this path is only reachable via a real/
-  // external keyboard today -- driven directly here, not via the OSK.
-  test('inventory.html quantity: a negative adjustment amount is still accepted (no OSK "-" key yet, ut-docs#1276)', async ({ page }) => {
+  // this. Now driven via the real OSK (ut-docs#1276 gave the numeric
+  // layer a '-' key for exactly this field's pattern="-?..."); see
+  // osk-signed-minus-key-1276.spec.ts for the dedicated minus-key
+  // coverage (gating, and the payout/cash-adjustment direction).
+  test('inventory.html quantity: a negative adjustment amount can be typed via the on-screen keyboard', async ({ page }) => {
+    await setOskMode(page, 'on');
     await page.goto('/inventory');
     const qty = page.locator('#stock-form input[name="quantity"]');
-    await qty.fill('-5.25');
+    await qty.click();
+    await expect(page.locator('#osk.osk-open')).toBeVisible();
+    await typeViaOsk(page, '-5.25');
     await expect(qty).toHaveValue('-5.25');
     expect(await qty.evaluate((el: HTMLInputElement) => el.checkValidity())).toBe(true);
   });

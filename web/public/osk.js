@@ -18,6 +18,16 @@
   // neighbor would leave it still `undefined` the first time guardSweep()
   // actually runs.
   var oskGuarded = new WeakSet();
+  // Shared digits/decimal/backspace rows for `num`/`numSigned` below — kept
+  // as ONE array so the two layouts can't quietly drift (independent
+  // review, ut-docs#1276): a future change to the shared keys (e.g. a
+  // decimal-comma key for de/es, ut-docs#1047) only has to happen once.
+  var NUM_ROWS = [
+    ['1','2','3'],
+    ['4','5','6'],
+    ['7','8','9'],
+    ['.','0','⌫']
+  ];
   var LAYOUTS = {
     en: [
       ['1','2','3','4','5','6','7','8','9','0'],
@@ -86,13 +96,19 @@
       ['!','?','~','<','>','[',']','⌫'],
       ['ABC',',','SPACE','.','↵']
     ],
-    num: [
-      ['1','2','3'],
-      ['4','5','6'],
-      ['7','8','9'],
-      ['.','0','⌫'],
-      ['↵']
-    ]
+    num: NUM_ROWS.concat([['↵']]),
+    // Same digits/decimal/backspace rows as `num` (NUM_ROWS, above), plus a
+    // literal '-' key (ut-docs#1276) for the subset of numeric fields whose
+    // own HTML `pattern` declares they accept a leading minus (see
+    // isSigned(), below) — a cash-adjustment/payout amount, a stock-
+    // adjustment quantity. Kept as a SEPARATE layout rather than always
+    // showing '-' on `num`: most numeric fields (item quantities, tax
+    // rates, fee percentages, …) have no legitimate negative value, and a
+    // stray minus key there would just be one more way to submit garbage.
+    // '-' isn't a special key in press() — it falls through to the same
+    // default insert() every digit/`.` already uses, so no press() change
+    // is needed to wire it up.
+    numSigned: NUM_ROWS.concat([['-','↵']])
   };
 
   var mode = (document.body.dataset.osk || 'auto');
@@ -191,6 +207,33 @@
   // keyboard is actually safe for a given field — see there for why.
   function localeSupported() {
     return !!LAYOUTS[(document.documentElement.lang || 'en').slice(0, 2)];
+  }
+
+  // Whether a numeric field's own HTML `pattern` declares it accepts a
+  // leading '-' (ut-docs#1276). Reuses the exact signal these templates
+  // already commit to for "this amount can legitimately be negative"
+  // (shifts.html's payout/adjustment amount, inventory.html's stock
+  // quantity/override fields all declare pattern="-?[0-9]+(\.[0-9]{1,2})?")
+  // rather than adding a second, easy-to-forget opt-in attribute alongside
+  // it — every current and future signed field gets the minus key for
+  // free. A field with no such pattern (item quantities, tax rates, fee
+  // percentages, …) gets the plain 'num' layer with no minus key.
+  // The `^?` tolerates an optional leading anchor (pattern="^-?[0-9]…" is
+  // an equally legal, equally common way to write the same constraint —
+  // independent review, ut-docs#1276) so a future signed field written
+  // that way still gets the key; every current field (see the four
+  // pattern="-?..." hits under web/ui/) matches either way.
+  // Excludes type="number": `pattern` is inert there (native number
+  // validation ignores it), so a `type="number"` field could carry this
+  // exact pattern with no real intent behind it — and showing the key
+  // would let an operator type a value straight into the type="number"
+  // decimal-corruption bug this codebase already fixed elsewhere
+  // (ut-docs#1249/#1275: insert()'s naive `value += text` path for
+  // number/email inputs). No such field exists today; this keeps it that
+  // way if one is ever added.
+  function isSigned(el) {
+    var pattern = el.getAttribute('pattern') || '';
+    return el.type !== 'number' && /^\^?-\?/.test(pattern);
   }
 
   function wantsOSK(el) {
@@ -345,7 +388,7 @@
     current = el;
     if (!osk) build();
     shift = false;
-    layer = isNumeric(el) ? 'num' : baseLayout();
+    layer = isNumeric(el) ? (isSigned(el) ? 'numSigned' : 'num') : baseLayout();
     render();
     osk.classList.add('osk-open');
     document.body.classList.add('osk-padded');
