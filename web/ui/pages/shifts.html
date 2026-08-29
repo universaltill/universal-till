@@ -59,13 +59,13 @@
            inputmode="decimal" + oninput fixes both; window.utCurrency
            .toMinor() replaces the hardcoded `* 100`, which was also wrong
            by 100x on any 0-decimal currency (IRR/IRT/IQD/AFN/JPY). -->
-      <label>{{ T "shifts.counted_cash" }} (£)
-        <input type="text" id="closing-cash" inputmode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" required placeholder="0.00"
+      <label>{{ T "shifts.counted_cash" }} ({{ currency.Display }})
+        <input type="text" id="closing-cash" inputmode="decimal" {{ moneypattern currency.Decimals false }} required {{ moneyplaceholder currency.Decimals 0 }}
                oninput="document.getElementById('closing-cash-minor').value = window.utCurrency.toMinor(this.value)">
       </label>
       <input type="hidden" name="skim" id="skim-minor">
-      <label>{{ T "shifts.skim" }} (£, {{ T "shifts.skim_hint" }})
-        <input type="text" id="skim-pounds" inputmode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" placeholder="0.00"
+      <label>{{ T "shifts.skim" }} ({{ currency.Display }}, {{ T "shifts.skim_hint" }})
+        <input type="text" id="skim-pounds" inputmode="decimal" {{ moneypattern currency.Decimals false }} {{ moneyplaceholder currency.Decimals 0 }}
                oninput="document.getElementById('skim-minor').value = this.value === '' ? '' : window.utCurrency.toMinor(this.value)">
       </label>
       <label>{{ T "shifts.reason" }} <input type="text" name="skim_reason" placeholder="{{ T "shifts.skim" }}"></label>
@@ -110,8 +110,8 @@
         <!-- ut-docs#1272: same fix as above. Allows a leading '-' (unlike
              the other fields on this page) — an adjustment/payout can be
              negative, see placeholder. -->
-        <label>{{ T "shifts.amount" }} (£, {{ T "shifts.amount_hint" }})
-          <input type="text" id="adjust-pounds" inputmode="decimal" pattern="-?[0-9]+(\.[0-9]{1,2})?" required placeholder="-50.00"
+        <label>{{ T "shifts.amount" }} ({{ currency.Display }}, {{ T "shifts.amount_hint" }})
+          <input type="text" id="adjust-pounds" inputmode="decimal" {{ moneypattern currency.Decimals true }} required {{ moneyplaceholder currency.Decimals -50 }}
                  oninput="document.getElementById('adjust-minor').value = window.utCurrency.toMinor(this.value)">
         </label>
         <label>{{ T "shifts.reason" }} <input type="text" name="reason" required></label>
@@ -133,8 +133,8 @@
       </label>
       <input type="hidden" name="opening_cash" id="opening-cash-minor" value="{{ .CarryForwardMinor }}">
       <!-- ut-docs#1272: same fix as above. -->
-      <label>{{ T "shifts.opening_cash" }} (£){{ if .HasCarryForward }} — {{ T "shifts.opening_carried" }}{{ end }}
-        <input type="text" id="opening-cash" inputmode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" required value="{{ .CarryForwardDisplay }}"
+      <label>{{ T "shifts.opening_cash" }} ({{ currency.Display }}){{ if .HasCarryForward }} — {{ T "shifts.opening_carried" }}{{ end }}
+        <input type="text" id="opening-cash" inputmode="decimal" {{ moneypattern currency.Decimals false }} required value="{{ .CarryForwardDisplay }}"
                oninput="document.getElementById('opening-cash-minor').value = window.utCurrency.toMinor(this.value)">
       </label>
       <button type="submit" class="btn primary" style="width:100%">{{ T "shifts.open_new" }}</button>
