@@ -31,11 +31,20 @@ const attachPollInterval = 500 * time.Millisecond
 // replaces — so a warm or manual launch, a platform with no startup gate,
 // or the gate disabled outright all cost exactly the one probe they always
 // cost. Only a cold boot still inside the gate window retries, and it never
-// waits any longer than that window already held the window itself back
-// for (attachDeadline derives from the same gate duration as
-// waitForSafeStartup) — so this removes the false-early spawn decision
-// without adding any new perceived delay on top of ut-docs#1093's existing
-// hold.
+// retries past that window (attachDeadline derives from the same gate
+// duration as waitForSafeStartup, which was holding the window shut for
+// exactly that long anyway).
+//
+// On the attach path that costs nothing: waitForSafeStartup still opens the
+// window at the same instant it always did. One case does pay a little
+// (review, ut-docs#1199) — a cold boot where the retry runs its whole
+// window and still finds nothing to attach to. The unitill-pos child is
+// then spawned AFTER that window rather than at the very first probe, so
+// its start-up and main()'s dial-wait loop no longer overlap the gate's
+// hold and the till appears a few seconds later than it used to (a tarball
+// install, or a .deb whose service is down). That is inherent rather than
+// an oversight: spawning speculatively in parallel with the retry is
+// precisely the second-server split-brain this exists to prevent.
 func waitForAttach(deadline time.Time, probe func() bool, sleep func(time.Duration), now func() time.Time) bool {
 	for {
 		if probe() {

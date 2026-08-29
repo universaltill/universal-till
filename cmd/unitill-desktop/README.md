@@ -64,12 +64,23 @@ child's own SQLite file instead of the service's, and in-app update
 honestly reported unsupported, because the process actually serving the UI
 couldn't write the service's install directory.
 
-The retry costs nothing extra when it fails to attach — the window was
-never going to open before the gate elapsed anyway — and it only runs on
-Linux; other platforms/topologies (macOS, Windows, the gate disabled, a
+On the attach path the retry costs nothing: the startup gate above was
+going to hold the window shut until the same instant regardless. The one
+case that does pay is a cold boot where the retry runs its whole window and
+still finds nothing — the `unitill-pos` child is then spawned *after* that
+window instead of at the first probe, so its start-up no longer overlaps
+the gate's hold and the till appears a few seconds later than it used to (a
+tarball install, or a `.deb` whose service is down). That is inherent, not
+an oversight: spawning in parallel with the retry is exactly the two-server
+split this fixes.
+
+The retry only runs on Linux; other platforms/topologies (macOS, Windows, a
 warm/manual launch already past the gate) still decide from one probe, same
-as always. See `attach_gate.go`'s doc comment for the exact retry-vs-give-up
-logic and its tests.
+as always. **Note that the retry window is derived from the startup gate's
+own duration, so `UT_SHELL_MIN_UPTIME_SECONDS=0` disables both** — a machine
+that doesn't need the WebKitGTK render mitigation is back to a single probe
+and can still lose this race. See `attach_gate.go`'s doc comment for the
+exact retry-vs-give-up logic and its tests.
 
 **If an install was already bitten by the race before this fix** (two
 `unitill-pos` processes, one on `:8080` as the desktop user with its own
