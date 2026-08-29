@@ -48,7 +48,26 @@
             <input form="cs-{{ .Code }}" type="text" name="currency_symbol" value="{{ .CurrencySymbol }}" dir="ltr" size="2" maxlength="4" />
           </td>
           <td>
-            <input form="cs-{{ .Code }}" type="number" name="tax_rate_pct" value="{{ .TaxRatePct }}" min="0" step="0.01" dir="ltr" size="5" />
+            <!-- ut-docs#1275: type="number" silently resets .value to "" on
+                 a momentarily-invalid decimal string while osk.js types it
+                 in (same root cause as ut-docs#1249/#1272) --
+                 text+inputmode="decimal" avoids that; non-negativity is
+                 already enforced server-side (parsePercentAsBP).
+                 size="5" was always here but inert under type="number"
+                 (size only applies to text-like inputs) -- now live, it
+                 narrows the column enough to wrap the checkbox label below
+                 onto multiple lines. size="7" (review finding S2) isn't a
+                 full fix (still 2 lines, not the original 1) but avoids
+                 the worst 3-line wrap while keeping the column narrower
+                 than before -- which is itself a net improvement: it's what
+                 stops the Archive Retention column being clipped off the
+                 card's edge. A single-line label needs size>=12, which
+                 re-widens the column enough to reintroduce that clipping;
+                 picking between those two is a UX call, not a mechanical
+                 fix, so this keeps the improvement and accepts the
+                 remaining 2-line wrap rather than trading one regression
+                 for the other. -->
+            <input form="cs-{{ .Code }}" type="text" inputmode="decimal" name="tax_rate_pct" value="{{ .TaxRatePct }}" pattern="[0-9]+(\.[0-9]{1,2})?" dir="ltr" size="7" />
             <label>
               <input form="cs-{{ .Code }}" type="checkbox" name="tax_inclusive" value="1" {{ if .TaxInclusive }}checked{{ end }} />
               {{ T "countrysettings.tax.inclusive" }}
@@ -80,7 +99,7 @@
       <label>{{ T "countrysettings.col.country" }} <input type="text" name="code" maxlength="8" required dir="ltr" /></label>
       <label>{{ T "countrysettings.col.currency" }} <input type="text" name="currency" maxlength="8" dir="ltr" /></label>
       <label>{{ T "countrysettings.col.symbol" }} <input type="text" name="currency_symbol" maxlength="4" dir="ltr" /></label>
-      <label>{{ T "countrysettings.col.tax" }} <input type="number" name="tax_rate_pct" min="0" step="0.01" value="0" dir="ltr" /></label>
+      <label>{{ T "countrysettings.col.tax" }} <input type="text" inputmode="decimal" name="tax_rate_pct" pattern="[0-9]+(\.[0-9]{1,2})?" value="0" dir="ltr" /></label>
       <label class="users-inline">
         <input type="checkbox" name="tax_inclusive" value="1" checked />
         {{ T "countrysettings.tax.inclusive" }}

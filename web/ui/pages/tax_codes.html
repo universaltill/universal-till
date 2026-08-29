@@ -18,8 +18,13 @@
     <form id="tax-code-form" autocomplete="off">
       <input type="hidden" name="id" id="tax-code-id">
       <label>{{ T "taxcodes.col.name" }} <input type="text" name="name" id="tax-code-name" required></label>
-      <label>{{ T "taxcodes.col.rate" }} (%) <input type="number" name="rate" id="tax-code-rate" min="0" max="100" step="0.01" required></label>
-      <label>{{ T "taxcodes.col.takeaway_rate" }} (%) <input type="number" name="takeawayRate" id="tax-code-takeaway-rate" min="0" max="100" step="0.01"></label>
+      <!-- ut-docs#1275: type="number" silently resets .value to "" on a
+           momentarily-invalid decimal string while osk.js types it in (same
+           root cause as ut-docs#1249/#1272) -- text+inputmode="decimal"
+           avoids that; range is already enforced server-side
+           (parsePercentToBP). -->
+      <label>{{ T "taxcodes.col.rate" }} (%) <input type="text" inputmode="decimal" name="rate" id="tax-code-rate" pattern="[0-9]+(\.[0-9]{1,2})?" required></label>
+      <label>{{ T "taxcodes.col.takeaway_rate" }} (%) <input type="text" inputmode="decimal" name="takeawayRate" id="tax-code-takeaway-rate" pattern="[0-9]+(\.[0-9]{1,2})?"></label>
       <div class="field-checks" id="tax-code-active-field" hidden>
         <input type="hidden" name="isActive" value="0">
         <label><input type="checkbox" name="isActive" id="tax-code-active" value="1" checked> {{ T "taxcodes.col.active" }}</label>
