@@ -39,7 +39,8 @@ func registerShiftsPage(mux *http.ServeMux, d *common.Deps) {
 		// drawer (new float after any skim), so the operator confirms
 		// rather than re-types it — still editable, an explicit value
 		// always wins. Best-effort like the register resolution above; no
-		// prior close (or no resolved register) leaves the 0.00 default.
+		// prior close (or no resolved register) leaves the currency's zero
+		// default ("0.00", or "0" on a 0-decimal currency).
 		carryMinor := int64(0)
 		if tillRegisterID != "" {
 			if carried, ok, cfErr := pos.LastClosedShiftNewFloat(r.Context(), d.Db, tillRegisterID); cfErr == nil && ok {

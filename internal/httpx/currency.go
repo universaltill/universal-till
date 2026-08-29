@@ -2,6 +2,7 @@ package httpx
 
 import (
 	"fmt"
+	"html/template"
 	"strings"
 )
 
@@ -207,4 +208,70 @@ func FormatMajorPlain(minor int64, decimals int) string {
 		s = "-" + s
 	}
 	return s
+}
+
+// MoneyPattern renders the value a decimal-mode money input's `pattern`
+// attribute should hold at the given currency's decimals: integer-only for
+// a 0-decimal currency, otherwise up to `decimals` fractional digits.
+// Generic over decimals rather than hardcoded to 2 -- the registry only
+// holds 0- and 2-decimal currencies today, but a hardcoded `{1,2}` would
+// silently reject valid input the day a 3-decimal currency (KWD/BHD/OMR)
+// is added, the same class of bug this whole card (ut-docs#1274) fixes for
+// `/100`. Plain string, for use from Go and from tests -- template callers
+// use MoneyPatternAttr instead (see its doc comment for why).
+func MoneyPattern(decimals int) string {
+	if decimals <= 0 {
+		return `[0-9]+`
+	}
+	return fmt.Sprintf(`[0-9]+(\.[0-9]{1,%d})?`, decimals)
+}
+
+// MoneyPlaceholder renders an example major-unit amount at the given
+// currency's decimals: MoneyPlaceholder(2, 50) -> "50.00",
+// MoneyPlaceholder(0, 50) -> "50", MoneyPlaceholder(3, 50) -> "50.000".
+// example may be negative (an adjustment/payout field's example, e.g.
+// -50 -> "-50.00"). Plain string, for use from Go and from tests --
+// template callers use MoneyPlaceholderAttr instead.
+func MoneyPlaceholder(decimals int, example int64) string {
+	if decimals <= 0 {
+		return fmt.Sprintf("%d", example)
+	}
+	return fmt.Sprintf("%d.%s", example, strings.Repeat("0", decimals))
+}
+
+// MoneyPatternAttr renders the WHOLE `pattern="…"` HTML attribute (not
+// just its value) for a decimal-mode money input -- see MoneyPattern for
+// the regex shape. signed prepends `-?` for a field that allows a leading
+// minus (e.g. a payout/adjustment).
+//
+// Returns template.HTMLAttr, not string: the regex contains a literal '+',
+// and html/template's contextual auto-escaper HTML-entity-encodes it to
+// "&#43;" whenever a plain string/template.HTML value is substituted
+// INSIDE an already hand-quoted `pattern="{{ ... }}"` -- harmless to a
+// real browser (attribute values are entity-decoded before use, so the
+// pattern still validates correctly) but it breaks a literal-`+` substring
+// check and departs from how this same pattern reads everywhere else it's
+// still hand-typed directly into markup (e.g. index.html's #pfand-amount).
+// template.HTMLAttr only suppresses that escaping when the ACTION PRODUCES
+// THE WHOLE ATTRIBUTE (`{{ moneypattern … }}`, no surrounding
+// `pattern="…"` in the template source) -- confirmed empirically, a
+// template.HTML value substituted inside hand-written quotes still gets
+// escaped the same way a plain string does.
+func MoneyPatternAttr(decimals int, signed bool) template.HTMLAttr {
+	p := MoneyPattern(decimals)
+	if signed {
+		p = "-?" + p
+	}
+	return template.HTMLAttr(`pattern="` + p + `"`)
+}
+
+// MoneyPlaceholderAttr renders the whole `placeholder="…"` HTML attribute
+// for an example major-unit amount (may be negative) -- see
+// MoneyPlaceholder. Same template.HTMLAttr reasoning as MoneyPatternAttr
+// (the placeholder is plain digits/'.'/'-' so escaping is harmless here
+// too, but the WHOLE-attribute convention is kept consistent between the
+// two so a template author reaches for the right one without re-deriving
+// which is safe).
+func MoneyPlaceholderAttr(decimals int, example int64) template.HTMLAttr {
+	return template.HTMLAttr(`placeholder="` + MoneyPlaceholder(decimals, example) + `"`)
 }

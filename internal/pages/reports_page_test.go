@@ -909,6 +909,9 @@ func TestReportsPage_TipsTabRecordFieldPatternIsCurrencyAware(t *testing.T) {
 
 	httpx.InitCurrency("GBP")
 	body := getReportsTab(t, mux, "tips", "?days=14").Body.String()
+	if !strings.Contains(body, "(£)") {
+		t.Fatalf("expected the GBP symbol in the tips-amount label, got:\n%s", body)
+	}
 	if !strings.Contains(body, `pattern="[0-9]+(\.[0-9]{1,2})?"`) {
 		t.Fatalf("expected the 2-decimal pattern for GBP, got:\n%s", body)
 	}
@@ -919,6 +922,12 @@ func TestReportsPage_TipsTabRecordFieldPatternIsCurrencyAware(t *testing.T) {
 	httpx.InitCurrency("IRT")
 	t.Cleanup(func() { httpx.InitCurrency("GBP") }) // ut-docs#970 convention: process-global, reset for later tests in this package.
 	body = getReportsTab(t, mux, "tips", "?days=14").Body.String()
+	if !strings.Contains(body, "(تومان)") {
+		t.Fatalf("expected the IRT symbol in the tips-amount label, got:\n%s", body)
+	}
+	if strings.Contains(body, "(£)") {
+		t.Fatalf("expected NO leftover GBP symbol on the tips-amount label once currency is 0-decimal, got:\n%s", body)
+	}
 	if !strings.Contains(body, `pattern="[0-9]+"`) {
 		t.Fatalf("expected the 0-decimal (integer-only) pattern for IRT, got:\n%s", body)
 	}
