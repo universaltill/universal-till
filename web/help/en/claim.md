@@ -21,5 +21,5 @@ Registering connects your till to the Universal Till marketplace; claiming links
 
 The setup wizard's last screen asks once whether to register the till right away — not ticked unless you tick it. The same choice lives in Settings → Till registration as "Register this till with the marketplace automatically":
 
-1. Turn it on and the till sends its device ID, store name, and shop type/address to the Universal Till cloud marketplace (used for support, updates and licensing) and registers straight away. Offline just then? Nothing is held up — registration simply happens the next time the till talks to the marketplace.
+1. Turn it on and the till sends its device ID, store name, shop region and software version to the Universal Till cloud marketplace (used for support, updates and licensing) and registers straight away. Your address is not sent. Offline just then? Nothing is held up and setup still finishes — but the till stays unregistered until you open the plugin store or press Register now, so check Settings → Till registration once you are back online.
 2. Turn it off and the till goes back to registering only when you first use the plugin store or press Register now. Turning it off never removes a registration that already happened.

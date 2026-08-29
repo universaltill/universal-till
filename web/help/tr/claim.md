@@ -20,5 +20,5 @@ Kayıt, kasanızı Universal Till marketplace'e bağlar; sahiplenme mağazayı S
 
 Kurulum sihirbazının son ekranı, kasayı hemen kaydetmek isteyip istemediğinizi bir kez sorar — siz işaretlemedikçe işaretli değildir. Aynı seçenek Ayarlar → Kasa kaydı altında "Bu kasayı pazaryerine otomatik olarak kaydet" olarak da bulunur:
 
-1. Açarsanız kasa; cihaz kimliğini, mağaza adını ve işletme türü/adresini (destek, güncellemeler ve lisanslama için kullanılır) Universal Till bulut pazaryerine gönderir ve hemen kaydolur. O an çevrimdışı mı? Hiçbir şey beklemez — kayıt, kasanın pazaryeriyle bir sonraki iletişiminde kendiliğinden gerçekleşir.
+1. Açarsanız kasa; cihaz kimliğini, mağaza adını, mağaza bölgesini ve yazılım sürümünü (destek, güncellemeler ve lisanslama için kullanılır) Universal Till bulut pazaryerine gönderir ve hemen kaydolur. Adresiniz gönderilmez. O an çevrimdışı mı? Hiçbir şey beklemez, kurulum yine de tamamlanır — ama kasa, eklenti mağazasını açana veya Şimdi kaydol'a basana kadar kayıtsız kalır; yeniden çevrimiçi olduğunuzda Ayarlar → Kasa kaydı bölümünü kontrol edin.
 2. Kapatırsanız kasa yalnızca eklenti mağazasını ilk kullandığınızda veya Şimdi kaydol'a bastığınızda kaydolmaya döner. Kapatmak, daha önce yapılmış bir kaydı asla kaldırmaz.

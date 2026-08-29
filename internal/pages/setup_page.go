@@ -31,10 +31,15 @@ const autoRegisterAttemptTimeout = 5 * time.Second
 // own pending-list persistence), then — on an explicit yes only — make one
 // best-effort, time-boxed EnsureRegistered call. Never blocks or fails the
 // wizard's own response: the persist error is logged and swallowed, and
-// EnsureRegistered already logs-and-swallows its own registration failure
-// (the till stays on enroll's ordinary lazy-retry machinery, which picks the
-// identity up once the network returns). On no/absent, no call at all —
-// ADR-0015's lazy registration stays exactly as it is.
+// EnsureRegistered already logs-and-swallows its own registration failure.
+// A failed attempt is NOT retried in the background: enroll.Init's loop
+// deliberately never registers a store (see its own comment — it only fetches
+// the signing key and registers a device under an ALREADY-registered store),
+// so an opted-in till that was offline at wizard completion simply falls back
+// to ADR-0015's lazy triggers — the next plugin-store visit/install, or
+// Settings → "Register now". Settings' enrolment card shows the till as not
+// registered until then, which is the operator's signal. On no/absent, no
+// call at all — ADR-0015's lazy registration stays exactly as it is.
 func autoRegisterForSetup(ctx context.Context, d *common.Deps, optIn bool) {
 	val := "false"
 	if optIn {
