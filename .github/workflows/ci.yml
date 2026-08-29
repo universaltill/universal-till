@@ -78,6 +78,8 @@ jobs:
         run: bash scripts/ci/guard-help-topics.sh
       - name: Linux desktop webkit2gtk version guard
         run: bash scripts/ci/guard-webkit-version.sh
+      - name: Linux desktop webkit2gtk version guard regression test
+        run: bash scripts/ci/guard-webkit-version_test.sh
       - name: Kiosk launch flags guard
         run: bash scripts/ci/guard-kiosk-launch-flags.sh
       - name: Android status/notification address guard
