@@ -10,11 +10,51 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
 )
+
+// autoRegisterAttemptTimeout bounds the ONE synchronous store-registration
+// attempt an explicit opt-in triggers (ADR-0071, ut-docs#879) — the wizard's
+// "yes" on its last screen, and Settings toggling the same choice on later.
+// A sibling of setupBasePluginAttemptTimeout rather than a reuse of it: the
+// same 5s offline-first bound, but named for what it actually times, so the
+// two can drift independently if either ever needs to.
+const autoRegisterAttemptTimeout = 5 * time.Second
+
+// autoRegisterForSetup is POST /api/setup's ADR-0071 hook: persist the
+// operator's explicit opt-in answer FIRST (before any network attempt, same
+// mid-request-crash reasoning installBasePluginsForSetup documents for its
+// own pending-list persistence), then — on an explicit yes only — make one
+// best-effort, time-boxed EnsureRegistered call. Never blocks or fails the
+// wizard's own response: the persist error is logged and swallowed, and
+// EnsureRegistered already logs-and-swallows its own registration failure.
+// A failed attempt is NOT retried in the background: enroll.Init's loop
+// deliberately never registers a store (see its own comment — it only fetches
+// the signing key and registers a device under an ALREADY-registered store),
+// so an opted-in till that was offline at wizard completion simply falls back
+// to ADR-0015's lazy triggers — the next plugin-store visit/install, or
+// Settings → "Register now". Settings' enrolment card shows the till as not
+// registered until then, which is the operator's signal. On no/absent, no
+// call at all — ADR-0015's lazy registration stays exactly as it is.
+func autoRegisterForSetup(ctx context.Context, d *common.Deps, optIn bool) {
+	val := "false"
+	if optIn {
+		val = "true"
+	}
+	if err := d.Settings.Set(ctx, common.KeyAutoRegisterOptIn, val); err != nil {
+		logging.L().Errorf("setup wizard: persist auto-register opt-in: %v", err)
+	}
+	if !optIn {
+		return
+	}
+	attemptCtx, cancel := context.WithTimeout(ctx, autoRegisterAttemptTimeout)
+	defer cancel()
+	enroll.EnsureRegistered(attemptCtx, d.Cfg, d.Settings)
+}
 
 // setupCountry prefills currency + tax for the wizard's country step (docs
 // repo: architecture/zero-touch-setup.md, phase B). Compact by design —
@@ -560,6 +600,16 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// synchronous attempt; either way this never blocks or fails the
 		// wizard's own response. A no-op for a country with nothing mapped.
 		installBasePluginsForSetup(r.Context(), d, st.Country)
+
+		// Eager store registration on explicit opt-in (ADR-0071, ut-docs#879):
+		// same best-effort posture as the base-plugin install above — the
+		// choice is persisted BEFORE the one time-boxed network attempt, the
+		// attempt itself never blocks or fails the wizard's response, and a
+		// "no"/absent answer changes nothing about today's lazy registration.
+		// Truthy check matches the telemetry checkbox convention
+		// (settings_page.go): "on" from the checkbox, "1" as the alternative.
+		autoRegisterForSetup(r.Context(), d,
+			r.Form.Get("auto_register") == "on" || r.Form.Get("auto_register") == "1")
 
 		// German TSE provisioning kickoff (ADR-0053, ut-docs#802): same
 		// best-effort posture as the base-plugin install above — the pending

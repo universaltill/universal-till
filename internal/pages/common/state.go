@@ -80,6 +80,16 @@ const (
 	// also drop an entry from Settings without installing it — this is a
 	// helpful default, not a lock-in.
 	KeyPendingBasePlugins = "setup.pending_base_plugins"
+	// KeyAutoRegisterOptIn records the shop's explicit answer to the setup
+	// wizard's eager store-registration question (ADR-0071, ut-docs#879):
+	// "true" means the operator opted in on the wizard's last screen (or
+	// later from Settings) and the till may register eagerly; "false" (or
+	// unset — a till from before this question existed) keeps ADR-0015's
+	// lazy registration as the only behavior. Same marketplace.* namespace
+	// as internal/enroll's identity keys, deliberately distinct from the
+	// unrelated marketplace.telemetry_opt_in (plugin-usage telemetry).
+	// Toggling it off later never deregisters an identity already minted.
+	KeyAutoRegisterOptIn = "marketplace.auto_register_opt_in"
 	// KeyTSEProvisioningState holds the JSON lifecycle state of the German
 	// TSE reseller-provisioning flow (ADR-0053, ut-docs#802): written by the
 	// setup wizard the instant a complete business identity is submitted

@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -629,6 +630,49 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		b.WriteString(`</ul>`)
 		_, _ = w.Write([]byte(b.String()))
+	})
+
+	// Eager-registration opt-in toggle (ADR-0071, ut-docs#879): the same
+	// choice the setup wizard's last screen asks, changeable afterwards.
+	// Elevation-gated like POST /api/enrol/now above; audited like the
+	// telemetry toggle. Toggling ON also fires ONE best-effort, time-boxed
+	// EnsureRegistered attempt (register now, not just "arm a future
+	// trigger"); toggling OFF only stops future eager triggers — it never
+	// deregisters an identity already minted (no such flow exists).
+	mux.HandleFunc("POST /api/settings/auto-register", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		_ = r.ParseForm()
+		optIn := "false"
+		if r.Form.Get("optIn") == "on" || r.Form.Get("optIn") == "1" {
+			optIn = "true"
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			summaryKey := "elevation.summary.auto_register_off"
+			if optIn == "true" {
+				summaryKey = "elevation.summary.auto_register_on"
+			}
+			renderElevationPrompt(w, r, "/api/settings/auto-register", "#auto-register-msg",
+				httpx.T(locale, summaryKey),
+				[]elevationHiddenField{{Name: "optIn", Value: r.Form.Get("optIn")}}, elev)
+			return
+		}
+		if err := d.Settings.Set(r.Context(), common.KeyAutoRegisterOptIn, optIn); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings_auto_register", err)
+			return
+		}
+		settingsAudit(r, posRepo, elev, "settings", common.KeyAutoRegisterOptIn, "auto_register_opt_in_changed", map[string]any{"opt_in": optIn})
+		if optIn == "true" {
+			// Best-effort and bounded, exactly like the wizard's own opt-in
+			// attempt (autoRegisterForSetup): EnsureRegistered logs and
+			// swallows its own failure, and the response below reports the
+			// SETTING saved — registration status stays this page's
+			// enrolment card's job, refreshed by the success reload.
+			attemptCtx, cancel := context.WithTimeout(r.Context(), autoRegisterAttemptTimeout)
+			enroll.EnsureRegistered(attemptCtx, d.Cfg, d.Settings)
+			cancel()
+		}
+		settingsRespondSaved(w, r, elev)
 	})
 
 	// Idle auto-lock window (docs: pos-auth.md). Manager/admin only — an
