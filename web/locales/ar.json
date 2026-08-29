@@ -225,6 +225,7 @@
   "import.created": "تم الاستيراد",
   "import.detected": "الصيغة المُتعرَّف عليها",
   "import.export_btn": "حفظ CSV للكتالوج إلى التنزيلات",
+  "import.export_download_started": "بدأ التنزيل — تحقق من إشعاراتك أو تطبيق الملفات.",
   "import.export_help": "بياناتك ملكك: نزّل الكتالوج بالكامل — الأسماء ورموز الأصناف والباركودات والأسعار والفئات والمخزون — بصيغة CSV. يُستورد الملف مباشرة إلى أي Universal Till (وإلى الأنظمة الأخرى التي تقرأ CSV).",
   "import.export_save_failed": "تعذّر حفظ ملف CSV.",
   "import.export_title": "تصدير",
