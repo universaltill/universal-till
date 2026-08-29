@@ -75,7 +75,7 @@
 
 <div class="card" style="margin-top:1rem">
   <h2>{{ T "reports.tips.record_title" }}</h2>
-  <form hx-post="/api/reports/worker-allocations" hx-target="#report-tab-panel" hx-swap="innerHTML">
+  <form id="tips-record-form" hx-post="/api/reports/worker-allocations" hx-target="#report-tab-panel" hx-swap="innerHTML">
     {{ if .Period }}
     <input type="hidden" name="period" value="{{ .Period }}">
     <input type="hidden" name="anchor" value="{{ .Anchor }}">
@@ -116,8 +116,36 @@
       <input type="text" name="note" placeholder="{{ T "reports.tips.form_note_hint" }}">
     </label>
     <button type="submit" class="btn primary">{{ T "reports.tips.form_submit" }}</button>
+    <div id="tips-result" class="muted" aria-live="polite" style="min-height:1.3rem; margin-top:.4rem"></div>
   </form>
 </div>
+
+<script>
+// ut-docs#1273: the record-payout form above targets #report-tab-panel
+// (a full re-render of this tab, so a successful save shows the updated
+// totals/table in place — see renderTipsTab in reports_page.go) rather
+// than a small dedicated result element, unlike shifts.html's forms. So
+// htmx's default "never swap a non-2xx response" silently drops every
+// error (the 400 validations and the 500 save failure both go through
+// http.Error/LogAndLocalizedError, both plain text) into that big target
+// instead of showing it — the button appears to do nothing.
+//
+// Listening on the form element itself, rather than document.body (the
+// shifts.html/refund.html pattern), avoids stacking duplicate listeners:
+// this whole partial — form included — is torn down and re-created every
+// time the tab is (re-)swapped into #report-tab-panel, so a fresh listener
+// on the fresh form node replaces the old one for free instead of
+// accumulating (same reasoning as reports_tab_eod.html's button-local
+// binding for the same repeatedly-swapped-partial concern).
+(function () {
+  var form = document.getElementById('tips-record-form');
+  var msg = document.getElementById('tips-result');
+  if (!form || !msg) return;
+  form.addEventListener('htmx:responseError', function (ev) {
+    msg.textContent = '✗ ' + (ev.detail.xhr.responseText || '');
+  });
+})();
+</script>
 
 <div class="card" style="margin-top:1rem">
   <a class="btn secondary" href="/api/reports/worker-allocations/export?from={{ .From }}&amp;to={{ .To }}{{ if .CashierFilter }}&amp;cashier={{ .CashierFilter }}{{ end }}">{{ T "reports.tips.export_btn" }}</a>
