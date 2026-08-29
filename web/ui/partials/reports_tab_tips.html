@@ -101,9 +101,16 @@
       </select>
     </label>
     <input type="hidden" name="amount" id="tips-amount-minor">
+    <!-- ut-docs#1272 (same defect as ut-docs#1249, fixed on #pfand-amount):
+         was type="number" + onchange, which osk.js's `input`-only
+         keystrokes never fire, and which silently resets .value to "" on a
+         momentarily-invalid decimal string while typing. text +
+         inputmode="decimal" + oninput fixes both; window.utCurrency
+         .toMinor() replaces the hardcoded `* 100`, which was also wrong by
+         100x on any 0-decimal currency (IRR/IRT/IQD/AFN/JPY). -->
     <label>{{ T "reports.tips.form_amount" }}
-      <input type="number" id="tips-amount" step="0.01" min="0.01" required placeholder="0.00"
-             onchange="document.getElementById('tips-amount-minor').value = Math.round(parseFloat(this.value || 0) * 100)">
+      <input type="text" id="tips-amount" inputmode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" required placeholder="0.00"
+             oninput="document.getElementById('tips-amount-minor').value = window.utCurrency.toMinor(this.value)">
     </label>
     <label>{{ T "reports.tips.form_note" }}
       <input type="text" name="note" placeholder="{{ T "reports.tips.form_note_hint" }}">
