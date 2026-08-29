@@ -3,6 +3,7 @@ package discovery
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"path/filepath"
 	"sync"
 	"testing"
@@ -222,3 +223,85 @@ func TestRoleCheckFromSettings_TrueWhenPrimaryURLWhitespaceOnly(t *testing.T) {
 		t.Fatal("expected primary role (true) when sync.primary_url is whitespace-only")
 	}
 }
+
+// fakeFirstBootChecker stands in for *auth.Service in these tests — the
+// gate only ever calls NeedsFirstBoot, so that's all this needs to
+// implement (same narrowed-seam pattern as RoleCheck and mdnsServer).
+type fakeFirstBootChecker struct {
+	needsFirstBoot bool
+	err            error
+}
+
+func (f fakeFirstBootChecker) NeedsFirstBoot(context.Context) (bool, error) {
+	return f.needsFirstBoot, f.err
+}
+
+// TestGateOnFirstBoot_AdvertisesOnlyWhenPrimaryAndSetupComplete pins the
+// four-way truth table (ut-docs#1263): a fresh/unconfigured till reads as
+// "primary" by RoleCheckFromSettings' own rule (empty sync.primary_url) —
+// this gate is what stops it also advertising itself as a join target
+// before a human has ever opened the setup wizard.
+func TestGateOnFirstBoot_AdvertisesOnlyWhenPrimaryAndSetupComplete(t *testing.T) {
+	cases := []struct {
+		name           string
+		inner          bool
+		needsFirstBoot bool
+		want           bool
+	}{
+		{"primary, setup complete: advertise", true, false, true},
+		{"primary, setup NOT complete: withhold (the bug this closes)", true, true, false},
+		{"replica, setup complete: withhold (already gated by inner)", false, false, false},
+		{"replica, setup NOT complete: withhold", false, true, false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			inner := func(context.Context) bool { return tc.inner }
+			gated := GateOnFirstBoot(inner, fakeFirstBootChecker{needsFirstBoot: tc.needsFirstBoot})
+
+			if got := gated(context.Background()); got != tc.want {
+				t.Fatalf("GateOnFirstBoot(inner=%v, needsFirstBoot=%v) = %v, want %v", tc.inner, tc.needsFirstBoot, got, tc.want)
+			}
+		})
+	}
+}
+
+// TestGateOnFirstBoot_FailsClosedOnCheckerError: if the first-boot check
+// itself errors, this must not fall back to advertising blind — a till
+// that can't confirm its own setup state is not something anyone else
+// should be discovering as a join target.
+func TestGateOnFirstBoot_FailsClosedOnCheckerError(t *testing.T) {
+	inner := func(context.Context) bool { return true }
+	gated := GateOnFirstBoot(inner, fakeFirstBootChecker{err: errors.New("db unavailable")})
+
+	if gated(context.Background()) {
+		t.Fatal("expected withhold (false) when the first-boot checker errors, got advertise (true)")
+	}
+}
+
+// TestGateOnFirstBoot_ShortCircuitsWithoutCallingCheckerWhenNotPrimary
+// confirms the gate doesn't pay for (or depend on) a first-boot check at
+// all on the already-common replica path — same short-circuit shape as
+// Advertiser.tick's own primary/replica switch.
+func TestGateOnFirstBoot_ShortCircuitsWithoutCallingCheckerWhenNotPrimary(t *testing.T) {
+	inner := func(context.Context) bool { return false }
+	called := false
+	checker := firstBootCheckerFunc(func(context.Context) (bool, error) {
+		called = true
+		return false, nil
+	})
+	gated := GateOnFirstBoot(inner, checker)
+
+	if gated(context.Background()) {
+		t.Fatal("expected withhold (false) when inner reports not-primary")
+	}
+	if called {
+		t.Fatal("expected the first-boot checker not to be called when inner already reports not-primary")
+	}
+}
+
+// firstBootCheckerFunc adapts a plain func to FirstBootChecker, mirroring
+// the standard http.HandlerFunc adapter shape, for the one test above that
+// needs to observe whether it was called rather than just its return value.
+type firstBootCheckerFunc func(context.Context) (bool, error)
+
+func (f firstBootCheckerFunc) NeedsFirstBoot(ctx context.Context) (bool, error) { return f(ctx) }
