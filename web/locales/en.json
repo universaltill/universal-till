@@ -1751,5 +1751,6 @@
   "settings.fiscal_signer.missing.install_btn": "Install plugin",
   "settings.tax_rate_switcher.missing.title": "No tax-rate plugin installed",
   "settings.tax_rate_switcher.missing.message": "This country requires dine-in/takeaway VAT rates to be applied correctly, but no working tax-rate plugin is currently active — dine-in/takeaway rates are not being applied correctly. Install the country's tax plugin to fix this.",
-  "settings.tax_rate_switcher.missing.install_btn": "Install plugin"
+  "settings.tax_rate_switcher.missing.install_btn": "Install plugin",
+  "common.error.server": "Something went wrong. Please try again."
 }
