@@ -276,6 +276,13 @@
       if (r.ok) {
         renderNotice(msg, 'success', T.success);
         form.querySelector('[name="manager_pin"]').value = '';
+        // ut-docs#1254: see the identical guard in login.html's own
+        // exit-to-os handler (the "reference implementation" this form
+        // already mirrors) -- window.AndroidKiosk only exists inside the
+        // Android native shell's WebView, a safe no-op everywhere else.
+        if (window.AndroidKiosk && window.AndroidKiosk.exitLockdown) {
+          window.AndroidKiosk.exitLockdown();
+        }
       } else if (r.status === 503) {
         // ADR-0064 / ut-docs#1039: the PIN was right but nothing can (or
         // can confirm to) act on the window — three different facts, told

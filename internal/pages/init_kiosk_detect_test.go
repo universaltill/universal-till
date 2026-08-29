@@ -50,7 +50,7 @@ func TestAttachModeWindowControllerIsReal(t *testing.T) {
 	t.Setenv("UT_KIOSK", "")
 
 	shell := common.NewShellChannel("kiosk")
-	wc := newWindowController(shell, false)
+	wc := newWindowController(shell, false, "linux")
 
 	if _, isNoop := wc.(common.NoopWindowController); isNoop {
 		t.Fatal("attach mode wired NoopWindowController — the ut-docs#1039 trap (exit-to-os silently no-ops while kiosk engages)")
@@ -71,6 +71,34 @@ func TestAttachModeWindowControllerIsReal(t *testing.T) {
 	}
 	if !errors.Is(err, common.ErrNoWindowControl) {
 		t.Fatalf("ExitToOS error = %v, want errors.Is(ErrNoWindowControl)", err)
+	}
+}
+
+// TestAndroidWindowControllerExitToOSSucceeds (ut-docs#1254, review
+// blocker 1): the exact same "no shell, no env-handed fallback" topology
+// as TestAttachModeWindowControllerIsReal above — but on Android, where
+// that topology is not a misconfiguration, it's the ONLY topology that
+// will ever exist (no shell process, no UT_DESKTOP_CONTROL_ADDR). Before
+// this fix, newWindowController fell through to the same
+// ShellPollWindowController as the desktop .deb attach-mode case, so
+// POST /api/settings/exit-to-os answered a correct manager PIN with a 503
+// (ErrNoWindowControl) — and since login.html/settings.html only call
+// window.AndroidKiosk.exitLockdown() on a 2xx response, the kiosk's one
+// documented way out silently never worked at all. This pins the fix:
+// ExitToOS must succeed (nil) on Android with nothing else attached,
+// unlike the identical-looking Linux case.
+func TestAndroidWindowControllerExitToOSSucceeds(t *testing.T) {
+	shell := common.NewShellChannel("kiosk")
+	wc := newWindowController(shell, false, "android")
+
+	if _, ok := wc.(common.AndroidNativeWindowController); !ok {
+		t.Fatalf("newWindowController(goos=android) = %T, want common.AndroidNativeWindowController", wc)
+	}
+	if err := wc.ExitToOS(); err != nil {
+		t.Fatalf("ExitToOS on Android = %v, want nil (the native Kotlin bridge does the real unlock; this call must report the honest success it's gated on)", err)
+	}
+	if err := wc.ApplyMode("kiosk"); err != nil {
+		t.Fatalf("ApplyMode on Android = %v, want nil (no separate window-mode concept on this platform)", err)
 	}
 }
 
@@ -95,7 +123,7 @@ func TestSpawnModeWindowControllerFallsBackToEnvChannel(t *testing.T) {
 	t.Setenv("UT_KIOSK", "")
 
 	shell := common.NewShellChannel("kiosk")
-	wc := newWindowController(shell, false)
+	wc := newWindowController(shell, false, "linux")
 
 	if err := wc.ExitToOS(); err != nil {
 		t.Fatalf("ExitToOS = %v, want nil via the env-handed fallback", err)
