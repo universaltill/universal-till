@@ -401,6 +401,34 @@ func TestImport_BarcodeAttachFailureStillImportsStock(t *testing.T) {
 	}
 }
 
+// TestImport_FilePickerAcceptsCloudStorageOctetStream is ut-docs#1247's
+// acceptance test: a .bkp sourced from cloud storage (Google Drive, Dropbox,
+// …) commonly reports as application/octet-stream rather than
+// application/zip, and Android's system file picker filters strictly on the
+// file input's accept list — so the widened attribute must actually reach
+// the rendered page, and must not have dropped the existing hints (which
+// would regress desktop/Pi pickers using MIME matching).
+func TestImport_FilePickerAcceptsCloudStorageOctetStream(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/import", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /import: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `accept=".csv,text/csv,.bkp,application/zip,application/octet-stream"`) {
+		t.Fatalf("file input accept must widen to include application/octet-stream "+
+			"(cloud-storage-reported MIME for an unrecognised binary like .bkp) "+
+			"without dropping the existing .csv/.bkp/text/csv/application/zip hints, got: %s", body)
+	}
+}
+
 func TestImport_ManagerGate(t *testing.T) {
 	t.Setenv("UT_AUTH", "") // auth ON
 	dp := newImportTestDeps(t)
