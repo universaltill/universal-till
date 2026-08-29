@@ -8,7 +8,16 @@
   <p class="muted">{{ T "import.help" }}</p>
   <form id="import-form" hx-post="/api/import" hx-target="#import-result" hx-swap="innerHTML" enctype="multipart/form-data">
     <input type="hidden" name="commit" id="import-commit" value="0">
-    <label>{{ T "import.file" }} <input type="file" name="file" accept=".csv,text/csv,.bkp,application/zip" required></label>
+    <!-- ut-docs#1247: accept is a UX hint only (the server sniffs real
+         content, never trusts extension/MIME — see catimport.ParseBkp /
+         zipMagic in import_page.go), so being strict here is pure downside.
+         A cloud-storage provider (Google Drive, Dropbox, …) commonly reports
+         an unrecognised binary like .bkp as application/octet-stream, which
+         matched neither text/csv nor application/zip and made the file
+         unselectable in Android's system picker. Add it alongside the
+         existing hints rather than removing them, so this only ever widens
+         what's selectable. -->
+    <label>{{ T "import.file" }} <input type="file" name="file" accept=".csv,text/csv,.bkp,application/zip,application/octet-stream" required></label>
     <div style="display:flex; gap:.4rem; margin-top:.5rem">
       <button class="btn" type="submit" onclick="document.getElementById('import-commit').value='0'">{{ T "import.preview" }}</button>
       <button class="btn primary" type="submit" onclick="document.getElementById('import-commit').value='1'">{{ T "import.import" }}</button>
