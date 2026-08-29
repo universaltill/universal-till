@@ -319,6 +319,17 @@
         <section x-show="step === 8" x-cloak data-step="8">
           <h1>{{ T "setup.done.title" }}</h1>
           <p class="muted">{{ T "setup.done.hint" }}</p>
+          <!-- ADR-0071 (ut-docs#879): explicit, opt-in-gated eager store
+               registration — asked once, on the wizard's last screen, NOT
+               pre-ticked. On yes, POST /api/setup makes one best-effort,
+               time-boxed registration attempt; on no (the default) the till
+               keeps today's lazy registration (ADR-0015). Same labelled-
+               checkbox idiom as step 5's demo_data control. -->
+          <label class="set-row" style="margin-top:.6rem">
+            <input type="checkbox" name="auto_register">
+            {{ T "setup.auto_register.label" }}
+          </label>
+          <p class="muted">{{ T "setup.auto_register.hint" }}</p>
           <div class="setup-nav">
             <button type="button" class="btn secondary" @click="step = 7">{{ T "setup.back" }}</button>
             <button type="submit" class="btn primary">{{ T "setup.finish" }}</button>

@@ -27,6 +27,22 @@
       <span id="enrol-msg" aria-live="polite"></span>
     </div>
   {{ end }}
+  <!-- ADR-0071 (ut-docs#879): the setup wizard's eager-registration opt-in,
+       changeable afterwards. Elevation-wired endpoint, so the card renders
+       for every session (ut-docs#867 convention). Same Content-Type reload
+       guard as the telemetry form — a 200 elevation prompt (text/html) must
+       not trigger the success reload. Toggling ON also registers now,
+       best-effort; toggling OFF never deregisters anything. -->
+  <div class="set-divider">
+    <form hx-post="/api/settings/auto-register" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
+      <label><input type="checkbox" name="optIn" {{ if eq (index .settingsMap "marketplace.auto_register_opt_in") "true" }}checked{{ end }}> {{ T "settings.enrol.auto_register.label" }}</label>
+      <p class="muted">{{ T "settings.enrol.auto_register.help" }}</p>
+      <div class="set-gap-s">
+        <button class="btn" type="submit">{{ T "common.save" }}</button>
+        <span id="auto-register-msg" aria-live="polite"></span>
+      </div>
+    </form>
+  </div>
 </div>
 {{ if .isManager }}
 <div class="card">
