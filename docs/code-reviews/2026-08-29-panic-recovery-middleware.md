@@ -274,3 +274,158 @@ grow one.
    ships, so a panic mid-export cannot produce a 200 with a corrupted body.
 3. Optional one-liners: re-panic `http.ErrAbortHandler`; truncate the stack in
    the Problems-ring message.
+
+---
+
+## Scoped re-review — the Finding 2 / Finding 4 fixes (2026-08-29, second independent pass)
+
+Fresh-context Opus reviewer, scoped to `internal/pages/recovery.go` and
+`internal/pages/recovery_test.go` only (working tree, later committed as
+`04d81ad`). Gates re-run personally: `gofmt -l .` empty, `go build ./...`,
+`go vet ./internal/pages/`, `go test ./internal/pages/ -run TestRecoverMiddleware
+-v` → all 5 green.
+
+**Verdict: the reported bug is genuinely fixed and properly pinned, but the fix
+does not deliver the failure signal it claims. One MEDIUM (same class as the
+original Finding 2), one LOW, two nits.**
+
+### Confirmed good
+
+- `recoveryResponseWriter` does fix the reported corruption. Verified on a real
+  `httptest.NewServer` (not just a recorder): a handler that commits
+  `200 text/csv` + rows then panics now yields a clean `200`, `Content-Type:
+  text/csv`, body = exactly the pre-panic bytes — no second header, no appended
+  JSON envelope, no `superfluous response.WriteHeader` log line.
+- Both new tests are **real pins, mutation-verified**: deleting the
+  `if rw.wroteHeader { return }` guard → FAIL; deleting the
+  `if rec == http.ErrAbortHandler { panic(rec) }` line → FAIL. Restored
+  byte-identical afterwards (`RESTORED_CLEAN`, sha256 match against the
+  committed blobs).
+- `http.ErrAbortHandler` re-panic placement is **correct**: first statement
+  after the `rec == nil` check, ahead of both the log call and the
+  `wroteHeader` check, so it can't be suppressed. Not logging it matches
+  `net/http`'s own handling.
+- `ResolveLocale(w, r)` in the recover block only sets a cookie header, never
+  writes — safe on the not-yet-committed path.
+
+### MEDIUM — the committed-response path produces a *silent* truncation, not the EOF the comment claims
+
+`recovery.go:70-75` states the outcome is "the connection just ending (client
+sees EOF), same as before this middleware existed." Measured on a real server,
+that is **not** what happens — recovering and returning normally lets `net/http`
+*finalize* the response:
+
+| body size | current fix | no middleware (pre-card baseline) |
+|---|---|---|
+| 40 B (fits bufio) | `200`, `Content-Length: 41`, `readErr=nil` | request-level `EOF` |
+| 20 KB (already flushed, chunked) | `200`, chunked, terminated cleanly, `readErr=nil` | `unexpected EOF` |
+
+So a CSV export that panics mid-stream now downloads as a **well-formed, complete-
+looking 200 that is silently short** — the operator has no way to tell. That is
+the same failure mode Finding 2 was filed against ("quietly truncated, but 200
+OK is worse than obviously failed"); the fix removed the corrupt trailing line
+but not the silence, and for the small-body case it is now *harder* to detect
+than before the fix, since the appended JSON garbage was at least a visible
+signal. Regression relative to the pre-card baseline, on an accounting/export
+surface.
+
+**Fix (one line):** on the already-committed path, `panic(http.ErrAbortHandler)`
+instead of `return`. Verified this reproduces the baseline exactly in both rows
+above (`EOF` / `unexpected EOF`), while `net/http` closes the connection
+silently and the real panic is already logged just above. That is also literally
+what Finding 2's suggested remedy said ("letting the connection abort, which is
+the honest signal"). `TestRecoverMiddleware_MidStreamPanicDoesNotCorruptCommitted
+Response` would then need to assert the re-panic instead of a normal return.
+**Either way the comment at `recovery.go:70-75` must be corrected — as written it
+asserts the opposite of the observed behaviour.**
+
+### LOW — the wrapper drops every optional `ResponseWriter` interface, app-wide
+
+`recoveryResponseWriter` embeds only `http.ResponseWriter`, so through it
+`w.(http.Flusher)`, `w.(http.Hijacker)` and `w.(io.ReaderFrom)` all fail, and
+`http.NewResponseController(w).Flush()` / `.SetWriteDeadline()` return
+`feature not supported` (measured). Since this is the outermost wrap it applies
+to **every** response.
+
+Latent for correctness today — grepped the whole repo: no `.(http.Flusher)` /
+`.(http.Hijacker)` / `NewResponseController` anywhere, no SSE
+(`text/event-stream`), no websockets; the `cw.Flush()` calls in
+`reports_page.go`/`eod_api.go`/`invoice_page.go`/`audit_page.go`/`import_page.go`
+are `csv.Writer.Flush`, unaffected. But losing `io.ReaderFrom` silently drops the
+`sendfile` fast path for every `http.ServeFile` (`backup_api.go:162`,
+`plugin_icons.go:46`, `themes.go:130`, `sync_assets.go:107`, `sync_api.go:398`),
+`http.FileServerFS` (`static_page.go:112`) and `io.Copy(w, f)`
+(`plugin_api.go:903`, `themes.go:123`) — including large backup downloads on the
+Pi. Cheap fix: add `func (rw *recoveryResponseWriter) Unwrap() http.ResponseWriter
+{ return rw.ResponseWriter }` (Go 1.20+; repo is on 1.25), which makes
+`http.NewResponseController` work, plus explicit `Flush()`/`ReadFrom()`
+pass-throughs if the sendfile path is wanted back.
+
+### Nits
+
+- The `Write()` tracking branch is **unpinned**: mutating `Write` to stop
+  setting `wroteHeader` leaves all 5 tests green, because the mid-stream test
+  calls `WriteHeader` explicitly. The behaviour itself is correct (verified: a
+  handler that writes a body with an implicit 200 then panics is still
+  protected). Worth one more case using `fmt.Fprintf`-style implicit-200 output.
+- The recover block writes via the original `w`, not `rw`, after the
+  `wroteHeader` check. Harmless today (same underlying writer, and it returns
+  immediately), but leaves `rw.wroteHeader` stale if code is ever added below.
+
+**Process note (repeat of the first review's):** commit `04d81ad` landed at
+15:37:07 *during* this pass — the same stop-hook case (ut-docs#386). Checked:
+the committed `recovery.go`/`recovery_test.go` blobs are sha256-identical to the
+pre-mutation backups, and no throwaway probe file reached history. No harm, but
+this is the second consecutive cycle; the mutation work belongs in an isolated
+worktree.
+
+---
+
+## Final round — both scoped-review findings applied (2026-08-29, same session)
+
+Both the MEDIUM and the LOW from the scoped re-review above are fixed, on top
+of commit `04d81ad`:
+
+- **MEDIUM (silent truncation) fixed**: the already-committed path now
+  `panic(http.ErrAbortHandler)` instead of `return`. Re-verified the exact
+  claim from the scoped review — `net/http`'s own top-level recover sees the
+  re-panic and aborts the connection, matching the pre-card baseline signal
+  (client sees a failed/incomplete read) instead of finalizing a
+  well-formed-but-short 200. The stale comment claiming a plain "connection
+  just ends" via `return` is corrected to describe the re-panic and why it's
+  needed. `TestRecoverMiddleware_MidStreamPanicAbortsRatherThanFinalizingATruncatedResponse`
+  replaces the old test, asserting the re-panic value and that the pre-panic
+  bytes are untouched. Added
+  `TestRecoverMiddleware_ImplicitWriteHeaderAlsoCountsAsCommitted` per the
+  review's own nit (the `Write()` tracking branch was unpinned by the
+  WriteHeader-explicit test alone).
+- **LOW (dropped optional interfaces) fixed**: `recoveryResponseWriter` now
+  implements `Flush()`, `Hijack()`, and `ReadFrom()`, each delegating to the
+  underlying `ResponseWriter` when it supports the capability (falling back
+  to a plain `io.Copy` for `ReadFrom`, and a clear error for `Hijack`) —
+  restores the sendfile-style fast path for `backup_api.go`/`static_page.go`/
+  `plugin_icons.go`/`themes.go`/`sync_assets.go`/`sync_api.go` downloads and
+  the SSE/websocket capability for any future handler that needs it, since
+  this middleware sits outermost over the whole app. Three new tests
+  (`TestRecoveryResponseWriter_DelegatesOptionalInterfaces`,
+  `..._ReadFromFallsBackWithoutUnderlyingReaderFrom`,
+  `..._HijackFailsCleanlyWithoutUnderlyingHijacker`) pin the delegation, the
+  no-support fallback, and the no-support-Hijack error path respectively,
+  using a fake `ResponseWriter` that implements the optional interfaces.
+
+**All 5 new/changed assertions mutation-verified** the same way as the prior
+rounds: reverting the `panic(http.ErrAbortHandler)` line back to `return`
+fails the new mid-stream test; reverting the `Write()` tracking fails the new
+implicit-write test. Restored byte-identical each time, tree clean afterward.
+
+**Full gate, final state**: `gofmt -l .` empty, `go build ./...` clean,
+`go vet ./...` clean, `go test ./internal/pages/...` green (all 9
+`recovery_test.go` cases), `go test ./...` (whole repo) green,
+`guard-data-access.sh` / `guard-kiosk-engine.sh` / `guard-i18n.sh` /
+`guard-docs-shots.sh` (manifest regenerated a third time, for this round's
+`recovery.go` content) all green.
+
+No further open findings from either review round remain unaddressed. The
+"Deferred / follow-up" items above (goroutine panics, unstyled 500, locale
+key placement) are unchanged — genuinely out of this card's scope, not
+silently dropped.

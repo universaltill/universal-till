@@ -1,7 +1,11 @@
 package pages
 
 import (
+	"bufio"
 	"encoding/json"
+	"fmt"
+	"io"
+	"net"
 	"net/http"
 	"runtime/debug"
 	"strings"
@@ -45,7 +49,8 @@ func recoverMiddleware(next http.Handler) http.Handler {
 			// (no httputil.ReverseProxy, no Hijack), but registerExternalProxy
 			// is exactly the kind of surface that could grow one, so honor
 			// the convention now rather than silently turning a deliberate
-			// abort into a 500 later.
+			// abort into a 500 later. Checked first, ahead of the log call
+			// and the wroteHeader branch below, so it's never suppressed.
 			if rec == http.ErrAbortHandler {
 				panic(rec)
 			}
@@ -64,17 +69,22 @@ func recoverMiddleware(next http.Handler) http.Handler {
 			// A handler that already wrote status/body before panicking (a
 			// CSV/export stream that panics mid-write, e.g. reports_page.go,
 			// eod_api.go, invoice_page.go, audit_page.go, import_page.go) has
-			// already committed a 200 to the wire — writing a fresh header or
-			// appending the error envelope now would corrupt that response
+			// already committed a response to the wire — writing a fresh
+			// header or appending the error envelope now would corrupt it
 			// into a 200 that LOOKS successful but silently ends short/wrong
-			// (found in review, ut-docs#1271). Nothing more can be sent once
-			// the client has already read a status line; the honest outcome
-			// at that point is the connection just ending (client sees EOF),
-			// same as before this middleware existed. The panic is still
+			// (found in review, ut-docs#1271). Re-panicking ErrAbortHandler
+			// here — rather than just returning — is what actually reproduces
+			// the pre-existing "obviously failed" signal: returning normally
+			// lets net/http finalize a well-formed-but-truncated 200 (verified
+			// in review: for a Content-Length response the client sees a clean
+			// read with no error at all, which is a WORSE silent-failure than
+			// either outcome), whereas re-panicking here is recovered by
+			// net/http's own top-level handler, which aborts the connection
+			// the same way an unhandled panic always has. The panic is still
 			// logged above either way — this only changes what, if anything,
 			// reaches the client.
 			if rw.wroteHeader {
-				return
+				panic(http.ErrAbortHandler)
 			}
 
 			locale := httpx.ResolveLocale(w, r)
@@ -98,6 +108,19 @@ func recoverMiddleware(next http.Handler) http.Handler {
 // writing a response (status line and/or body), so recoverMiddleware can
 // tell a mid-stream panic (response already committed) apart from one before
 // any output (safe to still send a clean error response).
+//
+// Passes through Flush/Hijack/ReadFrom to the underlying ResponseWriter
+// (found in review, ut-docs#1271): without these, wrapping the ResponseWriter
+// silently drops optional capabilities from EVERY request in the app, since
+// this middleware sits outermost. Concretely, io.Copy(w, someReader) — which
+// http.ServeFile/http.ServeContent/http.FileServerFS use internally, and
+// which several handlers call directly for backup/asset downloads
+// (backup_api.go, plugin_icons.go, themes.go, sync_assets.go, sync_api.go,
+// static_page.go) — only takes the zero-copy sendfile-style fast path when
+// the destination itself implements io.ReaderFrom; a bare embedding would
+// fail that type assertion against THIS wrapper and silently fall back to a
+// byte-by-byte copy for every download in the app, not just this middleware's
+// own concern.
 type recoveryResponseWriter struct {
 	http.ResponseWriter
 	wroteHeader bool
@@ -115,4 +138,38 @@ func (rw *recoveryResponseWriter) Write(b []byte) (int, error) {
 	// (e.g. `fmt.Fprintf(w, ...)`) is still tracked correctly.
 	rw.wroteHeader = true
 	return rw.ResponseWriter.Write(b)
+}
+
+// Flush lets a streaming handler (SSE, chunked progress) push partial output
+// immediately, same as if this middleware weren't in the chain.
+func (rw *recoveryResponseWriter) Flush() {
+	if f, ok := rw.ResponseWriter.(http.Flusher); ok {
+		f.Flush()
+	}
+}
+
+// Hijack lets a handler take over the raw connection (websockets), same as
+// if this middleware weren't in the chain. Nothing in this repo hijacks
+// today, but failing the type assertion silently (rather than delegating)
+// would be a correctness trap for whatever adds the first one.
+func (rw *recoveryResponseWriter) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	h, ok := rw.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("recoveryResponseWriter: underlying ResponseWriter does not support Hijack")
+	}
+	rw.wroteHeader = true // hijacking hands the raw conn to the handler; treat as committed
+	return h.Hijack()
+}
+
+// ReadFrom restores the zero-copy fast path documented on
+// recoveryResponseWriter above (falls back to an explicit io.Copy, which is
+// exactly what io.Copy itself would have done had this wrapper not
+// implemented io.ReaderFrom at all — so this is never worse than not having
+// the method, only ever better when the underlying writer can go faster).
+func (rw *recoveryResponseWriter) ReadFrom(r io.Reader) (int64, error) {
+	rw.wroteHeader = true
+	if rf, ok := rw.ResponseWriter.(io.ReaderFrom); ok {
+		return rf.ReadFrom(r)
+	}
+	return io.Copy(rw.ResponseWriter, r)
 }
