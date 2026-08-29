@@ -165,6 +165,143 @@ func TestMergeAdditiveJSONMapSetting_IgnoresRegisterScopedRow(t *testing.T) {
 	}
 }
 
+// ut-docs#1255: a plugin manifest declaring a map-typed setting's
+// default_value as the JSON STRING "{}" (rather than the JSON OBJECT {})
+// gets it double-encoded at real install time — internal/plugins/manifest.go
+// does `json.Marshal(s.DefaultValue)` where DefaultValue is the Go string
+// "{}" parsed from that manifest field, producing the stored value_json
+// `"{}"` (4 bytes: quote-brace-brace-quote), not the raw object `{}` (2
+// bytes). This is exactly what ut-plugin-tax-de's manifest shipped for
+// takeaway_rate_overrides — confirmed live on a real till (2026-08-28/29):
+// every fresh install's very first merge attempt hit "existing value is not
+// valid JSON" and permanently refused ANY takeaway-tax override, forever,
+// with no way to recover short of hand-editing the DB. A merchant's actual
+// hand-edit gone wrong (TestMergeAdditiveJSONMapSetting_InvalidExistingJSONLeftUntouched
+// above) must still refuse to clobber — but this specific, single-level
+// string-wrapped-empty-object shape is never a plausible deliberate
+// override (nobody hand-sets their real overrides to a string containing
+// "{}"), so the merge self-heals it instead of refusing forever.
+func TestMergeAdditiveJSONMapSetting_SelfHealsDoubleEncodedManifestDefault(t *testing.T) {
+	d, repo := newPluginLifecycleTestDB(t)
+	ctx := context.Background()
+
+	seedCatalogEntry(t, d, "com.example.tax", "1.0.0")
+	if err := repo.InstallPlugin(ctx, nil, "com.example.tax"); err != nil {
+		t.Fatal(err)
+	}
+	// Reproduces exactly what internal/plugins/manifest.go's install path
+	// writes for a manifest default_value of "{}" (a JSON string), not a
+	// hand-edit: json.Marshal(`"{}"` as a Go string) == `"{}"`.
+	if err := repo.UpsertPluginSetting(ctx, "com.example.tax", "takeaway_rate_overrides", `"{}"`); err != nil {
+		t.Fatal(err)
+	}
+
+	added, err := repo.MergeAdditiveJSONMapSetting(ctx, "com.example.tax", "takeaway_rate_overrides", map[string]int{"a": 700})
+	if err != nil {
+		t.Fatalf("expected the double-encoded empty-object default to self-heal, got error: %v", err)
+	}
+	if added != 1 {
+		t.Fatalf("added = %d, want 1", added)
+	}
+
+	var raw string
+	if err := d.DB.QueryRowContext(ctx,
+		`SELECT value_json FROM plugin_settings WHERE plugin_id = 'com.example.tax' AND key = 'takeaway_rate_overrides'`).
+		Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	var got map[string]int
+	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+		t.Fatalf("healed value must be a real JSON object, got %q: %v", raw, err)
+	}
+	if got["a"] != 700 {
+		t.Fatalf("healed value = %v, want a=700", got)
+	}
+}
+
+// Found by independent review of the self-heal above: a stored JSON `null`
+// unmarshals SUCCESSFULLY into a map by setting it to nil, both bare (a
+// pre-existing hazard) and string-wrapped as `"null"` (newly reachable via
+// the self-heal's unwrap step — plugin_settings_page.go's plain-text
+// settings form does json.Marshal(val), so a manager typing "null" into
+// that box stores exactly `"null"`). Either shape must merge cleanly, not
+// panic on assignment to a nil map.
+func TestMergeAdditiveJSONMapSetting_NullExistingValueDoesNotPanic(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		stored string
+	}{
+		{"bare null", `null`},
+		{"string-wrapped null", `"null"`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			d, repo := newPluginLifecycleTestDB(t)
+			ctx := context.Background()
+
+			seedCatalogEntry(t, d, "com.example.tax", "1.0.0")
+			if err := repo.InstallPlugin(ctx, nil, "com.example.tax"); err != nil {
+				t.Fatal(err)
+			}
+			if err := repo.UpsertPluginSetting(ctx, "com.example.tax", "takeaway_rate_overrides", tc.stored); err != nil {
+				t.Fatal(err)
+			}
+
+			added, err := repo.MergeAdditiveJSONMapSetting(ctx, "com.example.tax", "takeaway_rate_overrides", map[string]int{"z": 700})
+			if err != nil {
+				t.Fatalf("expected a null existing value to merge cleanly, got error: %v", err)
+			}
+			if added != 1 {
+				t.Fatalf("added = %d, want 1", added)
+			}
+
+			var raw string
+			if err := d.DB.QueryRowContext(ctx,
+				`SELECT value_json FROM plugin_settings WHERE plugin_id = 'com.example.tax' AND key = 'takeaway_rate_overrides'`).
+				Scan(&raw); err != nil {
+				t.Fatal(err)
+			}
+			var got map[string]int
+			if err := json.Unmarshal([]byte(raw), &got); err != nil {
+				t.Fatalf("merged value not valid JSON %q: %v", raw, err)
+			}
+			if got["z"] != 700 {
+				t.Fatalf("merged value = %v, want z=700", got)
+			}
+		})
+	}
+}
+
+// A double-encoded-looking value whose UNWRAPPED content still isn't valid
+// JSON (a genuinely corrupt hand-edit, not the manifest-default shape above)
+// must still refuse to clobber, same as the plain invalid-JSON case.
+func TestMergeAdditiveJSONMapSetting_DoubleEncodedButStillInvalidLeftUntouched(t *testing.T) {
+	d, repo := newPluginLifecycleTestDB(t)
+	ctx := context.Background()
+
+	seedCatalogEntry(t, d, "com.example.tax", "1.0.0")
+	if err := repo.InstallPlugin(ctx, nil, "com.example.tax"); err != nil {
+		t.Fatal(err)
+	}
+	// A JSON string whose content is itself not valid JSON either.
+	if err := repo.UpsertPluginSetting(ctx, "com.example.tax", "takeaway_rate_overrides", `"not json at all"`); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := repo.MergeAdditiveJSONMapSetting(ctx, "com.example.tax", "takeaway_rate_overrides", map[string]int{"a": 100}); err == nil {
+		t.Fatal("expected an error — the unwrapped content is not valid JSON either")
+	}
+
+	var raw string
+	if err := d.DB.QueryRowContext(ctx,
+		`SELECT value_json FROM plugin_settings WHERE plugin_id = 'com.example.tax' AND key = 'takeaway_rate_overrides'`).
+		Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw != `"not json at all"` {
+		t.Fatalf("must be left untouched, got %q", raw)
+	}
+}
+
 // An existing value that isn't valid JSON (a hand-edit gone wrong) must be
 // left completely untouched, with an error returned so the caller can warn.
 func TestMergeAdditiveJSONMapSetting_InvalidExistingJSONLeftUntouched(t *testing.T) {
