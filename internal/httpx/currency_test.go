@@ -32,6 +32,37 @@ func TestFormatMoney(t *testing.T) {
 	InitCurrency("GBP")
 }
 
+// ut-docs#1274: FormatMajorPlain is the currency-decimals-aware replacement
+// for a hardcoded `%d.%02d` against `/100` (shifts_page.go's
+// CarryForwardDisplay before this fix) — plain digits only, no symbol, no
+// thousands grouping, no locale digit substitution, since it feeds an
+// editable decimal-mode input's value attribute that window.utCurrency
+// .toMinor() parses back, not a read-only display.
+func TestFormatMajorPlain(t *testing.T) {
+	cases := []struct {
+		minor    int64
+		decimals int
+		want     string
+	}{
+		{123, 2, "1.23"},
+		{5, 2, "0.05"},
+		{-50, 2, "-0.50"},
+		// 0-decimal: minor units ARE major units, never divided by 100.
+		{500, 0, "500"},
+		{-500, 0, "-500"},
+		{0, 0, "0"},
+		// no thousands grouping, unlike FormatMoney -- this feeds a
+		// pattern="[0-9]+(\.[0-9]{1,2})?"-validated input, which a comma
+		// would fail.
+		{1234567, 2, "12345.67"},
+	}
+	for _, c := range cases {
+		if got := FormatMajorPlain(c.minor, c.decimals); got != c.want {
+			t.Errorf("FormatMajorPlain(%d, %d) = %q, want %q", c.minor, c.decimals, got, c.want)
+		}
+	}
+}
+
 func TestLocalizeDigits(t *testing.T) {
 	if got := LocalizeDigits("12,345.60", "fa-IR"); got != "۱۲٬۳۴۵٫۶۰" {
 		t.Errorf("fa digits = %q", got)

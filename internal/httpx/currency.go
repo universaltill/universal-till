@@ -179,3 +179,32 @@ func FormatMoney(minor int64, locale string) string {
 	}
 	return c.Display + num
 }
+
+// FormatMajorPlain renders minor units as a plain decimal major-unit string
+// — no symbol, no thousands grouping, no locale digit substitution — for
+// prefilling an editable decimal-mode input that window.utCurrency.toMinor()
+// (or an equivalent Go-side parse) will convert back to minor units.
+// decimals-aware unlike a hardcoded `/100`: a 0-decimal currency's minor
+// units ARE its major units (500 IRT stays "500", never "5.00").
+// ut-docs#1274: CarryForwardDisplay used to hardcode `%d.%02d` against
+// `/100`, silently wrong on any 0-decimal shop (IRR/IRT/IQD/AFN/JPY).
+func FormatMajorPlain(minor int64, decimals int) string {
+	neg := minor < 0
+	if neg {
+		minor = -minor
+	}
+	var s string
+	if decimals <= 0 {
+		s = fmt.Sprintf("%d", minor)
+	} else {
+		pow := int64(1)
+		for i := 0; i < decimals; i++ {
+			pow *= 10
+		}
+		s = fmt.Sprintf("%d.%0*d", minor/pow, decimals, minor%pow)
+	}
+	if neg {
+		s = "-" + s
+	}
+	return s
+}
