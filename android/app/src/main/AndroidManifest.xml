@@ -78,5 +78,26 @@
                 android:name="autoStoreLocales"
                 android:value="true" />
         </service>
+
+        <!-- ut-docs#1254: inert scaffolding until a device is actually
+             provisioned as Device Owner (a manual, physical, out-of-band
+             step — see android/README.md, "Kiosk lock-down"). It exists so
+             `dpm set-device-owner` CAN target this app at all; on every
+             unprovisioned device (today's reality) it is never invoked and
+             MainActivity falls back to plain screen-pinning. The
+             BIND_DEVICE_ADMIN permission restricts who may bind/deliver to
+             it (the system only), which is why exported="true" is safe and
+             required here. -->
+        <receiver
+            android:name=".TillDeviceAdminReceiver"
+            android:permission="android.permission.BIND_DEVICE_ADMIN"
+            android:exported="true">
+            <meta-data
+                android:name="android.app.device_admin"
+                android:resource="@xml/device_admin_receiver" />
+            <intent-filter>
+                <action android:name="android.app.action.DEVICE_ADMIN_ENABLED" />
+            </intent-filter>
+        </receiver>
     </application>
 </manifest>

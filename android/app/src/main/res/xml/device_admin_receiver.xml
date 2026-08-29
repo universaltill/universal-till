@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- Deliberately minimal (ut-docs#1254): Device Owner status itself grants
+     the lock-task capability this app needs — this file only has to exist
+     and be well-formed for `dpm set-device-owner` provisioning to succeed
+     at all. See TillDeviceAdminReceiver.kt. -->
+<device-admin xmlns:android="http://schemas.android.com/apk/res/android">
+    <uses-policies />
+</device-admin>

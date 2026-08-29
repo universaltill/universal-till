@@ -205,7 +205,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// never start out disagreeing. See newWindowController below for how
 	// the controller is picked.
 	shellChannel := common.NewShellChannel(state.WindowMode)
-	windowCtl := newWindowController(shellChannel, piKioskServiceInstalled())
+	windowCtl := newWindowController(shellChannel, piKioskServiceInstalled(), runtime.GOOS)
 
 	dp := &common.Deps{
 		Cfg:         cfg,
@@ -438,8 +438,32 @@ func newRederiveSettings(dp *common.Deps, authDisabled bool, i18n *config.I18n) 
 // path leaves the unit file on disk, and the setup script runs on desktop
 // images and non-Pi Debian boxes, so that combination is reachable in the
 // field, not theoretical.
-func newWindowController(shell *common.ShellChannel, piKioskUnitPresent bool) common.WindowController {
-	if runtime.GOOS == "linux" && (os.Getenv("UT_KIOSK") == "1" || piKioskUnitPresent) {
+//
+// Android (ut-docs#1254, review blocker 1): mobile.Start's gomobile-bind
+// entry point runs this same Init on GOOS=="android", with no shell
+// process, no UT_KIOSK, and no UT_DESKTOP_CONTROL_ADDR ever set — which
+// used to fall all the way through to ShellPollWindowController with a nil
+// fallback, exactly the topology TestAttachModeWindowControllerIsReal below
+// pins as an honest ErrNoWindowControl/503. That's correct on the .deb
+// desktop path this function was designed for, but wrong on Android: the
+// PIN was already verified by the handler before WindowCtl.ExitToOS() is
+// ever called, and MainActivity.KioskBridge's exitLockdown() unlock only
+// fires when login.html/settings.html see a 2xx from that same call — so a
+// 503 here didn't just fail to change a window, it silently broke the
+// kiosk's only documented way out. Checked before the Pi branch (mutually
+// exclusive GOOS values anyway, but explicit ordering keeps this immune to
+// either branch's condition ever loosening).
+func newWindowController(shell *common.ShellChannel, piKioskUnitPresent bool, goos string) common.WindowController {
+	if goos == "android" {
+		// Deliberately NOT shell.MarkExitPath() — same reasoning as the
+		// kiosk branch below: nothing consumes the shell channel on this
+		// platform (MainActivity's own WebView IS the window; there is no
+		// separate GTK shell process to poll), so marking it would
+		// incorrectly let GET /api/window-mode serve chrome-hiding modes to
+		// a live poller that can never exist here.
+		return common.AndroidNativeWindowController{}
+	}
+	if goos == "linux" && (os.Getenv("UT_KIOSK") == "1" || piKioskUnitPresent) {
 		// Deliberately NOT shell.MarkExitPath() — see the invariant above.
 		return common.NewKioskSystemdWindowController()
 	}

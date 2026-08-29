@@ -660,4 +660,68 @@ test.describe.serial('first-boot setup and PIN login', () => {
       await ctx.close();
     }
   });
+
+  // ut-docs#1254 (review should-fix 4): the Android native shell's kiosk
+  // lock-task only ever releases via window.AndroidKiosk.exitLockdown() —
+  // added to the WebView by MainActivity.kt's addJavascriptInterface,
+  // invisible to a Go handler test, which can prove exit-to-os's status
+  // code but never that this page's own JS actually calls the native
+  // bridge for it. This is genuinely the ONLY place that bridge call is
+  // reachable at all: unlike settings.html (android-kiosk-bridge-1254
+  // .spec.ts covers that one against the plain auth-off till),
+  // login.html's exit-to-os is the self-order kiosk's session-less escape
+  // hatch — the whole reason it exists is to work on a till with no admin
+  // logged in, which needs THIS file's already-completed-wizard state (a
+  // real admin PIN) to reach at all; a fresh/default till redirects /login
+  // straight to /setup instead of showing it. Route-mocked (not the real
+  // 503 no_shell response the test just above this one gets from this e2e
+  // server) so both the success and failure paths are exercised
+  // deterministically, same technique exit-to-os-lockout-1104.spec.ts
+  // already uses for settings.html's identical branching.
+  test('the login-screen exit-to-os form calls window.AndroidKiosk.exitLockdown only on a real (2xx) exit', async ({ browser }) => {
+    const ctx = await browser.newContext();
+    const p = await ctx.newPage();
+    await p.addInitScript(`
+      window.__androidKioskCalls = [];
+      window.AndroidKiosk = { exitLockdown: function () { window.__androidKioskCalls.push('exitLockdown'); } };
+    `);
+    const callCount = () => p.evaluate(() => (window as any).__androidKioskCalls?.length ?? 0);
+    try {
+      // 503 (no window control) — the honest, undoctored response this
+      // e2e server actually gives (no desktop shell attached) — must NOT
+      // fire the bridge. Uses the SAME real (non-mocked) request the test
+      // above this one already exercises, so this also double-checks that
+      // test's own premise rather than assuming it.
+      const assertClean503 = watchConsole(p, /^Failed to load resource: .*503/);
+      await p.goto('/login');
+      await p.locator('details.login-exit-os summary').click();
+      const form503 = p.locator('#login-exit-os-form');
+      await form503.locator('[name="manager_pin"]').fill(ADMIN_PIN);
+      await form503.locator('button[type=submit]').click();
+      await expect(p.locator('#login-exit-os-msg')).toContainText("can't be reached");
+      expect(await callCount()).toBe(0);
+      assertClean503();
+
+      // Now mock a genuine 2xx and confirm the bridge DOES fire.
+      await p.route('**/api/settings/exit-to-os', async (route) => {
+        await route.fulfill({ status: 204 });
+      });
+      await form503.locator('[name="manager_pin"]').fill(ADMIN_PIN);
+      await form503.locator('button[type=submit]').click();
+      // A POSITIVE wait, not `.not.toContainText("can't be reached")` — the
+      // page's own JS clears #login-exit-os-msg synchronously on click,
+      // before the async fetch/.then() (which is what calls
+      // window.AndroidKiosk.exitLockdown()) resolves, so a negative
+      // assertion is trivially satisfied by that transient cleared state
+      // and doesn't actually wait for the response. Caught by CI (not the
+      // local run that wrote this test), which reliably runs slower
+      // relative to Playwright's own polling interval — a real race, not
+      // flakiness in the feature itself.
+      await expect(p.locator('#login-exit-os-msg')).toHaveText('Exited to OS.');
+      expect(await callCount()).toBe(1);
+      await p.unroute('**/api/settings/exit-to-os');
+    } finally {
+      await ctx.close();
+    }
+  });
 });
