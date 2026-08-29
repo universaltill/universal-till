@@ -4,7 +4,7 @@
   <div style="display:flex; gap:.5rem; align-items:center">
     <a class="btn secondary" href="/import">{{ T "import.title" }}</a>
     <a class="btn secondary" href="/catalog/tax-codes">{{ T "taxcodes.title" }}</a>
-    <button class="btn secondary" hx-post="/api/catalog/export-save" hx-target="#export-msg" hx-swap="innerHTML">{{ T "import.export_btn" }}</button>
+    <button id="catalog-export-btn" class="btn secondary" hx-post="/api/catalog/export-save" hx-target="#export-msg" hx-swap="innerHTML">{{ T "import.export_btn" }}</button>
     <div id="export-msg" class="muted" aria-live="polite"></div>
     <input type="search" id="catalog-search" placeholder="{{ T "catalog.search_placeholder" }}" autocomplete="off">
   </div>
@@ -441,6 +441,61 @@
   document.body.addEventListener('htmx:afterSwap', function (ev) {
     if (ev.detail.target && ev.detail.target.id === 'catalog-table') filterRows();
   });
+})();
+</script>
+
+<script>
+(function () {
+  // ut-docs#1258: POST /api/catalog/export-save writes the CSV via a raw
+  // os.Create into $HOME/Downloads server-side — there is no user-visible,
+  // shared "Downloads" folder reachable that way on Android (os.UserHomeDir
+  // resolves to the app's private sandbox there, if it resolves at all).
+  // Instead this navigates to the existing, already-correct GET
+  // /api/catalog/export download (Content-Disposition: attachment).
+  // MainActivity.kt's WebView.DownloadListener picks that navigation up and
+  // hands it to Android's own DownloadManager, which writes into the OS's
+  // shared Downloads collection the supported way.
+  //
+  // window.AndroidKiosk only exists inside the Android native shell's
+  // WebView (ut-docs#1254) — a safe no-op everywhere else (desktop, Pi,
+  // an ordinary browser), same presence-check idiom settings.html's
+  // exitLockdown() call already uses.
+  //
+  // Independent review (2026-08-29) found the first draft's hx-trigger
+  // filter ("click[!window.AndroidKiosk]" on the button itself) fails OPEN:
+  // if htmx's expression compiler ever chokes on it, htmx falls back to
+  // firing the click unfiltered, which on Android would fire the broken
+  // POST *and* this navigation *and* a misleading success notice, all at
+  // once. This listener instead intercepts the click directly and calls
+  // stopImmediatePropagation() so htmx's own (later-registered — this
+  // plain, non-deferred script runs before htmx's deferred one) click
+  // listener on the same button never runs at all: fails closed by
+  // construction, not by a filter expression staying valid.
+  //
+  // Mirrors this file's own inline-script i18n convention (see the
+  // NOTICE_MSG object above) — the string below is filled in by this
+  // page's own server-side template call, same as NOTICE_MSG's entries;
+  // renderNotice comes from base.html's globally-loaded app.js, already
+  // in scope by the time this runs.
+  var T_ANDROID_EXPORT = {
+    downloadStarted: "{{ T "import.export_download_started" }}"
+  };
+  var btn = document.getElementById('catalog-export-btn');
+  if (btn && window.AndroidKiosk) {
+    btn.addEventListener('click', function (e) {
+      e.preventDefault();
+      e.stopImmediatePropagation();
+      window.location.href = '/api/catalog/export';
+      // Optimistic, not a success guarantee (independent review,
+      // 2026-08-29): DownloadManager.enqueue() is fire-and-forget from
+      // MainActivity.kt's startDownload, and this app runs the till in
+      // kiosk/immersive mode on this very page — the one place Android's
+      // own download notification would otherwise appear is hidden by the
+      // app's own lockdown, so an in-page notice is the only feedback
+      // channel that reliably reaches the operator here.
+      renderNotice(document.getElementById('export-msg'), 'success', T_ANDROID_EXPORT.downloadStarted);
+    });
+  }
 })();
 </script>
 {{ end }}

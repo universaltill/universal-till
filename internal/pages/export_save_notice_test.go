@@ -3,12 +3,14 @@ package pages
 import (
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // ut-docs#238: POST /api/catalog/export-save used to write ad-hoc
@@ -90,5 +92,89 @@ func TestExportSave_SuccessRendersPosNoticeSuccessWithDestinationPath(t *testing
 	// Guards against the old ad-hoc markup regressing back in.
 	if strings.Contains(body, `<span>`) {
 		t.Fatalf("old ad-hoc <span> markup must be gone, got: %s", body)
+	}
+}
+
+// ut-docs#1258: every failure branch in POST /api/catalog/export-save used
+// to collapse into the one generic "import.export_save_failed" notice with
+// nothing logged server-side to tell them apart — undiagnosable from logs
+// alone (the exact complaint behind the Android report, before anyone could
+// tell os.UserHomeDir/os.MkdirAll/os.Create apart from the outside). These
+// two force the first two failure branches directly and assert the logged
+// Problem names the specific failing step, while the operator-facing notice
+// stays the same generic message (asserted already above).
+func TestExportSave_UserHomeDirFailureLogsWhichStepFailed(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	t.Setenv("HOME", "") // os.UserHomeDir errors on Linux when $HOME is unset/empty
+	logging.ResetRecent()
+
+	chdirRoot(t)
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("load i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/export-save", nil)
+	mux.ServeHTTP(rec, req)
+
+	if !strings.Contains(rec.Body.String(), `class="pos-notice error"`) {
+		t.Fatalf("expected the generic error notice, got: %s", rec.Body.String())
+	}
+	found := false
+	for _, p := range logging.Recent() {
+		if strings.Contains(p.Msg, "catalog export-save") && strings.Contains(p.Msg, "os.UserHomeDir") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected a logged Problem naming os.UserHomeDir as the failing step, got: %+v", logging.Recent())
+	}
+}
+
+func TestExportSave_MkdirAllFailureLogsWhichStepFailed(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	// HOME itself is a plain FILE, not a directory: os.MkdirAll(HOME+"/Downloads", ...)
+	// then fails because a path component that must be a directory isn't one.
+	homeAsFile := filepath.Join(t.TempDir(), "not-a-directory")
+	if err := os.WriteFile(homeAsFile, []byte("x"), 0o644); err != nil {
+		t.Fatalf("seed home-as-file: %v", err)
+	}
+	t.Setenv("HOME", homeAsFile)
+	logging.ResetRecent()
+
+	chdirRoot(t)
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("load i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/export-save", nil)
+	mux.ServeHTTP(rec, req)
+
+	if !strings.Contains(rec.Body.String(), `class="pos-notice error"`) {
+		t.Fatalf("expected the generic error notice, got: %s", rec.Body.String())
+	}
+	found := false
+	for _, p := range logging.Recent() {
+		if strings.Contains(p.Msg, "catalog export-save") && strings.Contains(p.Msg, "os.MkdirAll") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("expected a logged Problem naming os.MkdirAll as the failing step, got: %+v", logging.Recent())
 	}
 }
