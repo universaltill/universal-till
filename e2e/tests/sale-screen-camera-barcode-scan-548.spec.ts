@@ -146,6 +146,34 @@ test.describe('camera barcode scan on the sale screen (ut-docs#548)', () => {
     assertClean();
   });
 
+  // ut-docs#1251: on a non-secure-context origin (plain http:// to a LAN IP
+  // rather than localhost) `navigator.mediaDevices` is undefined entirely,
+  // and calling `.getUserMedia` on it throws a SYNCHRONOUS TypeError before
+  // the promise chain (and its .catch()) even exists — an uncaught
+  // exception, not the declared "Camera unavailable" status. Confirmed
+  // against a real Chromium instance during independent review (secure
+  // context vs. plain-http origin) before landing this test.
+  test('reports the existing camera-unavailable status instead of throwing when mediaDevices is unavailable', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.addInitScript(() => {
+      (window as any).BarcodeDetector = class {
+        async detect() { return []; }
+      };
+      // Simulates a non-secure-context origin, where the platform never
+      // defines navigator.mediaDevices at all.
+      Object.defineProperty(navigator, 'mediaDevices', { configurable: true, value: undefined });
+    });
+    await page.goto('/');
+
+    await page.locator('#barcode-scan-open').click();
+    await expect(page.locator('#barcode-scan-overlay')).toBeVisible();
+    await expect(page.locator('#barcode-scan-status')).toHaveText('Camera unavailable');
+    await page.locator('#barcode-scan-close').click();
+
+    // The whole point: no uncaught pageerror from the guard-less call.
+    assertClean();
+  });
+
   // The three races below reproduce what the independent review (ut-docs#548)
   // found live against the real page: neither async continuation in the
   // camera IIFE re-checked whether the cashier had already closed the

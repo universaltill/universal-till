@@ -659,6 +659,20 @@ function initOfflineOverride(updateFn){
     lastPhoto = null;
     captureBtn.hidden = false;
     retakeBtn.hidden = true;
+    // ut-docs#1251: on a non-secure-context origin (plain http:// to a LAN
+    // IP rather than localhost — reachable here since this button has no
+    // BarcodeDetector-style feature gate, only the server-side AI-key/online
+    // check above), `navigator.mediaDevices` is undefined entirely, and
+    // calling `.getUserMedia` on it throws a SYNCHRONOUS TypeError before
+    // the promise chain (and its .catch() below) even exists — the overlay
+    // opens but the camera never starts and no error is ever shown, not
+    // even "Camera unavailable". Guard it explicitly so that case reports
+    // the same honest, already-existing error as any other failure instead
+    // of hanging silently.
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setStatus(msgs.msgCameraError);
+      return;
+    }
     navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
       .then(function(s){ stream = s; video.srcObject = s; })
       .catch(function(){ setStatus(msgs.msgCameraError); });
@@ -805,6 +819,18 @@ function initOfflineOverride(updateFn){
     if (!overlay.hidden) return; // already open (button keeps focus; Space/Enter re-fires it)
     overlay.hidden = false;
     setStatus(msgs.msgScanning);
+    // ut-docs#1251: same guard as the AI-identify IIFE above — a
+    // non-secure-context origin leaves `navigator.mediaDevices` undefined,
+    // and calling `.getUserMedia` on it throws synchronously, before the
+    // .catch() below exists to report anything. In practice BarcodeDetector
+    // itself is also secure-context-gated in the browsers that ship it, so
+    // this button is usually already hidden in that case (the typeof check
+    // above) — this guard is defence-in-depth for whatever browser doesn't
+    // tie the two together the same way.
+    if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+      setStatus(msgs.msgCameraError);
+      return;
+    }
     navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
       .then(function(s){
         // The cashier can close while the permission prompt / camera start is
