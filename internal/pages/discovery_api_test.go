@@ -12,6 +12,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -151,6 +152,118 @@ func TestDiscoverPrimariesAPI_SurfacesBrowseErrorAs500(t *testing.T) {
 
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("expected 500 when Browse fails, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestDiscoverPrimariesAPI_ExcludesOwnAdvertisement — ut-docs#1261: a till
+// that is currently primary/standalone advertises itself over mDNS (see
+// discovery.Advertiser), so its own "join an existing shop" scan can see
+// its own advertisement come back as a "candidate primary." Joining
+// yourself makes no sense and every such pairing attempt fails, so the
+// handler must drop any candidate whose till_id matches this till's own
+// (the same stable identity discovery.TillID/RoleCheckFromSettings already
+// use elsewhere for pairing verification codes) before returning results.
+func TestDiscoverPrimariesAPI_ExcludesOwnAdvertisement(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newDiscoveryAPITestDeps(t)
+	mux := http.NewServeMux()
+	registerDiscoveryAPI(mux, dp)
+
+	myID, err := discovery.TillID(t.Context(), data.NewSettingsRepo(dp.Db))
+	if err != nil {
+		t.Fatalf("seed own till id: %v", err)
+	}
+	stubBrowse(t, []discovery.Candidate{
+		{Name: "My Store", TillID: myID, BaseURL: "http://127.0.0.1:37241"},
+		{Name: "Task Runner", TillID: "till-other-1", BaseURL: "http://192.168.1.50:8080"},
+	}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/discover-primaries", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Data struct {
+			Primaries []struct {
+				TillID string `json:"till_id"`
+			} `json:"primaries"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if len(out.Data.Primaries) != 1 || out.Data.Primaries[0].TillID != "till-other-1" {
+		t.Fatalf("expected only the other till's candidate, got: %+v", out.Data.Primaries)
+	}
+}
+
+// TestDiscoverPrimariesAPI_AloneOnLANSeesEmptyArrayNotItself pins the
+// literal ut-docs#1261 acceptance-criteria scenario: a standalone till,
+// alone on the LAN, scans and sees only its own advertisement (nothing
+// else responds) — the response must be an empty array, same
+// "primaries":[] contract as
+// TestDiscoverPrimariesAPI_ReturnsEmptyArrayNotNullWhenNoneFound, not a
+// literal JSON null and not a self-referential result.
+func TestDiscoverPrimariesAPI_AloneOnLANSeesEmptyArrayNotItself(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newDiscoveryAPITestDeps(t)
+	mux := http.NewServeMux()
+	registerDiscoveryAPI(mux, dp)
+
+	myID, err := discovery.TillID(t.Context(), data.NewSettingsRepo(dp.Db))
+	if err != nil {
+		t.Fatalf("seed own till id: %v", err)
+	}
+	stubBrowse(t, []discovery.Candidate{
+		{Name: "My Store", TillID: myID, BaseURL: "http://192.168.1.163:8080"},
+	}, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/discover-primaries", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `"primaries":[]`) {
+		t.Fatalf("expected an empty JSON array, not null and not self, got body: %s", body)
+	}
+}
+
+// TestDiscoverPrimariesAPI_FailsOpenWhenOwnTillIDLookupErrors — the
+// filtering is best-effort: if looking up this till's own id fails, the
+// handler must not 500 an otherwise-successful scan (this endpoint has
+// nothing better to fall back to, and 500ing would break "Join an
+// existing shop" wholesale over a transient settings read), it just skips
+// self-filtering for that one response.
+func TestDiscoverPrimariesAPI_FailsOpenWhenOwnTillIDLookupErrors(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newDiscoveryAPITestDeps(t)
+	mux := http.NewServeMux()
+	registerDiscoveryAPI(mux, dp)
+	stubBrowse(t, []discovery.Candidate{
+		{Name: "Task Runner", TillID: "till-other-1", BaseURL: "http://192.168.1.50:8080"},
+	}, nil)
+
+	origTillID := discoveryTillID
+	discoveryTillID = func(ctx context.Context, settings *data.SettingsRepo) (string, error) {
+		return "", errors.New("settings db unavailable")
+	}
+	t.Cleanup(func() { discoveryTillID = origTillID })
+
+	req := httptest.NewRequest(http.MethodGet, "/api/sync/discover-primaries", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (fail open, not 500) when own-id lookup errors, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, `"till_id":"till-other-1"`) {
+		t.Fatalf("expected the unfiltered candidate list on a lookup error, got body: %s", body)
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -24,6 +25,11 @@ const discoverBrowseTimeout = 4 * time.Second
 // multi-second network scan on every run.
 var discoveryBrowse = discovery.Browse
 
+// discoveryTillID is a package var over discovery.TillID, same seam style
+// as discoveryBrowse above — lets a test drive the "own id lookup failed"
+// path without a broken *sql.DB.
+var discoveryTillID = discovery.TillID
+
 // registerDiscoveryAPI wires the two flavours of the same scan
 // (ut-docs#289): GET /api/sync/discover-primaries for a manager on the
 // Tills page (managerGate/sync_management, same as sync_api.go's
@@ -32,12 +38,12 @@ var discoveryBrowse = discovery.Browse
 // first-boot wizard's "Join an existing shop" step, gated by NeedsFirstBoot
 // instead (middleware-exempt; see firstBootGate).
 func registerDiscoveryAPI(mux *http.ServeMux, d *common.Deps) {
-	mux.HandleFunc("GET /api/sync/discover-primaries", discoverPrimariesHandler(managerGate(d)))
+	mux.HandleFunc("GET /api/sync/discover-primaries", discoverPrimariesHandler(d, managerGate(d)))
 	// Rate-limited (ut-docs#289 review): unlike its manager-gated sibling
 	// above, this flavour needs no session at all — any LAN host can trigger
 	// a 4s mDNS multicast scan per request during the first-boot window.
 	setupDiscoverLimiter := newPairRateLimiter(time.Minute, 5)
-	mux.HandleFunc("GET /api/setup/discover-primaries", discoverPrimariesHandler(rateLimited(setupDiscoverLimiter, firstBootGate(d))))
+	mux.HandleFunc("GET /api/setup/discover-primaries", discoverPrimariesHandler(d, rateLimited(setupDiscoverLimiter, firstBootGate(d))))
 }
 
 // discoverPrimariesHandler runs the bounded LAN scan and reports the
@@ -45,7 +51,7 @@ func registerDiscoveryAPI(mux *http.ServeMux, d *common.Deps) {
 // only PRESENTS candidates; nothing here (or in either gate) enrols
 // anything, that always takes the explicit pair-start + primary-side
 // approval that follows.
-func discoverPrimariesHandler(gate apiGate) http.HandlerFunc {
+func discoverPrimariesHandler(d *common.Deps, gate apiGate) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !gate(w, r) {
 			return
@@ -65,6 +71,34 @@ func discoverPrimariesHandler(gate apiGate) http.HandlerFunc {
 		}
 		if candidates == nil {
 			candidates = []discovery.Candidate{}
+		}
+		// ut-docs#1261: a till that is currently primary/standalone
+		// advertises itself over mDNS (discovery.Advertiser), so its own
+		// scan can see its own advertisement come back as a "candidate
+		// primary" — joining yourself makes no sense and the pairing
+		// attempt always fails. Drop any candidate whose till_id matches
+		// this till's own, the same stable identity discovery.TillID
+		// already uses for pairing verification codes elsewhere (e.g.
+		// pairing_api.go, pending_pairings.go). Best-effort: if the own-id
+		// lookup itself fails, log it and fall through with the
+		// unfiltered list rather than 500ing a scan that otherwise
+		// succeeded.
+		if myID, idErr := discoveryTillID(r.Context(), data.NewSettingsRepo(d.Db)); idErr != nil {
+			log.Printf("[discovery] own till id lookup failed, not filtering self from results: %v", idErr)
+		} else {
+			// A fresh slice, not candidates[:0]: Browse allocates its own
+			// backing array per call (browse.go) so aliasing isn't a
+			// production bug today, but filtering in place is still a
+			// live foot-gun for any future caller that reuses a
+			// candidates slice across requests (caught in review).
+			filtered := make([]discovery.Candidate, 0, len(candidates))
+			for _, c := range candidates {
+				if c.TillID == myID {
+					continue
+				}
+				filtered = append(filtered, c)
+			}
+			candidates = filtered
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{
