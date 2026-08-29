@@ -15,18 +15,23 @@
 // persisted on first sight — a later key change never silently replaces it.
 //
 // This LAZY behavior is ADR-0015's deliberate decision (2026-07-17), and it
-// is still what ships today. ADR-0026 (2026-07-28) separately proposed
-// moving registration to eager-but-best-effort right after the setup
-// wizard, for every shop — that proposal was never accepted (it would
-// reverse ADR-0015 and its own privacy opt-out question is unresolved), so
-// don't read it as describing current behavior. The one thing that can
-// look like eager registration in practice: setup's automatic base-plugin
-// install for a handful of countries (setupBasePlugins in
+// is still the default. ADR-0026 (2026-07-28) separately proposed moving
+// registration to eager-but-best-effort right after the setup wizard, for
+// every shop, unconditionally — that version was never accepted. ADR-0071
+// (2026-08-29) resolved the tension with an opt-in-gated middle ground: the
+// setup wizard's last screen asks once, not pre-ticked, and only an
+// explicit yes (persisted as marketplace.auto_register_opt_in, toggleable
+// later from Settings) adds one best-effort, time-boxed EnsureRegistered
+// trigger at wizard completion / toggle-on (internal/pages/setup_page.go's
+// autoRegisterForSetup and POST /api/settings/auto-register). A shop that
+// doesn't opt in registers exactly as lazily as documented above; nothing
+// about this package's own retry/error semantics changed. The other thing
+// that can look like eager registration in practice: setup's automatic
+// base-plugin install for a handful of countries (setupBasePlugins in
 // internal/pages/setup_base_plugins.go) calls EnsureRegistered as part of
 // installing that plugin — that's this package's ordinary "first plugin
 // download/install" trigger firing earlier than a human browsing the
-// marketplace would, not a deliberate eager-enrolment step, and shops with
-// no mapped base plugin still only register lazily as documented above.
+// marketplace would, not a deliberate eager-enrolment step.
 package enroll
 
 import (
