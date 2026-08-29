@@ -13,6 +13,7 @@ import (
 	"unicode"
 	"unicode/utf8"
 
+	"golang.org/x/text/encoding/charmap"
 	"golang.org/x/text/runes"
 	"golang.org/x/text/transform"
 	"golang.org/x/text/unicode/norm"
@@ -39,7 +40,7 @@ type Doc struct {
 	// that predates this setting (ut-docs#1136) keeps today's behaviour --
 	// resolves to pin 2.
 	DrawerPin int
-	Charset   string // "utf8" (default) or "ascii"
+	Charset   string // "utf8" (default), "ascii", or "cp858"
 	// Logo is a pre-encoded GS v 0 raster block (RasterLogo), printed
 	// centered above the store name when present.
 	Logo []byte
@@ -112,6 +113,9 @@ func Render(d Doc) []byte {
 	}
 
 	b.Write(cmdInit)
+	if cmd := codepageSelectCmd(d.Charset); cmd != nil {
+		b.Write(cmd) // once per document, before any text (ut-docs#1243)
+	}
 	if d.KickDrawer {
 		if d.DrawerPin == 5 {
 			b.Write(cmdKickDrawerPin5)
@@ -241,29 +245,76 @@ func clip(s string, max int) string {
 
 // encodeText prepares a string for the printer. utf8 passes through (many
 // modern thermals accept it); ascii strips diacritics and replaces anything
-// unmappable with '?' so column math and cheap CP437 printers stay sane.
+// unmappable with '?' so column math and cheap CP437 printers stay sane;
+// cp858 transcodes to code page 858 (ut-docs#1243) so currency symbols
+// (€ → 0xD5, £ → 0x9C) print correctly on single-byte-codepage printers,
+// with the same per-rune '?' fallback as ascii for anything CP858 lacks.
 func encodeText(s, charset string) []byte {
-	if charset != "ascii" {
-		return []byte(s)
-	}
-	t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
-	folded, _, err := transform.String(t, s)
-	if err != nil {
-		folded = s
-	}
-	out := make([]byte, 0, len(folded))
-	for _, r := range folded {
-		if r < 0x20 || r > 0x7e {
-			if r == '\t' {
-				out = append(out, ' ')
+	switch charset {
+	case "ascii":
+		t := transform.Chain(norm.NFD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+		folded, _, err := transform.String(t, s)
+		if err != nil {
+			folded = s
+		}
+		out := make([]byte, 0, len(folded))
+		for _, r := range folded {
+			if r < 0x20 || r > 0x7e {
+				if r == '\t' {
+					out = append(out, ' ')
+					continue
+				}
+				out = append(out, '?')
 				continue
 			}
-			out = append(out, '?')
-			continue
+			out = append(out, byte(r))
 		}
-		out = append(out, byte(r))
+		return out
+	case "cp858":
+		// Per-rune EncodeRune rather than CodePage858.NewEncoder(): the
+		// encoder errors (or substitutes 0x1A) on an unmappable rune, and
+		// this branch must degrade to a visible '?' per rune instead —
+		// never error or corrupt the stream — matching the ascii branch.
+		//
+		// Two deliberate differences from the ascii branch, confirmed at
+		// review (ut-docs#1243) and left as-is because cp858 is a
+		// transcode, not a sanitiser:
+		//   - C0/DEL control bytes (\n, \r, ESC, NUL, 0x7f) round-trip
+		//     through CP858 unchanged, where ascii maps them to '?'. That
+		//     matches the utf8 default, which passes them through too, so
+		//     cp858 is no worse than the mode nearly every till runs; it is
+		//     simply not an improvement on it.
+		//   - No NFD diacritic folding. CP858 covers Western European
+		//     letters natively (é→0x82, ü→0x81, ß→0xe1), but it has no
+		//     'ş' and — unlike CP850 — no 'ı', whose 0xD5 slot is exactly
+		//     what CP858 gives up to gain '€'. So Turkish degrades to '?'
+		//     here where ascii would transliterate ("Sipariş" → "Sipari?"
+		//     vs "Siparis"). Acceptable for an opt-in option labelled
+		//     "Western Europe"; a fold-then-encode fallback would be a
+		//     product decision of its own, not part of this fix.
+		out := make([]byte, 0, len(s))
+		for _, r := range s {
+			if b, ok := charmap.CodePage858.EncodeRune(r); ok {
+				out = append(out, b)
+			} else {
+				out = append(out, '?')
+			}
+		}
+		return out
+	default: // "utf8" and the zero value — raw pass-through, unchanged
+		return []byte(s)
 	}
-	return out
+}
+
+// codepageSelectCmd returns the ESC/POS code-page selection command for a
+// charset, or nil when no selection is sent. Only cp858 selects a page
+// (ESC t 19 — PC858, the Euro variant of PC850); utf8 and ascii keep
+// today's behaviour of never touching the printer's code-page state.
+func codepageSelectCmd(charset string) []byte {
+	if charset == "cp858" {
+		return []byte{0x1b, 0x74, 0x13}
+	}
+	return nil
 }
 
 // Validate reports a friendly error for an obviously broken document.
@@ -348,6 +399,9 @@ func RenderLabel(name, price, code, charset string) []byte {
 	var b bytes.Buffer
 	enc := func(s string) []byte { return encodeText(s, charset) }
 	b.Write(cmdInit)
+	if cmd := codepageSelectCmd(charset); cmd != nil {
+		b.Write(cmd) // once per label, before any text (ut-docs#1243)
+	}
 	b.Write(cmdAlignMid)
 	b.Write(enc(clip(name, Width)))
 	b.WriteByte('\n')

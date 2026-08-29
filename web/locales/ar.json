@@ -844,6 +844,7 @@
   "settings.printer.apply": "حفظ الطابعة",
   "settings.printer.auto": "الطباعة تلقائياً بعد كل عملية بيع",
   "settings.printer.charset": "المحارف",
+  "settings.printer.charset_cp858": "أوروبا الغربية (CP858 — €/£)",
   "settings.printer.device": "مسار الجهاز",
   "settings.printer.drawer_pin": "دبوس درج النقد",
   "settings.printer.drawer_pin_2": "الدبوس 2 (معظم الأدراج)",

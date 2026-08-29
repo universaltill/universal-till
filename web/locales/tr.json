@@ -844,6 +844,7 @@
   "settings.printer.apply": "Yazıcıyı kaydet",
   "settings.printer.auto": "Her satıştan sonra otomatik yazdır",
   "settings.printer.charset": "Karakterler",
+  "settings.printer.charset_cp858": "Batı Avrupa (CP858 — €/£)",
   "settings.printer.device": "Cihaz yolu",
   "settings.printer.drawer_pin": "Kasa çekmecesi pimi",
   "settings.printer.drawer_pin_2": "Pim 2 (çoğu çekmece)",
