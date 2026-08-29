@@ -16,6 +16,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // TillIDSettingKey is the settings-table key holding this till's LAN
@@ -66,6 +67,44 @@ func RoleCheckFromSettings(settings *data.SettingsRepo) RoleCheck {
 	return func(ctx context.Context) bool {
 		v, _, _ := settings.Get(ctx, "sync.primary_url")
 		return strings.TrimSpace(v) == ""
+	}
+}
+
+// FirstBootChecker is the subset of *auth.Service GateOnFirstBoot depends
+// on — narrowed to a seam (same pattern as RoleCheck and mdnsServer) so
+// tests never need a real *auth.Service backed by the full auth schema.
+type FirstBootChecker interface {
+	NeedsFirstBoot(ctx context.Context) (bool, error)
+}
+
+// GateOnFirstBoot wraps a RoleCheck so a till also withholds mDNS
+// advertising until its own first-boot setup is actually complete
+// (ut-docs#1263). RoleCheckFromSettings' rule — empty "sync.primary_url"
+// means primary — is equally true of a brand-new, never-configured till,
+// so without this gate a device wiped or freshly flashed starts
+// advertising itself as a join target within seconds of boot, before a
+// human has even opened the setup wizard. Being a blank, not-yet-
+// configured device is a different state from being a deliberately
+// configured standalone primary, and only the latter should be
+// discoverable in someone else's "join an existing shop" scan.
+//
+// Short-circuits without calling firstBoot at all when inner already
+// reports not-primary, mirroring Advertiser.tick's own primary/replica
+// switch — a replica has nothing to gate.
+//
+// Fails closed: if the first-boot check itself errors, this reports false
+// (withhold) rather than advertising blind on an unknown setup state.
+func GateOnFirstBoot(inner RoleCheck, firstBoot FirstBootChecker) RoleCheck {
+	return func(ctx context.Context) bool {
+		if !inner(ctx) {
+			return false
+		}
+		needsFirstBoot, err := firstBoot.NeedsFirstBoot(ctx)
+		if err != nil {
+			logging.L().Warnf("lan discovery: first-boot check failed, withholding advertisement: %v", err)
+			return false
+		}
+		return !needsFirstBoot
 	}
 }
 

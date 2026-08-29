@@ -22,6 +22,7 @@ import (
 
 	"github.com/joho/godotenv"
 	"github.com/universaltill/universal-till/internal/alerts"
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
@@ -237,8 +238,19 @@ func Run(ctx context.Context) error {
 	// exact same "sync.primary_url" setting. RoleCheckFromSettings (not an
 	// inline closure here) so the rule itself has direct test coverage —
 	// see internal/discovery's TestRoleCheckFromSettings_* tests.
+	//
+	// Gated with GateOnFirstBoot (ut-docs#1263): "sync.primary_url unset"
+	// is also true of a till that has simply never been set up yet, so
+	// without this a freshly wiped/flashed device starts advertising
+	// itself as a join target within seconds of boot, before the human has
+	// even opened the setup wizard. auth.NewService is cheap (just wraps
+	// the db handle, no state) — constructing one here rather than waiting
+	// for pages.Init's own copy is the same "don't block this on Init"
+	// reasoning as the role check above.
 	discoverySettings := data.NewSettingsRepo(database.DB)
-	discoveryAdvertiser := discovery.NewAdvertiser(discoverySettings, discovery.RoleCheckFromSettings(discoverySettings), listenPort(cfg.ListenAddr))
+	discoveryAuth := auth.NewService(database.DB)
+	discoveryRoleCheck := discovery.GateOnFirstBoot(discovery.RoleCheckFromSettings(discoverySettings), discoveryAuth)
+	discoveryAdvertiser := discovery.NewAdvertiser(discoverySettings, discoveryRoleCheck, listenPort(cfg.ListenAddr))
 	discoveryAdvertiser.Start(bgCtx, &wg)
 
 	mux, deps := pagesInit(ctx, bgCtx, cfg, pluginManager, database.DB, catalogRepo, &wg)
