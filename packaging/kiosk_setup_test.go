@@ -593,6 +593,58 @@ func TestKioskHelpersStayOffPosWritableTree(t *testing.T) {
 	}
 }
 
+// TestUninstallerStaysOffPosWritableTree extends the ut-docs#255 guard above
+// to unitill-uninstall (ut-docs#1083, review finding): it's root-executed
+// (stops the service, calls apt-get) exactly like the kiosk scripts, so the
+// same pos→root escalation applies if it ever lands under /opt/unitill.
+// Written as a property, not a literal-path snapshot, so a future edit
+// putting it back under /opt/unitill in some new form still fails this.
+func TestUninstallerStaysOffPosWritableTree(t *testing.T) {
+	assertNotUnderOptUnitill := func(t *testing.T, label, path string) {
+		t.Helper()
+		if path == "" {
+			t.Errorf("%s: path not found", label)
+			return
+		}
+		if strings.Contains(path, "/opt/unitill") {
+			t.Errorf("%s resolves under /opt/unitill (%s) — that tree is pos-writable (postinstall.sh's chown -R pos:pos /opt/unitill, ut-docs#151), so a root-executed helper must never live there (ut-docs#255)", label, path)
+		}
+	}
+
+	goreleaser, err := os.ReadFile(filepath.Join("..", ".goreleaser.yaml"))
+	if err != nil {
+		t.Fatalf("read .goreleaser.yaml: %v", err)
+	}
+	nfpmDstPath := nfpmDst(string(goreleaser), "unitill-uninstall")
+	assertNotUnderOptUnitill(t, ".goreleaser.yaml nfpm dst for unitill-uninstall", nfpmDstPath)
+	// Also must not be auto-placed via nfpm's ids/bindir mechanism — that's
+	// exactly how the first draft of this shipped it under /opt/unitill/bin.
+	if strings.Contains(string(goreleaser), "ids: [linux, uninstall]") {
+		t.Error(".goreleaser.yaml: nfpm deb still lists 'uninstall' in ids — that auto-places the binary in bindir (/opt/unitill/bin), reopening the pos→root escalation this test guards against")
+	}
+
+	post := readScript(t, "packaging/scripts/postinstall.sh")
+	postCode := codeLines(post)
+	var symlinkSrc, symlinkDst string
+	for _, l := range postCode {
+		if strings.HasPrefix(l, "ln -sfn") && strings.Contains(l, "unitill-uninstall") {
+			fields := strings.Fields(l)
+			if len(fields) >= 4 {
+				symlinkSrc, symlinkDst = fields[len(fields)-2], fields[len(fields)-1]
+			}
+		}
+	}
+	assertNotUnderOptUnitill(t, "postinstall.sh unitill-uninstall symlink source", symlinkSrc)
+	if symlinkDst != "" && strings.HasPrefix(symlinkDst, "/usr/local/") {
+		t.Errorf("postinstall.sh symlinks unitill-uninstall onto PATH at %s — Debian Policy §9.1.2 reserves /usr/local for the local admin, not packages", symlinkDst)
+	}
+	// The symlink must point at exactly what nfpm actually shipped, or
+	// `unitill-uninstall` on PATH resolves to nothing.
+	if nfpmDstPath != "" && symlinkSrc != "" && nfpmDstPath != symlinkSrc {
+		t.Errorf("nfpm ships unitill-uninstall to %s but postinstall.sh symlinks from %s", nfpmDstPath, symlinkSrc)
+	}
+}
+
 // TestPostinstallMigratesStaleKioskUnitsFromBeforeUsrLibMove guards the
 // upgrade path for ut-docs#255. unitill-kiosk-firstboot.service and
 // unitill-kiosk.service are NOT dpkg-managed (both written by heredoc at
@@ -666,6 +718,10 @@ func nfpmDst(yaml, srcSuffix string) string {
 	for i, l := range lines {
 		trimmed := strings.TrimSpace(strings.TrimPrefix(strings.TrimSpace(l), "-"))
 		trimmed = strings.TrimSpace(trimmed)
+		// A templated src (e.g. "dist/.../{{ .Arch }}/unitill-uninstall")
+		// is YAML-quoted, so the raw line ends in `"` — strip it before the
+		// suffix match, or a quoted src never matches its own suffix.
+		trimmed = strings.TrimSuffix(trimmed, `"`)
 		if strings.HasPrefix(trimmed, "src:") && strings.HasSuffix(trimmed, srcSuffix) {
 			for _, next := range lines[i+1:] {
 				nt := strings.TrimSpace(next)

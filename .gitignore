@@ -77,5 +77,6 @@ data/plugins/
 data/backups/
 unitill-pos-setup-*.exe
 /unitill-desktop
+/unitill-uninstall
 .claude/worktrees/
 dist-shells/
