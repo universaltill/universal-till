@@ -22,7 +22,7 @@ const (
 	keyPrinterMode      = "printer.mode"    // off | network | device
 	keyPrinterAddress   = "printer.address" // host[:port]
 	keyPrinterDevice    = "printer.device"  // /dev/usb/lp0
-	keyPrinterCharset   = "printer.charset" // utf8 | ascii
+	keyPrinterCharset   = "printer.charset" // utf8 | ascii | cp858
 	keyPrinterAuto      = "printer.auto_print"
 	keyPrinterKitchen   = "printer.kitchen_addr" // kitchen printer host[:port] or device path
 	keyPrinterDrawerPin = "printer.drawer_pin"   // "2" | "5" (ut-docs#1136)
@@ -373,7 +373,9 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		charset := strings.TrimSpace(r.Form.Get("charset"))
-		if charset != "ascii" {
+		switch charset {
+		case "ascii", "cp858": // explicit allow-list (ut-docs#1243)
+		default:
 			charset = "utf8"
 		}
 		address := strings.TrimSpace(r.Form.Get("address"))
