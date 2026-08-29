@@ -121,10 +121,24 @@ type Gate struct {
 }
 
 // RequiresHardGate reports whether country is a market whose sales are
-// hard-gated on fiscal readiness. Only Germany today; the next fiscalised
-// market (ADR-0047's list) is a one-line addition here.
+// hard-gated on fiscal readiness: Germany (ADR-0048) and Turkey (Law No.
+// 3100's YN ÖKC mandate, ut-docs#1208, reference/turkey-compliance.md §1).
+// Turkey has no fiscal-signing plugin yet (no ut-plugin-tax-tr), which is
+// exactly why it belongs here rather than waiting for one — per ADR-0050
+// Decision 2, the enforcement point that notices a plugin's absence must be
+// core's, not the absent plugin's, the same reasoning that already gates DE
+// while ut-plugin-tax-de is itself an incomplete skeleton. A TR shop that
+// declares fiscal.system_of_record with no fiscal.tse_configured now hits
+// BlockedNeverConfigured instead of silently completing an unsigned sale.
+// The next fiscalised market (ADR-0047's list) is a further one-line
+// addition here.
 func RequiresHardGate(country string) bool {
-	return country == "DE"
+	switch country {
+	case "DE", "TR":
+		return true
+	default:
+		return false
+	}
 }
 
 // EvaluateGate applies ADR-0048 Decision 2, in order. It reads only the
