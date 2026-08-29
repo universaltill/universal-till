@@ -150,6 +150,17 @@
             if (r.ok) {
               show(false, T.success);
               form.querySelector('[name="manager_pin"]').value = '';
+              // ut-docs#1254: on the Android native shell, "exit to OS"
+              // has no separate window-mode concept to toggle -- its
+              // real-world equivalent IS releasing the app's own Lock
+              // Task/screen-pinning. window.AndroidKiosk only exists
+              // inside that WebView (MainActivity.kt's addJavascriptInterface);
+              // everywhere else (desktop/Pi WebKit, a plain browser) this
+              // is a safe no-op, same guard pattern as any other
+              // platform-only native bridge check in this app.
+              if (window.AndroidKiosk && window.AndroidKiosk.exitLockdown) {
+                window.AndroidKiosk.exitLockdown();
+              }
             } else if (r.status === 503) {
               r.text().then(function (body) {
                 if (body.indexOf('kiosk_appliance') !== -1) {

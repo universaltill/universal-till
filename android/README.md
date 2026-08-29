@@ -145,6 +145,116 @@ GitHub Releases API mechanism the other platforms already use).
   emulator, and upgrading an existing install with a newer signed build
   (same key) succeeded with no uninstall needed.
 
+## Kiosk lock-down (ut-docs#1254)
+
+What's implemented now, all in `MainActivity`:
+
+- **Screen-pinning Lock Task** (`startLockTask()`) engages automatically
+  on launch and is re-asserted on every `onResume` (defense in depth —
+  both calls are idempotent). Home and Recents are blocked while pinned.
+- **Immersive full-screen** (androidx `WindowInsetsControllerCompat`)
+  hides the status and navigation bars as a cosmetic second layer; a
+  swipe reveals them transiently and they auto-hide again.
+- **Navigation is confined to the till's own loopback origin**
+  (`WebViewClient.shouldOverrideUrlLoading`) — a link this app doesn't
+  control the far end of can't navigate this WebView off-origin. This
+  isn't only kiosk hygiene: the exit bridge below (`addJavascriptInterface`)
+  is only safe to expose because of it.
+- **Exit = the server's own existing "exit to OS" escape hatch, no
+  native-side auth.** `/api/settings/exit-to-os`
+  (`internal/pages/settings_page.go`, ut-docs#1099) already does a live
+  manager-PIN check server-side, and is reachable from both `/settings`
+  (a signed-in operator) and `/login` (a fully anonymous, un-signed-in
+  kiosk screen — the self-order case). It's issued as a plain `fetch()`
+  from the page's own JS, not a top-level navigation, so it isn't
+  observable via WebView navigation at all — `login.html`/`settings.html`
+  call `window.AndroidKiosk.exitLockdown()` directly on a successful
+  response instead (`MainActivity.KioskBridge`, exposed via
+  `addJavascriptInterface` — safe only because `shouldOverrideUrlLoading`
+  confines this WebView's navigation to the till's own loopback host; an
+  earlier draft of this card claimed safety from the WebView "only ever"
+  loading loopback content, which was false — an ungated in-page link
+  (`my_reports.html`'s GitHub issue link) could otherwise navigate this
+  same WebView, and the bridge, to an untrusted origin). Re-locking is
+  defensive on two fronts: `onPageFinished` re-engages
+  the moment navigation leaves `/login`/`/settings` for any other page
+  (the manager is done, till handed back), and `onResume` unconditionally
+  re-locks on every foreground return regardless of prior unlock state.
+  An earlier draft of this card watched for the WebView simply *landing*
+  on `/settings` as its unlock signal — wrong on two counts: it would
+  never fire for the `/login`-based self-order escape hatch at all (no
+  navigation happens there), and it would unlock for any signed-in
+  operator merely viewing Settings, not only a manager who actually used
+  the PIN-gated exit action. Fixed before this shipped.
+
+**Known limitation, by design of the mode itself:** without Device Owner
+provisioning, Lock Task is standard Android *screen-pinning*, and a user
+can still exit via Android's documented unpin gesture — **long-press Back
++ Overview together on 3-button navigation, or swipe up and hold on
+gesture navigation** (review finding: an earlier draft of this doc named
+only the 3-button gesture, which is wrong on the gesture-nav default most
+current devices, including the TECLAST P50T test rig, actually ship with).
+This is a real, weaker mode — deliberately shipped anyway because it
+fixes the reported bug (previously the app was exitable like any normal
+app) with zero device provisioning required.
+
+**Scaffolded but NOT active:** `TillDeviceAdminReceiver` +
+`res/xml/device_admin_receiver.xml` + the manifest `<receiver>` exist so
+this app *could* later be provisioned as **Device Owner**, which
+upgrades `startLockTask()` to full lock-task mode — no user-exit
+gesture at all (`MainActivity.engageKioskLock` already detects
+`isDeviceOwnerApp` at runtime and calls `setLockTaskPackages` first
+when true; nothing else changes). **Known consequence, not yet mitigated:**
+`setLockTaskPackages` allowlists ONLY this app's own package, so under
+true Device Owner lock-task the Plugins page's "Import from file" side-load
+(the document-picker `Intent` `MainActivity.fileChooserLauncher` launches)
+will be blocked — the picker app itself isn't in the allowlist. Worth
+allowlisting the device's documents provider too, or accepting the gap,
+before actually provisioning a shop device this way; not addressed here
+since Device Owner mode itself isn't active on any real device yet.
+Provisioning is a manual, physical, one-time step on a device with no
+accounts —
+`adb shell dpm set-device-owner com.universaltill.pos/.TillDeviceAdminReceiver`,
+or QR provisioning at factory reset — never attempted from code, and
+not attempted in this session (no device available).
+
+**Verification status:** none of this could be verified against a real
+device or the Android SDK/emulator in the session that wrote it (neither
+was available, and no download path existed). Real-hardware verification
+on the actual TECLAST P50T test rig — per the ticket's own acceptance
+criteria — is a required follow-up, tracked as its own board card.
+Manual checklist for whoever does it:
+
+1. Install the APK, launch it — confirm the app pins itself (a
+   "screen is pinned" toast/hint appears on first pin) and the
+   status/nav bars are hidden.
+2. Press Home and open Recents — both must be no-ops; the notification
+   shade must not open (a swipe from the top may transiently show the
+   status bar, which then auto-hides — that's the expected immersive
+   behavior, not a failure).
+3. Perform the documented unpin gesture (long-press Back + Overview on
+   3-button nav, or swipe-up-and-hold on gesture nav — check which
+   navigation mode the device is actually using) —
+   confirm it *does* unpin. That is the known screen-pinning limitation
+   above, not a bug; note whether it matters for the pilot shop.
+4. From the login screen's "exit to OS" collapsible (or the Settings
+   page's own exit-to-os form) enter a correct manager PIN — confirm the
+   success message appears AND the app unpins/bars return (the JS→native
+   bridge firing, not just the server-side call succeeding).
+5. Repeat from the *other* of those two forms (whichever #4 didn't use) —
+   both must trigger the same native unlock.
+6. Navigate away afterward (e.g. back to the sale screen, or self-order's
+   own idle-reset redirect) — confirm the app re-pins and the bars hide
+   again.
+7. Background/foreground the app (Home, then relaunch — reachable while
+   unpinned, or via the OS's own recent-apps affordance while pinned if
+   any) and confirm `onResume` re-asserts the pin without crashing, even
+   if step 4/5's unlock was still active.
+8. From My Reports (`/my-reports`), tap the "open GitHub issue"
+   link — confirm the WebView does NOT navigate to github.com (the
+   navigation restriction refusing it, not the link being absent/disabled).
+   This is the concrete case that motivated `shouldOverrideUrlLoading`.
+
 ## Not yet done
 
 - Physical hardware integrations (printer/scanner/card reader) — the
