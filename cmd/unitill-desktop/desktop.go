@@ -66,7 +66,17 @@ func main() {
 	// database. If something that answers our /healthz is already there,
 	// just open the window on it (also makes a second app launch join the
 	// running till instead of starting another).
-	if tillAlreadyRunning("127.0.0.1:8080") {
+	//
+	// ut-docs#1199: a single probe here used to lose the cold-boot race
+	// against a systemd service that hasn't bound :8080 yet, spawning a
+	// second server (as the desktop user, trading against its own SQLite
+	// file) instead of attaching to the real one. waitForAttach retries
+	// across the same window ut-docs#1093's own startup gate already holds
+	// the window back for (attachDeadline, per-OS), so a warm launch or a
+	// platform with no gate still decides from one probe, and only a cold
+	// boot gets a real chance to see the service come up before giving up
+	// and spawning.
+	if waitForAttach(attachDeadline(), func() bool { return tillAlreadyRunning("127.0.0.1:8080") }, time.Sleep, time.Now) {
 		// No child to hand UT_DESKTOP_CONTROL_ADDR/_TOKEN to here — that
 		// server process was started independently (typically the .deb's
 		// systemd service) and never got them. Window control in this
