@@ -1,6 +1,7 @@
 package com.universaltill.pos
 
 import android.app.Activity
+import android.app.DownloadManager
 import android.app.admin.DevicePolicyManager
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
@@ -10,9 +11,12 @@ import android.content.ServiceConnection
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.os.Environment
 import android.os.IBinder
 import android.view.View
+import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
 import android.webkit.WebResourceRequest
@@ -178,6 +182,88 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * ut-docs#1258: a plain WebView has no built-in reaction to a response
+     * carrying `Content-Disposition: attachment` (e.g. GET
+     * /api/catalog/export) -- without this listener it just tries to render
+     * the CSV bytes in place. Registering DownloadListener is Android's own
+     * documented mechanism for exactly this gap, invoked automatically by
+     * the WebView's rendering engine on a same-origin navigation that turns
+     * out to be a download (see catalog.html's window.AndroidKiosk branch,
+     * which turns the export button's click into that navigation instead of
+     * an htmx POST). No JS-callable bridge method needed -- registering this
+     * once on the WebView instance is the whole mechanism.
+     *
+     * Delegates to Android's own DownloadManager rather than a raw file
+     * write: it is the OS-supported way to land a file in the shared
+     * Downloads collection (the exact gap the ticket reports -- a raw
+     * os.Create in the Go server has nowhere meaningful to write on this
+     * OS), and it surfaces the OS's own download-progress/completion
+     * notification for free.
+     *
+     * The download is a fetch of this same till's own loopback origin under
+     * its normal manager/admin gate (canPerform in import_page.go), so the
+     * WebView's session cookie has to ride along explicitly -- DownloadManager
+     * is a separate OS service with no access to the WebView's CookieManager
+     * on its own.
+     *
+     * Independent review (2026-08-29) caught a real gap in the first draft:
+     * setDestinationInExternalPublicDir's DESTINATION_FILE_URI needs
+     * WRITE_EXTERNAL_STORAGE below API 29 (Q) -- this app's minSdk is 24 --
+     * and this app declares no such permission (deliberately: it's a
+     * dangerous permission needing its own runtime-grant UI, and every
+     * device this pipeline actually targets ships well past Android 10).
+     * Without the branch below, enqueue() throws SecurityException on API
+     * 24-28 and the old catch below swallowed it -- silently reproducing
+     * the exact "button does nothing" bug this ticket reports, just on an
+     * older OS range. setDestinationInExternalFilesDir needs no permission
+     * at any API level (app-scoped external storage): a real, working save
+     * on those older devices, just nested under Android/data/<pkg>/files/
+     * rather than the shared top-level Downloads a file manager shows by
+     * default, since MediaStore-backed shared Downloads is itself the
+     * post-Q model.
+     */
+    private fun startDownload(
+        url: String,
+        contentDisposition: String?,
+        mimeType: String?,
+    ) {
+        try {
+            val filename = URLUtil.guessFileName(url, contentDisposition, mimeType)
+            val request =
+                DownloadManager.Request(Uri.parse(url)).apply {
+                    val cookie = CookieManager.getInstance().getCookie(url)
+                    if (!cookie.isNullOrEmpty()) {
+                        addRequestHeader("Cookie", cookie)
+                    }
+                    // setMimeType's Android SDK signature is not reliably
+                    // annotated nullable across API levels this app spans
+                    // (minSdk 24 - compileSdk 36) -- default to a real MIME
+                    // type rather than pass through a possibly-null one.
+                    setMimeType(mimeType ?: "text/csv")
+                    setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                        setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, filename)
+                    } else {
+                        setDestinationInExternalFilesDir(this@MainActivity, Environment.DIRECTORY_DOWNLOADS, filename)
+                    }
+                }
+            (getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager).enqueue(request)
+        } catch (e: Exception) {
+            // Same never-crash-the-till posture as engageKioskLock/
+            // releaseKioskLock above: a failed download must not take down
+            // a live till. Unlike those two, though, an exception here means
+            // NOTHING was ever enqueued -- DownloadManager itself has
+            // nothing to show a failure notification about, so the OS gives
+            // no signal at all (independent review, 2026-08-29: the original
+            // comment here claimed otherwise, incorrectly). catalog.html's
+            // in-page "download started" notice (shown optimistically,
+            // before this call, since DownloadManager itself is
+            // fire-and-forget from here) is deliberately NOT a success
+            // guarantee for the same reason -- see its own comment.
+        }
+    }
+
+    /**
      * Hides the status and navigation bars (immersive full-screen). Purely
      * cosmetic defense-in-depth on top of [engageKioskLock] — Lock Task is
      * what actually prevents leaving the app; this just keeps the OS chrome
@@ -275,6 +361,10 @@ class MainActivity : AppCompatActivity() {
         // so there is no window where this interface is live without that
         // navigation restriction also being in place.
         webView.addJavascriptInterface(KioskBridge(), "AndroidKiosk")
+        // ut-docs#1258: see startDownload's KDoc above for why this exists.
+        webView.setDownloadListener { url, _, contentDisposition, mimeType, _ ->
+            startDownload(url, contentDisposition, mimeType)
+        }
         webView.webViewClient =
             object : WebViewClient() {
                 // ut-docs#1254 (review should-fix 3): confine this WebView

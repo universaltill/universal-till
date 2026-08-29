@@ -20,6 +20,7 @@ import (
 	"github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -68,6 +69,22 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 	// handling a Content-Disposition attachment, which the desktop WebView does
 	// NOT — the link silently did nothing there. This POST writes the CSV into
 	// the user's Downloads folder (htmx, works in the app and in a browser).
+	//
+	// Android does NOT use this endpoint (ut-docs#1258): os.UserHomeDir()
+	// resolves to the app's private sandboxed data directory there (if it
+	// resolves at all), which is invisible to the user in any file manager —
+	// a raw os.Create has nowhere meaningful to write on that OS. catalog.html
+	// branches on window.AndroidKiosk (the same presence-check idiom
+	// settings.html's exitLockdown() call uses) and instead navigates to the
+	// GET /api/catalog/export download above, which the native shell's
+	// WebView.DownloadListener (MainActivity.kt) hands to Android's own
+	// DownloadManager — the OS-supported way into the shared Downloads
+	// collection. This handler stays desktop/Pi-only.
+	//
+	// Every failure branch below used to collapse into the one generic
+	// "import.export_save_failed" notice with no server-side detail at all —
+	// undiagnosable from logs alone. Each now logs which step failed before
+	// showing the operator the same generic message (ut-docs#1258 AC).
 	mux.HandleFunc("POST /api/catalog/export-save", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
@@ -82,14 +99,20 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		}
 		home, herr := os.UserHomeDir()
 		if herr != nil {
+			logging.L().Errorf("catalog export-save: os.UserHomeDir: %v", herr)
 			httpx.RenderNotice(w, locale, "error", "import.export_save_failed")
 			return
 		}
 		dstDir := filepath.Join(home, "Downloads")
-		_ = os.MkdirAll(dstDir, 0o755)
+		if mkErr := os.MkdirAll(dstDir, 0o755); mkErr != nil {
+			logging.L().Errorf("catalog export-save: os.MkdirAll(%s): %v", dstDir, mkErr)
+			httpx.RenderNotice(w, locale, "error", "import.export_save_failed")
+			return
+		}
 		dst := filepath.Join(dstDir, "catalog-"+time.Now().UTC().Format("2006-01-02")+".csv")
 		f, ferr := os.Create(dst)
 		if ferr != nil {
+			logging.L().Errorf("catalog export-save: os.Create(%s): %v", dst, ferr)
 			httpx.RenderNotice(w, locale, "error", "import.export_save_failed")
 			return
 		}

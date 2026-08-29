@@ -225,6 +225,7 @@
   "import.created": "Imported",
   "import.detected": "Recognised format",
   "import.export_btn": "Save catalog CSV to Downloads",
+  "import.export_download_started": "Download started — check your notifications or Files app.",
   "import.export_help": "Your data is yours: download the whole catalog — names, SKUs, barcodes, prices, categories and stock — as a CSV. The file imports straight back into any Universal Till (and into other systems that read CSV).",
   "import.export_save_failed": "Could not save the CSV.",
   "import.export_title": "Export",

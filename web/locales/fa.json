@@ -225,6 +225,7 @@
   "import.created": "درون‌ریزی شد",
   "import.detected": "قالب شناسایی‌شده",
   "import.export_btn": "ذخیره CSV کاتالوگ در Downloads",
+  "import.export_download_started": "دانلود آغاز شد — اعلان‌ها یا برنامه Files را بررسی کنید.",
   "import.export_help": "داده‌هایتان مال خودتان است: کل کاتالوگ — نام‌ها، SKUها، بارکدها، قیمت‌ها، دسته‌ها و موجودی — را به‌صورت CSV دانلود کنید. این فایل مستقیم به هر Universal Till دیگری درون‌ریزی می‌شود (و به هر سیستمی که CSV می‌خواند).",
   "import.export_save_failed": "ذخیره فایل CSV ممکن نشد.",
   "import.export_title": "برون‌بری",
