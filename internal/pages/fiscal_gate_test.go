@@ -105,9 +105,11 @@ func TestFiscalGate_GermanShopWithoutTSECannotTender(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "pos-notice error") {
 		t.Fatalf("expected an error-level pos-notice, got: %s", rec.Body.String())
 	}
-	// Localized en copy, not a raw Go error string.
-	if !strings.Contains(rec.Body.String(), "TSE") {
-		t.Fatalf("expected the refusal to mention the TSE, got: %s", rec.Body.String())
+	// Localized en copy, not a raw Go error string. ut-docs#1208 generalized
+	// this copy to cover any hard-gated country, not just Germany's TSE, so
+	// it no longer names "TSE" specifically.
+	if !strings.Contains(rec.Body.String(), "fiscal-signing device") {
+		t.Fatalf("expected the refusal to mention the fiscal-signing device, got: %s", rec.Body.String())
 	}
 	if got := countSales(t, dp); got != 0 {
 		t.Fatalf("expected no sale row, got %d", got)

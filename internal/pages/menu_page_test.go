@@ -213,3 +213,28 @@ func TestMenuPage_FiscalRegisterTileHiddenOutsideGermanyEvenWithPlugin(t *testin
 		t.Fatalf("expected no fiscal-register tile outside Germany even with the plugin active, got: %s", rec.Body.String())
 	}
 }
+
+// ut-docs#1208 widened fiscal.RequiresHardGate to also cover Turkey (an
+// unrelated YN ÖKC obligation, not §146a Abs. 4 AO) -- this tile's gate must
+// stay an explicit country=="DE" check, not fiscal.RequiresHardGate, or a TR
+// shop would wrongly start seeing Germany's fiscal-register tile the moment
+// it happened to have the (unrelated) German tax plugin active.
+func TestMenuPage_FiscalRegisterTileHiddenForTurkeyEvenWithGermanPluginActive(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, nil)
+	t.Setenv("UT_AUTH", "off")
+	seedActiveTaxDePlugin(t, dp.Db)
+	if err := settings.NewStore(dp.Db).Set(t.Context(), "store.country", "TR"); err != nil {
+		t.Fatalf("set store.country: %v", err)
+	}
+	dp.State = common.LoadState(t.Context(), settings.NewStore(dp.Db), dp.Cfg)
+
+	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `href="/fiscal-register"`) {
+		t.Fatalf("expected no fiscal-register tile for TR even with the German plugin active, got: %s", rec.Body.String())
+	}
+}

@@ -630,10 +630,10 @@ obligations remain yours.*
 > bring your own on Free, or it's included in the subscription price on a
 > paid tier. See
 > [ADR-0047](https://github.com/universaltill/ut-docs/blob/main/adr/0047-free-tier-excludes-mandated-third-party-costs.md).
-> The till enforces this for Germany: a shop switched to system-of-record
-> mode cannot complete a real sale until a TSE is configured, and a
-> configured-but-failing TSE pauses sales unless an owner grants a
-> time-boxed, audit-logged override — see
+> The till enforces this on a per-market basis: a shop switched to
+> system-of-record mode cannot complete a real sale until its market's
+> required device is configured, and a configured-but-failing device pauses
+> sales unless an owner grants a time-boxed, audit-logged override — see
 > [ADR-0048](https://github.com/universaltill/ut-docs/blob/main/adr/0048-german-tse-hard-gate-and-owner-override.md).
 
 ---
