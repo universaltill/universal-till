@@ -91,6 +91,61 @@ func TestRecoverMiddleware_NonAPIPathReturnsLocalizedText(t *testing.T) {
 	}
 }
 
+// A handler that already committed a response (status + some body, e.g. a
+// CSV/export stream) before panicking mid-write must NOT get a second
+// header or an appended error envelope — that would corrupt an in-flight
+// 200 into a response that still LOOKS successful but is silently short or
+// wrong. The honest outcome once output has started is: nothing more is
+// written (the client sees the stream cut short, same as before this
+// middleware existed) — found in review, ut-docs#1271.
+func TestRecoverMiddleware_MidStreamPanicDoesNotCorruptCommittedResponse(t *testing.T) {
+	initRecoveryTestI18n(t)
+	h := recoverMiddleware(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/csv")
+		w.WriteHeader(http.StatusOK)
+		_, _ = w.Write([]byte("id,name\n1,widget\n"))
+		panic("boom mid-stream")
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/export.csv", nil)
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code = %d, want %d (the already-committed status must survive)", rec.Code, http.StatusOK)
+	}
+	if ct := rec.Header().Get("Content-Type"); ct != "text/csv" {
+		t.Fatalf("Content-Type = %q, want text/csv (must not be overwritten to application/json)", ct)
+	}
+	body := rec.Body.String()
+	if body != "id,name\n1,widget\n" {
+		t.Fatalf("body = %q, want exactly the pre-panic bytes with nothing appended", body)
+	}
+}
+
+// http.ErrAbortHandler is net/http's own "abort this response silently"
+// sentinel — recovery middleware must re-panic it, not swallow it into a
+// 500, so net/http's Server can apply its own (silent, connection-closing)
+// handling.
+func TestRecoverMiddleware_RepanicsErrAbortHandler(t *testing.T) {
+	initRecoveryTestI18n(t)
+	h := recoverMiddleware(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {
+		panic(http.ErrAbortHandler)
+	}))
+
+	req := httptest.NewRequest(http.MethodGet, "/api/whatever", nil)
+	rec := httptest.NewRecorder()
+
+	defer func() {
+		got := recover()
+		if got != http.ErrAbortHandler {
+			t.Fatalf("recovered value = %v, want http.ErrAbortHandler to propagate", got)
+		}
+	}()
+	h.ServeHTTP(rec, req)
+	t.Fatal("expected http.ErrAbortHandler to panic back out of ServeHTTP")
+}
+
 // A handler that does NOT panic must be entirely unaffected by the wrap.
 func TestRecoverMiddleware_PassesThroughWhenNoPanic(t *testing.T) {
 	initRecoveryTestI18n(t)
