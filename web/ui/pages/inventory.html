@@ -70,10 +70,17 @@
             {{ range .Locations }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
           </select>
         </label>
-        <label>{{ T "inventory.quantity" }} <input type="number" name="quantity" step="0.01" required placeholder="{{ T "inventory.qty_placeholder" }}"></label>
+        <!-- ut-docs#1275: type="number" silently resets .value to "" on a
+             momentarily-invalid decimal string while osk.js types it in
+             (same root cause as ut-docs#1249/#1272) --
+             text+inputmode="decimal" avoids that. -->
+        <!-- pattern allows a leading '-': type="number" here had no min=,
+             and Quantity is "positive for receive, +/- for adjust"
+             (internal/pages/inventory_api.go) -- must not regress that. -->
+        <label>{{ T "inventory.quantity" }} <input type="text" inputmode="decimal" name="quantity" pattern="-?[0-9]+(\.[0-9]{1,2})?" required placeholder="{{ T "inventory.qty_placeholder" }}"></label>
       </div>
       <div class="field-pair">
-        <label>{{ T "inventory.cost_optional" }} <input type="number" id="stock-cost" step="0.01" min="0"></label>
+        <label>{{ T "inventory.cost_optional" }} <input type="text" inputmode="decimal" id="stock-cost" pattern="{{ if eq currency.Decimals 0 }}[0-9]+{{ else }}[0-9]+(\.[0-9]{1,2})?{{ end }}"></label>
         <input type="hidden" name="cost_price" id="stock-cost-minor">
       </div>
       <label>{{ T "inventory.reason" }} <input type="text" name="reason" placeholder="{{ T "inventory.reason_placeholder" }}"></label>
@@ -94,10 +101,12 @@
               {{ range .Locations }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
             </select>
           </label>
-          <label>{{ T "inventory.current_qty" }} <input type="number" name="qty_before" step="0.01" required></label>
+          <!-- pattern allows a leading '-': type="number" here had no min=
+               either, so preserve the same sign permissiveness. -->
+          <label>{{ T "inventory.current_qty" }} <input type="text" inputmode="decimal" name="qty_before" pattern="-?[0-9]+(\.[0-9]{1,2})?" required></label>
         </div>
         <div class="field-pair">
-          <label>{{ T "inventory.requested_qty" }} <input type="number" name="qty_requested" step="0.01" required></label>
+          <label>{{ T "inventory.requested_qty" }} <input type="text" inputmode="decimal" name="qty_requested" pattern="-?[0-9]+(\.[0-9]{1,2})?" required></label>
           <label>{{ T "inventory.manager_pin" }} <input type="password" name="manager_pin" inputmode="numeric" pattern="[0-9]{4,8}" maxlength="8" placeholder="{{ T "inventory.manager_pin_placeholder" }}"></label>
         </div>
         <label>{{ T "inventory.reason" }} <input type="text" name="reason" required placeholder="{{ T "inventory.override_reason_placeholder" }}"></label>
