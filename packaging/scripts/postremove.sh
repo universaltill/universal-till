@@ -14,6 +14,12 @@ if [ "$1" = "remove" ] || [ "$1" = "purge" ]; then
     rm -f /etc/systemd/system/unitill-kiosk.service \
           /etc/systemd/system/unitill-kiosk-firstboot.service
     rm -rf /etc/systemd/system/unitill-kiosk.service.d
+    # The uninstaller's PATH symlink is postinstall-created (not
+    # package-owned, like the kiosk units above) — remove it here or a
+    # purge leaves /usr/bin/unitill-uninstall dangling at a deleted
+    # binary (ut-docs#1083). Guarded by remove/purge so an upgrade's
+    # postrm never strips it.
+    rm -f /usr/bin/unitill-uninstall
     if [ -d /run/systemd/system ]; then
         systemctl daemon-reload >/dev/null 2>&1 || true
     fi

@@ -46,6 +46,39 @@ builds:
     ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}}"]
     goos: [darwin]
     goarch: [arm64]
+  # Friendly .deb uninstaller (ut-docs#1083): backs the shop's database up
+  # (verified) before delegating removal to apt-get. .deb-only, so it goes
+  # into nfpms (via a staged contents: entry, see below) but deliberately
+  # NOT into the tar.gz archives — portable installs keep
+  # uninstall-unitill.sh.
+  #
+  # Deliberately NOT in nfpms' `ids:` (which auto-places a build's binary
+  # in bindir, /opt/unitill/bin): this must run as root (stops the
+  # service, calls apt-get), and postinstall.sh does `chown -R pos:pos
+  # /opt/unitill` for self-update (ut-docs#151) — a root-run binary
+  # sitting in a pos-writable directory is a pos→root privilege
+  # escalation (the exact class ut-docs#255 already fixed by moving the
+  # kiosk scripts to /usr/lib/unitill, which is never pos-writable). This
+  # one needs the same treatment, but as a per-arch Go binary (not a
+  # static script), it can't just be an nfpm contents `src:` pointing at
+  # a repo path — the hook below stages each arch's build output at a
+  # fixed, non-version-suffixed path (goreleaser's own dist layout embeds
+  # an unpredictable GOAMD64/GOARM64 suffix, e.g.
+  # dist/uninstall_linux_amd64_v1/..., that isn't safe to hardcode) so
+  # the nfpm contents entry can reference it with the same
+  # `{{ .Arch }}`-templated pattern already used for the desktop shell
+  # below.
+  - id: uninstall
+    binary: unitill-uninstall
+    main: ./cmd/unitill-uninstall
+    env: [CGO_ENABLED=0]
+    flags: [-trimpath]
+    ldflags: ["-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version={{.Version}}"]
+    goos: [linux]
+    goarch: [amd64, arm64]
+    hooks:
+      post:
+        - cmd: sh -c 'mkdir -p "dist/uninstall-stage/{{ .Arch }}" && cp "{{ .Path }}" "dist/uninstall-stage/{{ .Arch }}/unitill-uninstall"'
 
 # The binary reads web/ (templates, locales, assets) from disk at runtime —
 # every artifact must carry it, plus the right double-click launcher.
@@ -188,6 +221,17 @@ nfpms:
       - src: packaging/linux/unitill-kiosk-launch.sh
         dst: /usr/lib/unitill/unitill-kiosk-launch.sh
         file_info: { mode: 0o755 }
+      # Friendly uninstaller (ut-docs#1083, per-arch build's `hooks.post`
+      # above): same reasoning as the kiosk scripts just above — must run
+      # as root, so it lives outside /opt/unitill (never pos-writable),
+      # dpkg-owned here so a purge removes it automatically (no manual rm
+      # needed, unlike the kiosk units which are heredoc-written and thus
+      # NOT package-owned). postinstall.sh symlinks it onto PATH at
+      # /usr/bin/unitill-uninstall (not /usr/local/bin — Debian Policy
+      # §9.1.2 reserves that for the local admin, not packages).
+      - src: "dist/uninstall-stage/{{ .Arch }}/unitill-uninstall"
+        dst: /usr/lib/unitill/unitill-uninstall
+        file_info: { mode: 0o755 }
     scripts:
       postinstall: packaging/scripts/postinstall.sh
       preremove: packaging/scripts/preremove.sh
@@ -201,6 +245,10 @@ release:
   footer: |
     **Raspberry Pi / Debian:** `sudo apt install ./unitill-pos_*_arm64.deb`
     then open http://localhost:8080 — the first-boot wizard does the rest.
+    To remove it later, `sudo unitill-uninstall` is the recommended way — it
+    offers a verified backup of your shop data first, then asks whether to
+    keep or delete the data (plain `apt remove unitill-pos` / `apt remove
+    --purge unitill-pos` still work exactly as before).
 
     **Windows (recommended):** run **`unitill-pos-setup-*.exe`** — a guided
     installer; Universal Till then opens in **its own app window** (no

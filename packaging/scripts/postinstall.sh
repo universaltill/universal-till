@@ -39,6 +39,22 @@ chown -R pos:pos /var/lib/unitill
 # user could plant a script root re-executes via unitill-kiosk-firstboot.service.
 chown -R pos:pos /opt/unitill
 
+# Friendly uninstaller (ut-docs#1083) onto PATH so the operator can type
+# `sudo unitill-uninstall`. The binary itself is package-owned at
+# /usr/lib/unitill/unitill-uninstall — deliberately NOT under /opt/unitill
+# (which the chown above makes pos-writable): a root-run binary in a
+# pos-writable directory would be a pos→root escalation, the same class
+# ut-docs#255 already fixed for the kiosk scripts. /usr/bin, not
+# /usr/local/bin (review finding, ut-docs#1083): Debian Policy §9.1.2
+# reserves /usr/local for the local admin, not packages — and it's
+# historically root:staff 2775 on stock Debian/Ubuntu (this container's
+# 0755 is not representative), which would put the symlink itself in a
+# group-writable directory. ln -sfn = idempotent, safe on upgrades too
+# (same pattern as the items symlink above); the symlink itself isn't
+# package-owned (unlike the target), so it's removed again by
+# postremove.sh on remove/purge.
+ln -sfn /usr/lib/unitill/unitill-uninstall /usr/bin/unitill-uninstall
+
 # ut-docs#255 migration: unitill-kiosk-firstboot.service and
 # unitill-kiosk.service are NOT dpkg-managed (both written by heredoc, one
 # by this script and one by unitill-kiosk-setup.sh, not shipped as package
