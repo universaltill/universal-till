@@ -1715,7 +1715,13 @@ body.login-screen {
   text-overflow: ellipsis;
   white-space: nowrap;
 }
-.fee-row input[type="number"] {
+.fee-row input[type="number"], .fee-row input[type="text"] {
+  /* ut-docs#1275: percent/fixed switched from type="number" to type="text"
+     (osk.js decimal-corruption fix) -- without type="text" here too, this
+     rule silently stopped matching them and the 2026-08-01 review's own
+     fix (the comment above) regressed: the safety margin against clipping
+     at "100.00" shrank ~60% at ui_scale 1, invisible to make docs-shots
+     since /settings has no docs-shot. */
   inline-size: 4.8rem; min-inline-size: 4.8rem;
   padding: .35rem .4rem;
 }
