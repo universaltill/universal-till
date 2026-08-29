@@ -134,6 +134,24 @@ upgrades, keeps item photos in `/var/lib/unitill`):
 sudo apt install ./unitill-pos_*_arm64.deb
 ```
 
+To remove a `.deb` install later, the recommended way is the bundled
+friendly uninstaller — it offers a **verified backup of your shop data
+first** (saved to your home directory, or `--backup-to <dir>`), then asks
+separately whether to keep the data (the default; a reinstall picks it up
+again) or delete it (type `DELETE` to confirm):
+
+```bash
+sudo unitill-uninstall
+```
+
+Plain `sudo apt remove unitill-pos` (keeps data) and `sudo apt remove
+--purge unitill-pos` (deletes data) still work exactly as before —
+`unitill-uninstall` is a front door that ends in those same commands. For
+scripted/remote use, non-interactive flags cover the same choices:
+`--yes` (accept the default backup, keep data unless paired with
+`--purge-data`), `--no-backup`, `--backup-to <dir>`, `--keep-data` /
+`--purge-data`, and `--lang <code>` (en/ar/fa/tr).
+
 On a **Raspberry Pi (Pi OS Lite, fresh install)** this also stages the
 fullscreen kiosk automatically: the first boot after installing sets up
 cage + Chromium and boots straight into the till. To keep a Pi kiosk-free
