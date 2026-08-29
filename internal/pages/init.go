@@ -318,9 +318,11 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSetup(mux, dp, authSvc)
 	if authDisabled {
 		log.Warnf("UT_AUTH=off — operator login disabled")
-		return mux, dp
+		return recoverMiddleware(mux), dp
 	}
-	return auth.Middleware(mux, authSvc), dp
+	// recoverMiddleware wraps auth.Middleware itself (ut-docs#1271), not just
+	// mux, so a panic anywhere in the chain gets a clean response.
+	return recoverMiddleware(auth.Middleware(mux, authSvc)), dp
 }
 
 // newRederiveSettings builds the shared settings re-derive: everything
