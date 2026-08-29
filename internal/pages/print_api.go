@@ -9,6 +9,7 @@ import (
 	"strings"
 	"time"
 
+	qrcode "github.com/skip2/go-qrcode"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -221,13 +222,18 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	}
 	// ut-docs#585: the sale's recorded §6 KassenSichV TSE evidence, when any
 	// — same per-sale derivation as the two notices above (the sale's own
-	// fiscal_tse_signatures row, written at tender time). Plain-text
-	// lines only on this path (ESC/POS QR raster support is a declared
-	// non-goal for #585); fields the signer didn't return are skipped —
-	// never placeholders — and a read error degrades to no lines, same
-	// conservative policy as the audit-derived notices. English literals
-	// match this renderer's existing convention (locale "en", latin digits —
-	// see the locale note at the top of this function).
+	// fiscal_tse_signatures row, written at tender time). Plain-text lines
+	// plus, since ut-docs#1245, the same scannable QR the HTML receipt
+	// already shows: buildTSEQRPayload (pos_api.go) rastered through
+	// print.RasterLogo into a GS v 0 block. The payload format is the #585
+	// provisional one, unchanged — see buildTSEQRPayload's own doc comment
+	// for the must-be-confirmed-against-a-real-TSE caveat before any
+	// general German-market rollout. Fields the signer didn't return are
+	// skipped — never placeholders — and a read error degrades to no
+	// lines, same conservative policy as the audit-derived notices.
+	// English literals match this renderer's existing convention (locale
+	// "en", latin digits — see the locale note at the top of this
+	// function).
 	if sig, ok, sigErr := data.NewPOSRepo(d.Db).GetFiscalTSESignature(ctx, detail.ID); sigErr == nil && ok {
 		if sig.SerialNumber != "" {
 			doc.Meta = append(doc.Meta, "TSE serial: "+sig.SerialNumber)
@@ -249,6 +255,14 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 		}
 		if sig.Signature != "" {
 			doc.Meta = append(doc.Meta, "TSE signature: "+sig.Signature)
+		}
+		// The scannable QR (ut-docs#1245). 240px source gives RasterLogo
+		// enough modules to stay crisp after 1-bit thresholding. Encode or
+		// raster failure degrades silently to no QR (nil TSEQR) — a
+		// receipt without a QR beats no receipt, same policy as
+		// receiptLogoRaster and the evidence lines above.
+		if png, qrErr := qrcode.Encode(buildTSEQRPayload(sig), qrcode.Medium, 240); qrErr == nil {
+			doc.TSEQR = print.RasterLogo(png)
 		}
 	}
 	if rd.Footer != "" {
