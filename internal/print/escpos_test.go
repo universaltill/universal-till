@@ -273,6 +273,81 @@ func TestAsciiCharset(t *testing.T) {
 	}
 }
 
+// ut-docs#1243: cp858 mode transcodes text for single-byte-codepage thermal
+// printers so currency symbols print correctly instead of as mojibake. The
+// two symbols that matter for the pilot markets are € (0xD5 in CP858 — the
+// slot that distinguishes CP858 from CP850) and £ (0x9C).
+func TestCP858EncodesCurrencySymbols(t *testing.T) {
+	if got, want := encodeText("€2.50", "cp858"), []byte{0xd5, '2', '.', '5', '0'}; !bytes.Equal(got, want) {
+		t.Errorf("euro: encodeText = %x, want %x", got, want)
+	}
+	if got, want := encodeText("£1.00", "cp858"), []byte{0x9c, '1', '.', '0', '0'}; !bytes.Equal(got, want) {
+		t.Errorf("pound: encodeText = %x, want %x", got, want)
+	}
+}
+
+// ut-docs#1243: a rune CP858 cannot represent (Farsi/Arabic text, if cp858
+// mode is ever selected on such a till) must fall back to '?' per rune —
+// mirroring the ascii branch — never error out or corrupt the byte stream.
+func TestCP858UnmappableRuneFallsBackToQuestionMark(t *testing.T) {
+	got := encodeText("جمع", "cp858")
+	if want := []byte{'?', '?', '?'}; !bytes.Equal(got, want) {
+		t.Errorf("encodeText = %x, want %x (one '?' per unmappable rune)", got, want)
+	}
+}
+
+// ut-docs#1243: a cp858 document must select the printer's PC858 code page
+// (ESC t 19) exactly once, immediately after init — and the utf8/ascii/empty
+// modes must keep today's byte streams, which never touch code-page state.
+func TestRenderCP858EmitsCodepageSelect(t *testing.T) {
+	sel := []byte{0x1b, 0x74, 0x13} // ESC t 19 — PC858
+
+	d := sampleDoc()
+	d.Charset = "cp858"
+	if out := Render(d); !bytes.HasPrefix(out, append(append([]byte{}, cmdInit...), sel...)) {
+		t.Error("cp858 render must emit ESC t 19 immediately after init")
+	}
+	for _, cs := range []string{"", "utf8", "ascii"} {
+		d.Charset = cs
+		if bytes.Contains(Render(d), sel) {
+			t.Errorf("charset %q must not emit a code-page select", cs)
+		}
+	}
+}
+
+func TestRenderKitchenTicketCP858EmitsCodepageSelect(t *testing.T) {
+	sel := []byte{0x1b, 0x74, 0x13}
+	tk := KitchenTicket{OrderNo: "42", Items: []KitchenItem{{Qty: "1", Name: "Tea"}}}
+
+	tk.Charset = "cp858"
+	if out := RenderKitchenTicket(tk); !bytes.HasPrefix(out, append(append([]byte{}, cmdInit...), sel...)) {
+		t.Error("cp858 kitchen ticket must emit ESC t 19 immediately after init")
+	}
+	for _, cs := range []string{"", "utf8", "ascii"} {
+		tk.Charset = cs
+		if bytes.Contains(RenderKitchenTicket(tk), sel) {
+			t.Errorf("charset %q must not emit a code-page select", cs)
+		}
+	}
+}
+
+func TestRenderLabelCP858EmitsCodepageSelect(t *testing.T) {
+	sel := []byte{0x1b, 0x74, 0x13}
+
+	out := RenderLabel("Coca-Cola Can 330ml", "€1.40", "5000000000011", "cp858")
+	if !bytes.HasPrefix(out, append(append([]byte{}, cmdInit...), sel...)) {
+		t.Error("cp858 label must emit ESC t 19 immediately after init")
+	}
+	if !bytes.Contains(out, []byte{0xd5, '1', '.', '4', '0'}) {
+		t.Error("cp858 label price must carry the CP858 euro byte 0xD5")
+	}
+	for _, cs := range []string{"", "utf8", "ascii"} {
+		if bytes.Contains(RenderLabel("X", "1.40", "123", cs), sel) {
+			t.Errorf("charset %q must not emit a code-page select", cs)
+		}
+	}
+}
+
 func TestUTF8PassThrough(t *testing.T) {
 	d := Doc{StoreName: "فروشگاه", Totals: []KV{{Label: "جمع", Amount: "۱۲۰"}}}
 	if !bytes.Contains(Render(d), []byte("فروشگاه")) {

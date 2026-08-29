@@ -37,7 +37,7 @@ type KitchenTicket struct {
 	// Timestamp is the pre-formatted time the order was placed.
 	Timestamp string
 	Items     []KitchenItem
-	Charset   string // "utf8" (default) or "ascii", as Doc.Charset
+	Charset   string // "utf8" (default), "ascii", or "cp858", as Doc.Charset
 }
 
 // KitchenItem is one line of the order: a quantity, a name, and any
@@ -69,6 +69,9 @@ func RenderKitchenTicket(t KitchenTicket) []byte {
 	}
 
 	b.Write(cmdInit)
+	if cmd := codepageSelectCmd(t.Charset); cmd != nil {
+		b.Write(cmd) // once per ticket, before any text (ut-docs#1243)
+	}
 
 	b.Write(cmdAlignMid)
 	b.Write(cmdBoldOn)
