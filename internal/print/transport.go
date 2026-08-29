@@ -21,7 +21,7 @@ type Config struct {
 	Mode      string // off | network | device
 	Address   string // network: host[:port], default port 9100
 	Device    string // device: character device path, e.g. /dev/usb/lp0
-	Charset   string // utf8 | ascii
+	Charset   string // utf8 | ascii | cp858
 	AutoPrint bool
 	// DrawerPin is the drawer-kick connector pin: 2 (default) or 5
 	// (ut-docs#1136). See Doc.DrawerPin in escpos.go for the byte mapping.

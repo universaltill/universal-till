@@ -844,6 +844,7 @@
   "settings.printer.apply": "ذخیرهٔ چاپگر",
   "settings.printer.auto": "چاپ خودکار پس از هر فروش",
   "settings.printer.charset": "نویسه‌ها",
+  "settings.printer.charset_cp858": "اروپای غربی (CP858 — €/£)",
   "settings.printer.device": "مسیر دستگاه",
   "settings.printer.drawer_pin": "پین کشوی پول",
   "settings.printer.drawer_pin_2": "پین ۲ (اکثر کشوها)",

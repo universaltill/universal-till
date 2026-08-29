@@ -844,6 +844,7 @@
   "settings.printer.apply": "Save printer",
   "settings.printer.auto": "Print automatically after each sale",
   "settings.printer.charset": "Characters",
+  "settings.printer.charset_cp858": "Western Europe (CP858 — €/£)",
   "settings.printer.device": "Device path",
   "settings.printer.drawer_pin": "Cash drawer pin",
   "settings.printer.drawer_pin_2": "Pin 2 (most drawers)",

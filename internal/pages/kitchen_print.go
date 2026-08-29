@@ -51,18 +51,20 @@ func kitchenOrderTypeLabel(locale, charset, orderType string) string {
 	}
 }
 
-// kitchenTicketText translates key for locale, with an ASCII-safe fallback
-// (review finding, ut-docs#261): a printer.charset=="ascii" thermal
-// printer can't render non-Latin scripts — encodeText (internal/print)
-// maps every unmappable rune to "?", so an ar/fa translation would print
-// as a run of question marks. Before this card, kitchen tickets were
+// kitchenTicketText translates key for locale, with a Latin-safe fallback
+// (review finding, ut-docs#261; extended to cp858 in ut-docs#1243): both
+// printer.charset=="ascii" and =="cp858" are single-byte code pages that
+// can't render non-Latin scripts — encodeText (internal/print) maps every
+// unmappable rune to "?" under either, so an ar/fa translation would print
+// as a run of question marks. Before ut-docs#261, kitchen tickets were
 // hardcoded English and never hit this path at all; now that they carry
-// real translated text, degrade to the English string (always ASCII for
-// this ticket's own keys) rather than garbage, on ascii-charset setups
-// only. utf8-charset setups (the default) are unaffected.
+// real translated text, degrade to the English string (always ASCII, so
+// safe under both restricted charsets) rather than garbage. utf8-charset
+// setups (the default) are unaffected.
 func kitchenTicketText(locale, charset, key string) string {
 	v := httpx.T(locale, key)
-	if charset != "ascii" || isASCII(v) {
+	restricted := charset == "ascii" || charset == "cp858"
+	if !restricted || isASCII(v) {
 		return v
 	}
 	return httpx.T("en", key)

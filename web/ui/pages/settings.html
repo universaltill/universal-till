@@ -1062,6 +1062,7 @@
         <select name="charset">
           <option value="utf8"  {{ if eq $p.Charset "utf8" }}selected{{ end }}>UTF-8</option>
           <option value="ascii" {{ if eq $p.Charset "ascii" }}selected{{ end }}>ASCII</option>
+          <option value="cp858" {{ if eq $p.Charset "cp858" }}selected{{ end }}>{{ T "settings.printer.charset_cp858" }}</option>
         </select>
       </label>
     </div>
