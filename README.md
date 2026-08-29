@@ -489,7 +489,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 - [ ] **Order-for-collection** as its own order type (dine-in/takeaway/delivery/phone exists; collection doesn't yet)
 - [ ] **Germany fiscal compliance** (TSE signing, DSFinV-K export) — [ut-plugin-tax-de](https://github.com/universaltill/ut-plugin-tax-de) contains an incomplete skeleton only; it has not been verified with a real fiskaly account, is not legally validated, and must not be used by merchants until the unresolved cloud-versus-hardware TSE decision in [ut-docs#38](https://github.com/universaltill/ut-docs/issues/38) is approved
 - [ ] **Dine-in vs. takeaway VAT rate switching** — the per-line tax rate field exists, and an `OrderType` field exists for kitchen printing, but nothing connects the two yet
-- [ ] Setup wizard shop type + address capture, eager best-effort cloud registration (ADR-0026, drafted not built)
+- [x] Setup wizard shop-type capture (ADR-0026) and opt-in eager cloud registration: the wizard's last screen asks once, unticked by default, and Settings can change the answer later (ADR-0071 — lazy registration stays the default for a shop that doesn't opt in)
 
 ### Long-term
 - [ ] Employee scheduling, customer loyalty programs
