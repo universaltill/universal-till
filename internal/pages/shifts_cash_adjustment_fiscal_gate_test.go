@@ -89,8 +89,12 @@ func TestFiscalGate_CashAdjustmentPayoutBlockedWhenTSENeverConfigured(t *testing
 		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
 	}
 	// The localized copy specifically, not just any 409 — same finding
-	// class as ut-docs#731's B1 (raw sentinel text leaking to the operator).
-	if !strings.Contains(rec.Body.String(), "no TSE") && !strings.Contains(rec.Body.String(), "technical security device") {
+	// class as ut-docs#731's B1 (raw sentinel text leaking to the
+	// operator). "Refund not completed" is what actually distinguishes the
+	// localized copy from the raw sentinel ("fiscal gate: shop is system
+	// of record but no fiscal-signing device is configured" — never
+	// carries that prefix), now that both mention "fiscal-signing device".
+	if !strings.Contains(rec.Body.String(), "Refund not completed") || !strings.Contains(rec.Body.String(), "fiscal-signing device") {
 		t.Fatalf("expected the localized refund.error.fiscal_never_configured copy, got: %s", rec.Body.String())
 	}
 	if got := countShiftAdjustments(t, dp); got != 0 {
@@ -218,7 +222,7 @@ func TestFiscalGate_PfandRueckgabeBlockedWhenTSENeverConfigured(t *testing.T) {
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "technical security device") {
+	if !strings.Contains(rec.Body.String(), "fiscal-signing device") {
 		t.Fatalf("expected the localized refund.error.fiscal_never_configured copy, got: %s", rec.Body.String())
 	}
 	if got := countShiftAdjustments(t, dp); got != 0 {
