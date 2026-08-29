@@ -971,6 +971,10 @@ func TestBuildReceiptDoc_TSESignatureLinesWhenRecorded(t *testing.T) {
 	if meta := strings.Join(doc.Meta, "\n"); strings.Contains(meta, "TSE serial") || strings.Contains(meta, "TSE transaction") {
 		t.Fatalf("no recorded evidence must mean no TSE evidence lines, got %+v", doc.Meta)
 	}
+	// ut-docs#1245: no recorded evidence also means no printable QR raster.
+	if len(doc.TSEQR) != 0 {
+		t.Fatalf("no recorded evidence must mean no TSE QR raster, got %d bytes", len(doc.TSEQR))
+	}
 
 	if err := data.NewPOSRepo(dp.Db).RecordFiscalTSESignature(ctx, data.FiscalTSESignature{
 		SaleID:             "sale1",
@@ -994,6 +998,11 @@ func TestBuildReceiptDoc_TSESignatureLinesWhenRecorded(t *testing.T) {
 		if !strings.Contains(meta, want) {
 			t.Fatalf("ESC/POS Meta must carry TSE evidence value %q, got %+v", want, doc.Meta)
 		}
+	}
+	// ut-docs#1245: recorded evidence also yields the scannable QR as a
+	// pre-encoded GS v 0 raster block for the thermal-printer path.
+	if len(doc.TSEQR) == 0 {
+		t.Fatal("recorded TSE evidence must produce a printable TSE QR raster (ut-docs#1245)")
 	}
 }
 
