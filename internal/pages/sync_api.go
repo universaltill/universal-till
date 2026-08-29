@@ -311,6 +311,32 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		if name == "" {
 			name = "till"
 		}
+		// ut-docs#1264: a till's name must be unique on the shop's network,
+		// case-insensitively — against every enrolled sibling AND the
+		// primary's own effective name (till.name, or its translated
+		// default). 422 specifically, NOT 409: 409 on this handler already
+		// means "pair new tills on the primary till" (above), and
+		// completeJoin tells the two apart by status code alone.
+		// httpx.DefaultLocale(), NOT ResolveLocale(w, r) (independent review
+		// finding): this resolves the PRIMARY's own name for an identity
+		// comparison, not text rendered for the caller, so it must be read in
+		// the primary's own configured locale. ResolveLocale honours the
+		// request's ?lang/ut_lang, which would let the caller pick which
+		// locale's default till name it is compared against and slip past the
+		// check with the primary's displayed name in another locale. For the
+		// real machine-to-machine call (no cookie, no query) the two are
+		// already identical, so this changes no legitimate flow.
+		primaryName := tillNameOrDefault(r.Context(), d, httpx.DefaultLocale())
+		nameTaken, err := repo.NameTaken(r.Context(), name)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
+			return
+		}
+		if strings.EqualFold(name, primaryName) || nameTaken {
+			common.LogAndLocalizedError(w, r, http.StatusUnprocessableEntity, "sync.error.name_taken", "sync_api",
+				fmt.Errorf("till name %q already in use", name))
+			return
+		}
 		raw := make([]byte, 32)
 		_, _ = rand.Read(raw)
 		bearer := hex.EncodeToString(raw)
@@ -564,6 +590,7 @@ const (
 	joinErrUnreachable
 	joinErrNotATill
 	joinErrRefused
+	joinErrNameTaken
 	joinErrSnapshotFailed
 	joinErrStageSnapshotFailed
 	joinErrStageIdentityFailed
@@ -578,6 +605,7 @@ var joinErrLocaleKey = map[joinErrKind]string{
 	joinErrUnreachable:         "tills.join_error.unreachable",
 	joinErrNotATill:            "tills.join_error.not_a_till",
 	joinErrRefused:             "tills.join_error.refused",
+	joinErrNameTaken:           "tills.join_error.name_taken",
 	joinErrSnapshotFailed:      "tills.join_error.snapshot_failed",
 	joinErrStageSnapshotFailed: "tills.join_error.stage_snapshot_failed",
 	joinErrStageIdentityFailed: "tills.join_error.stage_identity_failed",
@@ -666,6 +694,13 @@ func completeJoin(r *http.Request, d *common.Deps, primaryURL, token, name strin
 		// expired" here is what made ut-docs#362 undiagnosable from the shop
 		// floor: it blames the code, so the owner regenerates it forever.
 		return "", &joinError{kind: joinErrNotATill, detail: base}
+	}
+	if resp.StatusCode == http.StatusUnprocessableEntity {
+		// ut-docs#1264: the primary rejected the name as already in use on
+		// this shop's network. 422 is reserved for exactly this on
+		// /api/sync/enroll — 409 there means something unrelated ("pair new
+		// tills on the primary till"), which stays in the generic catch-all.
+		return "", &joinError{kind: joinErrNameTaken}
 	}
 	if resp.StatusCode != http.StatusOK || json.NewDecoder(resp.Body).Decode(&out) != nil || out.Data.Bearer == "" {
 		return "", &joinError{kind: joinErrRefused}
