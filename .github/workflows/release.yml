@@ -624,7 +624,7 @@ jobs:
           check extracted/unitill-desktop "linux unitill-desktop (the omission that caused the real bug)"
           rm -rf extracted && mkdir extracted
 
-          unzip -q "unitill-pos_${VERSION}_windows_amd64.zip" -d extracted
+          unzip -qo "unitill-pos_${VERSION}_windows_amd64.zip" -d extracted
           check extracted/unitill-pos.exe "windows unitill-pos.exe"
           check extracted/unitill-desktop.exe "windows unitill-desktop.exe (the omission that caused the real bug)"
           rm -rf extracted && mkdir extracted
@@ -702,7 +702,15 @@ jobs:
 
           cd dist-check
           rm -rf extracted && mkdir extracted
-          unzip -q "unitill-pos_${VERSION}_android.apk" -d extracted
+          # ut-docs#1277: unzip prompts interactively (and fails non-zero
+          # under set -euo pipefail, with no test ever running) when the APK
+          # has two zip entries that collide once extracted onto this
+          # runner's case-insensitive macOS filesystem — a v0.6.17 run hit
+          # this for a 9-patch PNG resource. `-o` force-overwrites instead of
+          # prompting; the directory was just freshly rm -rf'd/mkdir'd above,
+          # so there's nothing here worth an interactive confirmation either
+          # way.
+          unzip -qo "unitill-pos_${VERSION}_android.apk" -d extracted
           checkAndroidLib extracted/lib/arm64-v8a/libgojni.so "android arm64-v8a libgojni.so (the omission that caused the real bug)"
           checkAndroidLib extracted/lib/armeabi-v7a/libgojni.so "android armeabi-v7a libgojni.so (the omission that caused the real bug)"
 
