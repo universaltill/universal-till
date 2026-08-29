@@ -708,7 +708,16 @@ test.describe.serial('first-boot setup and PIN login', () => {
       });
       await form503.locator('[name="manager_pin"]').fill(ADMIN_PIN);
       await form503.locator('button[type=submit]').click();
-      await expect(p.locator('#login-exit-os-msg')).not.toContainText("can't be reached");
+      // A POSITIVE wait, not `.not.toContainText("can't be reached")` — the
+      // page's own JS clears #login-exit-os-msg synchronously on click,
+      // before the async fetch/.then() (which is what calls
+      // window.AndroidKiosk.exitLockdown()) resolves, so a negative
+      // assertion is trivially satisfied by that transient cleared state
+      // and doesn't actually wait for the response. Caught by CI (not the
+      // local run that wrote this test), which reliably runs slower
+      // relative to Playwright's own polling interval — a real race, not
+      // flakiness in the feature itself.
+      await expect(p.locator('#login-exit-os-msg')).toHaveText('Exited to OS.');
       expect(await callCount()).toBe(1);
       await p.unroute('**/api/settings/exit-to-os');
     } finally {
