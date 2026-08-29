@@ -42,24 +42,26 @@ func (e *paymentDeclinedError) Error() string {
 }
 
 // fiscalNeverConfiguredError signals the ADR-0048 hard block: a shop in a
-// gated market (Germany) declared itself system-of-record without a TSE
-// configured. There is deliberately NO override path for this state — same
-// error shape as paymentDeclinedError so each tender surface maps it at its
-// own call site, with no sale row created.
+// hard-gated market (fiscal.RequiresHardGate — Germany and, since
+// ut-docs#1208, Turkey) declared itself system-of-record without a
+// fiscal-signing device configured. There is deliberately NO override path
+// for this state — same error shape as paymentDeclinedError so each tender
+// surface maps it at its own call site, with no sale row created.
 type fiscalNeverConfiguredError struct{}
 
 func (e *fiscalNeverConfiguredError) Error() string {
-	return "fiscal gate: shop is system of record but no TSE is configured"
+	return "fiscal gate: shop is system of record but no fiscal-signing device is configured"
 }
 
 // fiscalTSEFailingError signals the ADR-0048 configured-but-failing block:
-// the shop's TSE is known-failing and no owner override window is currently
-// active. Unlike fiscalNeverConfiguredError, an admin can lift this via
-// POST /api/fiscal/tse-override (fiscal_api.go).
+// the shop's configured fiscal-signing device (Germany's TSE, or the
+// equivalent for the next hard-gated market) is known-failing and no owner
+// override window is currently active. Unlike fiscalNeverConfiguredError, an
+// admin can lift this via POST /api/fiscal/tse-override (fiscal_api.go).
 type fiscalTSEFailingError struct{}
 
 func (e *fiscalTSEFailingError) Error() string {
-	return "fiscal gate: TSE is failing and no owner override is active"
+	return "fiscal gate: fiscal-signing device is failing and no owner override is active"
 }
 
 // fiscalSettingsReader resolves the settings source the gate reads —

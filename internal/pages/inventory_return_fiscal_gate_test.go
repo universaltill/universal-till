@@ -50,12 +50,15 @@ func TestFiscalGate_CreateReturnBlockedWhenTSENeverConfigured(t *testing.T) {
 		t.Fatalf("expected 409, got %d: %s", rec.Code, rec.Body.String())
 	}
 	// The localized refund.error.fiscal_never_configured copy specifically
-	// -- not just "contains TSE", which the raw, un-localized sentinel
-	// error text ("fiscal gate: shop is system of record but no TSE is
-	// configured") would ALSO satisfy, and so would never have caught this
-	// handler leaking that raw text to the operator (ut-docs#731 review
-	// finding B1 -- this call site is exactly where it happened).
-	if !strings.Contains(rec.Body.String(), "Refund not completed") || !strings.Contains(rec.Body.String(), "technical security device") {
+	// -- not just "contains fiscal-signing device", which the raw,
+	// un-localized sentinel error text ("fiscal gate: shop is system of
+	// record but no fiscal-signing device is configured") would ALSO
+	// satisfy. The "Refund not completed" prefix is what actually
+	// distinguishes the two (the raw sentinel never carries it), and so
+	// would still have caught this handler leaking that raw text to the
+	// operator (ut-docs#731 review finding B1 -- this call site is exactly
+	// where it happened).
+	if !strings.Contains(rec.Body.String(), "Refund not completed") || !strings.Contains(rec.Body.String(), "fiscal-signing device") {
 		t.Fatalf("expected the localized refund.error.fiscal_never_configured copy, got: %s", rec.Body.String())
 	}
 	if got := countInventoryReturns(t, dp); got != 0 {
