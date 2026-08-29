@@ -14,7 +14,7 @@ cd "${ROOT_DIR}"
 
 matches="$(grep -rnE 'webkit2gtk-4\.0' \
   --include='*.go' --include='*.yml' --include='*.yaml' \
-  internal/thirdparty/webview_go .github/workflows/release.yml .goreleaser.yaml 2>/dev/null || true)"
+  internal/thirdparty/webview_go .github/workflows/release.yml .github/workflows/ci.yml .goreleaser.yaml 2>/dev/null || true)"
 
 if [[ -n "${matches}" ]]; then
   echo "❌ webkit guard: webkit2gtk-4.0 reference found (ADR-0028 requires 4.1)" >&2
