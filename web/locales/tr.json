@@ -1751,5 +1751,6 @@
   "settings.fiscal_signer.missing.install_btn": "Eklentiyi yükle",
   "settings.tax_rate_switcher.missing.title": "Vergi oranı eklentisi yüklü değil",
   "settings.tax_rate_switcher.missing.message": "Bu ülke, salonda tüketim ve paket servis için doğru KDV oranlarının uygulanmasını gerektiriyor, ancak şu anda etkin ve çalışan bir vergi oranı eklentisi yok — salonda tüketim/paket servis oranları doğru uygulanmıyor. Bunu düzeltmek için ülkenizin vergi eklentisini yükleyin.",
-  "settings.tax_rate_switcher.missing.install_btn": "Eklentiyi yükle"
+  "settings.tax_rate_switcher.missing.install_btn": "Eklentiyi yükle",
+  "common.error.server": "Bir şeyler ters gitti. Lütfen tekrar deneyin."
 }
