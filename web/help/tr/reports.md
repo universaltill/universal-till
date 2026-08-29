@@ -107,7 +107,9 @@ kasa sayım düzeltmesi veya çekmeceden nakit çıkışı. Nakdi **azaltan** he
 düzeltme, seçilen türden bağımsız olarak yönetici PIN'i gerektirir — bir
 iade veya depozito iadesi (Pfandrückgabe) çıkışının gerektirdiği aynı onay,
 çünkü risk aynıdır (kasadan onaysız nakit çıkışı). Nakit eklemek (pozitif
-bir tutar, örn. bozukluk takviyesi) buna gerek duymaz.
+bir tutar, örn. bozukluk takviyesi) buna gerek duymaz. Çıkan tutarı negatif
+girin (ör. 50 birimlik bir çıkış için "-50.00") — fiziksel klavyesi olmayan
+dokunmatik bir kasada önce ekran klavyesinin "-" tuşuna dokunun.
 
 Resmi kayıt modundaki bir Alman mağazasında, nakdi azaltan bir düzeltme —
 ve bir Pfandrückgabe çıkışı — bir satışın veya iadenin geçtiği aynı TSE

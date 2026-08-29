@@ -80,12 +80,9 @@ test.describe('shifts + tips: money fields entered via the on-screen keyboard', 
     await expect(page.locator('#close-shift-form')).toBeVisible();
 
     // --- #adjust-pounds (adjustment-form) --------------------------------
-    // type="adjustment" + a positive amount is the one direction this field
-    // can actually exercise via osk.js: its 'num' layer has no '-' key
-    // (ut-docs#1272 grooming note; a real, separate gap for negative
-    // payout/adjustment entry, filed as a follow-up — see the PR/review
-    // record), so a payout (which the server requires to be negative) can't
-    // be typed on-screen at all today, on the fixed markup or the unfixed.
+    // type="adjustment" + a positive amount — the negative/payout direction
+    // (which needs osk.js's '-' key, ut-docs#1276) has its own dedicated
+    // coverage in osk-signed-minus-key-1276.spec.ts.
     await page.locator('details.catalog-extra summary', { hasText: /adjustment/i }).click();
     await page.locator('#adjustment-form select[name="type"]').selectOption('adjustment');
     await typeViaOsk(page, '#adjust-pounds', '12.34');
