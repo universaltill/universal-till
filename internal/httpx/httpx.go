@@ -506,6 +506,14 @@ func FuncsFor(locale string) template.FuncMap {
 	}
 	funcs["currency"] = ActiveCurrency // {{ currency.Code }} etc.
 	funcs["currencies"] = Currencies   // the Settings picker options
+	// {{ moneypattern currency.Decimals false }} / {{ moneyplaceholder currency.Decimals 50 }}
+	// -- shared decimals-generic pattern/placeholder ATTRIBUTES (the whole
+	// `pattern="…"`/`placeholder="…"`, not just the value -- see
+	// MoneyPatternAttr's doc comment for why) for a decimal-mode money
+	// <input>, so a future 3-decimal currency (KWD/BHD/OMR) doesn't need
+	// every call site's own hardcoded {1,2} updated (ut-docs#1274).
+	funcs["moneypattern"] = MoneyPatternAttr
+	funcs["moneyplaceholder"] = MoneyPlaceholderAttr
 	funcs["toJson"] = toJSON
 	funcs["assetv"] = assetVersion
 	funcs["imgv"] = imgVersion
