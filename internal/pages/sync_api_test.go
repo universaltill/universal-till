@@ -1363,7 +1363,13 @@ func TestSyncEnrollToken_QRTooLargeFailureIsLocalized(t *testing.T) {
 	}
 }
 
-func TestSyncEnroll_InsertTillFailureIsLocalized(t *testing.T) {
+// Dropping the tills table now fails inside the ut-docs#1264 name-uniqueness
+// check, which runs BEFORE InsertTill and reads the same table — so this test
+// covers that query's failure path and is named for it. InsertTill's own
+// failure path keeps dedicated coverage in the test below (independent review
+// finding: without the split, the enrolment write's 500 path would have been
+// silently shadowed and no longer tested by anything).
+func TestSyncEnroll_NameCheckFailureIsLocalized(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newSyncAPITestDeps(t)
 
@@ -1392,6 +1398,168 @@ func TestSyncEnroll_InsertTillFailureIsLocalized(t *testing.T) {
 	}
 	if strings.Contains(body, "no such table") {
 		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+// A BEFORE INSERT trigger fails the enrolment WRITE while leaving the
+// name-uniqueness SELECT working, so the request genuinely reaches
+// InsertTill — a real database failure, not a mock. Asserts the same
+// contract as above: 500, localized text, no raw SQL error in the body.
+func TestSyncEnroll_InsertTillFailureIsLocalized(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+
+	token := issueEnrolCode(t, mux, "http://192.168.1.10:8080")
+	_, tok, err := decodeEnrollCode(token)
+	if err != nil {
+		t.Fatalf("decode enrol code: %v", err)
+	}
+
+	if _, err := dp.Db.Exec(`CREATE TRIGGER tills_block_insert BEFORE INSERT ON tills
+BEGIN SELECT RAISE(ABORT, 'tills insert blocked by test trigger'); END`); err != nil {
+		t.Fatalf("create blocking trigger: %v", err)
+	}
+
+	enrollBody, _ := json.Marshal(map[string]string{"token": tok, "name": "Till 2"})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/enroll", strings.NewReader(string(enrollBody)))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500 when InsertTill fails, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := httpx.T("en", "sync.error.server")
+	if !strings.Contains(body, want) {
+		t.Fatalf("expected the localized message %q, got %q", want, body)
+	}
+	if strings.Contains(body, "blocked by test trigger") {
+		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+	// The name check must have passed (the table is readable and empty) —
+	// otherwise this would be the previous test over again.
+	tills, err := data.NewTillsRepo(dp.Db).ListTills(context.Background())
+	if err != nil {
+		t.Fatalf("list tills: %v", err)
+	}
+	if len(tills) != 0 {
+		t.Fatalf("a failed InsertTill must leave no till row, got %+v", tills)
+	}
+}
+
+// --- ut-docs#1264: enrolment rejects a duplicate till name ---
+
+// enrollWithName drives POST /api/sync/enroll with a fresh one-time token
+// and the given name, returning the recorder for assertions.
+func enrollWithName(t *testing.T, mux *http.ServeMux, name string) *httptest.ResponseRecorder {
+	t.Helper()
+	code := issueEnrolCode(t, mux, "http://192.168.1.10:8080")
+	_, tok, err := decodeEnrollCode(code)
+	if err != nil {
+		t.Fatalf("decode enrol code: %v", err)
+	}
+	enrollBody, _ := json.Marshal(map[string]string{"token": tok, "name": name})
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/enroll", strings.NewReader(string(enrollBody)))
+	req.Header.Set("Content-Type", "application/json")
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+func TestSyncEnroll_RejectsDuplicateSiblingName(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	tillsRepo := data.NewTillsRepo(dp.Db)
+	if _, err := tillsRepo.InsertTill(ctx, "Till 2", hashBearer("tok-sibling")); err != nil {
+		t.Fatalf("seed sibling till: %v", err)
+	}
+
+	for _, name := range []string{"Till 2", "till 2"} { // exact + case-insensitive
+		rec := enrollWithName(t, mux, name)
+		if rec.Code != http.StatusUnprocessableEntity {
+			t.Fatalf("enrolling duplicate name %q: expected 422, got %d: %s", name, rec.Code, rec.Body.String())
+		}
+		want := httpx.T("en", "sync.error.name_taken")
+		if !strings.Contains(rec.Body.String(), want) {
+			t.Fatalf("expected the localized message %q, got %q", want, rec.Body.String())
+		}
+	}
+
+	tills, err := tillsRepo.ListTills(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tills) != 1 {
+		t.Fatalf("a rejected enrolment must not insert a row: expected 1 till, got %d (%+v)", len(tills), tills)
+	}
+}
+
+func TestSyncEnroll_RejectsPrimaryOwnName(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	if err := dp.Settings.Set(ctx, "till.name", "Front Counter"); err != nil {
+		t.Fatalf("set till.name: %v", err)
+	}
+
+	rec := enrollWithName(t, mux, "front counter") // case-insensitive vs the primary's own name
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("enrolling with the primary's own name: expected 422, got %d: %s", rec.Code, rec.Body.String())
+	}
+	want := httpx.T("en", "sync.error.name_taken")
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("expected the localized message %q, got %q", want, rec.Body.String())
+	}
+
+	tills, err := data.NewTillsRepo(dp.Db).ListTills(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tills) != 0 {
+		t.Fatalf("a rejected enrolment must not insert a row, got %+v", tills)
+	}
+}
+
+// Regression: a genuinely unique name still enrols exactly as before.
+func TestSyncEnroll_UniqueNameStillSucceeds(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+	ctx := context.Background()
+	tillsRepo := data.NewTillsRepo(dp.Db)
+	if _, err := tillsRepo.InsertTill(ctx, "Till 2", hashBearer("tok-sibling-2")); err != nil {
+		t.Fatalf("seed sibling till: %v", err)
+	}
+
+	rec := enrollWithName(t, mux, "Till 3")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 enrolling a unique name, got %d: %s", rec.Code, rec.Body.String())
+	}
+	tills, err := tillsRepo.ListTills(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tills) != 2 {
+		t.Fatalf("expected 2 tills after a unique-name enrolment, got %d (%+v)", len(tills), tills)
+	}
+}
+
+// Regression: an empty name still defaults to "till" and succeeds when
+// "till" is not already taken.
+func TestSyncEnroll_DefaultNameStillSucceeds(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newSyncAPITestDeps(t)
+
+	rec := enrollWithName(t, mux, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 enrolling with the default name, got %d: %s", rec.Code, rec.Body.String())
+	}
+	tills, err := data.NewTillsRepo(dp.Db).ListTills(context.Background())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(tills) != 1 || tills[0].Name != "till" {
+		t.Fatalf("expected one till named %q, got %+v", "till", tills)
 	}
 }
 

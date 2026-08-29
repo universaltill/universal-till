@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -50,6 +51,38 @@ FROM tills ORDER BY enrolled_at DESC`)
 		out = append(out, t)
 	}
 	return out, rows.Err()
+}
+
+// NameTaken reports whether an enrolled replica already uses this name,
+// case-insensitively (ut-docs#1264).
+//
+// The fold is done in Go, deliberately, not as `lower(name) = lower(?)` in
+// SQL (independent review finding): SQLite's built-in lower() only folds
+// ASCII, so the SQL form silently misses "Ünite" vs "ünite" or "Café" vs
+// "CAFÉ" — real collisions on the tr/fa/ar installs this product ships —
+// AND it would disagree with the strings.EqualFold check the enrolment
+// handler applies to the primary's own name, making the same pair of names
+// a duplicate against the primary but not against a sibling. A shop has a
+// handful of tills, so reading the column is cheap.
+func (r *TillsRepo) NameTaken(ctx context.Context, name string) (bool, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT name FROM tills`)
+	if err != nil {
+		return false, fmt.Errorf("till name taken: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var existing string
+		if err := rows.Scan(&existing); err != nil {
+			return false, fmt.Errorf("scan till name: %w", err)
+		}
+		if strings.EqualFold(strings.TrimSpace(existing), strings.TrimSpace(name)) {
+			return true, nil
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return false, fmt.Errorf("till name taken: %w", err)
+	}
+	return false, nil
 }
 
 // TillByBearerHash resolves the sync caller; touches last_seen_at.

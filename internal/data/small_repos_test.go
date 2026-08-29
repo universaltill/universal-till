@@ -223,6 +223,75 @@ func TestTillsRepo_EnrollListLookupDelete(t *testing.T) {
 	}
 }
 
+// TestTillsRepo_NameTaken covers the enrolment-time uniqueness check
+// (ut-docs#1264): a joining till's name must not collide with an
+// already-enrolled sibling, case-insensitively.
+func TestTillsRepo_NameTaken(t *testing.T) {
+	repo := newTillsTestDB(t)
+	ctx := context.Background()
+
+	// No tills at all: nothing is taken.
+	taken, err := repo.NameTaken(ctx, "Till 2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if taken {
+		t.Fatal("expected no name taken in an empty tills table")
+	}
+
+	if _, err := repo.InsertTill(ctx, "Till 2", "hash-till2"); err != nil {
+		t.Fatal(err)
+	}
+
+	// Exact match.
+	taken, err = repo.NameTaken(ctx, "Till 2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !taken {
+		t.Fatal("expected an exact-match name to be taken")
+	}
+
+	// Case-insensitive match.
+	taken, err = repo.NameTaken(ctx, "till 2")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !taken {
+		t.Fatal("expected a case-insensitive match to be taken")
+	}
+
+	// A different name is free.
+	taken, err = repo.NameTaken(ctx, "Till 3")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if taken {
+		t.Fatal("expected an unused name to be free")
+	}
+
+	// Non-ASCII case-insensitivity (independent review finding). SQLite's
+	// built-in lower() folds ASCII only, so a `lower(name) = lower(?)`
+	// implementation passes every assertion above and still lets "ünite"
+	// enrol alongside "Ünite" — on a product that ships tr/fa/ar. These
+	// names are the realistic ones, so they are the ones under test.
+	if _, err := repo.InsertTill(ctx, "Ünite", "hash-unite"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.InsertTill(ctx, "Café", "hash-cafe"); err != nil {
+		t.Fatal(err)
+	}
+	for _, probe := range []string{"ünite", "üNite", "café", "CAFÉ"} {
+		taken, err = repo.NameTaken(ctx, probe)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !taken {
+			t.Fatalf("expected %q to collide case-insensitively with an existing non-ASCII till name", probe)
+		}
+	}
+}
+
 func TestInstallStatusRepo_DeleteForPlugin(t *testing.T) {
 	dbc, err := sql.Open("sqlite", ":memory:")
 	if err != nil {
