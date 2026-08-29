@@ -55,12 +55,29 @@
           hx-on::after-request="if (event.detail.xhr && event.detail.xhr.status >= 200 && event.detail.xhr.status < 300) { var m = document.getElementById('pfand-modal'); m.close(); this.reset(); }">
       <h3 id="pfand-modal-title">{{ T "pfand.modal.title" }}</h3>
       <input type="hidden" name="amount" id="pfand-amount-minor">
+      <!-- ut-docs#1249: was type="number" + onchange. osk.js (the kiosk's
+           custom keyboard) types by mutating .value and firing only `input`
+           — never `change`, and a script-set .value never sets a control's
+           "dirty value" flag, so blur can't synthesize `change` either.
+           Net effect: on a real touch till (osk.js's default/auto mode),
+           #pfand-amount-minor — the field actually POSTed — never updated,
+           so every payout 400'd with "amount must be greater than zero"
+           regardless of what the operator typed. `oninput` fires for both
+           osk.js keystrokes and real typing. Separately, type="number"
+           silently resets .value to "" on any momentarily-invalid float
+           string (verified live: typing '2','.','5','0' produced a final
+           .value of "50", not "2.50") — text+inputmode="decimal" avoids
+           that entirely (never coerces the string) and moves osk.js's
+           insert()/backspace() onto their cursor-aware setRangeText path,
+           which number/email inputs don't expose. window.utCurrency.toMinor
+           already degrades any unparsable string to 0, so a malformed
+           amount still surfaces the existing, correct 400 — never a silent
+           wrong charge. -->
       <label>{{ T "pfand.modal.amount" }} ({{ currency.Display }})
-        <input type="number" id="pfand-amount"
-               step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}"
-               min="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}"
+        <input type="text" id="pfand-amount" inputmode="decimal"
+               pattern="{{ if eq currency.Decimals 0 }}[0-9]+{{ else }}[0-9]+(\.[0-9]{1,2})?{{ end }}"
                required placeholder="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}"
-               onchange="document.getElementById('pfand-amount-minor').value = window.utCurrency.toMinor(this.value)">
+               oninput="document.getElementById('pfand-amount-minor').value = window.utCurrency.toMinor(this.value)">
       </label>
       <label>{{ T "pfand.modal.manager_pin" }}
         <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off">
