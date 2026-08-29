@@ -29,9 +29,11 @@ func TestRequiresHardGate(t *testing.T) {
 		want    bool
 	}{
 		{"DE", true},
+		{"TR", true}, // ut-docs#1208 — Law No. 3100's YN ÖKC mandate, no ut-plugin-tax-tr yet
 		{"GB", false},
 		{"", false},
 		{"de", false}, // store.country is persisted uppercase (setup wizard); no fuzzy matching
+		{"tr", false}, // same casing rule as "de"
 		{"AT", false}, // not fiscalised yet — one-line addition when it is
 	}
 	for _, c := range cases {
@@ -75,6 +77,22 @@ func TestEvaluateGate_SystemOfRecordWithoutTSEIsHardBlocked(t *testing.T) {
 	g, err := EvaluateGate(context.Background(), fakeSettings{vals: map[string]string{
 		KeySystemOfRecord: "true",
 	}}, "DE", time.Now())
+	if err != nil {
+		t.Fatalf("EvaluateGate: %v", err)
+	}
+	if g.Decision != BlockedNeverConfigured {
+		t.Fatalf("decision = %v, want BlockedNeverConfigured", g.Decision)
+	}
+}
+
+// ut-docs#1208: a Turkish shop declaring itself the system of record with no
+// signer configured must fail closed exactly like a German one — there is no
+// ut-plugin-tax-tr yet, so this is the only thing standing between "no
+// plugin installed" and a silently unsigned sale.
+func TestEvaluateGate_TurkeySystemOfRecordWithoutSignerIsHardBlocked(t *testing.T) {
+	g, err := EvaluateGate(context.Background(), fakeSettings{vals: map[string]string{
+		KeySystemOfRecord: "true",
+	}}, "TR", time.Now())
 	if err != nil {
 		t.Fatalf("EvaluateGate: %v", err)
 	}
