@@ -108,8 +108,8 @@
          inputmode="decimal" + oninput fixes both; window.utCurrency
          .toMinor() replaces the hardcoded `* 100`, which was also wrong by
          100x on any 0-decimal currency (IRR/IRT/IQD/AFN/JPY). -->
-    <label>{{ T "reports.tips.form_amount" }}
-      <input type="text" id="tips-amount" inputmode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" required placeholder="0.00"
+    <label>{{ T "reports.tips.form_amount" }} ({{ currency.Display }})
+      <input type="text" id="tips-amount" inputmode="decimal" {{ moneypattern currency.Decimals false }} required {{ moneyplaceholder currency.Decimals 0 }}
              oninput="document.getElementById('tips-amount-minor').value = window.utCurrency.toMinor(this.value)">
     </label>
     <label>{{ T "reports.tips.form_note" }}

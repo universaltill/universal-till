@@ -172,6 +172,157 @@ func TestShiftsPage_OpenShiftPickerPreselectsOwnRegister(t *testing.T) {
 	}
 }
 
+// ut-docs#1274: shifts.html hardcoded "(£)" in field labels and a fixed
+// 2-decimal pattern/placeholder regardless of the shop's real configured
+// currency -- both must now follow currency.Display/currency.Decimals, the
+// same convention #pfand-amount (ut-docs#1249) established. Covers both a
+// 2-decimal currency (GBP, unaffected by this fix) and a 0-decimal one
+// (IRT), where the old hardcoded pattern/placeholder was simply wrong.
+func TestShiftsPage_LabelsAndPatternsAreCurrencyAware(t *testing.T) {
+	mux, dp := newShiftsPageTestDeps(t)
+	ctx := t.Context()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO shifts(id,register_id,cashier_id,opened_at,opening_cash) VALUES('shift1','reg1','user1','2026-01-01T09:00:00Z',5000)`); err != nil {
+		t.Fatal(err)
+	}
+
+	get := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/shifts", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /shifts = %d: %s", rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	// GBP (2-decimal): unchanged behavior -- symbol in every label, 2-decimal
+	// pattern/placeholder, same as before this fix.
+	httpx.InitCurrency("GBP")
+	body := get()
+	if !strings.Contains(body, "(£)") {
+		t.Fatalf("expected the GBP symbol in the counted-cash label, got:\n%s", body)
+	}
+	if !strings.Contains(body, `pattern="[0-9]+(\.[0-9]{1,2})?"`) {
+		t.Fatalf("expected the 2-decimal pattern for GBP, got:\n%s", body)
+	}
+	if !strings.Contains(body, `placeholder="0.00"`) {
+		t.Fatalf("expected the 2-decimal placeholder for GBP, got:\n%s", body)
+	}
+	if !strings.Contains(body, `pattern="-?[0-9]+(\.[0-9]{1,2})?"`) {
+		t.Fatalf("expected the signed 2-decimal pattern for the adjustment field, got:\n%s", body)
+	}
+	if !strings.Contains(body, `placeholder="-50.00"`) {
+		t.Fatalf("expected the signed 2-decimal placeholder for the adjustment field, got:\n%s", body)
+	}
+	// opening-cash specifically (the field HasOpen currently hides -- this
+	// GET has an open shift, so this asserts the *closed*-shift form's
+	// fields only; TestShiftsPage_CarryForwardDisplayIsCurrencyAware below
+	// covers opening-cash's own pattern, on a GET where it actually renders).
+
+	// 0-decimal currency (IRT, toman): the old hardcoded pattern/placeholder
+	// was simply wrong here -- "0.00"/"\.[0-9]{1,2}" reject a valid 0-decimal
+	// amount like "500". Must now show the toman symbol on every label and
+	// an integer-only pattern/placeholder, with NO 2-decimal shape left over
+	// anywhere in the page (a partial conversion must fail this).
+	httpx.InitCurrency("IRT")
+	t.Cleanup(func() { httpx.InitCurrency("GBP") }) // ut-docs#970 convention: process-global, reset for later tests in this package.
+	body = get()
+	if !strings.Contains(body, "(تومان)") {
+		t.Fatalf("expected the IRT symbol in the counted-cash label, got:\n%s", body)
+	}
+	if strings.Contains(body, "(£)") {
+		t.Fatalf("expected NO leftover GBP symbol on any label once currency is 0-decimal, got:\n%s", body)
+	}
+	if !strings.Contains(body, `pattern="[0-9]+"`) {
+		t.Fatalf("expected the 0-decimal (integer-only) pattern for IRT, got:\n%s", body)
+	}
+	if strings.Contains(body, `pattern="[0-9]+(\.[0-9]{1,2})?"`) {
+		t.Fatalf("expected NO 2-decimal pattern left over anywhere once currency is 0-decimal, got:\n%s", body)
+	}
+	if !strings.Contains(body, `placeholder="0"`) {
+		t.Fatalf("expected the 0-decimal placeholder for IRT, got:\n%s", body)
+	}
+	if strings.Contains(body, `placeholder="0.00"`) {
+		t.Fatalf("expected NO 2-decimal placeholder left over anywhere once currency is 0-decimal, got:\n%s", body)
+	}
+	if !strings.Contains(body, `pattern="-?[0-9]+"`) {
+		t.Fatalf("expected the signed 0-decimal pattern for the adjustment field, got:\n%s", body)
+	}
+	if !strings.Contains(body, `placeholder="-50"`) {
+		t.Fatalf("expected the 0-decimal negative placeholder for the adjustment field, got:\n%s", body)
+	}
+	if strings.Contains(body, `placeholder="-50.00"`) {
+		t.Fatalf("expected NO 2-decimal negative placeholder left over once currency is 0-decimal, got:\n%s", body)
+	}
+}
+
+// ut-docs#1274: CarryForwardDisplay hardcoded `%d.%02d` against `/100`
+// (internal/pages/shifts_page.go) -- silently wrong on a 0-decimal currency,
+// where minor units ARE major units (500 IRT prefilled as "5.00" instead of
+// "500"). Covers the actual rendered <input value> on the open-shift form,
+// not just the underlying formatter (that's httpx.TestFormatMajorPlain).
+func TestShiftsPage_CarryForwardDisplayIsCurrencyAware(t *testing.T) {
+	mux, dp := newShiftsPageTestDeps(t)
+	ctx := t.Context()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	// A closed shift leaves a new float this till's next open should carry
+	// forward -- pos.LastClosedShiftNewFloat reads new_float, not closing_cash.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO shifts(id,register_id,cashier_id,opened_at,closed_at,opening_cash,closing_cash,new_float) VALUES('shift0','reg1','user1','2026-01-01T00:00:00Z','2026-01-01T08:00:00Z',0,500,500)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, pos.SettingsKeyTillRegisterID, "reg1"); err != nil {
+		t.Fatal(err)
+	}
+
+	get := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/shifts", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /shifts = %d: %s", rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	// Assertions are scoped to the actual #opening-cash <input> tag (id +
+	// pattern + value together), not a bare `value="…"` substring -- the
+	// page also renders a hidden #opening-cash-minor field prefilled
+	// straight from CarryForwardMinor (ut-docs#1274 review finding: a
+	// formatter that silently returned the wrong major-unit string could
+	// still coincidentally satisfy an unscoped `value="500"` check via that
+	// OTHER field, since 500 minor units is also this shift's raw minor
+	// amount).
+	httpx.InitCurrency("GBP")
+	body := get()
+	if !strings.Contains(body, "(£)") {
+		t.Fatalf("expected the GBP symbol in the opening-cash label, got:\n%s", body)
+	}
+	if !strings.Contains(body, `id="opening-cash" inputmode="decimal" pattern="[0-9]+(\.[0-9]{1,2})?" required value="5.00"`) {
+		t.Fatalf("expected #opening-cash's own pattern+value prefilled 5.00 under GBP, got:\n%s", body)
+	}
+
+	httpx.InitCurrency("IRT")
+	t.Cleanup(func() { httpx.InitCurrency("GBP") })
+	body = get()
+	if !strings.Contains(body, "(تومان)") {
+		t.Fatalf("expected the IRT symbol in the opening-cash label, got:\n%s", body)
+	}
+	if strings.Contains(body, "(£)") {
+		t.Fatalf("expected NO leftover GBP symbol on the opening-cash label once currency is 0-decimal, got:\n%s", body)
+	}
+	if !strings.Contains(body, `id="opening-cash" inputmode="decimal" pattern="[0-9]+" required value="500"`) {
+		t.Fatalf("expected #opening-cash's own pattern+value prefilled 500 (no /100) under a 0-decimal currency, got:\n%s", body)
+	}
+	if strings.Contains(body, `pattern="[0-9]+(\.[0-9]{1,2})?"`) || strings.Contains(body, `value="5.00"`) {
+		t.Fatalf("expected NO 2-decimal pattern or carry-forward value left over once currency is 0-decimal, got:\n%s", body)
+	}
+}
+
 // ut-docs#940 review finding: registers must be listed AFTER resolving this
 // till's identity, mirroring settings_page.go's own ordering and its
 // comment on why -- on a brand-new shop's very first shift-open, with zero

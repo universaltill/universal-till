@@ -144,7 +144,7 @@ that **removes** cash needs a manager PIN, whichever type is selected —
 the same approval a refund or a bottle-deposit (Pfandrückgabe) payout
 needs, since it's the same risk (cash leaving the drawer unapproved).
 Adding cash (a positive amount, e.g. a float top-up) doesn't need one.
-Enter the amount removed as a negative number (e.g. "-50.00" for a £50
+Enter the amount removed as a negative number (e.g. "-50" for a 50-unit
 payout) — on a touch till with no physical keyboard, tap the on-screen
 keyboard's "-" key first.
 
