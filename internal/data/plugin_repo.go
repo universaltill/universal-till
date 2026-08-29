@@ -783,9 +783,40 @@ LIMIT 1`,
 		return 0, err
 	case scanErr == nil && strings.TrimSpace(raw) != "":
 		if jsonErr := json.Unmarshal([]byte(raw), &existing); jsonErr != nil {
-			err = fmt.Errorf("existing value for %s/%s is not valid JSON: %w", pluginID, key, jsonErr)
-			return 0, err
+			// ut-docs#1255: a plugin manifest that declares a map-typed
+			// setting's default_value as the JSON STRING "{}" (rather than
+			// the JSON OBJECT {}) gets it double-encoded by
+			// internal/plugins/manifest.go's install seeding
+			// (json.Marshal of the Go string "{}" produces the JSON string
+			// "{}", not the raw object) — every fresh install of such a
+			// plugin then permanently fails this unmarshal, forever, with
+			// no way to ever populate the setting. That specific shape —
+			// a JSON string whose own content parses as the target map
+			// type — is never a plausible deliberate hand-edit (nobody
+			// hand-sets their real overrides to a string containing "{}"),
+			// so self-heal it transparently instead of refusing forever.
+			// Anything else (a genuine hand-edit gone wrong, or a
+			// string-wrapped value whose content ALSO isn't valid JSON)
+			// still falls through to the original refuse-to-clobber error.
+			var unwrapped string
+			if strErr := json.Unmarshal([]byte(raw), &unwrapped); strErr != nil ||
+				json.Unmarshal([]byte(unwrapped), &existing) != nil {
+				err = fmt.Errorf("existing value for %s/%s is not valid JSON: %w", pluginID, key, jsonErr)
+				return 0, err
+			}
 		}
+	}
+	// A stored JSON `null` (bare, or string-wrapped as `"null"` and unwrapped
+	// above) unmarshals SUCCESSFULLY into a map by setting it to nil — found
+	// by independent review, both the pre-existing bare-null case and the
+	// newly-reachable string-wrapped one (plugin_settings_page.go's plain-
+	// text settings form does json.Marshal(val), so a manager typing "null"
+	// into that box stores exactly `"null"`). The merge loop below would
+	// then panic on assignment to a nil map. Re-establish the empty map so
+	// a null-valued setting merges like an absent one, same as any other
+	// falsy-but-technically-valid existing value.
+	if existing == nil {
+		existing = map[string]int{}
 	}
 
 	for id, v := range newEntries {
