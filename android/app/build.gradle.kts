@@ -123,6 +123,35 @@ val goVersionForLdflags = (project.findProperty("versionName") as String?) ?: "0
 val generateAar =
     tasks.register<Exec>("generateAar") {
         workingDir = file("../..")
+        doFirst {
+            // A build that fails partway through (the preflight check right
+            // below, or gomobile bind itself failing) must never leave a
+            // stale .aar sitting in libs/ for a later task to package as if
+            // it were fresh (ut-docs#1240) — delete it FIRST, before any
+            // check that could throw, so a failure and a stale-but-present
+            // artifact can never be confused with success. (Deleting after
+            // the preflight check would skip this on exactly the failure
+            // mode the issue is named after — the check itself throwing.)
+            file("libs/unitill-mobile.aar").delete()
+            // gomobile bind shells out to `gobind` as its own separate PATH
+            // lookup, not a `go tool` invocation — after a Go toolchain
+            // upgrade, `gobind` can still resolve via `go tool gobind` while
+            // being completely invisible to gomobile, which never looks
+            // there. Fail here with the actual fix instead of letting Exec
+            // fail with Gradle's generic "A problem occurred starting
+            // process 'command gomobile'" (ut-docs#1240).
+            val pathDirs = (System.getenv("PATH") ?: "").split(":")
+            for (bin in listOf("gomobile", "gobind")) {
+                val onPath = pathDirs.any { dir -> file("$dir/$bin").let { it.isFile && it.canExecute() } }
+                if (!onPath) {
+                    throw GradleException(
+                        "generateAar: `$bin` not found on PATH. Install both with:\n" +
+                            "  go install golang.org/x/mobile/cmd/gomobile golang.org/x/mobile/cmd/gobind\n" +
+                            "See adr/0023-android-ios-till-strategy.md (ut-docs) for setup."
+                    )
+                }
+            }
+        }
         commandLine(
             "gomobile", "bind",
             // Bare "-target=android" builds shared libraries for ALL
