@@ -115,7 +115,7 @@ func TestFiscalRegisterPage_ManagerGate(t *testing.T) {
 		t.Fatalf("seed entry: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 	var entryID string
-	if err := d.Db.QueryRow(`SELECT id FROM fiscal_register_de WHERE eas_serial = 'eas-gate'`).Scan(&entryID); err != nil {
+	if err := d.Db.QueryRow(`SELECT json_extract(value, '$.id') FROM plugin_storage WHERE plugin_id = 'com.universaltill.tax-de' AND json_extract(value, '$.eas_serial') = 'eas-gate'`).Scan(&entryID); err != nil {
 		t.Fatalf("lookup seeded entry: %v", err)
 	}
 	var locID string
@@ -134,7 +134,7 @@ func TestFiscalRegisterPage_ManagerGate(t *testing.T) {
 	// The cashier's blocked decommission/address attempts must not have
 	// taken effect.
 	var decommissionedOn *string
-	if err := d.Db.QueryRow(`SELECT decommissioned_on FROM fiscal_register_de WHERE id = ?`, entryID).Scan(&decommissionedOn); err != nil {
+	if err := d.Db.QueryRow(`SELECT json_extract(value, '$.decommissioned_on') FROM plugin_storage WHERE plugin_id = 'com.universaltill.tax-de' AND key = 'fiscal_register:' || ?`, entryID).Scan(&decommissionedOn); err != nil {
 		t.Fatalf("lookup entry after blocked decommission: %v", err)
 	}
 	if decommissionedOn != nil {
@@ -297,7 +297,7 @@ func TestFiscalRegisterPageDecommission(t *testing.T) {
 		t.Fatalf("create: code=%d", rec.Code)
 	}
 	var id string
-	if err := d.Db.QueryRow(`SELECT id FROM fiscal_register_de WHERE eas_serial = 'eas-9'`).Scan(&id); err != nil {
+	if err := d.Db.QueryRow(`SELECT json_extract(value, '$.id') FROM plugin_storage WHERE plugin_id = 'com.universaltill.tax-de' AND json_extract(value, '$.eas_serial') = 'eas-9'`).Scan(&id); err != nil {
 		t.Fatalf("lookup: %v", err)
 	}
 
@@ -308,7 +308,7 @@ func TestFiscalRegisterPageDecommission(t *testing.T) {
 
 	// The date is server-stamped to today, not client-supplied.
 	var decommissionedOn string
-	if err := d.Db.QueryRow(`SELECT decommissioned_on FROM fiscal_register_de WHERE id = ?`, id).Scan(&decommissionedOn); err != nil {
+	if err := d.Db.QueryRow(`SELECT json_extract(value, '$.decommissioned_on') FROM plugin_storage WHERE plugin_id = 'com.universaltill.tax-de' AND key = 'fiscal_register:' || ?`, id).Scan(&decommissionedOn); err != nil {
 		t.Fatalf("lookup decommissioned_on: %v", err)
 	}
 	wantToday := time.Now().UTC().Format("2006-01-02")

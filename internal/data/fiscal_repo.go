@@ -3,10 +3,14 @@ package data
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
+	"errors"
 	"fmt"
+	"sort"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // FiscalTSESignature is one signed sale's §6 KassenSichV TSE evidence
@@ -67,11 +71,15 @@ WHERE sale_id = ?
 }
 
 // FiscalRegisterDE is one till/TSE pairing recorded for Germany's §146a
-// Abs. 4 AO till-notification duty (ut-docs#665, migration 059) — the data
-// the shop's own Mein ELSTER filing needs, joined with the register's and
-// its stock location's display names, and the location's address (all
-// added specifically for this feature). Data capture only: nothing here
-// files anything on the shop's behalf.
+// Abs. 4 AO till-notification duty (ut-docs#665) — the data the shop's own
+// Mein ELSTER filing needs, joined with the register's and its stock
+// location's display names, and the location's address (all added
+// specifically for this feature). Data capture only: nothing here files
+// anything on the shop's behalf. Since ADR-0072 (ut-docs#1106, migration
+// 075) the persisted half lives as a JSON blob in plugin_storage under the
+// German tax plugin's namespace (see FiscalRegisterDEStore below); the
+// Register*/Location* display fields are resolved live at read time and are
+// never stored.
 type FiscalRegisterDE struct {
 	ID                 string
 	RegisterID         string
@@ -94,97 +102,243 @@ type FiscalRegisterDE struct {
 	UpdatedAt          string
 }
 
-// CreateFiscalRegisterDE records one till/TSE pairing. registerID must
-// already exist — the FK on fiscal_register_de.register_id catches a
-// typo'd/stale id, wrapped here into a clear error rather than a raw driver
-// message. created_at/updated_at are stamped now (RFC3339 UTC); the four
-// business dates (acquiredOn/commissionedOn and, later, decommissionedOn)
-// stay whatever caller-supplied YYYY-MM-DD strings they were validated as
-// upstream — this method does not reinterpret them.
-func (r *POSRepo) CreateFiscalRegisterDE(ctx context.Context, registerID, easType, easSoftware, easSerial,
-	tseSerial, tseCertificationID, tseType, acquiredOn string, commissionedOn *string) (string, error) {
-	id := uuid.NewString()
-	now := time.Now().UTC().Format(time.RFC3339)
-	if _, err := r.db.ExecContext(ctx, `
-INSERT INTO fiscal_register_de
-	(id, register_id, eas_type, eas_software, eas_serial, tse_serial, tse_certification_id, tse_type,
-	 acquired_on, commissioned_on, created_at, updated_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, id, registerID, easType, easSoftware, easSerial, tseSerial, tseCertificationID, tseType,
-		acquiredOn, commissionedOn, now, now); err != nil {
-		return "", fmt.Errorf("create fiscal register de: register %s: %w", registerID, err)
-	}
-	return id, nil
+// RegisterLocationRow is one register's identity plus its stock location's
+// display/address fields (empty strings when the register has no location,
+// or the location has no address on file yet).
+type RegisterLocationRow struct {
+	RegisterID       string
+	RegisterName     string
+	LocationID       string
+	LocationName     string
+	LocationStreet   string
+	LocationPostcode string
+	LocationCity     string
 }
 
-// ListFiscalRegisterDE returns every recorded entry, LEFT JOINed to its
-// register's name and (via the register's own location_id) its stock
-// location's name and address. A register with no assigned location, or a
-// location with no address on file yet, still appears — with empty
-// location fields — rather than being silently dropped from the list.
-// Ordered by location name (an unassigned register's empty location name
-// sorts last), then register name, then acquired_on, so entries group
-// naturally by location for the page above this.
-func (r *POSRepo) ListFiscalRegisterDE(ctx context.Context) ([]FiscalRegisterDE, error) {
+// ListRegisterLocations returns EVERY register — active or not — with its
+// location joined in (LEFT JOIN + COALESCE, same shape the old
+// fiscal_register_de list query used). It backs FiscalRegisterDEStore.List's
+// read-time join (ADR-0072): a decommissioned till's register is routinely
+// deactivated afterwards, and its history must still show the register's
+// name, so ListRegisters' is_active=1 filter is deliberately not reused.
+func (r *POSRepo) ListRegisterLocations(ctx context.Context) ([]RegisterLocationRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT f.id, f.register_id, reg.name,
+SELECT reg.id, reg.name,
        COALESCE(loc.id, ''), COALESCE(loc.name, ''),
-       COALESCE(loc.address_street, ''), COALESCE(loc.address_postcode, ''), COALESCE(loc.address_city, ''),
-       f.eas_type, f.eas_software, f.eas_serial,
-       f.tse_serial, f.tse_certification_id, f.tse_type,
-       f.acquired_on, f.commissioned_on, f.decommissioned_on,
-       f.created_at, f.updated_at
-FROM fiscal_register_de f
-JOIN registers reg ON reg.id = f.register_id
+       COALESCE(loc.address_street, ''), COALESCE(loc.address_postcode, ''), COALESCE(loc.address_city, '')
+FROM registers reg
 LEFT JOIN stock_locations loc ON loc.id = reg.location_id
-ORDER BY CASE WHEN loc.name IS NULL THEN 1 ELSE 0 END, loc.name, reg.name, f.acquired_on
 `)
 	if err != nil {
-		return nil, fmt.Errorf("list fiscal register de: %w", err)
+		return nil, fmt.Errorf("list register locations: %w", err)
 	}
 	defer rows.Close()
-	var out []FiscalRegisterDE
+	var out []RegisterLocationRow
 	for rows.Next() {
-		var f FiscalRegisterDE
-		var commissionedOn, decommissionedOn sql.NullString
-		if err := rows.Scan(&f.ID, &f.RegisterID, &f.RegisterName,
-			&f.LocationID, &f.LocationName, &f.LocationStreet, &f.LocationPostcode, &f.LocationCity,
-			&f.EasType, &f.EasSoftware, &f.EasSerial,
-			&f.TSESerial, &f.TSECertificationID, &f.TSEType,
-			&f.AcquiredOn, &commissionedOn, &decommissionedOn,
-			&f.CreatedAt, &f.UpdatedAt); err != nil {
-			return nil, fmt.Errorf("scan fiscal register de: %w", err)
+		var row RegisterLocationRow
+		if err := rows.Scan(&row.RegisterID, &row.RegisterName,
+			&row.LocationID, &row.LocationName, &row.LocationStreet, &row.LocationPostcode, &row.LocationCity); err != nil {
+			return nil, fmt.Errorf("scan register location: %w", err)
 		}
-		if commissionedOn.Valid {
-			v := commissionedOn.String
-			f.CommissionedOn = &v
-		}
-		if decommissionedOn.Valid {
-			v := decommissionedOn.String
-			f.DecommissionedOn = &v
-		}
-		out = append(out, f)
+		out = append(out, row)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterate fiscal register de: %w", err)
+		return nil, fmt.Errorf("iterate register locations: %w", err)
 	}
 	return out, nil
 }
 
-// DecommissionFiscalRegisterDE stamps decommissioned_on on one entry and
-// bumps updated_at. It never deletes or hides the row — the AO record must
-// stay visible after the till goes out of service, so the page above this
-// only ever flips a status, never removes the entry from the list.
-func (r *POSRepo) DecommissionFiscalRegisterDE(ctx context.Context, id, decommissionedOn string) error {
+// FiscalRegisterDEKeyPrefix namespaces the entries inside the plugin's KV
+// storage: one key per entry, FiscalRegisterDEKeyPrefix + entry id. Exported
+// so internal/plugins can preserve this data on automatic uninstall paths
+// (ADR-0072 review finding B1) without duplicating the literal.
+const FiscalRegisterDEKeyPrefix = "fiscal_register:"
+
+// fiscalRegisterDERecord is the JSON shape persisted in plugin_storage —
+// exactly the columns migration 059's table carried, nothing more (the
+// join-derived Register*/Location* display fields are resolved live by
+// List, never stored). The json tags MUST stay in lockstep with migration
+// 075's json_object(...) keys: that INSERT..SELECT is the one-shot path
+// every pre-075 row round-trips through, and a mismatched key there would
+// silently drop the field on unmarshal.
+type fiscalRegisterDERecord struct {
+	ID                 string  `json:"id"`
+	RegisterID         string  `json:"register_id"`
+	EasType            string  `json:"eas_type"`
+	EasSoftware        string  `json:"eas_software"`
+	EasSerial          string  `json:"eas_serial"`
+	TSESerial          string  `json:"tse_serial"`
+	TSECertificationID string  `json:"tse_certification_id"`
+	TSEType            string  `json:"tse_type"`
+	AcquiredOn         string  `json:"acquired_on"`
+	CommissionedOn     *string `json:"commissioned_on"`
+	DecommissionedOn   *string `json:"decommissioned_on"`
+	CreatedAt          string  `json:"created_at"`
+	UpdatedAt          string  `json:"updated_at"`
+}
+
+// FiscalRegisterDEStore persists §146a Abs. 4 AO till/TSE entries as JSON
+// blobs in the plugin_storage KV table, namespaced under the German tax
+// plugin's id (ADR-0072, ut-docs#1106) — the plugin owns the obligation's
+// data (it vanishes with the plugin's uninstall housekeeping, DeleteStorage),
+// while the page and its handlers stay in core. The caller passes the plugin
+// id (internal/pages' taxDePluginID) rather than this package redefining the
+// constant. At a shop's realistic volume (single digits to low tens of
+// entries, ever) the KV scan replaces the old table's index comfortably;
+// ADR-0072 explicitly flags this as NOT a pattern for row-count-growth data.
+type FiscalRegisterDEStore struct {
+	db       *sql.DB
+	pos      *POSRepo
+	plugin   *PluginRepo
+	pluginID string
+}
+
+// NewFiscalRegisterDEStore builds the store over one *sql.DB — POSRepo and
+// PluginRepo both wrap the same handle, so this is wiring, not a second
+// connection.
+func NewFiscalRegisterDEStore(db *sql.DB, pluginID string) *FiscalRegisterDEStore {
+	return &FiscalRegisterDEStore{db: db, pos: NewPOSRepo(db), plugin: NewPluginRepo(db), pluginID: pluginID}
+}
+
+// Create records one till/TSE pairing. registerID must already exist — the
+// old table's FK caught a typo'd/stale id at write time; plugin_storage has
+// no FK onto registers, so the same guarantee is an explicit existence check
+// here (no is_active filter: the FK never checked that either, and the
+// page's picker is the UI-level active-only filter). created_at/updated_at
+// are stamped now (RFC3339 UTC); the business dates stay whatever
+// caller-supplied YYYY-MM-DD strings they were validated as upstream.
+func (s *FiscalRegisterDEStore) Create(ctx context.Context, registerID, easType, easSoftware, easSerial,
+	tseSerial, tseCertificationID, tseType, acquiredOn string, commissionedOn *string) (string, error) {
+	var n int
+	if err := s.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM registers WHERE id = ?`, registerID).Scan(&n); err != nil {
+		return "", fmt.Errorf("create fiscal register de: register %s: %w", registerID, err)
+	}
+	if n == 0 {
+		return "", fmt.Errorf("create fiscal register de: register %s: not found", registerID)
+	}
+
+	id := uuid.NewString()
 	now := time.Now().UTC().Format(time.RFC3339)
-	res, err := r.db.ExecContext(ctx,
-		`UPDATE fiscal_register_de SET decommissioned_on = ?, updated_at = ? WHERE id = ?`,
-		decommissionedOn, now, id)
+	rec := fiscalRegisterDERecord{
+		ID: id, RegisterID: registerID,
+		EasType: easType, EasSoftware: easSoftware, EasSerial: easSerial,
+		TSESerial: tseSerial, TSECertificationID: tseCertificationID, TSEType: tseType,
+		AcquiredOn: acquiredOn, CommissionedOn: commissionedOn,
+		CreatedAt: now, UpdatedAt: now,
+	}
+	raw, err := json.Marshal(rec)
+	if err != nil {
+		return "", fmt.Errorf("create fiscal register de: marshal: %w", err)
+	}
+	// StorageSet enforces the plugin-storage caps (ErrStorageTooLarge); the
+	// page surfaces any create error through its one generic error key,
+	// which reads fine for the cap too — no dedicated error path.
+	if err := s.plugin.StorageSet(ctx, s.pluginID, FiscalRegisterDEKeyPrefix+id, raw); err != nil {
+		return "", fmt.Errorf("create fiscal register de: %w", err)
+	}
+	return id, nil
+}
+
+// List returns every recorded entry with its register's name and (via the
+// register's own location) its stock location's name and address joined in
+// at read time. A register with no assigned location, or a location with no
+// address on file yet, still appears — with empty location fields — rather
+// than being silently dropped. Ordered exactly as the old SQL was: location
+// name first (an entry whose register has NO location sorts last — the old
+// CASE WHEN loc.name IS NULL; LocationID == "" is that same "no joined
+// location row" condition, and a real location's genuinely-empty name still
+// sorts first within the located group, matching SQL's ” < everything),
+// then register name, then acquired_on. SliceStable keeps equal-key entries
+// in ListStorageByPrefix's key order, so full ties stay deterministic.
+func (s *FiscalRegisterDEStore) List(ctx context.Context) ([]FiscalRegisterDE, error) {
+	entries, err := s.plugin.ListStorageByPrefix(ctx, s.pluginID, FiscalRegisterDEKeyPrefix)
+	if err != nil {
+		return nil, fmt.Errorf("list fiscal register de: %w", err)
+	}
+	regs, err := s.pos.ListRegisterLocations(ctx)
+	if err != nil {
+		return nil, fmt.Errorf("list fiscal register de: %w", err)
+	}
+	byRegister := make(map[string]RegisterLocationRow, len(regs))
+	for _, r := range regs {
+		byRegister[r.RegisterID] = r
+	}
+
+	out := make([]FiscalRegisterDE, 0, len(entries))
+	for _, e := range entries {
+		var rec fiscalRegisterDERecord
+		if err := json.Unmarshal(e.Value, &rec); err != nil {
+			// Skip-and-log, not abort-the-whole-page (ADR-0072/ut-docs#1106
+			// review finding S3): plugin_storage under this plugin's
+			// namespace is also writable by the plugin's own WASM guest
+			// code (hostStorageSet writes under the calling plugin's id),
+			// so one malformed or maliciously-crafted key must not make
+			// every other shop's genuine AO entry unreachable. Same
+			// precedent as export_repo.go's unparseable-content_json skip.
+			logging.L().Warnf("fiscal register de: list: skipping unparseable entry %s: %v", e.Key, err)
+			continue
+		}
+		reg, ok := byRegister[rec.RegisterID]
+		if !ok {
+			// The old SQL INNER JOINed registers, silently dropping an entry
+			// whose register was hard-deleted. Registers are soft-deleted
+			// only, so this is unreachable in practice — preserved as a skip,
+			// not promoted to an error (ADR-0072).
+			continue
+		}
+		out = append(out, FiscalRegisterDE{
+			ID: rec.ID, RegisterID: rec.RegisterID, RegisterName: reg.RegisterName,
+			LocationID: reg.LocationID, LocationName: reg.LocationName,
+			LocationStreet: reg.LocationStreet, LocationPostcode: reg.LocationPostcode, LocationCity: reg.LocationCity,
+			EasType: rec.EasType, EasSoftware: rec.EasSoftware, EasSerial: rec.EasSerial,
+			TSESerial: rec.TSESerial, TSECertificationID: rec.TSECertificationID, TSEType: rec.TSEType,
+			AcquiredOn: rec.AcquiredOn, CommissionedOn: rec.CommissionedOn, DecommissionedOn: rec.DecommissionedOn,
+			CreatedAt: rec.CreatedAt, UpdatedAt: rec.UpdatedAt,
+		})
+	}
+	sort.SliceStable(out, func(i, j int) bool {
+		a, b := out[i], out[j]
+		if aNoLoc, bNoLoc := a.LocationID == "", b.LocationID == ""; aNoLoc != bNoLoc {
+			return bNoLoc // located entries before no-location ones
+		}
+		if a.LocationName != b.LocationName {
+			return a.LocationName < b.LocationName
+		}
+		if a.RegisterName != b.RegisterName {
+			return a.RegisterName < b.RegisterName
+		}
+		return a.AcquiredOn < b.AcquiredOn
+	})
+	return out, nil
+}
+
+// Decommission stamps decommissioned_on on one entry and bumps updated_at.
+// It never deletes the key — the AO record must stay visible after the till
+// goes out of service (migration 059's own "destroys nothing" discipline,
+// reaffirmed by ADR-0072: decommission is an update, never a delete), so the
+// page above this only ever flips a status, never removes the entry.
+func (s *FiscalRegisterDEStore) Decommission(ctx context.Context, id, decommissionedOn string) error {
+	key := FiscalRegisterDEKeyPrefix + id
+	raw, err := s.plugin.StorageGet(ctx, s.pluginID, key)
+	if errors.Is(err, ErrStorageNotFound) {
+		// Same shape as the old zero-rows-UPDATE error.
+		return fmt.Errorf("decommission fiscal register de: %s not found", id)
+	}
 	if err != nil {
 		return fmt.Errorf("decommission fiscal register de: %w", err)
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return fmt.Errorf("decommission fiscal register de: %s not found", id)
+	var rec fiscalRegisterDERecord
+	if err := json.Unmarshal(raw, &rec); err != nil {
+		return fmt.Errorf("decommission fiscal register de: unmarshal %s: %w", id, err)
+	}
+	rec.DecommissionedOn = &decommissionedOn
+	rec.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
+	updated, err := json.Marshal(rec)
+	if err != nil {
+		return fmt.Errorf("decommission fiscal register de: marshal %s: %w", id, err)
+	}
+	if err := s.plugin.StorageSet(ctx, s.pluginID, key, updated); err != nil {
+		return fmt.Errorf("decommission fiscal register de: %w", err)
 	}
 	return nil
 }
