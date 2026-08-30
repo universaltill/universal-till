@@ -78,6 +78,15 @@ func Start(ctx context.Context, wg *sync.WaitGroup) {
 	}()
 }
 
+// Enabled reports whether an air-gapped/opted-out install has explicitly
+// disabled update checking via UT_UPDATE_CHECK — exported (ut-docs#1165
+// review finding N2) so a caller other than Start's own background loop
+// (e.g. the setup wizard's step-1 auto-triggered check, which — unlike
+// Settings' manual "Check for updates" button — fires without an explicit
+// user action and so must honor the same opt-out) can check the same
+// decision before making an outbound call.
+func Enabled() bool { return enabledFromEnv() }
+
 // enabledFromEnv reports whether the background checker should run at all:
 // only an explicit falsy UT_UPDATE_CHECK (e.g. "0", "false") disables it;
 // unset, truthy, or unparseable values leave it enabled.
