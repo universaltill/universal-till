@@ -87,7 +87,12 @@ var bkpMaxDBSize int64 = 1 << 30 // 1GB
 // Size alongside its multipart.File, which already implements ReaderAt
 // (see import_page.go) — so the ZIP is read directly off the upload,
 // never buffered to disk as a whole file first.
-func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int) (Result, error) {
+//
+// enabledSymbologyIDs/useItemNumbersAsBarcodes (ut-docs#1224) mirror Parse's
+// own params of the same name, meaningful only when useItemNumbersAsBarcodes
+// is true — this format never carries barcodes of its own (see the PLU
+// comment below), so enabledSymbologyIDs is otherwise unused.
+func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyIDs []string, useItemNumbersAsBarcodes bool) (Result, error) {
 	zr, err := zip.NewReader(r, size)
 	if err != nil {
 		return Result{}, fmt.Errorf("open zip: %w", err)
@@ -352,6 +357,22 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int) (Result, error) {
 			// that later row is another dedup candidate or a genuine PLU
 			// that happens to read the same as one.
 			seen[item.SKU] = true
+		}
+		// useItemNumbersAsBarcodes (ut-docs#1224): this format never carries
+		// barcodes of its own (Barcode is left empty above), so any clean
+		// row with a PLU is eligible — EXCEPT one whose PLU was just
+		// deduped above (item.SKUIssue != ""): the raw PLU it shares with
+		// an earlier row is exactly what must NOT become a barcode two
+		// distinct items would both scan as. Use plu (the raw source
+		// number), not item.SKU, which may already hold a synthesized
+		// suffix by this point.
+		if useItemNumbersAsBarcodes && item.Issue == "" && plu != "" {
+			if item.SKUIssue != "" {
+				item.BarcodeIssue = BarcodeIssueDuplicateItemNumber
+				item.BarcodeIssueRaw = plu
+			} else {
+				item.Barcode, item.BarcodeType, item.BarcodeIssue, item.BarcodeIssueRaw = deriveNumberBarcode(plu, enabledSymbologyIDs)
+			}
 		}
 		res.Items = append(res.Items, item)
 	}

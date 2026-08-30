@@ -39,7 +39,7 @@ Loose Screws,SKU-300,,0.05,Hardware,,1000,N
 `
 
 func TestParseLoyverse(t *testing.T) {
-	res, err := Parse(strings.NewReader(loyverseCSV), 2, testEnabledIDs)
+	res, err := Parse(strings.NewReader(loyverseCSV), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -63,7 +63,7 @@ func TestParseLoyverse(t *testing.T) {
 }
 
 func TestParseSquare(t *testing.T) {
-	res, err := Parse(strings.NewReader(squareCSV), 2, testEnabledIDs)
+	res, err := Parse(strings.NewReader(squareCSV), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -94,7 +94,7 @@ Milchkaffee to go,,,,3.50,1.20,19.00,Y,3.50,7.00,pcs,SU-003,4006381333931,Kaltge
 `
 
 func TestParseSumUp(t *testing.T) {
-	res, err := Parse(strings.NewReader(sumupCSV), 2, testEnabledIDs)
+	res, err := Parse(strings.NewReader(sumupCSV), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestDetectFormatParenSuffixDepartmentWinsOverSumUpFallback(t *testing.T) {
 }
 
 func TestParseGenericAndZeroDecimals(t *testing.T) {
-	res, err := Parse(strings.NewReader(genericCSV), 0, testEnabledIDs)
+	res, err := Parse(strings.NewReader(genericCSV), 0, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -217,7 +217,7 @@ func TestParseGenericAndZeroDecimals(t *testing.T) {
 }
 
 func TestParseGenericERPStockAndDepartment(t *testing.T) {
-	res, err := Parse(strings.NewReader(erpCSV), 2, testEnabledIDs)
+	res, err := Parse(strings.NewReader(erpCSV), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestHeaderMatchingParenthesisedSuffix(t *testing.T) {
 	for _, c := range cases {
 		t.Run(c.name, func(t *testing.T) {
 			csv := "Name,Price," + c.header + "\nEspresso,2.00,19\n"
-			res, err := Parse(strings.NewReader(csv), 2, testEnabledIDs)
+			res, err := Parse(strings.NewReader(csv), 2, testEnabledIDs, false)
 			if err != nil {
 				t.Fatalf("parse: %v", err)
 			}
@@ -287,7 +287,7 @@ func TestHeaderMatchingParenthesisedSuffix(t *testing.T) {
 // The fix must be general (every columnSynonyms field), not a tax-only
 // patch — prove it against an unrelated field.
 func TestHeaderMatchingParenthesisedSuffixNonTaxField(t *testing.T) {
-	res, err := Parse(strings.NewReader("Name,Price(GBP)\nWidget,4.50\n"), 2, testEnabledIDs)
+	res, err := Parse(strings.NewReader("Name,Price(GBP)\nWidget,4.50\n"), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestHeaderMatchingParenthesisedSuffixNonTaxField(t *testing.T) {
 // dine-in rate — the exact silent-money/compliance-corruption class this
 // package's other guardrails (ut-docs#512, #586) exist to prevent.
 func TestHeaderMatchingParenSuffixNeverShadowsAnExactMatch(t *testing.T) {
-	res, err := Parse(strings.NewReader("Name,Price (cost),Price\nWidget,1.10,4.50\n"), 2, testEnabledIDs)
+	res, err := Parse(strings.NewReader("Name,Price (cost),Price\nWidget,1.10,4.50\n"), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -320,7 +320,7 @@ func TestHeaderMatchingParenSuffixNeverShadowsAnExactMatch(t *testing.T) {
 		t.Errorf("exact \"Price\" column shadowed by the earlier lenient \"Price (cost)\" match: got %d, want 450 (the real retail price, not the 110 cost price)", got)
 	}
 
-	res, err = Parse(strings.NewReader("Name,Price,VAT (takeaway),VAT rate\nEspresso,2.00,7,19\n"), 2, testEnabledIDs)
+	res, err = Parse(strings.NewReader("Name,Price,VAT (takeaway),VAT rate\nEspresso,2.00,7,19\n"), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -348,7 +348,7 @@ Bad Takeaway,2.50,19,wat
 `
 
 func TestParseTaxColumns(t *testing.T) {
-	res, err := Parse(strings.NewReader(taxCSV), 2, testEnabledIDs)
+	res, err := Parse(strings.NewReader(taxCSV), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -402,7 +402,7 @@ func TestParseTaxColumns(t *testing.T) {
 // A file with no tax column at all (every pre-existing fixture) must leave
 // the tax fields untouched — existing Loyverse/Square imports unchanged.
 func TestParseNoTaxColumnLeavesTaxUnset(t *testing.T) {
-	res, err := Parse(strings.NewReader(loyverseCSV), 2, testEnabledIDs)
+	res, err := Parse(strings.NewReader(loyverseCSV), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -580,7 +580,7 @@ func TestNormalizeDecimalComma(t *testing.T) {
 }
 
 func TestParseRejectsHeaderlessGarbage(t *testing.T) {
-	if _, err := Parse(strings.NewReader("a,b,c\n1,2,3\n"), 2, testEnabledIDs); err == nil {
+	if _, err := Parse(strings.NewReader("a,b,c\n1,2,3\n"), 2, testEnabledIDs, false); err == nil {
 		t.Fatal("no name column must be an error")
 	}
 }
@@ -641,7 +641,7 @@ func TestParseImportsShortAndAlphanumericBarcodes(t *testing.T) {
 Loose Tomatoes,1.50,4011
 Supplier Widget,2.00,SKU-ABC123
 `
-	res, err := Parse(strings.NewReader(csv), 2, testEnabledIDs)
+	res, err := Parse(strings.NewReader(csv), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -673,7 +673,7 @@ func TestParseReportsNoSymbologyMatchReason(t *testing.T) {
 	csv := `Name,Price,Barcode
 Mystery Item,1.00,12345
 `
-	res, err := Parse(strings.NewReader(csv), 2, narrowIDs)
+	res, err := Parse(strings.NewReader(csv), 2, narrowIDs, false)
 	if err != nil {
 		t.Fatalf("parse: %v", err)
 	}
@@ -689,6 +689,119 @@ Mystery Item,1.00,12345
 	}
 	if it.BarcodeIssueRaw != "12345" {
 		t.Errorf("BarcodeIssueRaw = %q, want %q", it.BarcodeIssueRaw, "12345")
+	}
+}
+
+// TestParseUseItemNumbersAsBarcodesOptIn is ut-docs#1224's main acceptance
+// case: a source with no barcode column at all (unlike
+// TestParseImportsShortAndAlphanumericBarcodes, which has one) gets each
+// item's own SKU/item number turned into its barcode when the operator
+// opts in — via the same shared registry matcher (normalizeBarcode) any
+// other barcode goes through, not a special case.
+func TestParseUseItemNumbersAsBarcodesOptIn(t *testing.T) {
+	csv := `Name,SKU,Price
+Cappuccino,30005,2.50
+`
+	res, err := Parse(strings.NewReader(csv), 2, testEnabledIDs, true)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+	it := res.Items[0]
+	if it.Barcode != "30005" {
+		t.Errorf("Barcode = %q, want %q", it.Barcode, "30005")
+	}
+	// A plain 5-digit number matches none of the checksum-validated
+	// symbologies (EAN13/EAN8/UPCA/UPCE/GTIN14 all reject the wrong
+	// length) — it must land on one of the permissive catch-alls, never be
+	// mistaken for a real EAN.
+	if it.BarcodeType == "EAN13" || it.BarcodeType == "EAN8" || it.BarcodeType == "UPCA" || it.BarcodeType == "UPCE" || it.BarcodeType == "GTIN14" {
+		t.Errorf("BarcodeType = %q, must not be a checksum-validated GS1 symbology", it.BarcodeType)
+	}
+	if it.BarcodeType == "" {
+		t.Error("BarcodeType must be set alongside a derived Barcode")
+	}
+	if it.BarcodeIssue != "" {
+		t.Errorf("BarcodeIssue = %q, want none", it.BarcodeIssue)
+	}
+}
+
+// TestParseUseItemNumbersAsBarcodesDefaultOff confirms the opt-in is
+// genuinely opt-in: the exact same barcode-less file, opt-in left off
+// (false, the default), must import exactly as it always has — Barcode
+// stays empty. This is the regression this card must never introduce.
+func TestParseUseItemNumbersAsBarcodesDefaultOff(t *testing.T) {
+	csv := `Name,SKU,Price
+Cappuccino,30005,2.50
+`
+	res, err := Parse(strings.NewReader(csv), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+	if got := res.Items[0].Barcode; got != "" {
+		t.Errorf("Barcode = %q, want empty when opt-in is off", got)
+	}
+	if got := res.Items[0].BarcodeType; got != "" {
+		t.Errorf("BarcodeType = %q, want empty when opt-in is off", got)
+	}
+}
+
+// TestParseUseItemNumbersAsBarcodesNeverOverridesRealBarcode confirms the
+// opt-in only fills a GAP — a row whose barcode column already carries a
+// real value keeps it untouched, never replaced by an SKU-derived one.
+func TestParseUseItemNumbersAsBarcodesNeverOverridesRealBarcode(t *testing.T) {
+	csv := `Name,SKU,Price,Barcode
+Coca-Cola 330ml,10001,1.40,5449000000996
+`
+	res, err := Parse(strings.NewReader(csv), 2, testEnabledIDs, true)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if got := res.Items[0].Barcode; got != "5449000000996" {
+		t.Errorf("Barcode = %q, want the real barcode column value untouched", got)
+	}
+	if got := res.Items[0].BarcodeType; got != "EAN13" {
+		t.Errorf("BarcodeType = %q, want EAN13", got)
+	}
+}
+
+// TestParseUseItemNumbersAsBarcodesSkipsInFileDuplicate confirms the
+// collision-safety rule (ut-docs#1224's own acceptance criteria): only an
+// item number that's unique in the file may become a barcode, or two
+// distinct items would both scan as the same thing. The first occurrence
+// still claims it; only the later, colliding row is denied.
+func TestParseUseItemNumbersAsBarcodesSkipsInFileDuplicate(t *testing.T) {
+	csv := `Name,SKU,Price
+Cappuccino,555,2.50
+Latte,555,2.80
+`
+	res, err := Parse(strings.NewReader(csv), 2, testEnabledIDs, true)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(res.Items))
+	}
+	first, second := res.Items[0], res.Items[1]
+	if first.Barcode != "555" {
+		t.Errorf("first occurrence Barcode = %q, want %q", first.Barcode, "555")
+	}
+	if first.BarcodeIssue != "" {
+		t.Errorf("first occurrence BarcodeIssue = %q, want none", first.BarcodeIssue)
+	}
+	if second.Barcode != "" {
+		t.Errorf("second (colliding) occurrence Barcode = %q, want empty", second.Barcode)
+	}
+	if second.BarcodeIssue != BarcodeIssueDuplicateItemNumber {
+		t.Errorf("second occurrence BarcodeIssue = %q, want %q", second.BarcodeIssue, BarcodeIssueDuplicateItemNumber)
+	}
+	if second.BarcodeIssueRaw != "555" {
+		t.Errorf("second occurrence BarcodeIssueRaw = %q, want %q", second.BarcodeIssueRaw, "555")
 	}
 }
 

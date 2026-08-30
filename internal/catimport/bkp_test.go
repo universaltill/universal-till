@@ -140,7 +140,7 @@ func TestParseBkp_NormalRowImports(t *testing.T) {
 		"meta.inf":  []byte(validMetaInfNoChecksums),
 	})
 
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("ParseBkp: %v", err)
 	}
@@ -171,7 +171,7 @@ func TestParseBkp_StatusDeletedExcluded(t *testing.T) {
 	})
 	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
 
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("ParseBkp: %v", err)
 	}
@@ -189,7 +189,7 @@ func TestParseBkp_OrderToggleExcluded(t *testing.T) {
 	})
 	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
 
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("ParseBkp: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestParseBkp_BlankNameExcluded(t *testing.T) {
 	})
 	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
 
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("ParseBkp: %v", err)
 	}
@@ -225,7 +225,7 @@ func TestParseBkp_MultiLineNameCollapsed(t *testing.T) {
 	})
 	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
 
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("ParseBkp: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestParseBkp_DuplicateProductNumber(t *testing.T) {
 	})
 	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
 
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("ParseBkp: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestParseBkp_ProductNumberSharedBySixItems(t *testing.T) {
 	dbBytes := buildBkpDBBytes(t, rows)
 	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
 
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("ParseBkp: %v", err)
 	}
@@ -328,7 +328,7 @@ func TestParseBkp_SynthesizedSuffixNeverCollidesWithARealPLU(t *testing.T) {
 	})
 	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
 
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("ParseBkp: %v", err)
 	}
@@ -377,7 +377,7 @@ func TestParseBkp_WhitespaceOnlyProductNumberTreatedAsEmpty(t *testing.T) {
 	})
 	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
 
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("ParseBkp: %v", err)
 	}
@@ -400,7 +400,7 @@ func TestParseBkp_BadPrice(t *testing.T) {
 	})
 	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
 
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("ParseBkp: %v", err)
 	}
@@ -430,7 +430,7 @@ func TestParseBkp_GermanDecimalCommaPrice(t *testing.T) {
 	})
 	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
 
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("ParseBkp: %v", err)
 	}
@@ -461,7 +461,7 @@ func TestParseBkp_BadPriceRowDoesNotBlockLaterGoodRowSamePLU(t *testing.T) {
 	})
 	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
 
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("ParseBkp: %v", err)
 	}
@@ -478,7 +478,7 @@ func TestParseBkp_BadPriceRowDoesNotBlockLaterGoodRowSamePLU(t *testing.T) {
 
 func TestParseBkp_MissingBackupDB(t *testing.T) {
 	zipBytes := buildBkpZip(t, map[string][]byte{"meta.inf": []byte(validMetaInfNoChecksums)})
-	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if !errors.Is(err, ErrBkpMissingFiles) {
 		t.Fatalf("err = %v, want ErrBkpMissingFiles", err)
 	}
@@ -489,7 +489,7 @@ func TestParseBkp_MissingMetaInf(t *testing.T) {
 		{ProductNumber: "1", ProductTextShort: "Espresso", SalesPrice: 2.5, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
 	})
 	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes})
-	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if !errors.Is(err, ErrBkpMissingFiles) {
 		t.Fatalf("err = %v, want ErrBkpMissingFiles", err)
 	}
@@ -500,7 +500,7 @@ func TestParseBkp_InvalidMetaJSON(t *testing.T) {
 		{ProductNumber: "1", ProductTextShort: "Espresso", SalesPrice: 2.5, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
 	})
 	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte("not json at all {{{")})
-	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if !errors.Is(err, ErrBkpInvalidMeta) {
 		t.Fatalf("err = %v, want ErrBkpInvalidMeta", err)
 	}
@@ -523,7 +523,7 @@ func TestParseBkp_ChecksumMismatchFailsLoudly(t *testing.T) {
 		"backup.db": dbBytes,
 		"meta.inf":  []byte(metaInfWithChecksum(wrongHex)),
 	})
-	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if !errors.Is(err, ErrBkpChecksumMismatch) {
 		t.Fatalf("err = %v, want ErrBkpChecksumMismatch", err)
 	}
@@ -539,7 +539,7 @@ func TestParseBkp_ChecksumMatchPasses(t *testing.T) {
 		"backup.db": dbBytes,
 		"meta.inf":  []byte(metaInfWithChecksum(sha256Hex(dbBytes))),
 	})
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("ParseBkp: %v", err)
 	}
@@ -646,7 +646,7 @@ func TestParseBkp_BackupDBOverCapRejected(t *testing.T) {
 		"backup.db": dbBytes,
 		"meta.inf":  []byte(validMetaInfNoChecksums),
 	})
-	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if !errors.Is(err, ErrBkpTooLarge) {
 		t.Fatalf("err = %v, want ErrBkpTooLarge (backup.db is %d bytes, cap is 50)", err, len(dbBytes))
 	}
@@ -663,7 +663,7 @@ func TestParseBkp_BackupDBUnderCapImportsFine(t *testing.T) {
 		"backup.db": dbBytes,
 		"meta.inf":  []byte(validMetaInfNoChecksums),
 	})
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("ParseBkp at the exact cap boundary: %v", err)
 	}
@@ -700,7 +700,7 @@ func TestParseBkp_MismatchedDeclaredSizeRejected(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			zipBytes := buildBkpZipWithMismatchedBackupDBSize(t, dbBytes, tc.claimed, []byte(validMetaInfNoChecksums))
-			_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+			_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 			if err == nil {
 				t.Fatal("ParseBkp accepted a backup.db whose declared size doesn't match its real content — want a rejection")
 			}
@@ -745,7 +745,7 @@ func TestParseBkp_OversizedEntryRejectedWithoutStreamingIt(t *testing.T) {
 		"meta.inf":  []byte(validMetaInfNoChecksums),
 	})
 	counting := &countingReaderAt{inner: bytes.NewReader(zipBytes)}
-	_, err := ParseBkp(counting, int64(len(zipBytes)), 2)
+	_, err := ParseBkp(counting, int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if !errors.Is(err, ErrBkpTooLarge) {
 		t.Fatalf("err = %v, want ErrBkpTooLarge", err)
 	}
@@ -773,7 +773,7 @@ func TestParseBkp_CorruptBackupDBCRCRejected(t *testing.T) {
 	// that can catch it is archive/zip's checksum verification at EOF.
 	zipBytes := buildBkpZipRawBackupDB(t, dbBytes, uint64(len(dbBytes)),
 		crc32.ChecksumIEEE(dbBytes)+1, []byte(validMetaInfNoChecksums))
-	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if !errors.Is(err, zip.ErrChecksum) {
 		t.Fatalf("err = %v, want zip.ErrChecksum — the streamed copy must still trigger archive/zip's CRC32 check", err)
 	}
@@ -796,7 +796,7 @@ func TestParseBkp_TaxColumnsMapToTaxRates(t *testing.T) {
 	})
 	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
 
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("ParseBkp: %v", err)
 	}
@@ -835,7 +835,7 @@ func TestParseBkp_UnparseableTaxWarnsButStillImports(t *testing.T) {
 	})
 	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
 
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("ParseBkp: %v", err)
 	}
@@ -890,7 +890,7 @@ func TestParseBkp_NoTaxColumnsInSourceSchemaStillImports(t *testing.T) {
 	}
 	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
 
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("ParseBkp must not error on a pre-tax-column schema: %v", err)
 	}
@@ -931,7 +931,7 @@ func TestParseBkp_RealWorldMetaShape_CRC32ChecksumAccepted(t *testing.T) {
 		"backup.db": dbBytes,
 		"meta.inf":  []byte(metaInfRealShape(crc32Hex(dbBytes), len(dbBytes))),
 	})
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("a real-shaped backup with a correct CRC32 must import, got: %v", err)
 	}
@@ -952,7 +952,7 @@ func TestParseBkp_RealWorldMetaShape_WrongCRC32Rejected(t *testing.T) {
 		"backup.db": dbBytes,
 		"meta.inf":  []byte(metaInfRealShape(wrong, len(dbBytes))),
 	})
-	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	_, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if !errors.Is(err, ErrBkpChecksumMismatch) {
 		t.Fatalf("err = %v, want ErrBkpChecksumMismatch", err)
 	}
@@ -969,7 +969,7 @@ func TestParseBkp_UnrecognisedChecksumWidthDoesNotHardFail(t *testing.T) {
 		"backup.db": dbBytes,
 		"meta.inf":  []byte(metaInfRealShape(strings.Repeat("b", 40), len(dbBytes))), // SHA-1 width
 	})
-	if _, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2); err != nil {
+	if _, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false); err != nil {
 		t.Fatalf("an unrecognised checksum width must not hard-fail, got: %v", err)
 	}
 }
@@ -1058,7 +1058,7 @@ func TestParseBkp_RealSchema_CategoryComesFromProductGroupsJoin(t *testing.T) {
 		"backup.db": dbBytes,
 		"meta.inf":  []byte(metaInfRealShape(crc32Hex(dbBytes), len(dbBytes))),
 	})
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("a real-schema backup must import, got: %v", err)
 	}
@@ -1089,11 +1089,106 @@ func TestParseBkp_RealSchema_UnmatchedGroupStillImports(t *testing.T) {
 		"backup.db": dbBytes,
 		"meta.inf":  []byte(metaInfRealShape(crc32Hex(dbBytes), len(dbBytes))),
 	})
-	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2)
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
 	if err != nil {
 		t.Fatalf("unmatched group must not fail the import, got: %v", err)
 	}
 	if len(res.Items) != 1 || res.Items[0].Category != "" {
 		t.Fatalf("items=%d category=%q, want 1 item with empty category", len(res.Items), res.Items[0].Category)
+	}
+}
+
+// TestParseBkp_UseItemNumbersAsBarcodesOptIn is ut-docs#1224's main
+// acceptance case for this format: this source never carries barcodes of
+// its own (Barcode is always empty out of ParseBkp — see the "must never be
+// run through normalizeBarcode" comment above), so opting in derives one
+// from the PLU via the same shared registry matcher any other barcode goes
+// through.
+func TestParseBkp_UseItemNumbersAsBarcodesOptIn(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "30005", ProductTextShort: "Cappuccino", SalesPrice: 2.50, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, true)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+	it := res.Items[0]
+	if it.Barcode != "30005" {
+		t.Errorf("Barcode = %q, want the PLU %q", it.Barcode, "30005")
+	}
+	if it.BarcodeType == "" {
+		t.Error("BarcodeType must be set alongside a derived Barcode")
+	}
+	if it.BarcodeIssue != "" {
+		t.Errorf("BarcodeIssue = %q, want none", it.BarcodeIssue)
+	}
+}
+
+// TestParseBkp_UseItemNumbersAsBarcodesDefaultOff confirms the opt-in is
+// genuinely opt-in for this format too: the same source, opt-in left off,
+// must import exactly as every existing .bkp test already expects —
+// Barcode stays empty.
+func TestParseBkp_UseItemNumbersAsBarcodesDefaultOff(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "30005", ProductTextShort: "Cappuccino", SalesPrice: 2.50, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if got := res.Items[0].Barcode; got != "" {
+		t.Errorf("Barcode = %q, want empty when opt-in is off", got)
+	}
+}
+
+// TestParseBkp_UseItemNumbersAsBarcodesSkipsInFileDuplicate is ut-docs#1224's
+// collision-safety acceptance criteria, for the format that actually
+// motivated it (#1222's real pilot backup reused PLUs across distinct
+// products): a PLU that's NOT unique post-#1222-dedup — i.e. a row that got
+// a synthesized "-N" SKU suffix — must not become a barcode two distinct
+// items would both scan as. The first occurrence (bare PLU, no SKUIssue)
+// still claims it.
+func TestParseBkp_UseItemNumbersAsBarcodesSkipsInFileDuplicate(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "555", ProductTextShort: "Latte", SalesPrice: 3.00, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+		{ProductNumber: "555", ProductTextShort: "Latte (dup)", SalesPrice: 3.20, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, true)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(res.Items))
+	}
+	first, second := res.Items[0], res.Items[1]
+	if first.Barcode != "555" {
+		t.Errorf("first occurrence Barcode = %q, want %q", first.Barcode, "555")
+	}
+	if first.BarcodeIssue != "" {
+		t.Errorf("first occurrence BarcodeIssue = %q, want none", first.BarcodeIssue)
+	}
+	// The second occurrence's SKU is already the synthesized "555-2" (#1222,
+	// unaffected by this card) — what this card adds is that it must ALSO
+	// get no barcode derived from the shared raw PLU.
+	if second.SKU != "555-2" {
+		t.Errorf("second occurrence SKU = %q, want %q", second.SKU, "555-2")
+	}
+	if second.Barcode != "" {
+		t.Errorf("second (colliding) occurrence Barcode = %q, want empty", second.Barcode)
+	}
+	if second.BarcodeIssue != BarcodeIssueDuplicateItemNumber {
+		t.Errorf("second occurrence BarcodeIssue = %q, want %q", second.BarcodeIssue, BarcodeIssueDuplicateItemNumber)
+	}
+	if second.BarcodeIssueRaw != "555" {
+		t.Errorf("second occurrence BarcodeIssueRaw = %q, want the raw PLU %q", second.BarcodeIssueRaw, "555")
 	}
 }

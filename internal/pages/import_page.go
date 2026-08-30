@@ -223,20 +223,32 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		// Same shared registry matcher AddBarcode/the scan path use (ADR-0059
+		// Decision §3, ut-docs#936) — never brick an upload on a settings
+		// read failure, same rule as AddBarcode: EnabledBarcodeSymbologies
+		// already returns the compatibility-preserving default set alongside
+		// any error. Fetched once, above the format branch, so both parsers
+		// and every re-parse below (currency switch, barcode opt-in) share
+		// the same read.
+		enabledIDs, symErr := settingsRepo.EnabledBarcodeSymbologies(r.Context())
+		if symErr != nil {
+			log.Printf("[import] enabled symbologies unavailable, using defaults: %v", symErr)
+		}
+		// ut-docs#1224: the operator's per-import opt-in to derive a barcode
+		// from each item's own number, offered as an inline checkbox on the
+		// preview (see barcodelessCatalog/the preview render below) when the
+		// source carries no barcodes of its own. An unchecked checkbox sends
+		// no field at all, so "never previewed," "previewed but not shown
+		// the checkbox," and "shown but left unticked" all read the same
+		// way here: false, same as the field simply not existing before
+		// this card — never a gate, never a second round-trip.
+		useItemNumbersAsBarcodes := r.FormValue("use_item_numbers_as_barcodes") == "1"
+
 		var res catimport.Result
 		if isBkp {
-			res, err = catimport.ParseBkp(file, fileSize, httpx.ActiveCurrency().Decimals)
+			res, err = catimport.ParseBkp(file, fileSize, httpx.ActiveCurrency().Decimals, enabledIDs, useItemNumbersAsBarcodes)
 		} else {
-			// Same shared registry matcher AddBarcode/the scan path use
-			// (ADR-0059 Decision §3, ut-docs#936) — never brick a CSV
-			// upload on a settings read failure, same rule as AddBarcode:
-			// EnabledBarcodeSymbologies already returns the compatibility-
-			// preserving default set alongside any error.
-			enabledIDs, symErr := settingsRepo.EnabledBarcodeSymbologies(r.Context())
-			if symErr != nil {
-				log.Printf("[import] enabled symbologies unavailable, using defaults: %v", symErr)
-			}
-			res, err = catimport.Parse(file, httpx.ActiveCurrency().Decimals, enabledIDs)
+			res, err = catimport.Parse(file, httpx.ActiveCurrency().Decimals, enabledIDs, useItemNumbersAsBarcodes)
 		}
 		if err != nil {
 			switch {
@@ -337,13 +349,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					return
 				}
 				if isBkp {
-					res, err = catimport.ParseBkp(file, fileSize, chosen.Decimals)
+					res, err = catimport.ParseBkp(file, fileSize, chosen.Decimals, enabledIDs, useItemNumbersAsBarcodes)
 				} else {
-					enabledIDs, symErr := settingsRepo.EnabledBarcodeSymbologies(r.Context())
-					if symErr != nil {
-						log.Printf("[import] enabled symbologies unavailable, using defaults: %v", symErr)
-					}
-					res, err = catimport.Parse(file, chosen.Decimals, enabledIDs)
+					res, err = catimport.Parse(file, chosen.Decimals, enabledIDs, useItemNumbersAsBarcodes)
 				}
 				if err != nil {
 					log.Printf("[import] re-parse under confirmed currency %s: %v", chosen.Code, err)
@@ -902,6 +910,18 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// carries the attribute).
 				fmt.Fprintf(&b, `<input type="hidden" name="staged_id" value="%s" form="import-form">`, stagedFormID)
 			}
+			// ut-docs#1224: offered only when the source carries no barcodes
+			// of its own (barcodelessCatalog) — an inline, unchecked-by-
+			// default checkbox rather than a separate blocking prompt/round-
+			// trip: the "Confirm & Import" submit below is a real HTML form
+			// submit (type="submit" form="import-form"), so a checkbox left
+			// unticked simply never sends use_item_numbers_as_barcodes at
+			// all, reading identically to "never asked" — genuinely
+			// per-import, genuinely default off, with no extra request.
+			if barcodelessCatalog(res) {
+				fmt.Fprintf(&b, `<p><label><input type="checkbox" name="use_item_numbers_as_barcodes" value="1" form="import-form"> %s</label></p>`,
+					htmlEscape(T("import.barcode_opt_in.label")))
+			}
 		}
 		b.WriteString(`<table class="table"><thead><tr><th>` + T("catalog.col.name") + `</th><th>` +
 			T("catalog.col.price") + `</th><th>` + T("catalog.barcode") + `</th><th>` +
@@ -1081,13 +1101,42 @@ func renderImportCurrencyConfirm(w http.ResponseWriter, T func(string) string, s
 	_, _ = w.Write([]byte(b.String()))
 }
 
+// barcodelessCatalog reports whether res is worth offering the
+// use_item_numbers_as_barcodes checkbox for (ut-docs#1224): at least one row
+// that would actually import (Issue == "") carries an item number but no
+// barcode of its own. Works uniformly for both formats with no per-format
+// branching — the .bkp path never populates Barcode at all (see bkp.go),
+// and a CSV with no barcode column or only empty cells leaves it empty too.
+// A catalog that already carries real barcodes never matches this, so the
+// checkbox never adds friction to the common case.
+func barcodelessCatalog(res catimport.Result) bool {
+	for _, it := range res.Items {
+		if it.Issue == "" && it.SKU != "" && it.Barcode == "" {
+			return true
+		}
+	}
+	return false
+}
+
 // confirmCarriedOverrideField matches exactly the per-row problem-grid
 // field names the commit handler reads (row_include_<i>, row_name_<i>,
-// row_price_<i>) — the only request fields renderImportCurrencyConfirm ever
+// row_price_<i>) plus the barcode opt-in checkbox (use_item_numbers_as_barcodes,
+// ut-docs#1224) — the only request fields renderImportCurrencyConfirm ever
 // reflects back into the prompt's HTML. An allow-list on purpose, same
 // stance as forceableImportIssue: any other submitted field name never
 // round-trips through the response.
-var confirmCarriedOverrideField = regexp.MustCompile(`^row_(include|name|price)_[0-9]+$`)
+//
+// The checkbox needs this for exactly the same reason row_* does (ut-docs#601):
+// a staged commit that also needs the currency-confirm gate has that gate's
+// response fully REPLACE #import-result — including the checkbox itself, an
+// input outside <form id="import-form"> that only exists there because the
+// preview render put it there — so without re-emitting it as a hidden input
+// here, an operator who ticked it, then hit the (unrelated) currency gate,
+// silently loses their choice on the "Confirm & Import" resubmit: confirmed
+// live, driving this exact sequence in a real browser (ut-docs#1224 tester
+// note) — the item imported with no barcode despite the box being ticked,
+// before this fix.
+var confirmCarriedOverrideField = regexp.MustCompile(`^(row_(include|name|price)_[0-9]+|use_item_numbers_as_barcodes)$`)
 
 // writeCatalogCSV is G22b's catalog export writer. The CSV round-trips
 // with our own importer (column names come from its synonym table), so
@@ -1220,6 +1269,8 @@ func translateBarcodeIssue(T func(string) string, it catimport.ImportItem) strin
 	switch it.BarcodeIssue {
 	case catimport.BarcodeIssueNoSymbologyMatch:
 		return fmt.Sprintf(T("import.status.barcode_no_symbology_match"), it.BarcodeIssueRaw)
+	case catimport.BarcodeIssueDuplicateItemNumber:
+		return fmt.Sprintf(T("import.status.barcode_duplicate_item_number"), it.BarcodeIssueRaw)
 	default:
 		log.Printf("[import] unrecognised BarcodeIssue reason code %q", it.BarcodeIssue)
 		return T("import.status.unknown_issue")
