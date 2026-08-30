@@ -147,31 +147,46 @@
       next.click(); next.focus();
     }
   }">
-    <form class="scan-row" hx-post="/api/pos/scan" hx-target="#basket" hx-swap="outerHTML">
-      <!-- inputmode="none": keep scanner focus without inviting any IME at
-           load (ut-docs#155) — the OSK/toggle covers deliberate typing.
-           NOT when the OSK is off: a touch till with the OSK disabled would
-           otherwise have no way to type a barcode at all. -->
-      <input type="text" name="code" {{ if ne (oskmode) "off" }}inputmode="none" {{ end }}placeholder="{{ T "tender.scan.barcode" }}" aria-label="{{ T "tender.scan.barcode" }}" autofocus required>
-      <input type="number" name="qty" value="1" min="1" step="1" required title="{{ T "tender.scan.qty" }}" aria-label="{{ T "tender.scan.qty" }}">
-      <button class="btn" type="submit">{{ T "tender.scan.add" }}</button>
-      <button class="btn secondary osk-toggle" type="button" data-osk-toggle hidden
-              title="{{ T "osk.toggle" }}" aria-label="{{ T "osk.toggle" }}">⌨️</button>
-      <!-- Camera barcode/QR scan (ut-docs#548): unhidden by app.js only when
-           the browser has a native BarcodeDetector — feature-detection is
-           client-side-only, so the server always renders it hidden and lets
-           JS decide, unlike ai-identify's server-side (API key + online) gate
-           below. Never steals focus from, or disables, the wedge/HID scanner
-           path (ut-docs#76/#423) — purely additive. -->
-      <button class="btn secondary" type="button" id="barcode-scan-open" hidden
-              title="{{ T "scan.camera.button" }}" aria-label="{{ T "scan.camera.button" }}">🔳</button>
-      {{ if .aiIdentify }}
-      <button class="btn secondary" type="button" id="ai-identify-open" hidden
-              title="{{ T "ai.identify.button" }}">📷</button>
-      {{ end }}
-    </form>
+    <!-- 2026-08-30 (independent review): scan-row + held-sales scroll in
+         their own inner region instead of .tender-default-footer below
+         chasing them with margin-top:auto/position:sticky — a held-sales
+         strip that grows (persistent DB state, not a transient) used to
+         push the footer down until it scrolled off with everything else,
+         and a first attempt to pin it with `position: sticky` introduced
+         its own bug (the sticky box's rendered position overlapped the
+         scan-row, making the Add button unclickable — a real, confirmed
+         regression, not hypothetical). Same proven pattern this file
+         already uses for .basket-scroll/.totals: the SCROLLABLE part gets
+         its own flex:1/overflow-y:auto wrapper, so .tender-default-footer
+         is just a plain, un-scrolled sibling after it — always visible,
+         no positioning trick needed at all. -->
+    <div class="tender-scroll">
+      <form class="scan-row" hx-post="/api/pos/scan" hx-target="#basket" hx-swap="outerHTML">
+        <!-- inputmode="none": keep scanner focus without inviting any IME at
+             load (ut-docs#155) — the OSK/toggle covers deliberate typing.
+             NOT when the OSK is off: a touch till with the OSK disabled would
+             otherwise have no way to type a barcode at all. -->
+        <input type="text" name="code" {{ if ne (oskmode) "off" }}inputmode="none" {{ end }}placeholder="{{ T "tender.scan.barcode" }}" aria-label="{{ T "tender.scan.barcode" }}" autofocus required>
+        <input type="number" name="qty" value="1" min="1" step="1" required title="{{ T "tender.scan.qty" }}" aria-label="{{ T "tender.scan.qty" }}">
+        <button class="btn" type="submit">{{ T "tender.scan.add" }}</button>
+        <button class="btn secondary osk-toggle" type="button" data-osk-toggle hidden
+                title="{{ T "osk.toggle" }}" aria-label="{{ T "osk.toggle" }}">⌨️</button>
+        <!-- Camera barcode/QR scan (ut-docs#548): unhidden by app.js only when
+             the browser has a native BarcodeDetector — feature-detection is
+             client-side-only, so the server always renders it hidden and lets
+             JS decide, unlike ai-identify's server-side (API key + online) gate
+             below. Never steals focus from, or disables, the wedge/HID scanner
+             path (ut-docs#76/#423) — purely additive. -->
+        <button class="btn secondary" type="button" id="barcode-scan-open" hidden
+                title="{{ T "scan.camera.button" }}" aria-label="{{ T "scan.camera.button" }}">🔳</button>
+        {{ if .aiIdentify }}
+        <button class="btn secondary" type="button" id="ai-identify-open" hidden
+                title="{{ T "ai.identify.button" }}">📷</button>
+        {{ end }}
+      </form>
 
-    <div id="held-sales" hx-get="/ui/held" hx-trigger="load" hx-swap="outerHTML"></div>
+      <div id="held-sales" hx-get="/ui/held" hx-trigger="load" hx-swap="outerHTML"></div>
+    </div>
 
     <!-- Payment overlay (ut-docs#1252): the payment-method grid, split-tender
          card and Hold/New-customer footer used to render inline in this
