@@ -220,7 +220,13 @@ body.menu-screen .session-admin-link { display: none; }
 .menu-lang { margin-top: 1.6rem; display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
 .menu-lang-label { font-weight: 600; color: var(--muted); }
 .menu-lang-btns { display: flex; flex-wrap: wrap; gap: .5rem; }
-.menu-lang-btn { min-width: 64px; justify-content: center; text-transform: uppercase; font-weight: 700; letter-spacing: .04em; }
+/* ut-docs#1125: no text-transform/letter-spacing here. Both were written for
+   the old two-letter code labels ("EN", "FA"); now that the label is the
+   language's own native name they actively damage it — uppercase turns
+   "Türkçe" into the shouted "TÜRKÇE", and letter-spacing on Arabic-script
+   names ("العربية", "فارسی") pulls apart glyphs that must stay cursively
+   joined, which reads as broken text to a native speaker. */
+.menu-lang-btn { min-width: 64px; justify-content: center; font-weight: 700; }
 
 /* Sale screen top bar is touch-first: the manager links live in the ☰
    menu now, so hide them here; keep the operator + a big Lock button. */

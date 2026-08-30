@@ -73,8 +73,13 @@
           {{ end }}
           <div class="setup-langs">
             {{ $current := locale }}
+            <!-- ut-docs#1125: native name (via nativelocalename), never the
+                 bare code — a non-technical shop owner doesn't know "fa" is
+                 فارسی. Deliberately no flag: a language isn't a country
+                 (research recorded on the ticket), and it's the same choice
+                 the marketplace catalog tiles below already made. -->
             {{ range locales }}
-              <a class="btn{{ if eq . $current }} primary{{ end }}" href="/setup?lang={{ . }}">{{ . }}</a>
+              <a class="btn{{ if eq . $current }} primary{{ end }}" href="/setup?lang={{ . }}">{{ nativelocalename . }}</a>
             {{ end }}
             <!-- ut-docs#1092: marketplace catalog languages not bundled yet.
                  Each button submits its own plain POST form (this wizard is

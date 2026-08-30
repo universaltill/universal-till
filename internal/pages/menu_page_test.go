@@ -238,3 +238,38 @@ func TestMenuPage_FiscalRegisterTileHiddenForTurkeyEvenWithGermanPluginActive(t 
 		t.Fatalf("expected no fiscal-register tile for TR even with the German plugin active, got: %s", rec.Body.String())
 	}
 }
+
+// ut-docs#1125: the menu page's language row is the third render site for
+// httpx.AvailableLocales() (after the setup wizard's language step and
+// settings' default-locale picker) and must show each locale's native name,
+// never the bare two-letter code — a non-technical operator doesn't know "fa"
+// is فارسی. Pinned by a test rather than left to the manual's screenshots:
+// `make docs-shots` captures /menu above the fold, so this row (which sits
+// below the tile grid) never appears in menu.png and a regression here would
+// be invisible to both CI and the manual.
+func TestMenuPageLanguageRowShowsNativeNamesNotBareCodes(t *testing.T) {
+	mux, _ := newMenuPageTestDeps(t, []common.MenuItem{{Href: "/inventory", Label: "nav.inventory"}})
+	t.Setenv("UT_AUTH", "off")
+
+	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	for _, want := range []string{"العربية", "English", "فارسی", "Türkçe"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /menu language row missing native language name %q", want)
+		}
+	}
+	// Anchored on the href this row actually renders, so the codes' other
+	// legitimate uses on the page (the ?lang= values themselves) cannot
+	// false-positive.
+	for _, code := range []string{"ar", "en", "fa", "tr"} {
+		if strings.Contains(body, `/menu?lang=`+code+`">`+code+`</a>`) {
+			t.Errorf("GET /menu still renders bare locale code %q as a button label", code)
+		}
+	}
+}

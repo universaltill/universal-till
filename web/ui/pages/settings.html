@@ -1288,10 +1288,9 @@
 <!-- ut-docs#861: the shop's default locale — used for anything with no
      request to resolve a per-browser preference from (notification email,
      background jobs). Distinct from the ?lang=/ut_lang cookie a manager's
-     own browser might be on; same "codes, not display names" picker shape
-     as setup.html's own language step (ut-docs#590) — no locale-name map
-     exists elsewhere in this codebase to reuse, and inventing one just for
-     this card would be scope creep. -->
+     own browser might be on. ut-docs#1125: now native names (nativelocalename,
+     shared with setup.html's language step) — no flag, same reasoning
+     recorded on that ticket. -->
 <div class="card">
   <h2>{{ T "settings.language.title" }}</h2>
   <p class="muted">{{ T "settings.language.help" }}</p>
@@ -1299,7 +1298,7 @@
     {{ $cur := defaultlocale }}
     <select name="locale">
       {{ range locales }}
-      <option value="{{ . }}" {{ if eq . $cur }}selected{{ end }}>{{ . }}</option>
+      <option value="{{ . }}" {{ if eq . $cur }}selected{{ end }}>{{ nativelocalename . }}</option>
       {{ end }}
     </select>
     <button class="btn" type="submit">{{ T "settings.language.apply" }}</button>
