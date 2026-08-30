@@ -516,6 +516,31 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
   flex: 1 1 auto;
   min-height: 0;
 }
+/* 2026-08-30 (independent review, third iteration on this ticket — see
+   .tender-scroll's own comment for the fuller history): the .tender-scroll
+   split fixes the held-sales-growth class of clipping structurally (the
+   Payment button can no longer be pushed off by a growing held-sales
+   strip), but at the 1024x600 kiosk floor even the BASE case — zero held
+   sales, just scan row + Hold Sale + Payment, both buttons at their real
+   min-height, no more internal padding/gap left to trim without cutting
+   into an actual touch target — is genuinely ~30px short of tender's
+   `3fr` share of the viewport. That's a real budget shortfall, not
+   internal waste, so only a wider share (not a wrapper/positioning trick)
+   closes it. Scoped to height, not width, and only as far as measured:
+   `main`'s unscoped 4:3 behaviour returns above ~700px (measured
+   break-even ~686px; 700 leaves a small margin instead of cutting it
+   exactly).
+   5fr:6fr (tender ~54.5%), not a bare 1:1 — a plain 1:1 measured to only
+   ~0.3px of clearance in one dev build and +1.5px CLIPPED in the actual
+   e2e harness's own built-binary server (same viewport, same demo seed;
+   the gap is font-metric/footer-content noise between environments, not
+   a real content difference) — nowhere near enough margin to survive
+   that kind of run-to-run noise. 5:6 measured ~15-20px of real headroom
+   in both environments while still leaving products a healthy majority
+   share, not a coin-flip 50/50. */
+@media (max-height: 700px) {
+  .pos-container { grid-template-rows: minmax(8rem, 5fr) minmax(0, 6fr); }
+}
 .pos-container > .basket { grid-area: basket; }
 .pos-container > .products { grid-area: products; }
 .pos-container > .journal { grid-area: journal; display: none; } /* own page */
@@ -1048,12 +1073,26 @@ a.btn, a.btn:hover { text-decoration: none; }
 .journal .empty { text-align: center; color: var(--muted); }
 
 /* ---------- Tender ----------
-   Fixed panel that never scrolls: scan row + held strip + the single
-   Payment trigger (ut-docs#1252). Pay/Split tabs, pay-grid and footer
-   actions now render inside .payment-overlay (a <dialog>, styled further
-   down this section) instead of always-on in this column. */
+   Scan row + held strip + the single Payment trigger (ut-docs#1252). Pay/
+   Split tabs, pay-grid and footer actions now render inside
+   .payment-overlay (a <dialog>, styled further down this section) instead
+   of always-on in this column.
+   2026-08-30 (independent review): .tender-scroll (below) is the ONLY
+   scrolling region here now — same split as .basket/.basket-scroll/
+   .totals: the growable part (scan row + held strip) scrolls in its own
+   flex:1 wrapper, .tender-default-footer is a plain, un-scrolled sibling
+   after it, so it's always visible regardless of how tall the held-sales
+   strip gets. .tender itself keeps overflow-y: auto as the same last-
+   resort "never invisible" fallback .basket/.tab-panel already use
+   elsewhere in this file — should never engage in normal use now that the
+   footer no longer competes with held-sales for the same box. */
 [x-cloak] { display: none !important; }
-.tender { display: flex; flex-direction: column; gap: .55rem; }
+/* gap .55rem->.45rem (2026-08-30): closes the last ~1-2px of clip at
+   1024x600 after the .tender-scroll split + @media(max-height:700px)
+   fix above — see .pos-container's own comment for the measurement. */
+.tender { display: flex; flex-direction: column; gap: .45rem; }
+.tender-scroll { flex: 1; min-height: 3rem; overflow-y: auto;
+                 display: flex; flex-direction: column; gap: .55rem; }
 
 .scan-row { display: flex; gap: .4rem; }
 .scan-row input[name="code"] { flex: 1; min-width: 0; }
@@ -1136,10 +1175,17 @@ a.btn, a.btn:hover { text-decoration: none; }
    items on the left." Hold Sale stays here, NOT in the dialog (independent
    review): it's a "step away from checkout" action, not a payment one, and
    the dialog is modal — a Hold Sale reachable only inside it would cost an
-   unrelated trip through Payment. margin-top: auto on the wrapper puts
-   both buttons at the bottom of .tender's remaining flex space, the same
-   anchor point .tender-footer used before this column's content moved. */
-.tender-default-footer { display: flex; flex-direction: column; gap: .5rem; margin-top: auto; }
+   unrelated trip through Payment.
+   2026-08-30 (independent review, two attempts before this one — see
+   .tender-scroll above for the full history): this footer no longer needs
+   margin-top:auto OR position:sticky to stay pinned to the bottom — it's
+   simply the plain sibling AFTER .tender-scroll's own flex:1 wrapper, so
+   it's always the last thing in .tender's un-scrolled remainder, exactly
+   like .basket's .totals sits after .basket-scroll. flex-shrink: 0 keeps
+   it from being squeezed if .tender-scroll's own 6rem floor and this
+   footer's own content together somehow still exceed the panel (the same
+   "outer .tender scrolls as a last resort" fallback, never invisible). */
+.tender-default-footer { display: flex; flex-direction: column; gap: .5rem; flex-shrink: 0; }
 .payment-trigger { min-height: 4.2rem; font-size: 1.15rem; font-weight: 700; }
 
 /* The dialog itself: a slide-in panel anchored to the inline-end edge

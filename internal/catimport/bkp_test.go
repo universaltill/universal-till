@@ -35,6 +35,11 @@ type bkpProductRow struct {
 	// these, exercising "tax columns present but this row carries none".
 	TaxPercentage  any
 	TaxPercentage2 any
+	// ProductImagePath (ut-docs#1223): reference into the .bkp archive's
+	// documents.zip. nil/"" leaves the cell NULL/empty — most existing
+	// fixtures don't set this, exercising "column present but this row
+	// carries no image".
+	ProductImagePath any
 }
 
 // buildBkpDBBytes creates a temp SQLite file with a Products table matching
@@ -62,15 +67,16 @@ func buildBkpDBBytes(t *testing.T, rows []bkpProductRow) []byte {
 		Status INTEGER,
 		ProductType INTEGER,
 		TaxPercentage REAL,
-		TaxPercentage2 REAL
+		TaxPercentage2 REAL,
+		ProductImagePath TEXT
 	)`); err != nil {
 		t.Fatalf("create Products table: %v", err)
 	}
 	for _, r := range rows {
 		if _, err := db.Exec(`INSERT INTO Products
-			(ProductNumber, ProductTextShort, SalesPrice, ProductGroupText, Status, ProductType, TaxPercentage, TaxPercentage2)
-			VALUES (?,?,?,?,?,?,?,?)`,
-			r.ProductNumber, r.ProductTextShort, r.SalesPrice, r.ProductGroupText, r.Status, r.ProductType, r.TaxPercentage, r.TaxPercentage2); err != nil {
+			(ProductNumber, ProductTextShort, SalesPrice, ProductGroupText, Status, ProductType, TaxPercentage, TaxPercentage2, ProductImagePath)
+			VALUES (?,?,?,?,?,?,?,?,?)`,
+			r.ProductNumber, r.ProductTextShort, r.SalesPrice, r.ProductGroupText, r.Status, r.ProductType, r.TaxPercentage, r.TaxPercentage2, r.ProductImagePath); err != nil {
 			t.Fatalf("insert product %+v: %v", r, err)
 		}
 	}
@@ -896,6 +902,264 @@ func TestParseBkp_NoTaxColumnsInSourceSchemaStillImports(t *testing.T) {
 	}
 	if len(res.Items) != 1 || res.Items[0].HasTax || res.Items[0].HasTakeaway {
 		t.Errorf("got %+v, want one item with no tax data", res.Items)
+	}
+}
+
+// --- ut-docs#1223: product photos resolved from documents.zip ---
+
+func buildDocsZip(t *testing.T, entries map[string][]byte) []byte {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	for name, data := range entries {
+		w, err := zw.Create(name)
+		if err != nil {
+			t.Fatalf("create documents.zip entry %q: %v", name, err)
+		}
+		if _, err := w.Write(data); err != nil {
+			t.Fatalf("write documents.zip entry %q: %v", name, err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("close documents.zip writer: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func TestParseBkp_ResolvesImageFromDocumentsZip(t *testing.T) {
+	imgBytes := []byte("pretend-jpeg-bytes-espresso")
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Espresso", SalesPrice: 2.5, ProductGroupText: "Coffee", Status: 1, ProductType: 1, ProductImagePath: "images/espresso-uuid.jpg"},
+	})
+	docsBytes := buildDocsZip(t, map[string][]byte{"images/espresso-uuid.jpg": imgBytes})
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db":     dbBytes,
+		"meta.inf":      []byte(validMetaInfNoChecksums),
+		"documents.zip": docsBytes,
+	})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+	it := res.Items[0]
+	if !bytes.Equal(it.ImageData, imgBytes) {
+		t.Errorf("ImageData = %q, want %q", it.ImageData, imgBytes)
+	}
+	if it.ImageIssue != "" {
+		t.Errorf("ImageIssue = %q, want none", it.ImageIssue)
+	}
+}
+
+// A source that only records the bare filename (no directory prefix) must
+// still resolve against an archive that nests the same file under a
+// directory — the basename fallback in resolveBkpImage.
+func TestParseBkp_ResolvesImageByBasenameFallback(t *testing.T) {
+	imgBytes := []byte("pretend-png-bytes-latte")
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Latte", SalesPrice: 3.0, ProductGroupText: "Coffee", Status: 1, ProductType: 1, ProductImagePath: "latte-uuid.png"},
+	})
+	docsBytes := buildDocsZip(t, map[string][]byte{"images/2026/latte-uuid.png": imgBytes})
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db":     dbBytes,
+		"meta.inf":      []byte(validMetaInfNoChecksums),
+		"documents.zip": docsBytes,
+	})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != 1 || !bytes.Equal(res.Items[0].ImageData, imgBytes) {
+		t.Fatalf("got %+v, want one item with image %q resolved via basename fallback", res.Items, imgBytes)
+	}
+}
+
+// A dangling ProductImagePath — no matching member anywhere in
+// documents.zip — must warn, never block the row.
+func TestParseBkp_DanglingImagePathWarnsButStillImports(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Mocha", SalesPrice: 3.2, ProductGroupText: "Coffee", Status: 1, ProductType: 1, ProductImagePath: "images/does-not-exist.jpg"},
+	})
+	docsBytes := buildDocsZip(t, map[string][]byte{"images/unrelated.jpg": []byte("x")})
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db":     dbBytes,
+		"meta.inf":      []byte(validMetaInfNoChecksums),
+		"documents.zip": docsBytes,
+	})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1 — a dangling image path must not block the row", len(res.Items))
+	}
+	it := res.Items[0]
+	if it.Issue != "" {
+		t.Errorf("Issue = %q, a dangling image path must never block import", it.Issue)
+	}
+	if len(it.ImageData) != 0 {
+		t.Errorf("ImageData = %q, want none for a dangling path", it.ImageData)
+	}
+	if it.ImageIssue != ImageIssueUnresolved || it.ImageIssueRaw != "images/does-not-exist.jpg" {
+		t.Errorf("ImageIssue/Raw = (%q,%q), want (%q,%q)", it.ImageIssue, it.ImageIssueRaw, ImageIssueUnresolved, "images/does-not-exist.jpg")
+	}
+}
+
+// A ProductImagePath with no documents.zip in the archive at all must also
+// warn rather than block — an older backup, or one genuinely missing the
+// file, is not corrupt.
+func TestParseBkp_ImagePathWithNoDocumentsZipWarns(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Flat White", SalesPrice: 3.1, ProductGroupText: "Coffee", Status: 1, ProductType: 1, ProductImagePath: "images/flat-white.jpg"},
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != 1 || res.Items[0].ImageIssue != ImageIssueUnresolved {
+		t.Fatalf("got %+v, want one item with ImageIssue=%q", res.Items, ImageIssueUnresolved)
+	}
+}
+
+// A row with no ProductImagePath at all must be unaffected — the common
+// case (the pilot café's real backup carries none on any of its 409 rows).
+func TestParseBkp_NoImagePathLeavesImageFieldsEmpty(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Americano", SalesPrice: 2.8, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	it := res.Items[0]
+	if len(it.ImageData) != 0 || it.ImageIssue != "" {
+		t.Errorf("got ImageData=%q ImageIssue=%q, want both empty", it.ImageData, it.ImageIssue)
+	}
+}
+
+// An oversized image member (its declared UncompressedSize64 over the cap)
+// must be rejected before being read at all, warning ImageIssueTooLarge
+// rather than importing it — this test exercises the declared-size gate
+// specifically, not whether a lying header could smuggle more bytes past
+// it (archive/zip itself refuses that mismatch — see resolveBkpImage's own
+// doc comment and the equivalent backup.db reasoning above).
+func TestParseBkp_OversizedImageEntryRejected(t *testing.T) {
+	restore := withBkpMaxImageSize(t, 16)
+	defer restore()
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Big Photo Item", SalesPrice: 4.0, ProductGroupText: "Coffee", Status: 1, ProductType: 1, ProductImagePath: "images/huge.jpg"},
+	})
+	docsBytes := buildDocsZip(t, map[string][]byte{"images/huge.jpg": bytes.Repeat([]byte("x"), 64)})
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db":     dbBytes,
+		"meta.inf":      []byte(validMetaInfNoChecksums),
+		"documents.zip": docsBytes,
+	})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	it := res.Items[0]
+	if len(it.ImageData) != 0 {
+		t.Errorf("ImageData should be empty for an over-cap entry, got %d bytes", len(it.ImageData))
+	}
+	if it.ImageIssue != ImageIssueTooLarge {
+		t.Errorf("ImageIssue = %q, want %q", it.ImageIssue, ImageIssueTooLarge)
+	}
+}
+
+func withBkpMaxImageSize(t *testing.T, n int64) func() {
+	t.Helper()
+	old := bkpMaxImageSize
+	bkpMaxImageSize = n
+	return func() { bkpMaxImageSize = old }
+}
+
+func withBkpMaxTotalImageSize(t *testing.T, n int64) func() {
+	t.Helper()
+	old := bkpMaxTotalImageSize
+	bkpMaxTotalImageSize = n
+	return func() { bkpMaxTotalImageSize = old }
+}
+
+// TestParseBkp_AggregateImageBudgetCapsLaterRows is the independent
+// review's ut-docs#1223 finding: bkpMaxImageSize alone bounds each row,
+// but every row's ImageData is retained live on Result.Items
+// simultaneously, so a source with many near-cap-sized photos could hold
+// far more than any single cap suggests. Two rows, each individually well
+// under bkpMaxImageSize, whose combined bytes exceed a (test-lowered)
+// bkpMaxTotalImageSize: the first must resolve fine, the second must fall
+// back to ImageIssueTooLarge exactly like an individually oversized entry.
+func TestParseBkp_AggregateImageBudgetCapsLaterRows(t *testing.T) {
+	restoreImg := withBkpMaxImageSize(t, 1<<20) // 1MB — not the cap under test
+	defer restoreImg()
+	restoreTotal := withBkpMaxTotalImageSize(t, 20)
+	defer restoreTotal()
+
+	img1 := bytes.Repeat([]byte("a"), 15)
+	img2 := bytes.Repeat([]byte("b"), 15) // 15+15 > 20: must be rejected
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "First", SalesPrice: 2.0, ProductGroupText: "Coffee", Status: 1, ProductType: 1, ProductImagePath: "images/first.jpg"},
+		{ProductNumber: "2", ProductTextShort: "Second", SalesPrice: 2.0, ProductGroupText: "Coffee", Status: 1, ProductType: 1, ProductImagePath: "images/second.jpg"},
+	})
+	docsBytes := buildDocsZip(t, map[string][]byte{
+		"images/first.jpg":  img1,
+		"images/second.jpg": img2,
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db":     dbBytes,
+		"meta.inf":      []byte(validMetaInfNoChecksums),
+		"documents.zip": docsBytes,
+	})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(res.Items))
+	}
+	first, second := res.Items[0], res.Items[1]
+	if !bytes.Equal(first.ImageData, img1) || first.ImageIssue != "" {
+		t.Errorf("first row = (data=%q issue=%q), want the resolved image with no issue", first.ImageData, first.ImageIssue)
+	}
+	if len(second.ImageData) != 0 || second.ImageIssue != ImageIssueTooLarge {
+		t.Errorf("second row = (data=%q issue=%q), want empty data and ImageIssue=%q once the aggregate budget is exhausted", second.ImageData, second.ImageIssue, ImageIssueTooLarge)
+	}
+}
+
+// A row blocked for another reason (deleted, order toggle, bad price,
+// missing name) must never bother resolving its image — it still appears
+// in Items (import_page.go skips it at commit time on Issue alone, same as
+// every other blocking reason), but its ImageData/ImageIssue must stay
+// empty: the reference was never looked at, wasted work for a row that can
+// never be committed anyway.
+func TestParseBkp_BlockedRowNeverResolvesImage(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "Deleted Item", SalesPrice: 2.0, ProductGroupText: "Coffee", Status: 3, ProductType: 1, ProductImagePath: "images/does-not-exist.jpg"},
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != 1 || res.Items[0].Issue != IssueSourceDeleted {
+		t.Fatalf("got %+v, want one item with Issue=%q", res.Items, IssueSourceDeleted)
+	}
+	it := res.Items[0]
+	if len(it.ImageData) != 0 || it.ImageIssue != "" {
+		t.Errorf("a blocked row must never resolve its image reference, got ImageData=%q ImageIssue=%q", it.ImageData, it.ImageIssue)
 	}
 }
 

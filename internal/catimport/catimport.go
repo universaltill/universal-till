@@ -83,6 +83,19 @@ const (
 	// plus a "-N" suffix), rather than being silently dropped the way
 	// IssueDuplicateSKUInFile used to drop it.
 	SKUIssueDuplicateInFile = "duplicate_in_file"
+
+	// ImageIssueUnresolved/ImageIssueTooLarge (ut-docs#1223): ParseBkp's own
+	// reason codes for a row whose source carried a ProductImagePath that
+	// didn't turn into usable image bytes — either the .bkp archive has no
+	// documents.zip member matching the path (no such archive at all, or a
+	// dangling reference), or a matching member exists but is past the size
+	// this importer will read into memory. Non-blocking, same pattern as
+	// BarcodeIssue/TaxIssue/SKUIssue: the row still imports, just without a
+	// real photo — it falls back to the existing placeholder-icon path
+	// (ut-docs#1189) — and the pages layer surfaces this as a per-row
+	// warning rather than silently dropping the reference.
+	ImageIssueUnresolved = "unresolved"
+	ImageIssueTooLarge   = "too_large"
 )
 
 // ImportItem is one parsed catalog row, prices in minor units.
@@ -151,6 +164,20 @@ type ImportItem struct {
 	// two non-blocking Issue pairs above.
 	SKUIssue    string
 	SKUIssueRaw string
+	// ImageData is the resolved image bytes for this row (ut-docs#1223) —
+	// set only by ParseBkp, when the source's ProductImagePath resolved to
+	// a member of the .bkp archive's documents.zip. Empty for the CSV path
+	// (no source column for it yet) and for any .bkp row with no image
+	// reference at all. The pages layer decodes/re-encodes and writes this
+	// to disk at commit time, the same way a manual photo upload does —
+	// this package stays a pure, disk-free parser (package doc above).
+	ImageData []byte
+	// ImageIssue/ImageIssueRaw mirror BarcodeIssue/TaxIssue/SKUIssue: set
+	// when the row carried a non-empty ProductImagePath that did not
+	// resolve to usable image bytes. One of the ImageIssue* consts;
+	// ImageIssueRaw is the source's own path string. Never blocks the row.
+	ImageIssue    string
+	ImageIssueRaw string
 }
 
 // Result is a parsed file.
