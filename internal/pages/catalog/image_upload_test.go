@@ -129,6 +129,50 @@ func TestItemImageUpload_PersistsAndServesAcrossUpdates(t *testing.T) {
 	}
 }
 
+// TestItemImageUpload_RecordsItemImagesRow is review finding F2
+// (ut-docs#1189): before this fix, an uploaded photo was written ONLY to
+// disk — item_images (the table the POS sale-screen grid, basket, self-
+// order kiosk and search suggestions actually resolve a thumbnail from)
+// never learned about it. An item that had previously been given a
+// placeholder icon (ut-docs#1189 Phase 1) would then show the real photo
+// in the admin Catalog table forever while the till itself kept showing
+// the generic icon — this pins that the upload path now updates
+// item_images too.
+func TestItemImageUpload_RecordsItemImagesRow(t *testing.T) {
+	mux, db := imageUploadTestDeps(t)
+	testsupport.SeedTaxCode(t, db, "tax_std", "Standard", 2000)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Latte", BasePrice: 250, TaxCodeID: "tax_std", IsActive: true})
+	// Simulate a prior placeholder icon (ut-docs#1189 Phase 1) — the real
+	// upload below must REPLACE it, not leave it standing alongside.
+	if _, err := db.Exec(`INSERT INTO item_images (id, item_id, path, role) VALUES ('img-placeholder','itm1','/public/assets/category-icons/coffee.svg','thumbnail')`); err != nil {
+		t.Fatalf("seed placeholder: %v", err)
+	}
+
+	body, ct := multipartUpload(t, map[string]string{"item_id": "itm1"}, "photo.png", validPNG(t))
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/item/image", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("upload: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	var count int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM item_images WHERE item_id = 'itm1' AND role = 'thumbnail'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 thumbnail row, got %d", count)
+	}
+	var path string
+	if err := db.QueryRow(`SELECT path FROM item_images WHERE item_id = 'itm1' AND role = 'thumbnail'`).Scan(&path); err != nil {
+		t.Fatal(err)
+	}
+	if path != "/public/assets/items/itm1/thumb.png" {
+		t.Fatalf("item_images path = %q, want the real uploaded photo's path — placeholder icon never got replaced", path)
+	}
+}
+
 func TestItemImageUpload_RejectsMissingItemID(t *testing.T) {
 	mux, _ := imageUploadTestDeps(t)
 	body, ct := multipartUpload(t, map[string]string{}, "photo.png", validPNG(t))

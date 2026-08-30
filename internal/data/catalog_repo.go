@@ -989,6 +989,90 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	return in.ID, nil
 }
 
+// EnsureDefaultThumbnail gives an item a thumbnail (item_images, role=
+// thumbnail) IF it has none — never overwrites an existing row, whatever
+// put it there. Used by the catalog importer (ut-docs#1189 Phase 1) to
+// fall back a freshly imported, imageless item to a bundled generic
+// category icon rather than leaving it a blank tile; path is the caller's
+// already-resolved "/public/assets/..." value (see
+// catimport.PlaceholderIconPath) — this method does no icon selection of
+// its own, only the existence-gated insert, same division of labor as the
+// rest of this package (catimport stays a pure, DB-free parser).
+//
+// See SetItemThumbnail below for the unconditional-overwrite counterpart
+// a real photo upload needs — an item that only ever got here via THIS
+// method (no operator upload has happened yet) has nothing worth
+// protecting, which is exactly when SetItemThumbnail's overwrite is safe.
+//
+// Deliberately run OUTSIDE any item-creation transaction, the same
+// after-commit placement CreateItemTx's own doc comment describes for
+// barcode attach: it's a separate, best-effort concern the caller should
+// log-and-continue on failure, never roll the item itself back for.
+func (r *CatalogRepo) EnsureDefaultThumbnail(ctx context.Context, itemID, path string) error {
+	if itemID == "" || path == "" {
+		return errors.New("itemID and path required")
+	}
+	var exists int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT 1 FROM item_images WHERE item_id = ? AND role = 'thumbnail' LIMIT 1`, itemID,
+	).Scan(&exists)
+	if err == nil {
+		return nil // already has a thumbnail — never overwrite it
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("check existing thumbnail: %w", err)
+	}
+	if _, err := r.db.ExecContext(ctx,
+		`INSERT INTO item_images (id, item_id, path, role) VALUES (?, ?, ?, 'thumbnail')`,
+		uuid.NewString(), itemID, path,
+	); err != nil {
+		return fmt.Errorf("insert placeholder thumbnail: %w", err)
+	}
+	return nil
+}
+
+// SetItemThumbnail unconditionally sets an item's thumbnail (item_images,
+// role=thumbnail) to path — updating an existing row if one exists,
+// inserting one if not. Unlike EnsureDefaultThumbnail above, this DOES
+// overwrite: it's what a real photo (manual upload, or a barcode-lookup
+// match) is supposed to do — replace whatever placeholder or older photo
+// was there. Review finding F2/F7 (ut-docs#1189): before this method
+// existed, the manual upload handler
+// (internal/pages/catalog/handlers.go's POST /api/catalog/item/image and
+// saveLookupImage) wrote ONLY the thumb.png file, never touching
+// item_images at all — so the admin Catalog table (which resolves a
+// thumbnail by checking the file on disk) showed the new photo, but the
+// POS sale-screen grid, basket, self-order kiosk and search suggestions
+// (which all resolve via item_images/ImageURL, see internal/data's own
+// SELECT ... item_images JOINs) kept showing whatever was there before —
+// an imported item's placeholder icon, forever, with no in-app way to
+// clear it. See internal/data/shortcuts_repo.go's own doc comment for the
+// same gap independently observed from the shortcuts-button angle.
+func (r *CatalogRepo) SetItemThumbnail(ctx context.Context, itemID, path string) error {
+	if itemID == "" || path == "" {
+		return errors.New("itemID and path required")
+	}
+	res, err := r.db.ExecContext(ctx,
+		`UPDATE item_images SET path = ? WHERE item_id = ? AND role = 'thumbnail'`,
+		path, itemID,
+	)
+	if err != nil {
+		return fmt.Errorf("update thumbnail: %w", err)
+	}
+	if n, err := res.RowsAffected(); err != nil {
+		return fmt.Errorf("update thumbnail: %w", err)
+	} else if n > 0 {
+		return nil
+	}
+	if _, err := r.db.ExecContext(ctx,
+		`INSERT INTO item_images (id, item_id, path, role) VALUES (?, ?, ?, 'thumbnail')`,
+		uuid.NewString(), itemID, path,
+	); err != nil {
+		return fmt.Errorf("insert thumbnail: %w", err)
+	}
+	return nil
+}
+
 // ItemCostPrice returns the item's cost price in minor units (0 = unset).
 func (r *CatalogRepo) ItemCostPrice(ctx context.Context, itemID string) (int64, error) {
 	var cost sql.NullInt64
