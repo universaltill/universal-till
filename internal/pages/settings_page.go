@@ -1145,6 +1145,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if rawMode == "self_order" {
 			if c, err := r.Cookie(auth.CookieName); err == nil && d.AuthSvc != nil {
 				d.AuthSvc.Logout(r.Context(), c.Value)
+				// ut-docs#1303 (ut-docs#1259 follow-up): the revoke itself is a
+				// distinct auditable event, not just a side effect of
+				// display_mode_changed — same reasoning as POST /api/auth/logout's
+				// own dedicated "logout" entry. Written only when a session
+				// actually existed to revoke (same gate as the Logout call above),
+				// attributed to the acting session user via the same elev used
+				// below, so dual-attribution (approver vs. blocked actor) matches.
+				settingsAudit(r, posRepo, elev, "user", elev.ActorID, "self_order_session_revoked", nil)
 			}
 			setSessionCookie(w, "", -1)
 		}
