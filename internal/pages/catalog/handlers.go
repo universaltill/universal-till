@@ -327,6 +327,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if imgURL := strings.TrimSpace(r.Form.Get("imageUrl")); imgURL != "" {
 			if err := saveLookupImage(r.Context(), lookupClient, itemID, imgURL); err != nil {
 				log.Printf("[catalog] lookup image for item %s skipped: %v", itemID, err)
+			} else if err := repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png"); err != nil {
+				// Same review-F2 reasoning as the manual upload handler
+				// above: the photo is safely on disk regardless, this only
+				// keeps item_images (POS grid/basket/self-order/
+				// suggestions) in sync with what the admin table shows.
+				log.Printf("[catalog] record item_images thumbnail for %s: %v", itemID, err)
 			}
 		}
 		renderCatalogTable(w, r)
@@ -602,6 +608,17 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if err := png.Encode(out, img); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
+		}
+		// Review finding F2 (ut-docs#1189): this handler used to write ONLY
+		// the disk file — the admin Catalog table (which checks the file)
+		// showed the new photo, but the POS sale-screen grid/basket/self-
+		// order/suggestions (which resolve via item_images/ImageURL) never
+		// saw it, so a placeholder icon (or nothing) kept showing there
+		// forever with no in-app way to clear it. Best-effort: the photo
+		// is already saved and correct on disk either way, so a DB hiccup
+		// here logs rather than fails the upload.
+		if err := repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png"); err != nil {
+			log.Printf("[catalog] record item_images thumbnail for %s: %v", itemID, err)
 		}
 		renderCatalogTable(w, r)
 	})
