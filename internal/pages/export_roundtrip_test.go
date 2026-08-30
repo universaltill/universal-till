@@ -26,7 +26,7 @@ func TestExportCSVRoundTripsThroughImporter(t *testing.T) {
 	var b strings.Builder
 	writeCatalogCSV(&b, rows, 2)
 
-	res, err := catimport.Parse(strings.NewReader(b.String()), 2, data.DefaultEnabledBarcodeSymbologyIDs())
+	res, err := catimport.Parse(strings.NewReader(b.String()), 2, data.DefaultEnabledBarcodeSymbologyIDs(), false)
 	if err != nil {
 		t.Fatalf("parse exported CSV: %v", err)
 	}
@@ -78,7 +78,7 @@ func TestExportCatalogCSV_FormulaShapedValuesDefusedAndRoundTrip(t *testing.T) {
 		t.Fatalf("plain numeric Barcode should be untouched:\n%s", raw)
 	}
 
-	res, err := catimport.Parse(strings.NewReader(raw), 2, data.DefaultEnabledBarcodeSymbologyIDs())
+	res, err := catimport.Parse(strings.NewReader(raw), 2, data.DefaultEnabledBarcodeSymbologyIDs(), false)
 	if err != nil {
 		t.Fatalf("parse exported CSV: %v", err)
 	}
@@ -176,7 +176,7 @@ func TestCatalogCSVFormulaTriggersStaySynced(t *testing.T) {
 		rows := []data.ExportRow{{Name: name, SKU: "SKU-1", PriceMinor: 100, Category: "Cat", Stock: 1}}
 		var out strings.Builder
 		writeCatalogCSV(&out, rows, 2)
-		res, err := catimport.Parse(strings.NewReader(out.String()), 2, data.DefaultEnabledBarcodeSymbologyIDs())
+		res, err := catimport.Parse(strings.NewReader(out.String()), 2, data.DefaultEnabledBarcodeSymbologyIDs(), false)
 		if err != nil {
 			t.Fatalf("parse: %v", err)
 		}
