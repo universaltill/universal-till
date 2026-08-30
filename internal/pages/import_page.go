@@ -761,25 +761,49 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 						warnings = append(warnings, T("import.status.image_undecodable"))
 					} else {
 						dir := paths.Data("public", "assets", "items", itemID)
-						if err := os.MkdirAll(dir, 0o755); err != nil {
-							log.Printf("[import] create image dir for item %q: %v", it.Name, err)
-						} else if out, err := os.Create(filepath.Join(dir, "thumb.png")); err != nil {
-							log.Printf("[import] create thumbnail file for item %q: %v", it.Name, err)
-						} else {
+						thumbPath := filepath.Join(dir, "thumb.png")
+						writeErr := func() error {
+							if err := os.MkdirAll(dir, 0o755); err != nil {
+								return fmt.Errorf("create image dir: %w", err)
+							}
+							out, err := os.Create(thumbPath)
+							if err != nil {
+								return fmt.Errorf("create thumbnail file: %w", err)
+							}
 							encErr := png.Encode(out, img)
 							closeErr := out.Close()
-							switch {
-							case encErr != nil:
-								log.Printf("[import] encode thumbnail for item %q: %v", it.Name, encErr)
-							case closeErr != nil:
-								log.Printf("[import] close thumbnail file for item %q: %v", it.Name, closeErr)
-							default:
-								if err := repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png"); err != nil {
-									log.Printf("[import] record item_images thumbnail for %q: %v", it.Name, err)
-								} else {
-									imageSet = true
+							if encErr != nil || closeErr != nil {
+								// A partial/corrupt file must never linger
+								// (independent review, ut-docs#1223):
+								// self_order_shop.go's ImageURL resolves
+								// thumb.png by path CONVENTION, not via
+								// item_images, so a truncated file here
+								// would render broken on the self-order
+								// kiosk even though item_images correctly
+								// still points at the placeholder set
+								// below. Best-effort — the row's own
+								// outcome never depends on this succeeding.
+								if rmErr := os.Remove(thumbPath); rmErr != nil && !os.IsNotExist(rmErr) {
+									log.Printf("[import] remove partial thumbnail for item %q: %v", it.Name, rmErr)
 								}
+								if encErr != nil {
+									return fmt.Errorf("encode thumbnail: %w", encErr)
+								}
+								return fmt.Errorf("close thumbnail file: %w", closeErr)
 							}
+							return repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png")
+						}()
+						if writeErr != nil {
+							// A resolvable photo that then failed to save
+							// must not fail silently (independent review,
+							// ut-docs#1223) — same "never silently drop a
+							// reference" reasoning as ImageIssue below,
+							// just for a failure that happens after
+							// resolution rather than during it.
+							log.Printf("[import] save real photo for item %q: %v", it.Name, writeErr)
+							warnings = append(warnings, T("import.status.image_save_failed"))
+						} else {
+							imageSet = true
 						}
 					}
 				}

@@ -1600,6 +1600,7 @@
   "import.status.image_unresolved": "\"%s\" fotoğrafı yedekte bulunamadı — fotoğrafsız içe aktarıldı",
   "import.status.image_too_large": "\"%s\" fotoğrafı içe aktarmak için çok büyüktü — fotoğrafsız içe aktarıldı",
   "import.status.image_undecodable": "Bu ürünün fotoğrafı okunamadı — fotoğrafsız içe aktarıldı",
+  "import.status.image_save_failed": "Bu ürünün fotoğrafı kaydedilemedi — fotoğrafsız içe aktarıldı",
   "import.error.no_name_column": "İsim sütunu tanınmadı — bu bir katalog dışa aktarımı mı?",
   "import.error.invalid_file": "Bu dosya katalog dışa aktarımı olarak okunamadı.",
   "import.error.bkp_unrecognised": "Bu dosya tanınan bir yedek dosyasına benzemiyor.",

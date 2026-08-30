@@ -1600,6 +1600,7 @@
   "import.status.image_unresolved": "تصویر «%s» در نسخهٔ پشتیبان یافت نشد — بدون تصویر وارد شد",
   "import.status.image_too_large": "تصویر «%s» برای وارد کردن بسیار بزرگ بود — بدون تصویر وارد شد",
   "import.status.image_undecodable": "تصویر این کالا خوانده نشد — بدون تصویر وارد شد",
+  "import.status.image_save_failed": "تصویر این کالا ذخیره نشد — بدون تصویر وارد شد",
   "import.error.no_name_column": "ستون «نام» شناسایی نشد — آیا این یک خروجی کاتالوگ است؟",
   "import.error.invalid_file": "این فایل به‌عنوان خروجی کاتالوگ خوانده نشد.",
   "import.error.bkp_unrecognised": "این فایل به‌نظر یک فایل پشتیبان شناخته‌شده نیست.",

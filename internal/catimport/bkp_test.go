@@ -1046,8 +1046,12 @@ func TestParseBkp_NoImagePathLeavesImageFieldsEmpty(t *testing.T) {
 	}
 }
 
-// An oversized image member must warn (too_large), never be read fully
-// into memory.
+// An oversized image member (its declared UncompressedSize64 over the cap)
+// must be rejected before being read at all, warning ImageIssueTooLarge
+// rather than importing it — this test exercises the declared-size gate
+// specifically, not whether a lying header could smuggle more bytes past
+// it (archive/zip itself refuses that mismatch — see resolveBkpImage's own
+// doc comment and the equivalent backup.db reasoning above).
 func TestParseBkp_OversizedImageEntryRejected(t *testing.T) {
 	restore := withBkpMaxImageSize(t, 16)
 	defer restore()
@@ -1079,6 +1083,59 @@ func withBkpMaxImageSize(t *testing.T, n int64) func() {
 	old := bkpMaxImageSize
 	bkpMaxImageSize = n
 	return func() { bkpMaxImageSize = old }
+}
+
+func withBkpMaxTotalImageSize(t *testing.T, n int64) func() {
+	t.Helper()
+	old := bkpMaxTotalImageSize
+	bkpMaxTotalImageSize = n
+	return func() { bkpMaxTotalImageSize = old }
+}
+
+// TestParseBkp_AggregateImageBudgetCapsLaterRows is the independent
+// review's ut-docs#1223 finding: bkpMaxImageSize alone bounds each row,
+// but every row's ImageData is retained live on Result.Items
+// simultaneously, so a source with many near-cap-sized photos could hold
+// far more than any single cap suggests. Two rows, each individually well
+// under bkpMaxImageSize, whose combined bytes exceed a (test-lowered)
+// bkpMaxTotalImageSize: the first must resolve fine, the second must fall
+// back to ImageIssueTooLarge exactly like an individually oversized entry.
+func TestParseBkp_AggregateImageBudgetCapsLaterRows(t *testing.T) {
+	restoreImg := withBkpMaxImageSize(t, 1<<20) // 1MB — not the cap under test
+	defer restoreImg()
+	restoreTotal := withBkpMaxTotalImageSize(t, 20)
+	defer restoreTotal()
+
+	img1 := bytes.Repeat([]byte("a"), 15)
+	img2 := bytes.Repeat([]byte("b"), 15) // 15+15 > 20: must be rejected
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "1", ProductTextShort: "First", SalesPrice: 2.0, ProductGroupText: "Coffee", Status: 1, ProductType: 1, ProductImagePath: "images/first.jpg"},
+		{ProductNumber: "2", ProductTextShort: "Second", SalesPrice: 2.0, ProductGroupText: "Coffee", Status: 1, ProductType: 1, ProductImagePath: "images/second.jpg"},
+	})
+	docsBytes := buildDocsZip(t, map[string][]byte{
+		"images/first.jpg":  img1,
+		"images/second.jpg": img2,
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db":     dbBytes,
+		"meta.inf":      []byte(validMetaInfNoChecksums),
+		"documents.zip": docsBytes,
+	})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("items = %d, want 2", len(res.Items))
+	}
+	first, second := res.Items[0], res.Items[1]
+	if !bytes.Equal(first.ImageData, img1) || first.ImageIssue != "" {
+		t.Errorf("first row = (data=%q issue=%q), want the resolved image with no issue", first.ImageData, first.ImageIssue)
+	}
+	if len(second.ImageData) != 0 || second.ImageIssue != ImageIssueTooLarge {
+		t.Errorf("second row = (data=%q issue=%q), want empty data and ImageIssue=%q once the aggregate budget is exhausted", second.ImageData, second.ImageIssue, ImageIssueTooLarge)
+	}
 }
 
 // A row blocked for another reason (deleted, order toggle, bad price,

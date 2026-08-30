@@ -92,6 +92,18 @@ var bkpMaxDocsZipSize int64 = 512 << 20 // 512MB
 // A var so tests can lower it.
 var bkpMaxImageSize int64 = 10 << 20 // 10MB
 
+// bkpMaxTotalImageSize bounds the SUM of every resolved image's bytes over
+// one ParseBkp call (independent review, ut-docs#1223) — bkpMaxImageSize
+// alone only bounds each row, but every row's ImageData is retained live
+// on Result.Items simultaneously, and ParseBkp runs on both the preview
+// and the commit request (the caller has no separate "don't resolve
+// images" mode). A source with hundreds of near-cap-sized photos would
+// otherwise hold gigabytes resident on the low-memory Android/Pi hardware
+// this importer targets (see bkpMaxDBSize's own doc comment). Once the
+// running total would exceed this, later rows fall back to ImageIssueTooLarge
+// exactly like an individually oversized entry — a var so tests can lower it.
+var bkpMaxTotalImageSize int64 = 200 << 20 // 200MB
+
 // ParseBkp parses a speedy kasse / pepperm cashbox till backup (ut-docs#511)
 // into the same neutral Result/ImportItem shape Parse produces for CSV
 // exports, so the pages layer's preview/commit flow (dedup, category
@@ -274,6 +286,10 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 	res := Result{Format: "speedy-kasse"}
 	seen := map[string]bool{}
 	dupSuffix := map[string]int{}
+	// Aggregate image-bytes budget (independent review, ut-docs#1223) —
+	// see bkpMaxTotalImageSize's own doc comment for why per-row
+	// bkpMaxImageSize alone isn't enough.
+	var totalImageBytes int64
 	// Every trimmed product number appearing ANYWHERE in the file — not
 	// just the ones that end up importing — so a synthesized suffix (below)
 	// can never squat on a number that turns out to genuinely belong to a
@@ -350,6 +366,20 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 		if item.Issue == "" {
 			if raw := strings.TrimSpace(p.ProductImagePath); raw != "" {
 				item.ImageData, item.ImageIssue, item.ImageIssueRaw = resolveBkpImage(docsIndex, raw)
+				// Aggregate budget, checked AFTER resolving (the read
+				// itself is already per-row bounded by bkpMaxImageSize) —
+				// once the running total would exceed it, this and every
+				// later row falls back the same way an individually
+				// oversized entry does, rather than holding gigabytes of
+				// ImageData live on Result.Items simultaneously.
+				if n := int64(len(item.ImageData)); n > 0 {
+					if totalImageBytes+n > bkpMaxTotalImageSize {
+						item.ImageData = nil
+						item.ImageIssue, item.ImageIssueRaw = ImageIssueTooLarge, raw
+					} else {
+						totalImageBytes += n
+					}
+				}
 			}
 		}
 		// Only a row that cleanly imports (no Issue at all) registers its
@@ -586,7 +616,14 @@ func openBkpDocsIndex(docsZipFile *zip.File) (*bkpDocsIndex, error) {
 // separator style or leading slash the source recorded it with.
 func normalizeBkpArchivePath(p string) string {
 	p = strings.ReplaceAll(p, "\\", "/")
-	return strings.TrimPrefix(p, "/")
+	p = strings.TrimPrefix(p, "/")
+	// Case-folded too (independent review, ut-docs#1223): a source
+	// recording "IMAGES/Foo.JPG" against an archive member stored as
+	// "images/foo.jpg" is a plausible real-world mismatch — this package
+	// already bothers with a basename fallback for the same class of
+	// drift, so folding case here is the cheap, safe extension of that
+	// same tolerance rather than a silently-degraded ImageIssueUnresolved.
+	return strings.ToLower(p)
 }
 
 // resolveBkpImage turns one row's raw ProductImagePath into image bytes, or
