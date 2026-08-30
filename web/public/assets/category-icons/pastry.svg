@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Pastry">
+  <rect width="64" height="64" fill="#FBEFD9"/>
+  <path d="M10 40c0-14 10-24 22-24s22 10 22 24c0 4-4 6-8 4-3-2-6-2-9 0-3 2-7 2-10 0-3-2-6-2-9 0-4 2-8 0-8-4z" fill="#D99A5B"/>
+  <circle cx="24" cy="34" r="2" fill="#7A4A21"/>
+  <circle cx="34" cy="30" r="2" fill="#7A4A21"/>
+  <circle cx="40" cy="38" r="2" fill="#7A4A21"/>
+</svg>
