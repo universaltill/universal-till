@@ -10,6 +10,8 @@ test('Farsi locale renders RTL and can sell', async ({ page }) => {
   await page.locator('.scan-row button[type=submit]').click();
   await expect(page.locator('#basket')).toContainText('Coca-Cola');
   // Complete the sale — the basket is server-side and shared by the suite.
+  // ut-docs#1252: Cash/Card now live inside the #payment-overlay dialog.
+  await page.getByTestId('payment-open').click();
   await page.locator('.pay-btn').first().click();
   await expect(page.locator('#basket.receipt-view')).toBeVisible();
   assertClean();

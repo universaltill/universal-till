@@ -52,6 +52,8 @@ test('non-modal: a full sale completes underneath the open panel', async ({ page
 
   // …and the tender buttons are neither covered nor disabled: cash pays
   // and the receipt view appears, all while the panel stays open.
+  // ut-docs#1252: Cash/Card now live inside the #payment-overlay dialog.
+  await page.getByTestId('payment-open').click();
   await page.locator('.pay-btn', { hasText: 'Cash' }).first().click();
   await expect(page.locator('#basket.receipt-view')).toBeVisible();
   await expect(page.getByTestId('bugreport-panel')).toBeVisible();
