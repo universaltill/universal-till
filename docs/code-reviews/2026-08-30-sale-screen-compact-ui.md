@@ -197,6 +197,35 @@ into an already-large compactness diff:
   visible next to Payment again (needs reconciling against ut-docs#1252,
   which deliberately moved payment methods behind the overlay).
 
+## CI caught a real gap this local session missed: a second e2e suite
+
+PR #664's `e2e` CI job failed on first push — `tests/e2e/tests/pos_ui_mvp.spec.ts`,
+a smaller, older Playwright suite at `tests/e2e/` (7 spec files, run by
+CI's `e2e` job), entirely separate from the ~233-test suite at `e2e/tests/`
+this session ran throughout (CI's `playwright`/`UI E2E` job). Neither this
+session nor its earlier local gates ever ran `tests/e2e/`, so its two
+assertions on the exact markup this diff changed only surfaced once real
+CI ran them. Two real, correctly-caught regressions, not flaky tests:
+
+- **`navigation uses the canonical accessible logo`** asserted `alt="Universal
+  Till"` on `.nav .logo img` — this diff intentionally emptied that alt
+  (redundant now the adjacent `.app-name` span carries the same text
+  visibly). Fixed the test to assert `alt=""` plus the app-name text
+  instead of reverting the (correct) accessibility change.
+- **`offline status indicator is present and non-blocking`** asserted
+  `getByTestId('status-indicator')` — the testid that lived only on the
+  now-removed dead `.status-pill`. The real, live, JS-wired indicator
+  (`base.html`'s `#sb-conn`, online/offline event listeners) never carried
+  that testid. Fixed by moving the testid onto `#sb-conn` — consolidating
+  it onto the one genuine indicator, not by restoring the dead duplicate.
+
+Re-verified locally after both fixes: `tests/e2e/` 25/25 (`UT_AUTH=off`,
+seeded via `scripts/e2e_seed/main.go`, matching CI's own steps exactly),
+`e2e/tests/` re-run in full at 233/233, `gofmt`/`go build` clean. Worth a
+standing note: **this repo has two independent Playwright suites in two
+different directories** (`e2e/` and `tests/e2e/`) exercised by two
+different CI jobs — a full local gate needs both, not just the larger one.
+
 ## ut-docs#1327 — confirmed fixed, closing this session
 
 The review measured this directly on two live builds (before/after, same
