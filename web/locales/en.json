@@ -1600,6 +1600,7 @@
   "import.status.image_unresolved": "photo \"%s\" could not be found in the backup — imported without a photo",
   "import.status.image_too_large": "photo \"%s\" was too large to import — imported without a photo",
   "import.status.image_undecodable": "the item's photo could not be read — imported without a photo",
+  "import.status.image_save_failed": "the item's photo could not be saved — imported without a photo",
   "import.error.no_name_column": "No name column recognised — is this a catalog export?",
   "import.error.invalid_file": "This file could not be read as a catalog export.",
   "import.error.bkp_unrecognised": "This doesn't look like a recognised backup file.",

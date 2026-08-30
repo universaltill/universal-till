@@ -101,7 +101,7 @@ func bkpTableColumns(ctx context.Context, db *sql.DB, table string) (map[string]
 }
 
 // buildBkpProductsQuery assembles the SELECT for the schema actually present.
-// It always yields the same eight result columns, in the same order, with a
+// It always yields the same nine result columns, in the same order, with a
 // literal NULL standing in for anything this backup does not carry — so the
 // scan below never has to branch on shape.
 func buildBkpProductsQuery(productCols, groupCols map[string]bool) string {
