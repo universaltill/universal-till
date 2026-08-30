@@ -1,8 +1,15 @@
 <!-- web/ui/partials/buttons.html -->
 {{ define "buttons" }}
 <div class="products">
-  <h2>{{ T "products.title" }}</h2>
   {{ if not .Groups }}
+  <div class="products-header">
+    <h2>{{ T "products.title" }}</h2>
+    <!-- 2026-08-30 (product owner, live on the tablet, comparing against a
+         competitor POS): a quick "add a product" affordance right here,
+         like SumUp's own item grid has — the empty state used to just say
+         "add some in Designer" with no actual link to get there. -->
+    <a class="btn primary compact products-add" href="/designer" data-testid="products-add-link">+ {{ T "products.add" }}</a>
+  </div>
     <p class="empty">{{ T "products.empty" }}</p>
   {{ else }}
     {{/* $flat: no category has ever been assigned to anything on this
@@ -64,9 +71,22 @@
         next.click(); next.focus();
       }
     }">
-      <input type="search" id="products-search" x-model="q"
-             placeholder="{{ T "products.search_ph" }}" aria-label="{{ T "products.search_ph" }}"
-             autocomplete="off">
+      <!-- 2026-08-30 (product owner, live on the tablet): PRODUCTS/search
+           used to be two separate full-width rows (title, then search
+           below it) -- combined into one row so search doesn't cost its
+           own row of height, same pattern this session already applied
+           to the sale screen's other panels. The + Add tile-style button
+           (SumUp's own reference grid has one) is the same /designer link
+           as the empty-state's above, just compact since it lives
+           alongside real content here instead of being the only thing on
+           screen. -->
+      <div class="products-header">
+        <h2>{{ T "products.title" }}</h2>
+        <input type="search" id="products-search" x-model="q"
+               placeholder="{{ T "products.search_ph" }}" aria-label="{{ T "products.search_ph" }}"
+               autocomplete="off">
+        <a class="btn secondary compact products-add" href="/designer" data-testid="products-add-link" title="{{ T "products.add" }}" aria-label="{{ T "products.add" }}">+</a>
+      </div>
       {{ if $hasTabs }}
       {{/* One tab per top-level category (ut-docs#418) — findable by name
            via search below, ut-docs#173's barcode-less-item gap is

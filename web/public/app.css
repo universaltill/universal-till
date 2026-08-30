@@ -146,72 +146,173 @@ body.tracking-screen { -webkit-user-select: text; user-select: text; }
    reused here rather than inventing a second warning color. */
 .tag.warn { background: rgba(217, 119, 6, .12); color: var(--warning); border-color: var(--warning); }
 
-/* ---------- Top navigation ---------- */
+/* ---------- Navigation: left icon rail (>480px), top bar (<=480px) ----------
+   2026-08-30 (ut-docs#1332): converted from an always-horizontal top bar,
+   after repeated product-owner feedback comparing directly against a
+   competitor POS (SumUp) — a full-width row at the top of EVERY page (plus,
+   on the sale screen specifically, a second row for New Sale/Inventory/
+   Deposit refund) cost a fixed slice of vertical height nowhere else in the
+   app needed, on the screen operators spend the most time looking at.
+
+   Default (>480px, real tablet/kiosk/desktop widths): `.nav` is a fixed
+   left rail, full viewport height, `--rail-width` wide. `.nav-primary`
+   (Till/Menu/Inventory/+ the sale-screen-only New-Sale/Deposit-refund) sits
+   at the top; `.nav-right` (help/bugreport/sync/fiscal/session chips) is
+   pushed to the bottom via `margin-block-start: auto` in the same column.
+   Logical properties throughout (`inset-inline-start`, `padding-inline-
+   start`) so the rail sits on the RIGHT for RTL locales (fa/ar) with no
+   separate rule — "left or right" was the product owner's own framing.
+
+   <=480px (phone width): reverts to the previous horizontal top bar
+   wholesale, including its own hard-fought wrapping-to-two-rows behavior
+   (ut-docs#413) — a permanent ~8.5rem-wide side rail would eat too much of
+   a 360px screen, and that width class already has its own settled,
+   independently-tested layout not worth re-litigating here. */
+:root { --rail-width: 4.5rem; }
 .nav {
   background: var(--brand); color: #fff;
-  padding: .55rem 1.25rem;
-  display: flex; justify-content: space-between; align-items: center; gap: 1rem;
-  position: sticky; top: 0; z-index: 100;
-  box-shadow: 0 1px 4px rgba(0,0,0,.25);
+  padding: .6rem .5rem;
+  display: flex; flex-direction: column; align-items: stretch; gap: .4rem;
+  position: fixed; inset-inline-start: 0; top: 0; bottom: 0;
+  inline-size: var(--rail-width);
+  overflow-y: auto;
+  z-index: 100;
+  box-shadow: 1px 0 4px rgba(0,0,0,.25);
 }
+/* Rail content pushes the page's own content (and the footer statusbar)
+   over by the rail's width — .nav itself is `position: fixed`, so it's
+   unaffected by this padding on its own ancestor. */
+body { padding-inline-start: var(--rail-width); }
+.statusbar { padding-inline-start: calc(var(--rail-width) + 1rem); }
 /* ut-docs#298: .nav's background is always var(--brand) — dark in every
    shipped theme (fresh/slate/amber/monarch all set it near-black/navy) — so
    the light-glyph mark (unitill-logo-light.svg, transparent background)
-   sits directly on it with no backing plate. The previous white plate read
-   as a pasted-on patch against dark chrome; wider inline padding than block
-   is kept purely for touch spacing, not to frame a plate. */
-.logo { display: flex; align-items: center; gap: .55rem; padding: .15rem .35rem; }
+   sits directly on it with no backing plate. */
+.logo { display: flex; flex-direction: column; align-items: center; gap: .3rem;
+        padding: .3rem .35rem .5rem; }
 /* rem, not px: the logo must follow --ui-scale / the fluid baseline like
    everything else (ut-docs#213 — it was the nav's last fixed-px sizing,
    illegibly small on a 10-inch high-density till). */
-.logo img { height: 2.4rem; display: block; }
-/* App name, moved here from its own <h1> row on the sale screen
-   (2026-08-30) — inherits .nav's white text color. Visually collapsed
-   below 480px (the nav already tightens for phone width there,
-   ut-docs#413, and the logo mark alone carries the brand at that size)
-   but NOT display:none — independent review caught that hiding it
-   outright leaves the brand name announced by nothing in the nav on a
-   phone (.nav-toggle's labels say "Till"/"Menu", not the app name).
-   .visually-hidden (below) keeps it in the accessibility tree while
-   costing no layout width, same pattern this file already uses for
-   basket.html's item-count label. */
-.app-name { font-size: 1.1rem; font-weight: 700; white-space: nowrap; }
-@media (max-width: 480px) {
-  /* Matches .visually-hidden (below) exactly — can't apply that class
-     conditionally from CSS alone, so the same declarations are inlined
-     here under the media query. */
-  .app-name {
-    position: absolute; width: 1px; height: 1px; margin: -1px;
-    padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
-  }
+.logo img { height: 1.6rem; display: block; }
+/* App name: visible in the horizontal phone-width bar (space for it there),
+   visually-hidden in the rail — SumUp's own reference rail carries no
+   brand text either, and the logo mark alone (always on screen) already
+   carries the brand at this width. NOT display:none: independent review
+   (2026-08-30) caught that hiding it outright leaves the brand name
+   announced by nothing in the nav for assistive tech — same
+   .visually-hidden pattern this file already uses for basket.html's
+   item-count label, just applied unconditionally by default now instead
+   of only below 480px. */
+.app-name {
+  font-size: 1.1rem; font-weight: 700; white-space: nowrap;
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  padding: 0; overflow: hidden; clip-path: inset(50%); border: 0;
 }
-.nav-right { display: flex; align-items: center; gap: .5rem; margin-inline-start: .5rem; }
-/* The shared touch header: EVERY page shows the same ☰ Menu button (a proper
-   touch target) that opens the /menu launcher of big tiles — no page has its
-   own small-text link row. */
-.nav { flex-wrap: nowrap; }
-/* ut-docs#413: at a real phone width (confirmed live at 360px) .nav's own
-   content needs ~415px with `flex-wrap: nowrap` above — the right-most
-   nav-right chips (help, 🐞 report-issue, sync/session chips, and the
-   session chip's own Lock button) render past the right edge of the
-   viewport. Since `.nav` is inside `body.sale-screen`'s `overflow: hidden`
-   column (deliberate, so the sale screen itself never scrolls), that
-   overflow isn't a reachable scroll — it's simply invisible, off-canvas
-   content ("Lock" clipped to "Lo" in the field report). Wrapping to a
-   second row keeps every chip fully rendered and on-screen instead; the
-   sticky nav just gets taller, which `.pos-container`'s own `flex: 1 1
-   auto` already tolerates (see its own comment: "robust to the nav
-   wrapping to two rows"). Scoped to this new tier only — the 900px tablet
-   breakpoint above is untouched and still gets the single-row nav. */
-@media (max-width: 480px) {
-  .nav { flex-wrap: wrap; row-gap: .4rem; }
-  .nav-right { flex-wrap: wrap; margin-inline-start: 0; }
-}
-.nav-toggle { display: inline-flex; align-items: center; background: rgba(255,255,255,.12);
+.nav-primary { display: flex; flex-direction: column; gap: .3rem; }
+.nav-right { display: flex; flex-direction: column; align-items: stretch; gap: .3rem;
+             margin-block-start: auto; padding-block-start: .4rem;
+             border-block-start: 1px solid rgba(255,255,255,.15); }
+.nav-toggle {
+  display: flex; flex-direction: column; align-items: center; justify-content: center;
+  gap: .15rem; background: rgba(255,255,255,.12);
   color: #fff; border: 0; text-decoration: none;
-  border-radius: 10px; padding: .6rem 1.1rem; min-height: 46px; font-size: 1rem;
-  font-weight: 600; cursor: pointer; }
+  border-radius: 10px; padding: .5rem; min-height: 48px; min-width: 48px;
+  font-weight: 600; cursor: pointer; text-align: center;
+}
 .nav-toggle:hover, .nav-toggle:active { background: rgba(255,255,255,.22); }
+/* 2026-08-30 (product owner, live on the tablet): fixed box, centered
+   content -- emoji glyphs don't share the same natural metrics (🧾/☰/📦/
+   🛒/♻️/👥/🏷️/🌐/👤/🔒 all render at visibly different sizes at the same
+   font-size otherwise), so a plain font-size alone left every rail icon a
+   different apparent size. A fixed-size flex box normalizes each icon's
+   footprint regardless of its glyph's own intrinsic dimensions. */
+.nav-toggle-ico {
+  display: inline-flex; align-items: center; justify-content: center;
+  inline-size: 1.6rem; block-size: 1.6rem;
+  font-size: 1.25rem; line-height: 1;
+}
+/* 2026-08-30 (product owner, live on the tablet, second pass): the fixed
+   box above normalizes each icon's LAYOUT footprint, but not the glyph's
+   own rendered size within it — confirmed live: ☰/♻️/🔒 read visibly
+   smaller/thinner than 🧾/📦/🏷️ even inside identical boxes, since emoji
+   don't share the same intrinsic ink coverage at a given font-size. A
+   per-glyph size bump for the ones that measured smaller, rather than
+   inflating every icon (which would just make the already-full ones
+   crowd their box). */
+.ico-boost { font-size: 1.55rem; }
+/* Same fixed-box treatment as .nav-toggle-ico, scoped to the rail only —
+   .help-hint's base rule (below) is used on other pages too (a small "?"
+   next to a page heading) and must stay that size there; only inside
+   .nav should it match every other rail icon's footprint. */
+.nav .help-hint {
+  inline-size: 1.6rem; block-size: 1.6rem; font-size: 1.1rem;
+  margin-inline-start: 0;
+}
+/* 2026-08-30 (product owner, live on the tablet): icon-only in the rail,
+   like SumUp's own reference rail — the label doesn't need to be visible
+   when the icon alone reads fine at this size, and dropping it lets the
+   rail itself be much narrower (was 8.5rem to fit visible labels, now
+   4.5rem). NOT display:none/removed from the DOM: the same
+   .visually-hidden treatment .app-name already uses above keeps each
+   label in the accessible name (screen readers read it exactly as if it
+   were visible) at zero layout cost, and the <=480px block below restores
+   it fully visible for the top-bar fallback, which still has the width
+   for it. */
+.nav-toggle-label {
+  position: absolute; width: 1px; height: 1px; margin: -1px;
+  padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+}
+/* .sync-chip/.fiscal-chip carry real variable-length status text (till
+   name, queue/roster counts) — not a fixed icon+label pair, so they keep
+   their own pill markup rather than adopting .nav-toggle, just restyled to
+   wrap within the rail's column instead of sitting inline in a row. */
+.sync-chip, .fiscal-chip { margin-inline-start: 0; white-space: normal;
+  text-align: center; align-self: center; }
+
+@media (max-width: 480px) {
+  /* Reverts the rail back to the previous horizontal top bar wholesale —
+     see this block's own top-level comment for why. */
+  .nav {
+    position: sticky; inset-inline-start: auto; top: 0; bottom: auto;
+    inline-size: auto; flex-direction: row; flex-wrap: wrap; row-gap: .4rem;
+    justify-content: space-between; align-items: center; gap: 1rem;
+    padding: .55rem 1.25rem; box-shadow: 0 1px 4px rgba(0,0,0,.25);
+    /* The rail's own `overflow-y: auto` (default rule) turned out to break
+       this sticky bar's own height calculation for its wrapped rows --
+       confirmed live: .nav-right rendered a real ~10px BELOW .nav's own
+       bottom edge instead of inside it once .nav-primary's wrap pushed
+       .nav-right onto its own row, making the right-most chip (bugreport
+       toggle, same place the real Lock button sits with a session) fail
+       its own hit-test despite passing every plain bounding-box check.
+       position: sticky + a non-visible overflow on the same element is a
+       known interaction to avoid; visible is exactly what the previous,
+       working top-bar CSS always had here. */
+    overflow-y: visible;
+  }
+  body { padding-inline-start: 0; }
+  .statusbar { padding-inline-start: 1rem; }
+  .logo { flex-direction: row; gap: .55rem; padding: .15rem .35rem; }
+  .logo img { height: 2.4rem; }
+  .app-name { position: static; width: auto; height: auto; margin: 0;
+    padding: 0; overflow: visible; clip-path: none; }
+  .nav-primary { flex-direction: row; flex-wrap: wrap; gap: .4rem; }
+  .nav-right { flex-direction: row; flex-wrap: wrap; align-items: center;
+    gap: .5rem; margin-inline-start: .5rem; margin-block-start: 0;
+    padding-block-start: 0; border-block-start: 0; }
+  .nav-toggle { flex-direction: row; gap: .4rem; border-radius: 10px;
+    padding: .6rem 1.1rem; min-height: 46px; font-size: 1rem; }
+  .nav-toggle-ico { inline-size: auto; block-size: auto; font-size: 1rem; }
+  /* Undoes the rail's visually-hidden treatment (default rule, above) --
+     the top-bar fallback has room for a real visible label, same as it
+     always did before the rail existed. */
+  .nav-toggle-label {
+    position: static; width: auto; height: auto; margin: 0;
+    padding: 0; overflow: visible; clip-path: none; white-space: nowrap;
+    font-size: 1rem;
+  }
+  .sync-chip, .fiscal-chip { margin-inline-start: .6rem; white-space: nowrap;
+    text-align: start; }
+}
 
 /* Menu page: the tiles ARE the navigation — drop the redundant admin link
    from the session chip; keep logo, ☰, operator and Lock. */
@@ -248,11 +349,15 @@ body.menu-screen .session-admin-link { display: none; }
    joined, which reads as broken text to a native speaker. */
 .menu-lang-btn { min-width: 64px; justify-content: center; font-weight: 700; }
 
-/* Sale screen top bar is touch-first: the manager links live in the ☰
-   menu now, so hide them here; keep the operator + a big Lock button. */
+/* Sale screen is touch-first and the busiest screen in the product: the
+   manager links (Users/Promotions/Translations) live in the ☰ menu already,
+   so drop them from the rail here too, keeping it shorter. The Lock
+   button/operator name themselves no longer need their own sizing override
+   now every .nav-toggle (rail or top-bar fallback) already gets a uniform
+   size everywhere -- a sale-screen-only exception here would make the rail
+   look inconsistent between pages instead of it being one predictable
+   strip of chrome. */
 body.sale-screen .session-admin-link { display: none; }
-body.sale-screen .btn-lock { min-height: 46px; padding: .5rem 1.2rem; font-size: 1rem; }
-body.sale-screen .session-user { font-size: 1rem; padding: .3rem .5rem; }
 
 /* ---------- Reports ---------- */
 .report-cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; }
@@ -427,6 +532,23 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
   display: flex; align-items: center; justify-content: space-between;
   gap: 1rem; margin: .25rem 0 .6rem;
 }
+/* 2026-08-30 (nav rail, ut-docs#1332): New Sale/Inventory/Deposit refund
+   normally live in the shared nav rail now (nav.html) -- .kiosk-header
+   only still renders here as the <=480px phone-width fallback (see
+   index.html's own comment for why cramming them into the rail's own
+   phone-width bar instead overflowed the sale screen). Hidden by default;
+   the media query below is the ONLY place that shows it. */
+.phone-fallback-only { display: none; }
+@media (max-width: 480px) {
+  .phone-fallback-only { display: flex; }
+}
+/* The rail's own copies of Inventory/New Sale/Deposit refund (nav.html)
+   are the mirror image: shown by default, hidden at <=480px where
+   .phone-fallback-only above takes over instead. */
+.nav-rail-only { display: flex; }
+@media (max-width: 480px) {
+  .nav-rail-only { display: none; }
+}
 .kiosk-actions { display: flex; align-items: center; gap: .5rem; }
 /* .btn.compact (2026-08-30, product owner): a smaller secondary-action
    size for buttons that don't need the full checkout-grade footprint —
@@ -434,8 +556,8 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
    dense row of lower-stakes actions needs it. min-height 2.5rem/40px
    clears WCAG 2.5.5's 24x24 CSS px floor with real margin. Deliberately
    NOT applied to anything money/tax-path (Cash, Card, Payment, tender
-   actions, the dine-in/takeaway toggle — that one determines VAT, see
-   .order-type-toggle's own comment) — those keep the base .btn size. */
+   actions, the dine-in/takeaway switch — that one determines VAT, see
+   .order-type-switch's own comment) — those keep the base .btn size. */
 .btn.compact { min-height: 2.5rem; padding: .45rem .8rem; font-size: .9rem; }
 /* ut-docs#413: neither `.kiosk-header` nor `.kiosk-actions` wraps, so at a
    real phone width (confirmed live at 360px) `.kiosk-actions` alone needs
@@ -773,6 +895,15 @@ a.btn, a.btn:hover { text-decoration: none; }
    (the class of bug the self-order kiosk's own search+category
    combination has, ut-docs#419). */
 .products-finder { display: flex; flex-direction: column; gap: .6rem; }
+/* 2026-08-30 (product owner, live on the tablet): PRODUCTS/search used to
+   be two separate full-width rows -- combined into one (title + search +
+   the "+ Add" quick link, buttons.html) so search doesn't cost its own
+   row of height. h2 keeps its own margin reset since .products-header's
+   gap already provides spacing. */
+.products-header { display: flex; align-items: center; gap: .6rem; margin-bottom: .6rem; }
+.products-header h2 { margin: 0; white-space: nowrap; }
+.products-header input[type="search"] { flex: 1; min-width: 0; }
+.products-add { flex: 0 0 auto; }
 .products-finder input[type="search"] { width: 100%; }
 /* Unlike .tender's tab-panel (app.css, "Tender" section below), .products
    itself already scrolls (.pos-container > .products has its own
@@ -934,19 +1065,48 @@ a.btn, a.btn:hover { text-decoration: none; }
 .disc-input { width: 3.4rem; padding: .3rem .3rem; font-size: .8rem; }
 .btn-x { padding: .3rem .4rem; font-size: .8rem; min-height: 0; }
 
-.order-type-toggle { display: flex; gap: .4rem; margin-bottom: .6rem; }
-/* 2026-08-30: deliberately NOT .btn.compact, and deliberately still at the
-   base .btn's full 3rem/48px — independent review caught that this
-   toggle isn't the low-stakes control it looks like: it re-derives VAT
-   (internal/pos/service.go, tax_codes.takeaway_rate_basis_points — the
-   German dine-in/takeaway §12 UStG split, 19% vs 7%, live pilot work). A
-   mis-tap here puts the wrong tax on a fiscal receipt, which the base
-   touch-target floor this codebase already fought hard to protect
-   elsewhere (ut-docs#161) exists for weaker cases than this. The button
-   footprint still shrank (removing the old <h1> row and the tender
-   footer's old oversized styling freed far more height than this one
-   costs) — just not by shrinking a control on the tax path. */
-.order-type-toggle .btn { flex: 1; }
+.order-type-row { display: flex; align-items: center; gap: .5rem; margin-bottom: .6rem; }
+/* 2026-08-30 (product owner, live on the tablet): a single switch instead
+   of two full-width buttons -- same VAT sensitivity as before (see the
+   switch's own template comment, basket.html), so this is still a real
+   .btn-equivalent touch target (min-height 48px), deliberately not
+   shrunk to .compact -- only the SHAPE changed, not the tap-target floor
+   ut-docs#161 fought to protect. flex: 1 so it shares the row evenly with
+   the table-picker button next to it (when one renders -- ADR-0054 soft-
+   gates that to zero width when the shop has no tables). */
+.order-type-switch {
+  flex: 1; display: inline-flex; align-items: center; gap: .5rem;
+  min-height: 48px; padding: .5rem .8rem; border: 1px solid var(--border);
+  border-radius: 999px; background: var(--surface); color: var(--text);
+  font-weight: 600; cursor: pointer;
+}
+.order-type-switch-track {
+  flex: 0 0 auto; position: relative; inline-size: 2.4rem; block-size: 1.4rem;
+  border-radius: 999px; background: var(--border);
+  transition: background .15s ease;
+}
+.order-type-switch-knob {
+  position: absolute; inset-block-start: .15rem; inset-inline-start: .15rem;
+  inline-size: 1.1rem; block-size: 1.1rem; border-radius: 50%;
+  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.35);
+  transition: inset-inline-start .15s ease;
+}
+/* .is-takeaway (the "on" state — arbitrary which state is "on"/"off",
+   dine-in is simply the default/untaken state): track tints brand, knob
+   slides to the far side, same physical metaphor as a real switch. */
+.order-type-switch.is-takeaway .order-type-switch-track { background: var(--accent); }
+.order-type-switch.is-takeaway .order-type-switch-knob { inset-inline-start: 1.15rem; }
+.order-type-switch-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Table-assignment button + dialog (ut-docs#820, ADR-0054) — collapsed
+   from an always-expanded inline strip into this button next to the
+   order-type switch, 2026-08-30. flex: 1 so the two share
+   .order-type-row evenly; matches the switch's own 48px floor since it's
+   an equally real action, not a lower-stakes one. */
+.table-picker-trigger { flex: 1; min-height: 48px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.table-current { display: block; font-weight: 600; margin-block-end: .5rem; }
+.table-picker-options { display: flex; flex-wrap: wrap; gap: .4rem; margin-block-start: .5rem; }
+.table-picker-empty { display: block; }
 
 /* ut-docs#391 (3rd recurrence — see .basket-scroll below for two more
    prior symptomatic fixes this replaces). table-layout: auto (the
@@ -1536,7 +1696,10 @@ body.login-screen {
    being set on the parent. `.nav .sync-chip a` outranks `.nav a` on
    specificity alone (independent of load order), so `inherit` — and
    therefore the ok/warn color — actually wins here. */
-.sync-chip { display: inline-flex; align-items: center; margin-inline-start: .6rem;
+/* margin-inline-start is set back to .6rem only in the <=480px top-bar
+   media query above -- in the default rail layout, spacing between chips
+   comes from .nav-right's own `gap` (column flex) instead. */
+.sync-chip { display: inline-flex; align-items: center;
   padding: .15rem .55rem; border-radius: 999px; font-size: .8rem; font-weight: 600; }
 .sync-chip.ok { background: rgba(22, 163, 74, .12); color: var(--success); }
 .sync-chip.warn { background: rgba(217, 119, 6, .12); color: var(--warning); }
@@ -1549,16 +1712,26 @@ body.login-screen {
    .sync-chip above; empty (no TSE configured) renders nothing, so there is
    no zero-state style to define. No link inside, so none of .sync-chip's
    `a`-specificity workaround is needed here. */
-.fiscal-chip { display: inline-flex; align-items: center; margin-inline-start: .6rem;
+.fiscal-chip { display: inline-flex; align-items: center;
   padding: .15rem .55rem; border-radius: 999px; font-size: .8rem; font-weight: 600; }
 .fiscal-chip.ok { background: rgba(22, 163, 74, .12); color: var(--success); }
 .fiscal-chip.warn { background: rgba(217, 119, 6, .12); color: var(--warning); }
 
-/* Operator chip + lock button in the nav */
-.session-chip { display: inline-flex; align-items: center; gap: .5rem; margin-inline-start: .8rem; }
+/* Operator chip + lock button in the nav. Column by default (the rail);
+   the <=480px block right below restores the previous horizontal row for
+   the top-bar fallback -- kept HERE, right after the rule it overrides,
+   rather than folded into the earlier top-bar media block, since this
+   declaration (unlike .sync-chip/.fiscal-chip above) needs to come after
+   in cascade order to actually win at that width. */
+.session-chip { display: flex; flex-direction: column; align-items: stretch; gap: .3rem; }
 .session-user { font-weight: 600; }
-.session-lock { display: inline; margin: 0; }
-.btn-lock { padding: .25rem .7rem; }
+.session-lock { display: block; margin: 0; }
+.btn-lock { padding: .5rem .3rem; }
+@media (max-width: 480px) {
+  .session-chip { flex-direction: row; align-items: center; gap: .5rem; margin-inline-start: .8rem; }
+  .session-lock { display: inline; }
+  .btn-lock { padding: .25rem .7rem; }
+}
 
 /* Users admin page */
 .users-layout { display: grid; grid-template-columns: 2fr 1fr; gap: 1rem; align-items: start; }
@@ -2009,7 +2182,13 @@ body.login-screen {
 .bugreport-panel {
   display: none;
   position: fixed;
-  inset-block-start: 4.6rem;
+  /* 2026-08-30 (nav rail, ut-docs#1332): was 4.6rem unconditionally, tuned
+     to sit just below the old horizontal top bar. The rail no longer
+     occupies any top space by default, so 1rem matches the panel's own
+     1rem inline inset instead of leaving a dead gap; the <=480px block
+     below restores the old 4.6rem for the top-bar fallback, which still
+     needs the clearance. */
+  inset-block-start: 1rem;
   inset-inline-end: 1rem;
   inline-size: min(26rem, calc(100vw - 2rem));
   /* The sale screen's tender panel is content-sized and bottom-anchored in
@@ -2031,6 +2210,11 @@ body.login-screen {
   text-align: start;
 }
 .bugreport-panel.open { display: block; }
+@media (max-width: 480px) {
+  /* Restores the pre-rail clearance for the top-bar fallback, which still
+     occupies real vertical space at this width (see .nav's own comment). */
+  .bugreport-panel { inset-block-start: 4.6rem; }
+}
 /* ut-docs#395: draggable so the operator can shift the panel off whatever
    it's covering. touch-action: none stops the kiosk touchscreen's own
    scroll/pan gesture from competing with the drag; user-select: none stops
