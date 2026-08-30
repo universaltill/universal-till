@@ -189,7 +189,8 @@
     hx-vals='{{ jsonVals "code" .Code }}'
     hx-trigger="click"
     hx-target="#basket"
-    hx-swap="outerHTML">
+    hx-swap="outerHTML"
+    hx-sync="#basket:replace">
     {{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
     <span class="tile-name">{{ .Label }}</span>
     {{ if .Price }}<span class="tile-price">{{ money .Price }}</span>{{ end }}
