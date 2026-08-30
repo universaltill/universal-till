@@ -136,6 +136,15 @@ func stripWebPrefixes(paths []string) []string {
 	return out
 }
 
+// NewRenderer has zero production call sites today (confirmed via
+// `grep -rn "httpx.NewRenderer("` across the repo, ut-docs#1320 review) —
+// dead code, not wired into anything. Deliberately NOT converted to the
+// ClonedTemplate cache alongside every actually-invoked render path in this
+// file: caching something nothing calls has no effect, and "fixing" dead
+// code invites someone reading it to assume it's a live, exercised pattern.
+// If this is ever wired up for real, route it through ClonedTemplate like
+// Render/RenderPartial/RenderWith do, keyed on the (layout, page, partials)
+// tuple the way ui.NewRenderer (internal/ui/buttons.go) already does.
 func NewRenderer(layout string, page string, funcs template.FuncMap, partials ...string) (*Renderer, error) {
 	// nav.html and bugreport_panel.html ride along automatically: base.html
 	// references both on every page.
@@ -170,9 +179,18 @@ func withHelpHref(funcs template.FuncMap, r *http.Request) template.FuncMap {
 
 // RenderWith builds a one-off renderer from explicit files and funcs.
 func RenderWith(files []string, funcs template.FuncMap) func(name string, data any) http.HandlerFunc {
+	stripped := stripWebPrefixes(files)
+	// Cache key is the file set itself (ut-docs#1320): callers rebuild the
+	// same literal file slice on every call (some per-request, e.g.
+	// catalog/handlers.go's renderCatalogTable closure), so keying on the
+	// joined paths — rather than trusting call sites to share one cached
+	// RenderWith(...) result — is what makes every one of them hit cache
+	// regardless of how the call site is structured. "\x00" can't appear in
+	// a path, so this can't collide two different file sets.
+	key := "httpx.RenderWith:" + strings.Join(stripped, "\x00")
 	return func(name string, data any) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
-			t, err := template.New("base.html").Funcs(withHelpHref(funcs, r)).ParseFS(uiassets.FS, stripWebPrefixes(files)...)
+			t, err := ClonedTemplate(key, "base.html", withHelpHref(funcs, r), stripped...)
 			if err != nil {
 				http.Error(w, err.Error(), http.StatusInternalServerError)
 				return
@@ -607,26 +625,30 @@ func FuncsFor(locale string) template.FuncMap {
 
 func NewMux() *http.ServeMux { return http.NewServeMux() }
 
+// renderFiles is the fixed file set every Render() call shares — only the
+// page itself varies per call site, so the cache key only needs to vary on
+// page (ut-docs#1320).
+var renderFiles = []string{
+	"ui/layouts/base.html",
+	"ui/partials/nav.html",
+	"ui/partials/buttons.html",
+	"ui/partials/buttons_admin.html",
+	"ui/partials/basket.html",
+	"ui/partials/plugin_install_modal.html",
+	"ui/partials/plugin_manual_import.html",
+	"ui/partials/help_topic.html",
+	"ui/partials/help_nav.html",
+	"ui/partials/bugreport_panel.html",
+}
+
 // Render full page with layout + page + common partials
 func Render(tplPath string, data any) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		layout := "ui/layouts/base.html"
 		page := stripWebPrefix(tplPath)
 
 		locale := ResolveLocale(w, r)
-		t := template.Must(template.New("base.html").Funcs(withHelpHref(FuncsFor(locale), r)).ParseFS(uiassets.FS,
-			layout,
-			page,
-			"ui/partials/nav.html",
-			"ui/partials/buttons.html",
-			"ui/partials/buttons_admin.html",
-			"ui/partials/basket.html",
-			"ui/partials/plugin_install_modal.html",
-			"ui/partials/plugin_manual_import.html",
-			"ui/partials/help_topic.html",
-			"ui/partials/help_nav.html",
-			"ui/partials/bugreport_panel.html",
-		))
+		files := append([]string{renderFiles[0], page}, renderFiles[1:]...)
+		t := template.Must(ClonedTemplate("httpx.Render:"+page, "base.html", withHelpHref(FuncsFor(locale), r), files...))
 		if err := t.ExecuteTemplate(w, "base", data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
@@ -639,7 +661,7 @@ func RenderPartial(tplPath string, data any) http.HandlerFunc {
 		page := stripWebPrefix(tplPath)
 
 		locale := ResolveLocale(w, r)
-		t := template.Must(template.New(filepath.Base(page)).Funcs(FuncsFor(locale)).ParseFS(uiassets.FS, page))
+		t := template.Must(ClonedTemplate("httpx.RenderPartial:"+page, filepath.Base(page), FuncsFor(locale), page))
 		if err := t.Execute(w, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}

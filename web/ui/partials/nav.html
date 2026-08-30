@@ -1,6 +1,16 @@
 {{ define "nav" -}}
 <nav class="nav">
-  <div class="logo"><img src="/public/assets/logo/unitill-logo-light.svg" alt="Universal Till" /></div>
+  <!-- 2026-08-30 (product owner, comparing against a competitor POS): the
+       app name used to duplicate as its own large <h1> row on the sale
+       screen alone (.kiosk-header, index.html) -- redundant with the nav
+       bar already carrying the logo on every page, and it cost a whole
+       row of vertical height nowhere else in the app needed. Moved here,
+       next to the logo, once, shared by every page -- .kiosk-header no
+       longer renders its own heading at all (see index.html). -->
+  <div class="logo">
+    <img src="/public/assets/logo/unitill-logo-light.svg" alt="" />
+    <span class="app-name">{{ T "app.name" }}</span>
+  </div>
   <!-- One shared touch header on every page: the ☰ button opens the /menu
        launcher of big touch tiles — that page IS the navigation. -->
   <a href="/" class="nav-toggle" data-testid="nav-till">🧾 {{ T "nav.till" }}</a>

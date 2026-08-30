@@ -19,7 +19,6 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/money"
 	pos "github.com/universaltill/universal-till/internal/pos"
-	uiassets "github.com/universaltill/universal-till/web"
 )
 
 // designerErrorServerKey mirrors internal/pages/buttons_api.go's
@@ -374,9 +373,13 @@ func stripWebPrefix(path string) string {
 	return strings.TrimPrefix(filepath.ToSlash(path), "web/")
 }
 
+// NewRenderer's (layout, page, partial) file set only takes a handful of
+// distinct values across all call sites (buttons_api.go), so it's cached
+// per that tuple and cloned per call thereafter (ut-docs#1320) — see
+// httpx.ClonedTemplate.
 func NewRenderer(layout, page, partial string, funcs template.FuncMap) (*Renderer, error) {
-	// Parse templates with provided funcs (includes T for i18n)
-	t, err := template.New("base.html").Funcs(funcs).ParseFS(uiassets.FS,
+	key := "ui.Renderer:" + layout + "|" + page + "|" + partial
+	t, err := httpx.ClonedTemplate(key, "base.html", funcs,
 		stripWebPrefix(layout),
 		stripWebPrefix(page),
 		"ui/partials/nav.html",
