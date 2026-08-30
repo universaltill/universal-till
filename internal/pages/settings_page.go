@@ -1142,6 +1142,20 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// session server-side and clear the cookie, mirroring
 		// POST /api/auth/logout. register/backoffice never revoke — the
 		// operator making that switch needs to stay signed in.
+		//
+		// ut-docs#1301 (review finding NB-2, decided): this revokes ONLY the
+		// acting session — deliberately, not an oversight. A manager already
+		// signed in on a second device against this same till keeps a valid
+		// session; the switch doesn't touch it. The threat this exists to
+		// close is specific to the ACTING screen going customer-facing while
+		// still one navigation away from an authenticated /settings — a
+		// session on a different device was never physically exposed by that
+		// switch and carries no new risk from it. No kiosk-capable POS
+		// researched for #1301 (Toast's per-terminal Kiosk Mode toggle, gated
+		// by a manager passcode on that same terminal) reaches into another
+		// device's session on a mode change either. See
+		// TestSelfOrderMode_DoesNotRevokeOtherSessionsOnTheTill and
+		// docs/code-reviews/2026-08-30-self-order-mode-revoke-session.md.
 		if rawMode == "self_order" {
 			if c, err := r.Cookie(auth.CookieName); err == nil && d.AuthSvc != nil {
 				d.AuthSvc.Logout(r.Context(), c.Value)
