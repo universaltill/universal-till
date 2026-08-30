@@ -7,7 +7,7 @@
     {{ range .Suggestions }}
       <button type="button" class="suggest-chip" title="{{ T "suggest.add" }}"
               hx-post="/api/pos/scan" hx-vals='{{ jsonVals "code" .SKU "qty" 1 }}'
-              hx-target="#basket" hx-swap="outerHTML">
+              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
         {{ if .ImageURL }}<img class="suggest-thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" />{{ end }}
         <span class="suggest-name">{{ .Name }}</span>
         <span class="suggest-price">{{ money .PriceMinor }}</span>

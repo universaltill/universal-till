@@ -20,11 +20,11 @@
   <div class="order-type-toggle" role="group" aria-label="{{ T "basket.order_type.label" }}">
     <button type="button" class="btn{{ if eq .OrderType "takeaway" }} secondary{{ end }}"
             aria-pressed="{{ if ne .OrderType "takeaway" }}true{{ else }}false{{ end }}"
-            hx-post="/api/pos/order-type" hx-vals='{"order_type":""}' hx-target="#basket" hx-swap="outerHTML">
+            hx-post="/api/pos/order-type" hx-vals='{"order_type":""}' hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
       {{ if ne .OrderType "takeaway" }}✓ {{ end }}{{ T "basket.order_type.dine_in" }}</button>
     <button type="button" class="btn{{ if ne .OrderType "takeaway" }} secondary{{ end }}"
             aria-pressed="{{ if eq .OrderType "takeaway" }}true{{ else }}false{{ end }}"
-            hx-post="/api/pos/order-type" hx-vals='{"order_type":"takeaway"}' hx-target="#basket" hx-swap="outerHTML">
+            hx-post="/api/pos/order-type" hx-vals='{"order_type":"takeaway"}' hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
       {{ if eq .OrderType "takeaway" }}✓ {{ end }}{{ T "basket.order_type.takeaway" }}</button>
   </div>
   <!-- Table assignment (ut-docs#820, ADR-0054): the current table and the
@@ -68,19 +68,21 @@
                          hx-vals='{{ jsonVals "key" .LineKey }}'
                          hx-include="closest tr"
                          hx-target="#basket"
-                         hx-swap="outerHTML" />
+                         hx-swap="outerHTML"
+                         hx-sync="#basket:replace" />
                   <input class="disc-input" type="number" name="discount" value="{{ .LineDiscount.Minor }}" min="0" step="1"
                          title="{{ T "basket.discount_hint" }}" placeholder="{{ T "basket.discount_short" }}"
                          hx-post="/api/pos/line"
                          hx-vals='{{ jsonVals "key" .LineKey }}'
                          hx-include="closest tr"
                          hx-target="#basket"
-                         hx-swap="outerHTML" />
+                         hx-swap="outerHTML"
+                         hx-sync="#basket:replace" />
                 </div>
               </td>
               <td>{{ money .PriceCents }}</td>
               <td>{{ money .LineTotal }}</td>
-              <td><button class="btn danger btn-x" title="{{ T "basket.remove" }}" hx-post="/api/pos/remove" hx-vals='{{ jsonVals "key" .LineKey }}' hx-target="#basket" hx-swap="outerHTML">✕</button></td>
+              <td><button class="btn danger btn-x" title="{{ T "basket.remove" }}" hx-post="/api/pos/remove" hx-vals='{{ jsonVals "key" .LineKey }}' hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">✕</button></td>
             </tr>
           {{ end }}
         {{ else }}
