@@ -127,7 +127,80 @@
       guardSweep(document);
       updateToggles();
       window.removeEventListener('touchstart', once);
+      window.removeEventListener('click', enableFallback);
     }, { passive: true });
+    // ut-docs#1262: touchstart alone misses a device whose touch is
+    // misreported as mouse input (ut-docs#1238's Android-tablet-in-
+    // "desktop site"-mode case) — such a device's real taps dispatch as
+    // mouse-compatibility events, never a genuine touchstart, so `enabled`
+    // stayed false forever and native-keyboard suppression never ran
+    // anywhere on the page. The first `click` of any kind closes the gap at
+    // the source rather than per-dialog.
+    //
+    // `click` specifically, not `pointerdown` (independent review caught a
+    // real bug in an earlier draft that used pointerdown): `click` fires
+    // only after the whole interaction's hit-testing is already resolved,
+    // so mutating the DOM from inside this handler can no longer steal the
+    // target out from under an event still in flight. `pointerdown` fires
+    // WHILE the interaction is still in flight — mousedown/mouseup/click
+    // that follow are each hit-tested independently at a fixed coordinate,
+    // no implicit capture the way a real touch tap gets (every event of
+    // that tap keeps targeting whatever touchstart hit, even if the page
+    // reflows under it). A first draft enabled from pointerdown and
+    // deferred the reflow one tick via setTimeout, reasoning that a tick
+    // was enough to clear the current interaction — false for any real
+    // press longer than about a millisecond (confirmed with an
+    // instrumented probe: a 120ms press interleaves the timeout BEFORE
+    // mouseup/click, not after), so the exact misdetected-tablet hardware
+    // this ticket is about — which holds contact for real, human-scale
+    // duration — still hit the reflow mid-press: guardSweep()/
+    // updateToggles() reveal the scan-row's OSK toggle button, which sits
+    // after the Add button (web/ui/pages/index.html), shifting Add out
+    // from under the still-in-flight tap and dropping it silently.
+    // `click` has no such window: by the time it fires, this interaction's
+    // own hit-testing is already done, so nothing this handler does can
+    // retroactively misdirect it.
+    //
+    // Still deferred one tick via setTimeout even on `click` — not load-
+    // bearing for correctness (this event is the last one in its own
+    // interaction either way) but keeps this a single code path with
+    // touchstart's own handler for the `if (enabled) return` de-dup below,
+    // and avoids running the reflow inside the same synchronous dispatch a
+    // page's own click-delegated handlers (htmx, Alpine, …) are still
+    // executing.
+    //
+    // Accepted trade-off, deliberately not narrowed further: this also
+    // enables (and forces inputmode="none" via guardSweep, next tick) for a
+    // genuine mouse-only desktop session on its first click anywhere —
+    // there is no reliable signal that distinguishes the two (a
+    // misreporting device's synthetic events carry the same mouse-shaped
+    // signature a real mouse's do, so filtering on e.g.
+    // PointerEvent.pointerType would silently un-fix the exact case this
+    // closes). Acceptable here because this product's admin/back-office
+    // surfaces run on the same touch-first till hardware as checkout, not a
+    // general-purpose office desktop.
+    //
+    // Known residual gap, accepted (ut-docs#1262 review, non-blocking): the
+    // enable itself only takes effect inside the deferred timeout, so on
+    // the very FIRST tap of a misdetected device, the tapped field is
+    // FOCUSED (and the native keyboard's open/closed fate decided at focus
+    // time, per this file's own ut-docs#1022/#155 handling above) before
+    // guardSweep() has run — that one field can still pop the native
+    // keyboard once. Every tap after that first one, on this or any other
+    // field, is correctly guarded. Strictly better than the status quo this
+    // ticket reports (native keyboard forever), not a regression against
+    // any currently-passing case, and the same shape of gap the touchstart
+    // path itself carries on a genuinely fresh page's very first touch.
+    var enableFallback = function () {
+      window.removeEventListener('click', enableFallback);
+      setTimeout(function () {
+        if (enabled) return; // touchstart's own handler may have already run
+        enabled = true;
+        guardSweep(document);
+        updateToggles();
+      }, 0);
+    };
+    window.addEventListener('click', enableFallback, { passive: true });
   } else {
     // enabled is already true at parse time (mode="on", or a coarse
     // pointer was already reported) — the touchstart branch above won't
