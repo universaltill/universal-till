@@ -86,6 +86,18 @@ func TestKioskSystemdWindowController_ExitToOSIsHonestError(t *testing.T) {
 	}
 }
 
+// TestKioskSystemdWindowController_RecordInputHeartbeatIsQuietNoop
+// (ut-docs#1329): the Pi kiosk appliance has no unitill-desktop process to
+// forward a heartbeat to at all — deliberately nil, not an error, unlike
+// ExitToOS's honest ErrNoOSDesktop above (this has no operator-visible
+// effect either way, so there's nothing to report honestly about).
+func TestKioskSystemdWindowController_RecordInputHeartbeatIsQuietNoop(t *testing.T) {
+	c := KioskSystemdWindowController{}
+	if err := c.RecordInputHeartbeat(); err != nil {
+		t.Fatalf("RecordInputHeartbeat() = %v, want nil", err)
+	}
+}
+
 // TestKioskSystemdWindowController_ImplementsWindowController is a compile-
 // time-ish check that the real constructor also satisfies the interface
 // (the fake-runner tests above construct the struct literal directly).

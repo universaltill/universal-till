@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"strconv"
@@ -413,6 +414,89 @@ func TestWindowStateAPI_NoAdoptionAfterExplicitSetMode(t *testing.T) {
 	mux.ServeHTTP(rec, liveShellRequest("/api/window-mode?control=live&since=0&applied=normal"))
 	if mode, _, _ := decodeWindowModeBody(t, rec); mode != "kiosk" {
 		t.Fatalf("post-SetMode live poll served %q, want kiosk (no adoption once explicitly set)", mode)
+	}
+}
+
+// recordingHeartbeatController is a minimal WindowController test double
+// for POST /api/window/input-heartbeat (ut-docs#1329) — it only needs to
+// prove the handler calls through, not exercise ExitToOS/ApplyMode.
+type recordingHeartbeatController struct {
+	calls int
+	err   error
+}
+
+func (r *recordingHeartbeatController) ExitToOS() error             { return nil }
+func (r *recordingHeartbeatController) ApplyMode(mode string) error { return nil }
+func (r *recordingHeartbeatController) RecordInputHeartbeat() error {
+	r.calls++
+	return r.err
+}
+
+// TestInputHeartbeatEndpoint_CallsThroughToWindowCtl (ut-docs#1329, split
+// from #1228's input-freeze incident) proves the route reaches WindowCtl
+// and answers 204, mirroring how the analogous exit-to-os/apply-mode
+// handler tests prove theirs do.
+func TestInputHeartbeatEndpoint_CallsThroughToWindowCtl(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	wc := &recordingHeartbeatController{}
+	d.WindowCtl = wc
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/window/input-heartbeat", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("POST /api/window/input-heartbeat = %d, want 204: %s", rec.Code, rec.Body.String())
+	}
+	if wc.calls != 1 {
+		t.Fatalf("RecordInputHeartbeat calls = %d, want 1", wc.calls)
+	}
+}
+
+// TestInputHeartbeatEndpoint_NoInlinePINOrElevationGate proves the handler
+// itself never asks for a manager PIN or elevation — unlike
+// POST /api/settings/exit-to-os (AuthorizeManager) or
+// POST /api/settings/window-mode (checkOrElevate) above. The OUTER session
+// requirement (this route is not in auth.exempt()) is proven separately at
+// the auth package level (TestInputHeartbeatRouteIsNotExempt,
+// TestInputHeartbeatUnauthenticatedGetsRejectedByMiddleware) — this
+// helper's mux (newFullAuthDeps) never wires auth.Middleware itself, so it
+// cannot stand in for that proof.
+func TestInputHeartbeatEndpoint_NoInlinePINOrElevationGate(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	d.WindowCtl = &recordingHeartbeatController{}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/window/input-heartbeat", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 (no PIN/elevation gate on this route)", rec.Code)
+	}
+}
+
+// TestInputHeartbeatEndpoint_ForwardErrorStillAnswersNoContent proves a
+// WindowCtl failure is logged, never surfaced as a non-2xx to the caller —
+// this is best-effort telemetry fired from every kiosk screen; a delivery
+// failure must not make the page's own JS see or retry an error (see
+// web/public/input-heartbeat.js).
+func TestInputHeartbeatEndpoint_ForwardErrorStillAnswersNoContent(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	d.WindowCtl = &recordingHeartbeatController{err: errors.New("desktop shell control channel unreachable")}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/window/input-heartbeat", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 even when the forward fails", rec.Code)
+	}
+}
+
+// TestInputHeartbeatEndpoint_NilWindowCtlFallsBackToNoop covers the
+// bare-Deps case (d.WindowCtl unset) other handlers in this package
+// already fall back to common.NoopWindowController for.
+func TestInputHeartbeatEndpoint_NilWindowCtlFallsBackToNoop(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/window/input-heartbeat", nil))
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("status = %d, want 204 with WindowCtl unset", rec.Code)
 	}
 }
 
