@@ -160,11 +160,31 @@ body.tracking-screen { -webkit-user-select: text; user-select: text; }
    sits directly on it with no backing plate. The previous white plate read
    as a pasted-on patch against dark chrome; wider inline padding than block
    is kept purely for touch spacing, not to frame a plate. */
-.logo { display: flex; align-items: center; padding: .15rem .35rem; }
+.logo { display: flex; align-items: center; gap: .55rem; padding: .15rem .35rem; }
 /* rem, not px: the logo must follow --ui-scale / the fluid baseline like
    everything else (ut-docs#213 — it was the nav's last fixed-px sizing,
    illegibly small on a 10-inch high-density till). */
 .logo img { height: 2.4rem; display: block; }
+/* App name, moved here from its own <h1> row on the sale screen
+   (2026-08-30) — inherits .nav's white text color. Visually collapsed
+   below 480px (the nav already tightens for phone width there,
+   ut-docs#413, and the logo mark alone carries the brand at that size)
+   but NOT display:none — independent review caught that hiding it
+   outright leaves the brand name announced by nothing in the nav on a
+   phone (.nav-toggle's labels say "Till"/"Menu", not the app name).
+   .visually-hidden (below) keeps it in the accessibility tree while
+   costing no layout width, same pattern this file already uses for
+   basket.html's item-count label. */
+.app-name { font-size: 1.1rem; font-weight: 700; white-space: nowrap; }
+@media (max-width: 480px) {
+  /* Matches .visually-hidden (below) exactly — can't apply that class
+     conditionally from CSS alone, so the same declarations are inlined
+     here under the media query. */
+  .app-name {
+    position: absolute; width: 1px; height: 1px; margin: -1px;
+    padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+  }
+}
 .nav-right { display: flex; align-items: center; gap: .5rem; margin-inline-start: .5rem; }
 /* The shared touch header: EVERY page shows the same ☰ Menu button (a proper
    touch target) that opens the /menu launcher of big tiles — no page has its
@@ -400,11 +420,23 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 .stock-low { color: var(--danger); font-weight: 700; }
 
 /* ---------- Kiosk header row ---------- */
+/* 2026-08-30: margin-bottom trimmed 1rem->.6rem now this row no longer
+   follows its own <h1> (moved to the nav bar, nav.html) — it was sized
+   for the gap under a heading, not under nothing. */
 .kiosk-header {
   display: flex; align-items: center; justify-content: space-between;
-  gap: 1rem; margin: .25rem 0 1rem;
+  gap: 1rem; margin: .25rem 0 .6rem;
 }
-.kiosk-actions { display: flex; align-items: center; gap: .6rem; }
+.kiosk-actions { display: flex; align-items: center; gap: .5rem; }
+/* .btn.compact (2026-08-30, product owner): a smaller secondary-action
+   size for buttons that don't need the full checkout-grade footprint —
+   New Sale/Inventory/Deposit refund here, available anywhere else a
+   dense row of lower-stakes actions needs it. min-height 2.5rem/40px
+   clears WCAG 2.5.5's 24x24 CSS px floor with real margin. Deliberately
+   NOT applied to anything money/tax-path (Cash, Card, Payment, tender
+   actions, the dine-in/takeaway toggle — that one determines VAT, see
+   .order-type-toggle's own comment) — those keep the base .btn size. */
+.btn.compact { min-height: 2.5rem; padding: .45rem .8rem; font-size: .9rem; }
 /* ut-docs#413: neither `.kiosk-header` nor `.kiosk-actions` wraps, so at a
    real phone width (confirmed live at 360px) `.kiosk-actions` alone needs
    ~411px for its three buttons (New Sale / Inventory / Deposit refund) in
@@ -424,19 +456,6 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
   .kiosk-header { flex-wrap: wrap; row-gap: .5rem; }
   .kiosk-actions { flex-wrap: wrap; row-gap: .5rem; }
 }
-.status-pill {
-  display: inline-flex; align-items: center; gap: .4rem;
-  padding: .3rem .7rem; border-radius: 999px;
-  font-size: .8rem; font-weight: 600;
-  background: rgba(22, 163, 74, .12); color: var(--success);
-  border: 1px solid rgba(22, 163, 74, .35);
-}
-.status-pill::before { content: ""; width: .5rem; height: .5rem; border-radius: 50%;
-                       background: var(--success); }
-.status-pill.offline { background: rgba(217, 119, 6, .12); color: var(--warning);
-                       border-color: rgba(217, 119, 6, .35); }
-.status-pill.offline::before { background: var(--warning); }
-
 /* ---------- POS sale screen ----------
    One-screen till layout like real POS systems: the transaction column
    (basket with a pinned total + the tender actions) NEVER moves; the product
@@ -477,14 +496,33 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
      mid-tile, no visible scroll affordance. Making tender's max a real
      flex factor puts both rows on the same ratio-based distribution, so
      products — the screen's primary purpose — gets the dominant share at
-     any viewport height instead of "whatever tender didn't want" (4fr:3fr,
-     tuned rather than an arbitrary round ratio — see
-     docs/code-reviews/2026-08-28-sale-screen-products-dominant-space-1231.md
-     F1: a 2:1 split scrolled Cash/Card off-panel at both reference
-     resolutions, an even 1:1 split still scrolled every OTHER payment
-     button off; 4:3 is the loosest split that keeps Cash/Card — every
-     shop's always-present fallback methods — on screen at 1280x800 AND
-     1024x600 with no scroll, while still comfortably favouring products).
+     any viewport height instead of "whatever tender didn't want".
+     2026-08-30: retuned again, 4fr:3fr -> 5fr:2fr — the original 4:3
+     tuning (see docs/code-reviews/2026-08-28-sale-screen-products-
+     dominant-space-1231.md) was measured against a tender column that
+     doesn't exist anymore: a fixed pay-grid needing Cash/Card on screen
+     at all times. ut-docs#1252 moved that grid into its own overlay, and
+     a later compactness pass (docs/code-reviews/2026-08-30-sale-screen-
+     compact-ui.md) shrank the default view down to a scan row + two
+     small buttons — measured live, tender's real content need at
+     1024x600 is ~118px, and 5:2's ~122px floor share is the tightest
+     split that still clears it (verified via
+     e2e/tests/tender-panel-reachable.spec.ts's held-sales-matrix case —
+     4:1 was tried and clipped the Payment button, confirmed by that same
+     test failing). Pushing further toward products past 5:2 also wasn't
+     worth it on its own terms: at 3:1 products only gained 21px (293px
+     -> 314px) for a huge ratio swing — the remaining shortfall at
+     1024x600 (products needs ~476px for one full "heading + search +
+     tabs + category label + one tile row", the whole right column is
+     only ~427px total) is a genuine floor-height constraint no ratio
+     split can close without starving tender below its own real need.
+     Products scrolling internally at the 1024x600 floor for a catalog
+     with more than a handful of items in
+     one category is accepted, same "never invisible, always reachable
+     via scroll" fallback this file already uses for tender/basket/tab-
+     panel — not a new pathology. Every payment button (inside
+     the overlay now, not this row) stays reachable via its own dialog,
+     never this grid's concern anymore.
      Every payment button stays reachable via tender's own internal
      scroll exactly as before (e2e/tests/tender-panel-reachable.spec.ts).
      A flexible tender row does mean its rendered height now tracks
@@ -504,7 +542,7 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
      layout static — every other cause of `.pos-container` resizing
      (window resize, ui-scale, basket receipt-view toggling) reflows
      tender the same way and was never guarded against before either. */
-  grid-template-rows: minmax(8rem, 4fr) minmax(0, 3fr);
+  grid-template-rows: minmax(8rem, 5fr) minmax(0, 2fr);
   grid-template-areas:
     "basket products"
     "basket tender";
@@ -516,31 +554,19 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
   flex: 1 1 auto;
   min-height: 0;
 }
-/* 2026-08-30 (independent review, third iteration on this ticket — see
-   .tender-scroll's own comment for the fuller history): the .tender-scroll
-   split fixes the held-sales-growth class of clipping structurally (the
-   Payment button can no longer be pushed off by a growing held-sales
-   strip), but at the 1024x600 kiosk floor even the BASE case — zero held
-   sales, just scan row + Hold Sale + Payment, both buttons at their real
-   min-height, no more internal padding/gap left to trim without cutting
-   into an actual touch target — is genuinely ~30px short of tender's
-   `3fr` share of the viewport. That's a real budget shortfall, not
-   internal waste, so only a wider share (not a wrapper/positioning trick)
-   closes it. Scoped to height, not width, and only as far as measured:
-   `main`'s unscoped 4:3 behaviour returns above ~700px (measured
-   break-even ~686px; 700 leaves a small margin instead of cutting it
-   exactly).
-   5fr:6fr (tender ~54.5%), not a bare 1:1 — a plain 1:1 measured to only
-   ~0.3px of clearance in one dev build and +1.5px CLIPPED in the actual
-   e2e harness's own built-binary server (same viewport, same demo seed;
-   the gap is font-metric/footer-content noise between environments, not
-   a real content difference) — nowhere near enough margin to survive
-   that kind of run-to-run noise. 5:6 measured ~15-20px of real headroom
-   in both environments while still leaving products a healthy majority
-   share, not a coin-flip 50/50. */
-@media (max-height: 700px) {
-  .pos-container { grid-template-rows: minmax(8rem, 5fr) minmax(0, 6fr); }
-}
+/* 2026-08-30: the `@media (max-height: 700px)` override that used to sit
+   here (giving tender a 5fr:6fr share instead of the base 4:3) is GONE,
+   not just tuned again — it was compensating for `.tender-default-footer`
+   needing ~131px stacked at the old 4.2rem/1.15rem oversized button
+   styling. Now that Hold Sale + Payment sit side by side at the base
+   .btn size (~48px total, not ~131px), tender's real content need at
+   1024x600 dropped well below even its plain 3fr share — re-measured
+   live after the button-size change, base 4:3 clears the base case AND
+   a full held-sales matrix with real headroom, no override needed. Left
+   as a cautionary note for whoever next touches this ratio: it's been
+   retuned four separate times chasing tender's CONTENT footprint, not
+   the ratio itself being wrong — measure the actual content need first,
+   because the right ratio depends entirely on it. */
 .pos-container > .basket { grid-area: basket; }
 .pos-container > .products { grid-area: products; }
 .pos-container > .journal { grid-area: journal; display: none; } /* own page */
@@ -767,12 +793,23 @@ a.btn, a.btn:hover { text-decoration: none; }
 
 /* ---------- Product tiles ----------
    The whole tile is one touch target: image, name, price. */
-.grid { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fill, minmax(8.8rem, 1fr)); }
+/* 2026-08-30 (product owner, comparing against a competitor POS — "sumup
+   can show a lot of product there but we have only place for 4"):
+   column floor 8.8rem->7rem, tile min-height 8.5rem->6.5rem, thumb
+   4.25rem->3.25rem (below). A near-identical density change was tried
+   once already today and reverted before shipping — that attempt's own
+   comment wrongly asserted .tile-name already had a 2-line clamp when it
+   didn't, and a real German name overflowed the narrower column
+   (independent review caught it). Fixed properly this time: .tile-name
+   below actually gets display:-webkit-box/-webkit-line-clamp:2 plus
+   overflow-wrap, verified against a realistic long name before shipping,
+   not asserted without checking. */
+.grid { display: grid; gap: .5rem; grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr)); }
 /* user-select/touch-action unconditional here too (ut-docs#1170) — same
    reasoning as .btn above, previously gated behind body.kiosk only. */
 .btn-tile {
-  display: flex; flex-direction: column; align-items: stretch; gap: .3rem;
-  padding: .55rem .5rem .6rem; min-height: 8.5rem; border: 1px solid var(--border);
+  display: flex; flex-direction: column; align-items: stretch; gap: .25rem;
+  padding: .45rem .4rem .5rem; min-height: 6.5rem; border: 1px solid var(--border);
   border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow);
   font: inherit; color: var(--text); cursor: pointer; text-align: center;
   transition: border-color .12s ease, box-shadow .12s ease, transform .05s ease;
@@ -780,10 +817,14 @@ a.btn, a.btn:hover { text-decoration: none; }
 }
 .btn-tile:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15, 23, 42, .12); }
 .btn-tile:active { transform: scale(.97); }
-.tile-name { font-weight: 600; font-size: .95rem; line-height: 1.2; white-space: normal; }
-.tile-price { font-size: .95rem; color: var(--accent); font-weight: 700;
+.tile-name {
+  font-weight: 600; font-size: .9rem; line-height: 1.2; white-space: normal;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere;
+}
+.tile-price { font-size: .9rem; color: var(--accent); font-weight: 700;
               font-variant-numeric: tabular-nums; }
-.thumb { width: 100%; height: 4.25rem; object-fit: contain;
+.thumb { width: 100%; height: 3.25rem; object-fit: contain;
          border-radius: 7px; background: var(--surface-2); }
 .thumb.small { width: 40px; height: 40px; aspect-ratio: auto; margin-inline-end: .5rem;
                vertical-align: middle; }
@@ -894,6 +935,17 @@ a.btn, a.btn:hover { text-decoration: none; }
 .btn-x { padding: .3rem .4rem; font-size: .8rem; min-height: 0; }
 
 .order-type-toggle { display: flex; gap: .4rem; margin-bottom: .6rem; }
+/* 2026-08-30: deliberately NOT .btn.compact, and deliberately still at the
+   base .btn's full 3rem/48px — independent review caught that this
+   toggle isn't the low-stakes control it looks like: it re-derives VAT
+   (internal/pos/service.go, tax_codes.takeaway_rate_basis_points — the
+   German dine-in/takeaway §12 UStG split, 19% vs 7%, live pilot work). A
+   mis-tap here puts the wrong tax on a fiscal receipt, which the base
+   touch-target floor this codebase already fought hard to protect
+   elsewhere (ut-docs#161) exists for weaker cases than this. The button
+   footprint still shrank (removing the old <h1> row and the tender
+   footer's old oversized styling freed far more height than this one
+   costs) — just not by shrinking a control on the tax path. */
 .order-type-toggle .btn { flex: 1; }
 
 /* ut-docs#391 (3rd recurrence — see .basket-scroll below for two more
@@ -971,13 +1023,27 @@ a.btn, a.btn:hover { text-decoration: none; }
 .basket th:nth-child(4), .basket td:nth-child(4) { width: 4rem; }
 .basket th:nth-child(5), .basket td:nth-child(5) { width: 2.8rem; }
 .basket tr:last-child td { border-bottom: none; }
+/* 2026-08-30 (product owner, comparing against a competitor POS): two
+   columns instead of one long stack — Subtotal/Discount/Tax pair up
+   (flowing left-to-right, top-to-bottom — plain divs land in grid cells
+   in source order), roughly halving this block's height on the common
+   2-3 row case. .total keeps its own full-width row below them
+   (grid-column: 1 / -1) — it's the one line that should stay visually
+   distinct and easy to find regardless of how many detail rows precede
+   it. .totals-customer (basket.html) gets the same full-width treatment
+   — independent review measured a real CRM customer name paired against
+   a money figure in a half-width cell wrapping to 2 lines and dragging
+   the whole row taller with it; a name is the one field here with no
+   predictable length the way every money amount has. */
 .basket .totals {
-  margin-top: .5rem; display: grid; gap: .2rem; justify-items: end;
+  margin-top: .5rem; display: grid; grid-template-columns: 1fr 1fr;
+  gap: .2rem .8rem; justify-items: end;
   background: var(--surface-2); border: 1px solid var(--border);
   border-radius: var(--radius); padding: .5rem .7rem; font-variant-numeric: tabular-nums;
   font-size: .9rem;
 }
-.basket .total { font-weight: 700; font-size: 1.3rem; color: var(--brand); }
+.basket .totals-customer { grid-column: 1 / -1; }
+.basket .total { grid-column: 1 / -1; font-weight: 700; font-size: 1.3rem; color: var(--brand); }
 
 /* "Customers also buy" strip — compact chips pinned under the totals;
    scrolls sideways instead of growing so the fixed sale-screen grid holds. */
@@ -1095,8 +1161,13 @@ a.btn, a.btn:hover { text-decoration: none; }
                  display: flex; flex-direction: column; gap: .55rem; }
 
 .scan-row { display: flex; gap: .4rem; }
+/* 2026-08-30 (product owner): the barcode field inherited the global
+   input padding (.5rem .65rem, sized for a normal form field on an
+   admin page) — smaller here, since this row is tapped/scanned dozens
+   of times a shift and doesn't need that much padding to stay usable. */
+.scan-row input { padding: .4rem .55rem; }
 .scan-row input[name="code"] { flex: 1; min-width: 0; }
-.scan-row input[name="qty"] { width: 3.8rem; }
+.scan-row input[name="qty"] { width: 3.4rem; }
 /* ut-docs#413: this input's own `min-width: 0` above deliberately lets it
    shrink below its placeholder's content width (unlike the nav/kiosk
    buttons elsewhere in this file, which is exactly what made them squeeze
@@ -1184,9 +1255,26 @@ a.btn, a.btn:hover { text-decoration: none; }
    like .basket's .totals sits after .basket-scroll. flex-shrink: 0 keeps
    it from being squeezed if .tender-scroll's own 6rem floor and this
    footer's own content together somehow still exceed the panel (the same
-   "outer .tender scrolls as a last resort" fallback, never invisible). */
-.tender-default-footer { display: flex; flex-direction: column; gap: .5rem; flex-shrink: 0; }
-.payment-trigger { min-height: 4.2rem; font-size: 1.15rem; font-weight: 700; }
+   "outer .tender scrolls as a last resort" fallback, never invisible).
+   2026-08-30 (product owner, comparing against a competitor POS): row
+   instead of column, and .payment-trigger dropped from a 4.2rem/1.15rem
+   giant (matched to the old always-visible pay-grid buttons it replaced)
+   down to the base .btn size it now sits beside — Hold Sale and Payment
+   are two roughly-equal-weight actions in the default view, not one
+   dominant CTA over a secondary one, so making Payment 40% taller than
+   Hold Sale no longer earns its footprint now that it's not also the
+   only way to see any payment method. Still bold, and never sized below
+   the base .btn's 3rem/48px — this is still the button that opens the
+   actual payment flow. */
+.tender-default-footer { display: flex; flex-direction: row; gap: .5rem; flex-shrink: 0; }
+/* 2026-08-30: dropped further, to .btn.compact's own 2.5rem/40px — Hold
+   Sale (parks the sale, fully recoverable) and Payment (opens the
+   overlay; the actual charge happens on Cash/Card inside it, not here)
+   aren't money/tax-consequential the way the dine-in/takeaway toggle is
+   (see that rule's own comment for the contrast) — no reason to hold
+   them to the same floor. */
+.tender-default-footer > .btn { flex: 1; min-height: 2.5rem; padding: .45rem .8rem; font-size: .9rem; }
+.payment-trigger { font-weight: 700; }
 
 /* The dialog itself: a slide-in panel anchored to the inline-end edge
    (right in LTR, left in RTL — logical properties per this repo's RTL
@@ -1341,9 +1429,9 @@ table.table tr:last-child td, .card table tr:last-child td { border-bottom: none
    just readable in its own status text (ut-docs#303 — three warnings sat
    unnoticed among 209 rows that all rendered identically). Tint + icon,
    not colour alone, so it doesn't rely on colour perception. The icon uses
-   the --warning var directly; the tint is the same hardcoded rgba
-   .status-pill.offline already uses above (not var(--warning) itself —
-   a future --warning change won't move it, same as that precedent).
+   the --warning var directly; the tint is a hardcoded rgba, deliberately
+   not derived from var(--warning) itself — a future --warning change
+   won't silently move it.
    Legible on every theme's light --surface (ut-docs#303 review: no theme
    here is actually dark — see the themes/*.css files — so "every theme"
    IS "every background this can render on"). Logical margin, not
@@ -1372,11 +1460,10 @@ body.kiosk { font-size: .9375rem; touch-action: manipulation; }
 body.kiosk.sale-screen { overflow: hidden; }
 body.kiosk .container { padding: .6rem .8rem 0; }
 body.kiosk .kiosk-header { margin: 0 0 .6rem; }
-body.kiosk .kiosk-header h1 { font-size: 1.15rem; }
 body.kiosk .pos-container { height: calc(100dvh - 6.6rem); }
 body.kiosk * { -webkit-tap-highlight-color: transparent; }
 body.kiosk .btn, body.kiosk .nav-toggle, body.kiosk .btn-tile,
-body.kiosk h1, body.kiosk h2, body.kiosk .status-pill, body.kiosk label,
+body.kiosk h1, body.kiosk h2, body.kiosk label,
 body.kiosk .basket th, body.kiosk .journal th {
   -webkit-user-select: none; user-select: none;
 }
@@ -1438,10 +1525,9 @@ body.login-screen {
    tokens :root already defines, AND the opaque background clashed with
    whatever a shipped theme (e.g. "monarch") painted underneath — both
    contributed to the reported "text and background are some colours I
-   cannot see the till name" bug. .status-pill.online/.offline (this file,
-   "Operator chip" section below) already gets the rgba-tint + var(...)
-   shape right, reused here — but .status-pill is plain text, never a
-   link, so it never hits the problem below.
+   cannot see the till name" bug. `.sync-chip` is a link, unlike a plain
+   status-text element, so it hits a problem that class of element never
+   would (see below).
    Every shipped theme (web/public/themes/*.css) sets its own `.nav a {
    color: … }`, loaded in base.html AFTER this file — at equal specificity
    to a bare `.sync-chip a`, the theme's rule would win and silently
