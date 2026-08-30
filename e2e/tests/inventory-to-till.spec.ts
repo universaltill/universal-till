@@ -43,6 +43,8 @@ test('receive stock on Inventory, then sell that item at the till', async ({ pag
   await page.locator('.scan-row button[type=submit]').click();
   await expect(page.locator('#basket')).toContainText('Pepsi');
   await expect(page.locator('.basket .total')).toContainText('1.15');
+  // ut-docs#1252: Cash/Card now live inside the #payment-overlay dialog.
+  await page.getByTestId('payment-open').click();
   await page.locator('.pay-btn', { hasText: 'Cash' }).first().click();
   await expect(page.locator('#basket.receipt-view')).toBeVisible();
 

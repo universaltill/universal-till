@@ -75,7 +75,7 @@ test('opening Hold Sale focuses the label field without popping any keyboard, bu
   await page.locator('.scan-row button[type=submit]').click();
   await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
-  await page.locator('.tender-footer button', { hasText: 'Hold Sale' }).click();
+  await page.locator('.tender-default-footer button', { hasText: 'Hold Sale' }).click();
   await expect(page.locator('#hold-modal')).toBeVisible();
 
   const label = page.locator('#hold-label-input');

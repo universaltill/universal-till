@@ -32,6 +32,23 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     await page.goto('/');
     await page.waitForSelector('.pos-container');
 
+    // ut-docs#1252: the payment overlay is a MODAL <dialog> -- it blocks
+    // pointer events on the rest of the page (including the scan-row,
+    // which stays outside it, in .tender's default view) while open, same
+    // as this file's other dialogs. So scan the item FIRST, matching the
+    // real operator flow (build the basket, then open Payment) -- opening
+    // the overlay before scanning would just hang waiting for a click the
+    // modal itself is blocking.
+    await page.getByRole('textbox').first().fill('5000000000012');
+    await page.locator('.scan-row button[type=submit]').click();
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
+
+    // The Pay/Split tabs now live inside the #payment-overlay dialog,
+    // opened by the .payment-trigger button, instead of always being on
+    // screen -- open it before probing .tab-panel's geometry.
+    await page.getByTestId('payment-open').click();
+    await expect(page.locator('#payment-overlay')).toBeVisible();
+
     const tabPanelHeight = await page.evaluate(() => (document.querySelector('.tab-panel') as HTMLElement)?.clientHeight ?? -1);
     expect(tabPanelHeight, '.tab-panel must never collapse to ~0').toBeGreaterThan(40);
 
@@ -47,10 +64,6 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     // A real click completing a real sale is the strongest proof: it
     // fails if the button is present-but-unclickable in any way a
     // geometry check can't see.
-    await page.getByRole('textbox').first().fill('5000000000012');
-    await page.locator('.scan-row button[type=submit]').click();
-    await expect(page.locator('#basket')).toContainText('Coca-Cola');
-
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/pos/tender')),
       cashBtn.click(), // no force: must be a genuinely landable click
@@ -77,6 +90,10 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
 
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+
+    // ut-docs#1252: same overlay-open precondition as the test above.
+    await page.getByTestId('payment-open').click();
+    await expect(page.locator('#payment-overlay')).toBeVisible();
 
     const tabPanelHeight = await page.evaluate(() => (document.querySelector('.tab-panel') as HTMLElement)?.clientHeight ?? -1);
     expect(tabPanelHeight, '.tab-panel must never collapse to ~0 at a high manual scale').toBeGreaterThan(40);

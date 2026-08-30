@@ -381,6 +381,14 @@ window.utCurrency = (function(){
         renderPayments();
         clearForm();
         setStatus(msg.msgSaleCompleted, 'success');
+        // ut-docs#1252: the split-tender card now lives inside the
+        // #payment-overlay dialog (opened by the .payment-trigger button)
+        // instead of always being on screen -- close it on an actually-
+        // completed sale, same "checked the rejection branch above already
+        // returned" guarantee the pay-grid buttons' own hx-on::after-request
+        // close handler relies on (basket.html's #toast-message.error).
+        var overlay = document.getElementById('payment-overlay');
+        if (overlay && overlay.open) { overlay.close(); }
       } catch (err) {
         // ut-docs#925: err.message is raw, always-English browser text
         // ("Failed to fetch", ...) — the same leak class this card is about,

@@ -191,6 +191,10 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
     const assertClean = watchConsole(page);
     await page.goto('/');
 
+    // ut-docs#1252: the Pay/Split tab bar now lives inside the
+    // #payment-overlay dialog, opened by the .payment-trigger button.
+    await page.getByTestId('payment-open').click();
+
     const tabBar = page.locator('.tender .tab-bar');
     const payTab = tabBar.getByRole('tab', { name: 'Pay' });
     const splitTab = tabBar.getByRole('tab', { name: 'Split' });
@@ -228,6 +232,10 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
     const assertClean = watchConsole(page);
     await page.goto('/?lang=fa');
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+
+    // ut-docs#1252: the Pay/Split tab bar now lives inside the
+    // #payment-overlay dialog, opened by the .payment-trigger button.
+    await page.getByTestId('payment-open').click();
 
     const tabBar = page.locator('.tender .tab-bar');
     const tabs = tabBar.getByRole('tab');
