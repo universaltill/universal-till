@@ -1607,7 +1607,7 @@
   "import.currency_confirm.title": "Confirm the currency for this import",
   "import.currency_confirm.help": "This till's currency has never been explicitly set — it is currently using the default. Choose the currency these prices are actually in, then confirm below.",
   "import.currency_confirm.button": "Confirm & Import",
-  "import.barcode_opt_in.label": "Use each item's own item number as its barcode (this file has none)",
+  "import.barcode_opt_in.label": "Use each item's own item number as its barcode (this file has no barcodes)",
   "import.status.unknown_issue": "issue",
   "help.nav.label": "Manual topics",
   "help.search.label": "Search the manual",

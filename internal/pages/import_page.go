@@ -918,9 +918,38 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			// unticked simply never sends use_item_numbers_as_barcodes at
 			// all, reading identically to "never asked" — genuinely
 			// per-import, genuinely default off, with no extra request.
-			if barcodelessCatalog(res) {
-				fmt.Fprintf(&b, `<p><label><input type="checkbox" name="use_item_numbers_as_barcodes" value="1" form="import-form"> %s</label></p>`,
-					htmlEscape(T("import.barcode_opt_in.label")))
+			//
+			// Two review-found gaps (2026-08-30), one fix each condition
+			// below closes:
+			//  - Sticky across a re-preview (`|| useItemNumbersAsBarcodes`,
+			//    `checked` when it's on): barcodelessCatalog(res) is judged
+			//    against THIS parse's result, and a re-preview with the box
+			//    already ticked parses WITH derived barcodes filled in — so
+			//    without this, the box that produced the very rows the
+			//    operator is looking at would silently vanish, and the next
+			//    Import would commit with none of it. Confirmed empirically
+			//    in review: a barcode-less file, ticked, previewed a SECOND
+			//    time, showed the derived codes in the table with no
+			//    checkbox left to submit them.
+			//  - Gated on stagedFormID != "" (matches the interactive
+			//    problem-grid controls just above, ut-docs#601's own
+			//    `interactive` gate): stageCatalogUpload can fail
+			//    (disk/TMPDIR — a documented graceful-degradation path), in
+			//    which case renderImportCurrencyConfirm's re-emission
+			//    (confirmCarriedOverrideField) never runs at all — it's
+			//    scoped to `stagedID != ""` — so a checkbox rendered anyway
+			//    would tick, then silently lose its value on a currency-
+			//    gate detour with nothing to carry it forward. Never
+			//    offering the choice in that rare failure is the safe
+			//    degradation; the import itself still proceeds, barcode-
+			//    less, exactly as before this card.
+			if stagedFormID != "" && (barcodelessCatalog(res) || useItemNumbersAsBarcodes) {
+				checkedAttr := ""
+				if useItemNumbersAsBarcodes {
+					checkedAttr = " checked"
+				}
+				fmt.Fprintf(&b, `<p><label><input type="checkbox" name="use_item_numbers_as_barcodes" value="1" form="import-form"%s> %s</label></p>`,
+					checkedAttr, htmlEscape(T("import.barcode_opt_in.label")))
 			}
 		}
 		b.WriteString(`<table class="table"><thead><tr><th>` + T("catalog.col.name") + `</th><th>` +
