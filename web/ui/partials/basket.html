@@ -90,7 +90,11 @@
     </table>
   </div>
   <div class="totals">
-    {{ if .CustomerName }}<div>{{ T "basket.customer" }}: {{ .CustomerName }}</div>{{ end }}
+    <!-- Own full-width row, like .total below: a real customer name (CRM
+         plugin) paired against a money figure in a half-width 2-col cell
+         wraps to 2 lines and drags the whole row taller with it
+         (independent review, 2026-08-30). -->
+    {{ if .CustomerName }}<div class="totals-customer">{{ T "basket.customer" }}: {{ .CustomerName }}</div>{{ end }}
     <div>{{ T "basket.subtotal" }}: {{ money .Subtotal }}</div>
     {{ if gt .Discount 0 }}
       <div>

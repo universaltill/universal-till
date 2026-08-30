@@ -196,4 +196,51 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     }
     assertClean();
   });
+
+  // ut-docs#1327, 2026-08-30: the 900px-width stacked tablet tier (basket/
+  // tender/products in one column — `.pos-container`'s own
+  // `@media (max-width: 900px)` block) clipped the Payment button too,
+  // independently of the 1024x600 kiosk-floor bug the tests above guard —
+  // this one is width-driven, not height-driven (confirmed: broken at
+  // every height from 800px down at this width, before the fix). Fixed as
+  // a side effect of shrinking `.tender-default-footer` (row layout, base
+  // .btn size instead of the old 4.2rem/1.15rem giant) for the product-
+  // owner's compactness pass, not touched deliberately — this test pins
+  // it so it can't silently regress next time this row's sizing changes.
+  test('the default-view Payment button is not clipped at the 900px-width stacked tablet tier (ut-docs#1327)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.setViewportSize({ width: 850, height: 700 });
+    await page.goto('/');
+    await page.waitForSelector('.pos-container');
+
+    const payBtn = page.getByTestId('payment-open');
+    const hitTest = () =>
+      payBtn.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        const x = r.left + r.width / 2;
+        const y = r.bottom - 2;
+        if (y > window.innerHeight || y < 0) return false;
+        const at = document.elementFromPoint(x, y);
+        return !!at && (at === el || el.contains(at));
+      });
+
+    expect(await hitTest(), 'Payment button must be unclipped at 850x700 with an empty till').toBe(true);
+
+    await page.locator('input[name="code"]').first().fill('5000000000012');
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
+      page.locator('.scan-row button[type=submit]').click(),
+    ]);
+    await page.locator('.tender-default-footer button', { hasText: 'Hold Sale' }).click();
+    const modal = page.locator('#hold-modal');
+    await expect(modal).toBeVisible();
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/pos/hold')),
+      modal.locator('button[type=submit]').click(),
+    ]);
+    await expect(modal).toBeHidden();
+
+    expect(await hitTest(), 'Payment button must stay unclipped at 850x700 with a held sale present').toBe(true);
+    assertClean();
+  });
 });
