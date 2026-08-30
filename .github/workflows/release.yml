@@ -490,6 +490,28 @@ jobs:
           VERSION: ${{ needs.prepare.outputs.version }}
           TAG: ${{ needs.prepare.outputs.tag }}
         run: gh release upload "${TAG}" "unitill-pos_${VERSION}_android.apk" --clobber
+      - name: Also attach a fixed-name copy for the website's stable download link
+        # ut-docs (download-page-apk-dead-end, 2026-08-30): the versioned
+        # filename above means the website's Android button has no static
+        # URL it can point at directly -- it depends on a client-side fetch
+        # to the GitHub Releases API (unauthenticated, 60 req/hr per IP) to
+        # discover this release's real asset URL, and silently falls back to
+        # a bare releases-page link (not a direct download) whenever that
+        # fetch fails or is rate-limited. A SECOND copy under a fixed name
+        # (no version) lets the site link straight to
+        # .../releases/latest/download/unitill-pos-android-latest.apk --
+        # GitHub's own stable redirect to whatever the latest release's
+        # matching-named asset is, needing no JavaScript and no API call at
+        # all. The versioned asset above is kept too, for parity with every
+        # other platform's naming and for anyone linking a specific version.
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          VERSION: ${{ needs.prepare.outputs.version }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: |
+          set -euo pipefail
+          cp "unitill-pos_${VERSION}_android.apk" unitill-pos-android-latest.apk
+          gh release upload "${TAG}" unitill-pos-android-latest.apk --clobber
 
   # Regression gate for a real bug found 2026-07-28: the Windows and Linux
   # desktop-shell (WebView) builds had no buildinfo.Version ldflag at all
