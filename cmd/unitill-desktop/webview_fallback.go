@@ -14,6 +14,15 @@ import (
 	webview "github.com/webview/webview_go"
 )
 
+// setupPersistentCookies configures whatever this build's WebView engine
+// needs so cookies survive a shell restart (ut-docs#1233) — a no-op by
+// default, overridden by webkit_linux.go's init() on Linux, the only
+// platform whose engine (webview_go's GTK/WebKit2 backend) defaults to an
+// in-memory-only cookie jar. Windows's WebView2 already persists cookies
+// to its own per-app user-data folder out of the box, same as macOS's
+// WKWebView (webkit_darwin.go), so both stay this no-op.
+var setupPersistentCookies = func() error { return nil }
+
 // showWindow opens the webview_go window (Windows: Edge WebView2, Linux: GTK
 // WebKit) and blocks until it closes. Run() returns on close, so main's
 // deferred Kill stops the server; childPid is unused here.
@@ -36,6 +45,9 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 	// compositing surface WebKit creates at window construction, so once
 	// webview.New has returned it is already too late.
 	waitForSafeStartup()
+	if err := setupPersistentCookies(); err != nil {
+		fmt.Fprintln(os.Stderr, "unitill: persistent cookie storage setup failed, language/login choices won't survive a restart:", err)
+	}
 	w := webview.New(false)
 	if w == nil {
 		if ctl != nil {
