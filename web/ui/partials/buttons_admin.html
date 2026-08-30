@@ -1,12 +1,16 @@
 {{ define "buttons_admin_grid" }}
 <div id="buttons-grid-admin" class="grid">
   {{ range .Buttons }}
-    <div class="btn-tile draggable-tile" draggable="true" data-code="{{ .Code }}">
+    <div class="btn-tile reorderable-tile" data-code="{{ .Code }}">
       {{ if .ImageURL }}
       <img class="thumb" src="{{ imgv .ImageURL }}" alt="" />
       {{ end }}
       <span class="tile-name">{{ .Label }}</span>
       <div class="btn-actions">
+        <button type="button" class="btn secondary move-up" data-move="-1"
+                aria-label="{{ T "designer.move_up" }}">▲</button>
+        <button type="button" class="btn secondary move-down" data-move="1"
+                aria-label="{{ T "designer.move_down" }}">▼</button>
         <form class="remove"
               hx-post="/api/buttons/remove"
               hx-target="#buttons-grid-admin" hx-swap="outerHTML">
@@ -21,36 +25,86 @@
 </div>
 <script>
 (function () {
+  // ut-docs#1221: the previous HTML5 drag-and-drop reorder (draggable="true"
+  // + dragstart/dragover/drop) has no touch path at all -- WebKitGTK (and
+  // browsers generally) never synthesize those events from a touch pointer,
+  // so on the till's actual touchscreen this whole feature was mouse-only.
+  // Rather than reimplement reordering as a Pointer Events drag (the
+  // ADR-0054/ut-docs#1170 pattern used by the floor-plan editor, which still
+  // needs its own touch-vs-scroll `touch-action` tuning and is only ever
+  // emulation-tested per the `ux` skill's honesty rule), explicit move-
+  // up/move-down buttons are used instead: one `<button>` per tile is a
+  // single mechanism that already works by tap, click AND keyboard (Tab +
+  // Enter/Space) with no gesture-detection code at all.
   var grid = document.getElementById('buttons-grid-admin');
-  var dragged = null;
 
-  grid.addEventListener('dragstart', function (ev) {
-    dragged = ev.target.closest('.draggable-tile');
-    if (dragged) { dragged.classList.add('dragging'); ev.dataTransfer.effectAllowed = 'move'; }
-  });
-  grid.addEventListener('dragend', function () {
-    if (dragged) dragged.classList.remove('dragging');
-    dragged = null;
-  });
-  grid.addEventListener('dragover', function (ev) {
-    ev.preventDefault();
-    var over = ev.target.closest('.draggable-tile');
-    if (!dragged || !over || over === dragged) return;
-    var rect = over.getBoundingClientRect();
-    var before = (ev.clientX - rect.left) < rect.width / 2;
-    grid.insertBefore(dragged, before ? over : over.nextSibling);
-  });
-  grid.addEventListener('drop', function (ev) {
-    ev.preventDefault();
-    var codes = Array.prototype.map.call(grid.querySelectorAll('.draggable-tile'), function (t) { return t.dataset.code; });
-    var fd = new FormData();
-    codes.forEach(function (c) { fd.append('codes', c); });
-    fetch('/api/buttons/reorder', { method: 'POST', body: fd }).then(function (res) {
-      // If the save failed, reload so the grid shows the real order instead
-      // of a reorder that only happened in the DOM.
-      if (!res.ok) location.reload();
+  function tiles() {
+    return grid.querySelectorAll('.reorderable-tile');
+  }
+
+  // Keeps the edge tiles' buttons from offering a move that has nowhere to
+  // go -- recomputed after every move since which tile is first/last
+  // changes without a server round trip.
+  function refreshEdgeStates() {
+    var all = tiles();
+    Array.prototype.forEach.call(all, function (tile, i) {
+      var up = tile.querySelector('.move-up');
+      var down = tile.querySelector('.move-down');
+      if (up) up.disabled = (i === 0);
+      if (down) down.disabled = (i === all.length - 1);
     });
+  }
+
+  // Review finding (2026-08-30): a repeated tap/Enter is the intended way to
+  // step a tile several places (see the focus-retention comment below), so a
+  // fast N-step move used to fire N concurrent fire-and-forget POSTs, each
+  // carrying a full order snapshot -- whichever happened to land last on the
+  // server won, not whichever was clicked last. Chaining every send onto one
+  // running promise fixes this without debouncing away the save: each
+  // snapshot is already the fully up-to-date DOM order at click time (the
+  // preceding insertBefore calls are synchronous), so simply guaranteeing
+  // sends never overtake each other on the wire is enough to make the last
+  // click always win.
+  var pending = Promise.resolve();
+
+  function persistOrder() {
+    var codes = Array.prototype.map.call(tiles(), function (t) { return t.dataset.code; });
+    pending = pending.then(function () {
+      var fd = new FormData();
+      codes.forEach(function (c) { fd.append('codes', c); });
+      return fetch('/api/buttons/reorder', { method: 'POST', body: fd }).then(function (res) {
+        // If the save failed, reload so the grid shows the real order instead
+        // of a reorder that only happened in the DOM.
+        if (!res.ok) location.reload();
+      });
+    });
+  }
+
+  grid.addEventListener('click', function (ev) {
+    var btn = ev.target.closest ? ev.target.closest('[data-move]') : null;
+    if (!btn) return;
+    var tile = btn.closest('.reorderable-tile');
+    if (!tile) return;
+    var sibling = (btn.dataset.move === '-1') ? tile.previousElementSibling : tile.nextElementSibling;
+    if (!sibling || !sibling.classList.contains('reorderable-tile')) return; // already at an edge
+    if (btn.dataset.move === '-1') {
+      grid.insertBefore(tile, sibling);
+    } else {
+      grid.insertBefore(sibling, tile);
+    }
+    refreshEdgeStates();
+    // Keep focus on the button the operator just pressed -- it moved with
+    // the tile, so a repeated tap/Enter keeps stepping it further. Once the
+    // move lands the tile at an edge, refreshEdgeStates() has just disabled
+    // this same button (review finding, 2026-08-30: focusing a disabled
+    // element is a no-op and silently drops focus to <body>), so hand focus
+    // to the tile's other move button instead -- still on the tile the
+    // operator was just steering, still keyboard-reachable.
+    (btn.disabled ? tile.querySelector(btn.dataset.move === '-1' ? '.move-down' : '.move-up') : btn).focus();
+    persistOrder();
   });
+
+  refreshEdgeStates();
 })();
 </script>
 {{ end }}
