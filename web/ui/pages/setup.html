@@ -44,7 +44,8 @@
     <main class="setup-card" x-data="{ step: {{ .startStep }}, last: 8,
                                        country: '{{ .detectedCountry }}', currency: '{{ .detectedCurrency }}',
                                        tax: '{{ .detectedTaxRatePct }}', taxinc: '{{ if .detectedTaxInclusive }}on{{ else }}off{{ end }}',
-                                       currencyTouched: false }">
+                                       currencyTouched: false,
+                                       restoreAsking: false, restoreChoice: '', restoreStagedId: '' }">
       <img class="login-logo" src="/public/assets/logo/unitill-logo.svg" alt="Universal Till" />
       <div class="setup-dots" aria-hidden="true">
         <template x-for="i in last"><span class="setup-dot" :class="{ active: i <= step }"></span></template>
@@ -294,29 +295,41 @@
              radio was already checked, so re-tapping it fired no
              `change`). `asking` now owns which panel is shown; `choice`
              only ever holds the answer. -->
-        <section x-show="step === 6" x-cloak data-step="6" x-data="{ asking: false, choice: '' }">
+        <!-- ut-docs#1168: asking/choice/stagedId moved up to the root
+             x-data (as restoreAsking/restoreChoice/restoreStagedId) — the
+             real upload/preview form lives in its own section AFTER the
+             wizard's closing </form> below (nested forms are dropped by the
+             HTML parser, same reason step 1's language-install buttons and
+             step 3's tax-plugin button live out there), and it needs to
+             react to the same choice this section sets. -->
+        <section x-show="step === 6" x-cloak data-step="6">
           <h1>{{ T "setup.restore.title" }}</h1>
           <p class="muted">{{ T "setup.restore.hint" }}</p>
-          <input type="hidden" name="restore_choice" :value="choice">
-          <div x-show="!asking">
+          <input type="hidden" name="restore_choice" :value="restoreChoice">
+          <input type="hidden" name="staged_import_id" :value="restoreStagedId">
+          <div x-show="!restoreAsking">
             <div class="setup-nav">
-              <button type="button" class="btn primary" @click="choice = 'no'; step = 7">{{ T "setup.restore.no" }}</button>
-              <button type="button" class="btn secondary" @click="asking = true" style="margin-top:.4rem">{{ T "setup.restore.yes" }}</button>
-              <button type="button" class="btn secondary" @click="choice = 'later'; step = 7" style="margin-top:.4rem">{{ T "setup.restore.later" }}</button>
+              <button type="button" class="btn primary" @click="restoreChoice = 'no'; step = 7">{{ T "setup.restore.no" }}</button>
+              <button type="button" class="btn secondary" @click="restoreAsking = true" style="margin-top:.4rem">{{ T "setup.restore.yes" }}</button>
+              <button type="button" class="btn secondary" @click="restoreChoice = 'later'; step = 7" style="margin-top:.4rem">{{ T "setup.restore.later" }}</button>
             </div>
             <div class="setup-nav">
               <button type="button" class="btn secondary" @click="step = 5">{{ T "setup.back" }}</button>
             </div>
           </div>
-          <div x-show="asking">
+          <div x-show="restoreAsking">
             <label class="set-row">
-              <input type="radio" value="csv_excel" @change="choice = 'csv_excel'">
+              <input type="radio" value="csv_excel" @change="restoreChoice = 'csv_excel'">
               {{ T "setup.restore.csv_excel" }}
             </label>
-            <p class="muted">{{ T "setup.restore.no_plugins_yet" }}</p>
-            <div class="setup-nav">
-              <button type="button" class="btn secondary" @click="asking = false; choice = ''">{{ T "setup.back" }}</button>
-              <button type="button" class="btn primary" :disabled="choice !== 'csv_excel'" @click="step = 7">{{ T "setup.next" }}</button>
+            <!-- Back/Next for this panel only show BEFORE the radio is
+                 picked — the out-of-form section below (x-show="step === 6
+                 && restoreChoice === 'csv_excel'") takes over Browse/
+                 Preview/Back/Next the moment it is, so the operator never
+                 sees two "Next" buttons at once. -->
+            <div class="setup-nav" x-show="restoreChoice !== 'csv_excel'">
+              <button type="button" class="btn secondary" @click="restoreAsking = false; restoreChoice = ''; restoreStagedId = ''">{{ T "setup.back" }}</button>
+              <button type="button" class="btn primary" disabled>{{ T "setup.next" }}</button>
             </div>
           </div>
         </section>
@@ -388,6 +401,79 @@
         <input type="hidden" name="country" value="{{ .installableTaxPlugin.Country }}">
       </form>
       {{ end }}
+
+      <!-- ut-docs#1168: step 6's real Browse/Preview control — outside the
+           wizard's own <form> on purpose, same reasoning as the install
+           forms just above (nested forms are dropped by the HTML parser).
+           Posts straight to /api/import (preview only, commit is never set
+           here — see POST /api/import's own comment on why that's safe
+           auth-exempt during first boot), reusing that endpoint's existing
+           preview machinery byte-for-byte: id="import-form" matches what
+           the returned fragment's own hidden inputs/buttons target via
+           form= (see import.html), so the problem-grid and currency-confirm
+           controls a normal preview can produce work identically here.
+           Actual commit is deliberately NOT offered from this panel: country/
+           currency aren't saved until the wizard's final submit, so
+           committing here could label prices under the wrong currency. The
+           preview's staged_id is captured into restoreStagedId (script
+           below) and rides the wizard's own hidden staged_import_id field
+           instead — setup_page.go's POST /api/setup replays it as a real
+           commit once state is saved and the admin session exists,
+           falling back to /import?staged_id=... if that fails. -->
+      <section x-show="step === 6 && restoreChoice === 'csv_excel'" x-cloak data-step="6-upload">
+        <h2>{{ T "setup.restore.upload_title" }}</h2>
+        <p class="muted">{{ T "import.help" }}</p>
+        <form id="import-form" hx-post="/api/import" hx-target="#setup-restore-result" hx-swap="innerHTML" enctype="multipart/form-data">
+          <input type="hidden" name="commit" value="0">
+          <!-- ut-docs#1168 review: tells POST /api/import to suppress the
+               problem-grid/barcode-opt-in controls and the repeated Import
+               button it would otherwise render into #setup-restore-result —
+               none of them are wired to anything here (there's no
+               #import-commit element for their onclick handler to find, and
+               committing mid-wizard could label prices under a
+               not-yet-saved currency). The full interactive pipeline is
+               still there, unsuppressed, once the operator reaches /import
+               for real. -->
+          <input type="hidden" name="wizard" value="1">
+          <label>{{ T "import.file" }} <input type="file" name="file" accept=".csv,text/csv,.bkp,application/zip,application/octet-stream" required></label>
+          <button class="btn primary" type="submit" style="margin-top:.5rem">{{ T "import.preview" }}</button>
+        </form>
+        <div id="setup-restore-result" style="margin-top:.8rem; overflow-x:auto"></div>
+        <p class="muted" x-show="restoreStagedId !== ''" data-setup-preview-ready>{{ T "setup.restore.preview_ready" }}</p>
+        <div class="setup-nav">
+          <button type="button" class="btn secondary" @click="restoreAsking = false; restoreChoice = ''; restoreStagedId = ''">{{ T "setup.back" }}</button>
+          <button type="button" class="btn primary" @click="step = 7">{{ T "setup.next" }}</button>
+        </div>
+      </section>
+      <script>
+      // ut-docs#1168: a successful preview's response embeds
+      // <input name="staged_id" ... form="import-form"> (import_page.go) —
+      // capture it into the wizard's own Alpine state so it rides the
+      // final /api/setup submit as staged_import_id. Delegated to #setup-
+      // restore-result specifically so a re-preview (superseding the
+      // previous staged copy server-side, see discardStagedCatalogUpload)
+      // correctly overwrites the previous value rather than leaving it
+      // stale.
+      document.getElementById('setup-restore-result').addEventListener('htmx:afterSwap', function () {
+        var staged = document.querySelector('#setup-restore-result input[name="staged_id"]');
+        var root = document.querySelector('main.setup-card');
+        if (staged && root && window.Alpine) {
+          window.Alpine.$data(root).restoreStagedId = staged.value;
+        }
+      });
+      // ut-docs#1168 review: a rejected/unrecognised file (wrong format, a
+      // corrupt .bkp, …) returns a non-2xx status with the translated
+      // reason as its plain-text body (import_page.go's T("import.error.*")
+      // calls) — htmx does not swap a non-2xx response on its own (same
+      // pattern shifts.html's own htmx:responseError handler exists for),
+      // so without this the operator gets no feedback at all: an empty
+      // #setup-restore-result and no clue why Preview did nothing.
+      document.body.addEventListener('htmx:responseError', function (ev) {
+        var target = ev.detail && ev.detail.target;
+        if (!target || target.id !== 'setup-restore-result') return;
+        target.innerHTML = '<p class="login-error">' + (ev.detail.xhr.responseText || '') + '</p>';
+      });
+      </script>
 
       <!-- Alternate path: join an existing shop (ADR-0011 D2). The primary's
            QR code enrols this till and copies the whole shop over. -->
