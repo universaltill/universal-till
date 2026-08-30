@@ -45,6 +45,13 @@ type BkpProductRow struct {
 	// both are "no tax data for this row", never an error.
 	TaxPercentageRaw  string
 	TaxPercentage2Raw string
+	// ProductImagePath (ut-docs#1223): the source's own reference to a
+	// product photo — a path resolved against the .bkp archive's
+	// documents.zip member names by the caller (internal/catimport/bkp.go).
+	// Blank when absent from this backup.db's schema (older exports) or
+	// the cell itself is NULL/empty — both mean "no image for this row",
+	// same optional-column treatment as the tax columns above.
+	ProductImagePath string
 }
 
 // The Products query is BUILT FROM THE SCHEMA, not hard-coded (ut-docs#968).
@@ -146,6 +153,7 @@ func buildBkpProductsQuery(productCols, groupCols map[string]bool) string {
 		col("ProductType", "NULL"),
 		col("TaxPercentage", "NULL"),
 		col("TaxPercentage2", "NULL"),
+		col("ProductImagePath", "NULL"),
 	}, ", ") + " FROM Products p" + join + " ORDER BY p.rowid"
 }
 
@@ -176,10 +184,10 @@ func ReadBkpProducts(ctx context.Context, db *sql.DB) ([]BkpProductRow, error) {
 	var out []BkpProductRow
 	for rows.Next() {
 		var productNumber, textShort, salesPrice, groupText, status, productType any
-		var taxPct, taxPct2 any
-		// Always eight columns: buildBkpProductsQuery substitutes NULL for
+		var taxPct, taxPct2, imagePath any
+		// Always nine columns: buildBkpProductsQuery substitutes NULL for
 		// anything the backup doesn't carry, so there is no shape to branch on.
-		scanErr := rows.Scan(&productNumber, &textShort, &salesPrice, &groupText, &status, &productType, &taxPct, &taxPct2)
+		scanErr := rows.Scan(&productNumber, &textShort, &salesPrice, &groupText, &status, &productType, &taxPct, &taxPct2, &imagePath)
 		if scanErr != nil {
 			return nil, fmt.Errorf("scan Products row: %w", scanErr)
 		}
@@ -192,6 +200,7 @@ func ReadBkpProducts(ctx context.Context, db *sql.DB) ([]BkpProductRow, error) {
 			ProductType:       bkpScanInt(productType),
 			TaxPercentageRaw:  bkpScanString(taxPct),
 			TaxPercentage2Raw: bkpScanString(taxPct2),
+			ProductImagePath:  bkpScanString(imagePath),
 		})
 	}
 	if err := rows.Err(); err != nil {

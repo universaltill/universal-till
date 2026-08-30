@@ -93,6 +93,66 @@ func TestReadBkpProducts_MissingTaxColumnsIsBackwardCompatible(t *testing.T) {
 	}
 }
 
+// ut-docs#1223: the speedy kasse Products table can carry a
+// ProductImagePath column referencing a photo inside the .bkp archive's
+// documents.zip — ReadBkpProducts must surface it, and must not error when
+// an older backup.db lacks the column entirely (same optional-column
+// pattern as the tax columns above).
+func TestReadBkpProducts_ProductImagePathPresent(t *testing.T) {
+	db := openTempSQLite(t)
+	if _, err := db.Exec(`CREATE TABLE Products (
+		ProductNumber TEXT, ProductTextShort TEXT, SalesPrice REAL,
+		ProductGroupText TEXT, Status INTEGER, ProductType INTEGER,
+		ProductImagePath TEXT
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO Products
+		(ProductNumber, ProductTextShort, SalesPrice, ProductGroupText, Status, ProductType, ProductImagePath)
+		VALUES ('1','Cappuccino',3.50,'Coffee',1,1,'images/abc-123.jpg')`); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := data.ReadBkpProducts(context.Background(), db)
+	if err != nil {
+		t.Fatalf("ReadBkpProducts: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0].ProductImagePath != "images/abc-123.jpg" {
+		t.Errorf("ProductImagePath = %q, want %q", rows[0].ProductImagePath, "images/abc-123.jpg")
+	}
+}
+
+func TestReadBkpProducts_MissingProductImagePathIsBackwardCompatible(t *testing.T) {
+	db := openTempSQLite(t)
+	// Older-schema backup.db: no ProductImagePath column at all — must not
+	// error, must just leave the field blank.
+	if _, err := db.Exec(`CREATE TABLE Products (
+		ProductNumber TEXT, ProductTextShort TEXT, SalesPrice REAL,
+		ProductGroupText TEXT, Status INTEGER, ProductType INTEGER
+	)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec(`INSERT INTO Products
+		(ProductNumber, ProductTextShort, SalesPrice, ProductGroupText, Status, ProductType)
+		VALUES ('1','Espresso',2.20,'Coffee',1,1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	rows, err := data.ReadBkpProducts(context.Background(), db)
+	if err != nil {
+		t.Fatalf("ReadBkpProducts must not error on an image-path-columnless schema: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("rows = %d, want 1", len(rows))
+	}
+	if rows[0].ProductImagePath != "" {
+		t.Errorf("ProductImagePath should be blank on an older schema, got %q", rows[0].ProductImagePath)
+	}
+}
+
 // ut-docs#968 (independent review): buildBkpProductsQuery introspects the
 // category DISPLAY column on ProductGroups, but the join predicate it emits
 // is "ON g.ProductGroupID = p.ProductGroupID" — so a ProductGroups table
