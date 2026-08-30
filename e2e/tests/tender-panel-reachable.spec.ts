@@ -110,4 +110,92 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     await page.waitForEvent('load');
     assertClean();
   });
+
+  // 2026-08-30 (product owner review, compared directly against a competitor
+  // POS): the two tests above only prove Cash is reachable via internal
+  // scroll — deliberately, per this file's own header comment, since a
+  // collapsed/occluded button is worse than one behind a scroll. But the
+  // block comment on .pos-container's row split (app.css, ut-docs#1231)
+  // claims something stronger: the 4fr:3fr split was tuned so "Cash/Card...
+  // stays on screen at 1280x800 AND 1024x600 with no scroll". Live
+  // screenshots at plain 1024x600 (no manual UI-scale) showed Cash and Card
+  // themselves clipped by the footer statusbar with zero scrolling — the
+  // code's own claimed invariant, not met. This test holds the CSS to that
+  // claim directly: no scrollIntoViewIfNeeded, both buttons must already be
+  // fully within the tender panel's visible box on load.
+  test('Cash and Card are visible with no scroll at 1024x600, default scale', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.setViewportSize({ width: 1024, height: 600 });
+    await page.goto('/');
+    await page.waitForSelector('.pos-container');
+
+    // Hermetic: earlier specs sharing this till server can leave BOTH a
+    // non-empty live basket AND held sales behind, and the #held-sales
+    // strip lives inside .tender — a populated strip eats into the exact
+    // height budget this test measures, so a spec that happened to run
+    // after either kind of leftover would fail for a reason that has
+    // nothing to do with THIS test's own assertion (caught by independent
+    // review: green in isolation, red in the full suite run).
+    //
+    // Order matters two ways here. First: server-side, POST /api/pos/resume
+    // hard-refuses ("Finish or hold the current sale first") whenever
+    // Engine.HasItems() is true — Engine is one shared instance across
+    // this whole till server, not per-browser-context, so a non-empty
+    // live basket left by an earlier spec blocks every resume until it's
+    // cleared. Second: the reset click itself must be genuinely AWAITED
+    // (its real network response, not just a selector that was already
+    // true beforehand) — an unawaited reset let the very next resume
+    // click race ahead of it, hitting the server before Reset() had run
+    // and hanging on a response that legitimately never arrives (a real,
+    // once-reproduced failure, not a hypothetical).
+    //
+    // A THIRD bug, also once-reproduced live: resume's own Engine.HasItems()
+    // guard means the basket must be empty before EVERY resume, not just
+    // the first — each successful resume re-populates the basket with the
+    // held sale's own lines, so a naive loop drains exactly one held sale
+    // and then spins forever re-clicking the next chip, which fails with
+    // the same "busy" error every time because nothing ever empties the
+    // basket back out again (Playwright's 30s test timeout was the only
+    // thing that ever stopped it). Reset between every resume, not once.
+    const clearBasket = () =>
+      Promise.all([
+        page.waitForResponse((r) => r.url().includes('/api/pos/reset')),
+        page.locator('[data-testid="kiosk-checkout-start"]').click(),
+      ]);
+
+    await clearBasket();
+
+    for (;;) {
+      const chip = page.locator('.held-chip').first();
+      if ((await chip.count()) === 0) break;
+      await Promise.all([
+        page.waitForResponse((r) => r.url().includes('/api/pos/resume')),
+        chip.click(),
+      ]);
+      await clearBasket(); // also leaves an empty basket for whichever spec runs next
+    }
+
+    for (const label of ['Cash', 'Card']) {
+      // Exact match, not substring — 'Card' as a plain hasText also matches
+      // a 'Gift Card' button (also caught by independent review).
+      const btn = page.locator('#panel-pay .btn').filter({ hasText: new RegExp(`^${label}$`) }).first();
+      // Deliberately NO scrollIntoViewIfNeeded here — that's the whole
+      // point of "no scroll needed". Hit-test near the button's own BOTTOM
+      // edge (not its center, which the footer-clip case can still pass):
+      // real elementFromPoint, same technique this file already uses for
+      // the tab-panel-collapse class of bug, so a sticky footer painted
+      // over the button's lower portion is caught the same way a collapsed
+      // ancestor was.
+      const hit = await btn.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        const x = r.left + r.width / 2;
+        const y = r.bottom - 2;
+        if (y > window.innerHeight || y < 0) return false; // off-viewport entirely
+        const at = document.elementFromPoint(x, y);
+        return !!at && (at === el || el.contains(at));
+      });
+      expect(hit, `${label}'s own bottom edge must be visible and unclipped with no scroll`).toBe(true);
+    }
+    assertClean();
+  });
 });

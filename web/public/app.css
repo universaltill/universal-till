@@ -487,6 +487,26 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
      1024x600 with no scroll, while still comfortably favouring products).
      Every payment button stays reachable via tender's own internal
      scroll exactly as before (e2e/tests/tender-panel-reachable.spec.ts).
+
+     2026-08-30 (docs/code-reviews/2026-08-30-sale-screen-density-and-
+     tender-clipping.md): #1231's "no scroll" claim above was measured
+     with a CENTRE-point hit-test; a bottom-edge probe (the way a real
+     footer-overlap clip actually manifests) shows even 4:3 misses at
+     1024x600 with 3 payment methods (Cash/Card/Gift Card — the actual
+     shipped default, not a hypothetical). The first attempt at a fix
+     flipped this ratio to 3fr:4fr (tender-favoured) — WRONG: measured
+     across 1024x600/1280x800/1194x834, 3:4 is strictly dominated by a
+     plain 1fr:1fr, which reaches the identical pay-button/footer outcome
+     while giving products 28-45px more every time, and at 1280x800 it
+     reproduced #1231's own bug report verbatim (thumbnail slivers, no
+     name/price visible on any product tile). Reverted to 4:3. The actual
+     fix for the 1024x600 gap is `.pay-grid`'s `repeat(auto-fit,
+     minmax(9rem, 1fr))` (below) letting 3+ payment methods share a row
+     instead of stacking — which removes #1231's own stated reason to
+     reject a gentler split (a second pay-grid row no longer costs a
+     whole extra tender row) — PLUS the `max-height: 640px` override
+     below for the genuinely tight case, rather than punishing every
+     taller viewport with a worse products:tender ratio it doesn't need.
      A flexible tender row does mean its rendered height now tracks
      `.pos-container`'s own available height (plain `auto` never did),
      which moves the scan-row/"Add"-button boundary whenever that height
@@ -515,6 +535,14 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
      pushed the tender panel off-screen). */
   flex: 1 1 auto;
   min-height: 0;
+}
+/* 2026-08-30: only the genuinely short case (the 1024x600 kiosk floor is
+   the reference here, not width) gets tender a bigger share — measured to
+   be the loosest change that clears the bottom-edge no-scroll bar without
+   touching the 4:3 default every taller viewport already relies on (see
+   the review doc cited above for the full measurement table). */
+@media (max-height: 640px) {
+  .pos-container { grid-template-rows: minmax(8rem, 1fr) minmax(0, 1fr); }
 }
 .pos-container > .basket { grid-area: basket; }
 .pos-container > .products { grid-area: products; }
@@ -742,12 +770,29 @@ a.btn, a.btn:hover { text-decoration: none; }
 
 /* ---------- Product tiles ----------
    The whole tile is one touch target: image, name, price. */
-.grid { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fill, minmax(8.8rem, 1fr)); }
+/* 2026-08-30: column floor 8.8rem->7.5rem, tile min-height 8.5rem->7.2rem
+   and thumb 4.25rem->3.4rem (product owner review vs. a competitor POS —
+   ours fit 3 tiles/row with large gaps where theirs fit ~5 in less width).
+   Touch-target area still comfortably clears WCAG 2.5.5 (24x24 CSS px
+   min; a 7.2rem=115px tile is nowhere near that floor), and kiosk
+   inherits the same base value unchanged (ut-docs#161 parity).
+   Independent review (docs/code-reviews/2026-08-30-sale-screen-density-
+   and-tender-clipping.md) caught that .tile-name had NO clamp at all
+   before this comment was written — the first version of this comment
+   wrongly asserted one already existed. A real German name ("Halbfett-
+   margarine 500g") at the new 7.5rem column floor rendered sheared at
+   the tile edge (scrollWidth > clientWidth), against the standing
+   multilingual/longest-locale rule. Fixed below: an actual 2-line clamp
+   (same pattern as the basket's .line-name) plus overflow-wrap so a long
+   unbroken compound word wraps instead of overflowing — German is
+   routinely ~30% longer than English and compounds don't get natural
+   break points the way English phrases do. */
+.grid { display: grid; gap: .6rem; grid-template-columns: repeat(auto-fill, minmax(7.5rem, 1fr)); }
 /* user-select/touch-action unconditional here too (ut-docs#1170) — same
    reasoning as .btn above, previously gated behind body.kiosk only. */
 .btn-tile {
   display: flex; flex-direction: column; align-items: stretch; gap: .3rem;
-  padding: .55rem .5rem .6rem; min-height: 8.5rem; border: 1px solid var(--border);
+  padding: .5rem .45rem .55rem; min-height: 7.2rem; border: 1px solid var(--border);
   border-radius: var(--radius); background: var(--surface); box-shadow: var(--shadow);
   font: inherit; color: var(--text); cursor: pointer; text-align: center;
   transition: border-color .12s ease, box-shadow .12s ease, transform .05s ease;
@@ -755,10 +800,14 @@ a.btn, a.btn:hover { text-decoration: none; }
 }
 .btn-tile:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15, 23, 42, .12); }
 .btn-tile:active { transform: scale(.97); }
-.tile-name { font-weight: 600; font-size: .95rem; line-height: 1.2; white-space: normal; }
+.tile-name {
+  font-weight: 600; font-size: .95rem; line-height: 1.2; white-space: normal;
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
+  overflow: hidden; overflow-wrap: anywhere;
+}
 .tile-price { font-size: .95rem; color: var(--accent); font-weight: 700;
               font-variant-numeric: tabular-nums; }
-.thumb { width: 100%; height: 4.25rem; object-fit: contain;
+.thumb { width: 100%; height: 3.4rem; object-fit: contain;
          border-radius: 7px; background: var(--surface-2); }
 .thumb.small { width: 40px; height: 40px; aspect-ratio: auto; margin-inline-end: .5rem;
                vertical-align: middle; }
@@ -1051,7 +1100,7 @@ a.btn, a.btn:hover { text-decoration: none; }
    Fixed panel that never scrolls: scan row + held strip + Pay/Split tabs +
    footer actions. */
 [x-cloak] { display: none !important; }
-.tender { display: flex; flex-direction: column; gap: .55rem; }
+.tender { display: flex; flex-direction: column; gap: .4rem; }
 
 .scan-row { display: flex; gap: .4rem; }
 .scan-row input[name="code"] { flex: 1; min-width: 0; }
@@ -1115,7 +1164,21 @@ a.btn, a.btn:hover { text-decoration: none; }
 .tab-panel { flex: 1; min-height: 6rem; overflow-y: auto; display: flex;
              flex-direction: column; gap: .5rem; }
 
-.pay-grid { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+/* 2026-08-30, product owner review (compared directly against a
+   competitor POS): a fixed 2-column grid forces every payment method past
+   the second into its own extra row, so a shop with Cash+Card+one more
+   (Gift Card, a payment plugin — extremely common, not an edge case)
+   already overflowed .tender's own row allotment and had to scroll for
+   payment buttons that the app.css:483-487 comment (ut-docs#1231) claims
+   should need no scroll at all at 1280x800/1024x600 — live-confirmed not
+   true even for Cash/Card themselves at 1024x600, tab-panel-reachable
+   spec's own "no scroll" test. auto-fit lets 3-4 buttons share a row on
+   any panel wide enough (which .tender always is — it's never the width-
+   constrained column) instead of stacking, shrinking the pay-grid's own
+   height footprint without shrinking any individual button — the 480px
+   override below still forces one column for phone-width label safety,
+   untouched. */
+.pay-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr)); gap: .5rem; }
 .pay-btn { min-height: 4.2rem; font-size: 1.15rem; font-weight: 700; }
 .pay-btn.pay-plugin { background: var(--surface); color: var(--accent);
                       border: 2px dashed var(--accent); }
@@ -1262,8 +1325,11 @@ body.kiosk .basket th, body.kiosk .journal th {
 }
 /* .btn/.btn-tile touch targets: kiosk must never be SMALLER than non-kiosk
    (real screens, real fingers) — previously 2.75rem/5.4rem here shrank
-   below the 3rem/8.5rem base rules and fell under a 48px effective floor
-   at common till widths (ut-docs#161). Kiosk now inherits the base sizes. */
+   below the 3rem/8.5rem base rules of the time and fell under a 48px
+   effective floor at common till widths (ut-docs#161). Kiosk still
+   inherits the base sizes unchanged — no kiosk-only override here — so
+   this parity holds regardless of what the base .btn-tile min-height
+   itself is tuned to later (currently 7.2rem, 2026-08-30 density pass). */
 body.kiosk input, body.kiosk select { min-height: 2.4rem; }
 body.kiosk .qty-input, body.kiosk .disc-input { min-height: 2.1rem; }
 body.kiosk .basket .total { font-size: 1.45rem; }
