@@ -226,6 +226,16 @@ func TestCatalogCreate_SavesLookupImage(t *testing.T) {
 	if _, _, err := image.Decode(bytes.NewReader(raw)); err != nil {
 		t.Fatalf("stored thumb is not a decodable image: %v", err)
 	}
+	// Review finding F2 (ut-docs#1189): the disk file alone isn't enough —
+	// item_images (what the POS grid/basket/self-order/suggestions
+	// actually resolve a thumbnail from) must be updated too.
+	var imgPath string
+	if err := db.QueryRow(`SELECT path FROM item_images WHERE item_id = ? AND role = 'thumbnail'`, itemID).Scan(&imgPath); err != nil {
+		t.Fatalf("expected an item_images thumbnail row for the lookup image: %v", err)
+	}
+	if imgPath != "/public/assets/items/"+itemID+"/thumb.png" {
+		t.Fatalf("item_images path = %q", imgPath)
+	}
 }
 
 // A disallowed image host (SSRF attempt or stale URL) must not fail the
