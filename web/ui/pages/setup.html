@@ -55,6 +55,23 @@
       <form method="post" action="/api/setup">
         <!-- Step 1 · language (reloads with the chosen locale) -->
         <section x-show="step === 1" x-cloak.important data-step="1">
+          <!-- ut-docs#1165: checks for a newer release in the background and,
+               if one exists, offers to update BEFORE setup continues — never
+               automatic, never blocking. Empty container: the fetch itself
+               (bounded by updates.CheckNow's own 10s timeout) never delays
+               painting step 1, and an unreachable/offline check renders
+               nothing at all (offline-first — no error, no banner). -->
+          <!-- hx-params="none": this container sits inside the wizard's own
+               <form> (below), which also holds later steps' PIN fields
+               (pin/pin_confirm) — Alpine's x-show only hides via CSS, so
+               those inputs are in the DOM the moment an operator steps
+               forward then back to step 1. htmx's default non-GET behavior
+               includes the closest enclosing form's fields on every
+               triggered request; without this, an admin PIN could be sent
+               to this unauthenticated endpoint (review finding B1,
+               ut-docs#1165). Neither handler reads the body, but it doesn't
+               belong on the wire at all. -->
+          <div id="setup-update-check" hx-post="/api/setup/update-check" hx-trigger="load" hx-swap="innerHTML" hx-params="none"></div>
           <h1>{{ T "setup.language.title" }}</h1>
           <!-- ut-docs#590: the OS locale was detected but isn't one of the
                languages this till ships today (core files + installed
