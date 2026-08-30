@@ -266,18 +266,20 @@ body.sale-screen .session-user { font-size: 1rem; padding: .3rem .5rem; }
 .catalog-row { cursor: pointer; }
 .catalog-row:hover td { background: var(--surface-2); }
 .catalog-name { font-weight: 600; }
-/* -webkit-user-drag: element (review finding, ut-docs#1170): this tile is
-   ALSO a .btn-tile, which this same change just gave an unconditional
-   `user-select: none`. WebKitGTK (the Linux desktop shell, ADR-0028,
-   guard-webkit-version.sh — not the Chromium kiosk shell, unaffected) has a
-   known behavior where user-select:none on a draggable="true" element can
-   suppress HTML5 drag-and-drop initiation. This tile's mouse-driven
-   REORDER gesture (buttons_admin.html's dragstart/dragover/drop) works
-   today and has no e2e coverage — this rule is the standard, Blink-inert
-   workaround, applied preventively rather than waiting to find out on
-   real desktop-shell hardware. */
-.draggable-tile { cursor: grab; -webkit-user-drag: element; }
-.draggable-tile.dragging { opacity: .4; }
+/* ut-docs#1221: the Designer's reorder tiles used to be HTML5
+   draggable="true" elements, which needed a `-webkit-user-drag: element`
+   workaround here (WebKitGTK can suppress HTML5 DnD on a user-select:none
+   draggable element) -- moot now that reordering is done via the
+   move-up/move-down buttons in buttons_admin.html instead of a drag
+   gesture, so there is nothing left to opt back into native dragging for. */
+/* Review finding (2026-08-30): .btn-actions .btn's own `min-height: 0`
+   (below, "Buttons") shrinks these to ~33px with ~4px gaps -- under this
+   product's own 46px touch-target floor (.btn-touch), on the one card whose
+   entire point is making reordering work by touch. Scoped here rather than
+   widening .btn-actions .btn generally, which is deliberately compact for
+   dense rows (e.g. the sale-screen tender panel) this change doesn't touch. */
+.reorderable-tile .btn-actions .btn { min-height: 46px; min-width: 46px; }
+.reorderable-tile .btn-actions { gap: .5rem; }
 .journal-row { cursor: pointer; }
 .journal-row:hover td { background: var(--surface-2); }
 .catalog-form-head { display: flex; justify-content: space-between; align-items: center;
