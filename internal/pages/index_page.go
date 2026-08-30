@@ -43,13 +43,17 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		// Self-order kiosk mode (ADR-0020): "/" itself requires a session
-		// (it's not auth-exempt), so this branch only ever helps a
-		// logged-in visitor (e.g. a manager checking what the kiosk shows)
-		// — a real anonymous customer never sees "/" at all, since the
-		// kiosk's browser is configured to open /self-order directly
-		// (which IS auth-exempt). Applies to every session, not just
-		// managers: a self-order-mode till isn't meant to show the cashier
-		// screen to anyone by default.
+		// (it's not auth-exempt), so this branch only runs for a request
+		// that already carries a LIVE one (e.g. a manager checking what the
+		// kiosk shows, or another operator's still-valid session on a
+		// second device) — auth.Middleware's own SetAnonymousRootRedirect
+		// seam (ut-docs#1259) is what sends a genuinely anonymous "/" to
+		// /self-order before this handler is ever reached, since every real
+		// kiosk launcher (packaging/linux/unitill-kiosk-launch.sh, the
+		// desktop shell, the Android app) opens "/", not /self-order
+		// directly. Applies to every authenticated session here too, not
+		// just managers: a self-order-mode till isn't meant to show the
+		// cashier screen to anyone by default.
 		if mode == "self_order" {
 			http.Redirect(w, r, "/self-order", http.StatusSeeOther)
 			return

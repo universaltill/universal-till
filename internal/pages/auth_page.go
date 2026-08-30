@@ -78,14 +78,17 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// next=="kiosk" is the self-order kiosk's public-facing, PIN-gated
 		// exit link (ut-docs#208) — it must always demand a fresh PIN, even
 		// when the browser already carries a valid session cookie
-		// (ut-docs#1253). Putting a till into self-order mode never logs it
-		// out (display.mode only changes what "/" redirects to — see
-		// registerIndex / TestSelfOrderModeRedirectsEverySession), so
-		// without this exclusion the "already authenticated, skip the form"
-		// shortcut below — meant for a plain register re-visiting /login —
-		// applied identically here, and any customer who found this URL
-		// while that session was still alive walked straight into Settings
-		// with no PIN prompt at all.
+		// (ut-docs#1253). Switching a till INTO self-order mode now revokes
+		// the acting browser's own session (ut-docs#1259), but that's a
+		// single-cookie revoke, not a device-wide logout: any OTHER live
+		// session on the same till — a manager still signed in on a second
+		// device, or an operator who never switched the mode themselves —
+		// keeps working exactly as before (TestSelfOrderModeRedirectsEvery
+		// Session). So without this exclusion the "already authenticated,
+		// skip the form" shortcut below — meant for a plain register
+		// re-visiting /login — applied identically here, and any customer
+		// who found this URL while such a session was still alive walked
+		// straight into Settings with no PIN prompt at all.
 		if next != "kiosk" {
 			if c, err := r.Cookie(auth.CookieName); err == nil {
 				if _, ok := svc.Resolve(r.Context(), c.Value); ok {
