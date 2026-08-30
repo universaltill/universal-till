@@ -30,6 +30,15 @@ const FA = {
 };
 
 test.describe('split-tender panel status copy localizes (ut-docs#925)', () => {
+  test.beforeEach(async ({ page }) => {
+    // The basket lives in the server-global engine, shared by every spec on
+    // this till -- without this, a line left behind by an earlier spec (e.g.
+    // settings-osk.spec.ts's cancelled hold-sale dialog test, which leaves a
+    // Coca-Cola in the basket on purpose) breaks this file's exact-total
+    // arithmetic (ut-docs#1310). Mirrors sale-screen-osk-scan-submit-1177.
+    // spec.ts's own beforeEach reset for the same reason.
+    await page.request.post('/api/pos/reset');
+  });
   test.afterEach(async ({ page }) => {
     await page.request.post('/api/pos/reset');
   });
