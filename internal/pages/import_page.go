@@ -725,6 +725,15 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					failed++
 					continue
 				}
+				// Placeholder thumbnail (ut-docs#1189 Phase 1): a source
+				// export never carries an image, so every committed row
+				// lands here with no thumbnail yet. Same after-commit
+				// placement and best-effort spirit as the barcode attach
+				// below — a category icon is a cosmetic nicety, never a
+				// reason to fail an otherwise-successful import row.
+				if err := repo.EnsureDefaultThumbnail(r.Context(), itemID, catimport.PlaceholderIconPath(it.Name, it.Category)); err != nil {
+					log.Printf("[import] set placeholder thumbnail for item %q: %v", it.Name, err)
+				}
 				// The row's item is now durably committed — only now does
 				// its tax-override candidate (if any) get promoted into the
 				// set that actually gets merged into ut-plugin-tax-de's
