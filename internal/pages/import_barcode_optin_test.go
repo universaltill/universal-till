@@ -7,6 +7,47 @@ import (
 	"testing"
 )
 
+// TestImport_TickedOptIn_StaysStickyOnRePreview is a real bug found in
+// independent review (2026-08-30, F1): barcodelessCatalog is judged against
+// the CURRENT parse's result, and a re-preview submitted with the box
+// already ticked parses WITH derived barcodes filled in — so every row now
+// has a non-empty Barcode, barcodelessCatalog(res) flips to false, and the
+// checkbox that produced the very rows on screen silently disappears. The
+// next "Import" click then has nothing to submit and commits barcode-less,
+// contradicting the preview the operator just approved. Fixed by keeping the
+// checkbox rendered (and ticked) whenever the request itself already carries
+// use_item_numbers_as_barcodes=1, not only when the parse result still looks
+// barcode-less.
+func TestImport_TickedOptIn_StaysStickyOnRePreview(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	// First preview: establishes the staged copy.
+	stagedID, firstBody := previewAndExtractStagedID(t, mux, barcodelessCSV)
+	if !strings.Contains(firstBody, `name="use_item_numbers_as_barcodes"`) {
+		t.Fatalf("first preview must offer the checkbox: %s", firstBody)
+	}
+
+	// Re-preview WITH the box already ticked — same file, carrying the
+	// previous staged_id, exactly what clicking Preview a second time sends.
+	body, ct := multipartCSV(t, barcodelessCSV, map[string]string{
+		"staged_id": stagedID, "use_item_numbers_as_barcodes": "1",
+	})
+	rec := postImport(t, mux, body, ct)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("re-preview: code %d body %s", rec.Code, rec.Body.String())
+	}
+	second := rec.Body.String()
+	if !strings.Contains(second, "30005") {
+		t.Fatalf("re-preview must show the derived barcode in the table: %s", second)
+	}
+	if !strings.Contains(second, `name="use_item_numbers_as_barcodes" value="1" form="import-form" checked`) {
+		t.Fatalf("re-preview must keep the checkbox rendered AND ticked, or the next Import silently loses the choice: %s", second)
+	}
+}
+
 // TestImport_TickedOptIn_SurvivesCurrencyConfirmDetour is a real bug found by
 // driving this exact sequence in an actual browser (ut-docs#1224 tester
 // note), not derived from reading the code: on a till whose currency was
