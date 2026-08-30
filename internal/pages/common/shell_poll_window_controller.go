@@ -96,3 +96,36 @@ func (c *ShellPollWindowController) ExitToOS() error {
 	}
 	return nil
 }
+
+// RecordInputHeartbeat forwards to the spawn-mode fallback control channel
+// when one exists (ut-docs#1329, split from #1228's input-freeze
+// incident). Unlike ApplyMode above, this is unconditional — never gated
+// on !c.ch.Attached(...) — because there is no ShellChannel field a
+// heartbeat could be published into for an attach-mode shell to pick up on
+// its own next long poll (ShellChannel carries window-MODE state, not an
+// input-liveness timestamp); the fallback's direct loopback+token channel
+// to unitill-desktop's own POST /input-heartbeat is the only path this
+// diagnostic signal can travel over at all. A pure attach-mode shell (nil
+// fallback — the common .deb-install topology per ADR-0064) simply has no
+// live channel yet for this to reach, same as ApplyMode's own "no shell,
+// no fallback" case; this is deliberately never an error either way — a
+// heartbeat that can't be delivered must not disturb the caller (fired
+// many times a minute from every kiosk screen), so a genuine fallback
+// failure is logged, not returned. Logged at Info, deliberately NOT
+// Errorf/Warnf (review of ut-docs#1329, blocker 2): logging.L()'s
+// recentBuf — the capped ring behind both the backoffice "recent
+// problems" panel and the ADR-0018 cloud-sync heartbeat digest — admits
+// anything >= Warn, and this call can fire every ~5s per open kiosk page.
+// A single unreachable/erroring shell would fill the whole 50-slot buffer
+// in minutes and evict every genuine problem — exactly the regression
+// ut-docs#954 fixed on 2026-08-24, and especially self-defeating here
+// since a wedged/unreachable shell is precisely the incident class this
+// diagnostic exists to illuminate, not obscure.
+func (c *ShellPollWindowController) RecordInputHeartbeat() error {
+	if c.fallback != nil {
+		if err := c.fallback.RecordInputHeartbeat(); err != nil {
+			logging.L().Infof("input heartbeat forward: %v", err)
+		}
+	}
+	return nil
+}
