@@ -228,3 +228,169 @@ func TestPluginRepo_StorageGetSetDelete(t *testing.T) {
 		t.Fatalf("other plugin's storage should be unaffected: %v", err)
 	}
 }
+
+// ListStorageByPrefix (ADR-0072): the generic key-enumeration primitive the
+// core-UI-over-plugin-storage pattern needs — plugin- and prefix-scoped,
+// ordered by key, with the other plugin's identically-prefixed keys invisible.
+func TestPluginRepo_ListStorageByPrefix(t *testing.T) {
+	ctx := context.Background()
+	d := openMigratedDB(t, "till.db")
+	repo := NewPluginRepo(d.DB)
+
+	// Empty result (not an error) before anything is stored.
+	entries, err := repo.ListStorageByPrefix(ctx, "com.t.list", "fiscal_register:")
+	if err != nil {
+		t.Fatalf("ListStorageByPrefix on empty namespace: %v", err)
+	}
+	if len(entries) != 0 {
+		t.Fatalf("expected no entries, got %d", len(entries))
+	}
+
+	// Seed out of key order to prove ORDER BY key, plus a non-matching key
+	// and an identically-prefixed key under a DIFFERENT plugin id.
+	for _, kv := range []struct{ plugin, key, val string }{
+		{"com.t.list", "fiscal_register:b", "val-b"},
+		{"com.t.list", "fiscal_register:a", "val-a"},
+		{"com.t.list", "other:x", "val-other"},
+		{"com.t.list2", "fiscal_register:z", "val-foreign"},
+	} {
+		if err := repo.StorageSet(ctx, kv.plugin, kv.key, []byte(kv.val)); err != nil {
+			t.Fatalf("seed %s/%s: %v", kv.plugin, kv.key, err)
+		}
+	}
+
+	entries, err = repo.ListStorageByPrefix(ctx, "com.t.list", "fiscal_register:")
+	if err != nil {
+		t.Fatalf("ListStorageByPrefix: %v", err)
+	}
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 matching entries, got %d: %+v", len(entries), entries)
+	}
+	if entries[0].Key != "fiscal_register:a" || string(entries[0].Value) != "val-a" ||
+		entries[1].Key != "fiscal_register:b" || string(entries[1].Value) != "val-b" {
+		t.Fatalf("expected key-ordered [a, b] with values intact, got %+v", entries)
+	}
+
+	// A prefix that matches nothing is an empty result, not an error.
+	entries, err = repo.ListStorageByPrefix(ctx, "com.t.list", "no-such-prefix:")
+	if err != nil || len(entries) != 0 {
+		t.Fatalf("no-match prefix: entries=%+v err=%v, want empty", entries, err)
+	}
+
+	// A literal % or _ in the prefix must match itself, not act as a LIKE
+	// wildcard widening the result set.
+	if err := repo.StorageSet(ctx, "com.t.list", "x%y:1", []byte("literal")); err != nil {
+		t.Fatalf("seed literal-%% key: %v", err)
+	}
+	if err := repo.StorageSet(ctx, "com.t.list", "xAy:1", []byte("wildcard-bait")); err != nil {
+		t.Fatalf("seed wildcard-bait key: %v", err)
+	}
+	entries, err = repo.ListStorageByPrefix(ctx, "com.t.list", "x%y:")
+	if err != nil {
+		t.Fatalf("ListStorageByPrefix with literal %%: %v", err)
+	}
+	if len(entries) != 1 || entries[0].Key != "x%y:1" {
+		t.Fatalf("literal %% in prefix must not act as a wildcard, got %+v", entries)
+	}
+}
+
+// DeleteStorageKey (ADR-0072): single-key delete, scoped to one plugin's
+// namespace; deleting an absent key is a no-op, not an error.
+func TestPluginRepo_DeleteStorageKey(t *testing.T) {
+	ctx := context.Background()
+	d := openMigratedDB(t, "till.db")
+	repo := NewPluginRepo(d.DB)
+
+	if err := repo.StorageSet(ctx, "com.t.delkey", "keep", []byte("keep")); err != nil {
+		t.Fatalf("seed keep: %v", err)
+	}
+	if err := repo.StorageSet(ctx, "com.t.delkey", "gone", []byte("gone")); err != nil {
+		t.Fatalf("seed gone: %v", err)
+	}
+	if err := repo.StorageSet(ctx, "com.t.delkey2", "gone", []byte("other-plugin")); err != nil {
+		t.Fatalf("seed other plugin: %v", err)
+	}
+
+	if err := repo.DeleteStorageKey(ctx, "com.t.delkey", "gone"); err != nil {
+		t.Fatalf("DeleteStorageKey: %v", err)
+	}
+	if _, err := repo.StorageGet(ctx, "com.t.delkey", "gone"); !errors.Is(err, ErrStorageNotFound) {
+		t.Fatalf("deleted key should be gone, got %v", err)
+	}
+	if v, err := repo.StorageGet(ctx, "com.t.delkey", "keep"); err != nil || string(v) != "keep" {
+		t.Fatalf("sibling key must survive: v=%q err=%v", v, err)
+	}
+	// The other plugin's identically-named key is untouched.
+	if v, err := repo.StorageGet(ctx, "com.t.delkey2", "gone"); err != nil || string(v) != "other-plugin" {
+		t.Fatalf("other plugin's key must survive: v=%q err=%v", v, err)
+	}
+
+	// Deleting a key that does not exist is not an error.
+	if err := repo.DeleteStorageKey(ctx, "com.t.delkey", "never-existed"); err != nil {
+		t.Fatalf("delete of absent key must be a no-op, got %v", err)
+	}
+}
+
+// TestPluginRepo_DeleteStorageExceptPrefix pins ADR-0072/ut-docs#1106 review
+// finding B1's fix: everything under preservePrefix survives, everything
+// else in the plugin's own namespace is cleared, and a wildcard character in
+// the preserved prefix is treated literally (same escaping discipline as
+// ListStorageByPrefix), not as a LIKE pattern.
+func TestPluginRepo_DeleteStorageExceptPrefix(t *testing.T) {
+	ctx := context.Background()
+	d := openMigratedDB(t, "till.db")
+	repo := NewPluginRepo(d.DB)
+
+	seed := map[string]string{
+		"fiscal_register:a": "keep-a",
+		"fiscal_register:b": "keep-b",
+		"tse_result:sale-1": "gone-1",
+		"other-key":         "gone-2",
+	}
+	for k, v := range seed {
+		if err := repo.StorageSet(ctx, "com.t.exceptprefix", k, []byte(v)); err != nil {
+			t.Fatalf("seed %s: %v", k, err)
+		}
+	}
+	// A sibling plugin's namespace must be entirely untouched.
+	if err := repo.StorageSet(ctx, "com.t.exceptprefix2", "tse_result:sale-1", []byte("other-plugin")); err != nil {
+		t.Fatalf("seed other plugin: %v", err)
+	}
+
+	if err := repo.DeleteStorageExceptPrefix(ctx, "com.t.exceptprefix", "fiscal_register:"); err != nil {
+		t.Fatalf("DeleteStorageExceptPrefix: %v", err)
+	}
+
+	for _, key := range []string{"fiscal_register:a", "fiscal_register:b"} {
+		if v, err := repo.StorageGet(ctx, "com.t.exceptprefix", key); err != nil || string(v) != seed[key] {
+			t.Fatalf("preserved key %s must survive: v=%q err=%v", key, v, err)
+		}
+	}
+	for _, key := range []string{"tse_result:sale-1", "other-key"} {
+		if _, err := repo.StorageGet(ctx, "com.t.exceptprefix", key); !errors.Is(err, ErrStorageNotFound) {
+			t.Fatalf("non-preserved key %s should be gone, got %v", key, err)
+		}
+	}
+	if v, err := repo.StorageGet(ctx, "com.t.exceptprefix2", "tse_result:sale-1"); err != nil || string(v) != "other-plugin" {
+		t.Fatalf("other plugin's key must survive: v=%q err=%v", v, err)
+	}
+
+	// Wildcard characters in the preserved prefix are literal, not LIKE
+	// metacharacters: a "%" preserve-prefix must not accidentally preserve
+	// everything.
+	if err := repo.StorageSet(ctx, "com.t.exceptprefix3", "fiscal_register:c", []byte("x")); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := repo.StorageSet(ctx, "com.t.exceptprefix3", "other", []byte("y")); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := repo.DeleteStorageExceptPrefix(ctx, "com.t.exceptprefix3", "%"); err != nil {
+		t.Fatalf("DeleteStorageExceptPrefix with wildcard prefix: %v", err)
+	}
+	if _, err := repo.StorageGet(ctx, "com.t.exceptprefix3", "fiscal_register:c"); !errors.Is(err, ErrStorageNotFound) {
+		t.Fatalf("literal '%%' prefix must not match every key, got %v", err)
+	}
+	if _, err := repo.StorageGet(ctx, "com.t.exceptprefix3", "other"); !errors.Is(err, ErrStorageNotFound) {
+		t.Fatalf("literal '%%' prefix must not match every key, got %v", err)
+	}
+}

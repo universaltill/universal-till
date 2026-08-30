@@ -3,9 +3,12 @@ package data
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/db"
 	_ "modernc.org/sqlite"
 )
 
@@ -123,24 +126,29 @@ func TestFiscalTSESignature_RecordIsIdempotent(t *testing.T) {
 	}
 }
 
-// ut-docs#665: §146a Abs. 4 AO till-notification bookkeeping. These run
-// against a real migrated schema (migration 059) — the register_id FK, the
-// stock_locations address columns, and the LEFT JOIN shape are all part of
-// the behavior under test.
+// ut-docs#665/#1106: §146a Abs. 4 AO till-notification bookkeeping. Since
+// ADR-0072 the entries live as JSON blobs in plugin_storage (namespaced
+// under the German tax plugin's id), not their own table — these run against
+// a real migrated schema (migration 075 applied), with the register/location
+// join data still coming from live SQL via ListRegisterLocations.
 
-func newFiscalRegisterDETestRepo(t *testing.T) (*POSRepo, *sql.DB) {
+// fiscalTestPluginID mirrors internal/pages' taxDePluginID (that constant is
+// package-private to pages; the store takes the id as a parameter).
+const fiscalTestPluginID = "com.universaltill.tax-de"
+
+func newFiscalRegisterDETestStore(t *testing.T) (*FiscalRegisterDEStore, *POSRepo, *sql.DB) {
 	t.Helper()
 	d := openMigratedDB(t, "fiscal_register_de.db")
-	return NewPOSRepo(d.DB), d.DB
+	return NewFiscalRegisterDEStore(d.DB, fiscalTestPluginID), NewPOSRepo(d.DB), d.DB
 }
 
 func strPtr(s string) *string { return &s }
 
 // A create round-trips through List with every field intact, and List
 // resolves the register's name and its location's name+address via the
-// join.
+// live register/location lookup.
 func TestFiscalRegisterDE_CreateAndList(t *testing.T) {
-	repo, sqldb := newFiscalRegisterDETestRepo(t)
+	store, repo, sqldb := newFiscalRegisterDETestStore(t)
 	ctx := context.Background()
 
 	locID, err := repo.CreateStockLocation(ctx, "Main Shop")
@@ -155,18 +163,18 @@ func TestFiscalRegisterDE_CreateAndList(t *testing.T) {
 		t.Fatalf("CreateRegister: %v", err)
 	}
 
-	id, err := repo.CreateFiscalRegisterDE(ctx, regID, "Tablet-/App-Kassen-Systeme", "AwesomePOS", "eas-serial-1",
+	id, err := store.Create(ctx, regID, "Tablet-/App-Kassen-Systeme", "AwesomePOS", "eas-serial-1",
 		"tse-serial-1", "BSI-cert-1", "cloud-tse", "2026-01-15", strPtr("2026-02-01"))
 	if err != nil {
-		t.Fatalf("CreateFiscalRegisterDE: %v", err)
+		t.Fatalf("Create: %v", err)
 	}
 	if id == "" {
 		t.Fatal("expected a non-empty id")
 	}
 
-	list, err := repo.ListFiscalRegisterDE(ctx)
+	list, err := store.List(ctx)
 	if err != nil {
-		t.Fatalf("ListFiscalRegisterDE: %v", err)
+		t.Fatalf("List: %v", err)
 	}
 	if len(list) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(list))
@@ -200,35 +208,36 @@ func TestFiscalRegisterDE_CreateAndList(t *testing.T) {
 		t.Fatalf("expected created_at/updated_at to be stamped, got %+v", got)
 	}
 
-	// Sanity: the row really is in the DB with the id CreateFiscalRegisterDE
-	// returned.
+	// Sanity: the entry really landed in plugin_storage under the German tax
+	// plugin's namespace, keyed by the id Create returned (ADR-0072).
 	var count int
-	if err := sqldb.QueryRow(`SELECT COUNT(*) FROM fiscal_register_de WHERE id = ?`, id).Scan(&count); err != nil {
+	if err := sqldb.QueryRow(`SELECT COUNT(*) FROM plugin_storage WHERE plugin_id = ? AND key = 'fiscal_register:' || ?`,
+		fiscalTestPluginID, id).Scan(&count); err != nil {
 		t.Fatalf("count: %v", err)
 	}
 	if count != 1 {
-		t.Fatalf("expected exactly one row for id %q, got %d", id, count)
+		t.Fatalf("expected exactly one plugin_storage row for id %q, got %d", id, count)
 	}
 }
 
 // commissioned_on is optional: creating without it round-trips as nil, not
 // an empty string.
 func TestFiscalRegisterDE_CreateWithoutCommissionedOn(t *testing.T) {
-	repo, _ := newFiscalRegisterDETestRepo(t)
+	store, repo, _ := newFiscalRegisterDETestStore(t)
 	ctx := context.Background()
 
 	regID, err := repo.CreateRegister(ctx, "Back Till", nil)
 	if err != nil {
 		t.Fatalf("CreateRegister: %v", err)
 	}
-	if _, err := repo.CreateFiscalRegisterDE(ctx, regID, "Tablet-/App-Kassen-Systeme", "AwesomePOS", "eas-2",
+	if _, err := store.Create(ctx, regID, "Tablet-/App-Kassen-Systeme", "AwesomePOS", "eas-2",
 		"tse-2", "cert-2", "cloud-tse", "2026-03-01", nil); err != nil {
-		t.Fatalf("CreateFiscalRegisterDE: %v", err)
+		t.Fatalf("Create: %v", err)
 	}
 
-	list, err := repo.ListFiscalRegisterDE(ctx)
+	list, err := store.List(ctx)
 	if err != nil {
-		t.Fatalf("ListFiscalRegisterDE: %v", err)
+		t.Fatalf("List: %v", err)
 	}
 	if len(list) != 1 {
 		t.Fatalf("expected 1 entry, got %d", len(list))
@@ -238,25 +247,25 @@ func TestFiscalRegisterDE_CreateWithoutCommissionedOn(t *testing.T) {
 	}
 }
 
-// A register with no assigned location still appears in the list — LEFT
-// JOIN, not INNER — with empty location fields rather than being silently
-// dropped.
+// A register with no assigned location still appears in the list — the
+// lookup is a LEFT JOIN, not INNER — with empty location fields rather than
+// being silently dropped.
 func TestFiscalRegisterDE_ListIncludesRegisterWithNoLocation(t *testing.T) {
-	repo, _ := newFiscalRegisterDETestRepo(t)
+	store, repo, _ := newFiscalRegisterDETestStore(t)
 	ctx := context.Background()
 
 	regID, err := repo.CreateRegister(ctx, "Unassigned Till", nil)
 	if err != nil {
 		t.Fatalf("CreateRegister: %v", err)
 	}
-	if _, err := repo.CreateFiscalRegisterDE(ctx, regID, "Tablet-/App-Kassen-Systeme", "AwesomePOS", "eas-3",
+	if _, err := store.Create(ctx, regID, "Tablet-/App-Kassen-Systeme", "AwesomePOS", "eas-3",
 		"tse-3", "cert-3", "cloud-tse", "2026-04-01", nil); err != nil {
-		t.Fatalf("CreateFiscalRegisterDE: %v", err)
+		t.Fatalf("Create: %v", err)
 	}
 
-	list, err := repo.ListFiscalRegisterDE(ctx)
+	list, err := store.List(ctx)
 	if err != nil {
-		t.Fatalf("ListFiscalRegisterDE: %v", err)
+		t.Fatalf("List: %v", err)
 	}
 	if len(list) != 1 {
 		t.Fatalf("expected the unassigned register's entry to still be listed, got %d", len(list))
@@ -267,17 +276,80 @@ func TestFiscalRegisterDE_ListIncludesRegisterWithNoLocation(t *testing.T) {
 	}
 }
 
-// A bad register_id fails at create time with a clear, wrapped error — the
-// FK constraint is what actually rejects it, but the caller must not see a
-// raw driver error.
+// A bad register_id fails at create time with a clear error. The old table's
+// FK used to reject this; plugin_storage has no FK onto registers, so the
+// store's own existence check must preserve the behavior — and nothing may
+// be written for the rejected create.
 func TestFiscalRegisterDE_CreateWithBadRegisterIDFails(t *testing.T) {
-	repo, _ := newFiscalRegisterDETestRepo(t)
+	store, _, sqldb := newFiscalRegisterDETestStore(t)
 	ctx := context.Background()
 
-	_, err := repo.CreateFiscalRegisterDE(ctx, "no-such-register", "Tablet-/App-Kassen-Systeme", "AwesomePOS",
+	_, err := store.Create(ctx, "no-such-register", "Tablet-/App-Kassen-Systeme", "AwesomePOS",
 		"eas-4", "tse-4", "cert-4", "cloud-tse", "2026-05-01", nil)
 	if err == nil {
 		t.Fatal("expected an error for a nonexistent register_id")
+	}
+	var n int
+	if err := sqldb.QueryRow(`SELECT COUNT(*) FROM plugin_storage WHERE plugin_id = ?`, fiscalTestPluginID).Scan(&n); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("rejected create must not leave a storage row behind, got %d", n)
+	}
+}
+
+// An INACTIVE register still accepts a create — the old FK never checked
+// is_active, and the page's own picker (active-only) is the UI-level filter;
+// the data layer must not silently tighten that contract.
+func TestFiscalRegisterDE_CreateAgainstInactiveRegisterSucceeds(t *testing.T) {
+	store, repo, _ := newFiscalRegisterDETestStore(t)
+	ctx := context.Background()
+
+	regID, err := repo.CreateRegister(ctx, "Dormant Till", nil)
+	if err != nil {
+		t.Fatalf("CreateRegister: %v", err)
+	}
+	if err := repo.SetRegisterActive(ctx, regID, false); err != nil {
+		t.Fatalf("SetRegisterActive: %v", err)
+	}
+	if _, err := store.Create(ctx, regID, "Tablet-/App-Kassen-Systeme", "AwesomePOS", "eas-inactive",
+		"tse-inactive", "cert-inactive", "cloud-tse", "2026-05-01", nil); err != nil {
+		t.Fatalf("Create against inactive register: %v", err)
+	}
+}
+
+// A decommissioned till's register is routinely deactivated afterwards — its
+// history must still list with the register's real name. ListRegisters
+// filters is_active=1 and is deliberately NOT what backs the join lookup.
+func TestFiscalRegisterDE_ListIncludesInactiveRegisterName(t *testing.T) {
+	store, repo, _ := newFiscalRegisterDETestStore(t)
+	ctx := context.Background()
+
+	regID, err := repo.CreateRegister(ctx, "Retired Till", nil)
+	if err != nil {
+		t.Fatalf("CreateRegister: %v", err)
+	}
+	id, err := store.Create(ctx, regID, "Tablet-/App-Kassen-Systeme", "AwesomePOS", "eas-retired",
+		"tse-retired", "cert-retired", "cloud-tse", "2026-01-01", nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := store.Decommission(ctx, id, "2026-06-30"); err != nil {
+		t.Fatalf("Decommission: %v", err)
+	}
+	if err := repo.SetRegisterActive(ctx, regID, false); err != nil {
+		t.Fatalf("SetRegisterActive: %v", err)
+	}
+
+	list, err := store.List(ctx)
+	if err != nil {
+		t.Fatalf("List: %v", err)
+	}
+	if len(list) != 1 {
+		t.Fatalf("expected the deactivated register's entry to still be listed, got %d", len(list))
+	}
+	if list[0].RegisterName != "Retired Till" {
+		t.Fatalf("RegisterName = %q, want %q (inactive register must keep its name)", list[0].RegisterName, "Retired Till")
 	}
 }
 
@@ -285,34 +357,34 @@ func TestFiscalRegisterDE_CreateWithBadRegisterIDFails(t *testing.T) {
 // row stays fully visible in the list afterward — the whole point of the
 // AO record is that it survives the till going out of service.
 func TestFiscalRegisterDE_DecommissionKeepsRowVisible(t *testing.T) {
-	repo, _ := newFiscalRegisterDETestRepo(t)
+	store, repo, _ := newFiscalRegisterDETestStore(t)
 	ctx := context.Background()
 
 	regID, err := repo.CreateRegister(ctx, "Retiring Till", nil)
 	if err != nil {
 		t.Fatalf("CreateRegister: %v", err)
 	}
-	id, err := repo.CreateFiscalRegisterDE(ctx, regID, "Tablet-/App-Kassen-Systeme", "AwesomePOS", "eas-5",
+	id, err := store.Create(ctx, regID, "Tablet-/App-Kassen-Systeme", "AwesomePOS", "eas-5",
 		"tse-5", "cert-5", "cloud-tse", "2026-01-01", nil)
 	if err != nil {
-		t.Fatalf("CreateFiscalRegisterDE: %v", err)
+		t.Fatalf("Create: %v", err)
 	}
 
-	before, err := repo.ListFiscalRegisterDE(ctx)
+	before, err := store.List(ctx)
 	if err != nil {
-		t.Fatalf("ListFiscalRegisterDE (before): %v", err)
+		t.Fatalf("List (before): %v", err)
 	}
 	if before[0].UpdatedAt == "" {
 		t.Fatal("expected updated_at to be stamped on create")
 	}
 
-	if err := repo.DecommissionFiscalRegisterDE(ctx, id, "2026-06-30"); err != nil {
-		t.Fatalf("DecommissionFiscalRegisterDE: %v", err)
+	if err := store.Decommission(ctx, id, "2026-06-30"); err != nil {
+		t.Fatalf("Decommission: %v", err)
 	}
 
-	after, err := repo.ListFiscalRegisterDE(ctx)
+	after, err := store.List(ctx)
 	if err != nil {
-		t.Fatalf("ListFiscalRegisterDE (after): %v", err)
+		t.Fatalf("List (after): %v", err)
 	}
 	if len(after) != 1 {
 		t.Fatalf("expected the decommissioned row to stay listed, got %d entries", len(after))
@@ -333,19 +405,58 @@ func TestFiscalRegisterDE_DecommissionKeepsRowVisible(t *testing.T) {
 	}
 }
 
-// Decommissioning an id that doesn't exist is an error, mirroring
-// RenameRegister's RowsAffected()==0 pattern.
+// Decommissioning an id that doesn't exist is an error naming the id,
+// equivalent to the old zero-rows-UPDATE behavior.
 func TestFiscalRegisterDE_DecommissionNotFound(t *testing.T) {
-	repo, _ := newFiscalRegisterDETestRepo(t)
-	if err := repo.DecommissionFiscalRegisterDE(context.Background(), "no-such-id", "2026-06-30"); err == nil {
+	store, _, _ := newFiscalRegisterDETestStore(t)
+	err := store.Decommission(context.Background(), "no-such-id", "2026-06-30")
+	if err == nil {
 		t.Fatal("expected an error for a nonexistent id")
+	}
+	if !strings.Contains(err.Error(), "no-such-id not found") {
+		t.Fatalf("error should name the missing id, got %v", err)
+	}
+}
+
+// List skips a malformed entry instead of failing the whole page (ADR-0072/
+// ut-docs#1106 review finding S3) — a plugin's own storage namespace is
+// writable by that plugin's WASM guest code, so one bad key must not make
+// every other genuine entry unreachable.
+func TestFiscalRegisterDE_ListSkipsMalformedEntry(t *testing.T) {
+	store, repo, sqldb := newFiscalRegisterDETestStore(t)
+	ctx := context.Background()
+
+	regID, err := repo.CreateRegister(ctx, "Front Till", nil)
+	if err != nil {
+		t.Fatalf("CreateRegister: %v", err)
+	}
+	id, err := store.Create(ctx, regID, "Tablet-/App-Kassen-Systeme", "AwesomePOS", "eas-serial-1",
+		"tse-serial-1", "BSI-cert-1", "cloud-tse", "2026-01-15", nil)
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+
+	// Plant a malformed value directly, as a buggy/malicious plugin guest
+	// writing under its own namespace could via storage_set.
+	if _, err := sqldb.ExecContext(ctx,
+		`INSERT INTO plugin_storage (plugin_id, key, value, updated_at) VALUES (?, ?, ?, datetime('now'))`,
+		fiscalTestPluginID, "fiscal_register:bad", []byte("not json")); err != nil {
+		t.Fatalf("seed malformed entry: %v", err)
+	}
+
+	list, err := store.List(ctx)
+	if err != nil {
+		t.Fatalf("List must not fail on one malformed entry, got: %v", err)
+	}
+	if len(list) != 1 || list[0].ID != id {
+		t.Fatalf("expected the one genuine entry to still be listed, got %+v", list)
 	}
 }
 
 // SetStockLocationAddressDE updates the three address columns and errors
 // for an unknown location id.
 func TestSetStockLocationAddressDE(t *testing.T) {
-	repo, sqldb := newFiscalRegisterDETestRepo(t)
+	_, repo, sqldb := newFiscalRegisterDETestStore(t)
 	ctx := context.Background()
 
 	locID, err := repo.CreateStockLocation(ctx, "Branch")
@@ -371,9 +482,11 @@ func TestSetStockLocationAddressDE(t *testing.T) {
 }
 
 // The list orders by location name (unassigned last), then register name,
-// then acquired_on.
+// then acquired_on — now an in-memory sort (ADR-0072), so the tie-breaks
+// are pinned explicitly: two registers in one location order by register
+// name, and one register's multiple entries order by acquired_on.
 func TestFiscalRegisterDE_ListOrdering(t *testing.T) {
-	repo, _ := newFiscalRegisterDETestRepo(t)
+	store, repo, _ := newFiscalRegisterDETestStore(t)
 	ctx := context.Background()
 
 	locZ, err := repo.CreateStockLocation(ctx, "Z Branch")
@@ -393,34 +506,164 @@ func TestFiscalRegisterDE_ListOrdering(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateRegister A: %v", err)
 	}
+	regA2, err := repo.CreateRegister(ctx, "B Till", &locA)
+	if err != nil {
+		t.Fatalf("CreateRegister B: %v", err)
+	}
 	regUnassigned, err := repo.CreateRegister(ctx, "Unassigned Till", nil)
 	if err != nil {
 		t.Fatalf("CreateRegister unassigned: %v", err)
 	}
 
+	// Seeded deliberately out of every expected order (locations Z before A,
+	// the later acquired_on first, B Till before A Till) so the sort itself
+	// does the work, not insertion order.
 	for _, r := range []struct {
-		reg, easSerial string
+		reg, easSerial, acquiredOn string
 	}{
-		{regZ, "eas-z"},
-		{regA, "eas-a"},
-		{regUnassigned, "eas-u"},
+		{regZ, "eas-z", "2026-01-01"},
+		{regA2, "eas-b", "2026-01-01"},
+		{regA, "eas-a2", "2026-03-01"}, // A Till's SECOND acquisition (TSE swap)
+		{regA, "eas-a1", "2026-01-01"},
+		{regUnassigned, "eas-u", "2026-01-01"},
 	} {
-		if _, err := repo.CreateFiscalRegisterDE(ctx, r.reg, "Tablet-/App-Kassen-Systeme", "AwesomePOS", r.easSerial,
-			"tse-x", "cert-x", "cloud-tse", "2026-01-01", nil); err != nil {
-			t.Fatalf("CreateFiscalRegisterDE %s: %v", r.reg, err)
+		if _, err := store.Create(ctx, r.reg, "Tablet-/App-Kassen-Systeme", "AwesomePOS", r.easSerial,
+			"tse-x", "cert-x", "cloud-tse", r.acquiredOn, nil); err != nil {
+			t.Fatalf("Create %s: %v", r.easSerial, err)
 		}
 	}
 
-	list, err := repo.ListFiscalRegisterDE(ctx)
+	list, err := store.List(ctx)
 	if err != nil {
-		t.Fatalf("ListFiscalRegisterDE: %v", err)
+		t.Fatalf("List: %v", err)
 	}
-	if len(list) != 3 {
-		t.Fatalf("expected 3 entries, got %d", len(list))
+	if len(list) != 5 {
+		t.Fatalf("expected 5 entries, got %d", len(list))
 	}
-	gotOrder := []string{list[0].LocationName, list[1].LocationName, list[2].LocationName}
-	wantOrder := []string{"A Branch", "Z Branch", ""}
-	if gotOrder[0] != wantOrder[0] || gotOrder[1] != wantOrder[1] || gotOrder[2] != wantOrder[2] {
-		t.Fatalf("location order = %v, want %v", gotOrder, wantOrder)
+	var got []string
+	for _, e := range list {
+		got = append(got, e.EasSerial)
+	}
+	// A Branch first (A Till's two entries by acquired_on, then B Till),
+	// then Z Branch, then the unassigned register LAST.
+	want := []string{"eas-a1", "eas-a2", "eas-b", "eas-z", "eas-u"}
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("order = %v, want %v", got, want)
+		}
+	}
+}
+
+// Migration 075 round-trip (ADR-0072): a row written by the old
+// fiscal_register_de table must come out of the new storage-backed List
+// with every field intact after the migration runs — including the NULL
+// commissioned_on/decommissioned_on shape — and the old table must be gone.
+// Simulated the same way this repo's other upgrade tests do it: open (all
+// migrations apply), physically rewind 075 (recreate the 059-shape table),
+// un-record it in schema_migrations, seed a pre-migration row, reopen.
+func TestFiscalRegisterDE_Migration075RoundTrip(t *testing.T) {
+	ctx := context.Background()
+	path := filepath.Join(t.TempDir(), "m075.db")
+	d, err := db.Open(path)
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+
+	// The entry's register + location, created through the live schema —
+	// they survive the migration untouched.
+	repo := NewPOSRepo(d.DB)
+	locID, err := repo.CreateStockLocation(ctx, "Main Shop")
+	if err != nil {
+		t.Fatalf("CreateStockLocation: %v", err)
+	}
+	if err := repo.SetStockLocationAddressDE(ctx, locID, "Hauptstraße 1", "10115", "Berlin"); err != nil {
+		t.Fatalf("SetStockLocationAddressDE: %v", err)
+	}
+	regID, err := repo.CreateRegister(ctx, "Front Till", &locID)
+	if err != nil {
+		t.Fatalf("CreateRegister: %v", err)
+	}
+
+	// Rewind 075: recreate the 059-shape table (075 dropped it) and
+	// un-record the migration so the next Open replays exactly it.
+	if _, err := d.DB.Exec(`CREATE TABLE fiscal_register_de (
+	id TEXT PRIMARY KEY, register_id TEXT NOT NULL REFERENCES registers(id),
+	eas_type TEXT NOT NULL, eas_software TEXT NOT NULL, eas_serial TEXT NOT NULL,
+	tse_serial TEXT NOT NULL, tse_certification_id TEXT NOT NULL, tse_type TEXT NOT NULL,
+	acquired_on TEXT NOT NULL, commissioned_on TEXT, decommissioned_on TEXT,
+	created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
+		t.Fatalf("recreate pre-075 table: %v", err)
+	}
+	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 75`); err != nil {
+		t.Fatalf("rewind schema_migrations: %v", err)
+	}
+	// Two pre-migration rows: one fully populated, one with both optional
+	// dates NULL — both shapes must round-trip.
+	if _, err := d.DB.Exec(`INSERT INTO fiscal_register_de
+	(id, register_id, eas_type, eas_software, eas_serial, tse_serial, tse_certification_id, tse_type,
+	 acquired_on, commissioned_on, decommissioned_on, created_at, updated_at)
+	VALUES
+	('old-1', ?, 'Tablet-/App-Kassen-Systeme', 'AwesomePOS', 'eas-old-1', 'tse-old-1', 'cert-old-1', 'cloud-tse',
+	 '2025-11-01', '2025-12-01', '2026-02-01', '2025-11-01T09:00:00Z', '2026-02-01T09:00:00Z'),
+	('old-2', ?, 'Tablet-/App-Kassen-Systeme', 'AwesomePOS', 'eas-old-2', 'tse-old-2', 'cert-old-2', 'cloud-tse',
+	 '2026-01-15', NULL, NULL, '2026-01-15T09:00:00Z', '2026-01-15T09:00:00Z')`, regID, regID); err != nil {
+		t.Fatalf("seed pre-migration rows: %v", err)
+	}
+	if err := d.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	d, err = db.Open(path) // replays migration 075
+	if err != nil {
+		t.Fatalf("reopen (075 replay): %v", err)
+	}
+	t.Cleanup(func() { d.Close() })
+
+	store := NewFiscalRegisterDEStore(d.DB, fiscalTestPluginID)
+	list, err := store.List(ctx)
+	if err != nil {
+		t.Fatalf("List after migration: %v", err)
+	}
+	if len(list) != 2 {
+		t.Fatalf("expected both migrated entries, got %d: %+v", len(list), list)
+	}
+	byID := map[string]FiscalRegisterDE{list[0].ID: list[0], list[1].ID: list[1]}
+	full, ok := byID["old-1"]
+	if !ok {
+		t.Fatalf("old-1 missing after migration: %+v", byID)
+	}
+	if full.RegisterID != regID || full.RegisterName != "Front Till" ||
+		full.LocationID != locID || full.LocationName != "Main Shop" ||
+		full.LocationStreet != "Hauptstraße 1" || full.LocationPostcode != "10115" || full.LocationCity != "Berlin" {
+		t.Fatalf("old-1 register/location join mismatch: %+v", full)
+	}
+	if full.EasType != "Tablet-/App-Kassen-Systeme" || full.EasSoftware != "AwesomePOS" ||
+		full.EasSerial != "eas-old-1" || full.TSESerial != "tse-old-1" ||
+		full.TSECertificationID != "cert-old-1" || full.TSEType != "cloud-tse" {
+		t.Fatalf("old-1 eas/tse fields mismatch: %+v", full)
+	}
+	if full.AcquiredOn != "2025-11-01" ||
+		full.CommissionedOn == nil || *full.CommissionedOn != "2025-12-01" ||
+		full.DecommissionedOn == nil || *full.DecommissionedOn != "2026-02-01" ||
+		full.CreatedAt != "2025-11-01T09:00:00Z" || full.UpdatedAt != "2026-02-01T09:00:00Z" {
+		t.Fatalf("old-1 dates/timestamps mismatch: %+v", full)
+	}
+	bare, ok := byID["old-2"]
+	if !ok {
+		t.Fatalf("old-2 missing after migration: %+v", byID)
+	}
+	if bare.CommissionedOn != nil || bare.DecommissionedOn != nil {
+		t.Fatalf("old-2's NULL optional dates must round-trip as nil, got %+v", bare)
+	}
+
+	// The migrated entry stays fully operable through the new backend.
+	if err := store.Decommission(ctx, "old-2", "2026-08-30"); err != nil {
+		t.Fatalf("Decommission migrated entry: %v", err)
+	}
+
+	// And the old table is really gone.
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM fiscal_register_de`).Scan(&n); err == nil {
+		t.Fatalf("fiscal_register_de still queryable after 075 (n=%d), want no-such-table error", n)
 	}
 }

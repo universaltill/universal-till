@@ -382,11 +382,14 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		// page's join both hit these columns directly, same drift rule as
 		// the comments elsewhere in this fixture.
 		`CREATE TABLE stock_locations (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, is_active INTEGER NOT NULL DEFAULT 1, address_street TEXT, address_postcode TEXT, address_city TEXT);`,
-		// fiscal_register_de: column-identical to
-		// internal/db/migrations/059_fiscal_register_de.sql (ut-docs#665) --
-		// the fiscal register admin page's create/list/decommission handlers
-		// hit it directly via the repo methods in internal/data/fiscal_repo.go.
-		`CREATE TABLE fiscal_register_de (id TEXT PRIMARY KEY, register_id TEXT NOT NULL REFERENCES registers(id), eas_type TEXT NOT NULL, eas_software TEXT NOT NULL, eas_serial TEXT NOT NULL, tse_serial TEXT NOT NULL, tse_certification_id TEXT NOT NULL, tse_type TEXT NOT NULL, acquired_on TEXT NOT NULL, commissioned_on TEXT, decommissioned_on TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
+		// plugin_storage: column-identical to
+		// internal/db/migrations/011_plugin_storage.sql -- since ADR-0072
+		// (ut-docs#1106) the fiscal register page's create/list/decommission
+		// handlers persist their entries here (JSON blobs under
+		// com.universaltill.tax-de, keyed fiscal_register:<id>) via
+		// data.FiscalRegisterDEStore, replacing the dropped
+		// fiscal_register_de table (migration 075).
+		`CREATE TABLE plugin_storage (plugin_id TEXT NOT NULL, key TEXT NOT NULL, value BLOB NOT NULL, updated_at TEXT NOT NULL DEFAULT (datetime('now')), PRIMARY KEY (plugin_id, key));`,
 		// name UNIQUE: column-identical to 001_init.sql (universaltill/ut-docs#651)
 		// -- a drifted fixture missing that constraint would pass the
 		// registers admin page's duplicate-name test against a schema that
