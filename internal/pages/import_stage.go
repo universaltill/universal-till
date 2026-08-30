@@ -11,6 +11,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"sync"
 	"time"
 
@@ -166,8 +167,14 @@ func commitStagedImportForSetup(ctx context.Context, mux *http.ServeMux, adminUs
 	req = auth.WithUser(req, adminUser)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		logging.L().Errorf("setup wizard: staged import %s: commit returned %d: %s", stagedID, rec.Code, rec.Body.String())
+	// ut-docs#1168 review: status 200 alone isn't proof anything was
+	// actually committed — the ut-docs#970 currency-confirm detour
+	// (renderImportCurrencyConfirm) also answers with a 200 HTML fragment
+	// when confirm_currency is missing/rejected, and a re-preview-instead-
+	// of-commit response would too. A real commit's success branch always
+	// renders the "view catalog" link (import_page.go), so require both.
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), `href="/catalog"`) {
+		logging.L().Errorf("setup wizard: staged import %s did not commit (code %d): %s", stagedID, rec.Code, rec.Body.String())
 		return false
 	}
 	return true

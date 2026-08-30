@@ -18,7 +18,13 @@
        every other commit on this page — this is a convenience, not a
        bypass; the operator still presses Import for real. -->
   <p class="muted" data-setup-staged-import>{{ T "import.staged_from_setup" }}</p>
-  <form id="import-form" hx-post="/api/import" hx-target="#import-result" hx-swap="innerHTML">
+  <!-- enctype="multipart/form-data" even with no file input (review
+       finding): POST /api/import's very first step is
+       r.ParseMultipartForm — htmx posts a plain form urlencoded unless the
+       form itself declares multipart, and ParseMultipartForm rejects a
+       urlencoded body outright (ErrNotMultipart -> 400), which silently
+       broke this exact "press Import" button before this fix. -->
+  <form id="import-form" hx-post="/api/import" hx-target="#import-result" hx-swap="innerHTML" enctype="multipart/form-data">
     <input type="hidden" name="commit" value="1">
     <input type="hidden" name="staged_id" value="{{ .stagedID }}">
     <button class="btn primary" type="submit">{{ T "import.import" }}</button>

@@ -955,6 +955,7 @@
   "setup.restore.hint": "If you're moving from another till or EPOS system, we can help bring your products over.",
   "setup.restore.later": "Ask me later",
   "setup.restore.no": "No, starting fresh",
+  "setup.restore.preview_ready": "File recognised — press Next to continue. Your products will be brought in once setup finishes.",
   "setup.restore.title": "Are you moving from another till system?",
   "setup.restore.upload_title": "Upload your export/backup file",
   "setup.restore.yes": "Yes",
