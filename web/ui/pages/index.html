@@ -173,27 +173,66 @@
 
     <div id="held-sales" hx-get="/ui/held" hx-trigger="load" hx-swap="outerHTML"></div>
 
-    <div class="tab-bar" role="tablist" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
-      <button type="button" id="tab-pay" class="tab" role="tab" :class="tab === 'pay' && 'active'" :aria-selected="tab === 'pay'" :tabindex="tab === 'pay' ? 0 : -1" aria-controls="panel-pay" @click="tab = 'pay'">{{ T "tender.tab.pay" }}</button>
-      <button type="button" id="tab-split" class="tab" role="tab" :class="tab === 'split' && 'active'" :aria-selected="tab === 'split'" :tabindex="tab === 'split' ? 0 : -1" aria-controls="split-tender-card" @click="tab = 'split'">{{ T "tender.tab.split" }}</button>
+    <!-- Payment overlay (ut-docs#1252): the payment-method grid, split-tender
+         card and Hold/New-customer footer used to render inline in this
+         column at all times ("show every payment thing"). Product-owner
+         proposal: default sale screen is just basket + product buttons, one
+         Payment button opens the method/split UI as a panel layered OVER the
+         products column — basket (a separate grid area, .pos-container >
+         .basket) is never covered, so it stays visible while paying. A
+         native <dialog> (same pattern as #modifier-modal/#hold-modal/
+         #pfand-modal above) gives free focus-trap + Escape-to-close; its
+         ::backdrop is made transparent in app.css specifically so it doesn't
+         dim/hide the basket the way those other dialogs' backdrops do. -->
+    <!-- Hold Sale stays in the default view, NOT inside the payment overlay
+         (independent review, ut-docs#1252): the overlay is a MODAL dialog,
+         so a button only reachable inside it would make "hold this basket
+         for the next customer" cost an unrelated trip through Payment.
+         New Customer stays inside the overlay's own footer below — it's
+         duplicated by the header's kiosk-checkout-start button already, so
+         losing a quick path to it while paying isn't a real regression. -->
+    <div class="tender-default-footer">
+      <button class="btn secondary" type="button"
+              onclick="document.getElementById('hold-modal').show(); document.getElementById('hold-label-input').focus();">
+        {{ T "hold.action" }}</button>
+      <button type="button" class="btn primary payment-trigger" data-testid="payment-open"
+              onclick="document.getElementById('payment-overlay').showModal()">
+        {{ T "tender.open_payment" }}</button>
     </div>
 
-    <div class="tab-panel" id="panel-pay" role="tabpanel" aria-labelledby="tab-pay" x-show="tab === 'pay'">
-      <input type="hidden" id="offline-flag" name="offline" value="0">
-      <div class="pay-grid">
-        {{ range .payMethods }}
-        <button class="btn pay-btn{{ if .PluginID }} pay-plugin{{ end }}" data-method="{{ .ID }}" hx-post="/api/pos/tender"
-                hx-vals='{{ jsonVals "amount" 0 "method" .ID }}' hx-include="#offline-flag"
-                hx-target="#basket" hx-swap="outerHTML">{{ .Name }}<span class="fee-hint" data-fee-for="{{ .ID }}"></span></button>
-        {{ else }}
-        <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML">{{ T "tender.cash" }}</button>
-        <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML">{{ T "tender.card" }}</button>
-        {{ end }}
-      </div>
-      <label class="offline-toggle">
-        <input type="checkbox" id="offline-override"> {{ T "kiosk.offline" }}
-      </label>
-    </div>
+    <dialog id="payment-overlay" class="payment-overlay" aria-labelledby="payment-overlay-title">
+      <div class="payment-overlay-body">
+        <div class="payment-overlay-header">
+          <h3 id="payment-overlay-title">{{ T "tender.title" }}</h3>
+          <button type="button" class="btn secondary payment-overlay-close" data-testid="payment-close"
+                  aria-label="{{ T "common.close" }}"
+                  onclick="document.getElementById('payment-overlay').close()">✕</button>
+        </div>
+
+        <div class="tab-bar" role="tablist" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
+          <button type="button" id="tab-pay" class="tab" role="tab" :class="tab === 'pay' && 'active'" :aria-selected="tab === 'pay'" :tabindex="tab === 'pay' ? 0 : -1" aria-controls="panel-pay" @click="tab = 'pay'">{{ T "tender.tab.pay" }}</button>
+          <button type="button" id="tab-split" class="tab" role="tab" :class="tab === 'split' && 'active'" :aria-selected="tab === 'split'" :tabindex="tab === 'split' ? 0 : -1" aria-controls="split-tender-card" @click="tab = 'split'">{{ T "tender.tab.split" }}</button>
+        </div>
+
+        <div class="tab-panel" id="panel-pay" role="tabpanel" aria-labelledby="tab-pay" x-show="tab === 'pay'">
+          <input type="hidden" id="offline-flag" name="offline" value="0">
+          <div class="pay-grid">
+            {{ range .payMethods }}
+            <button class="btn pay-btn{{ if .PluginID }} pay-plugin{{ end }}" data-method="{{ .ID }}" hx-post="/api/pos/tender"
+                    hx-vals='{{ jsonVals "amount" 0 "method" .ID }}' hx-include="#offline-flag"
+                    hx-target="#basket" hx-swap="outerHTML"
+                    hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ .Name }}<span class="fee-hint" data-fee-for="{{ .ID }}"></span></button>
+            {{ else }}
+            <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML"
+                    hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T "tender.cash" }}</button>
+            <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML"
+                    hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T "tender.card" }}</button>
+            {{ end }}
+          </div>
+          <label class="offline-toggle">
+            <input type="checkbox" id="offline-override"> {{ T "kiosk.offline" }}
+          </label>
+        </div>
 
     <script>
       // Provider fee hints (ADR-0016 manual mode): fee ≈ total×bp/10000 + fixed.
@@ -274,12 +313,19 @@
       </div>
     </div>
 
-    <div class="tender-footer">
-      <button class="btn secondary" type="button"
-              onclick="document.getElementById('hold-modal').show(); document.getElementById('hold-label-input').focus();">
-        {{ T "hold.action" }}</button>
-      <button class="btn secondary" hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML">{{ T "tender.new_customer" }}</button>
+    <div class="tender-footer single">
+      <!-- Hold Sale moved to the default view (ut-docs#1252 independent
+           review) -- only New Customer stays here. Closing the overlay
+           first isn't a correctness fix (the hx-post below works fine
+           against an inert-elsewhere document either way, since #basket
+           lives outside this dialog and htmx doesn't care about inert),
+           just tidiness: nothing left to pay for once the basket resets. -->
+      <button class="btn secondary"
+              onclick="document.getElementById('payment-overlay').close();"
+              hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML">{{ T "tender.new_customer" }}</button>
     </div>
+      </div>
+    </dialog>
   </div>
 </div>
 

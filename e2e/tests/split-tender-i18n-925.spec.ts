@@ -40,6 +40,9 @@ test.describe('split-tender panel status copy localizes (ut-docs#925)', () => {
     const assertClean = watchConsole(page);
     await page.goto('/?lang=fa');
     await page.waitForSelector('.pos-container');
+    // ut-docs#1252: the Pay/Split tabs now live inside the #payment-overlay
+    // dialog, opened by the .payment-trigger button.
+    await page.getByTestId('payment-open').click();
     await page.locator('.tender .tab').nth(1).click();
 
     const list = page.locator('#split-tender-payments');
@@ -62,12 +65,19 @@ test.describe('split-tender panel status copy localizes (ut-docs#925)', () => {
     // 3. Add a real payment WITH change, so the change-note fragment inside
     //    the payment pill is genuinely exercised (the first draft added a
     //    payment with change 0, making its change-note assertion unreachable).
+    // ut-docs#1252: #payment-overlay is a MODAL dialog -- it blocks pointer
+    // events on the rest of the page (scan-row included) while open, so
+    // close it before scanning, same as tender-panel-reachable.spec.ts.
+    await page.getByTestId('payment-close').click();
     await page.getByRole('textbox').first().fill('5000000000012');
     await Promise.all([
       page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
       page.locator('.scan-row button[type=submit]').click(),
     ]);
     await page.waitForSelector('.basket table tbody tr');
+    // ut-docs#1252: the Pay/Split tabs now live inside the #payment-overlay
+    // dialog, opened by the .payment-trigger button.
+    await page.getByTestId('payment-open').click();
     await page.locator('.tender .tab').nth(1).click();
     await page.locator('#split-tender-form select[name="method"]').selectOption({ index: 0 });
     await page.locator('#split-tender-form input[name="amount"]').fill('1.40');
@@ -102,6 +112,9 @@ test.describe('split-tender panel status copy localizes (ut-docs#925)', () => {
   test('en is unchanged: the same statuses still render the English copy', async ({ page }) => {
     await page.goto('/?lang=en');
     await page.waitForSelector('.pos-container');
+    // ut-docs#1252: the Pay/Split tabs now live inside the #payment-overlay
+    // dialog, opened by the .payment-trigger button.
+    await page.getByTestId('payment-open').click();
     await page.locator('.tender .tab').nth(1).click();
 
     await expect(page.locator('#split-tender-payments')).toContainText('No pending payments yet.');

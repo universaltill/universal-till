@@ -58,9 +58,13 @@ test.describe('POS UI MVP Uplift', () => {
     await page.goto('/');
 
     await expect(page.getByRole('button', { name: 'Add', exact: true })).toBeVisible();
-    // Complete Sale lives in the Split tender tab since the tabbed tender
-    // panel. The tab carries role="tab" (WAI-ARIA tabs pattern, ut-docs#424)
-    // rather than the native <button> element's implicit role="button".
+    // Complete Sale lives in the Split tender tab, inside the payment
+    // overlay (ut-docs#1252): the Pay/Split tabs used to always be on
+    // screen, now they're behind the Payment button that opens
+    // #payment-overlay. The tab itself still carries role="tab" (WAI-ARIA
+    // tabs pattern, ut-docs#424) rather than the native <button> element's
+    // implicit role="button".
+    await page.getByTestId('payment-open').click();
     await page.getByRole('tab', { name: 'Split', exact: true }).click();
     await expect(page.getByRole('button', { name: 'Complete Sale', exact: true })).toBeVisible();
   });

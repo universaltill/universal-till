@@ -1048,8 +1048,10 @@ a.btn, a.btn:hover { text-decoration: none; }
 .journal .empty { text-align: center; color: var(--muted); }
 
 /* ---------- Tender ----------
-   Fixed panel that never scrolls: scan row + held strip + Pay/Split tabs +
-   footer actions. */
+   Fixed panel that never scrolls: scan row + held strip + the single
+   Payment trigger (ut-docs#1252). Pay/Split tabs, pay-grid and footer
+   actions now render inside .payment-overlay (a <dialog>, styled further
+   down this section) instead of always-on in this column. */
 [x-cloak] { display: none !important; }
 .tender { display: flex; flex-direction: column; gap: .55rem; }
 
@@ -1122,6 +1124,78 @@ a.btn, a.btn:hover { text-decoration: none; }
 .pay-btn.pay-plugin:hover { background: var(--accent); color: #fff; }
 
 .tender-footer { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; margin-top: auto; }
+/* Only New Customer lives in the overlay's own footer now (Hold Sale moved
+   to .tender-default-footer below, independent review) — a lone button in
+   a 2-column grid would only fill half the width. */
+.tender-footer.single { grid-template-columns: 1fr; }
+
+/* ut-docs#1252: the Pay/Split tabs, pay-grid and New-Customer footer moved
+   out of the always-visible .tender column into the <dialog> below (opened
+   by .payment-trigger) — "we shouldn't show all payment things, ... a
+   payment button can open something over them ... but still show the
+   items on the left." Hold Sale stays here, NOT in the dialog (independent
+   review): it's a "step away from checkout" action, not a payment one, and
+   the dialog is modal — a Hold Sale reachable only inside it would cost an
+   unrelated trip through Payment. margin-top: auto on the wrapper puts
+   both buttons at the bottom of .tender's remaining flex space, the same
+   anchor point .tender-footer used before this column's content moved. */
+.tender-default-footer { display: flex; flex-direction: column; gap: .5rem; margin-top: auto; }
+.payment-trigger { min-height: 4.2rem; font-size: 1.15rem; font-weight: 700; }
+
+/* The dialog itself: a slide-in panel anchored to the inline-end edge
+   (right in LTR, left in RTL — logical properties per this repo's RTL
+   rule) rather than the UA's default centered box, and sized so it never
+   covers .pos-container's basket column (a separate grid area next to
+   .tender, untouched by this dialog). ::backdrop is a light tint, not the
+   UA/this-file's other dialogs' near-opaque default — the basket must
+   stay visible while the overlay is open, unlike #modifier-modal/
+   #hold-modal/#pfand-modal, which really do want to block the screen. */
+.payment-overlay {
+  position: fixed;
+  inset-block: 0;
+  inset-inline: auto 0;
+  margin: 0;
+  width: min(26rem, 92vw);
+  max-width: 92vw;
+  height: 100dvh;
+  max-height: 100dvh;
+  border: none;
+  border-start-start-radius: var(--radius-lg);
+  border-end-start-radius: var(--radius-lg);
+  padding: 0;
+  /* Symmetric (no horizontal offset), deliberately: a directional
+     box-shadow (e.g. -8px 0) would need to flip sign under RTL, where this
+     panel anchors to the LEFT instead of the right — independent review
+     caught the first draft's `-8px 0` falling off-canvas under RTL, the
+     one physical-direction value left in an otherwise all-logical block. */
+  box-shadow: 0 0 24px rgba(0, 0, 0, .25);
+  background: var(--surface);
+}
+.payment-overlay::backdrop { background: rgba(15, 23, 42, .08); }
+.payment-overlay-body {
+  display: flex; flex-direction: column; height: 100%; min-height: 0;
+  padding: .8rem .9rem; gap: .55rem; overflow-y: auto;
+}
+.payment-overlay-header { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
+.payment-overlay-header h3 { margin: 0; }
+.payment-overlay-close { min-height: 2.2rem; min-width: 2.2rem; padding: 0; font-size: 1rem; line-height: 1; }
+/* Tablet-and-narrower (independent review, ut-docs#1252): the first draft
+   keyed this to 480px, matching the phone-only stacking tier further down
+   this file. But .pos-container itself stops being a side-by-side grid at
+   900px (see ".pos-container { grid-template-columns... }" media query
+   below) -- between 481-900px the layout is ALREADY stacked (basket above
+   tender above products) while this rule still rendered the overlay as a
+   fixed-width side panel, landing it on top of the stacked basket instead
+   of beside it (measured live: 58% of the basket covered at 768px, an
+   iPad-portrait width). Matching .pos-container's own 900px breakpoint is
+   what actually keeps the "basket stays visible" promise at every width
+   where a side panel and a visible basket can't both fit — below it,
+   nothing can show basket + overlay side by side anyway (same reasoning
+   as the phone tier, just at .pos-container's real stacking point, not an
+   arbitrary narrower one). */
+@media (max-width: 900px) {
+  .payment-overlay { inset-inline: 0; width: 100%; max-width: 100%; border-radius: 0; }
+}
 
 .offline-toggle { display: flex; align-items: center; gap: .5rem; font-weight: 600;
                   font-size: .85rem; color: var(--muted); padding: .2rem .1rem; }

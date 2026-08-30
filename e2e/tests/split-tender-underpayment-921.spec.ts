@@ -27,6 +27,9 @@ test.describe('split-tender panel does not report success on a rejected tender (
     ]);
     await page.waitForSelector('.basket table tbody tr');
 
+    // ut-docs#1252: the Pay/Split tabs now live inside the #payment-overlay
+    // dialog, opened by the .payment-trigger button.
+    await page.getByTestId('payment-open').click();
     await page.locator('.tender .tab', { hasText: /split/i }).click();
     await page.locator('#split-tender-form select[name="method"]').selectOption({ index: 0 });
     // Well short of the total on purpose -- this IS the split-tender
@@ -77,6 +80,9 @@ test.describe('split-tender panel does not report success on a rejected tender (
     ]);
     await page.waitForSelector('.basket table tbody tr');
 
+    // ut-docs#1252: the Pay/Split tabs now live inside the #payment-overlay
+    // dialog, opened by the .payment-trigger button.
+    await page.getByTestId('payment-open').click();
     await page.locator('.tender .tab', { hasText: /split/i }).click();
     await page.locator('#split-tender-form select[name="method"]').selectOption({ index: 0 });
     await page.locator('#split-tender-fill').click(); // fills the exact remaining total
