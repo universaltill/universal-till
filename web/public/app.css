@@ -853,7 +853,11 @@ a.btn, a.btn:hover { text-decoration: none; }
    with no declared table width (.basket table's comment above) so it
    can grow to fill whatever the other columns don't need — this caps
    how far that growth goes at the panel's roomy default width. */
-.line-item { max-width: 9.875rem; display: flex; align-items: center; gap: .4rem; }
+/* 10.4rem = the item column's real share at the panel's 26.25rem default
+   (26.25 - 4.3 qty - 4 price - 4 total - 2.8 remove - .7 cell padding)
+   since ut-docs#1314 slimmed the qty column; was 9.875rem for the old
+   8rem side-by-side qty+discount budget. */
+.line-item { max-width: 10.4rem; display: flex; align-items: center; gap: .4rem; }
 .line-thumb {
   flex: 0 0 auto; width: 2rem; height: 2rem; object-fit: cover;
   border-radius: 6px; border: 1px solid var(--border);
@@ -864,10 +868,35 @@ a.btn, a.btn:hover { text-decoration: none; }
    3-line wrap (seen on Linux/CI metrics) broke the >=4-visible-lines AC.
    Full names still print on receipts; the row shows an ellipsis. */
 .line-name { display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
-  overflow: hidden; font-weight: 600; font-size: .88rem; line-height: 1.2; }
+  overflow: hidden; font-weight: 600; font-size: .88rem; line-height: 1.2;
+  /* ut-docs#1314: long unbreakable words (German compound product names,
+     e.g. "Doppelrahmfrischkäse") must wrap into the clamp, not clip
+     mid-character past the box's hidden overflow edge. */
+  overflow-wrap: anywhere; }
 .line-item small { font-size: .68rem; }
 .line-modifiers { list-style: none; margin: .15rem 0 0; padding: 0; }
 .line-modifiers li { font-size: .72rem; line-height: 1.3; }
+/* ut-docs#1314, phone tier (ut-docs#413's breakpoint): at 360px the whole
+   basket table is ~288px while the declared qty/price/total/remove
+   columns take ~257px, leaving the ITEM column ~32px — which the 2rem
+   thumbnail alone (itself clipped) used to consume entirely, rendering
+   the item NAME at literal 0px width (measured live 2026-08-30; before
+   #1314's column-budget change the item column got ~0px, so the name was
+   invisible on phones either way). The name is what the operator needs;
+   drop the photo at this tier so the name owns the column.
+   Re-measured at review (2026-08-30), 360x800, before -> after: item
+   column 0 -> 31.6px, name 0 -> 19.8px, and — not previously reported —
+   .basket-scroll's HORIZONTAL overflow 32px -> 0 (16px -> 0 under
+   body.kiosk). So this tier is strictly better than it was, including for
+   ut-docs#391's own no-horizontal-scroll invariant. It is still not GOOD:
+   ~20px is ~2 characters. Making the phone tier genuinely readable means
+   re-budgeting the PRICE/TOTAL/remove columns or giving this tier its own
+   row layout, which is deliberately out of scope for ut-docs#1314 and is
+   filed as its own card — do not "fix" it by widening the item column
+   here, that is exactly attempt 3's regression. */
+@media (max-width: 480px) {
+  .line-thumb { display: none; }
+}
 
 /* ---------- Item customization (ADR-0020) ---------- */
 .modifier-modal {
@@ -926,12 +955,74 @@ a.btn, a.btn:hover { text-decoration: none; }
 @media (max-width: 480px) {
   .modifier-actions { flex-wrap: wrap; }
 }
-/* qty + line-discount side by side, not stacked — a stacked pair nearly
-   doubled every row's height and was the main reason only ~1 line item
-   fit in the old basket panel (ut-docs#213). */
-.line-inputs { display: flex; align-items: center; gap: .25rem; justify-content: flex-end; }
-.qty-input { width: 3.4rem; padding: .3rem .3rem; font-size: .85rem; }
-.disc-input { width: 3.4rem; padding: .3rem .3rem; font-size: .8rem; }
+/* qty ABOVE line-discount (ut-docs#1314) — a deliberate reversal of the
+   ut-docs#213-era rule that kept them side by side. History, both ways:
+   - Pre-#213, a stacked pair nearly doubled every row's height and was
+     the main reason only ~1 line item fit in the OLD basket panel —
+     which was half a column, stacked above the tender panel.
+   - Post-#213 the basket owns the full left column, so row height has
+     real headroom — and the side-by-side pair's 8rem column reservation
+     became the dominant width cost: it left the ITEM column ~2.6-2.9rem
+     of text space (~45-47px measured live at 1024x600 and 1280x800),
+     clamping "Cheddar Cheese 400g" to "Chedd Che…" (ut-docs#1314).
+   Stacking frees ~3.7rem of width for the item column (see the column
+   budget at .basket table below). Measured live at 1280x800 after this
+   change (with the input line-height/padding shave below): rows are
+   ~77-79px — the same ~79px they already were, because pre-change row
+   height was set by 2-line-clamped NAMES + SKU while post-change it's
+   set by the stacked inputs — and the ut-docs#213 ">=4 without
+   scrolling" AC passes with a 12.9px margin (pre-change margin: ~11px).
+   Known, accepted trade-off, RE-MEASURED at review (2026-08-30) because
+   the first pass under-reported it — quote these numbers, not "3 instead
+   of 4", if there is ever a 5th attempt. Under body.kiosk the two stacked
+   inputs keep their 2.1rem touch min-height, so nothing shaves kiosk rows
+   the way the shave below shaves normal ones, and kiosk rows grow
+   73.6->90.2px / 77.3->94.7px. Fully-visible basket lines, before -> after,
+   six lines rung up:
+     - NON-kiosk: 1280x800 4->4, 1024x600 1->1, 901x600 1->1, 360x800 1->1.
+       No row-count regression at ANY viewport — the shave below exactly
+       absorbs the stacking.
+     - body.kiosk: 1280x800 4->3, and at the DOCUMENTED KIOSK FLOOR
+       1024x600 (and 901x600) 2->1. The floor case is the worse half and
+       is the one the first pass omitted.
+   Accepted because the alternative is worse for the same operator: before
+   this change those kiosk rows were legible-count-2 but name-width 44.8px,
+   i.e. two lines of "Chedd Che…" the operator cannot actually verify;
+   after, it is one line of a fully readable name (107.7px) plus a scroll.
+   Nothing is blocked either way — .basket-scroll scrolls, .totals is
+   pinned, and the .basket-count badge carries the quantity. Recovering the
+   kiosk row count without re-starving the name needs a phone/kiosk-tier
+   row layout, which is deliberately NOT in this card.
+   align-items: flex-end = inline-end in a column
+   flex, so the pair hugs the cell's end edge in LTR and RTL alike. */
+.line-inputs { display: flex; flex-direction: column; align-items: flex-end; gap: .25rem; }
+/* line-height 1.2 (matching .line-name's own) + .25rem vertical padding:
+   with the ut-docs#1314 stacked pair, the INPUTS are what set row height
+   (they outgrow the 2-line-clamped item text), and the inherited 1.45
+   body line-height + .3rem padding made rows 87.8px at 1280x800 — the
+   4th row overshot .basket-scroll's box by ~25px, breaking ut-docs#213's
+   ">=4 lines visible" AC (measured live, 2026-08-30). These two shaves
+   bring rows back to ~77-79px (4 rows fit again, 12.9px margin,
+   measured live). Touch height on
+   kiosk hardware is untouched: body.kiosk's 2.1rem min-height (below)
+   still wins there — verified at review, byte-identical before/after
+   (37.5px at 1280x800, 35.7px at 1024x600).
+   But read "kiosk hardware" literally, NOT as "no touch target moved":
+   OUTSIDE body.kiosk these two inputs do shrink, 34.7->29.1px at 1280x800
+   and 33.1->27.8px at 1024x600 (measured at review). That matters because
+   ut-docs#1021 confirmed a REAL deployed till running window_mode=normal
+   with the kiosk service inactive — i.e. a touchscreen that never gets
+   body.kiosk (the same finding that made ut-docs#1170 un-gate .btn's
+   touch protections from body.kiosk). Accepted here rather than fixed:
+   these inputs were ALREADY under this product's 44px touch-target
+   minimum before this change (33-35px), so the shave lowers a floor that
+   was never met rather than breaking one that was, and it stays above
+   WCAG 2.2 AA 2.5.5's 24px. Raising basket qty/discount to a real 44px in
+   non-kiosk mode is its own card — it cannot be done by padding alone
+   without re-breaking ut-docs#213's ">=4 rows" AC that the shave exists
+   to protect. */
+.qty-input { width: 3.4rem; padding: .25rem .3rem; font-size: .85rem; line-height: 1.2; }
+.disc-input { width: 3.4rem; padding: .25rem .3rem; font-size: .8rem; line-height: 1.2; }
 .btn-x { padding: .3rem .4rem; font-size: .8rem; min-height: 0; }
 
 .order-type-toggle { display: flex; gap: .4rem; margin-bottom: .6rem; }
@@ -989,8 +1080,11 @@ a.btn, a.btn:hover { text-decoration: none; }
       everywhere else: regressed ut-docs#213's own ">=4 basket lines
       visible without scrolling at 1280x800" (narrower item column ->
       more names hit their 2-line clamp -> taller rows -> fewer fit).
-   The fix that actually holds: reserve qty+discount (8rem: two 3.4rem
-   inputs + .25rem gap + .35rem*2 cell padding), price (4rem) and total
+   The fix that actually holds: reserve qty+discount (4.3rem since
+   ut-docs#1314 stacked the two inputs vertically — one 3.4rem input wide
+   + .35rem*2 cell padding + .2rem headroom; was 8rem for the
+   side-by-side pair: two 3.4rem inputs + .25rem gap + cell padding),
+   price (4rem) and total
    (4rem) as explicit REM sized to their real content — including the
    PRICE/TOTAL header labels themselves, which need more room than the
    data amounts do — and remove
@@ -1003,7 +1097,7 @@ a.btn, a.btn:hover { text-decoration: none; }
    columns are honoured — unambiguous with exactly one such column
    (attempt 2's equal-split trap only happens with MULTIPLE unspecified/
    calc()'d columns competing for the same leftover space). So item
-   grows freely up to its own max-width (9.875rem, below) at the panel's
+   grows freely up to its own max-width (10.4rem, below) at the panel's
    normal 26.25rem width — recovering attempt 3's regression — while
    still only ever shrinking, never overflowing, at the tightest floor+
    scale corner. Verified live — scrollWidth/clientWidth, remove-button
@@ -1018,7 +1112,7 @@ a.btn, a.btn:hover { text-decoration: none; }
              text-align: start; }
 .basket td { padding: .55rem .6rem; border-bottom: 1px solid var(--border); text-align: start; }
 .basket th:nth-child(n+2), .basket td:nth-child(n+2) { text-align: end; }
-.basket th:nth-child(2), .basket td:nth-child(2) { width: 8rem; }
+.basket th:nth-child(2), .basket td:nth-child(2) { width: 4.3rem; }
 .basket th:nth-child(3), .basket td:nth-child(3) { width: 4rem; }
 .basket th:nth-child(4), .basket td:nth-child(4) { width: 4rem; }
 .basket th:nth-child(5), .basket td:nth-child(5) { width: 2.8rem; }
