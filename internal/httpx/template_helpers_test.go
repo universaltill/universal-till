@@ -61,6 +61,43 @@ func TestFuncsForTAndLocalesWithoutTranslator(t *testing.T) {
 	}
 }
 
+// ut-docs#1125: the setup wizard's / settings' / staff menu page's (/menu)
+// language pickers must show a native name ("العربية", "فارسی", "Türkçe"), never a
+// bare locale code — a non-technical shop owner doesn't know "fa" is Persian.
+func TestNativeLanguageNameRendersCoreLocales(t *testing.T) {
+	cases := map[string]string{
+		"ar": "العربية",
+		"en": "English",
+		"fa": "فارسی",
+		"tr": "Türkçe",
+	}
+	for code, want := range cases {
+		if got := NativeLanguageName(code); got != want {
+			t.Errorf("NativeLanguageName(%q) = %q, want %q", code, got, want)
+		}
+	}
+}
+
+// An unparseable code (never expected from AvailableLocales in practice, but
+// the func must not panic on untrusted input) falls back to the raw string
+// rather than an empty label.
+func TestNativeLanguageNameFallsBackOnUnknownCode(t *testing.T) {
+	if got := NativeLanguageName("not-a-real-locale-code!!"); got != "not-a-real-locale-code!!" {
+		t.Errorf("NativeLanguageName(garbage) = %q, want the input echoed back", got)
+	}
+}
+
+func TestFuncsForRegistersNativeLocaleName(t *testing.T) {
+	funcs := FuncsFor("en")
+	fn, ok := funcs["nativelocalename"].(func(string) string)
+	if !ok {
+		t.Fatalf("funcs[\"nativelocalename\"] missing or wrong type: %v", funcs["nativelocalename"])
+	}
+	if got := fn("de"); got != "Deutsch" {
+		t.Errorf(`nativelocalename("de") = %q, want "Deutsch"`, got)
+	}
+}
+
 func TestDefaultLocale(t *testing.T) {
 	InitI18n(nil, "de")
 	if got := DefaultLocale(); got != "de" {

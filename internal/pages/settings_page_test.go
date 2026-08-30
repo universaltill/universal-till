@@ -1388,6 +1388,39 @@ func TestSettingsPageOffersHighDensityScaleOption(t *testing.T) {
 	}
 }
 
+// ut-docs#1125: the shop-default-locale picker must label its options with
+// each locale's native name, not the bare code — the ticket's acceptance
+// criterion is "no bare locale code shown anywhere (wizard or settings)", and
+// settings is the half the wizard's own test cannot cover.
+func TestSettingsPageDefaultLocalePickerShowsNativeNamesNotBareCodes(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	for _, want := range []string{"العربية", "English", "فارسی", "Türkçe"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("settings default-locale picker missing native language name %q", want)
+		}
+	}
+	// The <option> value stays the bare code (the form posts it, and
+	// settings_page.go validates it against AvailableLocales) — only the
+	// visible label must change. Anchored on the option's own shape so the
+	// value attribute itself can't false-positive.
+	for _, code := range []string{"ar", "en", "fa", "tr"} {
+		if regexp.MustCompile(`value="` + code + `"[^>]*>\s*` + code + `\s*</option>`).MatchString(body) {
+			t.Errorf("settings default-locale picker still labels an option with the bare code %q", code)
+		}
+		if !strings.Contains(body, `value="`+code+`"`) {
+			t.Errorf("settings default-locale picker no longer posts the bare code %q as the option value", code)
+		}
+	}
+}
+
 // SaveState's write must be all-or-nothing at the HTTP boundary too
 // (ut-docs#157): a failed settings-page save must answer 5xx and must not
 // apply the change to the live sale engine, or a shop would silently

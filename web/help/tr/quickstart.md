@@ -51,7 +51,7 @@ Normal bir gün için ihtiyacınız olan her şey, küçük adımlarla. Denemekl
 
 ## 8 · Dili değiştir
 
-1. Ekranın üstündeki dil harflerine (örneğin EN veya FA) dokunun ve kendinizinkini seçin. Her şey aynı anda değişir.
+1. **☰ Menü**'yü açın ve ekranın altına yakın kendi dilinizin adına (örneğin English veya فارسی) dokunun. Her şey aynı anda değişir.
 
 ## 9 · Bir şey yanlış mı görünüyor?
 

@@ -52,7 +52,7 @@ Everything you need for a normal day, in small steps. You cannot break anything 
 
 ## 8 · Change the language
 
-1. Tap the language letters at the top of the screen (for example EN or FA) and pick yours. Everything changes at once.
+1. Open **☰ Menu** and tap your language's own name near the bottom (for example Türkçe or فارسی). Everything changes at once.
 
 ## 9 · Something looks wrong?
 
