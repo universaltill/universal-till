@@ -52,10 +52,27 @@ touched.
 | `bash scripts/ci/guard-compliance-claims.sh` | pass (221 files scanned, no forbidden claims) |
 | `go build ./...` | pass |
 | `gofmt -l .` | empty |
+| `bash scripts/ci/guard-docs-shots.sh` | pass (after `make docs-shots`, see below) |
 
 No Go code, template, or locale-JSON string changed, so `guard-data-access`,
 `guard-kiosk-engine`, `guard-i18n`, and `go test ./...` are not implicated by
 this diff; not re-run for a docs-only change.
+
+### CI finding, fixed
+
+**`guard-docs-shots.sh` failed on the PR** (build check, first push): this
+guard's manifest hashes each routed topic's markdown *content*, not just its
+rendered pixels — `display.md` changing in all 4 locales meant its manifest
+entries were stale even though no screen itself changed. Missed locally
+before the first push (not run alongside the other two guards). Fixed:
+ran `make docs-shots` (23 topics × 4 locales, all passed) and committed the
+regenerated `manifest.json`. That same run also picked up two screenshots
+(`ar/translations.png`, `tr/sell.png`) that had drifted from their pages'
+current rendering — unrelated to this PR's own change (their manifest hash
+entries are untouched by this diff) but refreshed as a side effect of the
+full run; committed along with it, consistent with prior precedent
+(`docs/code-reviews/2026-08-30-self-order-mode-revoke-session.md`, "Blocking
+1"). Guard passes locally after the fix.
 
 ## Checked and found clean
 
