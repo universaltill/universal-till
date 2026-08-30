@@ -77,6 +77,21 @@ const bkpMaxMetaSize = 200 << 20 // 200MB
 // ever be given. 1GB leaves comfortable headroom above that.
 var bkpMaxDBSize int64 = 1 << 30 // 1GB
 
+// bkpMaxDocsZipSize bounds the archive's documents.zip member itself,
+// extracted to a temp file the same streamed/authoritatively-capped way as
+// backup.db above (ut-docs#1223) — a real backup's documents.zip can carry
+// years of receipt PDFs alongside any product photos, so this stays
+// generous, but bounded against the same zip-bomb concern. A var so tests
+// can lower it.
+var bkpMaxDocsZipSize int64 = 512 << 20 // 512MB
+
+// bkpMaxImageSize bounds a single resolved product image (ut-docs#1223) —
+// matches the manual item-photo upload handler's own decode cap
+// (internal/pages/catalog/handlers.go's POST /api/catalog/item/image), so
+// an import can never write a thumbnail larger than a manual upload could.
+// A var so tests can lower it.
+var bkpMaxImageSize int64 = 10 << 20 // 10MB
+
 // ParseBkp parses a speedy kasse / pepperm cashbox till backup (ut-docs#511)
 // into the same neutral Result/ImportItem shape Parse produces for CSV
 // exports, so the pages layer's preview/commit flow (dedup, category
@@ -98,13 +113,19 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 		return Result{}, fmt.Errorf("open zip: %w", err)
 	}
 
-	var dbFile, metaFile *zip.File
+	var dbFile, metaFile, docsZipFile *zip.File
 	for _, f := range zr.File {
 		switch f.Name {
 		case "backup.db":
 			dbFile = f
 		case "meta.inf":
 			metaFile = f
+		case "documents.zip":
+			// ut-docs#1223: a Products row's ProductImagePath (below) is
+			// resolved against this archive's own member names, once
+			// there's a row that actually references one — see
+			// resolveBkpImages further down.
+			docsZipFile = f
 		}
 	}
 	if dbFile == nil || metaFile == nil {
@@ -225,6 +246,31 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 		return Result{}, fmt.Errorf("read Products table: %w", err)
 	}
 
+	// ut-docs#1223: only bother extracting documents.zip when at least one
+	// row actually references an image — most real backups (the pilot
+	// café's own included, per the ticket) carry no ProductImagePath at
+	// all, and this archive can be large.
+	needsImages := false
+	for _, p := range products {
+		if strings.TrimSpace(p.ProductImagePath) != "" {
+			needsImages = true
+			break
+		}
+	}
+	var docsIndex *bkpDocsIndex
+	if needsImages && docsZipFile != nil {
+		docsIndex, err = openBkpDocsIndex(docsZipFile)
+		if err != nil {
+			// Best-effort, same spirit as the placeholder-thumbnail path
+			// this falls back to: a corrupt/oversized documents.zip must
+			// never fail the whole import, only leave every image
+			// reference unresolved below.
+			log.Printf("[catimport] open documents.zip: %v", err)
+		} else {
+			defer docsIndex.close()
+		}
+	}
+
 	res := Result{Format: "speedy-kasse"}
 	seen := map[string]bool{}
 	dupSuffix := map[string]int{}
@@ -295,6 +341,15 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 				item.IssueDetail = p.SalesPriceRaw
 			} else {
 				item.PriceMinor = price
+			}
+		}
+		// Product photo (ut-docs#1223): only worth resolving for a row
+		// that's actually going to import — a blocked row (deleted,
+		// order-mode toggle, missing name, bad price) never reaches
+		// commit, so its image reference would just be wasted work.
+		if item.Issue == "" {
+			if raw := strings.TrimSpace(p.ProductImagePath); raw != "" {
+				item.ImageData, item.ImageIssue, item.ImageIssueRaw = resolveBkpImage(docsIndex, raw)
 			}
 		}
 		// Only a row that cleanly imports (no Issue at all) registers its
@@ -418,6 +473,150 @@ func readZipEntry(f *zip.File) ([]byte, error) {
 	}
 	defer rc.Close()
 	return io.ReadAll(rc)
+}
+
+// bkpDocsIndex is a documents.zip archive, extracted to a bounded temp file
+// and indexed for O(1) lookup by member path (ut-docs#1223) — built once
+// per ParseBkp call (see openBkpDocsIndex), never per row. The temp file's
+// *os.File backs the nested zip.Reader's lazy per-entry reads, so it must
+// stay open for the index's whole lifetime — close() removes both.
+type bkpDocsIndex struct {
+	tmpPath string
+	file    *os.File
+	byNorm  map[string]*zip.File
+	byBase  map[string]*zip.File
+}
+
+func (idx *bkpDocsIndex) close() {
+	if idx == nil {
+		return
+	}
+	if idx.file != nil {
+		_ = idx.file.Close()
+	}
+	if idx.tmpPath != "" {
+		_ = os.Remove(idx.tmpPath)
+	}
+}
+
+// openBkpDocsIndex extracts docsZipFile (the .bkp archive's documents.zip
+// member) to a bounded temp file and indexes its own members for lookup.
+// Streamed the same authoritatively-capped way ParseBkp streams backup.db
+// itself, for the same zip-bomb reason (ut-docs#594's guard, reused here) —
+// a nested zip's DEFLATE-compressed entries aren't randomly seekable, so
+// resolving image references against the archive's compressed bytes
+// directly isn't an option; this decompresses documents.zip once, up
+// front, rather than once per referencing row.
+func openBkpDocsIndex(docsZipFile *zip.File) (*bkpDocsIndex, error) {
+	if docsZipFile.UncompressedSize64 > uint64(bkpMaxDocsZipSize) {
+		return nil, ErrBkpTooLarge
+	}
+	tmp, err := os.CreateTemp("", "ut-bkp-docs-*.zip")
+	if err != nil {
+		return nil, fmt.Errorf("create temp file for documents.zip: %w", err)
+	}
+	tmpPath := tmp.Name()
+	rc, err := docsZipFile.Open()
+	if err != nil {
+		tmp.Close()
+		os.Remove(tmpPath)
+		return nil, fmt.Errorf("open documents.zip entry: %w", err)
+	}
+	written, copyErr := io.Copy(tmp, io.LimitReader(rc, bkpMaxDocsZipSize+1))
+	rcCloseErr := rc.Close()
+	closeErr := tmp.Close()
+	if copyErr != nil {
+		os.Remove(tmpPath)
+		return nil, fmt.Errorf("write temp documents.zip: %w", copyErr)
+	}
+	if rcCloseErr != nil {
+		os.Remove(tmpPath)
+		return nil, fmt.Errorf("close documents.zip entry: %w", rcCloseErr)
+	}
+	if closeErr != nil {
+		os.Remove(tmpPath)
+		return nil, fmt.Errorf("close temp documents.zip: %w", closeErr)
+	}
+	if written > bkpMaxDocsZipSize {
+		os.Remove(tmpPath)
+		return nil, ErrBkpTooLarge
+	}
+
+	f, err := os.Open(tmpPath)
+	if err != nil {
+		os.Remove(tmpPath)
+		return nil, fmt.Errorf("reopen temp documents.zip: %w", err)
+	}
+	fi, err := f.Stat()
+	if err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		return nil, fmt.Errorf("stat temp documents.zip: %w", err)
+	}
+	nzr, err := zip.NewReader(f, fi.Size())
+	if err != nil {
+		f.Close()
+		os.Remove(tmpPath)
+		return nil, fmt.Errorf("parse documents.zip: %w", err)
+	}
+
+	idx := &bkpDocsIndex{
+		tmpPath: tmpPath,
+		file:    f,
+		byNorm:  map[string]*zip.File{},
+		byBase:  map[string]*zip.File{},
+	}
+	for _, e := range nzr.File {
+		norm := normalizeBkpArchivePath(e.Name)
+		idx.byNorm[norm] = e
+		// First occurrence wins on a basename collision — an ambiguous
+		// fallback is still strictly better than none at all, and a real
+		// archive keying its members by UUID (per this card's own ticket)
+		// won't collide in practice.
+		if base := filepath.Base(norm); base != "" {
+			if _, exists := idx.byBase[base]; !exists {
+				idx.byBase[base] = e
+			}
+		}
+	}
+	return idx, nil
+}
+
+// normalizeBkpArchivePath makes a path comparable regardless of the
+// separator style or leading slash the source recorded it with.
+func normalizeBkpArchivePath(p string) string {
+	p = strings.ReplaceAll(p, "\\", "/")
+	return strings.TrimPrefix(p, "/")
+}
+
+// resolveBkpImage turns one row's raw ProductImagePath into image bytes, or
+// a non-blocking ImageIssue reason code (ut-docs#1223). idx is nil when
+// this .bkp carries no documents.zip at all, or it failed to open — either
+// way every reference is unresolved.
+func resolveBkpImage(idx *bkpDocsIndex, raw string) (data []byte, issue, issueRaw string) {
+	if idx == nil {
+		return nil, ImageIssueUnresolved, raw
+	}
+	norm := normalizeBkpArchivePath(raw)
+	entry, ok := idx.byNorm[norm]
+	if !ok {
+		// Fall back to a basename match — the source may record only a
+		// relative filename while the archive nests it under a UUID
+		// directory, or the reverse.
+		entry, ok = idx.byBase[filepath.Base(norm)]
+	}
+	if !ok {
+		return nil, ImageIssueUnresolved, raw
+	}
+	if entry.UncompressedSize64 > uint64(bkpMaxImageSize) {
+		return nil, ImageIssueTooLarge, raw
+	}
+	b, err := readZipEntry(entry)
+	if err != nil {
+		log.Printf("[catimport] read image %q from documents.zip: %v", entry.Name, err)
+		return nil, ImageIssueUnresolved, raw
+	}
+	return b, "", ""
 }
 
 // bkpChecksumEntry is one recognised {name-like, hash-like} pair found
