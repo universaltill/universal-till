@@ -636,6 +636,105 @@ func TestSelfOrderMode_RevokesActingSessionOnEntry(t *testing.T) {
 	}
 }
 
+// ut-docs#1301 (ut-docs#1259 review finding NB-2, decided): only the ACTING
+// browser's session is revoked when a till enters self_order mode — a second
+// manager already signed in on another device against this same till keeps a
+// valid session and can still reach /settings. #1301's own grooming pass
+// recommended the opposite (revoke every session on the till) under the
+// standing security-first rule, with an explicit escape hatch: keep (a) if
+// design turns up a concrete technical reason, noted on the issue. Two
+// verifiable reasons pinned here: (1) auth.Middleware's /self-order,
+// /api/self-order/* exemption is unconditional, not gated on display.mode —
+// this switch doesn't grant an anonymous LAN client anything it couldn't
+// already reach; (2) any forgotten session is already time-bounded by the
+// idle-lock default (10 minutes), independent of this till's display mode.
+// Neither changes for a session on a different device before vs. after this
+// switch, so revoking it too would cost real UX (kicking a manager off their
+// own laptop) without closing a gap this change actually introduced. See
+// docs/code-reviews/2026-08-30-self-order-mode-revoke-session.md's NB-2
+// discussion, the handler comment above, and the decision comment on
+// ut-docs#1301 for the full record.
+func TestSelfOrderMode_DoesNotRevokeOtherSessionsOnTheTill(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	svc := auth.NewService(d.DB)
+	actingID, err := svc.Repo().CreateUser(t.Context(), "mgr-acting", "Manager Acting", "manager")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hash, err := auth.HashPIN("1111"); err != nil {
+		t.Fatal(err)
+	} else if err := svc.Repo().SetUserPIN(t.Context(), actingID, hash); err != nil {
+		t.Fatal(err)
+	}
+	otherID, err := svc.Repo().CreateUser(t.Context(), "mgr-other", "Manager Other", "manager")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if hash, err := auth.HashPIN("2222"); err != nil {
+		t.Fatal(err)
+	} else if err := svc.Repo().SetUserPIN(t.Context(), otherID, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerIndex(mux, dp)
+	registerSettings(mux, dp)
+	registerSelfOrder(mux, dp)
+	registerSelfOrderShop(mux, dp)
+	registerAuth(mux, dp, svc)
+	svc.SetAnonymousRootRedirect(func(ctx context.Context) string {
+		if mode, _, _ := dp.Settings.Get(ctx, "display.mode"); mode == "self_order" {
+			return "/self-order"
+		}
+		return ""
+	})
+	h := auth.Middleware(mux, svc)
+
+	login := func(pin string) *http.Cookie {
+		rec := httptest.NewRecorder()
+		req := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+			strings.NewReader(url.Values{"pin": {pin}}.Encode()))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		h.ServeHTTP(rec, req)
+		for _, c := range rec.Result().Cookies() {
+			if c.Name == auth.CookieName {
+				return c
+			}
+		}
+		t.Fatalf("setup: login with pin %q did not set a session cookie", pin)
+		return nil
+	}
+
+	// Two independent sessions on the same till — e.g. the acting browser
+	// making the switch, and a manager already signed in on a second LAN
+	// device pointed at this same till's server.
+	actingCookie := login("1111")
+	otherCookie := login("2222")
+
+	setRec := httptest.NewRecorder()
+	setReq := httptest.NewRequest(http.MethodPost, "/api/settings/display-mode", strings.NewReader("mode=self_order"))
+	setReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	setReq.AddCookie(actingCookie)
+	h.ServeHTTP(setRec, setReq)
+	if setRec.Code != http.StatusNoContent {
+		t.Fatalf("manager set self_order mode: %d %s", setRec.Code, setRec.Body.String())
+	}
+
+	// The OTHER session's token must still resolve server-side...
+	if _, ok := svc.Resolve(t.Context(), otherCookie.Value); !ok {
+		t.Fatal("a different device's session must survive another device switching this till into self_order mode")
+	}
+	// ...and concretely still reach /settings, unlike the acting cookie
+	// (covered by TestSelfOrderMode_RevokesActingSessionOnEntry).
+	settingsRec := httptest.NewRecorder()
+	settingsReq := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	settingsReq.AddCookie(otherCookie)
+	h.ServeHTTP(settingsRec, settingsReq)
+	if settingsRec.Code != http.StatusOK {
+		t.Fatalf("GET /settings with an unrelated device's still-valid cookie = %d, want 200 (unaffected by another device's self_order switch): %s", settingsRec.Code, settingsRec.Body.String())
+	}
+}
+
 // ut-docs#1303 (ut-docs#1259 follow-up): the session revoke on entering
 // self_order must leave its own dedicated audit entry, distinguishable from
 // the display_mode_changed entry that the setting change itself already
