@@ -261,6 +261,12 @@ func (r *recordingWindowController) ApplyMode(mode string) error {
 	return r.applyModeErr
 }
 
+// RecordInputHeartbeat exists only to satisfy the WindowController
+// interface for this settings-page test double (ut-docs#1329) — none of
+// this file's tests exercise the heartbeat endpoint (that's
+// window_state_api_test.go), so there's nothing meaningful to record here.
+func (r *recordingWindowController) RecordInputHeartbeat() error { return nil }
+
 // Exit-to-os (ut-docs#608 scaffold) requires a LIVE manager PIN — an existing
 // manager session (isManagerOrAuthOff) is not enough — mirroring the
 // blank-PIN-lockout fix in shifts_api.go's cash-adjustment/payout handlers.
@@ -2064,8 +2070,9 @@ func TestExitToOSEndpoint_PiKioskAppliance503NoAudit(t *testing.T) {
 // drive the handler's per-sentinel mapping directly.
 type erroringWindowController struct{ exitErr error }
 
-func (e erroringWindowController) ExitToOS() error          { return e.exitErr }
-func (e erroringWindowController) ApplyMode(m string) error { return nil }
+func (e erroringWindowController) ExitToOS() error             { return e.exitErr }
+func (e erroringWindowController) ApplyMode(m string) error    { return nil }
+func (e erroringWindowController) RecordInputHeartbeat() error { return nil }
 
 // TestExitToOSEndpoint_NotConfirmedIsAuditedAndDistinct (review of
 // ut-docs#1039, finding 3): when a shell was attached and the exit WAS

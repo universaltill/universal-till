@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"errors"
 	"net/http"
 	"strings"
@@ -280,6 +281,253 @@ func TestControlServer_SetOpsConcurrentAccessIsRaceFree(t *testing.T) {
 	}
 	close(stop)
 	wg.Wait()
+}
+
+// authedGet mirrors authedPost above for the GET /diagnostics endpoint.
+func authedGet(t *testing.T, addr, path, token string) *http.Response {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodGet, "http://"+addr+path, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(controlTokenHeader, token)
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("GET %s: %v", path, err)
+	}
+	return resp
+}
+
+type diagnosticsBody struct {
+	Data struct {
+		LastInputAgeSeconds *float64 `json:"last_input_age_seconds"`
+		CurrentWindowMode   string   `json:"current_window_mode"`
+		UptimeSeconds       float64  `json:"uptime_seconds"`
+		Addr                string   `json:"addr"`
+	} `json:"data"`
+	Error any `json:"error"`
+}
+
+func decodeDiagnostics(t *testing.T, resp *http.Response) diagnosticsBody {
+	t.Helper()
+	defer resp.Body.Close()
+	var body diagnosticsBody
+	if err := json.NewDecoder(resp.Body).Decode(&body); err != nil {
+		t.Fatalf("decode /diagnostics body: %v", err)
+	}
+	return body
+}
+
+// TestControlServer_InputHeartbeat_UpdatesLastInputAt proves a real HTTP
+// POST reaches LastInputAt — the plumbing ut-docs#1329 exists for (split
+// from #1228's input-freeze incident): a future occurrence needs a
+// timestamp to reason about, not another anecdote.
+func TestControlServer_InputHeartbeat_UpdatesLastInputAt(t *testing.T) {
+	cs, err := newControlServer()
+	if err != nil {
+		t.Fatalf("newControlServer() = %v", err)
+	}
+	defer cs.Close()
+
+	if _, ok := cs.LastInputAt(); ok {
+		t.Fatal("LastInputAt() ok = true before any heartbeat, want false")
+	}
+
+	before := time.Now()
+	resp := authedPost(t, cs.Addr(), "/input-heartbeat", cs.Token(), "")
+	resp.Body.Close()
+	after := time.Now()
+
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("POST /input-heartbeat = %d, want 204", resp.StatusCode)
+	}
+	at, ok := cs.LastInputAt()
+	if !ok {
+		t.Fatal("LastInputAt() ok = false after a heartbeat, want true")
+	}
+	if at.Before(before) || at.After(after) {
+		t.Fatalf("LastInputAt() = %v, want between %v and %v", at, before, after)
+	}
+}
+
+// TestControlServer_InputHeartbeat_RequiresAuth mirrors
+// TestControlServer_WrongOrMissingTokenReturns403 for the new endpoint —
+// same withAuth wrapper, same expected behaviour.
+func TestControlServer_InputHeartbeat_RequiresAuth(t *testing.T) {
+	cs, err := newControlServer()
+	if err != nil {
+		t.Fatalf("newControlServer() = %v", err)
+	}
+	defer cs.Close()
+
+	for _, c := range []struct {
+		name  string
+		token string
+	}{{"missing token", ""}, {"wrong token", "not-the-real-token"}} {
+		resp := authedPost(t, cs.Addr(), "/input-heartbeat", c.token, "")
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusForbidden {
+			t.Errorf("%s: status = %d, want 403", c.name, resp.StatusCode)
+		}
+	}
+	if _, ok := cs.LastInputAt(); ok {
+		t.Fatal("LastInputAt() ok = true after only unauthenticated attempts, want false")
+	}
+}
+
+// TestControlServer_InputHeartbeat_RejectsOriginHeader mirrors
+// TestControlServer_OriginHeaderReturns403 for the new endpoint.
+func TestControlServer_InputHeartbeat_RejectsOriginHeader(t *testing.T) {
+	cs, err := newControlServer()
+	if err != nil {
+		t.Fatalf("newControlServer() = %v", err)
+	}
+	defer cs.Close()
+
+	req, err := http.NewRequest(http.MethodPost, "http://"+cs.Addr()+"/input-heartbeat", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set(controlTokenHeader, cs.Token())
+	req.Header.Set("Origin", "http://evil.example")
+	resp, err := http.DefaultClient.Do(req)
+	if err != nil {
+		t.Fatalf("POST /input-heartbeat: %v", err)
+	}
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("status = %d, want 403 (Origin header present, even with a valid token)", resp.StatusCode)
+	}
+}
+
+// TestControlServer_Diagnostics_RequiresAuth and
+// TestControlServer_Diagnostics_RejectsOriginHeader cover the same two
+// gates as every other endpoint on this listener — GET is not special-cased
+// in withAuth, so a table-driven pass across both new routes here would
+// duplicate the loop above; a focused test per route reads more clearly for
+// what each one asserts about /diagnostics specifically (the JSON body).
+func TestControlServer_Diagnostics_RequiresAuth(t *testing.T) {
+	cs, err := newControlServer()
+	if err != nil {
+		t.Fatalf("newControlServer() = %v", err)
+	}
+	defer cs.Close()
+
+	resp := authedGet(t, cs.Addr(), "/diagnostics", "not-the-real-token")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusForbidden {
+		t.Errorf("GET /diagnostics with wrong token = %d, want 403", resp.StatusCode)
+	}
+}
+
+// TestControlServer_Diagnostics_ShapeBeforeAnyHeartbeat proves
+// last_input_age_seconds is absent/null before the first heartbeat — never
+// a fabricated zero that would misleadingly claim "input just now".
+func TestControlServer_Diagnostics_ShapeBeforeAnyHeartbeat(t *testing.T) {
+	cs, err := newControlServer()
+	if err != nil {
+		t.Fatalf("newControlServer() = %v", err)
+	}
+	defer cs.Close()
+
+	resp := authedGet(t, cs.Addr(), "/diagnostics", cs.Token())
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("GET /diagnostics = %d, want 200", resp.StatusCode)
+	}
+	body := decodeDiagnostics(t, resp)
+	if body.Data.LastInputAgeSeconds != nil {
+		t.Fatalf("last_input_age_seconds = %v before any heartbeat, want nil/absent", *body.Data.LastInputAgeSeconds)
+	}
+	if body.Data.Addr != cs.Addr() {
+		t.Errorf("addr = %q, want %q", body.Data.Addr, cs.Addr())
+	}
+	if body.Data.UptimeSeconds < 0 || body.Data.UptimeSeconds > 5 {
+		t.Errorf("uptime_seconds = %v, want a small non-negative value fresh off newControlServer()", body.Data.UptimeSeconds)
+	}
+	if body.Data.CurrentWindowMode != "" {
+		t.Errorf("current_window_mode = %q before any /apply-mode call, want empty", body.Data.CurrentWindowMode)
+	}
+}
+
+// TestControlServer_Diagnostics_ReflectsHeartbeatAndLastAppliedMode is the
+// end-to-end shape this whole card exists for: a heartbeat makes
+// last_input_age_seconds present and small, and a real /apply-mode call
+// (through wired ops, not just accepted-then-discarded) is what
+// current_window_mode reports back.
+func TestControlServer_Diagnostics_ReflectsHeartbeatAndLastAppliedMode(t *testing.T) {
+	cs, err := newControlServer()
+	if err != nil {
+		t.Fatalf("newControlServer() = %v", err)
+	}
+	defer cs.Close()
+	cs.SetOps(&windowOps{
+		ExitToOS:  func() error { return nil },
+		ApplyMode: func(string) error { return nil },
+	})
+
+	resp := authedPost(t, cs.Addr(), "/apply-mode", cs.Token(), "mode=kiosk")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("POST /apply-mode = %d, want 204", resp.StatusCode)
+	}
+	resp = authedPost(t, cs.Addr(), "/input-heartbeat", cs.Token(), "")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("POST /input-heartbeat = %d, want 204", resp.StatusCode)
+	}
+
+	resp = authedGet(t, cs.Addr(), "/diagnostics", cs.Token())
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("GET /diagnostics = %d, want 200", resp.StatusCode)
+	}
+	body := decodeDiagnostics(t, resp)
+	if body.Data.CurrentWindowMode != "kiosk" {
+		t.Errorf("current_window_mode = %q, want kiosk (the last successful /apply-mode)", body.Data.CurrentWindowMode)
+	}
+	if body.Data.LastInputAgeSeconds == nil {
+		t.Fatal("last_input_age_seconds absent after a heartbeat, want present")
+	}
+	if age := *body.Data.LastInputAgeSeconds; age < 0 || age > 5 {
+		t.Errorf("last_input_age_seconds = %v, want a small non-negative value right after the heartbeat", age)
+	}
+}
+
+// TestControlServer_Diagnostics_ModeUnchangedByFailedOrInvalidApply proves
+// current_window_mode reflects only a mode that was ACTUALLY applied — a
+// rejected (400) or failed (500) /apply-mode call must not silently claim
+// the operator's till is in a mode it never reached.
+func TestControlServer_Diagnostics_ModeUnchangedByFailedOrInvalidApply(t *testing.T) {
+	cs, err := newControlServer()
+	if err != nil {
+		t.Fatalf("newControlServer() = %v", err)
+	}
+	defer cs.Close()
+	cs.SetOps(&windowOps{
+		ExitToOS:  func() error { return nil },
+		ApplyMode: func(string) error { return nil },
+	})
+
+	resp := authedPost(t, cs.Addr(), "/apply-mode", cs.Token(), "mode=kiosk")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusNoContent {
+		t.Fatalf("POST /apply-mode = %d, want 204", resp.StatusCode)
+	}
+
+	// An invalid mode is rejected (400) and must not overwrite the tracked
+	// current mode.
+	resp = authedPost(t, cs.Addr(), "/apply-mode", cs.Token(), "mode=bogus")
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("POST /apply-mode mode=bogus = %d, want 400", resp.StatusCode)
+	}
+
+	resp = authedGet(t, cs.Addr(), "/diagnostics", cs.Token())
+	body := decodeDiagnostics(t, resp)
+	if body.Data.CurrentWindowMode != "kiosk" {
+		t.Errorf("current_window_mode = %q after a rejected apply-mode, want kiosk unchanged", body.Data.CurrentWindowMode)
+	}
 }
 
 // TestShellPollContractsMatchCommonPackage pins the cross-binary numeric

@@ -10,12 +10,15 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // envDesktopControlAddr/envDesktopControlToken are the env vars this shell
@@ -37,6 +40,14 @@ const (
 // connection (gosec G112); traffic here is exactly one same-host client
 // making one small POST, so this never bites in normal operation.
 const controlServerReadHeaderTimeout = 5 * time.Second
+
+// inputHeartbeatResumeGap is how long since the previous heartbeat counts
+// as "input appeared to stop and has just started again" — worth a log
+// line a human tailing this process's own stderr/journal can see without
+// ever polling GET /diagnostics (ut-docs#1329, split from #1228's
+// input-freeze incident: a future occurrence should leave a paper trail
+// instead of another anecdote).
+const inputHeartbeatResumeGap = 2 * time.Minute
 
 // windowOps are the real per-OS actions the control listener dispatches to
 // once the native window exists. Both fields are set exactly once, by the
@@ -88,12 +99,41 @@ var validWindowModes = map[string]bool{
 // reach the native window without ever going through the PIN check at
 // all — the exact bypass an unauthenticated channel would otherwise be).
 type controlServer struct {
-	ln    net.Listener
-	srv   *http.Server
-	token string
+	ln        net.Listener
+	srv       *http.Server
+	token     string
+	startedAt time.Time
 
 	mu  sync.RWMutex
 	ops *windowOps
+	// lastInputAt/haveInput back LastInputAt() and GET /diagnostics'
+	// last_input_age_seconds (ut-docs#1329) — the input-liveness heartbeat
+	// half of this card's diagnosability plumbing. haveInput distinguishes
+	// "never received one" from the zero time, so diagnostics can report
+	// null/absent honestly instead of a fabricated huge age.
+	lastInputAt time.Time
+	haveInput   bool
+	// lastAppliedMode is the mode value from the most recent SUCCESSFUL
+	// /apply-mode call (ops wired, mode valid, ApplyMode returned nil) —
+	// surfaced as GET /diagnostics' current_window_mode. Deliberately not
+	// updated on a rejected (400) or failed (500) apply: this must report
+	// what the window actually reached, never what a caller merely asked
+	// for.
+	//
+	// KNOWN GAP (review of ut-docs#1329, should-fix 3, deliberately not
+	// fixed in this card): only POST /apply-mode ever sets this, which on
+	// Linux is reached only via HTTPWindowController — i.e. the spawn-mode
+	// fallback inside ShellPollWindowController. The INITIAL mode
+	// (showWindow's own applyWindowMode call, webview_fallback.go) and a
+	// live mode change on the attach-mode-with-poll path (watchShellMode,
+	// shell_poll.go) both bypass this field entirely, so it reads ""
+	// (empty, not "unknown") on the exact topology #1228's incident
+	// happened on. Fixing this needs a small SetAppliedMode(mode) hook
+	// called from both of those paths — deferred to a follow-up rather
+	// than risk an under-tested change to platform build-tagged code in
+	// this pass; current_window_mode's absence is visible (empty string),
+	// not silently wrong.
+	lastAppliedMode string
 }
 
 // newControlServer binds the loopback listener, mints a random bearer
@@ -111,12 +151,23 @@ func newControlServer() (*controlServer, error) {
 		_ = ln.Close()
 		return nil, fmt.Errorf("control token: %w", err)
 	}
-	cs := &controlServer{ln: ln, token: hex.EncodeToString(tokenBytes)}
+	cs := &controlServer{ln: ln, token: hex.EncodeToString(tokenBytes), startedAt: time.Now()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /exit-to-os", cs.withAuth(cs.handleExitToOS))
 	mux.HandleFunc("POST /apply-mode", cs.withAuth(cs.handleApplyMode))
+	mux.HandleFunc("POST /input-heartbeat", cs.withAuth(cs.handleInputHeartbeat))
+	mux.HandleFunc("GET /diagnostics", cs.withAuth(cs.handleDiagnostics))
 	cs.srv = &http.Server{Handler: mux, ReadHeaderTimeout: controlServerReadHeaderTimeout}
 	go func() { _ = cs.srv.Serve(ln) }()
+	// Log the listener ADDRESS (never the token) at startup — review of
+	// ut-docs#1329: without this, GET /diagnostics is unreachable after
+	// the fact in spawn mode (the addr only otherwise exists in the
+	// child's env) and unreachable full stop in attach mode (no child to
+	// hand it to at all). A human with shell access can now at least
+	// `curl` the snapshot if they also have the token from elsewhere
+	// (e.g. a still-running unitill-pos's own env); the token itself
+	// stays out of logs deliberately.
+	logging.L().Infof("desktop control server listening on %s", cs.Addr())
 	return cs, nil
 }
 
@@ -199,7 +250,91 @@ func (cs *controlServer) handleApplyMode(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	cs.mu.Lock()
+	cs.lastAppliedMode = mode
+	cs.mu.Unlock()
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// LastInputAt returns the timestamp of the most recent POST
+// /input-heartbeat (ut-docs#1329), and whether one has ever been received
+// — the accessor GET /diagnostics' last_input_age_seconds is built on top
+// of, and a future auto-recovery card (explicitly out of THIS card's
+// scope) would read directly.
+func (cs *controlServer) LastInputAt() (time.Time, bool) {
+	cs.mu.RLock()
+	defer cs.mu.RUnlock()
+	return cs.lastInputAt, cs.haveInput
+}
+
+// handleInputHeartbeat records that the kiosk saw genuine user input just
+// now (ut-docs#1329, split from #1228: a till that stops responding to all
+// touch input while the backend stays healthy, cleared only by restarting
+// this process). Forwarded here from unitill-pos over the same
+// loopback+token channel as exit-to-os/apply-mode — see
+// internal/pages/common/http_window_controller.go's RecordInputHeartbeat
+// and internal/pages/window_state_api.go's POST /api/window/input-heartbeat
+// on that side. No windowOps involved: unlike exit-to-os/apply-mode this
+// never touches the native window, it only records a fact for
+// GET /diagnostics (and this log line) to report later.
+func (cs *controlServer) handleInputHeartbeat(w http.ResponseWriter, _ *http.Request) {
+	now := time.Now()
+	cs.mu.Lock()
+	prev, hadPrev := cs.lastInputAt, cs.haveInput
+	cs.lastInputAt = now
+	cs.haveInput = true
+	cs.mu.Unlock()
+
+	// Log a resume line on the first heartbeat ever, and again whenever a
+	// gap longer than inputHeartbeatResumeGap has passed — so a human
+	// tailing this process's stderr/journal sees "input is flowing again"
+	// without needing to poll GET /diagnostics themselves. A healthy kiosk
+	// heartbeats every ~5s (web/public/input-heartbeat.js's throttle), so
+	// this line is rare in normal operation and notable when it appears.
+	switch {
+	case !hadPrev:
+		logging.L().Infof("input heartbeat: first heartbeat received")
+	case now.Sub(prev) > inputHeartbeatResumeGap:
+		logging.L().Infof("input heartbeat: resumed after a %s gap", now.Sub(prev).Round(time.Second))
+	}
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// diagnosticsSnapshot is GET /diagnostics' JSON shape (ut-docs#1329) — the
+// on-demand counterpart to the input-heartbeat above: a human (or a future
+// automated check, out of this card's scope) can ask "what does this
+// process currently believe" without waiting for the next log line.
+// LastInputAgeSeconds is a pointer so "no heartbeat yet" marshals as an
+// absent key (omitempty) rather than a fabricated zero/huge age.
+type diagnosticsSnapshot struct {
+	LastInputAgeSeconds *float64 `json:"last_input_age_seconds,omitempty"`
+	CurrentWindowMode   string   `json:"current_window_mode"`
+	UptimeSeconds       float64  `json:"uptime_seconds"`
+	Addr                string   `json:"addr"`
+}
+
+func (cs *controlServer) handleDiagnostics(w http.ResponseWriter, _ *http.Request) {
+	cs.mu.RLock()
+	lastInputAt, haveInput := cs.lastInputAt, cs.haveInput
+	mode := cs.lastAppliedMode
+	cs.mu.RUnlock()
+
+	snap := diagnosticsSnapshot{
+		CurrentWindowMode: mode,
+		UptimeSeconds:     time.Since(cs.startedAt).Seconds(),
+		Addr:              cs.Addr(),
+	}
+	inputDesc := "none received"
+	if haveInput {
+		age := time.Since(lastInputAt).Seconds()
+		snap.LastInputAgeSeconds = &age
+		inputDesc = fmt.Sprintf("%.1fs ago", age)
+	}
+	logging.L().Infof("diagnostics snapshot requested: uptime=%.0fs window_mode=%q last_input=%s",
+		snap.UptimeSeconds, mode, inputDesc)
+
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(map[string]any{"data": snap, "error": nil})
 }
 
 // Close shuts the listener down; best-effort, called as the shell exits.

@@ -4,8 +4,10 @@ import (
 	"net"
 	"net/http"
 	"strconv"
+	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -177,5 +179,81 @@ func registerWindowState(mux *http.ServeMux, d *common.Deps) {
 			},
 			"error": nil,
 		})
+	})
+
+	// POST /api/window/input-heartbeat (ut-docs#1329, split from #1228's
+	// input-freeze incident: kiosk stops responding to all touch input,
+	// backend/app internals stay healthy, only a unitill-desktop restart
+	// clears it) forwards a "this kiosk saw real user input just now"
+	// signal to WindowCtl, which — on the desktop-shell platforms —
+	// carries it on to unitill-desktop's own control channel
+	// (HTTPWindowController.RecordInputHeartbeat), recorded there and
+	// surfaced via that process's own GET /diagnostics. Diagnosability
+	// plumbing only: nothing here acts on a freeze, it only leaves a trail
+	// for a human investigating one later.
+	//
+	// Auth tier, deliberately NOT PIN/manager-gated like
+	// POST /api/settings/exit-to-os or checkOrElevate-gated like
+	// POST /api/settings/window-mode above: web/public/input-heartbeat.js
+	// fires this on every genuine touch/click/key across every
+	// base.html-rendered page, throttled to ~once per 5s — a manager PIN
+	// prompt or elevation dialog on that cadence would be unusable, and
+	// the destructive-action reasoning those two routes gate on (leaving
+	// kiosk lockdown, changing the window mode) doesn't apply here at all.
+	// Left OUT of auth.exempt() instead: the plain signed-in-session tier
+	// every other non-elevated /api/* route already sits behind by
+	// default — no PIN, but not open to an anonymous LAN caller either,
+	// same "authenticated but not re-authenticated" shape as
+	// GET /api/window-mode?control=live's own precedent for a frequent,
+	// low-cost, non-destructive poll (that one is pre-login-exempt for a
+	// different reason — the shell reads it before any operator exists at
+	// all — but is the closest existing "cheap and frequent" example).
+	// Every page this ships on (base.html) already carries the session
+	// cookie the middleware checks, so this never prompts anything new.
+	// heartbeatMu/heartbeatLastAt log receipt at THIS layer, independent of
+	// whether WindowCtl.RecordInputHeartbeat below has anywhere to forward
+	// to (review of ut-docs#1329, should-fix 5): on the Pi kiosk appliance
+	// (KioskSystemdWindowController), Android
+	// (AndroidNativeWindowController), and a pure attach-mode desktop
+	// shell (ShellPollWindowController with a nil fallback — the common
+	// .deb-install topology, ADR-0064), RecordInputHeartbeat is a
+	// documented no-op: unitill-desktop's own control server never sees
+	// the signal, so ITS "first heartbeat"/"resumed after a gap" log
+	// lines (cmd/unitill-desktop/control.go) never fire either. Logging
+	// the same two facts unconditionally here covers every topology with
+	// no new channel, satisfying the "log line" half of the card's
+	// acceptance criteria universally rather than only on the
+	// desktop-shell-with-fallback path.
+	var heartbeatMu sync.Mutex
+	var heartbeatLastAt time.Time
+	mux.HandleFunc("POST /api/window/input-heartbeat", func(w http.ResponseWriter, r *http.Request) {
+		now := time.Now()
+		heartbeatMu.Lock()
+		prev := heartbeatLastAt
+		heartbeatLastAt = now
+		heartbeatMu.Unlock()
+		switch {
+		case prev.IsZero():
+			logging.L().Infof("input heartbeat: first heartbeat received")
+		case now.Sub(prev) > 2*time.Minute:
+			logging.L().Infof("input heartbeat: resumed after a %s gap", now.Sub(prev).Round(time.Second))
+		}
+
+		wc := d.WindowCtl
+		if wc == nil {
+			wc = common.NoopWindowController{}
+		}
+		if err := wc.RecordInputHeartbeat(); err != nil {
+			// Best-effort telemetry: log for whoever investigates a freeze
+			// later, but still answer success — a delivery failure here
+			// must never surface as an error to the kiosk page's own JS
+			// (which ignores the response either way, see
+			// web/public/input-heartbeat.js) or slow it down with a retry.
+			// Infof, not Errorf/Warnf (review of ut-docs#1329, blocker 2
+			// — same recentBuf-flooding risk as
+			// ShellPollWindowController's own forward-failure log).
+			logging.L().Infof("input heartbeat forward: %v", err)
+		}
+		w.WriteHeader(http.StatusNoContent)
 	})
 }
