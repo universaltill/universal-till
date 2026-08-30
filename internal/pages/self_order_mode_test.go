@@ -636,6 +636,123 @@ func TestSelfOrderMode_RevokesActingSessionOnEntry(t *testing.T) {
 	}
 }
 
+// ut-docs#1303 (ut-docs#1259 follow-up): the session revoke on entering
+// self_order must leave its own dedicated audit entry, distinguishable from
+// the display_mode_changed entry that the setting change itself already
+// writes — an auditor should be able to tell "the operator's session was
+// terminated" apart from "a setting was changed" without inferring it from
+// display_mode_changed's payload. Mirrors TestSelfOrderMode_RevokesActingSessionOnEntry's setup.
+func TestSelfOrderMode_RevokedSessionWritesDedicatedAuditEntry(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	svc := auth.NewService(d.DB)
+	mgrID, err := svc.Repo().CreateUser(t.Context(), "mgr3", "Manager Three", "manager")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashPIN("9998")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Repo().SetUserPIN(t.Context(), mgrID, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerIndex(mux, dp)
+	registerSettings(mux, dp)
+	registerSelfOrder(mux, dp)
+	registerSelfOrderShop(mux, dp)
+	registerAuth(mux, dp, svc)
+	h := auth.Middleware(mux, svc)
+
+	loginRec := httptest.NewRecorder()
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+		strings.NewReader(url.Values{"pin": {"9998"}}.Encode()))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(loginRec, loginReq)
+	var cookie *http.Cookie
+	for _, c := range loginRec.Result().Cookies() {
+		if c.Name == auth.CookieName {
+			cookie = c
+		}
+	}
+	if cookie == nil || cookie.Value == "" {
+		t.Fatal("setup: manager login did not set a session cookie")
+	}
+
+	setRec := httptest.NewRecorder()
+	setReq := httptest.NewRequest(http.MethodPost, "/api/settings/display-mode", strings.NewReader("mode=self_order"))
+	setReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	setReq.AddCookie(cookie)
+	h.ServeHTTP(setRec, setReq)
+	if setRec.Code != http.StatusNoContent {
+		t.Fatalf("manager set self_order mode: %d %s", setRec.Code, setRec.Body.String())
+	}
+
+	if got := auditCount(t, d.DB, "self_order_session_revoked"); got != 1 {
+		t.Fatalf("self_order_session_revoked audit rows = %d, want 1 (actor %s)", got, mgrID)
+	}
+	if got := auditCount(t, d.DB, "display_mode_changed"); got != 1 {
+		t.Fatalf("display_mode_changed audit rows = %d, want 1 — both entries must be present, not just the new one", got)
+	}
+}
+
+// Regression guard: register/backoffice never revoke a session, so they must
+// never write the self_order_session_revoked entry either — it's specific to
+// the self_order transition, not a generic display-mode-change side effect.
+func TestSetDisplayMode_BackofficeWritesNoRevokeAudit(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	svc := auth.NewService(d.DB)
+	mgrID, err := svc.Repo().CreateUser(t.Context(), "mgr4", "Manager Four", "manager")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashPIN("9997")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Repo().SetUserPIN(t.Context(), mgrID, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerIndex(mux, dp)
+	registerSettings(mux, dp)
+	registerAuth(mux, dp, svc)
+	h := auth.Middleware(mux, svc)
+
+	loginRec := httptest.NewRecorder()
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+		strings.NewReader(url.Values{"pin": {"9997"}}.Encode()))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(loginRec, loginReq)
+	var cookie *http.Cookie
+	for _, c := range loginRec.Result().Cookies() {
+		if c.Name == auth.CookieName {
+			cookie = c
+		}
+	}
+	if cookie == nil || cookie.Value == "" {
+		t.Fatal("setup: manager login did not set a session cookie")
+	}
+
+	setRec := httptest.NewRecorder()
+	setReq := httptest.NewRequest(http.MethodPost, "/api/settings/display-mode", strings.NewReader("mode=backoffice"))
+	setReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	setReq.AddCookie(cookie)
+	h.ServeHTTP(setRec, setReq)
+	if setRec.Code != http.StatusNoContent {
+		t.Fatalf("manager set backoffice mode: %d %s", setRec.Code, setRec.Body.String())
+	}
+
+	if got := auditCount(t, d.DB, "self_order_session_revoked"); got != 0 {
+		t.Fatalf("self_order_session_revoked audit rows = %d, want 0 for a backoffice switch", got)
+	}
+	if got := auditCount(t, d.DB, "display_mode_changed"); got != 1 {
+		t.Fatalf("display_mode_changed audit rows = %d, want 1", got)
+	}
+}
+
 // Regression guard for the ordinary case: an anonymous "/" on a till that is
 // NOT in self_order mode must keep going to /login exactly as before —
 // SetAnonymousRootRedirect must be a narrow, opt-in exception, not a general
