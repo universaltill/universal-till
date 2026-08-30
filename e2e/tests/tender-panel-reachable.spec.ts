@@ -127,4 +127,73 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     await page.waitForEvent('load');
     assertClean();
   });
+
+  // 2026-08-30 (independent review, product-owner UX comparison against a
+  // competitor POS): the default view's Payment button (ut-docs#1252 —
+  // opens the payment overlay the two tests above already drive) has its
+  // OWN clipping failure mode neither of them can see: they both open the
+  // overlay first, so they only ever assert on elements INSIDE it, which
+  // is a <dialog> sized independently of `.pos-container`'s grid rows.
+  // The trigger button itself — Hold Sale + Payment, `.tender-default-
+  // footer` — lives in the always-visible default view and is exactly as
+  // exposed to `.tender`'s own height budget as the pre-#1252 pay-grid
+  // was. Two real regressions were caught live before this test existed:
+  // the button clipped by a few px at 1024x600 even with an empty till,
+  // and a growing held-sales strip (persistent DB state, not a transient)
+  // pushed it further down until it was off-screen entirely at 3 held
+  // sales — worse than the original always-visible-pay-grid bug this
+  // column's whole redesign was meant to fix. Fixed with a `.tender-
+  // scroll` wrapper (the growable part — scan row + held strip — scrolls
+  // in its own region, same split `.basket-scroll`/`.totals` already use)
+  // plus a small `@media (max-height)` row-split adjustment for the
+  // genuine base-case budget shortfall that remained. This test holds
+  // both fixes to account: no scroll, and no held-sales count regresses
+  // it.
+  test('the default-view Payment button is never clipped at 1024x600, with or without held sales', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.setViewportSize({ width: 1024, height: 600 });
+    await page.goto('/');
+    await page.waitForSelector('.pos-container');
+
+    const payBtn = page.getByTestId('payment-open');
+    const hitTest = () =>
+      payBtn.evaluate((el) => {
+        const r = el.getBoundingClientRect();
+        const x = r.left + r.width / 2;
+        const y = r.bottom - 2;
+        if (y > window.innerHeight || y < 0) return false;
+        const at = document.elementFromPoint(x, y);
+        return !!at && (at === el || el.contains(at));
+      });
+
+    expect(await hitTest(), 'Payment button must be unclipped with an empty till, no scroll').toBe(true);
+
+    // Hold three sales in a row — the held-sales strip is persistent DB
+    // state (grows with real use, not a transient edge case) and is what
+    // actually broke this before the fix. Deliberately NOT scrolling or
+    // waiting for anything past each hold to settle, matching how an
+    // operator would actually stack up parked orders.
+    const codes = ['5000000000012', '5000000000029', '5000000000012'];
+    for (let i = 0; i < codes.length; i++) {
+      await page.locator('input[name="code"]').first().fill(codes[i]);
+      await Promise.all([
+        page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
+        page.locator('.scan-row button[type=submit]').click(),
+      ]);
+      await page.locator('.tender-default-footer button', { hasText: 'Hold Sale' }).click();
+      const modal = page.locator('#hold-modal');
+      await expect(modal).toBeVisible();
+      await Promise.all([
+        page.waitForResponse((r) => r.url().includes('/api/pos/hold')),
+        modal.locator('button[type=submit]').click(),
+      ]);
+      await expect(modal).toBeHidden();
+
+      expect(
+        await hitTest(),
+        `Payment button must stay unclipped with ${i + 1} held sale(s), no scroll`,
+      ).toBe(true);
+    }
+    assertClean();
+  });
 });
