@@ -69,7 +69,7 @@
     <footer class="statusbar" aria-label="Status">
       <!-- data-conn-*, not data-online: html/template strips "data-" and
            treats on*-named attributes as JS context, JSON-quoting the value. -->
-      <span class="sb-item sb-conn" id="sb-conn"
+      <span class="sb-item sb-conn" id="sb-conn" data-testid="status-indicator"
             data-conn-online="{{ T "status.online" }}" data-conn-offline="{{ T "status.offline" }}">
         <span class="sb-dot"></span>
         <span class="sb-conn-text">{{ T "status.online" }}</span>
