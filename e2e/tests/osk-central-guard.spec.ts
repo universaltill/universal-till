@@ -147,6 +147,92 @@ test('a field added directly is NOT guarded while OSK is disabled (ut-docs#1022 
   assertClean();
 });
 
+// ut-docs#1262: a device whose touch is misreported as mouse input (the
+// same class ut-docs#1238 found — an Android tablet in "desktop site" mode
+// reads as a generic desktop to matchMedia/maxTouchPoints, and its real
+// taps dispatch as mouse-compatibility events, never a genuine touchstart)
+// used to never flip `enabled` at all in 'auto' mode: only a real
+// touchstart did. This browser (the default project, no `hasTouch`) is
+// itself a stand-in for exactly that failure mode — its plain mouse click
+// below never fires touchstart either, so pre-fix this test's own click
+// would leave `enabled` false forever, same as the misdetected device.
+test('a plain click (no touchstart) still enables auto mode, for a device whose touch never fires one (ut-docs#1262)', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  await setOskMode(page, 'auto');
+
+  await page.goto('/catalog');
+  const name = page.locator('#item-name');
+  // Pre-fix: 'auto' + no touchstart ever fired (this browser has no touch)
+  // meant `enabled` stayed false forever, so clicking here would never
+  // suppress the native keyboard or open the custom one — the identical
+  // silent gap ut-docs#1262 reports on the misdetected hardware.
+  //
+  // The fix's own enable is deferred one tick past this first click (see
+  // osk.js's `enableFallback` comment — running guardSweep()/
+  // updateToggles() synchronously mid-click reveals the scan-row's OSK
+  // toggle and can shift layout under a still-in-flight click elsewhere on
+  // the page), so this first click does NOT itself pop the OSK — only
+  // `toHaveAttribute` below (which polls) proves the field is guarded once
+  // the deferred enable has run.
+  await name.click();
+  await expect(name).toHaveAttribute('inputmode', 'none');
+
+  // A SECOND interaction, now that `enabled` is true from the moment it
+  // starts, opens the OSK exactly like the already-covered touchstart path.
+  await name.click();
+  await expect(page.locator('#osk')).toBeVisible();
+
+  // The fix enables from the source (any click, anywhere), not just this
+  // one field — a field added afterward is swept too.
+  await page.evaluate(() => {
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.id = 'osk-test-1262-late-field';
+    document.body.appendChild(input);
+  });
+  await expect(page.locator('#osk-test-1262-late-field')).toHaveAttribute('inputmode', 'none');
+
+  assertClean();
+});
+
+// ut-docs#1262 review (blocking finding, fixed before merge): an earlier
+// draft enabled from `pointerdown` and deferred the reflow one tick via
+// `setTimeout`, reasoning that a tick was enough to clear the current
+// interaction — true only for a synthetic `.click()`'s sub-millisecond
+// mousedown-to-mouseup gap, false for any real, human-scale press.
+// `pointerdown` fires WHILE the interaction is still in flight (mouseup/
+// click that follow are each hit-tested independently at a fixed
+// coordinate — no implicit capture the way a real touch tap gets), so on a
+// real press the timeout fired BEFORE mouseup/click, not after: reveals the
+// scan-row's OSK toggle (which sits after the Add button, shifting it) mid-
+// press, silently dropping the tap — precisely the misdetected hardware
+// this ticket is about, which holds contact for real duration, not an
+// instant. The fix moved the trigger to `click` itself, which only ever
+// fires once this interaction's own hit-testing is already resolved. `{
+// delay: 120 }` below is the load-bearing part of this test: a plain
+// `.click()` (no delay) would have passed even against the buggy
+// `pointerdown`+`setTimeout` draft, which is exactly why that draft's own
+// version of this test didn't catch the bug.
+test('a realistic-duration press (not an instant synthetic click) is not hijacked by the fix enabling mid-press (ut-docs#1262 review)', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  // The basket lives in the server-global engine, shared by every spec on
+  // this till (ut-docs#1177 review, F2) — reset both sides so a line left
+  // behind here doesn't leak into whatever runs next either.
+  await page.request.post('/api/pos/reset');
+  await setOskMode(page, 'auto');
+
+  await page.goto('/');
+  await page.getByRole('textbox').first().fill('5000000000012');
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/pos/')),
+    page.locator('.scan-row button[type=submit]').click({ delay: 120 }),
+  ]);
+  await expect(page.locator('#basket')).toContainText('Coca-Cola');
+
+  await page.request.post('/api/pos/reset');
+  assertClean();
+});
+
 test('a field disabled at sweep time gets guarded once it is enabled in place, with no further DOM mutation (ut-docs#1050)', async ({ page }) => {
   const assertClean = watchConsole(page);
   await setOskMode(page, 'on');
