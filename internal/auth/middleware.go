@@ -144,16 +144,29 @@ func Middleware(next http.Handler, svc *Service) http.Handler {
 			})
 			return
 		}
+		// ut-docs#1259: an anonymous "/" gets sent to /login by default below
+		// — but on a self-order-mode till, "/" is where every kiosk launcher
+		// actually opens (not /self-order, despite index_page.go's older
+		// comment claiming otherwise), so that default would strand a real
+		// customer, or a rebooted kiosk device, on the staff PIN keypad.
+		// SetAnonymousRootRedirect (installed by pages.Init) answers "" for
+		// the ordinary case, leaving dest untouched.
+		dest := "/login"
+		if r.URL.Path == "/" {
+			if alt := svc.anonymousRootDest(r.Context()); alt != "" {
+				dest = alt
+			}
+		}
 		// HTMX fragment loads (nav chips, basket polls…) must NOT get a 302:
 		// htmx follows it transparently and swaps the ENTIRE login page into
 		// the fragment's slot — the PIN pad rendered inside the header bar.
-		// HX-Redirect makes htmx do a real browser navigation to /login.
+		// HX-Redirect makes htmx do a real browser navigation to dest.
 		if r.Header.Get("HX-Request") == "true" {
-			w.Header().Set("HX-Redirect", "/login")
+			w.Header().Set("HX-Redirect", dest)
 			w.WriteHeader(http.StatusUnauthorized)
 			return
 		}
-		http.Redirect(w, r, "/login", http.StatusSeeOther)
+		http.Redirect(w, r, dest, http.StatusSeeOther)
 	})
 }
 

@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -505,5 +506,224 @@ func TestLogin_ExistingSessionStillSkipsFormWhenNotKioskExit(t *testing.T) {
 	h.ServeHTTP(rec, req)
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/" {
 		t.Fatalf("bare /login with an existing session = %d → %q, want 303 → / (unchanged convenience path)", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// ut-docs#1259 (follow-up from the #1253 review, finding 1): switching a
+// till into self-order mode must revoke the acting session, not just
+// reroute "/" — the #1253 fix only closed the tap-through kiosk-UI path
+// (every self-order template's own /login?next=kiosk exit); it explicitly
+// did not close a browser that keeps typing/navigating directly (no
+// chrome-less kiosk lockdown, or a desktop till's OS chrome), which is what
+// this ticket is about. Drives the real round trip: a manager logs in for
+// real, switches the till into self_order mode with that session, and the
+// same cookie must no longer reach any authenticated page — server-side,
+// not just "/" redirecting it away.
+func TestSelfOrderMode_RevokesActingSessionOnEntry(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	svc := auth.NewService(d.DB)
+	mgrID, err := svc.Repo().CreateUser(t.Context(), "mgr2", "Manager Two", "manager")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashPIN("9999")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Repo().SetUserPIN(t.Context(), mgrID, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerIndex(mux, dp)
+	registerSettings(mux, dp)
+	registerSelfOrder(mux, dp)
+	registerSelfOrderShop(mux, dp)
+	registerAuth(mux, dp, svc)
+	// Same seam pages.Init wires in production (ut-docs#1259 review finding:
+	// without it, an anonymous "/" on a self-order-mode till 303s to /login,
+	// stranding every kiosk launcher — none of which open /self-order
+	// directly — on the staff PIN keypad instead of the kiosk landing).
+	svc.SetAnonymousRootRedirect(func(ctx context.Context) string {
+		if mode, _, _ := dp.Settings.Get(ctx, "display.mode"); mode == "self_order" {
+			return "/self-order"
+		}
+		return ""
+	})
+	h := auth.Middleware(mux, svc)
+
+	// A real manager session, exactly as the till running it would carry.
+	loginRec := httptest.NewRecorder()
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+		strings.NewReader(url.Values{"pin": {"9999"}}.Encode()))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(loginRec, loginReq)
+	var cookie *http.Cookie
+	for _, c := range loginRec.Result().Cookies() {
+		if c.Name == auth.CookieName {
+			cookie = c
+		}
+	}
+	if cookie == nil || cookie.Value == "" {
+		t.Fatal("setup: manager login did not set a session cookie")
+	}
+
+	// That same session switches the till into self_order mode.
+	setRec := httptest.NewRecorder()
+	setReq := httptest.NewRequest(http.MethodPost, "/api/settings/display-mode", strings.NewReader("mode=self_order"))
+	setReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	setReq.AddCookie(cookie)
+	h.ServeHTTP(setRec, setReq)
+	if setRec.Code != http.StatusNoContent {
+		t.Fatalf("manager set self_order mode: %d %s", setRec.Code, setRec.Body.String())
+	}
+
+	// The response itself must clear the cookie (MaxAge<0) — the browser
+	// genuinely goes anonymous, it isn't left holding a token that merely
+	// stopped resolving server-side.
+	var cleared *http.Cookie
+	for _, c := range setRec.Result().Cookies() {
+		if c.Name == auth.CookieName {
+			cleared = c
+		}
+	}
+	if cleared == nil || cleared.MaxAge >= 0 {
+		t.Fatalf("switching to self_order must clear the session cookie in the response, got %+v", cleared)
+	}
+
+	// Server-side: the token behind the OLD cookie must no longer resolve at
+	// all — this is the actual security property (#1253's own review
+	// finding said a stale MANAGER session could still mutate settings with
+	// zero PIN via checkOrElevate's canPerform fast-path).
+	if _, ok := svc.Resolve(t.Context(), cookie.Value); ok {
+		t.Fatal("session token must be revoked server-side once the till enters self_order mode")
+	}
+
+	// And concretely: the same old cookie can no longer reach /settings
+	// directly (not via the kiosk UI at all — typed straight into a URL
+	// bar, the exact gap #1253's review left open).
+	settingsRec := httptest.NewRecorder()
+	settingsReq := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	settingsReq.AddCookie(cookie)
+	h.ServeHTTP(settingsRec, settingsReq)
+	if settingsRec.Code == http.StatusOK {
+		t.Fatalf("GET /settings with the old (pre-self_order) cookie = 200, want it rejected once the till is in self_order mode: %s", settingsRec.Body.String())
+	}
+
+	// ut-docs#1259 review finding (blocking): the landing destination
+	// itself. Every real kiosk launcher (unitill-kiosk-launch.sh,
+	// desktop.go, MainActivity.kt) opens "/", not /self-order — so once the
+	// acting session is revoked, "/" must land on the kiosk, not the login
+	// keypad, or the switch that was supposed to show the kiosk instead
+	// strands the operator (and, after a reboot, any real customer) on the
+	// staff PIN form.
+	rootWithOldCookie := httptest.NewRecorder()
+	rootReq := httptest.NewRequest(http.MethodGet, "/", nil)
+	rootReq.AddCookie(cookie)
+	h.ServeHTTP(rootWithOldCookie, rootReq)
+	if rootWithOldCookie.Code != http.StatusSeeOther || rootWithOldCookie.Header().Get("Location") != "/self-order" {
+		t.Fatalf("GET / with the revoked cookie = %d → %q, want 303 → /self-order (not /login)", rootWithOldCookie.Code, rootWithOldCookie.Header().Get("Location"))
+	}
+
+	// And the reboot case: a genuinely anonymous request (no cookie at
+	// all — what a freshly-restarted kiosk device sends) must also land on
+	// the kiosk, not be stuck on the keypad forever with no way to reach
+	// the customer-facing screen at all.
+	rootAnon := httptest.NewRecorder()
+	h.ServeHTTP(rootAnon, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rootAnon.Code != http.StatusSeeOther || rootAnon.Header().Get("Location") != "/self-order" {
+		t.Fatalf("anonymous GET / on a self_order-mode till = %d → %q, want 303 → /self-order", rootAnon.Code, rootAnon.Header().Get("Location"))
+	}
+}
+
+// Regression guard for the ordinary case: an anonymous "/" on a till that is
+// NOT in self_order mode must keep going to /login exactly as before —
+// SetAnonymousRootRedirect must be a narrow, opt-in exception, not a general
+// change to how unauthenticated requests are handled.
+func TestAnonymousRoot_StillGoesToLoginWhenNotSelfOrderMode(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	svc := auth.NewService(d.DB)
+
+	mux := http.NewServeMux()
+	registerIndex(mux, dp)
+	registerSettings(mux, dp)
+	registerAuth(mux, dp, svc)
+	svc.SetAnonymousRootRedirect(func(ctx context.Context) string {
+		if mode, _, _ := dp.Settings.Get(ctx, "display.mode"); mode == "self_order" {
+			return "/self-order"
+		}
+		return ""
+	})
+	h := auth.Middleware(mux, svc)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("anonymous GET / on a register-mode till = %d → %q, want 303 → /login (unchanged)", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// The other half of the same acceptance criteria: switching back to
+// register mode must NOT revoke the acting session — the operator making
+// that switch needs to stay signed in to keep working, and someone must be
+// able to log back in normally afterward via the ordinary flow (not just
+// the kiosk exit). Mirrors TestSelfOrderMode_RevokesActingSessionOnEntry.
+func TestDisplayModeRegister_DoesNotRevokeActingSession(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	svc := auth.NewService(d.DB)
+	mgrID, err := svc.Repo().CreateUser(t.Context(), "mgr3", "Manager Three", "manager")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashPIN("8888")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Repo().SetUserPIN(t.Context(), mgrID, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerIndex(mux, dp)
+	registerSettings(mux, dp)
+	registerSelfOrder(mux, dp)
+	registerSelfOrderShop(mux, dp)
+	registerAuth(mux, dp, svc)
+	h := auth.Middleware(mux, svc)
+
+	loginRec := httptest.NewRecorder()
+	loginReq := httptest.NewRequest(http.MethodPost, "/api/auth/login",
+		strings.NewReader(url.Values{"pin": {"8888"}}.Encode()))
+	loginReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	h.ServeHTTP(loginRec, loginReq)
+	var cookie *http.Cookie
+	for _, c := range loginRec.Result().Cookies() {
+		if c.Name == auth.CookieName {
+			cookie = c
+		}
+	}
+	if cookie == nil || cookie.Value == "" {
+		t.Fatal("setup: manager login did not set a session cookie")
+	}
+
+	setRec := httptest.NewRecorder()
+	setReq := httptest.NewRequest(http.MethodPost, "/api/settings/display-mode", strings.NewReader("mode=register"))
+	setReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	setReq.AddCookie(cookie)
+	h.ServeHTTP(setRec, setReq)
+	if setRec.Code != http.StatusNoContent {
+		t.Fatalf("manager set register mode: %d %s", setRec.Code, setRec.Body.String())
+	}
+
+	if _, ok := svc.Resolve(t.Context(), cookie.Value); !ok {
+		t.Fatal("switching to register mode must not revoke the acting session")
+	}
+
+	settingsRec := httptest.NewRecorder()
+	settingsReq := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	settingsReq.AddCookie(cookie)
+	h.ServeHTTP(settingsRec, settingsReq)
+	if settingsRec.Code != http.StatusOK {
+		t.Fatalf("GET /settings with the still-live session after switching to register = %d, want 200: %s", settingsRec.Code, settingsRec.Body.String())
 	}
 }

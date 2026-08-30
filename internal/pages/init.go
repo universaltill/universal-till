@@ -187,6 +187,16 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	if !authDisabled {
 		httpx.InitIdleLock(state.IdleLockMinutes)
 	}
+	// ut-docs#1259: an anonymous "/" on a self-order-mode till goes to the
+	// kiosk landing, not the login keypad — see auth.Middleware's own
+	// comment for why this matters (every kiosk launcher opens "/", and a
+	// self-order switch now revokes the acting session).
+	authSvc.SetAnonymousRootRedirect(func(ctx context.Context) string {
+		if mode, _, _ := setStore.Get(ctx, "display.mode"); mode == "self_order" {
+			return "/self-order"
+		}
+		return ""
+	})
 
 	// Assistive AI (camera identify). No UT_AI_API_KEY → disabled and
 	// invisible; never on the checkout path (ADR-0003).
