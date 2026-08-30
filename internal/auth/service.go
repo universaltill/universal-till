@@ -56,6 +56,11 @@ type Service struct {
 	idleLockMinutes atomic.Int64
 	// onIdleLock is the audit seam (set by pages.Init; auth stays SQL-free).
 	onIdleLock atomic.Value // func(ctx context.Context, userID string)
+	// anonymousRootRedirect is the ut-docs#1259 seam (set by pages.Init;
+	// auth stays SQL-free) — lets Middleware send an unauthenticated "/"
+	// somewhere other than /login (the self-order kiosk landing, when
+	// display.mode=self_order). Returns "" for the ordinary case.
+	anonymousRootRedirect atomic.Value // func(ctx context.Context) string
 
 	mu       sync.Mutex
 	failures int
@@ -194,6 +199,29 @@ func (s *Service) SetIdleLockAudit(fn func(ctx context.Context, userID string)) 
 	if fn != nil {
 		s.onIdleLock.Store(fn)
 	}
+}
+
+// SetAnonymousRootRedirect installs the callback Middleware consults for an
+// unauthenticated request to "/" (ut-docs#1259). Returning a non-empty path
+// sends the browser there instead of /login — used to route a self-order-
+// mode till's anonymous "/" straight to the (already auth-exempt) kiosk
+// landing, since every kiosk launcher (unitill-kiosk-launch.sh, the desktop
+// shell, the Android app) opens "/", not /self-order directly, and this is
+// also what keeps a self-order kiosk usable across a reboot once its own
+// display-mode switch has revoked the acting browser's session.
+func (s *Service) SetAnonymousRootRedirect(fn func(ctx context.Context) string) {
+	if fn != nil {
+		s.anonymousRootRedirect.Store(fn)
+	}
+}
+
+// anonymousRootDest returns SetAnonymousRootRedirect's answer for this
+// request, or "" if none was installed or it declined to redirect.
+func (s *Service) anonymousRootDest(ctx context.Context) string {
+	if fn, ok := s.anonymousRootRedirect.Load().(func(context.Context) string); ok && fn != nil {
+		return fn(ctx)
+	}
+	return ""
 }
 
 // touchInterval keeps last_seen_at fresh enough for the idle window without

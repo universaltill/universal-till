@@ -1132,6 +1132,22 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
+		// ut-docs#1259: self_order is customer-facing and auth-exempt
+		// (/self-order, /api/self-order/*) — the browser that just made this
+		// switch must not keep a live session past it, or anyone with
+		// physical/URL access to that same browser (no chrome-less kiosk
+		// lockdown, or a desktop till's OS chrome) reaches an authenticated
+		// page directly with zero PIN, same door #1253 closed for the
+		// tap-through kiosk UI but not for this one. Revoke the acting
+		// session server-side and clear the cookie, mirroring
+		// POST /api/auth/logout. register/backoffice never revoke — the
+		// operator making that switch needs to stay signed in.
+		if rawMode == "self_order" {
+			if c, err := r.Cookie(auth.CookieName); err == nil && d.AuthSvc != nil {
+				d.AuthSvc.Logout(r.Context(), c.Value)
+			}
+			setSessionCookie(w, "", -1)
+		}
 		settingsAudit(r, posRepo, elev, "settings", "display.mode", "display_mode_changed", map[string]any{"mode": rawMode})
 		settingsRespondSaved(w, r, elev)
 	})
