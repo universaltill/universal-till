@@ -3,6 +3,9 @@
 **Card:** universaltill/ut-docs#1337 (p1, field-reported)
 **Repo/branch:** `universal-till`, `fix/1337-basket-hx-sync-race`
 **Base:** `origin/main` @ `e822582b3dec9503807673b834ef9d38028f200c`
+**Merged with:** `origin/main` @ `50b26abc` (PR #667, ut-docs#1314's basket
+item-name column width fix) partway through this PR's lifetime — see
+"Concurrent-PR merge conflict" below.
 
 ## The bug
 
@@ -196,6 +199,25 @@ basket total into `sale.spec.ts`'s own assertion in the same run.
   (authoritative; this diff shouldn't trip any of the others either, since
   none touch server-side data access, migrations, kiosk-engine isolation,
   plugin-menu reads, compliance wording, or the Android/webkit guards).
+
+### 4. Concurrent-PR merge conflict, mid-review
+
+While this PR sat waiting on CI, PR #667 (ut-docs#1314, basket item-name
+column width — a genuinely different, independently-developed fix touching
+`web/public/app.css`) merged to `main` first. Both PRs touch the
+`web/ui/**`/`web/public/**` surface `guard-docs-shots.sh` hashes, so both
+regenerated `web/help/img/manifest.json` and every screenshot independently
+— a real conflict, not a mistake by either side. Resolved by merging
+`origin/main` into this branch, taking `main`'s screenshots for the merge
+itself, then re-running `make docs-shots` fresh against the fully-merged
+tree so the manifest and every screenshot reflect **both** changes
+combined. Re-verified after the merge: `gofmt`/`go build` clean,
+`internal/pages`/`internal/pos`/`internal/ui` Go tests still green, and the
+full e2e suite (238 specs, one more than the pre-merge 234 — #1314 added
+its own spec) **238/238 passed** in a single run — no interaction issue
+between the two changes (#1314's basket-row layout change and this PR's
+`hx-sync` additions touch disjoint concerns: row CSS vs. request
+sequencing).
 
 ## Scope notes
 
