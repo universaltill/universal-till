@@ -419,14 +419,23 @@ test.describe.serial('first-boot setup and PIN login', () => {
     // was already checked and firing no further `change`). Real coverage
     // for the fix, and for the "no detour through Settings/Catalog"
     // acceptance criterion below.
+    // ut-docs#1168: the CSV/Excel picker's own in-panel Next (a static
+    // `disabled` button, never re-enabled) now exists only to disappear
+    // the moment the radio is picked — control passes to a real
+    // Browse/Preview panel, `[data-step="6-upload"]`, which lives OUTSIDE
+    // `[data-step="6"]` (nested forms are dropped by the HTML parser, see
+    // that section's own doc comment) and carries its own Next.
     await step(6).locator('.setup-nav button.secondary', { hasText: 'Yes' }).click();
     const csvPanel = step(6).locator('label.set-row', { hasText: 'CSV' });
     await expect(csvPanel).toBeVisible();
-    const nextBtn = step(6).locator('.setup-nav button.primary', { hasText: 'Next' });
-    await expect(nextBtn).toBeDisabled();
+    const oldNextBtn = step(6).locator('.setup-nav button.primary', { hasText: 'Next' });
+    await expect(oldNextBtn).toBeDisabled();
     await csvPanel.locator('input[type=radio]').check();
+    await expect(oldNextBtn).toBeHidden(); // the bug: picking the radio used to leave this whole panel (Next included) on screen instead of handing off
+    const uploadPanel = page.locator('[data-step="6-upload"]');
+    await expect(uploadPanel).toBeVisible();
+    const nextBtn = uploadPanel.locator('.setup-nav button.primary', { hasText: 'Next' });
     await expect(nextBtn).toBeEnabled();
-    await expect(csvPanel).toBeVisible(); // the bug: picking the radio used to hide this whole panel, Next included
     await nextBtn.click();
 
     // Step 7 · admin PIN.
