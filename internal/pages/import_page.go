@@ -6,6 +6,9 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
+	"image"
+	_ "image/jpeg"
+	"image/png"
 	"io"
 	"log"
 	"mime/multipart"
@@ -22,6 +25,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/taxrate"
@@ -725,15 +729,6 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					failed++
 					continue
 				}
-				// Placeholder thumbnail (ut-docs#1189 Phase 1): a source
-				// export never carries an image, so every committed row
-				// lands here with no thumbnail yet. Same after-commit
-				// placement and best-effort spirit as the barcode attach
-				// below — a category icon is a cosmetic nicety, never a
-				// reason to fail an otherwise-successful import row.
-				if err := repo.EnsureDefaultThumbnail(r.Context(), itemID, catimport.PlaceholderIconPath(it.Name, it.Category)); err != nil {
-					log.Printf("[import] set placeholder thumbnail for item %q: %v", it.Name, err)
-				}
 				// The row's item is now durably committed — only now does
 				// its tax-override candidate (if any) get promoted into the
 				// set that actually gets merged into ut-plugin-tax-de's
@@ -748,6 +743,84 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// row's status, so neither branch clobbers the other's
 				// message.
 				var warnings []string
+				// Product photo (ut-docs#1223): a real image ParseBkp
+				// resolved from the .bkp archive's documents.zip is
+				// decoded/re-encoded and written exactly the way a manual
+				// upload does (POST /api/catalog/item/image), then recorded
+				// with the unconditional-overwrite SetItemThumbnail — this
+				// genuinely is "a real photo" (see that method's own doc
+				// comment for why that's the right one, not
+				// EnsureDefaultThumbnail). Falls back to the ut-docs#1189
+				// placeholder icon whenever there's no image, or it fails to
+				// decode — same best-effort, never-fail-the-row spirit as
+				// that existing path.
+				imageSet := false
+				if len(it.ImageData) > 0 {
+					if img, _, derr := image.Decode(bytes.NewReader(it.ImageData)); derr != nil {
+						log.Printf("[import] decode image for item %q: %v", it.Name, derr)
+						warnings = append(warnings, T("import.status.image_undecodable"))
+					} else {
+						dir := paths.Data("public", "assets", "items", itemID)
+						thumbPath := filepath.Join(dir, "thumb.png")
+						writeErr := func() error {
+							if err := os.MkdirAll(dir, 0o755); err != nil {
+								return fmt.Errorf("create image dir: %w", err)
+							}
+							out, err := os.Create(thumbPath)
+							if err != nil {
+								return fmt.Errorf("create thumbnail file: %w", err)
+							}
+							encErr := png.Encode(out, img)
+							closeErr := out.Close()
+							if encErr != nil || closeErr != nil {
+								// A partial/corrupt file must never linger
+								// (independent review, ut-docs#1223):
+								// self_order_shop.go's ImageURL resolves
+								// thumb.png by path CONVENTION, not via
+								// item_images, so a truncated file here
+								// would render broken on the self-order
+								// kiosk even though item_images correctly
+								// still points at the placeholder set
+								// below. Best-effort — the row's own
+								// outcome never depends on this succeeding.
+								if rmErr := os.Remove(thumbPath); rmErr != nil && !os.IsNotExist(rmErr) {
+									log.Printf("[import] remove partial thumbnail for item %q: %v", it.Name, rmErr)
+								}
+								if encErr != nil {
+									return fmt.Errorf("encode thumbnail: %w", encErr)
+								}
+								return fmt.Errorf("close thumbnail file: %w", closeErr)
+							}
+							return repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png")
+						}()
+						if writeErr != nil {
+							// A resolvable photo that then failed to save
+							// must not fail silently (independent review,
+							// ut-docs#1223) — same "never silently drop a
+							// reference" reasoning as ImageIssue below,
+							// just for a failure that happens after
+							// resolution rather than during it.
+							log.Printf("[import] save real photo for item %q: %v", it.Name, writeErr)
+							warnings = append(warnings, T("import.status.image_save_failed"))
+						} else {
+							imageSet = true
+						}
+					}
+				}
+				if !imageSet {
+					if err := repo.EnsureDefaultThumbnail(r.Context(), itemID, catimport.PlaceholderIconPath(it.Name, it.Category)); err != nil {
+						log.Printf("[import] set placeholder thumbnail for item %q: %v", it.Name, err)
+					}
+				}
+				// The source referenced an image that never turned into
+				// usable bytes (dangling path, no documents.zip, oversized
+				// entry) — non-blocking, the row still imports with the
+				// placeholder icon set just above, but silently dropping
+				// the reference would be the same defect class as the
+				// dropped-barcode fix (ut-docs#293).
+				if it.ImageIssue != "" {
+					warnings = append(warnings, translateImageIssue(T, it.ImageIssue, it.ImageIssueRaw))
+				}
 				if it.Barcode != "" {
 					// Pass the symbology catimport already decoded as an
 					// explicit BarcodeType so AddBarcode does NOT re-run
@@ -1336,6 +1409,20 @@ func translateSKUIssue(T func(string) string, code, raw string) string {
 		return fmt.Sprintf(T("import.status.sku_reused_in_file"), raw)
 	default:
 		log.Printf("[import] unrecognised SKU issue reason code %q", code)
+		return T("import.status.unknown_issue")
+	}
+}
+
+// translateImageIssue is translateBarcodeIssue's counterpart for the
+// (non-blocking) ImageIssue reason codes (ut-docs#1223).
+func translateImageIssue(T func(string) string, code, raw string) string {
+	switch code {
+	case catimport.ImageIssueUnresolved:
+		return fmt.Sprintf(T("import.status.image_unresolved"), raw)
+	case catimport.ImageIssueTooLarge:
+		return fmt.Sprintf(T("import.status.image_too_large"), raw)
+	default:
+		log.Printf("[import] unrecognised image issue reason code %q", code)
 		return T("import.status.unknown_issue")
 	}
 }
