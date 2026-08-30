@@ -6,6 +6,24 @@
 
 <div class="card">
   <p class="muted">{{ T "import.help" }}</p>
+  {{ if .stagedID }}
+  <!-- ut-docs#1168: the operator already browsed to and previewed this exact
+       file on the setup wizard's restore step — the wizard couldn't commit
+       it itself (see commitStagedImportForSetup's own comment for why that
+       can fail) so it sent them here with the preview's staged_id instead of
+       making them re-upload and re-preview. No file input, no Preview
+       button: staged_id only ever reaches this page already previewed, and
+       repreviewing here isn't wired (the preview path always expects a
+       fresh `file` field). Same "nothing saved until Import" contract as
+       every other commit on this page — this is a convenience, not a
+       bypass; the operator still presses Import for real. -->
+  <p class="muted" data-setup-staged-import>{{ T "import.staged_from_setup" }}</p>
+  <form id="import-form" hx-post="/api/import" hx-target="#import-result" hx-swap="innerHTML">
+    <input type="hidden" name="commit" value="1">
+    <input type="hidden" name="staged_id" value="{{ .stagedID }}">
+    <button class="btn primary" type="submit">{{ T "import.import" }}</button>
+  </form>
+  {{ else }}
   <form id="import-form" hx-post="/api/import" hx-target="#import-result" hx-swap="innerHTML" enctype="multipart/form-data">
     <input type="hidden" name="commit" id="import-commit" value="0">
     <!-- ut-docs#1247: accept is a UX hint only (the server sniffs real
@@ -23,6 +41,7 @@
       <button class="btn primary" type="submit" onclick="document.getElementById('import-commit').value='1'">{{ T "import.import" }}</button>
     </div>
   </form>
+  {{ end }}
   <div id="import-result" style="margin-top:.8rem; overflow-x:auto"></div>
 </div>
 

@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"net/url"
 	"strconv"
 	"strings"
 	"time"
@@ -432,6 +433,12 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// /import flow instead of home. Anything else (including "no" and
 		// the unset default) is a no-op.
 		restoreChoice := strings.TrimSpace(r.PostFormValue("restore_choice"))
+		// ut-docs#1168: set only when the operator actually browsed to a
+		// file and previewed it inline on this step (web/ui/pages/setup.html
+		// captures the staged_id the preview response embeds) — empty means
+		// either "no"/"later"/never previewed, all of which keep today's
+		// behaviour exactly.
+		stagedImportID := strings.TrimSpace(r.PostFormValue("staged_import_id"))
 
 		pin, pin2 := r.PostFormValue("pin"), r.PostFormValue("pin_confirm")
 		if auth.ValidatePINFormat(pin) != nil {
@@ -645,13 +652,28 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				logging.L().Errorf("setup wizard: seed demo customers/promos: %v", err)
 			}
 		}
-		// ut-docs#617: "csv/excel" lands the new operator straight in the
-		// existing catalog importer instead of home — no detour through
+		// ut-docs#617/#1168: "csv/excel" lands the new operator straight in
+		// the catalog importer instead of home — no detour through
 		// Settings/Catalog navigation. Every other choice keeps today's
-		// behaviour.
+		// behaviour. When the operator also previewed a file inline on this
+		// step, try to finish the job for them: country/currency are saved
+		// and the admin session now exists (both happened above), so the
+		// preview can be replayed as a real commit — the same job the
+		// operator would otherwise do by hand on /import a moment later.
+		// Best-effort: a failed auto-commit falls back to exactly today's
+		// "/import" detour, plus the staged_id so the already-previewed file
+		// is one click away instead of a re-upload.
 		redirectTo := "/"
 		if restoreChoice == "csv_excel" {
 			redirectTo = "/import"
+			if stagedImportID != "" {
+				if adminUser, ok := svc.Resolve(r.Context(), token); ok &&
+					commitStagedImportForSetup(r.Context(), mux, adminUser, stagedImportID, st.Currency) {
+					redirectTo = "/catalog?imported=1"
+				} else {
+					redirectTo = "/import?staged_id=" + url.QueryEscape(stagedImportID)
+				}
+			}
 		}
 		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
 	})
