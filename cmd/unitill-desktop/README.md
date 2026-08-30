@@ -48,6 +48,18 @@ rather than being honoured, so a units-confusion typo can't hold the window
 for hours or silently disable the gate. Windows and macOS use their own
 platform web views and are unaffected — the gate is a no-op there.
 
+## Linux WebKit cookie persistence (ut-docs#1233)
+
+On Linux, the shell points the default `WebKitWebContext`'s cookie
+manager at a persistent SQLite file under
+`~/.local/share/universal-till/webkit/cookies.sqlite` (honoring
+`$XDG_DATA_HOME`, see `webkit_datadir_linux.go`/`webkit_linux.go`) —
+without it, `webview_go`'s GTK/WebKit2 backend keeps an in-memory-only
+cookie jar that dies with the process, so the language choice (`ut_lang`)
+and login session both reset on every restart/reboot. Windows (WebView2)
+and macOS (`webkit_darwin.go`'s `WKWebView`) already persist cookies to
+their own per-app data store by default and need no equivalent wiring.
+
 ## Attach-vs-spawn cold-boot race (ut-docs#1199)
 
 Before deciding whether to attach to an already-running `.deb`/systemd
