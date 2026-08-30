@@ -470,6 +470,15 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 
 		// Locale/currency/tax — same application path as /api/settings/save.
 		st := d.CurrentState()
+		// web/ui/pages/setup.html's currencyTouched only flips true on a
+		// genuine @change on the country select — see the ut-docs#970
+		// comment just below for why a submitted non-blank currency alone
+		// proves nothing. Named here (not just inlined) because
+		// commitStagedImportForSetup, further down, reuses the exact same
+		// signal for the exact same reason (ut-docs#1168 review, finding
+		// 2): it must never confirm a currency the operator never actually
+		// chose.
+		currencyTouched := r.Form.Get("currency_touched") == "1"
 		if v := strings.TrimSpace(r.Form.Get("currency")); v != "" && httpx.IsKnownCurrency(v) {
 			st.Currency = v
 			// Only mark confirmed (ut-docs#970) when the operator actually
@@ -478,9 +487,8 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// not from a choice, so a submitted non-blank value alone proves
 			// nothing (review finding F3: this originally marked confirmed
 			// on every completed wizard run, since the field is essentially
-			// never blank). web/ui/pages/setup.html's currencyTouched only
-			// flips true on a genuine @change on the country select.
-			if r.Form.Get("currency_touched") == "1" {
+			// never blank).
+			if currencyTouched {
 				if err := d.Settings.Set(r.Context(), common.KeyCurrencyConfirmed, "true"); err != nil {
 					http.Error(w, "setup failed", http.StatusInternalServerError)
 					return
@@ -663,15 +671,33 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// Best-effort: a failed auto-commit falls back to exactly today's
 		// "/import" detour, plus the staged_id so the already-previewed file
 		// is one click away instead of a re-upload.
+		//
+		// ONLY attempted when currencyTouched (ut-docs#1168 review, finding
+		// 2, blocker): the operator's country pick is the only thing that
+		// stands in for the real ut-docs#970 currency-confirm prompt here,
+		// and that pick started PRE-FILLED from OS locale detection, not a
+		// choice — a completed wizard's currency is "confirmed" only if
+		// they actually touched it. Auto-committing under an untouched
+		// (guessed) currency would silently label every imported price
+		// under it AND mark the till's currency confirmed for good,
+		// suppressing every future manual import's real prompt too —
+		// reversing #970's own review finding on the one path built to
+		// avoid exactly that. When untouched, skip straight to the normal
+		// fallback below: the operator hits /import, presses the real
+		// Import button, and gets the genuine confirm prompt like anyone
+		// else would.
 		redirectTo := "/"
 		if restoreChoice == "csv_excel" {
 			redirectTo = "/import"
 			if stagedImportID != "" {
-				if adminUser, ok := svc.Resolve(r.Context(), token); ok &&
+				redirectTo = "/import?staged_id=" + url.QueryEscape(stagedImportID)
+				if adminUser, ok := svc.Resolve(r.Context(), token); currencyTouched && ok &&
 					commitStagedImportForSetup(r.Context(), mux, adminUser, stagedImportID, st.Currency) {
-					redirectTo = "/catalog?imported=1"
-				} else {
-					redirectTo = "/import?staged_id=" + url.QueryEscape(stagedImportID)
+					// ut-docs#1168 review (nit): no page currently reads an
+					// ?imported= query param, so land on the plain page
+					// rather than promising an affordance that doesn't
+					// exist yet.
+					redirectTo = "/catalog"
 				}
 			}
 		}

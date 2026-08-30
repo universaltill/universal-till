@@ -955,6 +955,7 @@
   "setup.restore.hint": "Başka bir kasa veya EPOS sisteminden geçiyorsanız, ürünlerinizi aktarmanıza yardımcı olabiliriz.",
   "setup.restore.later": "Sonra sor",
   "setup.restore.no": "Hayır, sıfırdan başlıyorum",
+  "setup.restore.preview_ready": "Dosya tanındı — devam etmek için İleri'ye basın. Ürünleriniz kurulum tamamlandığında içe aktarılacak.",
   "setup.restore.title": "Başka bir kasa sisteminden mi geçiyorsunuz?",
   "setup.restore.upload_title": "Dışa aktarma/yedek dosyanızı yükleyin",
   "setup.restore.yes": "Evet",

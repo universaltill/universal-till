@@ -130,6 +130,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/import", func(w http.ResponseWriter, r *http.Request) {
+		usedFirstBootExemption := false
 		if !canPerform(d, r, "import_export") {
 			// ut-docs#1168: the setup wizard's restore step lets a migrating
 			// shop browse to their export/backup file and preview it inline,
@@ -162,12 +163,44 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 				return
 			}
+			usedFirstBootExemption = true
 		}
 		if err := r.ParseMultipartForm(20 << 20); err != nil {
 			common.LocalizedError(w, r, http.StatusBadRequest, "common.error.invalid_upload")
 			return
 		}
 		commit := r.FormValue("commit") == "1"
+		// ut-docs#1168: the first-boot exemption above covers PREVIEW ONLY.
+		// The wizard's own upload panel never sends commit=1 — its
+		// preview's staged_id instead rides the wizard's final submit and
+		// is replayed as a real commit by commitStagedImportForSetup
+		// (import_stage.go), by which point the request carries the
+		// just-created admin's identity via auth.WithUser and never needs
+		// this exemption at all. Checked here, after the parse, rather
+		// than by peeking at commit's value earlier: an early r.FormValue
+		// call would parse under Go's default 32MB memory cap instead of
+		// this handler's explicit 20MB one below, and ParseMultipartForm
+		// no-ops on an already-parsed request — silently widening the
+		// size cap for every caller, not just this exemption.
+		if usedFirstBootExemption && commit {
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return
+		}
+		// ut-docs#1168: suppress the interactive problem-grid/barcode-
+		// opt-in controls and the repeated bottom Import button (below) on
+		// a preview served to the wizard's own upload panel (setup.html
+		// sends wizard=1) — none of them are safe to act on there.
+		// Country/currency aren't saved until the wizard's own final
+		// submit, so a same-session commit from this preview (the bottom
+		// button's whole purpose) could label prices under a stale
+		// currency; the row-level corrections those controls capture
+		// (row_include_*, use_item_numbers_as_barcodes) are never
+		// forwarded by commitStagedImportForSetup for the same reason — it
+		// only ever replays a bare commit, once real state is saved. The
+		// operator still gets the full interactive pipeline, unsuppressed,
+		// on /import — either via the auto-commit's own fallback
+		// (staged_id) or by finishing setup and importing again for real.
+		wizardPreview := r.FormValue("wizard") == "1"
 		stagedID := strings.TrimSpace(r.FormValue("staged_id"))
 
 		// Resolved up front (ut-docs#303): every row status below is a
@@ -987,7 +1020,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			//    offering the choice in that rare failure is the safe
 			//    degradation; the import itself still proceeds, barcode-
 			//    less, exactly as before this card.
-			if stagedFormID != "" && (barcodelessCatalog(res) || useItemNumbersAsBarcodes) {
+			if !wizardPreview && stagedFormID != "" && (barcodelessCatalog(res) || useItemNumbersAsBarcodes) {
 				checkedAttr := ""
 				if useItemNumbersAsBarcodes {
 					checkedAttr = " checked"
@@ -1017,7 +1050,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		// preview whose upload actually staged (ut-docs#601). Never on a
 		// commit response: the grid's whole point is deciding what the NEXT
 		// commit does.
-		interactive := !commit && stagedFormID != ""
+		interactive := !commit && stagedFormID != "" && !wizardPreview
 		writeRow := func(row rowView) {
 			// A warned row must be visually distinct from BOTH a clean row
 			// and a failed/skipped one — a status pill/icon, not just the
@@ -1080,7 +1113,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(&b, `<tr><td colspan="5" class="muted">… %d more</td></tr>`, len(plainRows)-plainShown)
 		}
 		b.WriteString(`</tbody></table>`)
-		if !commit {
+		if !commit && !wizardPreview {
 			// ut-docs#1171: a long preview (the product owner's real
 			// 217-item .bkp ran to 209+ rows plus this "… N more"
 			// truncation) otherwise strands the operator at the bottom
