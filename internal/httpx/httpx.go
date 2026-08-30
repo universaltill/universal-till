@@ -14,6 +14,9 @@ import (
 	"sync/atomic"
 	"time"
 
+	"golang.org/x/text/language"
+	"golang.org/x/text/language/display"
+
 	"github.com/universaltill/universal-till/internal/buildinfo"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/enroll"
@@ -349,6 +352,25 @@ func IsRTL(locale string) bool {
 	return false
 }
 
+// NativeLanguageName renders a locale code in its own language ("de" →
+// "Deutsch", "fa" → "فارسی") via x/text's CLDR self-names — fully offline, no
+// lookup service. Falls back to the raw code when the tag is unknown.
+// ut-docs#1125: the one native-name source for this codebase, shared by the
+// core-locale picker (setup/settings/menu, this file's "nativelocalename"
+// template func) and the plugin-catalog install tiles
+// (pages.setupLanguageCatalogEntries) — deliberately not duplicated, so the
+// two pickers can never drift on what a code renders as.
+func NativeLanguageName(code string) string {
+	tag, err := language.Parse(code)
+	if err != nil {
+		return code
+	}
+	if n := display.Self.Name(tag); n != "" {
+		return n
+	}
+	return code
+}
+
 // translator returns the wired i18n, or nil. The typed assertion matters:
 // InitI18n(nil, ...) stores a typed nil *config.I18n, which an interface
 // nil-check alone would treat as present and then panic on method call.
@@ -565,6 +587,12 @@ func FuncsFor(locale string) template.FuncMap {
 		}
 		return []string{"en"}
 	}
+	// ut-docs#1125: renders a core locale code (e.g. "ar") as its native name
+	// ("العربية") for the setup wizard / settings / staff menu page (/menu)
+	// language pickers — deliberately no flag (a language isn't a country; see the
+	// ticket's recorded research). Left as bare "locales" for callers that
+	// need the raw code (comparisons, the ?lang= href).
+	funcs["nativelocalename"] = NativeLanguageName
 	funcs["T"] = func(key string) string {
 		if t := translator(); t != nil {
 			return t.T(locale, key)

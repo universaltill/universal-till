@@ -850,6 +850,42 @@ func TestSetupPageLoadsHTMXForTheJoinForm(t *testing.T) {
 	}
 }
 
+// ut-docs#1125: the language step's core-locale buttons must show a native
+// name, never a bare code — a non-technical shop owner doesn't know "fa" is
+// فارسی. Pins both directions: the native names are present, and none of the
+// bare codes appear as a standalone button label (regex anchored on the href
+// this wizard actually renders, so it can't false-positive on the codes'
+// other legitimate uses in the page, e.g. lang= query values or the
+// data-detected-lang attribute).
+func TestSetupWizardLanguageStepShowsNativeNamesNotBareCodes(t *testing.T) {
+	withOSLocale(t, "", "")
+	mux, _, _ := newFullAuthDeps(t)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/setup", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	for _, want := range []string{"العربية", "English", "فارسی", "Türkçe"} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /setup body missing native language name %q", want)
+		}
+	}
+	for _, code := range []string{"ar", "en", "fa", "tr"} {
+		if regexp.MustCompile(`\?lang=` + code + `">` + code + `</a>`).MatchString(body) {
+			t.Errorf("GET /setup still renders bare locale code %q as a button label", code)
+		}
+	}
+	// The no-flag decision (ut-docs#1125's own recorded research: a language
+	// isn't a country) — guard against a future edit reaching for an emoji
+	// flag on this same row instead of nativelocalename.
+	if regexp.MustCompile(`setup-langs[\s\S]*?[\x{1F1E6}-\x{1F1FF}]`).MatchString(body) {
+		t.Error("GET /setup language step renders a flag emoji — recorded decision on ut-docs#1125 is native name only, no flag")
+	}
+}
+
 // The manual pairing-code textbox's placeholder used to be the raw wire
 // shape (`{"token":"…","url":"http://…"}`) — a shop owner is never going to
 // hand-type or recognise that, and the screen's own copy already says

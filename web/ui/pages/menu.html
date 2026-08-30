@@ -15,8 +15,12 @@
 
 <div class="menu-lang">
   <span class="menu-lang-label">🌐 {{ T "setup.language.title" }}</span>
+  <!-- ut-docs#1125: native name (nativelocalename), not the bare code — same
+       fix and same no-flag reasoning as setup.html's language step and
+       settings.html's default-locale picker; this is the third render site
+       for the same locale list, found while fixing the other two. -->
   <div class="menu-lang-btns">
-    {{ range locales }}<a class="btn btn-touch menu-lang-btn{{ if eq . locale }} primary{{ else }} secondary{{ end }}" href="/menu?lang={{ . }}">{{ . }}</a>{{ end }}
+    {{ range locales }}<a class="btn btn-touch menu-lang-btn{{ if eq . locale }} primary{{ else }} secondary{{ end }}" href="/menu?lang={{ . }}">{{ nativelocalename . }}</a>{{ end }}
   </div>
 </div>
 {{ end }}

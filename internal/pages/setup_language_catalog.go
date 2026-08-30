@@ -9,9 +9,6 @@ import (
 	"sync"
 	"time"
 
-	"golang.org/x/text/language"
-	"golang.org/x/text/language/display"
-
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -221,7 +218,7 @@ func installableSetupLanguages(entries []marketplace.PluginSummary, available []
 			covered[b] = true // also dedups across listings
 			out = append(out, installableLanguage{
 				Locale:     b,
-				NativeName: nativeLanguageName(b),
+				NativeName: httpx.NativeLanguageName(b),
 				ListingID:  listingID,
 			})
 		}
@@ -236,20 +233,6 @@ func installableSetupLanguages(entries []marketplace.PluginSummary, available []
 func setupInstallableLanguages(ctx context.Context, d *common.Deps) (langs []installableLanguage, unavailable bool) {
 	entries, ok := setupLanguageCatalogEntries(ctx, d)
 	return installableSetupLanguages(entries, httpx.AvailableLocales()), !ok
-}
-
-// nativeLanguageName renders a language code in its own language ("de" →
-// "Deutsch", "fr" → "français") via x/text's CLDR self-names — fully offline,
-// no lookup service. Falls back to the raw code when the tag is unknown.
-func nativeLanguageName(code string) string {
-	tag, err := language.Parse(code)
-	if err != nil {
-		return code
-	}
-	if n := display.Self.Name(tag); n != "" {
-		return n
-	}
-	return code
 }
 
 // isPlausibleLocale keeps a locale value to something actually locale-shaped.
