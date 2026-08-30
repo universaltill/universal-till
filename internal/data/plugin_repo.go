@@ -922,12 +922,84 @@ ON CONFLICT (plugin_id, key) DO UPDATE SET value = excluded.value, updated_at = 
 	return nil
 }
 
+// StorageEntry is one key/value pair from a plugin's storage namespace, as
+// returned by ListStorageByPrefix.
+type StorageEntry struct {
+	Key   string
+	Value []byte
+}
+
+// ListStorageByPrefix returns every entry in a plugin's namespace whose key
+// starts with prefix, ordered by key. Deliberately generic — any plugin, any
+// prefix (ADR-0072): this is the enumeration primitive the core-UI-over-
+// plugin-storage pattern needs, not something fiscal-register-specific.
+// Literal '%'/'_' (and '\') in prefix are escaped so they match themselves
+// instead of acting as LIKE wildcards — today's only caller passes a fixed
+// literal, but a generic primitive shouldn't carry a latent injection quirk.
+func (r *PluginRepo) ListStorageByPrefix(ctx context.Context, pluginID, prefix string) ([]StorageEntry, error) {
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix)
+	rows, err := r.executor(nil).QueryContext(ctx, `
+SELECT key, value FROM plugin_storage
+WHERE plugin_id = ? AND key LIKE ? ESCAPE '\'
+ORDER BY key`, pluginID, escaped+"%")
+	if err != nil {
+		return nil, pluginObs.wrap("storage_list_prefix", err)
+	}
+	defer rows.Close()
+	var out []StorageEntry
+	for rows.Next() {
+		var e StorageEntry
+		if err := rows.Scan(&e.Key, &e.Value); err != nil {
+			return nil, pluginObs.wrap("storage_list_prefix", err)
+		}
+		out = append(out, e)
+	}
+	return out, rows.Err()
+}
+
+// DeleteStorageKey removes one key from a plugin's namespace. Deleting an
+// absent key is a no-op, not an error. No production caller yet — added for
+// KV-primitive symmetry per ADR-0072 (fiscal-register decommission is an
+// update, never a delete).
+func (r *PluginRepo) DeleteStorageKey(ctx context.Context, pluginID, key string) error {
+	_, err := r.executor(nil).ExecContext(ctx,
+		`DELETE FROM plugin_storage WHERE plugin_id = ? AND key = ?`, pluginID, key)
+	if err != nil {
+		return pluginObs.wrap("storage_delete_key", err)
+	}
+	return nil
+}
+
 // DeleteStorage clears a plugin's namespace (uninstall housekeeping).
 func (r *PluginRepo) DeleteStorage(ctx context.Context, pluginID string) error {
 	_, err := r.executor(nil).ExecContext(ctx,
 		`DELETE FROM plugin_storage WHERE plugin_id = ?`, pluginID)
 	if err != nil {
 		return pluginObs.wrap("storage_delete", err)
+	}
+	return nil
+}
+
+// DeleteStorageExceptPrefix clears a plugin's namespace except entries whose
+// key starts with preservePrefix. Added for ADR-0072 / ut-docs#1106's
+// independent review finding B1: UninstallPlugin's blanket DeleteStorage is
+// reachable not only from a deliberate operator uninstall but also from
+// fully automatic plugin-lifecycle paths with no operator action at all —
+// sync-driven pruning of a plugin the primary no longer has
+// (internal/pages/sync_admin.go) and a pinned-version-mismatch rollback
+// (internal/pages/cloudsync_wire.go) both funnel through UninstallPlugin. A
+// legally-relevant record (e.g. the §146a Abs. 4 AO till/TSE bookkeeping
+// under the "fiscal_register:" prefix) must never be silently destroyed by
+// either — migration 059's own header already invokes ADR-0042's "destroys
+// nothing" discipline for this exact data. Same LIKE-escaping discipline as
+// ListStorageByPrefix.
+func (r *PluginRepo) DeleteStorageExceptPrefix(ctx context.Context, pluginID, preservePrefix string) error {
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(preservePrefix)
+	_, err := r.executor(nil).ExecContext(ctx,
+		`DELETE FROM plugin_storage WHERE plugin_id = ? AND key NOT LIKE ? ESCAPE '\'`,
+		pluginID, escaped+"%")
+	if err != nil {
+		return pluginObs.wrap("storage_delete_except_prefix", err)
 	}
 	return nil
 }
