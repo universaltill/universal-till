@@ -28,7 +28,13 @@ test.describe('POS UI MVP Uplift', () => {
     // the other till surfaces (login/setup/self-order) keep the canonical
     // dark mark, since their background is white in every shipped theme.
     await expect(logo).toHaveAttribute('src', /unitill-logo-light\.svg/);
-    await expect(logo).toHaveAttribute('alt', 'Universal Till');
+    // 2026-08-30 (sale-screen compact-ui pass): the logo now sits next to
+    // a visible ".app-name" text span carrying "Universal Till" (was
+    // previously only in the sale screen's own <h1>, now shared across
+    // every page via nav.html) -- the image is decorative and alt is
+    // empty so a screen reader doesn't announce the name twice.
+    await expect(logo).toHaveAttribute('alt', '');
+    await expect(page.locator('.nav .app-name')).toHaveText('Universal Till');
     await expect(logo).toBeVisible();
 
     // ut-docs#290 shipped the previous logo renamed to unitill-logo.svg, and

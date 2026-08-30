@@ -63,3 +63,55 @@ func TestJournalView_ShowFiltersGatesCrossTillUI(t *testing.T) {
 		t.Fatalf("full journal view must render the till's LastSeenAt: %s", full)
 	}
 }
+
+// TestNewJournalView_LocaleNotStaleAcrossCachedCalls guards ut-docs#1320's
+// fix directly: NewJournalView now parses its template ONCE per process
+// (httpx.ClonedTemplate caches the parse) and hands back a Clone() bound to
+// the caller's funcs on every call. If that clone/rebind step were ever
+// dropped — e.g. a future edit executes the cached base template directly
+// instead of a clone — every view would render with whichever locale's
+// closures happened to be bound first, no matter what funcs a later caller
+// passes. Money formatting is the sharpest signal available: fa digits are
+// Persian numerals, en digits are ASCII, so a stale closure is unmissable.
+func TestNewJournalView_LocaleNotStaleAcrossCachedCalls(t *testing.T) {
+	httpx.InitCurrency("GBP")
+	entries := []data.SaleJournalEntry{{ReceiptNo: "R-1", Total: 1234, TenderType: "cash", SyncStatus: "synced", CreatedAt: "2026-08-15T09:00:00Z"}}
+
+	enView, err := NewJournalView(httpx.FuncsFor("en"))
+	if err != nil {
+		t.Fatalf("NewJournalView(en): %v", err)
+	}
+	var enBuf bytes.Buffer
+	if err := enView.Render(&enBuf, JournalViewData{Entries: entries}); err != nil {
+		t.Fatalf("render en: %v", err)
+	}
+	if !strings.Contains(enBuf.String(), "12.34") {
+		t.Fatalf("en render should show ASCII digits (12.34): %s", enBuf.String())
+	}
+
+	faView, err := NewJournalView(httpx.FuncsFor("fa"))
+	if err != nil {
+		t.Fatalf("NewJournalView(fa): %v", err)
+	}
+	var faBuf bytes.Buffer
+	if err := faView.Render(&faBuf, JournalViewData{Entries: entries}); err != nil {
+		t.Fatalf("render fa: %v", err)
+	}
+	if strings.Contains(faBuf.String(), "12.34") {
+		t.Fatalf("fa render must NOT show ASCII digits — got en's cached closure (stale funcmap): %s", faBuf.String())
+	}
+	if !strings.Contains(faBuf.String(), "۱۲") {
+		t.Fatalf("fa render should show Persian digits (۱۲…): %s", faBuf.String())
+	}
+
+	// Re-render on the FIRST (en) view again, after the fa view was built —
+	// proves the shared cached base template was never mutated by the fa
+	// call (which would corrupt every other locale's already-built view).
+	var enAgainBuf bytes.Buffer
+	if err := enView.Render(&enAgainBuf, JournalViewData{Entries: entries}); err != nil {
+		t.Fatalf("re-render en: %v", err)
+	}
+	if enAgainBuf.String() != enBuf.String() {
+		t.Fatalf("en view's output changed after a different-locale view was built:\nfirst:  %s\nsecond: %s", enBuf.String(), enAgainBuf.String())
+	}
+}

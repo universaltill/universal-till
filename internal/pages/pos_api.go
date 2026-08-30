@@ -27,7 +27,6 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/ui"
-	uiassets "github.com/universaltill/universal-till/web"
 )
 
 // paymentDeclinedError signals that a plugin's blocking payment.<method>.authorize
@@ -1373,7 +1372,9 @@ func normalizeLegalLines(text string, lines []string) []string {
 }
 
 func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, storeName string, design receiptDesign, tableLabel string) (string, error) {
-	t, err := template.New("receipt.html").Funcs(funcs).ParseFS(uiassets.FS,
+	// Fixed file set, parsed once and cloned per call thereafter
+	// (ut-docs#1320) — this runs on every completed sale.
+	t, err := httpx.ClonedTemplate("pages.renderReceipt", "receipt.html", funcs,
 		"ui/partials/receipt.html",
 	)
 	if err != nil {
