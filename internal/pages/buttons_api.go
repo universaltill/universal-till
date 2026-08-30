@@ -40,7 +40,8 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 		btnHTTP.List(w, r)
 	})
 
-	// Drag&drop reorder from the Designer: codes arrive in display order.
+	// Reorder from the Designer (move-up/move-down buttons, ut-docs#1221 --
+	// formerly drag&drop): codes arrive in display order.
 	mux.HandleFunc("POST /api/buttons/reorder", func(w http.ResponseWriter, r *http.Request) {
 		// The Designer posts FormData (multipart) — ParseForm alone ignores
 		// multipart bodies, which silently dropped every reorder.
