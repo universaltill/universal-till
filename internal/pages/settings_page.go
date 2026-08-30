@@ -1144,16 +1144,27 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// operator making that switch needs to stay signed in.
 		//
 		// ut-docs#1301 (review finding NB-2, decided): this revokes ONLY the
-		// acting session — deliberately, not an oversight. A manager already
-		// signed in on a second device against this same till keeps a valid
-		// session; the switch doesn't touch it. The threat this exists to
-		// close is specific to the ACTING screen going customer-facing while
-		// still one navigation away from an authenticated /settings — a
-		// session on a different device was never physically exposed by that
-		// switch and carries no new risk from it. No kiosk-capable POS
-		// researched for #1301 (Toast's per-terminal Kiosk Mode toggle, gated
-		// by a manager passcode on that same terminal) reaches into another
-		// device's session on a mode change either. See
+		// acting session — deliberately, not an oversight, and kept as (a)
+		// against #1301's own grooming recommendation for (b) (revoke every
+		// session on the till), per the concrete-technical-reason escape
+		// hatch that recommendation itself defined (see the issue comment).
+		// Two verifiable reasons this switch creates no new exposure for a
+		// session on a DIFFERENT device:
+		//   1. auth.Middleware's /self-order, /api/self-order/* exemption is
+		//      unconditional, not gated on display.mode — an anonymous LAN
+		//      client could always reach that surface, self_order mode or
+		//      not. The switch changes what a walk-up customer is routed to
+		//      from "/", not what's reachable; it grants no attacker
+		//      anything against a session elsewhere that a request to
+		//      /self-order didn't already grant.
+		//   2. A forgotten session anywhere is already time-bounded by the
+		//      idle-lock default (common.DefaultIdleLockMinutes = 10),
+		//      enforced server-side on every Resolve — independent of this
+		//      till's display mode.
+		// The threat #1259 closed is specific to the ACTING screen going
+		// customer-facing while still one navigation away from an
+		// authenticated /settings; neither of the above changes for a
+		// session on a different device before vs. after this switch. See
 		// TestSelfOrderMode_DoesNotRevokeOtherSessionsOnTheTill and
 		// docs/code-reviews/2026-08-30-self-order-mode-revoke-session.md.
 		if rawMode == "self_order" {

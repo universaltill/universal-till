@@ -639,21 +639,21 @@ func TestSelfOrderMode_RevokesActingSessionOnEntry(t *testing.T) {
 // ut-docs#1301 (ut-docs#1259 review finding NB-2, decided): only the ACTING
 // browser's session is revoked when a till enters self_order mode — a second
 // manager already signed in on another device against this same till keeps a
-// valid session and can still reach /settings. This is a deliberate choice,
-// not an accident: research into how other kiosk-capable POS systems scope a
-// device-mode switch (Toast's Kiosk Mode toggles per-terminal, gated by a
-// manager passcode on that same terminal, with no documented effect on any
-// other terminal's session) found no precedent for a mode switch on one
-// device reaching into another device's already-authenticated session. The
-// threat #1259 closed is specific to the ACTING screen: a browser that just
-// became the customer-facing kiosk display must not still be one URL-bar
-// navigation away from an authenticated /settings. A session on a different
-// device was never physically exposed by that switch — it carries exactly
-// the privileges it already had, unaffected by which mode this till's own
-// display now shows. Revoking it too would cost real UX (kicking a manager
-// off their own laptop for a switch made elsewhere) without closing a gap
-// this change actually introduced. See docs/code-reviews/2026-08-30-self-order-mode-revoke-session.md's
-// NB-2 discussion and the handler comment above for the code-level record.
+// valid session and can still reach /settings. #1301's own grooming pass
+// recommended the opposite (revoke every session on the till) under the
+// standing security-first rule, with an explicit escape hatch: keep (a) if
+// design turns up a concrete technical reason, noted on the issue. Two
+// verifiable reasons pinned here: (1) auth.Middleware's /self-order,
+// /api/self-order/* exemption is unconditional, not gated on display.mode —
+// this switch doesn't grant an anonymous LAN client anything it couldn't
+// already reach; (2) any forgotten session is already time-bounded by the
+// idle-lock default (10 minutes), independent of this till's display mode.
+// Neither changes for a session on a different device before vs. after this
+// switch, so revoking it too would cost real UX (kicking a manager off their
+// own laptop) without closing a gap this change actually introduced. See
+// docs/code-reviews/2026-08-30-self-order-mode-revoke-session.md's NB-2
+// discussion, the handler comment above, and the decision comment on
+// ut-docs#1301 for the full record.
 func TestSelfOrderMode_DoesNotRevokeOtherSessionsOnTheTill(t *testing.T) {
 	dp, d := setupSelfOrderShopDeps(t)
 	svc := auth.NewService(d.DB)
