@@ -17,6 +17,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -40,10 +41,15 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			http.Redirect(w, r, "/catalog", http.StatusSeeOther)
 			return
 		}
+		// ut-docs#1168: a setup-wizard preview that couldn't be auto-committed
+		// (see commitStagedImportForSetup) lands the now-logged-in operator
+		// here instead of a bare /import, so the file they already browsed to
+		// and previewed is still one click away rather than a re-upload.
 		httpx.Render("ui/pages/import.html", map[string]any{
 			"title":     "Import",
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
+			"stagedID":  strings.TrimSpace(r.URL.Query().Get("staged_id")),
 		})(w, r)
 	})
 
@@ -125,8 +131,37 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("POST /api/import", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "import_export") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
-			return
+			// ut-docs#1168: the setup wizard's restore step lets a migrating
+			// shop browse to their export/backup file and preview it inline,
+			// before any admin account exists — same auth-exempt,
+			// NeedsFirstBoot-gated tier as POST /api/setup/join and friends
+			// (setup_page.go). NeedsFirstBoot flips false the instant the
+			// wizard's own PIN step creates the admin account, so this
+			// window is exactly as narrow as every other first-boot
+			// exemption, and commitStagedImportForSetup (below) is the only
+			// caller that ever actually commits through this exemption —
+			// the wizard's own upload panel only ever previews (commit=0).
+			//
+			// Deliberately narrower than a bare NeedsFirstBoot check: that
+			// method only asks "does any PIN-bearing user exist in the DB
+			// at all", which says nothing about THIS request. An already-
+			// authenticated-but-insufficiently-privileged request (a
+			// cashier session denied import_export above) must still be
+			// denied even in the rare state where no user has a PIN set
+			// yet — auth.FromContext resolving a session at all is proof
+			// this request isn't the anonymous, pre-admin wizard case this
+			// exemption exists for. A nil AuthSvc (some minimal test/embed
+			// setups never wire one) fails closed the same way canPerform
+			// already does elsewhere in this file.
+			if _, hasSession := auth.FromContext(r.Context()); hasSession || d.AuthSvc == nil {
+				common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+				return
+			}
+			firstBoot, ferr := d.AuthSvc.NeedsFirstBoot(r.Context())
+			if ferr != nil || !firstBoot {
+				common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+				return
+			}
 		}
 		if err := r.ParseMultipartForm(20 << 20); err != nil {
 			common.LocalizedError(w, r, http.StatusBadRequest, "common.error.invalid_upload")

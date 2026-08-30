@@ -1,15 +1,22 @@
 package pages
 
 import (
+	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"fmt"
 	"io"
+	"mime/multipart"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/catimport"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // Preview-time staging for POST /api/import (ut-docs#601): a preview
@@ -121,6 +128,49 @@ func discardStagedCatalogUpload(id string) {
 	if path, ok := takeStagedCatalogUpload(id); ok {
 		_ = os.Remove(path)
 	}
+}
+
+// commitStagedImportForSetup (ut-docs#1168) replays a preview the operator
+// ran on the setup wizard's restore step as a real POST /api/import commit,
+// once the wizard has actually saved the chosen country/currency and minted
+// the admin session — reusing the exact commit codepath (dedup, audit,
+// problem handling) via one in-process ServeHTTP call rather than
+// duplicating any of it. auth.WithUser stands in for the auth middleware
+// that normally resolves the session cookie before a handler runs — this
+// call goes straight to the unwrapped mux, bypassing that middleware
+// entirely, so canPerform would otherwise see no session at all.
+//
+// Best-effort, like every other post-setup side effect in setup_page.go
+// (autoRegisterForSetup, installBasePluginsForSetup, ...): false just tells
+// the caller to fall back to sending the operator to /import?staged_id=...
+// to finish by hand. The staged copy is untouched by a non-2xx response —
+// takeStagedCatalogUpload/restageCatalogUpload (above) only ever consume it
+// on the way to a real attempt, and confirm_currency is supplied up front so
+// that detour shouldn't fire here anyway.
+func commitStagedImportForSetup(ctx context.Context, mux *http.ServeMux, adminUser auth.User, stagedID, currencyCode string) bool {
+	var body bytes.Buffer
+	mw := multipart.NewWriter(&body)
+	_ = mw.WriteField("commit", "1")
+	_ = mw.WriteField("staged_id", stagedID)
+	_ = mw.WriteField("confirm_currency", currencyCode)
+	if err := mw.Close(); err != nil {
+		logging.L().Errorf("setup wizard: build staged-import commit request: %v", err)
+		return false
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, "/api/import", &body)
+	if err != nil {
+		logging.L().Errorf("setup wizard: build staged-import commit request: %v", err)
+		return false
+	}
+	req.Header.Set("Content-Type", mw.FormDataContentType())
+	req = auth.WithUser(req, adminUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		logging.L().Errorf("setup wizard: staged import %s: commit returned %d: %s", stagedID, rec.Code, rec.Body.String())
+		return false
+	}
+	return true
 }
 
 // forceableImportIssue is ut-docs#601's explicit allow-list: the only two
