@@ -108,6 +108,11 @@ func withinLastMonth(date string, now time.Time) bool {
 // own Mein ELSTER notification.
 func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
+	// Entries persist in plugin_storage under the German tax plugin's
+	// namespace since ADR-0072 (ut-docs#1106, migration 075) — the plugin
+	// owns the §146a Abs. 4 AO data (uninstall removes it), core still owns
+	// this page. Registers, locations, addresses and audit stay on posRepo.
+	fiscalStore := data.NewFiscalRegisterDEStore(d.Db, taxDePluginID)
 
 	// requireManager gates on the "settings" action (039's catalog) via
 	// canPerform, same pattern (and same UT_AUTH=off rationale) as
@@ -129,7 +134,7 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 	}
 
 	renderFiscalRegister := func(w http.ResponseWriter, r *http.Request, errKey string) {
-		entries, err := posRepo.ListFiscalRegisterDE(r.Context())
+		entries, err := fiscalStore.List(r.Context())
 		if err != nil {
 			http.Error(w, "failed to load fiscal register", http.StatusInternalServerError)
 			return
@@ -145,7 +150,7 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		now := time.Now().UTC()
-		// ListFiscalRegisterDE already orders rows by location name
+		// fiscalStore.List already orders rows by location name
 		// (unassigned last), so a single linear pass -- start a new group
 		// the first time a location id is seen, append to it otherwise --
 		// reproduces that same order in the grouped output with no
@@ -244,7 +249,7 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 			commissionedOn = &commissionedOnRaw
 		}
 
-		id, err := posRepo.CreateFiscalRegisterDE(r.Context(), registerID, easType, easSoftware, easSerial,
+		id, err := fiscalStore.Create(r.Context(), registerID, easType, easSoftware, easSerial,
 			tseSerial, tseCertificationID, tseType, acquiredOn, commissionedOn)
 		if err != nil {
 			http.Redirect(w, r, "/fiscal-register?err=fiscalregister.error.create", http.StatusSeeOther)
@@ -263,7 +268,7 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 		// Server-stamped to today -- this is a "mark it now" action, not a
 		// backdated entry (per the Architect's design).
 		today := time.Now().UTC().Format(fiscalRegisterDEDateLayout)
-		if err := posRepo.DecommissionFiscalRegisterDE(r.Context(), id, today); err != nil {
+		if err := fiscalStore.Decommission(r.Context(), id, today); err != nil {
 			http.Redirect(w, r, "/fiscal-register?err=fiscalregister.error.decommission", http.StatusSeeOther)
 			return
 		}

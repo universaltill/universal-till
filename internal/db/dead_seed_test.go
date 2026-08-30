@@ -234,15 +234,16 @@ func rewindTracking058(t *testing.T, d *DB) {
 }
 
 // rewindFiscalRegisterDE059 undoes migration 059's non-idempotent DDL (the
-// three stock_locations address columns + the fiscal_register_de table and
-// its index, ut-docs#665) — same replay problem as rewindTables054/
-// rewindTracking058 above; the index goes first, then the table, then the
-// address columns (no ordering constraint between the two beyond that).
+// three stock_locations address columns, ut-docs#665) — same replay problem
+// as rewindTables054/rewindTracking058 above. The fiscal_register_de table
+// and its index that 059 also created no longer exist on a fully migrated
+// DB: migration 075 (ADR-0072, ut-docs#1106) moved the rows into
+// plugin_storage and dropped the table (the index went with it), so there
+// is nothing left of them to rewind — a below-59 replay recreates the
+// table via 059 and 075 then drops it again, in order, on its own.
 func rewindFiscalRegisterDE059(t *testing.T, d *DB) {
 	t.Helper()
 	for _, q := range []string{
-		`DROP INDEX idx_fiscal_register_de_register`,
-		`DROP TABLE fiscal_register_de`,
 		`ALTER TABLE stock_locations DROP COLUMN address_street`,
 		`ALTER TABLE stock_locations DROP COLUMN address_postcode`,
 		`ALTER TABLE stock_locations DROP COLUMN address_city`,

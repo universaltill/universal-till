@@ -28,7 +28,19 @@ func UninstallPlugin(ctx context.Context, db *sql.DB, pluginID string) error {
 	}
 
 	// plugin_storage is namespaced KV without an FK — clear it explicitly.
-	if err := repo.DeleteStorage(ctx, pluginID); err != nil {
+	// EXCEPT the fiscal-register prefix (ADR-0072/ut-docs#1106 review finding
+	// B1): this function is reachable not only from a deliberate operator
+	// uninstall but also from fully automatic paths with no operator action
+	// at all — sync-driven pruning of a plugin the primary no longer has
+	// (pages.sync_admin.go) and a pinned-version-mismatch rollback
+	// (pages.cloudsync_wire.go) both call UninstallPlugin. A legally-relevant
+	// record (the §146a Abs. 4 AO till/TSE bookkeeping) must never be
+	// destroyed by either, per migration 059's own "destroys nothing"
+	// discipline (ADR-0042) and this product's standing "never silently
+	// destroy data" principle. If the operator genuinely wants old AO
+	// records purged, that is a separate, deliberate, explicit action this
+	// card does not build.
+	if err := repo.DeleteStorageExceptPrefix(ctx, pluginID, data.FiscalRegisterDEKeyPrefix); err != nil {
 		fmt.Printf("warning: failed to clear plugin storage: %v\n", err)
 	}
 
