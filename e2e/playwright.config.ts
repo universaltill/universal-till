@@ -1,4 +1,14 @@
 import { defineConfig } from '@playwright/test';
+import { existsSync } from 'fs';
+
+// Sandboxed pipeline runners pre-install one Chromium at a fixed path
+// (PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1, no per-version browser cache), so
+// the version-suffixed executable `npx playwright install` would resolve
+// doesn't exist there. Point at the pre-installed binary when present;
+// everywhere else (CI, dev machines) this is a no-op and the normal
+// per-version cache resolution applies.
+const PREINSTALLED_CHROMIUM = '/opt/pw-browsers/chromium';
+const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREINSTALLED_CHROMIUM } : {};
 
 // Two tills under test:
 //  - the DEFAULT project: auth off, demo catalog seeded by the migrations
@@ -52,6 +62,7 @@ export default defineConfig({
         baseURL: 'http://127.0.0.1:8091',
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
+        launchOptions,
       },
     },
     {
@@ -61,6 +72,7 @@ export default defineConfig({
         baseURL: 'http://127.0.0.1:8092',
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
+        launchOptions,
       },
     },
   ],
