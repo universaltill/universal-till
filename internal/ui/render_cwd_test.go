@@ -13,6 +13,15 @@ import (
 // chdirTemp switches the process CWD to a fresh empty directory for the
 // duration of the test — simulates a packaged install launched from a
 // working directory with no web/ subtree alongside it.
+//
+// Also force-clears httpx's process-lifetime template cache (ut-docs#1320
+// review, finding 1): these tests exist to catch a constructor reading from
+// a cwd-relative disk path instead of the embedded FS, but every one of
+// them shares this package's test binary. Without the reset, only the
+// first test to touch a given cache key actually parses anything — every
+// later test gets a harmless cache hit from a PREVIOUS test's (correct,
+// cwd-independent) parse and would pass even if this specific test's
+// constructor regressed to a disk read, silently disarming the guard.
 func chdirTemp(t *testing.T) {
 	t.Helper()
 	dir := t.TempDir()
@@ -23,10 +32,12 @@ func chdirTemp(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatalf("Chdir: %v", err)
 	}
+	httpx.ResetCacheForTests()
 	t.Cleanup(func() {
 		if err := os.Chdir(orig); err != nil {
 			t.Fatalf("restore cwd: %v", err)
 		}
+		httpx.ResetCacheForTests()
 	})
 }
 

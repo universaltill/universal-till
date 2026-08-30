@@ -29,10 +29,18 @@ func TestRenderReceipt_WorksFromAnyWorkingDirectory(t *testing.T) {
 	if err := os.Chdir(dir); err != nil {
 		t.Fatalf("Chdir: %v", err)
 	}
+	// Force a fresh ParseFS (ut-docs#1320 review, finding 1): renderReceipt's
+	// template is now cached process-lifetime keyed on "pages.renderReceipt"
+	// — without this, whichever other renderReceipt test in this file (or
+	// package) ran first already primed that key from a normal working
+	// directory, and this test would get a harmless cache hit instead of
+	// actually exercising the disk-read regression it exists to catch.
+	httpx.ResetCacheForTests()
 	t.Cleanup(func() {
 		if err := os.Chdir(orig); err != nil {
 			t.Fatalf("restore cwd: %v", err)
 		}
+		httpx.ResetCacheForTests()
 	})
 
 	funcs := map[string]any{

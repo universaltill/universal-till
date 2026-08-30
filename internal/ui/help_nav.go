@@ -4,7 +4,7 @@ import (
 	"html/template"
 	"io"
 
-	uiassets "github.com/universaltill/universal-till/web"
+	"github.com/universaltill/universal-till/internal/httpx"
 )
 
 // HelpNavView renders the manual's topic-tree partial on its own, for the
@@ -13,10 +13,15 @@ type HelpNavView struct {
 	Tpl *template.Template
 }
 
+// NewHelpNavView's file set is fixed, so it's parsed once and cloned per
+// call thereafter (ut-docs#1320) — see httpx.ClonedTemplate.
 func NewHelpNavView(funcs template.FuncMap) (*HelpNavView, error) {
-	t := template.Must(template.New("base.html").Funcs(funcs).ParseFS(uiassets.FS,
+	t, err := httpx.ClonedTemplate("ui.HelpNavView", "base.html", funcs,
 		"ui/partials/help_nav.html",
-	))
+	)
+	if err != nil {
+		return nil, err
+	}
 	return &HelpNavView{Tpl: t}, nil
 }
 

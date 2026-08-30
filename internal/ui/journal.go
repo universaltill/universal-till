@@ -5,7 +5,7 @@ import (
 	"io"
 
 	"github.com/universaltill/universal-till/internal/data"
-	uiassets "github.com/universaltill/universal-till/web"
+	"github.com/universaltill/universal-till/internal/httpx"
 )
 
 type JournalView struct {
@@ -44,10 +44,16 @@ type JournalViewData struct {
 	Truncated bool
 }
 
+// NewJournalView's file set is fixed, so it's parsed once and cloned per
+// call thereafter (ut-docs#1320) — see httpx.ClonedTemplate. Called on
+// every completed sale (pos_api.go) and every /ui/journal load.
 func NewJournalView(funcs template.FuncMap) (*JournalView, error) {
-	t := template.Must(template.New("base.html").Funcs(funcs).ParseFS(uiassets.FS,
+	t, err := httpx.ClonedTemplate("ui.JournalView", "base.html", funcs,
 		"ui/partials/journal.html",
-	))
+	)
+	if err != nil {
+		return nil, err
+	}
 	return &JournalView{Tpl: t}, nil
 }
 
