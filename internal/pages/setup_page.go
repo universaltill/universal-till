@@ -407,6 +407,15 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	// POST /api/setup/language above.
 	mux.HandleFunc("POST /api/setup/tax-plugin", setupTaxPluginInstallHandler(d, svc))
 
+	// ut-docs#1165: step 1's background "a newer version exists — update
+	// before continuing?" check and its explicit apply action. Same
+	// auth-exempt, NeedsFirstBoot-gated tier as POST /api/setup/language
+	// above — no admin session exists yet at first boot, so the manager-gated
+	// POST /api/update/check + /api/update/apply (update_api.go) can't be
+	// reused directly here.
+	mux.HandleFunc("POST /api/setup/update-check", setupUpdateCheckHandler(d, svc))
+	mux.HandleFunc("POST /api/setup/update-apply", setupUpdateApplyHandler(d, svc))
+
 	mux.HandleFunc("POST /api/setup", func(w http.ResponseWriter, r *http.Request) {
 		firstBoot, err := svc.NeedsFirstBoot(r.Context())
 		if err != nil || !firstBoot {

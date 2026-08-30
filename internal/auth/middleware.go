@@ -53,6 +53,10 @@ func exempt(path string) bool {
 		// session because a first-boot till has no operators to mint one.
 		// TestSetupLanguageInstallExemptFromAuthMiddleware pins this entry.
 		"/api/setup/language",
+		// ut-docs#1165: step 1's background update-check + its explicit
+		// apply action — same first-boot-only window as /api/setup/language
+		// above (NeedsFirstBoot refuses both once an operator exists).
+		"/api/setup/update-check", "/api/setup/update-apply",
 		// ut-docs#537: a joining replica has no session on the primary at
 		// all — it's a stranger LAN device sending its first-ever request
 		// there. The inbound pair request is unauthenticated by design
