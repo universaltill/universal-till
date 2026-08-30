@@ -539,7 +539,7 @@ func TestCatalogExport_RoundTripsTaxColumns(t *testing.T) {
 		t.Fatalf("export: code %d body %s", rec.Code, rec.Body.String())
 	}
 
-	res, err := catimport.Parse(strings.NewReader(rec.Body.String()), 2, data.DefaultEnabledBarcodeSymbologyIDs())
+	res, err := catimport.Parse(strings.NewReader(rec.Body.String()), 2, data.DefaultEnabledBarcodeSymbologyIDs(), false)
 	if err != nil {
 		t.Fatalf("re-parse of our own export failed: %v", err)
 	}

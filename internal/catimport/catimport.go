@@ -59,6 +59,15 @@ const (
 	// enabled set, Match never rejects a non-empty code (ADR-0059 §2).
 	BarcodeIssueNoSymbologyMatch = "no_symbology_match"
 
+	// BarcodeIssueDuplicateItemNumber: useItemNumbersAsBarcodes (ut-docs#1224)
+	// is on, but this row's item number/SKU is claimed by an earlier row in
+	// the same file — deriving a barcode from it would make two distinct
+	// items scan to the same code, so this row is left without one. The
+	// item itself still imports (its SKU is untouched by this — see
+	// SKUIssueDuplicateInFile for that, a separate, .bkp-only concern);
+	// only the barcode derivation is skipped.
+	BarcodeIssueDuplicateItemNumber = "duplicate_item_number"
+
 	// TaxIssueUnparseable: a tax/takeaway-tax cell was present but didn't
 	// read as a percentage. Non-blocking, like BarcodeIssue — but unlike
 	// stock (silently optional), a dropped tax rate is compliance-sensitive
@@ -367,7 +376,12 @@ func stripCSVDefuse(field string) string {
 // and passes it through so a CSV barcode is judged by the same shared
 // registry matcher as AddBarcode and the scan path (ut-docs#936,
 // ADR-0059 Decision §3's "call the same function, don't reimplement it").
-func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string) (Result, error) {
+// useItemNumbersAsBarcodes is the operator's per-import opt-in (ut-docs#1224,
+// asked by the pages layer only for a catalog whose barcode column is empty
+// or absent) — when true, a row with no barcode of its own gets one derived
+// from its SKU/item number via deriveNumberBarcode, unless that number is
+// shared by an earlier row in this file (BarcodeIssueDuplicateItemNumber).
+func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useItemNumbersAsBarcodes bool) (Result, error) {
 	cr := csv.NewReader(r)
 	cr.FieldsPerRecord = -1 // exports are ragged in the wild
 	headers, err := cr.Read()
@@ -392,6 +406,11 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string) (Res
 		return strings.TrimSpace(rec[i])
 	}
 
+	// Tracks which SKUs have already claimed a number-derived barcode this
+	// file, for useItemNumbersAsBarcodes below — first occurrence of a given
+	// SKU wins it, same "first claims it" convention ParseBkp's own in-file
+	// dedup already uses for the SKU itself (ut-docs#1222).
+	seenForBarcode := map[string]bool{}
 	for {
 		rec, err := cr.Read()
 		if err == io.EOF {
@@ -454,9 +473,41 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string) (Res
 			item.Issue = IssueBadPrice
 			item.IssueDetail = get(rec, "price")
 		}
+		// useItemNumbersAsBarcodes (ut-docs#1224): only a row with no barcode
+		// of its own, that cleanly imports, and that carries an item number
+		// is eligible — and only its FIRST occurrence in the file claims the
+		// derived barcode, so two distinct items sharing one number never
+		// end up scannable as the same thing.
+		if useItemNumbersAsBarcodes && item.Barcode == "" && item.Issue == "" && item.SKU != "" {
+			if seenForBarcode[item.SKU] {
+				item.BarcodeIssue = BarcodeIssueDuplicateItemNumber
+				item.BarcodeIssueRaw = item.SKU
+			} else {
+				seenForBarcode[item.SKU] = true
+				item.Barcode, item.BarcodeType, item.BarcodeIssue, item.BarcodeIssueRaw = deriveNumberBarcode(item.SKU, enabledSymbologyIDs)
+			}
+		}
 		res.Items = append(res.Items, item)
 	}
 	return res, nil
+}
+
+// deriveNumberBarcode runs an item number (a PLU/SKU with no barcode of its
+// own) through the same shared registry matcher normalizeBarcode/AddBarcode
+// use (ADR-0059 Decision §3) — this is useItemNumbersAsBarcodes's (ut-docs#1224)
+// only source of truth for what symbology such a number lands on: a plain
+// numeric PLU falls through the checksum-validated entries (EAN13/EAN8/UPCA/
+// UPCE/GTIN14 all reject a non-conforming length) to one of the permissive
+// catch-alls (typically CODE128), stored verbatim, no check-digit meaning
+// implied — never a real EAN. Returns an empty barcode/type and a non-empty
+// issue when the shop's own narrowed enabled set rejects the number outright
+// (only reachable once a shop has disabled the default catch-alls).
+func deriveNumberBarcode(number string, enabledSymbologyIDs []string) (code, codeType, issue, issueRaw string) {
+	dec, matched := normalizeBarcode(number, enabledSymbologyIDs)
+	if !matched {
+		return "", "", BarcodeIssueNoSymbologyMatch, number
+	}
+	return dec.LookupKey, dec.SymbologyID, "", ""
 }
 
 // normalizeDecimalComma rewrites a price string that uses a German/European
