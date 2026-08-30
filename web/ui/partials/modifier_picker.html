@@ -1,6 +1,6 @@
 <div class="modifier-picker">
   <h3>{{ .ItemName }}</h3>
-  <form hx-post="/api/pos/scan-with-modifiers" hx-target="#basket" hx-swap="outerHTML"
+  <form hx-post="/api/pos/scan-with-modifiers" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
         hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('modifier-modal'); m.close(); m.innerHTML=''; }">
     <input type="hidden" name="code" value="{{ .Code }}">
     <input type="hidden" name="itemId" value="{{ .ItemID }}">

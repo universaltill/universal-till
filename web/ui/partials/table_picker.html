@@ -14,14 +14,14 @@
     {{ if .Current }}
       <button type="button" class="btn secondary table-picker-clear" title="{{ T "basket.table.none" }}"
               hx-post="/api/pos/table" hx-vals='{"table_id":""}'
-              hx-target="#basket" hx-swap="outerHTML">✕</button>
+              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">✕</button>
     {{ end }}
     {{ if .Options }}
       <span class="table-picker-title">{{ T "basket.table.picker_title" }}</span>
       {{ range .Options }}
         <button type="button" class="btn{{ if ne .ID $.Current }} secondary{{ end }} table-picker-option"
                 hx-post="/api/pos/table" hx-vals='{{ jsonVals "table_id" .ID }}'
-                hx-target="#basket" hx-swap="outerHTML">{{ .Label }}</button>
+                hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">{{ .Label }}</button>
       {{ end }}
     {{ else }}
       <span class="muted table-picker-empty">{{ T "basket.table.no_free_tables" }}</span>
