@@ -1,7 +1,30 @@
 <span class="session-chip">
-  {{ if .isManager }}<a class="session-admin-link" href="/users">{{ T "users.title" }}</a> <a class="session-admin-link" href="/promotions">{{ T "promotions.title" }}</a> <a class="session-admin-link" href="/translations">{{ T "translations.title" }}</a>{{ end }}
-  <a class="session-user nav-toggle" href="/pin" title="{{ T "auth.change_pin" }}">👤 {{ .name }}</a>
+  {{ if .isManager }}
+  <a class="session-admin-link nav-toggle" href="/users">
+    <span class="nav-toggle-ico" aria-hidden="true">👥</span>
+    <span class="nav-toggle-label">{{ T "users.title" }}</span>
+  </a>
+  <a class="session-admin-link nav-toggle" href="/promotions">
+    <span class="nav-toggle-ico" aria-hidden="true">🏷️</span>
+    <span class="nav-toggle-label">{{ T "promotions.title" }}</span>
+  </a>
+  <a class="session-admin-link nav-toggle" href="/translations">
+    <span class="nav-toggle-ico" aria-hidden="true">🌐</span>
+    <span class="nav-toggle-label">{{ T "translations.title" }}</span>
+  </a>
+  {{ end }}
+  <!-- Operator name has no fixed length -- .session-user's own CSS clamps
+       it to one line with an ellipsis (app.css) rather than wrapping,
+       unlike every other rail label here, since a truncated name is still
+       recognisable but a name broken mid-word across two lines isn't. -->
+  <a class="session-user nav-toggle" href="/pin" title="{{ T "auth.change_pin" }}">
+    <span class="nav-toggle-ico" aria-hidden="true">👤</span>
+    <span class="nav-toggle-label">{{ .name }}</span>
+  </a>
   <form method="post" action="/api/auth/logout" class="session-lock">
-    <button type="submit" class="btn secondary btn-lock">{{ T "auth.lock" }}</button>
+    <button type="submit" class="nav-toggle btn-lock">
+      <span class="nav-toggle-ico ico-boost" aria-hidden="true">🔒</span>
+      <span class="nav-toggle-label">{{ T "auth.lock" }}</span>
+    </button>
   </form>
 </span>
