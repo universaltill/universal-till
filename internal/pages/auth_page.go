@@ -78,20 +78,30 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// next=="kiosk" is the self-order kiosk's public-facing, PIN-gated
 		// exit link (ut-docs#208) — it must always demand a fresh PIN, even
 		// when the browser already carries a valid session cookie
-		// (ut-docs#1253). Putting a till into self-order mode never logs it
-		// out (display.mode only changes what "/" redirects to — see
-		// registerIndex / TestSelfOrderModeRedirectsEverySession), so
-		// without this exclusion the "already authenticated, skip the form"
-		// shortcut below — meant for a plain register re-visiting /login —
-		// applied identically here, and any customer who found this URL
-		// while that session was still alive walked straight into Settings
-		// with no PIN prompt at all.
+		// (ut-docs#1253), so it's excluded from both branches below.
 		if next != "kiosk" {
 			if c, err := r.Cookie(auth.CookieName); err == nil {
 				if _, ok := svc.Resolve(r.Context(), c.Value); ok {
 					http.Redirect(w, r, loginDestination(next), http.StatusSeeOther)
 					return
 				}
+			}
+			// ut-docs#1259: entering self-order mode now revokes the acting
+			// session (registerSettings's display-mode handler), so there's
+			// no longer always a valid cookie for the branch above to find —
+			// but an anonymous visitor still needs to land on the kiosk, not
+			// a PIN pad. This is the same landing "/" already gives a
+			// logged-in visitor (registerIndex), extended to cover having no
+			// session at all: the till's own launch URL is "/", which isn't
+			// auth-exempt and funnels an unauthenticated request here.
+			// Without this, switching to self-order (or restarting the
+			// kiosk shell afterward, since the revoke persists across
+			// restarts) strands the till on the PIN keypad with no way back
+			// to the kiosk short of logging in — which would just recreate
+			// the very live session this ticket revokes.
+			if mode, _, _ := d.Settings.Get(r.Context(), "display.mode"); mode == "self_order" {
+				http.Redirect(w, r, "/self-order", http.StatusSeeOther)
+				return
 			}
 		}
 		// A brand-new till goes through the guided wizard instead of the

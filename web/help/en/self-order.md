@@ -14,3 +14,5 @@ Self-order turns a till into a customer-facing screen where shoppers browse the 
 Shoppers find items by tapping category chips — there is no search box on this screen, by design.
 
 The cart carries the same dine-in/takeaway toggle as the cashier's basket, so a self-order customer can mark their own order takeaway (or switch back). This records the choice on the receipt, journal and kitchen ticket; it only changes the tax charged if a tax plugin for your region uses it to pick a different rate.
+
+Switching a till into self-order mode (Settings → Display → Device profile) signs the browser that made the switch out immediately, so nobody is left signed in on the customer-facing screen. To get back into Settings afterward, tap the lock icon on the self-order screen and enter your PIN — the same way as leaving the kiosk at any other time.

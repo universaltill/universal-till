@@ -1133,6 +1133,45 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		settingsAudit(r, posRepo, elev, "settings", "display.mode", "display_mode_changed", map[string]any{"mode": rawMode})
+		// ut-docs#1259: switching THIS browser into self-order mode must make
+		// it genuinely anonymous, not just re-route "/" — otherwise the
+		// operator session that made this call (often a manager/admin, since
+		// the action is canPerform("settings")-gated) keeps sitting in the
+		// till's browser. On a chrome-less Pi kiosk that's harmless (no way
+		// to reach a URL bar), but on a desktop till put into self-order mode
+		// a customer can type /settings directly and reach it with the stale
+		// session — checkOrElevate returns allowed outright once canPerform
+		// passes, so zero-PIN. #1253 already closed every path reachable by
+		// tapping through the kiosk UI; this closes the direct-navigation
+		// door by revoking the session itself. register/backoffice keep
+		// their existing behaviour — this device is still being staffed.
+		// The paired half of this fix — an anonymous "/login"/"/" visitor
+		// with no session landing back on the kiosk instead of a stranded
+		// PIN pad — lives in registerAuth's "GET /login" (auth_page.go).
+		if rawMode == "self_order" && d.AuthSvc != nil {
+			if c, err := r.Cookie(auth.CookieName); err == nil {
+				// Audited BEFORE Logout (mirrors POST /api/auth/logout):
+				// Resolve needs the still-live token to name the actor.
+				if u, ok := d.AuthSvc.Resolve(r.Context(), c.Value); ok {
+					now := time.Now().UTC().Format(time.RFC3339)
+					_ = posRepo.InsertAudit(r.Context(), nil, u.ID, "user", u.ID, "session_revoked_self_order", nil, now, "")
+				}
+				d.AuthSvc.Logout(r.Context(), c.Value)
+				setSessionCookie(w, "", -1)
+				// The 204 fast path already navigates client-side
+				// (settings.html's after-request handler, on any non-HTML
+				// response); this covers the "elevated"/approved-via-
+				// override-PIN path too, whose text/html "✓ approved"
+				// response deliberately does NOT navigate on its own (that
+				// guard exists so a genuine elevation PROMPT — a different,
+				// earlier return above — isn't yanked out from under an
+				// operator mid-entry). Left stuck there, the operator sees
+				// success while every next action silently 401s from the
+				// now-revoked session. htmx follows HX-Redirect regardless
+				// of the response's own status/content-type.
+				w.Header().Set("HX-Redirect", "/self-order")
+			}
+		}
 		settingsRespondSaved(w, r, elev)
 	})
 
