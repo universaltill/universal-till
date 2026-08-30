@@ -19,6 +19,16 @@ type WindowController interface {
 	// changes (ut-docs#883). NoopWindowController ignores it; a real
 	// implementation applies the new mode to the actual OS window/service.
 	ApplyMode(mode string) error
+
+	// RecordInputHeartbeat records that the kiosk saw genuine user input
+	// just now (ut-docs#1329, split from #1228: input-freeze
+	// diagnosability — no self-recovery, just a fact for a future incident
+	// to reason about). Called very frequently (throttled client-side to
+	// ~once per 5s, from every base.html-rendered page) by a low-cost,
+	// best-effort route — an implementation must never block or fail loud
+	// enough to disturb the caller; a platform with nowhere meaningful to
+	// record this is a documented no-op returning nil, not an error.
+	RecordInputHeartbeat() error
 }
 
 // NoopWindowController is a do-nothing WindowController kept for bare-Deps
@@ -31,3 +41,4 @@ type NoopWindowController struct{}
 
 func (NoopWindowController) ExitToOS() error             { return nil }
 func (NoopWindowController) ApplyMode(mode string) error { return nil }
+func (NoopWindowController) RecordInputHeartbeat() error { return nil }

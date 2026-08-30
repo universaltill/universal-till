@@ -56,6 +56,42 @@ func TestExitToOSReachableWithoutSessionCookie(t *testing.T) {
 	}
 }
 
+// POST /api/window/input-heartbeat (ut-docs#1329, split from #1228's
+// input-freeze incident) is deliberately NOT exempt — unlike exit-to-os,
+// this route carries no PIN/manager check of its own, so the ordinary
+// session requirement is the only gate it has. An anonymous LAN caller
+// must not be able to fire it (it exists to be trusted telemetry an
+// incident review can lean on), and every page it ships on (base.html)
+// already carries a session, so this costs the real caller nothing.
+func TestInputHeartbeatRouteIsNotExempt(t *testing.T) {
+	if exempt("/api/window/input-heartbeat") {
+		t.Error("/api/window/input-heartbeat must NOT be exempt — it has no PIN/manager " +
+			"gate of its own (unlike exit-to-os), so the session requirement is its only auth")
+	}
+}
+
+// The same fact proven through the real middleware: a request with NO
+// session cookie must be rejected 401 by the middleware itself, never
+// reach the handler — the inverse of
+// TestExitToOSReachableWithoutSessionCookie above.
+func TestInputHeartbeatUnauthenticatedGetsRejectedByMiddleware(t *testing.T) {
+	reached := false
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reached = true
+		w.WriteHeader(http.StatusNoContent)
+	})
+	h := Middleware(next, nil)
+
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/window/input-heartbeat", nil))
+	if reached {
+		t.Fatal("handler was reached with no session cookie — this route must require a session")
+	}
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("status = %d, want 401", rec.Code)
+	}
+}
+
 // /o/{token} (ut-docs#527): the customer order-tracking page is reached by
 // scanning a QR on the self-order confirmation screen from a personal phone —
 // there is no session and can never be one, same anonymous-customer shape as

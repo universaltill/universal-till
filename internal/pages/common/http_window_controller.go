@@ -88,6 +88,16 @@ func (c HTTPWindowController) ApplyMode(mode string) error {
 	return c.post("/apply-mode", url.Values{"mode": {mode}})
 }
 
+// RecordInputHeartbeat forwards a heartbeat to the shell's control channel
+// (ut-docs#1329, split from #1228's input-freeze incident) — recorded
+// there as lastInputAt and surfaced later via the shell's own
+// GET /diagnostics, which this controller has no need to read: the
+// diagnostic snapshot is for a human (or a future automated check) to
+// pull directly from unitill-desktop, not something unitill-pos consumes.
+func (c HTTPWindowController) RecordInputHeartbeat() error {
+	return c.post("/input-heartbeat", nil)
+}
+
 // post calls one control-channel endpoint. Every failure path here is the
 // "falls back safely" scenario ut-docs#882's acceptance criteria requires:
 // unreachable (the shell exited, or predates this card and never started

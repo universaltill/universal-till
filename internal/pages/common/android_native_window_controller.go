@@ -23,3 +23,13 @@ type AndroidNativeWindowController struct{}
 
 func (AndroidNativeWindowController) ExitToOS() error             { return nil }
 func (AndroidNativeWindowController) ApplyMode(mode string) error { return nil }
+
+// RecordInputHeartbeat is a documented no-op (ut-docs#1329, split from
+// #1228): there is no separate unitill-desktop process on this platform —
+// the embedded server runs in-process inside the same app the operator is
+// looking at, and MainActivity never freezes independently of this Go
+// process the way a native desktop shell's own window can — so there is no
+// distinct "is the window still responsive" fact this could usefully
+// record. Same "nothing to touch on this platform" reasoning as ApplyMode
+// above.
+func (AndroidNativeWindowController) RecordInputHeartbeat() error { return nil }

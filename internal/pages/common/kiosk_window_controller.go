@@ -101,3 +101,16 @@ func (c KioskSystemdWindowController) ApplyMode(mode string) error {
 	}
 	return nil
 }
+
+// RecordInputHeartbeat is a documented no-op on the Pi headless kiosk
+// appliance (ut-docs#1329, split from #1228): there is no unitill-desktop
+// process on this platform at all — cage+chromium run directly under
+// unitill-kiosk.service, with no separate control-channel process for a
+// heartbeat to be forwarded to (unlike the desktop-shell platforms, see
+// HTTPWindowController.RecordInputHeartbeat) — so there is nowhere
+// meaningful this could record anything. Deliberately nil, not an error:
+// unlike ExitToOS above (a destructive action whose missing escape hatch
+// must be surfaced honestly), this is best-effort diagnostic telemetry
+// with no operator-visible effect either way, the same "doesn't apply on
+// this platform" shape as AndroidNativeWindowController's ApplyMode.
+func (KioskSystemdWindowController) RecordInputHeartbeat() error { return nil }

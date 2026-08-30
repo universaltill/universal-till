@@ -92,6 +92,53 @@ func TestHTTPWindowController_ApplyMode_SendsModeForm(t *testing.T) {
 	}
 }
 
+// TestHTTPWindowController_RecordInputHeartbeat_ReachesControlChannel
+// proves a real HTTP round trip against the shell's control channel for the
+// new ut-docs#1329 endpoint, same shape as ExitToOS's own test above.
+func TestHTTPWindowController_RecordInputHeartbeat_ReachesControlChannel(t *testing.T) {
+	var gotPath string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	c := HTTPWindowController{addr: strings.TrimPrefix(srv.URL, "http://"), client: srv.Client()}
+	if err := c.RecordInputHeartbeat(); err != nil {
+		t.Fatalf("RecordInputHeartbeat() = %v, want nil", err)
+	}
+	if gotPath != "/input-heartbeat" {
+		t.Errorf("path = %q, want /input-heartbeat", gotPath)
+	}
+}
+
+// TestHTTPWindowController_RecordInputHeartbeat_UnreachableReturnsError
+// covers the shell being unreachable — must be a clear error the caller
+// can log (review of ut-docs#1329, nit 8: this used to be misnamed
+// "...NonOKStatusReturnsError" while actually only exercising the
+// unreachable-address case; the real non-2xx case is the test below).
+func TestHTTPWindowController_RecordInputHeartbeat_UnreachableReturnsError(t *testing.T) {
+	c := HTTPWindowController{addr: "127.0.0.1:1", client: &http.Client{}}
+	if err := c.RecordInputHeartbeat(); err == nil {
+		t.Fatal("RecordInputHeartbeat() against an unreachable address = nil, want an error")
+	}
+}
+
+// TestHTTPWindowController_RecordInputHeartbeat_NonOKStatusReturnsError
+// covers the shell being up but answering non-2xx — same shape as
+// ExitToOS's own TestHTTPWindowController_NonOKStatusReturnsError above.
+func TestHTTPWindowController_RecordInputHeartbeat_NonOKStatusReturnsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "forbidden", http.StatusForbidden)
+	}))
+	defer srv.Close()
+
+	c := HTTPWindowController{addr: strings.TrimPrefix(srv.URL, "http://"), client: srv.Client()}
+	if err := c.RecordInputHeartbeat(); err == nil {
+		t.Fatal("RecordInputHeartbeat() against a 403 = nil, want an error")
+	}
+}
+
 // TestHTTPWindowController_UnreachableReturnsError is the "shell exited, or
 // predates this card and never started the listener" case ut-docs#882's own
 // acceptance criteria names — must be a clear error, never a panic.
