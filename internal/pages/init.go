@@ -306,7 +306,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerOrderStatus(mux, dp)   // order lifecycle status one-tap surface (ut-docs#526)
 	registerOrderTracking(mux, dp) // anonymous customer tracking page /o/{token}, auth-exempt (ut-docs#527)
 	registerHealth(mux)
-	registerWindowState(mux, dp) // desktop shell reads this pre-login at launch (ut-docs#611)
+	registerWindowState(mux, dp)    // desktop shell reads this pre-login at launch (ut-docs#611)
+	registerKioskHeartbeat(mux, dp) // kiosk input-liveness signal, pre-login too (ut-docs#1329)
 	registerExternalProxy(mux, dp)
 	registerPluginStore(mux, dp) // Marketplace plugin store
 	registerMarketplaceV1Stub(mux, dp)

@@ -19,6 +19,17 @@ type WindowController interface {
 	// changes (ut-docs#883). NoopWindowController ignores it; a real
 	// implementation applies the new mode to the actual OS window/service.
 	ApplyMode(mode string) error
+
+	// InputHeartbeat relays a kiosk page's own input-liveness signal
+	// (ut-docs#1329, split from #1228's Pi5-1 input-freeze incident) to
+	// whatever live shell control channel this implementation has,
+	// best-effort. Unlike ExitToOS/ApplyMode this is never PIN-gated and
+	// never audited — it is a high-frequency passive diagnostic signal
+	// fired from ordinary page JS, not an operator action. An
+	// implementation with no live channel to relay it to (no shell
+	// process exists to ask, e.g. the Pi headless kiosk appliance) is a
+	// harmless no-op, same convention as ExitToOS/ApplyMode's own no-ops.
+	InputHeartbeat() error
 }
 
 // NoopWindowController is a do-nothing WindowController kept for bare-Deps
@@ -31,3 +42,4 @@ type NoopWindowController struct{}
 
 func (NoopWindowController) ExitToOS() error             { return nil }
 func (NoopWindowController) ApplyMode(mode string) error { return nil }
+func (NoopWindowController) InputHeartbeat() error       { return nil }

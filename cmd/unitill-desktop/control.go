@@ -10,6 +10,7 @@ import (
 	"crypto/rand"
 	"crypto/subtle"
 	"encoding/hex"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"net"
@@ -88,12 +89,15 @@ var validWindowModes = map[string]bool{
 // reach the native window without ever going through the PIN check at
 // all — the exact bypass an unauthenticated channel would otherwise be).
 type controlServer struct {
-	ln    net.Listener
-	srv   *http.Server
-	token string
+	ln        net.Listener
+	srv       *http.Server
+	token     string
+	startedAt time.Time
 
-	mu  sync.RWMutex
-	ops *windowOps
+	mu          sync.RWMutex
+	ops         *windowOps
+	lastInputAt time.Time // zero until the first /input-heartbeat (ut-docs#1329)
+	mode        string    // last mode /apply-mode actually applied; "" until the first call
 }
 
 // newControlServer binds the loopback listener, mints a random bearer
@@ -111,10 +115,17 @@ func newControlServer() (*controlServer, error) {
 		_ = ln.Close()
 		return nil, fmt.Errorf("control token: %w", err)
 	}
-	cs := &controlServer{ln: ln, token: hex.EncodeToString(tokenBytes)}
+	cs := &controlServer{ln: ln, token: hex.EncodeToString(tokenBytes), startedAt: time.Now()}
 	mux := http.NewServeMux()
 	mux.HandleFunc("POST /exit-to-os", cs.withAuth(cs.handleExitToOS))
 	mux.HandleFunc("POST /apply-mode", cs.withAuth(cs.handleApplyMode))
+	// ut-docs#1329 (split from #1228's Pi5-1 input-freeze incident):
+	// input-heartbeat records that the kiosk page's own JS just saw real
+	// user input; snapshot is the on-demand diagnostic dump a human reads
+	// after the fact (e.g. over SSH, the same way Pi5-1 was diagnosed
+	// live) — no self-recovery action, that's the sibling watchdog card.
+	mux.HandleFunc("POST /input-heartbeat", cs.withAuth(cs.handleInputHeartbeat))
+	mux.HandleFunc("GET /snapshot", cs.withAuth(cs.handleSnapshot))
 	cs.srv = &http.Server{Handler: mux, ReadHeaderTimeout: controlServerReadHeaderTimeout}
 	go func() { _ = cs.srv.Serve(ln) }()
 	return cs, nil
@@ -152,6 +163,23 @@ func (cs *controlServer) withAuth(next http.HandlerFunc) http.HandlerFunc {
 		}
 		next(w, r)
 	}
+}
+
+// SetMode records the window mode showWindow actually just applied — the
+// snapshot's window_mode field (ut-docs#1329). Two kinds of callers, both
+// wired by showWindow itself: (1) the launch-time apply and the ADR-0064
+// polled-shell callback (webview_fallback.go), which call applyWindowMode
+// directly and never touch this control server otherwise — without this
+// call cs.mode would sit at its zero value "" for the entire life of the
+// steady-state common case (no live Settings toggle since launch), which
+// is exactly the kind of silently-wrong state ADR-0064 exists to prevent
+// elsewhere in this file; (2) handleApplyMode below, for the spawn-mode
+// fallback's own POST /apply-mode. Safe to call from any goroutine, same
+// convention as SetOps.
+func (cs *controlServer) SetMode(mode string) {
+	cs.mu.Lock()
+	cs.mode = mode
+	cs.mu.Unlock()
 }
 
 // SetOps wires the real native-window actions once the OS-specific
@@ -199,7 +227,58 @@ func (cs *controlServer) handleApplyMode(w http.ResponseWriter, r *http.Request)
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	cs.SetMode(mode)
 	w.WriteHeader(http.StatusNoContent)
+}
+
+// handleInputHeartbeat records that the kiosk page's own JS just observed
+// real user input (ut-docs#1329) — no window/native call, just a
+// timestamp, so unlike the two handlers above this needs no windowOps at
+// all and works even before the native window exists.
+func (cs *controlServer) handleInputHeartbeat(w http.ResponseWriter, _ *http.Request) {
+	cs.mu.Lock()
+	cs.lastInputAt = time.Now()
+	cs.mu.Unlock()
+	w.WriteHeader(http.StatusNoContent)
+}
+
+// snapshot is the on-demand diagnostic dump ut-docs#1329 asks for: enough
+// for a human to reconstruct state after an input-freeze report without
+// another anecdote. lastInputAgeMs is -1 when no heartbeat has ever
+// arrived (never reached the JSON-int trap of a fabricated 0, which would
+// read as "input a moment ago" on a till that has never sent one).
+//
+// KNOWN GAP (review of ut-docs#1329, round 2): on the ADR-0064 attach-mode
+// default (the real .deb/Pi topology), lastInputAgeMs stays permanently at
+// -1 — nothing on that path ever reaches POST /input-heartbeat at all. See
+// internal/pages/kiosk_heartbeat_api.go's own "KNOWN GAP" comment for the
+// recommended fix (route the signal through the existing long-poll
+// instead). This endpoint is fully live and correct today only for a
+// spawn-mode shell.
+type snapshot struct {
+	LastInputAgeMs int64  `json:"last_input_age_ms"`
+	WindowMode     string `json:"window_mode"`
+	ProcessUptimeS int64  `json:"process_uptime_s"`
+	ControlAddr    string `json:"control_addr"`
+}
+
+func (cs *controlServer) handleSnapshot(w http.ResponseWriter, _ *http.Request) {
+	cs.mu.RLock()
+	lastInputAt, mode := cs.lastInputAt, cs.mode
+	cs.mu.RUnlock()
+
+	lastInputAgeMs := int64(-1)
+	if !lastInputAt.IsZero() {
+		lastInputAgeMs = time.Since(lastInputAt).Milliseconds()
+	}
+	snap := snapshot{
+		LastInputAgeMs: lastInputAgeMs,
+		WindowMode:     mode,
+		ProcessUptimeS: int64(time.Since(cs.startedAt).Seconds()),
+		ControlAddr:    cs.Addr(),
+	}
+	w.Header().Set("Content-Type", "application/json")
+	_ = json.NewEncoder(w).Encode(snap)
 }
 
 // Close shuts the listener down; best-effort, called as the shell exits.

@@ -23,3 +23,10 @@ type AndroidNativeWindowController struct{}
 
 func (AndroidNativeWindowController) ExitToOS() error             { return nil }
 func (AndroidNativeWindowController) ApplyMode(mode string) error { return nil }
+
+// InputHeartbeat is a no-op here too: there is no separate shell process on
+// this platform to relay a liveness signal to (see the type doc comment) —
+// ut-docs#1329's diagnosability plumbing targets the desktop-shell
+// architecture where unitill-desktop is a distinct process worth reporting
+// to.
+func (AndroidNativeWindowController) InputHeartbeat() error { return nil }

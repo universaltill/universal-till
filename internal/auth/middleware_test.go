@@ -36,6 +36,29 @@ func TestExitToOSIsExemptButSettingsSurfaceStaysGated(t *testing.T) {
 	}
 }
 
+// ut-docs#1329 (split from #1228's Pi5-1 input-freeze incident):
+// POST /api/kiosk/input-heartbeat is the kiosk page's own input-liveness
+// signal, fired on a throttled timer from every kiosk page including the
+// login screen — same "no session exists yet" shape as /api/window-mode.
+// The exemption must stay exactly this one path.
+func TestKioskInputHeartbeatIsExempt(t *testing.T) {
+	if !exempt("/api/kiosk/input-heartbeat") {
+		t.Error("/api/kiosk/input-heartbeat is not exempt — a till sitting at the " +
+			"login screen would be 401'd before ever relaying a heartbeat, silencing " +
+			"the one diagnosability signal that matters most when the till is stuck")
+	}
+	for _, p := range []string{
+		"/api/kiosk",
+		"/api/kiosk/snapshot",
+		"/api/kiosk/input-heartbeat/extra",
+		"/api/kiosk/input-heartbeat-not-really",
+	} {
+		if exempt(p) {
+			t.Errorf("%s must NOT be exempt — only input-heartbeat carries no shop data", p)
+		}
+	}
+}
+
 // The same fact proven through the real middleware, not just the exempt()
 // helper: a request with NO session cookie must reach the next handler
 // rather than being answered 401 by the middleware itself.

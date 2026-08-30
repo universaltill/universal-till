@@ -23,7 +23,15 @@ func exempt(path string) bool {
 	// /api/window-mode (ut-docs#611): the desktop shell reads this at
 	// launch, before any operator has signed in — same shape as /healthz,
 	// and no more sensitive (UI display preferences, not shop data).
-	if path == "/login" || path == "/healthz" || path == "/setup" || path == "/api/setup" || path == "/api/window-mode" {
+	// /api/kiosk/input-heartbeat (ut-docs#1329): the kiosk page's own
+	// input-liveness signal, POSTed on a throttled timer from EVERY kiosk
+	// page including the login screen itself — a freeze can strand the
+	// till there before any operator ever signs in, same reasoning as
+	// /api/window-mode just above. It carries no shop data and takes no
+	// action beyond a fire-and-forget relay into the existing
+	// loopback-token-authed shell control channel.
+	if path == "/login" || path == "/healthz" || path == "/setup" || path == "/api/setup" ||
+		path == "/api/window-mode" || path == "/api/kiosk/input-heartbeat" {
 		return true
 	}
 	// Machine-to-machine sync surface (ADR-0011): enroll is one-time-token

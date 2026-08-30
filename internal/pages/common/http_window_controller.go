@@ -88,6 +88,16 @@ func (c HTTPWindowController) ApplyMode(mode string) error {
 	return c.post("/apply-mode", url.Values{"mode": {mode}})
 }
 
+// InputHeartbeat relays a kiosk page's own input-liveness signal to the
+// shell's control server (ut-docs#1329), which records it for the
+// on-demand snapshot (cmd/unitill-desktop/control.go's GET /snapshot).
+// Same falls-back-safely shape as ExitToOS/ApplyMode's post() — the caller
+// (registerKioskHeartbeat) never surfaces this as an operator-facing error,
+// it's a passive diagnostic signal, not an action.
+func (c HTTPWindowController) InputHeartbeat() error {
+	return c.post("/input-heartbeat", nil)
+}
+
 // post calls one control-channel endpoint. Every failure path here is the
 // "falls back safely" scenario ut-docs#882's acceptance criteria requires:
 // unreachable (the shell exited, or predates this card and never started

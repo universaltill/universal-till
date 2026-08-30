@@ -92,6 +92,30 @@ func TestHTTPWindowController_ApplyMode_SendsModeForm(t *testing.T) {
 	}
 }
 
+// TestHTTPWindowController_InputHeartbeat_ReachesControlChannel proves the
+// kiosk input-liveness signal (ut-docs#1329) reaches the shell's control
+// server as a real HTTP round trip, mirroring TestHTTPWindowController_
+// ExitToOS_ReachesControlChannel above.
+func TestHTTPWindowController_InputHeartbeat_ReachesControlChannel(t *testing.T) {
+	var gotPath, gotMethod string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath, gotMethod = r.URL.Path, r.Method
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer srv.Close()
+
+	c := HTTPWindowController{addr: strings.TrimPrefix(srv.URL, "http://"), client: srv.Client()}
+	if err := c.InputHeartbeat(); err != nil {
+		t.Fatalf("InputHeartbeat() = %v, want nil", err)
+	}
+	if gotPath != "/input-heartbeat" {
+		t.Errorf("path = %q, want /input-heartbeat", gotPath)
+	}
+	if gotMethod != http.MethodPost {
+		t.Errorf("method = %q, want POST", gotMethod)
+	}
+}
+
 // TestHTTPWindowController_UnreachableReturnsError is the "shell exited, or
 // predates this card and never started the listener" case ut-docs#882's own
 // acceptance criteria names — must be a clear error, never a panic.

@@ -117,6 +117,14 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 	// ut-docs#611 review, M2/M3).
 	prefs := fetchShellPrefs(url)
 	applyWindowMode(w, prefs.WindowMode)
+	if ctl != nil {
+		// ut-docs#1329: this is the ONLY mode-apply most tills ever see —
+		// the ADR-0064 default never touches HTTP handleApplyMode at all
+		// (see the poll callback below), so without this the snapshot's
+		// window_mode would sit at its zero value "" for the entire life
+		// of the steady-state common case.
+		ctl.SetMode(prefs.WindowMode)
+	}
 	if err := reconcileAutostart(prefs.LaunchOnStartup); err != nil {
 		fmt.Fprintln(os.Stderr, "reconcile autostart entry:", err)
 	}
@@ -157,6 +165,9 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 			watchShellMode(pollCtx, newShellPollClient(), url, prefs.WindowMode, prefs.Rev, func(mode string, done func()) {
 				w.Dispatch(func() {
 					applyWindowMode(w, mode)
+					if ctl != nil {
+						ctl.SetMode(mode) // ut-docs#1329, see the launch-time call's own comment above
+					}
 					done()
 				})
 			})

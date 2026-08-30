@@ -96,3 +96,19 @@ func (c *ShellPollWindowController) ExitToOS() error {
 	}
 	return nil
 }
+
+// InputHeartbeat has nothing to publish over the polled channel itself
+// (ShellChannel only carries mode/rev state the shell pulls, and "all
+// traffic shell → server, never the reverse" per this type's own doc
+// comment above) — so, like ApplyMode's own best-effort spawn-mode
+// forwarding, it relays to the fallback HTTPWindowController when one
+// exists (an old shell that handed us its env-token listener) and is a
+// silent no-op otherwise. Never worth failing a heartbeat POST over.
+func (c *ShellPollWindowController) InputHeartbeat() error {
+	if c.fallback != nil {
+		if err := c.fallback.InputHeartbeat(); err != nil {
+			logging.L().Debugf("spawn-mode fallback input heartbeat: %v", err)
+		}
+	}
+	return nil
+}

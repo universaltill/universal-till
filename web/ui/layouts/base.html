@@ -31,6 +31,18 @@
     <!-- ut-docs#400: guard-autofill-suppression.sh requires every standalone
          document to load this — see web/public/autofill.js's own comment. -->
     <script defer src="/public/autofill.js?v={{ assetv "public/autofill.js" }}"></script>
+    <!-- ut-docs#1329: NOT gated on {{ kiosk }} — that template func tracks
+         UT_KIOSK=1 (the Pi headless-cage appliance, see
+         KioskSystemdWindowController's own doc comment), which is a
+         DIFFERENT "kiosk" from the desktop-shell window-mode this
+         heartbeat targets; the appliance path has no unitill-desktop
+         process to relay to at all. Loading it unconditionally (like
+         autofill.js just above) costs nothing where there's no live
+         control channel — Deps.WindowCtl already no-ops safely — and
+         reaches the desktop-shell case this card was actually split from
+         (Pi5-1 ran unitill-desktop, not the cage appliance). See
+         web/public/kiosk-heartbeat.js's own comment for more. -->
+    <script defer src="/public/kiosk-heartbeat.js?v={{ assetv "public/kiosk-heartbeat.js" }}"></script>
   </head>
   <body class="{{ if kiosk }}kiosk{{ end }}{{ if .saleScreen }} sale-screen{{ end }}{{ if .menuScreen }} menu-screen{{ end }}"
         data-currency="{{ currency.Code }}" data-currency-decimals="{{ currency.Decimals }}"

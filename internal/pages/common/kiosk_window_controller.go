@@ -78,6 +78,13 @@ func runSystemctlKiosk(verb string) error {
 // (review of ut-docs#1039, blocker 1).
 func (KioskSystemdWindowController) ExitToOS() error { return ErrNoOSDesktop }
 
+// InputHeartbeat is a no-op on this path: the Pi headless kiosk appliance
+// runs cage+chromium directly, with no unitill-desktop shell process and no
+// control channel to relay a heartbeat to — there is nothing to report to
+// (ut-docs#1329's diagnosability plumbing targets the desktop-shell
+// architecture; a future watchdog for this appliance is a separate design).
+func (KioskSystemdWindowController) InputHeartbeat() error { return nil }
+
 // ApplyMode enables+starts unitill-kiosk.service for "kiosk" mode, and
 // disables+stops it for any other mode — replacing the file-touch-only
 // /etc/unitill/no-kiosk opt-out (still honoured as a documented manual

@@ -249,6 +249,8 @@ type recordingWindowController struct {
 	called         bool
 	applyModeCalls []string
 	applyModeErr   error
+	heartbeatCalls int
+	heartbeatErr   error
 }
 
 func (r *recordingWindowController) ExitToOS() error {
@@ -259,6 +261,11 @@ func (r *recordingWindowController) ExitToOS() error {
 func (r *recordingWindowController) ApplyMode(mode string) error {
 	r.applyModeCalls = append(r.applyModeCalls, mode)
 	return r.applyModeErr
+}
+
+func (r *recordingWindowController) InputHeartbeat() error {
+	r.heartbeatCalls++
+	return r.heartbeatErr
 }
 
 // Exit-to-os (ut-docs#608 scaffold) requires a LIVE manager PIN — an existing
@@ -2066,6 +2073,7 @@ type erroringWindowController struct{ exitErr error }
 
 func (e erroringWindowController) ExitToOS() error          { return e.exitErr }
 func (e erroringWindowController) ApplyMode(m string) error { return nil }
+func (e erroringWindowController) InputHeartbeat() error    { return nil }
 
 // TestExitToOSEndpoint_NotConfirmedIsAuditedAndDistinct (review of
 // ut-docs#1039, finding 3): when a shell was attached and the exit WAS

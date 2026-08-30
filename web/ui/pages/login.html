@@ -18,6 +18,11 @@
          comment for why this can't be app.js (standalone document, no
          layout to load it for us). -->
     <script defer src="/public/osk.js?v={{ assetv "public/osk.js" }}"></script>
+    <!-- ut-docs#1329: not gated on {{ kiosk }} — see web/ui/layouts/
+         base.html's own comment for why. The login screen is exactly
+         where a frozen till most often sits (no operator to notice and
+         restart it). -->
+    <script defer src="/public/kiosk-heartbeat.js?v={{ assetv "public/kiosk-heartbeat.js" }}"></script>
   </head>
   <body class="login-screen{{ if kiosk }} kiosk{{ end }}" data-osk="{{ oskmode }}">
     <main class="login-card">
