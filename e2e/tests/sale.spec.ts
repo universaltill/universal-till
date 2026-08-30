@@ -15,6 +15,9 @@ test('a cash sale completes end to end', async ({ page }) => {
   await expect(page.locator('.basket .total')).toContainText('1.20');
 
   // Cash pays exactly; the completed sale shows the receipt view.
+  // ut-docs#1252: Cash/Card now live inside the #payment-overlay dialog,
+  // opened by the .payment-trigger button, instead of always on screen.
+  await page.getByTestId('payment-open').click();
   await page.locator('.pay-btn', { hasText: 'Cash' }).first().click();
   await expect(page.locator('#basket.receipt-view')).toBeVisible();
   await expect(page.locator('#basket')).toContainText('1.20');

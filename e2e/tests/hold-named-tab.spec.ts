@@ -11,7 +11,7 @@ test('holding a sale with a typed name shows that name in the held strip', async
   await page.locator('.scan-row button[type=submit]').click();
   await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
-  await page.locator('.tender-footer button', { hasText: 'Hold Sale' }).click();
+  await page.locator('.tender-default-footer button', { hasText: 'Hold Sale' }).click();
   await expect(page.locator('#hold-modal')).toBeVisible();
 
   // Regression guard for a real bug an independent review caught: dialog.
@@ -40,7 +40,7 @@ test('cancelling the name prompt does not hold the sale', async ({ page }) => {
   await page.locator('.scan-row button[type=submit]').click();
   await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
-  await page.locator('.tender-footer button', { hasText: 'Hold Sale' }).click();
+  await page.locator('.tender-default-footer button', { hasText: 'Hold Sale' }).click();
   await expect(page.locator('#hold-modal')).toBeVisible();
   await page.locator('#hold-label-input').fill('should not be held');
   await page.locator('#hold-modal button', { hasText: 'Cancel' }).click();
@@ -59,7 +59,7 @@ test('holding with a blank name still falls back to a timestamp label', async ({
   await page.locator('.scan-row button[type=submit]').click();
   await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
-  await page.locator('.tender-footer button', { hasText: 'Hold Sale' }).click();
+  await page.locator('.tender-default-footer button', { hasText: 'Hold Sale' }).click();
   await expect(page.locator('#hold-modal')).toBeVisible();
   await page.locator('#hold-modal button[type=submit]').click();
 

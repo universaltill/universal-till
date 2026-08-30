@@ -115,7 +115,7 @@ test('the hold-sale dialog has its own OSK toggle for the label field', async ({
   await page.locator('.scan-row button[type=submit]').click();
   await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
-  await page.locator('.tender-footer button', { hasText: 'Hold Sale' }).click();
+  await page.locator('.tender-default-footer button', { hasText: 'Hold Sale' }).click();
   await expect(page.locator('#hold-modal')).toBeVisible();
 
   const toggle = page.locator('#hold-modal [data-osk-toggle]');
