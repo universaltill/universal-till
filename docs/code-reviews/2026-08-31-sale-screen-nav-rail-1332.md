@@ -191,22 +191,111 @@ added to all 4 locales (en/fa/ar/tr).
 | Visual: 1024×600, 1280×800, 360×640, `/menu`, `/settings` | screenshotted and looked at, not just asserted |
 | Visual: authenticated session (full wizard walkthrough) | screenshotted and looked at — Admin/Lock icons confirmed correctly sized |
 
-## Not yet done — flagging honestly rather than skipping past it
+## Independent review (Opus) — findings and fixes
 
-This document was written by the same session that made the changes, not
-an independent second model — this repo's standing practice
-(`reviewer` skill) is a genuinely independent, different-model review
-before merge, which has caught real shipped bugs before (a plugin
-signature-verification bypass, a false-pass test) that same-session
-review structurally cannot. **An independent review is still owed before
-this merges.** Also not yet re-run since the very last edits (icon
-boost sizing, products-header, `products.add` i18n key): the full e2e
-suite's LATEST run hit a port collision with a concurrently-running
-background agent's own e2e suite (both hardcoded to 127.0.0.1:8091/8092
-via `run-till.sh`/`playwright.config.ts`) — not a real failure, but it
-means the very last diff has only guard-level and manual visual
-verification, not a fresh clean 233/233. Re-run once the port is free,
-before merge.
+A genuinely independent review (different model, isolated worktree) ran
+against `0798df44` before this PR's two concurrent-merge rounds
+(`origin/main` moved twice mid-review — PR #667 then PR #668, ut-docs#1337)
+— full record: `docs/code-reviews/2026-08-31-sale-screen-nav-rail-1332-independent-review.md`.
+It found three real, diff-invisible bugs and pre-applied fixes for all of
+them, pulled into this branch:
+
+- **H1 (fixed): `monarch.css` — the default theme — silently overrode the
+  rail's layout.** Loaded after `app.css` at equal specificity, it carried
+  a leftover copy of the OLD horizontal top bar's layout properties
+  alongside its colours. Once `app.css` made `.nav` a vertical rail, this
+  broke it out-of-box on every till: the rail's own items overflowed its
+  content box (measured horizontally scrollable), `align-items:center`
+  overrode `stretch`, and a physical `margin-left` (wrong under RTL) made
+  `<a>` rail items narrower than `<button>` ones. Fixed by reducing the
+  theme file to colours only — layout belongs to `app.css` alone.
+- **H2 (fixed): the VAT switch's touch target used `48px`, not `3rem`.**
+  Looks identical to the eye and is not: this file's root font-size is
+  `calc(var(--ui-scale,1) * var(--fluid-fs))`, not a fixed 16px, so a `px`
+  floor doesn't track `--ui-scale`/the fluid viewport fit the way every
+  other touch target in this file does. Measured: the switch was smaller
+  than the `.btn` it replaced at plain default scale (48px vs 53.6px) and
+  dramatically smaller at a raised UI scale (48px vs 80.4px) — on the one
+  control that decides a fiscal receipt's VAT rate. Fixed: `min-height:
+  48px` → `3rem` on both the switch and the table-picker trigger.
+- **H3 (fixed): a live merge-conflict hazard around `hx-sync`.** PR #668
+  (ut-docs#1337) merged concurrently and added `hx-sync="#basket:replace"`
+  to every pre-existing `#basket`-targeting control. This branch's NEW
+  controls (the switch, both table-picker buttons, New Sale in the tender
+  footer) predated that PR and had none — the reviewer's trial merge showed
+  the natural conflict resolution would silently drop `hx-sync` from all
+  four and reintroduce the exact race #668 just fixed. In practice this
+  branch's own real merge (below) resolved those same conflicts directly
+  and added `hx-sync` to all four independently, before reading the review
+  — both arrived at the same fix.
+- **M4 (fixed): rail padding leaked onto pages with no rail.**
+  `body { padding-inline-start: var(--rail-width) }` is unconditional, but
+  `login.html`/`setup.html`/`order_tracking.html` are standalone documents
+  that never render `.nav` at all — measured the first-boot wizard and the
+  lock screen's card drawn ~40px off true centre. Fixed:
+  `body.login-screen, body.tracking-screen { padding-inline-start: 0 }`.
+- **L8 (fixed, comment only):** a `session_chip.html` comment claimed
+  `.session-user` clamps a long operator name to one line with an ellipsis
+  — it does not (measured: the rule is `font-weight: 600` and nothing
+  else). Corrected the comment to describe reality rather than silently
+  changing the behaviour (a real visual change that wants its own card).
+
+**Deferred as follow-up cards, not merge blockers** (reviewer's own
+verdict): M5, the switch's `aria-label` announces "off" rather than which
+state is active to a screen reader (needs a new locale key, not a
+same-session guess); M6, New Sale is below the fold at 360px (the product
+owner's own explicit placement choice — the phone-fallback row is the
+obvious home if this needs revisiting); L7, the rail has no headroom to
+spare at 1024×600 with a full manager session (not broken today, no
+regression test yet); L9/L10, cosmetic/markup-validity nits.
+
+**Verdict: safe to merge with the fixes applied** (reviewer's own words) —
+applied in full.
+
+## Concurrent-PR merge, twice
+
+`origin/main` moved twice while this PR was open:
+
+1. **PR #667** (ut-docs#1314, basket item-name column width) — merged
+   cleanly, no real source conflicts (only regenerated docs-shots PNGs,
+   resolved by taking ours and regenerating fresh).
+2. **PR #668** (ut-docs#1337, the basket hx-sync race fix) — real content
+   conflicts in exactly the three files the independent review's H3
+   predicted (`index.html`, `basket.html`, `table_picker.html`), since this
+   branch rewrote the same controls #668 was adding `hx-sync` to. Resolved
+   by keeping this branch's own markup and adding `hx-sync="#basket:replace"`
+   to all four of its new `#basket`-targeting elements (the switch, the
+   table-picker's clear + option buttons, New Sale in the tender footer) —
+   independently, before reading the review doc, which reached the
+   identical conclusion.
+
+   Also updated `e2e/tests/basket-hx-sync-race-1337.spec.ts` (added by
+   #668): its selector targeted the old two-button `.order-type-toggle`,
+   which this branch had already replaced with `.order-type-switch` —
+   updated to the new selector, same click intent.
+
+## What I measured after every fix
+
+| check | result |
+|---|---|
+| `gofmt -l .` / `go build ./...` | clean |
+| All CI guards (`guard-data-access`, `guard-kiosk-engine`, `guard-plugin-menu-read`, `guard-i18n`, `guard-compliance-claims`, `guard-help-topics`, `guard-docs-shots`) | all pass |
+| `make docs-shots` | 92/92, regenerated after the CSS fixes |
+| Full `e2e/tests/` suite (`--project=default`) | **238/238**, confirmed clean with zero competing processes on the machine |
+
+The full-suite run genuinely flaked twice during this session's later
+rounds (a handful of unrelated tests failing, including once on the new
+race spec itself) — root-caused, not hand-waved: this session had
+accumulated 60+ leftover Chromium/Playwright processes from many
+concurrent worktrees and background agents run over a very long session,
+and a stray worktree (the reviewer's own, left running a repeat full-suite
+pass after reporting its findings) was still actively consuming CPU/ports
+during two of the "final" runs. Every single test that showed as failing
+in a loaded run was re-run in isolation and passed; a manual, fully
+-instrumented reproduction of the race scenario passed 5/5 in a row on an
+unloaded server. Cleaned up (`pkill`, then `git worktree remove` on the
+reviewer's stale worktree) and reran once the machine was genuinely quiet:
+238/238, exit code 0.
 
 ## Deferred, not in this change
 

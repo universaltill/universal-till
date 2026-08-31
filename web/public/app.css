@@ -183,6 +183,18 @@ body.tracking-screen { -webkit-user-select: text; user-select: text; }
    over by the rail's width — .nav itself is `position: fixed`, so it's
    unaffected by this padding on its own ancestor. */
 body { padding-inline-start: var(--rail-width); }
+/* ...but only pages that actually RENDER the rail should pay for it. The
+   rule above is on bare `body`, while `.nav` comes from base.html — and
+   login.html / setup.html / order_tracking.html are standalone pages that
+   load app.css WITHOUT base.html, so they have no rail at all. Independent
+   review (2026-08-31) measured `padding-inline-start: 80.36px` with no
+   `.nav` in the DOM on /login and /setup at 1280x800 and 1024x600: since
+   `body.login-screen` centres its card with `justify-content: center`, the
+   card was centred inside a content box shifted 4.5rem inward, i.e. drawn
+   ~40px off true centre on the first screen a new shop owner ever sees.
+   (self_order*.html escape this only by accident — their own `padding`
+   shorthand happens to reset it — so they are not listed here.) */
+body.login-screen, body.tracking-screen { padding-inline-start: 0; }
 .statusbar { padding-inline-start: calc(var(--rail-width) + 1rem); }
 /* ut-docs#298: .nav's background is always var(--brand) — dark in every
    shipped theme (fresh/slate/amber/monarch all set it near-black/navy) — so
@@ -1165,9 +1177,22 @@ a.btn, a.btn:hover { text-decoration: none; }
    ut-docs#161 fought to protect. flex: 1 so it shares the row evenly with
    the table-picker button next to it (when one renders -- ADR-0054 soft-
    gates that to zero width when the shop has no tables). */
+/* 2026-08-31 (independent review): min-height is 3rem, NOT 48px. The two
+   look identical at a 16px root and are not: this file's own baseline is
+   `html { font-size: calc(var(--ui-scale,1) * var(--fluid-fs)) }`, so a rem
+   floor tracks the operator's UI-scale setting and the fluid viewport fit
+   while a px floor is frozen. The control this replaced was `.order-type-
+   toggle .btn`, i.e. the base `.btn`'s own `min-height: 3rem`, so `48px`
+   made the VAT switch SMALLER than the control it replaced the moment the
+   root font-size exceeded 16px — measured 48px vs 53.6px at a plain
+   1280x800 default scale, and 48px vs 80.4px at ui-scale 1.5. That is
+   exactly the tap-target floor ut-docs#161 fought to protect, on the one
+   control that decides a fiscal receipt's VAT rate (internal/pos/service.go,
+   the German §12 UStG dine-in/takeaway split). Same reason `.logo img`
+   above is rem and not px (ut-docs#213). */
 .order-type-switch {
   flex: 1; display: inline-flex; align-items: center; gap: .5rem;
-  min-height: 48px; padding: .5rem .8rem; border: 1px solid var(--border);
+  min-height: 3rem; padding: .5rem .8rem; border: 1px solid var(--border);
   border-radius: 999px; background: var(--surface); color: var(--text);
   font-weight: 600; cursor: pointer;
 }
@@ -1191,10 +1216,17 @@ a.btn, a.btn:hover { text-decoration: none; }
 
 /* Table-assignment button + dialog (ut-docs#820, ADR-0054) — collapsed
    from an always-expanded inline strip into this button next to the
-   order-type switch, 2026-08-30. flex: 1 so the two share
-   .order-type-row evenly; matches the switch's own 48px floor since it's
-   an equally real action, not a lower-stakes one. */
-.table-picker-trigger { flex: 1; min-height: 48px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+   order-type switch, 2026-08-30. Matches the switch's own 3rem floor since
+   it's an equally real action, not a lower-stakes one (and, like the
+   switch, rem not px so it tracks --ui-scale — independent review,
+   2026-08-31).
+   NOTE the `flex: 1` here does nothing: this button's parent is
+   table_picker.html's own `<span id="table-picker">` wrapper, and THAT span
+   (not the button) is the flex item of `.order-type-row`. Kept only because
+   it is harmless and the wrapper may later become `display: contents`;
+   measured today the switch takes the row's remaining space and this button
+   is content-sized, which is the layout we want anyway. */
+.table-picker-trigger { flex: 1; min-height: 3rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .table-current { display: block; font-weight: 600; margin-block-end: .5rem; }
 .table-picker-options { display: flex; flex-wrap: wrap; gap: .4rem; margin-block-start: .5rem; }
 .table-picker-empty { display: block; }
