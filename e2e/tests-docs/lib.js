@@ -15,7 +15,9 @@
 //                           the templates, e.g. app.css's statusbar colors,
 //                           which docs-shots.spec.ts's mask relies on
 //                           PLUS every *.go under internal/pages/ (recursive,
-//                           excluding *_test.go) EXCEPT a file whose ONLY
+//                           excluding *_test.go and testdata/ fixtures —
+//                           test-only wasip1 guests, build-tagged out of the
+//                           server, ut-docs#1351) EXCEPT a file whose ONLY
 //                           registered mux routes are all unscreenshotted
 //                           (ut-docs#620) — it registers at least one route
 //                           but none is any topic's routes[0], the one URL
@@ -147,8 +149,25 @@ function surfaceFiles() {
   const ui = walkFiles(path.join(repoRoot, 'web', 'ui'));
   const publicAssets = walkFiles(path.join(repoRoot, 'web', 'public'));
   const screenshotted = new Set(routedTopics().map((t) => t.route));
-  const pages = walkFiles(path.join(repoRoot, 'internal', 'pages'))
+  const pagesRoot = path.join(repoRoot, 'internal', 'pages');
+  const pages = walkFiles(pagesRoot)
     .filter((p) => p.endsWith('.go') && !p.endsWith('_test.go'))
+    // testdata/ holds test-only fixtures (e.g. the wasip1 guest plugins
+    // compiled per-test into .wasm), build-tagged out of the server binary —
+    // they can never change a rendered pixel, and hashing them forced a full
+    // screenshot regen for adding a TEST fixture (ut-docs#1351; same
+    // false-positive class as #620/#659). Must stay in lockstep with
+    // scripts/ci/guard-docs-shots.sh's surface_files.
+    //
+    // Matched against the path RELATIVE to internal/pages, never the
+    // absolute one: guard-docs-shots.sh prunes `testdata` while walking the
+    // relative "internal/pages" tree, so a checkout living under a
+    // directory literally named `testdata` (a CI workspace, a scratch
+    // worktree) would make an absolute-path test here silently drop EVERY
+    // internal/pages file from the surface while the .sh kept them — the
+    // two would disagree on the hash with nothing in the diff to explain
+    // it. Relative matching makes the lockstep hold for any checkout path.
+    .filter((p) => !path.relative(pagesRoot, p).split(path.sep).includes('testdata'))
     .filter((p) => {
       const routes = registeredRoutes(fs.readFileSync(p, 'utf8'));
       // Exclude ONLY a file that registers routes and none of them is
@@ -193,7 +212,8 @@ function buildManifest() {
       'sha256; surface_sha256 = sha256 of concat of "<sha256(file)>  <relpath>\\n" ' +
       'for the sorted fileset (web/ui/** + non-test internal/pages/**.go, ' +
       'excluding a file whose only registered routes are all ' +
-      'unscreenshotted, ut-docs#620); ' +
+      'unscreenshotted, ut-docs#620, and excluding testdata/ fixtures, ' +
+      'ut-docs#1351); ' +
       'topic hashes = sha256 of the topic markdown (en fallback). ' +
       'Full spec in e2e/tests-docs/lib.js.',
     surface_sha256: surfaceHash(),
