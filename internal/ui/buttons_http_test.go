@@ -405,6 +405,72 @@ func TestButtonsHTTPList_TabsCarryColorWithMultipleCategories(t *testing.T) {
 	}
 }
 
+// TestButtonsHTTPList_TopLevelTabPanelCarriesColorForDirectTiles: ut-docs#1325
+// (product tiles should show their category's color). The tab bar carries
+// --cat-color on the <button> itself (pinned by
+// TestButtonsHTTPList_TabsCarryColorWithMultipleCategories above), but a
+// top-level category's OWN buttons render inside its tab panel
+// (id="cat-panel-<id>") via the "category-group-body" template — a
+// completely separate element from the tab button, not a descendant of it.
+// CSS custom properties only inherit down the DOM tree, so a .btn-tile
+// under that panel has no --cat-color in scope at all unless the panel
+// itself also carries it. Only a NESTED subcategory (rendered via
+// "category-group") gets its own --cat-color — so this gap is invisible
+// for any till whose top-level categories are flat (no subcategories),
+// which is the common case. Pins that the panel wrapper carries the same
+// color as its tab, so every .btn-tile underneath — nested or not —
+// resolves the right var(--cat-color, ...) via inheritance.
+func TestButtonsHTTPList_TopLevelTabPanelCarriesColorForDirectTiles(t *testing.T) {
+	h, db := newButtonsHTTPWithDB(t, "buttons.html")
+
+	mustExec(t, db, `INSERT INTO categories(id,name,parent_id,sort_order,color) VALUES('drinks','Drinks',NULL,0,'#1D4ED8')`)
+	mustExec(t, db, `INSERT INTO categories(id,name,parent_id,sort_order,color) VALUES('food','Food',NULL,1,'#AA0011')`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active, category_id) VALUES('itm1','S1','Cola', 150, 1, 'drinks')`)
+	mustExec(t, db, `INSERT INTO items(id, sku, name, base_price, is_active, category_id) VALUES('itm2','S2','Burger', 650, 1, 'food')`)
+	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('B1','Cola','itm1',0)`)
+	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES('B2','Burger','itm2',1)`)
+
+	rec := httptest.NewRecorder()
+	h.List(rec, httptest.NewRequest("GET", "/ui/buttons", nil))
+	if rec.Code != 200 {
+		t.Fatalf("List = %d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	drinksPanel := extractBetween(t, body, `id="cat-panel-drinks"`, `id="cat-panel-food"`)
+	if !strings.Contains(drinksPanel, "--cat-color: #1D4ED8") {
+		t.Fatalf("expected the Drinks tab panel (ancestor of its own tiles) to carry --cat-color: #1D4ED8 so Cola's tile inherits it, got panel: %s", drinksPanel)
+	}
+	if !strings.Contains(drinksPanel, "Cola") {
+		t.Fatalf("test setup sanity: expected Cola inside the Drinks panel, got: %s", drinksPanel)
+	}
+
+	foodPanel := body[strings.Index(body, `id="cat-panel-food"`):]
+	if !strings.Contains(foodPanel, "--cat-color: #AA0011") {
+		t.Fatalf("expected the Food tab panel (ancestor of its own tiles) to carry --cat-color: #AA0011 so Burger's tile inherits it, got panel: %s", foodPanel)
+	}
+	if !strings.Contains(foodPanel, "Burger") {
+		t.Fatalf("test setup sanity: expected Burger inside the Food panel, got: %s", foodPanel)
+	}
+}
+
+// extractBetween returns the substring of s starting at the first
+// occurrence of start (inclusive) up to the first occurrence of end after
+// it (exclusive) — used to scope an assertion to one tab panel's own
+// markup rather than the whole document.
+func extractBetween(t *testing.T, s, start, end string) string {
+	t.Helper()
+	i := strings.Index(s, start)
+	if i == -1 {
+		t.Fatalf("marker %q not found in: %s", start, s)
+	}
+	j := strings.Index(s[i:], end)
+	if j == -1 {
+		t.Fatalf("marker %q not found after %q in: %s", end, start, s)
+	}
+	return s[i : i+j]
+}
+
 func TestNewRenderer_ErrorOnMissingTemplate(t *testing.T) {
 	_, err := NewRenderer(
 		filepath.Join("web", "ui", "layouts", "base.html"),
