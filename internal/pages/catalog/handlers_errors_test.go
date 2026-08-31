@@ -117,13 +117,14 @@ func TestVariantDeactivate_TableResponseAndRepoError(t *testing.T) {
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "S1", Name: "Coffee", BasePrice: 300, IsActive: true})
 	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "itm1", SKU: "S1-L", Name: "Large", Price: 350, IsActive: true})
 
-	// Without panelItem the response is the refreshed items table.
+	// Without panelItem the response is the parent item's refreshed row
+	// (row-scoped OOB since ut-docs#1363, resolved via ItemIDForVariant).
 	rec := postForm(t, mux, "/api/catalog/variant/deactivate", "id=v1")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `id="catalog-table"`) {
-		t.Fatal("table-scoped deactivate must answer with the items table")
+	if !strings.Contains(rec.Body.String(), `id="catalog-row-itm1" hx-swap-oob="true"`) {
+		t.Fatal("no-panel deactivate must answer with the parent item's row")
 	}
 
 	if _, err := db.Exec(`DROP TABLE item_variants`); err != nil {
@@ -209,8 +210,8 @@ func TestBarcodeAttach_PanelResponse(t *testing.T) {
 		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `id="catalog-table" hx-swap-oob="true"`) {
-		t.Fatal("panel-scoped attach must carry the out-of-band items table")
+	if !strings.Contains(body, `id="catalog-row-itm1" hx-swap-oob="true"`) {
+		t.Fatal("panel-scoped attach must carry the out-of-band item row")
 	}
 	if !strings.Contains(body, "5000001") {
 		t.Fatal("panel must show the newly attached barcode")
@@ -264,13 +265,14 @@ func TestBarcodeDelete_TableResponse(t *testing.T) {
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "S1", Name: "Coffee", BasePrice: 300, IsActive: true})
 	testsupport.SeedBarcode(t, db, "5000001", "itm1", true)
 
-	// Without panelItem the response is the refreshed items table.
+	// Without panelItem the response is the owning item's refreshed row
+	// (row-scoped OOB since ut-docs#1363, owner resolved before deletion).
 	rec := postForm(t, mux, "/api/catalog/barcode/delete", "barcode=5000001")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `id="catalog-table"`) {
-		t.Fatal("table-scoped delete must answer with the items table")
+	if !strings.Contains(rec.Body.String(), `id="catalog-row-itm1" hx-swap-oob="true"`) {
+		t.Fatal("no-panel delete must answer with the owning item's row")
 	}
 	var n int
 	_ = db.QueryRow(`SELECT COUNT(*) FROM item_barcodes WHERE barcode = '5000001'`).Scan(&n)

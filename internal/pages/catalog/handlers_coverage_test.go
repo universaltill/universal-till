@@ -353,13 +353,14 @@ func TestVariantDeactivate_PanelAndValidation(t *testing.T) {
 		t.Errorf("missing id: want 400, got %d", rec.Code)
 	}
 
-	// With panelItem: deactivates AND answers with the panel + oob table.
+	// With panelItem: deactivates AND answers with the panel + the item's
+	// row as an out-of-band swap (row-scoped since ut-docs#1363).
 	rec := postForm(t, mux, "/api/catalog/variant/deactivate", "id=v1&panelItem=itm1")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `id="catalog-table" hx-swap-oob="true"`) {
-		t.Fatal("panel-scoped deactivate must carry the out-of-band items table")
+	if !strings.Contains(rec.Body.String(), `id="catalog-row-itm1" hx-swap-oob="true"`) {
+		t.Fatal("panel-scoped deactivate must carry the out-of-band item row")
 	}
 	var active int
 	if err := db.QueryRow(`SELECT is_active FROM item_variants WHERE id = 'v1'`).Scan(&active); err != nil {

@@ -182,7 +182,7 @@ func RenderWith(files []string, funcs template.FuncMap) func(name string, data a
 	stripped := stripWebPrefixes(files)
 	// Cache key is the file set itself (ut-docs#1320): callers rebuild the
 	// same literal file slice on every call (some per-request, e.g.
-	// catalog/handlers.go's renderCatalogTable closure), so keying on the
+	// catalog/handlers.go's writeCatalogRowOOB closure), so keying on the
 	// joined paths — rather than trusting call sites to share one cached
 	// RenderWith(...) result — is what makes every one of them hit cache
 	// regardless of how the call site is structured. "\x00" can't appear in

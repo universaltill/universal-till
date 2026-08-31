@@ -303,6 +303,134 @@ ORDER BY v.name`)
 	return out, rows.Err()
 }
 
+// GetItem loads ONE item in exactly ListItems' shape (same columns, same
+// COALESCE'd nullable handling) — the single-row source for the catalog
+// admin's per-row HTMX OOB responses (ut-docs#1363), so a one-item mutation
+// no longer refetches the whole unbounded catalog. Unlike ListItems it does
+// NOT filter on is_active: the row renderer needs to see "this item just
+// went inactive" (IsActive=false, ok=true) to answer with an OOB row delete
+// instead of mistaking it for a missing item.
+func (r *CatalogRepo) GetItem(ctx context.Context, itemID string) (catalogtypes.ItemInput, bool, error) {
+	var itm catalogtypes.ItemInput
+	var tax, cat, brand, desc sql.NullString
+	err := r.db.QueryRowContext(ctx, `
+SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data
+FROM items WHERE id = ?`, itemID).
+		Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData)
+	if errors.Is(err, sql.ErrNoRows) {
+		return catalogtypes.ItemInput{}, false, nil
+	}
+	if err != nil {
+		return catalogtypes.ItemInput{}, false, fmt.Errorf("get item: %w", err)
+	}
+	if desc.Valid {
+		itm.Description = desc.String
+	}
+	if tax.Valid {
+		itm.TaxCodeID = &tax.String
+	}
+	if cat.Valid {
+		itm.CategoryID = &cat.String
+	}
+	if brand.Valid {
+		itm.BrandID = &brand.String
+	}
+	return itm, true, nil
+}
+
+// ItemVariantViews is ItemVariants for ONE item (ut-docs#1363): the same
+// active-only, name-ordered variant summaries (each with its primary
+// barcode) the whole-catalog map holds under that item's key — the catalog
+// row's variant summary, without querying every item's variants.
+func (r *CatalogRepo) ItemVariantViews(ctx context.Context, itemID string) ([]VariantView, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT v.id, v.name, v.price,
+       COALESCE((SELECT b.barcode FROM variant_barcodes b WHERE b.variant_id = v.id
+                 ORDER BY b.is_primary DESC, b.barcode LIMIT 1), '')
+FROM item_variants v
+WHERE v.item_id = ? AND v.is_active = 1
+ORDER BY v.name`, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []VariantView
+	for rows.Next() {
+		var v VariantView
+		if err := rows.Scan(&v.ID, &v.Name, &v.PriceMinor, &v.Barcode); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
+// CountActiveItems reports how many items the catalog table currently shows
+// — the per-row OOB protocol's empty-state bookkeeping (ut-docs#1363): the
+// first created item must remove the placeholder row, the last deactivated
+// one must restore it, and an OOB swap against a placeholder that isn't in
+// the DOM logs an htmx:oobErrorNoTarget console error, so the server has to
+// know rather than guess.
+func (r *CatalogRepo) CountActiveItems(ctx context.Context) (int, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM items WHERE is_active = 1`).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count active items: %w", err)
+	}
+	return n, nil
+}
+
+// ItemIDForVariant resolves a variant to its parent item — the catalog
+// table has one row per ITEM, so a variant-scoped mutation without a
+// panelItem hint needs the parent to know which row to re-render
+// (ut-docs#1363). Resolves inactive variants too: the caller typically just
+// deactivated the variant it's asking about.
+func (r *CatalogRepo) ItemIDForVariant(ctx context.Context, variantID string) (string, bool, error) {
+	var itemID string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT item_id FROM item_variants WHERE id = ?`, variantID).Scan(&itemID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("item for variant: %w", err)
+	}
+	return itemID, true, nil
+}
+
+// ItemIDForBarcode resolves a barcode to the ITEM whose catalog row shows
+// it — directly for an item-attached code, via the parent item for a
+// variant-attached one (ut-docs#1363's barcode-delete fallback resolves the
+// owner BEFORE deleting, since afterwards nothing links the code to a row).
+// Same exact-first-then-canonical strategy, and for the same reason, as
+// BarcodeExists/DeleteBarcode (ut-docs#948 F6).
+func (r *CatalogRepo) ItemIDForBarcode(ctx context.Context, barcode string) (string, bool, error) {
+	id, ok, err := r.itemIDForBarcodeExact(ctx, barcode)
+	if err != nil || ok {
+		return id, ok, err
+	}
+	if canonical := r.canonicalBarcodeKey(ctx, barcode); canonical != barcode {
+		return r.itemIDForBarcodeExact(ctx, canonical)
+	}
+	return "", false, nil
+}
+
+func (r *CatalogRepo) itemIDForBarcodeExact(ctx context.Context, barcode string) (string, bool, error) {
+	var itemID string
+	err := r.db.QueryRowContext(ctx, `
+SELECT item_id FROM item_barcodes WHERE barcode = ?
+UNION ALL
+SELECT v.item_id FROM variant_barcodes b JOIN item_variants v ON v.id = b.variant_id
+WHERE b.barcode = ?
+LIMIT 1`, barcode, barcode).Scan(&itemID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("item for barcode: %w", err)
+	}
+	return itemID, true, nil
+}
+
 // VariantEditView is one variant in the item's edit panel: everything the
 // operator can change, including inactive variants (so they can be
 // reactivated) and every barcode attached to the variant.

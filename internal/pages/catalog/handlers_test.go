@@ -277,8 +277,10 @@ func TestCatalogVariantsPanel(t *testing.T) {
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("variant save: want 200, got %d: %s", rec2.Code, rec2.Body.String())
 	}
-	if !strings.Contains(rec2.Body.String(), `id="catalog-table" hx-swap-oob="true"`) {
-		t.Fatal("panel mutation response missing the out-of-band items table")
+	// Row-scoped since ut-docs#1363: the OOB ride-along is the affected
+	// item's ROW, not the whole re-queried table.
+	if !strings.Contains(rec2.Body.String(), `id="catalog-row-itm1" hx-swap-oob="true"`) {
+		t.Fatal("panel mutation response missing the out-of-band item row")
 	}
 	var name string
 	var active int

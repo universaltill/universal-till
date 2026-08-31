@@ -233,5 +233,16 @@
     })();
   </script>
   {{ end }}
+  {{/* Row-scoped OOB ride-along (ut-docs#1363): panel mutations change what
+       the items table shows for this item (barcode/variant summaries), so
+       the refreshed ROW rides along as an hx-swap-oob fragment. It must be
+       NESTED here, inside a carrier <table> inside the panel div: htmx
+       1.9.12's fragment parser (makeFragment) picks the parse context from
+       the response's FIRST tag — a bare top-level <tr> after this <div>
+       would be silently discarded by the HTML parser. htmx finds the
+       [hx-swap-oob] row via querySelectorAll (nesting is fine), swaps it
+       out, and the leftover empty carrier is replaced with the rest of the
+       panel on its next render. */}}
+  {{ with .OOBRow }}<table hidden aria-hidden="true">{{ . }}</table>{{ end }}
 </div>
 {{ end }}

@@ -74,10 +74,10 @@
 
     <details class="catalog-extra">
       <summary>{{ T "catalog.item_image" }}</summary>
-      <form id="image-form" enctype="multipart/form-data">
+      <form id="image-form" enctype="multipart/form-data" hx-encoding="multipart/form-data">
         <label>{{ T "basket.col.item" }} <input type="text" class="pick-item" id="image-item-label" readonly placeholder="{{ T "catalog.pick_row" }}"></label>
-        <input type="hidden" id="image-item-id">
-        <label>{{ T "catalog.image_types" }} <input type="file" id="image-file" accept="image/png,image/jpeg" required></label>
+        <input type="hidden" name="item_id" id="image-item-id">
+        <label>{{ T "catalog.image_types" }} <input type="file" name="image" id="image-file" accept="image/png,image/jpeg" required></label>
         <button class="btn" type="submit">{{ T "catalog.upload_image" }}</button>
         <div id="image-msg" class="muted" style="min-height:1.2rem"></div>
       </form>
@@ -329,7 +329,11 @@
     var failed = false;
     function markFailed() { failed = true; }
     document.body.addEventListener('htmx:responseError', markFailed, { once: true });
-    htmx.ajax('POST', url, { source: '#item-form', target: '#catalog-table', swap: 'outerHTML' })
+    // swap:'none' (ut-docs#1363): the server answers with just the affected
+    // row as hx-swap-oob fragments (replace-in-place for an edit, a
+    // beforeend append for a new item) — htmx still processes OOB content
+    // under swap "none", there's just no main-target swap any more.
+    htmx.ajax('POST', url, { source: '#item-form', swap: 'none' })
       .then(function () {
         document.body.removeEventListener('htmx:responseError', markFailed);
         if (failed) return;
@@ -364,6 +368,12 @@
     if (cost && cost.value !== '') ev.detail.parameters.costPrice = window.utCurrency.toMinor(cost.value);
   });
 
+  // Image upload rides htmx too (ut-docs#1363): the server now answers with
+  // the item's row as an hx-swap-oob fragment, and htmx's OOB processing —
+  // not a hand-rolled fetch + outerHTML assignment — is what knows how to
+  // apply (and re-initialize) it. swap:'none': the whole response is OOB.
+  // The form carries hx-encoding="multipart/form-data" and named inputs so
+  // htmx serializes the file itself.
   var imageForm = document.getElementById('image-form');
   imageForm.addEventListener('submit', function (ev) {
     ev.preventDefault();
@@ -372,20 +382,26 @@
     var imsg = document.getElementById('image-msg');
     if (!id) { imsg.textContent = '✗ pick an item first (click a row)'; return; } // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
     if (!f) { imsg.textContent = '✗ choose an image'; return; } // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
-    var fd = new FormData();
-    fd.append('item_id', id);
-    fd.append('image', f);
     imsg.textContent = '⏳ uploading…';
-    fetch('/api/catalog/item/image', { method: 'POST', body: fd }).then(function (res) {
-      if (!res.ok) { return res.text().then(function (t) { imsg.textContent = '✗ ' + t; }); }
-      return res.text().then(function (html) {
-        var table = document.getElementById('catalog-table');
-        table.outerHTML = html;
-        htmx.process(document.getElementById('catalog-table'));
-        imsg.textContent = '✓ image updated'; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
-        filterRows();
-      });
-    }).catch(function (e) { imsg.textContent = '✗ ' + e; });
+    htmx.ajax('POST', '/api/catalog/item/image', { source: '#image-form', swap: 'none' });
+  });
+  // Errors stay in the image panel's own slot: stopPropagation keeps the
+  // body-level htmx:responseError listener (which renders into the ITEM
+  // form's notice) out of an image upload's failure.
+  imageForm.addEventListener('htmx:responseError', function (ev) {
+    ev.stopPropagation();
+  });
+  imageForm.addEventListener('htmx:afterRequest', function (ev) {
+    var imsg = document.getElementById('image-msg');
+    if (ev.detail.successful) {
+      imsg.textContent = '✓ image updated'; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
+      filterRows();
+    } else {
+      // Server error text when there is one, else the page's existing
+      // translated generic error (no new hardcoded prose).
+      var xhr = ev.detail.xhr;
+      imsg.textContent = '✗ ' + (((xhr && xhr.responseText) || '').trim() || NOTICE_MSG.itemFormErrorGeneric);
+    }
   });
 
   // Keypad mapping (ADR-0021): a physical HID-keyboard-emulating keypad
@@ -438,8 +454,14 @@
     });
   }
   search.addEventListener('input', filterRows);
-  document.body.addEventListener('htmx:afterSwap', function (ev) {
-    if (ev.detail.target && ev.detail.target.id === 'catalog-table') filterRows();
+  // Catalog mutations are row-scoped OOB swaps (ut-docs#1363), not a
+  // #catalog-table target swap, so they come through htmx:oobAfterSwap: a
+  // replaced/inserted row arrives unfiltered, so an active search has to be
+  // reapplied to it.
+  document.body.addEventListener('htmx:oobAfterSwap', function (ev) {
+    var t = ev.detail && ev.detail.target;
+    if (!t || !t.id) return;
+    if (t.id === 'catalog-rows' || t.id.indexOf('catalog-row-') === 0) filterRows();
   });
 })();
 </script>

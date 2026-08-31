@@ -1,0 +1,65 @@
+{{/*
+  One catalog item row (ut-docs#1363). Context is a catalogRow (handlers.go):
+  .Item / .Barcodes / .Variants, plus .OOB — the hx-swap-oob attribute value
+  for row-scoped mutation responses ("" for the full-table render, "true"
+  to replace the row in place, "beforeend:#catalog-rows" to append a newly
+  created item's row).
+*/}}
+{{ define "catalog_row" }}
+          <tr class="catalog-row" id="catalog-row-{{ .Item.ID }}"{{ if .OOB }} hx-swap-oob="{{ .OOB }}"{{ end }}
+              data-id="{{ .Item.ID }}" data-name="{{ .Item.Name }}" data-sku="{{ .Item.SKU }}"
+              data-description="{{ .Item.Description }}" data-unit="{{ .Item.Unit }}"
+              data-weighed="{{ if .Item.IsWeighed }}1{{ else }}0{{ end }}"
+              data-category="{{ with .Item.CategoryID }}{{ . }}{{ end }}"
+              data-brand="{{ with .Item.BrandID }}{{ . }}{{ end }}"
+              data-price="{{ .Item.BasePrice }}"
+              data-tax="{{ with .Item.TaxCodeID }}{{ . }}{{ end }}">
+            <td class="catalog-thumb-cell">{{ $thumb := printf "/public/assets/items/%s/thumb.png" .Item.ID }}{{ if imgExists $thumb }}<img class="thumb small" src="{{ imgv $thumb }}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">{{ else }}<div class="thumb small" aria-hidden="true"></div>{{ end }}</td>
+            <td class="catalog-name">{{ .Item.Name }}{{ if .Item.IsSampleData }} <span class="sample-badge">{{ T "catalog.sample_badge" }}</span>{{ end }}
+              {{ with .Barcodes }}<div class="muted" style="font-size:.8em">{{ T "catalog.barcodes" }}: {{ range $i, $b := . }}{{ if $i }}, {{ end }}{{ $b }}{{ end }}</div>{{ end }}
+              {{ with .Variants }}<div class="muted" style="font-size:.8em">{{ T "catalog.variants" }}: {{ range $i, $v := . }}{{ if $i }}, {{ end }}{{ $v.Name }}{{ if $v.Barcode }} [{{ $v.Barcode }}]{{ end }}{{ end }}</div>{{ end }}
+            </td>
+            <td class="muted">{{ .Item.SKU }}</td>
+            <td>{{ money .Item.BasePrice }}</td>
+            <td>{{ if .Item.Unit }}{{ .Item.Unit }}{{ else }}each{{ end }}{{ if .Item.IsWeighed }} ⚖{{ end }}</td>
+            <td>{{ $name := taxCodeName .Item.TaxCodeID }}{{ if $name }}{{ $name }}{{ else }}—{{ end }}</td>
+            <td class="btn-actions">
+              <button class="btn secondary catalog-edit" type="button">{{ T "common.edit" }}</button>
+              <button class="btn danger" type="button"
+                      hx-post="/api/catalog/item/deactivate"
+                      hx-vals='{{ jsonVals "id" .Item.ID }}'
+                      hx-confirm="Deactivate {{ .Item.Name }}?"
+                      hx-swap="none">✕</button>
+            </td>
+          </tr>
+{{ end }}
+
+{{/* Empty-state placeholder row (rendered inside the full table's tbody,
+     and inside catalog_oob_empty_insert's carrier). */}}
+{{ define "catalog_empty_row" }}
+          <tr id="catalog-empty-row"><td colspan="7" class="empty">{{ T "basket.empty" }}</td></tr>
+{{ end }}
+
+{{/*
+  OOB fragment carriers (ut-docs#1363). Two htmx 1.9.12 mechanics dictate
+  the <tbody> wrappers:
+  1. makeFragment picks the parse context from the response's FIRST tag —
+     a response starting with <tbody> is parsed inside a <table> at depth 1,
+     which keeps EVERY sibling fragment (further tbodys, implied-tbody-
+     wrapped <tr>s), whereas a response starting with <tr> is unwrapped at
+     tbody depth and drops any sibling tbody.
+  2. A selector-style OOB swap (hx-swap-oob="beforeend:#catalog-rows")
+     inserts the oob element's CHILDREN, discarding the element itself — so
+     the attribute goes on a carrier <tbody> wrapping the row; putting it on
+     the <tr> directly would append the row's loose <td>s (confirmed in a
+     real browser). Replace/delete swaps target the element itself, so
+     there the attribute stays on the <tr>, inside a plain carrier.
+*/}}
+{{ define "catalog_oob_row_update" }}<tbody>{{ template "catalog_row" . }}</tbody>{{ end }}
+{{ define "catalog_oob_row_insert" }}<tbody hx-swap-oob="beforeend:#catalog-rows">{{ template "catalog_row" . }}</tbody>{{ end }}
+{{ define "catalog_oob_empty_insert" }}<tbody hx-swap-oob="beforeend:#catalog-rows">{{ template "catalog_empty_row" }}</tbody>{{ end }}
+
+{{/* OOB delete marker: removes the element with this id from the page
+     (a deactivated item's row, or the empty-state placeholder when the
+     first item is created). Context is the target element's full id. */}}
+{{ define "catalog_oob_delete" }}<tbody><tr id="{{ . }}" hx-swap-oob="delete"></tr></tbody>{{ end }}

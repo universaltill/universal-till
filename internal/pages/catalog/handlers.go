@@ -19,9 +19,12 @@ import (
 	"strings"
 	"time"
 
+	"html/template"
+
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/barcode"
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	productlookup "github.com/universaltill/universal-till/internal/lookup"
@@ -35,6 +38,18 @@ import (
 // hermetic httptest servers so nothing in this package can ever touch the
 // network under test.
 var newLookupClient = func() *productlookup.Client { return productlookup.NewClient(nil, nil) }
+
+// catalogRow is one row of the catalog admin table (catalog_row.html): the
+// item plus the summaries the row displays. OOB carries the hx-swap-oob
+// attribute value for row-scoped mutation responses (ut-docs#1363) — empty
+// on the full page render, "true" for replace-in-place, "beforeend:..." for
+// a newly created item's append.
+type catalogRow struct {
+	Item     catalogtypes.ItemInput
+	Barcodes []string
+	Variants []data.VariantView
+	OOB      string
+}
 
 // Register mounts catalog list/create and barcode attach endpoints.
 // func Register(mux *http.ServeMux, db *sql.DB, theme string, menu []map[string]string) {
@@ -75,23 +90,105 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 	})
 
-	// Every mutation endpoint answers with the refreshed items table.
-	renderCatalogTable := func(w http.ResponseWriter, r *http.Request) {
-		items, _ := repo.ListItems(r.Context())
-		barcodes, _ := repo.ItemBarcodes(r.Context())
-		variants, _ := repo.ItemVariants(r.Context())
-		taxCodes, _ := repo.ListAllTaxCodes(r.Context())
+	rowFiles := files(filepath.Join("web", "ui", "partials", "catalog_row.html"))
+
+	// writeCatalogRowOOB answers a catalog mutation with just the AFFECTED
+	// item's row as HTMX out-of-band fragments (ut-docs#1363) instead of the
+	// old full-table refetch (4 unbounded queries per mutation):
+	//   - live item, insert=false → replace the row in place
+	//     (hx-swap-oob="true" against #catalog-row-<id>);
+	//   - live item, insert=true (just created) → append the row
+	//     (hx-swap-oob="beforeend:#catalog-rows"), deleting the empty-state
+	//     placeholder when this is the first item;
+	//   - missing/inactive item → delete the row (hx-swap-oob="delete"),
+	//     appending the placeholder back when it was the last item.
+	// The empty-state placeholder is only ever touched when the active-item
+	// count says it's actually there/gone: an OOB swap against a missing id
+	// is a silent no-op in htmx 1.9.12 (not a console error — this isn't
+	// error-avoidance), but firing both branches blindly would still leave
+	// the DOM wrong — a stray placeholder next to real rows, or a missing
+	// one after the last row goes — so the server tracks state instead of
+	// guessing.
+	// Returns an error only for data-load failures, before anything is
+	// written, so the caller can still send a clean error response.
+	writeCatalogRowOOB := func(w http.ResponseWriter, r *http.Request, itemID string, insert bool) error {
+		itm, ok, err := repo.GetItem(r.Context(), itemID)
+		if err != nil {
+			return err
+		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		if !ok || !itm.IsActive {
+			render := httpx.RenderWith(rowFiles, funcs)
+			render("catalog_oob_delete", "catalog-row-"+itemID)(w, r)
+			if n, err := repo.CountActiveItems(r.Context()); err == nil && n == 0 {
+				// Idempotent against a repeated no-op deactivation of an
+				// already-inactive item: delete any placeholder already on
+				// the page before appending a fresh one, so two calls in a
+				// row can never leave two #catalog-empty-row elements in
+				// the DOM (ut-docs#1363 review, N2). An OOB delete against
+				// a missing id is a silent no-op in htmx.
+				render("catalog_oob_delete", "catalog-empty-row")(w, r)
+				render("catalog_oob_empty_insert", nil)(w, r)
+			}
+			return nil
+		}
+		itemBCs, err := repo.BarcodesForItem(r.Context(), itemID)
+		if err != nil {
+			return err
+		}
+		barcodes := make([]string, 0, len(itemBCs))
+		for _, b := range itemBCs {
+			barcodes = append(barcodes, b.Barcode)
+		}
+		variants, err := repo.ItemVariantViews(r.Context(), itemID)
+		if err != nil {
+			return err
+		}
+		// The row only ever shows its own item's tax code — resolve just
+		// that one instead of listing every code (a retired code still
+		// resolves by name, same as ListAllTaxCodes-fed taxCodeNameFunc).
+		var taxCodes []data.TaxCodeView
+		if itm.TaxCodeID != nil {
+			if tc, err := repo.GetTaxCode(r.Context(), *itm.TaxCodeID); err == nil {
+				taxCodes = append(taxCodes, tc)
+			}
+		}
 		funcs["taxCodeName"] = taxCodeNameFunc(taxCodes)
-		httpx.RenderWith(files(
-			filepath.Join("web", "ui", "partials", "catalog_table.html"),
-		), funcs)("catalog_table", map[string]any{"Items": items, "Barcodes": barcodes, "Variants": variants})(w, r)
+		render := httpx.RenderWith(rowFiles, funcs)
+		if insert {
+			// The carrier <tbody> holds the beforeend attribute — htmx
+			// appends the carrier's CHILDREN (the row) into #catalog-rows —
+			// so the row itself carries no OOB attribute here.
+			render("catalog_oob_row_insert", catalogRow{Item: itm, Barcodes: barcodes, Variants: variants})(w, r)
+			if n, err := repo.CountActiveItems(r.Context()); err == nil && n == 1 {
+				render("catalog_oob_delete", "catalog-empty-row")(w, r)
+			}
+			return nil
+		}
+		render("catalog_oob_row_update", catalogRow{Item: itm, Barcodes: barcodes, Variants: variants, OOB: "true"})(w, r)
+		return nil
+	}
+
+	// respondItemRowOOB is writeCatalogRowOOB as a mutation handler's whole
+	// response. Content-Type is set explicitly: a response starting with
+	// "<tr" isn't in net/http's content-sniffing table and would otherwise
+	// go out as text/plain.
+	respondItemRowOOB := func(w http.ResponseWriter, r *http.Request, itemID string, insert bool) {
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		if err := writeCatalogRowOOB(w, r, itemID, insert); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+		}
 	}
 
 	// renderVariantsPanel answers with the per-item variants/barcodes editor.
 	// Panel mutations also change what the items table shows (its variant and
-	// barcode summaries), so the refreshed table rides along as an HTMX
-	// out-of-band swap when withTable is set.
+	// barcode summaries), so the refreshed ROW rides along as an HTMX
+	// out-of-band swap when withTable is set (row-scoped since ut-docs#1363;
+	// it used to be the whole re-queried table). The row fragment is passed
+	// into the panel template (OOBRow) rather than concatenated after it:
+	// htmx 1.9.12's fragment parser drops a bare top-level <tr> that follows
+	// a <div>, so the row has to ride nested inside a carrier <table> within
+	// the panel markup — see catalog_variants.html.
 	renderVariantsPanel := func(w http.ResponseWriter, r *http.Request, itemID string, withTable bool) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		pdata := map[string]any{"ItemID": "", "ItemName": ""}
@@ -123,24 +220,20 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				}
 			}
 		}
+		if withTable && itemID != "" {
+			var buf bytes.Buffer
+			bw := newBufResponseWriter(&buf)
+			if err := writeCatalogRowOOB(bw, r, itemID, false); err == nil {
+				pdata["OOBRow"] = template.HTML(buf.String())
+			} else {
+				// The panel itself is still correct — the stale row summary
+				// self-heals on the next full page load.
+				log.Printf("[catalog] row OOB for item %s skipped: %v", itemID, err)
+			}
+		}
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_variants.html"),
 		), funcs)("catalog_variants", pdata)(w, r)
-		if withTable {
-			var buf bytes.Buffer
-			items, _ := repo.ListItems(r.Context())
-			barcodes, _ := repo.ItemBarcodes(r.Context())
-			variants, _ := repo.ItemVariants(r.Context())
-			taxCodes, _ := repo.ListAllTaxCodes(r.Context())
-			funcs["taxCodeName"] = taxCodeNameFunc(taxCodes)
-			bw := newBufResponseWriter(&buf)
-			httpx.RenderWith(files(
-				filepath.Join("web", "ui", "partials", "catalog_table.html"),
-			), funcs)("catalog_table", map[string]any{"Items": items, "Barcodes": barcodes, "Variants": variants})(bw, r)
-			// Inject the oob marker so htmx replaces #catalog-table in place.
-			html := strings.Replace(buf.String(), `id="catalog-table"`, `id="catalog-table" hx-swap-oob="true"`, 1)
-			_, _ = io.WriteString(w, html)
-		}
 	}
 
 	// Variant options as JSON — the labels form's variant picker.
@@ -254,15 +347,19 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		funcs["taxCodeName"] = taxCodeNameFunc(taxCodes)
+		// The full page load is the ONE place the whole catalog is queried
+		// and rendered (ut-docs#1363) — mutations answer row-scoped.
 		barcodes, _ := repo.ItemBarcodes(r.Context())
 		variants, _ := repo.ItemVariants(r.Context())
+		rows := make([]catalogRow, 0, len(items))
+		for _, itm := range items {
+			rows = append(rows, catalogRow{Item: itm, Barcodes: barcodes[itm.ID], Variants: variants[itm.ID]})
+		}
 		data := map[string]any{
 			"title":       "Catalog",
 			"menuItems":   d.MenuSnapshot(),
 			"theme":       d.CurrentState().Theme,
-			"Items":       items,
-			"Barcodes":    barcodes,
-			"Variants":    variants,
+			"Rows":        rows,
 			"Categories":  cats,
 			"Brands":      brands,
 			"TaxCodes":    taxCodes,
@@ -275,6 +372,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			filepath.Join("web", "ui", "partials", "bugreport_panel.html"),
 			filepath.Join("web", "ui", "partials", "catalog_lookups.html"),
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
+			filepath.Join("web", "ui", "partials", "catalog_row.html"),
 			filepath.Join("web", "ui", "partials", "catalog_variants.html"),
 		), funcs)("base", data)(w, r)
 	})
@@ -335,7 +433,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				log.Printf("[catalog] record item_images thumbnail for %s: %v", itemID, err)
 			}
 		}
-		renderCatalogTable(w, r)
+		respondItemRowOOB(w, r, itemID, true)
 	})
 
 	// Update item
@@ -360,7 +458,10 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			skuAwareError(w, r, http.StatusBadRequest, err)
 			return
 		}
-		renderCatalogTable(w, r)
+		// An update that unchecks Active is a deactivation ridden through
+		// this endpoint — writeCatalogRowOOB sees IsActive=false and answers
+		// with the row-delete fragments, same as /item/deactivate.
+		respondItemRowOOB(w, r, itemInput.ID, false)
 	})
 
 	// Deactivate item
@@ -379,7 +480,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 			return
 		}
-		renderCatalogTable(w, r)
+		respondItemRowOOB(w, r, itemID, false)
 	})
 
 	// Create or update variant (if id present => update)
@@ -446,7 +547,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			renderVariantsPanel(w, r, panelItem, true)
 			return
 		}
-		renderCatalogTable(w, r)
+		respondItemRowOOB(w, r, itemID, false)
 	})
 
 	// Create or update a modifier group (ADR-0020) — id present = update,
@@ -564,7 +665,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			renderVariantsPanel(w, r, panelItem, true)
 			return
 		}
-		renderCatalogTable(w, r)
+		// The catalog table has one row per ITEM — resolve the parent so the
+		// row's variant summary refreshes. An unknown variant deactivated
+		// nothing, so there's nothing to re-render either.
+		if itemID, ok, err := repo.ItemIDForVariant(r.Context(), variantID); err == nil && ok {
+			respondItemRowOOB(w, r, itemID, false)
+		}
 	})
 
 	// Item image upload → web/public/assets/items/<id>/thumb.png (the same
@@ -620,7 +726,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if err := repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png"); err != nil {
 			log.Printf("[catalog] record item_images thumbnail for %s: %v", itemID, err)
 		}
-		renderCatalogTable(w, r)
+		respondItemRowOOB(w, r, itemID, false)
 	})
 
 	// Variant image upload → assets/items/<itemID>/variants/<variantID>/thumb.png
@@ -726,7 +832,17 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			renderVariantsPanel(w, r, panelItem, true)
 			return
 		}
-		renderCatalogTable(w, r)
+		// A variant barcode still shows on the PARENT item's row (its
+		// variant summary) — resolve the parent when only variantId came in.
+		rowItem := itemID
+		if rowItem == "" {
+			if id, ok, err := repo.ItemIDForVariant(r.Context(), variantID); err == nil && ok {
+				rowItem = id
+			}
+		}
+		if rowItem != "" {
+			respondItemRowOOB(w, r, rowItem, false)
+		}
 	})
 
 	// Detach a barcode (mis-scans and reassignments are routine corrections).
@@ -737,15 +853,26 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "barcode required", http.StatusBadRequest)
 			return
 		}
+		panelItem := strings.TrimSpace(r.Form.Get("panelItem"))
+		// Resolve which item's row shows this barcode BEFORE removing it —
+		// afterwards nothing links the code to a row any more. Only needed
+		// on the row-scoped (no-panel) path.
+		ownerID, ownerKnown := "", false
+		if panelItem == "" {
+			ownerID, ownerKnown, _ = repo.ItemIDForBarcode(r.Context(), barcode)
+		}
 		if err := pos.RemoveBarcode(r.Context(), d.Db, barcode); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 			return
 		}
-		if panelItem := strings.TrimSpace(r.Form.Get("panelItem")); panelItem != "" {
+		if panelItem != "" {
 			renderVariantsPanel(w, r, panelItem, true)
 			return
 		}
-		renderCatalogTable(w, r)
+		// An unattached barcode removed nothing, so no row changed either.
+		if ownerKnown {
+			respondItemRowOOB(w, r, ownerID, false)
+		}
 	})
 }
 
@@ -891,8 +1018,9 @@ func convertLookups(in []data.Lookup) []lookup {
 
 // taxCodeNameFunc returns a "taxCodeName" template func that resolves a
 // stored tax_code_id to its display name (ut-docs#1178) instead of letting
-// the raw id render — used by both the full /catalog page and the
-// catalog_table.html partial re-rendered after every mutation.
+// the raw id render — used by the full /catalog page (fed with every tax
+// code) and by writeCatalogRowOOB's row-scoped mutation responses (fed with
+// just the affected item's own code, ut-docs#1363).
 //
 // Takes *string, not string: Item.TaxCodeID is a *string (nil when the item
 // has no tax code, the common case), and while html/template auto-derefs a
