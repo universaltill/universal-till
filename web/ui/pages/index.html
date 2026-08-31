@@ -55,7 +55,7 @@
        of only a CRM customer name or a bare timestamp. Static (no server
        round-trip to open) since it needs no per-open data. -->
   <dialog id="hold-modal" class="modifier-modal" aria-labelledby="hold-modal-title">
-    <form hx-post="/api/pos/hold" hx-target="#basket" hx-swap="outerHTML"
+    <form hx-post="/api/pos/hold" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
           hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('hold-modal'); m.close(); this.reset(); }">
       <h3 id="hold-modal-title">{{ T "hold.modal.title" }}</h3>
       <input type="text" id="hold-label-input" name="label" maxlength="64"
@@ -194,7 +194,7 @@
          is just a plain, un-scrolled sibling after it — always visible,
          no positioning trick needed at all. -->
     <div class="tender-scroll">
-      <form class="scan-row" hx-post="/api/pos/scan" hx-target="#basket" hx-swap="outerHTML">
+      <form class="scan-row" hx-post="/api/pos/scan" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
         <!-- inputmode="none": keep scanner focus without inviting any IME at
              load (ut-docs#155) — the OSK/toggle covers deliberate typing.
              NOT when the OSK is off: a touch till with the OSK disabled would
@@ -249,7 +249,7 @@
          there" utility actions. -->
     <div class="tender-default-footer">
       <button class="btn secondary" type="button" data-testid="kiosk-checkout-start"
-              hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML"
+              hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
               onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)">
         🛒 {{ T "kiosk.checkout_start" }}</button>
       <button class="btn secondary" type="button"
@@ -280,12 +280,12 @@
             {{ range .payMethods }}
             <button class="btn pay-btn{{ if .PluginID }} pay-plugin{{ end }}" data-method="{{ .ID }}" hx-post="/api/pos/tender"
                     hx-vals='{{ jsonVals "amount" 0 "method" .ID }}' hx-include="#offline-flag"
-                    hx-target="#basket" hx-swap="outerHTML"
+                    hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ .Name }}<span class="fee-hint" data-fee-for="{{ .ID }}"></span></button>
             {{ else }}
-            <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML"
+            <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T "tender.cash" }}</button>
-            <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML"
+            <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T "tender.card" }}</button>
             {{ end }}
           </div>
@@ -382,7 +382,7 @@
            just tidiness: nothing left to pay for once the basket resets. -->
       <button class="btn secondary"
               onclick="document.getElementById('payment-overlay').close();"
-              hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML">{{ T "tender.new_customer" }}</button>
+              hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">{{ T "tender.new_customer" }}</button>
     </div>
       </div>
     </dialog>

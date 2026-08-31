@@ -33,7 +33,13 @@
          toggle between two named states, not a momentary pressed button.
          hx-vals computes the OPPOSITE of the current server-known state,
          so one tap always flips it -- no client-side JS needed, same
-         template-driven approach the two-button version used. -->
+         template-driven approach the two-button version used.
+         hx-sync="#basket:replace" (ut-docs#1337, merged concurrently with
+         this change): every other #basket-targeting trigger already
+         aborts an in-flight request to the same swap target the instant a
+         newer one fires -- this switch is a NEW trigger added in this
+         same branch, so it needs the identical treatment or it would be
+         the one un-synced hole in an otherwise-fixed set. -->
     {{ $nextOrderType := "takeaway" }}
     {{ if eq .OrderType "takeaway" }}{{ $nextOrderType = "" }}{{ end }}
     <button type="button" class="order-type-switch{{ if eq .OrderType "takeaway" }} is-takeaway{{ end }}"
@@ -41,7 +47,7 @@
             aria-label="{{ T "basket.order_type.label" }}"
             hx-post="/api/pos/order-type"
             hx-vals='{{ jsonVals "order_type" $nextOrderType }}'
-            hx-target="#basket" hx-swap="outerHTML">
+            hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
       <span class="order-type-switch-track" aria-hidden="true"><span class="order-type-switch-knob"></span></span>
       <span class="order-type-switch-label">{{ if eq .OrderType "takeaway" }}🥡 {{ T "basket.order_type.takeaway" }}{{ else }}🍽️ {{ T "basket.order_type.dine_in" }}{{ end }}</span>
     </button>
@@ -89,19 +95,21 @@
                          hx-vals='{{ jsonVals "key" .LineKey }}'
                          hx-include="closest tr"
                          hx-target="#basket"
-                         hx-swap="outerHTML" />
+                         hx-swap="outerHTML"
+                         hx-sync="#basket:replace" />
                   <input class="disc-input" type="number" name="discount" value="{{ .LineDiscount.Minor }}" min="0" step="1"
                          title="{{ T "basket.discount_hint" }}" placeholder="{{ T "basket.discount_short" }}"
                          hx-post="/api/pos/line"
                          hx-vals='{{ jsonVals "key" .LineKey }}'
                          hx-include="closest tr"
                          hx-target="#basket"
-                         hx-swap="outerHTML" />
+                         hx-swap="outerHTML"
+                         hx-sync="#basket:replace" />
                 </div>
               </td>
               <td>{{ money .PriceCents }}</td>
               <td>{{ money .LineTotal }}</td>
-              <td><button class="btn danger btn-x" title="{{ T "basket.remove" }}" hx-post="/api/pos/remove" hx-vals='{{ jsonVals "key" .LineKey }}' hx-target="#basket" hx-swap="outerHTML">✕</button></td>
+              <td><button class="btn danger btn-x" title="{{ T "basket.remove" }}" hx-post="/api/pos/remove" hx-vals='{{ jsonVals "key" .LineKey }}' hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">✕</button></td>
             </tr>
           {{ end }}
         {{ else }}
