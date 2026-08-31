@@ -151,3 +151,23 @@ confirmed by the reviewer): building real contrast-aware color adjustment
 is a materially larger feature than an `easy`-tier tile accent, and color
 is never this UI's sole differentiator for a category (name/grouping
 remain). Worth a dedicated backlog card if a real shop ever hits it.
+
+## Addendum — stale-PR sweep, merge conflict + CI fix (2026-08-31, later cycle)
+
+The reviewed diff above sat open for ~1.5h after `#685` merged to `main`
+(unrelated `tax.rate.ask` logging fix for ut-docs#1370), which turned
+`mergeable_state` `dirty`: both branches independently ran `make
+docs-shots`, so the generated `web/help/img/**` binaries and
+`manifest.json` collided on the merge, with no code-level conflict (`git
+diff` confirmed `web/public/app.css`/`web/ui/partials/buttons.html`
+untouched by `#685`). Resolved by merging `main` in and re-running `make
+docs-shots` against the merged tree per this repo's own
+generated-file rule, rather than hand-picking either side's binaries.
+
+That re-run's own output was committed in a follow-up commit
+(`b9eb573`) — the first push (`7a5c3be`) accidentally left it staged but
+uncommitted, which CI's `guard-docs-shots` correctly caught (`build` job,
+exit 1) since the pushed commit still carried `#685`'s screenshots, stale
+against this branch's `buttons.html` change. No code fix was needed, only
+committing the already-regenerated files; `guard-docs-shots.sh` re-run
+locally against `b9eb573` confirms clean (`surface 03840734a943…`).
