@@ -11,10 +11,76 @@
     <img src="/public/assets/logo/unitill-logo-light.svg" alt="" />
     <span class="app-name">{{ T "app.name" }}</span>
   </div>
-  <!-- One shared touch header on every page: the ☰ button opens the /menu
-       launcher of big touch tiles — that page IS the navigation. -->
-  <a href="/" class="nav-toggle" data-testid="nav-till">🧾 {{ T "nav.till" }}</a>
-  <a href="/menu" class="nav-toggle" data-testid="nav-menu">☰ {{ T "nav.menu" }}</a>
+  <!-- 2026-08-30 (nav rail, ut-docs#1332): the product owner asked
+       repeatedly, comparing directly against a competitor POS (SumUp),
+       for this bar to move off the top of the screen -- every page paid
+       for a full-width horizontal row (plus, on the sale screen, a SECOND
+       row for New Sale/Inventory/Deposit refund) before any actual content
+       started. Restructured into a left icon rail (app.css's `.nav`):
+       same items, stacked in a column instead of a row. Icon-only by
+       default (product owner, live on the tablet, same session) -- each
+       label stays in the DOM, just visually-hidden (app.css), so it's
+       still in the accessible name for assistive tech even with no
+       visible text; a touchscreen till has no hover to reveal a title
+       tooltip, so this only works because the label is a REAL (if hidden)
+       part of the button, not a tooltip-only affordance. Reverts to the
+       previous horizontal top bar (labels visible again -- room for them
+       there) at phone width (<=480px, this file's existing breakpoint) --
+       a permanent side rail eats too much of a 360px screen, and that
+       width class already had its own hard-fought wrapping behavior
+       (ut-docs#413) not worth re-litigating here. -->
+  <div class="nav-primary">
+    <a href="/" class="nav-toggle" data-testid="nav-till">
+      <span class="nav-toggle-ico" aria-hidden="true">🧾</span>
+      <span class="nav-toggle-label">{{ T "nav.till" }}</span>
+    </a>
+    <a href="/menu" class="nav-toggle" data-testid="nav-menu">
+      <span class="nav-toggle-ico ico-boost" aria-hidden="true">☰</span>
+      <span class="nav-toggle-label">{{ T "nav.menu" }}</span>
+    </a>
+    <!-- Moved from index.html's own header row (was a second full-width
+         row above the product grid) -- Inventory is a plain link with no
+         page-specific DOM dependency, so it's safe to render on every
+         page, same as Till/Menu above.
+         .nav-rail-only (app.css): hidden at <=480px. ut-docs#413 already
+         fought hard to fit exactly Till/Menu/help/chips in the phone-width
+         top bar's two-row wrap without this class's sale-screen bleed
+         overflowing the fixed-height sale screen (confirmed live: adding
+         these three unconditionally clipped BASKET under a third nav row
+         at 360px) -- Inventory already has its own tile on the ☰ Menu
+         launcher page, so hiding it here at phone width costs nothing.
+         New Sale/Deposit refund have no such equivalent, so index.html
+         still renders its OWN small phone-only fallback row for exactly
+         those two, shown only at <=480px -- see index.html's own comment. -->
+    <a href="/inventory" class="nav-toggle nav-rail-only" data-testid="kiosk-inventory-link">
+      <span class="nav-toggle-ico" aria-hidden="true">📦</span>
+      <span class="nav-toggle-label">{{ T "kiosk.inventory" }}</span>
+    </a>
+    {{ if .saleScreen }}
+    <!-- Deposit refund, unlike Inventory above, targets DOM that only
+         exists on the sale screen itself (#pfand-modal -- index.html) --
+         rendered here (nav.html shares the same page-level template data
+         as index.html, `.saleScreen` included) rather than in index.html,
+         so it visually sits in the SAME rail column as everything else
+         instead of a second, separately-positioned fragment. Guarding on
+         `.saleScreen` keeps it out of the rail (and its now-nonexistent
+         target) on every other page. Hidden at <=480px (.nav-rail-only) --
+         index.html's own phone-only fallback row (hidden at every OTHER
+         width) covers this tier with a real, page-local target instead.
+
+         2026-08-30: New Sale used to render here too -- moved into
+         .tender-default-footer instead (index.html, next to Hold Sale and
+         Payment), per the product owner's own live request. That row
+         renders at every width uniformly, so New Sale no longer needs a
+         separate rail copy OR a separate phone-fallback copy the way
+         Deposit refund still does. -->
+    <button class="nav-toggle nav-rail-only" type="button" data-testid="kiosk-pfand-open"
+            onclick="document.getElementById('pfand-result').textContent=''; var prev=document.activeElement; document.getElementById('pfand-modal').show(); if (document.getElementById('pfand-modal').contains(document.activeElement)) { document.activeElement.blur(); if (prev && prev!==document.body && prev.focus) prev.focus(); }">
+      <span class="nav-toggle-ico ico-boost" aria-hidden="true">♻️</span>
+      <span class="nav-toggle-label">{{ T "pfand.action" }}</span>
+    </button>
+    {{ end }}
+  </div>
   <div class="nav-right">
     <!-- Contextual help: resolves to the manual topic documenting THIS page
          (route → topic comes from the topics' own front matter), falling back

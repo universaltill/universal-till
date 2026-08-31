@@ -106,7 +106,12 @@ test.describe('ut-docs#1337 basket hx-sync race', () => {
     // another item behaves. Both are dispatched while the ORIGINAL #basket
     // node (from the Coca-Cola scan above) is still the current one, so
     // htmx resolves both requests' hx-target to that SAME node.
-    await page.locator('.order-type-toggle button', { hasText: 'Takeaway' }).click();
+    // 2026-08-31 (nav rail, ut-docs#1332, merged concurrently with this
+    // fix): the two-button `.order-type-toggle` this test originally
+    // targeted was replaced by a single `.order-type-switch` -- one
+    // control, one tap always flips it to the opposite state (Dine-in
+    // here, so this click goes to Takeaway, same as the original intent).
+    await page.locator('.order-type-switch').click();
     await page.getByRole('textbox').first().fill('5000000000029');
     await page.locator('.scan-row button[type=submit]').click();
 

@@ -17,25 +17,52 @@
     <span class="basket-count" data-testid="basket-count" title="{{ T "basket.count_label" }}">{{ .ItemCount }}</span>
     <span class="visually-hidden">{{ T "basket.count_label" }}</span>
   </h2>
-  <div class="order-type-toggle" role="group" aria-label="{{ T "basket.order_type.label" }}">
-    <button type="button" class="btn{{ if eq .OrderType "takeaway" }} secondary{{ end }}"
-            aria-pressed="{{ if ne .OrderType "takeaway" }}true{{ else }}false{{ end }}"
-            hx-post="/api/pos/order-type" hx-vals='{"order_type":""}' hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
-      {{ if ne .OrderType "takeaway" }}✓ {{ end }}{{ T "basket.order_type.dine_in" }}</button>
-    <button type="button" class="btn{{ if ne .OrderType "takeaway" }} secondary{{ end }}"
-            aria-pressed="{{ if eq .OrderType "takeaway" }}true{{ else }}false{{ end }}"
-            hx-post="/api/pos/order-type" hx-vals='{"order_type":"takeaway"}' hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
-      {{ if eq .OrderType "takeaway" }}✓ {{ end }}{{ T "basket.order_type.takeaway" }}</button>
+  <div class="order-type-row">
+    <!-- 2026-08-30 (product owner, live on the tablet): was two full-size
+         buttons (Dine in / Takeaway) side by side, each always rendering
+         the OTHER's un-selected state too -- a single switch says the same
+         thing (which of two states is this?) in one control instead of
+         two, freeing the row's other half for the table-assignment button
+         below. Still ONE .btn-sized control (deliberately NOT .compact,
+         same reasoning as the two-button version it replaces): this
+         determines VAT (internal/pos/service.go,
+         tax_codes.takeaway_rate_basis_points -- the German §12 UStG
+         dine-in/takeaway split, live pilot work), so a mis-tap puts the
+         wrong tax on a fiscal receipt. role="switch"+aria-checked (WAI-ARIA
+         switch pattern) rather than aria-pressed -- this is a two-state
+         toggle between two named states, not a momentary pressed button.
+         hx-vals computes the OPPOSITE of the current server-known state,
+         so one tap always flips it -- no client-side JS needed, same
+         template-driven approach the two-button version used.
+         hx-sync="#basket:replace" (ut-docs#1337, merged concurrently with
+         this change): every other #basket-targeting trigger already
+         aborts an in-flight request to the same swap target the instant a
+         newer one fires -- this switch is a NEW trigger added in this
+         same branch, so it needs the identical treatment or it would be
+         the one un-synced hole in an otherwise-fixed set. -->
+    {{ $nextOrderType := "takeaway" }}
+    {{ if eq .OrderType "takeaway" }}{{ $nextOrderType = "" }}{{ end }}
+    <button type="button" class="order-type-switch{{ if eq .OrderType "takeaway" }} is-takeaway{{ end }}"
+            role="switch" aria-checked="{{ if eq .OrderType "takeaway" }}true{{ else }}false{{ end }}"
+            aria-label="{{ T "basket.order_type.label" }}"
+            hx-post="/api/pos/order-type"
+            hx-vals='{{ jsonVals "order_type" $nextOrderType }}'
+            hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
+      <span class="order-type-switch-track" aria-hidden="true"><span class="order-type-switch-knob"></span></span>
+      <span class="order-type-switch-label">{{ if eq .OrderType "takeaway" }}🥡 {{ T "basket.order_type.takeaway" }}{{ else }}🍽️ {{ T "basket.order_type.dine_in" }}{{ end }}</span>
+    </button>
+    <!-- Table assignment (ut-docs#820, ADR-0054): was an always-expanded
+         inline strip (current table + clear + every free table listed) --
+         collapsed into a single button next to the switch (product owner,
+         2026-08-30) that opens the same picker in a dialog instead. The
+         fetched fragment (table_picker.html) renders BOTH the trigger
+         button and the dialog together, so a shop with zero tables
+         configured still gets no table chrome at all -- ADR-0054's
+         soft-gate is unchanged, just now covers the button too, not only
+         the dialog's contents. Loaded the same way the suggestions strip
+         below is. -->
+    <span id="table-picker" hx-get="/ui/pos/table-picker" hx-trigger="load" hx-swap="outerHTML"></span>
   </div>
-  <!-- Table assignment (ut-docs#820, ADR-0054): the current table and the
-       picker of free tables both live INSIDE this fragment, not inline here,
-       so a shop with zero tables configured gets no table chrome in the order
-       flow at all -- ADR-0054's soft-gate ("zero tables configured = today's
-       behavior exactly"). Rendering an always-on "Table: none" row here
-       instead cost two rows of basket height on every till, which is what
-       broke the sale-screen-213 / phone-width-413 layout assertions.
-       Loaded the same way the suggestions strip below is. -->
-  <div id="table-picker" class="table-picker" hx-get="/ui/pos/table-picker" hx-trigger="load" hx-swap="outerHTML"></div>
   <div class="basket-scroll">
     <table>
       <thead>
