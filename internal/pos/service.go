@@ -25,6 +25,19 @@ type Service struct {
 	// never another exported method on the same receiver. Unexported methods
 	// assume mu is already held. Breaking this convention self-deadlocks
 	// (hangs, not fails) the first time the reentrant path is exercised.
+	//
+	// One sanctioned exception (ut-docs#1317): recomputeTotals may briefly
+	// RELEASE and re-acquire mu around its plugin asks (see its doc comment)
+	// — it still always returns with mu held, so callers' `defer
+	// s.mu.Unlock()` stays correct. Consequence: an exported mutator that
+	// triggers this path is no longer atomic end-to-end — e.g. Scan() can be
+	// observed (by another goroutine calling Lines()/Basket() mid-call)
+	// with the new line already in s.lines but s.basket not yet reflecting
+	// it. This is transient display staleness only, not a money-safety gap:
+	// it self-heals on the next recompute, and the tender path
+	// (pos_api.go's completeTender) already composes its demanded total
+	// from separate lock acquisitions (Lines(), SaleDiscount(),
+	// ChargePolicy()), so it was never atomic across those calls anyway.
 	mu sync.Mutex
 
 	cfg       Config
@@ -58,6 +71,14 @@ type Service struct {
 	// an asker with no answer, means core's fail-closed default: charge
 	// permitted, taxed at the sale's own per-line rates.
 	chargeAsker ChargePolicyAsker
+	// recomputeGen (ut-docs#1317) is the optimistic-recompute generation
+	// counter. recomputeTotals bumps it on entry (and on each retry), and
+	// any locked mutation of totals-relevant state that does NOT itself call
+	// recomputeTotals (resetLocked, Tender, SetCustomerID, setCustomerLocked)
+	// must bump it too, so an in-flight recompute that dropped s.mu to make
+	// its plugin asks detects the race after re-locking and refuses to commit
+	// a snapshot that no longer matches current state. Guarded by mu.
+	recomputeGen uint64
 }
 
 type Config struct {
@@ -106,9 +127,17 @@ type TaxRateAsker interface {
 // the TENDER path's job (it must not complete while any line is blocked),
 // not this display computation's.
 func (s *Service) effectiveTaxRateBP(l BasketLine) (int, bool) {
+	return effectiveTaxRateBPFor(l, s.taxAsker, s.orderType, s.cfg.TaxRateBasisPoints)
+}
+
+// effectiveTaxRateBPFor is effectiveTaxRateBP's pure core: it reads no
+// *Service state, so recomputeTotals can call it on a snapshot with s.mu
+// released (ut-docs#1317) — the asker's wasm call can take ~100ms on a cache
+// miss and must not serialize unrelated requests behind the service lock.
+func effectiveTaxRateBPFor(l BasketLine, taxAsker TaxRateAsker, orderType string, defaultRateBP int) (int, bool) {
 	blocked := false
-	if s.taxAsker != nil {
-		bp, ok, askerBlocked := s.taxAsker.AskTaxRateBP(l, s.orderType)
+	if taxAsker != nil {
+		bp, ok, askerBlocked := taxAsker.AskTaxRateBP(l, orderType)
 		if ok {
 			return bp, false
 		}
@@ -116,7 +145,7 @@ func (s *Service) effectiveTaxRateBP(l BasketLine) (int, bool) {
 	}
 	standard := l.TaxRateBP
 	if standard == 0 {
-		standard = s.cfg.TaxRateBasisPoints
+		standard = defaultRateBP
 	}
 	if standard == 0 {
 		standard = 2000 // default to 20% if unconfigured
@@ -480,10 +509,68 @@ func (s *Service) findLineIndex(code string) int {
 	return -1
 }
 
-func (s *Service) recomputeTotals() {
+// totalsSnapshot is everything computeTotals needs, copied out of the
+// Service under s.mu so the computation — including the plugin asks — can
+// run with the lock released (ut-docs#1317). lines is a private copy of
+// s.lines; computeTotals fills each element's LineTotal in place.
+type totalsSnapshot struct {
+	lines             []BasketLine
+	cfg               Config
+	orderType         string
+	discountType      string
+	discountValue     money.Money
+	discountPercentBP int64
+	customerID        string
+	customerName      string
+	tableID           string
+	tableLabel        string
+	taxAsker          TaxRateAsker
+	chargeAsker       ChargePolicyAsker
+}
+
+// computedTotals is computeTotals' result — every basket field
+// recomputeTotals publishes, staged so commitTotalsLocked can write it under
+// s.mu in one step. commitTotalsLocked writes these fields individually
+// rather than replacing s.basket wholesale so that ToastMessage/ToastLevel
+// (set only on the *copies* basketCopyLocked hands out, e.g. pos_api.go's
+// completeTender — never on s.basket itself) are never disturbed by a field
+// this type doesn't carry.
+type computedTotals struct {
+	subtotal      money.Money
+	discount      money.Money
+	tax           money.Money
+	serviceCharge money.Money
+	total         money.Money
+}
+
+// snapshotForTotalsLocked copies the totals-relevant state. Caller must hold s.mu.
+func (s *Service) snapshotForTotalsLocked() totalsSnapshot {
+	return totalsSnapshot{
+		lines:             append([]BasketLine{}, s.lines...),
+		cfg:               s.cfg,
+		orderType:         s.orderType,
+		discountType:      s.discountType,
+		discountValue:     s.discountValue,
+		discountPercentBP: s.discountPercentBP,
+		customerID:        s.customerID,
+		customerName:      s.customerName,
+		tableID:           s.tableID,
+		tableLabel:        s.tableLabel,
+		taxAsker:          s.taxAsker,
+		chargeAsker:       s.chargeAsker,
+	}
+}
+
+// computeTotals derives the basket totals from snap alone — it touches no
+// *Service state, so recomputeTotals may run it with OR without s.mu held.
+// This is where the plugin asks happen (the per-line AskTaxRateBP loop and
+// the AskChargePolicy call), which on a cache miss can take ~100ms each.
+// Line totals are written into snap.lines (the snapshot's private copy).
+func computeTotals(snap totalsSnapshot) computedTotals {
+	var c computedTotals
 	var sub money.Money
-	for i := range s.lines {
-		l := &s.lines[i]
+	for i := range snap.lines {
+		l := &snap.lines[i]
 		lineBase := AmountForQuantity(l.PriceCents, l.Qty)
 		lineNet := lineBase.Sub(l.LineDiscount)
 		if lineNet.IsNegative() {
@@ -492,33 +579,21 @@ func (s *Service) recomputeTotals() {
 		l.LineTotal = lineNet
 		sub = sub.Add(lineNet)
 	}
-	s.basket.Lines = append([]BasketLine{}, s.lines...)
-	s.basket.Subtotal = sub
+	c.subtotal = sub
 	var discount money.Money
-	switch s.discountType {
+	switch snap.discountType {
 	case "percent":
-		if s.discountPercentBP > 0 && sub.IsPositive() {
+		if snap.discountPercentBP > 0 && sub.IsPositive() {
 			// round to nearest minor unit (unchanged: (sub*bp + 9999)/10000)
-			discount = money.FromMinor((sub.Minor()*int64(s.discountPercentBP) + 9999) / 10000)
+			discount = money.FromMinor((sub.Minor()*snap.discountPercentBP + 9999) / 10000)
 		}
 	default:
-		discount = s.discountValue
+		discount = snap.discountValue
 	}
 	if discount.IsNegative() {
 		discount = 0
 	}
-	s.basket.Discount = discount
-	s.basket.DiscountType = s.discountType
-	if s.discountType == "percent" {
-		s.basket.DiscountRaw = s.discountPercentBP
-	} else {
-		s.basket.DiscountRaw = s.discountValue.Minor()
-	}
-	s.basket.CustomerID = s.customerID
-	s.basket.CustomerName = s.customerName
-	s.basket.OrderType = s.orderType
-	s.basket.TableID = s.tableID
-	s.basket.TableLabel = s.tableLabel
+	c.discount = discount
 	// Per-line, not a single subtotal-wide rate: lines can carry different
 	// tax codes, and the order-type dine-in/takeaway switch (§12 UStG) only
 	// changes SOME lines' rate — a flat sub-wide engine can't represent that.
@@ -529,12 +604,12 @@ func (s *Service) recomputeTotals() {
 	// show a different VAT figure than the receipt/invoice for exactly the
 	// sales that fix corrected.
 	var total money.Money
-	vatLines := make([]VATLine, 0, len(s.lines))
-	chargeTaxLines := make([]ChargeTaxLine, 0, len(s.lines))
-	for i := range s.lines {
-		l := &s.lines[i]
-		rateBP, _ := s.effectiveTaxRateBP(*l)
-		lineTax, lineTotal := ComputeTaxBasisPoints(l.LineTotal, rateBP, s.cfg.TaxInclusive)
+	vatLines := make([]VATLine, 0, len(snap.lines))
+	chargeTaxLines := make([]ChargeTaxLine, 0, len(snap.lines))
+	for i := range snap.lines {
+		l := &snap.lines[i]
+		rateBP, _ := effectiveTaxRateBPFor(*l, snap.taxAsker, snap.orderType, snap.cfg.TaxRateBasisPoints)
+		lineTax, lineTotal := ComputeTaxBasisPoints(l.LineTotal, rateBP, snap.cfg.TaxInclusive)
 		total = total.Add(lineTotal)
 		vatLines = append(vatLines, VATLine{RateBP: rateBP, LineTotal: lineTotal.Minor(), TaxAmount: lineTax.Minor()})
 		chargeTaxLines = append(chargeTaxLines, ChargeTaxLine{RateBP: rateBP, Net: l.LineTotal})
@@ -542,7 +617,7 @@ func (s *Service) recomputeTotals() {
 	// serviceCharge=0: orthogonal to the chargeTax fold below, same
 	// reasoning as computeSaleTotals (internal/pos/sales.go).
 	var tax money.Money
-	for _, b := range VATBandsForSale(vatLines, discount.Minor(), s.cfg.TaxInclusive, 0, 0) {
+	for _, b := range VATBandsForSale(vatLines, discount.Minor(), snap.cfg.TaxInclusive, 0, 0) {
 		tax = tax.Add(money.FromMinor(b.Tax))
 	}
 	if tax.IsNegative() {
@@ -554,26 +629,26 @@ func (s *Service) recomputeTotals() {
 	// Service charge (ut-docs#72): same base as CompleteSale/pos_api.go use
 	// -- the pre-tax net subtotal, after discount -- so what's shown here,
 	// before tender, matches what CompleteSale will actually demand.
-	serviceCharge, _ := ComputeTaxBasisPoints(sub.Sub(discount), s.cfg.ServiceChargeRateBasisPoints, false)
+	serviceCharge, _ := ComputeTaxBasisPoints(sub.Sub(discount), snap.cfg.ServiceChargeRateBasisPoints, false)
 	// ADR-0061: an installed country plugin's charge.policy.ask answer can
 	// forbid the charge outright or fix a flat tax basis for it; with no
 	// answer (the normal no-plugin case) the fail-closed default taxes it
 	// at the sale's own per-line rates. Mirrors the tender handler
 	// (pos_api.go) exactly, so the on-screen total IS the demanded total.
 	chargeTaxBasisBP := 0
-	if s.chargeAsker != nil {
-		if policy, ok := s.chargeAsker.AskChargePolicy(); ok {
+	if snap.chargeAsker != nil {
+		if policy, ok := snap.chargeAsker.AskChargePolicy(); ok {
 			if !policy.ServiceChargePermitted {
 				serviceCharge = 0
 			}
 			chargeTaxBasisBP = policy.ServiceChargeTaxBasisBP
 		}
 	}
-	chargeTax := ServiceChargeTax(serviceCharge, chargeTaxLines, s.cfg.TaxInclusive, chargeTaxBasisBP)
-	s.basket.Tax = tax.Add(chargeTax)
-	s.basket.ServiceCharge = serviceCharge
+	chargeTax := ServiceChargeTax(serviceCharge, chargeTaxLines, snap.cfg.TaxInclusive, chargeTaxBasisBP)
+	c.tax = tax.Add(chargeTax)
+	c.serviceCharge = serviceCharge
 	total = total.Sub(discount).Add(serviceCharge)
-	if !s.cfg.TaxInclusive {
+	if !snap.cfg.TaxInclusive {
 		// Exclusive pricing: the charge's tax goes on top, same as each
 		// line's own; inclusive already carries it inside serviceCharge.
 		total = total.Add(chargeTax)
@@ -581,12 +656,125 @@ func (s *Service) recomputeTotals() {
 	if total.IsNegative() {
 		total = 0
 	}
-	s.basket.Total = total
+	c.total = total
+	return c
+}
+
+// commitTotalsLocked publishes a finished computation. snap.lines (already
+// carrying each LineTotal) becomes the basket's published Lines slice — it
+// is freshly allocated and never written again after this point, which is
+// what basketCopyLocked's aliasing contract relies on. Caller must hold s.mu
+// and MUST have already verified len(s.lines) == len(snap.lines) — on the
+// optimistic path that means a generation match (see recomputeTotals); the
+// fast and fallback paths never unlock between snapshot and commit, so it's
+// trivially true there. This is not re-checked here: an unguarded index into
+// s.lines below fails loudly (an out-of-bounds panic) rather than silently
+// truncating the write-back if that precondition is ever violated — a
+// silent partial LineTotal update is a worse outcome on the checkout path
+// than a panic surfacing a real bug immediately.
+func (s *Service) commitTotalsLocked(snap totalsSnapshot, c computedTotals) {
+	// Index into s.lines freshly — never through a slice header captured
+	// before an unlock, which a concurrent append could have reallocated.
+	for i := range s.lines {
+		s.lines[i].LineTotal = snap.lines[i].LineTotal
+	}
+	s.basket.Lines = snap.lines
+	s.basket.Subtotal = c.subtotal
+	s.basket.Discount = c.discount
+	s.basket.DiscountType = snap.discountType
+	if snap.discountType == "percent" {
+		s.basket.DiscountRaw = snap.discountPercentBP
+	} else {
+		s.basket.DiscountRaw = snap.discountValue.Minor()
+	}
+	s.basket.CustomerID = snap.customerID
+	s.basket.CustomerName = snap.customerName
+	s.basket.OrderType = snap.orderType
+	s.basket.TableID = snap.tableID
+	s.basket.TableLabel = snap.tableLabel
+	s.basket.Tax = c.tax
+	s.basket.ServiceCharge = c.serviceCharge
+	s.basket.Total = c.total
+}
+
+// recomputeTotals re-derives the published basket from current state.
+// Caller must hold s.mu; the function ALWAYS returns with s.mu held (every
+// caller's `defer s.mu.Unlock()` depends on it).
+//
+// ut-docs#1317: the plugin asks inside computeTotals (AskTaxRateBP per line,
+// AskChargePolicy once) can take ~100ms each on a cache miss, and holding
+// s.mu across them stalls every other request sharing this Service. So when
+// an asker is installed this runs optimistically: snapshot under the lock,
+// RELEASE the lock for the computation (the asks included), re-acquire, and
+// commit only if the generation counter proves no other mutation landed in
+// the unlocked window — otherwise re-snapshot and retry against the newer
+// state. Retries are bounded; if contention is so pathological that every
+// attempt races, the final fallback computes under the lock exactly as the
+// pre-fix code did (a plugin ask CAN happen locked on this path — it is the
+// deliberate safety valve that guarantees termination, traded off against
+// the general no-lock-across-a-plugin-ask goal only in that pathological
+// case), so the function always terminates with correct data.
+//
+// Note: `internal/pages/init.go` installs both askers unconditionally on
+// every engine it constructs, so in production this method is always on
+// the optimistic path — the taxAsker==nil&&chargeAsker==nil fast path below
+// exists for tests and any future asker-less configuration, not as the
+// common case.
+func (s *Service) recomputeTotals() {
+	// Invalidate any concurrent optimistic recompute currently in its
+	// unlocked window: its snapshot predates whatever state change brought
+	// us here, so it must retry rather than commit over our result.
+	s.recomputeGen++
+	if s.taxAsker == nil && s.chargeAsker == nil {
+		// Fast path — no plugin hooks installed, nothing can block: compute
+		// in place without ever dropping the lock (pre-fix behavior).
+		snap := s.snapshotForTotalsLocked()
+		s.commitTotalsLocked(snap, computeTotals(snap))
+		return
+	}
+	const maxAttempts = 4
+	for attempt := 0; attempt < maxAttempts; attempt++ {
+		myGen := s.recomputeGen
+		snap := s.snapshotForTotalsLocked()
+		s.mu.Unlock()
+		var c computedTotals
+		func() {
+			// Re-acquire even if a plugin ask panics, so the caller's
+			// deferred Unlock still operates on a locked mutex and the
+			// panic propagates with the documented postcondition intact.
+			defer s.mu.Lock()
+			c = computeTotals(snap)
+		}()
+		// The generation match is the real guarantee (every totals-relevant
+		// mutation bumps it, see recomputeGen's doc comment). The length
+		// check is the hard gate commitTotalsLocked's own precondition
+		// relies on — kept as an explicit, independent check here (not
+		// folded away as "implied by the gen match") so a future gap in gen-
+		// bump coverage fails safe (retry) instead of committing a
+		// length-mismatched write.
+		if s.recomputeGen == myGen && len(s.lines) == len(snap.lines) {
+			s.commitTotalsLocked(snap, c)
+			return
+		}
+		// Stale: another mutation (a recompute-triggering one, or a
+		// gen-bumping one like Reset/Tender) landed while we were unlocked.
+		// Bump again so any OTHER in-flight optimistic pass also retries,
+		// then re-snapshot current state and recompute.
+		s.recomputeGen++
+	}
+	// Pathological contention: every optimistic attempt raced. Compute under
+	// the lock — today's exact pre-fix behavior — which cannot be raced and
+	// therefore always terminates with correct, current data.
+	snap := s.snapshotForTotalsLocked()
+	s.commitTotalsLocked(snap, computeTotals(snap))
 }
 
 func (s *Service) Tender(amount money.Money, method string) (map[string]any, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Mutates totals-relevant state without recomputing — must invalidate
+	// any in-flight optimistic recompute (see recomputeGen's doc comment).
+	s.recomputeGen++
 	// reset basket for demo
 	s.basket = Basket{}
 	s.lines = nil
@@ -769,6 +957,9 @@ func (s *Service) Reset() {
 // resetLocked is Reset's lock-free core — also called by Restore before
 // loading a snapshot. Caller must hold s.mu.
 func (s *Service) resetLocked() {
+	// Mutates totals-relevant state without recomputing — must invalidate
+	// any in-flight optimistic recompute (see recomputeGen's doc comment).
+	s.recomputeGen++
 	s.basket = Basket{}
 	s.lines = nil
 	s.discountType = ""
@@ -886,6 +1077,10 @@ func (s *Service) CustomerID() string {
 func (s *Service) SetCustomerID(customerID string) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	// Mutates totals-relevant state without recomputing — must invalidate
+	// any in-flight optimistic recompute (see recomputeGen's doc comment),
+	// which would otherwise overwrite the new customer with its snapshot's.
+	s.recomputeGen++
 	s.customerID = customerID
 	s.basket.CustomerID = customerID
 }
@@ -900,6 +1095,8 @@ func (s *Service) SetCustomer(id, name string) {
 // setCustomerLocked is SetCustomer's lock-free core — also called by Restore
 // when loading a snapshot. Caller must hold s.mu.
 func (s *Service) setCustomerLocked(id, name string) {
+	// Same recomputeGen rule as SetCustomerID above.
+	s.recomputeGen++
 	s.customerID = id
 	s.customerName = name
 	s.basket.CustomerID = id
