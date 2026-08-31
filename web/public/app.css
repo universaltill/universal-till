@@ -1032,6 +1032,19 @@ a.btn, a.btn:hover { text-decoration: none; }
    overflow-wrap, verified against a realistic long name before shipping,
    not asserted without checking. */
 .grid { display: grid; gap: .5rem; grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr)); }
+/* ut-docs#1354: the Designer's reorder tiles (#buttons-grid-admin) share
+   .grid with the sale-screen product grid above, but #1221's three
+   touch-target-sized (46px) move-up/move-down/remove buttons — plus their
+   two .5rem gaps — need ~154px of content width (46*3 + 8*2). At the
+   7rem (112px) column floor tuned for sale-screen product density, that's
+   about 60px more than a tile has, so .btn-actions (a plain flex row with
+   no wrap) overflows the tile's right edge into its neighbor. Scoped by ID
+   so the sale-screen grid's own density (app.css:1034's own comment,
+   product-owner-driven) is untouched — this widens ONLY the admin grid's
+   column floor, not tile height/thumb size/anything else .grid sets. 11rem
+   (176px) clears the ~154px content need with margin for the
+   border-inline-start/padding asymmetry .btn-tile adds below. */
+#buttons-grid-admin { grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); }
 /* user-select/touch-action unconditional here too (ut-docs#1170) — same
    reasoning as .btn above, previously gated behind body.kiosk only. */
 .btn-tile {
