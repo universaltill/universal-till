@@ -1010,6 +1010,21 @@ a.btn, a.btn:hover { text-decoration: none; }
   transition: border-color .12s ease, box-shadow .12s ease, transform .05s ease;
   user-select: none; touch-action: manipulation;
 }
+/* Category-color accent (ut-docs#1325), same var(--cat-color, var(--accent))
+   fallback pattern .category-header/.tab already use — --cat-color inherits
+   from whichever ancestor sets it (.category-group, or the tab-panel wrapper
+   in buttons.html), so no per-tile data plumbing is needed here. Overrides
+   just the inline-start side of the uniform 1px .btn-tile border above
+   (source order, same technique used everywhere else this file layers a
+   colored accent onto a bordered element); padding-inline-start is trimmed
+   by the same 3px the border grew by (1px -> 4px) so the extra width doesn't
+   visibly nudge the centered tile content off-axis. Not the tile's only
+   identifying signal — name/price/thumbnail and the category header/tab
+   above it all still show — so a pale admin-set category color merely
+   weakens this one accent, it never makes an item unreadable or
+   unidentifiable (WCAG 1.4.1: color is not used as the sole means of
+   conveying the category). */
+.btn-tile { border-inline-start: 4px solid var(--cat-color, var(--accent)); padding-inline-start: calc(.4rem - 3px); }
 .btn-tile:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15, 23, 42, .12); }
 .btn-tile:active { transform: scale(.97); }
 .tile-name {
