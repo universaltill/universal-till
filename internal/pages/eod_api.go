@@ -680,43 +680,46 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 		if elev.Outcome == elevated {
 			actorID = elev.ApproverID
 		}
-		reports, err := repo.ListArchivedReports(r.Context(), 100)
+		// ut-docs#1323: a direct indexed (kind, period) lookup, in place of
+		// loading up to 100 full report blobs (including their large
+		// content_json) via ListArchivedReports just to linear-scan for
+		// this one row — report_archive already has a UNIQUE(kind, period)
+		// index to serve exactly this query.
+		a, found, err := repo.GetArchivedReport(r.Context(), "eod", period)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "eod.err.list_failed", "eod_print_list", err)
 			return
 		}
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		for _, a := range reports {
-			if a.Kind != "eod" || a.Period != period {
-				continue
-			}
-			var rep data.EODReport
-			if err := json.Unmarshal([]byte(a.Content), &rep); err != nil {
-				break
-			}
-			cfg := printerConfig(r.Context(), d)
-			if !cfg.Enabled() {
-				w.WriteHeader(http.StatusBadGateway)
-				fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
-				return
-			}
-			doc := buildEODDoc(rep, storeNameOrDefault(r.Context(), d), cfg.Charset)
-			if perr := print.PrintDoc(r.Context(), cfg, doc); perr != nil {
-				w.WriteHeader(http.StatusBadGateway)
-				fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
-				return
-			}
-			now := time.Now().UTC().Format(time.RFC3339)
-			if elev.Outcome == elevated {
-				_ = repo.InsertAuditElevated(r.Context(), nil, actorID, elev.ActorID, "report", period, "eod_reprinted", nil, now, "")
-			} else {
-				_ = repo.InsertAudit(r.Context(), nil, actorID, "report", period, "eod_reprinted", nil, now, "")
-			}
-			fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "journal.reprinted"))
+		if !found {
+			http.Error(w, "report not found", http.StatusNotFound)
 			return
 		}
-		http.Error(w, "report not found", http.StatusNotFound)
+		var rep data.EODReport
+		if err := json.Unmarshal([]byte(a.Content), &rep); err != nil {
+			http.Error(w, "report not found", http.StatusNotFound)
+			return
+		}
+		cfg := printerConfig(r.Context(), d)
+		if !cfg.Enabled() {
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
+			return
+		}
+		doc := buildEODDoc(rep, storeNameOrDefault(r.Context(), d), cfg.Charset)
+		if perr := print.PrintDoc(r.Context(), cfg, doc); perr != nil {
+			w.WriteHeader(http.StatusBadGateway)
+			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
+			return
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		if elev.Outcome == elevated {
+			_ = repo.InsertAuditElevated(r.Context(), nil, actorID, elev.ActorID, "report", period, "eod_reprinted", nil, now, "")
+		} else {
+			_ = repo.InsertAudit(r.Context(), nil, actorID, "report", period, "eod_reprinted", nil, now, "")
+		}
+		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "journal.reprinted"))
 	})
 
 	// Date-ranged Z-report (ut-docs#57), summary granularity, ad hoc — not
