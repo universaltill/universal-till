@@ -20,37 +20,50 @@
   <div class="order-type-row">
     <!-- 2026-08-30 (product owner, live on the tablet): was two full-size
          buttons (Dine in / Takeaway) side by side, each always rendering
-         the OTHER's un-selected state too -- a single switch says the same
-         thing (which of two states is this?) in one control instead of
-         two, freeing the row's other half for the table-assignment button
-         below. Still ONE .btn-sized control (deliberately NOT .compact,
-         same reasoning as the two-button version it replaces): this
-         determines VAT (internal/pos/service.go,
+         the OTHER's un-selected state too -- replaced with a single
+         sliding switch, one control instead of two.
+         2026-08-31 (product owner, live on the tablet, ut-docs#1379): the
+         single switch turned out to be genuinely ambiguous in practice --
+         one pill whose LABEL TEXT changes on tap reads, at a glance, as
+         "which one does tapping this switch TO?" rather than "which one is
+         active right now?" (the label is a description of the target
+         state on a plain button; only the knob position/track color
+         actually encode current state, and both are subtle). So: back to
+         two always-visible, mutually-exclusive segments -- but compact
+         (.order-type-option below, NOT the original's full .btn size),
+         still occupying exactly the switch's old flex:1 slot next to the
+         table-assignment button, so this is a visual/interaction fix, not
+         a return to the space cost the switch was introduced to solve.
+         Same VAT sensitivity as before either way (internal/pos/service.go,
          tax_codes.takeaway_rate_basis_points -- the German §12 UStG
-         dine-in/takeaway split, live pilot work), so a mis-tap puts the
-         wrong tax on a fiscal receipt. role="switch"+aria-checked (WAI-ARIA
-         switch pattern) rather than aria-pressed -- this is a two-state
-         toggle between two named states, not a momentary pressed button.
-         hx-vals computes the OPPOSITE of the current server-known state,
-         so one tap always flips it -- no client-side JS needed, same
-         template-driven approach the two-button version used.
-         hx-sync="#basket:replace" (ut-docs#1337, merged concurrently with
-         this change): every other #basket-targeting trigger already
-         aborts an in-flight request to the same swap target the instant a
-         newer one fires -- this switch is a NEW trigger added in this
-         same branch, so it needs the identical treatment or it would be
-         the one un-synced hole in an otherwise-fixed set. -->
-    {{ $nextOrderType := "takeaway" }}
-    {{ if eq .OrderType "takeaway" }}{{ $nextOrderType = "" }}{{ end }}
-    <button type="button" class="order-type-switch{{ if eq .OrderType "takeaway" }} is-takeaway{{ end }}"
-            role="switch" aria-checked="{{ if eq .OrderType "takeaway" }}true{{ else }}false{{ end }}"
-            aria-label="{{ T "basket.order_type.label" }}"
-            hx-post="/api/pos/order-type"
-            hx-vals='{{ jsonVals "order_type" $nextOrderType }}'
-            hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
-      <span class="order-type-switch-track" aria-hidden="true"><span class="order-type-switch-knob"></span></span>
-      <span class="order-type-switch-label">{{ if eq .OrderType "takeaway" }}🥡 {{ T "basket.order_type.takeaway" }}{{ else }}🍽️ {{ T "basket.order_type.dine_in" }}{{ end }}</span>
-    </button>
+         dine-in/takeaway split): a mis-tap puts the wrong tax on a fiscal
+         receipt, which is exactly the failure mode this fixes -- an
+         operator can now SEE both states at once and confirm the active
+         one is filled, not infer it from a knob's position.
+         role="radiogroup" + role="radio" + aria-checked (WAI-ARIA radio
+         pattern, not aria-pressed): this is a single mutually-exclusive
+         choice between two named states, not two independent toggles.
+         hx-sync="#basket:replace" (ut-docs#1337): every other
+         #basket-targeting trigger already aborts an in-flight request to
+         the same swap target the instant a newer one fires -- both
+         segments need the identical treatment or either would be an
+         un-synced hole in an otherwise-fixed set. -->
+    <div class="order-type-toggle-group" role="radiogroup" aria-label="{{ T "basket.order_type.label" }}">
+      <button type="button" class="order-type-option{{ if ne .OrderType "takeaway" }} is-active{{ end }}"
+              role="radio" aria-checked="{{ if ne .OrderType "takeaway" }}true{{ else }}false{{ end }}"
+              data-testid="order-type-dine-in"
+              hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "" }}'
+              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
+        🍽️ {{ T "basket.order_type.dine_in" }}
+      </button>
+      <button type="button" class="order-type-option{{ if eq .OrderType "takeaway" }} is-active{{ end }}"
+              role="radio" aria-checked="{{ if eq .OrderType "takeaway" }}true{{ else }}false{{ end }}"
+              data-testid="order-type-takeaway"
+              hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "takeaway" }}'
+              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
+        🥡 {{ T "basket.order_type.takeaway" }}
+      </button>
+    </div>
     <!-- Table assignment (ut-docs#820, ADR-0054): was an always-expanded
          inline strip (current table + clear + every free table listed) --
          collapsed into a single button next to the switch (product owner,
