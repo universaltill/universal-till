@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
@@ -380,6 +381,107 @@ func TestGetInvoices_ListsIssuedInvoicesWithCreditNotesNegated(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "Jane Doe") {
 		t.Fatalf("expected the issued invoice listed, got body without it")
+	}
+}
+
+// ut-docs#1321: a bare page load (no ?from=/?to=) used to mean "every
+// invoice ever issued" — an unbounded full-history scan on a shop with
+// years of trading. It now defaults `from` to the start of the current
+// calendar month; `to` stays open (see TestGetInvoices_DefaultDoesNotHide
+// TodaysInvoiceAcrossTimezones for why `to` is deliberately NOT also
+// defaulted to "today").
+func TestGetInvoices_DefaultsToCurrentMonthWhenNoFilterGiven(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newInvoiceTestDeps(t)
+	setSeller(t, dp)
+	seedInvoiceableSale(t, dp, "sale1", "R001", 120, 20)
+	repo := data.NewPOSRepo(dp.Db)
+	sale, _, err := repo.GetSaleDetail(context.Background(), "R001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Bypass issueInvoice (hardcodes time.Now() as IssuedAt) to plant an
+	// invoice well outside the current month, the same direct-repo seeding
+	// small_repos_test.go's TestInvoiceRepo_List uses.
+	if _, err := data.NewInvoiceRepo(dp.Db).Create(context.Background(), data.InvoiceInput{
+		Kind: "invoice", SaleID: sale.ID, CustomerName: "Old Customer", SellerJSON: "{}", VATBreakdownJSON: "[]",
+		NetTotal: 100, TaxTotal: 20, GrossTotal: 120, IssuedAt: "2020-01-15T10:00:00Z", IssuedBy: "user1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/invoices", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Old Customer") {
+		t.Fatalf("a bare page load must default to the current month, not show a 2020 invoice: %s", rec.Body.String())
+	}
+	now := time.Now()
+	wantFrom := time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format("2006-01-02")
+	if !strings.Contains(rec.Body.String(), `name="from" value="`+wantFrom+`"`) {
+		t.Fatalf("expected the from-date picker defaulted to %q (start of this month), got: %s", wantFrom, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `name="to" value="">`) {
+		t.Fatalf("expected `to` to stay OPEN (empty picker value), not defaulted — a `to=today` bound is exactly the timezone bug TestGetInvoices_DefaultDoesNotHideTodaysInvoiceAcrossTimezones guards against: %s", rec.Body.String())
+	}
+
+	// An explicit range still overrides the default and reaches the 2020 invoice.
+	rec2 := httptest.NewRecorder()
+	req2 := httptest.NewRequest(http.MethodGet, "/invoices?from=2020-01-01&to=2020-01-31", nil)
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	if !strings.Contains(rec2.Body.String(), "Old Customer") {
+		t.Fatalf("an explicit ?from=/?to= must still reach older invoices: %s", rec2.Body.String())
+	}
+}
+
+// TestGetInvoices_DefaultDoesNotHideTodaysInvoiceAcrossTimezones is the
+// independent review's regression (ut-docs#1321): the default handler
+// builds a LOCAL calendar date for `from`, but InvoiceRow.IssuedAt is
+// stored UTC RFC3339 and compared lexicographically
+// (invoiceRangeBound/List/Totals) — defaulting `to` to "today" as well
+// (an earlier draft of this fix did) would have silently excluded an
+// invoice issued minutes ago whenever the local and UTC calendar dates
+// disagree at that instant (any timezone west of UTC in the evening; the
+// first ~2h of a month in a timezone east of UTC, e.g. the Germany
+// pilot). This is exactly why the fix leaves `to` open rather than also
+// defaulting it — this test reproduces the west-of-UTC case with a real
+// TZ and a real "issued this instant" timestamp, the shape a live sale
+// actually produces, and would fail if `to` were ever re-defaulted.
+func TestGetInvoices_DefaultDoesNotHideTodaysInvoiceAcrossTimezones(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	t.Setenv("TZ", "Pacific/Honolulu") // UTC-10 — local calendar date can trail UTC's by a full day
+	mux, dp := newInvoiceTestDeps(t)
+	setSeller(t, dp)
+	seedInvoiceableSale(t, dp, "sale1", "R001", 120, 20)
+	repo := data.NewPOSRepo(dp.Db)
+	sale, _, err := repo.GetSaleDetail(context.Background(), "R001")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Issued "right now" in UTC — exactly what a real, live issueInvoice
+	// call (time.Now().UTC()) stores for a sale completed this instant.
+	issuedAt := time.Now().UTC().Format(time.RFC3339)
+	if _, err := data.NewInvoiceRepo(dp.Db).Create(context.Background(), data.InvoiceInput{
+		Kind: "invoice", SaleID: sale.ID, CustomerName: "Just Now Customer", SellerJSON: "{}", VATBreakdownJSON: "[]",
+		NetTotal: 100, TaxTotal: 20, GrossTotal: 120, IssuedAt: issuedAt, IssuedBy: "user1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodGet, "/invoices", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Just Now Customer") {
+		t.Fatalf("an invoice issued THIS INSTANT (UTC %s) must never be hidden by the bare-load default, regardless of local timezone: %s", issuedAt, rec.Body.String())
 	}
 }
 
