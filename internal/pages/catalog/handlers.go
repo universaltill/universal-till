@@ -891,7 +891,12 @@ func parseItemInput(r *http.Request) (pos.ItemInput, error) {
 		Description: strings.TrimSpace(r.Form.Get("description")),
 		Unit:        strings.TrimSpace(r.Form.Get("unit")),
 		IsWeighed:   r.Form.Get("isWeighed") == "1" || strings.ToLower(r.Form.Get("isWeighed")) == "on",
-		IsActive:    r.Form.Get("isActive") != "0",
+		// formCheckboxActive, not a bare Form.Get: the item form now pairs
+		// its Active checkbox with a hidden isActive=0 fallback
+		// (ut-docs#1367), same convention as the variant/modifier-group
+		// forms — see that helper's own comment for why Form.Get alone
+		// would get this backwards.
+		IsActive: formCheckboxActive(r),
 	}, nil
 }
 

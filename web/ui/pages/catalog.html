@@ -66,6 +66,12 @@
       </div>
       <div class="field-checks">
         <label><input type="checkbox" name="isWeighed" id="item-weighed" value="1"> {{ T "catalog.sold_by_weight" }}</label>
+        <!-- Checkbox semantics: an unchecked box submits nothing, so this
+             pairs it with a hidden isActive=0 (same convention as the
+             variant/modifier-group forms in catalog_variants.html) —
+             without it, unchecking "Active" and saving silently did
+             nothing (ut-docs#1367). -->
+        <input type="hidden" name="isActive" value="0">
         <label><input type="checkbox" name="isActive" id="item-active" value="1" checked> {{ T "catalog.active" }}</label>
       </div>
       <button class="btn primary" type="submit" id="item-form-submit" style="width:100%">{{ T "catalog.create_item" }}</button>

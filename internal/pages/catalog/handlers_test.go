@@ -166,6 +166,71 @@ func TestCatalogCreateAndDeactivate(t *testing.T) {
 	}
 }
 
+// TestCatalogItemUpdate_UncheckActive_ActuallyDeactivates is a regression
+// test for ut-docs#1367: the item-edit form's Active checkbox previously had
+// no paired hidden isActive=0 fallback, so an HTML form correctly submits
+// NOTHING for an unchecked box — the request landed with no isActive field
+// at all, and the naive `Form.Get("isActive") != "0"` read that as "still
+// active." Unchecking Active and saving silently did nothing.
+//
+// The fix pairs the checkbox with a hidden isActive=0 (same convention as
+// the variant/modifier-group forms), which changes what a checked box
+// submits too: BOTH the hidden "0" and the checkbox's "1", in that DOM
+// order. This test covers both submitted shapes a real browser now sends.
+func TestCatalogItemUpdate_UncheckActive_ActuallyDeactivates(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}})
+
+	create := strings.NewReader("name=Croissant&price=250&isActive=0&isActive=1")
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/item", create)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("create: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	id := extractItemID(t, db)
+
+	var active bool
+	mustActive := func(want bool, step string) {
+		t.Helper()
+		if err := db.QueryRow(`SELECT is_active FROM items WHERE id = ?`, id).Scan(&active); err != nil {
+			t.Fatalf("%s: query is_active: %v", step, err)
+		}
+		if active != want {
+			t.Fatalf("%s: is_active = %v, want %v", step, active, want)
+		}
+	}
+	mustActive(true, "after create (checked: hidden 0 + checkbox 1)")
+
+	// Unchecking Active: the browser submits ONLY the hidden field, exactly
+	// as an unchecked checkbox contributes nothing on its own.
+	uncheck := strings.NewReader("id=" + id + "&name=Croissant&price=250&isActive=0")
+	req = httptest.NewRequest(http.MethodPost, "/api/catalog/item/update", uncheck)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("uncheck update: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	mustActive(false, "after unchecking Active and saving")
+
+	// Re-checking it (both values, hidden-then-checkbox order) must
+	// reactivate — not get stuck reading the hidden "0" first.
+	recheck := strings.NewReader("id=" + id + "&name=Croissant&price=250&isActive=0&isActive=1")
+	req = httptest.NewRequest(http.MethodPost, "/api/catalog/item/update", recheck)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("recheck update: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	mustActive(true, "after re-checking Active and saving")
+}
+
 func TestCatalogLookupRejectsInvalidBarcode(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
