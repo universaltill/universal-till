@@ -117,6 +117,12 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 	// ut-docs#611 review, M2/M3).
 	prefs := fetchShellPrefs(url)
 	applyWindowMode(w, prefs.WindowMode)
+	if ctl != nil {
+		// ut-docs#1331: this initial apply never goes through
+		// handleApplyMode, so without this call GET /diagnostics'
+		// current_window_mode reads "" until the first live toggle.
+		ctl.SetAppliedMode(prefs.WindowMode)
+	}
 	if err := reconcileAutostart(prefs.LaunchOnStartup); err != nil {
 		fmt.Fprintln(os.Stderr, "reconcile autostart entry:", err)
 	}
@@ -157,6 +163,12 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 			watchShellMode(pollCtx, newShellPollClient(), url, prefs.WindowMode, prefs.Rev, func(mode string, done func()) {
 				w.Dispatch(func() {
 					applyWindowMode(w, mode)
+					if ctl != nil {
+						// ut-docs#1331: same reasoning as the initial-apply
+						// call above — this live path never goes through
+						// handleApplyMode either.
+						ctl.SetAppliedMode(mode)
+					}
 					done()
 				})
 			})

@@ -530,6 +530,31 @@ func TestControlServer_Diagnostics_ModeUnchangedByFailedOrInvalidApply(t *testin
 	}
 }
 
+// TestControlServer_SetAppliedMode proves SetAppliedMode updates
+// current_window_mode the same way a successful POST /apply-mode does —
+// this is the hook showWindow's initial apply and watchShellMode's live
+// callback now call directly (webview_fallback.go), bypassing the HTTP
+// path entirely (review of ut-docs#1329, should-fix 3; ut-docs#1331).
+func TestControlServer_SetAppliedMode(t *testing.T) {
+	cs, err := newControlServer()
+	if err != nil {
+		t.Fatalf("newControlServer() = %v", err)
+	}
+	defer cs.Close()
+
+	cs.SetAppliedMode("kiosk")
+
+	resp := authedGet(t, cs.Addr(), "/diagnostics", cs.Token())
+	if resp.StatusCode != http.StatusOK {
+		resp.Body.Close()
+		t.Fatalf("GET /diagnostics = %d, want 200", resp.StatusCode)
+	}
+	body := decodeDiagnostics(t, resp)
+	if body.Data.CurrentWindowMode != "kiosk" {
+		t.Errorf("current_window_mode = %q after SetAppliedMode(\"kiosk\"), want kiosk", body.Data.CurrentWindowMode)
+	}
+}
+
 // TestShellPollContractsMatchCommonPackage pins the cross-binary numeric
 // contracts that have no compiler to enforce them (review of ut-docs#1039,
 // finding 10 — same mechanism as TestEnvVarsMatchCommonPackage above):

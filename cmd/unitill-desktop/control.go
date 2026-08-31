@@ -114,25 +114,22 @@ type controlServer struct {
 	lastInputAt time.Time
 	haveInput   bool
 	// lastAppliedMode is the mode value from the most recent SUCCESSFUL
-	// /apply-mode call (ops wired, mode valid, ApplyMode returned nil) —
-	// surfaced as GET /diagnostics' current_window_mode. Deliberately not
-	// updated on a rejected (400) or failed (500) apply: this must report
-	// what the window actually reached, never what a caller merely asked
-	// for.
+	// apply — either POST /apply-mode (ops wired, mode valid, ApplyMode
+	// returned nil) or a direct SetAppliedMode call from a path that
+	// applies a mode outside the HTTP channel entirely — surfaced as
+	// GET /diagnostics' current_window_mode. Deliberately not updated on a
+	// rejected (400) or failed (500) apply: this must report what the
+	// window actually reached, never what a caller merely asked for.
 	//
-	// KNOWN GAP (review of ut-docs#1329, should-fix 3, deliberately not
-	// fixed in this card): only POST /apply-mode ever sets this, which on
+	// Until ut-docs#1331, only POST /apply-mode ever set this, which on
 	// Linux is reached only via HTTPWindowController — i.e. the spawn-mode
 	// fallback inside ShellPollWindowController. The INITIAL mode
 	// (showWindow's own applyWindowMode call, webview_fallback.go) and a
 	// live mode change on the attach-mode-with-poll path (watchShellMode,
-	// shell_poll.go) both bypass this field entirely, so it reads ""
+	// shell_poll.go) both bypassed this field entirely, so it read ""
 	// (empty, not "unknown") on the exact topology #1228's incident
-	// happened on. Fixing this needs a small SetAppliedMode(mode) hook
-	// called from both of those paths — deferred to a follow-up rather
-	// than risk an under-tested change to platform build-tagged code in
-	// this pass; current_window_mode's absence is visible (empty string),
-	// not silently wrong.
+	// happened on (review of ut-docs#1329, should-fix 3). Both now call
+	// SetAppliedMode directly.
 	lastAppliedMode string
 }
 
@@ -212,6 +209,18 @@ func (cs *controlServer) withAuth(next http.HandlerFunc) http.HandlerFunc {
 func (cs *controlServer) SetOps(ops *windowOps) {
 	cs.mu.Lock()
 	cs.ops = ops
+	cs.mu.Unlock()
+}
+
+// SetAppliedMode records the mode a window actually reached outside the
+// POST /apply-mode path — showWindow's initial apply and watchShellMode's
+// live callback (both in webview_fallback.go) call this directly, since
+// neither goes through handleApplyMode (review of ut-docs#1329, should-fix
+// 3; ut-docs#1331). Safe to call from any goroutine, same locking as
+// SetOps/handleApplyMode.
+func (cs *controlServer) SetAppliedMode(mode string) {
+	cs.mu.Lock()
+	cs.lastAppliedMode = mode
 	cs.mu.Unlock()
 }
 
