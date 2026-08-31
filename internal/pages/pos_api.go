@@ -1311,6 +1311,21 @@ func loadReceiptLegalBlocks(ctx context.Context, db *sql.DB, completedAt time.Ti
 		return nil, err
 	}
 	var repo = data.NewPluginRepo(db)
+	// ut-docs#1323: one batched lookup for every receipt-template plugin's
+	// version-at-completedAt, instead of one GetPluginVersionAt round trip
+	// per entry below — this ran on every completed sale. Fetched for every
+	// entry's PluginID up front (some may still get filtered out by the
+	// config/lines checks below), which is harmless: it costs nothing extra
+	// query-wise and keeps this a single batched call regardless of how
+	// many entries survive filtering.
+	var versionAt map[string]string
+	if !completedAt.IsZero() {
+		ids := make([]string, len(entries))
+		for i, entry := range entries {
+			ids[i] = entry.PluginID
+		}
+		versionAt, _ = repo.GetPluginVersionsAt(ctx, ids, completedAt)
+	}
 	var blocks []receiptLegalBlock
 	for _, entry := range entries {
 		var cfg receiptTemplateConfig
@@ -1328,10 +1343,8 @@ func loadReceiptLegalBlocks(ctx context.Context, db *sql.DB, completedAt time.Ti
 			priority = entry.SortOrder
 		}
 		version := entry.PluginVersion
-		if !completedAt.IsZero() {
-			if v, ok, _ := repo.GetPluginVersionAt(ctx, entry.PluginID, completedAt); ok && v != "" {
-				version = v
-			}
+		if v, ok := versionAt[entry.PluginID]; ok && v != "" {
+			version = v
 		}
 		blocks = append(blocks, receiptLegalBlock{
 			PluginID:      entry.PluginID,

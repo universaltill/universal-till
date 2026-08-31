@@ -1392,39 +1392,114 @@ type PaymentKeyConflict struct {
 // guard (ADR-0031): the guard makes a collision harmless, this makes it
 // loud at install time.
 func (r *PluginRepo) FindPaymentKeyConflicts(ctx context.Context, tx *sql.Tx, pluginID string, keys []string) ([]PaymentKeyConflict, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
 	exec := r.executor(tx)
-	var out []PaymentKeyConflict
-	for _, key := range keys {
-		var owner sql.NullString
-		var ownerInstalled int
-		err := exec.QueryRowContext(ctx, `
-SELECT pm.plugin_id, CASE WHEN p.id IS NULL THEN 0 ELSE 1 END
+	placeholders := make([]string, len(keys))
+	pmArgs := make([]any, len(keys))
+	for i, key := range keys {
+		placeholders[i] = "?"
+		pmArgs[i] = key
+	}
+	in := strings.Join(placeholders, ",")
+
+	// Batched replacement for what used to be one payment_methods lookup
+	// per candidate key (ut-docs#1323, install-time N+1). Same JOIN, same
+	// columns, now scoped to every key at once.
+	type pmHit struct {
+		owner     string
+		hasOwner  bool
+		installed bool
+	}
+	pmByKey := map[string]pmHit{}
+	pmRows, err := exec.QueryContext(ctx, `
+SELECT pm.id, pm.plugin_id, CASE WHEN p.id IS NULL THEN 0 ELSE 1 END
 FROM payment_methods pm
 LEFT JOIN plugins p ON p.id = pm.plugin_id
-WHERE pm.id = ?`, key).Scan(&owner, &ownerInstalled)
-		switch {
-		case err == sql.ErrNoRows:
-			// no method row; fall through to the entry check
-		case err != nil:
+WHERE pm.id IN (`+in+`)`, pmArgs...)
+	if err != nil {
+		return nil, pluginObs.wrap("payment_key_conflicts", err)
+	}
+	for pmRows.Next() {
+		var key string
+		var owner sql.NullString
+		var ownerInstalled int
+		if err := pmRows.Scan(&key, &owner, &ownerInstalled); err != nil {
+			pmRows.Close()
 			return nil, pluginObs.wrap("payment_key_conflicts", err)
-		case !owner.Valid || owner.String == "":
-			out = append(out, PaymentKeyConflict{Key: key})
-			continue
-		case owner.String != pluginID:
-			out = append(out, PaymentKeyConflict{Key: key, Owner: owner.String, OwnerInstalled: ownerInstalled == 1})
-			continue
 		}
-		var entryOwner string
-		err = exec.QueryRowContext(ctx, `
-SELECT plugin_id FROM plugin_entries
-WHERE type = 'payment' AND key = ? AND plugin_id != ? LIMIT 1`, key, pluginID).Scan(&entryOwner)
-		if err == sql.ErrNoRows {
-			continue
+		pmByKey[key] = pmHit{owner: owner.String, hasOwner: owner.Valid, installed: ownerInstalled == 1}
+	}
+	if err := pmRows.Err(); err != nil {
+		pmRows.Close()
+		return nil, pluginObs.wrap("payment_key_conflicts", err)
+	}
+	pmRows.Close()
+
+	// Keys needing the plugin_entries fallback check: no payment_methods
+	// row at all, or the row is already owned by pluginID itself (a
+	// just-installed sibling plugin's entry may not be synced into
+	// payment_methods yet — same reasoning as FindPaymentNameConflicts).
+	var needEntryCheck []string
+	for _, key := range keys {
+		hit, hasRow := pmByKey[key]
+		if !hasRow || (hit.hasOwner && hit.owner == pluginID) {
+			needEntryCheck = append(needEntryCheck, key)
 		}
+	}
+	entryOwnerByKey := map[string]string{}
+	if len(needEntryCheck) > 0 {
+		ph2 := make([]string, len(needEntryCheck))
+		args2 := make([]any, len(needEntryCheck)+1)
+		for i, key := range needEntryCheck {
+			ph2[i] = "?"
+			args2[i] = key
+		}
+		args2[len(needEntryCheck)] = pluginID
+		entryRows, err := exec.QueryContext(ctx, `
+SELECT key, plugin_id FROM plugin_entries
+WHERE type = 'payment' AND key IN (`+strings.Join(ph2, ",")+`) AND plugin_id != ?`, args2...)
 		if err != nil {
 			return nil, pluginObs.wrap("payment_key_conflicts", err)
 		}
-		out = append(out, PaymentKeyConflict{Key: key, Owner: entryOwner, OwnerInstalled: true})
+		for entryRows.Next() {
+			var key, owner string
+			if err := entryRows.Scan(&key, &owner); err != nil {
+				entryRows.Close()
+				return nil, pluginObs.wrap("payment_key_conflicts", err)
+			}
+			// Original per-key query used LIMIT 1 with no ORDER BY — an
+			// arbitrary but single row per key. First-seen-wins here
+			// reproduces that "pick any one" contract without needing an
+			// ORDER BY the original never had either.
+			if _, seen := entryOwnerByKey[key]; !seen {
+				entryOwnerByKey[key] = owner
+			}
+		}
+		if err := entryRows.Err(); err != nil {
+			entryRows.Close()
+			return nil, pluginObs.wrap("payment_key_conflicts", err)
+		}
+		entryRows.Close()
+	}
+
+	// Rebuild the result strictly in the caller's own key order — callers
+	// key off conflicts[0], so this preserves the original's "first
+	// conflicting key wins" semantics exactly.
+	var out []PaymentKeyConflict
+	for _, key := range keys {
+		hit, hasRow := pmByKey[key]
+		switch {
+		case hasRow && hit.hasOwner && hit.owner != "" && hit.owner != pluginID:
+			out = append(out, PaymentKeyConflict{Key: key, Owner: hit.owner, OwnerInstalled: hit.installed})
+		case hasRow && (!hit.hasOwner || hit.owner == ""):
+			out = append(out, PaymentKeyConflict{Key: key})
+		default:
+			if owner, ok := entryOwnerByKey[key]; ok {
+				out = append(out, PaymentKeyConflict{Key: key, Owner: owner, OwnerInstalled: true})
+			}
+		}
 	}
 	return out, nil
 }
@@ -1440,39 +1515,107 @@ WHERE type = 'payment' AND key = ? AND plugin_id != ? LIMIT 1`, key, pluginID).S
 // every startup (ut-docs#16, ADR-0031's documented residual). The plugin's
 // own existing rows never conflict, so reinstall/upgrade stay clean.
 func (r *PluginRepo) FindPaymentNameConflicts(ctx context.Context, tx *sql.Tx, pluginID string, names []string) ([]PaymentKeyConflict, error) {
+	if len(names) == 0 {
+		return nil, nil
+	}
 	exec := r.executor(tx)
-	var out []PaymentKeyConflict
-	for _, name := range names {
-		var owner sql.NullString
-		var ownerInstalled int
-		err := exec.QueryRowContext(ctx, `
-SELECT pm.plugin_id, CASE WHEN p.id IS NULL THEN 0 ELSE 1 END
+	placeholders := make([]string, len(names))
+	pmArgs := make([]any, len(names)+1)
+	for i, name := range names {
+		placeholders[i] = "?"
+		pmArgs[i] = name
+	}
+	pmArgs[len(names)] = pluginID
+	in := strings.Join(placeholders, ",")
+
+	// Batched replacement for what used to be one payment_methods lookup
+	// per candidate label (ut-docs#1323, install-time N+1).
+	type pmHit struct {
+		owner     string
+		installed bool
+	}
+	pmByName := map[string]pmHit{}
+	pmRows, err := exec.QueryContext(ctx, `
+SELECT pm.name, pm.plugin_id, CASE WHEN p.id IS NULL THEN 0 ELSE 1 END
 FROM payment_methods pm
 LEFT JOIN plugins p ON p.id = pm.plugin_id
-WHERE pm.name = ? AND COALESCE(pm.plugin_id, '') != ?`, name, pluginID).Scan(&owner, &ownerInstalled)
-		switch {
-		case err == sql.ErrNoRows:
-			// no method row; fall through to the entry check
-		case err != nil:
+WHERE pm.name IN (`+in+`) AND COALESCE(pm.plugin_id, '') != ?`, pmArgs...)
+	if err != nil {
+		return nil, pluginObs.wrap("payment_name_conflicts", err)
+	}
+	for pmRows.Next() {
+		var name string
+		var owner sql.NullString
+		var ownerInstalled int
+		if err := pmRows.Scan(&name, &owner, &ownerInstalled); err != nil {
+			pmRows.Close()
 			return nil, pluginObs.wrap("payment_name_conflicts", err)
-		case !owner.Valid || owner.String == "":
-			out = append(out, PaymentKeyConflict{Key: name})
-			continue
-		default:
-			out = append(out, PaymentKeyConflict{Key: name, Owner: owner.String, OwnerInstalled: ownerInstalled == 1})
-			continue
 		}
-		var entryOwner string
-		err = exec.QueryRowContext(ctx, `
-SELECT plugin_id FROM plugin_entries
-WHERE type = 'payment' AND label = ? AND plugin_id != ? LIMIT 1`, name, pluginID).Scan(&entryOwner)
-		if err == sql.ErrNoRows {
-			continue
+		pmByName[name] = pmHit{owner: owner.String, installed: ownerInstalled == 1}
+	}
+	if err := pmRows.Err(); err != nil {
+		pmRows.Close()
+		return nil, pluginObs.wrap("payment_name_conflicts", err)
+	}
+	pmRows.Close()
+
+	// A name with no matching row above (either no payment_methods row at
+	// all, or its only row belongs to pluginID itself — excluded by the
+	// query's own COALESCE(...) != ? filter) falls through to the
+	// plugin_entries check, exactly as the original per-name query did.
+	var needEntryCheck []string
+	for _, name := range names {
+		if _, hit := pmByName[name]; !hit {
+			needEntryCheck = append(needEntryCheck, name)
 		}
+	}
+	entryOwnerByName := map[string]string{}
+	if len(needEntryCheck) > 0 {
+		ph2 := make([]string, len(needEntryCheck))
+		args2 := make([]any, len(needEntryCheck)+1)
+		for i, name := range needEntryCheck {
+			ph2[i] = "?"
+			args2[i] = name
+		}
+		args2[len(needEntryCheck)] = pluginID
+		entryRows, err := exec.QueryContext(ctx, `
+SELECT label, plugin_id FROM plugin_entries
+WHERE type = 'payment' AND label IN (`+strings.Join(ph2, ",")+`) AND plugin_id != ?`, args2...)
 		if err != nil {
 			return nil, pluginObs.wrap("payment_name_conflicts", err)
 		}
-		out = append(out, PaymentKeyConflict{Key: name, Owner: entryOwner, OwnerInstalled: true})
+		for entryRows.Next() {
+			var name, owner string
+			if err := entryRows.Scan(&name, &owner); err != nil {
+				entryRows.Close()
+				return nil, pluginObs.wrap("payment_name_conflicts", err)
+			}
+			if _, seen := entryOwnerByName[name]; !seen {
+				entryOwnerByName[name] = owner
+			}
+		}
+		if err := entryRows.Err(); err != nil {
+			entryRows.Close()
+			return nil, pluginObs.wrap("payment_name_conflicts", err)
+		}
+		entryRows.Close()
+	}
+
+	// Rebuild strictly in the caller's own name order — callers key off
+	// conflicts[0].
+	var out []PaymentKeyConflict
+	for _, name := range names {
+		if hit, ok := pmByName[name]; ok {
+			if hit.owner == "" {
+				out = append(out, PaymentKeyConflict{Key: name})
+			} else {
+				out = append(out, PaymentKeyConflict{Key: name, Owner: hit.owner, OwnerInstalled: hit.installed})
+			}
+			continue
+		}
+		if owner, ok := entryOwnerByName[name]; ok {
+			out = append(out, PaymentKeyConflict{Key: name, Owner: owner, OwnerInstalled: true})
+		}
 	}
 	return out, nil
 }
@@ -1496,20 +1639,51 @@ type PageKeyConflict struct {
 // pattern, deliberately reused for a second entry type rather than
 // namespacing MenuPlugins itself, to keep the two conventions consistent.
 func (r *PluginRepo) FindPageKeyConflicts(ctx context.Context, tx *sql.Tx, pluginID string, keys []string) ([]PageKeyConflict, error) {
+	if len(keys) == 0 {
+		return nil, nil
+	}
 	exec := r.executor(tx)
-	var out []PageKeyConflict
-	for _, key := range keys {
-		var owner string
-		err := exec.QueryRowContext(ctx, `
-SELECT plugin_id FROM plugin_entries
-WHERE type = 'page' AND key = ? AND plugin_id != ? LIMIT 1`, key, pluginID).Scan(&owner)
-		if err == sql.ErrNoRows {
-			continue
-		}
-		if err != nil {
+	placeholders := make([]string, len(keys))
+	args := make([]any, len(keys)+1)
+	for i, key := range keys {
+		placeholders[i] = "?"
+		args[i] = key
+	}
+	args[len(keys)] = pluginID
+	// Batched replacement for what used to be one plugin_entries lookup
+	// per candidate key (ut-docs#1323, install-time N+1).
+	rows, err := exec.QueryContext(ctx, `
+SELECT key, plugin_id FROM plugin_entries
+WHERE type = 'page' AND key IN (`+strings.Join(placeholders, ",")+`) AND plugin_id != ?`, args...)
+	if err != nil {
+		return nil, pluginObs.wrap("page_key_conflicts", err)
+	}
+	ownerByKey := map[string]string{}
+	for rows.Next() {
+		var key, owner string
+		if err := rows.Scan(&key, &owner); err != nil {
+			rows.Close()
 			return nil, pluginObs.wrap("page_key_conflicts", err)
 		}
-		out = append(out, PageKeyConflict{Key: key, Owner: owner})
+		// Original per-key query used LIMIT 1 with no ORDER BY; first-seen
+		// here reproduces that same "pick any one" contract.
+		if _, seen := ownerByKey[key]; !seen {
+			ownerByKey[key] = owner
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, pluginObs.wrap("page_key_conflicts", err)
+	}
+	rows.Close()
+
+	// Rebuild strictly in the caller's own key order — callers key off
+	// conflicts[0].
+	var out []PageKeyConflict
+	for _, key := range keys {
+		if owner, ok := ownerByKey[key]; ok {
+			out = append(out, PageKeyConflict{Key: key, Owner: owner})
+		}
 	}
 	return out, nil
 }
@@ -1537,20 +1711,51 @@ type PageRouteConflict struct {
 // requires e.Route != ""), so it cannot collide and is skipped by the
 // caller before this is ever called with it.
 func (r *PluginRepo) FindPageRouteConflicts(ctx context.Context, tx *sql.Tx, pluginID string, routes []string) ([]PageRouteConflict, error) {
+	if len(routes) == 0 {
+		return nil, nil
+	}
 	exec := r.executor(tx)
-	var out []PageRouteConflict
-	for _, route := range routes {
-		var owner string
-		err := exec.QueryRowContext(ctx, `
-SELECT plugin_id FROM plugin_entries
-WHERE type = 'page' AND route = ? AND plugin_id != ? LIMIT 1`, route, pluginID).Scan(&owner)
-		if err == sql.ErrNoRows {
-			continue
-		}
-		if err != nil {
+	placeholders := make([]string, len(routes))
+	args := make([]any, len(routes)+1)
+	for i, route := range routes {
+		placeholders[i] = "?"
+		args[i] = route
+	}
+	args[len(routes)] = pluginID
+	// Batched replacement for what used to be one plugin_entries lookup
+	// per candidate route (ut-docs#1323, install-time N+1).
+	rows, err := exec.QueryContext(ctx, `
+SELECT route, plugin_id FROM plugin_entries
+WHERE type = 'page' AND route IN (`+strings.Join(placeholders, ",")+`) AND plugin_id != ?`, args...)
+	if err != nil {
+		return nil, pluginObs.wrap("page_route_conflicts", err)
+	}
+	ownerByRoute := map[string]string{}
+	for rows.Next() {
+		var route, owner string
+		if err := rows.Scan(&route, &owner); err != nil {
+			rows.Close()
 			return nil, pluginObs.wrap("page_route_conflicts", err)
 		}
-		out = append(out, PageRouteConflict{Route: route, Owner: owner})
+		// Original per-route query used LIMIT 1 with no ORDER BY;
+		// first-seen here reproduces that same "pick any one" contract.
+		if _, seen := ownerByRoute[route]; !seen {
+			ownerByRoute[route] = owner
+		}
+	}
+	if err := rows.Err(); err != nil {
+		rows.Close()
+		return nil, pluginObs.wrap("page_route_conflicts", err)
+	}
+	rows.Close()
+
+	// Rebuild strictly in the caller's own route order — callers key off
+	// conflicts[0].
+	var out []PageRouteConflict
+	for _, route := range routes {
+		if owner, ok := ownerByRoute[route]; ok {
+			out = append(out, PageRouteConflict{Route: route, Owner: owner})
+		}
 	}
 	return out, nil
 }
@@ -2076,6 +2281,54 @@ LIMIT 1
 		return "", false, pluginObs.wrap("get_plugin_version_at", err)
 	}
 	return version, true, nil
+}
+
+// GetPluginVersionsAt is GetPluginVersionAt batched over multiple plugin
+// ids in one query, instead of one round trip per id (ut-docs#1323 —
+// found on the receipt-legal-blocks path, which previously called
+// GetPluginVersionAt once per receipt-template plugin on every completed
+// sale). A plugin id absent from the result carries no `updated_at <= at`
+// row (never existed, or was created after `at`) — same "not found" the
+// singular form reports via its bool. Semantics match exactly: for each
+// id, the version from the row with the greatest updated_at at or before
+// at, picked in Go rather than via a per-id LIMIT 1 (SQLite has no
+// portable "top-1 per group" without a window function, and this keeps
+// the query itself trivial to read).
+func (r *PluginRepo) GetPluginVersionsAt(ctx context.Context, ids []string, at time.Time) (map[string]string, error) {
+	if len(ids) == 0 {
+		return map[string]string{}, nil
+	}
+	placeholders := make([]string, len(ids))
+	args := make([]any, 0, len(ids)+1)
+	for i, id := range ids {
+		placeholders[i] = "?"
+		args = append(args, id)
+	}
+	args = append(args, at.UTC().Format(time.RFC3339))
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, version, updated_at
+FROM plugins
+WHERE id IN (`+strings.Join(placeholders, ",")+`) AND updated_at <= ?
+ORDER BY id, updated_at DESC
+`, args...)
+	if err != nil {
+		return nil, pluginObs.wrap("get_plugin_versions_at", err)
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, version, updatedAt string
+		if err := rows.Scan(&id, &version, &updatedAt); err != nil {
+			return nil, pluginObs.wrap("get_plugin_versions_at", err)
+		}
+		// ORDER BY id, updated_at DESC: the first row seen for an id is
+		// its most-recent-at-or-before-`at` version — later rows for the
+		// same id are older and must not overwrite it.
+		if _, seen := out[id]; !seen {
+			out[id] = version
+		}
+	}
+	return out, rows.Err()
 }
 
 // ListCatalog returns non-deprecated catalog entries.

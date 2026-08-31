@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"sort"
+	"strings"
 	"time"
 )
 
@@ -51,6 +52,41 @@ ON CONFLICT(key) DO UPDATE SET
 		return settingsObs.wrapf("set", "set setting %s", err, key)
 	}
 	return nil
+}
+
+// GetByPrefix returns every settings key/value pair whose key starts with
+// prefix, in one query — in place of one Get per key (ut-docs#1323: the
+// sale screen previously called Get once per active payment method just to
+// read its "payments.fee.<id>" row, on the product's highest-traffic page
+// load). Literal '%'/'_' (and '\') in prefix are escaped so they match
+// themselves instead of acting as LIKE wildcards — same discipline as
+// PluginRepo.ListStorageByPrefix. A prefix matching nothing returns an
+// empty, non-nil map.
+func (r *SettingsRepo) GetByPrefix(ctx context.Context, prefix string) (map[string]string, error) {
+	var err error
+	done := settingsObs.trace("get_by_prefix")
+	defer func() { done(err) }()
+	escaped := strings.NewReplacer(`\`, `\\`, `%`, `\%`, `_`, `\_`).Replace(prefix)
+	var rows *sql.Rows
+	rows, err = r.db.QueryContext(ctx, `
+SELECT key, value FROM settings WHERE key LIKE ? ESCAPE '\'
+`, escaped+"%")
+	if err != nil {
+		return nil, settingsObs.wrap("get_by_prefix", err)
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var k, v string
+		if err = rows.Scan(&k, &v); err != nil {
+			return nil, settingsObs.wrap("get_by_prefix", err)
+		}
+		out[k] = v
+	}
+	if err = rows.Err(); err != nil {
+		return nil, settingsObs.wrap("get_by_prefix", err)
+	}
+	return out, nil
 }
 
 // GetOrCreate atomically returns the current value for key, seeding it with

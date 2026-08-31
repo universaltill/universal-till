@@ -52,6 +52,76 @@ func TestSettingsRepo_SetAndGet(t *testing.T) {
 	}
 }
 
+// TestSettingsRepo_GetByPrefix is the ut-docs#1323 regression: the sale
+// screen used to call Get once per active payment method's
+// "payments.fee.<id>" key. GetByPrefix replaces that with a single
+// prefix-scan query.
+func TestSettingsRepo_GetByPrefix(t *testing.T) {
+	db := newSettingsTestDB(t)
+	repo := NewSettingsRepo(db)
+	ctx := context.Background()
+
+	for k, v := range map[string]string{
+		"payments.fee.cash":       `{"bp":0,"fixed":0}`,
+		"payments.fee.card":       `{"bp":150,"fixed":10}`,
+		"payments.default_method": "cash", // must NOT be picked up by the "payments.fee." prefix
+		"display.mode":            "self_order",
+	} {
+		if err := repo.Set(ctx, k, v); err != nil {
+			t.Fatalf("seed %s: %v", k, err)
+		}
+	}
+
+	got, err := repo.GetByPrefix(ctx, "payments.fee.")
+	if err != nil {
+		t.Fatalf("GetByPrefix: %v", err)
+	}
+	want := map[string]string{
+		"payments.fee.cash": `{"bp":0,"fixed":0}`,
+		"payments.fee.card": `{"bp":150,"fixed":10}`,
+	}
+	if len(got) != len(want) {
+		t.Fatalf("expected %d keys, got %d: %+v", len(want), len(got), got)
+	}
+	for k, v := range want {
+		if got[k] != v {
+			t.Fatalf("key %s: got %q, want %q (full result %+v)", k, got[k], v, got)
+		}
+	}
+
+	// A prefix matching nothing returns an empty, non-nil map.
+	none, err := repo.GetByPrefix(ctx, "no.such.prefix.")
+	if err != nil {
+		t.Fatalf("GetByPrefix (no match): %v", err)
+	}
+	if none == nil || len(none) != 0 {
+		t.Fatalf("expected an empty non-nil map, got %#v", none)
+	}
+}
+
+// A literal '%'/'_' in the prefix must match itself, not act as a LIKE
+// wildcard — same discipline as PluginRepo.ListStorageByPrefix.
+func TestSettingsRepo_GetByPrefix_EscapesLikeWildcards(t *testing.T) {
+	db := newSettingsTestDB(t)
+	repo := NewSettingsRepo(db)
+	ctx := context.Background()
+
+	if err := repo.Set(ctx, "weird.100%.done", "yes"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.Set(ctx, "weird.100Xdone.other", "no"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.GetByPrefix(ctx, "weird.100%.")
+	if err != nil {
+		t.Fatalf("GetByPrefix: %v", err)
+	}
+	if len(got) != 1 || got["weird.100%.done"] != "yes" {
+		t.Fatalf("literal '%%' in prefix must not act as a wildcard, got %+v", got)
+	}
+}
+
 func newSettingsTestDB(t *testing.T) *sql.DB {
 	t.Helper()
 	db, err := sql.Open("sqlite", ":memory:")
