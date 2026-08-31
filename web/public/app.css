@@ -1032,6 +1032,19 @@ a.btn, a.btn:hover { text-decoration: none; }
    overflow-wrap, verified against a realistic long name before shipping,
    not asserted without checking. */
 .grid { display: grid; gap: .5rem; grid-template-columns: repeat(auto-fill, minmax(7rem, 1fr)); }
+/* ut-docs#1354: the Designer's reorder tiles (#buttons-grid-admin) share
+   .grid with the sale-screen product grid above, but #1221's three
+   touch-target-sized (46px) move-up/move-down/remove buttons — plus their
+   two .5rem gaps — need ~154px of content width (46*3 + 8*2). At the
+   7rem (112px) column floor tuned for sale-screen product density, that's
+   about 60px more than a tile has, so .btn-actions (a plain flex row with
+   no wrap) overflows the tile's right edge into its neighbor. Scoped by ID
+   so the sale-screen grid's own density (app.css:1034's own comment,
+   product-owner-driven) is untouched — this widens ONLY the admin grid's
+   column floor, not tile height/thumb size/anything else .grid sets. 11rem
+   (176px) clears the ~154px content need with margin for the
+   border-inline-start/padding asymmetry .btn-tile adds below. */
+#buttons-grid-admin { grid-template-columns: repeat(auto-fill, minmax(11rem, 1fr)); }
 /* user-select/touch-action unconditional here too (ut-docs#1170) — same
    reasoning as .btn above, previously gated behind body.kiosk only. */
 .btn-tile {
@@ -1277,32 +1290,19 @@ a.btn, a.btn:hover { text-decoration: none; }
    (internal/pos/service.go, tax_codes.takeaway_rate_basis_points -- the
    German §12 UStG dine-in/takeaway split). Both segments are always
    visible and labeled; the active one is filled, not inferred from a
-   knob position. `.order-type-toggle-group` occupies exactly the
-   switch's old flex: 1 slot (shares the row with the table-assignment
-   button, ADR-0054), so this is a legibility fix, not a reversion to the
-   ORIGINAL two-full-button layout's space cost (that one used two
-   independent `.btn`-sized buttons stacked outside this row entirely).
-   2026-08-31, same day (product owner, second look): the first cut of
-   this control kept the switch's OWN 3rem/48px floor (ut-docs#161/#213's
-   VAT-control tap-target protection) and read as visually oversized once
-   built and seen live, next to the equally-resized table button. Dropped
-   to `.btn.compact`'s own established 2.5rem/40px floor instead (see
-   `.btn.compact` above) — still a real, deliberately-chosen touch target
-   (above WCAG 2.2 AA 2.5.5's 24px, and the app already trusts 2.5rem for
-   other real actions), just no longer artificially inflated to match a
-   switch shape this control no longer has. Still a rem value, not px —
-   that lesson from #161/#213 stands regardless of which floor is chosen. */
-/* 2026-08-31 (product owner, live, ut-docs#1379 2nd follow-up, reference
-   screenshot supplied): flex: 1 made the group stretch to fill the WHOLE
-   row -- the previous follow-up fixed height/padding but not this. Both
-   the group and each option are now flex: 0 0 auto -- sized to their own
-   icon+label content, not to the row -- so this reads as a small, self-
-   contained widget (per the reference image) that happens to sit in the
-   row, not a bar spanning it. .order-type-row has no justify-content
-   override, so the group hugs the row's start and the table button (also
-   content-sized -- see its own comment below) sits right next to it with
-   the row's own `gap`; any leftover row width is simply empty, which is
-   the correct look for two small controls, not a layout bug. */
+   knob position.
+   Two same-day follow-ups after this first landed, both from the product
+   owner watching it live: (1) "too big" -- dropped from the switch's old
+   3rem/48px floor to the app's own established `.btn.compact` floor
+   (2.5rem/40px, still a real deliberate touch target, above WCAG 2.2 AA
+   2.5.5's 24px). (2) reference screenshot supplied showing a small self-
+   contained widget: `flex: 1` was still stretching the group to fill the
+   WHOLE row. Both the group and each option are now `flex: 0 0 auto` --
+   sized to their own icon+label content, not to the row. `.order-type-row`
+   has no `justify-content` override, so the group hugs the row's start
+   and the (also content-sized) table button sits right next to it with
+   the row's own `gap`; leftover row width is simply empty, which is
+   correct for two small controls, not a layout bug. */
 .order-type-toggle-group {
   flex: 0 0 auto; display: flex; border: 1px solid var(--border);
   border-radius: 999px; overflow: hidden;
@@ -1321,10 +1321,11 @@ a.btn, a.btn:hover { text-decoration: none; }
    from an always-expanded inline strip into this button next to the
    order-type switch, 2026-08-30. Sized to MATCH .order-type-option (not
    independently re-derived) so the two controls this row shares read as
-   one visual weight, not "one big, one small" — shrunk alongside it,
-   same 2026-08-31 ut-docs#1379 follow-up, same reasoning: still a real,
-   deliberate touch target (.btn.compact's own 2.5rem/40px floor), no
-   longer inflated to the switch's old 3rem shape.
+   one visual weight -- shrunk alongside it, same 2026-08-31 ut-docs#1379
+   follow-up: still a real, deliberate touch target (`.btn.compact`'s own
+   2.5rem/40px floor), no longer inflated to the switch's old 3rem shape.
+   The actual min-height comes from the `compact` class on the button
+   itself (table_picker.html), not from a rule here.
    NOTE the `flex: 1` here does nothing: this button's parent is
    table_picker.html's own `<span id="table-picker">` wrapper, and THAT span
    (not the button) is the flex item of `.order-type-row`. Kept only because
@@ -1332,10 +1333,6 @@ a.btn, a.btn:hover { text-decoration: none; }
    measured today the switch takes the row's remaining space and this button
    is content-sized, which is the layout we want anyway. */
 .table-picker-trigger { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-/* min-height comes from the .compact class on the button itself now
-   (2026-08-31, ut-docs#1379 follow-up) -- matches .order-type-option's
-   own drop to that same floor, so the two controls sharing this row read
-   as one visual weight. */
 .table-current { display: block; font-weight: 600; margin-block-end: .5rem; }
 .table-picker-options { display: flex; flex-wrap: wrap; gap: .4rem; margin-block-start: .5rem; }
 .table-picker-empty { display: block; }
