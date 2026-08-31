@@ -156,8 +156,9 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     await page.waitForSelector('.pos-container');
 
     const payBtn = page.getByTestId('payment-open');
-    const hitTest = () =>
-      payBtn.evaluate((el) => {
+    const quickPayBtn = page.getByTestId('quick-pay');
+    const hitTestEl = (btn: typeof payBtn) =>
+      btn.evaluate((el) => {
         const r = el.getBoundingClientRect();
         const x = r.left + r.width / 2;
         const y = r.bottom - 2;
@@ -165,8 +166,14 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
         const at = document.elementFromPoint(x, y);
         return !!at && (at === el || el.contains(at));
       });
+    const hitTest = () => hitTestEl(payBtn);
+    // ut-docs#1336: the quick-pay row sits BELOW the Hold Sale/Payment row,
+    // so it's the new bottom-most (most clip-exposed) element in .tender's
+    // default view — hit-test it with the exact same bottom-edge probe.
+    const hitTestQuickPay = () => hitTestEl(quickPayBtn);
 
     expect(await hitTest(), 'Payment button must be unclipped with an empty till, no scroll').toBe(true);
+    expect(await hitTestQuickPay(), 'quick-pay button must be unclipped with an empty till, no scroll').toBe(true);
 
     // Hold three sales in a row — the held-sales strip is persistent DB
     // state (grows with real use, not a transient edge case) and is what
@@ -193,6 +200,10 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
         await hitTest(),
         `Payment button must stay unclipped with ${i + 1} held sale(s), no scroll`,
       ).toBe(true);
+      expect(
+        await hitTestQuickPay(),
+        `quick-pay button must stay unclipped with ${i + 1} held sale(s), no scroll`,
+      ).toBe(true);
     }
     assertClean();
   });
@@ -213,9 +224,8 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     await page.goto('/');
     await page.waitForSelector('.pos-container');
 
-    const payBtn = page.getByTestId('payment-open');
-    const hitTest = () =>
-      payBtn.evaluate((el) => {
+    const hitTestEl = (btn: ReturnType<typeof page.getByTestId>) =>
+      btn.evaluate((el) => {
         const r = el.getBoundingClientRect();
         const x = r.left + r.width / 2;
         const y = r.bottom - 2;
@@ -223,8 +233,11 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
         const at = document.elementFromPoint(x, y);
         return !!at && (at === el || el.contains(at));
       });
+    const hitTest = () => hitTestEl(page.getByTestId('payment-open'));
+    const hitTestQuickPay = () => hitTestEl(page.getByTestId('quick-pay'));
 
     expect(await hitTest(), 'Payment button must be unclipped at 850x700 with an empty till').toBe(true);
+    expect(await hitTestQuickPay(), 'quick-pay button must be unclipped at 850x700 with an empty till').toBe(true);
 
     await page.locator('input[name="code"]').first().fill('5000000000012');
     await Promise.all([
@@ -241,6 +254,117 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     await expect(modal).toBeHidden();
 
     expect(await hitTest(), 'Payment button must stay unclipped at 850x700 with a held sale present').toBe(true);
+    expect(await hitTestQuickPay(), 'quick-pay button must stay unclipped at 850x700 with a held sale present').toBe(true);
+    assertClean();
+  });
+
+  // ut-docs#1336: one-tap quick pay. A second, full-width row below Hold
+  // Sale/Payment charges the shop's preferred/default method directly (same
+  // POST as the overlay's own pay-grid buttons), without opening the
+  // overlay. These tests hold it to the exact same standard the Payment
+  // trigger earned above: real hit-tests (not geometry), and a real tap
+  // that completes a real sale — a zero-height/occluded button passes
+  // isVisible and bounding-box checks, so those would be false-pass tests
+  // (see this file's header comment for the shipped bug that proved it).
+  test('the quick-pay button completes a sale with one tap, without opening the overlay (ut-docs#1336)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.setViewportSize({ width: 1024, height: 600 });
+    await page.goto('/');
+    await page.waitForSelector('.pos-container');
+
+    await page.locator('input[name="code"]').first().fill('5000000000012');
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
+      page.locator('.scan-row button[type=submit]').click(),
+    ]);
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
+
+    // The overlay must NOT be open — this is the whole point of the button.
+    await expect(page.locator('#payment-overlay')).not.toBeVisible();
+
+    const quickPay = page.getByTestId('quick-pay');
+    // Same tender POST the overlay's pay-grid buttons dispatch.
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/pos/tender')),
+      quickPay.click(), // no force: must be a genuinely landable click
+    ]);
+    await expect(page.locator('#basket.receipt-view')).toBeVisible();
+    assertClean();
+  });
+
+  test('the quick-pay button is a real hit-test target at 1280x800', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/');
+    await page.waitForSelector('.pos-container');
+
+    const hit = await page.getByTestId('quick-pay').evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const x = r.left + r.width / 2;
+      const y = r.bottom - 2;
+      if (y > window.innerHeight || y < 0) return false;
+      const at = document.elementFromPoint(x, y);
+      return !!at && (at === el || el.contains(at));
+    });
+    expect(hit, 'quick-pay button must be unclipped at 1280x800').toBe(true);
+    assertClean();
+  });
+
+  // 360px phone tier (ut-docs#413's breakpoint): .pos-container is
+  // deliberately scrollable at this width ("never invisible, always
+  // reachable via scroll"), so the contract here is reachability after a
+  // scroll plus no horizontal overflow — not the no-scroll guarantee the
+  // kiosk-floor tests above hold.
+  test('the quick-pay button is reachable at 360px phone width with no horizontal overflow', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.setViewportSize({ width: 360, height: 640 });
+    await page.goto('/');
+    await page.waitForSelector('.pos-container');
+
+    const overflow = await page.evaluate(() => ({
+      scrollWidth: document.documentElement.scrollWidth,
+      clientWidth: document.documentElement.clientWidth,
+    }));
+    expect(
+      overflow.scrollWidth,
+      'quick-pay row must not widen the page past the 360px viewport',
+    ).toBeLessThanOrEqual(overflow.clientWidth);
+
+    const quickPay = page.getByTestId('quick-pay');
+    await quickPay.scrollIntoViewIfNeeded();
+    const hit = await quickPay.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return !!at && (at === el || el.contains(at));
+    });
+    expect(hit, 'quick-pay button must be a real hit-test target at 360px width').toBe(true);
+    assertClean();
+  });
+
+  // RTL (fa): the row is direction-agnostic (full-width, no left/right
+  // literals) — under dir="rtl" it must span the same inline extent as the
+  // Hold Sale/Payment row above it, and still be a real hit-test target.
+  test('the quick-pay button mirrors correctly under RTL (fa) and stays a real target', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.setViewportSize({ width: 1280, height: 800 });
+    await page.goto('/?lang=fa');
+    await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+    await page.waitForSelector('.pos-container');
+
+    const geom = await page.evaluate(() => {
+      const row = document.querySelector('.tender-default-footer')!.getBoundingClientRect();
+      const qp = document.querySelector('[data-testid="quick-pay"]')!.getBoundingClientRect();
+      return { rowLeft: row.left, rowRight: row.right, qpLeft: qp.left, qpRight: qp.right };
+    });
+    expect(Math.abs(geom.qpLeft - geom.rowLeft), 'quick-pay must start where the footer row starts (RTL)').toBeLessThan(2);
+    expect(Math.abs(geom.qpRight - geom.rowRight), 'quick-pay must end where the footer row ends (RTL)').toBeLessThan(2);
+
+    const hit = await page.getByTestId('quick-pay').evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return !!at && (at === el || el.contains(at));
+    });
+    expect(hit, 'quick-pay button must be a real hit-test target under RTL').toBe(true);
     assertClean();
   });
 });

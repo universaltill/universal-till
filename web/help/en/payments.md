@@ -15,7 +15,7 @@ Cash is built in; card and other payment methods come as plugins from the store 
 
 1. Install a payment plugin from the Plugin store and enter your account keys in its settings.
 2. If you use a card reader, set its id in the plugin settings on that till.
-3. At checkout, tap **Payment** to open the payment panel (the basket stays visible while it's open) — the preferred method leads and each button can show an estimated fee (set provider fees in Settings → Payments) — pick the cheaper one; a declined card leaves the basket untouched.
+3. At checkout, tap **Payment** to open the payment panel (the basket stays visible while it's open) — the preferred method leads and each button can show an estimated fee (set provider fees in Settings → Payments) — pick the cheaper one; a declined card leaves the basket untouched. The preferred method also gets a full-width ⚡ quick-pay button right on the sale screen, below the Payment button — one tap charges the exact amount owed in that method without opening the panel at all.
 4. These quick buttons under the panel's **Pay** tab always charge the *exact* amount owed in that one method — there's nowhere on them to record change or to split the total. For anything else (change due, more than one method), use **Split** — see below.
 
 ## Giving change on a cash sale
