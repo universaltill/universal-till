@@ -532,8 +532,23 @@ jobs:
     needs: [prepare, goreleaser, macos-app, android-app]
     if: ${{ !cancelled() && needs.prepare.result == 'success' }}
     runs-on: macos-14 # hdiutil for the .dmg, plus tar/unzip for the rest — one runner covers every format
+    # contents: write, not the read-only this job actually needs (ut-docs#1376
+    # follow-up): since .goreleaser.yaml's release.draft became true, this
+    # job's own "wait for the release to exist" step (gh release view "$TAG")
+    # fails every single time under contents: read — reproduced twice in a
+    # row on the real v0.8.4 release, 10-minute timeout both times, even
+    # though the draft release demonstrably existed with all assets the whole
+    # time (confirmed manually, and confirmed by every SIBLING job here —
+    # windows-installer/macos-app/android-app, which inherit the workflow's
+    # top-level contents: write and hit the identical step successfully).
+    # GitHub's "get release by tag" endpoint apparently needs write-level
+    # repo access to resolve a DRAFT release by tag; read-only can't see it
+    # at all, not even eventually. Widened rather than left broken because a
+    # job that can never complete is strictly worse than one with slightly
+    # more access than its own work requires — this is read-only in
+    # practice, it just needs the wider token to be allowed to read a draft.
     permissions:
-      contents: read
+      contents: write
     steps:
       # Every sibling job with this same "wait" step has this first — gh
       # infers which repo to talk to from the checked-out git remote; without
