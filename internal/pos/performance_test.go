@@ -91,6 +91,7 @@ func setupBenchmarkDB(tb testing.TB) *sql.DB {
 		`CREATE TABLE item_variants (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, price INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE sales (id TEXT PRIMARY KEY, receipt_no TEXT NOT NULL UNIQUE, status TEXT NOT NULL, sale_type TEXT NOT NULL, tender_type TEXT NOT NULL DEFAULT 'unknown', order_type TEXT NOT NULL DEFAULT '', table_id TEXT, offline INTEGER NOT NULL DEFAULT 0, sync_status TEXT NOT NULL DEFAULT 'queued', sync_attempts INTEGER NOT NULL DEFAULT 0, sync_next_attempt_at TEXT, sync_last_error TEXT, register_id TEXT, cashier_id TEXT, customer_id TEXT, currency TEXT NOT NULL, subtotal INTEGER NOT NULL, discount_total INTEGER NOT NULL, tax_total INTEGER NOT NULL, total INTEGER NOT NULL, service_charge_amount INTEGER NOT NULL DEFAULT 0, service_charge_tax_basis_bp INTEGER NOT NULL DEFAULT 0, voucher_issue_total INTEGER NOT NULL DEFAULT 0, rounding INTEGER NOT NULL DEFAULT 0, note TEXT, created_at TEXT NOT NULL, completed_at TEXT, voided_at TEXT);`,
 		`CREATE TABLE sale_lines (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_no INTEGER NOT NULL, item_id TEXT, variant_id TEXT, name_snapshot TEXT NOT NULL, sku_snapshot TEXT, barcode_snapshot TEXT, quantity REAL NOT NULL, unit_price INTEGER NOT NULL, line_discount INTEGER NOT NULL DEFAULT 0, tax_rate_bp INTEGER NOT NULL, tax_amount INTEGER NOT NULL, total_before_tax INTEGER NOT NULL, total_after_tax INTEGER NOT NULL, FOREIGN KEY (sale_id) REFERENCES sales(id));`,
+		`CREATE TABLE sale_line_modifiers (id TEXT PRIMARY KEY, sale_line_id TEXT NOT NULL, group_id TEXT, option_id TEXT, group_name_snapshot TEXT NOT NULL, option_name_snapshot TEXT NOT NULL, price_delta_minor INTEGER NOT NULL, FOREIGN KEY (sale_line_id) REFERENCES sale_lines(id));`,
 		`CREATE TABLE sale_discounts (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_id TEXT, type TEXT NOT NULL, value INTEGER NOT NULL, amount INTEGER NOT NULL, reason TEXT);`,
 		`CREATE TABLE payments (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, method_id TEXT NOT NULL, amount INTEGER NOT NULL, currency TEXT NOT NULL, reference TEXT, change_given INTEGER NOT NULL DEFAULT 0, tip_amount INTEGER NOT NULL DEFAULT 0, tip_recipient TEXT NOT NULL DEFAULT 'employee', masked_pan TEXT, auth_code TEXT, terminal_id TEXT, trace_id TEXT, voucher_id TEXT, paid_at TEXT NOT NULL, FOREIGN KEY (sale_id) REFERENCES sales(id));`,
 		`CREATE TABLE sale_links (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, original_sale_id TEXT NOT NULL, reason TEXT);`,
@@ -249,6 +250,105 @@ func BenchmarkCompleteSaleMultiLine(b *testing.B) {
 		b.Logf("⚠️  THRESHOLD EXCEEDED: Average %dms > %dms threshold (multi-line)", avgMS, threshold)
 	} else {
 		b.Logf("✓ PASSED: Average %dms <= %dms threshold (multi-line)", avgMS, threshold)
+	}
+}
+
+// BenchmarkCompleteSaleLargeBasket benchmarks a realistic LARGE basket
+// (60 lines across 12 items, so each item repeats 5 times — exercising the
+// per-key aggregation in the batched stock-movement path, ut-docs#1318).
+// The earlier benchmarks only cover 1-3 lines, which hid the ~5 statements
+// per line the old per-line loop issued.
+func BenchmarkCompleteSaleLargeBasket(b *testing.B) {
+	ctx := context.Background()
+	db := setupBenchmarkDB(b)
+	defer db.Close()
+
+	const (
+		distinctItems = 12
+		basketLines   = 60
+	)
+	// Seed the extra items with deep stock so b.N iterations never run out.
+	for i := 2; i <= distinctItems; i++ {
+		id := fmt.Sprintf("itm%d", i)
+		_, _ = db.Exec(`INSERT INTO items(id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed) VALUES(?,?,?,?,NULL,NULL,'unit',500,NULL,1,0)`,
+			id, fmt.Sprintf("SKU%03d", i), fmt.Sprintf("Item %d", i), "Benchmark item")
+		_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES(?,?,NULL,'loc1',1000000000,datetime('now'))`,
+			fmt.Sprintf("inv%d", i), id)
+	}
+	_, _ = db.Exec(`UPDATE inventory SET quantity = 1000000000 WHERE item_id = 'itm1'`)
+
+	lines := make([]SaleLineInput, 0, basketLines)
+	for i := 0; i < basketLines; i++ {
+		itemNo := (i % distinctItems) + 1
+		line := SaleLineInput{
+			ItemID:             fmt.Sprintf("itm%d", itemNo),
+			SKU:                fmt.Sprintf("SKU%03d", itemNo),
+			Name:               fmt.Sprintf("Item %d", itemNo),
+			Qty:                2,
+			UnitPrice:          500,
+			TaxRateBasisPoints: 2000,
+			LocationID:         "loc1",
+		}
+		// A few lines carry modifiers and a line discount so those batch
+		// paths are exercised too.
+		if i%10 == 0 {
+			line.Modifiers = []data.SelectedModifier{
+				{GroupName: "Size", OptionName: "Large", PriceDeltaMinor: 50},
+			}
+		}
+		if i%15 == 0 {
+			line.LineDiscount = 25
+		}
+		lines = append(lines, line)
+	}
+
+	saleInput := SaleInput{
+		SaleType:     "sale",
+		RegisterID:   "reg1",
+		CashierID:    "cashier1",
+		Currency:     "GBP",
+		TaxInclusive: false,
+		Lines:        lines,
+		Payments: []PaymentInput{
+			// Generous overpayment — coverage is all completion requires.
+			{MethodID: "cash", Amount: 100000, Currency: "GBP"},
+		},
+		AllowNegativeInventory: false,
+	}
+
+	threshold := getBenchmarkThreshold()
+
+	b.ResetTimer()
+	var totalDuration time.Duration
+	for i := 0; i < b.N; i++ {
+		start := time.Now()
+		if _, err := CompleteSale(ctx, db, saleInput); err != nil {
+			b.Fatalf("CompleteSale failed: %v", err)
+		}
+		totalDuration += time.Since(start)
+	}
+	b.StopTimer()
+
+	avgDuration := totalDuration / time.Duration(b.N)
+	avgMS := avgDuration.Milliseconds()
+	b.ReportMetric(float64(avgMS), "ms/op")
+
+	// Rough statement-count comparison for the batched line/stock path
+	// (ut-docs#1318): the old per-line loop issued ~1 stock check + 1 line
+	// insert + 1 exec per modifier + 1 discount insert + 3-4 movement
+	// statements per line; the batched path is one SELECT plus a handful of
+	// chunked multi-row INSERTs and one prepared per-distinct-key UPDATE.
+	mods, discounts := basketLines/10, basketLines/15
+	oldStmts := basketLines*5 + mods + discounts
+	newStmts := 1 /*qty select*/ + 2 /*sale_lines chunks (60x15 cols)*/ +
+		1 /*modifiers*/ + 1 /*discounts*/ + 1 /*movements*/ +
+		distinctItems /*prepared inventory update per distinct key*/ + 1 /*audit*/
+	b.Logf("statement-count estimate for %d lines: ~%d (old per-line loop) vs ~%d (batched)", basketLines, oldStmts, newStmts)
+
+	if avgMS > int64(threshold) {
+		b.Logf("⚠️  THRESHOLD EXCEEDED: Average %dms > %dms threshold (large basket)", avgMS, threshold)
+	} else {
+		b.Logf("✓ PASSED: Average %dms <= %dms threshold (large basket)", avgMS, threshold)
 	}
 }
 
