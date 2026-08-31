@@ -720,6 +720,58 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
   overflow-y: auto;
 }
 
+/* ut-docs#1313: .products has no visible scroll affordance, and many kiosk
+   browsers hide native scrollbars entirely -- a cashier gets no on-screen
+   cue that the catalog continues below the fold. Pure-CSS "scroll shadow"
+   (no JS, no scroll listener/IntersectionObserver): two pairs of layered
+   backgrounds, one pinned to the scrolling content (`background-attachment:
+   local`) that paints an opaque cover flush over the edge tile as it scrolls
+   past, and one pinned to the panel's own box (`background-attachment:
+   scroll`) that paints the shadow underneath it. The cover only uncovers the
+   shadow once there's actual scrolled-past distance for it to reveal, so the
+   cue is self-hiding at each extreme (no shadow at the very top, none at the
+   very bottom once everything's been seen) with nothing to compute in JS.
+   Visible on first paint before any scroll gesture, identical in kiosk and
+   windowed mode (both already give this panel `overflow-y: auto` above),
+   and doesn't depend on hover -- this is a touch-only surface (see
+   ux-guidelines.md's "no hover-only affordance" rule). Overrides this
+   block's own `background` for `.products` specifically (same selector
+   specificity as the shared rule above, so source order is what makes this
+   win -- keep it directly below that block if either ever moves).
+   `rgba(255,255,255,0)` is used as "transparent" rather than a bare
+   `transparent` keyword so Safari's gradient-interpolation quirk doesn't
+   fade through gray; the alpha channel makes the RGB value irrelevant --
+   TODAY. This RGB is silently coupled to `--surface`'s *current* value
+   (`#ffffff`, the only definition in this file -- no `prefers-color-scheme`/
+   `[data-theme]` override exists yet). Reviewed 2026-08-31 (ut-docs#1313):
+   the moment a theme plugin (e.g. `ut-plugin-theme-midnight`, see
+   adr/0009's own example) overrides `--surface` to something dark, these
+   cover gradients will still fade toward WHITE-transparent instead of
+   matching-color-transparent -- a visible white halo at the scroll edges,
+   worse than no shadow at all. No CI guard catches this (no CSS-token-
+   linting guard exists). Fix then: swap both `rgba(255, 255, 255, 0)`
+   occurrences for `color-mix(in srgb, var(--surface), transparent 100%)`
+   (verify webkit2gtk-4.1's minimum shipped version actually supports
+   `color-mix()` first, per ADR-0028) -- not changed now because no dark
+   theme exists yet to verify against, and this card's scope is the scroll
+   cue itself. Only `.products` gets this for now -- `.basket`/`.tender`
+   have their own pinned-footer/tab-panel scroll patterns already (see
+   comments below) and are out of this card's scope, though the same
+   two-gradient-pair recipe would apply if a future card asks for it there
+   too. */
+.pos-container > .products {
+  background-color: var(--surface);
+  background-image:
+    linear-gradient(var(--surface) 30%, rgba(255, 255, 255, 0)),
+    linear-gradient(rgba(255, 255, 255, 0), var(--surface) 70%),
+    radial-gradient(farthest-side at 50% 0, rgba(0, 0, 0, .18), rgba(0, 0, 0, 0)),
+    radial-gradient(farthest-side at 50% 100%, rgba(0, 0, 0, .18), rgba(0, 0, 0, 0));
+  background-repeat: no-repeat;
+  background-position: 0 0, 0 100%, 0 0, 0 100%;
+  background-size: 100% 24px, 100% 24px, 100% 10px, 100% 10px;
+  background-attachment: local, local, scroll, scroll;
+}
+
 /* Basket: lines scroll, totals pinned at the bottom of the panel. At a high
    ui_scale on a short viewport, the toggle row + pinned totals can outgrow
    the grid row's allotted height entirely, squeezing basket-scroll's flex
