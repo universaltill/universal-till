@@ -57,3 +57,70 @@ test('uploading a catalog item photo makes it appear on the till', async ({ page
 
   assertClean();
 });
+
+// ut-docs#1326: a dedicated "take a photo" input alongside the plain file
+// picker, so a tablet's camera opens directly instead of a generic
+// file/gallery chooser. Uses Apple Juice 1L (itm006, barcode
+// 5000000000067) — untouched by any other spec. Deliberately does NOT
+// assert on the resulting <img> thumbnail's load state (naturalWidth/
+// complete) the way the test above does — that assertion is known to fail
+// deterministically in this sandboxed pipeline environment for reasons
+// unrelated to the upload itself (ut-docs#1362); this test instead proves
+// the new input actually reaches the server, which is the part #1326
+// changes.
+test('taking a photo (capture input) uploads via the same canonical file field', async ({ page }) => {
+  const assertClean = watchConsole(page);
+
+  await page.goto('/catalog');
+  await expect(page.locator('body')).toContainText('Catalog');
+
+  await page.locator('.catalog-row', { hasText: 'Apple Juice 1L' }).click();
+  await page.locator('details.catalog-extra', { hasText: 'Item image' }).locator('summary').click();
+
+  // The dedicated "take a photo" input carries capture="environment" so a
+  // mobile/tablet browser opens the rear camera directly, not a generic
+  // file/gallery chooser.
+  const cameraInput = page.locator('#image-file-camera');
+  await expect(cameraInput).toHaveAttribute('capture', 'environment');
+  await expect(cameraInput).toHaveAttribute('accept', 'image/*');
+
+  // Picking a file via the camera input must reach the server the same way
+  // the plain "choose file" input does — it's copied into the canonical
+  // #image-file field that both the submit handler and the multipart form
+  // key off (see the DataTransfer copy in the change listener).
+  await cameraInput.setInputFiles(path.join(__dirname, '../fixtures/test-item-image.png'));
+  await page.locator('#image-form button[type=submit]').click();
+  await expect(page.locator('#image-msg')).toContainText('updated');
+
+  assertClean();
+});
+
+// ut-docs#1326 review finding: the two triggers must be real, keyboard-
+// activatable controls. An earlier draft used a bare `<label for="...">`
+// on the hidden file input, which review proved (via a Tab-order probe)
+// is never reached by keyboard Tab and has no default Enter/Space
+// activation — a real regression vs. the plain visible file input this
+// replaced. Confirm both are actual <button> elements, and that keyboard
+// focus + Enter on the camera trigger opens the native file chooser (a
+// <label> would not fire a filechooser event this way).
+test('take-photo/choose-file triggers are real buttons, keyboard-activatable', async ({ page }) => {
+  const assertClean = watchConsole(page);
+
+  await page.goto('/catalog');
+  await page.locator('.catalog-row', { hasText: 'Apple Juice 1L' }).click();
+  await page.locator('details.catalog-extra', { hasText: 'Item image' }).locator('summary').click();
+
+  const cameraBtn = page.locator('#image-camera-btn');
+  const chooseBtn = page.locator('#image-choose-btn');
+  await expect(cameraBtn).toHaveJSProperty('tagName', 'BUTTON');
+  await expect(chooseBtn).toHaveJSProperty('tagName', 'BUTTON');
+
+  await cameraBtn.focus();
+  const [chooser] = await Promise.all([
+    page.waitForEvent('filechooser'),
+    page.keyboard.press('Enter'),
+  ]);
+  expect(chooser.isMultiple()).toBe(false);
+
+  assertClean();
+});

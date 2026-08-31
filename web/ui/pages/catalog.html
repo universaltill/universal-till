@@ -83,7 +83,28 @@
       <form id="image-form" enctype="multipart/form-data">
         <label>{{ T "basket.col.item" }} <input type="text" class="pick-item" id="image-item-label" readonly placeholder="{{ T "catalog.pick_row" }}"></label>
         <input type="hidden" name="item_id" id="image-item-id">
-        <label>{{ T "catalog.image_types" }} <input type="file" name="image" id="image-file" accept="image/png,image/jpeg" required></label>
+        <div class="muted">{{ T "catalog.image_types" }}</div>
+        <div class="field-pair">
+          <button type="button" class="btn secondary" id="image-camera-btn">{{ T "catalog.take_photo" }}</button>
+          <button type="button" class="btn secondary" id="image-choose-btn">{{ T "catalog.choose_file" }}</button>
+        </div>
+        <!-- Two triggers, one canonical submitted field: real <button>
+             elements (not a bare <label for>, which review found is NOT
+             keyboard-Tab-reachable and has no default Enter/Space
+             activation — a hidden input drops out of tab order regardless
+             of its own tabindex) calling .click() on their hidden file
+             input — this gets native button focus/keyboard-activation
+             semantics for free, same as clicking a visible file input
+             directly. The camera input's picked file is copied into
+             #image-file via DataTransfer (see the script below) so the
+             multipart form only ever sends one "image" part, and the
+             existing upload/validation JS keeps reading #image-file
+             unchanged. required dropped from both inputs — a hidden
+             required input blocks native submit with no focusable target;
+             the submit handler already does its own "choose an image" check. -->
+        <input type="file" id="image-file-camera" accept="image/*" capture="environment" hidden>
+        <input type="file" name="image" id="image-file" accept="image/png,image/jpeg" hidden>
+        <div id="image-file-name" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
         <button class="btn" type="submit">{{ T "catalog.upload_image" }}</button>
         <div id="image-msg" class="muted" style="min-height:1.2rem"></div>
       </form>
@@ -381,6 +402,35 @@
   // fetch() blind-replaced #catalog-table's outerHTML with a response that
   // is no longer a table.
   var imageForm = document.getElementById('image-form');
+  // ut-docs#1326: the "take a photo" input is a separate, unnamed file
+  // input (capture="environment") — its picked file is copied into the
+  // canonical #image-file (the one with name="image") via DataTransfer so
+  // it's the only field the multipart submit ever sees, and the existing
+  // submit handler below (which reads #image-file directly) needs no
+  // changes for either path. Echo whichever input's file is picked into
+  // #image-file-name — this is the browser-supplied file.name, not
+  // translatable prose, so no i18n key is needed for it.
+  var imageFileCamera = document.getElementById('image-file-camera');
+  var imageFileInput = document.getElementById('image-file');
+  var imageFileNameEl = document.getElementById('image-file-name');
+  // Real <button> triggers (see the template comment above) — .click() on
+  // a hidden file input still opens its native picker; this is the
+  // standard trick and gets keyboard focus/Enter/Space activation for
+  // free from the <button> itself, unlike a bare <label for> on a hidden
+  // input (not tab-reachable, no default key activation).
+  document.getElementById('image-camera-btn').addEventListener('click', function () { imageFileCamera.click(); });
+  document.getElementById('image-choose-btn').addEventListener('click', function () { imageFileInput.click(); });
+  imageFileCamera.addEventListener('change', function () {
+    if (this.files && this.files[0]) {
+      var dt = new DataTransfer();
+      dt.items.add(this.files[0]);
+      imageFileInput.files = dt.files;
+      imageFileNameEl.textContent = this.files[0].name;
+    }
+  });
+  imageFileInput.addEventListener('change', function () {
+    if (this.files && this.files[0]) { imageFileNameEl.textContent = this.files[0].name; }
+  });
   // Keep upload errors in the image form's own message slot: the form is
   // the source element, so htmx raises htmx:responseError here first —
   // stopPropagation() keeps the page-global listener (which paints into

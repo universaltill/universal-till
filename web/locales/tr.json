@@ -116,6 +116,8 @@
   "catalog.create_item": "Ürün oluştur",
   "catalog.description": "Açıklama",
   "catalog.image_types": "Görsel (PNG/JPEG)",
+  "catalog.take_photo": "Fotoğraf Çek",
+  "catalog.choose_file": "Dosya Seç",
   "catalog.item_image": "Ürün görseli",
   "catalog.keypad.capture_label": "Fiziksel tuşa basın (veya bir kod yazın)",
   "catalog.keypad.capture_placeholder": "Tuşa basılması bekleniyor…",
