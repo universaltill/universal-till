@@ -69,9 +69,9 @@ func TestCatalogPage_TaxCodeShowsNameNotID(t *testing.T) {
 	}
 }
 
-// The items table is also re-rendered standalone after every mutation
-// (renderCatalogTable) — that partial must carry the same fix, not just the
-// full /catalog page load.
+// The affected item's row is also re-rendered standalone after every
+// mutation (writeCatalogRowOOB, ut-docs#1363) — that fragment must carry
+// the same fix, not just the full /catalog page load.
 func TestCatalogTablePartial_TaxCodeShowsNameNotID(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
@@ -82,9 +82,10 @@ func TestCatalogTablePartial_TaxCodeShowsNameNotID(t *testing.T) {
 	mux := http.NewServeMux()
 	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
 
-	// /api/catalog/item/update re-renders catalog_table.html directly
-	// (renderCatalogTable), independently of the full /catalog page load
-	// above — that render path needs its own coverage.
+	// /api/catalog/item/update answers with the item's row as an
+	// out-of-band fragment (catalog_row.html via writeCatalogRowOOB),
+	// independently of the full /catalog page load above — that render
+	// path needs its own coverage.
 	rec := postForm(t, mux, "/api/catalog/item/update", "id=itm1&name=Tea&price=200&taxCode=4ca66fd2-8379-4f6b-90a7-63c959d0e44b")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update = %d, want 200: %s", rec.Code, rec.Body.String())

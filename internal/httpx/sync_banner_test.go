@@ -90,6 +90,7 @@ func TestCatalogBannerLinksToPrimaryWhenActionable(t *testing.T) {
 		funcs,
 		filepath.Join("web", "ui", "partials", "catalog_lookups.html"),
 		filepath.Join("web", "ui", "partials", "catalog_table.html"),
+		filepath.Join("web", "ui", "partials", "catalog_row.html"),
 		filepath.Join("web", "ui", "partials", "catalog_variants.html"),
 	)
 	if err != nil {
@@ -122,6 +123,7 @@ func TestCatalogBannerHasNoLinkWhenNotActionable(t *testing.T) {
 		funcs,
 		filepath.Join("web", "ui", "partials", "catalog_lookups.html"),
 		filepath.Join("web", "ui", "partials", "catalog_table.html"),
+		filepath.Join("web", "ui", "partials", "catalog_row.html"),
 		filepath.Join("web", "ui", "partials", "catalog_variants.html"),
 	)
 	if err != nil {

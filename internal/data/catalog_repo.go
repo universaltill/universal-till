@@ -303,6 +303,166 @@ ORDER BY v.name`)
 	return out, rows.Err()
 }
 
+// GetItem loads ONE item row — the single-row counterpart to ListItems
+// (identical column set and scan logic, filtered to one id) for the
+// row-level re-render after a catalog mutation (ut-docs#1363). Deliberately
+// no is_active filter: callers only ever fetch an item they just
+// created/updated, and the deactivate path needs the miss/hit distinction
+// from the bool, not an active-only view. A missing id is (zero, false,
+// nil), not an error.
+func (r *CatalogRepo) GetItem(ctx context.Context, itemID string) (catalogtypes.ItemInput, bool, error) {
+	var itm catalogtypes.ItemInput
+	var tax, cat, brand, desc sql.NullString
+	err := r.db.QueryRowContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data FROM items WHERE id = ?`, itemID).
+		Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData)
+	if errors.Is(err, sql.ErrNoRows) {
+		return catalogtypes.ItemInput{}, false, nil
+	}
+	if err != nil {
+		return catalogtypes.ItemInput{}, false, fmt.Errorf("get item: %w", err)
+	}
+	if desc.Valid {
+		itm.Description = desc.String
+	}
+	if tax.Valid {
+		itm.TaxCodeID = &tax.String
+	}
+	if cat.Valid {
+		itm.CategoryID = &cat.String
+	}
+	if brand.Valid {
+		itm.BrandID = &brand.String
+	}
+	return itm, true, nil
+}
+
+// ItemBarcodesFor returns ONE item's barcodes (primary first, then by
+// code) — the single-item counterpart to ItemBarcodes, same ordering
+// contract, for the row-level re-render (ut-docs#1363).
+func (r *CatalogRepo) ItemBarcodesFor(ctx context.Context, itemID string) ([]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT barcode FROM item_barcodes WHERE item_id = ? ORDER BY is_primary DESC, barcode`, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []string
+	for rows.Next() {
+		var bc string
+		if err := rows.Scan(&bc); err != nil {
+			return nil, err
+		}
+		out = append(out, bc)
+	}
+	return out, rows.Err()
+}
+
+// ItemIDForVariant resolves a variant to its parent item id — the
+// row-level re-render after a variant mutation needs the ITEM whose
+// summary line changed, and the variant-deactivate form doesn't carry it
+// (ut-docs#1363). No is_active filter: a just-deactivated variant still
+// has a row, and its parent's summary is exactly what needs refreshing.
+func (r *CatalogRepo) ItemIDForVariant(ctx context.Context, variantID string) (string, bool, error) {
+	var itemID string
+	err := r.db.QueryRowContext(ctx, `SELECT item_id FROM item_variants WHERE id = ?`, variantID).Scan(&itemID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("item id for variant: %w", err)
+	}
+	return itemID, true, nil
+}
+
+// ItemIDForBarcode resolves an attached barcode to the item whose catalog
+// row shows it — directly for an item barcode, via the parent item for a
+// variant barcode (ut-docs#1363; called BEFORE DeleteBarcode so the row
+// can still be found). Same exact-first-then-canonical resolution as
+// BarcodeExists/DeleteBarcode (ut-docs#948 F6) so this names the row the
+// delete will actually touch.
+func (r *CatalogRepo) ItemIDForBarcode(ctx context.Context, barcode string) (string, bool, error) {
+	id, ok, err := r.itemIDForBarcodeExact(ctx, barcode)
+	if err != nil || ok {
+		return id, ok, err
+	}
+	if canonical := r.canonicalBarcodeKey(ctx, barcode); canonical != barcode {
+		return r.itemIDForBarcodeExact(ctx, canonical)
+	}
+	return "", false, nil
+}
+
+func (r *CatalogRepo) itemIDForBarcodeExact(ctx context.Context, barcode string) (string, bool, error) {
+	var itemID string
+	err := r.db.QueryRowContext(ctx, `SELECT item_id FROM item_barcodes WHERE barcode = ?`, barcode).Scan(&itemID)
+	if err == nil {
+		return itemID, true, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return "", false, fmt.Errorf("item id for barcode: %w", err)
+	}
+	err = r.db.QueryRowContext(ctx, `
+SELECT v.item_id FROM variant_barcodes b
+JOIN item_variants v ON v.id = b.variant_id
+WHERE b.barcode = ?`, barcode).Scan(&itemID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("item id for barcode: %w", err)
+	}
+	return itemID, true, nil
+}
+
+// HasActiveItems reports whether ANY active item exists — the cheap
+// existence probe the empty-state placeholder row hangs off after a
+// deactivate (ut-docs#1363).
+func (r *CatalogRepo) HasActiveItems(ctx context.Context) (bool, error) {
+	var exists int
+	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM items WHERE is_active = 1)`).Scan(&exists); err != nil {
+		return false, fmt.Errorf("has active items: %w", err)
+	}
+	return exists == 1, nil
+}
+
+// HasOtherActiveItems reports whether any active item EXCEPT itemID
+// exists (ut-docs#1363): after an insert it decides whether the
+// empty-state placeholder is in the DOM (the new item is the sole active
+// item) and therefore whether the response may carry the placeholder's
+// OOB delete — htmx logs a console error for an OOB delete with no
+// matching element, so it can't just be emitted unconditionally.
+func (r *CatalogRepo) HasOtherActiveItems(ctx context.Context, itemID string) (bool, error) {
+	var exists int
+	if err := r.db.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM items WHERE is_active = 1 AND id <> ?)`, itemID).Scan(&exists); err != nil {
+		return false, fmt.Errorf("has other active items: %w", err)
+	}
+	return exists == 1, nil
+}
+
+// ItemVariantsFor returns ONE item's active variants (with each variant's
+// primary barcode), name-ordered — the single-item counterpart to
+// ItemVariants for the row-level re-render (ut-docs#1363).
+func (r *CatalogRepo) ItemVariantsFor(ctx context.Context, itemID string) ([]VariantView, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT v.id, v.name, v.price,
+       COALESCE((SELECT b.barcode FROM variant_barcodes b WHERE b.variant_id = v.id
+                 ORDER BY b.is_primary DESC, b.barcode LIMIT 1), '')
+FROM item_variants v
+WHERE v.is_active = 1 AND v.item_id = ?
+ORDER BY v.name`, itemID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var out []VariantView
+	for rows.Next() {
+		var v VariantView
+		if err := rows.Scan(&v.ID, &v.Name, &v.PriceMinor, &v.Barcode); err != nil {
+			return nil, err
+		}
+		out = append(out, v)
+	}
+	return out, rows.Err()
+}
+
 // VariantEditView is one variant in the item's edit panel: everything the
 // operator can change, including inactive variants (so they can be
 // reactivated) and every barcode attached to the variant.
