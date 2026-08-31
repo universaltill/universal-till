@@ -1,31 +1,48 @@
 {{ define "content" }}
 <!-- 2026-08-30 (product owner, comparing against a competitor POS): the
      app name used to render again here as its own <h1> row — moved to
-     the shared nav bar (nav.html, next to the logo) instead, so this row
-     is just the action buttons now, and they're compact (small, some
-     iconed) rather than full-size .btn — freeing a whole row of height
-     on the screen operators spend the most time on.
+     the shared nav bar (nav.html, next to the logo) instead.
      Independent review: this left the sale screen — the single most-used
      page in the product — with no <h1> at all (the outline jumped
      straight to "BASKET"/"PRODUCTS" as <h2>s). A visually-hidden one
      keeps the document outline correct for assistive tech without
      bringing back the vertical space it used to cost sighted operators. -->
 <h1 class="visually-hidden">{{ T "app.name" }}</h1>
-<div class="kiosk-header">
+<!-- 2026-08-30 (nav rail, ut-docs#1332): Inventory / Deposit refund used
+     to render in a second full-width row here, right above the product
+     grid, alongside New Sale -- exactly the "another row" the product
+     owner kept pointing at when comparing against a competitor POS.
+     Inventory is a plain global link, now in the shared left nav rail
+     (nav.html); New Sale moved into .tender-default-footer below instead,
+     next to Hold Sale and Payment, per the product owner's own later
+     request in the same session -- it renders at every width uniformly,
+     so it needed no rail copy or phone-fallback copy at all. Deposit
+     refund is the one item still split between the two: a rail copy
+     (nav.html, >480px) and this page's own phone-only fallback below
+     (<=480px) -- it targets THIS page's own #pfand-modal DOM, so it can't
+     live in nav.html unconditionally, and the rail itself isn't shown at
+     phone width (nav.html's own comment explains why). At >480px the
+     sale screen goes straight from the (visually-hidden) heading above
+     into BASKET/PRODUCTS/TENDER below.
+
+     .phone-fallback-only (app.css): hidden by default, shown ONLY at
+     <=480px. A permanent side rail was never going to fit a 360px screen,
+     and cramming Inventory/New Sale/Deposit refund into the phone-width
+     TOP BAR instead (nav.html) regressed live when first tried: measured,
+     that bar wrapping to a third row overflowed the sale screen's fixed
+     100dvh/overflow:hidden height and clipped BASKET underneath it. A
+     different testid from nav.html's rail version (…-phone suffix) --
+     Playwright's strict-mode locators refuse to resolve if a testid
+     matches more than one DOM element, visible or not, so the two can't
+     share one even though only one is ever on-screen at a time.
+     e2e/tests/phone-width-layout-413.spec.ts (360px-only) targets this
+     one; every other spec, run at a normal desktop-class viewport, keeps
+     targeting nav.html's rail version. -->
+<div class="kiosk-header phone-fallback-only">
   <div class="kiosk-actions">
-    <button class="btn primary compact" data-testid="kiosk-checkout-start"
-            hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-            onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)">
-      🛒 {{ T "kiosk.checkout_start" }}</button>
-    <a class="btn secondary compact" data-testid="kiosk-inventory-link" href="/inventory">📦 {{ T "kiosk.inventory" }}</a>
-    <button class="btn secondary compact" type="button" data-testid="kiosk-pfand-open"
+    <a class="btn secondary compact" data-testid="kiosk-inventory-link-phone" href="/inventory">📦 {{ T "kiosk.inventory" }}</a>
+    <button class="btn secondary compact" type="button" data-testid="kiosk-pfand-open-phone"
             onclick="document.getElementById('pfand-result').textContent=''; var prev=document.activeElement; document.getElementById('pfand-modal').show(); if (document.getElementById('pfand-modal').contains(document.activeElement)) { document.activeElement.blur(); if (prev && prev!==document.body && prev.focus) prev.focus(); }">♻️ {{ T "pfand.action" }}</button>
-    <!-- 2026-08-30: the standalone "Online" pill that used to sit here was
-         a static label wired to nothing (no JS, no data attribute driving
-         it) — always said "Online" regardless of real connectivity — and
-         duplicated the shared nav's own #sb-conn indicator (base.html's
-         .statusbar, present on every page, genuinely live). Removed rather
-         than fixed: connectivity status only needs to exist once. -->
   </div>
 </div>
 
@@ -220,9 +237,21 @@
          so a button only reachable inside it would make "hold this basket
          for the next customer" cost an unrelated trip through Payment.
          New Customer stays inside the overlay's own footer below — it's
-         duplicated by the header's kiosk-checkout-start button already, so
-         losing a quick path to it while paying isn't a real regression. -->
+         duplicated by kiosk-checkout-start (New Sale, right here in this
+         same row) already, so losing a quick path to it while paying
+         isn't a real regression.
+
+         2026-08-30: New Sale moved here, next to Hold Sale and Payment,
+         per the product owner's own live request — was the shared nav
+         rail's own top item (nav.html) until this same session. .btn
+         secondary (not primary): Payment stays the one visually-prominent
+         action in this row; New Sale/Hold Sale are both "before you get
+         there" utility actions. -->
     <div class="tender-default-footer">
+      <button class="btn secondary" type="button" data-testid="kiosk-checkout-start"
+              hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)">
+        🛒 {{ T "kiosk.checkout_start" }}</button>
       <button class="btn secondary" type="button"
               onclick="document.getElementById('hold-modal').show(); document.getElementById('hold-label-input').focus();">
         {{ T "hold.action" }}</button>

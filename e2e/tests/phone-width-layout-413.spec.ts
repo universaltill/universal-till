@@ -103,7 +103,12 @@ test.describe('phone-width layout (ut-docs#413)', () => {
     await page.goto('/');
     await page.waitForSelector('.pos-container');
 
-    await page.getByTestId('kiosk-pfand-open').click();
+    // 2026-08-30 (nav rail, ut-docs#1332): the rail's own trigger
+    // (data-testid="kiosk-pfand-open", nav.html) is hidden at this file's
+    // 360px width -- index.html's phone-only fallback row
+    // (data-testid="kiosk-pfand-open-phone") is what's actually on-screen
+    // here, same real handler/#pfand-modal target either way.
+    await page.getByTestId('kiosk-pfand-open-phone').click();
     await expect(page.locator('#pfand-modal')).toBeVisible();
 
     const geometry = await page.evaluate(() => {

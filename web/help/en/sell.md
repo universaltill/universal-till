@@ -18,7 +18,7 @@ The main register screen: scan or pick items, take payment, print or skip the re
 2. No barcode scanner? On a device with a camera and a supported browser, tap the 🔳 button next to the scan box to scan with the camera instead — point it at the barcode or QR code; the item rings up automatically and the camera closes. This never replaces or disables a plugged-in scanner, and no photo or video ever leaves the device.
 3. Adjust quantity or remove lines in the basket, then tap **Payment** — this opens a panel over the item buttons (the basket stays visible on the left) where you pick Cash, Card, or another method, or switch to the Split tab to take more than one payment against the same sale. Close the panel (✕) to go back and adjust the basket without paying.
 4. Hold a basket to serve the next customer and recall it later; refunds are under the sale history.
-5. If you've set up tables (see **Tables & floor plan**), assign the current basket to one from the table picker under the order-type toggle — pick "No table" to clear it. A held order keeps its table, shown as a chip on the held-orders strip; tap **Move table** on the strip to move a held order onto a different free table without losing it or resuming it.
+5. If you've set up tables (see **Tables & floor plan**), tap the **Table** button next to the dine-in/takeaway switch to open the table picker, then pick a table — or "No table" to clear it — and the dialog closes on its own. A held order keeps its table, shown as a chip on the held-orders strip; tap **Move table** on the strip to move a held order onto a different free table without losing it or resuming it.
 6. To refund a completed sale, open it from Journal → sale history: pick which lines and how much of each to return (already-refunded quantity is tracked, so you can't return more than was sold), then choose cash or the original payment method to refund into. If the original sale carried a service charge, your share of it comes back automatically, in proportion to how much of the sale you're refunding — refund everything and the whole service charge comes back too.
 
 ## Item customization
@@ -45,7 +45,7 @@ A per-line discount that's bigger than the line itself is accepted while you're 
 
 ## Dine-in or takeaway
 
-A toggle above the basket switches the current sale between **Dine in** and **Takeaway** — the active choice is highlighted, the other one sits in its normal, unselected style (still fully tappable, not disabled). This matters for tax: some items' tax rate can differ between eating in and taking away, and the shown total updates immediately when you switch, using whichever is selected at that moment. It resets to Dine in (the default) any time the basket is reset for the next customer.
+A switch above the basket flips the current sale between **Dine in** and **Takeaway** — tap it to change which one is active; its label and color show which is currently selected. This matters for tax: some items' tax rate can differ between eating in and taking away, and the shown total updates immediately when you switch, using whichever is selected at that moment. It resets to Dine in (the default) any time the basket is reset for the next customer.
 
 ## Linking a customer to a sale
 
@@ -59,9 +59,9 @@ A row of suggestion chips can appear under the basket totals, based on what tend
 
 The strip shows nothing at all — not even an empty box — whenever there's nothing to suggest: an empty basket, a basket of items with no strong sales pattern together, or if the lookup itself fails for any reason. It never blocks or interrupts a sale; treat it as a hint, not a step you need to act on.
 
-## Status chips in the top bar
+## Status chips in the side menu
 
-Several small chips in the nav bar tell you, at a glance, what's going on with the till — none of them block the sale screen:
+Several small chips near the bottom of the left-hand menu tell you, at a glance, what's going on with the till — none of them block the sale screen:
 
 - Your own name (👤) is who's currently signed in; tapping it opens Change PIN, and the **Lock** button next to it signs out to the PIN pad. See **Users, PINs & shifts** for that and for the manager-only shortcuts that show up next to it (Users, Promotions, Translations).
 - If this till syncs with others, a chip shows this till's name and its sync state (caught up, or behind/offline with a queued count) — see **Multiple tills (one shop)** for exactly what it shows. A single till with nothing joined shows no sync chip at all.
@@ -74,7 +74,7 @@ The till is built to keep selling when the internet, the shop's own network, or 
 
 - **Nothing about ringing up items, customizing them, applying discounts, or holding a basket needs the network** — all of that runs against this till's own local data.
 - If a request genuinely can't reach the till's own server (the browser tab itself lost connectivity), a banner reading "Connection problem — the till keeps working offline." appears at the top of the sale screen; it clears itself the next time a request succeeds, so it never has to be dismissed by hand.
-- If this till syncs with others (see **Multiple tills (one shop)**), the sync status chip in the top bar turns amber and marks itself offline/queued rather than disappearing — sales keep recording locally and catch the other tills up once the connection returns.
+- If this till syncs with others (see **Multiple tills (one shop)**), the sync status chip in the left-hand menu turns amber and marks itself offline/queued rather than disappearing — sales keep recording locally and catch the other tills up once the connection returns.
 - Payment still works the same way: cash and any offline-capable payment method complete normally. A payment method that itself needs the network (a card reader calling out to its processor, for instance) is a property of that specific method, not of the till. There's an offline checkbox next to the Pay buttons for marking a sale offline up front — note that it's a standing setting, not a one-off: once ticked it stays on (even after closing the till) until you untick it again, so switch it back off once the outage is over.
 - Printing a receipt is a local connection to the printer (USB, LAN, or Bluetooth), not an internet one, so it's unaffected by an internet outage on its own; a genuinely unreachable printer is reported separately (see **Receipts & printing**).
 - A held basket, once resumed, completes exactly the same way — nothing about holding or recalling a sale depends on connectivity either.
@@ -111,7 +111,7 @@ Separately from signing, some countries (today: Germany) need a plugin to apply 
 
 ### The fiscal signing status chip
 
-If your shop has a TSE configured, a small chip in the top navigation bar shows fiscal signing's current health at a glance: **✓ Fiscal signing OK**, or **⚠ Fiscal signing unavailable** if the most recent sale on this till completed without a TSE signature, together with how many sales today are still unsigned. It shows nothing at all when no TSE is configured — no chip, no warning, for a shop that will never need one. This is a status indicator only, sourced entirely from the till's own record of what it has signed — it never blocks the sale screen, and it never depends on reaching the network.
+If your shop has a TSE configured, a small chip near the bottom of the left-hand menu shows fiscal signing's current health at a glance: **✓ Fiscal signing OK**, or **⚠ Fiscal signing unavailable** if the most recent sale on this till completed without a TSE signature, together with how many sales today are still unsigned. It shows nothing at all when no TSE is configured — no chip, no warning, for a shop that will never need one. This is a status indicator only, sourced entirely from the till's own record of what it has signed — it never blocks the sale screen, and it never depends on reaching the network.
 
 ### When a sale can't be signed at all
 
