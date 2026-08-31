@@ -22,7 +22,11 @@
     <tbody>
       {{ range .Orders }}
       <tr>
-        <td><a href="/journal/{{ .ReceiptNo }}">{{ .ReceiptNo }}</a>{{ if eq .OrderType "takeaway" }} <span class="muted">{{ T "basket.order_type.takeaway" }}</span>{{ end }}</td>
+        {{/* ut-docs#1350: a primary-sourced row (this till's own DB never
+             replicates DOWN) may name a receipt this till has never heard
+             of — linking it to /journal/{receipt_no} would 404, so those
+             rows show the plain receipt number instead of a link. */}}
+        <td>{{ if .JournalLinkable }}<a href="/journal/{{ .ReceiptNo }}">{{ .ReceiptNo }}</a>{{ else }}{{ .ReceiptNo }}{{ end }}{{ if eq .OrderType "takeaway" }} <span class="muted">{{ T "basket.order_type.takeaway" }}</span>{{ end }}</td>
         <td>{{ .CreatedAt }}</td>
         <td id="order-status-{{ .ReceiptNo }}">
           <span class="order-status" data-status="{{ .Status }}">{{ T .StatusKey }}</span>
