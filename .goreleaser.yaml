@@ -241,7 +241,21 @@ checksum:
   name_template: checksums.txt
 
 release:
-  draft: false
+  # Draft, not published: windows-installer/macos-app/android-app/
+  # verify-versions all run AFTER this job (release.yml's needs: graph) and
+  # upload their own assets to the release goreleaser creates here — in
+  # PARALLEL with each other, not gated on one another. A public non-draft
+  # release becomes "Latest" (and releases/latest/download/* starts
+  # resolving) the instant this job finishes, regardless of whether those
+  # slower jobs — Android above all, SDK+Gradle+gomobile is consistently
+  # the long pole — have even started. v0.8.3 (2026-08-31) shipped exactly
+  # that way: android-app hit a transient go.sum verification error,
+  # goreleaser had already published, and the website's Android download
+  # button 404'd against a "Latest" release with no APK in it at all.
+  # release.yml's new publish-release job flips this to non-draft (making
+  # it "Latest") only after every platform job succeeds — see that job's
+  # own comment before changing this back to `false`.
+  draft: true
   footer: |
     **Raspberry Pi / Debian:** `sudo apt install ./unitill-pos_*_arm64.deb`
     then open http://localhost:8080 — the first-boot wizard does the rest.

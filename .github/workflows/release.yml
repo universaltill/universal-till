@@ -737,3 +737,46 @@ jobs:
           checkAndroidLib extracted/lib/armeabi-v7a/libgojni.so "android armeabi-v7a libgojni.so (the omission that caused the real bug)"
 
           exit $fail
+
+  # Flips the release goreleaser created (draft: true, .goreleaser.yaml) to
+  # published/"Latest" — the ONLY point in this whole workflow that does.
+  # Needs every platform job AND verify-versions: goreleaser's own job only
+  # covers the desktop archives it builds itself and returns long before
+  # windows-installer/macos-app/android-app (each a `needs: [prepare,
+  # goreleaser]` job that uploads its OWN asset to that same release,
+  # independently and in parallel with each other) are anywhere near done.
+  # Publishing there — the pre-existing behavior, `draft: false` — made the
+  # release "Latest" (and releases/latest/download/* start resolving,
+  # including the website's direct Android download link) the instant
+  # goreleaser finished, with zero regard for whether the slower jobs had
+  # even started yet, let alone succeeded. v0.8.3 (2026-08-31) shipped
+  # exactly that gap: android-app hit a transient go.sum verification
+  # error, goreleaser had already published, and the website's Android
+  # button 404'd against a "Latest" release with no APK in it at all.
+  # `if: ${{ !cancelled() && ... == 'success' }}` (not the default implicit
+  # success() on `needs`) so a genuine failure anywhere leaves the release
+  # sitting as a draft — visible to anyone with repo write access for
+  # inspection/manual fix-up, invisible to the public and to
+  # releases/latest — rather than silently skipping this job and leaving
+  # no signal beyond "the release never went public."
+  publish-release:
+    needs:
+      [
+        prepare,
+        goreleaser,
+        windows-installer,
+        macos-app,
+        android-app,
+        verify-versions,
+      ]
+    if: ${{ !cancelled() && needs.goreleaser.result == 'success' && needs.windows-installer.result == 'success' && needs.macos-app.result == 'success' && needs.android-app.result == 'success' && needs.verify-versions.result == 'success' }}
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - name: Publish the release (undraft) now that every platform succeeded
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ needs.prepare.outputs.tag }}
+        run: gh release edit "$TAG" --draft=false --latest
