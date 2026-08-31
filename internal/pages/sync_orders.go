@@ -91,15 +91,24 @@ func registerSyncOrders(mux *http.ServeMux, d *common.Deps) {
 	// The SAME guarded write as the human-facing one-tap endpoint —
 	// applyOrderStatusCore is shared, never duplicated. actor_id (the
 	// REPLICA's own session user, ut-docs#1350 review) is honored as the
-	// journal/audit actor only once VALIDATED against this (primary) till's
-	// own users table — a bearer-authed peer is trusted to relay a real tap,
-	// never trusted to assert an arbitrary actor id at face value. No
-	// resolvable operator (older replica, or UT_AUTH=off with no session at
-	// all) falls back to the calling TILL as the journal actor, same
-	// attribution convention as applyJournal's till-attributed writes.
-	// Status codes mirror the human-facing endpoint: 400 bad status, 404
-	// unknown receipt, 200 for both an applied and a silently-dropped stale
-	// write.
+	// journal/audit actor only once it resolves to a REAL ROW in this
+	// (primary) till's own users table — existence-checked, not further
+	// authenticated: a bearer-authed peer already has journal-push/snapshot-
+	// read trust (it's an enrolled till, not an anonymous caller), so this
+	// only stops an arbitrary UNVALIDATED string reaching audit_log's
+	// users-FK column, not a claim of any *existing* operator's id — a
+	// stronger check (e.g. requiring that operator to hold a live session
+	// somewhere) would need this endpoint to carry more than a till's own
+	// bearer, which it deliberately doesn't (round 2 review: judged
+	// acceptable — the forgeable actions are low-stakes status taps, never
+	// money/fiscal, and source_till always rides the audit payload
+	// regardless, so an investigator can always see which till relayed it).
+	// No resolvable operator (older replica, no session, or an id this
+	// till's users table doesn't have) falls back to the calling TILL as
+	// the journal actor, same attribution convention as applyJournal's
+	// till-attributed writes. Status codes mirror the human-facing
+	// endpoint: 400 bad status, 404 unknown receipt, 200 for both an
+	// applied and a silently-dropped stale write.
 	mux.HandleFunc("POST /api/sync/orders/{receipt_no}/status", func(w http.ResponseWriter, r *http.Request) {
 		till, ok := syncTill(r, tills)
 		if !ok {

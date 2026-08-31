@@ -228,12 +228,13 @@ func fetchOrdersFromPrimary(ctx context.Context, d *common.Deps, client *http.Cl
 // on the primary. ok=false on ANY failure — including the primary answering
 // 404 (a sale that exists here but hasn't journaled there yet) or 400 — and
 // the caller falls back to applying the write locally, exactly as an offline
-// till does. actorID (this till's own session user, may be "" — e.g.
-// UT_AUTH=off) rides along so the PRIMARY's audit trail can attribute the
-// real operator instead of just "some till changed this" (ut-docs#1350
-// review) — the primary still validates it against its own users table
-// before trusting it (see sync_orders.go), never taking a peer's claim at
-// face value.
+// till does. actorID (this till's own session user — getSessionUserID's
+// "system" fallback under UT_AUTH=off means this is never actually empty
+// in practice, but the empty check below is harmless defense in depth)
+// rides along so the PRIMARY's audit trail can attribute the real operator
+// instead of just "some till changed this" (ut-docs#1350 review) — the
+// primary only honors it once it resolves to a real row in ITS OWN users
+// table (see sync_orders.go), never an unvalidated string.
 func applyOrderStatusOnPrimary(ctx context.Context, d *common.Deps, client *http.Client, receiptNo, next, actorID string) (orderStatusOutcome, bool) {
 	base, bearer, isReplica := replicaSyncTarget(ctx, d)
 	if !isReplica {
@@ -311,17 +312,34 @@ func registerOrderStatus(mux *http.ServeMux, d *common.Deps) {
 			// surfaced as an inline warning next to the status.
 			KitchenPrintFailed bool
 			ReceiptPrintFailed bool
-			// ut-docs#1350 review: a row sourced from the PRIMARY's board may
-			// name a receipt this till's own DB has never heard of (sales
-			// only ever journal replica→primary, never back down) — linking
-			// it to /journal/{receipt_no} would 404. Sale journals only push
-			// FORWARD from wherever a sale was rung up, so this till's own
-			// local rows always resolve locally and keep the link; only
-			// primary-sourced rows suppress it.
+			// ut-docs#1350 review round 2: a row sourced from the PRIMARY's
+			// board may name a receipt this till's own DB has never heard of
+			// (sales only ever journal replica→primary, never back down) —
+			// linking it to /journal/{receipt_no} would 404. This is
+			// checked PER ROW, not assumed false for the whole primary-
+			// sourced batch: a replica's OWN sale journals to the primary
+			// too, so once it's landed there, a row for a sale THIS till
+			// actually took is both primary-sourced AND locally resolvable
+			// — a blanket "primary-sourced ⇒ no link" would wrongly kill a
+			// working link on the till's own orders every time the primary
+			// is reachable (caught by review: the help docs would then be
+			// describing behavior the code didn't actually have).
 			JournalLinkable bool
 		}
+		repo := data.NewPOSRepo(d.Db)
 		rows := make([]orderRow, 0, len(entries))
 		for _, e := range entries {
+			linkable := true
+			if fromPrimary {
+				// Bounded to the page's own 50-row cap; a local existence
+				// check per row is a handful of sub-millisecond embedded-
+				// SQLite lookups on a 15s poll, not a hot path.
+				var err error
+				linkable, err = repo.ReceiptExists(r.Context(), e.ReceiptNo)
+				if err != nil {
+					linkable = false // fail closed to "no link", never a 404
+				}
+			}
 			rows = append(rows, orderRow{
 				ReceiptNo:          e.ReceiptNo,
 				OrderType:          e.OrderType,
@@ -331,7 +349,7 @@ func registerOrderStatus(mux *http.ServeMux, d *common.Deps) {
 				CreatedAt:          e.CreatedAt,
 				KitchenPrintFailed: e.KitchenPrintFailedAt != "",
 				ReceiptPrintFailed: e.ReceiptPrintFailedAt != "",
-				JournalLinkable:    !fromPrimary,
+				JournalLinkable:    linkable,
 			})
 		}
 		httpx.RenderPartial("ui/partials/orders_list.html", map[string]any{"Orders": rows})(w, r)

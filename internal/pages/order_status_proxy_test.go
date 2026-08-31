@@ -72,6 +72,49 @@ func TestUIOrders_ReplicaRendersPrimaryData(t *testing.T) {
 	if auth, _ := gotAuth.Load().(string); auth != "Bearer b-123" {
 		t.Fatalf("primary must be called with the sync bearer, got %q", auth)
 	}
+	// ut-docs#1350 round 2: PRIMARY-1 doesn't exist in THIS till's local DB
+	// (only LOCAL-1 does, and it's not in the primary's response) — its
+	// receipt number must render as plain text, not a /journal/ link that
+	// would 404.
+	if strings.Contains(body, `href="/journal/PRIMARY-1"`) {
+		t.Fatalf("a receipt this till doesn't hold locally must not link to /journal/, got %q", body)
+	}
+	if !strings.Contains(body, "<td>PRIMARY-1") {
+		t.Fatalf("the receipt number must still be shown as plain text, got %q", body)
+	}
+}
+
+// A replica's OWN sale — rung up here, already journaled to the primary —
+// comes back from fetchOrdersFromPrimary like any other primary-sourced
+// row, but THIS till's local DB genuinely holds it: the journal link must
+// still work, not be blanket-suppressed just because the row happened to be
+// primary-sourced (round 2 finding: the original whole-batch suppression
+// was broader than intended and than the help docs describe — a
+// connected replica's OWN orders are both primary-sourced AND locally
+// resolvable).
+func TestUIOrders_ReplicaOwnJournaledSaleKeepsWorkingLink(t *testing.T) {
+	mux, dp, dbase := newOrderStatusTestDeps(t)
+	// This receipt exists LOCALLY (as if this till rang it up and it later
+	// journaled to the primary) AND is what the primary answers with.
+	seedOrderStatusTestSale(t, dbase, "sale-own", "OWN-1")
+
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":[{"receipt_no":"OWN-1","order_type":"","status":"","status_updated_at":"","created_at":"2026-08-31T08:55:00Z","kitchen_print_failed_at":"","receipt_print_failed_at":""}],"error":null}`)
+	}))
+	defer primary.Close()
+	setReplicaSettings(t, dp.Settings, primary.URL, "b-123")
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/orders", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `href="/journal/OWN-1"`) {
+		t.Fatalf("this till's own already-journaled sale must keep a working link even though the row is primary-sourced, got %q", body)
+	}
 }
 
 func TestUIOrders_ReplicaFallsBackToLocalWhenPrimaryUnreachable(t *testing.T) {
