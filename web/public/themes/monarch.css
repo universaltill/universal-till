@@ -1,6 +1,32 @@
 :root { --brand:#1e293b; --accent:#10b981; --focus-border:#0e9e6e; } /* ut-docs#797: --accent is 2.54:1 on white; --focus-border (darker green) is 3.42:1 (WCAG 1.4.11 >=3:1) */
-.nav { background:var(--brand); color:#fff; padding:.6rem 1rem; display:flex; justify-content:space-between; align-items:center }
-.nav a { color:#fff; margin-left:.8rem }
+/* 2026-08-31 (independent review of the nav rail, ut-docs#1332): this file
+   is loaded AFTER app.css (base.html), so at equal specificity every
+   declaration here WINS over app.css's own `.nav` rule. It used to carry a
+   full copy of the old horizontal top bar's LAYOUT
+   (`padding:.6rem 1rem; display:flex; justify-content:space-between;
+   align-items:center`) alongside its colours — harmless while app.css laid
+   the nav out the same way, silently breaking once app.css turned `.nav`
+   into a vertical rail:
+     - `padding:.6rem 1rem` left the 4.5rem rail only 2.5rem of content box,
+       narrower than the `min-width:48px` app.css gives every `.nav-toggle`,
+       so the rail's own items overflowed it (measured: scrollWidth 89 vs
+       clientWidth 80 — the rail became horizontally scrollable on a
+       touchscreen till).
+     - `align-items:center` overrode app.css's `stretch`, so rail items
+       shrank to content width instead of filling the rail.
+   monarch is the DEFAULT theme (internal/config/config.go), so this was the
+   out-of-box appearance, not an edge case. A theme should set COLOURS; the
+   layout belongs to app.css alone, which now owns both the rail and the
+   <=480px top-bar fallback. */
+.nav { background:var(--brand); color:#fff }
+/* `margin-left` (physical, and a leftover from spacing inline links in the
+   old horizontal bar) made every <a> rail item exactly .8rem narrower than
+   every <button> one in the same column — a visibly ragged rail — and, being
+   physical rather than logical, landed on the wrong side under RTL (fa/ar),
+   where the rail flips to the right. Spacing between rail items now comes
+   from `.nav-primary`/`.nav-right`'s own flex `gap` in app.css, at both
+   widths, so nothing needs a margin here. */
+.nav a { color:#fff }
 .btn { background:var(--accent) }
 .basket .total { color:var(--accent) }
 .logo img { height: 2.55rem; }
