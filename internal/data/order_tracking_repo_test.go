@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"testing"
+	"time"
 )
 
 // Customer order tracking tokens (ut-docs#527). Harness matches
@@ -87,7 +88,11 @@ func TestEnsureOrderTrackingToken_UnknownReceiptErrors(t *testing.T) {
 // (a callback, per order_status_repo.go's header — internal/pos imports
 // internal/data, so the rule can't be imported here directly). Tokenless
 // sales never appear; the callback decides liveness; ordering is stable so
-// the push's hash gate doesn't see phantom changes.
+// the push's hash gate doesn't see phantom changes. This test passes a nil
+// terminalStatuses throughout — the pre-#1321 unbounded query — so it's
+// purely exercising the callback wiring; TestListLiveTrackedOrders_
+// PrunesOldTerminalRowsInSQL below covers the terminalStatuses/
+// terminalCutoff SQL-side prune itself.
 func TestListLiveTrackedOrders(t *testing.T) {
 	d := openOrderStatusDB(t, "tracking_list_live.db")
 	seedOrderStatusSale(t, d, "sale-1", "R-0001")
@@ -115,7 +120,7 @@ func TestListLiveTrackedOrders(t *testing.T) {
 
 	// Callback sees exactly the tokened sales' status views.
 	var seen []TrackedOrder
-	all, err := repo.ListLiveTrackedOrders(ctx, func(o TrackedOrder) bool {
+	all, err := repo.ListLiveTrackedOrders(ctx, nil, time.Time{}, func(o TrackedOrder) bool {
 		seen = append(seen, o)
 		return true
 	})
@@ -138,7 +143,7 @@ func TestListLiveTrackedOrders(t *testing.T) {
 
 	// The callback's verdict is honored: filtering out terminal statuses
 	// drops R-0002 from the result.
-	live, err := repo.ListLiveTrackedOrders(ctx, func(o TrackedOrder) bool {
+	live, err := repo.ListLiveTrackedOrders(ctx, nil, time.Time{}, func(o TrackedOrder) bool {
 		return o.Status != "collected" && o.Status != "cancelled"
 	})
 	if err != nil {
@@ -149,12 +154,94 @@ func TestListLiveTrackedOrders(t *testing.T) {
 	}
 
 	// Nothing visible → empty, no error (the push's delete signal).
-	none, err := repo.ListLiveTrackedOrders(ctx, func(TrackedOrder) bool { return false })
+	none, err := repo.ListLiveTrackedOrders(ctx, nil, time.Time{}, func(TrackedOrder) bool { return false })
 	if err != nil {
 		t.Fatalf("ListLiveTrackedOrders none: %v", err)
 	}
 	if len(none) != 0 {
 		t.Fatalf("want no rows, got %+v", none)
+	}
+}
+
+// ut-docs#1321: terminalStatuses + terminalCutoff let SQL prune old terminal
+// rows before they ever reach Go — but ONLY terminal ones. A non-terminal
+// row must reach the callback (and this test's own visible-tracking
+// callback) no matter how old, exactly matching pos.OrderTrackingVisible's
+// "preparing is live regardless of timestamp" rule (order_tracking_test.go)
+// — this is the SQL-side prune's own correctness proof: it must never
+// disagree with what the callback would have decided.
+func TestListLiveTrackedOrders_PrunesOldTerminalRowsInSQL(t *testing.T) {
+	d := openOrderStatusDB(t, "tracking_list_live_prune.db")
+	seedOrderStatusSale(t, d, "sale-1", "R-OLD-PREPARING")
+	seedOrderStatusSale(t, d, "sale-2", "R-OLD-COLLECTED")
+	seedOrderStatusSale(t, d, "sale-3", "R-RECENT-COLLECTED")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	for _, r := range []string{"R-OLD-PREPARING", "R-OLD-COLLECTED", "R-RECENT-COLLECTED"} {
+		if _, err := repo.EnsureOrderTrackingToken(ctx, r); err != nil {
+			t.Fatalf("token %s: %v", r, err)
+		}
+	}
+	// A "preparing" order from 2020 — ancient by any cutoff, but non-terminal
+	// so it must never be pruned by terminalCutoff.
+	if applied, _, err := repo.ApplyOrderStatus(ctx, "R-OLD-PREPARING", "preparing", "u-alice",
+		"2020-01-01T00:00:00Z", func(string) bool { return true }); err != nil || !applied {
+		t.Fatalf("seed R-OLD-PREPARING: applied=%v err=%v", applied, err)
+	}
+	// A "collected" order from 2020 — terminal AND outside the cutoff below:
+	// SQL must prune this one before the callback ever sees it.
+	if applied, _, err := repo.ApplyOrderStatus(ctx, "R-OLD-COLLECTED", "collected", "u-alice",
+		"2020-01-01T00:00:00Z", func(string) bool { return true }); err != nil || !applied {
+		t.Fatalf("seed R-OLD-COLLECTED: applied=%v err=%v", applied, err)
+	}
+	// A "collected" order updated just now — terminal, but inside the
+	// cutoff, so it must still reach the callback.
+	recentAt := time.Now().UTC().Format(time.RFC3339)
+	if applied, _, err := repo.ApplyOrderStatus(ctx, "R-RECENT-COLLECTED", "collected", "u-alice",
+		recentAt, func(string) bool { return true }); err != nil || !applied {
+		t.Fatalf("seed R-RECENT-COLLECTED: applied=%v err=%v", applied, err)
+	}
+
+	var seenReceipts []string
+	cutoff := time.Now().UTC().Add(-2 * time.Hour) // mirrors pos.OrderTrackingExpiry
+	all, err := repo.ListLiveTrackedOrders(ctx, []string{"collected", "cancelled"}, cutoff,
+		func(o TrackedOrder) bool {
+			seenReceipts = append(seenReceipts, o.ReceiptNo)
+			return true // callback would accept everything it's shown
+		})
+	if err != nil {
+		t.Fatalf("ListLiveTrackedOrders: %v", err)
+	}
+	if len(all) != 2 {
+		t.Fatalf("got %d rows, want 2 (R-OLD-PREPARING never bounded, R-OLD-COLLECTED SQL-pruned, R-RECENT-COLLECTED inside cutoff): %+v", len(all), all)
+	}
+	got := map[string]bool{}
+	for _, o := range all {
+		got[o.ReceiptNo] = true
+	}
+	if !got["R-OLD-PREPARING"] {
+		t.Fatalf("R-OLD-PREPARING (non-terminal, ancient) must never be SQL-pruned — rows: %+v", all)
+	}
+	if !got["R-RECENT-COLLECTED"] {
+		t.Fatalf("R-RECENT-COLLECTED (terminal, inside cutoff) must survive the prune — rows: %+v", all)
+	}
+	if got["R-OLD-COLLECTED"] {
+		t.Fatalf("R-OLD-COLLECTED (terminal, outside cutoff) must be SQL-pruned before reaching the callback — rows: %+v", all)
+	}
+	if len(seenReceipts) != 2 {
+		t.Fatalf("callback ran %d times, want 2 — the pruned row must never reach it: %v", len(seenReceipts), seenReceipts)
+	}
+
+	// Empty terminalStatuses fails OPEN (pre-#1321 unbounded query, not a
+	// silently-empty result) — a caller with no terminal set yet still gets
+	// every tokened row, cutoff ignored.
+	unbounded, err := repo.ListLiveTrackedOrders(ctx, nil, cutoff, func(TrackedOrder) bool { return true })
+	if err != nil {
+		t.Fatalf("ListLiveTrackedOrders unbounded: %v", err)
+	}
+	if len(unbounded) != 3 {
+		t.Fatalf("got %d rows with nil terminalStatuses, want all 3 (fails open): %+v", len(unbounded), unbounded)
 	}
 }
 

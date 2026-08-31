@@ -313,20 +313,37 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		}
 		from := strings.TrimSpace(r.URL.Query().Get("from"))
 		to := strings.TrimSpace(r.URL.Query().Get("to"))
+		// ut-docs#1321: a bare page load (no ?from=/?to= at all) used to
+		// mean "every invoice ever issued" — fine for a new pilot shop, an
+		// unbounded full-history scan for one that's been trading a few
+		// years. Default `from` to the start of the current calendar month;
+		// an explicit ?from=/?to= still overrides this entirely.
+		//
+		// `to` is deliberately left OPEN rather than also defaulted to
+		// "today" (independent review finding): `from`/`to` here are LOCAL
+		// calendar dates (same as the `type="date"` pickers below), but
+		// invoices.IssuedAt is stored as UTC RFC3339 and InvoiceRepo.List/
+		// Totals compare it lexicographically (invoiceRangeBound) — a
+		// `to=today` bound would silently exclude an invoice issued today
+		// whenever the local and UTC calendar dates disagree at that
+		// instant (any timezone west of UTC in the evening; the first ~2h
+		// of a month in a timezone east of UTC, e.g. the Germany pilot).
+		// Leaving `to` open still gets the perf win — List/Totals run an
+		// indexed range scan from `from` instead of an all-time unbounded
+		// one — without ever risking hiding a just-issued invoice.
+		if from == "" && to == "" {
+			now := reportNow()
+			from = time.Date(now.Year(), now.Month(), 1, 0, 0, 0, 0, now.Location()).Format("2006-01-02")
+		}
 		list, err := invRepo.List(r.Context(), from, to)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "invoice.error.server", "invoice", err)
 			return
 		}
-		var net, tax, gross int64
-		for _, it := range list {
-			sign := int64(1)
-			if it.Kind == "credit_note" {
-				sign = -1
-			}
-			net += sign * it.NetTotal
-			tax += sign * it.TaxTotal
-			gross += sign * it.GrossTotal
+		net, tax, gross, err := invRepo.Totals(r.Context(), from, to)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "invoice.error.server", "invoice", err)
+			return
 		}
 		httpx.Render("ui/pages/invoices.html", map[string]any{
 			"title":     "Invoices",

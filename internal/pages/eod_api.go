@@ -738,6 +738,33 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "from must not be after to", http.StatusBadRequest)
 			return
 		}
+		// ut-docs#1321: unlike its sibling /api/reports/archive/export
+		// (maxReportArchiveExportRange, small per-day report_archive blobs),
+		// this endpoint loads full per-sale/sale_line/payment rows for the
+		// whole span (EndOfDayRange) — the same heavy per-sale-row shape
+		// data_api.go's export bounds with maxExportRange/maxExportRangeDays
+		// (ut-docs#229), so it reuses that same 366-day cap rather than the
+		// archive-export one. eodDateRe above only guarantees the DIGIT
+		// SHAPE (\d{4}-\d{2}-\d{2}), not a valid calendar date — "9999-99-99"
+		// matches it but fails time.Parse, and a discarded error there would
+		// leave both dates at the zero value, making toDate.Sub(fromDate)==0
+		// and silently bypassing this cap (independent review finding).
+		// Explicit errors here, mirroring data_api.go's identical from/to
+		// parse a few hundred lines up.
+		fromDate, err := time.Parse("2006-01-02", from)
+		if err != nil {
+			http.Error(w, "from must be YYYY-MM-DD", http.StatusBadRequest)
+			return
+		}
+		toDate, err := time.Parse("2006-01-02", to)
+		if err != nil {
+			http.Error(w, "to must be YYYY-MM-DD", http.StatusBadRequest)
+			return
+		}
+		if toDate.Sub(fromDate) > maxExportRange {
+			http.Error(w, fmt.Sprintf("date range exceeds the %d-day maximum", maxExportRangeDays), http.StatusBadRequest)
+			return
+		}
 		// Mutating + audit-writing (ut-docs#794): the SAME checkOrElevate
 		// gate as every other site here, but this handler's caller is raw
 		// fetch(), not htmx (it needs Content-Disposition-triggered blob

@@ -147,15 +147,20 @@ type InvoiceListItem struct {
 	GrossTotal    int64
 }
 
+// invoiceRangeBound normalizes List/Totals' shared "to" bound: an empty
+// value means open-ended (no upper bound at all — the max-codepoint
+// sentinel below beats any real RFC3339 string), and a date-only value
+// (e.g. from a `type="date"` picker) is widened to cover the whole final
+// day rather than stopping at its literal "00:00:00" prefix.
+func invoiceRangeBound(to string) string {
+	return to + "￿" // include the whole final day for date-only bounds
+}
+
 // List returns invoices issued in [from, to] (RFC3339 date prefixes are
 // fine — comparison is lexicographic on the stored RFC3339 strings),
 // newest first. Empty bounds mean open-ended.
 func (r *InvoiceRepo) List(ctx context.Context, from, to string) ([]InvoiceListItem, error) {
-	if to != "" {
-		to += "￿" // include the whole final day for date-only bounds
-	} else {
-		to = "￿"
-	}
+	to = invoiceRangeBound(to)
 	rows, err := r.db.QueryContext(ctx, `
 SELECT i.display_no, i.kind, i.issued_at, i.customer_name, i.customer_vat_no,
        s.receipt_no, i.net_total, i.tax_total, i.gross_total
@@ -176,4 +181,26 @@ ORDER BY i.issued_at DESC, i.display_no DESC`, from, to)
 		out = append(out, it)
 	}
 	return out, rows.Err()
+}
+
+// Totals sums net/tax/gross for invoices issued in [from, to], a credit
+// note's amounts subtracted rather than added — the same sign convention
+// the invoices page's own totals row has always used. ut-docs#1321: this
+// used to be a Go loop over List's full result set purely to add up
+// numbers SQLite can sum directly; SUM still has to touch every matched
+// row, but it never marshals them into Go InvoiceListItem structs or pays
+// the s.receipt_no JOIN List needs for its per-row display.
+func (r *InvoiceRepo) Totals(ctx context.Context, from, to string) (net, tax, gross int64, err error) {
+	to = invoiceRangeBound(to)
+	row := r.db.QueryRowContext(ctx, `
+SELECT
+  COALESCE(SUM(CASE WHEN kind = 'credit_note' THEN -net_total   ELSE net_total   END), 0),
+  COALESCE(SUM(CASE WHEN kind = 'credit_note' THEN -tax_total   ELSE tax_total   END), 0),
+  COALESCE(SUM(CASE WHEN kind = 'credit_note' THEN -gross_total ELSE gross_total END), 0)
+FROM invoices
+WHERE issued_at >= ? AND issued_at <= ?`, from, to)
+	if err := row.Scan(&net, &tax, &gross); err != nil {
+		return 0, 0, 0, fmt.Errorf("sum invoice totals: %w", err)
+	}
+	return net, tax, gross, nil
 }
