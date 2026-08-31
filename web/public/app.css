@@ -1268,50 +1268,37 @@ a.btn, a.btn:hover { text-decoration: none; }
 .btn-x { padding: .3rem .4rem; font-size: .8rem; min-height: 0; }
 
 .order-type-row { display: flex; align-items: center; gap: .5rem; margin-bottom: .6rem; }
-/* 2026-08-30 (product owner, live on the tablet): a single switch instead
-   of two full-width buttons -- same VAT sensitivity as before (see the
-   switch's own template comment, basket.html), so this is still a real
-   .btn-equivalent touch target (min-height 48px), deliberately not
-   shrunk to .compact -- only the SHAPE changed, not the tap-target floor
-   ut-docs#161 fought to protect. flex: 1 so it shares the row evenly with
-   the table-picker button next to it (when one renders -- ADR-0054 soft-
-   gates that to zero width when the shop has no tables). */
-/* 2026-08-31 (independent review): min-height is 3rem, NOT 48px. The two
-   look identical at a 16px root and are not: this file's own baseline is
-   `html { font-size: calc(var(--ui-scale,1) * var(--fluid-fs)) }`, so a rem
-   floor tracks the operator's UI-scale setting and the fluid viewport fit
-   while a px floor is frozen. The control this replaced was `.order-type-
-   toggle .btn`, i.e. the base `.btn`'s own `min-height: 3rem`, so `48px`
-   made the VAT switch SMALLER than the control it replaced the moment the
-   root font-size exceeded 16px — measured 48px vs 53.6px at a plain
-   1280x800 default scale, and 48px vs 80.4px at ui-scale 1.5. That is
-   exactly the tap-target floor ut-docs#161 fought to protect, on the one
-   control that decides a fiscal receipt's VAT rate (internal/pos/service.go,
-   the German §12 UStG dine-in/takeaway split). Same reason `.logo img`
-   above is rem and not px (ut-docs#213). */
-.order-type-switch {
-  flex: 1; display: inline-flex; align-items: center; gap: .5rem;
-  min-height: 3rem; padding: .5rem .8rem; border: 1px solid var(--border);
-  border-radius: 999px; background: var(--surface); color: var(--text);
-  font-weight: 600; cursor: pointer;
+/* 2026-08-31 (product owner, live on the tablet, ut-docs#1379): a compact
+   two-segment control replacing the single sliding switch this row
+   briefly had (2026-08-30) — the switch's one-label-that-changes-on-tap
+   turned out to read as "tap this to switch TO the named state" rather
+   than "the named state is active now", which is exactly backwards for a
+   control that decides a fiscal receipt's VAT rate
+   (internal/pos/service.go, tax_codes.takeaway_rate_basis_points -- the
+   German §12 UStG dine-in/takeaway split). Both segments are always
+   visible and labeled; the active one is filled, not inferred from a
+   knob position. `.order-type-toggle-group` occupies exactly the
+   switch's old flex: 1 slot (shares the row with the table-assignment
+   button, ADR-0054), so this is a legibility fix, not a reversion to the
+   ORIGINAL two-full-button layout's space cost (that one used two
+   independent `.btn`-sized buttons stacked outside this row entirely).
+   min-height: 3rem on the OPTIONS, not the group -- ut-docs#161/#213's
+   tap-target floor is a rem floor (tracks --ui-scale and viewport fit; a
+   px floor already broke this exact control once, see prior git blame)
+   and it protects the actual tappable element. */
+.order-type-toggle-group {
+  flex: 1; display: flex; border: 1px solid var(--border);
+  border-radius: 999px; overflow: hidden;
 }
-.order-type-switch-track {
-  flex: 0 0 auto; position: relative; inline-size: 2.4rem; block-size: 1.4rem;
-  border-radius: 999px; background: var(--border);
-  transition: background .15s ease;
+.order-type-option {
+  flex: 1; display: flex; align-items: center; justify-content: center;
+  gap: .3rem; min-height: 3rem; padding: .3rem .5rem; border: none;
+  background: var(--surface); color: var(--text); font-weight: 600;
+  font-size: .85rem; line-height: 1.15; cursor: pointer;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+  transition: background .15s ease, color .15s ease;
 }
-.order-type-switch-knob {
-  position: absolute; inset-block-start: .15rem; inset-inline-start: .15rem;
-  inline-size: 1.1rem; block-size: 1.1rem; border-radius: 50%;
-  background: #fff; box-shadow: 0 1px 2px rgba(0,0,0,.35);
-  transition: inset-inline-start .15s ease;
-}
-/* .is-takeaway (the "on" state — arbitrary which state is "on"/"off",
-   dine-in is simply the default/untaken state): track tints brand, knob
-   slides to the far side, same physical metaphor as a real switch. */
-.order-type-switch.is-takeaway .order-type-switch-track { background: var(--accent); }
-.order-type-switch.is-takeaway .order-type-switch-knob { inset-inline-start: 1.15rem; }
-.order-type-switch-label { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.order-type-option.is-active { background: var(--accent); color: #fff; }
 
 /* Table-assignment button + dialog (ut-docs#820, ADR-0054) — collapsed
    from an always-expanded inline strip into this button next to the
