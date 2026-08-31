@@ -443,6 +443,11 @@ func (s *Service) mergeResolved(line BasketLine) {
 			s.lines[i].Name = line.Name
 			s.lines[i].PriceCents = line.PriceCents
 			s.lines[i].TaxRateBP = line.TaxRateBP
+			// ut-docs#1351: refresh TaxCodeID alongside TaxRateBP — a
+			// TaxRateAsker (tax plugin) keys its order-type overrides on the
+			// tax code, so a merged line keeping a stale code was asked about
+			// the wrong code even though its base rate was current.
+			s.lines[i].TaxCodeID = line.TaxCodeID
 			s.lines[i].ItemID = line.ItemID
 			s.lines[i].VariantID = line.VariantID
 			s.lines[i].IsWeighed = line.IsWeighed

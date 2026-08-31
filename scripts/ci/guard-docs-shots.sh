@@ -17,7 +17,9 @@
 #   every regular file under web/ui/ + web/public/ (templates AND the CSS/JS
 #   that actually paints them — a theme/app.css change is exactly as visible
 #   in a screenshot as a template change) + every non-_test.go *.go under
-#   internal/pages/ EXCEPT a file whose ONLY registered mux routes are all
+#   internal/pages/ (excluding testdata/ fixtures — test-only wasip1 guests,
+#   build-tagged out of the server binary, ut-docs#1351) EXCEPT a file whose
+#   ONLY registered mux routes are all
 #   unscreenshotted (ut-docs#620) — i.e. it registers at least one route
 #   (mux.HandleFunc("[METHOD ]<route>", ...) / mux.Handle(...) literal) but
 #   none of them is any topic's routes[0], the one URL docs-shots.spec.ts
@@ -135,6 +137,17 @@ def surface_files(screenshotted_routes):
             # and no visible cause in the diff (ut-docs#659). Must stay in
             # lockstep with e2e/tests-docs/lib.js's walkFiles.
             dirs[:] = [d for d in dirs if not d.startswith(".")]
+            if want_go:
+                # internal/pages/**/testdata/ holds test-only fixtures — e.g.
+                # the wasip1 guest plugins (taxask_guest, fiscalsign_guest,
+                # taxask_overrides_guest) compiled per-test into .wasm. They
+                # are build-tagged out of the server binary entirely, so they
+                # can never change a rendered pixel; hashing them forced a
+                # full screenshot regen for adding a TEST fixture
+                # (ut-docs#1351) — same false-positive class as #620's
+                # unscreenshotted-route files and #659's .DS_Store. Must stay
+                # in lockstep with e2e/tests-docs/lib.js's surfaceFiles.
+                dirs[:] = [d for d in dirs if d != "testdata"]
             for n in names:
                 if n.startswith("."):
                     continue
