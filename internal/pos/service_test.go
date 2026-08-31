@@ -170,6 +170,14 @@ func (f fakeTaxAsker) AskTaxRateBP(l BasketLine, orderType string) (int, bool, b
 // Switching re-derives every current line immediately, including lines
 // added before the order type was chosen or changed (a customer changing
 // their mind mid-order, docs/germany-pos-parity-backlog.md).
+//
+// SCOPE (ut-docs#1351): fakeTaxAsker mocks the entire plugin chain, so this
+// test only pins pos.Service's own TaxRateAsker contract — it can not catch
+// a bug in internal/pages's real pluginTaxRateAsker (its generation-keyed
+// cache included), the event bus, the wazero runtime, or the plugin's
+// settings read. The internal/pages TestTakeawayOverride_RealChain_* tests
+// (tax_takeaway_realchain_test.go) cover that whole real chain against a
+// compiled wasm plugin; keep both.
 func TestOrderTypeTaxSwitching(t *testing.T) {
 	resolver := mapResolver{
 		"DRINK": {SKU: "DRINK", ItemID: "item-drink", TaxCodeID: "tax-drink", Name: "Coffee", Qty: 1, PriceCents: 1000, TaxRateBP: 1900},
@@ -288,6 +296,59 @@ func TestOrderTypeTaxSwitching_ModifierInheritsParentRate(t *testing.T) {
 	takeawayTax := money.FromMinor(77) // 7% of the whole 1100 -- never the hypothetical 19% modifier-level rate
 	if got := s.Basket().Tax; got != takeawayTax {
 		t.Fatalf("takeaway tax with priced modifier = %v, want %v (never the hypothetical modifier-level rate)", got, takeawayTax)
+	}
+}
+
+// TestMergeResolved_RescanUpdatesTaxCodeOnExistingLine (ut-docs#1351,
+// independent finding): mergeResolved's merge-into-existing-line branch
+// refreshed the surviving line's Name/PriceCents/TaxRateBP from the incoming
+// scan but NOT its TaxCodeID. After a mid-sale catalog change reassigns an
+// item to a different tax code (e.g. the ut-docs#512 import creating the
+// paired takeaway code), a re-scan of the already-in-basket item through a
+// second code (an item barcode vs. its SKU — a cache-missing path) merged
+// the fresh TaxRateBP in while leaving the STALE TaxCodeID on the line — so
+// the TaxRateAsker (a tax plugin keying its takeaway overrides by tax code)
+// was asked about the old code and its override for the new one never
+// applied.
+func TestMergeResolved_RescanUpdatesTaxCodeOnExistingLine(t *testing.T) {
+	resolver := mapResolver{
+		// The same item reachable by two codes (SKU and barcode). Between
+		// the two scans the catalog's view of the item changed tax codes —
+		// modeled here by the two codes resolving to different snapshots.
+		"DRINK":    {SKU: "DRINK", ItemID: "item-drink", TaxCodeID: "tax-old", Name: "Coffee", Qty: 1, PriceCents: 1000, TaxRateBP: 1900},
+		"DRINK-BC": {SKU: "DRINK", ItemID: "item-drink", TaxCodeID: "tax-new", Name: "Coffee", Qty: 1, PriceCents: 1000, TaxRateBP: 1900},
+	}
+	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, resolver)
+	// The asker only has a takeaway opinion about the NEW tax code.
+	s.SetTaxRateAsker(fakeTaxAsker{takeawayRateByTaxCode: map[string]int{"tax-new": 700}})
+
+	if _, err := s.ScanQty("DRINK", 1); err != nil {
+		t.Fatalf("ScanQty(DRINK): %v", err)
+	}
+	if _, err := s.ScanQty("DRINK-BC", 1); err != nil {
+		t.Fatalf("ScanQty(DRINK-BC): %v", err)
+	}
+
+	lines := s.Lines()
+	if len(lines) != 1 {
+		t.Fatalf("expected the re-scan to merge into the existing line, got %d lines: %+v", len(lines), lines)
+	}
+	if lines[0].Qty != 2 {
+		t.Fatalf("merged qty = %v, want 2", lines[0].Qty)
+	}
+	if lines[0].TaxCodeID != "tax-new" {
+		t.Fatalf("merged line TaxCodeID = %q, want %q — mergeResolved refreshed TaxRateBP but left the stale tax code", lines[0].TaxCodeID, "tax-new")
+	}
+
+	// And the stale code is not just cosmetic: the effective takeaway rate
+	// must follow the line's CURRENT tax code.
+	s.SetOrderType(OrderTypeTakeaway)
+	rate, blocked := s.EffectiveLineTaxRateBP(s.Lines()[0])
+	if blocked {
+		t.Fatal("unexpected blocked")
+	}
+	if rate != 700 {
+		t.Fatalf("takeaway effective rate = %d, want 700 (the asker's override for the line's current tax code)", rate)
 	}
 }
 
