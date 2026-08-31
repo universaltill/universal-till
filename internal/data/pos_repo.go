@@ -608,6 +608,173 @@ func (r *POSRepo) RecordStockMovementSavepoint(ctx context.Context, tx *sql.Tx, 
 	return id, nil
 }
 
+// RecordStockMovements is RecordStockMovement for a whole basket
+// (ut-docs#1318): the same four statements — insert stock_movements, update
+// inventory, the conditional insert-missing-inventory-row, insert audit_log
+// — each prepared ONCE and reused across every movement, instead of
+// compiled afresh per line. Per-movement logic is reproduced exactly: the
+// same validation (same error strings), the cost_price-column fallback, the
+// RowsAffected==0 → INSERT inventory branch, one audit row per movement,
+// and a per-movement timestamp. Nothing is merged across movements — two
+// movements against the same inventory row still apply as two updates, in
+// order. Unlike RecordStockMovement this never opens its own transaction:
+// the caller's tx is required (CompleteSale always already holds one), and
+// on error the tx is left as-is for that caller to roll back — the same
+// contract RecordStockMovement has with a caller-supplied tx.
+func (r *POSRepo) RecordStockMovements(ctx context.Context, tx *sql.Tx, ins []StockMovementInput) ([]string, error) {
+	if len(ins) == 0 {
+		return nil, nil
+	}
+	if tx == nil {
+		return nil, errors.New("transaction required")
+	}
+
+	const insertMovementNoCostSQL = `
+INSERT INTO stock_movements (id, item_id, variant_id, location_id, sale_line_id, type, quantity, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+`
+	// The cost_price fallback RecordStockMovement applies per exec also
+	// applies here, just once: on a schema without the column the statement
+	// fails to compile (at prepare instead of exec — same driver work, same
+	// "cost_price" error text), and every movement uses the no-cost shape.
+	useNoCost := false
+	movementStmt, err := tx.PrepareContext(ctx, `
+INSERT INTO stock_movements (id, item_id, variant_id, location_id, sale_line_id, type, quantity, cost_price, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`)
+	if err != nil {
+		if !strings.Contains(err.Error(), "cost_price") {
+			return nil, fmt.Errorf("insert stock movement: %w", err)
+		}
+		useNoCost = true
+	} else {
+		defer movementStmt.Close()
+	}
+	var movementNoCostStmt *sql.Stmt
+	defer func() {
+		if movementNoCostStmt != nil {
+			movementNoCostStmt.Close()
+		}
+	}()
+	prepareNoCost := func() error {
+		if movementNoCostStmt != nil {
+			return nil
+		}
+		var err error
+		movementNoCostStmt, err = tx.PrepareContext(ctx, insertMovementNoCostSQL)
+		if err != nil {
+			return fmt.Errorf("insert stock movement: %w", err)
+		}
+		return nil
+	}
+	if useNoCost {
+		if err := prepareNoCost(); err != nil {
+			return nil, err
+		}
+	}
+
+	updateStmt, err := tx.PrepareContext(ctx, `
+UPDATE inventory
+SET quantity = quantity + ?, updated_at = ?
+WHERE location_id = ?
+  AND ((item_id = ? AND variant_id IS NULL) OR (variant_id = ? AND item_id IS NULL))
+`)
+	if err != nil {
+		return nil, fmt.Errorf("update inventory: %w", err)
+	}
+	defer updateStmt.Close()
+
+	// Prepared lazily: a sale against already-stocked items never takes the
+	// missing-inventory-row branch at all.
+	var insertInvStmt *sql.Stmt
+	defer func() {
+		if insertInvStmt != nil {
+			insertInvStmt.Close()
+		}
+	}()
+
+	auditStmt, err := tx.PrepareContext(ctx, `
+INSERT INTO audit_log (id, actor_id, entity_type, entity_id, action, data_json, created_at)
+VALUES (?, ?, 'inventory', ?, ?, ?, ?)
+`)
+	if err != nil {
+		return nil, fmt.Errorf("insert audit: %w", err)
+	}
+	defer auditStmt.Close()
+
+	ids := make([]string, 0, len(ins))
+	for _, in := range ins {
+		// Same validation, same order, same error strings as
+		// RecordStockMovement.
+		if in.LocationID == "" {
+			return nil, errors.New("locationID required")
+		}
+		if in.ItemID == "" && in.VariantID == "" {
+			return nil, errors.New("itemID or variantID required")
+		}
+		if in.ItemID != "" && in.VariantID != "" {
+			return nil, errors.New("cannot specify both itemID and variantID")
+		}
+		if in.Type == "" {
+			return nil, errors.New("type required")
+		}
+		if in.Quantity == 0 {
+			return nil, errors.New("quantity must be non-zero")
+		}
+
+		movementID := uuid.NewString()
+		now := time.Now().UTC().Format(time.RFC3339)
+		var execErr error
+		if useNoCost {
+			_, execErr = movementNoCostStmt.ExecContext(ctx, movementID, nullIfEmpty(in.ItemID), nullIfEmpty(in.VariantID), in.LocationID, nullIfEmpty(in.SaleLineID), in.Type, in.Quantity, now)
+		} else {
+			_, execErr = movementStmt.ExecContext(ctx, movementID, nullIfEmpty(in.ItemID), nullIfEmpty(in.VariantID), in.LocationID, nullIfEmpty(in.SaleLineID), in.Type, in.Quantity, nullInt64(in.CostPrice), now)
+			if execErr != nil && strings.Contains(execErr.Error(), "cost_price") {
+				// Exec-time fallback, mirroring RecordStockMovement exactly.
+				if err := prepareNoCost(); err != nil {
+					return nil, err
+				}
+				_, execErr = movementNoCostStmt.ExecContext(ctx, movementID, nullIfEmpty(in.ItemID), nullIfEmpty(in.VariantID), in.LocationID, nullIfEmpty(in.SaleLineID), in.Type, in.Quantity, now)
+			}
+		}
+		if execErr != nil {
+			return nil, fmt.Errorf("insert stock movement: %w", execErr)
+		}
+
+		res, err := updateStmt.ExecContext(ctx, in.Quantity, now, in.LocationID, nullIfEmpty(in.ItemID), nullIfEmpty(in.VariantID))
+		if err != nil {
+			return nil, fmt.Errorf("update inventory: %w", err)
+		}
+		aff, _ := res.RowsAffected()
+		if aff == 0 {
+			if insertInvStmt == nil {
+				insertInvStmt, err = tx.PrepareContext(ctx, `
+INSERT INTO inventory (id, item_id, variant_id, location_id, quantity, updated_at)
+VALUES (?, ?, ?, ?, ?, ?)
+`)
+				if err != nil {
+					return nil, fmt.Errorf("insert inventory: %w", err)
+				}
+			}
+			if _, err := insertInvStmt.ExecContext(ctx, uuid.NewString(), nullIfEmpty(in.ItemID), nullIfEmpty(in.VariantID), in.LocationID, in.Quantity, now); err != nil {
+				return nil, fmt.Errorf("insert inventory: %w", err)
+			}
+		}
+
+		payload := map[string]any{
+			"type":     in.Type,
+			"quantity": in.Quantity,
+			"reason":   in.Reason,
+		}
+		payloadJSON, _ := json.Marshal(payload)
+		if _, err := auditStmt.ExecContext(ctx, uuid.NewString(), nullIfEmpty(in.ActorID), movementID, in.Type, string(payloadJSON), now); err != nil {
+			return nil, fmt.Errorf("insert audit: %w", err)
+		}
+		ids = append(ids, movementID)
+	}
+	return ids, nil
+}
+
 // RecordNegativeInventoryOverride writes an audit entry noting the override.
 func (r *POSRepo) RecordNegativeInventoryOverride(ctx context.Context, override OverrideNegativeInventory) (string, error) {
 	if override.ActorID == "" {
@@ -3672,6 +3839,101 @@ WHERE location_id = ?
 	return qty, true, nil
 }
 
+// InventoryKey identifies one inventory row target for CurrentQtyBatch: the
+// location plus exactly one of ItemID/VariantID — the same shape as
+// CurrentQty's parameters, and the same exactly-one-set convention the
+// inventory CHECK constraint enforces.
+type InventoryKey struct {
+	LocationID string
+	ItemID     string
+	VariantID  string
+}
+
+// CurrentQtyBatch is CurrentQty for a whole basket in ONE query
+// (ut-docs#1318). For each key with a matching inventory row the map holds
+// its quantity; a key with no row is simply absent (CurrentQty's
+// found=false — the caller treats absent as 0). Per-key match semantics are
+// identical to CurrentQty: an item id only matches an item-level row
+// (variant_id IS NULL) and a variant id only a variant-level row, at
+// exactly that location. The location and id sets are matched as sets (one
+// IN-list each), so a basket spanning locations can make the query scan a
+// few extra rows; those are filtered back to the requested keys before
+// returning, so correctness is unaffected.
+func (r *POSRepo) CurrentQtyBatch(ctx context.Context, tx *sql.Tx, keys []InventoryKey) (map[InventoryKey]float64, error) {
+	out := make(map[InventoryKey]float64, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+	requested := make(map[InventoryKey]bool, len(keys))
+	var locs, itemIDs, variantIDs []string
+	seenLoc := make(map[string]bool)
+	seenItem := make(map[string]bool)
+	seenVariant := make(map[string]bool)
+	for _, k := range keys {
+		requested[k] = true
+		if !seenLoc[k.LocationID] {
+			seenLoc[k.LocationID] = true
+			locs = append(locs, k.LocationID)
+		}
+		if k.ItemID != "" && !seenItem[k.ItemID] {
+			seenItem[k.ItemID] = true
+			itemIDs = append(itemIDs, k.ItemID)
+		}
+		if k.VariantID != "" && !seenVariant[k.VariantID] {
+			seenVariant[k.VariantID] = true
+			variantIDs = append(variantIDs, k.VariantID)
+		}
+	}
+	inList := func(n int) string {
+		p := strings.Repeat("?,", n)
+		return p[:len(p)-1]
+	}
+	args := make([]any, 0, len(locs)+len(itemIDs)+len(variantIDs))
+	for _, l := range locs {
+		args = append(args, l)
+	}
+	itemClause := "1=0"
+	if len(itemIDs) > 0 {
+		itemClause = "(item_id IN (" + inList(len(itemIDs)) + ") AND variant_id IS NULL)"
+		for _, id := range itemIDs {
+			args = append(args, id)
+		}
+	}
+	variantClause := "1=0"
+	if len(variantIDs) > 0 {
+		variantClause = "(variant_id IN (" + inList(len(variantIDs)) + ") AND item_id IS NULL)"
+		for _, id := range variantIDs {
+			args = append(args, id)
+		}
+	}
+	rows, err := r.exec(tx).QueryContext(ctx, `
+SELECT location_id, item_id, variant_id, COALESCE(quantity, 0)
+FROM inventory
+WHERE location_id IN (`+inList(len(locs))+`)
+  AND (`+itemClause+` OR `+variantClause+`)
+`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("read inventory: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var loc string
+		var itemID, variantID sql.NullString
+		var qty float64
+		if err := rows.Scan(&loc, &itemID, &variantID, &qty); err != nil {
+			return nil, fmt.Errorf("read inventory: %w", err)
+		}
+		k := InventoryKey{LocationID: loc, ItemID: itemID.String, VariantID: variantID.String}
+		if requested[k] {
+			out[k] = qty
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("read inventory: %w", err)
+	}
+	return out, nil
+}
+
 // InsertSaleParams is InsertSale's argument struct (ut-docs#976). InsertSale
 // had grown to ~25 positional arguments, one sale-column addition at a time;
 // at that arity two adjacent same-typed arguments (two money amounts, two
@@ -3785,6 +4047,47 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 	return nil
 }
 
+// SaleDiscountRow is one sale_discounts row for InsertSaleDiscounts — the
+// same fields, meaning and NULL handling (empty LineID → NULL, a whole-sale
+// discount) as InsertSaleDiscount's positional parameters.
+type SaleDiscountRow struct {
+	ID     string
+	SaleID string
+	LineID string
+	Type   string
+	Value  int64
+	Amount int64
+	Reason string
+}
+
+// InsertSaleDiscounts writes a batch of sale_discounts rows through ONE
+// prepared statement (ut-docs#1318), instead of InsertSaleDiscount's
+// per-call exec. Row semantics are identical to InsertSaleDiscount's.
+// Empty batch is a no-op; a transaction is required (the statement is
+// prepared on it, and every caller batching discounts already has one).
+func (r *POSRepo) InsertSaleDiscounts(ctx context.Context, tx *sql.Tx, discounts []SaleDiscountRow) error {
+	if len(discounts) == 0 {
+		return nil
+	}
+	if tx == nil {
+		return errors.New("transaction required")
+	}
+	stmt, err := tx.PrepareContext(ctx, `
+INSERT INTO sale_discounts (id, sale_id, line_id, type, value, amount, reason)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+`)
+	if err != nil {
+		return fmt.Errorf("insert sale discount: %w", err)
+	}
+	defer stmt.Close()
+	for _, d := range discounts {
+		if _, err := stmt.ExecContext(ctx, d.ID, d.SaleID, nullIfEmpty(d.LineID), d.Type, d.Value, d.Amount, d.Reason); err != nil {
+			return fmt.Errorf("insert sale discount: %w", err)
+		}
+	}
+	return nil
+}
+
 // SaleCharge is one row of a sale's itemized additive statutory charge list
 // (ADR-0062, ut-docs#963) — the child rows sales.service_charge_amount /
 // service_charge_tax_basis_bp are derived FROM (sum, first-item basis) once
@@ -3841,6 +4144,57 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, lineID, saleID, lineNo, nullIfEmpty(itemID), nullIfEmpty(variantID), name, sku, barcode, qty, unitPrice, lineDiscount, taxRateBP, taxAmount, totalBeforeTax, totalAfterTax)
 	if err != nil {
 		return fmt.Errorf("insert sale line: %w", err)
+	}
+	return nil
+}
+
+// SaleLineRow is one sale_lines row for InsertSaleLines — the same fields,
+// meaning and NULL handling (empty ItemID/VariantID → NULL) as
+// InsertSaleLine's positional parameters, named so a 15-argument call site
+// can't silently transpose two same-typed values (the InsertSaleParams
+// precedent, ut-docs#976).
+type SaleLineRow struct {
+	LineID         string
+	SaleID         string
+	LineNo         int
+	ItemID         string
+	VariantID      string
+	Name           string
+	SKU            string
+	Barcode        string
+	Qty            float64
+	UnitPrice      int64
+	LineDiscount   int64
+	TaxRateBP      int
+	TaxAmount      int64
+	TotalBeforeTax int64
+	TotalAfterTax  int64
+}
+
+// InsertSaleLines writes a batch of sale_lines rows through ONE prepared
+// statement (ut-docs#1318), instead of InsertSaleLine's per-call exec. Row
+// semantics are identical to InsertSaleLine's. Empty batch is a no-op; a
+// transaction is required (the statement is prepared on it, and every
+// caller batching lines already has one).
+func (r *POSRepo) InsertSaleLines(ctx context.Context, tx *sql.Tx, lines []SaleLineRow) error {
+	if len(lines) == 0 {
+		return nil
+	}
+	if tx == nil {
+		return errors.New("transaction required")
+	}
+	stmt, err := tx.PrepareContext(ctx, `
+INSERT INTO sale_lines (id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`)
+	if err != nil {
+		return fmt.Errorf("insert sale line: %w", err)
+	}
+	defer stmt.Close()
+	for _, l := range lines {
+		if _, err := stmt.ExecContext(ctx, l.LineID, l.SaleID, l.LineNo, nullIfEmpty(l.ItemID), nullIfEmpty(l.VariantID), l.Name, l.SKU, l.Barcode, l.Qty, l.UnitPrice, l.LineDiscount, l.TaxRateBP, l.TaxAmount, l.TotalBeforeTax, l.TotalAfterTax); err != nil {
+			return fmt.Errorf("insert sale line: %w", err)
+		}
 	}
 	return nil
 }

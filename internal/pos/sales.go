@@ -616,14 +616,27 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 
 		err = db.WithTx(ctx, sqlDB, func(tx *sql.Tx) error {
 			if !in.AllowNegativeInventory {
+				// ut-docs#1318: ONE pre-fetch for every line's stock level
+				// instead of a per-line SELECT. Each line is then checked
+				// against the SAME pre-fetched figure — deliberately NOT
+				// decremented between lines: two lines of the same item do
+				// not see each other's depletion. That is the pre-existing
+				// per-line-CurrentQty behavior (each line re-read the same
+				// unmodified inventory row, since movements are only written
+				// after every check passes), preserved exactly; changing it
+				// is a product decision, not a batching side effect.
+				keys := make([]data.InventoryKey, 0, len(in.Lines))
 				for _, l := range in.Lines {
-					cur, found, err := repo.CurrentQty(ctx, tx, l.LocationID, l.ItemID, l.VariantID)
-					if err != nil {
-						return err
-					}
-					if !found {
-						cur = 0
-					}
+					keys = append(keys, data.InventoryKey{LocationID: l.LocationID, ItemID: l.ItemID, VariantID: l.VariantID})
+				}
+				qtys, err := repo.CurrentQtyBatch(ctx, tx, keys)
+				if err != nil {
+					return err
+				}
+				for _, l := range in.Lines {
+					// A key absent from the map is CurrentQty's found=false:
+					// no inventory row, treated as 0 on hand.
+					cur := qtys[data.InventoryKey{LocationID: l.LocationID, ItemID: l.ItemID, VariantID: l.VariantID}]
 					qtyDelta := l.Qty
 					if in.SaleType == "sale" {
 						qtyDelta = -qtyDelta
@@ -690,6 +703,20 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				}
 			}
 
+			// ut-docs#1318: one pass computes every line's derived figures,
+			// then each write type lands as ONE batched repo call (a single
+			// prepared statement reused across lines) instead of up to 5
+			// separate statement compilations per line. The per-line values
+			// are computed exactly as before; only the statement grouping
+			// changed. Grouping by write type reorders the interleaving
+			// (all lines, then all modifiers, then line discounts, then
+			// stock movements) — unobservable from outside the transaction,
+			// which still commits or rolls back as one unit, and FK-safe:
+			// every child row's sale_lines parent is inserted first.
+			lineRows := make([]data.SaleLineRow, 0, len(in.Lines))
+			modifierSets := make([]data.SaleLineModifierSet, 0, len(in.Lines))
+			var lineDiscounts []data.SaleDiscountRow
+			movements := make([]data.StockMovementInput, 0, len(in.Lines))
 			for i, l := range in.Lines {
 				lineID := uuid.NewString()
 				lineBase := AmountForQuantity(l.UnitPrice, l.Qty)
@@ -707,18 +734,25 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					totalAfterTax = lineNet
 				}
 
-				if err := repo.InsertSaleLine(ctx, tx, lineID, saleID, i+1, l.ItemID, l.VariantID, l.Name, l.SKU, l.Barcode, l.Qty, l.UnitPrice.Minor(), l.LineDiscount.Minor(), l.TaxRateBasisPoints, lineTax.Minor(), totalBeforeTax.Minor(), totalAfterTax.Minor()); err != nil {
-					return err
-				}
+				lineRows = append(lineRows, data.SaleLineRow{
+					LineID: lineID, SaleID: saleID, LineNo: i + 1,
+					ItemID: l.ItemID, VariantID: l.VariantID,
+					Name: l.Name, SKU: l.SKU, Barcode: l.Barcode,
+					Qty: l.Qty, UnitPrice: l.UnitPrice.Minor(), LineDiscount: l.LineDiscount.Minor(),
+					TaxRateBP: l.TaxRateBasisPoints, TaxAmount: lineTax.Minor(),
+					TotalBeforeTax: totalBeforeTax.Minor(), TotalAfterTax: totalAfterTax.Minor(),
+				})
 
-				if err := repo.InsertSaleLineModifiers(ctx, tx, lineID, l.Modifiers); err != nil {
-					return err
+				if len(l.Modifiers) > 0 {
+					modifierSets = append(modifierSets, data.SaleLineModifierSet{LineID: lineID, Modifiers: l.Modifiers})
 				}
 
 				if l.LineDiscount.IsPositive() {
-					if err := repo.InsertSaleDiscount(ctx, tx, uuid.NewString(), saleID, lineID, "fixed", l.LineDiscount.Minor(), l.LineDiscount.Minor(), "line_discount"); err != nil {
-						return err
-					}
+					lineDiscounts = append(lineDiscounts, data.SaleDiscountRow{
+						ID: uuid.NewString(), SaleID: saleID, LineID: lineID,
+						Type: "fixed", Value: l.LineDiscount.Minor(), Amount: l.LineDiscount.Minor(),
+						Reason: "line_discount",
+					})
 				}
 
 				// Stock movement: negative for sale, positive for return
@@ -729,7 +763,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				if in.SaleType == "return" {
 					// keep positive
 				}
-				if _, err := repo.RecordStockMovement(ctx, tx, data.StockMovementInput{
+				movements = append(movements, data.StockMovementInput{
 					ItemID:     l.ItemID,
 					VariantID:  l.VariantID,
 					LocationID: l.LocationID,
@@ -737,9 +771,19 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					Type:       in.SaleType,
 					Quantity:   qty,
 					ActorID:    in.ActorID,
-				}); err != nil {
-					return err
-				}
+				})
+			}
+			if err := repo.InsertSaleLines(ctx, tx, lineRows); err != nil {
+				return err
+			}
+			if err := repo.InsertSaleLineModifiersBatch(ctx, tx, modifierSets); err != nil {
+				return err
+			}
+			if err := repo.InsertSaleDiscounts(ctx, tx, lineDiscounts); err != nil {
+				return err
+			}
+			if _, err := repo.RecordStockMovements(ctx, tx, movements); err != nil {
+				return err
 			}
 
 			// Voucher issues (ut-docs#1008): one vouchers row (the liability)

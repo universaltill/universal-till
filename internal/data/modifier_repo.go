@@ -315,3 +315,44 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 	}
 	return nil
 }
+
+// SaleLineModifierSet is one sale line's chosen modifiers, addressed to its
+// already-inserted sale_lines row, for InsertSaleLineModifiersBatch.
+type SaleLineModifierSet struct {
+	LineID    string
+	Modifiers []SelectedModifier
+}
+
+// InsertSaleLineModifiersBatch persists every line's chosen modifiers
+// through ONE prepared statement for the whole basket (ut-docs#1318),
+// instead of InsertSaleLineModifiers' fresh PrepareContext per line. Row
+// semantics are identical to InsertSaleLineModifiers'. When no line has any
+// modifiers this is a complete no-op — not even the prepare runs.
+func (r *POSRepo) InsertSaleLineModifiersBatch(ctx context.Context, tx *sql.Tx, sets []SaleLineModifierSet) error {
+	total := 0
+	for _, s := range sets {
+		total += len(s.Modifiers)
+	}
+	if total == 0 {
+		return nil
+	}
+	if tx == nil {
+		return errors.New("transaction required")
+	}
+	stmt, err := tx.PrepareContext(ctx, `
+INSERT INTO sale_line_modifiers (id, sale_line_id, group_id, option_id, group_name_snapshot, option_name_snapshot, price_delta_minor)
+VALUES (?, ?, ?, ?, ?, ?, ?)
+`)
+	if err != nil {
+		return fmt.Errorf("prepare insert sale_line_modifiers: %w", err)
+	}
+	defer stmt.Close()
+	for _, s := range sets {
+		for _, m := range s.Modifiers {
+			if _, err := stmt.ExecContext(ctx, uuid.NewString(), s.LineID, nullableString(m.GroupID), nullableString(m.OptionID), m.GroupName, m.OptionName, m.PriceDeltaMinor); err != nil {
+				return fmt.Errorf("insert sale_line_modifier: %w", err)
+			}
+		}
+	}
+	return nil
+}
