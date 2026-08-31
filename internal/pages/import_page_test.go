@@ -186,6 +186,67 @@ func TestImport_PreviewEndsWithReachableImportButton(t *testing.T) {
 	}
 }
 
+// TestImport_CategoryCacheFoldsOnlyASCIICase is the ut-docs#1322
+// independent-review regression (finding B1): the per-run category cache
+// added to avoid N+1 lookups must fold case exactly the way
+// EnsureCategoryUnder's own `COLLATE NOCASE` DB lookup does — ASCII only.
+// SQLite's NOCASE leaves non-ASCII letters (Ä/ä) untouched, so "GETRÄNKE"
+// and "Getränke" are DISTINCT rows to the DB. A cache keyed with Go's
+// Unicode-aware strings.ToLower would fold both onto the same key and
+// divert an exactly-matching row into the wrong (newly-created) category
+// within the same import run — directly in scope for the Germany pilot's
+// own café vocabulary (Getränke, Käse, Bäckerei, Süßwaren).
+func TestImport_CategoryCacheFoldsOnlyASCIICase(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	// First import: a lone row establishes the real "Getränke" category.
+	seedCSV := "Name,SKU,Price,Category,In stock\n" +
+		"Kaffee,K1,2.50,Getränke,0\n"
+	body, ct := multipartCSV(t, seedCSV, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("seed commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	var seededCatID string
+	if err := dp.Db.QueryRow(`SELECT id FROM categories WHERE name = ?`, "Getränke").Scan(&seededCatID); err != nil {
+		t.Fatalf("seeded category not found: %v", err)
+	}
+
+	// Second import, one request: row 1 uses an ASCII-uppercased variant
+	// SQLite's NOCASE does NOT match against "Getränke" (Ä != ä), so it's
+	// expected to create a genuinely new category — that's pre-existing
+	// DB behavior, not something this fix changes. Row 2 uses the EXACT
+	// original spelling and must land in the original category, not
+	// whatever row 1 just created within the same cached run.
+	mixedCSV := "Name,SKU,Price,Category,In stock\n" +
+		"Energy Drink,K2,3.00,GETRÄNKE,0\n" +
+		"Tee,K3,2.00,Getränke,0\n"
+	body2, ct2 := multipartCSV(t, mixedCSV, map[string]string{"commit": "1"})
+	req2 := httptest.NewRequest(http.MethodPost, "/api/import", body2)
+	req2.Header.Set("Content-Type", ct2)
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("mixed-case commit: code %d body %s", rec2.Code, rec2.Body.String())
+	}
+
+	var teeCatID string
+	if err := dp.Db.QueryRow(`
+SELECT c.id FROM items i JOIN categories c ON c.id = i.category_id
+WHERE i.sku = ?`, "K3").Scan(&teeCatID); err != nil {
+		t.Fatalf("Tee category not linked: %v", err)
+	}
+	if teeCatID != seededCatID {
+		t.Fatalf("Tee (exact spelling %q) landed in category %s, want the original seeded category %s (a Unicode-folding cache key would divert it into the new ASCII-uppercased row's category instead)", "Getränke", teeCatID, seededCatID)
+	}
+}
+
 func TestImport_CommitCreatesCatalog(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	dp := newImportTestDeps(t)
