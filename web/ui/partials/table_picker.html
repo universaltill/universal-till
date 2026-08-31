@@ -14,7 +14,13 @@
      the same picker in a dialog instead -- the button and the dialog are
      both part of THIS fetched fragment (not basket.html), so the
      Configured soft-gate still covers the button too, not only the
-     dialog's contents. -->
+     dialog's contents.
+
+     hx-sync="#basket:replace" on the two buttons below (ut-docs#1337,
+     merged concurrently with this change): every #basket-targeting
+     trigger needs this so a newer request always aborts an older
+     in-flight one instead of racing it -- see basket.html's own switch
+     for the fuller explanation. -->
 <span id="table-picker">
   {{ if .Configured }}
     <button type="button" class="btn secondary table-picker-trigger" data-testid="table-picker-open"
@@ -29,7 +35,7 @@
       {{ if .Current }}
         <button type="button" class="btn secondary table-picker-clear" title="{{ T "basket.table.none" }}"
                 hx-post="/api/pos/table" hx-vals='{"table_id":""}'
-                hx-target="#basket" hx-swap="outerHTML"
+                hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                 onclick="document.getElementById('table-modal').close()">✕ {{ T "basket.table.none" }}</button>
       {{ end }}
       {{ if .Options }}
@@ -37,7 +43,7 @@
           {{ range .Options }}
             <button type="button" class="btn{{ if ne .ID $.Current }} secondary{{ end }} table-picker-option"
                     hx-post="/api/pos/table" hx-vals='{{ jsonVals "table_id" .ID }}'
-                    hx-target="#basket" hx-swap="outerHTML"
+                    hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     onclick="document.getElementById('table-modal').close()">{{ .Label }}</button>
           {{ end }}
         </div>
