@@ -6,8 +6,11 @@
   each round, no shared history with the Sonnet/Fable dev pass) — hard-tier
   routing per `scrum-master`'s model-routing table.
 - **Verdict:** Round 1 found 1 blocker + 4 should-fix findings, all fixed.
-  Round 2 (scoped to the fixes) was still in progress when this record was
-  first written; its outcome is appended below before merge.
+  Round 2 (scoped to the fixes) confirmed the blocker fix correct in both
+  directions, found finding 2's fix narrower than intended (real code gap,
+  not just docs), two comment-wording nits, and one CI-blocking gap
+  (`guard-docs-shots.sh` stale after the round-2 doc edits) — all fixed
+  below. **Safe to merge.**
 
 ## Context
 
@@ -148,4 +151,93 @@ matters in practice, not blocking here.
 
 ## Round 2 (scoped to the fixes above)
 
-_Appended once complete._
+A fresh Opus pass, scoped to re-verifying rounds 1's 5 findings rather than
+re-reviewing the whole diff. It read the exemption logic adversarially
+(walked every boundary case by hand: `.../a/b/status`, `.../status/extra`,
+`.../status` with an empty id, a bare `.../orders/status`) and confirmed
+both directions by temporarily reverting each fix and watching the
+matching test fail, then restored the tree and verified it matched
+(`git status`, `gofmt`, build, tests) before reporting.
+
+**1 (auth exemption): confirmed FIXED, both directions pinned.** One
+residual, accepted note: a receipt number containing an encoded `/`
+wouldn't match the segment-bounded rule and would fail closed to the local
+fallback — not a hole (receipt numbers are `R-nnnn`), just recorded.
+
+**2 (dead journal link): PARTIALLY fixed — real gap, not just docs.** The
+original whole-batch `JournalLinkable = !fromPrimary` was broader than
+intended: on a *connected* replica, the till's own sales are ALSO
+primary-sourced (they journal to the primary same as any other), so the
+blanket rule was killing a link that would have resolved locally, on every
+row, whenever the primary is reachable — not just for genuinely-foreign
+receipts. **Fixed for real** (not just re-worded) in
+`internal/pages/order_status.go`: `JournalLinkable` is now checked **per
+row** via `POSRepo.ReceiptExists` against this till's own local DB,
+bounded to the existing 50-row page cap (cheap embedded-SQLite lookups on
+a 15s poll, not a hot path); a lookup error fails closed to "no link"
+rather than risking a 404. The help docs' existing wording ("except an
+order shown here because it was taken on a *different* till") turns out to
+describe exactly this corrected behavior accurately — a receipt this till
+never rang up is the only receipt genuinely absent locally — so no further
+doc changes were needed. New tests:
+`TestUIOrders_ReplicaOwnJournaledSaleKeepsWorkingLink` (a replica's own
+already-journaled sale keeps a working link even though the row is
+primary-sourced) and an added negative assertion in
+`TestUIOrders_ReplicaRendersPrimaryData` (a genuinely foreign row stays
+link-free).
+
+**3 (operator attribution): confirmed FIXED**, with two comment
+corrections (no code change needed):
+- The trust-boundary comment in `sync_orders.go` overstated what the
+  existence check does — reworded to say plainly that a bearer-authed
+  peer's claimed `actor_id` is validated for *existence* in the primary's
+  users table, not further authenticated; a stronger check would need the
+  endpoint to carry more than a till's own bearer, which it deliberately
+  doesn't. Judged acceptable: the forgeable actions are low-stakes status
+  taps (never money/fiscal), and `source_till` always rides the audit
+  payload regardless, so an investigator can always see which till relayed
+  a write.
+- A stale comment in `order_status.go` claimed `actorID` "may be \"\"" —
+  `getSessionUserID`'s `auth.UserID` fallback is `"system"`, never empty,
+  so that branch was dead prose. Corrected.
+- Round 2 also upheld the round-1 call not to namespace the till-fallback
+  actor as `"till:"+till.ID` — the reachable collision is the two seeded
+  literals `system`/`kiosk` (migrations 003/018), not an arbitrary UUID
+  clash, but it only affects the *unresolved* fallback path and is
+  cosmetically harmless (a mis-rendered display name, nothing else). Not
+  worth the UX cost of showing a raw till id instead of its name.
+- Noted, not fixed (pre-existing, out of this card's scope):
+  `AuthRepo.GetUser` doesn't filter `is_active`, so a deactivated
+  operator's id still resolves for attribution purposes.
+
+**4 (revert-behavior prose): confirmed FIXED, accurate** — round 2 walked
+the actual sequence (offline tap → primary reconnects → next 15s poll →
+`fetchOrdersFromPrimary` replaces the whole list) against the real code
+rather than reading for plausibility, and confirmed the described revert
+is exactly as strong as documented, not milder or more severe.
+
+**5 (test gaps): confirmed FIXED** — spot-verified by reverting the
+underlying code and watching the specific new tests fail (the non-200
+fallback guard, the `actor_id` field being sent, the unresolved-actor
+fallback).
+
+**New, CI-blocking finding: `guard-docs-shots.sh` was red.** The round-2
+doc/code edits (help text, `order_status.go`, `orders_list.html`) landed
+after the dev pass's `make docs-shots` run, leaving
+`web/help/img/manifest.json` stale on the surface hash and all four
+`order-status` topic hashes. **Fixed:** re-ran `make docs-shots` (92/92
+screenshots regenerated); only `manifest.json` and the two
+already-known-nondeterministic `sell.png` byte-diffs changed — no
+`order-status` screenshot changed pixel content (the docs fixture's
+context doesn't exercise the replica-proxy path), consistent with this
+being a real UI-neutral change.
+
+## Final verification (after round 2's fixes)
+
+- `gofmt -l .` clean, `go build ./...` / `go vet ./...` clean.
+- `go test ./internal/pages/... ./internal/auth/... ./internal/data/...
+  ./internal/pos/...` — all green, cache cleared.
+- `-race` on all 27 order-status/sync-orders/auth-middleware tests (added
+  2 for the per-row link fix) — all pass.
+- Every CI-blocking guard in `.github/workflows/ci.yml`'s `build` job run
+  individually — all pass, `guard-docs-shots.sh` included this time.
