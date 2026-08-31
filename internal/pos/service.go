@@ -829,6 +829,15 @@ func (s *Service) SetOrderType(orderType string) *Basket {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.orderType = orderType
+	if orderType == OrderTypeTakeaway {
+		// ut-docs#1355: a table assignment doesn't make sense for a
+		// takeaway/to-go order -- clear it the same way ClearTable does,
+		// rather than silently carrying a dine-in table onto a takeaway
+		// sale. Switching back to dine-in afterwards does NOT restore it;
+		// the cashier re-picks a table if the order goes dine-in again.
+		s.tableID = ""
+		s.tableLabel = ""
+	}
 	s.recomputeTotals()
 	return s.basketCopyLocked()
 }

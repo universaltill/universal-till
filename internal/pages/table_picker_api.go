@@ -6,6 +6,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // tablePickerOption is one choice in the basket's table-assignment picker.
@@ -29,10 +30,6 @@ func registerTablePicker(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewPOSRepo(d.Db)
 
 	mux.HandleFunc("GET /ui/pos/table-picker", func(w http.ResponseWriter, r *http.Request) {
-		states, err := repo.ListTablesWithState(r.Context())
-		if err != nil {
-			states = nil
-		}
 		current := d.Engine.TableID()
 		// configured tracks whether this shop does table service at all --
 		// ADR-0054 soft-gates the whole feature on configuration, so with no
@@ -40,17 +37,29 @@ func registerTablePicker(mux *http.ServeMux, d *common.Deps) {
 		// always-on "Table: none" row. Counted separately from options
 		// below, which excludes occupied tables: "all tables are busy" is a
 		// real state worth a message, "this shop has no tables" is not.
+		//
+		// ut-docs#1355: assigning a physical table to a takeaway/to-go
+		// order doesn't make sense, so the whole picker (button + dialog)
+		// is soft-gated off for Takeaway too, same shape as "no tables
+		// configured" -- deliberately skipping the ListTablesWithState
+		// query entirely rather than fetching state nobody will render.
 		configured := false
 		var options []tablePickerOption
-		for _, s := range states {
-			if !s.Enabled {
-				continue
+		if d.Engine.OrderType() != pos.OrderTypeTakeaway {
+			states, err := repo.ListTablesWithState(r.Context())
+			if err != nil {
+				states = nil
 			}
-			configured = true
-			if s.Occupied && s.ID != current {
-				continue
+			for _, s := range states {
+				if !s.Enabled {
+					continue
+				}
+				configured = true
+				if s.Occupied && s.ID != current {
+					continue
+				}
+				options = append(options, tablePickerOption{ID: s.ID, Label: s.Label})
 			}
-			options = append(options, tablePickerOption{ID: s.ID, Label: s.Label})
 		}
 		httpx.RenderPartial("ui/partials/table_picker.html", map[string]any{
 			"Options":      options,
