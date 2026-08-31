@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 // The user manual (/help): the layer Go tests can't see — the htmx swap when
 // you pick a topic, the debounced search, the RTL mirror, and the contextual

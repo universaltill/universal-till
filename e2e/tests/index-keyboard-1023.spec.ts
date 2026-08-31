@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { watchConsole, setOskMode } from './helpers';
 
 // ut-docs#1023 ("this is the second time it has come back" — ut-docs#155

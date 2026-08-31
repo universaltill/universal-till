@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { watchConsole } from './helpers';
 
 // ut-docs#413: an external tester on a real ~360dp-wide Android phone found

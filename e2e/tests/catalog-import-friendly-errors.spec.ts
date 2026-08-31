@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { watchConsole } from './helpers';
 
 // ut-docs#303: catalog import used to show the operator raw Go errors with

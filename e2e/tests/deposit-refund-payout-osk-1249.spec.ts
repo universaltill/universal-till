@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { setOskMode } from './helpers';
 
 // ut-docs#1249: "after filling the amount and manager pin, the pay out

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { watchConsole } from './helpers';
 
 // ut-docs#251: regression coverage for two real bugs the independent review

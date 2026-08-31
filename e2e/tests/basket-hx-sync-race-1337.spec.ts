@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 // ut-docs#1337 (product owner, live report): add items in Dine-in, switch to
 // Takeaway, add more items, delete some -- items sometimes randomly

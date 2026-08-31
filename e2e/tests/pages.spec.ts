@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { watchConsole } from './helpers';
 
 // Every operator page renders without JS errors and shows its content —

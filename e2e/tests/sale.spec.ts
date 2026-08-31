@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { watchConsole } from './helpers';
 
 // The one flow that must never break: scan → basket → cash tender → reset.

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { watchConsole, waitForStableLayout } from './helpers';
 
 // ut-docs#1313: `.pos-container > .products` scrolls internally when the

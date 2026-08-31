@@ -102,7 +102,8 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo â
   `guard-help-topics.sh`, `guard-webkit-version.sh`,
   `guard-kiosk-launch-flags.sh`, `guard-android-status-address.sh`,
   `guard-android-i18n.sh`, `guard-emoji-font.sh`, `guard-htmx-loaded.sh`,
-  `guard-autofill-suppression.sh`, `check-brand-assets.sh`, and
+  `guard-autofill-suppression.sh`, `guard-e2e-fixtures-import.sh`,
+  `check-brand-assets.sh`, and
   `guard-makefile-version.sh` (all under `scripts/ci/`). This list drifts as
   guards are added â€” check the workflow file's `build` job for the
   authoritative, current one rather than trusting this snapshot.

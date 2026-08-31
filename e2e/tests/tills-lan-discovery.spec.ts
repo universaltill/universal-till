@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { watchConsole } from './helpers';
 
 // ut-docs#373: web/ui/pages/tills.html's inline <script> had an unbalanced
