@@ -44,7 +44,14 @@ func exempt(path string) bool {
 	// TestSyncPullPathsAreExempt pins the list against the client.
 	switch path {
 	case "/api/sync/enroll", "/api/sync/ping", "/api/sync/snapshot", "/api/sync/sales", "/api/sync/admin",
-		"/api/sync/stock", "/api/sync/plugins", "/api/sync/assets", "/api/sync/assets/file", "/api/setup/join",
+		"/api/sync/stock", "/api/sync/plugins", "/api/sync/assets", "/api/sync/assets/file",
+		// ut-docs#1350: the primary-side cross-till orders board a replica's
+		// /ui/orders polls. Bearer-authed in the handler (syncTill), same as
+		// every other entry on this line — omitting it here would silently
+		// no-op the whole feature exactly like the /api/sync/stock incident
+		// this switch's own comment documents (independent review caught
+		// this before merge).
+		"/api/sync/orders", "/api/setup/join",
 		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status",
 		// ut-docs#1092: the wizard's install-a-catalog-language action —
 		// same first-boot-only window as /api/setup itself (its handler's
@@ -122,6 +129,17 @@ func exempt(path string) bool {
 	// exclusions.
 	if rest, ok := strings.CutPrefix(path, "/api/sync/pair-requests/"); ok && rest != "" && !strings.Contains(rest, "/") {
 		return true
+	}
+	// ut-docs#1350: the one-tap status write a replica proxies to the primary,
+	// POST /api/sync/orders/{receipt_no}/status — bearer-authed in the
+	// handler (syncTill), same shape as pair-requests/{id} above. Bounded to
+	// exactly one segment between the prefix and the /status suffix so this
+	// can never accidentally exempt some future /api/sync/orders/{id}/<other
+	// action> route that ought to stay session-gated.
+	if rest, ok := strings.CutPrefix(path, "/api/sync/orders/"); ok {
+		if id, ok := strings.CutSuffix(rest, "/status"); ok && id != "" && !strings.Contains(id, "/") {
+			return true
+		}
 	}
 	return false
 }
