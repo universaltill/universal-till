@@ -3672,6 +3672,442 @@ WHERE location_id = ?
 	return qty, true, nil
 }
 
+// ----------------------------------------------------------------------
+// Batched sale-completion writes (ut-docs#1318). CompleteSale used to issue
+// ~5 statements PER BASKET LINE inside its transaction; the methods below
+// replace those per-line loops with chunked multi-row statements. The
+// single-row siblings (CurrentQty, InsertSaleLine, InsertSaleLineModifiers,
+// InsertSaleDiscount, RecordStockMovement) stay untouched — they have other
+// live call sites (sync replay, inventory API, catalog import).
+// ----------------------------------------------------------------------
+
+// maxBatchParams caps bound parameters per multi-row statement, with safe
+// headroom under SQLite's historic 999-variable-per-statement default.
+const maxBatchParams = 800
+
+// batchChunkSize is how many rows fit in one multi-row statement given the
+// per-row column count.
+func batchChunkSize(columnsPerRow int) int {
+	return maxBatchParams / columnsPerRow
+}
+
+// StockKey identifies one inventory aggregation row: a location plus exactly
+// one of item/variant (the same identity shape the inventory and
+// stock_movements CHECK constraints enforce).
+type StockKey struct {
+	LocationID string
+	ItemID     string
+	VariantID  string
+}
+
+// stockKeyPredicate is CurrentQty's own WHERE shape for one key; keys are
+// OR-joined rather than expressed as a row-value IN (VALUES ...) list, which
+// SQLite does not reliably support for this NULL-asymmetric predicate.
+const stockKeyPredicate = `(location_id = ? AND ((item_id = ? AND variant_id IS NULL) OR (variant_id = ? AND item_id IS NULL)))`
+
+// CurrentQtyBatch is CurrentQty for many keys in one SELECT (chunked if the
+// distinct-key list is very large). A key with no matching inventory row is
+// simply ABSENT from the returned map — the caller treats missing as 0, the
+// same meaning as CurrentQty's found=false. Duplicate input keys are fine.
+func (r *POSRepo) CurrentQtyBatch(ctx context.Context, tx *sql.Tx, keys []StockKey) (map[StockKey]float64, error) {
+	out := make(map[StockKey]float64, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+	// Dedupe, preserving first-seen order.
+	seen := make(map[StockKey]bool, len(keys))
+	distinct := make([]StockKey, 0, len(keys))
+	for _, k := range keys {
+		if !seen[k] {
+			seen[k] = true
+			distinct = append(distinct, k)
+		}
+	}
+	exec := r.exec(tx)
+	chunk := batchChunkSize(3)
+	for start := 0; start < len(distinct); start += chunk {
+		end := start + chunk
+		if end > len(distinct) {
+			end = len(distinct)
+		}
+		part := distinct[start:end]
+		preds := make([]string, 0, len(part))
+		args := make([]any, 0, len(part)*3)
+		for _, k := range part {
+			preds = append(preds, stockKeyPredicate)
+			args = append(args, k.LocationID, nullIfEmpty(k.ItemID), nullIfEmpty(k.VariantID))
+		}
+		rows, err := exec.QueryContext(ctx,
+			`SELECT location_id, item_id, variant_id, COALESCE(quantity, 0) FROM inventory WHERE `+strings.Join(preds, " OR "), args...)
+		if err != nil {
+			return nil, fmt.Errorf("read inventory batch: %w", err)
+		}
+		for rows.Next() {
+			var loc string
+			var itemID, variantID sql.NullString
+			var qty float64
+			if err := rows.Scan(&loc, &itemID, &variantID, &qty); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("scan inventory batch: %w", err)
+			}
+			k := StockKey{LocationID: loc, ItemID: itemID.String, VariantID: variantID.String}
+			// First row per key wins — same as CurrentQty's QueryRow on a
+			// (pathological) duplicated inventory row.
+			if _, ok := out[k]; !ok {
+				out[k] = qty
+			}
+		}
+		if err := rows.Err(); err != nil {
+			rows.Close()
+			return nil, fmt.Errorf("read inventory batch: %w", err)
+		}
+		rows.Close()
+	}
+	return out, nil
+}
+
+// SaleLineRow mirrors InsertSaleLine's parameters, with the row ID generated
+// by the caller (uuid.NewString(), same as today — never DB-generated).
+type SaleLineRow struct {
+	ID             string
+	SaleID         string
+	LineNo         int
+	ItemID         string
+	VariantID      string
+	Name           string
+	SKU            string
+	Barcode        string
+	Qty            float64
+	UnitPrice      int64
+	LineDiscount   int64
+	TaxRateBP      int
+	TaxAmount      int64
+	TotalBeforeTax int64
+	TotalAfterTax  int64
+}
+
+// InsertSaleLinesBatch writes many sale_lines rows via chunked multi-row
+// INSERTs. No-op for an empty batch.
+func (r *POSRepo) InsertSaleLinesBatch(ctx context.Context, tx *sql.Tx, rows []SaleLineRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	const cols = 15
+	exec := r.exec(tx)
+	chunk := batchChunkSize(cols)
+	for start := 0; start < len(rows); start += chunk {
+		end := start + chunk
+		if end > len(rows) {
+			end = len(rows)
+		}
+		part := rows[start:end]
+		placeholders := make([]string, 0, len(part))
+		args := make([]any, 0, len(part)*cols)
+		for _, row := range part {
+			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+			args = append(args, row.ID, row.SaleID, row.LineNo, nullIfEmpty(row.ItemID), nullIfEmpty(row.VariantID),
+				row.Name, row.SKU, row.Barcode, row.Qty, row.UnitPrice, row.LineDiscount,
+				row.TaxRateBP, row.TaxAmount, row.TotalBeforeTax, row.TotalAfterTax)
+		}
+		if _, err := exec.ExecContext(ctx, `
+INSERT INTO sale_lines (id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES `+strings.Join(placeholders, ", "), args...); err != nil {
+			return fmt.Errorf("insert sale lines batch: %w", err)
+		}
+	}
+	return nil
+}
+
+// SaleLineModifierRow mirrors InsertSaleLineModifiers' per-modifier insert,
+// with the row ID generated by the caller.
+type SaleLineModifierRow struct {
+	ID              string
+	SaleLineID      string
+	GroupID         string
+	OptionID        string
+	GroupName       string
+	OptionName      string
+	PriceDeltaMinor int64
+}
+
+// InsertSaleLineModifiersBatch writes many sale_line_modifiers rows via
+// chunked multi-row INSERTs. No-op for an empty batch (the common
+// zero-modifier sale). Must run AFTER the referenced sale_lines rows exist.
+func (r *POSRepo) InsertSaleLineModifiersBatch(ctx context.Context, tx *sql.Tx, rows []SaleLineModifierRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	const cols = 7
+	exec := r.exec(tx)
+	chunk := batchChunkSize(cols)
+	for start := 0; start < len(rows); start += chunk {
+		end := start + chunk
+		if end > len(rows) {
+			end = len(rows)
+		}
+		part := rows[start:end]
+		placeholders := make([]string, 0, len(part))
+		args := make([]any, 0, len(part)*cols)
+		for _, row := range part {
+			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?)")
+			args = append(args, row.ID, row.SaleLineID, nullableString(row.GroupID), nullableString(row.OptionID),
+				row.GroupName, row.OptionName, row.PriceDeltaMinor)
+		}
+		if _, err := exec.ExecContext(ctx, `
+INSERT INTO sale_line_modifiers (id, sale_line_id, group_id, option_id, group_name_snapshot, option_name_snapshot, price_delta_minor)
+VALUES `+strings.Join(placeholders, ", "), args...); err != nil {
+			return fmt.Errorf("insert sale line modifiers batch: %w", err)
+		}
+	}
+	return nil
+}
+
+// SaleDiscountRow mirrors InsertSaleDiscount's parameters, with the row ID
+// generated by the caller. LineID empty = a sale-level discount (NULL).
+type SaleDiscountRow struct {
+	ID     string
+	SaleID string
+	LineID string
+	Type   string
+	Value  int64
+	Amount int64
+	Reason string
+}
+
+// InsertSaleDiscountsBatch writes many sale_discounts rows via chunked
+// multi-row INSERTs. No-op for an empty batch. Rows with a LineID must run
+// AFTER the referenced sale_lines rows exist.
+func (r *POSRepo) InsertSaleDiscountsBatch(ctx context.Context, tx *sql.Tx, rows []SaleDiscountRow) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	const cols = 7
+	exec := r.exec(tx)
+	chunk := batchChunkSize(cols)
+	for start := 0; start < len(rows); start += chunk {
+		end := start + chunk
+		if end > len(rows) {
+			end = len(rows)
+		}
+		part := rows[start:end]
+		placeholders := make([]string, 0, len(part))
+		args := make([]any, 0, len(part)*cols)
+		for _, row := range part {
+			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?)")
+			args = append(args, row.ID, row.SaleID, nullIfEmpty(row.LineID), row.Type, row.Value, row.Amount, row.Reason)
+		}
+		if _, err := exec.ExecContext(ctx, `
+INSERT INTO sale_discounts (id, sale_id, line_id, type, value, amount, reason)
+VALUES `+strings.Join(placeholders, ", "), args...); err != nil {
+			return fmt.Errorf("insert sale discounts batch: %w", err)
+		}
+	}
+	return nil
+}
+
+// RecordStockMovementsBatch is RecordStockMovement for many movements at
+// once, on the caller's tx (no savepoints — CompleteSale's surrounding
+// db.WithTx owns atomicity):
+//
+//   - one chunked multi-row INSERT into stock_movements (one row per input,
+//     with the same missing-cost_price-column retry the single-row method
+//     has);
+//   - the net quantity delta AGGREGATED per StockKey across the batch (a
+//     basket can carry the same item on two lines), then applied with ONE
+//     prepared inventory UPDATE executed per distinct key;
+//   - keys with no existing inventory row get one chunked multi-row INSERT;
+//   - one audit_log row PER MOVEMENT (not per aggregated key), same payload
+//     shape as RecordStockMovement.
+//
+// existing is CurrentQtyBatch's result for these keys on the SAME tx: keys
+// absent from a non-nil map skip the UPDATE probe and insert directly. A nil
+// map means "unknown" — every key is probed with the UPDATE and inserted
+// only when no row was affected (full RecordStockMovement semantics).
+// Returned movement IDs are in input order.
+func (r *POSRepo) RecordStockMovementsBatch(ctx context.Context, tx *sql.Tx, ins []StockMovementInput, existing map[StockKey]float64) ([]string, error) {
+	if len(ins) == 0 {
+		return nil, nil
+	}
+	if tx == nil {
+		return nil, errors.New("transaction required")
+	}
+	for i, in := range ins {
+		switch {
+		case in.LocationID == "":
+			return nil, fmt.Errorf("stock movement %d: locationID required", i+1)
+		case in.ItemID == "" && in.VariantID == "":
+			return nil, fmt.Errorf("stock movement %d: itemID or variantID required", i+1)
+		case in.ItemID != "" && in.VariantID != "":
+			return nil, fmt.Errorf("stock movement %d: cannot specify both itemID and variantID", i+1)
+		case in.Type == "":
+			return nil, fmt.Errorf("stock movement %d: type required", i+1)
+		case in.Quantity == 0:
+			return nil, fmt.Errorf("stock movement %d: quantity must be non-zero", i+1)
+		}
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339)
+	movementIDs := make([]string, len(ins))
+	for i := range ins {
+		movementIDs[i] = uuid.NewString()
+	}
+
+	// (b) stock_movements, chunked; whole-batch retry without cost_price on
+	// the same column-missing error the single-row method detects. The
+	// schema error is deterministic, so it can only strike the FIRST chunk —
+	// a later-chunk cost_price error is returned as-is rather than risking
+	// re-inserting already-landed chunks.
+	var insertMovements func(withCostPrice bool) error
+	insertMovements = func(withCostPrice bool) error {
+		cols := 9
+		colList := `id, item_id, variant_id, location_id, sale_line_id, type, quantity, cost_price, created_at`
+		rowPH := "(?, ?, ?, ?, ?, ?, ?, ?, ?)"
+		if !withCostPrice {
+			cols = 8
+			colList = `id, item_id, variant_id, location_id, sale_line_id, type, quantity, created_at`
+			rowPH = "(?, ?, ?, ?, ?, ?, ?, ?)"
+		}
+		chunk := batchChunkSize(cols)
+		for start := 0; start < len(ins); start += chunk {
+			end := start + chunk
+			if end > len(ins) {
+				end = len(ins)
+			}
+			placeholders := make([]string, 0, end-start)
+			args := make([]any, 0, (end-start)*cols)
+			for i := start; i < end; i++ {
+				in := ins[i]
+				placeholders = append(placeholders, rowPH)
+				args = append(args, movementIDs[i], nullIfEmpty(in.ItemID), nullIfEmpty(in.VariantID), in.LocationID,
+					nullIfEmpty(in.SaleLineID), in.Type, in.Quantity)
+				if withCostPrice {
+					args = append(args, nullInt64(in.CostPrice))
+				}
+				args = append(args, now)
+			}
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO stock_movements (`+colList+`) VALUES `+strings.Join(placeholders, ", "), args...); err != nil {
+				if withCostPrice && start == 0 && strings.Contains(err.Error(), "cost_price") {
+					return insertMovements(false)
+				}
+				return fmt.Errorf("insert stock movements batch: %w", err)
+			}
+		}
+		return nil
+	}
+	if err := insertMovements(true); err != nil {
+		return nil, err
+	}
+
+	// (c) aggregate the net delta per key, in first-seen order.
+	agg := make(map[StockKey]float64, len(ins))
+	order := make([]StockKey, 0, len(ins))
+	for _, in := range ins {
+		k := StockKey{LocationID: in.LocationID, ItemID: in.ItemID, VariantID: in.VariantID}
+		if _, ok := agg[k]; !ok {
+			order = append(order, k)
+		}
+		agg[k] += in.Quantity
+	}
+
+	// (d) split into has-row / needs-row using the caller's CurrentQtyBatch
+	// knowledge — no fresh existence-check query here.
+	updateKeys := make([]StockKey, 0, len(order))
+	insertKeys := make([]StockKey, 0)
+	for _, k := range order {
+		if existing == nil {
+			updateKeys = append(updateKeys, k) // unknown: probe via UPDATE
+			continue
+		}
+		if _, ok := existing[k]; ok {
+			updateKeys = append(updateKeys, k)
+		} else {
+			insertKeys = append(insertKeys, k)
+		}
+	}
+
+	// (e) one prepared UPDATE, executed once per distinct existing key.
+	if len(updateKeys) > 0 {
+		stmt, err := tx.PrepareContext(ctx, `
+UPDATE inventory
+SET quantity = quantity + ?, updated_at = ?
+WHERE location_id = ?
+  AND ((item_id = ? AND variant_id IS NULL) OR (variant_id = ? AND item_id IS NULL))
+`)
+		if err != nil {
+			return nil, fmt.Errorf("prepare inventory update: %w", err)
+		}
+		defer stmt.Close()
+		for _, k := range updateKeys {
+			res, err := stmt.ExecContext(ctx, agg[k], now, k.LocationID, nullIfEmpty(k.ItemID), nullIfEmpty(k.VariantID))
+			if err != nil {
+				return nil, fmt.Errorf("update inventory: %w", err)
+			}
+			// aff==0 means the map's knowledge was wrong (or nil): fall
+			// through to the insert list, same as RecordStockMovement's
+			// own insert-on-zero-affected branch.
+			if aff, _ := res.RowsAffected(); aff == 0 {
+				insertKeys = append(insertKeys, k)
+			}
+		}
+	}
+
+	// (f) new inventory rows for keys with no existing row, chunked.
+	if len(insertKeys) > 0 {
+		const cols = 6
+		chunk := batchChunkSize(cols)
+		for start := 0; start < len(insertKeys); start += chunk {
+			end := start + chunk
+			if end > len(insertKeys) {
+				end = len(insertKeys)
+			}
+			placeholders := make([]string, 0, end-start)
+			args := make([]any, 0, (end-start)*cols)
+			for _, k := range insertKeys[start:end] {
+				placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?)")
+				args = append(args, uuid.NewString(), nullIfEmpty(k.ItemID), nullIfEmpty(k.VariantID), k.LocationID, agg[k], now)
+			}
+			if _, err := tx.ExecContext(ctx, `
+INSERT INTO inventory (id, item_id, variant_id, location_id, quantity, updated_at)
+VALUES `+strings.Join(placeholders, ", "), args...); err != nil {
+				return nil, fmt.Errorf("insert inventory batch: %w", err)
+			}
+		}
+	}
+
+	// (g) one audit row per movement, chunked — the audit trail stays
+	// per-movement, exactly as N RecordStockMovement calls would leave it.
+	{
+		const cols = 6
+		chunk := batchChunkSize(cols)
+		for start := 0; start < len(ins); start += chunk {
+			end := start + chunk
+			if end > len(ins) {
+				end = len(ins)
+			}
+			placeholders := make([]string, 0, end-start)
+			args := make([]any, 0, (end-start)*cols)
+			for i := start; i < end; i++ {
+				in := ins[i]
+				payloadJSON, _ := json.Marshal(map[string]any{
+					"type":     in.Type,
+					"quantity": in.Quantity,
+					"reason":   in.Reason,
+				})
+				placeholders = append(placeholders, "(?, ?, 'inventory', ?, ?, ?, ?)")
+				args = append(args, uuid.NewString(), nullIfEmpty(in.ActorID), movementIDs[i], in.Type, string(payloadJSON), now)
+			}
+			if _, err := tx.ExecContext(ctx, `
+INSERT INTO audit_log (id, actor_id, entity_type, entity_id, action, data_json, created_at)
+VALUES `+strings.Join(placeholders, ", "), args...); err != nil {
+				return nil, fmt.Errorf("insert audit batch: %w", err)
+			}
+		}
+	}
+
+	return movementIDs, nil
+}
+
 // InsertSaleParams is InsertSale's argument struct (ut-docs#976). InsertSale
 // had grown to ~25 positional arguments, one sale-column addition at a time;
 // at that arity two adjacent same-typed arguments (two money amounts, two
