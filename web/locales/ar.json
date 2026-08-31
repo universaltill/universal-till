@@ -116,6 +116,8 @@
   "catalog.create_item": "إنشاء صنف",
   "catalog.description": "الوصف",
   "catalog.image_types": "صورة (PNG/JPEG)",
+  "catalog.take_photo": "التقاط صورة",
+  "catalog.choose_file": "اختيار ملف",
   "catalog.item_image": "صورة الصنف",
   "catalog.keypad.capture_label": "اضغط المفتاح الفعلي (أو اكتب رمزاً)",
   "catalog.keypad.capture_placeholder": "بانتظار ضغط المفتاح…",

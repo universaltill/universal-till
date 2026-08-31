@@ -15,6 +15,7 @@ Your products: names, prices, departments, item variants (size, flavour…) and 
 ## How to use it
 
 1. Open Catalog and click an item row — the editor panel below shows all its variants and barcodes. Items with a SAMPLE badge came from the optional starter catalogue (removable from Settings → Data).
+   - **Item image:** open the **Item image** section below the editor to add or replace the item's own photo. On a phone or tablet, tap **Take a Photo** to use the camera directly, or **Choose File** to pick an existing image instead.
 2. Edit variant names, SKUs, prices, cost prices and photos right in the grid; add or remove barcodes as chips; print labels per variant.
    - **Plain code (ignore weight/price):** tick this when adding a barcode only if your shop uses weight- or price-embedded scale labels *and* you are entering an ordinary product barcode that happens to start with the same digits. It tells the till to store the code exactly as typed instead of reading part of it as a weight or price. Leave it unticked for everything else — it has no effect on a normal barcode.
 3. Use Import to load items from a CSV file, and Export to save your catalog — a speedy kasse / pepperm cashbox `.bkp` till backup is also accepted directly, detected automatically with no conversion needed. Either file can also carry a `Tax rate` column (and a `Takeaway tax` column where it differs) — Universal Till creates the matching tax codes for you automatically.

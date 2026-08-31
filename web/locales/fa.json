@@ -116,6 +116,8 @@
   "catalog.create_item": "ایجاد کالا",
   "catalog.description": "توضیحات",
   "catalog.image_types": "تصویر (PNG/JPEG)",
+  "catalog.take_photo": "گرفتن عکس",
+  "catalog.choose_file": "انتخاب فایل",
   "catalog.item_image": "تصویر کالا",
   "catalog.keypad.capture_label": "کلید فیزیکی را فشار دهید (یا کدی را تایپ کنید)",
   "catalog.keypad.capture_placeholder": "در انتظار فشردن کلید…",
