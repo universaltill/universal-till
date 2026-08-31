@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { watchConsole, waitForStableLayout } from './helpers';
 
 // ut-docs#213: the basket is a full-height first-class panel (>=4 line

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { watchConsole, setOskMode } from './helpers';
 
 // A failed run used to leak osk=on into later specs (the open keyboard

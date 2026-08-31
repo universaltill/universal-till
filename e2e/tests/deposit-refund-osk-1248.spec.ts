@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { setOskMode } from './helpers';
 
 // ut-docs#1248: "when I click on deposit refund, 2 keyboards, opening."

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { setOskMode } from './helpers';
 
 // ut-docs#1272: same defect as ut-docs#1249 (deposit-refund-payout-osk-1249

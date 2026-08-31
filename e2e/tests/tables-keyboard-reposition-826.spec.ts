@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { watchConsole, deactivateAllTables, createTable } from './helpers';
 
 // GET /tables (internal/pages/tables_page.go) used to requireManager-gate

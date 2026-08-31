@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { setOskMode } from './helpers';
 
 // ut-docs#1276: osk.js's numeric ('num') layer was digits + '.' + '⌫' + '↵'

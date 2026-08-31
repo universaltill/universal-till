@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { watchConsole, deactivateAllTables, createTable } from './helpers';
 
 // ut-docs#1173: reported against the real 10.1" till (1920x1200 @ 1.5 scale

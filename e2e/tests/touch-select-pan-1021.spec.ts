@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { watchConsole } from './helpers';
 
 // ut-docs#1021: on the physical till (WebKitGTK 2.52 / labwc / Wayland) a
