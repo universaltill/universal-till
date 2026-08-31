@@ -1290,24 +1290,28 @@ a.btn, a.btn:hover { text-decoration: none; }
    (internal/pos/service.go, tax_codes.takeaway_rate_basis_points -- the
    German §12 UStG dine-in/takeaway split). Both segments are always
    visible and labeled; the active one is filled, not inferred from a
-   knob position. `.order-type-toggle-group` occupies exactly the
-   switch's old flex: 1 slot (shares the row with the table-assignment
-   button, ADR-0054), so this is a legibility fix, not a reversion to the
-   ORIGINAL two-full-button layout's space cost (that one used two
-   independent `.btn`-sized buttons stacked outside this row entirely).
-   min-height: 3rem on the OPTIONS, not the group -- ut-docs#161/#213's
-   tap-target floor is a rem floor (tracks --ui-scale and viewport fit; a
-   px floor already broke this exact control once, see prior git blame)
-   and it protects the actual tappable element. */
+   knob position.
+   Two same-day follow-ups after this first landed, both from the product
+   owner watching it live: (1) "too big" -- dropped from the switch's old
+   3rem/48px floor to the app's own established `.btn.compact` floor
+   (2.5rem/40px, still a real deliberate touch target, above WCAG 2.2 AA
+   2.5.5's 24px). (2) reference screenshot supplied showing a small self-
+   contained widget: `flex: 1` was still stretching the group to fill the
+   WHOLE row. Both the group and each option are now `flex: 0 0 auto` --
+   sized to their own icon+label content, not to the row. `.order-type-row`
+   has no `justify-content` override, so the group hugs the row's start
+   and the (also content-sized) table button sits right next to it with
+   the row's own `gap`; leftover row width is simply empty, which is
+   correct for two small controls, not a layout bug. */
 .order-type-toggle-group {
-  flex: 1; display: flex; border: 1px solid var(--border);
+  flex: 0 0 auto; display: flex; border: 1px solid var(--border);
   border-radius: 999px; overflow: hidden;
 }
 .order-type-option {
-  flex: 1; display: flex; align-items: center; justify-content: center;
-  gap: .3rem; min-height: 3rem; padding: .3rem .5rem; border: none;
+  flex: 0 0 auto; display: flex; align-items: center; justify-content: center;
+  gap: .3rem; min-height: 2.5rem; padding: .35rem .7rem; border: none;
   background: var(--surface); color: var(--text); font-weight: 600;
-  font-size: .85rem; line-height: 1.15; cursor: pointer;
+  font-size: .8rem; line-height: 1.15; cursor: pointer;
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
   transition: background .15s ease, color .15s ease;
 }
@@ -1315,17 +1319,20 @@ a.btn, a.btn:hover { text-decoration: none; }
 
 /* Table-assignment button + dialog (ut-docs#820, ADR-0054) — collapsed
    from an always-expanded inline strip into this button next to the
-   order-type switch, 2026-08-30. Matches the switch's own 3rem floor since
-   it's an equally real action, not a lower-stakes one (and, like the
-   switch, rem not px so it tracks --ui-scale — independent review,
-   2026-08-31).
+   order-type switch, 2026-08-30. Sized to MATCH .order-type-option (not
+   independently re-derived) so the two controls this row shares read as
+   one visual weight -- shrunk alongside it, same 2026-08-31 ut-docs#1379
+   follow-up: still a real, deliberate touch target (`.btn.compact`'s own
+   2.5rem/40px floor), no longer inflated to the switch's old 3rem shape.
+   The actual min-height comes from the `compact` class on the button
+   itself (table_picker.html), not from a rule here.
    NOTE the `flex: 1` here does nothing: this button's parent is
    table_picker.html's own `<span id="table-picker">` wrapper, and THAT span
    (not the button) is the flex item of `.order-type-row`. Kept only because
    it is harmless and the wrapper may later become `display: contents`;
    measured today the switch takes the row's remaining space and this button
    is content-sized, which is the layout we want anyway. */
-.table-picker-trigger { flex: 1; min-height: 3rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.table-picker-trigger { flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .table-current { display: block; font-weight: 600; margin-block-end: .5rem; }
 .table-picker-options { display: flex; flex-wrap: wrap; gap: .4rem; margin-block-start: .5rem; }
 .table-picker-empty { display: block; }

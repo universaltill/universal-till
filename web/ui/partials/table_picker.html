@@ -23,7 +23,7 @@
      for the fuller explanation. -->
 <span id="table-picker">
   {{ if .Configured }}
-    <button type="button" class="btn secondary table-picker-trigger" data-testid="table-picker-open"
+    <button type="button" class="btn secondary compact table-picker-trigger" data-testid="table-picker-open"
             onclick="document.getElementById('table-modal').showModal()">
       🍽️ {{ if .CurrentLabel }}{{ .CurrentLabel }}{{ else }}{{ T "basket.table.label" }}{{ end }}</button>
     <dialog id="table-modal" class="modifier-modal" aria-labelledby="table-modal-title">
