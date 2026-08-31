@@ -1,0 +1,80 @@
+{{/* One catalog items-table row (ut-docs#1363). Dot is a catalogRowVM
+     (internal/pages/catalog): .Item / .Barcodes / .Variants plus .OOB —
+     false renders a plain row (the initial /catalog table and the insert
+     wrapper below), true adds hx-swap-oob="true" so htmx replaces the
+     existing #catalog-row-<id> element in place. */}}
+{{ define "catalog_row" }}
+          <tr class="catalog-row" id="catalog-row-{{ .Item.ID }}"{{ if .OOB }} hx-swap-oob="true"{{ end }}
+              data-id="{{ .Item.ID }}" data-name="{{ .Item.Name }}" data-sku="{{ .Item.SKU }}"
+              data-description="{{ .Item.Description }}" data-unit="{{ .Item.Unit }}"
+              data-weighed="{{ if .Item.IsWeighed }}1{{ else }}0{{ end }}"
+              data-category="{{ with .Item.CategoryID }}{{ . }}{{ end }}"
+              data-brand="{{ with .Item.BrandID }}{{ . }}{{ end }}"
+              data-price="{{ .Item.BasePrice }}"
+              data-tax="{{ with .Item.TaxCodeID }}{{ . }}{{ end }}">
+            <td class="catalog-thumb-cell">{{ $thumb := printf "/public/assets/items/%s/thumb.png" .Item.ID }}{{ if imgExists $thumb }}<img class="thumb small" src="{{ imgv $thumb }}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">{{ else }}<div class="thumb small" aria-hidden="true"></div>{{ end }}</td>
+            <td class="catalog-name">{{ .Item.Name }}{{ if .Item.IsSampleData }} <span class="sample-badge">{{ T "catalog.sample_badge" }}</span>{{ end }}
+              {{ with .Barcodes }}<div class="muted" style="font-size:.8em">{{ T "catalog.barcodes" }}: {{ range $i, $b := . }}{{ if $i }}, {{ end }}{{ $b }}{{ end }}</div>{{ end }}
+              {{ with .Variants }}<div class="muted" style="font-size:.8em">{{ T "catalog.variants" }}: {{ range $i, $v := . }}{{ if $i }}, {{ end }}{{ $v.Name }}{{ if $v.Barcode }} [{{ $v.Barcode }}]{{ end }}{{ end }}</div>{{ end }}
+            </td>
+            <td class="muted">{{ .Item.SKU }}</td>
+            <td>{{ money .Item.BasePrice }}</td>
+            <td>{{ if .Item.Unit }}{{ .Item.Unit }}{{ else }}each{{ end }}{{ if .Item.IsWeighed }} ⚖{{ end }}</td>
+            <td>{{ $name := taxCodeName .Item.TaxCodeID }}{{ if $name }}{{ $name }}{{ else }}—{{ end }}</td>
+            <td class="btn-actions">
+              <button class="btn secondary catalog-edit" type="button">{{ T "common.edit" }}</button>
+              <button class="btn danger" type="button"
+                      hx-post="/api/catalog/item/deactivate"
+                      hx-vals='{{ jsonVals "id" .Item.ID }}'
+                      hx-confirm="Deactivate {{ .Item.Name }}?"
+                      hx-target="this" hx-swap="none">✕</button>
+            </td>
+          </tr>
+{{ end }}
+
+{{/* The "no items yet" placeholder row, shared by the table's else-branch
+     and the OOB append fragment below. */}}
+{{ define "catalog_empty_row" }}<tr id="catalog-empty-row"><td colspan="7" class="empty">{{ T "basket.empty" }}</td></tr>{{ end }}
+
+{{/* ------------------------------------------------------------------
+     Out-of-band fragments. Two constraints of the vendored htmx 1.9.12
+     shape everything here (verified against web/public/vendor/htmx.min.js):
+
+     1. PARSING — makeFragment picks its parse context from the FIRST tag
+        of the whole response. A mutation response that leads with the
+        variants panel <div> is parsed in body context, where a bare <tr>
+        or <tbody> is silently discarded by the HTML parser. So every
+        fragment is wrapped in a real, self-contained <table> "carrier",
+        which parses intact anywhere.
+
+     2. OOB SEMANTICS — only hx-swap-oob="true"/"outerHTML" swaps the
+        flagged element itself; any other style (beforeend, none) inserts
+        the flagged element's CHILDREN. Hence inserts put the oob
+        attribute on a wrapper <tbody> whose child is the row, and the
+        carrier <table> flags itself hx-swap-oob="none:#catalog-tbody" —
+        a no-op swap whose one effect is that htmx removes the processed
+        carrier from the response fragment, so a panel response's primary
+        swap never deposits a leftover table skeleton into the page.
+        (Go writes fragments only when their target provably exists in the
+        DOM — not to dodge an htmx error, an over-emitted OOB delete is a
+        silent no-op in this htmx version — but because matching each
+        fragment to DOM reality is simpler to reason about; see
+        writeCatalogRowOOB's own note.)
+     ------------------------------------------------------------------ */}}
+
+{{/* In-place update of one existing row. Dot: catalogRowVM (OOB true). */}}
+{{ define "catalog_row_update_oob" }}<table hidden class="ut-oob-carrier" hx-swap-oob="none:#catalog-tbody"><tbody>{{ template "catalog_row" . }}</tbody></table>{{ end }}
+
+{{/* Append a newly created row to the table. Dot: catalogRowVM (OOB
+     false — the wrapper tbody carries the swap directive). */}}
+{{ define "catalog_row_insert_oob" }}<table hidden class="ut-oob-carrier" hx-swap-oob="none:#catalog-tbody"><tbody hx-swap-oob="beforeend:#catalog-tbody">{{ template "catalog_row" . }}</tbody></table>{{ end }}
+
+{{/* Remove one row (deactivated item). Dot: the item id. htmx's delete
+     style removes the matching #catalog-row-<id>; content is ignored. */}}
+{{ define "catalog_row_delete" }}<table hidden class="ut-oob-carrier" hx-swap-oob="none:#catalog-tbody"><tbody><tr id="catalog-row-{{ . }}" hx-swap-oob="delete"></tr></tbody></table>{{ end }}
+
+{{/* Bring the empty-state placeholder back (last item deactivated). */}}
+{{ define "catalog_empty_row_append_oob" }}<table hidden class="ut-oob-carrier" hx-swap-oob="none:#catalog-tbody"><tbody hx-swap-oob="beforeend:#catalog-tbody">{{ template "catalog_empty_row" }}</tbody></table>{{ end }}
+
+{{/* Clear the empty-state placeholder (first item created). */}}
+{{ define "catalog_empty_row_delete" }}<table hidden class="ut-oob-carrier" hx-swap-oob="none:#catalog-tbody"><tbody><tr id="catalog-empty-row" hx-swap-oob="delete"></tr></tbody></table>{{ end }}

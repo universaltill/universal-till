@@ -76,8 +76,8 @@
       <summary>{{ T "catalog.item_image" }}</summary>
       <form id="image-form" enctype="multipart/form-data">
         <label>{{ T "basket.col.item" }} <input type="text" class="pick-item" id="image-item-label" readonly placeholder="{{ T "catalog.pick_row" }}"></label>
-        <input type="hidden" id="image-item-id">
-        <label>{{ T "catalog.image_types" }} <input type="file" id="image-file" accept="image/png,image/jpeg" required></label>
+        <input type="hidden" name="item_id" id="image-item-id">
+        <label>{{ T "catalog.image_types" }} <input type="file" name="image" id="image-file" accept="image/png,image/jpeg" required></label>
         <button class="btn" type="submit">{{ T "catalog.upload_image" }}</button>
         <div id="image-msg" class="muted" style="min-height:1.2rem"></div>
       </form>
@@ -326,10 +326,14 @@
     // before this promise settles — catch that here and skip the success
     // branch entirely, so a failed save can never clear the form or paint
     // a false "Saved" over the real error.
+    // ut-docs#1363: the primary swap is a no-op — the server answers with
+    // out-of-band fragments for just the affected row, which htmx processes
+    // regardless of the primary swap mode. The target only needs to be a
+    // valid element; swap:none never touches it.
     var failed = false;
     function markFailed() { failed = true; }
     document.body.addEventListener('htmx:responseError', markFailed, { once: true });
-    htmx.ajax('POST', url, { source: '#item-form', target: '#catalog-table', swap: 'outerHTML' })
+    htmx.ajax('POST', url, { source: '#item-form', target: '#catalog-table', swap: 'none' })
       .then(function () {
         document.body.removeEventListener('htmx:responseError', markFailed);
         if (failed) return;
@@ -364,7 +368,22 @@
     if (cost && cost.value !== '') ev.detail.parameters.costPrice = window.utCurrency.toMinor(cost.value);
   });
 
+  // ut-docs#1363: the upload now goes through htmx's own request pipeline
+  // (htmx.ajax serializes the form's named inputs, multipart via the
+  // form's enctype) so the row-level OOB fragment the handler returns is
+  // processed by htmx like every other mutation response — the old raw
+  // fetch() blind-replaced #catalog-table's outerHTML with a response that
+  // is no longer a table.
   var imageForm = document.getElementById('image-form');
+  // Keep upload errors in the image form's own message slot: the form is
+  // the source element, so htmx raises htmx:responseError here first —
+  // stopPropagation() keeps the page-global listener (which paints into
+  // the ITEM form's slot) out of it.
+  imageForm.addEventListener('htmx:responseError', function (ev) {
+    ev.stopPropagation();
+    var imsg = document.getElementById('image-msg');
+    imsg.textContent = '✗ ' + ((ev.detail.xhr.responseText || '').trim()); // i18n:ignore — pre-existing prefix convention, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
+  });
   imageForm.addEventListener('submit', function (ev) {
     ev.preventDefault();
     var id = document.getElementById('image-item-id').value;
@@ -372,20 +391,27 @@
     var imsg = document.getElementById('image-msg');
     if (!id) { imsg.textContent = '✗ pick an item first (click a row)'; return; } // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
     if (!f) { imsg.textContent = '✗ choose an image'; return; } // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
-    var fd = new FormData();
-    fd.append('item_id', id);
-    fd.append('image', f);
     imsg.textContent = '⏳ uploading…';
-    fetch('/api/catalog/item/image', { method: 'POST', body: fd }).then(function (res) {
-      if (!res.ok) { return res.text().then(function (t) { imsg.textContent = '✗ ' + t; }); }
-      return res.text().then(function (html) {
-        var table = document.getElementById('catalog-table');
-        table.outerHTML = html;
-        htmx.process(document.getElementById('catalog-table'));
+    // Same resolve-on-any-response caveat as the item form above
+    // (ut-docs#917): the promise also resolves on a 4xx/5xx, so a flag set
+    // by the (earlier-firing) responseError listener guards the success
+    // branch.
+    var failed = false;
+    function markFailed() { failed = true; }
+    imageForm.addEventListener('htmx:responseError', markFailed, { once: true });
+    htmx.ajax('POST', '/api/catalog/item/image', { source: '#image-form', target: '#catalog-table', swap: 'none' })
+      .then(function () {
+        imageForm.removeEventListener('htmx:responseError', markFailed);
+        if (failed) return;
         imsg.textContent = '✓ image updated'; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
         filterRows();
+      })
+      .catch(function () {
+        // Network-level failure only (the promise resolves on HTTP error
+        // statuses — see above); parity with the old fetch().catch path.
+        imageForm.removeEventListener('htmx:responseError', markFailed);
+        imsg.textContent = '✗ ' + NOTICE_MSG.itemFormErrorGeneric;
       });
-    }).catch(function (e) { imsg.textContent = '✗ ' + e; });
   });
 
   // Keypad mapping (ADR-0021): a physical HID-keyboard-emulating keypad
@@ -440,6 +466,41 @@
   search.addEventListener('input', filterRows);
   document.body.addEventListener('htmx:afterSwap', function (ev) {
     if (ev.detail.target && ev.detail.target.id === 'catalog-table') filterRows();
+  });
+  // ut-docs#1363 review: the row-level OOB protocol inserts a new row at
+  // the bottom of #catalog-tbody (beforeend) and swaps an edited row in
+  // place, so a create/rename no longer lands it in the server's own
+  // name-sorted position the way a full-table re-render always did — a
+  // shop owner adding an item to a long catalog would find it at the very
+  // bottom instead of where they'd look. appendChild() on an ALREADY-
+  // attached node MOVES it rather than cloning/detaching, so this keeps
+  // every row's DOM identity (and the isConnected/attribute checks the
+  // e2e suite pins) intact while restoring sort order.
+  function sortRows() {
+    var tbody = document.getElementById('catalog-tbody');
+    if (!tbody) return;
+    var rows = Array.prototype.slice.call(tbody.querySelectorAll('.catalog-row'));
+    rows.sort(function (a, b) {
+      var an = a.dataset.name || '', bn = b.dataset.name || '';
+      return an < bn ? -1 : an > bn ? 1 : 0;
+    });
+    rows.forEach(function (row) { tbody.appendChild(row); });
+  }
+  // ut-docs#1363: mutations no longer primary-swap #catalog-table — every
+  // row update/insert arrives as an out-of-band fragment, for which htmx
+  // fires htmx:oobAfterSwap instead. detail.target is the element the OOB
+  // fragment was matched against: the replaced row itself for an in-place
+  // update, or #catalog-tbody for a beforeend insert of a new row. Without
+  // the filterRows() call, a row created/edited while a search is typed
+  // would ignore the active filter; without sortRows(), it would sit
+  // wherever it landed instead of its name-sorted position.
+  document.body.addEventListener('htmx:oobAfterSwap', function (ev) {
+    var t = ev.detail && ev.detail.target;
+    if (!t) return;
+    if ((t.classList && t.classList.contains('catalog-row')) || t.id === 'catalog-tbody') {
+      sortRows();
+      filterRows();
+    }
   });
 })();
 </script>

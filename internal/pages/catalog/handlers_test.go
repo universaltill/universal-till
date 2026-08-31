@@ -268,7 +268,8 @@ func TestCatalogVariantsPanel(t *testing.T) {
 	}
 
 	// Edit via the panel: rename + uncheck Active (checkbox absent, hidden 0
-	// present). Response = panel + out-of-band items table.
+	// present). Response = panel + out-of-band ROW for the affected item
+	// (ut-docs#1363 — never the whole table any more).
 	form := "panelItem=itm1&id=v1&itemId=itm1&name=330ml+Can&sku=COLA-330&price=110&isActive=0"
 	req := httptest.NewRequest(http.MethodPost, "/api/catalog/variant", strings.NewReader(form))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -277,8 +278,11 @@ func TestCatalogVariantsPanel(t *testing.T) {
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("variant save: want 200, got %d: %s", rec2.Code, rec2.Body.String())
 	}
-	if !strings.Contains(rec2.Body.String(), `id="catalog-table" hx-swap-oob="true"`) {
-		t.Fatal("panel mutation response missing the out-of-band items table")
+	if !strings.Contains(rec2.Body.String(), `id="catalog-row-itm1"`) || !strings.Contains(rec2.Body.String(), `hx-swap-oob="true"`) {
+		t.Fatal("panel mutation response missing the out-of-band item row")
+	}
+	if strings.Contains(rec2.Body.String(), `id="catalog-table"`) {
+		t.Fatal("panel mutation response must not re-render the whole items table")
 	}
 	var name string
 	var active int

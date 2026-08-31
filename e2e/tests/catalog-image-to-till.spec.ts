@@ -25,7 +25,8 @@ test('uploading a catalog item photo makes it appear on the till', async ({ page
   await expect(page.locator('#image-msg')).toContainText('updated');
 
   // The catalog table's own thumbnail reflects the upload without a page
-  // reload (the upload handler swaps #catalog-table in place). itm003
+  // reload (the upload handler answers with the item's row as an
+  // out-of-band fragment — ut-docs#1363 — not a whole-table swap). itm003
   // ships with a SEEDED 289x375 thumbnail, so asserting merely "non-zero
   // width" would pass even with a completely broken/no-op upload — the
   // fixture is a distinctive 2x2, so assert that exact dimension to
