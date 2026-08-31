@@ -1,39 +1,17 @@
 {{ define "catalog_table" }}
+{{/* Rendered as a whole ONLY on the initial /catalog page load (dot
+     carries .Rows, []catalogRowVM built Go-side). Every mutation since
+     ut-docs#1363 answers with row-level out-of-band fragments instead —
+     see catalog_row.html — anchored on #catalog-row-<id>, #catalog-tbody
+     (beforeend inserts) and #catalog-empty-row. */}}
 <div class="card" id="catalog-table">
   <table class="table">
     <thead><tr><th></th><th>{{ T "catalog.col.name" }}</th><th>{{ T "catalog.col.sku" }}</th><th>{{ T "catalog.col.price" }}</th><th>{{ T "catalog.col.unit" }}</th><th>{{ T "catalog.col.tax" }}</th><th></th></tr></thead>
-    <tbody>
-      {{ if .Items }}
-        {{ range .Items }}
-          <tr class="catalog-row"
-              data-id="{{ .ID }}" data-name="{{ .Name }}" data-sku="{{ .SKU }}"
-              data-description="{{ .Description }}" data-unit="{{ .Unit }}"
-              data-weighed="{{ if .IsWeighed }}1{{ else }}0{{ end }}"
-              data-category="{{ with .CategoryID }}{{ . }}{{ end }}"
-              data-brand="{{ with .BrandID }}{{ . }}{{ end }}"
-              data-price="{{ .BasePrice }}"
-              data-tax="{{ with .TaxCodeID }}{{ . }}{{ end }}">
-            <td class="catalog-thumb-cell">{{ $thumb := printf "/public/assets/items/%s/thumb.png" .ID }}{{ if imgExists $thumb }}<img class="thumb small" src="{{ imgv $thumb }}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">{{ else }}<div class="thumb small" aria-hidden="true"></div>{{ end }}</td>
-            <td class="catalog-name">{{ .Name }}{{ if .IsSampleData }} <span class="sample-badge">{{ T "catalog.sample_badge" }}</span>{{ end }}
-              {{ with index $.Barcodes .ID }}<div class="muted" style="font-size:.8em">{{ T "catalog.barcodes" }}: {{ range $i, $b := . }}{{ if $i }}, {{ end }}{{ $b }}{{ end }}</div>{{ end }}
-              {{ with index $.Variants .ID }}<div class="muted" style="font-size:.8em">{{ T "catalog.variants" }}: {{ range $i, $v := . }}{{ if $i }}, {{ end }}{{ $v.Name }}{{ if $v.Barcode }} [{{ $v.Barcode }}]{{ end }}{{ end }}</div>{{ end }}
-            </td>
-            <td class="muted">{{ .SKU }}</td>
-            <td>{{ money .BasePrice }}</td>
-            <td>{{ if .Unit }}{{ .Unit }}{{ else }}each{{ end }}{{ if .IsWeighed }} ⚖{{ end }}</td>
-            <td>{{ $name := taxCodeName .TaxCodeID }}{{ if $name }}{{ $name }}{{ else }}—{{ end }}</td>
-            <td class="btn-actions">
-              <button class="btn secondary catalog-edit" type="button">{{ T "common.edit" }}</button>
-              <button class="btn danger" type="button"
-                      hx-post="/api/catalog/item/deactivate"
-                      hx-vals='{{ jsonVals "id" .ID }}'
-                      hx-confirm="Deactivate {{ .Name }}?"
-                      hx-target="#catalog-table" hx-swap="outerHTML">✕</button>
-            </td>
-          </tr>
-        {{ end }}
+    <tbody id="catalog-tbody">
+      {{ if .Rows }}
+        {{ range .Rows }}{{ template "catalog_row" . }}{{ end }}
       {{ else }}
-        <tr><td colspan="7" class="empty">{{ T "basket.empty" }}</td></tr>
+        {{ template "catalog_empty_row" }}
       {{ end }}
     </tbody>
   </table>
