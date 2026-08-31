@@ -116,6 +116,8 @@
   "catalog.create_item": "Create Item",
   "catalog.description": "Description",
   "catalog.image_types": "Image (PNG/JPEG)",
+  "catalog.take_photo": "Take a Photo",
+  "catalog.choose_file": "Choose File",
   "catalog.item_image": "Item image",
   "catalog.keypad.capture_label": "Press the physical key (or type a code)",
   "catalog.keypad.capture_placeholder": "Waiting for key press…",
