@@ -33,6 +33,20 @@ import (
 	"github.com/universaltill/universal-till/internal/taxrate"
 )
 
+// asciiFoldLower folds only ASCII 'A'-'Z' to lowercase, matching SQLite's
+// `COLLATE NOCASE` exactly (NOCASE folds ASCII only, unlike Go's
+// Unicode-aware strings.ToLower). Used to build cache keys that must agree
+// with a NOCASE DB lookup on which distinct values are "the same" — see
+// ensureCategoryCached below.
+func asciiFoldLower(s string) string {
+	return strings.Map(func(r rune) rune {
+		if r >= 'A' && r <= 'Z' {
+			return r + ('a' - 'A')
+		}
+		return r
+	}, s)
+}
+
 // Catalog import (docs: architecture/catalog-import.md, G22a): upload a
 // Loyverse/Square/generic CSV export → preview → import. Preview writes
 // nothing; import is idempotent (existing barcode/SKU rows are skipped).
@@ -625,6 +639,57 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			// movement at the default location (same path as the
 			// inventory page), so the migration carries quantities too.
 			locID, locErr := posRepo.EnsureStockLocation(r.Context())
+			// Local per-run caches (ut-docs#1322, perf audit
+			// 2026-08-30-performance-audit.md section F finding #3):
+			// EnsureCategoryUnder/FindOrCreateTaxCode are idempotent and
+			// parent/pair-scoped, so a distinct (name, parent) or (rate,
+			// takeaway) value resolves to the same id for every row that
+			// shares it. A 2,000-3,000 row import across ~30 categories
+			// was issuing thousands of redundant lookup queries instead of
+			// ~30-60 — cache on first miss per distinct value instead of
+			// re-querying per row. Scoped to this one commit run, not
+			// package-level: rows never span two HTTP requests.
+			categoryCache := map[string]string{}
+			ensureCategoryCached := func(name, parentID string) (string, error) {
+				// Fold ONLY ASCII A-Z, matching EnsureCategoryUnder's own
+				// `COLLATE NOCASE` lookup exactly (SQLite's NOCASE folds
+				// ASCII only). strings.ToLower is Unicode-aware and would
+				// fold e.g. "GETRÄNKE"/"Getränke" onto the same cache key
+				// even though NOCASE treats Ä and ä as distinct — that
+				// mismatch would divert a row into the wrong existing
+				// category the DB itself would never have merged
+				// (independent review finding B1, ut-docs#1322).
+				key := asciiFoldLower(strings.TrimSpace(name)) + "\x00" + parentID
+				if id, ok := categoryCache[key]; ok {
+					return id, nil
+				}
+				id, err := repo.EnsureCategoryUnder(r.Context(), name, parentID)
+				if err != nil {
+					return "", err
+				}
+				categoryCache[key] = id
+				return id, nil
+			}
+			taxCodeCache := map[string]string{}
+			findOrCreateTaxCodeCached := func(rateBP int, takeawayBP *int) (string, bool, error) {
+				key := strconv.Itoa(rateBP) + "\x00"
+				if takeawayBP != nil {
+					key += strconv.Itoa(*takeawayBP)
+				}
+				if id, ok := taxCodeCache[key]; ok {
+					// Already resolved earlier in this run — never
+					// re-report "created" for a cache hit, or a repeated
+					// value would inflate taxCodesCreated past the number
+					// of rows that actually issued an INSERT.
+					return id, false, nil
+				}
+				id, created, err := repo.FindOrCreateTaxCode(r.Context(), rateBP, takeawayBP)
+				if err != nil {
+					return "", false, err
+				}
+				taxCodeCache[key] = id
+				return id, created, nil
+			}
 			for i := range rows {
 				if rows[i].Skipped {
 					continue
@@ -638,7 +703,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				var catID *string
 				deptID := ""
 				if it.Department != "" {
-					id, err := repo.EnsureCategoryUnder(r.Context(), it.Department, "")
+					id, err := ensureCategoryCached(it.Department, "")
 					if err != nil {
 						// Raw DB error text (table/constraint names) must
 						// never reach the operator's screen — log it, show
@@ -652,7 +717,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					deptID = id
 				}
 				if it.Category != "" {
-					id, err := repo.EnsureCategoryUnder(r.Context(), it.Category, deptID)
+					id, err := ensureCategoryCached(it.Category, deptID)
 					if err != nil {
 						log.Printf("[import] ensure category %q: %v", it.Category, err)
 						rows[i].Status = T("import.status.category_failed")
@@ -688,7 +753,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 						bp := it.TakeawayRateBP
 						takeawayBP = &bp
 					}
-					id, taxCreated, err := repo.FindOrCreateTaxCode(r.Context(), it.TaxRateBP, takeawayBP)
+					id, taxCreated, err := findOrCreateTaxCodeCached(it.TaxRateBP, takeawayBP)
 					if err != nil {
 						log.Printf("[import] find/create tax code (%d,%v) for %q: %v", it.TaxRateBP, takeawayBP, it.Name, err)
 						rows[i].Status = T("import.status.tax_code_failed")
