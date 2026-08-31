@@ -515,3 +515,69 @@ VALUES('sale1', 'R1', 'completed', 'sale', 'GBP', 100, 0, 20, 120, '2026-01-01T1
 		t.Fatalf("expected the invoice included when `to` is a bare date covering issue day, got %+v", items)
 	}
 }
+
+// ut-docs#1321: Totals sums net/tax/gross in SQL (a credit note subtracted,
+// not added) instead of the invoices page's old Go loop over List's full
+// result set — same sign convention, same range semantics (invoiceRangeBound),
+// checked directly against the numbers a hand-rolled sum would produce.
+func TestInvoiceRepo_Totals(t *testing.T) {
+	dbo, err := db.Open(filepath.Join(t.TempDir(), "invoice_totals.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dbo.Close()
+	ctx := context.Background()
+	if _, err := dbo.DB.ExecContext(ctx, `DELETE FROM invoices`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dbo.DB.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES('sale1', 'R1', 'completed', 'sale', 'GBP', 100, 0, 20, 120, '2026-01-01T10:00:00Z', '2026-01-01T10:00:00Z')`); err != nil {
+		t.Fatal(err)
+	}
+
+	repo := NewInvoiceRepo(dbo.DB)
+	inv, err := repo.Create(ctx, InvoiceInput{
+		Series: "", Kind: "invoice", SaleID: "sale1",
+		CustomerName: "Jane Doe", SellerJSON: "{}", VATBreakdownJSON: "[]",
+		NetTotal: 100, TaxTotal: 20, GrossTotal: 120, IssuedAt: "2026-01-01T10:05:00Z", IssuedBy: "user1",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.Create(ctx, InvoiceInput{
+		Series: "", Kind: "credit_note", SaleID: "sale1", OriginalInvoiceID: inv.ID,
+		CustomerName: "Jane Doe", SellerJSON: "{}", VATBreakdownJSON: "[]",
+		NetTotal: 100, TaxTotal: 20, GrossTotal: 120, IssuedAt: "2026-01-01T11:00:00Z", IssuedBy: "user1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Invoice + its own credit note net to zero.
+	net, tax, gross, err := repo.Totals(ctx, "", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if net != 0 || tax != 0 || gross != 0 {
+		t.Fatalf("Totals = net=%d tax=%d gross=%d, want all zero (invoice cancelled by its credit note)", net, tax, gross)
+	}
+
+	// Narrowing the range to exclude the credit note leaves the invoice's
+	// own positive totals.
+	net, tax, gross, err = repo.Totals(ctx, "", "2026-01-01T10:30:00Z")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if net != 100 || tax != 20 || gross != 120 {
+		t.Fatalf("Totals (invoice only) = net=%d tax=%d gross=%d, want 100/20/120", net, tax, gross)
+	}
+
+	// No rows matched → zero, not an error (COALESCE guards SQL NULL on an
+	// empty SUM).
+	net, tax, gross, err = repo.Totals(ctx, "2027-01-01", "2027-12-31")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if net != 0 || tax != 0 || gross != 0 {
+		t.Fatalf("Totals over an empty range = net=%d tax=%d gross=%d, want all zero", net, tax, gross)
+	}
+}

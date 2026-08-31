@@ -16,3 +16,6 @@ Issue a proper (tax) invoice for a sale — for business customers or wherever a
 
 1. Open Invoices, pick the sale, and fill in the customer details.
 2. Print it or reprint any past invoice from the list.
+
+The list (and its accountant CSV export button) shows the current month
+onward by default — widen the From date to reach older invoices.
