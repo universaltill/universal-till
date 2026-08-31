@@ -13,6 +13,7 @@ import (
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
+	"github.com/universaltill/universal-till/internal/settings"
 )
 
 // newOrderStatusTestDeps wires the one-tap order-status surface against a
@@ -28,7 +29,12 @@ func newOrderStatusTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *db.DB)
 	}
 	t.Cleanup(func() { dbase.Close() })
 
-	dp := &common.Deps{Db: dbase.DB, OrderStatus: pos.NewOrderStatusBroadcaster()}
+	// Settings backs the replica check (SyncPrimaryURL): left empty, this
+	// till is a primary/standalone — every pre-existing test in this file
+	// runs down the primary path and pins that a primary behaves exactly as
+	// before ut-docs#1350. Replica tests (order_status_proxy_test.go) set
+	// sync.primary_url/sync.bearer on the same store.
+	dp := &common.Deps{Db: dbase.DB, OrderStatus: pos.NewOrderStatusBroadcaster(), Settings: settings.NewStore(dbase.DB)}
 	mux := http.NewServeMux()
 	registerOrderStatus(mux, dp)
 	return mux, dp, dbase

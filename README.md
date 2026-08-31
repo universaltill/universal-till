@@ -47,7 +47,7 @@
 - Inventory management
 - Customer management
 - Receipt printing (thermal and regular)
-- Order status tracking (new → preparing → ready → collected, one-tap for kitchen staff)
+- Order status tracking (new → preparing → ready → collected, one-tap for kitchen staff; on linked tills every till sees and updates the whole shop's orders, with silent local fallback when the main till is unreachable)
 - Customer order tracking via QR (self-order kiosk checkout shows a QR; the customer follows their order's status — and nothing else — live on their own phone over the shop's network)
 - Kitchen station routing (send each category — or a single item — to its own kitchen printer)
 - Table floor plan and assignment (draw your dining room, name each table, drag it into place; assign an order to a table from the basket or move a held order to a different free table, and the plan's free/open-order status lights up live)
