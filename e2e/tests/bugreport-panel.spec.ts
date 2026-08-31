@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { watchConsole } from './helpers';
 
 // The 🐞 bug-report panel (ut-docs#346): the capture UI moved out of the

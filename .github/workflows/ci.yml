@@ -98,6 +98,10 @@ jobs:
         run: bash scripts/ci/guard-osk-loaded.sh
       - name: On-screen keyboard guard regression test
         run: bash scripts/ci/guard-osk-loaded_test.sh
+      - name: E2e cross-spec fixtures-import guard
+        run: bash scripts/ci/guard-e2e-fixtures-import.sh
+      - name: E2e cross-spec fixtures-import guard regression test
+        run: bash scripts/ci/guard-e2e-fixtures-import_test.sh
       - name: Brand asset guard
         run: bash scripts/ci/check-brand-assets.sh
       - name: Makefile version-stamp guard

@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { watchConsole, setOskMode } from './helpers';
 
 // The OSK mode is a SERVER-side setting shared by every spec on this server

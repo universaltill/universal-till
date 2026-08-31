@@ -1,4 +1,5 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import type { Page } from '@playwright/test';
 import { watchConsole, setOskMode } from './helpers';
 
 // ut-docs#1177: the product owner typed SKU/barcode '30005' into the sale

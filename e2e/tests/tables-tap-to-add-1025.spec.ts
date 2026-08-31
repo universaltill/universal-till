@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { watchConsole, deactivateAllTables, createTable } from './helpers';
 
 // ut-docs#1025: two bounded floor-plan editor fixes.
