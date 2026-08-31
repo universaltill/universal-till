@@ -389,6 +389,83 @@ func TestSetTableAndClearTable(t *testing.T) {
 	}
 }
 
+// TestSetOrderType_TakeawayClearsTable (ut-docs#1355): assigning a physical
+// table to a takeaway/to-go order doesn't make sense, so switching an
+// already-table-assigned basket to Takeaway clears the assignment rather
+// than silently carrying it along. Switching back to dine-in ("") must NOT
+// resurrect a table that was cleared this way -- it's gone, same as an
+// explicit ClearTable call.
+func TestSetOrderType_TakeawayClearsTable(t *testing.T) {
+	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, mapResolver{})
+	s.SetTable("tbl-1", "T1")
+
+	b := *s.SetOrderType(OrderTypeTakeaway)
+	if b.TableID != "" || b.TableLabel != "" {
+		t.Fatalf("basket after switching to takeaway = id=%q label=%q, want both cleared", b.TableID, b.TableLabel)
+	}
+	if s.TableID() != "" || s.TableLabel() != "" {
+		t.Fatalf("accessors after switching to takeaway = id=%q label=%q, want both cleared", s.TableID(), s.TableLabel())
+	}
+
+	b = *s.SetOrderType("")
+	if b.TableID != "" || b.TableLabel != "" {
+		t.Fatalf("switching back to dine-in must not resurrect the cleared table, got id=%q label=%q", b.TableID, b.TableLabel)
+	}
+}
+
+// TestSetOrderType_DineInLeavesTableAlone confirms the clear above is
+// specific to Takeaway -- switching between dine-in and any other non-
+// takeaway value (including re-affirming dine-in) never touches an existing
+// table assignment. Neither "" nor an arbitrary non-takeaway string is
+// expected to go red against pre-fix code -- this test guards against a
+// too-broad clear (e.g. "clear on any SetOrderType call"), a mistake the
+// TDD-red run for TestSetOrderType_TakeawayClearsTable above wouldn't catch
+// on its own.
+func TestSetOrderType_DineInLeavesTableAlone(t *testing.T) {
+	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, mapResolver{})
+	s.SetTable("tbl-1", "T1")
+
+	b := *s.SetOrderType("")
+	if b.TableID != "tbl-1" || b.TableLabel != "T1" {
+		t.Fatalf("basket after re-affirming dine-in = id=%q label=%q, want table untouched", b.TableID, b.TableLabel)
+	}
+
+	// "garbage" is not a recognized order type, but the handler-level clamp
+	// to known values lives in pos_api.go, not here -- the service itself
+	// treats anything other than OrderTypeTakeaway as not-takeaway, same
+	// convention EffectiveLineTaxRateBP already relies on.
+	b = *s.SetOrderType("garbage")
+	if b.TableID != "tbl-1" || b.TableLabel != "T1" {
+		t.Fatalf("basket after an unrecognized non-takeaway order type = id=%q label=%q, want table untouched", b.TableID, b.TableLabel)
+	}
+}
+
+// TestSetTable_NoOpWhileTakeaway (ut-docs#1355 F1): a table assignment
+// arriving directly at the service layer while the sale is Takeaway is
+// refused, not just hidden in the UI. This is the actual enforcement point
+// -- registerTablePicker only hides the button/dialog for the common path;
+// without this, a stale second client (or a table POST racing an
+// order-type switch) could still attach a table to a takeaway sale.
+func TestSetTable_NoOpWhileTakeaway(t *testing.T) {
+	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, mapResolver{})
+	s.SetOrderType(OrderTypeTakeaway)
+
+	b := *s.SetTable("tbl-1", "T1")
+	if b.TableID != "" || b.TableLabel != "" {
+		t.Fatalf("basket after SetTable during takeaway = id=%q label=%q, want both refused/empty", b.TableID, b.TableLabel)
+	}
+	if s.TableID() != "" || s.TableLabel() != "" {
+		t.Fatalf("accessors after SetTable during takeaway = id=%q label=%q, want both empty", s.TableID(), s.TableLabel())
+	}
+
+	// Switching to dine-in afterward is a normal, unblocked assignment.
+	s.SetOrderType("")
+	b = *s.SetTable("tbl-1", "T1")
+	if b.TableID != "tbl-1" || b.TableLabel != "T1" {
+		t.Fatalf("basket after SetTable once dine-in = id=%q label=%q, want tbl-1/T1", b.TableID, b.TableLabel)
+	}
+}
+
 // TestReset_ClearsTable confirms a table assignment doesn't leak into the
 // next customer's basket after Reset/Tender, the same guarantee already
 // held for OrderType and the discount/customer fields.

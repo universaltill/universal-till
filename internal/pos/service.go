@@ -829,6 +829,15 @@ func (s *Service) SetOrderType(orderType string) *Basket {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	s.orderType = orderType
+	if orderType == OrderTypeTakeaway {
+		// ut-docs#1355: a table assignment doesn't make sense for a
+		// takeaway/to-go order -- clear it the same way ClearTable does,
+		// rather than silently carrying a dine-in table onto a takeaway
+		// sale. Switching back to dine-in afterwards does NOT restore it;
+		// the cashier re-picks a table if the order goes dine-in again.
+		s.tableID = ""
+		s.tableLabel = ""
+	}
 	s.recomputeTotals()
 	return s.basketCopyLocked()
 }
@@ -855,9 +864,22 @@ func (s *Service) TableLabel() string {
 // handler, via the tables repo) — kept alongside the id purely for display,
 // mirroring how SetCustomer carries both id and name. Passing an empty
 // tableID is equivalent to ClearTable.
+//
+// ut-docs#1355: a no-op while the sale's order type is Takeaway, same as
+// ClearTable would be. This is the enforcement point, not just
+// registerTablePicker's UI soft-gate -- the picker hides the button, but
+// /api/pos/table is reachable directly regardless (a second cashier client
+// with a stale, pre-switch page still showing the dialog; a table POST
+// already in flight when an order-type switch lands first). Without this,
+// hiding the picker only stops the common path, not the one the ticket's
+// own title called out ("...is offered (and works) in Takeaway mode").
 func (s *Service) SetTable(tableID, label string) *Basket {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if s.orderType == OrderTypeTakeaway {
+		tableID = ""
+		label = ""
+	}
 	s.tableID = tableID
 	if tableID == "" {
 		label = ""

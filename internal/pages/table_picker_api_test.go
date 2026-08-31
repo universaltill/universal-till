@@ -154,6 +154,40 @@ func TestTablePicker_NoTablesConfiguredRendersNothing(t *testing.T) {
 	}
 }
 
+// Assigning a physical table to a takeaway/to-go order doesn't make sense
+// (ut-docs#1355) -- with the basket's order type set to Takeaway, the picker
+// must render nothing at all, the same "no chrome" shape as the
+// no-tables-configured case above, even though tables ARE configured and
+// free.
+func TestTablePicker_HiddenForTakeaway(t *testing.T) {
+	engine := pos.NewServiceWithResolver(pos.Config{}, stubResolver{})
+	dp := newTablePickerTestDeps(t, engine)
+	repo := data.NewPOSRepo(dp.Db)
+	ctx := context.Background()
+
+	if _, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100); err != nil {
+		t.Fatalf("CreateTable T1: %v", err)
+	}
+	dp.Engine.SetOrderType(pos.OrderTypeTakeaway)
+
+	mux := http.NewServeMux()
+	registerTablePicker(mux, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/pos/table-picker", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /ui/pos/table-picker: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "table-picker-trigger") || strings.Contains(body, "table-modal") {
+		t.Fatalf("expected no table chrome at all while order type is takeaway, got %s", body)
+	}
+	if strings.Contains(body, "T1") {
+		t.Fatalf("expected the configured table not to appear while order type is takeaway, got %s", body)
+	}
+}
+
 // A shop that DOES have tables but they're all occupied is a real, distinct
 // state that DOES warrant the "no free tables" message (unlike the no-tables
 // case above) -- so the operator knows why there's nothing to pick, rather
