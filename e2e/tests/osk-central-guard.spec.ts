@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { watchConsole, setOskMode } from './helpers';
 
 // ut-docs#1022: osk.js used to suppress the native OS keyboard only

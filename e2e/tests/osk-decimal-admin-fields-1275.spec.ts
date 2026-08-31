@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 import { setOskMode } from './helpers';
 
 // ut-docs#1275: found by independent review of ut-docs#1272's fix, out of

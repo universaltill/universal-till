@@ -1,4 +1,5 @@
-import { test, expect, Page } from '@playwright/test';
+import { test, expect } from './fixtures';
+import type { Page } from '@playwright/test';
 import { watchConsole, fieldGeometry, expectStacked } from './helpers';
 
 // ut-docs#300: the deposit-refund (Pfandrückgabe) payout dialog shipped with

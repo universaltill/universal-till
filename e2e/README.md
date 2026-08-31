@@ -38,6 +38,24 @@ Rules learned the hard way:
 - A spec that adds basket items must COMPLETE its sale (or explicitly
   remove the line, like `catalog-image-to-till.spec.ts` does); one that
   flips a server setting (OSK) must restore it.
+- **Import `test`/`expect` from `./fixtures`, not `'@playwright/test'`
+  directly** (ut-docs#1315; `scripts/ci/guard-e2e-fixtures-import.sh`
+  enforces this). `fixtures.ts` wraps `test` with an auto fixture that
+  resets the shared till's basket once per spec FILE, before that file's
+  first test — the backstop for the rule above when a spec forgets it
+  (ut-docs#1310: `settings-osk.spec.ts` cancelling its hold-sale dialog
+  left a basket item that broke `split-tender-i18n-925.spec.ts`'s fa/RTL
+  test, on a completely unrelated later run, purely from alphabetical
+  file ordering). It only resets *between* files — a file's own tests
+  still see each other's basket state exactly as before, e.g.
+  `tender-panel-reachable.spec.ts` holding several sales in a row within
+  one test. `login.spec.ts` is the one exception: it drives the separate
+  `auth` project against a genuinely fresh, never-set-up till, where a
+  basket reset is meaningless and the guard exempts it explicitly.
+  **Ordering caveat:** the reset fires before a file's first *test body*
+  but *after* a `test.beforeAll` in that same file, if it has one — don't
+  seed basket state meant to survive the whole file in `beforeAll`, it
+  will be silently wiped.
 - `watchConsole(page)` fails a spec on any JS/console error — keep it in
   every spec; it's the layer Go tests can't see.
 - Within `login.spec.ts`, the whole flow is ONE `test.describe.serial`
