@@ -121,8 +121,17 @@
         {{/* x-cloak only the non-default panels — cloaking the initially-
              active one too would hide the till's main content until
              Alpine hydrates, the same tradeoff index.html's own Pay/Split
-             tabs make (only "split", never "pay", is cloaked). */}}
-        <div id="cat-panel-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" role="tabpanel" aria-labelledby="cat-tab-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" class="products-tab-panel" x-show="tab === '{{ $g.ID }}'"{{ if ne $i 0 }} x-cloak{{ end }}>
+             tabs make (only "split", never "pay", is cloaked).
+             --cat-color set here too (ut-docs#1325), not just on the tab
+             button above: a top-level group's OWN buttons render straight
+             into this panel via "category-group-body", never wrapped in a
+             "category-group" element of their own, so without it here a
+             .btn-tile would have no --cat-color ancestor at all (only a
+             NESTED subcategory, rendered via "category-group", carries
+             its own). The tab button and this panel are siblings, not
+             ancestor/descendant, so the tab's own --cat-color never
+             reaches down into it on its own. */}}
+        <div id="cat-panel-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" role="tabpanel" aria-labelledby="cat-tab-{{ if $g.ID }}{{ $g.ID }}{{ else }}uncategorized{{ end }}" class="products-tab-panel" style="--cat-color: {{ $g.Color }}" x-show="tab === '{{ $g.ID }}'"{{ if ne $i 0 }} x-cloak{{ end }}>
           {{ template "category-group-body" $g }}
           <p class="empty" x-show="!sectionHasMatch($el.parentElement)">{{ T "products.no_matches" }}</p>
         </div>
