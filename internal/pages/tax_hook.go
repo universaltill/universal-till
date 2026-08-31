@@ -145,16 +145,25 @@ func (a *pluginTaxRateAsker) AskTaxRateBP(l pos.BasketLine, orderType string) (i
 		// transient failure: decline now, retry next recompute — but still
 		// fail closed if a registered tax plugin is broken (a second,
 		// working plugin erroring doesn't clear the broken one's block).
+		// Logged (ut-docs#1370 investigation): this branch previously failed
+		// completely silently — indistinguishable from "no plugin has an
+		// opinion" in every log/metric — so a permanent ask failure specific
+		// to one runtime (observed live on Android, never reproduced on
+		// desktop with byte-identical plugin code) had no trace anywhere to
+		// catch it by.
+		logging.L().Errorf("tax.rate.ask failed for item=%s tax_code=%s order_type=%q: %v", l.ItemID, l.TaxCodeID, orderType, err)
 		return 0, false, a.taxAuthorityBroken(gen)
 	}
 	ans := taxAskAnswer{}
 	if ok {
 		var parsed taxRateAskResponse
-		if json.Unmarshal(resp, &parsed) != nil {
+		if unmarshalErr := json.Unmarshal(resp, &parsed); unmarshalErr != nil {
 			// Answered, but with JSON core can't read: a plugin bug the
 			// merchant can't see. Decline this recompute WITHOUT caching so
 			// the next one retries — unlike a clean empty-response decline,
-			// which is a deterministic answer and cacheable.
+			// which is a deterministic answer and cacheable. Logged for the
+			// same reason as the bus.Ask error above (ut-docs#1370).
+			logging.L().Errorf("tax.rate.ask returned unparseable JSON for item=%s tax_code=%s order_type=%q: %v (raw: %q)", l.ItemID, l.TaxCodeID, orderType, unmarshalErr, string(resp))
 			return 0, false, a.taxAuthorityBroken(gen)
 		}
 		if parsed.RateBP > 0 {
