@@ -165,6 +165,14 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// window mode to apply — same "no session exists yet" shape as the
 		// pairing/sync paths above.
 		"/api/window-mode",
+		// ut-docs#1350: the primary-side cross-till orders board a replica's
+		// /ui/orders polls, and the one-tap status write it proxies —
+		// missing here at first is the exact /api/sync/stock failure class
+		// again (independent review caught it before merge): the till
+		// authenticates perfectly at syncTill and is still 401'd by THIS
+		// middleware first, so cross-till orders silently never work.
+		"/api/sync/orders",
+		"/api/sync/orders/R-0001/status",
 	} {
 		if !exempt(p) {
 			t.Errorf("%s is not exempt — this middleware will 401 it before the "+
@@ -198,6 +206,15 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// boundary above.
 		"/api/sync/pair-requests/some-request-id/approve",
 		"/api/sync/pair-requests/some-request-id/deny",
+		// ut-docs#1350 review: same segment-boundary concern as
+		// pair-requests above, for the new /api/sync/orders/{id}/status
+		// exemption — a bare HasPrefix("/api/sync/orders/") would also
+		// exempt some future .../{id}/<other action> route that ought to
+		// stay session-gated, and the human-facing operator surface
+		// (/orders itself, not the /api/sync/ prefix) must never be exempt.
+		"/orders",
+		"/api/sync/orders/R-0001/void",
+		"/api/sync/orders/R-0001/status/extra",
 	} {
 		if exempt(p) {
 			t.Errorf("%s must NOT be exempt — it is an operator surface", p)
