@@ -260,6 +260,38 @@
         {{ T "tender.open_payment" }}</button>
     </div>
 
+    <!-- ut-docs#1336: one-tap quick pay — a second, full-width row below
+         Hold Sale/Payment that charges the shop's preferred/default method
+         directly (payMethods is preferred-first server-side, ADR-0016), the
+         exact same tender POST as the overlay's pay-grid buttons above,
+         without a trip through the overlay. Its own row, NOT a fourth
+         button inside .tender-default-footer: that row's .btn.compact
+         sizing was justified for buttons that only OPEN things (see
+         app.css's own comment) — this one completes a charge, so it keeps
+         the base .btn floor. The after-request overlay-close handler is
+         copied verbatim from the pay-grid buttons: this button doesn't
+         open the overlay, but the overlay can legitimately be open (e.g.
+         Escape-less kiosks tabbing back), and closing it on success is
+         then exactly right; when it's closed the handler is a no-op.
+         ⚡ prefix is decorative, this file's existing unkeyed icon
+         convention (🛒/♻️); the label itself is live DB data (.Name) or
+         the same tender.cash fallback the pay-grid's own else-branch uses. -->
+    <div class="tender-quickpay">
+      {{ if .defaultPayMethod }}
+      <button class="btn quick-pay-btn" type="button" data-testid="quick-pay" data-method="{{ .defaultPayMethod.ID }}"
+              hx-post="/api/pos/tender"
+              hx-vals='{{ jsonVals "amount" 0 "method" .defaultPayMethod.ID }}' hx-include="#offline-flag"
+              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">⚡ {{ .defaultPayMethod.Name }}</button>
+      {{ else }}
+      <button class="btn quick-pay-btn" type="button" data-testid="quick-pay" data-method="cash"
+              hx-post="/api/pos/tender"
+              hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag"
+              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">⚡ {{ T "tender.cash" }}</button>
+      {{ end }}
+    </div>
+
     <dialog id="payment-overlay" class="payment-overlay" aria-labelledby="payment-overlay-title">
       <div class="payment-overlay-body">
         <div class="payment-overlay-header">

@@ -100,6 +100,15 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			methods = []string{"cash", "card"}
 		}
 		defaultMethod := methods[0]
+		// ut-docs#1336: one-tap quick pay in the default view's footer.
+		// payMethods is already preferred-method-first (the reorder above),
+		// so its head IS the shop's default; nil when no method rows exist,
+		// which the template mirrors with the same hardcoded-cash fallback
+		// the overlay's own pay-grid `{{ else }}` branch uses.
+		var defaultPayMethod *data.PaymentMethod
+		if len(payMethods) > 0 {
+			defaultPayMethod = &payMethods[0]
+		}
 		// German TSE hard gate (ADR-0048): while an owner override window is
 		// active, the sale screen shows a persistent banner — sales are
 		// being recorded without a TSE signature, and everyone at the till
@@ -123,6 +132,7 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			"paymentFeesJSON":      template.JS(feesJSON),
 			"paymentMethodDefault": defaultMethod,
 			"payMethods":           payMethods,
+			"defaultPayMethod":     defaultPayMethod,
 			"aiIdentify":           aiService(r.Context(), d).Enabled(),
 			"fiscalOverrideActive": fiscalOverrideActive,
 			"fiscalOverrideUntil":  fiscalOverrideUntil,

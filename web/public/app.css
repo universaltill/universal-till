@@ -700,7 +700,39 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
    as a cautionary note for whoever next touches this ratio: it's been
    retuned four separate times chasing tender's CONTENT footprint, not
    the ratio itself being wrong — measure the actual content need first,
-   because the right ratio depends entirely on it. */
+   because the right ratio depends entirely on it.
+   2026-08-31 (ut-docs#1336): …and exactly per that note, the content
+   footprint changed again — the quick-pay row (.tender-quickpay, a base
+   .btn ~51px + gap) re-raised tender's need past its short-viewport
+   share, so a height-scoped override RETURNS below. Measured live
+   before re-adding it (real Chromium, e2e built-binary server, 1024px
+   width): with the base ratio the quick-pay button overflowed .tender
+   by +17.6px at 600px height (hit-test false), +3.3px at 650, clear
+   from ~680 (−5.3px), internal overflow gone entirely from ~710px.
+   Independent review (ut-docs#1336, F2) measured this override's own
+   cost outside its target element at the first-drafted 720px threshold:
+   products goes from 0px internal overflow to 113px at 1024x600 (as
+   intended — that's the tradeoff this override exists to make) but ALSO
+   from 0px to 50px/38px at 700/720px height specifically, i.e. degrading
+   an already-fits-with-no-scroll case in the 711-720px band purely
+   because the threshold sat above where quick-pay's own need stops,
+   not because quick-pay needed it there. Narrowed to 710px — exactly
+   the measured break-even where quick-pay's internal overflow already
+   reaches 0 under the BASE ratio — so 711-720px reverts to the base
+   ratio and keeps products' no-scroll case, while quick-pay itself is
+   already clear well before 710 (from ~680). No single-pixel cliff
+   introduced at the new boundary either (the earlier review's B3
+   objection): both sides sit deep inside their own already-measured
+   clear range, not at a freshly-drawn edge. */
+@media (max-height: 710px) {
+  /* Tender's share up (products keeps the larger track and its 8rem
+     floor): re-measured with this rule at 1024x600 — quick-pay clears
+     .tender's edge by −12.9px with zero internal overflow, at every
+     held-sales count 0-3 (the .tender-scroll split keeps held-strip
+     growth invisible to this budget), and products' grid still renders
+     usable tiles. See docs/code-reviews entry for ut-docs#1336. */
+  .pos-container { grid-template-rows: minmax(8rem, 5fr) minmax(0, 3fr); }
+}
 .pos-container > .basket { grid-area: basket; }
 .pos-container > .products { grid-area: products; }
 .pos-container > .journal { grid-area: journal; display: none; } /* own page */
@@ -1628,6 +1660,18 @@ a.btn, a.btn:hover { text-decoration: none; }
    them to the same floor. */
 .tender-default-footer > .btn { flex: 1; min-height: 2.5rem; padding: .45rem .8rem; font-size: .9rem; }
 .payment-trigger { font-weight: 700; }
+/* ut-docs#1336: one-tap quick pay — its own full-width row BELOW the
+   Hold Sale/Payment row, deliberately NOT a child of .tender-default-footer:
+   that row's compact 2.5rem floor (rule above) was justified there because
+   those buttons only OPEN things (hold modal, overlay). This button itself
+   completes a charge — money-consequential, like the dine-in/takeaway
+   toggle's own comment contrasts — so it keeps the base .btn 3rem/48px
+   floor. flex-shrink: 0 for the same reason as the footer's (outer .tender
+   scrolls as a last resort, never squeezes this to nothing). Full-width via
+   the row's single stretched flex item — direction-agnostic, no
+   left/right, nothing to mirror for RTL. */
+.tender-quickpay { display: flex; flex-shrink: 0; }
+.tender-quickpay > .btn { flex: 1; font-weight: 700; }
 
 /* The dialog itself: a slide-in panel anchored to the inline-end edge
    (right in LTR, left in RTL — logical properties per this repo's RTL
