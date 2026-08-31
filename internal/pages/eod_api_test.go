@@ -723,6 +723,14 @@ func TestPostEODRange_ValidatesFromTo(t *testing.T) {
 		{"unpadded from", "from=2026-1-1&to=2026-01-31"},
 		{"garbage to", "from=2026-01-01&to=not-a-date"},
 		{"garbage from", "from=not-a-date&to=2026-01-31"},
+		// ut-docs#1321 independent review finding: eodDateRe only checks the
+		// DIGIT SHAPE (\d{4}-\d{2}-\d{2}), not calendar validity — "9999-99-99"
+		// matches the regex but fails time.Parse. A discarded parse error
+		// there used to leave both dates at the zero value, making
+		// toDate.Sub(fromDate)==0 and silently BYPASSING the 366-day cap
+		// below rather than rejecting the request.
+		{"regex-shaped but invalid calendar date", "from=2026-01-01&to=9999-99-99"},
+		{"regex-shaped but invalid calendar date in from", "from=9999-99-99&to=2026-01-31"},
 	}
 	for _, c := range cases {
 		rec := httptest.NewRecorder()
@@ -732,6 +740,30 @@ func TestPostEODRange_ValidatesFromTo(t *testing.T) {
 		if rec.Code != http.StatusBadRequest {
 			t.Errorf("%s: expected 400, got %d: %s", c.name, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// ut-docs#1321: unlike its sibling POST /api/reports/archive/export
+// (maxReportArchiveExportRange), this endpoint used to have NO maximum
+// range at all — an unbounded EndOfDayRange scan over a shop's entire
+// sales/sale_lines/payments history. It now reuses data_api.go's own
+// 366-day cap (maxExportRange/maxExportRangeDays, ut-docs#229) since both
+// endpoints load the same heavy per-sale-row shape. Mirrors
+// TestExportDispatch_DateRangeTooLarge's shape.
+func TestPostEODRange_DateRangeTooLarge(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newEODAPITestMux(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/range",
+		strings.NewReader("from=2024-01-01&to=2026-06-01"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if want := "date range exceeds the 366-day maximum"; !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("body = %q, want it to contain %q", rec.Body.String(), want)
 	}
 }
 

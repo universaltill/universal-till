@@ -450,9 +450,17 @@ func pushOrderTrackingIfChanged(ctx context.Context, cfg *config.Config, db *sql
 	m := eff.Marketplace
 
 	now := time.Now().UTC()
-	live, err := data.NewPOSRepo(db).ListLiveTrackedOrders(ctx, func(o data.TrackedOrder) bool {
-		return pos.OrderTrackingVisible(o.Status, o.StatusUpdatedAt, now)
-	})
+	// ut-docs#1321: bound the SQL side to what could ever pass the callback
+	// below — a terminal row older than OrderTrackingExpiry can never be
+	// visible, so there's no reason to fetch and marshal it every tick just
+	// to filter it back out in Go. Non-terminal rows are deliberately never
+	// bounded (data.ListLiveTrackedOrders' own doc comment) — matches
+	// OrderTrackingVisible exactly, just pushed into SQL.
+	live, err := data.NewPOSRepo(db).ListLiveTrackedOrders(ctx,
+		pos.OrderTrackingTerminalStatuses(), now.Add(-pos.OrderTrackingExpiry),
+		func(o data.TrackedOrder) bool {
+			return pos.OrderTrackingVisible(o.Status, o.StatusUpdatedAt, now)
+		})
 	if err != nil {
 		return err
 	}
