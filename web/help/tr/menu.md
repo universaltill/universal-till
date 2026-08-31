@@ -9,4 +9,4 @@ routes: [/menu]
 
 # Menü ekranı
 
-Satış ekranındaki **☰ Menü** düğmesine dokunun; kasanın her bölümü için birer büyük karo açılır. Gitmek istediğiniz karoya dokunun; satışa dönmek için logoya dokunun.
+Satış ekranındaki **☰ Menü** düğmesine dokunun; kasanın her bölümü için birer büyük karo açılır. Gitmek istediğiniz karoya dokunun; satışa dönmek için logoya dokunun. Depozito iadesi başka bir sayfaya gitmeden, olduğu yerde küçük bir form olarak açılır.

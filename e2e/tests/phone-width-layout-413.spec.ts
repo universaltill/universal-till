@@ -100,15 +100,14 @@ test.describe('phone-width layout (ut-docs#413)', () => {
 
   test('the deposit-refund (pfand) modal and its manager-PIN-gated controls stay fully on-screen', async ({ page }) => {
     const assertClean = watchConsole(page);
-    await page.goto('/');
-    await page.waitForSelector('.pos-container');
 
-    // 2026-08-30 (nav rail, ut-docs#1332): the rail's own trigger
-    // (data-testid="kiosk-pfand-open", nav.html) is hidden at this file's
-    // 360px width -- index.html's phone-only fallback row
-    // (data-testid="kiosk-pfand-open-phone") is what's actually on-screen
-    // here, same real handler/#pfand-modal target either way.
-    await page.getByTestId('kiosk-pfand-open-phone').click();
+    // ut-docs#1334: deposit refund's only entry point is now the Menu
+    // page's own tile (data-testid="menu-pfand-open") -- the sale-screen
+    // nav-rail/phone-fallback split this comment used to describe no
+    // longer exists.
+    await page.goto('/menu');
+    await page.waitForSelector('.menu-grid');
+    await page.getByTestId('menu-pfand-open').click();
     await expect(page.locator('#pfand-modal')).toBeVisible();
 
     const geometry = await page.evaluate(() => {

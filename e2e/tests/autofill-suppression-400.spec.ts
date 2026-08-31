@@ -26,7 +26,18 @@ test.describe('browser autofill suppression (ut-docs#400)', () => {
     const qty = page.locator('.scan-row input[name="qty"]');
     await expect(qty).toHaveAttribute('autocomplete', /^off-/);
 
-    // An input identified only by id, no name — the fallback key.
+    assertClean();
+  });
+
+  // ut-docs#1334: the pfand fields moved off the sale screen onto /menu (the
+  // dialog is closed by default there, but its fields are still real DOM —
+  // the sweep runs at DOMContentLoaded regardless of the <dialog>'s open
+  // state, same as it always has for #hold-modal's fields on the sale
+  // screen).
+  test('an input identified only by id, no name, still gets the fallback key (menu page pfand dialog)', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/menu');
+
     const pfandAmount = page.locator('#pfand-amount');
     await expect(pfandAmount).toHaveAttribute('autocomplete', /^off-pfand-amount/);
 
@@ -34,9 +45,9 @@ test.describe('browser autofill suppression (ut-docs#400)', () => {
   });
 
   test('an input that already declares its own autocomplete is left alone', async ({ page }) => {
-    await page.goto('/');
+    await page.goto('/menu');
 
-    // web/ui/pages/index.html's pfand manager_pin field ships with an
+    // web/ui/pages/menu.html's pfand manager_pin field ships with an
     // explicit autocomplete="off" already in the template. The sweep must
     // not rewrite an existing declaration into the off-<key> form — that
     // would suggest it clobbers deliberate per-field choices, which is

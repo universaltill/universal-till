@@ -8,41 +8,30 @@
      keeps the document outline correct for assistive tech without
      bringing back the vertical space it used to cost sighted operators. -->
 <h1 class="visually-hidden">{{ T "app.name" }}</h1>
-<!-- 2026-08-30 (nav rail, ut-docs#1332): Inventory / Deposit refund used
-     to render in a second full-width row here, right above the product
-     grid, alongside New Sale -- exactly the "another row" the product
-     owner kept pointing at when comparing against a competitor POS.
-     Inventory is a plain global link, now in the shared left nav rail
-     (nav.html); New Sale moved into .tender-default-footer below instead,
-     next to Hold Sale and Payment, per the product owner's own later
-     request in the same session -- it renders at every width uniformly,
-     so it needed no rail copy or phone-fallback copy at all. Deposit
-     refund is the one item still split between the two: a rail copy
-     (nav.html, >480px) and this page's own phone-only fallback below
-     (<=480px) -- it targets THIS page's own #pfand-modal DOM, so it can't
-     live in nav.html unconditionally, and the rail itself isn't shown at
-     phone width (nav.html's own comment explains why). At >480px the
-     sale screen goes straight from the (visually-hidden) heading above
-     into BASKET/PRODUCTS/TENDER below.
+<!-- 2026-08-30 (nav rail, ut-docs#1332): Inventory used to render in a
+     second full-width row here, right above the product grid, alongside
+     New Sale -- exactly the "another row" the product owner kept pointing
+     at when comparing against a competitor POS. Inventory is a plain
+     global link, now in the shared left nav rail (nav.html); New Sale
+     moved into .tender-default-footer below instead, next to Hold Sale
+     and Payment, per the product owner's own later request in the same
+     session -- it renders at every width uniformly, so it needed no rail
+     copy or phone-fallback copy at all. At >480px the sale screen goes
+     straight from the (visually-hidden) heading above into
+     BASKET/PRODUCTS/TENDER below.
 
      .phone-fallback-only (app.css): hidden by default, shown ONLY at
      <=480px. A permanent side rail was never going to fit a 360px screen,
-     and cramming Inventory/New Sale/Deposit refund into the phone-width
-     TOP BAR instead (nav.html) regressed live when first tried: measured,
-     that bar wrapping to a third row overflowed the sale screen's fixed
-     100dvh/overflow:hidden height and clipped BASKET underneath it. A
-     different testid from nav.html's rail version (…-phone suffix) --
-     Playwright's strict-mode locators refuse to resolve if a testid
-     matches more than one DOM element, visible or not, so the two can't
-     share one even though only one is ever on-screen at a time.
+     and cramming Inventory into the phone-width TOP BAR instead (nav.html)
+     regressed live when first tried: measured, that bar wrapping to a
+     third row overflowed the sale screen's fixed 100dvh/overflow:hidden
+     height and clipped BASKET underneath it.
      e2e/tests/phone-width-layout-413.spec.ts (360px-only) targets this
      one; every other spec, run at a normal desktop-class viewport, keeps
      targeting nav.html's rail version. -->
 <div class="kiosk-header phone-fallback-only">
   <div class="kiosk-actions">
     <a class="btn secondary compact" data-testid="kiosk-inventory-link-phone" href="/inventory">📦 {{ T "kiosk.inventory" }}</a>
-    <button class="btn secondary compact" type="button" data-testid="kiosk-pfand-open-phone"
-            onclick="document.getElementById('pfand-result').textContent=''; var prev=document.activeElement; document.getElementById('pfand-modal').show(); if (document.getElementById('pfand-modal').contains(document.activeElement)) { document.activeElement.blur(); if (prev && prev!==document.body && prev.focus) prev.focus(); }">♻️ {{ T "pfand.action" }}</button>
   </div>
 </div>
 
@@ -72,55 +61,6 @@
                 onclick="document.getElementById('hold-modal').close(); document.getElementById('hold-label-input').value='';">
           {{ T "common.cancel" }}</button>
         <button type="submit" class="btn primary">{{ T "hold.action" }}</button>
-      </div>
-    </form>
-  </dialog>
-
-  <!-- Pfandrückgabe (ut-docs#248): a manager-gated cash payout unrelated to
-       any specific earlier sale — a customer can walk in with only empty
-       bottles. Static (no server round-trip to open), same pattern as
-       #hold-modal. Recorded via the existing cash-adjustment machinery
-       (POST /api/shifts/pfandrueckgabe) with a fixed reason so it's
-       reportable distinctly from other adjustments. -->
-  <dialog id="pfand-modal" class="modifier-modal" aria-labelledby="pfand-modal-title">
-    <form class="stacked-form" hx-post="/api/shifts/pfandrueckgabe" hx-target="#pfand-result" hx-swap="innerHTML"
-          hx-on::before-swap="if (event.detail.target && event.detail.target.id === 'pfand-result') { event.detail.shouldSwap = true; event.detail.isError = false; }"
-          hx-on::after-request="if (event.detail.xhr && event.detail.xhr.status >= 200 && event.detail.xhr.status < 300) { var m = document.getElementById('pfand-modal'); m.close(); this.reset(); }">
-      <h3 id="pfand-modal-title">{{ T "pfand.modal.title" }}</h3>
-      <input type="hidden" name="amount" id="pfand-amount-minor">
-      <!-- ut-docs#1249: was type="number" + onchange. osk.js (the kiosk's
-           custom keyboard) types by mutating .value and firing only `input`
-           — never `change`, and a script-set .value never sets a control's
-           "dirty value" flag, so blur can't synthesize `change` either.
-           Net effect: on a real touch till (osk.js's default/auto mode),
-           #pfand-amount-minor — the field actually POSTed — never updated,
-           so every payout 400'd with "amount must be greater than zero"
-           regardless of what the operator typed. `oninput` fires for both
-           osk.js keystrokes and real typing. Separately, type="number"
-           silently resets .value to "" on any momentarily-invalid float
-           string (verified live: typing '2','.','5','0' produced a final
-           .value of "50", not "2.50") — text+inputmode="decimal" avoids
-           that entirely (never coerces the string) and moves osk.js's
-           insert()/backspace() onto their cursor-aware setRangeText path,
-           which number/email inputs don't expose. window.utCurrency.toMinor
-           already degrades any unparsable string to 0, so a malformed
-           amount still surfaces the existing, correct 400 — never a silent
-           wrong charge. -->
-      <label>{{ T "pfand.modal.amount" }} ({{ currency.Display }})
-        <input type="text" id="pfand-amount" inputmode="decimal"
-               pattern="{{ if eq currency.Decimals 0 }}[0-9]+{{ else }}[0-9]+(\.[0-9]{1,2})?{{ end }}"
-               required placeholder="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}"
-               oninput="document.getElementById('pfand-amount-minor').value = window.utCurrency.toMinor(this.value)">
-      </label>
-      <label>{{ T "pfand.modal.manager_pin" }}
-        <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off">
-      </label>
-      <div id="pfand-result" class="muted" style="min-height:1.3rem"></div>
-      <div class="modifier-actions">
-        <button type="button" class="btn secondary"
-                onclick="document.getElementById('pfand-modal').close(); this.form && this.form.reset(); document.getElementById('pfand-result').textContent='';">
-          {{ T "pfand.modal.cancel" }}</button>
-        <button type="submit" class="btn primary">{{ T "pfand.modal.confirm" }}</button>
       </div>
     </form>
   </dialog>
@@ -228,8 +168,8 @@
          Payment button opens the method/split UI as a panel layered OVER the
          products column — basket (a separate grid area, .pos-container >
          .basket) is never covered, so it stays visible while paying. A
-         native <dialog> (same pattern as #modifier-modal/#hold-modal/
-         #pfand-modal above) gives free focus-trap + Escape-to-close; its
+         native <dialog> (same pattern as #modifier-modal/#hold-modal
+         above) gives free focus-trap + Escape-to-close; its
          ::backdrop is made transparent in app.css specifically so it doesn't
          dim/hide the basket the way those other dialogs' backdrops do. -->
     <!-- Hold Sale stays in the default view, NOT inside the payment overlay

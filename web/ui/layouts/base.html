@@ -53,7 +53,8 @@
     {{ template "bugreport_panel" . }}
     <!-- Manager-override-elevation dialog (ut-docs#557). Empty/pre-built
          placeholder, OUTSIDE any <form> — same precedent as index.html's
-         #modifier-modal/#hold-modal/#pfand-modal. checkOrElevate's
+         #modifier-modal/#hold-modal (and menu.html's #pfand-modal, moved
+         there in ut-docs#1334). checkOrElevate's
          needsElevation branch (elevation.go's renderElevationPrompt) fills
          this in via hx-swap-oob="true" targeting this id: rendering the
          dialog's own <form> straight into the triggering action's own

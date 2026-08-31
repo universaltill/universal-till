@@ -341,6 +341,17 @@ body.menu-screen .session-admin-link { display: none; }
   background: var(--surface); border: 1px solid var(--border);
   border-radius: var(--radius-lg); box-shadow: var(--shadow);
   color: var(--text); text-decoration: none; text-align: center;
+  /* ut-docs#1334 (review): .menu-tile is now used on a <button> (the deposit-
+     refund tile) as well as on <a>. A <button> does NOT inherit body's font,
+     so without this it rendered its label AND its ♻️ .menu-ico in the UA
+     default (measured: font-family "Arial", vs the app stack every sibling
+     tile gets) — which also drops body's explicit colour-emoji fallback
+     chain ("Noto Color Emoji" …, the one scripts/ci/guard-emoji-font.sh
+     exists to keep), leaving that one glyph to implicit fontconfig
+     substitution on the Pi kiosk. Same normalisation .btn-tile/.nav-toggle
+     already apply for the same reason; a no-op for the <a> tiles, which
+     inherit these values already. */
+  font: inherit; cursor: pointer;
   transition: transform .06s ease, border-color .15s ease;
 }
 .menu-tile:hover, .menu-tile:active { border-color: var(--brand); transform: translateY(-2px); }

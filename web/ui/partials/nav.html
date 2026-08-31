@@ -49,37 +49,12 @@
          these three unconditionally clipped BASKET under a third nav row
          at 360px) -- Inventory already has its own tile on the ☰ Menu
          launcher page, so hiding it here at phone width costs nothing.
-         New Sale/Deposit refund have no such equivalent, so index.html
-         still renders its OWN small phone-only fallback row for exactly
-         those two, shown only at <=480px -- see index.html's own comment. -->
+         index.html still renders its OWN small phone-only fallback row for
+         Inventory, shown only at <=480px -- see index.html's own comment. -->
     <a href="/inventory" class="nav-toggle nav-rail-only" data-testid="kiosk-inventory-link">
       <span class="nav-toggle-ico" aria-hidden="true">📦</span>
       <span class="nav-toggle-label">{{ T "kiosk.inventory" }}</span>
     </a>
-    {{ if .saleScreen }}
-    <!-- Deposit refund, unlike Inventory above, targets DOM that only
-         exists on the sale screen itself (#pfand-modal -- index.html) --
-         rendered here (nav.html shares the same page-level template data
-         as index.html, `.saleScreen` included) rather than in index.html,
-         so it visually sits in the SAME rail column as everything else
-         instead of a second, separately-positioned fragment. Guarding on
-         `.saleScreen` keeps it out of the rail (and its now-nonexistent
-         target) on every other page. Hidden at <=480px (.nav-rail-only) --
-         index.html's own phone-only fallback row (hidden at every OTHER
-         width) covers this tier with a real, page-local target instead.
-
-         2026-08-30: New Sale used to render here too -- moved into
-         .tender-default-footer instead (index.html, next to Hold Sale and
-         Payment), per the product owner's own live request. That row
-         renders at every width uniformly, so New Sale no longer needs a
-         separate rail copy OR a separate phone-fallback copy the way
-         Deposit refund still does. -->
-    <button class="nav-toggle nav-rail-only" type="button" data-testid="kiosk-pfand-open"
-            onclick="document.getElementById('pfand-result').textContent=''; var prev=document.activeElement; document.getElementById('pfand-modal').show(); if (document.getElementById('pfand-modal').contains(document.activeElement)) { document.activeElement.blur(); if (prev && prev!==document.body && prev.focus) prev.focus(); }">
-      <span class="nav-toggle-ico ico-boost" aria-hidden="true">♻️</span>
-      <span class="nav-toggle-label">{{ T "pfand.action" }}</span>
-    </button>
-    {{ end }}
   </div>
   <div class="nav-right">
     <!-- Contextual help: resolves to the manual topic documenting THIS page

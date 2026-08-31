@@ -30,10 +30,13 @@ import { setOskMode } from './helpers';
 // nothing is ever focused — keyboard or not — until the operator deliberately
 // taps a field, exactly like every other non-autofocus field in the app.
 
+// ut-docs#1334: deposit refund moved off the sale screen onto its own Menu
+// tile — opened via /menu's data-testid="menu-pfand-open" button now, not
+// the sale screen's (now-removed) nav-rail/phone-fallback pair.
 async function openPfand(page: import('@playwright/test').Page) {
-  await page.goto('/');
-  await page.waitForSelector('.pos-container');
-  await page.locator('[data-testid="kiosk-pfand-open"]').click();
+  await page.goto('/menu');
+  await page.waitForSelector('.menu-grid');
+  await page.locator('[data-testid="menu-pfand-open"]').click();
   await expect(page.locator('#pfand-modal')).toBeVisible();
 }
 
