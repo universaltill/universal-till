@@ -182,11 +182,11 @@ func RenderWith(files []string, funcs template.FuncMap) func(name string, data a
 	stripped := stripWebPrefixes(files)
 	// Cache key is the file set itself (ut-docs#1320): callers rebuild the
 	// same literal file slice on every call (some per-request, e.g.
-	// catalog/handlers.go's renderCatalogTable closure), so keying on the
-	// joined paths — rather than trusting call sites to share one cached
-	// RenderWith(...) result — is what makes every one of them hit cache
-	// regardless of how the call site is structured. "\x00" can't appear in
-	// a path, so this can't collide two different file sets.
+	// catalog/handlers.go's row_oob.go fragment renderers), so keying on
+	// the joined paths — rather than trusting call sites to share one
+	// cached RenderWith(...) result — is what makes every one of them hit
+	// cache regardless of how the call site is structured. "\x00" can't
+	// appear in a path, so this can't collide two different file sets.
 	key := "httpx.RenderWith:" + strings.Join(stripped, "\x00")
 	return func(name string, data any) http.HandlerFunc {
 		return func(w http.ResponseWriter, r *http.Request) {
