@@ -2918,6 +2918,31 @@ func formatArchiveTimestamp(raw string) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
+// GetArchivedReport returns the single archived report for (kind, period),
+// via the report_archive `UNIQUE(kind, period)` index — for a caller that
+// already knows both (ut-docs#1323: the EOD reprint handler previously
+// called ListArchivedReports(ctx, 100) and linear-scanned up to 100 full
+// report blobs, including their large content_json, just to find this one
+// row). false, nil means no such report exists.
+func (r *POSRepo) GetArchivedReport(ctx context.Context, kind, period string) (ArchivedReportRow, bool, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, kind, period, content_json, created_at,
+       z_number, prev_z_number, prev_closed_at, first_receipt, last_receipt
+FROM report_archive WHERE kind = ? AND period = ?`, kind, period)
+	if err != nil {
+		return ArchivedReportRow{}, false, fmt.Errorf("get archived report: %w", err)
+	}
+	defer rows.Close()
+	if !rows.Next() {
+		return ArchivedReportRow{}, false, rows.Err()
+	}
+	a, err := scanArchivedReport(rows)
+	if err != nil {
+		return ArchivedReportRow{}, false, err
+	}
+	return a, true, nil
+}
+
 // ListArchivedReports returns recent archived reports, newest first.
 func (r *POSRepo) ListArchivedReports(ctx context.Context, limit int) ([]ArchivedReportRow, error) {
 	rows, err := r.db.QueryContext(ctx, `

@@ -25,6 +25,12 @@ func (s *Store) Set(ctx context.Context, key, value string) error {
 	return s.repo.Set(ctx, key, value)
 }
 
+// GetByPrefix returns every key/value pair whose key starts with prefix, in
+// one query — see SettingsRepo.GetByPrefix.
+func (s *Store) GetByPrefix(ctx context.Context, prefix string) (map[string]string, error) {
+	return s.repo.GetByPrefix(ctx, prefix)
+}
+
 // SetMany upserts every pair in one transaction — all or nothing.
 func (s *Store) SetMany(ctx context.Context, kv map[string]string) error {
 	return s.repo.SetMany(ctx, kv)
