@@ -177,7 +177,32 @@ export async function waitForStableLayout(page: Page, selector: string, maxFrame
 // — callers must restore 'auto' in an afterEach even when the test body
 // fails, or a failed run leaks e.g. osk=on into unrelated later specs.
 export async function setOskMode(page: Page, mode: string) {
-  await page.goto('/settings');
+  // ut-docs#1375: an afterEach commonly calls this right after the test
+  // body's last action (e.g. a shift-close/form submit) triggers its own
+  // client-side navigation — that navigation can still be in flight, or
+  // about to start, here. A single upfront `waitForLoadState('load')`
+  // isn't enough on its own: when the prior navigation hasn't actually
+  // begun yet at that check, it reports "already loaded" and this
+  // helper's own goto below starts, only for the prior navigation to
+  // then fire and abort it mid-flight (`net::ERR_ABORTED`) — confirmed
+  // by hitting exactly that once even with the upfront wait in place.
+  // So: wait for load first (handles the common case cheaply), then
+  // retry the goto itself a couple of times on the two error shapes this
+  // race actually produces ("interrupted by another navigation" and
+  // "net::ERR_ABORTED"), which is robust regardless of *when* the
+  // trailing navigation happens to fire.
+  await page.waitForLoadState('load').catch(() => {});
+  for (let attempt = 1; ; attempt++) {
+    try {
+      await page.goto('/settings');
+      break;
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      const isNavigationRace = /interrupted by another navigation|ERR_ABORTED/.test(message);
+      if (!isNavigationRace || attempt >= 3) throw err;
+      await page.waitForLoadState('load').catch(() => {});
+    }
+  }
   const osk = page.locator('form[hx-post="/api/settings/osk"] select');
   await osk.selectOption(mode);
   await Promise.all([
