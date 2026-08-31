@@ -79,9 +79,13 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		// (basis points) + fixed (minor units); the tender UI shows a live
 		// "≈ fee" hint so the cashier picks the cheaper provider (ADR-0016
 		// manual mode).
+		// ut-docs#1323: one prefix-scan query for every payments.fee.* row,
+		// instead of one Settings.Get per active payment method on every
+		// load of this, the product's highest-traffic page.
 		fees := map[string]map[string]int64{}
+		feeSettings, _ := d.Settings.GetByPrefix(r.Context(), "payments.fee.")
 		for _, m := range payMethods {
-			if raw, ok, _ := d.Settings.Get(r.Context(), "payments.fee."+m.ID); ok && raw != "" {
+			if raw, ok := feeSettings["payments.fee."+m.ID]; ok && raw != "" {
 				var f struct {
 					BP    int64 `json:"bp"`
 					Fixed int64 `json:"fixed"`
