@@ -709,11 +709,22 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
    width): with the base ratio the quick-pay button overflowed .tender
    by +17.6px at 600px height (hit-test false), +3.3px at 650, clear
    from ~680 (−5.3px), internal overflow gone entirely from ~710px.
-   Threshold 720px sits above that measured break-even so both sides of
-   the boundary have real margin (no single-pixel cliff — the earlier
-   review's B3 objection): at 721px+ the base ratio already clears by
-   −12.9px; under it the boosted share below applies. */
-@media (max-height: 720px) {
+   Independent review (ut-docs#1336, F2) measured this override's own
+   cost outside its target element at the first-drafted 720px threshold:
+   products goes from 0px internal overflow to 113px at 1024x600 (as
+   intended — that's the tradeoff this override exists to make) but ALSO
+   from 0px to 50px/38px at 700/720px height specifically, i.e. degrading
+   an already-fits-with-no-scroll case in the 711-720px band purely
+   because the threshold sat above where quick-pay's own need stops,
+   not because quick-pay needed it there. Narrowed to 710px — exactly
+   the measured break-even where quick-pay's internal overflow already
+   reaches 0 under the BASE ratio — so 711-720px reverts to the base
+   ratio and keeps products' no-scroll case, while quick-pay itself is
+   already clear well before 710 (from ~680). No single-pixel cliff
+   introduced at the new boundary either (the earlier review's B3
+   objection): both sides sit deep inside their own already-measured
+   clear range, not at a freshly-drawn edge. */
+@media (max-height: 710px) {
   /* Tender's share up (products keeps the larger track and its 8rem
      floor): re-measured with this rule at 1024x600 — quick-pay clears
      .tender's edge by −12.9px with zero internal overflow, at every
