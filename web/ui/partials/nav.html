@@ -59,9 +59,27 @@
   <div class="nav-right">
     <!-- Contextual help: resolves to the manual topic documenting THIS page
          (route → topic comes from the topics' own front matter), falling back
-         to the manual's index when nothing claims the route yet. -->
-    <a class="help-hint" href="{{ helpHref }}" title="{{ T "help.open" }}"
-       aria-label="{{ T "help.open" }}" data-testid="help-hint">?</a>
+         to the manual's index when nothing claims the route yet.
+         2026-09-01 (ut-docs#1348, product owner, live on the tablet): used
+         to be the bare `.help-hint` markup (a small, deliberately
+         low-contrast outlined circle meant to sit quietly next to a page
+         heading elsewhere in the app — see its base rule in app.css). Inside
+         the rail that read as visibly smaller than, and left-aligned
+         against, every other icon here, because it never got the
+         `.nav-toggle`/`.nav-toggle-ico` button treatment the rest of the
+         rail shares (fixed rounded-square box, background, centered
+         content) — a `.nav .help-hint` override tried to patch just the
+         box size, but `.nav-right`'s `align-items: stretch` only stretches
+         (and thus centers) an item with no fixed size of its own, so a
+         fixed-size override left it pinned to flex-start instead. Now
+         `.nav-toggle` like every sibling here; `.help-hint` itself is
+         untouched and keeps its own small-circle look everywhere else it's
+         used (`helpLink`, next to a page heading). -->
+    <a class="nav-toggle" href="{{ helpHref }}" title="{{ T "help.open" }}"
+       aria-label="{{ T "help.open" }}" data-testid="help-hint">
+      <span class="nav-toggle-ico" aria-hidden="true">?</span>
+      <span class="nav-toggle-label">{{ T "help.open" }}</span>
+    </a>
     <!-- 🐞 bug-report toggle (ut-docs#346). Same trick as the sync/session
          chips: nav.html has no per-request data, so an htmx fragment loads
          after render and the /ui/bugreport-chip route does the manager

@@ -2,5 +2,10 @@
         data-testid="bugreport-toggle" aria-expanded="false"
         aria-controls="bugreport-panel"
         title="{{ T "issuereport.nav_label" }}" aria-label="{{ T "issuereport.nav_label" }}">
-  <span class="nav-toggle-ico" aria-hidden="true">🐞</span>
+  <!-- ico-boost (ut-docs#1348, product owner, live on the tablet): 🐞 reads
+       visibly smaller than 👤/🔒 and the rest of the rail at the same
+       font-size — same per-glyph ink-coverage gap app.css's .ico-boost
+       comment already documents for ☰/♻️/🔒, just not caught for this glyph
+       in that first pass. -->
+  <span class="nav-toggle-ico ico-boost" aria-hidden="true">🐞</span>
 </button>
