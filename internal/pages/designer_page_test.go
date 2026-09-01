@@ -122,6 +122,36 @@ func TestDesigner_SearchBoxTriggerFiresOnSyntheticInputEvent(t *testing.T) {
 	}
 }
 
+// TestDesigner_HelpHintResolvesToOwnTopic (ut-docs#1388) guards against the
+// contextual "?" on /designer resolving to an unrelated topic. It used to
+// land on "Catalog, variants & barcodes" because catalog.md's front matter
+// claimed the /designer route — a stale claim from before Till Designer had
+// its own manual page. Anchored on data-testid="help-hint" the same way
+// TestHelpHintResolvesPerPage is, independent of markup/attribute order.
+func TestDesigner_HelpHintResolvesToOwnTopic(t *testing.T) {
+	dp := newDesignerTestDeps(t)
+	mux := http.NewServeMux()
+	registerDesigner(mux, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/designer", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /designer: code %d body %s", rec.Code, rec.Body.String())
+	}
+	tag := helpHintTag.FindString(rec.Body.String())
+	if tag == "" {
+		t.Fatal("no help hint rendered on /designer")
+	}
+	m := helpHintHrefAttr.FindStringSubmatch(tag)
+	if m == nil {
+		t.Fatalf("help hint tag has no href: %s", tag)
+	}
+	if m[1] != "/help/till-designer" {
+		t.Errorf("hint on /designer → %s, want /help/till-designer", m[1])
+	}
+}
+
 // TestDesigner_RendersAddErrorSurface (ut-docs#1220) guards the Designer's
 // only channel for telling an operator that "add as button" failed. htmx
 // swaps nothing into hx-target for a non-2xx, so without the dedicated
