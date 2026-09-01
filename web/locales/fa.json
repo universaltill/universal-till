@@ -1023,6 +1023,8 @@
   "shifts.variance": "مغایرت",
   "status.offline": "آفلاین",
   "status.online": "آنلاین",
+  "status.psu_underpowered": "منبع تغذیه ضعیف است",
+  "status.psu_underpowered_hint": "منبع تغذیه این دستگاه جریان کافی تأمین نمی‌کند — لوازم جانبی USB مانند صفحه‌لمسی ممکن است دچار مشکل شوند. آن را با منبع تغذیه رسمی این برد جایگزین کنید.",
   "status.register_till": "مارکت: متصل نیست",
   "status.update_available": "به‌روزرسانی موجود است",
   "status.update_now": "اکنون به‌روزرسانی کن",
