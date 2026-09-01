@@ -15,7 +15,13 @@ import (
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
-var helpHintHref = regexp.MustCompile(`class="help-hint" href="([^"]+)"`)
+// Anchored on data-testid="help-hint" rather than the CSS class — ut-docs#1348
+// changed the nav rail's help link from class="help-hint" to class="nav-toggle"
+// (matching every other rail icon's button treatment), and attribute order
+// isn't guaranteed, so this matches the whole opening tag first and then
+// pulls href out of it, independent of which class or attribute order is used.
+var helpHintTag = regexp.MustCompile(`<a\b[^>]*\bdata-testid="help-hint"[^>]*>`)
+var helpHintHrefAttr = regexp.MustCompile(`\bhref="([^"]+)"`)
 
 // The contextual "?" must resolve to the topic documenting the page it is on.
 //
@@ -54,9 +60,13 @@ func TestHelpHintResolvesPerPage(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /catalog: %d %s", rec.Code, rec.Body.String())
 	}
-	m := helpHintHref.FindStringSubmatch(rec.Body.String())
-	if m == nil {
+	tag := helpHintTag.FindString(rec.Body.String())
+	if tag == "" {
 		t.Fatal("no help hint rendered on /catalog")
+	}
+	m := helpHintHrefAttr.FindStringSubmatch(tag)
+	if m == nil {
+		t.Fatalf("help hint tag has no href: %s", tag)
 	}
 	if m[1] != "/help/catalog" {
 		t.Errorf("hint on /catalog → %s, want /help/catalog", m[1])

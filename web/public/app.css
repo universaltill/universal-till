@@ -250,16 +250,9 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
    don't share the same intrinsic ink coverage at a given font-size. A
    per-glyph size bump for the ones that measured smaller, rather than
    inflating every icon (which would just make the already-full ones
-   crowd their box). */
+   crowd their box). 2026-09-01 (ut-docs#1348): 🐞 (bugreport_chip.html)
+   missed this first pass and got the same live-confirmed treatment. */
 .ico-boost { font-size: 1.55rem; }
-/* Same fixed-box treatment as .nav-toggle-ico, scoped to the rail only —
-   .help-hint's base rule (below) is used on other pages too (a small "?"
-   next to a page heading) and must stay that size there; only inside
-   .nav should it match every other rail icon's footprint. */
-.nav .help-hint {
-  inline-size: 1.6rem; block-size: 1.6rem; font-size: 1.1rem;
-  margin-inline-start: 0;
-}
 /* 2026-08-30 (product owner, live on the tablet): icon-only in the rail,
    like SumUp's own reference rail — the label doesn't need to be visible
    when the icon alone reads fine at this size, and dropping it lets the
