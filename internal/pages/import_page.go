@@ -330,6 +330,32 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		// way here: false, same as the field simply not existing before
 		// this card — never a gate, never a second round-trip.
 		useItemNumbersAsBarcodes := r.FormValue("use_item_numbers_as_barcodes") == "1"
+		// ut-docs#1356: on the FIRST render of this checkbox for THIS import
+		// — never a re-preview, never a commit — pre-tick it from the shop's
+		// own default (CatalogImportBarcodeFromSKUDefaultKey, settings page)
+		// instead of always starting unticked. "First render" is judged the
+		// same way the rest of this handler already distinguishes a fresh
+		// upload from a round-trip: no incoming staged_id at all (a re-
+		// preview/currency-confirm resubmit always carries the PREVIOUS
+		// preview's hidden staged_id field, forged by stagedFormID below —
+		// see its own comment) and not a commit (a direct, never-previewed
+		// commit must behave exactly as before this card, matching
+		// TestImport_BarcodelessCatalog_DirectCommit_NoGate). Suppressed on
+		// a wizard preview too: that render never shows the checkbox at all
+		// (the gate below is itself !wizardPreview-gated), and its eventual
+		// real commit (commitStagedImportForSetup) never forwards this field
+		// regardless — this only avoids the wizard's OWN preview table
+		// silently showing derived barcodes with no checkbox to explain why.
+		// This can only ever ADD a tick to what the raw form value already
+		// computed above — it never clears one an explicit submission set,
+		// and it plays no part at all in a commit that already has its own
+		// real field to read (a ticked-and-resubmitted preview, or a bare
+		// commit, both read their own r.FormValue untouched by this block).
+		if !useItemNumbersAsBarcodes && !commit && !wizardPreview && stagedID == "" {
+			if def, found, derr := settingsRepo.Get(r.Context(), data.CatalogImportBarcodeFromSKUDefaultKey); derr == nil && found && def == "1" {
+				useItemNumbersAsBarcodes = true
+			}
+		}
 
 		var res catimport.Result
 		if isBkp {

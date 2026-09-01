@@ -896,6 +896,44 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsRespondSaved(w, r, elev)
 	})
 
+	// ut-docs#1356: whether a fresh catalog-import preview's "derive a
+	// barcode from SKU" checkbox (ut-docs#1224, import_page.go) starts
+	// pre-ticked for this shop. Same manager-gated, elevation-wired,
+	// persist-a-bool shape as launch-on-startup above — this key is read
+	// only to choose that checkbox's initial state, never to change what an
+	// import/backfill actually does (the operator's own explicit submit
+	// always decides that).
+	mux.HandleFunc("POST /api/settings/catalog-import-barcode-default", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		_ = r.ParseForm()
+		b, err := strconv.ParseBool(strings.TrimSpace(r.Form.Get("enabled")))
+		if err != nil {
+			http.Error(w, "enabled must be a boolean", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			summaryKey := "elevation.summary.catalog_import_barcode_default_off"
+			if b {
+				summaryKey = "elevation.summary.catalog_import_barcode_default_on"
+			}
+			renderElevationPrompt(w, r, "/api/settings/catalog-import-barcode-default", "#catalog-import-barcode-default-msg",
+				httpx.T(locale, summaryKey),
+				[]elevationHiddenField{{Name: "enabled", Value: r.Form.Get("enabled")}}, elev)
+			return
+		}
+		val := "0"
+		if b {
+			val = "1"
+		}
+		if err := d.Settings.Set(r.Context(), data.CatalogImportBarcodeFromSKUDefaultKey, val); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		settingsAudit(r, posRepo, elev, "settings", data.CatalogImportBarcodeFromSKUDefaultKey, "catalog_import_barcode_default_changed", map[string]any{"enabled": b})
+		settingsRespondSaved(w, r, elev)
+	})
+
 	// Barcode symbology checklist (ADR-0059 Decision §2, ut-docs#935): one
 	// checkbox per internal/barcode registry entry, persisted immediately
 	// via SettingsRepo.SetEnabledBarcodeSymbologies — same manager-gated,

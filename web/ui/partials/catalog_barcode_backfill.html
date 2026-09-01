@@ -1,0 +1,80 @@
+{{/* ut-docs#1356: bulk "backfill barcodes from SKU" — preview (dry run)
+     and post-commit result fragments, swapped into catalog.html's
+     #barcode-backfill-modal <dialog> (same hx-get/hx-target/showModal()
+     pattern as #modifier-modal in buttons.html). Both templates share this
+     file since they're the same dialog's two states. */}}
+{{ define "catalog_barcode_backfill" }}
+<h3>{{ T "catalog.barcode_backfill.heading" }}</h3>
+{{ if .Empty }}
+<p class="muted">{{ T "catalog.barcode_backfill.empty" }}</p>
+{{ else }}
+{{ if .Eligible }}
+<p>{{ printf (T "catalog.barcode_backfill.eligible_count") .EligibleCount }}</p>
+<div style="max-height:40vh; overflow:auto">
+  <table class="table" style="min-width:32rem">
+    <thead><tr><th>{{ T "catalog.col.name" }}</th><th>{{ T "catalog.col.sku" }}</th><th>{{ T "catalog.barcode" }}</th></tr></thead>
+    <tbody>
+      {{ range .Eligible }}
+      <tr><td>{{ .Name }}</td><td>{{ .SKU }}</td><td>{{ .Barcode }}</td></tr>
+      {{ end }}
+      {{ if .MoreCount }}
+      <tr><td colspan="3" class="muted">{{ printf (T "catalog.barcode_backfill.more_rows") .MoreCount }}</td></tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+{{ else }}
+{{/* Not the fully-empty state (there ARE issue buckets below), but
+     nothing eligible to assign either — say that plainly rather than
+     silently omitting both the count and the confirm button with no
+     explanation. */}}
+<p class="muted">{{ T "catalog.barcode_backfill.empty" }}</p>
+{{ end }}
+{{ if .NoSymbology }}
+<p class="muted"><strong>{{ T "catalog.barcode_backfill.issue.no_symbology" }}</strong> ({{ len .NoSymbology }})</p>
+<ul>
+  {{ range .NoSymbology }}
+  <li>{{ .Name }} ({{ .SKU }})</li>
+  {{ end }}
+</ul>
+{{ end }}
+{{ if .AlreadyUsed }}
+<p class="muted"><strong>{{ T "catalog.barcode_backfill.issue.already_used" }}</strong> ({{ len .AlreadyUsed }})</p>
+<ul>
+  {{ range .AlreadyUsed }}
+  <li>{{ .Name }} ({{ .SKU }}) — {{ .Reason }}</li>
+  {{ end }}
+</ul>
+{{ end }}
+{{ end }}
+<div style="margin-block-start:.8rem; display:flex; gap:.5rem">
+  {{ if .Eligible }}
+  <button class="btn primary" type="button"
+          hx-post="/api/catalog/barcode-backfill" hx-target="#barcode-backfill-modal" hx-swap="innerHTML">
+    {{ T "catalog.barcode_backfill.confirm_btn" }}
+  </button>
+  {{ end }}
+  <button class="btn secondary" type="button" onclick="document.getElementById('barcode-backfill-modal').close()">{{ T "common.close" }}</button>
+</div>
+{{ end }}
+
+{{ define "catalog_barcode_backfill_result" }}
+<h3>{{ T "catalog.barcode_backfill.heading" }}</h3>
+<p>{{ printf (T "catalog.barcode_backfill.result") .Assigned }}</p>
+{{ if .Skipped }}
+<p class="muted">{{ printf (T "catalog.barcode_backfill.result_skipped") (len .Skipped) }}</p>
+<ul>
+  {{ range .Skipped }}
+  <li>{{ .Name }} ({{ .SKU }}) — {{ .Reason }}</li>
+  {{ end }}
+</ul>
+{{ end }}
+<div style="margin-block-start:.8rem">
+  {{/* Reload once the operator has actually read the report (not
+       HX-Refresh on the commit response itself — see handlers.go's
+       comment) so the catalog table picks up the newly-assigned
+       barcodes, same close-then-reload shape as
+       plugin_install_modal.html. */}}
+  <button class="btn secondary" type="button" onclick="document.getElementById('barcode-backfill-modal').close(); location.reload()">{{ T "common.close" }}</button>
+</div>
+{{ end }}

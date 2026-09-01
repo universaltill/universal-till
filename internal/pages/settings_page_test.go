@@ -240,6 +240,35 @@ func TestLaunchOnStartupEndpoint(t *testing.T) {
 	}
 }
 
+// CatalogImportBarcodeFromSKUDefault (ut-docs#1356) is the per-shop toggle
+// for whether the import page's "derive a barcode from SKU" checkbox
+// starts pre-ticked. Same manager-gated, elevation-wired, boolean shape as
+// launch-on-startup above — this endpoint only ever writes the settings-
+// table key, never anything import behaviour actually reads at commit time.
+func TestCatalogImportBarcodeFromSKUDefaultEndpoint(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	if rec := postForm(mux, "/api/settings/catalog-import-barcode-default", url.Values{"enabled": {"true"}}, &cashUser); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("cashier catalog-import-barcode-default = %d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
+	}
+	if rec := postForm(mux, "/api/settings/catalog-import-barcode-default", url.Values{"enabled": {"not-a-bool"}}, &mgrUser); rec.Code != http.StatusBadRequest {
+		t.Fatalf("malformed catalog-import-barcode-default = %d, want 400", rec.Code)
+	}
+	if rec := postForm(mux, "/api/settings/catalog-import-barcode-default", url.Values{"enabled": {"true"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("enable catalog-import-barcode-default = %d, want 204", rec.Code)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), data.CatalogImportBarcodeFromSKUDefaultKey); v != "1" {
+		t.Fatalf("stored %s = %q, want 1", data.CatalogImportBarcodeFromSKUDefaultKey, v)
+	}
+	if rec := postForm(mux, "/api/settings/catalog-import-barcode-default", url.Values{"enabled": {"false"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("disable catalog-import-barcode-default = %d, want 204", rec.Code)
+	}
+	if v, _, _ := d.Settings.Get(t.Context(), data.CatalogImportBarcodeFromSKUDefaultKey); v != "0" {
+		t.Fatalf("stored %s = %q, want 0", data.CatalogImportBarcodeFromSKUDefaultKey, v)
+	}
+}
+
 // recordingWindowController is a WindowController test double that records
 // whether ExitToOS was invoked (so exit-to-os tests can assert the hook was,
 // or for rejected auth was NOT, reached) and every mode ApplyMode was called
@@ -1641,6 +1670,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 		{"till-register", http.MethodPost, "/api/settings/till-register", url.Values{"register_id": {"regA"}}, gateElevation},
 		{"save", http.MethodPost, "/api/settings/save", url.Values{"currency": {"GBP"}}, gateElevation},
 		{"upsert", http.MethodPost, "/api/settings/upsert", url.Values{"key": {"x"}, "value": {"y"}}, gateElevation},
+		{"catalog-import-barcode-default", http.MethodPost, "/api/settings/catalog-import-barcode-default", url.Values{"enabled": {"true"}}, gateElevation},
 	}
 
 	doReq := func(tc matrixCase, u auth.User) *httptest.ResponseRecorder {
