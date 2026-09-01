@@ -506,7 +506,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 - [ ] **Table-side ordering** (customer's own phone, QR-per-table) and **true remote/online ordering** — neither exists; don't confuse either with the self-order kiosk above
 - [ ] **Order-for-collection** as its own order type (dine-in/takeaway/delivery/phone exists; collection doesn't yet)
 - [ ] **Germany fiscal compliance** (TSE signing, DSFinV-K export) — [ut-plugin-tax-de](https://github.com/universaltill/ut-plugin-tax-de) contains an incomplete skeleton only; it has not been verified with a real fiskaly account, is not legally validated, and must not be used by merchants until the unresolved cloud-versus-hardware TSE decision in [ut-docs#38](https://github.com/universaltill/ut-docs/issues/38) is approved
-- [ ] **Dine-in vs. takeaway VAT rate switching** — the per-line tax rate field exists, and an `OrderType` field exists for kitchen printing, but nothing connects the two yet
+- [x] **Dine-in vs. takeaway VAT rate switching** — every basket line carries its own dine-in/takeaway mode (ADR-0073, ut-docs#1181): a whole-sale two-segment control converts every line in one tap, a per-line icon pair flips one item, and each line is taxed for its own mode through the installed country plugin's `tax.rate.ask` (core has no country rules). A mixed sale is persisted, receipted, kitchen-printed, journalled and replicated as `mixed` with each line's mode; historic uniform sales are unchanged
 - [x] Setup wizard shop-type capture (ADR-0026) and opt-in eager cloud registration: the wizard's last screen asks once, unticked by default, and Settings can change the answer later (ADR-0071 — lazy registration stays the default for a shop that doesn't opt in)
 
 ### Long-term

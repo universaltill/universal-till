@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
+	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/print"
 )
 
@@ -161,11 +162,25 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 		}
 		doc.Meta = append(meta, doc.Meta...)
 	}
+	// ADR-0073 Decision 7: a MIXED sale marks each line's mode; a uniform
+	// sale prints exactly as before. English literals match this renderer's
+	// existing convention (locale "en", latin digits — see above).
+	mixed := detail.OrderType == pos.OrderTypeMixed
+	if mixed {
+		doc.Meta = append(doc.Meta, "Mixed dine-in / takeaway")
+	}
 	for _, l := range detail.Lines {
 		qty := strconv.FormatFloat(l.Qty, 'f', -1, 64)
 		name := l.Name
 		if rd.ShowSKU && l.SKU != "" {
 			name += " [" + l.SKU + "]"
+		}
+		if mixed {
+			if l.OrderType == pos.OrderTypeTakeaway {
+				name += " (takeaway)"
+			} else {
+				name += " (dine in)"
+			}
 		}
 		doc.Lines = append(doc.Lines, print.Line{Name: name, Qty: qty, Amount: money(l.LineTotal)})
 	}

@@ -50,6 +50,8 @@
       <span class="tag">{{ .Sale.Status }}</span>
       <span class="tag">{{ .Sale.SaleType }}</span>
       <span class="tag">{{ .Sale.TenderType }}</span>
+      {{/* ut-docs#1181 (ADR-0073): the derived order-type summary. */}}
+      {{ if eq .Sale.OrderType "takeaway" }}<span class="tag">🥡 {{ T "basket.order_type.takeaway" }}</span>{{ else if eq .Sale.OrderType "mixed" }}<span class="tag" data-testid="journal-mixed">⚖️ {{ T "basket.order_type.mixed" }}</span>{{ end }}
       <span class="tag">{{ if .Sale.Offline }}{{ T "journal.detail.offline" }}{{ else }}{{ T "journal.detail.online" }}{{ end }}</span>
       <span class="tag">{{ T "journal.detail.sync" }}: {{ .Sale.SyncStatus }}</span>
       <span class="tag">{{ .Sale.CreatedAt }}</span>
@@ -59,7 +61,7 @@
       <tbody>
         {{ range .Sale.Lines }}
           <tr>
-            <td class="catalog-name">{{ .Name }}</td>
+            <td class="catalog-name">{{ .Name }}{{ if eq $.Sale.OrderType "mixed" }} <span class="muted line-mode">{{ if eq .OrderType "takeaway" }}🥡 {{ T "basket.order_type.takeaway" }}{{ else }}🍽️ {{ T "basket.order_type.dine_in" }}{{ end }}</span>{{ end }}</td>
             <td class="muted">{{ .SKU }}</td>
             <td>{{ .Qty }}</td>
             <td>{{ money .UnitPrice }}</td>

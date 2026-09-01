@@ -46,9 +46,26 @@ func kitchenOrderTypeLabel(locale, charset, orderType string) string {
 		return ""
 	case pos.OrderTypeTakeaway:
 		return kitchenTicketText(locale, charset, "basket.order_type.takeaway")
+	case pos.OrderTypeMixed:
+		// ADR-0073: a mixed sale prints a translated header and each
+		// line carries its own marker (kitchenItemsFor).
+		return kitchenTicketText(locale, charset, "basket.order_type.mixed")
 	default:
 		return orderType
 	}
+}
+
+// kitchenLineModeLabel is the per-line marker for a MIXED sale's items
+// (ut-docs#1181, ADR-0073 Decision 7). Uniform sales get "" for every line
+// so their ticket bytes are unchanged.
+func kitchenLineModeLabel(locale, charset, saleOrderType, lineOrderType string) string {
+	if saleOrderType != pos.OrderTypeMixed {
+		return ""
+	}
+	if lineOrderType == pos.OrderTypeTakeaway {
+		return kitchenTicketText(locale, charset, "basket.order_type.takeaway")
+	}
+	return kitchenTicketText(locale, charset, "basket.order_type.dine_in")
 }
 
 // kitchenTicketText translates key for locale, with a Latin-safe fallback
@@ -94,7 +111,7 @@ func buildKitchenTicket(ctx context.Context, d *common.Deps, receiptNo string) (
 	}
 	cfg := printerConfig(ctx, d)
 	locale := httpx.DefaultLocale()
-	return kitchenTicketFor(detail, cfg, locale, kitchenStation, true, kitchenItemsFor(detail.Lines)), nil
+	return kitchenTicketFor(detail, cfg, locale, kitchenStation, true, kitchenItemsFor(detail, cfg, locale, detail.Lines)), nil
 }
 
 // kitchenTicketFor assembles one ticket from a sale's header fields, a
@@ -130,13 +147,14 @@ func kitchenTicketFor(detail data.SaleDetail, cfg print.Config, locale, station 
 	}
 }
 
-func kitchenItemsFor(lines []data.SaleDetailLine) []print.KitchenItem {
+func kitchenItemsFor(detail data.SaleDetail, cfg print.Config, locale string, lines []data.SaleDetailLine) []print.KitchenItem {
 	var items []print.KitchenItem
 	for _, l := range lines {
 		items = append(items, print.KitchenItem{
 			Qty:       strconv.FormatFloat(l.Qty, 'f', -1, 64),
 			Name:      l.Name,
 			Modifiers: l.Modifiers,
+			Mode:      kitchenLineModeLabel(locale, cfg.Charset, detail.OrderType, l.OrderType),
 		})
 	}
 	return items
@@ -248,7 +266,7 @@ func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo string) 
 		targets = append(targets, kitchenTarget{
 			station: g.station.Name,
 			address: g.station.PrinterAddress,
-			items:   kitchenItemsFor(g.lines),
+			items:   kitchenItemsFor(detail, cfg, locale, g.lines),
 		})
 	}
 	if len(defaultLines) > 0 {
@@ -256,7 +274,7 @@ func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo string) 
 			station:   kitchenStation,
 			isDefault: true,
 			address:   cfg.KitchenAddress,
-			items:     kitchenItemsFor(defaultLines),
+			items:     kitchenItemsFor(detail, cfg, locale, defaultLines),
 		})
 	}
 	// Render each ticket now so a per-target send failure later can't be a

@@ -441,6 +441,7 @@ func kioskSaleLinesAndTotal(d *common.Deps, locID string) ([]pos.SaleLineInput, 
 			LineDiscount:       l.LineDiscount,
 			LocationID:         locID,
 			Modifiers:          l.Modifiers,
+			OrderType:          l.OrderType, // ADR-0073: kiosk lines inherit the kiosk's whole-order default
 		})
 		lineBase := pos.AmountForQuantity(l.PriceCents, l.Qty)
 		lineNet := lineBase.Sub(l.LineDiscount)

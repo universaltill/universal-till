@@ -23,23 +23,38 @@ import (
 // screen load until resumed.
 const maxHoldLabelRunes = 64
 
-// heldSaleOrderType reads a held sale's order type straight out of its
-// stored JSON payload (ut-docs#1381) -- held_sales has no dedicated column
-// for it, unlike TableID. "" is dine-in/unset, same as everywhere else in
-// this package, and is also the correct decode of a legitimate pre-#1381
-// payload (the field simply didn't exist yet, `omitempty`). A genuine
-// unmarshal error is logged (same convention as this package's other
-// payload reads, e.g. the Resume handler below) rather than silently
-// swallowed -- it still defaults to "" here (the caller only uses this to
-// decide whether to show/enforce a table restriction, not to resume the
-// sale, and a payload that won't decode can never be resumed anyway).
-func heldSaleOrderType(payload string) string {
+// heldSaleMayHaveTable is the table-eligibility predicate over a held
+// payload (ut-docs#1181, ADR-0073 Decision 5): a table is allowed while any
+// LINE is dine-in — evaluated over the lines, with the legacy header
+// fallback (a pre-ADR-0073 "takeaway" header with no line values means every
+// line was takeaway). Replaces the header-only `!= Takeaway` check, which
+// would have been only accidentally right for a "mixed" header.
+func heldSaleMayHaveTable(payload string) bool {
 	var snap pos.BasketSnapshot
 	if err := json.Unmarshal([]byte(payload), &snap); err != nil {
-		log.Printf("heldSaleOrderType: decode held sale payload: %v", err)
-		return ""
+		log.Printf("heldSaleMayHaveTable: decode held sale payload: %v", err)
+		return false // fail closed, same as the direct-endpoint gate below
 	}
-	return snap.OrderType
+	if len(snap.Lines) == 0 {
+		return snap.OrderType != pos.OrderTypeTakeaway
+	}
+	anyTyped := false
+	for _, l := range snap.Lines {
+		if l.OrderType != "" {
+			anyTyped = true
+			break
+		}
+	}
+	for _, l := range snap.Lines {
+		mode := pos.NormalizeLineOrderType(l.OrderType)
+		if !anyTyped && snap.OrderType == pos.OrderTypeTakeaway {
+			mode = pos.OrderTypeTakeaway
+		}
+		if mode != pos.OrderTypeTakeaway {
+			return true
+		}
+	}
+	return false
 }
 
 func truncateRunes(s string, max int) string {
@@ -136,7 +151,7 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 				// has no dedicated held_sales column (unlike TableID), so this
 				// is the only place it's currently readable from at this layer.
 				moveTargets := make([]data.TableWithState, 0, len(freeTables))
-				if heldSaleOrderType(h.Payload) != pos.OrderTypeTakeaway {
+				if heldSaleMayHaveTable(h.Payload) {
 					for _, ft := range freeTables {
 						if ft.ID == h.TableID {
 							// The order's own current table is never a move target.
@@ -298,7 +313,7 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 			renderHeldStrip(w, r)
 			return
 		}
-		if found && heldSaleOrderType(held.Payload) == pos.OrderTypeTakeaway {
+		if found && !heldSaleMayHaveTable(held.Payload) {
 			tableID = ""
 		}
 		if tableID != "" {

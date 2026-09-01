@@ -6,7 +6,6 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
-	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // tablePickerOption is one choice in the basket's table-assignment picker.
@@ -45,7 +44,10 @@ func registerTablePicker(mux *http.ServeMux, d *common.Deps) {
 		// query entirely rather than fetching state nobody will render.
 		configured := false
 		var options []tablePickerOption
-		if d.Engine.OrderType() != pos.OrderTypeTakeaway {
+		// ADR-0073 Decision 5: eligibility follows the LINES (any dine-in
+		// line, or an empty basket whose default isn't takeaway), not the
+		// header — a mixed basket may take a table.
+		if d.Engine.HasDineInLine() {
 			states, err := repo.ListTablesWithState(r.Context())
 			if err != nil {
 				states = nil

@@ -446,6 +446,7 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 				UnitPrice:          money.FromMinor(s.UnitPrice),
 				TaxRateBasisPoints: s.TaxRateBP,
 				LocationID:         defaultLocation(s.LocationID),
+				OrderType:          s.OrderType, // ADR-0073 D6: return keeps the original line's mode
 			}
 		}
 

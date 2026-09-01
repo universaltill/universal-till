@@ -51,8 +51,11 @@ type Service struct {
 	discountPercentBP int64       // percentage discount as basis points (a rate, not money)
 	customerID        string
 	customerName      string
-	// orderType is "" (no explicit choice) or OrderTypeTakeaway. What (if
-	// anything) it does to tax is entirely up to taxAsker.
+	// orderType is "" (no explicit choice) or OrderTypeTakeaway. Since
+	// ut-docs#1181 (ADR-0073) it is the DEFAULT a newly added line inherits,
+	// not the tax context of every current line -- each BasketLine carries
+	// its own OrderType, which is what taxAsker is asked with. What (if
+	// anything) the mode does to tax is entirely up to taxAsker.
 	orderType string
 	// tableID/tableLabel (ut-docs#820, ADR-0054) are the dining table this
 	// sale is assigned to — both empty when unassigned. tableLabel is
@@ -100,6 +103,53 @@ type Config struct {
 // no built-in notion of any country's tax rules.
 const OrderTypeTakeaway = "takeaway"
 
+// OrderTypeMixed (ut-docs#1181, ADR-0073) is a SUMMARY value only: a basket
+// or completed sale whose lines carry both dine-in ("") and takeaway. It is
+// never a valid value for a single line -- NormalizeLineOrderType clamps
+// anything but OrderTypeTakeaway to "" -- and never a valid default for new
+// lines. It exists so a mixed sale's header is distinguishable from an
+// all-dine-in one on receipts, kitchen tickets, the order board, LAN sync
+// and integrations, rather than silently reusing "" for both.
+const OrderTypeMixed = "mixed"
+
+// NormalizeLineOrderType clamps a LINE order type to the two values a line
+// may carry: "" (dine-in) or OrderTypeTakeaway. OrderTypeMixed and any
+// unknown string are dine-in -- the same clamp every HTTP handler already
+// applies, centralised so no caller can smuggle a summary value onto a line.
+func NormalizeLineOrderType(orderType string) string {
+	if orderType == OrderTypeTakeaway {
+		return OrderTypeTakeaway
+	}
+	return ""
+}
+
+// SummarizeOrderType derives the header/summary order type from the lines
+// (ADR-0073 Decision 1): "" when every line is dine-in, OrderTypeTakeaway
+// when every line is takeaway, OrderTypeMixed when both occur. With no
+// lines it reports def -- the default the next scanned line will inherit --
+// so an empty basket's control still shows what the cashier chose.
+func SummarizeOrderType(lines []BasketLine, def string) string {
+	if len(lines) == 0 {
+		return NormalizeLineOrderType(def)
+	}
+	dineIn, takeaway := false, false
+	for _, l := range lines {
+		if NormalizeLineOrderType(l.OrderType) == OrderTypeTakeaway {
+			takeaway = true
+		} else {
+			dineIn = true
+		}
+	}
+	switch {
+	case dineIn && takeaway:
+		return OrderTypeMixed
+	case takeaway:
+		return OrderTypeTakeaway
+	default:
+		return ""
+	}
+}
+
 // TaxRateAsker lets an installed plugin override a line's effective tax
 // rate — e.g. a country-specific order-type VAT switch (Germany's §12 UStG:
 // some items tax differently for takeaway than dine-in). ok=false means the
@@ -127,7 +177,7 @@ type TaxRateAsker interface {
 // the TENDER path's job (it must not complete while any line is blocked),
 // not this display computation's.
 func (s *Service) effectiveTaxRateBP(l BasketLine) (int, bool) {
-	return effectiveTaxRateBPFor(l, s.taxAsker, s.orderType, s.cfg.TaxRateBasisPoints)
+	return effectiveTaxRateBPFor(l, s.taxAsker, l.OrderType, s.cfg.TaxRateBasisPoints)
 }
 
 // effectiveTaxRateBPFor is effectiveTaxRateBP's pure core: it reads no
@@ -216,6 +266,14 @@ type BasketLine struct {
 	// silently drop money. A double scan of the same label yields two
 	// visible lines the operator can void (accepted ADR trade-off).
 	NoMerge bool `json:"-"`
+	// OrderType (ut-docs#1181, ADR-0073) is THIS line's consumption mode:
+	// "" (dine-in) or OrderTypeTakeaway, never OrderTypeMixed. Set from the
+	// Service's default when the line is added, changed per line by
+	// SetLineOrderType, converted in bulk by SetOrderType. It is part of
+	// merge identity (mergeResolved) and is what the TaxRateAsker is asked
+	// with. Serialized so the basket partial can render the per-line
+	// control; SnapshotLine carries it through hold/resume.
+	OrderType string `json:"orderType,omitempty"`
 }
 
 // ModifierSignature is a stable key for two lines' modifier selections —
@@ -255,12 +313,36 @@ type Basket struct {
 	// notification surface (ut-docs#213): "info" (default), "success" or
 	// "error". Errors persist until dismissed; info/success auto-expire.
 	ToastLevel string `json:"toastLevel,omitempty"`
-	// OrderType is "" (dine-in/standard) or OrderTypeTakeaway.
+	// OrderType is the derived SUMMARY (ADR-0073, SummarizeOrderType): ""
+	// (every line dine-in), OrderTypeTakeaway (every line takeaway) or
+	// OrderTypeMixed. With no lines it is the default the next line
+	// inherits, so the control shows the cashier's choice on an empty basket.
 	OrderType string `json:"orderType,omitempty"`
 	// TableID/TableLabel (ut-docs#820) are the assigned dining table, both
 	// empty when the sale has none.
 	TableID    string `json:"tableId,omitempty"`
 	TableLabel string `json:"tableLabel,omitempty"`
+}
+
+// HasDineInLine reports whether any line is consumed on the premises --
+// the table-eligibility predicate (ADR-0073 Decision 5): a table is allowed
+// whenever at least one dine-in line exists (dine-in or mixed basket),
+// never for an all-takeaway one. An EMPTY basket follows the default, so a
+// cashier can still pick a table before the first item is rung up.
+func (b Basket) HasDineInLine() bool {
+	return hasDineInLine(b.Lines, b.OrderType)
+}
+
+func hasDineInLine(lines []BasketLine, def string) bool {
+	if len(lines) == 0 {
+		return NormalizeLineOrderType(def) != OrderTypeTakeaway
+	}
+	for _, l := range lines {
+		if NormalizeLineOrderType(l.OrderType) != OrderTypeTakeaway {
+			return true
+		}
+	}
+	return false
 }
 
 // ItemCount is the total quantity in the basket for the sale screen's
@@ -345,6 +427,7 @@ func (s *Service) scanQty(code string, qty float64) (*Basket, bool) {
 			if !cached.QtyFromCode {
 				cached.Qty = qty
 			}
+			cached.OrderType = s.orderType
 			s.mergeResolved(cached)
 			return &s.basket, true
 		}
@@ -357,6 +440,9 @@ func (s *Service) scanQty(code string, qty float64) (*Basket, bool) {
 		if !resolved.QtyFromCode {
 			resolved.Qty = qty
 		}
+		// ADR-0073: a new line inherits the current default mode. Stamped
+		// BEFORE merge so same-mode rescans merge and cross-mode ones don't.
+		resolved.OrderType = s.orderType
 		s.mergeResolved(resolved)
 		s.cacheScan(code, resolved)
 		return &s.basket, true
@@ -367,7 +453,7 @@ func (s *Service) scanQty(code string, qty float64) (*Basket, bool) {
 		// code already in the basket. Never bump a NoMerge (price-embedded)
 		// line this way: its Qty is fixed at 1 for one specific label, and
 		// qty+1 would double an absolute price (ADR-0059 §3).
-		if idx := s.findLineIndex(code); idx >= 0 && !s.lines[idx].NoMerge {
+		if idx := s.findLineIndexForMode(code, s.orderType); idx >= 0 && !s.lines[idx].NoMerge {
 			s.lines[idx].Qty += qty
 			s.recomputeTotals()
 			return &s.basket, true
@@ -400,6 +486,7 @@ func (s *Service) AddLineWithModifiers(base BasketLine, qty float64, mods []data
 	for _, m := range mods {
 		line.PriceCents = line.PriceCents.Add(money.FromMinor(m.PriceDeltaMinor))
 	}
+	line.OrderType = s.orderType // ADR-0073: inherit the default, same as scanQty
 	s.mergeResolved(line)
 	return s.basketCopyLocked()
 }
@@ -453,8 +540,16 @@ func (s *Service) mergeResolved(line BasketLine) {
 		s.recomputeTotals()
 		return
 	}
+	line.OrderType = NormalizeLineOrderType(line.OrderType)
 	sig := line.ModifierSignature()
 	for i := range s.lines {
+		if NormalizeLineOrderType(s.lines[i].OrderType) != line.OrderType {
+			// ADR-0073 Decision 3: the same product rung up once per
+			// consumption mode is TWO lines -- merging would collapse one
+			// VAT context into the other (a real money/tax bug), silently
+			// and depending on scan order.
+			continue
+		}
 		if s.lines[i].NoMerge {
 			// An existing price-embedded line must never be merged INTO
 			// either: a later plain scan of the same item would sum Qty and
@@ -498,6 +593,22 @@ func (s *Service) mergeResolved(line BasketLine) {
 	}
 	s.lines = append(s.lines, line)
 	s.recomputeTotals()
+}
+
+// findLineIndexForMode is findLineIndex restricted to lines in the given
+// order-type mode (ADR-0073): the resolver-less rescan fallback must bump a
+// line of the SAME mode, never fold a takeaway rescan into a dine-in line.
+func (s *Service) findLineIndexForMode(code, orderType string) int {
+	orderType = NormalizeLineOrderType(orderType)
+	for i := range s.lines {
+		if NormalizeLineOrderType(s.lines[i].OrderType) != orderType {
+			continue
+		}
+		if s.lines[i].SKU == code || s.lines[i].ItemID == code || s.lines[i].VariantID == code {
+			return i
+		}
+	}
+	return -1
 }
 
 func (s *Service) findLineIndex(code string) int {
@@ -608,7 +719,8 @@ func computeTotals(snap totalsSnapshot) computedTotals {
 	chargeTaxLines := make([]ChargeTaxLine, 0, len(snap.lines))
 	for i := range snap.lines {
 		l := &snap.lines[i]
-		rateBP, _ := effectiveTaxRateBPFor(*l, snap.taxAsker, snap.orderType, snap.cfg.TaxRateBasisPoints)
+		// ADR-0073: each line is rated for ITS OWN mode, not the basket's.
+		rateBP, _ := effectiveTaxRateBPFor(*l, snap.taxAsker, l.OrderType, snap.cfg.TaxRateBasisPoints)
 		lineTax, lineTotal := ComputeTaxBasisPoints(l.LineTotal, rateBP, snap.cfg.TaxInclusive)
 		total = total.Add(lineTotal)
 		vatLines = append(vatLines, VATLine{RateBP: rateBP, LineTotal: lineTotal.Minor(), TaxAmount: lineTax.Minor()})
@@ -689,7 +801,7 @@ func (s *Service) commitTotalsLocked(snap totalsSnapshot, c computedTotals) {
 	}
 	s.basket.CustomerID = snap.customerID
 	s.basket.CustomerName = snap.customerName
-	s.basket.OrderType = snap.orderType
+	s.basket.OrderType = SummarizeOrderType(snap.lines, snap.orderType)
 	s.basket.TableID = snap.tableID
 	s.basket.TableLabel = snap.tableLabel
 	s.basket.Tax = c.tax
@@ -825,21 +937,69 @@ func (s *Service) EffectiveLineTaxRateBP(l BasketLine) (rateBP int, blocked bool
 // for the arithmetic. A tax-exclusive catalog is the deliberate mirror
 // image: there the switch DOES move Basket.Total, because it's the net
 // that's held fixed.
+//
+// ADR-0073 Decision 2: this is the whole-basket BULK action and default
+// setter in one -- it converts every current line to orderType AND makes
+// orderType the mode new lines inherit. Per-line changes go through
+// SetLineOrderType. The invariant that a basket with no dine-in line has no
+// table (ut-docs#1355) is enforced by applyTablePolicyLocked.
 func (s *Service) SetOrderType(orderType string) *Basket {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	orderType = NormalizeLineOrderType(orderType)
 	s.orderType = orderType
-	if orderType == OrderTypeTakeaway {
-		// ut-docs#1355: a table assignment doesn't make sense for a
-		// takeaway/to-go order -- clear it the same way ClearTable does,
-		// rather than silently carrying a dine-in table onto a takeaway
-		// sale. Switching back to dine-in afterwards does NOT restore it;
-		// the cashier re-picks a table if the order goes dine-in again.
+	for i := range s.lines {
+		s.lines[i].OrderType = orderType
+	}
+	s.applyTablePolicyLocked()
+	s.recomputeTotals()
+	return s.basketCopyLocked()
+}
+
+// SetLineOrderType changes ONE line's consumption mode by LineKey
+// (ut-docs#1181, ADR-0073 Decision 2), leaving every other line and the
+// default for new lines untouched. ok=false for an unknown key or for a
+// value that is not a valid LINE mode (OrderTypeMixed is a summary, never a
+// line value -- rejected rather than clamped so a caller's bug surfaces).
+// A line that, after the change, is identical to another line in the same
+// mode is NOT auto-coalesced: the cashier sees two visible lines they can
+// void, the same accepted trade-off as NoMerge (ADR-0059 §3), and a later
+// rescan still merges normally.
+func (s *Service) SetLineOrderType(key, orderType string) (*Basket, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if orderType != "" && orderType != OrderTypeTakeaway {
+		return s.basketCopyLocked(), false
+	}
+	for i := range s.lines {
+		if s.lines[i].LineKey == key {
+			s.lines[i].OrderType = orderType
+			s.applyTablePolicyLocked()
+			s.recomputeTotals()
+			return s.basketCopyLocked(), true
+		}
+	}
+	return s.basketCopyLocked(), false
+}
+
+// HasDineInLine is the table-eligibility predicate (ADR-0073 Decision 5)
+// over the live basket -- see Basket.HasDineInLine.
+func (s *Service) HasDineInLine() bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return hasDineInLine(s.lines, s.orderType)
+}
+
+// applyTablePolicyLocked clears the table once no dine-in line remains
+// (ut-docs#1355, generalised by ADR-0073 Decision 5): a table assignment
+// doesn't make sense for a to-go order. Switching a line back to dine-in
+// afterwards does NOT restore it; the cashier re-picks a table. Caller must
+// hold s.mu.
+func (s *Service) applyTablePolicyLocked() {
+	if !hasDineInLine(s.lines, s.orderType) {
 		s.tableID = ""
 		s.tableLabel = ""
 	}
-	s.recomputeTotals()
-	return s.basketCopyLocked()
 }
 
 // TableID returns the id of the table the current sale is assigned to, or
@@ -876,7 +1036,9 @@ func (s *Service) TableLabel() string {
 func (s *Service) SetTable(tableID, label string) *Basket {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	if s.orderType == OrderTypeTakeaway {
+	if !hasDineInLine(s.lines, s.orderType) {
+		// ADR-0073 Decision 5: no dine-in line (all-takeaway, or an empty
+		// basket whose default is takeaway) -> no table.
 		tableID = ""
 		label = ""
 	}
@@ -942,6 +1104,7 @@ func (s *Service) removeLocked(sku string) {
 	}
 	s.lines = filtered
 	s.clearCacheForCode(sku)
+	s.applyTablePolicyLocked() // ADR-0073 D5: voiding the last dine-in line clears the table
 	s.recomputeTotals()
 }
 
@@ -966,6 +1129,7 @@ func (s *Service) removeLineLocked(key string) {
 		filtered = append(filtered, l)
 	}
 	s.lines = filtered
+	s.applyTablePolicyLocked() // ADR-0073 D5: voiding the last dine-in line clears the table
 	s.recomputeTotals()
 }
 

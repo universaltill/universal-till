@@ -44,6 +44,7 @@ func TestSaleCompletedEvent_ConnectorContract(t *testing.T) {
 		SaleID:        "sale-1",
 		ReceiptNo:     "R-000123",
 		SaleType:      "sale",
+		OrderType:     "mixed", // ADR-0073: derived sale summary (additive field)
 		Currency:      "AED",
 		SubtotalCents: 10000,
 		DiscountCents: 500,
@@ -57,7 +58,8 @@ func TestSaleCompletedEvent_ConnectorContract(t *testing.T) {
 		},
 		LineItems: []SaleLineItem{
 			{ItemID: "i-1", SKU: "SKU-1", Name: "Rice 5kg", Quantity: 2.5,
-				UnitPriceCents: 4000, TaxRateBP: 500, TaxCents: 475, TotalCents: 10000},
+				UnitPriceCents: 4000, TaxRateBP: 500, TaxCents: 475, TotalCents: 10000,
+				OrderType: "takeaway"}, // ADR-0073: per-line mode (additive field)
 		},
 		CompletedAt: time.Now().UTC(),
 	}
@@ -79,6 +81,9 @@ func TestSaleCompletedEvent_ConnectorContract(t *testing.T) {
 		}
 		if len(got.LineItems) != 1 || got.LineItems[0].SKU != "SKU-1" || got.LineItems[0].Quantity != 2.5 {
 			t.Fatalf("line item lost (SKU/decimal qty): %+v", got.LineItems)
+		}
+		if got.OrderType != "mixed" || got.LineItems[0].OrderType != "takeaway" {
+			t.Fatalf("ADR-0073 order types lost: header=%q line=%q", got.OrderType, got.LineItems[0].OrderType)
 		}
 		if len(got.Payments) != 1 || got.Payments[0].Method != "card" || got.Payments[0].AmountCents != 9975 {
 			t.Fatalf("payment lost: %+v", got.Payments)

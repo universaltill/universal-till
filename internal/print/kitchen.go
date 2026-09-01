@@ -46,6 +46,12 @@ type KitchenItem struct {
 	Qty       string // pre-formatted ("2")
 	Name      string
 	Modifiers []string
+	// Mode (ut-docs#1181, ADR-0073) is the pre-translated per-line
+	// dine-in/takeaway marker for a MIXED order only — printed under the
+	// item like a modifier so the cook knows which cup gets a lid. Empty
+	// (prints nothing, byte-identical to before) on every uniform sale,
+	// whose single header line already says it all.
+	Mode string
 }
 
 // orderLabel returns t.OrderLabel, or "ORDER" if the caller left it unset —
@@ -107,6 +113,9 @@ func RenderKitchenTicket(t KitchenTicket) []byte {
 		}
 		line(clip(label, Width/2)) // double-width halves the columns
 		b.Write(cmdDoubleOff)
+		if m := strings.TrimSpace(it.Mode); m != "" {
+			line(clip("  * "+strings.ToUpper(m), Width))
+		}
 		for _, m := range it.Modifiers {
 			if m = strings.TrimSpace(m); m != "" {
 				line(clip("  - "+m, Width))
@@ -154,6 +163,9 @@ func RenderKitchenTicketText(t KitchenTicket) string {
 			label = q + " x " + label
 		}
 		b.WriteString(clip(label, Width) + "\n")
+		if m := strings.TrimSpace(it.Mode); m != "" {
+			b.WriteString(clip("  * "+strings.ToUpper(m), Width) + "\n")
+		}
 		for _, m := range it.Modifiers {
 			if m = strings.TrimSpace(m); m != "" {
 				b.WriteString(clip("  - "+m, Width) + "\n")

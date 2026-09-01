@@ -12,6 +12,8 @@ build/
 dist/
 /seed_faq
 data/*.db
+data/*.db-shm
+data/*.db-wal
 .codex
 .github/agents
 .github/prompts

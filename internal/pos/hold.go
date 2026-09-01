@@ -37,6 +37,11 @@ type SnapshotLine struct {
 	// exactly the money bug the flag exists to prevent.
 	QtyFromCode bool `json:"qty_from_code,omitempty"`
 	NoMerge     bool `json:"no_merge,omitempty"`
+	// OrderType (ut-docs#1181, ADR-0073) is this line's own consumption
+	// mode. omitempty: absent on every pre-ADR-0073 payload, where Restore
+	// falls back to the header (a legacy "takeaway" header meant EVERY line
+	// was takeaway).
+	OrderType string `json:"order_type,omitempty"`
 }
 
 // BasketSnapshot captures the full in-progress sale state for hold/resume.
@@ -53,6 +58,11 @@ type BasketSnapshot struct {
 	// changing a resumed takeaway sale's VAT basis (EffectiveLineTaxRateBP/
 	// recomputeTotals both key off orderType, §12 UStG) — a compliance bug,
 	// not just a display one. Same convention as TableID/TableLabel below.
+	// Since ADR-0073 it is the derived SUMMARY (SummarizeOrderType) --
+	// "", "takeaway" or "mixed" -- and the per-line truth rides on each
+	// SnapshotLine.OrderType. A legacy payload (no line values) with a
+	// "takeaway" header restores every line as takeaway; "mixed" is never
+	// applied to a line.
 	OrderType string `json:"order_type,omitempty"`
 	// TableID/TableLabel (ut-docs#820) carry the assigned dining table
 	// through a hold/resume cycle, same convention as CustomerID/Name.
@@ -79,7 +89,7 @@ func (s *Service) Snapshot() BasketSnapshot {
 		DiscountPercentBP: s.discountPercentBP,
 		CustomerID:        s.customerID,
 		CustomerName:      s.customerName,
-		OrderType:         s.orderType,
+		OrderType:         SummarizeOrderType(s.lines, s.orderType),
 		TableID:           s.tableID,
 		TableLabel:        s.tableLabel,
 		Total:             s.basket.Total,
@@ -94,6 +104,7 @@ func (s *Service) Snapshot() BasketSnapshot {
 			TaxCodeID:   l.TaxCodeID,
 			Modifiers:   l.Modifiers,
 			QtyFromCode: l.QtyFromCode, NoMerge: l.NoMerge,
+			OrderType: l.OrderType,
 		})
 	}
 	return snap
@@ -106,8 +117,20 @@ func (s *Service) Restore(snap BasketSnapshot) {
 	// Lock-free cores, NOT s.Reset()/s.SetCustomer() — s.mu is non-reentrant
 	// and already held here (see the locking-pattern comment on Service.mu).
 	s.resetLocked()
+	// ADR-0073 legacy rule: a pre-ADR-0073 payload has no per-line values
+	// and its header IS the mode of every line. A new payload always writes
+	// an explicit "takeaway" on every takeaway line, so only a "takeaway"
+	// header ever needs to fill in omitted lines; "mixed"/"" fall to dine-in.
+	legacyLineMode := ""
+	if snap.OrderType == OrderTypeTakeaway {
+		legacyLineMode = OrderTypeTakeaway
+	}
 	for _, l := range snap.Lines {
 		key := l.LineKey
+		lineMode := NormalizeLineOrderType(l.OrderType)
+		if l.OrderType == "" {
+			lineMode = legacyLineMode
+		}
 		if key == "" {
 			// Self-heal a held sale saved before LineKey existed — an empty
 			// key would otherwise collide across every such line restored
@@ -123,6 +146,7 @@ func (s *Service) Restore(snap BasketSnapshot) {
 			TaxCodeID:   l.TaxCodeID,
 			Modifiers:   l.Modifiers,
 			QtyFromCode: l.QtyFromCode, NoMerge: l.NoMerge,
+			OrderType: lineMode,
 		})
 	}
 	s.discountType = snap.DiscountType
@@ -141,12 +165,12 @@ func (s *Service) Restore(snap BasketSnapshot) {
 	// than trust every caller to have kept it true. A no-op whenever the
 	// invariant already holds (the normal case); harmless on a legacy
 	// pre-#1381 payload (OrderType decodes to "", never Takeaway).
-	s.orderType = snap.OrderType
+	// The default for NEW lines after a resume: takeaway only when the held
+	// sale was uniformly takeaway; a mixed or dine-in sale defaults to
+	// dine-in (the product's standing default). Never OrderTypeMixed.
+	s.orderType = legacyLineMode
 	s.tableID = snap.TableID
 	s.tableLabel = snap.TableLabel
-	if s.orderType == OrderTypeTakeaway {
-		s.tableID = ""
-		s.tableLabel = ""
-	}
+	s.applyTablePolicyLocked()
 	s.recomputeTotals()
 }
