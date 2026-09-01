@@ -70,6 +70,11 @@
 </ul>
 {{ end }}
 <div style="margin-block-start:.8rem">
-  <button class="btn secondary" type="button" onclick="document.getElementById('barcode-backfill-modal').close()">{{ T "common.close" }}</button>
+  {{/* Reload once the operator has actually read the report (not
+       HX-Refresh on the commit response itself — see handlers.go's
+       comment) so the catalog table picks up the newly-assigned
+       barcodes, same close-then-reload shape as
+       plugin_install_modal.html. */}}
+  <button class="btn secondary" type="button" onclick="document.getElementById('barcode-backfill-modal').close(); location.reload()">{{ T "common.close" }}</button>
 </div>
 {{ end }}

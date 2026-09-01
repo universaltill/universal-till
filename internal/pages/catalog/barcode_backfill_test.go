@@ -131,8 +131,14 @@ func TestBarcodeBackfillCommit_AssignsAndReportsSkips(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("commit code = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
-	if rec.Header().Get("HX-Refresh") != "true" {
-		t.Fatalf("commit must set HX-Refresh: true for the full catalog refresh, got %q", rec.Header().Get("HX-Refresh"))
+	// Deliberately NOT HX-Refresh (review finding, ut-docs#1356): htmx
+	// processes that header before swapping in the response body, so
+	// setting it here would reload the page and discard this very result
+	// fragment — the operator would never see which items were skipped or
+	// why. The result renders as an ordinary swapped fragment instead (see
+	// handlers.go's comment); the "Close" button reloads once it's read.
+	if rec.Header().Get("HX-Refresh") == "true" {
+		t.Fatalf("commit must NOT set HX-Refresh: true — that would discard this result fragment before the operator reads it")
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, "Assigned 1") {
@@ -207,5 +213,68 @@ func TestBarcodeBackfillCommit_ReDerivesFreshNotStalePreview(t *testing.T) {
 	}
 	if itemXCount != 0 {
 		t.Fatalf("i-x must stay barcode-less — the code it wanted was claimed first, got %d barcode row(s)", itemXCount)
+	}
+}
+
+// TestBarcodeBackfillPlan_IntraBatchCollisionOnlyClaimsOnce is a review
+// finding (ut-docs#1356): two DIFFERENT SKUs in the SAME preview/commit
+// call can derive the SAME code — normalizeBarcode strips a trailing ".0"
+// spreadsheet artifact, so SKU "12345" and SKU "12345.0" both derive
+// CODE128 code "12345" once neither the plain nor the ".0"-stripped digits
+// carry any pre-existing owner. Before this fix, BarcodeOwner only saw data
+// already committed before the plan ran, so both rows showed as eligible
+// in the preview even though only the first could ever actually get the
+// code — the preview's count and the commit's real result silently
+// diverged. Both must now show/behave identically: exactly one assigned,
+// the other in the "already used" bucket, naming the item that claimed it.
+func TestBarcodeBackfillPlan_IntraBatchCollisionOnlyClaimsOnce(t *testing.T) {
+	mux, db := newCatalogMux(t)
+	seedNarrowedSymbologies(t, db, `["CODE128"]`)
+
+	// Alphabetical order matters here: ItemsWithoutBarcode orders by name,
+	// and computeBarcodeBackfillPlan processes in that order, so "AAA" is
+	// the one that claims the code first in both the preview and the commit.
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i-first", SKU: "12345", Name: "AAA First Item", BasePrice: 100, IsActive: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i-second", SKU: "12345.0", Name: "BBB Second Item", BasePrice: 100, IsActive: true})
+
+	previewRec := get(t, mux, "/api/catalog/barcode-backfill")
+	if previewRec.Code != http.StatusOK {
+		t.Fatalf("preview code = %d: %s", previewRec.Code, previewRec.Body.String())
+	}
+	previewBody := previewRec.Body.String()
+	if !strings.Contains(previewBody, "AAA First Item") {
+		t.Fatalf("preview must show AAA First Item as eligible: %s", previewBody)
+	}
+	if !strings.Contains(previewBody, "BBB Second Item") {
+		t.Fatalf("preview must list BBB Second Item in an issue bucket, not silently drop it: %s", previewBody)
+	}
+	if !strings.Contains(previewBody, "AAA First Item") {
+		t.Fatalf("preview's skip reason for BBB Second Item must name AAA First Item as the claimant: %s", previewBody)
+	}
+
+	commitRec := postForm(t, mux, "/api/catalog/barcode-backfill", "")
+	if commitRec.Code != http.StatusOK {
+		t.Fatalf("commit code = %d: %s", commitRec.Code, commitRec.Body.String())
+	}
+	commitBody := commitRec.Body.String()
+	if !strings.Contains(commitBody, "Assigned 1") {
+		t.Fatalf("commit must assign exactly 1 (preview and commit must agree), got: %s", commitBody)
+	}
+	if !strings.Contains(commitBody, "BBB Second Item") {
+		t.Fatalf("commit must report BBB Second Item as skipped, not silently omit it: %s", commitBody)
+	}
+
+	var firstCount, secondCount int
+	if err := db.QueryRow(`SELECT COUNT(*) FROM item_barcodes WHERE item_id = 'i-first'`).Scan(&firstCount); err != nil {
+		t.Fatalf("count i-first barcodes: %v", err)
+	}
+	if err := db.QueryRow(`SELECT COUNT(*) FROM item_barcodes WHERE item_id = 'i-second'`).Scan(&secondCount); err != nil {
+		t.Fatalf("count i-second barcodes: %v", err)
+	}
+	if firstCount != 1 {
+		t.Fatalf("i-first (claimed first) must get the barcode, got %d row(s)", firstCount)
+	}
+	if secondCount != 0 {
+		t.Fatalf("i-second must stay barcode-less — the code was already claimed by i-first in this same batch, got %d row(s)", secondCount)
 	}
 }

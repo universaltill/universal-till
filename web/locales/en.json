@@ -729,6 +729,7 @@
   "settings.backup.title": "Backups",
   "settings.barcode.symbologies_help": "Choose which barcode types this shop scans and enters. The two scale-label types are off by default — turn one on only once you're ready to use scale-printed labels, since it changes how a matching code is read.",
   "settings.barcode.symbologies_title": "Barcode types",
+  "settings.catalog_import_barcode_default.title": "Catalog import defaults",
   "settings.catalog_import_barcode_default.label": "Pre-tick \"derive barcodes from SKU\" on catalog imports",
   "settings.catalog_import_barcode_default.hint": "Only sets the import checkbox's starting state — you still confirm it (or untick it) on every import.",
   "settings.currency.apply": "Apply",

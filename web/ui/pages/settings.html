@@ -430,7 +430,12 @@
        barcode from SKU" checkbox (ut-docs#1224) starts pre-ticked for this
        shop — never changes what an import actually does, only that
        checkbox's initial state. Same single-checkbox hx-post/revert-on-
-       failure pattern as launch-on-startup above. -->
+       failure pattern as launch-on-startup above. Its own <h2> (review
+       finding, ut-docs#1356): this card sits right below "Barcode types"
+       but is a separate, unrelated setting — leaving it headingless read
+       as part of that card above it, and the manual already describes it
+       as its own place ("Settings → Catalog import defaults"). -->
+  <h2>{{ T "settings.catalog_import_barcode_default.title" }} {{ helpLink "catalog" }}</h2>
   <label style="display:block; margin:.35rem 0">
     <input type="checkbox" id="catalog-import-barcode-default-cb" name="enabled"
            hx-post="/api/settings/catalog-import-barcode-default" hx-trigger="change" hx-swap="none"

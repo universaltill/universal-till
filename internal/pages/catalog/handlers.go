@@ -851,11 +851,14 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			}
 			assigned++
 		}
-		// Rare bulk admin action touching potentially many rows at once —
-		// a full refresh (same convention pairing_api.go/backup_api.go use
-		// on their own bulk/state-changing endpoints) rather than patching
-		// every affected row's own OOB fragment individually.
-		w.Header().Set("HX-Refresh", "true")
+		// Deliberately NOT HX-Refresh (unlike pairing_api.go/backup_api.go's
+		// own bulk endpoints): htmx processes that header before the swap,
+		// so it would reload the page and discard this very result fragment
+		// before the operator ever saw it — a partial backfill (some SKUs
+		// skipped) would then look identical to a full one. The result
+		// fragment's own "Close" button (catalog_barcode_backfill.html)
+		// reloads instead, once the operator has actually read the report —
+		// same close-then-reload shape as plugin_install_modal.html.
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "partials", "catalog_barcode_backfill.html"),
 		), funcs)("catalog_barcode_backfill_result", barcodeBackfillResultView(assigned, skipped))(w, r)
@@ -905,10 +908,26 @@ func computeBarcodeBackfillPlan(ctx context.Context, repo *data.CatalogRepo, ena
 	if ierr != nil {
 		return nil, nil, nil, fmt.Errorf("barcode backfill: %w", ierr)
 	}
+	// Two DIFFERENT SKUs in this same candidate set can derive the SAME
+	// code — DeriveNumberBarcode's underlying LookupKey collapses some
+	// distinct-looking numbers onto one key (e.g. EAN13 weight/price-prefix
+	// variants), and normalizeBarcode strips a trailing ".0". items.sku is
+	// UNIQUE, so both rows are legitimate candidates, but only the first can
+	// actually get the code — BarcodeOwner only sees data already committed
+	// before this plan ran, so without tracking this batch's own claims a
+	// later duplicate would show as "eligible" in the preview and then
+	// silently fail to assign at commit time. Track them here so the
+	// preview's count and the commit's actual result always agree.
+	claimedInBatch := make(map[string]string) // code -> name of the item that claimed it first
 	for _, it := range items {
 		code, codeType, issue, _ := catimport.DeriveNumberBarcode(it.SKU, enabledIDs)
 		if issue != "" || code == "" {
 			noSymbology = append(noSymbology, backfillSkip{Name: it.Name, SKU: it.SKU, Reason: T("catalog.barcode_backfill.issue.no_symbology")})
+			continue
+		}
+		if claimant, dup := claimedInBatch[code]; dup {
+			reason := fmt.Sprintf(T("catalog.error.barcode_conflict"), claimant)
+			alreadyUsed = append(alreadyUsed, backfillSkip{Name: it.Name, SKU: it.SKU, Reason: reason})
 			continue
 		}
 		targetType, targetID, found, oerr := repo.BarcodeOwner(ctx, code)
@@ -924,6 +943,7 @@ func computeBarcodeBackfillPlan(ctx context.Context, repo *data.CatalogRepo, ena
 			alreadyUsed = append(alreadyUsed, backfillSkip{Name: it.Name, SKU: it.SKU, Reason: reason})
 			continue
 		}
+		claimedInBatch[code] = it.Name
 		assign = append(assign, backfillRow{ItemID: it.ID, Name: it.Name, SKU: it.SKU, Barcode: code, BarcodeType: codeType})
 	}
 	return assign, noSymbology, alreadyUsed, nil

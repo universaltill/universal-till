@@ -50,12 +50,20 @@ test('backfilling barcodes from SKU previews then assigns a derived barcode to a
   const clipped = await barcodeCell.evaluate(el => el.scrollWidth > el.clientWidth + 1);
   expect(clipped, 'derived-barcode cell must not clip its own text').toBe(false);
 
-  // Confirm — the commit response carries HX-Refresh: true, so the whole
-  // page reloads; wait for that navigation before asserting anything about
-  // post-commit DOM state.
+  // Confirm — the commit response swaps the result fragment into the SAME
+  // dialog (deliberately NOT HX-Refresh: htmx would process that header
+  // before the swap and reload the page before the operator ever saw the
+  // report, review finding ut-docs#1356). So the report must be readable
+  // here, before anything reloads.
+  await dialog.getByRole('button', { name: /Assign these barcodes/i }).click();
+  await expect(dialog).toContainText('Assigned 1 barcode');
+
+  // Only the operator's own "Close" click reloads the page (same
+  // close-then-reload shape as plugin_install_modal.html) — wait for that
+  // navigation before asserting anything about post-commit DOM state.
   await Promise.all([
     page.waitForNavigation(),
-    dialog.getByRole('button', { name: /Assign these barcodes/i }).click(),
+    dialog.getByRole('button', { name: 'Close' }).click(),
   ]);
 
   // After the reload, the item's row shows its newly derived barcode — the

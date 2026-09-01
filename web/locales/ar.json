@@ -729,6 +729,7 @@
   "settings.backup.title": "النسخ الاحتياطية",
   "settings.barcode.symbologies_help": "اختر أنواع الباركود التي يستخدمها هذا المتجر للمسح والإدخال. نوعا ملصق الميزان معطلان افتراضيًا — فعّل أحدهما فقط عند الاستعداد لاستخدام ملصقات الميزان المطبوعة، لأن ذلك يغيّر طريقة قراءة الرمز المطابق.",
   "settings.barcode.symbologies_title": "أنواع الباركود",
+  "settings.catalog_import_barcode_default.title": "إعدادات استيراد الكتالوج الافتراضية",
   "settings.catalog_import_barcode_default.label": "تفعيل خانة \"اشتقاق الباركود من SKU\" افتراضيًا عند استيراد الكتالوج",
   "settings.catalog_import_barcode_default.hint": "يحدد هذا فقط الحالة الابتدائية لخانة الاستيراد — ستظل تؤكدها (أو تلغيها) في كل عملية استيراد.",
   "settings.currency.apply": "تطبيق",
