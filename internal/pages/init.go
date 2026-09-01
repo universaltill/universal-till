@@ -123,6 +123,24 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	httpx.InitUIScale(state.UIScale)
 	httpx.InitOSKMode(state.OSKMode)
 
+	// Boot sweep: drop every live-basket table claim (ut-docs#1390). The
+	// engine constructed just below always starts with an empty basket, so
+	// any table_claims row still present belongs to a process that ended
+	// without releasing it (crash, kill, power loss) — stale by
+	// construction, every time, with nothing per-row to decide. Without
+	// this a table claimed right before an unclean shutdown stays
+	// unbookable forever (independent review, ut-docs#1390): the picker
+	// filters occupied tables out and both table-assignment handlers
+	// reject a pick on one, so nothing else ever revisits an orphaned row.
+	// Non-fatal, same offline-first "a boot must never be blocked on a
+	// settings write" convention as SaveState above — a failed sweep just
+	// means recovery waits for the next restart, not a boot failure. Never
+	// touches held_sales: a parked order surviving a restart is durability
+	// working as intended, not a leftover to clear.
+	if err := data.NewPOSRepo(db).ClearAllTableClaims(ctx); err != nil {
+		log.Errorf("clear stale table claims: %v", err)
+	}
+
 	btnStore := ui.NewButtonStore(db)
 	resolver := ui.PriceResolverAdapter{Store: btnStore}
 	engine := pos.NewServiceWithResolver(pos.Config{

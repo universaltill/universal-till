@@ -120,6 +120,25 @@ func enforceFiscalGate(ctx context.Context, d *common.Deps) (fiscal.Gate, error)
 	return gate, nil
 }
 
+// releaseTableClaim drops the live basket's claim on tableID (ut-docs#1390)
+// at every point the basket stops occupying it — cleared, moved off, parked
+// (the held_sales row takes over), tendered, reset, or switched to
+// Takeaway. A "" tableID (no table was assigned) is the common case and a
+// no-op; a DB failure is logged, never surfaced — the basket-side state
+// change it accompanies has already happened (or is about to, and must
+// not be blocked by bookkeeping), and a lingering claim is the lesser evil
+// versus a sale that can't complete. Shared by the cashier handlers here
+// and the hold/resume handlers in hold_api.go so the release rule lives in
+// exactly one place.
+func releaseTableClaim(ctx context.Context, repo *data.POSRepo, tableID string) {
+	if tableID == "" {
+		return
+	}
+	if err := repo.ReleaseTableClaim(ctx, tableID); err != nil {
+		log.Printf("table claim: release %s failed: %v", tableID, err)
+	}
+}
+
 // completeTender runs the money-critical authorize -> complete -> publish
 // pipeline shared by every till-mode's tender path (cashier and self-order
 // kiosk alike): payment authorization gate, CompleteSale, basket reset via
@@ -248,7 +267,14 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		recordFiscalTSEEvidence(ctx, repo, saleID, actorID, signRes.Evidence)
 	}
 
+	// The sale is committed: the table it was served at is free again.
+	// Captured BEFORE Reset (which clears it) and released unconditionally
+	// — regardless of the fiscal-signing outcome above (a declared-unsigned
+	// sale is still a completed sale) — ut-docs#1390. Always "" for the
+	// kiosk engine (no table picker there), so a no-op on that path.
+	tableToRelease := engine.TableID()
 	engine.Reset()
+	releaseTableClaim(ctx, repo, tableToRelease)
 
 	// Plugin-provided tender methods: publish each entry's trigger_event so
 	// the owning plugin can react (charge a terminal, show a QR, …).
@@ -565,7 +591,17 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if r.Form.Get("order_type") == pos.OrderTypeTakeaway {
 			orderType = pos.OrderTypeTakeaway
 		}
+		// Switching to Takeaway clears the basket's table inside
+		// SetOrderType (ut-docs#1355); the persisted claim on it has to go
+		// the same way or the table reads occupied with nothing on it
+		// (ut-docs#1390). Compared before/after rather than keyed on the
+		// order type so this stays correct however SetOrderType's own
+		// clear rule evolves.
+		prevTable := d.Engine.TableID()
 		b := d.Engine.SetOrderType(orderType)
+		if prevTable != "" && b.TableID == "" {
+			releaseTableClaim(r.Context(), repo, prevTable)
+		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
 		_ = basketView.Render(w, *b)
@@ -578,25 +614,87 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	// doesn't resolve (deleted/garbage) degrades to "no table assigned"
 	// rather than stamping a stale/bogus label onto the basket, same
 	// fail-safe shape as order-type's own clamp-to-known-values above.
+	//
+	// ut-docs#1390: the pick is also PERSISTED as a table_claims row the
+	// instant it's made -- the live basket's table used to be in-memory
+	// only, invisible to IsTableFree/ListTablesWithState, so the next order
+	// could take the same table with no rejection. Re-picking the basket's
+	// own current table is the "owner" short-circuit (no DB call at all):
+	// there is exactly one live basket per till, so that is the only case
+	// where an existing claim on the requested table could be ours, and it
+	// is what lets the claims table carry no owner column. Any other pick
+	// must find the table free AND win the claim; on either failure the
+	// basket keeps its current assignment and the operator gets an in-place
+	// error toast (same surface as hold_api.go's renderBasket), never a
+	// silent success. A table-to-table move claims the NEW table before
+	// releasing the OLD one, deliberately: there is never a window where
+	// the old table shows free while the new one is not yet confirmed.
 	mux.HandleFunc("/api/pos/table", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
+		ctx := r.Context()
+		locale := httpx.ResolveLocale(w, r)
 		tableID := strings.TrimSpace(r.Form.Get("table_id"))
+		current := d.Engine.TableID()
 		var b *pos.Basket
-		if tableID == "" {
+		switch {
+		case tableID == current:
+			// Owner short-circuit: re-picking the assigned table (or
+			// clearing an already-clear one) changes nothing.
+			cur := d.Engine.Basket()
+			b = &cur
+		case tableID == "":
+			releaseTableClaim(ctx, repo, current)
 			b = d.Engine.ClearTable()
-		} else if tbl, ok, err := data.NewPOSRepo(d.Db).GetTable(r.Context(), tableID); err == nil && ok {
+		default:
+			tbl, ok, err := repo.GetTable(ctx, tableID)
+			if err != nil || !ok {
+				// Unknown id degrades to "no table" (pre-#1390 behaviour,
+				// kept) -- and the basket stops occupying its old one.
+				releaseTableClaim(ctx, repo, current)
+				b = d.Engine.ClearTable()
+				break
+			}
+			free, err := repo.IsTableFree(ctx, tableID, "")
+			claimed := false
+			if err == nil && free {
+				// Race-free: INSERT OR IGNORE on the PK. IsTableFree above
+				// is the cheap, held_sales-aware pre-check; losing here
+				// means a concurrent claim landed in between -- same
+				// "occupied" answer, no 500.
+				claimed, err = repo.ClaimTable(ctx, tableID)
+			}
+			if err != nil {
+				log.Printf("table claim: %s: %v", tableID, err)
+			}
+			if err != nil || !claimed {
+				cur := d.Engine.Basket()
+				cur.ToastMessage = httpx.T(locale, "basket.table.occupied")
+				cur.ToastLevel = "error"
+				b = &cur
+				break
+			}
 			b = d.Engine.SetTable(tableID, tbl.Label)
-		} else {
-			b = d.Engine.ClearTable()
+			if b.TableID != tableID {
+				// SetTable refused (a Takeaway basket, ut-docs#1355): undo
+				// the claim we just took, or the table would read occupied
+				// with nothing on it.
+				releaseTableClaim(ctx, repo, tableID)
+				break
+			}
+			// New claim confirmed -- only now let go of the old table.
+			releaseTableClaim(ctx, repo, current)
 		}
-		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		funcs := httpx.FuncsFor(locale)
 		basketView, _ := ui.NewBasketView(funcs)
 		_ = basketView.Render(w, *b)
 	})
 
-	// Reset basket for new customer.
+	// Reset basket for new customer. The table it had picked is free again
+	// (ut-docs#1390) -- captured before Reset clears it.
 	mux.HandleFunc("/api/pos/reset", func(w http.ResponseWriter, r *http.Request) {
+		tableToRelease := d.Engine.TableID()
 		d.Engine.Reset()
+		releaseTableClaim(r.Context(), repo, tableToRelease)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
 		b, _ := d.Engine.Scan("")
