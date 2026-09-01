@@ -51,6 +51,14 @@ func ValidOrderStatus(s string) bool {
 	return orderStatusRank[s] > 0
 }
 
+// IsTerminalOrderStatus reports whether s is a terminal lifecycle state
+// (collected or cancelled) — an order in either state is done and leaves
+// the active /orders queue (ut-docs#1389), while still keeping its sale,
+// audit trail and journal/reporting history untouched elsewhere.
+func IsTerminalOrderStatus(s string) bool {
+	return s == OrderStatusCollected || s == OrderStatusCancelled
+}
+
 // OrderStatusAllowed is THE offline multi-till conflict rule for order
 // status (ut-docs#526, extending ADR-0011's fixed-and-simple conflict-rule
 // philosophy — decided by the Architect step, do not relitigate here):

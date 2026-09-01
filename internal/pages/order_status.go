@@ -68,13 +68,40 @@ func orderStatusLabelKey(status string) string {
 // endpoint swaps into the status cell: status label + who/when. It renders
 // the POST-write truth whether the write applied or was dropped as stale —
 // a dropped write's response simply re-shows the unchanged current state.
-func writeOrderStatusFragment(w http.ResponseWriter, locale, status, who, when string) {
+//
+// /orders is the active work queue (ut-docs#1389): once status is terminal
+// (collected/cancelled — pos.IsTerminalOrderStatus), the row itself must
+// leave the board immediately, not just on the next 15s poll. The status
+// cell swap alone can't remove its own ancestor row, so the response also
+// carries an htmx out-of-band "delete" targeting the row's id
+// (order-row-{receiptNo}, set on the <tr> in orders_list.html) — htmx
+// no-ops on a missing target, so this is safe to always emit for a
+// terminal status, including when THIS write was itself a dropped no-op
+// (e.g. cancel-after-collected, TestOrderStatusPost_CancelAfterCollectedStillRemovesRow):
+// the order is terminal either way, so the row must not linger.
+//
+// The OOB element itself is a <div>, NOT a <tr> — deliberately, found by a
+// real-browser e2e run, not just the Go fragment tests (which only proved
+// the server SENT the marker, not that a browser could act on it). htmx's
+// fragment parser only wraps the response in a <table> context when the
+// FIRST tag in the whole response is table-related (thead/tr/td/…); here
+// the response starts with the <span> status label, so a bare <tr> is
+// parsed "in body" instead, where the HTML spec has the browser silently
+// drop an out-of-context <tr> before htmx's own JS ever sees it — the swap
+// target is matched purely by id, so the OOB element's own tag doesn't
+// need to (and here must not) be <tr>; a <div> carries the same id/attribute
+// and parses standalone with no table-context requirement.
+func writeOrderStatusFragment(w http.ResponseWriter, locale, receiptNo, status, who, when string) {
 	label := httpx.T(locale, orderStatusLabelKey(status))
 	fmt.Fprintf(w, `<span class="order-status" data-status="%s">%s</span>`,
 		template.HTMLEscapeString(status), template.HTMLEscapeString(label))
 	if who != "" || when != "" {
 		fmt.Fprintf(w, ` <span class="muted">%s · %s</span>`,
 			template.HTMLEscapeString(who), template.HTMLEscapeString(when))
+	}
+	if pos.IsTerminalOrderStatus(status) {
+		fmt.Fprintf(w, `<div id="order-row-%s" hx-swap-oob="delete"></div>`,
+			template.HTMLEscapeString(receiptNo))
 	}
 }
 
@@ -380,7 +407,7 @@ func registerOrderStatus(mux *http.ServeMux, d *common.Deps) {
 		// (ut-docs#1350) and render its post-write truth; ANY failure falls
 		// back to the local write below, exactly as an offline till.
 		if res, ok := applyOrderStatusOnPrimary(r.Context(), d, orderProxyClient, receiptNo, next, actorID); ok {
-			writeOrderStatusFragment(w, locale, res.Status, res.Who, res.When)
+			writeOrderStatusFragment(w, locale, receiptNo, res.Status, res.Who, res.When)
 			return
 		}
 		res, err := applyOrderStatusCore(r.Context(), d, receiptNo, next, actorID, actorID, "")
@@ -397,6 +424,6 @@ func registerOrderStatus(mux *http.ServeMux, d *common.Deps) {
 		// who/when. Tracked=false (sale exists but was never tracked, only
 		// possible when the write was dropped) renders the untracked state
 		// via the outcome's zero Status/Who/When.
-		writeOrderStatusFragment(w, locale, res.Status, res.Who, res.When)
+		writeOrderStatusFragment(w, locale, receiptNo, res.Status, res.Who, res.When)
 	})
 }

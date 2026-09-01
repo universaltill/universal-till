@@ -14,12 +14,13 @@ Mark each order's progress — preparing, ready, collected — with one tap, so 
 
 ## How to use it
 
-1. Open **Orders** — the 🛎️ icon in the rail on the sale screen, or from the ☰ menu. Recent sales are listed newest first, each with its current status.
+1. Open **Orders** — the 🛎️ icon in the rail on the sale screen, or from the ☰ menu. This is the *active* queue: recent, still-in-progress sales are listed newest first, each with its current status.
 2. Tap **Preparing** when the kitchen starts on an order, **Ready** when it can be picked up, and **Collected** when the customer has it. Any operator can do this — no manager PIN needed.
 3. Every change records who made it and when, next to the status. The receipt number links to the full receipt in the Journal — except an order shown here because it was taken on a *different* till (see the note below), where the number is shown but isn't a link, since this till doesn't hold that receipt itself.
 4. **Cancel order** marks an order cancelled. It works at any point until the order is collected; a collected order can't be cancelled.
-5. An order's status only ever moves forward. Tapping an earlier step by mistake (or a second till reporting an old status after being offline) changes nothing — the till just keeps showing the later status. That's deliberate, not a fault.
-6. Orders from sales made before this feature (or that nobody has tapped yet) show **Not started** — nothing changes for them until someone taps a status.
+5. Marking an order **Collected**, or cancelling it, removes it from this list right away — it's done, so it stops taking up space in the active queue. Nothing is deleted: the receipt, every status change, and who did what stay exactly where they always did, in the Journal.
+6. An order's status only ever moves forward (Collected and Cancelled are the end of the line). Tapping an earlier step by mistake (or a second till reporting an old status after being offline) changes nothing — the till just keeps showing the later status. That's deliberate, not a fault.
+7. Orders from sales made before this feature (or that nobody has tapped yet) show **Not started** — nothing changes for them until someone taps a status.
 
 ## Notes
 
