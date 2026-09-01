@@ -79,12 +79,20 @@ func TestItemCost_RespectsZeroDecimalCurrency_OnDisplay(t *testing.T) {
 	if strings.Contains(body, `value="6500.00"`) {
 		t.Fatal("panel shows the rial cost divided by a hardcoded 100")
 	}
-	// The input's step must also follow the currency, matching the sibling
-	// variant/modifier price fields ("1" for a 0-decimal currency, "0.01"
-	// otherwise) — a step="0.01" field would let a rial shop type an
-	// impossible fractional rial.
-	if strings.Contains(body, `name="cost" step="0.01"`) {
-		t.Fatal(`cost input step is hardcoded to "0.01" for a 0-decimal currency`)
+	// The input's pattern must also follow the currency, matching the
+	// sibling variant/modifier price fields (integer-only for a 0-decimal
+	// currency, one-or-two fractional digits otherwise) — ut-docs#1284
+	// moved this field from type="number" step="…" to type="text"
+	// pattern="…" (an on-screen-keyboard decimal-corruption fix), so this
+	// assertion now targets the pattern, not the step, but the invariant
+	// it protects is unchanged: a decimal-permitting field would let a
+	// rial shop type an impossible fractional rial.
+	if !strings.Contains(body, `name="cost" pattern="[0-9]+"`) {
+		t.Fatalf(`cost input pattern must be integer-only ([0-9]+) for a 0-decimal currency, body has: %s`,
+			excerptAround(body, `name="cost"`))
+	}
+	if strings.Contains(body, `\.[0-9]`) {
+		t.Fatal(`cost input pattern allows a decimal point for a 0-decimal currency`)
 	}
 }
 

@@ -210,8 +210,12 @@ func TestIndexAndBasketRender(t *testing.T) {
 		t.Fatalf("update line failed: code %d body %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `value="2.00"`) {
-		t.Fatalf("expected qty 2.00 in basket render, got: %s", body)
+	// ut-docs#1284 review finding: a non-weighed line now renders its
+	// whole-number quantity as "2", not "2.00" -- the value must actually
+	// match its own pattern="[0-9]+" (integer-only for a non-weighed
+	// line), which "2.00" never did.
+	if !strings.Contains(body, `name="qty" value="2"`) {
+		t.Fatalf("expected qty 2 in basket render, got: %s", body)
 	}
 }
 

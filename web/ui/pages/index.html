@@ -370,10 +370,20 @@
             </select>
           </label>
           <label>{{ T "tender.amount" }}
-            <input type="number" name="amount" min="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" placeholder="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}" required>
+            <!-- ut-docs#1284: type="number" silently corrupts a decimal typed
+                 via the kiosk's on-screen keyboard (osk.js has no cursor-aware
+                 insert for number inputs, so a momentarily-invalid float
+                 string resets .value — "2.50" ends up "50"). text+inputmode
+                 avoids that; addPayment() in app.js already reads this via
+                 FormData and converts with window.utCurrency.toMinor(), so no
+                 JS change is needed beyond the markup. min/max are dropped on
+                 purpose (pattern only validates format) — same accepted
+                 tradeoff as ut-docs#1249/#1272/#1275; addPayment() already
+                 rejects a non-positive amount. -->
+            <input type="text" inputmode="decimal" name="amount" {{ moneypattern currency.Decimals false }} {{ moneyplaceholder currency.Decimals 0 }} required>
           </label>
           <label>{{ T "tender.change" }}
-            <input type="number" name="change" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" value="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}">
+            <input type="text" inputmode="decimal" name="change" {{ moneypattern currency.Decimals false }} value="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}">
           </label>
           <label>{{ T "tender.reference" }}
             <input type="text" name="reference" placeholder="{{ T "tender.reference_placeholder" }}">
