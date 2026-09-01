@@ -74,6 +74,30 @@ func TestMenuPage_RendersConfiguredTilesWithMappedIcons(t *testing.T) {
 	}
 }
 
+// ut-docs#1371: /orders had no iconFor entry, so its tile fell through to
+// the "▪️" no-icon fallback -- a plain black square on-screen, live-reported
+// on v0.8.2. Pinned the same way every other mapped route is (see
+// TestMenuPage_RendersConfiguredTilesWithMappedIcons) so a future icon-map
+// edit can't silently drop it again.
+func TestMenuPage_OrdersTileHasAMappedIcon(t *testing.T) {
+	mux, _ := newMenuPageTestDeps(t, []common.MenuItem{
+		{Href: "/orders", Label: "nav.orders"},
+	})
+	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `href="/orders"`) {
+		t.Fatalf("expected the orders tile rendered, got: %s", body)
+	}
+	if strings.Contains(body, `<span class="menu-ico">▪️</span>`) {
+		t.Fatalf("expected the orders tile NOT to use the no-icon fallback, got: %s", body)
+	}
+}
+
 func TestMenuPage_UnmappedRouteGetsFallbackIcon(t *testing.T) {
 	mux, _ := newMenuPageTestDeps(t, []common.MenuItem{
 		{Href: "/some-plugin-page", Label: "Custom Plugin"},
