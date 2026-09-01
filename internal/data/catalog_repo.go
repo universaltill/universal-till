@@ -577,6 +577,78 @@ ORDER BY is_primary DESC, barcode`, itemID)
 	return out, rows.Err()
 }
 
+// ItemNumberOnly is a minimal item projection — id, SKU, name — for the
+// ut-docs#1356 "backfill barcodes from SKU" bulk action's preview list. Not
+// reused from ItemLabel (name/price/code) or catalogtypes.ItemInput (the
+// full item row): both carry fields this candidate list never needs and
+// ItemLabel's Code is specifically "primary barcode falling back to SKU",
+// the opposite of what this query selects FOR (items with NO barcode).
+type ItemNumberOnly struct {
+	ID   string
+	SKU  string
+	Name string
+}
+
+// ItemsWithoutBarcode returns active items that carry a non-empty SKU/item
+// number but no row in item_barcodes at all — the candidate set for
+// ut-docs#1356's bulk "backfill barcodes from SKU" action, ordered by name
+// for a stable, operator-readable preview. Variant-only barcode gaps are
+// out of scope (the feature backfills item numbers, not variant SKUs).
+func (r *CatalogRepo) ItemsWithoutBarcode(ctx context.Context) ([]ItemNumberOnly, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT i.id, i.sku, i.name
+FROM items i
+WHERE i.is_active = 1
+  AND COALESCE(i.sku, '') != ''
+  AND NOT EXISTS (SELECT 1 FROM item_barcodes b WHERE b.item_id = i.id)
+ORDER BY i.name
+`)
+	if err != nil {
+		return nil, fmt.Errorf("items without barcode: %w", err)
+	}
+	defer rows.Close()
+	var out []ItemNumberOnly
+	for rows.Next() {
+		var it ItemNumberOnly
+		if err := rows.Scan(&it.ID, &it.SKU, &it.Name); err != nil {
+			return nil, fmt.Errorf("items without barcode: scan: %w", err)
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+// BarcodeOwner is a read-only lookup for whether barcode is already
+// assigned to an item or variant — checking both item_barcodes and
+// variant_barcodes, same two tables ensureBarcodeAvailable checks inside
+// AddBarcode's transaction. Deliberately NOT that function: this is for the
+// ut-docs#1356 backfill preview's dry run, which must never hold AddBarcode's
+// write lock (or run inside any transaction at all) just to show an
+// operator what WOULD happen — ensureBarcodeAvailable's locking semantics
+// stay exactly as they are, load-bearing for the real write path (see its
+// own doc comment). Being non-transactional, the result is a snapshot, not
+// a guarantee: the commit endpoint re-derives fresh against current data
+// rather than trusting a preview built from this.
+func (r *CatalogRepo) BarcodeOwner(ctx context.Context, barcode string) (targetType, targetID string, found bool, err error) {
+	var itemID string
+	scanErr := r.db.QueryRowContext(ctx, `SELECT item_id FROM item_barcodes WHERE barcode = ?`, barcode).Scan(&itemID)
+	if scanErr == nil {
+		return "item", itemID, true, nil
+	}
+	if !errors.Is(scanErr, sql.ErrNoRows) {
+		return "", "", false, fmt.Errorf("barcode owner: %w", scanErr)
+	}
+	var variantID string
+	scanErr = r.db.QueryRowContext(ctx, `SELECT variant_id FROM variant_barcodes WHERE barcode = ?`, barcode).Scan(&variantID)
+	if scanErr == nil {
+		return "variant", variantID, true, nil
+	}
+	if !errors.Is(scanErr, sql.ErrNoRows) {
+		return "", "", false, fmt.Errorf("barcode owner: %w", scanErr)
+	}
+	return "", "", false, nil
+}
+
 // DeleteBarcode detaches a barcode wherever it is attached (item or variant).
 // Fixing a mis-scanned or reassigned code is a normal back-office task.
 //
