@@ -4,8 +4,9 @@
 # the guard rejects a spec importing `test` straight from
 # '@playwright/test', passes a spec importing it from './fixtures' (even
 # alongside an unrelated named import still pulled from
-# '@playwright/test', e.g. a type-only Page import), exempts
-# login.spec.ts unconditionally, and passes the real, unmodified repo
+# '@playwright/test', e.g. a type-only Page import), exempts each of
+# EXEMPT_FILES (login.spec.ts, nav-rail-lock-reachable-1346.spec.ts —
+# ut-docs#1346) unconditionally, and passes the real, unmodified repo
 # tree.
 set -euo pipefail
 
@@ -111,6 +112,24 @@ import { test, expect } from './fixtures';
 test('x', async ({ page }) => {});
 EOF
 expect_pass "login.spec.ts importing test directly (deliberately exempt)" "${d}"
+
+# 4b. nav-rail-lock-reachable-1346.spec.ts (ut-docs#1346) is exempt for
+#     the same auth-project-only reason as login.spec.ts, alongside both
+#     an ordinary compliant spec and login.spec.ts itself.
+d="$(fresh_dir exempt_nav_rail)"
+cat >"${d}/login.spec.ts" <<'EOF'
+import { test, expect, Page } from '@playwright/test';
+test('x', async ({ page }) => {});
+EOF
+cat >"${d}/nav-rail-lock-reachable-1346.spec.ts" <<'EOF'
+import { test, expect } from '@playwright/test';
+test('x', async ({ page }) => {});
+EOF
+cat >"${d}/other.spec.ts" <<'EOF'
+import { test, expect } from './fixtures';
+test('x', async ({ page }) => {});
+EOF
+expect_pass "nav-rail-lock-reachable-1346.spec.ts importing test directly (deliberately exempt)" "${d}"
 
 # 5. A directory with no *.spec.ts at all -> fail closed.
 d="$(fresh_dir empty)"

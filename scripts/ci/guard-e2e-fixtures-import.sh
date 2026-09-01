@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
 #
-# Guard: every e2e spec (except login.spec.ts) imports `test`/`expect`
-# from e2e/tests/fixtures.ts, not directly from '@playwright/test'
-# (ut-docs#1315).
+# Guard: every e2e spec (except the auth-project-only specs in
+# $EXEMPT_FILES) imports `test`/`expect` from e2e/tests/fixtures.ts, not
+# directly from '@playwright/test' (ut-docs#1315).
 #
 # fixtures.ts wraps `test` with an auto fixture that resets the shared
 # till's basket once per spec FILE, before that file's first test BODY
@@ -18,10 +18,22 @@
 # reappear one file at a time. This guard makes that opt-out a build
 # failure instead.
 #
-# login.spec.ts is the one deliberate exception (see fixtures.ts's own
-# comment): it drives the separate `auth` project against a genuinely
-# fresh, never-set-up till, and resetting `/api/pos/reset` before the
-# setup wizard has even run is meaningless there.
+# login.spec.ts is the original deliberate exception (see fixtures.ts's
+# own comment): it drives the separate `auth` project against a
+# genuinely fresh, never-set-up till, and resetting `/api/pos/reset`
+# before the setup wizard has even run is meaningless there.
+#
+# nav-rail-lock-reachable-1346.spec.ts (ut-docs#1346) is exempt for the
+# same underlying reason, not a copy-paste of it: it also runs only on
+# the `auth` project (playwright.config.ts's AUTH_ONLY_SPECS) — the
+# `#session-chip` fragment it measures never renders on the default
+# (UT_AUTH=off) project at all, since nothing ever populates
+# `auth.FromContext` there (see that spec's own header comment). The
+# fixtures.ts `resetPosOncePerFile` auto-fixture posts through a bare
+# `request` context that carries no session cookie, so it would 401
+# against the `auth` project instead of the harmless (if pointless) no-op
+# it is for login.spec.ts's fresh install — importing `test` from
+# fixtures.ts here would break the fixture itself, not just be redundant.
 #
 # Explicit first argument runs this guard against a fixture directory
 # instead of the real tree (see guard-e2e-fixtures-import_test.sh).
@@ -37,14 +49,22 @@ if [ ! -d "$TESTS_DIR" ]; then
   exit 1
 fi
 
-EXEMPT='login.spec.ts'
+EXEMPT_FILES=('login.spec.ts' 'nav-rail-lock-reachable-1346.spec.ts')
+
+is_exempt() {
+  local base="$1" f
+  for f in "${EXEMPT_FILES[@]}"; do
+    [ "$base" = "$f" ] && return 0
+  done
+  return 1
+}
 
 failed=0
 checked=0
 
 while IFS= read -r -d '' spec; do
   base="$(basename "$spec")"
-  [ "$base" = "$EXEMPT" ] && continue
+  is_exempt "$base" && continue
   checked=$((checked + 1))
 
   # Flag any import statement that pulls `test` (as a bound name, not just
@@ -88,4 +108,4 @@ if [ "$failed" -ne 0 ]; then
   exit 1
 fi
 
-echo "✓ e2e-fixtures-import guard: ${checked} spec(s) checked, all import test/expect from ./fixtures (${EXEMPT} exempt)"
+echo "✓ e2e-fixtures-import guard: ${checked} spec(s) checked, all import test/expect from ./fixtures (${EXEMPT_FILES[*]} exempt)"

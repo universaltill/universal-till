@@ -28,7 +28,23 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 // AUTH_TILL_TOPICS works around for the screenshot harness) — #901 fixed
 // locations/registers, #902 fixed the remaining five, so every admin page
 // is reachable on the default project now.
-const AUTH_ONLY_SPECS = /login\.spec\.ts$/;
+//
+// nav-rail-lock-reachable-1346.spec.ts (ut-docs#1346) is a different class
+// of gap #901/#902 didn't touch: GET /settings itself is reachable on the
+// default project, but its `#session-chip` fragment (web/ui/partials/
+// session_chip.html — the 3 manager admin links + operator name + Lock
+// button this spec measures) is rendered from `auth.FromContext(r.Context())`
+// (auth_page.go's `GET /ui/session-chip`), which is only ever populated by
+// `auth.Middleware` resolving a real session cookie — a middleware that is
+// never installed at all when UT_AUTH=off (internal/pages/init.go), so the
+// chip renders empty on the default project regardless of canPerform()'s
+// bypass. Confirmed live: the default project's `.session-admin-link`
+// count is 0, not 3. Needs the auth project's real PIN-login session, same
+// as login.spec.ts — this spec runs AFTER login.spec.ts in file-sort order
+// (verified: `playwright test --project=auth --list`), so it always finds
+// the wizard-created admin operator already in place and never races
+// login.spec.ts's own "brand-new till" first assertion.
+const AUTH_ONLY_SPECS = /(login|nav-rail-lock-reachable-1346)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: './tests',
