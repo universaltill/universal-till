@@ -47,4 +47,5 @@ jobs:
           BASE_SHA: ${{ github.event.pull_request.base.sha }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
-          git log --format='%H|%an|%ae' "$BASE_SHA..$HEAD_SHA" | bash scripts/ci/guard-commit-attribution.sh
+          set -euo pipefail
+          git log --format='%H|%ae|%an' "$BASE_SHA..$HEAD_SHA" | bash scripts/ci/guard-commit-attribution.sh

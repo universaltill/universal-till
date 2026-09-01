@@ -31,9 +31,14 @@
 # bad case here isn't a known-bad string — it's a well-formed one with the
 # wrong ID inside it.
 #
-# Reads one commit per line from stdin, format 'sha|author name|author
-# email' — the same shape `git log --format='%H|%an|%ae'` produces (see
-# commit-attribution.yml, which pipes that straight in). Kept as a
+# Reads one commit per line from stdin, format 'sha|author email|author
+# name' — the same shape `git log --format='%H|%ae|%an'` produces (see
+# commit-attribution.yml, which pipes that straight in). EMAIL BEFORE NAME,
+# deliberately: `IFS='|' read` puts everything past the last split field into
+# the final variable, so a name containing a literal '|' (a valid git commit
+# author name) can't smuggle bytes into the email field and dodge every
+# check below — it can only pollute its own (unchecked) field. See
+# guard-commit-attribution_test.sh's pipe-in-name case. Kept as a
 # standalone, testable script — see guard-commit-attribution_test.sh —
 # rather than inline workflow YAML, same convention as every other guard
 # under scripts/ci/.
@@ -52,16 +57,29 @@ ALLOWED_IDS=(
 )
 
 # Older-style GitHub noreply addresses carry no numeric-ID prefix
-# (<username>@users.noreply.github.com) — still live on accounts that
-# enabled email privacy before GitHub added the ID-prefixed form. There's no
-# ID to check here, so the username itself must be on this list.
-ALLOWED_LEGACY_USERNAMES=(
-  farshid3003
-)
+# (<username>@users.noreply.github.com) — GitHub matches these by the LOGIN
+# STRING, which is exactly the ut-docs#1373 bug class in a different
+# disguise: if the login is ever renamed or the account deleted, that exact
+# address becomes either unattributable (nobody holds it) or reassignable to
+# a stranger who registers the freed login — and either way this guard
+# would have no way to tell. Deliberately empty: this repo's real
+# contributors all use the numeric-ID-prefixed form today (verified against
+# `list_repository_collaborators`; "farshid3003" is a RETIRED login for the
+# farshidmirza account — GitHub search finds no such user — so allowing it
+# would silently recreate #1373). Add an entry here only after confirming
+# the login is still actively held by the named person, and re-confirm
+# periodically — usernames can be renamed away at any time.
+ALLOWED_LEGACY_USERNAMES=()
 
+# Matched case-insensitively via $email_lc below — GitHub email matching
+# (and the domain/local-part grammar generally) is not case-sensitive, so a
+# denylist or allowlist that only matched exact-case would let
+# `noreply@Anthropic.com` or `26383381+X@Users.NoReply.GitHub.Com` sail
+# through untouched. lower() once, match everywhere on the lowered string.
 BANNED_RE='^(noreply@anthropic\.com|codex@users\.noreply\.github\.com|noreply@universaltill\.com)$'
-ID_PREFIXED_RE='^([0-9]+)\+[A-Za-z0-9_-]+@users\.noreply\.github\.com$'
-LEGACY_RE='^([A-Za-z0-9_.-]+)@users\.noreply\.github\.com$'
+ID_PREFIXED_RE='^([0-9]+)\+[a-z0-9-]+@users\.noreply\.github\.com$'
+LEGACY_RE='^([a-z0-9-]+)@users\.noreply\.github\.com$'
+NOREPLY_DOMAIN_RE='@users\.noreply\.github\.com$'
 
 is_allowed_id() {
   local id="$1" a
@@ -77,14 +95,15 @@ is_allowed_legacy_username() {
 
 bad=0
 seen=0
-while IFS='|' read -r sha name email; do
+while IFS='|' read -r sha email name; do
   [ -n "$sha" ] || continue
   seen=$((seen + 1))
+  email_lc="${email,,}"
 
-  if printf '%s' "$email" | grep -Eiq "$BANNED_RE"; then
+  if printf '%s' "$email_lc" | grep -Eq "$BANNED_RE"; then
     echo "::error::${sha:0:9} is authored by '${name} <${email}>' — AI-tool or unattributable identity"
     bad=1
-  elif [[ "$email" =~ $ID_PREFIXED_RE ]]; then
+  elif [[ "$email_lc" =~ $ID_PREFIXED_RE ]]; then
     id="${BASH_REMATCH[1]}"
     if is_allowed_id "$id"; then
       echo "ok  ${sha:0:9}  ${name} <${email}>"
@@ -92,7 +111,7 @@ while IFS='|' read -r sha name email; do
       echo "::error::${sha:0:9} is authored by '${name} <${email}>' — numeric ID ${id} is not a known contributor ID (see ALLOWED_IDS in scripts/ci/guard-commit-attribution.sh)"
       bad=1
     fi
-  elif [[ "$email" =~ $LEGACY_RE ]]; then
+  elif [[ "$email_lc" =~ $LEGACY_RE ]]; then
     uname="${BASH_REMATCH[1]}"
     if is_allowed_legacy_username "$uname"; then
       echo "ok  ${sha:0:9}  ${name} <${email}>"
@@ -100,13 +119,29 @@ while IFS='|' read -r sha name email; do
       echo "::error::${sha:0:9} is authored by '${name} <${email}>' — legacy noreply username '${uname}' is not a known contributor (see ALLOWED_LEGACY_USERNAMES in scripts/ci/guard-commit-attribution.sh)"
       bad=1
     fi
+  elif printf '%s' "$email_lc" | grep -Eq "$NOREPLY_DOMAIN_RE"; then
+    # Anything ending in @users.noreply.github.com that matched NEITHER
+    # recognized shape above — e.g. a stray extra '+', a character GitHub
+    # usernames can't contain, a truncated/malformed address. DEFAULT-DENY
+    # here on purpose: this is exactly how ut-docs#1373's own address would
+    # have slipped past an "unrecognized shape passes by default" guard
+    # with a one-character variation. A real GitHub noreply address always
+    # matches one of the two patterns above; anything else is suspect.
+    echo "::error::${sha:0:9} is authored by '${name} <${email}>' — unrecognized users.noreply.github.com address shape (matches neither the ID-prefixed nor legacy form)"
+    bad=1
   else
     echo "ok  ${sha:0:9}  ${name} <${email}>"
   fi
 done
 
 if [ "$seen" -eq 0 ]; then
-  echo "guard-commit-attribution: no commits to check"
+  # A real PR always has at least one commit. Zero here almost always means
+  # the git-log invocation upstream silently produced nothing (e.g. an
+  # unreachable/rewritten base SHA) rather than that there was genuinely
+  # nothing to check — fail closed instead of reporting a clean bill for a
+  # check that never actually ran.
+  echo "::error::guard-commit-attribution: no commits were read from stdin — the upstream git log likely failed silently (unreachable base/head SHA?); treating as a check failure rather than a pass"
+  exit 1
 fi
 
 if [ "$bad" -ne 0 ]; then
