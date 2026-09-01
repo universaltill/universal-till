@@ -32,13 +32,16 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     await page.goto('/');
     await page.waitForSelector('.pos-container');
 
-    // ut-docs#1252: the payment overlay is a MODAL <dialog> -- it blocks
-    // pointer events on the rest of the page (including the scan-row,
-    // which stays outside it, in .tender's default view) while open, same
-    // as this file's other dialogs. So scan the item FIRST, matching the
-    // real operator flow (build the basket, then open Payment) -- opening
-    // the overlay before scanning would just hang waiting for a click the
-    // modal itself is blocking.
+    // ut-docs#1252: scan the item FIRST, matching the real operator flow
+    // (build the basket, then open Payment). ut-docs#1385: the payment
+    // overlay used to be a MODAL <dialog> that blocked pointer events on
+    // the rest of the page (including the scan-row, which stays outside
+    // it, in .tender's default view) while open -- opening the overlay
+    // before scanning would have hung waiting for a click the modal itself
+    // was blocking. It's non-modal now (.show(), not .showModal() -- the
+    // on-screen keyboard needed to stay tappable while it's open), so that
+    // particular hang can't happen any more either way, but scan-then-open
+    // still matches the real flow and is kept unchanged.
     await page.getByRole('textbox').first().fill('5000000000012');
     await page.locator('.scan-row button[type=submit]').click();
     await expect(page.locator('#basket')).toContainText('Coca-Cola');

@@ -74,9 +74,14 @@ test.describe('split-tender panel status copy localizes (ut-docs#925)', () => {
     // 3. Add a real payment WITH change, so the change-note fragment inside
     //    the payment pill is genuinely exercised (the first draft added a
     //    payment with change 0, making its change-note assertion unreachable).
-    // ut-docs#1252: #payment-overlay is a MODAL dialog -- it blocks pointer
-    // events on the rest of the page (scan-row included) while open, so
-    // close it before scanning, same as tender-panel-reachable.spec.ts.
+    // ut-docs#1252: close the overlay before scanning, matching the real
+    // operator flow (same as tender-panel-reachable.spec.ts). It used to be
+    // a MODAL dialog that blocked pointer events on the rest of the page
+    // (scan-row included) while open, making this a hard requirement, not
+    // just a flow preference -- ut-docs#1385 made it non-modal (the
+    // on-screen keyboard needed to stay tappable while it's open), so that
+    // block no longer applies, but closing first still matches how an
+    // operator actually works and is kept unchanged.
     await page.getByTestId('payment-close').click();
     await page.getByRole('textbox').first().fill('5000000000012');
     await Promise.all([
