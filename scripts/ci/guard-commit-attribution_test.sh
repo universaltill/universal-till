@@ -65,7 +65,7 @@ expect_pass "a second known contributor's correctly-ID'd noreply commit" \
 
 # A verified personal (non-noreply) email — untouched by this guard.
 expect_pass "a verified personal email address" \
-  'dddddddddddddddddddddddddddddddddddddddd|farshid3003@gmail.com|Farshid Mirza'
+  'dddddddddddddddddddddddddddddddddddddddd|contributor@example.com|Somebody'
 
 # Multiple good commits in one run.
 expect_pass "multiple good commits together" \
