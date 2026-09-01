@@ -1164,6 +1164,14 @@ a.btn, a.btn:hover { text-decoration: none; }
 }
 .modifier-modal::backdrop { background: rgba(15, 23, 42, .45); }
 .modifier-modal:not([open]) { display: none; }
+/* ut-docs#1356: the barcode-backfill dialog reuses .modifier-modal's frame
+   but holds a 3-column data table (name/SKU/derived barcode), which the
+   base 28rem max-width clips on any realistic SKU length -- confirmed by
+   screenshot in both LTR and RTL. Wider dialog, not a narrower table: the
+   table's own min-width (catalog_barcode_backfill.html) plus this class's
+   larger cap keep the common case scroll-free; the table wrapper's
+   overflow:auto is the remaining safety net for a still-longer row. */
+.barcode-backfill-modal { max-width: 38rem; }
 /* Hold Sale naming (ut-docs#46) is opened non-modal (dialog.show(), not
    showModal()): a showModal() dialog makes everything outside it inert,
    including the custom on-screen keyboard (#osk, appended to <body>, not

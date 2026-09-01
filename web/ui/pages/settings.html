@@ -425,6 +425,36 @@
   });
 })();
 </script>
+<div class="card">
+  <!-- ut-docs#1356: whether a fresh catalog-import preview's "derive a
+       barcode from SKU" checkbox (ut-docs#1224) starts pre-ticked for this
+       shop — never changes what an import actually does, only that
+       checkbox's initial state. Same single-checkbox hx-post/revert-on-
+       failure pattern as launch-on-startup above. -->
+  <label style="display:block; margin:.35rem 0">
+    <input type="checkbox" id="catalog-import-barcode-default-cb" name="enabled"
+           hx-post="/api/settings/catalog-import-barcode-default" hx-trigger="change" hx-swap="none"
+           hx-vals="js:{enabled: document.getElementById('catalog-import-barcode-default-cb').checked}"
+           hx-on::before-request="document.getElementById('catalog-import-barcode-default-msg').textContent=''"
+           hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
+           {{ if eq (index .settingsMap "catalog_import_barcode_from_sku_default") "1" }}checked{{ end }}>
+    {{ T "settings.catalog_import_barcode_default.label" }}
+  </label>
+  <p class="muted">{{ T "settings.catalog_import_barcode_default.hint" }}</p>
+  <div id="catalog-import-barcode-default-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+</div>
+<script>
+(function () {
+  var cb = document.getElementById('catalog-import-barcode-default-cb');
+  if (!cb) return;
+  var msg = document.getElementById('catalog-import-barcode-default-msg');
+  var T = { saved: "{{ T "settings.display.change_saved" }}" };
+  cb.addEventListener('htmx:afterRequest', function (ev) {
+    var ct = ev.detail.xhr.getResponseHeader('Content-Type') || '';
+    if (ev.detail.successful && ct.indexOf('text/html') === -1) { renderNotice(msg, 'success', T.saved); }
+  });
+})();
+</script>
 <div class="card settings-wide">
   <h2>{{ T "settings.backup.title" }} {{ helpLink "backups" }}</h2>
   <p class="muted">{{ T "settings.backup.help" }}</p>

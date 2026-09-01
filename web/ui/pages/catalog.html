@@ -6,9 +6,19 @@
     <a class="btn secondary" href="/catalog/tax-codes">{{ T "taxcodes.title" }}</a>
     <button id="catalog-export-btn" class="btn secondary" hx-post="/api/catalog/export-save" hx-target="#export-msg" hx-swap="innerHTML">{{ T "import.export_btn" }}</button>
     <div id="export-msg" class="muted" aria-live="polite"></div>
+    <!-- ut-docs#1356: bulk backfill, preview-before-apply — same
+         hx-get/hx-target/showModal() pattern as #modifier-modal
+         (buttons.html) and #table-modal (table_picker.html). -->
+    <button id="catalog-barcode-backfill-btn" class="btn secondary"
+            hx-get="/api/catalog/barcode-backfill" hx-target="#barcode-backfill-modal" hx-swap="innerHTML"
+            hx-on::after-request="document.getElementById('barcode-backfill-modal').showModal()">
+      {{ T "catalog.barcode_backfill.btn" }}
+    </button>
     <input type="search" id="catalog-search" placeholder="{{ T "catalog.search_placeholder" }}" autocomplete="off">
   </div>
 </div>
+
+<dialog id="barcode-backfill-modal" class="modifier-modal barcode-backfill-modal" aria-labelledby="catalog-barcode-backfill-btn"></dialog>
 
 {{ if .SyncPrimary }}
 <div class="sync-banner">⚠ {{ T "sync.banner_replica" }}
