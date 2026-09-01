@@ -19,6 +19,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/http"
 	"strings"
@@ -26,6 +27,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -212,6 +214,30 @@ func saveTSEProvisioningState(ctx context.Context, d *common.Deps, st *tseProvis
 	return d.Settings.Set(ctx, common.KeyTSEProvisioningState, string(raw))
 }
 
+// tseSystemActor is the audit actor for TSE provisioning transitions nobody
+// is driving interactively — the wizard's fire-and-forget hook, the
+// background retry ticker and the cloudsync directive path. A real seeded
+// user (internal/db/migrations/003_system_user.sql), same convention as
+// eod_api.go's report_archive_pruned entry.
+const tseSystemActor = "system"
+
+// auditTSEProvisioning records one provisioning state transition in the
+// audit trail (ut-docs#1174 item E): entity fiscal/tse, action
+// tse_provisioning_state_changed, payload {status, error_code}. Transitions
+// only — the "still pending, transient" no-op is deliberately not logged.
+// Best-effort like every other fire-and-forget write in this file: an
+// insert failure is logged, never allowed to fail provisioning itself.
+func auditTSEProvisioning(ctx context.Context, d *common.Deps, actorID, status, errorCode string) {
+	if d.Db == nil {
+		return
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	payload := map[string]any{"status": status, "error_code": errorCode}
+	if err := data.NewPOSRepo(d.Db).InsertAudit(ctx, nil, actorID, "fiscal", "tse", "tse_provisioning_state_changed", payload, now, ""); err != nil {
+		logging.L().Errorf("tse provisioning: audit %s transition: %v", status, err)
+	}
+}
+
 // startTSEProvisioningForSetup is POST /api/setup's hook: persists the
 // collected identity as pending BEFORE any network attempt (so it survives
 // the process dying mid-request and the wizard finishing offline), then
@@ -228,7 +254,7 @@ func startTSEProvisioningForSetup(ctx context.Context, d *common.Deps, country s
 	}
 	attemptCtx, cancel := context.WithTimeout(ctx, tseKickoffAttemptTimeout)
 	defer cancel()
-	tseKickoffAttempt(attemptCtx, d, st)
+	tseKickoffAttempt(attemptCtx, d, st, tseSystemActor)
 }
 
 // tseKickoffAttempt performs one kickoff POST against the cloud and updates
@@ -236,7 +262,11 @@ func startTSEProvisioningForSetup(ctx context.Context, d *common.Deps, country s
 //   - accepted            -> awaiting_ready
 //   - definitive rejection -> kickoff_rejected (+ the cloud's error code)
 //   - anything transient   -> stays pending_kickoff for the next retry
-func tseKickoffAttempt(ctx context.Context, d *common.Deps, st *tseProvisioningState) {
+//
+// actorID attributes the resulting audit entry: tseSystemActor for the
+// wizard hook and the background ticker, the acting manager's id for the
+// manual Settings retry (ut-docs#1174).
+func tseKickoffAttempt(ctx context.Context, d *common.Deps, st *tseProvisioningState, actorID string) {
 	effCfg := enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)
 	m := effCfg.Marketplace
 	if m.EndpointURL == "" || m.StoreID == "" || m.MerchantToken == "" {
@@ -259,6 +289,8 @@ func tseKickoffAttempt(ctx context.Context, d *common.Deps, st *tseProvisioningS
 		st.ErrorCode = ""
 		if err := saveTSEProvisioningState(ctx, d, st); err != nil {
 			logging.L().Errorf("tse provisioning: persist awaiting_ready: %v", err)
+		} else {
+			auditTSEProvisioning(ctx, d, actorID, st.Status, st.ErrorCode)
 		}
 		logging.L().Infof("tse provisioning: kickoff accepted, awaiting fiscal_tse_ready directive")
 	case err == nil && tseKickoffRejected(status):
@@ -273,6 +305,8 @@ func tseKickoffAttempt(ctx context.Context, d *common.Deps, st *tseProvisioningS
 		}
 		if err := saveTSEProvisioningState(ctx, d, st); err != nil {
 			logging.L().Errorf("tse provisioning: persist kickoff_rejected: %v", err)
+		} else {
+			auditTSEProvisioning(ctx, d, actorID, st.Status, st.ErrorCode)
 		}
 		logging.L().Warnf("tse provisioning: kickoff rejected by the cloud (%s), not retrying", st.ErrorCode)
 	default:
@@ -306,7 +340,7 @@ func tseProvisionRetryTick(ctx context.Context, d *common.Deps) {
 	if st == nil || st.Status != tseStatusPendingKickoff {
 		return
 	}
-	tseKickoffAttempt(ctx, d, st)
+	tseKickoffAttempt(ctx, d, st, tseSystemActor)
 }
 
 // StartTSEProvisionRetry launches the background half of the TSE kickoff
@@ -423,10 +457,32 @@ func finishTSEProvisioning(ctx context.Context, d *common.Deps, msg string) (str
 		// store.Load() fast path above) and will retry this write.
 		return "", fmt.Errorf("persist %s: %w", fiscal.KeyTSEConfigured, err)
 	}
+	// "configured" rather than a lifecycle constant: the lifecycle state is
+	// cleared below — this entry records the terminal success transition
+	// (credential confirmed on disk, fiscal.tse_configured now true).
+	// Audited right after the load-bearing write above succeeds, NOT
+	// conditioned on the state-clear below: a failure to clear the now-moot
+	// pending record must never suppress the record that TSE actually
+	// became configured (review finding, ut-docs#1174 follow-up).
+	auditTSEProvisioning(ctx, d, tseSystemActor, "configured", "")
 	if err := saveTSEProvisioningState(ctx, d, nil); err != nil {
 		logging.L().Warnf("tse provisioning: clear state after success: %v", err)
 	}
 	return msg, nil
+}
+
+// requeueTSEKickoffState is the shared move-back-to-pending step
+// (ut-docs#1174): sets pending_kickoff with errCode on an already-loaded
+// state, persists it, and audits the transition. Callers own deciding
+// whether the state is eligible.
+func requeueTSEKickoffState(ctx context.Context, d *common.Deps, st *tseProvisioningState, errCode, actorID string) {
+	st.Status = tseStatusPendingKickoff
+	st.ErrorCode = errCode
+	if err := saveTSEProvisioningState(ctx, d, st); err != nil {
+		logging.L().Errorf("tse provisioning: persist requeue: %v", err)
+		return
+	}
+	auditTSEProvisioning(ctx, d, actorID, st.Status, st.ErrorCode)
 }
 
 // requeueTSEKickoff moves the state back to pending_kickoff (keeping the
@@ -439,11 +495,7 @@ func requeueTSEKickoff(ctx context.Context, d *common.Deps) {
 		logging.L().Warnf("tse provisioning: load state for requeue: %v", err)
 	}
 	if st != nil && st.Identity.isComplete() {
-		st.Status = tseStatusPendingKickoff
-		st.ErrorCode = "credential_unavailable"
-		if err := saveTSEProvisioningState(ctx, d, st); err != nil {
-			logging.L().Errorf("tse provisioning: persist requeue: %v", err)
-		}
+		requeueTSEKickoffState(ctx, d, st, "credential_unavailable", tseSystemActor)
 		return
 	}
 	markTSECredentialFailed(ctx, d, "credential_unavailable")
@@ -464,7 +516,74 @@ func markTSECredentialFailed(ctx context.Context, d *common.Deps, code string) {
 	st.ErrorCode = code
 	if err := saveTSEProvisioningState(ctx, d, st); err != nil {
 		logging.L().Errorf("tse provisioning: persist credential_failed: %v", err)
+		return
 	}
+	auditTSEProvisioning(ctx, d, tseSystemActor, st.Status, st.ErrorCode)
+}
+
+// tseProvisioningRetryable reports whether st is a failure a manager can
+// manually re-attempt from Settings (ut-docs#1174 item A): a definitive
+// kickoff rejection (fixable out-of-band — e.g. the subscription was since
+// activated — so a fresh identical request CAN now succeed), or a failed
+// credential fetch (a fresh kickoff mints a fresh single-use record,
+// ADR-0053 Decision 1). pending/awaiting states are NOT retryable here —
+// the background ticker and the cloud's directive re-serve own those.
+func tseProvisioningRetryable(st *tseProvisioningState) bool {
+	return st != nil && (st.Status == tseStatusKickoffRejected || st.Status == tseStatusCredentialFailed)
+}
+
+// tseProvisioningDismissBlocked reports whether the Settings notice for st
+// must NOT be dismissible (ut-docs#1174 item B): the shop is in a market
+// whose sales are hard-blocked without a working TSE (fiscal.RequiresHardGate
+// — never a second hardcoded "DE") AND a provisioning record is stored at
+// all. Deliberately NOT scoped to specific "failure" statuses (kickoff_
+// rejected/credential_failed only, as first shipped) — every status this key
+// is ever set to means "not configured yet" (finishTSEProvisioning clears
+// the whole record to nil on success, the only way fiscal.tse_configured
+// flips true), so ANY stored state for a hard-gated country already means
+// every sale is refused by fiscal.EvaluateGate with no other explanation
+// anywhere in the UI. Independent review (2026-09-01) found the narrower,
+// status-based version had a two-click bypass: retry a rejected kickoff
+// while the cloud is unreachable, and tseKickoffAttempt's transient branch
+// leaves the state at pending_kickoff — a status the old check didn't cover
+// — making the record freely dismissible again. Blocking on "any record"
+// closes that regardless of which status a retry lands on.
+func tseProvisioningDismissBlocked(st *tseProvisioningState) bool {
+	return st != nil && fiscal.RequiresHardGate(st.Country)
+}
+
+// errNoTSERetry: POST /api/settings/retry-tse-provisioning found nothing
+// retryable stored — a clean 409 at the handler, never a crash.
+var errNoTSERetry = errors.New("no retryable TSE provisioning state")
+
+// retryTSEProvisioning is the manual Settings retry (ut-docs#1174 item A):
+// requeue a retryable failure to pending_kickoff (keeping the stored
+// identity) and make ONE synchronous, time-boxed kickoff attempt — same
+// budget/posture as the wizard's own attempt — so the manager gets an
+// immediate answer. Returns the freshly-reloaded state for re-rendering.
+// Every transition is audited under actorID (the acting manager).
+//
+// Requires a COMPLETE stored identity, same guard requeueTSEKickoff already
+// applies (isComplete()) — independent review found markTSECredentialFailed
+// can persist a credential_failed state with a zero identity (dismiss a
+// pending_kickoff — allowed pre-fix — then its fiscal_tse_ready directive's
+// credential fetch fails with nothing left to re-send); without this guard
+// retryTSEProvisioning would POST an empty business_identity to the cloud,
+// which a real backend would reject as invalid_request, permanently and
+// undismissibly, with no UI path back to re-entering the details.
+func retryTSEProvisioning(ctx context.Context, d *common.Deps, actorID string) (*tseProvisioningState, error) {
+	st, err := loadTSEProvisioningState(ctx, d)
+	if err != nil {
+		return nil, err
+	}
+	if !tseProvisioningRetryable(st) || !st.Identity.isComplete() {
+		return nil, errNoTSERetry
+	}
+	requeueTSEKickoffState(ctx, d, st, "", actorID)
+	attemptCtx, cancel := context.WithTimeout(ctx, tseKickoffAttemptTimeout)
+	defer cancel()
+	tseKickoffAttempt(attemptCtx, d, st, actorID)
+	return loadTSEProvisioningState(ctx, d)
 }
 
 // tseCloudPost / tseCloudPostBody POST to the cloud with the store's bearer

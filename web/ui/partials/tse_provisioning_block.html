@@ -1,0 +1,41 @@
+<!-- TSE provisioning status block (ADR-0053, ut-docs#802; extracted from
+     web/ui/pages/settings.html by ut-docs#1174 so the manual-retry endpoint
+     can re-render EXACTLY the same markup for its htmx outerHTML swap —
+     one source of truth, no Go-side duplicate of this fragment).
+     Rendered two ways with the same keys (tseProvisioning / tseRetryable /
+     tseCanDismiss):
+       - inline from settings.html, included by file name (this file rides
+         along in httpx renderFiles — template actions run even inside HTML
+         comments, so the include syntax is deliberately not spelled out
+         here: a literal self-include in this very comment recursed);
+       - standalone via httpx.RenderPartial from
+         POST /api/settings/retry-tse-provisioning (settings_page.go).
+     ut-docs#1112: message stays in .notice-block-warn (wrapping), never the
+     nowrap .chip that silently clipped it.
+     ut-docs#1174: Retry only for a retryable failure (kickoff_rejected /
+     credential_failed); the dismiss button is OMITTED — not just refused
+     server-side — while a hard-gated market's failure is unresolved, with a
+     hint saying why instead. -->
+{{ if .tseProvisioning }}
+<div class="tse-provisioning-block" data-testid="tse-provisioning" style="margin:.3rem 0">
+  {{ if .tseProvisioning.ReasonKey }}
+  <p class="notice-block-warn"><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ printf (T .tseProvisioning.MessageKey) (T .tseProvisioning.ReasonKey) }}</p>
+  {{ else }}
+  <p class="notice-block-warn"><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T .tseProvisioning.MessageKey }}</p>
+  {{ end }}
+  {{ if .tseRetryable }}
+  <button class="btn secondary" data-testid="tse-provisioning-retry"
+          hx-post="/api/settings/retry-tse-provisioning"
+          hx-target="closest .tse-provisioning-block" hx-swap="outerHTML"
+          hx-disabled-elt="this">{{ T "settings.tse.retry_btn" }}</button>
+  {{ end }}
+  {{ if .tseCanDismiss }}
+  <button class="btn secondary" data-testid="tse-provisioning-dismiss"
+          hx-post="/api/settings/dismiss-tse-provisioning"
+          hx-target="closest .tse-provisioning-block" hx-swap="outerHTML"
+          hx-disabled-elt="this">{{ T "settings.tse.dismiss_btn" }}</button>
+  {{ else }}
+  <p class="muted" data-testid="tse-provisioning-dismiss-blocked">{{ T "settings.tse.dismiss_blocked" }}</p>
+  {{ end }}
+</div>
+{{ end }}

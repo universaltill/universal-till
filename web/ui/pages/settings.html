@@ -603,26 +603,11 @@
   {{ if .tseProvisioning }}
   <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
   <h3 style="margin:0 0 .3rem">{{ T "settings.tse.title" }}</h3>
-  <!-- ut-docs#1112: identical clipping bug ut-docs#1026 found and fixed on
-       this block's sibling (missingFiscalSigner) below — .chip is
-       `white-space: nowrap`, and the parent .settings-grid .card is
-       `overflow: hidden`, so a long message here was silently clipped at
-       the card edge instead of wrapping. Same fix: swap to
-       .notice-block-warn (+ .row-warn-icon), this codebase's existing
-       wrapping warning-block component, rather than inventing new CSS.
-       The dismiss button's hx-target now names this wrapper explicitly
-       (no more .chip-row to anchor "closest" on). -->
-  <div class="tse-provisioning-block" data-testid="tse-provisioning" style="margin:.3rem 0">
-    {{ if .tseProvisioning.ReasonKey }}
-    <p class="notice-block-warn"><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ printf (T .tseProvisioning.MessageKey) (T .tseProvisioning.ReasonKey) }}</p>
-    {{ else }}
-    <p class="notice-block-warn"><span class="row-warn-icon" aria-hidden="true">⚠</span>{{ T .tseProvisioning.MessageKey }}</p>
-    {{ end }}
-    <button class="btn secondary" data-testid="tse-provisioning-dismiss"
-            hx-post="/api/settings/dismiss-tse-provisioning"
-            hx-target="closest .tse-provisioning-block" hx-swap="outerHTML"
-            hx-disabled-elt="this">{{ T "settings.tse.dismiss_btn" }}</button>
-  </div>
+  <!-- ut-docs#1174: the block itself moved to
+       web/ui/partials/tse_provisioning_block.html (one source of truth —
+       the manual-retry endpoint re-renders the same partial for its htmx
+       swap). The ut-docs#1112 wrapping fix and its history live there. -->
+  {{ template "tse_provisioning_block.html" . }}
   {{ end }}
 
   {{ if .missingFiscalSigner }}

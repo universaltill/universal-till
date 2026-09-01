@@ -701,6 +701,32 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				}
 			}
 		}
+		// ut-docs#1174 item D: a definitive rejection during the wizard's own
+		// synchronous attempt (not_configured / subscription_inactive are
+		// exactly this — fast synchronous cloud answers, not flakiness) is
+		// surfaced to the operator immediately, on the page this redirect
+		// lands on, instead of waiting to be found in Settings. Carried as a
+		// query param — no stored state, same posture as install_pending /
+		// tax_plugin_pending above; the landing page re-checks the REAL
+		// stored state before rendering anything (index_page.go), so the
+		// param can never conjure a warning that isn't true. A kickoff still
+		// pending/transient at this point deliberately adds nothing — the
+		// background ticker plus Settings already cover it.
+		//
+		// Restricted to redirectTo == "/" (independent review, ut-docs#1174
+		// follow-up): only index_page.go ever reads this param — appending it
+		// to /import or /catalog (the csv_excel branch above) produced a dead
+		// marker that no page rendered, silently dropping the surfacing this
+		// item exists to provide. Settings still shows the failure regardless
+		// of which page the wizard lands on. Checked first (before the load)
+		// so the csv_excel branches skip the extra settings read entirely.
+		if redirectTo == "/" {
+			if st, err := loadTSEProvisioningState(r.Context(), d); err == nil && st != nil && st.Status == tseStatusKickoffRejected {
+				// redirectTo is exactly "/" on this branch, never already
+				// carrying a "?" — no separator logic needed.
+				redirectTo = "/?tse_setup=rejected"
+			}
+		}
 		http.Redirect(w, r, redirectTo, http.StatusSeeOther)
 	})
 }
