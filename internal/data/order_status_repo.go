@@ -169,6 +169,15 @@ LIMIT 1
 // excluded too — the kitchen must never get a one-tap status control for a
 // transaction that isn't a real, finished order) with their current order
 // status, for the one-tap status list. Untracked sales list with Status "".
+//
+// /orders is the ACTIVE work queue (ut-docs#1389), so a sale whose
+// order_status has reached a terminal lifecycle state (collected,
+// cancelled — pos.IsTerminalOrderStatus) is excluded too: its sale, audit
+// trail and journal/reporting history are untouched, this only stops it
+// resurfacing in the queue. This is the ONE query both the local /ui/orders
+// fragment and the primary's GET /api/sync/orders (sync_orders.go, which a
+// replica's board polls) share, so the filter applies to every board that
+// reads it without needing a second copy.
 func (r *POSRepo) ListRecentOrders(ctx context.Context, limit int) ([]OrderListEntry, error) {
 	if limit <= 0 {
 		limit = 50
@@ -178,6 +187,7 @@ SELECT receipt_no, COALESCE(order_type, ''), order_status, COALESCE(order_status
        COALESCE(kitchen_print_failed_at, ''), COALESCE(receipt_print_failed_at, '')
 FROM sales
 WHERE sale_type = 'sale' AND status = 'completed'
+  AND order_status NOT IN ('collected', 'cancelled')
 ORDER BY created_at DESC
 LIMIT ?
 `, limit)
