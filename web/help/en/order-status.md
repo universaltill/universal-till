@@ -14,7 +14,7 @@ Mark each order's progress — preparing, ready, collected — with one tap, so 
 
 ## How to use it
 
-1. Open **Orders** from the menu. Recent sales are listed newest first, each with its current status.
+1. Open **Orders** — the 🛎️ icon in the rail on the sale screen, or from the ☰ menu. Recent sales are listed newest first, each with its current status.
 2. Tap **Preparing** when the kitchen starts on an order, **Ready** when it can be picked up, and **Collected** when the customer has it. Any operator can do this — no manager PIN needed.
 3. Every change records who made it and when, next to the status. The receipt number links to the full receipt in the Journal — except an order shown here because it was taken on a *different* till (see the note below), where the number is shown but isn't a link, since this till doesn't hold that receipt itself.
 4. **Cancel order** marks an order cancelled. It works at any point until the order is collected; a collected order can't be cancelled.

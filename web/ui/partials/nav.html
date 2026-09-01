@@ -55,6 +55,17 @@
       <span class="nav-toggle-ico" aria-hidden="true">📦</span>
       <span class="nav-toggle-label">{{ T "kiosk.inventory" }}</span>
     </a>
+    <!-- ut-docs#1349 (product owner, reported twice live): Orders was only
+         reachable via ☰ Menu → Orders (the tile itself, and its 🛎️ icon,
+         already exist — ut-docs#1371/menu_page.go's iconFor). This
+         promotes it to a one-tap rail shortcut, same pattern and same
+         phone-width tradeoff as Inventory just above: .nav-rail-only
+         (hidden at <=480px) because the Menu tile already covers phone
+         width and ut-docs#413 has no spare budget in that top-bar wrap. -->
+    <a href="/orders" class="nav-toggle nav-rail-only" data-testid="nav-orders">
+      <span class="nav-toggle-ico" aria-hidden="true">🛎️</span>
+      <span class="nav-toggle-label">{{ T "nav.orders" }}</span>
+    </a>
   </div>
   <div class="nav-right">
     <!-- Contextual help: resolves to the manual topic documenting THIS page
