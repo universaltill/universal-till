@@ -3,11 +3,25 @@ import { watchConsole } from './helpers';
 
 // ut-docs#46: cashier can name a held sale (e.g. "Tab 1") instead of it
 // always falling back to the CRM customer name or a bare timestamp.
+//
+// ut-docs#1284 review finding: this file has no reset between tests, and
+// the "cancelling" test below deliberately leaves Coca-Cola in the basket
+// -- so every `.scan-row input[name="code"]` fill() here is scoped
+// directly to the scan field rather than `getByRole('textbox').first()`,
+// which would resolve to a leftover basket qty-input instead once one
+// exists (a basket qty-input is type="text" -> ARIA role "textbox" since
+// ut-docs#1284's own decimal-corruption fix; it used to be type="number"
+// -> role "spinbutton", which `.first()` safely skipped). Also reset the
+// basket after each test so this file stops relying on later tests
+// tolerating whatever an earlier one left behind.
+test.afterEach(async ({ page }) => {
+  await page.request.post('/api/pos/reset').catch(() => {});
+});
 test('holding a sale with a typed name shows that name in the held strip', async ({ page }) => {
   const assertClean = watchConsole(page);
   await page.goto('/');
 
-  await page.getByRole('textbox').first().fill('5000000000012');
+  await page.locator('.scan-row input[name="code"]').fill('5000000000012');
   await page.locator('.scan-row button[type=submit]').click();
   await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
@@ -36,7 +50,7 @@ test('cancelling the name prompt does not hold the sale', async ({ page }) => {
   const assertClean = watchConsole(page);
   await page.goto('/');
 
-  await page.getByRole('textbox').first().fill('5000000000012');
+  await page.locator('.scan-row input[name="code"]').fill('5000000000012');
   await page.locator('.scan-row button[type=submit]').click();
   await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
@@ -55,7 +69,7 @@ test('holding with a blank name still falls back to a timestamp label', async ({
   const assertClean = watchConsole(page);
   await page.goto('/');
 
-  await page.getByRole('textbox').first().fill('5000000000012');
+  await page.locator('.scan-row input[name="code"]').fill('5000000000012');
   await page.locator('.scan-row button[type=submit]').click();
   await expect(page.locator('#basket')).toContainText('Coca-Cola');
 

@@ -45,7 +45,14 @@ test.describe('ut-docs#1337 basket hx-sync race', () => {
     await page.goto('/');
 
     // Baseline: one item already in the basket, Dine-in (default).
-    await page.getByRole('textbox').first().fill('5000000000012');
+    // ut-docs#1284: scoped directly to the scan-row's own barcode input,
+    // not `getByRole('textbox').first()` -- that used to safely skip the
+    // basket's qty-input (type="number" -> ARIA role "spinbutton"), but
+    // that card's decimal-corruption fix switched it to type="text" (role
+    // "textbox"), so once a line exists in the basket `.first()` can
+    // resolve to it instead. Matters here specifically: the second fill()
+    // below runs AFTER the Coca-Cola scan already added a line.
+    await page.locator('.scan-row input[name="code"]').fill('5000000000012');
     await page.locator('.scan-row button[type=submit]').click();
     await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
@@ -111,7 +118,7 @@ test.describe('ut-docs#1337 basket hx-sync race', () => {
     // turned out ambiguous in practice) -- click the Takeaway segment
     // directly by testid, same original intent (Dine-in -> Takeaway).
     await page.locator('[data-testid="order-type-takeaway"]').click();
-    await page.getByRole('textbox').first().fill('5000000000029');
+    await page.locator('.scan-row input[name="code"]').fill('5000000000029');
     await page.locator('.scan-row button[type=submit]').click();
 
     // Both real requests have now genuinely round-tripped the server (both

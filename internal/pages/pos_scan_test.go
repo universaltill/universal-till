@@ -45,8 +45,12 @@ func TestScanHandlerUpdatesBasketTotals(t *testing.T) {
 	if !strings.Contains(body, "Test Item") {
 		t.Fatalf("expected scanned item in response, got: %s", body)
 	}
-	if !strings.Contains(body, `value="1.00"`) {
-		t.Fatalf("expected qty 1.00 in response, got: %s", body)
+	// ut-docs#1284 review finding: a non-weighed line renders its
+	// whole-number quantity as "1", not "1.00" -- the value must actually
+	// match its own pattern="[0-9]+" (integer-only for a non-weighed
+	// line), which "1.00" never did.
+	if !strings.Contains(body, `name="qty" value="1"`) {
+		t.Fatalf("expected qty 1 in response, got: %s", body)
 	}
 
 	req2 := httptest.NewRequest(http.MethodPost, "/api/pos/scan", strings.NewReader("code=ABC&qty=1"))
@@ -57,8 +61,10 @@ func TestScanHandlerUpdatesBasketTotals(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec2.Code, rec2.Body.String())
 	}
 	body2 := rec2.Body.String()
-	if !strings.Contains(body2, `value="2.00"`) {
-		t.Fatalf("expected qty 2.00 in response after rescan, got: %s", body2)
+	// ut-docs#1284 review finding: see the same note above -- "2", not
+	// "2.00".
+	if !strings.Contains(body2, `name="qty" value="2"`) {
+		t.Fatalf("expected qty 2 in response after rescan, got: %s", body2)
 	}
 	if !strings.Contains(body2, "Total:") {
 		t.Fatalf("expected totals in response, got: %s", body2)

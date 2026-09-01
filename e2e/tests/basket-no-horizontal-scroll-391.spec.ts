@@ -42,7 +42,13 @@ const VIEWPORTS = [
 ];
 
 async function scan(page, code: string) {
-  await page.getByRole('textbox').first().fill(code);
+  // ut-docs#1284: `getByRole('textbox').first()` used to safely skip the
+  // basket's qty-input (type="number" -> ARIA role "spinbutton"), but that
+  // card's decimal-corruption fix switched it to type="text" (role
+  // "textbox") -- so once a basket line exists, `.first()` can resolve to
+  // it instead of the scan field, depending on DOM order. Scope directly
+  // to the scan-row's own barcode input instead.
+  await page.locator('.scan-row input[name="code"]').fill(code);
   await Promise.all([
     page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
     page.locator('.scan-row button[type=submit]').click(),

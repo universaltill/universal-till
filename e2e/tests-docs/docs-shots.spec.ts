@@ -153,10 +153,16 @@ async function ensureBasketLines(page: Page) {
   await page.goto('/');
   const basket = page.locator('#basket');
   if ((await basket.textContent())?.includes('Coca-Cola')) return; // already staged
-  await page.getByRole('textbox').first().fill('5000000000012');
+  // ut-docs#1284: scoped directly to the scan-row's own barcode input, not
+  // `getByRole('textbox').first()` -- that used to safely skip the
+  // basket's qty-input (type="number" -> ARIA role "spinbutton"), but that
+  // card's decimal-corruption fix switched it to type="text" (role
+  // "textbox"), so the second fill() below (basket already has a Coca-Cola
+  // line by then) could resolve to it instead of the scan field.
+  await page.locator('.scan-row input[name="code"]').fill('5000000000012');
   await page.locator('.scan-row button[type=submit]').click();
   await expect(basket).toContainText('Coca-Cola');
-  await page.getByRole('textbox').first().fill('5000000000029');
+  await page.locator('.scan-row input[name="code"]').fill('5000000000029');
   await page.locator('.scan-row button[type=submit]').click();
   await expect(basket).toContainText('Pepsi');
 }
