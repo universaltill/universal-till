@@ -127,6 +127,40 @@ func TestHoldThenResume_RestoresBasketAndClearsHeldRow(t *testing.T) {
 	}
 }
 
+// TestHoldThenResume_PreservesOrderType (ut-docs#1381, independent review):
+// end-to-end through the REAL HTTP hold/resume handlers -- hold.go's own
+// TestSnapshotRestoreRoundTrip_PreservesOrderType already pins Service's
+// Snapshot()/Restore() contract directly, but not that this package's
+// Hold/Resume handlers actually round-trip a real held_sales.payload
+// column through json.Marshal/Unmarshal end to end.
+func TestHoldThenResume_PreservesOrderType(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	dp.Engine.SetOrderType(pos.OrderTypeTakeaway)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/hold", nil)
+	mux.ServeHTTP(httptest.NewRecorder(), req)
+
+	var id string
+	if err := dp.Db.QueryRow(`SELECT id FROM held_sales`).Scan(&id); err != nil {
+		t.Fatalf("expected a held_sales row: %v", err)
+	}
+
+	// Serve another (dine-in) customer in between.
+	_, _ = dp.Engine.Scan("ABC")
+	dp.Engine.Reset()
+
+	resumeReq := httptest.NewRequest(http.MethodPost, "/api/pos/resume", strings.NewReader("id="+id))
+	resumeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(httptest.NewRecorder(), resumeReq)
+
+	if got := dp.Engine.OrderType(); got != pos.OrderTypeTakeaway {
+		t.Fatalf("resumed OrderType() = %q, want %q (silently reverted to dine-in)", got, pos.OrderTypeTakeaway)
+	}
+}
+
 func TestResumeHandler_RequiresID(t *testing.T) {
 	mux, dp := newHoldTestDeps(t)
 	req := httptest.NewRequest(http.MethodPost, "/api/pos/resume", strings.NewReader(""))
@@ -518,6 +552,62 @@ func TestHeldTableHandler_MoveOntoOwnCurrentTableSucceeds(t *testing.T) {
 	}
 	if tableID != "tbl-1" {
 		t.Fatalf("h1's table_id = %q, want tbl-1", tableID)
+	}
+}
+
+// TestHeldTableHandler_TakeawayOrderIgnoresTableMove (ut-docs#1381): a held
+// Takeaway order's table assignment can never be set via this endpoint --
+// mirrors Service.SetTable's own no-op-while-Takeaway rule, now enforceable
+// here because OrderType survives into the held sale's own JSON payload
+// (it has no dedicated held_sales column, unlike table_id).
+func TestHeldTableHandler_TakeawayOrderIgnoresTableMove(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO tables (id, label, created_at, updated_at) VALUES ('tbl-1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed table: %v", err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES ('h1','Takeaway 1',100,1,'{"order_type":"takeaway"}','')`); err != nil {
+		t.Fatalf("seed held sale: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/held/table", strings.NewReader("id=h1&table_id=tbl-1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (in-place no-op), got %d: %s", rec.Code, rec.Body.String())
+	}
+	// COALESCE: repo.SetTable stores "" as SQL NULL (nullIfEmpty), which the
+	// gate above should still be routing this request into.
+	var tableID string
+	if err := dp.Db.QueryRow(`SELECT COALESCE(table_id, '') FROM held_sales WHERE id='h1'`).Scan(&tableID); err != nil {
+		t.Fatalf("query held_sales.table_id: %v", err)
+	}
+	if tableID != "" {
+		t.Fatalf("a Takeaway held order's table_id must stay empty after an attempted move, got %q", tableID)
+	}
+}
+
+// TestHeldStrip_NoMoveControlForTakeawayOrder (ut-docs#1381): the Move-table
+// control must not render for a held Takeaway order even when a free table
+// exists -- same soft-gate ut-docs#1355 already applies to the live sale's
+// table picker (registerTablePicker).
+func TestHeldStrip_NoMoveControlForTakeawayOrder(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO tables (id, label, created_at, updated_at) VALUES ('tbl-1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed table: %v", err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES ('h1','Takeaway 1',100,1,'{"order_type":"takeaway"}','')`); err != nil {
+		t.Fatalf("seed held sale: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/held", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "/api/pos/held/table") {
+		t.Fatalf("a Takeaway held order must not render a Move control, got: %s", body)
 	}
 }
 
