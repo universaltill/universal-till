@@ -277,3 +277,51 @@ func TestListRecentOrders(t *testing.T) {
 		t.Fatalf("untracked sale must list with empty status, got %q", orders[1].Status)
 	}
 }
+
+// ListRecentOrders is the ACTIVE work queue (ut-docs#1389): a sale whose
+// order_status has reached a terminal lifecycle state (collected, cancelled)
+// must not keep reappearing in it, while every non-terminal tracked state
+// (new/preparing/ready) and the untracked "" state stay visible.
+func TestListRecentOrders_ExcludesTerminalStates(t *testing.T) {
+	d := openOrderStatusDB(t, "order_status_recent_terminal.db")
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := d.DB.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v", err)
+		}
+	}
+	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('sale-untracked','R-0001','completed','sale','GBP',100,0,0,100,'2026-09-01T09:00:00Z')`)
+	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('sale-new','R-0002','completed','sale','GBP',100,0,0,100,'2026-09-01T09:01:00Z')`)
+	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('sale-preparing','R-0003','completed','sale','GBP',100,0,0,100,'2026-09-01T09:02:00Z')`)
+	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('sale-ready','R-0004','completed','sale','GBP',100,0,0,100,'2026-09-01T09:03:00Z')`)
+	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('sale-collected','R-0005','completed','sale','GBP',100,0,0,100,'2026-09-01T09:04:00Z')`)
+	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('sale-cancelled','R-0006','completed','sale','GBP',100,0,0,100,'2026-09-01T09:05:00Z')`)
+
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	apply := func(receiptNo, status string) {
+		t.Helper()
+		if applied, _, err := repo.ApplyOrderStatus(ctx, receiptNo, status, "u-alice", "2026-09-01T09:10:00Z", func(string) bool { return true }); err != nil || !applied {
+			t.Fatalf("seed status %s=%s: applied=%v err=%v", receiptNo, status, applied, err)
+		}
+	}
+	apply("R-0002", "new")
+	apply("R-0003", "preparing")
+	apply("R-0004", "ready")
+	apply("R-0005", "collected")
+	apply("R-0006", "cancelled")
+
+	orders, err := repo.ListRecentOrders(ctx, 10)
+	if err != nil {
+		t.Fatalf("ListRecentOrders: %v", err)
+	}
+	want := map[string]bool{"R-0001": true, "R-0002": true, "R-0003": true, "R-0004": true}
+	if len(orders) != len(want) {
+		t.Fatalf("want %d active orders, got %d: %+v", len(want), len(orders), orders)
+	}
+	for _, o := range orders {
+		if !want[o.ReceiptNo] {
+			t.Fatalf("terminal-state order %s (status %q) leaked into the active orders list: %+v", o.ReceiptNo, o.Status, orders)
+		}
+	}
+}
