@@ -122,6 +122,21 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			fiscalOverrideActive = true
 			fiscalOverrideUntil = g.OverrideUntil.Local().Format("2006-01-02 15:04")
 		}
+		// ut-docs#1174 item D: the setup wizard's completion redirect carries
+		// ?tse_setup=rejected when its own synchronous TSE kickoff attempt
+		// got a fast definitive rejection, so the operator sees the failure
+		// here, immediately, instead of discovering it in Settings (or at the
+		// first refused sale). The param alone proves nothing — the banner
+		// only renders when the STORED state really is kickoff_rejected, and
+		// it reuses the exact Settings message mapping (tseProvisioningViewFor)
+		// rather than inventing new copy. One-shot by construction: any plain
+		// later visit to "/" has no param and shows nothing.
+		var tseRejectedView *tseProvisioningView
+		if r.URL.Query().Get("tse_setup") == "rejected" {
+			if st, stErr := loadTSEProvisioningState(r.Context(), d); stErr == nil && st != nil && st.Status == tseStatusKickoffRejected {
+				tseRejectedView = tseProvisioningViewFor(st)
+			}
+		}
 		data := map[string]any{
 			"title":                "Universal Till",
 			"saleScreen":           true,
@@ -136,6 +151,7 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			"aiIdentify":           aiService(r.Context(), d).Enabled(),
 			"fiscalOverrideActive": fiscalOverrideActive,
 			"fiscalOverrideUntil":  fiscalOverrideUntil,
+			"tseKickoffRejected":   tseRejectedView,
 		}
 		httpx.Render("ui/pages/index.html", data)(w, r)
 	})

@@ -100,6 +100,20 @@
   </div>
   {{ end }}
 
+  <!-- ut-docs#1174: one-shot banner right after the setup wizard when its
+       own TSE kickoff attempt was definitively rejected — the same message
+       the Settings block shows (tseProvisioningViewFor's mapping, same
+       locale keys), plus where to go to retry. Only rendered when the
+       wizard's redirect carried the marker AND the stored state really is
+       kickoff_rejected (index_page.go); dismissible, and gone on any plain
+       revisit — Settings owns the persistent surfacing. -->
+  {{ if .tseKickoffRejected }}
+  <div class="pos-notice error" role="alert" data-testid="tse-kickoff-rejected-banner">
+    <span class="notice-text">{{ if .tseKickoffRejected.ReasonKey }}{{ printf (T .tseKickoffRejected.MessageKey) (T .tseKickoffRejected.ReasonKey) }}{{ else }}{{ T .tseKickoffRejected.MessageKey }}{{ end }} {{ T "settings.tse.see_settings" }}</span>
+    <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}">✕</button>
+  </div>
+  {{ end }}
+
   <div class="pos-container" data-currency="{{ or .currency "GBP" }}">
     <!-- Basket loads on page load -->
     <div class="basket" hx-get="/ui/basket" hx-trigger="load" hx-swap="outerHTML"></div>

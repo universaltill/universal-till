@@ -639,6 +639,11 @@ var renderFiles = []string{
 	"ui/partials/help_topic.html",
 	"ui/partials/help_nav.html",
 	"ui/partials/bugreport_panel.html",
+	// ut-docs#1174: the Settings TSE provisioning block lives in a partial
+	// so POST /api/settings/retry-tse-provisioning can re-render exactly the
+	// same markup standalone (RenderPartial) for its htmx swap; riding along
+	// here is what lets settings.html include it by file name.
+	"ui/partials/tse_provisioning_block.html",
 }
 
 // Render full page with layout + page + common partials

@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -611,19 +612,23 @@ func TestApplyFiscalTSEReady_CorruptExistingFileIsNotTreatedAsStored(t *testing.
 
 // --- Settings surfacing + dismiss ---
 
+// getSettingsAs renders /settings for a user and returns the body.
+func getSettingsAs(t *testing.T, mux *http.ServeMux, u auth.User) string {
+	t.Helper()
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req = auth.WithUser(req, u)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	return rec.Body.String()
+}
+
 func TestSettingsShowsTSEProvisioningChipAndDismiss(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
-	getSettings := func() string {
-		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
-		req = auth.WithUser(req, mgrUser)
-		rec := httptest.NewRecorder()
-		mux.ServeHTTP(rec, req)
-		if rec.Code != http.StatusOK {
-			t.Fatalf("GET /settings = %d", rec.Code)
-		}
-		return rec.Body.String()
-	}
+	getSettings := func() string { return getSettingsAs(t, mux, mgrUser) }
 
 	if strings.Contains(getSettings(), `data-testid="tse-provisioning"`) {
 		t.Fatal("TSE chip shown with nothing pending")
@@ -648,19 +653,531 @@ func TestSettingsShowsTSEProvisioningChipAndDismiss(t *testing.T) {
 		t.Fatal("TSE provisioning message not wrapped in .notice-block-warn — regressed to the clipping .chip layout (ut-docs#1112)")
 	}
 
-	// Dismiss is manager-gated and clears the state.
+	// Dismiss stays manager-gated.
 	rec := postForm(mux, "/api/settings/dismiss-tse-provisioning", url.Values{}, &cashUser)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier dismiss: code=%d, want 403", rec.Code)
 	}
+	// ut-docs#1174: a hard-gated (DE) shop with an UNRESOLVED failure
+	// (kickoff_rejected) can no longer dismiss the notice away — sales are
+	// hard-blocked without a TSE, so hiding the only explanation of why
+	// would leave the operator flying blind. 409, state survives.
 	rec = postForm(mux, "/api/settings/dismiss-tse-provisioning", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("manager dismiss of a hard-gated unresolved state: code=%d body=%s, want 409", rec.Code, rec.Body.String())
+	}
+	st, _ := loadTSEProvisioningState(t.Context(), d)
+	if st == nil || st.Status != tseStatusKickoffRejected {
+		t.Fatalf("state after blocked dismiss = %+v, want kickoff_rejected preserved", st)
+	}
+	if !strings.Contains(getSettings(), `data-testid="tse-provisioning"`) {
+		t.Fatal("TSE chip must survive a blocked dismiss")
+	}
+}
+
+// ut-docs#1174: for a hard-gated, unresolved state the Settings block hides
+// the dismiss button entirely (the 409 above is defense in depth, not the
+// UI) and offers Retry instead, plus the why-you-can't-dismiss hint.
+func TestSettingsTSEBlock_HardGatedUnresolvedShowsRetryHidesDismiss(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	for _, status := range []string{tseStatusKickoffRejected, tseStatusCredentialFailed} {
+		if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+			Status: status, Country: "DE", ErrorCode: "subscription_inactive",
+			Identity: tseBusinessIdentity{LegalName: "L", OwnerName: "O", TaxNumber: "DE123456789", Address: "A"},
+		}); err != nil {
+			t.Fatal(err)
+		}
+		body := getSettingsAs(t, mux, mgrUser)
+		if !strings.Contains(body, `data-testid="tse-provisioning-retry"`) {
+			t.Fatalf("status %s: Retry button missing from Settings", status)
+		}
+		if strings.Contains(body, `data-testid="tse-provisioning-dismiss"`) {
+			t.Fatalf("status %s: dismiss button rendered for a hard-gated unresolved state", status)
+		}
+	}
+
+	// A still-progressing state (pending_kickoff) for the SAME hard-gated
+	// country gets no Retry (the background ticker owns that retry) and is
+	// ALSO not dismissible: the shop still has no working TSE regardless of
+	// exact status, so hiding this one explanation would leave the operator
+	// flying blind exactly as a kickoff_rejected would. (Fixed after
+	// independent review: a status-enumerated block let a retry that landed
+	// back at pending_kickoff be freely dismissed away — see
+	// TestDismissTSEProvisioning_BlockedRegardlessOfStatusAfterRetry.)
+	if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+		Status: tseStatusPendingKickoff, Country: "DE",
+		Identity: tseBusinessIdentity{LegalName: "L", OwnerName: "O", TaxNumber: "DE123456789", Address: "A"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	body := getSettingsAs(t, mux, mgrUser)
+	if strings.Contains(body, `data-testid="tse-provisioning-dismiss"`) {
+		t.Fatal("DE pending_kickoff: dismiss button must NOT be offered")
+	}
+	if !strings.Contains(body, `data-testid="tse-provisioning-dismiss-blocked"`) {
+		t.Fatal("DE pending_kickoff: blocked-dismiss hint missing")
+	}
+	if strings.Contains(body, `data-testid="tse-provisioning-retry"`) {
+		t.Fatal("pending_kickoff: no Retry button (the background ticker already retries)")
+	}
+}
+
+// The still-allowed dismissal path (not hard-gate-blocked): a pending state
+// dismisses exactly as before — 200, state cleared, chip gone — and the
+// dismissal is audited.
+// GB (not RequiresHardGate) so this exercises the still-fully-dismissible
+// path while proving the success side effects (state cleared, audited under
+// the real actor). A hard-gated country's pending_kickoff is deliberately
+// NOT dismissible any more — see
+// TestDismissTSEProvisioning_BlockedRegardlessOfStatusAfterRetry below.
+func TestDismissTSEProvisioning_AllowedWhenPendingAndAudited(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+		Status: tseStatusPendingKickoff, Country: "GB",
+		Identity: tseBusinessIdentity{LegalName: "L", OwnerName: "O", TaxNumber: "DE123456789", Address: "A"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/settings/dismiss-tse-provisioning", url.Values{}, &mgrUser)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("manager dismiss: code=%d body=%s", rec.Code, rec.Body.String())
+		t.Fatalf("manager dismiss of pending state: code=%d body=%s", rec.Code, rec.Body.String())
 	}
 	if st, _ := loadTSEProvisioningState(t.Context(), d); st != nil {
 		t.Fatalf("state survived dismiss: %+v", st)
 	}
-	if strings.Contains(getSettings(), `data-testid="tse-provisioning"`) {
+	if strings.Contains(getSettingsAs(t, mux, mgrUser), `data-testid="tse-provisioning"`) {
 		t.Fatal("TSE chip still shown after dismiss")
+	}
+	entries, err := data.NewPOSRepo(d.Db).ListAudit(t.Context(), data.AuditFilters{EntityType: "fiscal"})
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Action == "tse_provisioning_dismissed" && e.EntityID == "tse" && e.ActorID == mgrUser.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("no tse_provisioning_dismissed audit entry by %s; entries=%+v", mgrUser.ID, entries)
+	}
+}
+
+// A non-hard-gated country's state (RequiresHardGate false) stays fully
+// dismissible even when unresolved — the block is about hard-gated markets
+// only, checked via fiscal.RequiresHardGate, never a hardcoded "DE".
+func TestDismissTSEProvisioning_NonHardGatedCountryStillDismissible(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+		Status: tseStatusKickoffRejected, Country: "GB", ErrorCode: "not_configured",
+		Identity: tseBusinessIdentity{LegalName: "L", OwnerName: "O", TaxNumber: "DE123456789", Address: "A"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/settings/dismiss-tse-provisioning", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("dismiss of a non-hard-gated country's rejected state: code=%d, want 200", rec.Code)
+	}
+	if st, _ := loadTSEProvisioningState(t.Context(), d); st != nil {
+		t.Fatalf("state survived dismiss: %+v", st)
+	}
+}
+
+// --- POST /api/settings/retry-tse-provisioning (ut-docs#1174) ---
+
+// A manager can manually re-attempt a definitively rejected kickoff (e.g.
+// after activating the subscription the cloud said was missing): the state
+// requeues to pending_kickoff, ONE synchronous time-boxed attempt runs, and
+// the response re-renders the block with the new state.
+func TestRetryTSEProvisioning_RetriesRejectedKickoff(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	initTestPaths(t)
+	cloud := newFakeTSECloud(t)
+	configureTSECloud(d, cloud.server.URL)
+
+	if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+		Status: tseStatusKickoffRejected, Country: "DE", ErrorCode: "subscription_inactive",
+		Identity: tseBusinessIdentity{LegalName: "L", OwnerName: "O", TaxNumber: "DE123456789", Address: "A"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Manager-gated exactly like dismiss.
+	rec := postForm(mux, "/api/settings/retry-tse-provisioning", url.Values{}, &cashUser)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier retry: code=%d, want 403", rec.Code)
+	}
+	if cloud.provisionCount() != 0 {
+		t.Fatalf("a forbidden retry still hit the cloud (%d calls)", cloud.provisionCount())
+	}
+
+	rec = postForm(mux, "/api/settings/retry-tse-provisioning", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manager retry: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if cloud.provisionCount() != 1 {
+		t.Fatalf("provision calls = %d, want exactly 1 synchronous attempt", cloud.provisionCount())
+	}
+	st, _ := loadTSEProvisioningState(t.Context(), d)
+	if st == nil || st.Status != tseStatusAwaitingReady {
+		t.Fatalf("state after accepted retry = %+v, want awaiting_ready", st)
+	}
+	if st.Identity.TaxNumber != "DE123456789" {
+		t.Fatalf("identity lost on retry: %+v", st)
+	}
+	// The response is the re-rendered block (htmx swaps it in place), now
+	// showing the awaiting_ready message — no Retry button any more.
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="tse-provisioning"`) {
+		t.Fatalf("retry response is not the re-rendered block: %s", body)
+	}
+	if strings.Contains(body, `data-testid="tse-provisioning-retry"`) {
+		t.Fatalf("awaiting_ready block still offers Retry: %s", body)
+	}
+	// The manual retry is audited with the real acting user, not "system".
+	entries, err := data.NewPOSRepo(d.Db).ListAudit(t.Context(), data.AuditFilters{EntityType: "fiscal", ActorID: mgrUser.ID})
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	statuses := map[string]bool{}
+	for _, e := range entries {
+		if e.Action == "tse_provisioning_state_changed" && e.EntityID == "tse" {
+			statuses[e.DataJSON] = true
+		}
+	}
+	wantPending, wantAwaiting := false, false
+	for raw := range statuses {
+		if strings.Contains(raw, tseStatusPendingKickoff) {
+			wantPending = true
+		}
+		if strings.Contains(raw, tseStatusAwaitingReady) {
+			wantAwaiting = true
+		}
+	}
+	if !wantPending || !wantAwaiting {
+		t.Fatalf("retry transitions not audited under actor %s: %+v", mgrUser.ID, entries)
+	}
+}
+
+// A retry with nothing retryable stored (no state at all, or one that isn't
+// a failure) answers a clean 409 — never a crash, never a cloud call.
+func TestRetryTSEProvisioning_NoRetryableStateIsCleanError(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	initTestPaths(t)
+	cloud := newFakeTSECloud(t)
+	configureTSECloud(d, cloud.server.URL)
+
+	rec := postForm(mux, "/api/settings/retry-tse-provisioning", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("retry with no state: code=%d, want 409", rec.Code)
+	}
+
+	if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+		Status: tseStatusAwaitingReady, Country: "DE",
+		Identity: tseBusinessIdentity{LegalName: "L", OwnerName: "O", TaxNumber: "DE123456789", Address: "A"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec = postForm(mux, "/api/settings/retry-tse-provisioning", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("retry of awaiting_ready: code=%d, want 409", rec.Code)
+	}
+	if cloud.provisionCount() != 0 {
+		t.Fatalf("non-retryable state still hit the cloud (%d calls)", cloud.provisionCount())
+	}
+}
+
+// credential_failed is retryable too: a fresh kickoff mints a fresh
+// single-use credential record (ADR-0053 Decision 1).
+func TestRetryTSEProvisioning_RetriesCredentialFailed(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	initTestPaths(t)
+	cloud := newFakeTSECloud(t)
+	configureTSECloud(d, cloud.server.URL)
+
+	if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+		Status: tseStatusCredentialFailed, Country: "DE", ErrorCode: "http_500",
+		Identity: tseBusinessIdentity{LegalName: "L", OwnerName: "O", TaxNumber: "DE123456789", Address: "A"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/settings/retry-tse-provisioning", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("retry of credential_failed: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if cloud.provisionCount() != 1 {
+		t.Fatalf("provision calls = %d, want 1", cloud.provisionCount())
+	}
+	st, _ := loadTSEProvisioningState(t.Context(), d)
+	if st == nil || st.Status != tseStatusAwaitingReady {
+		t.Fatalf("state = %+v, want awaiting_ready", st)
+	}
+}
+
+// A retry that requeues to pending_kickoff but then hits a TRANSIENT cloud
+// failure (unreachable/5xx, not a definitive rejection) must leave the
+// record just as undismissible as the kickoff_rejected it started from —
+// the shop still has no working TSE and every sale is still refused.
+// Regression for a review finding: the first cut of
+// tseProvisioningDismissBlocked only covered kickoff_rejected/
+// credential_failed, so this exact sequence (retry -> transient failure ->
+// dismiss) silently discarded the record via a status the block-list didn't
+// enumerate.
+func TestDismissTSEProvisioning_BlockedRegardlessOfStatusAfterRetry(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	initTestPaths(t)
+	cloud := newFakeTSECloud(t)
+	configureTSECloud(d, cloud.server.URL)
+	cloud.provisionStatus = http.StatusInternalServerError // transient, not a definitive rejection
+
+	if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+		Status: tseStatusKickoffRejected, Country: "DE", ErrorCode: "subscription_inactive",
+		Identity: tseBusinessIdentity{LegalName: "L", OwnerName: "O", TaxNumber: "DE123456789", Address: "A"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postForm(mux, "/api/settings/retry-tse-provisioning", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("retry: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	st, _ := loadTSEProvisioningState(t.Context(), d)
+	if st == nil || st.Status != tseStatusPendingKickoff {
+		t.Fatalf("state after a transient retry failure = %+v, want pending_kickoff", st)
+	}
+	// The re-rendered block must still show the blocked hint, not a Dismiss
+	// button, for this pending_kickoff (server-side truth, not just the
+	// handler's own answer below).
+	if strings.Contains(rec.Body.String(), `data-testid="tse-provisioning-dismiss"`) {
+		t.Fatalf("pending_kickoff block still offers Dismiss after retry: %s", rec.Body.String())
+	}
+
+	dismissRec := postForm(mux, "/api/settings/dismiss-tse-provisioning", url.Values{}, &mgrUser)
+	if dismissRec.Code != http.StatusConflict {
+		t.Fatalf("dismiss of a hard-gated pending_kickoff (post-retry): code=%d, want 409", dismissRec.Code)
+	}
+	if st, _ := loadTSEProvisioningState(t.Context(), d); st == nil {
+		t.Fatal("state was cleared by a blocked dismiss")
+	}
+}
+
+// A credential_failed state can end up with an EMPTY stored identity
+// (dismiss a pending_kickoff — allowed pre-fix, or any state whose identity
+// was never completed — then a later fiscal_tse_ready directive's credential
+// fetch fails with nothing left to re-send). Retry must refuse rather than
+// POST an empty business_identity to the cloud.
+func TestRetryTSEProvisioning_IncompleteIdentityIsCleanError(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	initTestPaths(t)
+	cloud := newFakeTSECloud(t)
+	configureTSECloud(d, cloud.server.URL)
+
+	if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+		Status: tseStatusCredentialFailed, Country: "DE", ErrorCode: "credential_unavailable",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/settings/retry-tse-provisioning", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("retry with no complete identity: code=%d, want 409", rec.Code)
+	}
+	if cloud.provisionCount() != 0 {
+		t.Fatalf("incomplete-identity retry still hit the cloud (%d calls)", cloud.provisionCount())
+	}
+	st, _ := loadTSEProvisioningState(t.Context(), d)
+	if st == nil || st.Status != tseStatusCredentialFailed {
+		t.Fatalf("state changed by a refused retry: %+v", st)
+	}
+}
+
+// --- audit trail for automatic transitions (ut-docs#1174 item E) ---
+
+// The wizard-driven kickoff audits its outcome as actor "system": a
+// definitive rejection lands a tse_provisioning_state_changed entry with the
+// rejected status and error code.
+func TestTSEAudit_WizardKickoffRejected(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	restoreCurrencyAfter(t)
+	initTestPaths(t)
+	cloud := newFakeTSECloud(t)
+	cloud.provisionStatus = http.StatusForbidden
+	cloud.provisionErrCode = "subscription_inactive"
+	configureTSECloud(d, cloud.server.URL)
+
+	if rec := postForm(mux, "/api/setup", deWizardForm(), nil); rec.Code != http.StatusSeeOther {
+		t.Fatalf("wizard: code=%d", rec.Code)
+	}
+	entries, err := data.NewPOSRepo(d.Db).ListAudit(t.Context(), data.AuditFilters{EntityType: "fiscal", ActorID: "system"})
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	found := false
+	for _, e := range entries {
+		if e.Action == "tse_provisioning_state_changed" && e.EntityID == "tse" &&
+			strings.Contains(e.DataJSON, tseStatusKickoffRejected) && strings.Contains(e.DataJSON, "subscription_inactive") {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("rejected kickoff not audited as system; entries=%+v", entries)
+	}
+}
+
+// An accepted kickoff audits the awaiting_ready transition too.
+func TestTSEAudit_KickoffAccepted(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	_ = mux
+	initTestPaths(t)
+	if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+		Status: tseStatusPendingKickoff, Country: "DE",
+		Identity: tseBusinessIdentity{LegalName: "L", OwnerName: "O", TaxNumber: "DE123456789", Address: "A"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	cloud := newFakeTSECloud(t)
+	configureTSECloud(d, cloud.server.URL)
+	tseProvisionRetryTick(t.Context(), d)
+
+	ok, err := data.NewPOSRepo(d.Db).HasAuditEntry(t.Context(), "fiscal", "tse", "tse_provisioning_state_changed")
+	if err != nil || !ok {
+		t.Fatalf("accepted kickoff not audited: ok=%v err=%v", ok, err)
+	}
+}
+
+// The credential fetch's success and failure paths both audit: success as a
+// final "configured" transition, failure as credential_failed.
+func TestTSEAudit_CredentialOutcomes(t *testing.T) {
+	_, _, d := newFullAuthDeps(t)
+	initTestPaths(t)
+	cloud := newFakeTSECloud(t)
+	configureTSECloud(d, cloud.server.URL)
+	repo := data.NewPOSRepo(d.Db)
+
+	// Failure first: a 500 on the credential fetch audits credential_failed.
+	cloud.credentialStatus = http.StatusInternalServerError
+	if _, err := applyFiscalTSEReady(t.Context(), d); err == nil {
+		t.Fatal("want error")
+	}
+	entries, err := repo.ListAudit(t.Context(), data.AuditFilters{EntityType: "fiscal", ActorID: "system"})
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	foundFailed := false
+	for _, e := range entries {
+		if e.Action == "tse_provisioning_state_changed" && strings.Contains(e.DataJSON, tseStatusCredentialFailed) {
+			foundFailed = true
+		}
+	}
+	if !foundFailed {
+		t.Fatalf("credential failure not audited; entries=%+v", entries)
+	}
+
+	// Then success: the stored-and-confirmed credential audits "configured".
+	cloud.credentialStatus = 0
+	if _, err := applyFiscalTSEReady(t.Context(), d); err != nil {
+		t.Fatalf("applyFiscalTSEReady: %v", err)
+	}
+	entries, err = repo.ListAudit(t.Context(), data.AuditFilters{EntityType: "fiscal", ActorID: "system"})
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	foundConfigured := false
+	for _, e := range entries {
+		if e.Action == "tse_provisioning_state_changed" && strings.Contains(e.DataJSON, "configured") {
+			foundConfigured = true
+		}
+	}
+	if !foundConfigured {
+		t.Fatalf("configured transition not audited; entries=%+v", entries)
+	}
+}
+
+// --- wizard-inline surfacing of a rejected kickoff (ut-docs#1174 item D) ---
+
+// A fast definitive rejection during the wizard's own synchronous attempt is
+// surfaced to the operator immediately: the wizard's completion redirect
+// carries the marker, and the sale screen it lands on renders the same
+// message Settings shows — no navigating to Settings required.
+func TestSetupWizardDE_RejectedKickoffSurfacesInline(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	restoreCurrencyAfter(t)
+	initTestPaths(t)
+	cloud := newFakeTSECloud(t)
+	cloud.provisionStatus = http.StatusServiceUnavailable
+	cloud.provisionErrCode = "not_configured"
+	configureTSECloud(d, cloud.server.URL)
+	registerIndex(mux, d)
+
+	rec := postForm(mux, "/api/setup", deWizardForm(), nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("wizard: code=%d", rec.Code)
+	}
+	loc := rec.Header().Get("Location")
+	if loc != "/?tse_setup=rejected" {
+		t.Fatalf("Location = %q, want /?tse_setup=rejected", loc)
+	}
+
+	get := func(path string) string {
+		req := httptest.NewRequest(http.MethodGet, path, nil)
+		req = auth.WithUser(req, mgrUser)
+		r := httptest.NewRecorder()
+		mux.ServeHTTP(r, req)
+		if r.Code != http.StatusOK {
+			t.Fatalf("GET %s = %d: %s", path, r.Code, r.Body.String())
+		}
+		return r.Body.String()
+	}
+	if !strings.Contains(get("/?tse_setup=rejected"), `data-testid="tse-kickoff-rejected-banner"`) {
+		t.Fatal("sale screen after the wizard redirect does not surface the rejected kickoff")
+	}
+	// Without the marker (any later plain visit) the sale screen stays
+	// clean — Settings owns the persistent surfacing.
+	if strings.Contains(get("/"), `data-testid="tse-kickoff-rejected-banner"`) {
+		t.Fatal("banner must not render without the wizard's redirect marker")
+	}
+}
+
+// A transient (still pending) kickoff adds no marker and no banner — the
+// background ticker plus Settings already cover it.
+func TestSetupWizardDE_PendingKickoffDoesNotSurfaceInline(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	restoreCurrencyAfter(t)
+	initTestPaths(t)
+	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
+	configureTSECloud(d, dead.URL)
+	dead.Close()
+
+	rec := postForm(mux, "/api/setup", deWizardForm(), nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("wizard: code=%d", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "/" {
+		t.Fatalf("Location = %q, want plain / for a still-pending kickoff", loc)
+	}
+}
+
+// The redirect marker alone must not conjure a banner when the stored state
+// is not actually kickoff_rejected (stale bookmark, hand-typed URL).
+func TestIndexTSEBanner_RequiresRealRejectedState(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	registerIndex(mux, d)
+	if err := saveTSEProvisioningState(t.Context(), d, &tseProvisioningState{
+		Status: tseStatusPendingKickoff, Country: "DE",
+		Identity: tseBusinessIdentity{LegalName: "L", OwnerName: "O", TaxNumber: "DE123456789", Address: "A"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	req := httptest.NewRequest(http.MethodGet, "/?tse_setup=rejected", nil)
+	req = auth.WithUser(req, mgrUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET / = %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), `data-testid="tse-kickoff-rejected-banner"`) {
+		t.Fatal("banner rendered from the query param alone, without a rejected state stored")
 	}
 }

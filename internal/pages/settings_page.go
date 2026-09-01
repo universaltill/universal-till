@@ -142,6 +142,35 @@ func settingsAudit(r *http.Request, repo *data.POSRepo, elev elevationCheck, ent
 	}
 }
 
+// settingsActorID resolves the audit actor for a plain (non-elevation)
+// manager-gated handler: the session user when one exists, else "system"
+// (the UT_AUTH=off dev/CI bypass has no session to attribute — "system" is
+// the seeded fallback actor, migration 003, so the FK still holds).
+func settingsActorID(r *http.Request) string {
+	if u, ok := auth.FromContext(r.Context()); ok && u.ID != "" {
+		return u.ID
+	}
+	return "system"
+}
+
+// renderTSEProvisioningBlock re-renders the Settings TSE provisioning block
+// (web/ui/partials/tse_provisioning_block.html) for an htmx outerHTML swap —
+// the retry endpoint's response shape (ut-docs#1174 item A). A nil/cleared
+// state renders an empty 200 body, the same "swap the block away" contract
+// the dismiss endpoint already has.
+func renderTSEProvisioningBlock(w http.ResponseWriter, r *http.Request, st *tseProvisioningState) {
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	view := tseProvisioningViewFor(st)
+	if view == nil {
+		return
+	}
+	httpx.RenderPartial("ui/partials/tse_provisioning_block.html", map[string]any{
+		"tseProvisioning": view,
+		"tseRetryable":    tseProvisioningRetryable(st),
+		"tseCanDismiss":   !tseProvisioningDismissBlocked(st),
+	})(w, r)
+}
+
 // settingsRespondSaved answers success on an elevation-wired handler whose
 // plain-session contract is a bare 204: unchanged (204) for an ordinarily
 // authorized session, but a real confirmation body once elevation was
@@ -412,6 +441,8 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			"restorePromptDeferred":  restorePromptStatus == common.RestorePromptStatusDeferred,
 			"pendingBasePlugins":     pendingBasePluginViews(pendingBasePlugins),
 			"tseProvisioning":        tseProvisioningViewFor(tseState),
+			"tseRetryable":           tseProvisioningRetryable(tseState),
+			"tseCanDismiss":          !tseProvisioningDismissBlocked(tseState),
 			"missingFiscalSigner":    missingSigner,
 			"missingTaxRateSwitcher": missingSwitcher,
 			"resetBatches":           resetBatches,
@@ -1413,16 +1444,64 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// hx-swap "outerHTML"/empty-200-body convention as the two dismisses
 	// above. Deliberately does NOT touch fiscal.tse_configured or any stored
 	// credential — this dismisses a status chip, not a configured TSE.
+	//
+	// ut-docs#1174: no longer unconditional — a hard-gated market's
+	// UNRESOLVED failure (tseProvisioningDismissBlocked) answers 409 and
+	// keeps the state: with sales hard-blocked until a TSE works, dismissing
+	// the only explanation would hide the exact thing the operator must fix.
+	// The template already omits the dismiss button in that case; this is
+	// the defense-in-depth server half.
 	mux.HandleFunc("POST /api/settings/dismiss-tse-provisioning", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "settings") {
 			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		st, err := loadTSEProvisioningState(r.Context(), d)
+		if err != nil {
+			http.Error(w, "could not load state", http.StatusInternalServerError)
+			return
+		}
+		if tseProvisioningDismissBlocked(st) {
+			locale := httpx.ResolveLocale(w, r)
+			http.Error(w, httpx.T(locale, "settings.tse.dismiss_blocked"), http.StatusConflict)
 			return
 		}
 		if err := saveTSEProvisioningState(r.Context(), d, nil); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
+		if st != nil { // a no-op dismiss of nothing isn't a state change
+			now := time.Now().UTC().Format(time.RFC3339)
+			if err := posRepo.InsertAudit(r.Context(), nil, settingsActorID(r), "fiscal", "tse", "tse_provisioning_dismissed",
+				map[string]any{"status": st.Status, "error_code": st.ErrorCode}, now, ""); err != nil {
+				logging.L().Errorf("settings: audit TSE provisioning dismiss: %v", err)
+			}
+		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	})
+
+	// Manual TSE provisioning retry (ut-docs#1174 item A): a manager
+	// re-attempts a definitively rejected kickoff or a failed credential
+	// fetch — e.g. right after activating the subscription the cloud said
+	// was missing — and gets an immediate answer: the block re-renders with
+	// the post-attempt state (htmx swaps it in place, same outerHTML target
+	// as dismiss). Same manager gate as dismiss.
+	mux.HandleFunc("POST /api/settings/retry-tse-provisioning", func(w http.ResponseWriter, r *http.Request) {
+		if !canPerform(d, r, "settings") {
+			http.Error(w, "manager or admin required", http.StatusForbidden)
+			return
+		}
+		st, err := retryTSEProvisioning(r.Context(), d, settingsActorID(r))
+		if errors.Is(err, errNoTSERetry) {
+			locale := httpx.ResolveLocale(w, r)
+			http.Error(w, httpx.T(locale, "settings.tse.nothing_to_retry"), http.StatusConflict)
+			return
+		}
+		if err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		renderTSEProvisioningBlock(w, r, st)
 	})
 
 	// This till's own display name (ut-docs#396) — distinct from a replica's
