@@ -45,7 +45,13 @@
       <div id="autofill-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
       <label>{{ T "catalog.col.name" }} <input type="text" name="name" id="item-name" required></label>
       <div class="field-pair">
-        <label>{{ T "catalog.col.price" }} ({{ currency.Display }}) <input type="number" id="item-price" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" placeholder="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}" required></label>
+        <!-- ut-docs#1284: type="number" corrupts a decimal typed via the
+             kiosk OSK (see index.html's split-tender amount field for the
+             full explanation). The submit handler below already reads
+             item-price's raw .value and converts via
+             window.utCurrency.toMinor() into the hidden item-price-minor
+             field, so no JS change is needed. -->
+        <label>{{ T "catalog.col.price" }} ({{ currency.Display }}) <input type="text" inputmode="decimal" id="item-price" {{ moneypattern currency.Decimals false }} {{ moneyplaceholder currency.Decimals 0 }} required></label>
         <label>{{ T "catalog.col.sku" }} <input type="text" name="sku" id="item-sku" placeholder="{{ T "catalog.auto_if_blank" }}"></label>
       </div>
       <label>{{ T "catalog.description" }} <input type="text" name="description" id="item-description"></label>

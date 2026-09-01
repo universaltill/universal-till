@@ -34,9 +34,13 @@
       <div class="muted catalog-detail-label">{{ T "catalog.cost_price" }}</div>
       <form class="chip-add" hx-post="/api/catalog/item-cost" hx-target="#catalog-variants" hx-swap="outerHTML">
         <input type="hidden" name="panelItem" value="{{ .ItemID }}">
-        <input type="number" name="cost" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" min="0" style="max-inline-size:7rem"
+        <!-- ut-docs#1284: type="number" corrupts a decimal typed via the
+             kiosk OSK (see index.html's split-tender amount field). The
+             /api/catalog/item-cost handler already parses this raw string
+             server-side, so no JS change is needed. -->
+        <input type="text" inputmode="decimal" name="cost" {{ moneypattern currency.Decimals false }} style="max-inline-size:7rem"
                value="{{ .CostMajor }}"
-               placeholder="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}" title="{{ T "catalog.cost_price_hint" }}">
+               {{ moneyplaceholder currency.Decimals 0 }} title="{{ T "catalog.cost_price_hint" }}">
         <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
       </form>
       <div class="muted catalog-detail-label">{{ T "catalog.lead_time_days" }}</div>
@@ -104,8 +108,12 @@
           </div>
           <input form="vf-{{ .ID }}" type="text" name="name" value="{{ .Name }}" required>
           <input form="vf-{{ .ID }}" type="text" name="sku" value="{{ .SKU }}">
-          <input form="vf-{{ .ID }}" type="number" class="variant-price-major" data-minor="{{ .PriceMinor }}" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" required>
-          <input form="vf-{{ .ID }}" type="number" class="variant-cost-major" data-minor="{{ .CostMinor }}" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" placeholder="—">
+          <!-- ut-docs#1284: type="number" corrupts a decimal typed via the
+               kiosk OSK (see index.html's split-tender amount field). The
+               htmx:configRequest listener below already reads these fields'
+               raw .value at submit time, so no JS change is needed. -->
+          <input form="vf-{{ .ID }}" type="text" inputmode="decimal" class="variant-price-major" data-minor="{{ .PriceMinor }}" {{ moneypattern currency.Decimals false }} required>
+          <input form="vf-{{ .ID }}" type="text" inputmode="decimal" class="variant-cost-major" data-minor="{{ .CostMinor }}" {{ moneypattern currency.Decimals false }} placeholder="—">
           <div class="chip-row">
             {{ range .Barcodes }}
             <span class="chip">{{ . }}
@@ -133,8 +141,8 @@
           <div></div>
           <input form="vf-new" type="text" name="name" required placeholder="{{ T "catalog.variants.add" }} — 330ml / XL">
           <input form="vf-new" type="text" name="sku" placeholder="{{ T "catalog.auto_if_blank" }}">
-          <input form="vf-new" type="number" class="variant-price-major" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" required>
-          <input form="vf-new" type="number" class="variant-cost-major" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" placeholder="—">
+          <input form="vf-new" type="text" inputmode="decimal" class="variant-price-major" {{ moneypattern currency.Decimals false }} required>
+          <input form="vf-new" type="text" inputmode="decimal" class="variant-cost-major" {{ moneypattern currency.Decimals false }} placeholder="—">
           <div class="muted"></div>
           <div></div>
           <button form="vf-new" class="btn" type="submit">{{ T "catalog.save_variant" }}</button>
@@ -180,7 +188,11 @@
           <input type="hidden" name="groupId" value="{{ $group.ID }}">
           <input type="hidden" name="id" value="{{ .ID }}">
           <input type="text" name="name" value="{{ .Name }}" required placeholder="{{ T "catalog.modifiers.option_name" }}">
-          <input type="number" name="priceDeltaMajor" class="modifier-price-major" data-minor="{{ .PriceDeltaMinor }}" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" title="{{ T "catalog.modifiers.price_delta" }}">
+          <!-- ut-docs#1284: type="number" corrupts a decimal typed via the
+               kiosk OSK (see index.html's split-tender amount field). The
+               /api/catalog/modifier-option handler already parses this raw
+               string server-side, so no JS change is needed. -->
+          <input type="text" inputmode="decimal" name="priceDeltaMajor" class="modifier-price-major" data-minor="{{ .PriceDeltaMinor }}" {{ moneypattern currency.Decimals false }} title="{{ T "catalog.modifiers.price_delta" }}">
           <input type="hidden" name="isActive" value="0">
           <label><input type="checkbox" name="isActive" value="1" {{ if .IsActive }}checked{{ end }}> {{ T "catalog.active" }}</label>
           <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
@@ -192,7 +204,7 @@
           <input type="hidden" name="groupId" value="{{ $group.ID }}">
           <input type="hidden" name="isActive" value="1">
           <input type="text" name="name" required placeholder="{{ T "catalog.modifiers.option_name" }} — {{ T "catalog.modifiers.option_example" }}">
-          <input type="number" name="priceDeltaMajor" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" placeholder="0.00">
+          <input type="text" inputmode="decimal" name="priceDeltaMajor" {{ moneypattern currency.Decimals false }} placeholder="0.00">
           <button class="btn" type="submit">{{ T "catalog.modifiers.add_option" }}</button>
         </form>
       </div>

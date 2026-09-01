@@ -103,7 +103,23 @@
               </td>
               <td>
                 <div class="line-inputs">
-                  <input class="qty-input" type="number" name="qty" value="{{ printf "%.2f" .Qty }}" min="0" step="{{ if .IsWeighed }}0.01{{ else }}1{{ end }}"
+                  <!-- ut-docs#1284: type="number" corrupts a decimal typed via
+                       the kiosk OSK (see index.html's amount field for the
+                       full explanation). Only weighed items ever take a
+                       decimal quantity, so the pattern stays integer-only for
+                       everything else — matching the original step="1" vs
+                       step="0.01" split. hx-vals/hx-include read .value as
+                       before; the /api/pos/line handler already parses qty
+                       as a plain decimal string. -->
+                  <!-- Review finding (ut-docs#1284): a non-weighed line's
+                       value must actually match its own integer-only
+                       pattern below -- %.2f always rendered "1.00", which
+                       a real <form> submit or an :invalid style rule would
+                       reject against pattern="[0-9]+". Whole-number display
+                       for a non-weighed (countable) line is also just the
+                       correct thing to show an operator, independent of
+                       the bug. -->
+                  <input class="qty-input" type="text" inputmode="decimal" name="qty" value="{{ if .IsWeighed }}{{ printf "%.2f" .Qty }}{{ else }}{{ printf "%.0f" .Qty }}{{ end }}" pattern="{{ if .IsWeighed }}[0-9]+(\.[0-9]{1,2})?{{ else }}[0-9]+{{ end }}"
                          hx-post="/api/pos/line"
                          hx-vals='{{ jsonVals "key" .LineKey }}'
                          hx-include="closest tr"
