@@ -118,6 +118,68 @@ func TestSnapshotRestoreRoundTrip_PreservesTable(t *testing.T) {
 	}
 }
 
+// TestSnapshotRestoreRoundTrip_PreservesOrderType (ut-docs#1381): a held
+// takeaway order must resume as takeaway, not silently revert to dine-in —
+// Restore's resetLocked() call used to zero orderType back to "" (dine-in)
+// before ever restoring it, changing the sale's VAT basis on every resume
+// (§12 UStG: EffectiveLineTaxRateBP/recomputeTotals both key off orderType).
+// Uses fakeTaxAsker (service_test.go, same package) so the takeaway/dine-in
+// rates genuinely differ — a same-rate round trip couldn't have caught this.
+func TestSnapshotRestoreRoundTrip_PreservesOrderType(t *testing.T) {
+	resolver := mapResolver{
+		"DRINK": {SKU: "DRINK", ItemID: "item-drink", TaxCodeID: "tax-drink", Name: "Coffee", PriceCents: money.FromMinor(1000), TaxRateBP: 1900},
+	}
+	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, resolver)
+	s.SetTaxRateAsker(fakeTaxAsker{takeawayRateByTaxCode: map[string]int{"tax-drink": 700}})
+	if _, err := s.Scan("DRINK"); err != nil {
+		t.Fatalf("Scan error: %v", err)
+	}
+	s.SetOrderType(OrderTypeTakeaway)
+
+	if rateBP, blocked := s.EffectiveLineTaxRateBP(s.Lines()[0]); blocked || rateBP != 700 {
+		t.Fatalf("pre-hold takeaway rate = %d (blocked=%v), want 700", rateBP, blocked)
+	}
+
+	snap := s.Snapshot()
+	if snap.OrderType != OrderTypeTakeaway {
+		t.Fatalf("snapshot order type = %q, want %q", snap.OrderType, OrderTypeTakeaway)
+	}
+
+	// Survive JSON persistence like the held_sales table does.
+	raw, err := json.Marshal(snap)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var back BasketSnapshot
+	if err := json.Unmarshal(raw, &back); err != nil {
+		t.Fatal(err)
+	}
+
+	// Serve another (dine-in) customer in between.
+	s.Reset()
+	_, _ = s.Scan("DRINK")
+	s.Reset()
+
+	s.Restore(back)
+	if got := s.OrderType(); got != OrderTypeTakeaway {
+		t.Fatalf("restored OrderType() = %q, want %q (silently reverted to dine-in)", got, OrderTypeTakeaway)
+	}
+	if got := s.Basket().OrderType; got != OrderTypeTakeaway {
+		t.Fatalf("restored basket.OrderType = %q, want %q", got, OrderTypeTakeaway)
+	}
+	// Independent review: pin the actual money, not just the rate --
+	// this is a VAT-basis compliance ticket, so the number that ends up
+	// on the receipt/sale record is what actually matters. 7% of a
+	// £10.00 (tax-exclusive) line is £0.70; the pre-fix bug would have
+	// this at 19% (£1.90, dine-in's rate).
+	if got := s.Basket().Tax; got != money.FromMinor(70) {
+		t.Fatalf("restored basket.Tax = %v, want 70 (7%% takeaway rate, not dine-in's 19%%)", got)
+	}
+	if rateBP, blocked := s.EffectiveLineTaxRateBP(s.Lines()[0]); blocked || rateBP != 700 {
+		t.Fatalf("restored effective rate = %d (blocked=%v), want 700 (still takeaway, not dine-in's 1900)", rateBP, blocked)
+	}
+}
+
 func TestHasItems(t *testing.T) {
 	s := newHoldService()
 	if s.HasItems() {
