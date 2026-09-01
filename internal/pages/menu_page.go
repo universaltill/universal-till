@@ -37,6 +37,13 @@ var iconFor = map[string]string{
 	"/tills":            "🖥️",
 	"/report-issue":     "🐞",
 	"/fiscal-register":  "📋",
+	// ut-docs#1371: /orders had no entry here, so every Orders tile fell
+	// through to the "▪️" no-icon fallback below — the exact "plain black
+	// square" the report described, not a font-coverage gap. 🛎️ (service
+	// bell) over a generic 🔔 notification bell — /orders is a kitchen-
+	// progress board (preparing/ready/collected), closer to "order ready
+	// for pickup" than "you have a notification" (independent review nit).
+	"/orders": "🛎️",
 }
 
 func registerMenu(mux *http.ServeMux, d *common.Deps) {
