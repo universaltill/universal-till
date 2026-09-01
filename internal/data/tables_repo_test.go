@@ -294,3 +294,186 @@ INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) V
 		t.Fatalf("expected T2 free when excluding its own occupant h1, got ok=%v err=%v", ok, err)
 	}
 }
+
+// ut-docs#1390: a LIVE (not-yet-held) basket's table pick is persisted as a
+// table_claims row the moment it's made, so a second basket can't pick the
+// same table. ClaimTable is the race-free primitive: INSERT OR IGNORE on the
+// PRIMARY KEY, reporting whether THIS call took the claim.
+func TestClaimTable_TakesFreeTableRefusesClaimedOne(t *testing.T) {
+	_, repo := openTablesTestDB(t)
+	ctx := context.Background()
+
+	id, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	claimed, err := repo.ClaimTable(ctx, id)
+	if err != nil || !claimed {
+		t.Fatalf("first ClaimTable on a free table: claimed=%v err=%v", claimed, err)
+	}
+	// The same table again (a second basket): the PK conflict is reported
+	// as "not claimed", never as an error and never as a silent success.
+	claimed, err = repo.ClaimTable(ctx, id)
+	if err != nil {
+		t.Fatalf("second ClaimTable must not error: %v", err)
+	}
+	if claimed {
+		t.Fatal("second ClaimTable on an already-claimed table must report claimed=false")
+	}
+}
+
+// ReleaseTableClaim frees a claimed table, and is a safe no-op on a table
+// nobody claimed (same convention as HeldSalesRepo.Delete on a missing row).
+func TestReleaseTableClaim_FreesAndIsNoOpWhenUnclaimed(t *testing.T) {
+	_, repo := openTablesTestDB(t)
+	ctx := context.Background()
+
+	id, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	if err := repo.ReleaseTableClaim(ctx, id); err != nil {
+		t.Fatalf("ReleaseTableClaim on an unclaimed table must be a no-op, got: %v", err)
+	}
+	if claimed, err := repo.ClaimTable(ctx, id); err != nil || !claimed {
+		t.Fatalf("ClaimTable: claimed=%v err=%v", claimed, err)
+	}
+	if err := repo.ReleaseTableClaim(ctx, id); err != nil {
+		t.Fatalf("ReleaseTableClaim: %v", err)
+	}
+	if claimed, err := repo.ClaimTable(ctx, id); err != nil || !claimed {
+		t.Fatalf("table must be claimable again after release: claimed=%v err=%v", claimed, err)
+	}
+}
+
+// The regression for the reported bug (ut-docs#1390): a table with ONLY a
+// live claim (no held_sales row) must read as occupied — before this,
+// IsTableFree only looked at held_sales, so the live basket's pick reserved
+// nothing.
+func TestIsTableFree_LiveClaimOccupiesTable(t *testing.T) {
+	_, repo := openTablesTestDB(t)
+	ctx := context.Background()
+
+	id, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	if ok, err := repo.IsTableFree(ctx, id, ""); err != nil || !ok {
+		t.Fatalf("expected T1 free before any claim, got ok=%v err=%v", ok, err)
+	}
+	if claimed, err := repo.ClaimTable(ctx, id); err != nil || !claimed {
+		t.Fatalf("ClaimTable: claimed=%v err=%v", claimed, err)
+	}
+	if ok, err := repo.IsTableFree(ctx, id, ""); err != nil || ok {
+		t.Fatalf("expected T1 occupied by its live claim, got ok=%v err=%v", ok, err)
+	}
+	// excludeHeldSaleID excludes a held_sales row only — never a live claim.
+	if ok, err := repo.IsTableFree(ctx, id, "some-held-sale"); err != nil || ok {
+		t.Fatalf("a held-sale exclusion must not exclude a live claim, got ok=%v err=%v", ok, err)
+	}
+	if err := repo.ReleaseTableClaim(ctx, id); err != nil {
+		t.Fatalf("ReleaseTableClaim: %v", err)
+	}
+	if ok, err := repo.IsTableFree(ctx, id, ""); err != nil || !ok {
+		t.Fatalf("expected T1 free again after release, got ok=%v err=%v", ok, err)
+	}
+}
+
+// ClearAllTableClaims is the boot-time recovery for a claim orphaned by an
+// unclean shutdown (independent review finding, ut-docs#1390): pos.Service
+// always starts empty, so any table_claims row still present at Init belongs
+// to a process that never released it. Without this sweep, that table would
+// stay unbookable forever — nothing else ever revisits an orphaned row.
+func TestClearAllTableClaims_WipesExistingRowsAndIsSafeOnEmpty(t *testing.T) {
+	_, repo := openTablesTestDB(t)
+	ctx := context.Background()
+
+	// Safe no-op with nothing to clear (e.g. a clean-shutdown boot).
+	if err := repo.ClearAllTableClaims(ctx); err != nil {
+		t.Fatalf("ClearAllTableClaims on empty table: %v", err)
+	}
+
+	t1, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T1: %v", err)
+	}
+	t2, err := repo.CreateTable(ctx, "T2", "", 4, "rect", 200, 200)
+	if err != nil {
+		t.Fatalf("CreateTable T2: %v", err)
+	}
+	if claimed, err := repo.ClaimTable(ctx, t1); err != nil || !claimed {
+		t.Fatalf("ClaimTable T1: claimed=%v err=%v", claimed, err)
+	}
+	if claimed, err := repo.ClaimTable(ctx, t2); err != nil || !claimed {
+		t.Fatalf("ClaimTable T2: claimed=%v err=%v", claimed, err)
+	}
+
+	if err := repo.ClearAllTableClaims(ctx); err != nil {
+		t.Fatalf("ClearAllTableClaims: %v", err)
+	}
+
+	if ok, err := repo.IsTableFree(ctx, t1, ""); err != nil || !ok {
+		t.Errorf("T1 must be free after ClearAllTableClaims, got ok=%v err=%v", ok, err)
+	}
+	if ok, err := repo.IsTableFree(ctx, t2, ""); err != nil || !ok {
+		t.Errorf("T2 must be free after ClearAllTableClaims, got ok=%v err=%v", ok, err)
+	}
+}
+
+// ListTablesWithState (the floor plan + picker's occupancy source) must light
+// a table up from a live claim alone, with the claim's timestamp as
+// OccupiedSince; when a held_sales row AND a claim both reference a table
+// (not a steady state, but must not produce wrong data) the earlier of the
+// two wins.
+func TestListTablesWithState_OccupiedViaLiveClaim(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+
+	claimedID, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	bothID, err := repo.CreateTable(ctx, "T2", "", 4, "rect", 300, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	if _, err := repo.CreateTable(ctx, "T3", "", 2, "round", 500, 100); err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	if claimed, err := repo.ClaimTable(ctx, claimedID); err != nil || !claimed {
+		t.Fatalf("ClaimTable T1: claimed=%v err=%v", claimed, err)
+	}
+	// T2: a held order from earlier AND a live claim (seeded raw so the
+	// claim timestamp is deterministic and later than the held row).
+	if _, err := dbo.DB.Exec(`
+INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id, created_at)
+VALUES ('h1','',0,0,'{}',?, '2026-08-18 10:05:00')`, bothID); err != nil {
+		t.Fatalf("seed held sale: %v", err)
+	}
+	if _, err := dbo.DB.Exec(`INSERT INTO table_claims (table_id, claimed_at) VALUES (?, '2026-08-18T11:00:00Z')`, bothID); err != nil {
+		t.Fatalf("seed claim: %v", err)
+	}
+
+	rows, err := repo.ListTablesWithState(ctx)
+	if err != nil {
+		t.Fatalf("ListTablesWithState: %v", err)
+	}
+	byLabel := map[string]TableWithState{}
+	for _, r := range rows {
+		byLabel[r.Label] = r
+	}
+	t1 := byLabel["T1"]
+	if !t1.Occupied || t1.OccupiedSince == "" {
+		t.Fatalf("T1 must be occupied by its live claim alone: %+v", t1)
+	}
+	t2 := byLabel["T2"]
+	if !t2.Occupied || t2.OccupiedSince != "2026-08-18 10:05:00" {
+		t.Fatalf("T2 must be occupied since the EARLIER of held row / claim: %+v", t2)
+	}
+	if t3 := byLabel["T3"]; t3.Occupied || t3.OccupiedSince != "" {
+		t.Fatalf("T3 must stay free: %+v", t3)
+	}
+	if len(rows) != 3 {
+		t.Fatalf("a table with both a held row and a claim must still list exactly once; got %d rows", len(rows))
+	}
+}

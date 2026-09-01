@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -71,5 +72,54 @@ func TestInit_IdleAndKioskDefaultsSurviveTwoConsecutiveBoots(t *testing.T) {
 	if st.KioskIdleResetSeconds != common.DefaultKioskIdleResetSeconds {
 		t.Errorf("after two boots, KioskIdleResetSeconds = %d, want default %d (kiosk idle-reset silently disabled)",
 			st.KioskIdleResetSeconds, common.DefaultKioskIdleResetSeconds)
+	}
+}
+
+// ut-docs#1390 (independent review finding): a table claimed right before an
+// unclean shutdown (crash, kill, power loss) used to stay unbookable
+// forever — pos.Service always starts with an empty basket, so nothing ever
+// revisited the orphaned table_claims row left behind. This drives Init
+// across a simulated crash-restart (a fresh process boots against a DB that
+// already carries a claim from a process that never got to release it) and
+// asserts the table is free again afterward — the actual boot path, not
+// just the repo method in isolation.
+func TestInit_ClearsStaleTableClaimLeftByUncleanShutdown(t *testing.T) {
+	chdirRoot(t)
+	paths.Init(t.TempDir())
+
+	d, err := db.Open(filepath.Join(t.TempDir(), "crash_restart.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer d.Close()
+
+	posRepo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	tableID, err := posRepo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	// Simulates the crashed process's own claim, made and never released —
+	// not going through a live pos.Service at all, since the whole point is
+	// that no in-memory basket survives to release it.
+	if claimed, err := posRepo.ClaimTable(ctx, tableID); err != nil || !claimed {
+		t.Fatalf("simulate pre-crash claim: claimed=%v err=%v", claimed, err)
+	}
+	if ok, err := posRepo.IsTableFree(ctx, tableID, ""); err != nil || ok {
+		t.Fatalf("precondition: T1 must read occupied before the restart, got ok=%v err=%v", ok, err)
+	}
+
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	pctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	pm, err := plugins.Init(pctx, cfg, d.DB)
+	if err != nil {
+		t.Fatalf("plugins.Init: %v", err)
+	}
+	var wg sync.WaitGroup
+	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg) // the restart
+
+	if ok, err := posRepo.IsTableFree(ctx, tableID, ""); err != nil || !ok {
+		t.Errorf("after restart, T1 must be free again (stale claim swept), got ok=%v err=%v", ok, err)
 	}
 }

@@ -17,11 +17,13 @@ type tablePickerOption struct {
 
 // registerTablePicker serves the basket's table-assignment picker
 // (ut-docs#820, ADR-0054): every enabled, currently FREE table, plus
-// whichever table the current basket is already assigned to (so re-opening
-// the picker still shows the current choice, even though a table with a
-// live, not-yet-held basket assigned to it doesn't itself make
-// ListTablesWithState report it occupied -- occupancy there is driven by
-// held_sales rows). Deliberately separate from registerTables (the
+// whichever table the current basket is already assigned to. Since
+// ut-docs#1390 that second half is load-bearing rather than merely
+// defensive: the live basket's own pick now writes a table_claims row, so
+// ListTablesWithState DOES report the basket's own table occupied, and
+// without the `s.ID != current` exception below the picker would stop
+// offering the cashier the table they are already on. Deliberately
+// separate from registerTables (the
 // manager-gated floor-plan editor): assigning a table to an order is a
 // normal checkout action any cashier can do, not floor-plan management.
 // Mirrors registerSuggestions' "load an HTMX fragment under the basket"

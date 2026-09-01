@@ -1146,3 +1146,253 @@ func TestPluginReportedTipAmount(t *testing.T) {
 		})
 	}
 }
+
+// tableOccupied reports a table's live state via the same ListTablesWithState
+// the floor plan and the basket's table picker read (ut-docs#1390 tests).
+func tableOccupied(t *testing.T, dp *common.Deps, tableID string) bool {
+	t.Helper()
+	states, err := data.NewPOSRepo(dp.Db).ListTablesWithState(context.Background())
+	if err != nil {
+		t.Fatalf("ListTablesWithState: %v", err)
+	}
+	for _, s := range states {
+		if s.ID == tableID {
+			return s.Occupied
+		}
+	}
+	t.Fatalf("table %s not listed", tableID)
+	return false
+}
+
+func createTestTable(t *testing.T, dp *common.Deps, label string) string {
+	t.Helper()
+	id, err := data.NewPOSRepo(dp.Db).CreateTable(context.Background(), label, "", 4, "rect", 200, 200)
+	if err != nil {
+		t.Fatalf("CreateTable %s: %v", label, err)
+	}
+	return id
+}
+
+// TestTableHandler_AssignClaimsTable_OccupiedPickRejected is the regression
+// for ut-docs#1390: assigning a table to the LIVE basket must reserve it the
+// instant it's picked (visible through ListTablesWithState), re-picking the
+// basket's own table is a no-op, and a pick of a table some other basket
+// already claims is rejected in place -- the basket keeps its current table
+// and the operator sees an error toast, never a silent success.
+func TestTableHandler_AssignClaimsTable_OccupiedPickRejected(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	t1 := createTestTable(t, dp, "T1")
+	t2 := createTestTable(t, dp, "T2")
+
+	rec := posPostForm(mux, "/api/pos/table", "table_id="+t1)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := dp.Engine.Basket().TableID; got != t1 {
+		t.Fatalf("expected TableID %q, got %q", t1, got)
+	}
+	if !tableOccupied(t, dp, t1) {
+		t.Fatalf("T1 must read occupied the moment the live basket picks it")
+	}
+
+	// Re-picking the basket's own current table: no-op, no error.
+	rec = posPostForm(mux, "/api/pos/table", "table_id="+t1)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("re-pick: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := dp.Engine.Basket().TableID; got != t1 {
+		t.Fatalf("re-pick must keep TableID %q, got %q", t1, got)
+	}
+	if strings.Contains(rec.Body.String(), "already occupied") {
+		t.Fatalf("re-picking the basket's own table must not render the occupied toast: %s", rec.Body.String())
+	}
+
+	// T2 is claimed by another live basket (seeded raw, as the held_sales
+	// occupancy tests do): picking it must be rejected, leaving this basket
+	// on T1 -- and T1's own claim untouched.
+	if _, err := dp.Db.Exec(`INSERT INTO table_claims (table_id, claimed_at) VALUES (?, '2026-08-18T11:00:00Z')`, t2); err != nil {
+		t.Fatalf("seed claim: %v", err)
+	}
+	rec = posPostForm(mux, "/api/pos/table", "table_id="+t2)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("occupied pick: expected 200 (in-place toast), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := dp.Engine.Basket().TableID; got != t1 {
+		t.Fatalf("an occupied pick must leave the basket on T1, got TableID %q", got)
+	}
+	if !strings.Contains(rec.Body.String(), "already occupied") {
+		t.Fatalf("expected the occupied toast in the re-rendered basket, got: %s", rec.Body.String())
+	}
+	if !tableOccupied(t, dp, t1) {
+		t.Fatalf("T1's claim must survive a rejected move")
+	}
+	var claims int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM table_claims WHERE table_id = ?`, t2).Scan(&claims); err != nil || claims != 1 {
+		t.Fatalf("T2 must keep exactly its one foreign claim, got %d (err %v)", claims, err)
+	}
+}
+
+// The end-to-end shape of the reported bug (ut-docs#1390), through nothing
+// but public handlers: order 1 picks T1 and is parked; order 2 (the next
+// live basket) picks T1 -- it used to succeed, because the live-basket path
+// never consulted IsTableFree at all.
+func TestTableHandler_RejectsTableOfParkedOrder(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	registerHoldAPI(mux, dp)
+	t1 := createTestTable(t, dp, "T1")
+
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	if rec := posPostForm(mux, "/api/pos/table", "table_id="+t1); rec.Code != http.StatusOK {
+		t.Fatalf("assign: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := posPostForm(mux, "/api/pos/hold", ""); rec.Code != http.StatusOK {
+		t.Fatalf("hold: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := dp.Engine.Basket().TableID; got != "" {
+		t.Fatalf("hold must clear the live basket's table, got %q", got)
+	}
+
+	rec := posPostForm(mux, "/api/pos/table", "table_id="+t1)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := dp.Engine.Basket().TableID; got != "" {
+		t.Fatalf("order 2 must not be assigned the parked order's table, got TableID %q", got)
+	}
+	if !strings.Contains(rec.Body.String(), "already occupied") {
+		t.Fatalf("expected the occupied toast, got: %s", rec.Body.String())
+	}
+}
+
+// Clearing the live basket's table releases its claim (ut-docs#1390).
+func TestTableHandler_ClearReleasesClaim(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	t1 := createTestTable(t, dp, "T1")
+	if rec := posPostForm(mux, "/api/pos/table", "table_id="+t1); rec.Code != http.StatusOK {
+		t.Fatalf("assign: expected 200, got %d", rec.Code)
+	}
+	if !tableOccupied(t, dp, t1) {
+		t.Fatalf("T1 must be occupied after assignment")
+	}
+	if rec := posPostForm(mux, "/api/pos/table", "table_id="); rec.Code != http.StatusOK {
+		t.Fatalf("clear: expected 200, got %d", rec.Code)
+	}
+	if tableOccupied(t, dp, t1) {
+		t.Fatalf("T1 must be free again after the basket clears its table")
+	}
+}
+
+// Moving the live basket from T1 to T2: T2 gets claimed, T1 released
+// (ut-docs#1390).
+func TestTableHandler_MoveReleasesOldClaimsNew(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	t1 := createTestTable(t, dp, "T1")
+	t2 := createTestTable(t, dp, "T2")
+	if rec := posPostForm(mux, "/api/pos/table", "table_id="+t1); rec.Code != http.StatusOK {
+		t.Fatalf("assign T1: expected 200, got %d", rec.Code)
+	}
+	if rec := posPostForm(mux, "/api/pos/table", "table_id="+t2); rec.Code != http.StatusOK {
+		t.Fatalf("move to T2: expected 200, got %d", rec.Code)
+	}
+	if got := dp.Engine.Basket().TableID; got != t2 {
+		t.Fatalf("expected TableID %q after move, got %q", t2, got)
+	}
+	if tableOccupied(t, dp, t1) {
+		t.Fatalf("T1 must be free after the basket moved off it")
+	}
+	if !tableOccupied(t, dp, t2) {
+		t.Fatalf("T2 must be occupied after the basket moved onto it")
+	}
+}
+
+// ut-docs#1355 x ut-docs#1390: Service.SetTable is a no-op on a Takeaway
+// basket, so a claim taken for that pick must be undone -- otherwise the
+// table would read occupied with nothing actually on it.
+func TestTableHandler_TakeawayPickDoesNotLeakClaim(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	t1 := createTestTable(t, dp, "T1")
+	dp.Engine.SetOrderType(pos.OrderTypeTakeaway)
+	if rec := posPostForm(mux, "/api/pos/table", "table_id="+t1); rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d", rec.Code)
+	}
+	if got := dp.Engine.Basket().TableID; got != "" {
+		t.Fatalf("a takeaway basket must not be assigned a table, got %q", got)
+	}
+	if tableOccupied(t, dp, t1) {
+		t.Fatalf("T1 must not stay claimed by a pick SetTable refused")
+	}
+}
+
+// ut-docs#1355 x ut-docs#1390: switching the order to Takeaway clears the
+// basket's table in the engine (SetOrderType), so the claim goes with it.
+func TestOrderTypeHandler_TakeawayReleasesTableClaim(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	t1 := createTestTable(t, dp, "T1")
+	if rec := posPostForm(mux, "/api/pos/table", "table_id="+t1); rec.Code != http.StatusOK {
+		t.Fatalf("assign: expected 200, got %d", rec.Code)
+	}
+	if rec := posPostForm(mux, "/api/pos/order-type", "order_type="+pos.OrderTypeTakeaway); rec.Code != http.StatusOK {
+		t.Fatalf("order-type: expected 200, got %d", rec.Code)
+	}
+	if got := dp.Engine.Basket().TableID; got != "" {
+		t.Fatalf("takeaway must clear the table, got %q", got)
+	}
+	if tableOccupied(t, dp, t1) {
+		t.Fatalf("T1 must be free once the order went takeaway")
+	}
+}
+
+// The explicit "new customer" reset releases the table claim (ut-docs#1390).
+func TestResetHandler_ReleasesTableClaim(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	t1 := createTestTable(t, dp, "T1")
+	if rec := posPostForm(mux, "/api/pos/table", "table_id="+t1); rec.Code != http.StatusOK {
+		t.Fatalf("assign: expected 200, got %d", rec.Code)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/reset", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := dp.Engine.Basket().TableID; got != "" {
+		t.Fatalf("reset must clear the table, got %q", got)
+	}
+	if tableOccupied(t, dp, t1) {
+		t.Fatalf("T1 must be free after the basket was reset")
+	}
+}
+
+// Completing the sale (tender) releases the table claim afterwards
+// (ut-docs#1390) -- completeTender captures the table before engine.Reset()
+// clears it.
+func TestTenderHandler_ReleasesTableClaim(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	t1 := createTestTable(t, dp, "T1")
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	if rec := posPostForm(mux, "/api/pos/table", "table_id="+t1); rec.Code != http.StatusOK {
+		t.Fatalf("assign: expected 200, got %d", rec.Code)
+	}
+	if !tableOccupied(t, dp, t1) {
+		t.Fatalf("T1 must be occupied before tender")
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"cash","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tender: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := dp.Engine.Basket().TableID; got != "" {
+		t.Fatalf("tender must reset the basket's table, got %q", got)
+	}
+	if tableOccupied(t, dp, t1) {
+		t.Fatalf("T1 must be free after the sale completed")
+	}
+}
