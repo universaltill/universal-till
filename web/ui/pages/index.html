@@ -15,9 +15,8 @@
      global link, now in the shared left nav rail (nav.html); New Sale
      moved into .tender-default-footer below instead, next to Hold Sale
      and Payment, per the product owner's own later request in the same
-     session -- it renders at every width uniformly, so it needed no rail
-     copy or phone-fallback copy at all. At >480px the sale screen goes
-     straight from the (visually-hidden) heading above into
+     session -- it renders at every width uniformly. At >480px the sale
+     screen goes straight from the (visually-hidden) heading above into
      BASKET/PRODUCTS/TENDER below.
 
      .phone-fallback-only (app.css): hidden by default, shown ONLY at
@@ -26,11 +25,24 @@
      regressed live when first tried: measured, that bar wrapping to a
      third row overflowed the sale screen's fixed 100dvh/overflow:hidden
      height and clipped BASKET underneath it.
+
+     2026-09-01 (ut-docs#1345): New Sale is ALSO duplicated into this row
+     now. It still renders in .tender-default-footer at every width
+     (unchanged there — this is additive, not a move), but at <=480px that
+     footer sits below the fold, reachable only by scrolling. Same fix
+     shape as Inventory just above: a second copy of the SAME action
+     (identical hx-post/target/swap/sync + focus onclick), shown only at
+     phone width, testid suffixed "-phone" so e2e can address either copy
+     unambiguously (mirrors kiosk-inventory-link-phone).
      e2e/tests/phone-width-layout-413.spec.ts (360px-only) targets this
      one; every other spec, run at a normal desktop-class viewport, keeps
-     targeting nav.html's rail version. -->
+     targeting the .tender-default-footer copy. -->
 <div class="kiosk-header phone-fallback-only">
   <div class="kiosk-actions">
+    <button class="btn secondary compact" type="button" data-testid="kiosk-checkout-start-phone"
+            hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+            onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)">
+      🛒 {{ T "kiosk.checkout_start" }}</button>
     <a class="btn secondary compact" data-testid="kiosk-inventory-link-phone" href="/inventory">📦 {{ T "kiosk.inventory" }}</a>
   </div>
 </div>

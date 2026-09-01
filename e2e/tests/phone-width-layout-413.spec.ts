@@ -215,6 +215,49 @@ test.describe('phone-width layout (ut-docs#413)', () => {
     expect(hit, 'chip must be the real hit-test target').toBe(true);
   });
 
+  // ut-docs#1345: New Sale moved into .tender-default-footer (ut-docs#1332)
+  // and renders at every width uniformly, but at 360x640 that footer sits
+  // below the fold -- reachable only by scrolling .pos-container. Fixed by
+  // duplicating it into the existing .phone-fallback-only row (same pattern
+  // as kiosk-inventory-link-phone), so it stays reachable without scrolling.
+  test('New Sale is reachable at 360px without scrolling .pos-container', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/');
+    await page.waitForSelector('.pos-container');
+
+    const button = page.getByTestId('kiosk-checkout-start-phone');
+    await expect(button).toBeVisible();
+
+    const geometry = await button.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const container = document.querySelector('.pos-container');
+      return {
+        top: r.top,
+        bottom: r.bottom,
+        centerX: r.left + r.width / 2,
+        centerY: r.top + r.height / 2,
+        containerScrollTop: container ? container.scrollTop : null,
+      };
+    });
+    // Reachable at the page's initial scroll position -- not merely present
+    // somewhere further down a scrollable ancestor.
+    expect(geometry.containerScrollTop, '.pos-container must not need scrolling to reach it').toBe(0);
+    expect(geometry.top, 'button top edge on-screen (>= 0)').toBeGreaterThanOrEqual(-0.5);
+    expect(geometry.bottom, 'button bottom edge on-screen (<= 640px viewport)').toBeLessThanOrEqual(640.5);
+
+    const hit = await button.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return !!at && (at === el || el.contains(at));
+    });
+    expect(hit, 'button must be the real hit-test target, not covered/off-canvas').toBe(true);
+
+    // AC: no regression to the tender-footer's own copy -- it must still
+    // exist (just off the initial fold at this width), not be replaced.
+    await expect(page.getByTestId('kiosk-checkout-start')).toBeAttached();
+    assertClean();
+  });
+
   test('basket and tender panels never overlap on the sale screen', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/');
