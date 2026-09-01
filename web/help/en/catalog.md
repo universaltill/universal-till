@@ -4,7 +4,7 @@ title: Catalog, variants & barcodes
 section: Setting up your shop
 order: 110
 summary: "Your products: names, prices, departments, item variants (size, flavour…) and any number of barcodes per item or per variant."
-routes: [/catalog, /import, /designer]
+routes: [/catalog, /import]
 keywords: [items, prices, barcode, variants, modifiers, import, export]
 ---
 
@@ -29,4 +29,4 @@ Your products: names, prices, departments, item variants (size, flavour…) and 
 4. A takeaway tax rate needs the German tax plugin enabled to save its override — if it's installed but switched off, the import still creates correct tax codes but the summary warns that the takeaway override wasn't applied; enable the plugin and re-run the import to fix it.
 5. The first time you import priced items on a till whose currency you've never explicitly set, Import stops before writing anything and asks you to confirm which currency the file's prices are in — a fresh till defaults to GBP, so importing a foreign catalogue without checking this could otherwise price everything under the wrong currency. Confirm the currency shown if it's right, or pick the correct one; either way Import proceeds automatically and won't ask again once your till's currency has been set.
 6. Which barcode types a scan or manual entry accepts is controlled per shop from Settings → Barcode types. Every common retail type (EAN-13, EAN-8, UPC-A, UPC-E, GTIN-14, Code 128, Code 39, internal/PLU codes) is on by default, so existing barcodes keep working exactly as before. The two scale-label types (weight-embedded and price-embedded EAN-13) are off by default — turn one on only once you're ready to use scale-printed labels, since it changes how a matching code is read.
-7. In the screen designer, search for an item and tap it to add a quick-sale button; tap the ▲/▼ arrows on a button to move it earlier or later in the sale screen's grid — this works the same by touch, mouse or keyboard, so it's usable on the till itself, not only from a desktop.
+7. To arrange which items appear as quick-sale buttons on the sale screen, use **Till Designer**.

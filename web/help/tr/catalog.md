@@ -4,7 +4,7 @@ title: Katalog, varyantlar ve barkodlar
 section: Dükkanı kurma
 order: 110
 summary: "Ürünleriniz: adlar, fiyatlar, reyonlar, ürün varyantları (beden, aroma…) ve ürün ya da varyant başına istediğiniz kadar barkod."
-routes: [/catalog, /import, /designer]
+routes: [/catalog, /import]
 ---
 
 # Katalog, varyantlar ve barkodlar
@@ -27,4 +27,4 @@ routes: [/catalog, /import, /designer]
 4. Paket servis vergi oranının uygulanması için Alman vergi eklentisinin etkin olması gerekir — kurulu ama devre dışıysa, içe aktarma yine doğru vergi kodlarını oluşturur ama özet, paket servis oranının uygulanmadığını belirtir; eklentiyi etkinleştirip içe aktarmayı yeniden çalıştırın.
 5. Para birimi hiç açıkça ayarlanmamış bir kasaya fiyatlı ürünler ilk kez içe aktarıldığında, İçe aktar hiçbir şey yazmadan önce durur ve dosyadaki fiyatların hangi para biriminde olduğunu onaylamanızı ister — yeni bir kasa varsayılan olarak GBP kullanır, bu yüzden bunu kontrol etmeden yabancı bir katalog içe aktarmak her şeyi yanlış para biriminde fiyatlandırabilir. Gösterilen para birimi doğruysa onaylayın veya doğru olanı seçin; her durumda içe aktarma otomatik olarak devam eder ve kasanızın para birimi ayarlandıktan sonra bir daha sormaz.
 6. Bir taramanın veya elle girişin hangi barkod türlerini kabul ettiği, Ayarlar → Barkod türleri üzerinden mağaza bazında denetlenir. Yaygın perakende türlerinin tümü (EAN-13, EAN-8, UPC-A, UPC-E, GTIN-14, Code 128, Code 39, dahili/PLU kodları) varsayılan olarak açıktır, böylece mevcut barkodlar tıpkı önceki gibi çalışmaya devam eder. İki tartı etiketi türü (ağırlık gömülü ve fiyat gömülü EAN-13) varsayılan olarak kapalıdır — eşleşen bir kodun nasıl okunduğunu değiştirdiği için, yalnızca basılı tartı etiketlerini kullanmaya hazır olduğunuzda birini açın.
-7. Ekran tasarımcısında bir ürünü arayıp dokunarak hızlı satış düğmesi ekleyin; bir düğmeyi satış ekranı ızgarasında daha öne veya sonraya taşımak için üzerindeki ▲/▼ oklarına dokunun — bu, dokunma, fare veya klavyeyle aynı şekilde çalışır, dolayısıyla yalnızca masaüstünden değil kasanın kendisinden de kullanılabilir.
+7. Satış ekranında hangi ürünlerin hızlı satış düğmesi olarak görüneceğini düzenlemek için **Kasa Tasarımcısı**'nı kullanın.
