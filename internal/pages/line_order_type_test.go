@@ -378,3 +378,43 @@ func TestApplyJournal_LegacyReturnInheritsOriginalLineModes(t *testing.T) {
 		t.Fatalf("returned pool = %v, want the unit under the takeaway key", returned)
 	}
 }
+
+// ut-docs#1390 × ADR-0073 D5: when a per-line flip or a void turns the
+// basket all-takeaway, the engine clears the table AND the persisted
+// table_claims row must be released, or the table reads occupied with
+// nothing on it.
+func TestLineOrderType_ClaimReleasedWhenBasketTurnsAllTakeaway(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	t1 := createTestTable(t, dp, "T1")
+	posPostForm(mux, "/api/pos/scan", "code=ABC")
+	posPostForm(mux, "/api/pos/scan", "code=VAR")
+	if rec := posPostForm(mux, "/api/pos/table", "table_id="+t1); rec.Code != http.StatusOK {
+		t.Fatalf("assign: %d", rec.Code)
+	}
+	if !tableOccupied(t, dp, t1) {
+		t.Fatal("T1 should be claimed")
+	}
+	b := dp.Engine.Basket()
+	posPostForm(mux, "/api/pos/line-order-type", "key="+b.Lines[0].LineKey+"&order_type=takeaway")
+	if !tableOccupied(t, dp, t1) {
+		t.Fatal("mixed basket must keep its claim")
+	}
+	posPostForm(mux, "/api/pos/line-order-type", "key="+b.Lines[1].LineKey+"&order_type=takeaway")
+	if dp.Engine.TableID() != "" || tableOccupied(t, dp, t1) {
+		t.Fatalf("all-takeaway via per-line flip: table=%q occupied=%v, want cleared+released", dp.Engine.TableID(), tableOccupied(t, dp, t1))
+	}
+	// Void path: dine-in + takeaway, table, void the dine-in line.
+	posPostForm(mux, "/api/pos/reset", "")
+	posPostForm(mux, "/api/pos/scan", "code=ABC")
+	posPostForm(mux, "/api/pos/scan", "code=VAR")
+	b = dp.Engine.Basket()
+	posPostForm(mux, "/api/pos/line-order-type", "key="+b.Lines[1].LineKey+"&order_type=takeaway")
+	posPostForm(mux, "/api/pos/table", "table_id="+t1)
+	if !tableOccupied(t, dp, t1) {
+		t.Fatal("T1 should be claimed (mixed)")
+	}
+	posPostForm(mux, "/api/pos/remove", "key="+b.Lines[0].LineKey)
+	if dp.Engine.TableID() != "" || tableOccupied(t, dp, t1) {
+		t.Fatalf("all-takeaway via void: table=%q occupied=%v, want cleared+released", dp.Engine.TableID(), tableOccupied(t, dp, t1))
+	}
+}

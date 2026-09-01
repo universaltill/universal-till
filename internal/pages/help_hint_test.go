@@ -81,6 +81,7 @@ func TestHelpHrefMapping(t *testing.T) {
 	for route, want := range map[string]string{
 		"/":                     "/help/sell",
 		"/catalog":              "/help/catalog",
+		"/designer":             "/help/till-designer",
 		"/inventory":            "/help/inventory",
 		"/reports":              "/help/reports",
 		"/plugins":              "/help/plugins",

@@ -219,6 +219,11 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 			renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
 			return
 		}
+		// The held_sales row now carries the table's occupancy, so the live
+		// claim the table pick wrote (ut-docs#1390) is released -- one
+		// occupancy source per lifecycle stage, never both at once. After
+		// Insert, deliberately: the table must never read free in between.
+		releaseTableClaim(ctx, posRepo, snap.TableID)
 		d.Engine.Reset()
 		w.Header().Set("HX-Trigger", "held-changed")
 		renderBasket(w, r, httpx.T(locale, "hold.toast.held"), "success")
@@ -266,7 +271,29 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 				snap.TableLabel = held.TableID
 			}
 		}
+		// ut-docs#1390: occupancy moves back from the held_sales row (about
+		// to be deleted) to a live claim for the resumed basket -- claimed
+		// BEFORE the delete so the table never reads free in between, and
+		// read back from the engine rather than held.TableID because
+		// Restore itself enforces the Takeaway-clears-table invariant
+		// (nothing to claim then). The empty basket being resumed INTO may
+		// already have picked a table of its own (a pick needs no items);
+		// Restore wipes that assignment, so its claim is released -- unless
+		// it is the very table being resumed, in which case the existing
+		// row simply stays ours. A failed/lost claim is logged, never fails
+		// the resume: the sale is restored either way, same philosophy as
+		// the Delete below.
+		prevTable := d.Engine.TableID()
 		d.Engine.Restore(snap)
+		restoredTable := d.Engine.TableID()
+		if restoredTable != "" && restoredTable != prevTable {
+			if claimed, err := posRepo.ClaimTable(ctx, restoredTable); err != nil || !claimed {
+				log.Printf("resume %s: re-claim table %s failed (claimed=%v): %v", id, restoredTable, claimed, err)
+			}
+		}
+		if prevTable != restoredTable {
+			releaseTableClaim(ctx, posRepo, prevTable)
+		}
 		if err := repo.Delete(ctx, id); err != nil {
 			// The sale is restored either way; a stale row is the lesser evil.
 			_ = err

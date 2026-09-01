@@ -159,7 +159,7 @@ func TestDeadTaxInclusiveSeedRemovedOnUpgrade(t *testing.T) {
 	rewindZReportNumbering070(t, d)
 	rewindPaymentsVoucherID072(t, d)
 	rewindCountryDefaultLocale073(t, d)
-	rewindSaleLineOrderType077(t, d)
+	rewindSaleLineOrderType078(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -365,13 +365,13 @@ func rewindCountryDefaultLocale073(t *testing.T, d *DB) {
 	}
 }
 
-// rewindSaleLineOrderType077 undoes migration 077's non-idempotent DDL
+// rewindSaleLineOrderType078 undoes migration 078's non-idempotent DDL
 // (ut-docs#1181, ADR-0073) so a rewind-and-reopen test can replay it.
-func rewindSaleLineOrderType077(t *testing.T, d *DB) {
+func rewindSaleLineOrderType078(t *testing.T, d *DB) {
 	t.Helper()
 	for _, tbl := range []string{"sale_lines", "sale_lines_archive"} {
 		if _, err := d.DB.Exec(`ALTER TABLE ` + tbl + ` DROP COLUMN order_type`); err != nil {
-			t.Fatalf("rewind 077 (%s): %v", tbl, err)
+			t.Fatalf("rewind 078 (%s): %v", tbl, err)
 		}
 	}
 }

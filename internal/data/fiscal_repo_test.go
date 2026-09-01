@@ -594,12 +594,12 @@ func TestFiscalRegisterDE_Migration075RoundTrip(t *testing.T) {
 	created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
 		t.Fatalf("recreate pre-075 table: %v", err)
 	}
-	// 077 (sale_lines.order_type, ut-docs#1181) replays too after a >= 75
+	// 078 (sale_lines.order_type, ut-docs#1181) replays too after a >= 75
 	// rewind — undo its non-idempotent ALTER TABLEs first, same as the
 	// internal/db rewind tests' helpers.
 	for _, tbl := range []string{"sale_lines", "sale_lines_archive"} {
 		if _, err := d.DB.Exec(`ALTER TABLE ` + tbl + ` DROP COLUMN order_type`); err != nil {
-			t.Fatalf("rewind 077 (%s): %v", tbl, err)
+			t.Fatalf("rewind 078 (%s): %v", tbl, err)
 		}
 	}
 	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 75`); err != nil {

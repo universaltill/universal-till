@@ -6,15 +6,15 @@ import (
 	"testing"
 )
 
-// TestMigration077_BackfillsLineOrderTypeFromSaleHeader (ut-docs#1181,
+// TestMigration078_BackfillsLineOrderTypeFromSaleHeader (ut-docs#1181,
 // ADR-0073 Decision 6): historic sales carry order_type only on the header.
 // The additive sale_lines.order_type column must be backfilled from that
 // header for BOTH live and archived rows, or every pre-existing takeaway
 // sale would silently read as dine-in line by line after the upgrade.
-// Standard rewind-and-reopen shape: seed the pre-077 shape, drop 077's
-// columns, reopen so 077 replays against it.
-func TestMigration077_BackfillsLineOrderTypeFromSaleHeader(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "m077.db")
+// Standard rewind-and-reopen shape: seed the pre-078 shape, drop 078's
+// columns, reopen so 078 replays against it.
+func TestMigration078_BackfillsLineOrderTypeFromSaleHeader(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "m078.db")
 	d, err := Open(path)
 	if err != nil {
 		t.Fatal(err)
@@ -60,16 +60,16 @@ func TestMigration077_BackfillsLineOrderTypeFromSaleHeader(t *testing.T) {
 	exec(`INSERT INTO sale_lines (id, sale_id, line_no, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, item_id) VALUES ('l-ret','s-ret',1,'Widget',1,100,0,0,100,100,'i1')`)
 	exec(`INSERT INTO sale_links (id, sale_id, original_sale_id, reason) VALUES ('lnk','s-ret','s-ta','return')`)
 
-	rewindSaleLineOrderType077(t, d)
-	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 77`); err != nil {
+	rewindSaleLineOrderType078(t, d)
+	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 78`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
-	d, err = Open(path) // replays 077 against the simulated pre-upgrade till
+	d, err = Open(path) // replays 078 against the simulated pre-upgrade till
 	if err != nil {
-		t.Fatalf("reopen replaying 077: %v", err)
+		t.Fatalf("reopen replaying 078: %v", err)
 	}
 	defer d.Close()
 

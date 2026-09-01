@@ -187,7 +187,7 @@ func TestDemoCatalogueUpgradeKeepsTouchedItems(t *testing.T) {
 	rewindZReportNumbering070(t, d)
 	rewindPaymentsVoucherID072(t, d)
 	rewindCountryDefaultLocale073(t, d)
-	rewindSaleLineOrderType077(t, d)
+	rewindSaleLineOrderType078(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -340,7 +340,7 @@ func TestDemoCatalogueUpgradeRemovesAllWhenUntouched(t *testing.T) {
 	rewindZReportNumbering070(t, d)
 	rewindPaymentsVoucherID072(t, d)
 	rewindCountryDefaultLocale073(t, d)
-	rewindSaleLineOrderType077(t, d)
+	rewindSaleLineOrderType078(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -426,7 +426,7 @@ func TestDemoCatalogueUpgradeKeepsRenamedUntradedItem(t *testing.T) {
 	rewindZReportNumbering070(t, d)
 	rewindPaymentsVoucherID072(t, d)
 	rewindCountryDefaultLocale073(t, d)
-	rewindSaleLineOrderType077(t, d)
+	rewindSaleLineOrderType078(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -523,7 +523,7 @@ func TestDemoCustomersPromosUpgradeKeepsTouchedRows(t *testing.T) {
 	rewindZReportNumbering070(t, d)
 	rewindPaymentsVoucherID072(t, d)
 	rewindCountryDefaultLocale073(t, d)
-	rewindSaleLineOrderType077(t, d)
+	rewindSaleLineOrderType078(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -640,7 +640,7 @@ func TestDemoCustomersPromosUpgradeRemovesAllWhenUntouched(t *testing.T) {
 	rewindZReportNumbering070(t, d)
 	rewindPaymentsVoucherID072(t, d)
 	rewindCountryDefaultLocale073(t, d)
-	rewindSaleLineOrderType077(t, d)
+	rewindSaleLineOrderType078(t, d)
 	if err := d.Close(); err != nil {
 		t.Fatal(err)
 	}

@@ -104,6 +104,82 @@ func TestOrderStatusPost_AppliesForwardMove(t *testing.T) {
 	}
 }
 
+// Reaching a terminal lifecycle state (collected/cancelled) must remove the
+// order's row from the currently-rendered /orders board immediately — not
+// just on the next 15s poll (ut-docs#1389). The status-cell fragment swap
+// alone can't do that (it only replaces the cell's innerHTML), so the
+// response also carries an htmx out-of-band delete for the row itself.
+func TestOrderStatusPost_CollectedRemovesRowViaOOBDelete(t *testing.T) {
+	mux, _, dbase := newOrderStatusTestDeps(t)
+	seedOrderStatusTestSale(t, dbase, "sale-1", "R-0010")
+
+	rec := postOrderStatus(mux, "R-0010", "collected")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := `id="order-row-R-0010" hx-swap-oob="delete"`
+	if !strings.Contains(body, want) {
+		t.Fatalf("fragment must carry an OOB delete for the row, want %q in %q", want, body)
+	}
+}
+
+func TestOrderStatusPost_CancelledRemovesRowViaOOBDelete(t *testing.T) {
+	mux, _, dbase := newOrderStatusTestDeps(t)
+	seedOrderStatusTestSale(t, dbase, "sale-1", "R-0011")
+
+	rec := postOrderStatus(mux, "R-0011", "cancelled")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	want := `id="order-row-R-0011" hx-swap-oob="delete"`
+	if !strings.Contains(body, want) {
+		t.Fatalf("fragment must carry an OOB delete for the row, want %q in %q", want, body)
+	}
+}
+
+// A cancel tap that arrives after the order is already collected is a
+// silent no-op (TestOrderStatusPost_CancelAllowedUntilCollected) — but the
+// order is still terminal (collected), so the row must still carry the OOB
+// delete: a client with the row still on screen (e.g. two taps landed
+// close together) must not end up with a stuck row for an order that IS
+// terminal, even though this particular write didn't apply.
+func TestOrderStatusPost_CancelAfterCollectedStillRemovesRow(t *testing.T) {
+	mux, _, dbase := newOrderStatusTestDeps(t)
+	seedOrderStatusTestSale(t, dbase, "sale-1", "R-0012")
+	if rec := postOrderStatus(mux, "R-0012", "collected"); rec.Code != http.StatusOK {
+		t.Fatalf("setup move: %d", rec.Code)
+	}
+
+	rec := postOrderStatus(mux, "R-0012", "cancelled")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	want := `id="order-row-R-0012" hx-swap-oob="delete"`
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("fragment must still carry an OOB delete for the (already-terminal) row, want %q in %q", want, rec.Body.String())
+	}
+}
+
+// A non-terminal move (or an untracked sale never touched at all) must NOT
+// remove the row — only new/preparing/ready still belong on the active
+// board, and they poll-refresh normally.
+func TestOrderStatusPost_NonTerminalMoveDoesNotRemoveRow(t *testing.T) {
+	mux, _, dbase := newOrderStatusTestDeps(t)
+	seedOrderStatusTestSale(t, dbase, "sale-1", "R-0013")
+
+	for _, status := range []string{"new", "preparing", "ready"} {
+		rec := postOrderStatus(mux, "R-0013", status)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("%s: status = %d, want 200 (body %q)", status, rec.Code, rec.Body.String())
+		}
+		if strings.Contains(rec.Body.String(), "hx-swap-oob=\"delete\"") {
+			t.Fatalf("%s: non-terminal move must not remove the row, got %q", status, rec.Body.String())
+		}
+	}
+}
+
 // A stale backward move (offline multi-till catch-up) is silently dropped:
 // still 200 — NOT an error — the fragment shows the unchanged current
 // status, nothing is journaled, nothing is broadcast.

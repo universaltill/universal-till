@@ -128,7 +128,7 @@ func itoa(i int) string { return strconv.Itoa(i) }
 // Review B2 (ut-docs#1181): a historic takeaway sale that was FULLY refunded
 // before the upgrade — its return persisted with header ” and untyped
 // lines — must still show 0 remaining and reject a second refund after
-// migration 077's backfill keys the pool per mode.
+// migration 078's backfill keys the pool per mode.
 func TestRefund_HistoricTakeawaySaleAlreadyRefunded_StillRejected(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, _ := newRefundTestDeps(t)
@@ -139,7 +139,7 @@ func TestRefund_HistoricTakeawaySaleAlreadyRefunded_StillRejected(t *testing.T) 
 			t.Fatalf("%s: %v", q, err)
 		}
 	}
-	// Post-077 shape of a pre-upgrade takeaway sale + its full return, i.e.
+	// Post-078 shape of a pre-upgrade takeaway sale + its full return, i.e.
 	// what the backfill must have produced: sale lines takeaway, return
 	// lines takeaway (derived through sale_links), return header takeaway.
 	x(`INSERT INTO sales(id, receipt_no, status, sale_type, order_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at) VALUES('s-hist','R-HIST','completed','sale','takeaway','GBP',100,0,7,107,datetime('now'),datetime('now'))`)

@@ -250,7 +250,7 @@ func TestMigration076IsIdempotentOnCleanData(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	rewindSaleLineOrderType077(t, d) // 077 replays too after a >= 76 rewind
+	rewindSaleLineOrderType078(t, d) // 078 replays too after a >= 76 rewind
 	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 76`); err != nil {
 		t.Fatalf("rewind schema_migrations: %v", err)
 	}

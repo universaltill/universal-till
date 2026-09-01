@@ -616,7 +616,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 	// takeaway rule above cannot fire. Inherit each line's mode from the
 	// ORIGINAL sale's persisted lines (matched the same way the refund
 	// pool is keyed: item, variant, unit price) — the runtime twin of
-	// migration 077's sale_links backfill — or the whole refund pool would
+	// migration 078's sale_links backfill — or the whole refund pool would
 	// be keyed per mode while this return's lines sit under dine-in, and a
 	// fully-refunded takeaway unit could be refunded again.
 	if !anyLineTyped && in.SaleType == "return" && in.OriginalSaleID != "" {

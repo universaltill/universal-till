@@ -19,7 +19,7 @@ is a derived summary (`""` dine-in, `takeaway`, or the new `mixed`). Design:
   (`applyTablePolicyLocked`, also on every void path), hold/resume with the
   legacy header fallback, `CompleteSale` normalization + header derivation
   (incl. legacy untyped returns inheriting the original's line modes).
-- `internal/db`: migration 077 (`sale_lines.order_type` + archive twin,
+- `internal/db`: migration 078 (`sale_lines.order_type` + archive twin,
   backfilled from the header, and historic returns via `sale_links`,
   batch-scoped for the archive).
 - `internal/data`: `SaleLineRow`/`SaleDetailLine`/`SaleLineSnapshot` carry the
@@ -46,11 +46,11 @@ Blockers, both proven with throwaway tests by the reviewer, both fixed:
   derived summary → "bulk Takeaway, scan, flip the line to dine in" recorded
   a dine-in-taxed line as takeaway. Fix: derive from the line snapshot
   (`pos.SummarizeOrderType(lines, …)`). Test: `TestTender_DefaultTakeawayButLineDineIn_PersistsDineIn`.
-- **B2** migration 077 backfilled historic *returns'* lines to `''` while the
+- **B2** migration 078 backfilled historic *returns'* lines to `''` while the
   original takeaway sale's became `takeaway`, so the per-mode refund pool
   never saw the returned unit → double refund. Fix: backfill return lines and
   headers through `sale_links` (live + archive). Tests:
-  `TestMigration077_BackfillsLineOrderTypeFromSaleHeader` (extended),
+  `TestMigration078_BackfillsLineOrderTypeFromSaleHeader` (extended),
   `TestRefund_HistoricTakeawaySaleAlreadyRefunded_StillRejected`.
 
 High/medium, all fixed: H3 void-last-dine-in-line kept the table
@@ -71,7 +71,7 @@ B1/B2/H3/M7/M8 confirmed fixed. One new blocker found and fixed:
 - **BLOCKER-1** LAN replay of a *pre-ADR-0073 peer's return* (header `""`,
   untyped lines) re-created B2 at runtime for mixed-version fleets. Fix: at
   the `CompleteSale` choke point an untyped return inherits the original
-  sale's persisted line modes (the runtime twin of 077's `sale_links`
+  sale's persisted line modes (the runtime twin of 078's `sale_links`
   backfill). Test: `TestApplyJournal_LegacyReturnInheritsOriginalLineModes`.
 - MEDIUM-2 archive return backfill untested → test extended with
   `sale_links_archive` rows across two batches.

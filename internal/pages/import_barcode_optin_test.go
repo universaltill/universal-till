@@ -5,6 +5,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/universaltill/universal-till/internal/data"
 )
 
 // TestImport_TickedOptIn_StaysStickyOnRePreview is a real bug found in
@@ -252,5 +254,103 @@ func TestImport_BarcodelessCatalog_TickedCheckbox_DerivesBarcode(t *testing.T) {
 	}
 	if barcodeType == "" {
 		t.Error("barcode_type must be set")
+	}
+}
+
+// TestImport_ShopDefaultOn_FirstPreviewPreTicksCheckbox is ut-docs#1356's
+// Settings toggle (CatalogImportBarcodeFromSKUDefaultKey): a shop that has
+// turned it on sees the ut-docs#1224 opt-in checkbox PRE-TICKED the first
+// time a barcode-less catalog is previewed — never a gate, still just a
+// starting point for the SAME explicit-submit checkbox.
+func TestImport_ShopDefaultOn_FirstPreviewPreTicksCheckbox(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	if err := data.NewSettingsRepo(dp.Db).Set(t.Context(), data.CatalogImportBarcodeFromSKUDefaultKey, "1"); err != nil {
+		t.Fatalf("seed shop default: %v", err)
+	}
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	body, ct := multipartCSV(t, barcodelessCSV, nil) // no commit, no staged_id: first render
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+	}
+	got := rec.Body.String()
+	if !strings.Contains(got, `name="use_item_numbers_as_barcodes" value="1" form="import-form" checked`) {
+		t.Fatalf("shop default on must pre-tick the checkbox on the first preview: %s", got)
+	}
+}
+
+// TestImport_ShopDefaultOff_FirstPreviewLeavesCheckboxUnticked pins the
+// absent/"0" default (unchanged ut-docs#1224 behaviour) — this is the SAME
+// assertion TestImport_BarcodelessCatalog_PreviewOffersOptInCheckbox already
+// makes with no setting seeded at all; this one seeds an explicit "0" to
+// also cover a shop that toggled the setting on then back off.
+func TestImport_ShopDefaultOff_FirstPreviewLeavesCheckboxUnticked(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	if err := data.NewSettingsRepo(dp.Db).Set(t.Context(), data.CatalogImportBarcodeFromSKUDefaultKey, "0"); err != nil {
+		t.Fatalf("seed shop default: %v", err)
+	}
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	body, ct := multipartCSV(t, barcodelessCSV, nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "checked") {
+		t.Fatalf("shop default off must leave the checkbox unticked: %s", rec.Body.String())
+	}
+}
+
+// TestImport_ShopDefaultOn_ExplicitUntickOnCommit_NeverAppliesBarcodes is the
+// brief's key guardrail: the shop default only ever changes what the
+// checkbox SHOWS, never what an import actually does. The operator's own
+// explicit choice — here, unticking the pre-ticked box before pressing
+// Import — must always win, even with the shop default on.
+func TestImport_ShopDefaultOn_ExplicitUntickOnCommit_NeverAppliesBarcodes(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	if err := data.NewSettingsRepo(dp.Db).Set(t.Context(), data.CatalogImportBarcodeFromSKUDefaultKey, "1"); err != nil {
+		t.Fatalf("seed shop default: %v", err)
+	}
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	// First preview: pre-ticked by the shop default.
+	stagedID, firstBody := previewAndExtractStagedID(t, mux, barcodelessCSV)
+	if !strings.Contains(firstBody, `name="use_item_numbers_as_barcodes" value="1" form="import-form" checked`) {
+		t.Fatalf("first preview must be pre-ticked by the shop default: %s", firstBody)
+	}
+
+	// The operator unticks it and presses Import: commit carries staged_id
+	// but NOT use_item_numbers_as_barcodes at all — exactly what a real
+	// unticked checkbox submits.
+	body, ct := multipartFields(t, map[string]string{"commit": "1", "staged_id": stagedID})
+	rec := postImport(t, mux, body, ct)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	var barcodeCount int
+	if err := dp.Db.QueryRow(`
+		SELECT COUNT(*) FROM item_barcodes ib
+		JOIN items i ON i.id = ib.item_id
+		WHERE i.sku = '30005'`).Scan(&barcodeCount); err != nil {
+		t.Fatalf("count barcodes: %v", err)
+	}
+	if barcodeCount != 0 {
+		t.Fatalf("barcode rows for sku=30005 = %d, want 0 — the operator's explicit untick must win over the shop default", barcodeCount)
 	}
 }

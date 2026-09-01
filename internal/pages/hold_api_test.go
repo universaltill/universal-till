@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"net/http/httptest"
@@ -9,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -43,6 +45,13 @@ func newHoldTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	// directly -- needed even by tests that never assign a table.
 	if _, err := db.Exec(`CREATE TABLE tables (id TEXT PRIMARY KEY, label TEXT NOT NULL, area_zone TEXT NOT NULL DEFAULT '', seat_count INTEGER NOT NULL DEFAULT 0, shape TEXT NOT NULL DEFAULT 'rect', pos_x INTEGER NOT NULL DEFAULT 0, pos_y INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`); err != nil {
 		t.Fatalf("create tables: %v", err)
+	}
+	// ut-docs#1390: hold releases the live basket's table claim and resume
+	// re-claims it, so the claims table (migration 078) is part of every
+	// hold/resume round trip, table-assigned or not (release is a no-op
+	// DELETE either way) -- column-identical to the migration.
+	if _, err := db.Exec(`CREATE TABLE table_claims (table_id TEXT PRIMARY KEY REFERENCES tables(id), claimed_at TEXT NOT NULL);`); err != nil {
+		t.Fatalf("create table_claims: %v", err)
 	}
 
 	resolver := stubResolver{
@@ -722,5 +731,131 @@ func TestHeldStrip_EmptyWhenNothingHeld(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "held-chip") {
 		t.Fatalf("expected no chips when nothing is held, got: %s", rec.Body.String())
+	}
+}
+
+// holdTestTableClaimed reports whether the claims table (ut-docs#1390) holds
+// a row for tableID -- the live-basket half of table occupancy; the
+// held_sales.table_id column is the parked half.
+func holdTestTableClaimed(t *testing.T, dp *common.Deps, tableID string) bool {
+	t.Helper()
+	var n int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM table_claims WHERE table_id = ?`, tableID).Scan(&n); err != nil {
+		t.Fatalf("count claims: %v", err)
+	}
+	return n == 1
+}
+
+func holdTestTableOccupied(t *testing.T, dp *common.Deps, tableID string) bool {
+	t.Helper()
+	states, err := data.NewPOSRepo(dp.Db).ListTablesWithState(context.Background())
+	if err != nil {
+		t.Fatalf("ListTablesWithState: %v", err)
+	}
+	for _, s := range states {
+		if s.ID == tableID {
+			return s.Occupied
+		}
+	}
+	t.Fatalf("table %s not listed", tableID)
+	return false
+}
+
+// TestHoldThenResume_MovesTableClaimBetweenLiveAndHeld (ut-docs#1390): a
+// table-assigned live basket carries a table_claims row (seeded here the
+// way POST /api/pos/table writes it -- this harness registers only the hold
+// API). Hold hands the occupancy to the held_sales row and drops the claim,
+// so a table never has both; resume re-claims it BEFORE the held row is
+// deleted, so the table never reads free in between. Occupancy as the floor
+// plan sees it (ListTablesWithState) stays true throughout.
+func TestHoldThenResume_MovesTableClaimBetweenLiveAndHeld(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO tables (id, label, created_at, updated_at) VALUES ('tbl-1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed table: %v", err)
+	}
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	dp.Engine.SetTable("tbl-1", "T1")
+	if claimed, err := data.NewPOSRepo(dp.Db).ClaimTable(context.Background(), "tbl-1"); err != nil || !claimed {
+		t.Fatalf("seed live claim: claimed=%v err=%v", claimed, err)
+	}
+
+	holdRec := httptest.NewRecorder()
+	mux.ServeHTTP(holdRec, httptest.NewRequest(http.MethodPost, "/api/pos/hold", nil))
+	if holdRec.Code != http.StatusOK {
+		t.Fatalf("hold: expected 200, got %d: %s", holdRec.Code, holdRec.Body.String())
+	}
+	if holdTestTableClaimed(t, dp, "tbl-1") {
+		t.Fatalf("hold must release the live claim (the held_sales row now carries the occupancy)")
+	}
+	var heldTable string
+	if err := dp.Db.QueryRow(`SELECT table_id FROM held_sales`).Scan(&heldTable); err != nil || heldTable != "tbl-1" {
+		t.Fatalf("held_sales.table_id = %q (err %v), want tbl-1", heldTable, err)
+	}
+	if !holdTestTableOccupied(t, dp, "tbl-1") {
+		t.Fatalf("T1 must still read occupied while parked")
+	}
+
+	var id string
+	if err := dp.Db.QueryRow(`SELECT id FROM held_sales`).Scan(&id); err != nil {
+		t.Fatalf("query held_sales id: %v", err)
+	}
+	resumeReq := httptest.NewRequest(http.MethodPost, "/api/pos/resume", strings.NewReader("id="+id))
+	resumeReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	resumeRec := httptest.NewRecorder()
+	mux.ServeHTTP(resumeRec, resumeReq)
+	if resumeRec.Code != http.StatusOK {
+		t.Fatalf("resume: expected 200, got %d: %s", resumeRec.Code, resumeRec.Body.String())
+	}
+	var heldRows int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM held_sales`).Scan(&heldRows); err != nil || heldRows != 0 {
+		t.Fatalf("resume must delete the held row, got %d rows (err %v)", heldRows, err)
+	}
+	if !holdTestTableClaimed(t, dp, "tbl-1") {
+		t.Fatalf("resume must re-claim the table for the live basket")
+	}
+	if !holdTestTableOccupied(t, dp, "tbl-1") {
+		t.Fatalf("T1 must read occupied after resume, via the live claim")
+	}
+	if got := dp.Engine.Basket().TableID; got != "tbl-1" {
+		t.Fatalf("resumed basket TableID = %q, want tbl-1", got)
+	}
+}
+
+// Resuming into an EMPTY basket that nonetheless has a table picked (a
+// table pick needs no items) must release that pre-resume claim, or the
+// table would stay occupied with nothing on it (ut-docs#1390).
+func TestResume_ReleasesEmptyBasketsPriorTableClaim(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO tables (id, label, created_at, updated_at) VALUES
+ ('tbl-1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z'),
+ ('tbl-2','T2','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed tables: %v", err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES ('h1','T1',100,1,'{"lines":[{"sku":"ABC","name":"Apple","qty":1,"priceCents":100}]}','tbl-1')`); err != nil {
+		t.Fatalf("seed held sale: %v", err)
+	}
+	// The live basket: no items, but T2 picked (and claimed).
+	dp.Engine.SetTable("tbl-2", "T2")
+	if claimed, err := data.NewPOSRepo(dp.Db).ClaimTable(context.Background(), "tbl-2"); err != nil || !claimed {
+		t.Fatalf("seed live claim: claimed=%v err=%v", claimed, err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/resume", strings.NewReader("id=h1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("resume: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := dp.Engine.Basket().TableID; got != "tbl-1" {
+		t.Fatalf("resumed basket TableID = %q, want tbl-1", got)
+	}
+	if holdTestTableClaimed(t, dp, "tbl-2") {
+		t.Fatalf("the empty basket's prior T2 claim must be released on resume")
+	}
+	if !holdTestTableClaimed(t, dp, "tbl-1") {
+		t.Fatalf("the resumed order's T1 must be claimed")
 	}
 }

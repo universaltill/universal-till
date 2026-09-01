@@ -22,6 +22,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/barcode"
+	"github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	productlookup "github.com/universaltill/universal-till/internal/lookup"
@@ -779,6 +780,203 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			writeRowOOB(w, r, ownerID, false)
 		}
 	})
+
+	// ut-docs#1356: bulk "backfill barcodes from SKU" — preview (dry run,
+	// GET, no writes) + commit (POST). Both share computeBarcodeBackfillPlan
+	// below, which reuses ut-docs#1224's exported derivation
+	// (catimport.DeriveNumberBarcode, ADR-0059 §3 "call the same function,
+	// don't reimplement it") and the dry-run-safe BarcodeOwner lookup —
+	// never ensureBarcodeAvailable/AddBarcode's own transactional check,
+	// which stays load-bearing for the real write path (see AddBarcode
+	// below and BarcodeOwner's own doc comment).
+	mux.HandleFunc("GET /api/catalog/barcode-backfill", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		funcs := httpx.FuncsFor(locale)
+		T := funcs["T"].(func(string) string)
+		settingsRepo := data.NewSettingsRepo(d.Db)
+		enabledIDs, symErr := settingsRepo.EnabledBarcodeSymbologies(r.Context())
+		if symErr != nil {
+			log.Printf("[catalog] enabled symbologies unavailable for barcode backfill, using defaults: %v", symErr)
+		}
+		assign, noSymbology, alreadyUsed, err := computeBarcodeBackfillPlan(r.Context(), repo, enabledIDs, locale, T)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+			return
+		}
+		httpx.RenderWith(files(
+			filepath.Join("web", "ui", "partials", "catalog_barcode_backfill.html"),
+		), funcs)("catalog_barcode_backfill", barcodeBackfillPreviewView(assign, noSymbology, alreadyUsed))(w, r)
+	})
+
+	mux.HandleFunc("POST /api/catalog/barcode-backfill", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		funcs := httpx.FuncsFor(locale)
+		settingsRepo := data.NewSettingsRepo(d.Db)
+		enabledIDs, symErr := settingsRepo.EnabledBarcodeSymbologies(r.Context())
+		if symErr != nil {
+			log.Printf("[catalog] enabled symbologies unavailable for barcode backfill, using defaults: %v", symErr)
+		}
+		// Re-derive eligibility fresh against CURRENT data — never trust the
+		// preview (ut-docs#1356): a concurrent edit between preview and
+		// commit (another operator adding a barcode, an item going
+		// inactive, …) must not misfire.
+		T := funcs["T"].(func(string) string)
+		assign, noSymbology, alreadyUsed, err := computeBarcodeBackfillPlan(r.Context(), repo, enabledIDs, locale, T)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+			return
+		}
+		var assigned int
+		// Pre-seeded with the plan's own two issue buckets (items never
+		// attempted at all — not eligible even before this commit ran) so
+		// the result names EVERY item that didn't get a barcode and why,
+		// not only the rarer AddBarcode-time race case the loop below adds
+		// to it.
+		skipped := make([]backfillSkip, 0, len(noSymbology)+len(alreadyUsed))
+		skipped = append(skipped, noSymbology...)
+		skipped = append(skipped, alreadyUsed...)
+		for _, row := range assign {
+			if aerr := pos.AddBarcode(r.Context(), d.Db, pos.BarcodeInput{
+				Barcode: row.Barcode, BarcodeType: row.BarcodeType, ItemID: row.ItemID, IsPrimary: true,
+			}); aerr != nil {
+				// AddBarcode re-checks availability inside its own IMMEDIATE
+				// transaction (ut-docs#304) — a race since the plan above
+				// was computed (another request/import claiming the same
+				// derived code first) is an ordinary "skipped: already in
+				// use" outcome here, not a batch-aborting error.
+				skipped = append(skipped, backfillSkip{
+					Name: row.Name, SKU: row.SKU,
+					Reason: common.FriendlyBarcodeConflict(r.Context(), repo, locale, aerr),
+				})
+				continue
+			}
+			assigned++
+		}
+		// Deliberately NOT HX-Refresh (unlike pairing_api.go/backup_api.go's
+		// own bulk endpoints): htmx processes that header before the swap,
+		// so it would reload the page and discard this very result fragment
+		// before the operator ever saw it — a partial backfill (some SKUs
+		// skipped) would then look identical to a full one. The result
+		// fragment's own "Close" button (catalog_barcode_backfill.html)
+		// reloads instead, once the operator has actually read the report —
+		// same close-then-reload shape as plugin_install_modal.html.
+		httpx.RenderWith(files(
+			filepath.Join("web", "ui", "partials", "catalog_barcode_backfill.html"),
+		), funcs)("catalog_barcode_backfill_result", barcodeBackfillResultView(assigned, skipped))(w, r)
+	})
+}
+
+// backfillRow is one item computeBarcodeBackfillPlan found eligible for a
+// SKU-derived barcode (ut-docs#1356).
+type backfillRow struct {
+	ItemID      string
+	Name        string
+	SKU         string
+	Barcode     string
+	BarcodeType string
+}
+
+// backfillSkip is one item computeBarcodeBackfillPlan (or the commit loop)
+// could NOT assign a barcode to, with an operator-facing, already-
+// translated reason.
+type backfillSkip struct {
+	Name   string
+	SKU    string
+	Reason string
+}
+
+// backfillPreviewRowCap caps the preview's eligible-list display — same
+// "don't render an unbounded table" convention as import_page.go's own
+// 200-row cap, sized smaller here since this renders inside a dialog, not a
+// full page (ut-docs#1356 brief: "first ~50").
+const backfillPreviewRowCap = 50
+
+// computeBarcodeBackfillPlan re-derives, from CURRENT data, which of
+// CatalogRepo.ItemsWithoutBarcode's candidates are actually eligible for a
+// SKU-derived barcode right now — the shared logic both the preview (dry
+// run) and the commit call, so a concurrent edit between them can never
+// leave the commit trusting stale eligibility. For each candidate:
+//   - DeriveNumberBarcode reports an issue (no enabled symbology matches the
+//     SKU's shape) → the "can't derive" bucket.
+//   - Otherwise BarcodeOwner finds the derived code already claimed by a
+//     different item/variant → the "already in use" bucket, named via
+//     FriendlyBarcodeConflict (ut-docs#303) — reused by constructing the
+//     exact *data.BarcodeConflictError AddBarcode itself would return,
+//     rather than duplicating its item/variant label resolution.
+//   - Otherwise → eligible to assign.
+func computeBarcodeBackfillPlan(ctx context.Context, repo *data.CatalogRepo, enabledIDs []string, locale string, T func(string) string) (assign []backfillRow, noSymbology, alreadyUsed []backfillSkip, err error) {
+	items, ierr := repo.ItemsWithoutBarcode(ctx)
+	if ierr != nil {
+		return nil, nil, nil, fmt.Errorf("barcode backfill: %w", ierr)
+	}
+	// Two DIFFERENT SKUs in this same candidate set can derive the SAME
+	// code — DeriveNumberBarcode's underlying LookupKey collapses some
+	// distinct-looking numbers onto one key (e.g. EAN13 weight/price-prefix
+	// variants), and normalizeBarcode strips a trailing ".0". items.sku is
+	// UNIQUE, so both rows are legitimate candidates, but only the first can
+	// actually get the code — BarcodeOwner only sees data already committed
+	// before this plan ran, so without tracking this batch's own claims a
+	// later duplicate would show as "eligible" in the preview and then
+	// silently fail to assign at commit time. Track them here so the
+	// preview's count and the commit's actual result always agree.
+	claimedInBatch := make(map[string]string) // code -> name of the item that claimed it first
+	for _, it := range items {
+		code, codeType, issue, _ := catimport.DeriveNumberBarcode(it.SKU, enabledIDs)
+		if issue != "" || code == "" {
+			noSymbology = append(noSymbology, backfillSkip{Name: it.Name, SKU: it.SKU, Reason: T("catalog.barcode_backfill.issue.no_symbology")})
+			continue
+		}
+		if claimant, dup := claimedInBatch[code]; dup {
+			reason := fmt.Sprintf(T("catalog.error.barcode_conflict"), claimant)
+			alreadyUsed = append(alreadyUsed, backfillSkip{Name: it.Name, SKU: it.SKU, Reason: reason})
+			continue
+		}
+		targetType, targetID, found, oerr := repo.BarcodeOwner(ctx, code)
+		if oerr != nil {
+			return nil, nil, nil, fmt.Errorf("barcode backfill: %w", oerr)
+		}
+		if found {
+			// The candidate item itself can never be this owner:
+			// ItemsWithoutBarcode already excludes any item that has a row
+			// in item_barcodes, so a found owner here is always a
+			// DIFFERENT item or variant.
+			reason := common.FriendlyBarcodeConflict(ctx, repo, locale, &data.BarcodeConflictError{TargetType: targetType, TargetID: targetID})
+			alreadyUsed = append(alreadyUsed, backfillSkip{Name: it.Name, SKU: it.SKU, Reason: reason})
+			continue
+		}
+		claimedInBatch[code] = it.Name
+		assign = append(assign, backfillRow{ItemID: it.ID, Name: it.Name, SKU: it.SKU, Barcode: code, BarcodeType: codeType})
+	}
+	return assign, noSymbology, alreadyUsed, nil
+}
+
+// barcodeBackfillPreviewView shapes computeBarcodeBackfillPlan's result for
+// catalog_barcode_backfill.html, capping the eligible list at
+// backfillPreviewRowCap.
+func barcodeBackfillPreviewView(assign []backfillRow, noSymbology, alreadyUsed []backfillSkip) map[string]any {
+	shown := assign
+	moreCount := 0
+	if len(assign) > backfillPreviewRowCap {
+		shown = assign[:backfillPreviewRowCap]
+		moreCount = len(assign) - backfillPreviewRowCap
+	}
+	return map[string]any{
+		"Eligible":      shown,
+		"EligibleCount": len(assign),
+		"MoreCount":     moreCount,
+		"NoSymbology":   noSymbology,
+		"AlreadyUsed":   alreadyUsed,
+		"Empty":         len(assign) == 0 && len(noSymbology) == 0 && len(alreadyUsed) == 0,
+	}
+}
+
+// barcodeBackfillResultView shapes the commit loop's outcome for
+// catalog_barcode_backfill.html's result fragment.
+func barcodeBackfillResultView(assigned int, skipped []backfillSkip) map[string]any {
+	return map[string]any{
+		"Assigned": assigned,
+		"Skipped":  skipped,
+	}
 }
 
 // saveLookupImage downloads an allowlisted product-database image and stores

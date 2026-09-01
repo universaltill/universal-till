@@ -23,6 +23,20 @@ import (
 // and behaves exactly as before ADR-0059.
 const BarcodeEnabledSymbologiesKey = "barcode_enabled_symbologies"
 
+// CatalogImportBarcodeFromSKUDefaultKey is the settings-table key holding
+// whether this shop wants ut-docs#1224's "derive a barcode from each item's
+// own number" catalog-import checkbox pre-ticked by default the first time
+// a barcode-less import is previewed (ut-docs#1356's bulk backfill card
+// shares this same default). "1" = pre-tick, "0"/absent = don't (the
+// unchanged #1224 default) — this key is purely a UI starting point: it
+// only ever changes what a fresh checkbox shows before the operator
+// touches it, never the actual import/backfill behaviour, which is always
+// whatever the operator explicitly submits. No GetOrCreate/seed like
+// BarcodeEnabledSymbologiesKey above — absent reads as off with no row
+// ever written, so a shop that never opens this toggle behaves exactly as
+// before this card.
+const CatalogImportBarcodeFromSKUDefaultKey = "catalog_import_barcode_from_sku_default"
+
 // ErrEmptyBarcodeSymbologySet is returned by SetBarcodeSymbologyEnabled when
 // disabling the given id would leave the shop with zero enabled
 // symbologies — every scan and every untyped AddBarcode call would then

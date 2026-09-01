@@ -406,7 +406,7 @@ func stripCSVDefuse(field string) string {
 // useItemNumbersAsBarcodes is the operator's per-import opt-in (ut-docs#1224,
 // asked by the pages layer only for a catalog whose barcode column is empty
 // or absent) — when true, a row with no barcode of its own gets one derived
-// from its SKU/item number via deriveNumberBarcode, unless that number is
+// from its SKU/item number via DeriveNumberBarcode, unless that number is
 // shared by an earlier row in this file (BarcodeIssueDuplicateItemNumber).
 func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useItemNumbersAsBarcodes bool) (Result, error) {
 	cr := csv.NewReader(r)
@@ -511,7 +511,7 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 				item.BarcodeIssueRaw = item.SKU
 			} else {
 				seenForBarcode[item.SKU] = true
-				item.Barcode, item.BarcodeType, item.BarcodeIssue, item.BarcodeIssueRaw = deriveNumberBarcode(item.SKU, enabledSymbologyIDs)
+				item.Barcode, item.BarcodeType, item.BarcodeIssue, item.BarcodeIssueRaw = DeriveNumberBarcode(item.SKU, enabledSymbologyIDs)
 			}
 		}
 		res.Items = append(res.Items, item)
@@ -519,7 +519,7 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 	return res, nil
 }
 
-// deriveNumberBarcode runs an item number (a PLU/SKU with no barcode of its
+// DeriveNumberBarcode runs an item number (a PLU/SKU with no barcode of its
 // own) through the same shared registry matcher normalizeBarcode/AddBarcode
 // use (ADR-0059 Decision §3) — this is useItemNumbersAsBarcodes's (ut-docs#1224)
 // only source of truth for what symbology such a number lands on: a plain
@@ -529,7 +529,7 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 // implied — never a real EAN. Returns an empty barcode/type and a non-empty
 // issue when the shop's own narrowed enabled set rejects the number outright
 // (only reachable once a shop has disabled the default catch-alls).
-func deriveNumberBarcode(number string, enabledSymbologyIDs []string) (code, codeType, issue, issueRaw string) {
+func DeriveNumberBarcode(number string, enabledSymbologyIDs []string) (code, codeType, issue, issueRaw string) {
 	dec, matched := normalizeBarcode(number, enabledSymbologyIDs)
 	if !matched {
 		return "", "", BarcodeIssueNoSymbologyMatch, number
