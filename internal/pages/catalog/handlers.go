@@ -521,7 +521,8 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			// subdivision at all, so a hardcoded *100 would inflate every
 			// price 100x for those shops. Matches the same
 			// currency.Decimals the template already uses for this
-			// field's step="" attribute.
+			// field's pattern="" attribute (ut-docs#1284 moved it from
+			// type="number" step="" to type="text" pattern="").
 			decimals := httpx.CurrencyByCode(d.CurrentState().Currency).Decimals
 			priceDeltaMinor = int64(math.Round(major * math.Pow(10, float64(decimals))))
 		}

@@ -4,8 +4,24 @@ import { watchConsole, setOskMode } from './helpers';
 // A failed run used to leak osk=on into later specs (the open keyboard
 // then covered the scan submit button in ui-scale-basket.spec.ts and its
 // click hung) — restore 'auto' even when a test body fails.
+//
+// ut-docs#1284: also reset the basket. This file's `getByRole('textbox')
+// .first()` calls (below) rely on the scan/barcode field being the only
+// real textbox-role candidate on the sale screen — true whenever the
+// basket is empty, and it used to stay true even with a leftover line
+// (e.g. the hold-modal test below deliberately leaves one in place)
+// because a basket qty-input was type="number", which gets the
+// "spinbutton" ARIA role, not "textbox". ut-docs#1284 fixed that field's
+// on-screen-keyboard decimal-corruption bug by switching it to
+// type="text", which also makes it a real "textbox" — so a leftover
+// basket line now DOES compete with the scan field for `.first()`, and
+// (DOM order: the basket panel renders before the scan/barcode panel)
+// wins it, breaking a test that never itself touches the basket. Resetting
+// here removes that cross-test coupling instead of just moving it forward
+// to whichever test in the file happens to run after one that scans.
 test.afterEach(async ({ page }) => {
   await setOskMode(page, 'auto');
+  await page.request.post('/api/pos/reset').catch(() => {});
 });
 
 // Farshid's field report: "still don't see the on-screen keyboard". Auto

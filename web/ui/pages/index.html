@@ -193,15 +193,38 @@
          proposal: default sale screen is just basket + product buttons, one
          Payment button opens the method/split UI as a panel layered OVER the
          products column — basket (a separate grid area, .pos-container >
-         .basket) is never covered, so it stays visible while paying. A
-         native <dialog> (same pattern as #modifier-modal/#hold-modal
-         above) gives free focus-trap + Escape-to-close; its
-         ::backdrop is made transparent in app.css specifically so it doesn't
-         dim/hide the basket the way those other dialogs' backdrops do. -->
+         .basket) is never covered, so it stays visible while paying.
+
+         ut-docs#1385: originally opened via showModal() for its free
+         focus-trap + Escape-to-close (a native <dialog>'s ::backdrop was
+         made transparent in app.css so it wouldn't dim/hide the basket the
+         way #modifier-modal's opaque one does). That traded away
+         typability: showModal()'s top-layer/inert-outside behaviour made
+         the custom on-screen keyboard (#osk, a singleton appended to
+         <body>, not re-parented into whichever dialog is open) untappable
+         while the overlay was open — a real Playwright click landed on
+         nothing. The Split tab's amount/change/reference fields are
+         OSK-only on kiosk hardware, so this now opens non-modally (.show(),
+         see the payment-trigger button below), the same fix already
+         applied to #hold-modal/#pfand-modal/#elevation-modal/
+         #table-add-modal for the identical reason (app.css's #hold-modal
+         comment) — accepting the same lost focus-trap/Escape-to-close
+         those four already gave up. app.css gives it an explicit
+         `position: fixed` + `z-index: 500` (matching those four) to replace
+         the native top-layer stacking .show() no longer grants, kept below
+         #osk's `z-index: 1000` so the keyboard still renders on top of the
+         panel it types into; its ::backdrop rule is now dead (a .show()
+         dialog has no backdrop) and has been removed rather than replaced —
+         the basket staying visible/undimmed was already the intent, so
+         dropping the residual tint is a continuation of that, not a
+         regression, matching the other four dialogs (none of which
+         replicate dimming either). -->
     <!-- Hold Sale stays in the default view, NOT inside the payment overlay
-         (independent review, ut-docs#1252): the overlay is a MODAL dialog,
-         so a button only reachable inside it would make "hold this basket
-         for the next customer" cost an unrelated trip through Payment.
+         (independent review, ut-docs#1252): a button only reachable inside
+         the payment overlay would make "hold this basket for the next
+         customer" cost an unrelated trip through Payment — true regardless
+         of the overlay's modality (ut-docs#1385 changed that; this
+         reachability reasoning didn't).
          New Customer stays inside the overlay's own footer below — it's
          duplicated by kiosk-checkout-start (New Sale, right here in this
          same row) already, so losing a quick path to it while paying
@@ -222,7 +245,7 @@
               onclick="document.getElementById('hold-modal').show(); document.getElementById('hold-label-input').focus();">
         {{ T "hold.action" }}</button>
       <button type="button" class="btn primary payment-trigger" data-testid="payment-open"
-              onclick="document.getElementById('payment-overlay').showModal()">
+              onclick="document.getElementById('payment-overlay').show()">
         {{ T "tender.open_payment" }}</button>
     </div>
 
@@ -347,10 +370,20 @@
             </select>
           </label>
           <label>{{ T "tender.amount" }}
-            <input type="number" name="amount" min="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" placeholder="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}" required>
+            <!-- ut-docs#1284: type="number" silently corrupts a decimal typed
+                 via the kiosk's on-screen keyboard (osk.js has no cursor-aware
+                 insert for number inputs, so a momentarily-invalid float
+                 string resets .value — "2.50" ends up "50"). text+inputmode
+                 avoids that; addPayment() in app.js already reads this via
+                 FormData and converts with window.utCurrency.toMinor(), so no
+                 JS change is needed beyond the markup. min/max are dropped on
+                 purpose (pattern only validates format) — same accepted
+                 tradeoff as ut-docs#1249/#1272/#1275; addPayment() already
+                 rejects a non-positive amount. -->
+            <input type="text" inputmode="decimal" name="amount" {{ moneypattern currency.Decimals false }} {{ moneyplaceholder currency.Decimals 0 }} required>
           </label>
           <label>{{ T "tender.change" }}
-            <input type="number" name="change" min="0" step="{{ if eq currency.Decimals 0 }}1{{ else }}0.01{{ end }}" value="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}">
+            <input type="text" inputmode="decimal" name="change" {{ moneypattern currency.Decimals false }} value="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}">
           </label>
           <label>{{ T "tender.reference" }}
             <input type="text" name="reference" placeholder="{{ T "tender.reference_placeholder" }}">

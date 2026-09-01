@@ -1696,10 +1696,24 @@ a.btn, a.btn:hover { text-decoration: none; }
    (right in LTR, left in RTL — logical properties per this repo's RTL
    rule) rather than the UA's default centered box, and sized so it never
    covers .pos-container's basket column (a separate grid area next to
-   .tender, untouched by this dialog). ::backdrop is a light tint, not the
-   UA/this-file's other dialogs' near-opaque default — the basket must
-   stay visible while the overlay is open, unlike #modifier-modal/
-   #hold-modal/#pfand-modal, which really do want to block the screen. */
+   .tender, untouched by this dialog).
+   ut-docs#1385: opened via .show(), not showModal() (index.html's
+   payment-trigger button) — showModal()'s top-layer/inert-outside
+   behaviour made the custom on-screen keyboard untappable while this was
+   open, the same bug already fixed for #hold-modal/#pfand-modal/
+   #elevation-modal/#table-add-modal below. `z-index: 500` matches those
+   four (needed now — .show() no longer gets the browser's native top-layer
+   stacking) and stays below #osk's `z-index: 1000` so the keyboard still
+   renders above whichever field it's typing into here. No ::backdrop rule
+   any more: a .show() dialog never paints one, and the basket staying
+   visible/undimmed while paying was always the intent (the light tint this
+   replaced only ever softened, never replicated, the near-opaque default
+   #modifier-modal's own ::backdrop uses for its still-genuinely-modal
+   showModal() state — the ONE dialog in this file that still opens that
+   way) — dropping it is a continuation of that, not a regression, and
+   matches the other four non-modal dialogs (#hold-modal/#pfand-modal/
+   #elevation-modal/#table-add-modal), none of which replicate dimming
+   either. */
 .payment-overlay {
   position: fixed;
   inset-block: 0;
@@ -1713,6 +1727,7 @@ a.btn, a.btn:hover { text-decoration: none; }
   border-start-start-radius: var(--radius-lg);
   border-end-start-radius: var(--radius-lg);
   padding: 0;
+  z-index: 500;
   /* Symmetric (no horizontal offset), deliberately: a directional
      box-shadow (e.g. -8px 0) would need to flip sign under RTL, where this
      panel anchors to the LEFT instead of the right — independent review
@@ -1721,7 +1736,29 @@ a.btn, a.btn:hover { text-decoration: none; }
   box-shadow: 0 0 24px rgba(0, 0, 0, .25);
   background: var(--surface);
 }
-.payment-overlay::backdrop { background: rgba(15, 23, 42, .08); }
+/* ut-docs#1385 (independent review): body.osk-padded reserves 15.5rem at
+   the bottom of <body> for the on-screen keyboard (line ~441 above), but
+   that's a BODY padding -- it does nothing for .payment-overlay, which is
+   position: fixed and sized/positioned relative to the viewport, not to
+   body's padding box. Without this, the OSK (z-index 1000) simply draws
+   on top of whatever the overlay's own fixed 100dvh height put underneath
+   it -- confirmed live at 1024x600: #split-tender-submit sat at
+   y 436-487, #osk spanned y 312-600, so the button was genuinely,
+   unreachably covered, not merely close to an edge. Higher specificity
+   (2 classes vs. .payment-overlay's 1) overrides height/max-height with
+   the SAME two properties the base rule sets, deliberately not
+   `block-size` -- kept in the same physical property to avoid any
+   logical/physical-property cascade-interaction subtlety. Shrinking the
+   dialog's own box is what lets #split-tender-card's EXISTING
+   `flex: 1; overflow-y: auto` (below) do the rest: less box height means
+   its content now genuinely overflows, so the panel scrolls internally to
+   reach Complete/Clear -- the same mechanism .tab-panel's own 6rem-floor
+   comment already relies on, just newly triggered because there is
+   finally a reason to. */
+body.osk-padded .payment-overlay {
+  height: calc(100dvh - 15.5rem);
+  max-height: calc(100dvh - 15.5rem);
+}
 .payment-overlay-body {
   display: flex; flex-direction: column; height: 100%; min-height: 0;
   padding: .8rem .9rem; gap: .55rem; overflow-y: auto;

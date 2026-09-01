@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"html/template"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -21,6 +22,25 @@ import (
 // free text straight off the request, and it's re-rendered on every sale
 // screen load until resumed.
 const maxHoldLabelRunes = 64
+
+// heldSaleOrderType reads a held sale's order type straight out of its
+// stored JSON payload (ut-docs#1381) -- held_sales has no dedicated column
+// for it, unlike TableID. "" is dine-in/unset, same as everywhere else in
+// this package, and is also the correct decode of a legitimate pre-#1381
+// payload (the field simply didn't exist yet, `omitempty`). A genuine
+// unmarshal error is logged (same convention as this package's other
+// payload reads, e.g. the Resume handler below) rather than silently
+// swallowed -- it still defaults to "" here (the caller only uses this to
+// decide whether to show/enforce a table restriction, not to resume the
+// sale, and a payload that won't decode can never be resumed anyway).
+func heldSaleOrderType(payload string) string {
+	var snap pos.BasketSnapshot
+	if err := json.Unmarshal([]byte(payload), &snap); err != nil {
+		log.Printf("heldSaleOrderType: decode held sale payload: %v", err)
+		return ""
+	}
+	return snap.OrderType
+}
 
 func truncateRunes(s string, max int) string {
 	if utf8.RuneCountInString(s) <= max {
@@ -105,13 +125,25 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 				// re-renders this whole strip, so the target is #held-sales.
 				// Fresh slice per order -- never alias freeTables' backing
 				// array, which is reused for every held item in this loop.
+				//
+				// ut-docs#1381: also hidden for a held Takeaway order, same
+				// soft-gate ut-docs#1355 already applies to the live basket's
+				// table picker (registerTablePicker) -- a table assignment
+				// doesn't make sense for takeaway, and moving one onto a table
+				// would just be undone the moment the order resumes (Restore no
+				// longer wipes OrderType, so a takeaway order stays takeaway).
+				// Reads OrderType from the held sale's own JSON payload -- it
+				// has no dedicated held_sales column (unlike TableID), so this
+				// is the only place it's currently readable from at this layer.
 				moveTargets := make([]data.TableWithState, 0, len(freeTables))
-				for _, ft := range freeTables {
-					if ft.ID == h.TableID {
-						// The order's own current table is never a move target.
-						continue
+				if heldSaleOrderType(h.Payload) != pos.OrderTypeTakeaway {
+					for _, ft := range freeTables {
+						if ft.ID == h.TableID {
+							// The order's own current table is never a move target.
+							continue
+						}
+						moveTargets = append(moveTargets, ft)
 					}
-					moveTargets = append(moveTargets, ft)
 				}
 				if len(moveTargets) > 0 {
 					fmt.Fprintf(&b, `<details class="held-move"><summary>%s</summary>`, template.HTMLEscapeString(httpx.T(locale, "basket.table.move")))
@@ -245,6 +277,29 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		if id == "" {
 			renderHeldStrip(w, r)
 			return
+		}
+		// ut-docs#1381: this is the actual enforcement point, not just
+		// renderHeldStrip's UI soft-gate above -- same "not just the picker's
+		// soft-gate" reasoning Service.SetTable's own comment gives, and for
+		// the identical reason: this endpoint is reachable directly regardless
+		// of what the strip currently renders (a stale pre-refresh page, or a
+		// request replayed after the order's type changed). Mirrors
+		// Service.SetTable exactly: force tableID to "" for a Takeaway held
+		// order rather than rejecting the request outright, so "clear the
+		// table" (tableID already "") still succeeds as a no-op either way.
+		//
+		// independent review (ut-docs#1381): fail CLOSED on a Get error, not
+		// open -- the IsTableFree check just below already rejects the move
+		// on its own error, and this gate is the actual enforcement point
+		// (not just the strip's UI soft-gate), so silently skipping it on an
+		// error would let a Takeaway order be assigned a table after all.
+		held, found, err := repo.Get(ctx, id)
+		if err != nil {
+			renderHeldStrip(w, r)
+			return
+		}
+		if found && heldSaleOrderType(held.Payload) == pos.OrderTypeTakeaway {
+			tableID = ""
 		}
 		if tableID != "" {
 			free, err := posRepo.IsTableFree(ctx, tableID, id)
