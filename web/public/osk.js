@@ -84,7 +84,11 @@
     // and ñ, displacing it).
     es: [
       ['1','2','3','4','5','6','7','8','9','0'],
-      ['q','w','e','r','t','y','u','i','o','p','á','é'],
+      // ü appended at the end, same "append to the row" pattern as
+      // tr/de above — needed for güe/güi words (pingüino, bilingüe,
+      // ut-docs#1147). No dead-key mechanism, so this is the only way
+      // to reach it.
+      ['q','w','e','r','t','y','u','i','o','p','á','é','ü'],
       ['a','s','d','f','g','h','j','k','l','ñ','í'],
       ['⇧','z','x','c','v','b','n','m','ó','ú','⌫'],
       ['?123',',','SPACE','.','↵']
@@ -93,7 +97,10 @@
       ['1','2','3','4','5','6','7','8','9','0'],
       ['@','#','£','$','€','%','&','*','(',')'],
       ['-','_','+','=','/',':',';','"','\''],
-      ['!','?','~','<','>','[',']','⌫'],
+      // ¡/¿ live in the shared sym layer, not the es-specific layout —
+      // every locale benefits from inverted punctuation on ?123
+      // (ut-docs#1148), placed next to their non-inverted counterparts.
+      ['!','¡','?','¿','~','<','>','[',']','⌫'],
       ['ABC',',','SPACE','.','↵']
     ],
     num: NUM_ROWS.concat([['↵']]),

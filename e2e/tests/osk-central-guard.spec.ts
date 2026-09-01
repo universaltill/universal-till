@@ -362,8 +362,10 @@ test('es OSK renders accented vowels/ñ and types real Spanish characters (ut-do
   // above for why a mere-visibility check would be a weaker assertion.
   const rows = page.locator('#osk .osk-row');
   const topRowKeys = await rows.nth(1).locator('button').evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.k));
-  expect(topRowKeys, 'top letter row must end with the appended á/é').toEqual(
-    ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', 'á', 'é'],
+  // ü appended last (ut-docs#1147: pingüino/bilingüe need it and there's no
+  // dead-key mechanism to reach it any other way).
+  expect(topRowKeys, 'top letter row must end with the appended á/é/ü').toEqual(
+    ['q', 'w', 'e', 'r', 't', 'y', 'u', 'i', 'o', 'p', 'á', 'é', 'ü'],
   );
   const homeRowKeys = await rows.nth(2).locator('button').evaluateAll((els) => els.map((e) => (e as HTMLElement).dataset.k));
   // ñ directly after l (its real physical/mobile-keyboard position), not
@@ -383,6 +385,46 @@ test('es OSK renders accented vowels/ñ and types real Spanish characters (ut-do
   await page.locator('#osk button[data-k="⇧"]').click();
   await page.locator('#osk button[data-k="á"]').click();
   await expect(name).toHaveValue('Á');
+
+  // ü must be reachable and type real güe/güi words (ut-docs#1147).
+  await name.fill('');
+  await page.locator('#osk button[data-k="p"]').click();
+  await page.locator('#osk button[data-k="i"]').click();
+  await page.locator('#osk button[data-k="n"]').click();
+  await page.locator('#osk button[data-k="g"]').click();
+  await page.locator('#osk button[data-k="ü"]').click();
+  await page.locator('#osk button[data-k="i"]').click();
+  await page.locator('#osk button[data-k="n"]').click();
+  await page.locator('#osk button[data-k="o"]').click();
+  await expect(name).toHaveValue('pingüino');
+
+  assertClean();
+});
+
+// ut-docs#1148: ¿ and ¡ must be reachable via the shared sym layer, not
+// just the es-specific layout — every locale benefits from inverted
+// punctuation on the ?123 page.
+test('sym layer includes inverted punctuation ¿ and ¡ (ut-docs#1148)', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  await setOskMode(page, 'on');
+
+  await page.goto('/catalog?lang=en');
+  const name = page.locator('#item-name');
+  await name.click();
+  await expect(page.locator('#osk')).toBeVisible();
+
+  // Switch to the sym (?123) layer.
+  await page.locator('#osk button[data-k="?123"]').click();
+  await expect(page.locator('#osk')).toBeVisible();
+
+  // Both inverted punctuation marks must exist as keys.
+  await expect(page.locator('#osk button[data-k="¿"]')).toBeVisible();
+  await expect(page.locator('#osk button[data-k="¡"]')).toBeVisible();
+
+  // They must type into the field.
+  await page.locator('#osk button[data-k="¿"]').click();
+  await page.locator('#osk button[data-k="¡"]').click();
+  await expect(name).toHaveValue('¿¡');
 
   assertClean();
 });
