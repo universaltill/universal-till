@@ -456,7 +456,7 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 				item.BarcodeIssue = BarcodeIssueDuplicateItemNumber
 				item.BarcodeIssueRaw = plu
 			} else {
-				item.Barcode, item.BarcodeType, item.BarcodeIssue, item.BarcodeIssueRaw = deriveNumberBarcode(plu, enabledSymbologyIDs)
+				item.Barcode, item.BarcodeType, item.BarcodeIssue, item.BarcodeIssueRaw = DeriveNumberBarcode(plu, enabledSymbologyIDs)
 			}
 		}
 		res.Items = append(res.Items, item)
