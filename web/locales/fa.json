@@ -88,6 +88,7 @@
   "basket.table.move": "جابه‌جایی میز",
   "basket.table.no_free_tables": "میز آزادی موجود نیست",
   "basket.table.none": "بدون میز",
+  "basket.table.occupied": "این میز از قبل اشغال شده است",
   "basket.table.picker_title": "تخصیص میز",
   "basket.tax": "مالیات",
   "basket.title": "سبد خرید",

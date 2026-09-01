@@ -88,6 +88,7 @@
   "basket.table.move": "Move table",
   "basket.table.no_free_tables": "No free tables",
   "basket.table.none": "No table",
+  "basket.table.occupied": "That table is already occupied",
   "basket.table.picker_title": "Assign table",
   "basket.tax": "Tax",
   "basket.title": "Basket",

@@ -88,6 +88,7 @@
   "basket.table.move": "نقل الطاولة",
   "basket.table.no_free_tables": "لا توجد طاولات متاحة",
   "basket.table.none": "بدون طاولة",
+  "basket.table.occupied": "هذه الطاولة مشغولة بالفعل",
   "basket.table.picker_title": "تعيين طاولة",
   "basket.tax": "الضريبة",
   "basket.title": "السلة",
