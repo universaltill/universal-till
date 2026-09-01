@@ -15,7 +15,8 @@
           triggering element already sits in (e.g. tills.html's #promote-msg
           is inside <form hx-post="/api/sync/promote">) — invalid HTML, and
           silently mangled by the fragment-parsing algorithm. Matching
-          web/ui/pages/index.html's #modifier-modal/#hold-modal/#pfand-modal
+          web/ui/pages/index.html's #modifier-modal/#hold-modal (and
+          menu.html's #pfand-modal, moved there in ut-docs#1334)
           precedent instead keeps this dialog a top-level element outside
           any form, at the cost of needing the OOB indirection.
 

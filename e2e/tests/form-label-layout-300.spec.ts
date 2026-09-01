@@ -27,10 +27,12 @@ import { watchConsole, fieldGeometry, expectStacked } from './helpers';
 // every control here is also hit-tested with elementFromPoint, not merely
 // measured.
 
-async function openPfand(page: Page, url = '/') {
+// ut-docs#1334: deposit refund moved off the sale screen onto its own Menu
+// tile — opened via /menu's data-testid="menu-pfand-open" button now.
+async function openPfand(page: Page, url = '/menu') {
   await page.goto(url);
-  await page.waitForSelector('.pos-container');
-  await page.locator('[data-testid="kiosk-pfand-open"]').click();
+  await page.waitForSelector('.menu-grid');
+  await page.locator('[data-testid="menu-pfand-open"]').click();
   await expect(page.locator('#pfand-modal')).toBeVisible();
 }
 
@@ -116,7 +118,7 @@ test.describe('wrapped-control labels stack above their inputs (ut-docs#300)', (
   test('deposit-refund dialog: stacks and aligns to the inline start in RTL (fa)', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1024, height: 600 });
-    await openPfand(page, '/?lang=fa');
+    await openPfand(page, '/menu?lang=fa');
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
 
     const fields = await fieldGeometry(page, '#pfand-modal');

@@ -82,28 +82,15 @@ func TestIndexScanRowKeyboardIsOnDemand(t *testing.T) {
 // The custom on-screen keyboard is appended to <body>. A native showModal()
 // dialog puts itself in the top layer and makes that keyboard inert, so the
 // payout dialog must use the keyboard-compatible non-modal show() pattern.
+//
+// ut-docs#1334: the deposit-refund entry point moved from the sale screen
+// (GET /) to the Menu page (GET /menu) — asserted there now, not on /.
 func TestPfandDialogStaysKeyboardReachableAndUsesEnglishLabel(t *testing.T) {
-	chdirRoot(t)
-	db := openPagesTestDB(t)
-	defer db.Close()
-	seedForPages(t, db)
-
-	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
-	if err != nil {
-		t.Fatalf("i18n: %v", err)
-	}
-	httpx.InitI18n(i18n, "en")
-
-	cfg := &config.Config{Theme: "default"}
-	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
-	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
-		Menu: []common.MenuItem{}, Settings: settings.NewStore(db)}
-	mux := http.NewServeMux()
-	registerIndex(mux, dp)
+	mux, _ := newMenuPageTestDeps(t, nil)
 	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/", nil))
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/menu", nil))
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /: %d", rec.Code)
+		t.Fatalf("GET /menu: %d", rec.Code)
 	}
 	body := rec.Body.String()
 	if !strings.Contains(body, `getElementById('pfand-modal').show()`) {

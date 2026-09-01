@@ -11,7 +11,74 @@
     <span class="menu-label">{{ T .Label }}</span>
   </a>
   {{ end }}
+  <!-- Deposit refund (ut-docs#1334): opens in place as a small form, not a
+       navigation target -- a button, not a link, same visual pattern
+       (menu-tile/menu-ico/menu-label) as every tile above. Moved here from
+       the sale screen's own nav-rail icon + phone-fallback button (both
+       removed, ut-docs#1332's split), which were the last two entry points
+       still living outside the Menu launcher. -->
+  <button type="button" class="menu-tile" data-testid="menu-pfand-open"
+          onclick="document.getElementById('pfand-result').textContent=''; var prev=document.activeElement; document.getElementById('pfand-modal').show(); if (document.getElementById('pfand-modal').contains(document.activeElement)) { document.activeElement.blur(); if (prev && prev!==document.body && prev.focus) prev.focus(); }">
+    <span class="menu-ico">♻️</span>
+    <span class="menu-label">{{ T "pfand.action" }}</span>
+  </button>
 </div>
+
+<!-- Pfandrückgabe (ut-docs#248): a manager-gated cash payout unrelated to
+     any specific earlier sale — a customer can walk in with only empty
+     bottles. Static (no server round-trip to open), same pattern as
+     index.html's own #hold-modal. Recorded via the existing cash-adjustment
+     machinery (POST /api/shifts/pfandrueckgabe) with a fixed reason so it's
+     reportable distinctly from other adjustments.
+
+     Moved here from the sale screen (ut-docs#1334) — the ♻️ tile above is
+     now this dialog's only trigger. Markup unchanged from its previous
+     index.html location: its hx-post target, field ids
+     (#pfand-amount/#pfand-amount-minor/#pfand-result) and
+     inputmode="decimal" are fixes for real cited bugs (ut-docs#1249,
+     ut-docs#1248) and must not be altered by the move. -->
+<dialog id="pfand-modal" class="modifier-modal" aria-labelledby="pfand-modal-title">
+  <form class="stacked-form" hx-post="/api/shifts/pfandrueckgabe" hx-target="#pfand-result" hx-swap="innerHTML"
+        hx-on::before-swap="if (event.detail.target && event.detail.target.id === 'pfand-result') { event.detail.shouldSwap = true; event.detail.isError = false; }"
+        hx-on::after-request="if (event.detail.xhr && event.detail.xhr.status >= 200 && event.detail.xhr.status < 300) { var m = document.getElementById('pfand-modal'); m.close(); this.reset(); }">
+    <h3 id="pfand-modal-title">{{ T "pfand.modal.title" }}</h3>
+    <input type="hidden" name="amount" id="pfand-amount-minor">
+    <!-- ut-docs#1249: was type="number" + onchange. osk.js (the kiosk's
+         custom keyboard) types by mutating .value and firing only `input`
+         — never `change`, and a script-set .value never sets a control's
+         "dirty value" flag, so blur can't synthesize `change` either.
+         Net effect: on a real touch till (osk.js's default/auto mode),
+         #pfand-amount-minor — the field actually POSTed — never updated,
+         so every payout 400'd with "amount must be greater than zero"
+         regardless of what the operator typed. `oninput` fires for both
+         osk.js keystrokes and real typing. Separately, type="number"
+         silently resets .value to "" on any momentarily-invalid float
+         string (verified live: typing '2','.','5','0' produced a final
+         .value of "50", not "2.50") — text+inputmode="decimal" avoids
+         that entirely (never coerces the string) and moves osk.js's
+         insert()/backspace() onto their cursor-aware setRangeText path,
+         which number/email inputs don't expose. window.utCurrency.toMinor
+         already degrades any unparsable string to 0, so a malformed
+         amount still surfaces the existing, correct 400 — never a silent
+         wrong charge. -->
+    <label>{{ T "pfand.modal.amount" }} ({{ currency.Display }})
+      <input type="text" id="pfand-amount" inputmode="decimal"
+             pattern="{{ if eq currency.Decimals 0 }}[0-9]+{{ else }}[0-9]+(\.[0-9]{1,2})?{{ end }}"
+             required placeholder="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}"
+             oninput="document.getElementById('pfand-amount-minor').value = window.utCurrency.toMinor(this.value)">
+    </label>
+    <label>{{ T "pfand.modal.manager_pin" }}
+      <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off">
+    </label>
+    <div id="pfand-result" class="muted" style="min-height:1.3rem"></div>
+    <div class="modifier-actions">
+      <button type="button" class="btn secondary"
+              onclick="document.getElementById('pfand-modal').close(); this.form && this.form.reset(); document.getElementById('pfand-result').textContent='';">
+        {{ T "pfand.modal.cancel" }}</button>
+      <button type="submit" class="btn primary">{{ T "pfand.modal.confirm" }}</button>
+    </div>
+  </form>
+</dialog>
 
 <div class="menu-lang">
   <span class="menu-lang-label">🌐 {{ T "setup.language.title" }}</span>
