@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"net/http"
@@ -11,7 +12,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/buildinfo"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -164,6 +167,23 @@ func StartAutoUpdateScheduler(ctx context.Context, d *common.Deps, wg *sync.Wait
 // kiosk never reaches here: selfupdate.Supported() is true for a
 // service-writable install, so the inline Apply button is shown instead.
 func updateUnavailableHTML(locale, latest, goos string) string {
+	// ut-docs#1246: Android can never self-swap — the Go core ships as a
+	// native library inside the APK and only the package installer may
+	// replace an app's own code (an OS guarantee, not a gap here). But the
+	// native shell CAN drive that installer, so this is not the dead end the
+	// generic branch below describes: offer a button that calls the shell's
+	// own bridge. The bridge takes NO url — it resolves the release APK
+	// itself — so this markup cannot steer what gets installed (see
+	// MainActivity.KioskBridge.installUpdate). A plain <a href> would not
+	// work either way: shouldOverrideUrlLoading confines the WebView to the
+	// till's own loopback origin, so an off-origin download link is refused
+	// before it starts.
+	if goos == "android" {
+		return fmt.Sprintf(`<span>⬆ %s v%s — <a href="#android-update" data-testid="android-update-install">%s</a></span>`,
+			html.EscapeString(httpx.T(locale, "status.update_available")),
+			html.EscapeString(latest),
+			html.EscapeString(httpx.T(locale, "settings.update.download")))
+	}
 	if selfupdate.DownloadLinkActionable(goos) {
 		// target="_blank": a plain same-window navigation is a dead end in
 		// the WebView2 desktop shell (cmd/unitill-desktop/webview_fallback.go
@@ -256,6 +276,50 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 
 	// Manual "Check for updates" (Settings): one synchronous poll of the
 	// releases API, answered as a swappable HTML snippet.
+	// ut-docs#1246: authorises the Android in-app update behind a MANAGER PIN.
+	//
+	// The install itself is performed by the native shell
+	// (MainActivity.KioskBridge.installUpdate), which must drop the kiosk pin
+	// to let the package installer appear — Android silently refuses to start
+	// a non-allowlisted activity from a pinned app. Dropping the pin is
+	// exactly the capability exit-to-os guards, and the update chip lives in
+	// base.html on EVERY page including the sale screen, so without this gate
+	// any cashier could tap "Update" and walk the till straight out of kiosk
+	// mode. Same shape and same reasoning as POST /api/settings/exit-to-os,
+	// including rejecting a blank PIN BEFORE AuthorizeManager so it cannot
+	// burn the device-wide failed-attempt budget (5 failures = 30s lockout)
+	// that keypad login shares.
+	//
+	// Authorisation only: this returns nothing the page can install with, and
+	// the bridge takes no URL. A caller who forges a success response gains
+	// no ability to install anything of their choosing.
+	mux.HandleFunc("POST /api/update/android-install", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		pin := strings.TrimSpace(r.Form.Get("manager_pin"))
+		if pin == "" {
+			respondUpdateApply(w, http.StatusForbidden, false, "manager PIN required")
+			return
+		}
+		if d.AuthSvc == nil {
+			// Fail closed, same convention as canPerform elsewhere in this
+			// package: no auth service wired means no way to prove manager.
+			respondUpdateApply(w, http.StatusForbidden, false, "manager PIN required")
+			return
+		}
+		approver, err := d.AuthSvc.AuthorizeManager(r.Context(), pin)
+		if err != nil {
+			status := http.StatusForbidden
+			if errors.Is(err, auth.ErrLockedOut) {
+				status = http.StatusTooManyRequests
+			}
+			respondUpdateApply(w, status, false, "manager PIN required")
+			return
+		}
+		now := time.Now().UTC().Format(time.RFC3339)
+		_ = data.NewPOSRepo(d.Db).InsertAudit(r.Context(), nil, approver.ID, "update", "android", "update_authorized", nil, now, "")
+		respondUpdateApply(w, http.StatusOK, true, "authorized")
+	})
+
 	mux.HandleFunc("POST /api/update/check", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
 			http.Error(w, "manager only", http.StatusForbidden)

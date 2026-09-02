@@ -65,8 +65,33 @@ func TestUpdateFallbackHTML(t *testing.T) {
 		t.Errorf("macOS fallback link should open in a new context (target=_blank), got %q", mac)
 	}
 
+	// ut-docs#1246: Android is neither the desktop link branch nor the unix
+	// kiosk dead end. The shell can drive the package installer, so the
+	// operator gets an actionable control instead of "not available for this
+	// install" — the state a real tablet was stuck in, forcing a manual APK
+	// reinstall for every build.
+	android := updateUnavailableHTML("en", "0.2.51", "android")
+	if strings.Contains(android, "available for this install") {
+		t.Errorf("android must not fall into the kiosk dead-end branch, got %q", android)
+	}
+	if !strings.Contains(android, "#android-update") {
+		t.Errorf("android fallback should point at the PIN-gated install form, got %q", android)
+	}
+	// Installing drops the kiosk pin, which is what exit-to-os guards. This
+	// status line renders on pages a cashier can reach, so it must NOT call
+	// the bridge itself — only settings.html's PIN-gated form may.
+	if strings.Contains(android, "installUpdate") {
+		t.Errorf("android status line must not call the install bridge directly (ungated kiosk escape), got %q", android)
+	}
+	// A website link is useless here: shouldOverrideUrlLoading confines the
+	// WebView to the till's own loopback origin, so an off-origin href is
+	// refused before any download starts.
+	if strings.Contains(android, "universaltill.com/download") {
+		t.Errorf("android fallback must not rely on an off-origin link, got %q", android)
+	}
+
 	// Both still surface the available version so the operator knows one exists.
-	for _, h := range []string{win, kiosk, mac} {
+	for _, h := range []string{win, kiosk, mac, android} {
 		if !strings.Contains(h, "0.2.51") {
 			t.Errorf("fallback should show the available version, got %q", h)
 		}
@@ -84,7 +109,11 @@ func TestUpdateAPI_ManagerGate(t *testing.T) {
 	mux := http.NewServeMux()
 	registerUpdateAPI(mux, dp)
 
-	for _, path := range []string{"/api/update/apply", "/api/update/check"} {
+	// ut-docs#1246: android-install authorises dropping the kiosk pin, so it
+	// must refuse just as hard — with no AuthSvc wired it fails closed, and a
+	// blank PIN is rejected before AuthorizeManager so it cannot burn the
+	// device-wide lockout budget keypad login shares.
+	for _, path := range []string{"/api/update/apply", "/api/update/check", "/api/update/android-install"} {
 		req := httptest.NewRequest(http.MethodPost, path, nil)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)

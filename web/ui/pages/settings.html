@@ -221,6 +221,51 @@
     <div class="set-gap">
       <h3 style="margin:0 0 .3rem">{{ T "settings.display.exit_to_os_title" }}</h3>
       <p class="muted">{{ T "settings.display.exit_to_os_help" }}</p>
+      {{ if updateinstallbridge }}
+      <!-- ut-docs#1246: Android in-app update, behind the SAME manager-PIN gate
+           as exit-to-os directly below — and for the same reason. Installing
+           requires the native shell to drop the kiosk pin (Android refuses to
+           start the package installer from a pinned app), so an ungated button
+           would be a one-tap kiosk escape for any cashier. The status chip in
+           base.html links here rather than calling the bridge itself. -->
+      <form id="android-update-form" class="set-row">
+        <label id="android-update">{{ T "shifts.manager_pin" }}
+          <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off">
+        </label>
+        <button class="btn secondary" type="submit" id="android-update-btn">⬆&nbsp;{{ T "settings.update.download" }}</button>
+        <div id="android-update-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+      </form>
+      <script>
+      (function () {
+        var form = document.getElementById('android-update-form');
+        if (!form) return;
+        var msg = document.getElementById('android-update-msg');
+        var btn = document.getElementById('android-update-btn');
+        form.addEventListener('submit', function (ev) {
+          ev.preventDefault();
+          var pin = form.querySelector('[name="manager_pin"]').value;
+          btn.disabled = true;
+          msg.textContent = '';
+          fetch('/api/update/android-install', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+            body: new URLSearchParams({ manager_pin: pin }).toString()
+          }).then(function (res) {
+            btn.disabled = false;
+            form.querySelector('[name="manager_pin"]').value = '';
+            if (!res.ok) { msg.textContent = '✗'; return; }
+            // Authorised. The bridge takes no url — it resolves the release
+            // APK itself — so nothing here chooses what gets installed.
+            if (window.AndroidKiosk && window.AndroidKiosk.installUpdate) {
+              window.AndroidKiosk.installUpdate();
+              msg.textContent = '✓';
+            }
+          }).catch(function () { btn.disabled = false; msg.textContent = '✗'; });
+        });
+      })();
+      </script>
+      {{ end }}
+
       <form id="exit-to-os-form" class="set-row">
         <label>{{ T "settings.display.exit_to_os_pin_label" }}
           <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off">

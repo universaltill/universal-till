@@ -19,6 +19,18 @@
     <uses-permission android:name="android.permission.FOREGROUND_SERVICE_SPECIAL_USE" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
 
+    <!-- ut-docs#1246: in-app update. The Go core ships as a native library
+         inside this APK, so it can never self-swap the way the desktop/Pi
+         builds do — only the package installer may replace an app's own code.
+         This permission lets MainActivity hand a downloaded release APK to
+         that installer, turning "go and download a new APK by hand for every
+         build" into one tap. Android still enforces that the new APK carries
+         the SAME signing key, so this cannot be used to install a substituted
+         package over this one. NOTE for the Play build: Play restricts
+         REQUEST_INSTALL_PACKAGES and does its own updating, so a Play-targeted
+         variant should drop this permission and the bridge behind it. -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
     <application
         android:allowBackup="false"
         android:icon="@mipmap/ic_launcher"
@@ -27,6 +39,22 @@
         android:networkSecurityConfig="@xml/network_security_config"
         android:supportsRtl="true"
         android:theme="@style/Theme.AppCompat.DayNight.NoActionBar">
+        <!-- ut-docs#1246: grants the system installer read access to the
+             downloaded APK. A file:// URI is rejected outright from API 24
+             (FileUriExposedException) — this app's own minSdk — so the
+             content:// grant is the only route, not a modern-Android nicety.
+             Scoped to the app's external files dir (res/xml/file_paths.xml),
+             never the shared Downloads collection. -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.updates"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
+
         <activity
             android:name=".MainActivity"
             android:exported="true"

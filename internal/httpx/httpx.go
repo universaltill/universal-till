@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -65,6 +66,15 @@ var baseFuncs = template.FuncMap{
 	// internal/pages/update_api.go's updateUnavailableHTML via the shared
 	// selfupdate.DownloadLinkActionable predicate.
 	"updatedownloadlink": func() bool { return selfupdate.DownloadLinkActionableNow() },
+	// updateinstallbridge: Android only. The Go core can never self-swap
+	// there (it ships as a native library inside the APK — only the package
+	// installer may replace an app's own code), so canselfupdate is false by
+	// design, but the native shell CAN drive that installer. Without this the
+	// chip fell through to the unix-kiosk dead-end text and the operator was
+	// told to reinstall by hand for every build (ut-docs#1246). Keep in step
+	// with internal/pages/update_api.go's updateUnavailableHTML, which makes
+	// the same distinction for the Settings page.
+	"updateinstallbridge": func() bool { return runtime.GOOS == "android" },
 	// crossdevicelinkactionable: whether a link to ANOTHER device (a replica
 	// linking to its primary till's own UI, ut-docs#390) is safe to make
 	// clickable — false on a unix kiosk (fullscreen, no chrome, no way back
