@@ -965,21 +965,91 @@ func (s *Service) SetOrderType(orderType string) *Basket {
 // mode is NOT auto-coalesced: the cashier sees two visible lines they can
 // void, the same accepted trade-off as NoMerge (ADR-0059 §3), and a later
 // rescan still merges normally.
+//
+// A line with Qty > 1 does NOT flip as a whole: one UNIT moves to the
+// other mode (product owner, live on the tablet 2026-09-02: "suppose I
+// have 2 americano, one takeaway and the other one dine in"). The line's
+// Qty drops by one and the moved unit lands on an existing line of the
+// same item/modifiers/price in the target mode if there is one (so
+// repeated taps walk units across one at a time and never leave two lines
+// in the same mode), else on a new line right after the source. A
+// per-line discount is prorated by unit so the discount total is
+// unchanged by the split. Weighed lines and code-priced lines (a scale
+// label's weight, a price-embedded label's single unit) flip whole — a
+// "unit" isn't meaningful there. Tapping the mode the line already has
+// is a no-op.
 func (s *Service) SetLineOrderType(key, orderType string) (*Basket, bool) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if orderType != "" && orderType != OrderTypeTakeaway {
 		return s.basketCopyLocked(), false
 	}
+	idx := -1
 	for i := range s.lines {
 		if s.lines[i].LineKey == key {
-			s.lines[i].OrderType = orderType
-			s.applyTablePolicyLocked()
-			s.recomputeTotals()
-			return s.basketCopyLocked(), true
+			idx = i
+			break
 		}
 	}
-	return s.basketCopyLocked(), false
+	if idx < 0 {
+		return s.basketCopyLocked(), false
+	}
+	src := s.lines[idx]
+	if NormalizeLineOrderType(src.OrderType) == orderType {
+		return s.basketCopyLocked(), true
+	}
+	splittable := !src.IsWeighed && !src.QtyFromCode && !src.NoMerge && src.Qty > 1 && src.Qty == float64(int64(src.Qty))
+	moveQty, moveDisc := src.Qty, src.LineDiscount
+	if splittable {
+		moveQty = 1
+		moveDisc = money.FromMinor(src.LineDiscount.Minor() / int64(src.Qty))
+	}
+	// An existing line of the same item/modifiers/price already in the
+	// target mode absorbs the moved quantity (never two lines in one mode
+	// for one item). Never into or out of a NoMerge line (ADR-0059 §3).
+	target := -1
+	if !src.NoMerge {
+		sig := src.ModifierSignature()
+		for j := range s.lines {
+			if j == idx || s.lines[j].NoMerge || NormalizeLineOrderType(s.lines[j].OrderType) != orderType {
+				continue
+			}
+			if s.lines[j].ModifierSignature() != sig || s.lines[j].PriceCents != src.PriceCents || s.lines[j].IsWeighed != src.IsWeighed {
+				continue
+			}
+			if s.lines[j].SKU == src.SKU || (s.lines[j].ItemID == src.ItemID && s.lines[j].VariantID == src.VariantID) {
+				target = j
+				break
+			}
+		}
+	}
+	switch {
+	case target >= 0 && !splittable:
+		s.lines[target].Qty += moveQty
+		s.lines[target].LineDiscount = s.lines[target].LineDiscount.Add(moveDisc)
+		s.lines = append(s.lines[:idx], s.lines[idx+1:]...)
+	case target >= 0:
+		s.lines[target].Qty += 1
+		s.lines[target].LineDiscount = s.lines[target].LineDiscount.Add(moveDisc)
+		s.lines[idx].Qty = src.Qty - 1
+		s.lines[idx].LineDiscount = src.LineDiscount.Sub(moveDisc)
+	case !splittable:
+		s.lines[idx].OrderType = orderType
+	default:
+		s.lines[idx].Qty = src.Qty - 1
+		s.lines[idx].LineDiscount = src.LineDiscount.Sub(moveDisc)
+		unit := src
+		unit.Qty = 1
+		unit.LineDiscount = moveDisc
+		unit.OrderType = orderType
+		unit.LineKey = uuid.NewString()
+		s.lines = append(s.lines, BasketLine{})
+		copy(s.lines[idx+2:], s.lines[idx+1:])
+		s.lines[idx+1] = unit
+	}
+	s.applyTablePolicyLocked()
+	s.recomputeTotals()
+	return s.basketCopyLocked(), true
 }
 
 // HasDineInLine is the table-eligibility predicate (ADR-0073 Decision 5)

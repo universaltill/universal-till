@@ -418,3 +418,41 @@ func TestLineOrderType_ClaimReleasedWhenBasketTurnsAllTakeaway(t *testing.T) {
 		t.Fatalf("all-takeaway via void: table=%q occupied=%v, want cleared+released", dp.Engine.TableID(), tableOccupied(t, dp, t1))
 	}
 }
+
+// Product owner 2026-09-02: "2 americano, one takeaway and the other one
+// dine in" — through the real handler, one tap on the per-line icon of a
+// qty-2 line yields two lines, and the tender persists them separately
+// with each line's own tax rate.
+func TestLineOrderTypeHandler_SplitsOneUnitOfMultiQtyLine(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	posPostForm(mux, "/api/pos/scan", "code=ABC&qty=2")
+	b := dp.Engine.Basket()
+	if len(b.Lines) != 1 || b.Lines[0].Qty != 2 {
+		t.Fatalf("seed: %+v", b.Lines)
+	}
+	rec := posPostForm(mux, "/api/pos/line-order-type", "key="+b.Lines[0].LineKey+"&order_type=takeaway")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("flip: %d %s", rec.Code, rec.Body.String())
+	}
+	b = dp.Engine.Basket()
+	if len(b.Lines) != 2 || b.Lines[0].Qty != 1 || b.Lines[1].Qty != 1 || b.Lines[0].OrderType != "" || b.Lines[1].OrderType != pos.OrderTypeTakeaway {
+		t.Fatalf("after one tap: %+v", b.Lines)
+	}
+	if strings.Count(rec.Body.String(), `data-testid="line-order-type-`) < 4 {
+		t.Fatalf("expected two rendered lines each with a control, got: %s", rec.Body.String())
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender", strings.NewReader(`{"payments":[{"method_id":"cash","amount":100000}]}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("tender: %d %s", rec.Code, rec.Body.String())
+	}
+	var n int
+	_ = dp.Db.QueryRow(`SELECT COUNT(*) FROM sale_lines`).Scan(&n)
+	var header string
+	_ = dp.Db.QueryRow(`SELECT order_type FROM sales WHERE status='completed'`).Scan(&header)
+	if n != 2 || header != pos.OrderTypeMixed {
+		t.Fatalf("persisted lines=%d header=%q, want 2/mixed", n, header)
+	}
+}

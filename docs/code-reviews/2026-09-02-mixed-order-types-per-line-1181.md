@@ -80,6 +80,19 @@ B1/B2/H3/M7/M8 confirmed fixed. One new blocker found and fixed:
 - LOW-5 ES pack drift gate must run after core merges; it is already red at
   ES HEAD for 16 unrelated keys — filed as its own card.
 
+## Product-owner feedback after the first merge attempt (2026-09-02)
+
+"suppose I have 2 americano, one takeaway and the other one dine in": a
+per-line tap on a qty≥2 line now moves ONE unit (merging into an existing
+target-mode line if any, else a new line after the source; discount
+prorated per unit; weighed/code-priced lines move whole; same-mode tap is a
+no-op). ADR-0073 amended (ut-docs PR #1398). Tests:
+`TestSetLineOrderType_SplitsOneUnitFromMultiQtyLine`,
+`TestSetLineOrderType_SplitProratesLineDiscount`,
+`TestSetLineOrderType_WeighedLineFlipsWhole`,
+`TestLineOrderTypeHandler_SplitsOneUnitOfMultiQtyLine`; manuals in four
+locales updated. Verified by real touch on the tablet (Chrome → LAN till).
+
 Not changed on purpose (LOW): the thermal reprint's English literals match
 that renderer's existing convention; `strings.ToUpper` on localized kitchen
 markers is a pre-existing quirk of that renderer.

@@ -103,19 +103,21 @@ func TestLineOrderType_SameItemDifferentModesDoNotMerge(t *testing.T) {
 	if len(b.Lines) != 1 || b.Lines[0].Qty != 2 {
 		t.Fatalf("same-mode rescan should merge: lines=%d qty=%v", len(b.Lines), b.Lines[0].Qty)
 	}
+	// One tap moves ONE unit of the qty-2 takeaway line to dine-in (the
+	// product owner's "2 americano, one takeaway one dine in" case).
 	s.SetLineOrderType(b.Lines[0].LineKey, "")
-	// default is still takeaway → this scan is a takeaway line, distinct
+	// default is still takeaway → this scan joins the takeaway line
 	_, _ = s.Scan("DRINK")
 	b = s.Basket()
 	if len(b.Lines) != 2 {
 		t.Fatalf("cross-mode rescan merged: lines=%d, want 2", len(b.Lines))
 	}
-	if b.Lines[0].OrderType != "" || b.Lines[1].OrderType != OrderTypeTakeaway {
-		t.Fatalf("line modes = %q/%q, want dine-in/takeaway", b.Lines[0].OrderType, b.Lines[1].OrderType)
+	if b.Lines[0].OrderType != OrderTypeTakeaway || b.Lines[0].Qty != 2 || b.Lines[1].OrderType != "" || b.Lines[1].Qty != 1 {
+		t.Fatalf("lines = %+v, want takeaway×2 then dine-in×1", b.Lines)
 	}
-	// 2 × dine-in drink at 19% (380) + 1 takeaway drink at 7% (70)
-	if b.Tax != money.FromMinor(380+70) {
-		t.Fatalf("tax = %v, want 450", b.Tax)
+	// 2 × takeaway drink at 7% (140) + 1 dine-in drink at 19% (190)
+	if b.Tax != money.FromMinor(140+190) {
+		t.Fatalf("tax = %v, want 330", b.Tax)
 	}
 	if b.OrderType != OrderTypeMixed {
 		t.Fatalf("summary = %q, want mixed", b.OrderType)
@@ -261,5 +263,82 @@ func TestLineOrderType_VoidingLastDineInLineClearsTable(t *testing.T) {
 	s.Remove("CAKE")
 	if got := s.TableID(); got != "" {
 		t.Fatalf("all-takeaway basket after Remove(sku) kept table %q", got)
+	}
+}
+
+// Product owner, live on the tablet 2026-09-02: "suppose I have 2
+// americano, one takeaway and the other one dine in" — tapping the
+// per-line icon on a qty>1 line must move ONE unit to the other mode
+// (splitting the line), not flip the whole line. Repeated taps move one
+// unit each; the moved unit merges into an existing line of the same item
+// in the target mode. A qty-1 line flips as before. Weighed/code-priced
+// lines never split (a unit isn't meaningful there).
+func TestSetLineOrderType_SplitsOneUnitFromMultiQtyLine(t *testing.T) {
+	s := newMixedService()
+	_, _ = s.ScanQty("DRINK", 2)
+	b := s.Basket()
+	if len(b.Lines) != 1 || b.Lines[0].Qty != 2 {
+		t.Fatalf("seed: %+v", b.Lines)
+	}
+	key := b.Lines[0].LineKey
+	b2, ok := s.SetLineOrderType(key, OrderTypeTakeaway)
+	if !ok {
+		t.Fatal("SetLineOrderType !ok")
+	}
+	if len(b2.Lines) != 2 {
+		t.Fatalf("expected the line to split into 2, got %d: %+v", len(b2.Lines), b2.Lines)
+	}
+	if b2.Lines[0].Qty != 1 || b2.Lines[0].OrderType != "" || b2.Lines[1].Qty != 1 || b2.Lines[1].OrderType != OrderTypeTakeaway {
+		t.Fatalf("after one tap: %+v", b2.Lines)
+	}
+	if b2.OrderType != OrderTypeMixed || b2.Tax != money.FromMinor(190+70) {
+		t.Fatalf("summary/tax = %q/%v, want mixed/260", b2.OrderType, b2.Tax)
+	}
+	// Second tap on the remaining dine-in unit: it moves into the existing
+	// takeaway line rather than creating a third line.
+	b3, _ := s.SetLineOrderType(key, OrderTypeTakeaway)
+	if len(b3.Lines) != 1 || b3.Lines[0].Qty != 2 || b3.Lines[0].OrderType != OrderTypeTakeaway {
+		t.Fatalf("after second tap: %+v", b3.Lines)
+	}
+	if b3.OrderType != OrderTypeTakeaway || b3.Tax != money.FromMinor(70+70) {
+		t.Fatalf("summary/tax = %q/%v, want takeaway/140", b3.OrderType, b3.Tax)
+	}
+	// And back: one unit returns to dine-in, splitting again.
+	b4, _ := s.SetLineOrderType(b3.Lines[0].LineKey, "")
+	if len(b4.Lines) != 2 || b4.OrderType != OrderTypeMixed {
+		t.Fatalf("after flipping one back: %+v summary=%q", b4.Lines, b4.OrderType)
+	}
+	// Tapping the icon that is ALREADY the line's mode is a no-op.
+	b5, _ := s.SetLineOrderType(b4.Lines[0].LineKey, b4.Lines[0].OrderType)
+	if len(b5.Lines) != 2 || b5.Lines[0].Qty != b4.Lines[0].Qty {
+		t.Fatalf("same-mode tap must be a no-op: %+v", b5.Lines)
+	}
+}
+
+func TestSetLineOrderType_SplitProratesLineDiscount(t *testing.T) {
+	s := newMixedService()
+	_, _ = s.ScanQty("DRINK", 3)
+	key := s.Basket().Lines[0].LineKey
+	s.UpdateLineByKey(key, 3, money.FromMinor(90)) // 30 per unit
+	b, _ := s.SetLineOrderType(key, OrderTypeTakeaway)
+	if len(b.Lines) != 2 || b.Lines[0].Qty != 2 || b.Lines[1].Qty != 1 {
+		t.Fatalf("split: %+v", b.Lines)
+	}
+	if b.Lines[0].LineDiscount != money.FromMinor(60) || b.Lines[1].LineDiscount != money.FromMinor(30) {
+		t.Fatalf("discount not prorated: %v / %v", b.Lines[0].LineDiscount, b.Lines[1].LineDiscount)
+	}
+	if b.Lines[0].LineDiscount.Add(b.Lines[1].LineDiscount) != money.FromMinor(90) {
+		t.Fatal("discount total changed by the split")
+	}
+}
+
+func TestSetLineOrderType_WeighedLineFlipsWhole(t *testing.T) {
+	resolver := mapResolver{"CHEESE": {SKU: "CHEESE", ItemID: "item-cheese", Name: "Cheese", Qty: 0.35, PriceCents: 2000, TaxRateBP: 700, IsWeighed: true}}
+	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, resolver)
+	_, _ = s.ScanQty("CHEESE", 2.5)
+	key := s.Basket().Lines[0].LineKey
+	b, _ := s.SetLineOrderType(key, OrderTypeTakeaway)
+	if len(b.Lines) != 1 || b.Lines[0].OrderType != OrderTypeTakeaway || b.Lines[0].Qty != 2.5 {
+		t.Fatalf("weighed line must flip whole: %+v", b.Lines)
 	}
 }
