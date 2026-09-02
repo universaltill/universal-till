@@ -1,10 +1,21 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Allows cleartext (plain HTTP) ONLY to loopback — the embedded till
-     server (mobile.Mobile) always binds 127.0.0.1, never a real network
-     interface. Android 9+ blocks cleartext by default app-wide; scoping
-     the exception to this one destination instead of the blanket
-     android:usesCleartextTraffic="true" keeps the app from silently
-     accepting cleartext to anything else it might ever talk to. -->
+<!-- Allows cleartext (plain HTTP) ONLY to loopback. Android 9+ blocks
+     cleartext by default app-wide; scoping the exception to this one
+     destination instead of the blanket android:usesCleartextTraffic="true"
+     keeps the app from silently accepting cleartext to anything else it
+     might ever talk to.
+
+     The embedded till server (mobile.Mobile) binds ALL interfaces, not just
+     127.0.0.1 — it is LAN-reachable (ut-docs#1256) so other tills can
+     discover and pair with it, protected by ADR-0033's existing
+     discovery + approve-to-pair + per-till bearer-token model. That does
+     NOT widen what this file must permit: Network Security Config governs
+     only the app's own OUTBOUND cleartext calls made through Android's
+     Java/WebView networking stack, and the WebView still only ever loads
+     127.0.0.1. Inbound connections to the Go server's own socket, and any
+     outbound calls the embedded Go server itself makes (e.g. LAN sync to a
+     primary till), are made directly by the Go runtime's own syscalls and
+     are not subject to Network Security Config at all. -->
 <network-security-config>
     <domain-config cleartextTrafficPermitted="true">
         <domain includeSubdomains="false">127.0.0.1</domain>
