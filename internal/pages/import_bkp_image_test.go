@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/paths"
 
 	_ "modernc.org/sqlite"
@@ -87,6 +88,25 @@ func buildTestPNG(t *testing.T) []byte {
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		t.Fatalf("encode test png: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// buildOversizedTestPNG returns a real, fully decodable PNG whose pixel
+// count sits just over imaging.MaxPixels — the ut-docs#1328 pixel-bomb
+// shape (a solid color compresses to a small file while still being
+// genuinely decodable, so a rejection here is attributable to the
+// dimension guard, not to some unrelated "corrupt file" failure).
+func buildOversizedTestPNG(t *testing.T) []byte {
+	t.Helper()
+	const w, h = 7000, 6000
+	if int64(w)*int64(h) <= imaging.MaxPixels {
+		t.Fatalf("test fixture %dx%d must exceed imaging.MaxPixels (%d)", w, h, imaging.MaxPixels)
+	}
+	img := image.NewGray(image.Rect(0, 0, w, h))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode oversized test png: %v", err)
 	}
 	return buf.Bytes()
 }
@@ -236,5 +256,53 @@ WHERE i.sku = '30001'`).Scan(&itemID, &imgPath); err != nil {
 	}
 	if imgPath == "/public/assets/items/"+itemID+"/thumb.png" {
 		t.Errorf("a dangling image reference must fall back to the placeholder icon, not claim a real photo path")
+	}
+}
+
+// TestImport_BkpOversizedImageWarnsAndFallsBackToPlaceholder is the
+// ut-docs#1328 regression for the .bkp commit-time image write: a real,
+// fully valid, 42-million-pixel PNG resolved from the archive's
+// documents.zip must be rejected by the same imaging.Decode pixel-count
+// guard the manual-upload handlers use (independently proven here by
+// running with the guard disabled — see internal/imaging/decode_test.go
+// and internal/pages/catalog/image_upload_test.go for the sibling manual-
+// upload proof), falling back to the placeholder icon with a surfaced
+// warning — the same best-effort, never-fail-the-row behavior as a
+// dangling or corrupt image reference, never a 500 or an unbounded decode.
+func TestImport_BkpOversizedImageWarnsAndFallsBackToPlaceholder(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init("") })
+
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	imgBytes := buildOversizedTestPNG(t)
+	zipBytes := buildBkpZipWithImage(t, "images/flat-white-uuid.png", imgBytes)
+	body, ct := multipartFile(t, "backup.bkp", zipBytes, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "photo could not be read") {
+		t.Errorf("commit response must warn that the oversized photo could not be read, got: %s", rec.Body.String())
+	}
+
+	var itemID, imgPath string
+	if err := dp.Db.QueryRow(`
+SELECT i.id, img.path FROM items i
+JOIN item_images img ON img.item_id = i.id AND img.role = 'thumbnail'
+WHERE i.sku = '30001'`).Scan(&itemID, &imgPath); err != nil {
+		t.Fatalf("query item_images: %v", err)
+	}
+	if imgPath == "/public/assets/items/"+itemID+"/thumb.png" {
+		t.Errorf("an oversized/pixel-bomb image reference must fall back to the placeholder icon, not claim a real photo path")
+	}
+	if _, err := os.Stat(paths.Data("public", "assets", "items", itemID, "thumb.png")); err == nil {
+		t.Error("a rejected oversized image must not leave a real thumbnail file behind")
 	}
 }

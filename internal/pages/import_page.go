@@ -7,8 +7,6 @@ import (
 	"encoding/csv"
 	"errors"
 	"fmt"
-	"image"
-	_ "image/jpeg"
 	"image/png"
 	"io"
 	"log"
@@ -25,6 +23,7 @@ import (
 	"github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -916,7 +915,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// that existing path.
 				imageSet := false
 				if len(it.ImageData) > 0 {
-					if img, _, derr := image.Decode(bytes.NewReader(it.ImageData)); derr != nil {
+					if img, derr := imaging.Decode(it.ImageData); derr != nil {
 						log.Printf("[import] decode image for item %q: %v", it.Name, derr)
 						warnings = append(warnings, T("import.status.image_undecodable"))
 					} else {

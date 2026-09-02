@@ -12,6 +12,7 @@ import (
 	"os"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/testsupport"
@@ -25,6 +26,37 @@ func validPNG(t *testing.T) []byte {
 	var buf bytes.Buffer
 	if err := png.Encode(&buf, img); err != nil {
 		t.Fatalf("encode test png: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// oversizedPNG is a REAL, fully valid, fully decodable PNG whose pixel
+// count sits just over imaging.MaxPixels — the actual pixel-bomb shape
+// (ut-docs#1328): a solid color compresses to a tiny file (PNG's DEFLATE
+// handles a uniform image extremely well) while still being genuinely
+// decodable, so this proves the guard rejects it via the cheap
+// image.DecodeConfig dimension check rather than happening to fail for
+// some unrelated "corrupt file" reason — unlike a header-only crafted file
+// with no pixel data at all, which any decoder would also reject on its
+// own, proving nothing about the dimension guard specifically.
+func oversizedPNG(t *testing.T) []byte {
+	t.Helper()
+	const w, h = 7000, 6000
+	if int64(w)*int64(h) <= imaging.MaxPixels {
+		t.Fatalf("test fixture %dx%d must exceed imaging.MaxPixels (%d) to be a meaningful pixel-bomb case", w, h, imaging.MaxPixels)
+	}
+	img := image.NewGray(image.Rect(0, 0, w, h))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode oversized test png: %v", err)
+	}
+	// A uniform 42M-pixel image compresses to ~50KB in practice (Go's PNG
+	// encoder isn't maximally aggressive) — still ~800x smaller than the
+	// 42MB it decodes to, and comfortably under the handler's 10MB upload
+	// cap, so this remains the real attack shape: a modest file, a decode
+	// far larger than its size implies.
+	if buf.Len() > 200_000 {
+		t.Fatalf("test fixture should compress small relative to its decoded size — got %d bytes", buf.Len())
 	}
 	return buf.Bytes()
 }
@@ -293,5 +325,46 @@ func TestVariantImageUpload_RejectsPathTraversalVariantID(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for a path-traversal variant_id, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestItemImageUpload_RejectsOversizedImage is the ut-docs#1328 regression:
+// a real, fully valid, 42-million-pixel PNG that compresses to only a few
+// hundred bytes must be rejected with 400 before the handler attempts to
+// allocate a decode buffer for it.
+func TestItemImageUpload_RejectsOversizedImage(t *testing.T) {
+	mux, db := imageUploadTestDeps(t)
+	testsupport.SeedTaxCode(t, db, "tax_std", "Standard", 2000)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Latte", BasePrice: 250, TaxCodeID: "tax_std", IsActive: true})
+
+	body, ct := multipartUpload(t, map[string]string{"item_id": "itm1"}, "bomb.png", oversizedPNG(t))
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/item/image", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an oversized image upload, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(paths.Data("public", "assets", "items", "itm1", "thumb.png")); err == nil {
+		t.Fatal("a rejected oversized-image upload must not leave a thumbnail file behind")
+	}
+}
+
+func TestVariantImageUpload_RejectsOversizedImage(t *testing.T) {
+	mux, db := imageUploadTestDeps(t)
+	testsupport.SeedTaxCode(t, db, "tax_std", "Standard", 2000)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Latte", BasePrice: 250, TaxCodeID: "tax_std", IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "itm1", SKU: "SKU1-L", Name: "Large", Price: 300, IsActive: true})
+
+	body, ct := multipartUpload(t, map[string]string{"variant_id": "v1", "panelItem": "itm1"}, "bomb.png", oversizedPNG(t))
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/variant/image", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an oversized variant image upload, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(paths.Data("public", "assets", "items", "itm1", "variants", "v1", "thumb.png")); err == nil {
+		t.Fatal("a rejected oversized-image variant upload must not leave a thumbnail file behind")
 	}
 }
