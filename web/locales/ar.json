@@ -1029,6 +1029,8 @@
   "shifts.variance": "الفرق",
   "status.offline": "دون اتصال",
   "status.online": "متصل",
+  "status.psu_underpowered": "مزود الطاقة ضعيف جدًا",
+  "status.psu_underpowered_hint": "لا يستطيع مزود الطاقة لهذا الجهاز توفير تيار كافٍ — قد لا تعمل ملحقات USB مثل الشاشة اللمسية بشكل صحيح. استبدله بمزود الطاقة الرسمي لهذه اللوحة.",
   "status.register_till": "السوق: غير متصل",
   "status.update_available": "يوجد تحديث",
   "status.update_now": "حدّث الآن",

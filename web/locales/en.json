@@ -1029,6 +1029,8 @@
   "shifts.variance": "Variance",
   "status.offline": "Offline",
   "status.online": "Online",
+  "status.psu_underpowered": "Power supply too weak",
+  "status.psu_underpowered_hint": "This device's power supply can't deliver enough current — USB peripherals like the touchscreen may misbehave. Replace it with the official supply for this board.",
   "status.register_till": "Marketplace: not connected",
   "status.update_available": "Update available",
   "status.update_now": "Update now",

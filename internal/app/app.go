@@ -32,6 +32,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
+	"github.com/universaltill/universal-till/internal/pihealth"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/plugins/oauth"
@@ -228,6 +229,7 @@ func Run(ctx context.Context) error {
 	}
 
 	updates.Start(bgCtx, &wg)
+	pihealth.Start(bgCtx, &wg)
 	alerts.Start(bgCtx, cfg, database.DB, &wg)
 
 	// LAN till discovery (ADR-0033 part 1, ut-docs#264): advertise this

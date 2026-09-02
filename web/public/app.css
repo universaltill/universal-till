@@ -2333,6 +2333,22 @@ body.login-screen {
   margin-inline-start: .5rem;
 }
 .statusbar .sb-enrol:hover { color: var(--ink, #111827); border-color: var(--muted, #6b7280); }
+/* Underpowered-PSU chip (ut-docs#1232) — reuses the shared --warning token
+   (already used for `.tag.warn`/`.row-warn-icon` elsewhere) rather than
+   inventing a second warning color. Persistent like sb-update, not a toast:
+   it stays until the till is rebooted on a proper supply. Dark ink on the
+   amber fill (not light, unlike sb-update's dark-on-green) — #fff7ed on
+   #d97706 measured ~3:1, failing WCAG AA at this chip's ~12.5px bold text
+   (needs 4.5:1, not the 3:1 "large text" bar); #451a03 measures ~4.7:1
+   (independent review finding). A real <a> (see markup), so it hovers like
+   sb-enrol/sb-update rather than sitting inert. */
+.statusbar .sb-power {
+  color: #451a03; background: var(--warning, #d97706);
+  text-decoration: none;
+  padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar a.sb-power:hover { filter: brightness(0.92); }
 /* ut-docs#413: confirmed live at 360px — `.statusbar`'s row (conn chip +
    the optional enrol/update pills + the version, none of it wrapping)
    needs more width than a phone viewport has. Wrapping the bar itself
@@ -2353,7 +2369,8 @@ body.login-screen {
 @media (max-width: 480px) {
   .statusbar { flex-wrap: wrap; row-gap: .2rem; }
   .statusbar .sb-update,
-  .statusbar .sb-enrol {
+  .statusbar .sb-enrol,
+  .statusbar .sb-power {
     overflow: hidden; text-overflow: ellipsis; max-inline-size: 70vw;
   }
 }
