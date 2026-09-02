@@ -3,6 +3,7 @@ package db
 import (
 	"path/filepath"
 	"regexp"
+	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data/seeddata"
@@ -112,6 +113,89 @@ func TestDemoSeedItemsPristineValuesMatchCatalogue(t *testing.T) {
 		if c != s {
 			t.Errorf("%s pristine values drifted: demo_catalogue.sql has (sku=%q, name=%q, base_price=%s), demo_ids.sql has (sku=%q, name=%q, base_price=%s)",
 				id, c.sku, c.name, c.price, s.sku, s.name, s.price)
+		}
+	}
+}
+
+// ut-docs#1425 review finding F4: the migration-specific cross-check this
+// replaces (TestMigration038MatchesSeedData) read migration 038's SQL text
+// directly and was deleted along with it in the ADR-0074 squash — but the
+// seeddata.DemoCustomerIDs/DemoPromoCodes vs.
+// DemoCustomersPromosIDsSQL/DemoCustomersPromosSQL drift it guarded against
+// has nothing to do with migration files and still needs guarding: a
+// customer/promo present in the insert script but missing from the ID list
+// would seed fine (DemoCustomersPromosSQL) but never be recognised as
+// removable (RemoveDemoCustomersPromosSQL only targets rows in the TEMP ID
+// tables demo_customers_promos_ids.sql populates) — a permanently
+// unremovable "sample" customer. Mirrors
+// TestDemoSeedItemsPristineValuesMatchCatalogue's item-side both-directions
+// shape above.
+func TestDemoCustomersPromosIDsMatchSeedData(t *testing.T) {
+	for _, id := range seeddata.DemoCustomerIDs {
+		if !strings.Contains(seeddata.DemoCustomersPromosIDsSQL, "('"+id+"')") {
+			t.Errorf("seeddata.DemoCustomerIDs has %s but demo_customers_promos_ids.sql does not list it", id)
+		}
+		if !strings.Contains(seeddata.DemoCustomersPromosSQL, "'"+id+"'") {
+			t.Errorf("seeddata.DemoCustomerIDs has %s but demo_customers_promos.sql does not insert it", id)
+		}
+	}
+	for _, code := range seeddata.DemoPromoCodes {
+		if !strings.Contains(seeddata.DemoCustomersPromosIDsSQL, "('"+code+"')") {
+			t.Errorf("seeddata.DemoPromoCodes has %s but demo_customers_promos_ids.sql does not list it", code)
+		}
+		if !strings.Contains(seeddata.DemoCustomersPromosSQL, "'"+code+"'") {
+			t.Errorf("seeddata.DemoPromoCodes has %s but demo_customers_promos.sql does not insert it", code)
+		}
+	}
+
+	// Reverse direction (ut-docs#539 review N3's lesson, same reasoning as
+	// the item-side reverse check above): a row added to
+	// demo_customers_promos.sql's INSERTs without also adding it to
+	// DemoCustomerIDs/DemoPromoCodes would seed but be permanently
+	// unremovable, and none of the forward checks above would catch it.
+	custRows := regexp.MustCompile(`(?m)^\('cust-\d+',`).FindAllString(seeddata.DemoCustomersPromosSQL, -1)
+	if len(custRows) != len(seeddata.DemoCustomerIDs) {
+		t.Errorf("demo_customers_promos.sql's customers INSERT has %d rows, seeddata.DemoCustomerIDs has %d — a customer was added to one but not the other",
+			len(custRows), len(seeddata.DemoCustomerIDs))
+	}
+	promoRows := regexp.MustCompile(`(?m)^\('[A-Z0-9]+',\s*'(?:amount|percent)'`).FindAllString(seeddata.DemoCustomersPromosSQL, -1)
+	if len(promoRows) != len(seeddata.DemoPromoCodes) {
+		t.Errorf("demo_customers_promos.sql's promotions INSERT has %d rows, seeddata.DemoPromoCodes has %d — a promo was added to one but not the other",
+			len(promoRows), len(seeddata.DemoPromoCodes))
+	}
+}
+
+// ut-docs#1425 review finding F6: TestDeadTaxInclusiveSeedRemoved asserted
+// on a fresh Open that pos.tax_inclusive (a dead settings key removed by
+// the now-deleted migration 022) never seeds, while its neighbouring
+// defaults survive — pure final-state, no replay, so it went with the rest
+// of dead_seed_test.go's rewind tests by mistake (the file's replay tests
+// were correctly deleted; this one wasn't a replay test). The baseline
+// (001_init.sql) is currently correct — it just doesn't carry the dead
+// key — but since ADR-0074 makes 001 freely editable pre-revenue, nothing
+// else guards against the key being re-added by a future edit.
+func TestBaselineSeedsNoDeadTaxInclusiveKey(t *testing.T) {
+	d, err := Open(filepath.Join(t.TempDir(), "dead-seed.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer d.Close()
+
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = 'pos.tax_inclusive'`).Scan(&n); err != nil {
+		t.Fatalf("count pos.tax_inclusive: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("pos.tax_inclusive present in the baseline seed (n=%d) — this key was deliberately dropped (ut-docs#22/migration 022) and must stay out of 001_init.sql", n)
+	}
+
+	// The neighboring defaults seeded by the same statement must survive.
+	for _, key := range []string{"store.name", "store.currency"} {
+		if err := d.DB.QueryRow(`SELECT COUNT(*) FROM settings WHERE key = ?`, key).Scan(&n); err != nil {
+			t.Fatalf("count %s: %v", key, err)
+		}
+		if n != 1 {
+			t.Fatalf("seed %s: got %d rows, want 1", key, n)
 		}
 	}
 }

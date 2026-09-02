@@ -222,8 +222,20 @@ func (db *DB) checkSchemaLineage() error {
 // will — the watermark skips it) has no ledger row at all. Either way boot
 // fails loudly rather than silently skipping a step — unless the version is
 // in idempotentRerunVersions, in which case the file is re-applied in place.
+//
+// This runs both directions (ut-docs#1425 review finding F2): the loop below
+// catches a file present on disk with no ledger row (downward renumbering —
+// a version slips below an existing watermark). The mirror case — a ledger
+// row exists but no on-disk file has that version anymore, because a file
+// was renumbered UPWARD out from under an applied version — is invisible to
+// a files-first loop: the renumbered file's new version is simply above the
+// watermark and gets silently applied as "new", while the orphaned ledger
+// row is never inspected. loadedVersions + the second loop below closes that
+// gap by walking the ledger itself for every row <= current.
 func (db *DB) verifyAppliedMigrations(migs []migration, current int) error {
+	loadedVersions := make(map[int]bool, len(migs))
 	for _, m := range migs {
+		loadedVersions[m.Version] = true
 		if m.Version > current {
 			continue
 		}
@@ -247,7 +259,23 @@ func (db *DB) verifyAppliedMigrations(migs []migration, current int) error {
 			return err
 		}
 	}
-	return nil
+
+	rows, err := db.Query(`SELECT version, name FROM schema_migrations WHERE version <= ?`, current)
+	if err != nil {
+		return fmt.Errorf("read ledger versions: %w", err)
+	}
+	defer rows.Close()
+	for rows.Next() {
+		var version int
+		var name string
+		if err := rows.Scan(&version, &name); err != nil {
+			return fmt.Errorf("scan ledger version: %w", err)
+		}
+		if !loadedVersions[version] {
+			return fmt.Errorf("migration %d (%s) is recorded as applied but no on-disk file carries that version anymore — it was likely renumbered to a different version; delete the data directory and start again (ADR-0074)", version, name)
+		}
+	}
+	return rows.Err()
 }
 
 func (db *DB) applyMigration(m migration) error {

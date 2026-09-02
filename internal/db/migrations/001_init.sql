@@ -11,8 +11,12 @@
 --
 -- Conventions: schema_migrations (the applied-migration ledger) is created
 -- and populated by internal/db/db.go, never by a migration file. Every
--- other table below is listed in creation order as SQLite recorded it, so
--- FOREIGN KEY targets always precede their referrers.
+-- other table below is listed in creation order as SQLite recorded it —
+-- this is NOT a strict FK-dependency order (SQLite resolves FOREIGN KEY
+-- targets at DML time, not CREATE TABLE time, so a handful of tables here
+-- reference one defined later, e.g. promotions.customer_id -> customers,
+-- several tables' table_id -> tables; harmless, confirmed by a clean fresh
+-- Open, but don't assume forward references can't happen when editing).
 
 -- ----------------------------------------
 -- Schema
@@ -744,6 +748,27 @@ CREATE TABLE reset_batches (
     sales_count INTEGER NOT NULL DEFAULT 0
 );
 
+-- ----------------------------------------
+-- Reset archives (ADR-0042, ut-docs#187) — restated here after ADR-0074's
+-- squash deleted this invariant's original home (migration 040's header).
+-- ----------------------------------------
+-- POSRepo.ResetTransactionHistory does not destroy transactional data:
+-- every row it clears is moved into a *_archive twin, tagged with one
+-- reset_batches row per reset event, and is restorable whole-batch as long
+-- as the till has not traded since (see reset_archive_repo.go).
+-- report_archive above is NOT part of this mechanism (ADR-0040 §9) — it is
+-- a separate retained legal record with its own retention pruning.
+--
+-- Every table below must stay column-identical to its live counterpart,
+-- plus reset_batch_id, with three deliberate relaxations: no FKs to live
+-- tables (an archived row must not pin, or be broken by, live rows that
+-- can change or vanish after the reset — sale_id/sale_line_id links only
+-- make sense WITHIN the same batch); no PRIMARY KEY/UNIQUE constraints (a
+-- shop that resets, trades, and resets again legitimately archives the
+-- same receipt_no/display_no in two different batches); NOT NULL and
+-- single-table CHECK constraints are kept. Whoever adds a column to a live
+-- table that has an archive twin must add the same column here too, in
+-- the same change (internal/data/reset_test.go pins this).
 CREATE TABLE sales_archive (
     id              TEXT NOT NULL,
     receipt_no      TEXT NOT NULL,

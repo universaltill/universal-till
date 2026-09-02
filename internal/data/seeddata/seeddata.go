@@ -2,17 +2,16 @@
 // data") grocery catalogue (ut-docs#539) and its companion demo customers
 // + promo codes (ut-docs#567).
 //
-// Until migration 036 the catalogue was seeded unconditionally by
-// 001_init.sql; it is now opt-in (setup wizard checkbox →
-// data.DemoSeedRepo.SeedDemoCatalogue) and removable (Settings →
-// "Remove sample data"). Migration 038 (ut-docs#567) did the same for the
-// 3 demo customers + 3 demo promo codes 001_init.sql also used to seed
-// unconditionally → data.DemoSeedRepo.SeedDemoCustomersPromos, same
-// checkbox, same removal action. The SQL assets here are shared verbatim
-// with migrations 036_demo_seed_opt_in.sql and
-// 038_demo_customers_promos_opt_in.sql; tests in this package and in
-// internal/db guard that the ID lists, the seed rows and the migrations
-// never drift apart.
+// Before the ADR-0074 migration squash (ut-docs#1425), the catalogue was
+// seeded unconditionally by 001_init.sql until migration 036 made it
+// opt-in; the demo customers/promo codes went the same way at migration
+// 038 (ut-docs#567). Both migrations are gone — 001_init.sql now carries
+// no demo rows at all (opt-in from the very first boot) — but the runtime
+// behaviour they introduced is unchanged: opt-in via the setup wizard
+// checkbox (data.DemoSeedRepo.SeedDemoCatalogue /
+// SeedDemoCustomersPromos) and removable via Settings → "Remove sample
+// data". Tests in this package and in internal/db guard that the ID lists
+// and the seed rows never drift apart from each other.
 package seeddata
 
 import (
