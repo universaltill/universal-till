@@ -18,8 +18,11 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
 )
@@ -76,6 +79,14 @@ func TestTablesPagePermissions(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier GET /tables = %d, want 403", rec.Code)
+	}
+	// ut-docs#1455 review finding: the reported incident's own page still
+	// answered its 403 with a bare, rail-less common.LocalizedError body —
+	// one call away from the fix this file otherwise carries. GET /tables
+	// specifically (not the API/fragment routes, which correctly keep a
+	// short body) must render the full layout here too.
+	if body := rec.Body.String(); !strings.Contains(body, `class="nav"`) {
+		t.Fatalf("cashier's 403 on GET /tables has no nav rail — a kiosk hitting this has no way back:\n%s", body)
 	}
 	if rec := postForm(mux, "/api/tables", url.Values{"label": {"T1"}}, &cashier); rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier create = %d, want 403", rec.Code)
@@ -287,6 +298,96 @@ func TestTablesStatePartial_FreeTodayOccupiedViaTableID(t *testing.T) {
 	}
 	if !strings.Contains(body, "30") {
 		t.Fatalf("occupied tile must show elapsed minutes: %q", body)
+	}
+}
+
+// TestTablesPage_RepoFailureRendersErrorPageNotBareText is the regression
+// test for the live incident ut-docs#1455 reports (TECLAST tablet,
+// 0.9.1-1423b): ListTablesWithState failing used to write a bare, unlogged
+// http.Error — on a pinned Android kiosk that replaces the whole screen
+// with plain text and no way back. It must now render the full layout
+// (rail + Back to sale) with a translated message, log the real error, and
+// never leak that raw error into the response.
+func TestTablesPage_RepoFailureRendersErrorPageNotBareText(t *testing.T) {
+	mux, d := newTablesTestMux(t)
+
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+	logging.ResetRecent()
+
+	// Force ListTablesWithState to fail with a raw driver error, without
+	// touching canPerform's own permission check (a different table).
+	if _, err := d.Db.Exec(`DROP TABLE tables`); err != nil {
+		t.Fatalf("drop tables: %v", err)
+	}
+
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/tables", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("code = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `class="nav"`) {
+		t.Fatalf("response has no nav rail — a kiosk hitting this has no way back:\n%s", body)
+	}
+	if !strings.Contains(body, "Back to sale") {
+		t.Fatalf("response has no \"Back to sale\" link:\n%s", body)
+	}
+	if !strings.Contains(body, "Try again, or use the menu to keep working") {
+		t.Fatalf("response missing the translated error message:\n%s", body)
+	}
+	if strings.Contains(body, "no such table") || strings.Contains(body, "sqlite") {
+		t.Fatalf("response leaked the raw driver error:\n%s", body)
+	}
+
+	found := false
+	for _, p := range logging.Recent() {
+		if strings.Contains(p.Msg, "no such table: tables") {
+			found = true
+			break
+		}
+	}
+	if !found {
+		t.Fatalf("the real repo error was not logged — this is the other half of #1455's bug (a silent failure)")
+	}
+}
+
+// The live-state HTMX partial hits the exact same failure but must answer
+// with a short, translated fragment body — not the full-page RenderError,
+// which would embed a whole HTML document into the polling swap target.
+func TestTablesLiveState_RepoFailureStaysAFragment(t *testing.T) {
+	mux, d := newTablesTestMux(t)
+
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+
+	if _, err := d.Db.Exec(`DROP TABLE tables`); err != nil {
+		t.Fatalf("drop tables: %v", err)
+	}
+
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/tables/state", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("code = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "<!DOCTYPE") || strings.Contains(body, `class="nav"`) {
+		t.Fatalf("fragment response must not embed the full page layout:\n%s", body)
+	}
+	if !strings.Contains(body, httpx.T("en", "tables.error.load_failed")) {
+		t.Fatalf("fragment missing the translated error message:\n%s", body)
 	}
 }
 

@@ -129,8 +129,11 @@ func registerOrderTracking(mux *http.ServeMux, d *common.Deps) {
 		funcs := httpx.FuncsFor(locale)
 		o, token, ok, err := lookup(r)
 		if err != nil {
-			// No error detail on an anonymous surface.
-			http.Error(w, "lookup failed", http.StatusInternalServerError)
+			// No error detail on an anonymous surface. Not RenderError:
+			// this is a customer's own phone (real browser chrome, own
+			// Back button), rendered without the operator base layout —
+			// see this file's own top-of-file comment.
+			http.Error(w, "lookup failed", http.StatusInternalServerError) // page-error:allow anonymous customer surface, no operator layout
 			return
 		}
 		if !ok {
@@ -154,7 +157,7 @@ func registerOrderTracking(mux *http.ServeMux, d *common.Deps) {
 		funcs := httpx.FuncsFor(locale)
 		o, token, ok, err := lookup(r)
 		if err != nil {
-			http.Error(w, "lookup failed", http.StatusInternalServerError)
+			http.Error(w, "lookup failed", http.StatusInternalServerError) // page-error:allow htmx poll fragment on the same anonymous customer surface
 			return
 		}
 		var viewData map[string]any

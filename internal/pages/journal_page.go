@@ -27,7 +27,7 @@ func registerJournal(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/journal/{receipt}", func(w http.ResponseWriter, r *http.Request) {
 		sale, found, err := data.NewPOSRepo(d.Db).GetSaleDetail(r.Context(), r.PathValue("receipt"))
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "journal.error.server", "journal", err)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "journal.error.server", "journal", err) // page-error:allow not yet migrated, tracked in ut-docs#1458
 			return
 		}
 		if !found {

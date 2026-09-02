@@ -100,6 +100,7 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo â
 - `gofmt -l .` (no output), `go build ./...`, `go test ./...`, and every
   CI-blocking guard in `.github/workflows/ci.yml`'s `build` job â€” currently:
   `guard-data-access.sh`, `guard-kiosk-engine.sh`, `guard-plugin-menu-read.sh`,
+  `guard-page-http-error.sh`,
   `guard-i18n.sh`, `guard-compliance-claims.sh`, `guard-docs-shots.sh`,
   `guard-help-topics.sh`, `guard-webkit-version.sh`,
   `guard-kiosk-launch-flags.sh`, `guard-android-status-address.sh`,

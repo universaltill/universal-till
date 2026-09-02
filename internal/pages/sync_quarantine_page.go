@@ -72,7 +72,7 @@ func registerSyncQuarantinePage(mux *http.ServeMux, d *common.Deps) {
 
 		entries, err := posRepo.ListJournalQuarantine(r.Context(), syncQuarantinePageSize)
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_quarantine", err)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_quarantine", err) // page-error:allow not yet migrated, tracked in ut-docs#1458
 			return
 		}
 		// See syncQuarantinePageSize's own comment: ListJournalQuarantine

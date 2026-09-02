@@ -70,31 +70,56 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 		return u, true
 	}
 
+	// requirePageManager is requireManager's gate, answered as a full
+	// RenderError page instead of a bare LocalizedError body — for the
+	// /tables page route itself (ut-docs#1455 review finding: the reported
+	// incident's own page still 403'd with a bare, rail-less body via
+	// requireManager, one call away from the fix this file otherwise
+	// carries). requireManager stays as-is for /ui/tables/state (a
+	// fragment) and the /api/tables/* mutation routes, which need the
+	// short body their JS callers expect.
+	requirePageManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
+		if !canPerform(d, r, "settings") {
+			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
+			return auth.User{}, false
+		}
+		u, _ := auth.FromContext(r.Context())
+		return u, true
+	}
+
 	audit := func(r *http.Request, actorID, targetID, action string) {
 		now := time.Now().UTC().Format(time.RFC3339)
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "table", targetID, action, nil, now, "")
 	}
 
-	tiles := func(w http.ResponseWriter, r *http.Request) ([]tableTile, bool) {
+	// tiles is shared by both the full page below and its live-state HTMX
+	// partial, which need different failure treatments — a full page can
+	// render the error through the base layout (rail + Back to sale), a
+	// partial swap cannot — so it returns the error to each caller instead
+	// of writing to w itself (ut-docs#1455: the error was previously
+	// written here as a bare, unlogged http.Error, which on a pinned
+	// Android kiosk replaced the whole screen with plain text and no way
+	// back).
+	tiles := func(r *http.Request) ([]tableTile, error) {
 		states, err := posRepo.ListTablesWithState(r.Context())
 		if err != nil {
-			http.Error(w, "failed to load tables", http.StatusInternalServerError)
-			return nil, false
+			return nil, err
 		}
 		now := time.Now().UTC()
 		out := make([]tableTile, 0, len(states))
 		for _, s := range states {
 			out = append(out, tableTile{TableWithState: s, OpenMinutes: elapsedMinutes(s.OccupiedSince, now)})
 		}
-		return out, true
+		return out, nil
 	}
 
 	mux.HandleFunc("GET /tables", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := requireManager(w, r); !ok {
+		if _, ok := requirePageManager(w, r); !ok {
 			return
 		}
-		rows, ok := tiles(w, r)
-		if !ok {
+		rows, err := tiles(r)
+		if err != nil {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "tables.error.load_failed", err)
 			return
 		}
 		httpx.Render("ui/pages/tables.html", map[string]any{
@@ -116,8 +141,9 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 		if _, ok := requireManager(w, r); !ok {
 			return
 		}
-		rows, ok := tiles(w, r)
-		if !ok {
+		rows, err := tiles(r)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "tables.error.load_failed", "tables_state", err)
 			return
 		}
 		httpx.RenderPartial("ui/partials/tables_state.html", map[string]any{

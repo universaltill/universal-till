@@ -325,7 +325,12 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	mux.HandleFunc("GET /setup", func(w http.ResponseWriter, r *http.Request) {
 		firstBoot, err := svc.NeedsFirstBoot(r.Context())
 		if err != nil {
-			http.Error(w, "setup unavailable", http.StatusInternalServerError)
+			// The first-boot wizard renders via RenderPartial with its own
+			// standalone template (no base.html/nav rail; see setup.html),
+			// before enrollment state even exists — httpx.RenderError's
+			// operator layout doesn't apply here, and there's no sale
+			// screen yet to route "Back to sale" to.
+			http.Error(w, "setup unavailable", http.StatusInternalServerError) // page-error:allow pre-enrollment wizard has no base layout to render into
 			return
 		}
 		if !firstBoot {

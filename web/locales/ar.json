@@ -555,7 +555,8 @@
   "products.no_matches": "لا توجد منتجات مطابقة.",
   "products.search_ph": "ابحث عن المنتجات…",
   "products.add": "إضافة منتج",
-  "products.title": "المنتجات",  "products.uncategorized": "بدون تصنيف",
+  "products.title": "المنتجات",
+  "products.uncategorized": "بدون تصنيف",
   "receipt.auth_code": "رمز الموافقة",
   "receipt.auto_reset": "إعادة ضبط تلقائية خلال ٦٠ ثانية…",
   "receipt.change": "الباقي",
@@ -1846,5 +1847,8 @@
   "recovery.safe_mode_col_receipt": "الإيصال",
   "recovery.safe_mode_col_total": "الإجمالي",
   "recovery.safe_mode_col_time": "الوقت",
-  "recovery.taking_longer": "لا يزال قيد العمل — قد يستغرق هذا بضع دقائق بعد تحديث قاعدة البيانات."
+  "recovery.taking_longer": "لا يزال قيد العمل — قد يستغرق هذا بضع دقائق بعد تحديث قاعدة البيانات.",
+  "error.page.title": "حدث خطأ ما",
+  "permissions.error.super_admin_required": "مطلوب صلاحية مدير النظام",
+  "tables.error.load_failed": "تعذّر تحميل الطاولات. حاول مجددًا، أو استخدم القائمة لمواصلة العمل."
 }

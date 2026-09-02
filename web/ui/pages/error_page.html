@@ -1,0 +1,13 @@
+{{ define "content" }}
+<!-- Rendered by httpx.RenderError (ut-docs#1455) in place of a bare
+     http.Error body — the base layout's rail/nav still renders around
+     this, so a page-route failure never leaves a stuck, bare-text screen
+     with no way back on a kiosk. -->
+<div class="page-head">
+  <h1>{{ T "error.page.title" }}</h1>
+</div>
+<div class="card">
+  <p>{{ .Message }}</p>
+  <a class="btn primary btn-touch" href="/">← {{ T "menu.back_to_sale" }}</a>
+</div>
+{{ end }}

@@ -29,7 +29,7 @@ func registerTranslations(mux *http.ServeMux, d *common.Deps, i18n *config.I18n)
 	// change to gated (UT_AUTH on) behavior.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		if !canPerform(d, r, "settings") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required") // page-error:allow not yet migrated, tracked in ut-docs#1458
 			return auth.User{}, false
 		}
 		u, _ := auth.FromContext(r.Context())
