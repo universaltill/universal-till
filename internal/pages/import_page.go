@@ -1496,6 +1496,62 @@ func mergeTakeawayOverrides(ctx context.Context, db *sql.DB, discovered map[stri
 	return added, false
 }
 
+// reconcileTaxDeTakeawayOverridesOnActivate mirrors mergeTakeawayOverrides
+// for the OTHER direction of ut-docs#512/#1370: a catalog import can
+// happen BEFORE the German tax plugin is installed (tax codes created,
+// overrides silently skipped — the ut-docs#531 branch), and nothing
+// re-visits those tax codes once the plugin activates later. Reconciles
+// from every ACTIVE tax code's pinned takeaway rate (not just the rows one
+// import just touched), covering "the plugin was installed/re-enabled
+// after the catalog already existed" the way mergeTakeawayOverrides covers
+// "the catalog was imported after the plugin already existed". Add-only
+// via the same MergeAdditiveJSONMapSetting — a manual override is never
+// touched. Safe to call after every activation (install, enable, upgrade)
+// of taxDePluginID: idempotent, a shop with nothing new to reconcile is a
+// clean no-op (no write, no generation bump).
+//
+// Product decision (2026-09-01, ut-docs#1370): a successful country-plugin
+// install/enable IS the consent boundary — the applicable default legal
+// values become ACTIVE overrides immediately, not a placeholder-only
+// suggestion the settings screen renders as if it were configured.
+func reconcileTaxDeTakeawayOverridesOnActivate(ctx context.Context, db *sql.DB) (added int, failed bool) {
+	taxCodes, err := data.NewCatalogRepo(db).ListTaxCodes(ctx)
+	if err != nil {
+		log.Printf("[plugins] list tax codes for takeaway_rate_overrides reconcile: %v", err)
+		return 0, true
+	}
+	discovered := map[string]int{}
+	for _, tc := range taxCodes {
+		// > 0: the real plugin treats rate<=0 as "no opinion" (ut-docs#1351),
+		// so a zero-pinned entry would be a dead write.
+		if tc.TakeawayRateBP != nil && *tc.TakeawayRateBP > 0 {
+			discovered[tc.ID] = int(*tc.TakeawayRateBP)
+		}
+	}
+	if len(discovered) == 0 {
+		return 0, false
+	}
+	return mergeTakeawayOverrides(ctx, db, discovered)
+}
+
+// reconcileTaxDeTakeawayOverridesIfActivated calls
+// reconcileTaxDeTakeawayOverridesOnActivate exactly when pluginID is the
+// German tax plugin, logging (never failing the caller) on error. Every
+// plugin-activation call site in this package should call this right
+// before its own ReloadPlugins — ut-docs#1370's second review round found
+// two operator-facing activation paths (import-from-file, Plugin Store
+// install) that had been missed because the guard was duplicated per call
+// site instead of centralized; a future new activation path now only
+// needs to call this one function to be covered.
+func reconcileTaxDeTakeawayOverridesIfActivated(ctx context.Context, db *sql.DB, pluginID string) {
+	if pluginID != taxDePluginID {
+		return
+	}
+	if _, failed := reconcileTaxDeTakeawayOverridesOnActivate(ctx, db); failed {
+		log.Printf("[plugins] reconcile takeaway_rate_overrides on activation of %s: failed, see prior log line", pluginID)
+	}
+}
+
 // zipMagic is the local-file-header signature every non-empty ZIP (a .bkp
 // backup included) starts with; zipEmptyMagic is the end-of-central-
 // directory signature an entirely empty ZIP starts with instead — sniffed

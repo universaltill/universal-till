@@ -297,6 +297,10 @@ func registerPluginStoreAPI(mux *http.ServeMux, d *common.Deps) {
 			CurrentVersion: result.Version,
 			State:          plugins.InstallStateActive,
 		})
+		// ut-docs#1370: the Plugin Store's "install" button activates the
+		// plugin — reconcile the catalog's pinned takeaway rates for the
+		// German tax plugin, same as every other activation path.
+		reconcileTaxDeTakeawayOverridesIfActivated(r.Context(), d.Db, result.PluginID)
 		if err := d.ReloadPlugins(r.Context()); err != nil {
 			logging.L().Warnf("[PluginStore] reload after install: %v", err)
 		}
