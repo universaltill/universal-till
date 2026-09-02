@@ -243,6 +243,8 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		funcs["taxCodeName"] = taxCodeNameFunc(taxCodes)
+		funcs["categoryName"] = lookupNameFunc(cats)
+		funcs["brandName"] = lookupNameFunc(brands)
 		barcodes, _ := repo.ItemBarcodes(r.Context())
 		variants, _ := repo.ItemVariants(r.Context())
 		data := map[string]any{
@@ -260,7 +262,6 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			filepath.Join("web", "ui", "pages", "catalog.html"),
 			filepath.Join("web", "ui", "partials", "nav.html"),
 			filepath.Join("web", "ui", "partials", "bugreport_panel.html"),
-			filepath.Join("web", "ui", "partials", "catalog_lookups.html"),
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
 			filepath.Join("web", "ui", "partials", "catalog_row.html"),
 			filepath.Join("web", "ui", "partials", "catalog_variants.html"),
@@ -1153,6 +1154,25 @@ func taxCodeNameFunc(taxCodes []data.TaxCodeView) func(id *string) string {
 	names := make(map[string]string, len(taxCodes))
 	for _, tc := range taxCodes {
 		names[tc.ID] = tc.Name
+	}
+	return func(id *string) string {
+		if id == nil {
+			return ""
+		}
+		return names[*id]
+	}
+}
+
+// lookupNameFunc returns a template func resolving a stored lookup id
+// (category/brand) to its display name (ut-docs#1430) instead of letting
+// the raw id render -- same shape and *string-nil handling as
+// taxCodeNameFunc above, generalized since categories and brands are both
+// plain id/name lookup tables. Built from the already-fetched cats/brands
+// list at the /catalog route, so this costs no extra query.
+func lookupNameFunc(lookups []lookup) func(id *string) string {
+	names := make(map[string]string, len(lookups))
+	for _, l := range lookups {
+		names[l.ID] = l.Name
 	}
 	return func(id *string) string {
 		if id == nil {

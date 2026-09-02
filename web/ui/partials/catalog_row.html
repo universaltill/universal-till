@@ -21,6 +21,7 @@
             <td>{{ money .Item.BasePrice }}</td>
             <td>{{ if .Item.Unit }}{{ .Item.Unit }}{{ else }}each{{ end }}{{ if .Item.IsWeighed }} ⚖{{ end }}</td>
             <td>{{ $name := taxCodeName .Item.TaxCodeID }}{{ if $name }}{{ $name }}{{ else }}—{{ end }}</td>
+            <td>{{ $cn := categoryName .Item.CategoryID }}{{ if $cn }}{{ $cn }}{{ else }}—{{ end }}</td>
             <td class="btn-actions">
               <button class="btn secondary catalog-edit" type="button">{{ T "common.edit" }}</button>
               <button class="btn danger" type="button"
@@ -34,7 +35,7 @@
 
 {{/* The "no items yet" placeholder row, shared by the table's else-branch
      and the OOB append fragment below. */}}
-{{ define "catalog_empty_row" }}<tr id="catalog-empty-row"><td colspan="7" class="empty">{{ T "basket.empty" }}</td></tr>{{ end }}
+{{ define "catalog_empty_row" }}<tr id="catalog-empty-row"><td colspan="8" class="empty">{{ T "basket.empty" }}</td></tr>{{ end }}
 
 {{/* ------------------------------------------------------------------
      Out-of-band fragments. Two constraints of the vendored htmx 1.9.12
