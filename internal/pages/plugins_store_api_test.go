@@ -301,20 +301,18 @@ func validStorePublicKey(t *testing.T) string {
 	return hex.EncodeToString(pub)
 }
 
-// TestStoreAPI_InstallFromStagedBundleSucceeds drives the real "downloaded ->
-// installed" transition: a signed asset-only bundle staged exactly where
-// DownloadToStore would put it, then POST /api/plugins/store/install.
-func TestStoreAPI_InstallFromStagedBundleSucceeds(t *testing.T) {
-	t.Setenv("UT_AUTH", "off")
-
-	// A signed, asset-only (runtime "none") manifest — no executable needed.
+// signedAssetOnlyManifest returns a signed, asset-only (runtime "none")
+// manifest for id/name — no executable needed to install it — plus the hex
+// public key that verifies it.
+func signedAssetOnlyManifest(t *testing.T, id, name string) (plugins.Manifest, string) {
+	t.Helper()
 	pub, priv, err := ed25519.GenerateKey(rand.Reader)
 	if err != nil {
 		t.Fatalf("generate key: %v", err)
 	}
 	m := plugins.Manifest{
-		ID:            "com.test.storeinstall",
-		Name:          "Store Install Plugin",
+		ID:            id,
+		Name:          name,
 		Version:       "1.0.0",
 		Runtime:       "none",
 		CanonicalType: "theme",
@@ -325,19 +323,21 @@ func TestStoreAPI_InstallFromStagedBundleSucceeds(t *testing.T) {
 		t.Fatalf("marshal canonical: %v", err)
 	}
 	m.Signature = hex.EncodeToString(ed25519.Sign(priv, canonical))
+	return m, hex.EncodeToString(pub)
+}
 
-	mux, d := newStoreAPIMux(t, config.MarketplaceConfig{
-		EndpointURL: "http://127.0.0.1:0",
-		PublicKey:   hex.EncodeToString(pub),
-	})
-
-	// Stage the bundle + metadata exactly as DownloadToStore records them.
+// stageSignedStoreBundle writes m as a bundle plus its metadata under
+// paths.Plugins("downloads") exactly as DownloadToStore records them, so a
+// POST /api/plugins/store/install for listingID finds it. Returns the staged
+// bundle path (a successful install consumes it).
+func stageSignedStoreBundle(t *testing.T, m plugins.Manifest, listingID string) string {
+	t.Helper()
 	bundleSrc := writePluginBundle(t, m)
 	downloads := paths.Plugins("downloads")
 	if err := os.MkdirAll(downloads, 0o755); err != nil {
 		t.Fatalf("mkdir downloads: %v", err)
 	}
-	bundlePath := filepath.Join(downloads, "lst-store.tar.gz")
+	bundlePath := filepath.Join(downloads, listingID+".tar.gz")
 	src, err := os.Open(bundleSrc)
 	if err != nil {
 		t.Fatalf("open bundle: %v", err)
@@ -356,20 +356,38 @@ func TestStoreAPI_InstallFromStagedBundleSucceeds(t *testing.T) {
 		t.Fatalf("checksum: %v", err)
 	}
 	metaRaw, err := json.Marshal(map[string]any{
-		"listing_id":      "lst-store",
+		"listing_id":      listingID,
 		"version":         m.Version,
 		"checksum_sha256": sum,
 		"signature":       m.Signature,
-		"source_url":      "https://marketplace.example/bundles/lst-store.tar.gz",
+		"source_url":      "https://marketplace.example/bundles/" + listingID + ".tar.gz",
 		"bundle_path":     bundlePath,
 		"downloaded_at":   time.Now().UTC().Format(time.RFC3339),
 	})
 	if err != nil {
 		t.Fatalf("marshal meta: %v", err)
 	}
-	if err := os.WriteFile(filepath.Join(downloads, "lst-store.json"), metaRaw, 0o644); err != nil {
+	if err := os.WriteFile(filepath.Join(downloads, listingID+".json"), metaRaw, 0o644); err != nil {
 		t.Fatalf("write meta: %v", err)
 	}
+	return bundlePath
+}
+
+// TestStoreAPI_InstallFromStagedBundleSucceeds drives the real "downloaded ->
+// installed" transition: a signed asset-only bundle staged exactly where
+// DownloadToStore would put it, then POST /api/plugins/store/install.
+func TestStoreAPI_InstallFromStagedBundleSucceeds(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+
+	// A signed, asset-only (runtime "none") manifest — no executable needed.
+	m, pubHex := signedAssetOnlyManifest(t, "com.test.storeinstall", "Store Install Plugin")
+
+	mux, d := newStoreAPIMux(t, config.MarketplaceConfig{
+		EndpointURL: "http://127.0.0.1:0",
+		PublicKey:   pubHex,
+	})
+
+	bundlePath := stageSignedStoreBundle(t, m, "lst-store")
 
 	rec := postForm(mux, "/api/plugins/store/install", url.Values{"listing_id": {"lst-store"}}, nil)
 	if rec.Code != http.StatusOK {

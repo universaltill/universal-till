@@ -291,6 +291,13 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 			State:          plugins.InstallStateActive,
 		})
 
+		// ut-docs#1370: the German tax plugin is now durably active — fold
+		// the catalog's pre-existing pinned takeaway rates into its
+		// takeaway_rate_overrides (add-only). Best-effort: the install has
+		// succeeded regardless, so a failure is logged, never surfaced as
+		// an install error.
+		reconcileTaxDeTakeawayOverridesIfActivated(ctx, d.Db, result.PluginID)
+
 		// Reload plugin manager to pick up the new plugin and rebuild the
 		// nav so newly registered pages appear immediately (serialized —
 		// the sync-pull goroutine runs the same sequence).
@@ -443,6 +450,14 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 				"error": fmt.Sprintf("failed to %s plugin: %v", verb, err),
 			})
 			return
+		}
+		// ut-docs#1370: re-enabling the German tax plugin is an activation
+		// — fold the catalog's pinned takeaway rates into its
+		// takeaway_rate_overrides (add-only, a merchant-set entry is never
+		// overwritten). Enable only, never on disable. Best-effort: the
+		// flip has already landed, so a failure is logged, not surfaced.
+		if active {
+			reconcileTaxDeTakeawayOverridesIfActivated(ctx, d.Db, pluginID)
 		}
 		if err := d.ReloadPlugins(ctx); err != nil {
 			log.Printf("warning: reload after %s %s: %v", verb, pluginID, err)
@@ -625,6 +640,11 @@ func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 			State:          plugins.InstallStateActive,
 		})
 
+		// ut-docs#1370: an update re-activates the plugin — on a standalone
+		// till "Update" is the remediation a merchant is most likely to try,
+		// so it must reconcile the catalog's pinned takeaway rates too.
+		reconcileTaxDeTakeawayOverridesIfActivated(ctx, d.Db, result.PluginID)
+
 		if err := d.ReloadPlugins(ctx); err != nil {
 			log.Printf("Warning: failed to reload plugin manager: %v", err)
 		}
@@ -682,6 +702,9 @@ func handleRollbackPlugin(d *common.Deps) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf("Rollback failed: %v", err), http.StatusInternalServerError)
 			return
 		}
+
+		// ut-docs#1370: a rollback is an activation of the restored version.
+		reconcileTaxDeTakeawayOverridesIfActivated(ctx, d.Db, pluginID)
 
 		if err := d.ReloadPlugins(ctx); err != nil {
 			log.Printf("Warning: failed to reload plugin manager: %v", err)
@@ -831,6 +854,11 @@ func handleImportFromFile(d *common.Deps) http.HandlerFunc {
 			http.Error(w, fmt.Sprintf("Import failed: %v", err), http.StatusBadRequest)
 			return
 		}
+
+		// ut-docs#1370: PersistManifest activates the imported plugin
+		// unconditionally, so a sideloaded German tax plugin must reconcile
+		// the catalog's pinned takeaway rates like every other activation.
+		reconcileTaxDeTakeawayOverridesIfActivated(ctx, d.Db, result.PluginID)
 
 		// Reload plugin manager
 		if err := d.ReloadPlugins(ctx); err != nil {

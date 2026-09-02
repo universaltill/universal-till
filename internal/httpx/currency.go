@@ -3,6 +3,7 @@ package httpx
 import (
 	"fmt"
 	"html/template"
+	"math"
 	"strings"
 )
 
@@ -208,6 +209,25 @@ func FormatMajorPlain(minor int64, decimals int) string {
 		s = "-" + s
 	}
 	return s
+}
+
+// MinorFromMajor converts a value entered in major units (e.g. "5.00" under
+// a 2-decimal currency, or "500" under a 0-decimal one) into minor units --
+// the write-side inverse of FormatMajorPlain, for a Go-side form handler
+// parsing a major-unit amount instead of relying on
+// window.utCurrency.toMinor() client-side. Rounds to the nearest minor unit
+// to absorb float parsing imprecision, same as the hardcoded `* 100`
+// literals this replaces already did for 2-decimal currencies.
+// ut-docs#1400: promotions_page.go/settings_page.go hardcoded `* 100`
+// regardless of the active currency's decimals, storing a 100x-too-large
+// value on a 0-decimal shop (IRR/IRT/IQD/AFN/JPY) -- e.g. an operator
+// entering "500" for ¥500 got 50000 minor units persisted.
+func MinorFromMajor(major float64, decimals int) int64 {
+	pow := int64(1)
+	for i := 0; i < decimals; i++ {
+		pow *= 10
+	}
+	return int64(math.Round(major * float64(pow)))
 }
 
 // MoneyPattern renders the value a decimal-mode money input's `pattern`
