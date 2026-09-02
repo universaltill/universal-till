@@ -8,14 +8,23 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.util.Base64
+import android.view.PixelCopy
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.PermissionRequest
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -32,6 +41,10 @@ import androidx.core.os.LocaleListCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Native shell (ADR-0023, spec 013 Phase 2): binds to [TillService] — which
@@ -144,6 +157,50 @@ class MainActivity : AppCompatActivity() {
             callback.onReceiveValue(uris)
         }
 
+    // ut-docs#1435: the WebView-side half of camera/microphone access. A
+    // page's getUserMedia() call surfaces as WebChromeClient.onPermissionRequest
+    // (below, in onCreate's webChromeClient) — and a plain WebView's default
+    // implementation of that callback is request.deny(), unconditionally, so
+    // until this was wired up the bug-report panel's voice note was silently
+    // refused on every Android till (the panel's own "mic error" message,
+    // with no OS prompt ever shown — exactly the ticket's symptom). The
+    // WebView contract is that EVERY PermissionRequest is resolved with
+    // exactly one grant()/deny(), which can't happen inline when the Android
+    // runtime permission still has to be asked for: the request is parked
+    // here across that async gap and resolved from the launcher's callback.
+    // Same registration shape as fileChooserLauncher above (a class-level
+    // property, registered before STARTED as the Activity Result API
+    // requires), and RequestMultiplePermissions rather than the single-
+    // permission contract requestNotificationPermission uses because one
+    // getUserMedia({audio, video}) can need CAMERA and RECORD_AUDIO at once.
+    private var pendingMediaRequest: PermissionRequest? = null
+    private val mediaPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            val request = pendingMediaRequest ?: return@registerForActivityResult
+            pendingMediaRequest = null
+            // Re-read the real grant state rather than trusting the result
+            // map alone: a permission that was already granted before the
+            // dialog isn't in the map at all (it was never asked for), and
+            // a resource whose permission the user just refused must not
+            // be granted on the WebView side — partial grants are fine
+            // (mic yes, camera no), a grant the OS didn't back is not.
+            val granted = grantedMediaResources(request.resources)
+            if (granted.isEmpty()) request.deny() else request.grant(granted.toTypedArray())
+        }
+
+    /**
+     * The subset of a [PermissionRequest]'s resources whose backing Android
+     * runtime permission is currently granted (ut-docs#1435). Only the two
+     * resources in [MEDIA_PERMISSIONS] can ever be returned — anything else
+     * a page might ask for (RESOURCE_PROTECTED_MEDIA_ID, ...) is dropped,
+     * never granted, since this till has no use for it.
+     */
+    private fun grantedMediaResources(resources: Array<String>): List<String> =
+        resources.filter { resource ->
+            val permission = MEDIA_PERMISSIONS[resource] ?: return@filter false
+            ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+        }
+
     // ut-docs#1254: whether a manager has deliberately left kiosk mode.
     // Set true ONLY by [KioskBridge.exitLockdown] (the server's own
     // purpose-built "exit to OS" escape hatch, internal/pages/
@@ -192,6 +249,146 @@ class MainActivity : AppCompatActivity() {
                 kioskUnlocked = true
                 releaseKioskLock()
                 clearImmersiveMode()
+            }
+        }
+
+        /**
+         * Native screenshot for the bug-report panel (ut-docs#1435). Android's
+         * WebView implements no `getDisplayMedia` at all, so the panel's
+         * screenshot button — which every other platform backs with a one-
+         * frame display capture — could only ever report "not available
+         * here" on an Android till. This returns the WebView's current
+         * visual content as a `data:image/png;base64,...` URL, which the
+         * panel turns into a Blob with the same `fetch(url).blob()` shape the
+         * rest of its capture code already produces (bugreport_panel.html's
+         * `window.AndroidKiosk.captureScreenshot` branch); `""` on any
+         * failure, never an exception — nothing may throw across the JS
+         * bridge.
+         *
+         * Sync-over-async, deliberately: a @JavascriptInterface method runs
+         * on a WebView-owned BACKGROUND thread and has to hand its return
+         * value back synchronously (the bridge has no promise/callback
+         * channel), while the capture itself must happen on the UI thread
+         * and, via PixelCopy, completes asynchronously on a Handler. So the
+         * capture is posted to the UI thread and this thread blocks on a
+         * CountDownLatch that the completion callback counts down — with a
+         * timeout, so a stalled copy (window not yet drawn, surface torn
+         * down mid-call) degrades to `""` rather than parking the WebView's
+         * bridge thread forever. Blocking here does not block the Android
+         * UI thread, which is what actually does the work — but it DOES
+         * block the page's own JS main thread for the call's whole
+         * duration (this is a synchronous @JavascriptInterface call, by
+         * construction): the panel is unresponsive for that stretch, up to
+         * [SCREENSHOT_TIMEOUT_SECONDS] in the pathological case, same as
+         * any other synchronous native bridge call. In the ordinary case
+         * PixelCopy completes within a frame or two, so this reads as a
+         * brief pause, not a hang — review finding, ut-docs#1435: an
+         * earlier draft of this comment (and android/README.md) overstated
+         * this as "never janks," which conflated the UI thread staying
+         * free with the JS thread also staying free; corrected here.
+         *
+         * API branch: PixelCopy (API 26+) reads back the composited window
+         * surface — the only way to get real pixels out of a hardware-
+         * accelerated WebView. The platform has no `View` overload, only
+         * Surface/SurfaceView/Window ones, so this uses the Window overload
+         * with the WebView's own bounds (in window coordinates) as the
+         * source Rect: exactly the WebView's content, nothing else this
+         * Activity draws (the debug-only status bar, which is GONE in
+         * release anyway). API 24-25 (this app's minSdk is 24) fall back to
+         * View.draw onto a software Canvas — the classic pre-PixelCopy
+         * technique; it can render a hardware-accelerated WebView less
+         * faithfully, but those two API levels are the "still supported,
+         * not what any real till runs" range startDownload's KDoc already
+         * describes. The PNG encode runs on the calling background thread
+         * once the Bitmap is handed over, not on the UI thread: a full-
+         * resolution till screen takes tens to hundreds of ms to compress,
+         * which would otherwise be a visible jank on the live sale screen.
+         * The Bitmap is recycled after encoding — a manager retaking a
+         * shot many times over a long session must not accumulate screen-
+         * sized buffers.
+         *
+         * Safe to expose on the same reasoning as exitLockdown above: the
+         * WebView only ever shows the till's own loopback-origin pages
+         * (shouldOverrideUrlLoading confines navigation to allowedHost), so
+         * the only content this can ever capture is what that page is
+         * already displaying to — and could already read from its own DOM
+         * for — the same operator who pressed the button. No native chrome
+         * or other app's surface is reachable through the WebView's rect.
+         */
+        @JavascriptInterface
+        fun captureScreenshot(): String {
+            val latch = CountDownLatch(1)
+            val captured = AtomicReference<Bitmap?>(null)
+            runOnUiThread {
+                // Visible to the catch block below so a Bitmap that was
+                // successfully allocated but never reached PixelCopy's
+                // callback (request() itself threw — e.g. an invalid Rect —
+                // which can only happen before it schedules that callback,
+                // so `captured` is guaranteed still unset here) is recycled
+                // instead of silently left for GC (review finding,
+                // ut-docs#1435).
+                var bitmap: Bitmap? = null
+                try {
+                    val width = webView.width
+                    val height = webView.height
+                    if (width <= 0 || height <= 0) {
+                        // Called before layout (or on a detached WebView):
+                        // nothing to capture, and createBitmap(0, 0) throws.
+                        latch.countDown()
+                        return@runOnUiThread
+                    }
+                    val newBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                    bitmap = newBitmap
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        val location = IntArray(2)
+                        webView.getLocationInWindow(location)
+                        val source = Rect(location[0], location[1], location[0] + width, location[1] + height)
+                        PixelCopy.request(
+                            window,
+                            source,
+                            newBitmap,
+                            PixelCopy.OnPixelCopyFinishedListener { copyResult ->
+                                if (copyResult == PixelCopy.SUCCESS) {
+                                    captured.set(newBitmap)
+                                } else {
+                                    newBitmap.recycle()
+                                }
+                                latch.countDown()
+                            },
+                            Handler(Looper.getMainLooper()),
+                        )
+                    } else {
+                        webView.draw(Canvas(newBitmap))
+                        captured.set(newBitmap)
+                        latch.countDown()
+                    }
+                } catch (e: Exception) {
+                    // Same never-crash-the-till posture as every other
+                    // native helper in this file: a failed screenshot is
+                    // "" on the web side, not a dead till.
+                    bitmap?.recycle()
+                    latch.countDown()
+                }
+            }
+            val finished =
+                try {
+                    latch.await(SCREENSHOT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                } catch (e: InterruptedException) {
+                    false
+                }
+            // On a timeout the UI side may still complete later and set the
+            // reference; that Bitmap is simply left for GC (API 26+ keeps
+            // Bitmap pixels on the Java heap, so no native-memory leak) —
+            // only a copy that's actually consumed is recycled explicitly.
+            val bitmap = (if (finished) captured.getAndSet(null) else null) ?: return ""
+            return try {
+                val out = ByteArrayOutputStream()
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                "data:image/png;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+            } catch (e: Exception) {
+                ""
+            } finally {
+                bitmap.recycle()
             }
         }
     }
@@ -526,6 +723,76 @@ class MainActivity : AppCompatActivity() {
                         false
                     }
                 }
+
+                // ut-docs#1435: a page's getUserMedia() lands here; WebChrome-
+                // Client's own default is an unconditional deny(), which is
+                // why the bug-report panel's voice note never worked on an
+                // Android till (see the pendingMediaRequest comment above).
+                // This only ever fires in response to a real in-page capture
+                // call, so "never prompt for camera/mic at boot, only when a
+                // capture feature is actually used" is satisfied by simply
+                // not requesting these anywhere else in this file.
+                override fun onPermissionRequest(request: PermissionRequest) {
+                    // Origin scoping, failing closed: exactly the host
+                    // comparison shouldOverrideUrlLoading uses (authority ==
+                    // allowedHost — TillService reports host:port, so it's
+                    // the authority, not the bare host, that matches), with
+                    // the same null rule: until the till's real address is
+                    // known, nothing may be granted, because no page of ours
+                    // can legitimately be asking yet. Navigation is already
+                    // confined to that origin, so this is defense in depth
+                    // — but a camera/mic grant to any other origin would be
+                    // a real leak, so it's checked here independently too.
+                    val origin: Uri? = request.origin
+                    if (allowedHost == null || origin == null || origin.authority != allowedHost) {
+                        request.deny()
+                        return
+                    }
+                    // Only the two resources MEDIA_PERMISSIONS maps are ever
+                    // grantable; a request for anything else alone
+                    // (RESOURCE_PROTECTED_MEDIA_ID, ...) is denied outright.
+                    val wanted = request.resources.filter { it in MEDIA_PERMISSIONS }
+                    if (wanted.isEmpty()) {
+                        request.deny()
+                        return
+                    }
+                    val missing =
+                        wanted.mapNotNull { MEDIA_PERMISSIONS[it] }.filter {
+                            ContextCompat.checkSelfPermission(this@MainActivity, it) != PackageManager.PERMISSION_GRANTED
+                        }
+                    if (missing.isEmpty()) {
+                        // Already granted (the second and every later voice
+                        // note): no OS prompt, no round trip.
+                        request.grant(wanted.toTypedArray())
+                        return
+                    }
+                    // One in-flight request at a time: a second one arriving
+                    // while the OS dialog is still up is denied rather than
+                    // overwriting the first, because silently dropping a
+                    // PermissionRequest (never grant()ing or deny()ing it)
+                    // violates the WebView contract; the page just retries.
+                    if (pendingMediaRequest != null) {
+                        request.deny()
+                        return
+                    }
+                    pendingMediaRequest = request
+                    try {
+                        mediaPermissionLauncher.launch(missing.toTypedArray())
+                    } catch (e: Exception) {
+                        // launch() can throw (e.g. IllegalStateException if the
+                        // Activity is finishing/destroyed) — if it does, the
+                        // callback that would normally clear pendingMediaRequest
+                        // and resolve the request never runs. Left alone, that
+                        // both leaks this PermissionRequest (never grant()ed or
+                        // deny()ed — a WebView contract violation) AND wedges
+                        // every later getUserMedia() shut via the in-flight
+                        // check above, silently reproducing this ticket's
+                        // original symptom for the rest of the process. Deny
+                        // and clear immediately instead; the page can retry.
+                        pendingMediaRequest = null
+                        request.deny()
+                    }
+                }
             }
 
         statusView.text = getString(R.string.status_starting)
@@ -544,6 +811,10 @@ class MainActivity : AppCompatActivity() {
             },
         )
 
+        // ut-docs#1435: unlike POST_NOTIFICATIONS here, CAMERA/RECORD_AUDIO
+        // are requested lazily — only from webChromeClient's
+        // onPermissionRequest above, i.e. only when a page actually starts
+        // a capture — never at boot.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             requestNotificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -607,5 +878,21 @@ class MainActivity : AppCompatActivity() {
         // single page load) or reach LocaleListCompat.forLanguageTags as
         // outright garbage (independent review, 2026-08-07).
         private val KNOWN_LOCALES = setOf("en", "fa", "tr", "ar")
+
+        // ut-docs#1435: WebView PermissionRequest resource → the Android
+        // runtime permission that backs it. Deliberately only these two:
+        // whatever else a page could ask for is never grantable here (see
+        // grantedMediaResources / onPermissionRequest).
+        private val MEDIA_PERMISSIONS =
+            mapOf(
+                PermissionRequest.RESOURCE_VIDEO_CAPTURE to android.Manifest.permission.CAMERA,
+                PermissionRequest.RESOURCE_AUDIO_CAPTURE to android.Manifest.permission.RECORD_AUDIO,
+            )
+
+        // ut-docs#1435: how long KioskBridge.captureScreenshot's bridge
+        // thread waits for the UI-thread PixelCopy to finish before giving
+        // up with "". A copy normally completes within one frame; 5s is
+        // "something is genuinely wrong", not a tuning knob.
+        private const val SCREENSHOT_TIMEOUT_SECONDS = 5L
     }
 }
