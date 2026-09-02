@@ -14,8 +14,10 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo â
 - Threading `*sql.DB` / `*sql.Tx` through the domain layer is fine; writing the
   query outside the data layer is not. Add a `PluginRepo`/`POSRepo`/etc. method
   instead.
-- Migrations under `internal/db/migrations/` are **append-only** after the first
-  release (`001_init.sql` may still be edited pre-release).
+- Migrations under `internal/db/migrations/` are **append-only** after the
+  first paying shop goes live on this schema (`001_init.sql` may still be
+  edited freely before that, across as many pre-revenue releases as needed â€”
+  ADR-0074; superseded "append-only after the first release").
 
 ## Offline-first (non-negotiable)
 - **Checkout must never be blocked by the network.** A full sale completes offline.
