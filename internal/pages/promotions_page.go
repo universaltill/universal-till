@@ -272,7 +272,11 @@ func newPromotionView(p data.PromotionAdmin) promotionView {
 		v.ValuePercent = fmt.Sprintf("%.2f", pct)
 	} else {
 		v.ValueDisplay = money.FromMinor(p.Value).Format()
-		v.ValueAmountMajor = fmt.Sprintf("%.2f", float64(p.Value)/100)
+		// ut-docs#1290: was hardcoded %.2f against /100, silently wrong on a
+		// 0-decimal currency (IRR/IRT/IQD/AFN/JPY) -- 500 minor units
+		// rendered as "5.00" instead of "500". Same fix as ut-docs#1274's
+		// CarryForwardDisplay.
+		v.ValueAmountMajor = httpx.FormatMajorPlain(p.Value, httpx.ActiveCurrency().Decimals)
 	}
 	return v
 }

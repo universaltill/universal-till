@@ -223,7 +223,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 						fr.PercentMaj = fmt.Sprintf("%.2f", float64(f.BP)/100)
 					}
 					if f.Fixed > 0 {
-						fr.FixedMaj = fmt.Sprintf("%.2f", float64(f.Fixed)/100)
+						// ut-docs#1290: was hardcoded %.2f against /100,
+						// silently wrong on a 0-decimal currency (IRR/IRT/
+						// IQD/AFN/JPY) -- 500 minor units rendered as
+						// "5.00" instead of "500". Same fix as
+						// ut-docs#1274's CarryForwardDisplay.
+						fr.FixedMaj = httpx.FormatMajorPlain(f.Fixed, httpx.ActiveCurrency().Decimals)
 					}
 				}
 			}

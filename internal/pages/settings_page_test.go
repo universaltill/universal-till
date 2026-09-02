@@ -1906,6 +1906,56 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 	}
 }
 
+// ut-docs#1290: the payments-fee row's FixedMaj prefill (the "fixed"
+// input's value attribute) hardcoded a 2-decimal `%.2f` against `/100`,
+// same defect class as ut-docs#1274's CarryForwardDisplay -- silently wrong
+// on a 0-decimal currency (IRR/IRT/IQD/AFN/JPY), where minor units ARE
+// major units (500 minor rendered "5.00" instead of "500"). Stores the fee
+// setting directly at a known minor value so this test isolates the
+// display/prefill fix from the (separate, out-of-scope) fixed-field
+// write-path parsing in POST /api/settings/payments-fee.
+func TestSettingsPage_PaymentsFeeFixedMajIsCurrencyAware(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	for _, s := range []string{
+		`CREATE TABLE payment_methods (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT,
+		 is_active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, plugin_id TEXT)`,
+		`INSERT INTO payment_methods (id, name, type, is_active, sort_order) VALUES ('cash', 'Cash', 'cash', 1, 1)`,
+	} {
+		if _, err := d.Db.Exec(s); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := d.Settings.Set(t.Context(), "payments.fee.cash", `{"bp":0,"fixed":500}`); err != nil {
+		t.Fatal(err)
+	}
+
+	get := func() string {
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/settings", nil), mgrUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d: %s", rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	httpx.InitCurrency("GBP")
+	body := get()
+	if !strings.Contains(body, `value="5.00"`) {
+		t.Fatalf("expected the 2-decimal FixedMaj prefill for GBP, got:\n%s", body)
+	}
+
+	httpx.InitCurrency("IRT")
+	t.Cleanup(func() { httpx.InitCurrency("GBP") }) // ut-docs#970 convention: process-global, reset for later tests in this package.
+	body = get()
+	if !strings.Contains(body, `value="500"`) {
+		t.Fatalf("expected the 0-decimal FixedMaj prefill \"500\" (no /100) for IRT, got:\n%s", body)
+	}
+	if strings.Contains(body, `value="5.00"`) {
+		t.Fatalf("expected NO 2-decimal FixedMaj prefill left over once currency is 0-decimal, got:\n%s", body)
+	}
+}
+
 // ut-docs#867 review nit: with none of the Data card's data-availability
 // guards true (no demo sample, no pending base plugin, no deferred restore
 // prompt), a cashier must not get an empty bordered card containing only the
