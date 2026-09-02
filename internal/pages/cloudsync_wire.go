@@ -337,6 +337,11 @@ func cloudInstallPluginVersion(ctx context.Context, d *common.Deps, listingID, v
 		ListingID: listingID, PluginID: result.PluginID, PluginName: result.Name,
 		CurrentVersion: result.Version, State: plugins.InstallStateActive,
 	})
+	// ut-docs#1370: same post-activation reconcile as
+	// handleInstallFromMarketplace — a directive/sync install (or pinned
+	// upgrade) of the German tax plugin folds the catalog's pinned takeaway
+	// rates into takeaway_rate_overrides, add-only. Best-effort, logged.
+	reconcileTaxDeTakeawayOverridesIfActivated(ctx, d.Db, result.PluginID)
 	// ReloadPlugins nil-checks d.Pm (this path used to dereference it bare
 	// while cloudRemovePlugin checked — now both are safe) and serializes
 	// the reload + menu rebuild against every other lifecycle call site.
