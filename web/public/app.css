@@ -232,27 +232,29 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
   font-weight: 600; cursor: pointer; text-align: center;
 }
 .nav-toggle:hover, .nav-toggle:active { background: rgba(255,255,255,.22); }
+/* 2026-09-02 (ut-docs#1423, seen on the tablet next to the icon-size
+   report): the two rail items that are <button>s (bug-report toggle, Lock)
+   rendered ~48px wide against ~60px for the <a> tiles — a <button>
+   shrink-wraps its content even as a stretch flex item / inside a block
+   <form>, so it needs an explicit inline-size to match. Reset to auto in
+   the <=480px top bar, where every control sits in a row. */
+.nav button.nav-toggle { inline-size: 100%; }
 /* 2026-08-30 (product owner, live on the tablet): fixed box, centered
-   content -- emoji glyphs don't share the same natural metrics (🧾/☰/📦/
-   🛒/♻️/👥/🏷️/🌐/👤/🔒 all render at visibly different sizes at the same
-   font-size otherwise), so a plain font-size alone left every rail icon a
-   different apparent size. A fixed-size flex box normalizes each icon's
-   footprint regardless of its glyph's own intrinsic dimensions. */
+   content -- a fixed-size flex box normalizes each icon's footprint.
+   2026-09-02 (ut-docs#1423): the icons themselves are now inline SVG
+   ({{ icon }}, internal/httpx/icons.go), not emoji. Two rounds of
+   per-glyph emoji font-size tuning (#1332, #1348's `.ico-boost`) each
+   passed on desktop Chromium and each still left 🔒/🐞 visibly smaller on
+   the real tablet, because every platform's colour-emoji font pads each
+   glyph differently. One vector set, one CSS size, identical everywhere;
+   `.ico-boost` is gone with it. font-size is kept only so a stray text
+   node can never render huge. */
 .nav-toggle-ico {
   display: inline-flex; align-items: center; justify-content: center;
   inline-size: 1.6rem; block-size: 1.6rem;
   font-size: 1.25rem; line-height: 1;
 }
-/* 2026-08-30 (product owner, live on the tablet, second pass): the fixed
-   box above normalizes each icon's LAYOUT footprint, but not the glyph's
-   own rendered size within it — confirmed live: ☰/♻️/🔒 read visibly
-   smaller/thinner than 🧾/📦/🏷️ even inside identical boxes, since emoji
-   don't share the same intrinsic ink coverage at a given font-size. A
-   per-glyph size bump for the ones that measured smaller, rather than
-   inflating every icon (which would just make the already-full ones
-   crowd their box). 2026-09-01 (ut-docs#1348): 🐞 (bugreport_chip.html)
-   missed this first pass and got the same live-confirmed treatment. */
-.ico-boost { font-size: 1.55rem; }
+.nav-toggle-ico svg { inline-size: 1.5rem; block-size: 1.5rem; display: block; }
 /* 2026-08-30 (product owner, live on the tablet): icon-only in the rail,
    like SumUp's own reference rail — the label doesn't need to be visible
    when the icon alone reads fine at this size, and dropping it lets the
@@ -307,6 +309,7 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
   .nav-toggle { flex-direction: row; gap: .4rem; border-radius: 10px;
     padding: .6rem 1.1rem; min-height: 46px; font-size: 1rem; }
   .nav-toggle-ico { inline-size: auto; block-size: auto; font-size: 1rem; }
+  .nav button.nav-toggle { inline-size: auto; }
   /* Undoes the rail's visually-hidden treatment (default rule, above) --
      the top-bar fallback has room for a real visible label, same as it
      always did before the rail existed. */

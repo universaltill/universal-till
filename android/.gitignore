@@ -10,3 +10,4 @@ local.properties
 # source. See app/build.gradle.kts.
 app/libs/unitill-mobile.aar
 app/libs/unitill-mobile-sources.jar
+.kotlin/
