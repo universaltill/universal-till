@@ -30,6 +30,22 @@
          REQUEST_INSTALL_PACKAGES and does its own updating, so a Play-targeted
          variant should drop this permission and the bridge behind it. -->
     <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+    <!-- ut-docs#1435: back the WebView's getUserMedia() (the bug-report
+         panel's voice note today; in-page camera capture as a follow-up).
+         Both are dangerous permissions, requested at runtime by
+         MainActivity's WebChromeClient.onPermissionRequest — lazily, only
+         when a page actually starts a capture, never at boot — and only
+         for the till's own loopback origin. Deliberately NO matching
+         <uses-feature android:name="android.hardware.camera"> here: a till
+         may run on hardware without any camera, and declaring the feature
+         would make the app uninstallable there; the runtime check is
+         what decides, never an assumption that a camera exists. -->
+    <uses-permission android:name="android.permission.CAMERA" />
+    <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- MODIFY_AUDIO_SETTINGS is normal (auto-granted), needed by the
+         WebView's audio-capture path for route/gain setup during a
+         getUserMedia({audio}) session. -->
+    <uses-permission android:name="android.permission.MODIFY_AUDIO_SETTINGS" />
 
     <application
         android:allowBackup="false"

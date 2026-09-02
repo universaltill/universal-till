@@ -192,7 +192,7 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 		}
 		list, err := repo.ListTills(r.Context())
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_api", err) // page-error:allow not yet migrated, tracked in ut-docs#1458
 			return
 		}
 		// The primary's own name (ut-docs#396's till.name setting): shown

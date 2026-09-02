@@ -317,7 +317,37 @@
       });
     }
 
-    if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+    // ut-docs#1435: the Android native shell's WebView has no getDisplayMedia
+    // at all, so on an Android till the branch below could only ever land on
+    // "not available here". MainActivity.kt's KioskBridge exposes a native
+    // capture instead — synchronous, returning a data:image/png;base64 URL
+    // (or "" on failure), which fetch() turns into the same PNG Blob every
+    // other path hands addScreenshotThumb. Checked FIRST so the bridge wins
+    // wherever it exists; on every other platform window.AndroidKiosk is
+    // undefined and the two pre-existing branches below run untouched.
+    if (window.AndroidKiosk && typeof window.AndroidKiosk.captureScreenshot === 'function') {
+      screenshotBtn.addEventListener('click', function () {
+        screenshotBtn.disabled = true;
+        var dataUrl;
+        try {
+          dataUrl = window.AndroidKiosk.captureScreenshot();
+        } catch (e) {
+          dataUrl = '';
+        }
+        if (!dataUrl) {
+          screenshotBtn.disabled = false;
+          statusEl.textContent = T.screenshotError;
+          return;
+        }
+        fetch(dataUrl).then(function (r) { return r.blob(); }).then(function (blob) {
+          screenshotBtn.disabled = false;
+          addScreenshotThumb(blob);
+        }).catch(function () {
+          screenshotBtn.disabled = false;
+          statusEl.textContent = T.screenshotError;
+        });
+      });
+    } else if (!navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
       screenshotBtn.disabled = true;
       screenshotBtn.textContent = T.screenshotUnsupported;
     } else {

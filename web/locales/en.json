@@ -555,7 +555,8 @@
   "products.no_matches": "No matching products.",
   "products.search_ph": "Search products…",
   "products.add": "Add product",
-  "products.title": "Products",  "products.uncategorized": "Uncategorized",
+  "products.title": "Products",
+  "products.uncategorized": "Uncategorized",
   "receipt.auth_code": "Auth",
   "receipt.auto_reset": "Auto-reset in 60s...",
   "receipt.change": "Change",
@@ -1846,5 +1847,8 @@
   "recovery.safe_mode_col_receipt": "Receipt",
   "recovery.safe_mode_col_total": "Total",
   "recovery.safe_mode_col_time": "Time",
-  "recovery.taking_longer": "Still working — this can take a few minutes after a database update."
+  "recovery.taking_longer": "Still working — this can take a few minutes after a database update.",
+  "error.page.title": "Something went wrong",
+  "permissions.error.super_admin_required": "Super admin required",
+  "tables.error.load_failed": "Couldn't load tables. Try again, or use the menu to keep working."
 }

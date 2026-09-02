@@ -36,7 +36,7 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 	// change to gated (UT_AUTH on) behavior.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		if !canPerform(d, r, "settings") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required") // page-error:allow not yet migrated, tracked in ut-docs#1458
 			return auth.User{}, false
 		}
 		u, _ := auth.FromContext(r.Context())
@@ -51,7 +51,7 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 	renderPromotions := func(w http.ResponseWriter, r *http.Request, errKey string) {
 		list, err := posRepo.ListPromotionsForAdmin(r.Context())
 		if err != nil {
-			http.Error(w, "failed to load promotions", http.StatusInternalServerError)
+			http.Error(w, "failed to load promotions", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
 			return
 		}
 		views := make([]promotionView, 0, len(list))

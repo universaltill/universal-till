@@ -1,6 +1,7 @@
 package mobile
 
 import (
+	"net"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -179,6 +180,95 @@ func TestIsRunning_DetectsServerDiedWithoutStop(t *testing.T) {
 	if resp.StatusCode != http.StatusOK {
 		t.Fatalf("/healthz = %d, want 200", resp.StatusCode)
 	}
+}
+
+// ut-docs#1256: the embedded server must bind ALL interfaces (so an Android
+// till can be a LAN-reachable primary that other tills discover and pair
+// with — the existing ADR-0033 discovery/pairing/bearer-token model is the
+// security boundary, same as desktop), while the address Start hands the
+// native shell stays loopback (the WebView contract is unchanged). Two
+// distinct addresses, one port: the code-level guarantee this test pins is
+// the UT_LISTEN_ADDR host, since that is exactly what internal/server binds.
+func TestStart_ListensOnAllInterfacesButReturnsLoopbackAddress(t *testing.T) {
+	dataDir := mobileTestEnv(t)
+	// Start sets UT_LISTEN_ADDR process-wide via os.Setenv; pinning it here
+	// first makes t.Setenv restore whatever was there once this test ends,
+	// and proves the value read below came from THIS Start, not a stale one.
+	t.Setenv("UT_LISTEN_ADDR", "")
+
+	addr, err := Start(dataDir)
+	if err != nil {
+		t.Fatalf("Start: %v", err)
+	}
+
+	host, port, err := net.SplitHostPort(addr)
+	if err != nil {
+		t.Fatalf("Start returned %q, not a host:port: %v", addr, err)
+	}
+	if host != "127.0.0.1" {
+		t.Fatalf("Start returned host %q, want the loopback 127.0.0.1 the WebView loads", host)
+	}
+
+	listenHost, listenPort, err := net.SplitHostPort(os.Getenv("UT_LISTEN_ADDR"))
+	if err != nil {
+		t.Fatalf("UT_LISTEN_ADDR = %q, not a host:port: %v", os.Getenv("UT_LISTEN_ADDR"), err)
+	}
+	if listenHost != "0.0.0.0" {
+		t.Fatalf("UT_LISTEN_ADDR host = %q, want the all-interfaces 0.0.0.0 bind", listenHost)
+	}
+	if listenPort != port {
+		t.Fatalf("UT_LISTEN_ADDR port = %q, want the same port %q Start returned", listenPort, port)
+	}
+
+	// A wildcard bind still accepts loopback — the returned address must
+	// actually answer, exactly as it did when the bind itself was loopback.
+	get := func(target string) {
+		t.Helper()
+		resp, err := http.Get("http://" + target + "/healthz")
+		if err != nil {
+			t.Fatalf("GET /healthz via %s: %v", target, err)
+		}
+		resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			t.Fatalf("/healthz via %s = %d, want 200", target, resp.StatusCode)
+		}
+	}
+	get(addr)
+
+	// And the point of the change: the same port answers on this host's
+	// real (non-loopback IPv4) interfaces — enumerated the way
+	// internal/discovery.localIPs does, so this is the address a LAN peer
+	// would actually dial. A host with no such interface (a sandboxed CI
+	// network namespace) can't exercise this leg; the UT_LISTEN_ADDR
+	// assertion above is the guarantee that still holds there.
+	lanIPs := nonLoopbackIPv4s(t)
+	if len(lanIPs) == 0 {
+		t.Log("no non-loopback IPv4 interface on this host; LAN reachability leg skipped")
+		return
+	}
+	for _, ip := range lanIPs {
+		get(net.JoinHostPort(ip.String(), port))
+	}
+}
+
+// nonLoopbackIPv4s mirrors internal/discovery.localIPs's interface walk
+// (minus its loopback fallback) — the addresses a LAN peer would reach
+// this host on.
+func nonLoopbackIPv4s(t *testing.T) []net.IP {
+	t.Helper()
+	addrs, err := net.InterfaceAddrs()
+	if err != nil {
+		t.Fatalf("net.InterfaceAddrs: %v", err)
+	}
+	var ips []net.IP
+	for _, addr := range addrs {
+		ipNet, ok := addr.(*net.IPNet)
+		if !ok || ipNet.IP.IsLoopback() || ipNet.IP.To4() == nil {
+			continue
+		}
+		ips = append(ips, ipNet.IP)
+	}
+	return ips
 }
 
 func TestStop_SafeWhenNotRunning(t *testing.T) {

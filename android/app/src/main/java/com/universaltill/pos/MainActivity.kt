@@ -8,14 +8,23 @@ import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.ServiceConnection
+import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Rect
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.os.Environment
+import android.os.Handler
 import android.os.IBinder
+import android.os.Looper
+import android.util.Base64
+import android.view.PixelCopy
 import android.view.View
 import android.webkit.CookieManager
 import android.webkit.JavascriptInterface
+import android.webkit.PermissionRequest
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
@@ -33,7 +42,11 @@ import androidx.core.os.LocaleListCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 
 /**
  * Native shell (ADR-0023, spec 013 Phase 2): binds to [TillService] — which
@@ -146,6 +159,50 @@ class MainActivity : AppCompatActivity() {
             callback.onReceiveValue(uris)
         }
 
+    // ut-docs#1435: the WebView-side half of camera/microphone access. A
+    // page's getUserMedia() call surfaces as WebChromeClient.onPermissionRequest
+    // (below, in onCreate's webChromeClient) — and a plain WebView's default
+    // implementation of that callback is request.deny(), unconditionally, so
+    // until this was wired up the bug-report panel's voice note was silently
+    // refused on every Android till (the panel's own "mic error" message,
+    // with no OS prompt ever shown — exactly the ticket's symptom). The
+    // WebView contract is that EVERY PermissionRequest is resolved with
+    // exactly one grant()/deny(), which can't happen inline when the Android
+    // runtime permission still has to be asked for: the request is parked
+    // here across that async gap and resolved from the launcher's callback.
+    // Same registration shape as fileChooserLauncher above (a class-level
+    // property, registered before STARTED as the Activity Result API
+    // requires), and RequestMultiplePermissions rather than the single-
+    // permission contract requestNotificationPermission uses because one
+    // getUserMedia({audio, video}) can need CAMERA and RECORD_AUDIO at once.
+    private var pendingMediaRequest: PermissionRequest? = null
+    private val mediaPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
+            val request = pendingMediaRequest ?: return@registerForActivityResult
+            pendingMediaRequest = null
+            // Re-read the real grant state rather than trusting the result
+            // map alone: a permission that was already granted before the
+            // dialog isn't in the map at all (it was never asked for), and
+            // a resource whose permission the user just refused must not
+            // be granted on the WebView side — partial grants are fine
+            // (mic yes, camera no), a grant the OS didn't back is not.
+            val granted = grantedMediaResources(request.resources)
+            if (granted.isEmpty()) request.deny() else request.grant(granted.toTypedArray())
+        }
+
+    /**
+     * The subset of a [PermissionRequest]'s resources whose backing Android
+     * runtime permission is currently granted (ut-docs#1435). Only the two
+     * resources in [MEDIA_PERMISSIONS] can ever be returned — anything else
+     * a page might ask for (RESOURCE_PROTECTED_MEDIA_ID, ...) is dropped,
+     * never granted, since this till has no use for it.
+     */
+    private fun grantedMediaResources(resources: Array<String>): List<String> =
+        resources.filter { resource ->
+            val permission = MEDIA_PERMISSIONS[resource] ?: return@filter false
+            ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
+        }
+
     // ut-docs#1254: whether a manager has deliberately left kiosk mode.
     // Set true ONLY by [KioskBridge.exitLockdown] (the server's own
     // purpose-built "exit to OS" escape hatch, internal/pages/
@@ -201,44 +258,174 @@ class MainActivity : AppCompatActivity() {
          * ut-docs#1246: the Android half of in-app update. The Go core can
          * never self-swap here — it ships as a native library inside the APK
          * and only the package installer may replace an app's own code — so
-         * `selfupdate.Supported()` is false on android by design and the
-         * Settings page had no actionable control at all. Every build meant
-         * telling the operator to go and download an APK by hand, which is
-         * what made the pilot's feedback loop unworkable.
+         * `selfupdate.Supported()` is false on android by design and the till
+         * had no actionable update control at all. Every build meant telling
+         * the operator to download and reinstall an APK by hand.
          *
-         * **Takes no URL, deliberately.** The release APK is resolved here
-         * from [UPDATE_APK_URL], a compile-time constant, so nothing the page
-         * renders can steer what gets installed. That matters more than usual
-         * for this particular method: an argument would turn a JS-reachable
-         * bridge into "install arbitrary package", which is the one capability
-         * this app must never expose. shouldOverrideUrlLoading already
-         * confines the WebView to loopback, but defence in depth is cheap here
-         * and the alternative is not recoverable if it ever fails.
+         * **Takes no URL, deliberately.** The release APK is resolved from
+         * [UPDATE_APK_URL], a compile-time constant, so nothing the page
+         * renders can steer what gets installed — an argument would turn a
+         * JS-reachable bridge into "install arbitrary package".
          *
-         * Android enforces that the downloaded APK is signed with the same key
-         * as the installed app, so a substituted package cannot install over
-         * this one even if the download were tampered with in transit — the
-         * platform provides the integrity guarantee, not this code.
+         * Reaching this is gated on a manager PIN by settings.html's
+         * #android-update form (POST /api/update/android-install), because
+         * installing forces the kiosk pin to drop — the same capability
+         * exit-to-os guards. Android separately enforces that the new APK
+         * carries this app's signing key.
          */
         @JavascriptInterface
         fun installUpdate() {
             runOnUiThread { downloadAndInstallUpdate() }
         }
+
+        /**
+         * Native screenshot for the bug-report panel (ut-docs#1435). Android's
+         * WebView implements no `getDisplayMedia` at all, so the panel's
+         * screenshot button — which every other platform backs with a one-
+         * frame display capture — could only ever report "not available
+         * here" on an Android till. This returns the WebView's current
+         * visual content as a `data:image/png;base64,...` URL, which the
+         * panel turns into a Blob with the same `fetch(url).blob()` shape the
+         * rest of its capture code already produces (bugreport_panel.html's
+         * `window.AndroidKiosk.captureScreenshot` branch); `""` on any
+         * failure, never an exception — nothing may throw across the JS
+         * bridge.
+         *
+         * Sync-over-async, deliberately: a @JavascriptInterface method runs
+         * on a WebView-owned BACKGROUND thread and has to hand its return
+         * value back synchronously (the bridge has no promise/callback
+         * channel), while the capture itself must happen on the UI thread
+         * and, via PixelCopy, completes asynchronously on a Handler. So the
+         * capture is posted to the UI thread and this thread blocks on a
+         * CountDownLatch that the completion callback counts down — with a
+         * timeout, so a stalled copy (window not yet drawn, surface torn
+         * down mid-call) degrades to `""` rather than parking the WebView's
+         * bridge thread forever. Blocking here does not block the Android
+         * UI thread, which is what actually does the work — but it DOES
+         * block the page's own JS main thread for the call's whole
+         * duration (this is a synchronous @JavascriptInterface call, by
+         * construction): the panel is unresponsive for that stretch, up to
+         * [SCREENSHOT_TIMEOUT_SECONDS] in the pathological case, same as
+         * any other synchronous native bridge call. In the ordinary case
+         * PixelCopy completes within a frame or two, so this reads as a
+         * brief pause, not a hang — review finding, ut-docs#1435: an
+         * earlier draft of this comment (and android/README.md) overstated
+         * this as "never janks," which conflated the UI thread staying
+         * free with the JS thread also staying free; corrected here.
+         *
+         * API branch: PixelCopy (API 26+) reads back the composited window
+         * surface — the only way to get real pixels out of a hardware-
+         * accelerated WebView. The platform has no `View` overload, only
+         * Surface/SurfaceView/Window ones, so this uses the Window overload
+         * with the WebView's own bounds (in window coordinates) as the
+         * source Rect: exactly the WebView's content, nothing else this
+         * Activity draws (the debug-only status bar, which is GONE in
+         * release anyway). API 24-25 (this app's minSdk is 24) fall back to
+         * View.draw onto a software Canvas — the classic pre-PixelCopy
+         * technique; it can render a hardware-accelerated WebView less
+         * faithfully, but those two API levels are the "still supported,
+         * not what any real till runs" range startDownload's KDoc already
+         * describes. The PNG encode runs on the calling background thread
+         * once the Bitmap is handed over, not on the UI thread: a full-
+         * resolution till screen takes tens to hundreds of ms to compress,
+         * which would otherwise be a visible jank on the live sale screen.
+         * The Bitmap is recycled after encoding — a manager retaking a
+         * shot many times over a long session must not accumulate screen-
+         * sized buffers.
+         *
+         * Safe to expose on the same reasoning as exitLockdown above: the
+         * WebView only ever shows the till's own loopback-origin pages
+         * (shouldOverrideUrlLoading confines navigation to allowedHost), so
+         * the only content this can ever capture is what that page is
+         * already displaying to — and could already read from its own DOM
+         * for — the same operator who pressed the button. No native chrome
+         * or other app's surface is reachable through the WebView's rect.
+         */
+        @JavascriptInterface
+        fun captureScreenshot(): String {
+            val latch = CountDownLatch(1)
+            val captured = AtomicReference<Bitmap?>(null)
+            runOnUiThread {
+                // Visible to the catch block below so a Bitmap that was
+                // successfully allocated but never reached PixelCopy's
+                // callback (request() itself threw — e.g. an invalid Rect —
+                // which can only happen before it schedules that callback,
+                // so `captured` is guaranteed still unset here) is recycled
+                // instead of silently left for GC (review finding,
+                // ut-docs#1435).
+                var bitmap: Bitmap? = null
+                try {
+                    val width = webView.width
+                    val height = webView.height
+                    if (width <= 0 || height <= 0) {
+                        // Called before layout (or on a detached WebView):
+                        // nothing to capture, and createBitmap(0, 0) throws.
+                        latch.countDown()
+                        return@runOnUiThread
+                    }
+                    val newBitmap = Bitmap.createBitmap(width, height, Bitmap.Config.ARGB_8888)
+                    bitmap = newBitmap
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                        val location = IntArray(2)
+                        webView.getLocationInWindow(location)
+                        val source = Rect(location[0], location[1], location[0] + width, location[1] + height)
+                        PixelCopy.request(
+                            window,
+                            source,
+                            newBitmap,
+                            PixelCopy.OnPixelCopyFinishedListener { copyResult ->
+                                if (copyResult == PixelCopy.SUCCESS) {
+                                    captured.set(newBitmap)
+                                } else {
+                                    newBitmap.recycle()
+                                }
+                                latch.countDown()
+                            },
+                            Handler(Looper.getMainLooper()),
+                        )
+                    } else {
+                        webView.draw(Canvas(newBitmap))
+                        captured.set(newBitmap)
+                        latch.countDown()
+                    }
+                } catch (e: Exception) {
+                    // Same never-crash-the-till posture as every other
+                    // native helper in this file: a failed screenshot is
+                    // "" on the web side, not a dead till.
+                    bitmap?.recycle()
+                    latch.countDown()
+                }
+            }
+            val finished =
+                try {
+                    latch.await(SCREENSHOT_TIMEOUT_SECONDS, TimeUnit.SECONDS)
+                } catch (e: InterruptedException) {
+                    false
+                }
+            // On a timeout the UI side may still complete later and set the
+            // reference; that Bitmap is simply left for GC (API 26+ keeps
+            // Bitmap pixels on the Java heap, so no native-memory leak) —
+            // only a copy that's actually consumed is recycled explicitly.
+            val bitmap = (if (finished) captured.getAndSet(null) else null) ?: return ""
+            return try {
+                val out = ByteArrayOutputStream()
+                bitmap.compress(Bitmap.CompressFormat.PNG, 100, out)
+                "data:image/png;base64," + Base64.encodeToString(out.toByteArray(), Base64.NO_WRAP)
+            } catch (e: Exception) {
+                ""
+            } finally {
+                bitmap.recycle()
+            }
+        }
     }
 
     /**
      * Enqueues the release APK and hands the finished file to the system
-     * package installer. Downloads into the app's own external files dir
-     * rather than the shared Downloads collection: that directory needs no
-     * storage permission, is what [FileProvider] is configured to expose (see
-     * res/xml/file_paths.xml), and keeps a half-written APK out of the
-     * operator's Files app.
-     *
-     * The completion receiver is registered per download and unregistered as
-     * soon as it fires, so a till left running for weeks doesn't accumulate
-     * receivers. Same never-crash-the-till posture as startDownload: any
-     * failure leaves the operator exactly where they were, still able to
-     * install by hand.
+     * package installer. Downloads into the app's own external files dir: no
+     * storage permission needed, it is what [FileProvider] exposes (see
+     * res/xml/file_paths.xml), and a half-written APK never appears in the
+     * operator's Files app. Never crashes the till — a failure leaves the
+     * operator able to install by hand.
      */
     private fun downloadAndInstallUpdate() {
         try {
@@ -258,17 +445,7 @@ class MainActivity : AppCompatActivity() {
                     )
                 }
             val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
-            val id = manager.enqueue(request)
-            // POLLED, not a completion broadcast. DownloadManager's
-            // ACTION_DOWNLOAD_COMPLETE comes from the system, so a receiver
-            // must be registered RECEIVER_EXPORTED to hear it at all —
-            // verified the hard way on a real tablet, where a
-            // RECEIVER_NOT_EXPORTED registration silently never fired and the
-            // 142MB APK just sat on disk. Exporting it would let any app on
-            // the device spoof "your download finished", so poll our own
-            // query instead: no receiver to leak, no broadcast to spoof, and
-            // the terminal states are explicit.
-            pollDownload(manager, id, dest)
+            pollDownload(manager, manager.enqueue(request), dest)
         } catch (e: Exception) {
             statusView.visibility = View.VISIBLE
             statusView.text = getString(R.string.status_failed, e.message ?: "update download failed")
@@ -277,9 +454,16 @@ class MainActivity : AppCompatActivity() {
 
     /**
      * Watches [id] to a terminal state, then hands the file to the installer.
-     * Re-posts itself on the main looper rather than blocking, and gives up
-     * after [UPDATE_POLL_LIMIT] ticks so a stalled download can never leave a
-     * callback running for the life of the till.
+     *
+     * POLLED, not a completion broadcast: DownloadManager's
+     * ACTION_DOWNLOAD_COMPLETE comes from the system, so a receiver must be
+     * registered RECEIVER_EXPORTED to hear it at all — verified the hard way
+     * on a real tablet, where a RECEIVER_NOT_EXPORTED registration silently
+     * never fired and the 142MB APK just sat on disk. Exporting it would let
+     * any app on the device spoof "your download finished"; polling has no
+     * receiver to leak and explicit terminal states. Bounded by
+     * [UPDATE_POLL_LIMIT] so a stalled download cannot poll for the life of
+     * the till.
      */
     private fun pollDownload(
         manager: DownloadManager,
@@ -292,11 +476,13 @@ class MainActivity : AppCompatActivity() {
             statusView.text = getString(R.string.status_failed, "update download timed out")
             return
         }
-        val cursor = manager.query(DownloadManager.Query().setFilterById(id))
         val status =
-            cursor.use { c ->
-                if (!c.moveToFirst()) return@use DownloadManager.STATUS_FAILED
-                c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+            manager.query(DownloadManager.Query().setFilterById(id)).use { c ->
+                if (!c.moveToFirst()) {
+                    DownloadManager.STATUS_FAILED
+                } else {
+                    c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                }
             }
         when (status) {
             DownloadManager.STATUS_SUCCESSFUL -> launchPackageInstaller(dest)
@@ -304,29 +490,26 @@ class MainActivity : AppCompatActivity() {
                 statusView.visibility = View.VISIBLE
                 statusView.text = getString(R.string.status_failed, "update download failed")
             }
-            else ->
-                webView.postDelayed({ pollDownload(manager, id, dest, tick + 1) }, UPDATE_POLL_MS)
+            else -> webView.postDelayed({ pollDownload(manager, id, dest, tick + 1) }, UPDATE_POLL_MS)
         }
     }
 
     /**
      * Hands [apk] to the system installer via [FileProvider]. A `file://` URI
-     * is rejected outright from API 24 (FileUriExposedException), which is
-     * this app's own minSdk — so the content:// grant is the only route, not a
-     * modern-Android nicety.
+     * is rejected from API 24 (FileUriExposedException) — this app's own
+     * minSdk — so the content:// grant is the only route.
      */
     private fun launchPackageInstaller(apk: File) {
         try {
-            // ut-docs#1246: the till runs pinned in lock-task (kiosk) mode, and
-            // Android silently REFUSES to start any activity outside the
-            // allowlist from a pinned app — "Attempted Lock Task Mode
-            // violation r=...packageinstaller/...InstallStart" in logcat, no
-            // dialog, no exception, nothing on screen. That is exactly what
-            // "I pressed Update and nothing happened" looked like on a real
-            // tablet. Release the pin first, the same way KioskBridge
-            // .exitLockdown does for the manager's own exit-to-OS path; the
-            // installer then appears normally. kioskUnlocked is set so
-            // onResume does not immediately re-pin and re-block it.
+            // The till runs pinned in lock-task (kiosk) mode, and Android
+            // silently REFUSES to start any non-allowlisted activity from a
+            // pinned app — "Attempted Lock Task Mode violation
+            // r=...packageinstaller/...InstallStart" in logcat, no dialog, no
+            // exception. That is exactly what "I pressed Update and nothing
+            // happened" looked like on a real tablet. Release the pin first,
+            // the same way KioskBridge.exitLockdown does for exit-to-OS;
+            // kioskUnlocked stops onResume immediately re-pinning and
+            // re-blocking it. Authorised by a manager PIN before we get here.
             kioskUnlocked = true
             releaseKioskLock()
             clearImmersiveMode()
@@ -339,10 +522,9 @@ class MainActivity : AppCompatActivity() {
                 }
             startActivity(intent)
         } catch (e: Exception) {
-            // Most likely ActivityNotFoundException, or the user has not yet
-            // granted "install unknown apps" for this app. Surface it rather
-            // than failing silently — the operator's fallback is a manual
-            // install, and they can only choose that if they know this failed.
+            // Most likely ActivityNotFoundException, or "install unknown apps"
+            // not yet granted. Surface it — the fallback is a manual install,
+            // which the operator can only choose if they know this failed.
             statusView.visibility = View.VISIBLE
             statusView.text = getString(R.string.status_failed, e.message ?: "install failed")
         }
@@ -678,6 +860,76 @@ class MainActivity : AppCompatActivity() {
                         false
                     }
                 }
+
+                // ut-docs#1435: a page's getUserMedia() lands here; WebChrome-
+                // Client's own default is an unconditional deny(), which is
+                // why the bug-report panel's voice note never worked on an
+                // Android till (see the pendingMediaRequest comment above).
+                // This only ever fires in response to a real in-page capture
+                // call, so "never prompt for camera/mic at boot, only when a
+                // capture feature is actually used" is satisfied by simply
+                // not requesting these anywhere else in this file.
+                override fun onPermissionRequest(request: PermissionRequest) {
+                    // Origin scoping, failing closed: exactly the host
+                    // comparison shouldOverrideUrlLoading uses (authority ==
+                    // allowedHost — TillService reports host:port, so it's
+                    // the authority, not the bare host, that matches), with
+                    // the same null rule: until the till's real address is
+                    // known, nothing may be granted, because no page of ours
+                    // can legitimately be asking yet. Navigation is already
+                    // confined to that origin, so this is defense in depth
+                    // — but a camera/mic grant to any other origin would be
+                    // a real leak, so it's checked here independently too.
+                    val origin: Uri? = request.origin
+                    if (allowedHost == null || origin == null || origin.authority != allowedHost) {
+                        request.deny()
+                        return
+                    }
+                    // Only the two resources MEDIA_PERMISSIONS maps are ever
+                    // grantable; a request for anything else alone
+                    // (RESOURCE_PROTECTED_MEDIA_ID, ...) is denied outright.
+                    val wanted = request.resources.filter { it in MEDIA_PERMISSIONS }
+                    if (wanted.isEmpty()) {
+                        request.deny()
+                        return
+                    }
+                    val missing =
+                        wanted.mapNotNull { MEDIA_PERMISSIONS[it] }.filter {
+                            ContextCompat.checkSelfPermission(this@MainActivity, it) != PackageManager.PERMISSION_GRANTED
+                        }
+                    if (missing.isEmpty()) {
+                        // Already granted (the second and every later voice
+                        // note): no OS prompt, no round trip.
+                        request.grant(wanted.toTypedArray())
+                        return
+                    }
+                    // One in-flight request at a time: a second one arriving
+                    // while the OS dialog is still up is denied rather than
+                    // overwriting the first, because silently dropping a
+                    // PermissionRequest (never grant()ing or deny()ing it)
+                    // violates the WebView contract; the page just retries.
+                    if (pendingMediaRequest != null) {
+                        request.deny()
+                        return
+                    }
+                    pendingMediaRequest = request
+                    try {
+                        mediaPermissionLauncher.launch(missing.toTypedArray())
+                    } catch (e: Exception) {
+                        // launch() can throw (e.g. IllegalStateException if the
+                        // Activity is finishing/destroyed) — if it does, the
+                        // callback that would normally clear pendingMediaRequest
+                        // and resolve the request never runs. Left alone, that
+                        // both leaks this PermissionRequest (never grant()ed or
+                        // deny()ed — a WebView contract violation) AND wedges
+                        // every later getUserMedia() shut via the in-flight
+                        // check above, silently reproducing this ticket's
+                        // original symptom for the rest of the process. Deny
+                        // and clear immediately instead; the page can retry.
+                        pendingMediaRequest = null
+                        request.deny()
+                    }
+                }
             }
 
         statusView.text = getString(R.string.status_starting)
@@ -696,6 +948,10 @@ class MainActivity : AppCompatActivity() {
             },
         )
 
+        // ut-docs#1435: unlike POST_NOTIFICATIONS here, CAMERA/RECORD_AUDIO
+        // are requested lazily — only from webChromeClient's
+        // onPermissionRequest above, i.e. only when a page actually starts
+        // a capture — never at boot.
         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
             requestNotificationPermission.launch(android.Manifest.permission.POST_NOTIFICATIONS)
         }
@@ -748,18 +1004,17 @@ class MainActivity : AppCompatActivity() {
 
     companion object {
         // ut-docs#1246: the release APK's STABLE url — release.yml republishes
-        // this same filename on every release (see its
-        // unitill-pos-android-latest.apk step), so the shell never has to
-        // resolve a version or talk to the GitHub API to find the newest
-        // build. Compile-time constant on purpose: installUpdate() takes no
-        // argument, so page content can never redirect an install.
+        // this same filename on every release, so the shell never resolves a
+        // version or calls the GitHub API. Compile-time constant on purpose:
+        // installUpdate() takes no argument, so page content can never
+        // redirect an install.
         private const val UPDATE_APK_URL =
             "https://github.com/universaltill/universal-till/releases/latest/download/unitill-pos-android-latest.apk"
         private const val UPDATE_APK_NAME = "unitill-pos-update.apk"
         private const val APK_MIME = "application/vnd.android.package-archive"
 
-        // ~5 minutes at 750ms: long enough for a ~140MB APK on shop WiFi,
-        // bounded so a stalled download can't poll forever.
+        // ~5 minutes at 750ms: enough for a ~140MB APK on shop WiFi, bounded
+        // so a stalled download cannot poll forever.
         private const val UPDATE_POLL_MS = 750L
         private const val UPDATE_POLL_LIMIT = 400
 
@@ -775,5 +1030,21 @@ class MainActivity : AppCompatActivity() {
         // single page load) or reach LocaleListCompat.forLanguageTags as
         // outright garbage (independent review, 2026-08-07).
         private val KNOWN_LOCALES = setOf("en", "fa", "tr", "ar")
+
+        // ut-docs#1435: WebView PermissionRequest resource → the Android
+        // runtime permission that backs it. Deliberately only these two:
+        // whatever else a page could ask for is never grantable here (see
+        // grantedMediaResources / onPermissionRequest).
+        private val MEDIA_PERMISSIONS =
+            mapOf(
+                PermissionRequest.RESOURCE_VIDEO_CAPTURE to android.Manifest.permission.CAMERA,
+                PermissionRequest.RESOURCE_AUDIO_CAPTURE to android.Manifest.permission.RECORD_AUDIO,
+            )
+
+        // ut-docs#1435: how long KioskBridge.captureScreenshot's bridge
+        // thread waits for the UI-thread PixelCopy to finish before giving
+        // up with "". A copy normally completes within one frame; 5s is
+        // "something is genuinely wrong", not a tuning knob.
+        private const val SCREENSHOT_TIMEOUT_SECONDS = 5L
     }
 }

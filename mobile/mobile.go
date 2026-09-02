@@ -8,6 +8,20 @@
 // a window" shape as cmd/unitill-desktop/desktop.go, just in-process instead
 // of a child process.
 //
+// The server itself binds ALL interfaces (0.0.0.0), not just loopback
+// (ut-docs#1256): a phone/tablet till is then LAN-reachable exactly like a
+// Linux/Pi SERVICE till (the bare unitill-pos binary, config default
+// UT_LISTEN_ADDR=:8080 — NOT cmd/unitill-desktop's WebView shell, which
+// stays loopback-only, its own separate design) — it advertises over mDNS
+// (internal/discovery) and other tills can discover it and pair with it as
+// their primary. The security boundary is the one ADR-0033 already ships
+// for every other platform, unchanged: approve-to-pair with a verification
+// code (internal/pages/pairing_api.go) and a per-till bearer token on the
+// /api/sync/* surface (internal/pages/sync_api.go). ADR-0023's original
+// loopback-only bind was a conservative placeholder, not a considered
+// permanent restriction. What the native shell receives from Start is
+// still the loopback address — the WebView contract did not change.
+//
 // gomobile bind's cross-language boundary only supports a narrow set of
 // types (strings, ints, bools, []byte, error, and a few others — no generics,
 // no complex struct fields crossing directly) — this package's exported
@@ -66,6 +80,22 @@ var (
 // similar) and returns "127.0.0.1:<port>" once the server is confirmed
 // accepting connections — ready for a WebView to load.
 //
+// The returned address is what the in-process WebView loads, NOT what the
+// server binds: the bind is "0.0.0.0:<port>" — every interface, so the till
+// is reachable from the LAN for ADR-0033 discovery/pairing/sync
+// (ut-docs#1256; see the package comment). A wildcard bind still accepts
+// loopback connections, so the loopback address the caller gets keeps
+// working exactly as it did when the bind itself was loopback-only.
+//
+// Known gap, tracked separately (ut-docs#1256 review, not fixed here):
+// Android's mDNS multicast packets may still not reach this till without
+// android.net.wifi.WifiManager's MulticastLock (no CHANGE_WIFI_MULTICAST_STATE
+// permission or lock call exists in android/ yet) — many Android Wi-Fi
+// drivers drop inbound multicast an app hasn't asked to receive. Direct-IP
+// sync (an already-paired replica) and the manual/QR pairing fallback both
+// work regardless; the "browse and find it" discovery UX needs a real
+// on-device check before relying on it.
+//
 // Idempotent while genuinely running: a second Start call with the same
 // dataDir just returns the existing address (mirrors cmd/unitill-desktop's
 // tillAlreadyRunning re-attach behavior — useful if the native shell's
@@ -110,7 +140,14 @@ func Start(dataDir string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("mobile: find a free port: %w", err)
 	}
-	addr := "127.0.0.1:" + port
+	// Two addresses, one port (ut-docs#1256): listenAddr is what the server
+	// binds — all interfaces, so the till is LAN-reachable and ADR-0033's
+	// discovery + approve-to-pair + bearer-token model applies to it the
+	// same way it already does to a desktop/Pi till. localAddr is the
+	// loopback view of the same port: what waitUntilReady polls and what
+	// the native shell gets back for its WebView, unchanged from before.
+	listenAddr := "0.0.0.0:" + port
+	localAddr := "127.0.0.1:" + port
 
 	if err := os.Setenv("UT_DATA_DIR", dataDir); err != nil {
 		return "", fmt.Errorf("mobile: set UT_DATA_DIR: %w", err)
@@ -142,7 +179,7 @@ func Start(dataDir string) (string, error) {
 			return "", fmt.Errorf("mobile: set TMPDIR: %w", err)
 		}
 	}
-	if err := os.Setenv("UT_LISTEN_ADDR", addr); err != nil {
+	if err := os.Setenv("UT_LISTEN_ADDR", listenAddr); err != nil {
 		return "", fmt.Errorf("mobile: set UT_LISTEN_ADDR: %w", err)
 	}
 	// The native shell supplies its own window/WebView; the server must
@@ -171,7 +208,7 @@ func Start(dataDir string) (string, error) {
 	}
 
 	ctx, cancel := context.WithCancel(context.Background())
-	newInst := &instance{dataDir: dataDir, addr: addr, cancel: cancel, done: make(chan struct{})}
+	newInst := &instance{dataDir: dataDir, addr: localAddr, cancel: cancel, done: make(chan struct{})}
 
 	go func() {
 		newInst.err = app.Run(ctx)
@@ -187,7 +224,7 @@ func Start(dataDir string) (string, error) {
 	// phone hardware skews weaker and more variable than desktop/POS
 	// terminal hardware, so mobile gets more headroom than desktop rather
 	// than copying its number.
-	if err := waitUntilReady(addr, 30*time.Second, newInst); err != nil {
+	if err := waitUntilReady(localAddr, 30*time.Second, newInst); err != nil {
 		cancel()
 		<-newInst.done // wait for the full teardown before reporting failure
 		return "", err
@@ -196,7 +233,7 @@ func Start(dataDir string) (string, error) {
 	mu.Lock()
 	inst = newInst
 	mu.Unlock()
-	return addr, nil
+	return localAddr, nil
 }
 
 // Stop gracefully shuts the server down and BLOCKS until it has actually
@@ -241,14 +278,20 @@ func IsRunning() bool {
 	}
 }
 
-// freePort asks the OS for an unused loopback port. Same probe-then-close
-// pattern as cmd/unitill-desktop/desktop.go's freePort, and the same small,
-// accepted race: internal/server.Start's own listenWithFallback tolerates
-// the port being taken by the time it actually binds, falling back to a
-// different one — which cmd/unitill-desktop also doesn't defend against,
-// so this doesn't introduce a new gap, just matches the existing one.
+// freePort asks the OS for an unused port, probed on ALL interfaces
+// (0.0.0.0), matching exactly what Start binds it on (ut-docs#1256 review
+// finding: probing loopback-only while binding 0.0.0.0 elsewhere meant a
+// port merely free on loopback but already held on some other interface
+// would pass this probe and then reliably fail the real bind — not the
+// harmless microsecond TOCTOU race this comment used to describe. That
+// failure is worse than a retry: internal/server.listenWithFallback
+// deliberately degrades a wildcard bind failure to 127.0.0.1 (ut-docs#1169),
+// silently undoing this whole feature, on a different port than
+// waitUntilReady is polling — a guaranteed 30s timeout and a failed Start).
+// Probing 0.0.0.0:0 instead makes the probed port free on every interface,
+// which is exactly what the real bind needs, closing the mismatch.
 func freePort() (string, error) {
-	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	ln, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		return "", err
 	}
@@ -260,7 +303,9 @@ func freePort() (string, error) {
 // waitUntilReady polls addr's /healthz until it answers 200, timeout
 // elapses, or app.Run itself already exited (a fast, fatal startup
 // failure — e.g. a bad config — shouldn't make the caller wait out the
-// full timeout to find out).
+// full timeout to find out). Start polls the loopback address even though
+// the server binds 0.0.0.0 (ut-docs#1256): a wildcard bind answers on
+// loopback, and 0.0.0.0 is not a portable DIAL target.
 func waitUntilReady(addr string, timeout time.Duration, inst *instance) error {
 	client := &http.Client{Timeout: 500 * time.Millisecond}
 	deadline := time.Now().Add(timeout)
