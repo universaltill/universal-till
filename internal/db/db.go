@@ -102,6 +102,41 @@ func Open(path string) (*DB, error) {
 	return db, nil
 }
 
+// OpenReadOnly opens an existing SQLite database WITHOUT running migrate() —
+// the boot-failure recovery screen's safe mode (ut-docs#1436, ADR-0075)
+// uses this to serve today's sales read-only when a migration failed
+// partway through: each migration commits in its own transaction
+// (applyMigration), so the on-disk file is exactly whatever committed
+// migrations left it at, a clean state to query even though the LATEST
+// migration never finished. Deliberately does not call migrate() at all —
+// re-attempting (and re-failing) the same broken migration on every safe-
+// mode page load would defeat the point of a read-only fallback. This also
+// means it never checks schema_lineage (ADR-0074) either — a pre-reset
+// database still carries every table the squashed baseline does (the reset
+// consolidated migration FILES, not the resulting schema), so
+// internal/recovery's own probeSafeMode is what actually decides whether
+// this connection is usable, regardless of lineage.
+//
+// mode=ro is SQLite's own genuine read-only open (distinct from this
+// package's write path, which uses _txlock=immediate — irrelevant here,
+// there are no writes to lock for): a write attempt against this connection
+// fails at the SQLite layer, not merely by this package's convention.
+// Fails on a database that does not exist yet (mode=ro never creates one) —
+// safe mode has nothing to serve without prior successful boots, and must
+// not be confused with a fresh-install first boot.
+func OpenReadOnly(path string) (*DB, error) {
+	dsn := fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(5000)", path)
+	sqlDB, err := sql.Open("sqlite", dsn)
+	if err != nil {
+		return nil, fmt.Errorf("open sqlite (read-only): %w", err)
+	}
+	if err := sqlDB.Ping(); err != nil {
+		_ = sqlDB.Close()
+		return nil, fmt.Errorf("ping sqlite (read-only): %w", err)
+	}
+	return &DB{DB: sqlDB}, nil
+}
+
 // ErrDatabasePredatesReset is returned (wrapped) by Open when the database
 // carries schema_migrations rows but no schema_lineage marker: it was
 // created by the pre-2026-09 78-migration ledger, and there is no supported
