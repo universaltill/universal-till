@@ -884,8 +884,8 @@ FROM tax_codes WHERE id = ?`, id).Scan(&v.ID, &v.Name, &v.RateBP, &takeaway, &ac
 // same ordering as ListTaxCodes, just without the WHERE is_active = 1
 // filter, so the tax-code management UI (ut-docs#259) can show and
 // reactivate a retired code. ListTaxCodes itself is UNCHANGED: it must keep
-// excluding inactive codes, exactly as today, because catalog_lookups.html's
-// read-only autocomplete depends on that.
+// excluding inactive codes, exactly as today, because the catalog page's
+// tax-code select (web/ui/pages/catalog.html) depends on that.
 func (r *CatalogRepo) ListAllTaxCodes(ctx context.Context) ([]TaxCodeView, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, name, rate_basis_points, takeaway_rate_basis_points, is_active
@@ -1057,6 +1057,28 @@ func (r *CatalogRepo) ReadLookup(ctx context.Context, table string) ([]Lookup, e
 		res = append(res, l)
 	}
 	return res, rows.Err()
+}
+
+// ErrLookupNotFound reports that GetLookup's id doesn't exist in the given
+// lookup table (ut-docs#1430).
+var ErrLookupNotFound = errors.New("lookup not found")
+
+// GetLookup looks up a single row (category/brand/etc.) by id, wrapping
+// sql.ErrNoRows as ErrLookupNotFound. Single-row equivalent of ReadLookup,
+// for call sites (a per-mutation row re-render) that need just one name and
+// would otherwise pay a whole-table read for it -- same rationale as
+// GetTaxCode/ErrTaxCodeNotFound alongside ListAllTaxCodes (ut-docs#1430,
+// mirroring ut-docs#1363's row_oob.go single-row taxCodeName resolution).
+func (r *CatalogRepo) GetLookup(ctx context.Context, table string, id string) (Lookup, error) {
+	var l Lookup
+	err := r.db.QueryRowContext(ctx, `SELECT id, name FROM `+table+` WHERE id = ?`, id).Scan(&l.ID, &l.Name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Lookup{}, ErrLookupNotFound
+	}
+	if err != nil {
+		return Lookup{}, err
+	}
+	return l, nil
 }
 
 // ValidateLookup checks existence of ids in a lookup table.

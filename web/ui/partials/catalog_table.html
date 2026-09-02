@@ -6,7 +6,7 @@
      (beforeend inserts) and #catalog-empty-row. */}}
 <div class="card" id="catalog-table">
   <table class="table">
-    <thead><tr><th></th><th>{{ T "catalog.col.name" }}</th><th>{{ T "catalog.col.sku" }}</th><th>{{ T "catalog.col.price" }}</th><th>{{ T "catalog.col.unit" }}</th><th>{{ T "catalog.col.tax" }}</th><th></th></tr></thead>
+    <thead><tr><th></th><th>{{ T "catalog.col.name" }}</th><th>{{ T "catalog.col.sku" }}</th><th>{{ T "catalog.col.price" }}</th><th>{{ T "catalog.col.unit" }}</th><th>{{ T "catalog.col.tax" }}</th><th>{{ T "catalog.col.category" }}</th><th></th></tr></thead>
     <tbody id="catalog-tbody">
       {{ if .Rows }}
         {{ range .Rows }}{{ template "catalog_row" . }}{{ end }}
