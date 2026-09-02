@@ -1828,5 +1828,20 @@
   "settings.tax_rate_switcher.missing.title": "افزونهٔ نرخ مالیات نصب نشده است",
   "settings.tax_rate_switcher.missing.message": "این کشور به اعمال درست نرخ‌های مالیات بر ارزش افزوده برای سرو در محل و بیرون‌بر نیاز دارد، اما در حال حاضر هیچ افزونهٔ نرخ مالیاتی فعال و کارآمدی وجود ندارد — نرخ‌های سرو در محل/بیرون‌بر به‌درستی اعمال نمی‌شوند. برای رفع این مشکل، افزونهٔ مالیاتی کشور را نصب کنید.",
   "settings.tax_rate_switcher.missing.install_btn": "نصب افزونه",
-  "common.error.server": "مشکلی پیش آمد. دوباره تلاش کنید."
+  "common.error.server": "مشکلی پیش آمد. دوباره تلاش کنید.",
+  "recovery.title": "حالت بازیابی",
+  "recovery.migration_failed": "صندوق نتوانست به‌روزرسانی پایگاه داده را کامل کند. اطلاعات شما ایمن است — نیاز به تلاش دوباره یا پشتیبانی دارد.",
+  "recovery.db_open_failed": "صندوق نتوانست پایگاه داده را باز کند. اطلاعات شما ایمن است — نیاز به تلاش دوباره یا پشتیبانی دارد.",
+  "recovery.disk_full": "فضای ذخیره‌سازی صندوق پر شده است. روی این دستگاه فضا آزاد کنید، سپس دوباره تلاش کنید.",
+  "recovery.unknown_error": "صندوق راه‌اندازی نشد. اطلاعات شما ایمن است — نیاز به تلاش دوباره یا پشتیبانی دارد.",
+  "recovery.ref_code": "کد پیگیری",
+  "recovery.retry_button": "تلاش دوباره",
+  "recovery.retrying": "در حال تلاش دوباره…",
+  "recovery.safe_mode_banner": "حالت ایمن — فقط خواندنی. تا رفع این مشکل امکان ایجاد تغییر وجود ندارد.",
+  "recovery.safe_mode_sales_today": "فروش امروز",
+  "recovery.safe_mode_export": "خروجی CSV",
+  "recovery.safe_mode_col_receipt": "رسید",
+  "recovery.safe_mode_col_total": "جمع کل",
+  "recovery.safe_mode_col_time": "زمان",
+  "recovery.taking_longer": "هنوز در حال کار است — پس از به‌روزرسانی پایگاه داده ممکن است چند دقیقه طول بکشد."
 }

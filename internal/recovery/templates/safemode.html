@@ -1,0 +1,32 @@
+<!doctype html>
+<html lang="{{ locale }}" dir="{{ dir }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ T "recovery.safe_mode_sales_today" }}</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 2rem; background: #1a1a1a; color: #f0f0f0; }
+  .banner { background: #78350f; color: #fef3c7; padding: 0.75rem 1rem; border-radius: 0.5rem; margin-block-end: 1rem; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: start; padding: 0.5rem; border-block-end: 1px solid #333; }
+  a.back { color: #60a5fa; }
+</style>
+</head>
+<body>
+  <p class="banner">{{ T "recovery.safe_mode_banner" }}</p>
+  <h1>{{ T "recovery.safe_mode_sales_today" }}</h1>
+  <p><a class="back" href="/">&larr;</a> <a class="back" href="/recovery/safe-mode/export.csv">{{ T "recovery.safe_mode_export" }}</a></p>
+  <table>
+    <thead><tr>
+      <th>{{ T "recovery.safe_mode_col_receipt" }}</th>
+      <th>{{ T "recovery.safe_mode_col_total" }}</th>
+      <th>{{ T "recovery.safe_mode_col_time" }}</th>
+    </tr></thead>
+    <tbody>
+    {{ range .Entries }}
+      <tr><td>{{ .ReceiptNo }}</td><td>{{ money .Total }}</td><td>{{ .CreatedAt }}</td></tr>
+    {{ end }}
+    </tbody>
+  </table>
+</body>
+</html>
