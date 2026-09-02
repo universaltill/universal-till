@@ -1,8 +1,9 @@
 -- Demo customer/promotion removal (ut-docs#567). Requires
 -- demo_customers_promos_ids.sql to have run first on the same connection
 -- (it creates the temp demo_seed_customers / demo_seed_promos ID tables).
--- Shared verbatim by migration 038_demo_customers_promos_opt_in.sql and
--- DemoSeedRepo.RemoveDemoCustomersPromos.
+-- Executed verbatim by DemoSeedRepo.RemoveDemoCustomersPromos (until the
+-- ADR-0074 migration squash, ut-docs#1425, this was also shared verbatim
+-- by migration 038_demo_customers_promos_opt_in.sql, now deleted).
 --
 -- "Untouched" safety rule — deliberately not the same shape as the
 -- catalogue's (demo_ids.sql/remove_demo.sql), because this schema can't

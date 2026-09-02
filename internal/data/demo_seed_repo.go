@@ -10,7 +10,9 @@ import (
 
 // DemoSeedRepo manages the opt-in demo ("sample data") catalogue —
 // ut-docs#539. The catalogue itself lives in internal/data/seeddata, the
-// single source of truth shared with migration 036_demo_seed_opt_in.sql.
+// single source of truth for the opt-in seed/remove SQL (until the
+// ADR-0074 squash, ut-docs#1425, this was also shared with migration
+// 036_demo_seed_opt_in.sql, now deleted).
 type DemoSeedRepo struct {
 	db *sql.DB
 }

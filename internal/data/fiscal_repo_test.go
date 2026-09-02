@@ -3,12 +3,10 @@ package data
 import (
 	"context"
 	"database/sql"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
-	"github.com/universaltill/universal-till/internal/db"
 	_ "modernc.org/sqlite"
 )
 
@@ -551,127 +549,5 @@ func TestFiscalRegisterDE_ListOrdering(t *testing.T) {
 		if got[i] != want[i] {
 			t.Fatalf("order = %v, want %v", got, want)
 		}
-	}
-}
-
-// Migration 075 round-trip (ADR-0072): a row written by the old
-// fiscal_register_de table must come out of the new storage-backed List
-// with every field intact after the migration runs — including the NULL
-// commissioned_on/decommissioned_on shape — and the old table must be gone.
-// Simulated the same way this repo's other upgrade tests do it: open (all
-// migrations apply), physically rewind 075 (recreate the 059-shape table),
-// un-record it in schema_migrations, seed a pre-migration row, reopen.
-func TestFiscalRegisterDE_Migration075RoundTrip(t *testing.T) {
-	ctx := context.Background()
-	path := filepath.Join(t.TempDir(), "m075.db")
-	d, err := db.Open(path)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-
-	// The entry's register + location, created through the live schema —
-	// they survive the migration untouched.
-	repo := NewPOSRepo(d.DB)
-	locID, err := repo.CreateStockLocation(ctx, "Main Shop")
-	if err != nil {
-		t.Fatalf("CreateStockLocation: %v", err)
-	}
-	if err := repo.SetStockLocationAddressDE(ctx, locID, "Hauptstraße 1", "10115", "Berlin"); err != nil {
-		t.Fatalf("SetStockLocationAddressDE: %v", err)
-	}
-	regID, err := repo.CreateRegister(ctx, "Front Till", &locID)
-	if err != nil {
-		t.Fatalf("CreateRegister: %v", err)
-	}
-
-	// Rewind 075: recreate the 059-shape table (075 dropped it) and
-	// un-record the migration so the next Open replays exactly it.
-	if _, err := d.DB.Exec(`CREATE TABLE fiscal_register_de (
-	id TEXT PRIMARY KEY, register_id TEXT NOT NULL REFERENCES registers(id),
-	eas_type TEXT NOT NULL, eas_software TEXT NOT NULL, eas_serial TEXT NOT NULL,
-	tse_serial TEXT NOT NULL, tse_certification_id TEXT NOT NULL, tse_type TEXT NOT NULL,
-	acquired_on TEXT NOT NULL, commissioned_on TEXT, decommissioned_on TEXT,
-	created_at TEXT NOT NULL, updated_at TEXT NOT NULL)`); err != nil {
-		t.Fatalf("recreate pre-075 table: %v", err)
-	}
-	// 078 (sale_lines.order_type, ut-docs#1181) replays too after a >= 75
-	// rewind — undo its non-idempotent ALTER TABLEs first, same as the
-	// internal/db rewind tests' helpers.
-	for _, tbl := range []string{"sale_lines", "sale_lines_archive"} {
-		if _, err := d.DB.Exec(`ALTER TABLE ` + tbl + ` DROP COLUMN order_type`); err != nil {
-			t.Fatalf("rewind 078 (%s): %v", tbl, err)
-		}
-	}
-	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 75`); err != nil {
-		t.Fatalf("rewind schema_migrations: %v", err)
-	}
-	// Two pre-migration rows: one fully populated, one with both optional
-	// dates NULL — both shapes must round-trip.
-	if _, err := d.DB.Exec(`INSERT INTO fiscal_register_de
-	(id, register_id, eas_type, eas_software, eas_serial, tse_serial, tse_certification_id, tse_type,
-	 acquired_on, commissioned_on, decommissioned_on, created_at, updated_at)
-	VALUES
-	('old-1', ?, 'Tablet-/App-Kassen-Systeme', 'AwesomePOS', 'eas-old-1', 'tse-old-1', 'cert-old-1', 'cloud-tse',
-	 '2025-11-01', '2025-12-01', '2026-02-01', '2025-11-01T09:00:00Z', '2026-02-01T09:00:00Z'),
-	('old-2', ?, 'Tablet-/App-Kassen-Systeme', 'AwesomePOS', 'eas-old-2', 'tse-old-2', 'cert-old-2', 'cloud-tse',
-	 '2026-01-15', NULL, NULL, '2026-01-15T09:00:00Z', '2026-01-15T09:00:00Z')`, regID, regID); err != nil {
-		t.Fatalf("seed pre-migration rows: %v", err)
-	}
-	if err := d.Close(); err != nil {
-		t.Fatalf("close: %v", err)
-	}
-
-	d, err = db.Open(path) // replays migration 075
-	if err != nil {
-		t.Fatalf("reopen (075 replay): %v", err)
-	}
-	t.Cleanup(func() { d.Close() })
-
-	store := NewFiscalRegisterDEStore(d.DB, fiscalTestPluginID)
-	list, err := store.List(ctx)
-	if err != nil {
-		t.Fatalf("List after migration: %v", err)
-	}
-	if len(list) != 2 {
-		t.Fatalf("expected both migrated entries, got %d: %+v", len(list), list)
-	}
-	byID := map[string]FiscalRegisterDE{list[0].ID: list[0], list[1].ID: list[1]}
-	full, ok := byID["old-1"]
-	if !ok {
-		t.Fatalf("old-1 missing after migration: %+v", byID)
-	}
-	if full.RegisterID != regID || full.RegisterName != "Front Till" ||
-		full.LocationID != locID || full.LocationName != "Main Shop" ||
-		full.LocationStreet != "Hauptstraße 1" || full.LocationPostcode != "10115" || full.LocationCity != "Berlin" {
-		t.Fatalf("old-1 register/location join mismatch: %+v", full)
-	}
-	if full.EasType != "Tablet-/App-Kassen-Systeme" || full.EasSoftware != "AwesomePOS" ||
-		full.EasSerial != "eas-old-1" || full.TSESerial != "tse-old-1" ||
-		full.TSECertificationID != "cert-old-1" || full.TSEType != "cloud-tse" {
-		t.Fatalf("old-1 eas/tse fields mismatch: %+v", full)
-	}
-	if full.AcquiredOn != "2025-11-01" ||
-		full.CommissionedOn == nil || *full.CommissionedOn != "2025-12-01" ||
-		full.DecommissionedOn == nil || *full.DecommissionedOn != "2026-02-01" ||
-		full.CreatedAt != "2025-11-01T09:00:00Z" || full.UpdatedAt != "2026-02-01T09:00:00Z" {
-		t.Fatalf("old-1 dates/timestamps mismatch: %+v", full)
-	}
-	bare, ok := byID["old-2"]
-	if !ok {
-		t.Fatalf("old-2 missing after migration: %+v", byID)
-	}
-	if bare.CommissionedOn != nil || bare.DecommissionedOn != nil {
-		t.Fatalf("old-2's NULL optional dates must round-trip as nil, got %+v", bare)
-	}
-
-	// The migrated entry stays fully operable through the new backend.
-	if err := store.Decommission(ctx, "old-2", "2026-08-30"); err != nil {
-		t.Fatalf("Decommission migrated entry: %v", err)
-	}
-
-	// And the old table is really gone.
-	var n int
-	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM fiscal_register_de`).Scan(&n); err == nil {
-		t.Fatalf("fiscal_register_de still queryable after 075 (n=%d), want no-such-table error", n)
 	}
 }

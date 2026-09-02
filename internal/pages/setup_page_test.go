@@ -5,7 +5,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -14,6 +13,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	utdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -31,30 +31,26 @@ func initAuthTestI18n(t *testing.T) {
 	httpx.InitI18n(i18n, "en")
 }
 
-// seedCountrySettingsTable applies the REAL country_settings migration
-// (ut-docs#660) to a hand-rolled test schema, rather than retyping its
-// DDL/seed here — a hand-rolled copy is exactly the schema drift the tester
-// skill warns against; reading the actual migration file can't drift
-// because it IS the migration. Self-contained (no FK to any other table),
-// so it's safe to layer onto any hand-rolled schema. Shared by every fixture
-// in this package that registers the setup wizard (registerSetup), since
-// wizardCountries now queries this table on every render.
-//
-// Also applies 073 (ut-docs#1027, default_locale column) for the same
-// reason — 041 alone no longer matches the real, current table shape, and
-// any later migration that further alters country_settings needs adding
-// here too, or this fixture silently drifts from what production actually
-// runs (exactly the failure mode this helper's own doc comment guards
-// against for 041).
+// seedCountrySettingsTable applies the REAL country_settings DDL and seed
+// rows (ut-docs#660, ut-docs#1027) to a hand-rolled test schema, rather
+// than retyping them here — a hand-rolled copy is exactly the schema drift
+// the tester skill warns against; pulling the statements out of the
+// embedded 001 baseline can't drift because it IS the schema (it used to
+// execute the real 041/073 migration files for the same reason, until
+// ADR-0074 squashed them into the baseline). Self-contained (no FK to any
+// other table), so it's safe to layer onto any hand-rolled schema. Shared
+// by every fixture in this package that registers the setup wizard
+// (registerSetup), since wizardCountries queries this table on every
+// render.
 func seedCountrySettingsTable(t *testing.T, db *sql.DB) {
 	t.Helper()
-	for _, name := range []string{"041_country_settings.sql", "073_country_default_locale.sql"} {
-		migrationSQL, err := os.ReadFile(filepath.Join("internal", "db", "migrations", name))
-		if err != nil {
-			t.Fatalf("read %s: %v", name, err)
-		}
-		if _, err := db.Exec(string(migrationSQL)); err != nil {
-			t.Fatalf("apply %s: %v", name, err)
+	stmts, err := utdb.BaselineStatementsFor("country_settings")
+	if err != nil {
+		t.Fatalf("read country_settings statements from the baseline: %v", err)
+	}
+	for _, s := range stmts {
+		if _, err := db.Exec(s); err != nil {
+			t.Fatalf("apply baseline country_settings statement: %v\n%s", err, s)
 		}
 	}
 }

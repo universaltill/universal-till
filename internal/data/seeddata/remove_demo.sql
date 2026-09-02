@@ -1,7 +1,8 @@
 -- Demo catalogue removal (ut-docs#539). Requires demo_ids.sql to have run
 -- first on the same connection (it creates the temp demo_seed_* ID tables).
--- Shared verbatim by migration 036_demo_seed_opt_in.sql and
--- DemoSeedRepo.RemoveDemoCatalogue.
+-- Executed verbatim by DemoSeedRepo.RemoveDemoCatalogue (until the
+-- ADR-0074 migration squash, ut-docs#1425, this was also shared verbatim
+-- by migration 036_demo_seed_opt_in.sql, now deleted).
 --
 -- "Untouched" safety rule: a demo item may only be deleted when it is still
 -- flagged is_sample_data = 1 AND still PRISTINE — its sku/name/base_price
