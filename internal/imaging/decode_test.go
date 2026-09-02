@@ -6,6 +6,7 @@ import (
 	"hash/crc32"
 	"image"
 	"image/color"
+	"image/gif"
 	"image/jpeg"
 	"image/png"
 	"strings"
@@ -45,6 +46,28 @@ func TestDecode_ValidSmallPNG(t *testing.T) {
 	}
 	if b := img.Bounds(); b.Dx() != 10 || b.Dy() != 10 {
 		t.Fatalf("got %dx%d, want 10x10", b.Dx(), b.Dy())
+	}
+}
+
+// TestDecode_RejectsGIF is the independent-review regression: this package
+// only ever meant to accept PNG/JPEG (every caller's error text says so),
+// but image.Decode dispatches to any format registered ANYWHERE in the
+// built binary — internal/print blank-imports image/gif for an unrelated
+// reason, which before the format allowlist silently made GIF a 5th
+// accepted format here too, with its own dimension limits never audited
+// against MaxPixels.
+func TestDecode_RejectsGIF(t *testing.T) {
+	img := image.NewPaletted(image.Rect(0, 0, 10, 10), color.Palette{color.Black, color.White})
+	var buf bytes.Buffer
+	if err := gif.Encode(&buf, img, nil); err != nil {
+		t.Fatalf("encode GIF: %v", err)
+	}
+	_, err := Decode(buf.Bytes())
+	if err == nil {
+		t.Fatal("expected a valid GIF to be rejected (png/jpeg only), got nil error")
+	}
+	if !strings.Contains(err.Error(), "unsupported image format") {
+		t.Fatalf("expected an unsupported-format error, got: %v", err)
 	}
 }
 

@@ -598,8 +598,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		defer file.Close()
 		raw, readErr := io.ReadAll(io.LimitReader(file, 10<<20))
+		if readErr != nil {
+			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
+			return
+		}
 		img, err := imaging.Decode(raw)
-		if readErr != nil || err != nil {
+		if err != nil {
 			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
 			return
 		}
@@ -663,8 +667,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		}
 		defer file.Close()
 		raw, readErr := io.ReadAll(io.LimitReader(file, 10<<20))
+		if readErr != nil {
+			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
+			return
+		}
 		img, err := imaging.Decode(raw)
-		if readErr != nil || err != nil {
+		if err != nil {
 			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
 			return
 		}

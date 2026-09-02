@@ -364,4 +364,7 @@ func TestVariantImageUpload_RejectsOversizedImage(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for an oversized variant image upload, got %d: %s", rec.Code, rec.Body.String())
 	}
+	if _, err := os.Stat(paths.Data("public", "assets", "items", "itm1", "variants", "v1", "thumb.png")); err == nil {
+		t.Fatal("a rejected oversized-image variant upload must not leave a thumbnail file behind")
+	}
 }
