@@ -42,7 +42,11 @@ import (
 // (`country === 'DE' ? 3 : 4`), and renderWizard resumes a tax-plugin
 // install round-trip on step 3 for the same reason. Adding e.g. "FR" to
 // this map alone would resolve a listing that no operator can ever see —
-// the step gating has to move too.
+// the step gating has to move too. As of ut-docs#1460, renderWizard also
+// resolves this tile's data with the hardcoded tseProvisionCountry
+// (setup_tse.go), not a country looked up from this map — that hardcode
+// needs to move too, to whatever decides which of several tax-mapped
+// countries' step the operator is actually in.
 var countryTaxLocale = map[string]string{
 	"DE": "de",
 }

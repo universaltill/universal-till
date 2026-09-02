@@ -268,11 +268,40 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if p := r.URL.Query().Get("install_pending"); isPlausibleLocale(p) {
 			data["installPendingLang"] = p
 		}
-		// ut-docs#1180: ADR-0025 decision 4 — a fiscal (tax) plugin match
-		// for the now-resolved country, PROMPTED never silently installed.
-		// Uses this same final `code` (the operator's own pick on a POST
-		// re-render, never an earlier draft), same TTL-cached-catalog
+		// ut-docs#1180: ADR-0025 decision 4 — a fiscal (tax) plugin match,
+		// PROMPTED never silently installed. Same TTL-cached-catalog
 		// posture as installableLangs just above.
+		//
+		// ut-docs#1460: resolved against tseProvisionCountry (the fixed
+		// Germany country code step 3 itself is scoped to, ADR-0053), NOT
+		// the wizard's currently-detected/posted `code`. This tile only
+		// ever renders inside step 3, which is Germany-only regardless of
+		// `code` (setup.html's `country === 'DE' ? 3 : 4` — the ONLY thing
+		// that keeps this now-unconditionally-rendered markup off a non-DE
+		// operator's screen; see TestSetupWizardShowsTaxPluginInstallTileForDEOnly's
+		// pinned assertion on that exact ternary), so hardcoding the
+		// country here doesn't leak the tile anywhere else. The bug this
+		// replaced: resolving against `code` meant the tile depended on the
+		// OS-detected country at the wizard's very first GET (ut-docs#590)
+		// — step 2's country picker is pure client-side Alpine with no
+		// server round-trip on a tile click, so a till whose OS
+		// locale/timezone wasn't already German-tagged (the pilot café's
+		// TECLAST tablet: en-GB/Europe/London) never got this tile's markup
+		// into the DOM at all; no later hand-picked country could reveal
+		// markup that was never rendered. Alpine's own `x-show="step ===
+		// 3"` is what reveals it once the operator actually reaches step 3
+		// — this only has to be resolved once, not re-resolved per pick.
+		//
+		// Side effect worth knowing about: this now runs the tax-catalog
+		// fetch (setupTaxCatalogEntries, bounded by
+		// setupTaxCatalogFetchTimeout, 5m TTL-cached) unconditionally on
+		// every first-boot render, not only when the OS happened to detect
+		// Germany — setupInstallableTaxPlugin used to short-circuit on the
+		// countryTaxLocale miss before ever calling it. Bounded and cached,
+		// same as installableLangs' own catalog fetch just above, and never
+		// on the checkout path, so this doesn't violate offline-first — but
+		// it is a small first-boot latency regression for the common
+		// non-German till, worth knowing if setup ever feels slower.
 		//
 		// The second return (catalogUnavailable) is deliberately NOT put in
 		// data: unlike langCatalogUnavailable there is no "…once connected"
@@ -281,7 +310,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// record for ut-docs#1180) — it needs product sign-off on whether an
 		// unreachable catalog should say anything at all about a *fiscal*
 		// plugin during setup, plus copy in every locale.
-		taxPlugin, _ := setupInstallableTaxPlugin(r.Context(), d, code)
+		taxPlugin, _ := setupInstallableTaxPlugin(r.Context(), d, tseProvisionCountry)
 		data["installableTaxPlugin"] = taxPlugin
 		// tax_plugin_pending: set by POST /api/setup/tax-plugin's failure
 		// redirect (query param, not stored state) — shows the "still
