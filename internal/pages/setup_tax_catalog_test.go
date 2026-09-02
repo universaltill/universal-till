@@ -353,11 +353,74 @@ func TestSetupWizardShowsTaxPluginInstallTileForDEOnly(t *testing.T) {
 		t.Error("tax-plugin tile must not call this 'Optional' — it is required before any real sale can complete (ADR-0048)")
 	}
 
-	// A non-DE country must not show the tile at all.
+	// ut-docs#1460: the tile's presence in the rendered HTML is no longer
+	// gated by which country was posted — it's resolved against the fixed
+	// Germany country code unconditionally (see setup_page.go), because
+	// step 2's country picker never round-trips to the server, so the
+	// FIRST render is the only chance this markup ever lands in the DOM.
+	// It stays out of an FR operator's way for the reason that mattered
+	// all along: the tile only lives inside step 3, which setup.html's
+	// `country === 'DE' ? 3 : 4` never routes a non-DE pick into, per
+	// ADR-0053 — not because the server withheld the markup.
 	form["country"] = []string{"FR"}
 	rec = postFormRaw(mux, "/api/setup", form)
-	if strings.Contains(rec.Body.String(), `action="/api/setup/tax-plugin"`) {
-		t.Error("a non-DE country must not show the tax-plugin install tile")
+	body = rec.Body.String()
+	if !strings.Contains(body, `action="/api/setup/tax-plugin"`) {
+		t.Error("the DE tax-plugin tile must still be present in the DOM even on an FR re-render — Alpine, not the server, is what keeps it off an FR operator's screen")
+	}
+	// Review finding (ut-docs#1460): with the server-side gate gone, this
+	// ternary is now THE ONLY thing standing between the unconditionally-
+	// rendered DE tax tile and a non-DE operator's screen. Nothing
+	// previously pinned it, so a later change that made step 3 reachable
+	// for any other reason (a step-jump nav, a "confirm business details"
+	// step for every country) could ship this tile to a French operator
+	// with an otherwise fully green suite. Pin both ternaries that gate it
+	// (step 2's Next, step 4's Back) directly.
+	if !strings.Contains(body, `step = country === 'DE' ? 3 : 4`) {
+		t.Error("step 2's Next must stay Germany-only — it is what keeps the unconditionally-rendered DE tax tile off a non-DE operator's screen (ut-docs#1460)")
+	}
+	if !strings.Contains(body, `step = country === 'DE' ? 3 : 2`) {
+		t.Error("step 4's Back must stay Germany-only for the same reason (ut-docs#1460)")
+	}
+}
+
+// ut-docs#1460: the tile must be present in the DOM even when the OS-
+// detected country isn't Germany. Step 2's country picker is pure Alpine —
+// picking DE there never triggers a server round-trip — so whatever
+// installableTaxPlugin resolves against on the FIRST render is the only
+// chance the tile's markup ever gets into the DOM at all; Alpine's
+// `x-show="step === 3"` is what reveals it once the operator later steps
+// into step 3, not a fresh server render. Before the fix,
+// installableTaxPlugin was resolved from the OS-detected `code`
+// (setup_page.go), so a till whose OS locale/timezone wasn't already
+// German-tagged (the pilot café's TECLAST tablet: en-GB/Europe/London) got
+// no tile in the DOM at all on the initial GET — no later client-side
+// country pick could resurrect markup that was never rendered.
+func TestSetupWizardTaxPluginTilePresentEvenWhenOSCountryIsNotDE(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	resetSetupLanguageCatalog()
+	t.Cleanup(resetSetupLanguageCatalog)
+	withOSLocale(t, "en_GB.UTF-8", "Europe/London")
+	mux, _, dp := newFullAuthDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	// en is a core locale, so this is the same "already the default"
+	// redirect TestSetupWizardRedirectsToDetectedEnglishAndPrefillsGB pins.
+	rec := getSetup(mux, "", "")
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup?lang=en" {
+		t.Fatalf("GET /setup (en_GB, Europe/London): code=%d loc=%q, want 303 -> /setup?lang=en",
+			rec.Code, rec.Header().Get("Location"))
+	}
+
+	body := getSetup(mux, "?lang=en", "").Body.String()
+	if !strings.Contains(body, "country: 'GB'") {
+		t.Fatalf("sanity check failed: expected OS-detected country GB, got:\n%s", body)
+	}
+	if !strings.Contains(body, `action="/api/setup/tax-plugin"`) {
+		t.Errorf("expected the DE tax-plugin install tile present in the DOM even though the OS-detected country is GB (Alpine reveals it once the operator picks DE), got:\n%s", body)
 	}
 }
 
