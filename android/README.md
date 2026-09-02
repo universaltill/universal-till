@@ -20,9 +20,19 @@ no rewrite, no second plugin host.
   show a window" shape `cmd/unitill-desktop/desktop.go` uses, minus the
   child-process spawn (mobile apps can't do that).
 - Cleartext HTTP is allowed **only** to `127.0.0.1`
-  (`network_security_config.xml`) — the embedded server never binds
-  anything else, and this keeps the app from accepting cleartext to
-  anything else it might ever talk to.
+  (`network_security_config.xml`), which keeps the app from accepting
+  cleartext to anything else it might ever talk to. The embedded server
+  itself binds **all** interfaces (`0.0.0.0`, ut-docs#1256) so an Android
+  till is LAN-reachable — discoverable and pairable as a primary by other
+  tills, behind the same ADR-0033 discovery + approve-to-pair +
+  per-till bearer-token boundary the Linux/Pi **service** till (the bare
+  `unitill-pos` binary) already ships — NOT `cmd/unitill-desktop`'s WebView
+  shell, which stays loopback-only like this app always has. That
+  doesn't change what the config must permit: Network Security Config
+  governs only the app's own outbound Java/WebView-layer cleartext calls,
+  and the WebView still only ever loads `127.0.0.1`; inbound connections
+  to the Go server's socket (and the Go server's own outbound LAN calls)
+  go through the Go runtime directly, outside Network Security Config.
 
 ## Prerequisites
 
