@@ -354,10 +354,24 @@
 
   form.addEventListener('submit', function (ev) {
     ev.preventDefault();
+    // ut-docs#1365: the submit button was never disabled while a save was
+    // in flight. Harmless before #1363 (every response re-rendered the
+    // whole table), but #1363's row-level OOB protocol decides insert-vs-
+    // in-place from the item's PREVIOUS active state, read once before the
+    // mutation — two rapid clicks while reactivating a formerly-inactive
+    // item both read wasActive=false before either write lands, so both
+    // responses emit a row insert (`beforeend`) instead of the second one
+    // updating the row the first just created. Disabling here makes a
+    // second click physically impossible (a disabled button's own click()
+    // never dispatches, browsers included) rather than racing on request
+    // timing; the `submit.disabled` check below is belt-and-braces for any
+    // non-click submission path (e.g. implicit Enter-key submit).
+    if (submit.disabled) return;
     document.getElementById('item-price-minor').value = window.utCurrency.toMinor(document.getElementById('item-price').value || '0');
     var editing = document.getElementById('item-id').value !== '';
     var url = editing ? '/api/catalog/item/update' : '/api/catalog/item';
     renderNotice(msg, 'info', NOTICE_MSG.itemFormSaving);
+    submit.disabled = true;
     // ut-docs#917: htmx.ajax()'s returned promise resolves on ANY completed
     // HTTP response, error statuses included — htmx's xhr.onload always
     // calls the resolver; only a network-level failure (onerror/onabort/
@@ -378,6 +392,7 @@
     document.body.addEventListener('htmx:responseError', markFailed, { once: true });
     htmx.ajax('POST', url, { source: '#item-form', target: '#catalog-table', swap: 'none' })
       .then(function () {
+        submit.disabled = false;
         document.body.removeEventListener('htmx:responseError', markFailed);
         if (failed) return;
         // clearForm() BEFORE the success notice, never after — clearForm()
@@ -390,6 +405,15 @@
         if (!editing) clearForm();
         renderNotice(msg, 'success', NOTICE_MSG.itemFormSaved);
         filterRows();
+      })
+      // Only a network-level failure (see the ut-docs#917 note above)
+      // rejects instead of resolving — without this the button would stay
+      // disabled forever after e.g. a dropped connection, with no way to
+      // retry the save.
+      .catch(function () {
+        submit.disabled = false;
+        document.body.removeEventListener('htmx:responseError', markFailed);
+        renderNotice(msg, 'error', NOTICE_MSG.itemFormErrorGeneric);
       });
   });
   document.body.addEventListener('htmx:responseError', function (ev) {
