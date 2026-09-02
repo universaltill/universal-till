@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
@@ -76,6 +77,43 @@ func TestPaymentsSettingsEndpoints(t *testing.T) {
 	raw, ok, _ := d.Settings.Get(t.Context(), "payments.fee.card")
 	if !ok || !strings.Contains(raw, `"bp":175`) || !strings.Contains(raw, `"fixed":20`) {
 		t.Fatalf("stored fee = %q ok=%v", raw, ok)
+	}
+}
+
+// ut-docs#1400: POST /api/settings/payments-fee hardcoded `* 100` for the
+// fixed-fee minor-unit conversion regardless of the active currency's
+// decimals -- an operator entering "500" for a ¥500 fixed fee on a
+// 0-decimal shop (IRR/IRT/IQD/AFN/JPY) got 50000 minor units stored instead
+// of 500. bp (basis points) is unaffected -- it's a percentage, not money,
+// and stays *100 regardless of currency.
+func TestPaymentsSettingsFee_IsCurrencyDecimalsAware(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	httpx.InitCurrency("IRT")
+	t.Cleanup(func() { httpx.InitCurrency("GBP") })
+
+	rec := postForm(mux, "/api/settings/payments-fee", url.Values{
+		"method": {"cash"}, "percent": {"1.75"}, "fixed": {"500"},
+	}, &mgrUser)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "✓") {
+		t.Fatalf("valid fee under IRT: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	raw, ok, _ := d.Settings.Get(t.Context(), "payments.fee.cash")
+	if !ok {
+		t.Fatalf("stored fee not found")
+	}
+	// Decoded, not a substring match: "fixed":500 is itself a substring of
+	// the unfixed bug's "fixed":50000, so a Contains check here would
+	// silently pass against the very regression this test exists to catch.
+	var fee struct {
+		BP    int64 `json:"bp"`
+		Fixed int64 `json:"fixed"`
+	}
+	if err := json.Unmarshal([]byte(raw), &fee); err != nil {
+		t.Fatalf("decode stored fee %q: %v", raw, err)
+	}
+	if fee.BP != 175 || fee.Fixed != 500 {
+		t.Fatalf("stored fee under a 0-decimal currency = %+v, want {BP:175 Fixed:500} (not Fixed:50000)", fee)
 	}
 }
 
