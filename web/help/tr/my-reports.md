@@ -5,6 +5,7 @@ section: Bağlantı ve eklentiler
 order: 361
 summary: "Bu kasanın kaydettiği sorun raporlarını — gönderilmiş ya da gönderim bekleyen (en son 100 tanesi) — bilinen son durumlarıyla görün. Çevrimdışı da çalışır."
 routes: [/my-reports]
+keywords: [bug, issue, report, status, sent, pending, github, tracking]
 ---
 
 # Raporlarım
@@ -30,4 +31,6 @@ Durumların anlamı:
 
 Bu sayfanın internete hiç ihtiyacı yoktur: her zaman mağazanın son çevrimiçi olduğu andaki durumları gösterir ve bağlantı geri geldiğinde bunları arka planda otomatik olarak yeniler. Az önce kaydettiğiniz bir rapor burada hemen "gönderim bekliyor" olarak görünür — gerçekten yüklendiğinde "Gönderildi, inceleme bekliyor" durumuna geçer.
 
-Sayfayı bildirim panelindeki **Raporlarımı görüntüle** bağlantısından açın (üst çubuktaki 🐞 düğmesi — Sorun bildirme konusuna bakın).
+Eğer bu kasa bir raporun kendi kopyasını kaydedemezse — örneğin depolaması dolmuşsa — yeniden denemeye devam eder, ama sadece bir süre. Birkaç başarısız denemeden sonra raporu yerel olarak hatırlamayı bırakır. Raporun kendisi her halükarda desteğe ulaşır; sadece burada listelenmez.
+
+Sayfayı bildirim panelindeki **Raporlarımı görüntüle** bağlantısından açın (yan menüdeki 🐞 düğmesi — Sorun bildirme konusuna bakın).
