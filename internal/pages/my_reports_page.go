@@ -66,14 +66,14 @@ type myReportRow struct {
 func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /my-reports", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "reports") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
 			return
 		}
 		const rowLimit = 100
 		repo := data.NewIssueReportsRepo(d.Db)
 		reports, err := repo.ListSent(r.Context(), rowLimit)
 		if err != nil {
-			http.Error(w, "failed to load reports", http.StatusInternalServerError)
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
 

@@ -63,7 +63,7 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 	// change to gated (UT_AUTH on) behavior.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		if !canPerform(d, r, "settings") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required") // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return auth.User{}, false
 		}
 		u, _ := auth.FromContext(r.Context())
@@ -78,7 +78,7 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 	tiles := func(w http.ResponseWriter, r *http.Request) ([]tableTile, bool) {
 		states, err := posRepo.ListTablesWithState(r.Context())
 		if err != nil {
-			http.Error(w, "failed to load tables", http.StatusInternalServerError)
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return nil, false
 		}
 		now := time.Now().UTC()

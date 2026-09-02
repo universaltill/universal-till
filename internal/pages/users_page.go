@@ -49,7 +49,7 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	// ut-docs#795 moved every mutating handler onto checkOrElevate instead.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		if !canPerform(d, r, "user_management") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required") // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return auth.User{}, false
 		}
 		u, _ := auth.FromContext(r.Context())
@@ -120,7 +120,7 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	renderUsers := func(w http.ResponseWriter, r *http.Request, actor auth.User, errKey string) {
 		users, err := repo.ListUsers(r.Context())
 		if err != nil {
-			http.Error(w, "failed to load users", http.StatusInternalServerError)
+			http.Error(w, "failed to load users", http.StatusInternalServerError) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return
 		}
 		type row struct {

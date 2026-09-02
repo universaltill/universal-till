@@ -55,7 +55,7 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	renderLogin := func(w http.ResponseWriter, r *http.Request, errKey, next string) {
 		firstBoot, err := svc.NeedsFirstBoot(r.Context())
 		if err != nil {
-			http.Error(w, "auth unavailable", http.StatusInternalServerError)
+			http.Error(w, "auth unavailable", http.StatusInternalServerError) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return
 		}
 		data := map[string]any{

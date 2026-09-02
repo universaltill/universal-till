@@ -1590,6 +1590,8 @@
   "catalog.error.barcode_no_symbology_match": "Bu barkod, bu mağaza için etkinleştirilmiş herhangi bir barkod türüyle eşleşmiyor.",
   "catalog.error.item_created_barcode_failed": "ürün oluşturuldu, ancak %s",
   "common.error.manager_or_admin_required": "Yönetici veya admin gerekli",
+  "common.error.super_admin_required": "Süper admin gerekli",
+  "common.error.marketplace_not_configured": "Eklenti Mağazası yapılandırılmamış",
   "common.error.invalid_upload": "Geçersiz yükleme",
   "catalog.error.server": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
   "catalog.error.invalid_request": "Geçersiz istek — ayrıntıları kontrol edip tekrar deneyin.",

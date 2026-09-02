@@ -130,7 +130,7 @@ func registerOrderTracking(mux *http.ServeMux, d *common.Deps) {
 		o, token, ok, err := lookup(r)
 		if err != nil {
 			// No error detail on an anonymous surface.
-			http.Error(w, "lookup failed", http.StatusInternalServerError)
+			http.Error(w, "lookup failed", http.StatusInternalServerError) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return
 		}
 		if !ok {
@@ -154,7 +154,7 @@ func registerOrderTracking(mux *http.ServeMux, d *common.Deps) {
 		funcs := httpx.FuncsFor(locale)
 		o, token, ok, err := lookup(r)
 		if err != nil {
-			http.Error(w, "lookup failed", http.StatusInternalServerError)
+			http.Error(w, "lookup failed", http.StatusInternalServerError) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return
 		}
 		var viewData map[string]any

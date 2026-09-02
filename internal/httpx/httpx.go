@@ -658,15 +658,26 @@ var renderFiles = []string{
 	"ui/partials/tse_provisioning_block.html",
 }
 
+// renderFullPage is the composition Render() executes, factored out so
+// RenderError (internal/httpx/error_page.go, ut-docs#1455) can run the exact
+// same layout+page+partials render synchronously inside a handler that
+// already has its own status code and headers to set — Render() itself
+// always returns an http.HandlerFunc, which doesn't fit RenderError needing
+// to run inline. locale is a parameter (not resolved here) so RenderError
+// can resolve it once and reuse it for both the translated message and the
+// render itself.
+func renderFullPage(w http.ResponseWriter, r *http.Request, locale, tplPath string, data any) error {
+	page := stripWebPrefix(tplPath)
+	files := append([]string{renderFiles[0], page}, renderFiles[1:]...)
+	t := template.Must(ClonedTemplate("httpx.Render:"+page, "base.html", withHelpHref(FuncsFor(locale), r), files...))
+	return t.ExecuteTemplate(w, "base", data)
+}
+
 // Render full page with layout + page + common partials
 func Render(tplPath string, data any) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
-		page := stripWebPrefix(tplPath)
-
 		locale := ResolveLocale(w, r)
-		files := append([]string{renderFiles[0], page}, renderFiles[1:]...)
-		t := template.Must(ClonedTemplate("httpx.Render:"+page, "base.html", withHelpHref(FuncsFor(locale), r), files...))
-		if err := t.ExecuteTemplate(w, "base", data); err != nil {
+		if err := renderFullPage(w, r, locale, tplPath, data); err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}

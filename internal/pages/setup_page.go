@@ -325,7 +325,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	mux.HandleFunc("GET /setup", func(w http.ResponseWriter, r *http.Request) {
 		firstBoot, err := svc.NeedsFirstBoot(r.Context())
 		if err != nil {
-			http.Error(w, "setup unavailable", http.StatusInternalServerError)
+			http.Error(w, "setup unavailable", http.StatusInternalServerError) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return
 		}
 		if !firstBoot {

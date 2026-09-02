@@ -1590,6 +1590,8 @@
   "catalog.error.barcode_no_symbology_match": "این بارکد با هیچ نوع بارکد فعال‌شده برای این فروشگاه مطابقت ندارد.",
   "catalog.error.item_created_barcode_failed": "کالا ایجاد شد، اما %s",
   "common.error.manager_or_admin_required": "نیاز به دسترسی مدیر یا سرپرست",
+  "common.error.super_admin_required": "نیاز به دسترسی سرپرست کل",
+  "common.error.marketplace_not_configured": "فروشگاه افزونه‌ها پیکربندی نشده است",
   "common.error.invalid_upload": "بارگذاری نامعتبر",
   "catalog.error.server": "مشکلی پیش آمد. دوباره تلاش کنید.",
   "catalog.error.invalid_request": "درخواست نامعتبر — جزئیات را بررسی کرده و دوباره تلاش کنید.",

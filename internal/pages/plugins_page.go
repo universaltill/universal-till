@@ -21,7 +21,7 @@ func registerPluginsPage(mux *http.ServeMux, d *common.Deps) {
 
 		rows, err := data.NewPluginRepo(d.Db).ListManagedPlugins(ctx)
 		if err != nil {
-			http.Error(w, "failed to load plugins", http.StatusInternalServerError)
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
 		statuses, _ := plugins.NewInstallStatusStore(d.Db).List(ctx)

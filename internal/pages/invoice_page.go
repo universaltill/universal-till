@@ -337,12 +337,12 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		}
 		list, err := invRepo.List(r.Context(), from, to)
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "invoice.error.server", "invoice", err)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "invoice.error.server", "invoice", err) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return
 		}
 		net, tax, gross, err := invRepo.Totals(r.Context(), from, to)
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "invoice.error.server", "invoice", err)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "invoice.error.server", "invoice", err) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return
 		}
 		httpx.Render("ui/pages/invoices.html", map[string]any{
@@ -414,7 +414,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		}
 		sale, _, err := posRepo.GetSaleDetailByID(r.Context(), inv.SaleID)
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "invoice.error.server", "invoice", err)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "invoice.error.server", "invoice", err) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return
 		}
 		var seller invoiceSeller

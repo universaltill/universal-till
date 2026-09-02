@@ -231,7 +231,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		pluginID := r.PathValue("id")
 		rows, err := repo.ListPluginSettings(r.Context(), pluginID)
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return
 		}
 		var views []settingView
@@ -248,7 +248,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			if isTaxRateOverridesKey(row.Key) {
 				taxCodes, err := catalogRepo.ListTaxCodes(r.Context())
 				if err != nil {
-					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
+					common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 					return
 				}
 				if taxRows, ok := buildTaxOverrideRows(v, taxCodes); ok {

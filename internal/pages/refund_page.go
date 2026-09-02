@@ -117,7 +117,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// ut-docs#944 (ut-docs#924 increment 2 of 4): a genuine DB-layer
 			// failure, not a reachable business rejection -- same defect class
 			// as #921/#923/#929/#316 elsewhere in this package.
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return
 		}
 		methods := []string{"cash"}

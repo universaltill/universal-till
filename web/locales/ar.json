@@ -1590,6 +1590,8 @@
   "catalog.error.barcode_no_symbology_match": "هذا الباركود لا يطابق أي نوع باركود مُفعّل حاليًا لهذا المتجر.",
   "catalog.error.item_created_barcode_failed": "تم إنشاء الصنف، لكن %s",
   "common.error.manager_or_admin_required": "مطلوب صلاحية مدير أو مسؤول",
+  "common.error.super_admin_required": "مطلوب صلاحية المشرف الأعلى",
+  "common.error.marketplace_not_configured": "متجر الإضافات غير مُهيأ",
   "common.error.invalid_upload": "رفع غير صالح",
   "catalog.error.server": "حدث خطأ ما. يرجى المحاولة مجددًا.",
   "catalog.error.invalid_request": "طلب غير صالح — تحقق من التفاصيل وحاول مرة أخرى.",

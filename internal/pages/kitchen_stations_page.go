@@ -39,7 +39,7 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 	// change to gated (UT_AUTH on) behavior.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		if !canPerform(d, r, "settings") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required") // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return auth.User{}, false
 		}
 		u, _ := auth.FromContext(r.Context())
@@ -67,22 +67,22 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 		ctx := r.Context()
 		stations, err := posRepo.ListKitchenStations(ctx)
 		if err != nil {
-			http.Error(w, "failed to load kitchen stations", http.StatusInternalServerError)
+			http.Error(w, "failed to load kitchen stations", http.StatusInternalServerError) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return
 		}
 		categories, err := catRepo.ListCategories(ctx)
 		if err != nil {
-			http.Error(w, "failed to load categories", http.StatusInternalServerError)
+			http.Error(w, "failed to load categories", http.StatusInternalServerError) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return
 		}
 		catRoutes, err := posRepo.AllCategoryStationRoutes(ctx)
 		if err != nil {
-			http.Error(w, "failed to load category routing", http.StatusInternalServerError)
+			http.Error(w, "failed to load category routing", http.StatusInternalServerError) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return
 		}
 		overrides, err := posRepo.ListItemStationOverrides(ctx)
 		if err != nil {
-			http.Error(w, "failed to load item overrides", http.StatusInternalServerError)
+			http.Error(w, "failed to load item overrides", http.StatusInternalServerError) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return
 		}
 
@@ -119,7 +119,7 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 			}
 			found, err := posRepo.SearchActiveItems(ctx, q, 0, 20)
 			if err != nil {
-				http.Error(w, "failed to search items", http.StatusInternalServerError)
+				http.Error(w, "failed to search items", http.StatusInternalServerError) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 				return
 			}
 			for _, it := range found {

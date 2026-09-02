@@ -121,7 +121,7 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 	// "settings" for now, per the Architect's design.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		if !canPerform(d, r, "settings") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required") // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return auth.User{}, false
 		}
 		u, _ := auth.FromContext(r.Context())
@@ -136,7 +136,7 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 	renderFiscalRegister := func(w http.ResponseWriter, r *http.Request, errKey string) {
 		entries, err := fiscalStore.List(r.Context())
 		if err != nil {
-			http.Error(w, "failed to load fiscal register", http.StatusInternalServerError)
+			http.Error(w, "failed to load fiscal register", http.StatusInternalServerError) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return
 		}
 		// The "add entry" picker offers active registers only, same
@@ -145,7 +145,7 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 		// the tax office.
 		registers, err := posRepo.ListRegisters(r.Context())
 		if err != nil {
-			http.Error(w, "failed to load registers", http.StatusInternalServerError)
+			http.Error(w, "failed to load registers", http.StatusInternalServerError) // page-error:allow ut-docs#1458 (pending migration to httpx.RenderError — tracked follow-up card, out of #1455's scope)
 			return
 		}
 

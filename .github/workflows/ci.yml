@@ -76,6 +76,16 @@ jobs:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
         run: bash scripts/ci/guard-help-topics.sh
+      - name: Page-route bare-error guard
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: bash scripts/ci/guard-page-http-error.sh
+      - name: Page-route bare-error guard regression test
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: bash scripts/ci/guard-page-http-error_test.sh
       - name: Linux desktop webkit2gtk version guard
         run: bash scripts/ci/guard-webkit-version.sh
       - name: Linux desktop webkit2gtk version guard regression test

@@ -1590,6 +1590,8 @@
   "catalog.error.barcode_no_symbology_match": "This barcode doesn't match any barcode type currently enabled for this shop.",
   "catalog.error.item_created_barcode_failed": "item created, but %s",
   "common.error.manager_or_admin_required": "Manager or admin required",
+  "common.error.super_admin_required": "Super admin required",
+  "common.error.marketplace_not_configured": "Marketplace is not configured",
   "common.error.invalid_upload": "Invalid upload",
   "catalog.error.server": "Something went wrong. Please try again.",
   "catalog.error.invalid_request": "Invalid request — check the details and try again.",

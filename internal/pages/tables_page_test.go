@@ -85,6 +85,40 @@ func TestTablesPagePermissions(t *testing.T) {
 	}
 }
 
+// TestTablesPage_RepoErrorRendersFullLayout is the regression test for the
+// live bug ut-docs#1455 fixes: ListTablesWithState failing used to fall
+// back to a bare-text http.Error body — no nav rail, no way back on the
+// pinned Android kiosk (no browser Back). Force the repo call to fail
+// (drop the underlying table, same fault-injection pattern
+// catalog/handlers_errors_test.go already uses) and assert the response is
+// still the full page layout — nav rail + Back to sale — not a bare body.
+func TestTablesPage_RepoErrorRendersFullLayout(t *testing.T) {
+	mux, d := newTablesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	if _, err := d.Db.Exec(`DROP TABLE tables`); err != nil {
+		t.Fatalf("drop tables table: %v", err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/tables", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("GET /tables with broken repo = %d, want 500: %s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("Cache-Control"); got != "no-store" {
+		t.Fatalf("Cache-Control = %q, want no-store", got)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "nav-toggle") {
+		t.Fatalf("500 response missing nav rail marker (nav-toggle) — bare-text lock-up regression; body:\n%s", body)
+	}
+	if !strings.Contains(body, "Back to sale") {
+		t.Fatalf("500 response missing \"Back to sale\" link; body:\n%s", body)
+	}
+}
+
 func TestTablesPage_CreateEditPositionDeactivateAndRender(t *testing.T) {
 	mux, d := newTablesTestMux(t)
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
