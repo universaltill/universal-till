@@ -119,9 +119,12 @@ type Event struct {
 // SAP, Dynamics/LS Central, …) consume to mirror each sale into another
 // system. Money is integer minor units; quantities are decimal (weighed goods).
 type SaleCompletedEvent struct {
-	SaleID        string         `json:"sale_id"`
-	ReceiptNo     string         `json:"receipt_no"`
-	SaleType      string         `json:"sale_type"` // "sale" | "return"
+	SaleID    string `json:"sale_id"`
+	ReceiptNo string `json:"receipt_no"`
+	SaleType  string `json:"sale_type"` // "sale" | "return"
+	// OrderType (ut-docs#1181, ADR-0073): the sale's derived summary —
+	// "" (dine-in), "takeaway" or "mixed". Additive; omitted when dine-in.
+	OrderType     string         `json:"order_type,omitempty"`
 	Currency      string         `json:"currency"`
 	SubtotalCents int64          `json:"subtotal_cents"`
 	DiscountCents int64          `json:"discount_cents"`
@@ -148,6 +151,9 @@ type SaleLineItem struct {
 	TaxRateBP      int     `json:"tax_rate_bp"`
 	TaxCents       int64   `json:"tax_cents"`
 	TotalCents     int64   `json:"total_cents"`
+	// OrderType (ut-docs#1181, ADR-0073): this line's own mode, "" (dine-in,
+	// omitted) or "takeaway" — never "mixed". Additive.
+	OrderType string `json:"order_type,omitempty"`
 }
 
 // SalePayment is one tender applied to a sale (ERP contract).

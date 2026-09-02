@@ -30,6 +30,10 @@ type refundLineView struct {
 	UnitPrice int64
 	Sold      float64
 	Remaining float64
+	// OrderType (ut-docs#1181, ADR-0073): the line's own mode, so two rows
+	// of the same product at the same price but different modes/tax rates
+	// are distinguishable on the refund screen.
+	OrderType string
 }
 
 // saleIsTaxInclusive infers the original sale's pricing mode from its own
@@ -51,7 +55,7 @@ func saleIsTaxInclusive(d data.SaleDetail) bool {
 func refundLinePool(lines []data.SaleDetailLine, returned map[string]float64) map[string]float64 {
 	pool := map[string]float64{}
 	for _, l := range lines {
-		pool[data.RefundLineKey(l.ItemID, l.VariantID, l.UnitPrice)] += l.Qty
+		pool[data.RefundLineKey(l.ItemID, l.VariantID, l.UnitPrice, l.OrderType)] += l.Qty
 	}
 	for key, r := range returned {
 		pool[key] -= r
@@ -69,14 +73,14 @@ func refundableLines(detail data.SaleDetail, returned map[string]float64) []refu
 	pool := refundLinePool(detail.Lines, returned)
 	var out []refundLineView
 	for i, l := range detail.Lines {
-		key := data.RefundLineKey(l.ItemID, l.VariantID, l.UnitPrice)
+		key := data.RefundLineKey(l.ItemID, l.VariantID, l.UnitPrice, l.OrderType)
 		remaining := l.Qty
 		if remaining > pool[key] {
 			remaining = pool[key]
 		}
 		out = append(out, refundLineView{
 			Index: i, Name: l.Name, SKU: l.SKU, UnitPrice: l.UnitPrice,
-			Sold: l.Qty, Remaining: remaining,
+			Sold: l.Qty, Remaining: remaining, OrderType: l.OrderType,
 		})
 		// Multiple original lines sharing a key split the same remaining
 		// pool; charge this line's view against it so the page never
@@ -246,7 +250,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				http.Error(w, fmt.Sprintf("invalid quantity for line %d", i+1), http.StatusBadRequest)
 				return
 			}
-			key := data.RefundLineKey(l.ItemID, l.VariantID, l.UnitPrice)
+			key := data.RefundLineKey(l.ItemID, l.VariantID, l.UnitPrice, l.OrderType)
 			remaining := pool[key]
 			if qty > remaining+1e-9 {
 				http.Error(w, fmt.Sprintf("line %q: only %.3g left to refund", l.Name, remaining), http.StatusConflict)
@@ -262,6 +266,9 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				TaxRateBasisPoints: l.TaxRateBP,
 				LineDiscount:       money.FromMinor(lineDiscount),
 				LocationID:         locID,
+				// ADR-0073 Decision 6: the return line keeps the original
+				// line's mode; TaxRateBP above stays the money authority.
+				OrderType: l.OrderType,
 			})
 			refundGross += int64(float64(l.UnitPrice) * qty)
 		}

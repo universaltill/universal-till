@@ -134,3 +134,21 @@ func kitchenLeadingSpaces(t *testing.T, out string, want string) int {
 	t.Fatalf("line containing %q not found in output", want)
 	return -1
 }
+
+// ut-docs#1181 / ADR-0073 Decision 7: a per-line Mode marker prints under
+// the item for a MIXED order; an empty Mode leaves the ticket byte-identical
+// to before the field existed (every uniform sale).
+func TestRenderKitchenTicket_LineModeMarkerOnlyWhenSet(t *testing.T) {
+	base := KitchenTicket{OrderNo: "R-1", Items: []KitchenItem{{Qty: "1", Name: "Coffee"}}}
+	withMode := KitchenTicket{OrderNo: "R-1", Items: []KitchenItem{{Qty: "1", Name: "Coffee", Mode: "Takeaway"}}}
+	if a, b := RenderKitchenTicket(base), RenderKitchenTicket(KitchenTicket{OrderNo: "R-1", Items: []KitchenItem{{Qty: "1", Name: "Coffee", Mode: ""}}}); string(a) != string(b) {
+		t.Fatal("an empty Mode must not change the ticket bytes")
+	}
+	txt := RenderKitchenTicketText(withMode)
+	if !strings.Contains(txt, "* TAKEAWAY") {
+		t.Fatalf("expected the mode marker under the item, got:\n%s", txt)
+	}
+	if !strings.Contains(string(RenderKitchenTicket(withMode)), "* TAKEAWAY") {
+		t.Fatal("ESC/POS ticket must carry the mode marker too")
+	}
+}

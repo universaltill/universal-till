@@ -217,7 +217,11 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 		returned, err := repo.ReturnedQuantities(ctx, j.OriginalSaleID)
 		if err == nil {
 			for _, l := range j.Sale.Lines {
-				key := data.RefundLineKey(l.ItemID, l.VariantID, l.UnitPrice)
+				// NOTE: this tally is not read back — a report-time check
+				// (see the trailing comment) is where the per-line compare
+				// happens. Kept keyed identically to refund_page.go so the
+				// two can never disagree if it is ever consulted.
+				key := data.RefundLineKey(l.ItemID, l.VariantID, l.UnitPrice, l.OrderType)
 				returned[key] += l.Qty
 			}
 			// (detailed per-line compare happens naturally at report time;
@@ -261,6 +265,12 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 			Qty: l.Qty, UnitPrice: money.FromMinor(l.UnitPrice),
 			TaxRateBasisPoints: l.TaxRateBP, LineDiscount: money.FromMinor(l.LineDiscount),
 			LocationID: locID,
+			// ADR-0073 / contract 1.5.0: the originating till's line mode
+			// rides the journal verbatim; CompleteSale normalizes it (a bad
+			// value becomes dine-in, never a 422 — ADR-0065) and fills omitted
+			// lines from a legacy "takeaway" header. The tax rate above is
+			// the originating one; the primary's tax plugin is never re-asked.
+			OrderType: l.OrderType,
 		})
 	}
 	if j.Sale.DiscountTotal > 0 {

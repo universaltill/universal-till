@@ -39,7 +39,7 @@ func TestRefundableLines_SubtractsPriorPartialReturn(t *testing.T) {
 	detail := data.SaleDetail{Lines: []data.SaleDetailLine{
 		{Name: "Apple", SKU: "A1", ItemID: "i1", UnitPrice: 100, Qty: 3},
 	}}
-	key := data.RefundLineKey("i1", "", 100)
+	key := data.RefundLineKey("i1", "", 100, "")
 	lines := refundableLines(detail, map[string]float64{key: 1})
 	if len(lines) != 1 || lines[0].Remaining != 2 {
 		t.Fatalf("expected 2 units remaining after 1 already returned, got %+v", lines)
@@ -50,7 +50,7 @@ func TestRefundableLines_FullyReturnedNeverGoesNegative(t *testing.T) {
 	detail := data.SaleDetail{Lines: []data.SaleDetailLine{
 		{Name: "Apple", SKU: "A1", ItemID: "i1", UnitPrice: 100, Qty: 2},
 	}}
-	key := data.RefundLineKey("i1", "", 100)
+	key := data.RefundLineKey("i1", "", 100, "")
 	// More already "returned" than was ever sold shouldn't happen in
 	// practice, but the view must clamp to zero, not go negative.
 	lines := refundableLines(detail, map[string]float64{key: 5})
@@ -70,7 +70,7 @@ func TestRefundableLines_SplitLinesShareTheSamePool(t *testing.T) {
 		{Name: "Apple", SKU: "A1", ItemID: "i1", UnitPrice: 100, Qty: 2},
 		{Name: "Apple", SKU: "A1", ItemID: "i1", UnitPrice: 100, Qty: 2},
 	}}
-	key := data.RefundLineKey("i1", "", 100)
+	key := data.RefundLineKey("i1", "", 100, "")
 	// One unit already returned against the combined pool of 4.
 	lines := refundableLines(detail, map[string]float64{key: 1})
 	if len(lines) != 2 {

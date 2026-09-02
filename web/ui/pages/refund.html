@@ -24,7 +24,11 @@
       <tbody>
         {{ range .Lines }}
         <tr>
-          <td>{{ .Name }}{{ if .SKU }} <span class="muted">{{ .SKU }}</span>{{ end }}</td>
+          <td>{{ .Name }}{{ if .SKU }} <span class="muted">{{ .SKU }}</span>{{ end }}
+            {{/* ut-docs#1181 (ADR-0073): a mixed sale can hold the same product
+                 twice at the same price with different modes/tax rates -- the
+                 marker is what tells the two rows apart. */}}
+            {{ if eq $.Sale.OrderType "mixed" }}<span class="muted line-mode" data-testid="refund-line-mode-{{ .Index }}">{{ if eq .OrderType "takeaway" }}🥡 {{ T "basket.order_type.takeaway" }}{{ else }}🍽️ {{ T "basket.order_type.dine_in" }}{{ end }}</span>{{ end }}</td>
           <td>{{ .Sold }}</td>
           <td>{{ .Remaining }}</td>
           <td>{{ money .UnitPrice }}</td>

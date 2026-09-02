@@ -369,7 +369,7 @@ VALUES('rline1','return1',1,'itm1','Apple','SKU1',1,100,2000,10,100,110)`); err 
 	if err != nil {
 		t.Fatal(err)
 	}
-	key := RefundLineKey("itm1", "", 100)
+	key := RefundLineKey("itm1", "", 100, "")
 	if returned[key] != 1 {
 		t.Fatalf("expected 1 unit already returned at key %q, got %+v", key, returned)
 	}

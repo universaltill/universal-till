@@ -44,11 +44,14 @@
     {{ range .DesignHeader }}<div class="receipt-design-line"><small>{{ . }}</small></div>{{ end }}
     <h2>{{ T "receipt.title" }} #{{ .ReceiptNo }}</h2>
     {{ if .TableLabel }}<p class="receipt-table"><small>{{ T "basket.table.label" }}: {{ .TableLabel }}</small></p>{{ end }}
+    {{/* ut-docs#1181 (ADR-0073 Decision 7): only a MIXED sale marks its
+         mode -- a uniform sale's receipt is unchanged. */}}
+    {{ if .MixedOrder }}<p class="receipt-mixed" data-testid="receipt-mixed"><small>{{ T "basket.order_type.mixed" }}</small></p>{{ end }}
     {{ if .OriginalReceiptNo }}<p><small>{{ T "receipt.return_for" }}: {{ .OriginalReceiptNo }}</small></p>{{ end }}
     {{ if .ShowBarcode }}<div class="barcode">{{ barcodesvg .ReceiptNo }}<small>{{ .ReceiptNo }}</small></div>{{ end }}
     <ul class="receipt-lines">
       {{ range .Lines }}
-      <li><span>{{ .Name }}{{ if .SKU }} <small class="muted">{{ .SKU }}</small>{{ end }} x{{ .Qty }}</span><span>{{ money .TotalAfterTax }}</span></li>
+      <li><span>{{ .Name }}{{ if .SKU }} <small class="muted">{{ .SKU }}</small>{{ end }} x{{ .Qty }}{{ if .Mixed }} <small class="muted receipt-line-mode">{{ if eq .OrderType "takeaway" }}🥡 {{ T "basket.order_type.takeaway" }}{{ else }}🍽️ {{ T "basket.order_type.dine_in" }}{{ end }}</small>{{ end }}</span><span>{{ money .TotalAfterTax }}</span></li>
       {{ end }}
     </ul>
     <div class="totals">

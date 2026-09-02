@@ -1328,7 +1328,48 @@ a.btn, a.btn:hover { text-decoration: none; }
   transition: background .15s ease, color .15s ease;
 }
 .order-type-option.is-active { background: var(--accent); color: #fff; }
-
+/* ut-docs#1181 (ADR-0073): mixed-basket status chip next to the bulk
+   segments -- a status, not a control, so it is deliberately not styled
+   like .order-type-option (which reads as tappable). */
+.order-type-mixed {
+  flex: 0 0 auto; display: inline-flex; align-items: center; gap: .3rem;
+  min-height: 2.5rem; padding: .35rem .6rem; border-radius: 999px;
+  border: 1px dashed var(--accent); color: var(--text); font-weight: 600;
+  font-size: .8rem; white-space: nowrap;
+}
+/* Per-line dine-in/takeaway segments (ADR-0073 Decision 2) under the item
+   name: an icon-only pill the height of the remove button (.btn-x), so a
+   row's height and the item column's width are unchanged by it. 2rem/32px
+   squares (matching .line-thumb) rather than the 2.5rem .btn.compact floor
+   -- product owner's live call (2026-09-02): the labelled 2.5rem pair
+   "is too big for each item and has a bad design". A 32px target is
+   still above WCAG 2.5.8's 24px minimum. Logical properties for RTL. */
+.line-order-type {
+  display: inline-flex; margin-block-start: .2rem; border: 1px solid var(--border);
+  border-radius: 999px; overflow: hidden; vertical-align: middle;
+}
+.line-order-type-option {
+  flex: 0 0 auto; display: inline-flex; align-items: center; justify-content: center;
+  width: 2rem; height: 2rem; min-height: 0; padding: 0; border: none;
+  background: var(--surface); color: var(--text); font-size: .95rem; line-height: 1;
+  cursor: pointer; opacity: .55;
+  transition: background .15s ease, opacity .15s ease;
+}
+.line-order-type-option.is-active { background: var(--accent); opacity: 1; }
+.line-order-type-option:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: -2px; opacity: 1; }
+/* Phone-only instance (basket.html, inside .line-inputs): hidden wherever
+   the pill under the item name fits; swapped in below 480px where the item
+   column is ~32px (ut-docs#1314) -- stacked vertically so it stays 2rem
+   wide inside the 3.4rem qty column and never widens the table
+   (ut-docs#391's no-horizontal-scroll invariant). */
+.line-order-type-phone { display: none; }
+@media (max-width: 480px) {
+  .line-item .line-order-type { display: none; }
+  .line-order-type-phone { display: inline-flex; flex-direction: column; border-radius: 1rem; }
+  /* The bulk segments + Mixed chip must wrap, never push the basket wider
+     than the phone (ut-docs#391's no-horizontal-scroll invariant). */
+  .order-type-row { flex-wrap: wrap; }
+}
 /* Table-assignment button + dialog (ut-docs#820, ADR-0054) — collapsed
    from an always-expanded inline strip into this button next to the
    order-type switch, 2026-08-30. Sized to MATCH .order-type-option (not

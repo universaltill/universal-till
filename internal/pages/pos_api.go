@@ -522,9 +522,19 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if key != "" {
+			// Voiding the last dine-in line clears the table (ADR-0073
+			// D5) -- release its persisted claim too (ut-docs#1390).
+			prevTable := d.Engine.TableID()
 			d.Engine.RemoveLine(key)
+			if prevTable != "" && d.Engine.TableID() == "" {
+				releaseTableClaim(r.Context(), repo, prevTable)
+			}
 		} else {
+			prevTable := d.Engine.TableID()
 			d.Engine.Remove(code)
+			if prevTable != "" && d.Engine.TableID() == "" {
+				releaseTableClaim(r.Context(), repo, prevTable)
+			}
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
@@ -555,9 +565,19 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		if key != "" {
+			// qty→0 voids the line; if it was the last dine-in line the
+			// table clears (ADR-0073 D5) and its claim must go (ut-docs#1390).
+			prevTable := d.Engine.TableID()
 			d.Engine.UpdateLineByKey(key, qty, money.FromMinor(discount))
+			if prevTable != "" && d.Engine.TableID() == "" {
+				releaseTableClaim(r.Context(), repo, prevTable)
+			}
 		} else {
+			prevTable := d.Engine.TableID()
 			d.Engine.UpdateLine(code, qty, money.FromMinor(discount))
+			if prevTable != "" && d.Engine.TableID() == "" {
+				releaseTableClaim(r.Context(), repo, prevTable)
+			}
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
@@ -599,6 +619,35 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// clear rule evolves.
 		prevTable := d.Engine.TableID()
 		b := d.Engine.SetOrderType(orderType)
+		if prevTable != "" && b.TableID == "" {
+			releaseTableClaim(r.Context(), repo, prevTable)
+		}
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		basketView, _ := ui.NewBasketView(funcs)
+		_ = basketView.Render(w, *b)
+	})
+
+	// Per-line order type (ut-docs#1181, ADR-0073 Decision 2): flip ONE
+	// line's dine-in/takeaway mode by LineKey, leaving every other line and
+	// the default for new lines untouched. Unlike the whole-basket endpoint
+	// above, an unknown value is a 400 (the ADR: "rejects an unknown value at
+	// the HTTP boundary") — "mixed" is a summary, never a line value, and a
+	// client sending it has a bug worth surfacing. An unknown key just
+	// re-renders the basket unchanged: a tap on a stale page after the line
+	// was removed must not error the whole basket.
+	mux.HandleFunc("/api/pos/line-order-type", func(w http.ResponseWriter, r *http.Request) {
+		_ = r.ParseForm()
+		key := strings.TrimSpace(r.Form.Get("key"))
+		orderType := r.Form.Get("order_type")
+		if orderType != "" && orderType != pos.OrderTypeTakeaway {
+			http.Error(w, "invalid order_type", http.StatusBadRequest)
+			return
+		}
+		// Flipping the LAST dine-in line to takeaway clears the basket's
+		// table (ADR-0073 D5); the persisted claim goes with it, same
+		// before/after shape as the bulk endpoint above (ut-docs#1390).
+		prevTable := d.Engine.TableID()
+		b, _ := d.Engine.SetLineOrderType(key, orderType)
 		if prevTable != "" && b.TableID == "" {
 			releaseTableClaim(r.Context(), repo, prevTable)
 		}
@@ -860,6 +909,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				LineDiscount:       l.LineDiscount,
 				LocationID:         locID,
 				Modifiers:          l.Modifiers,
+				// ADR-0073: the line's own mode — the context taxBP above was
+				// resolved for — persisted alongside it.
+				OrderType: l.OrderType,
 			})
 		}
 		if len(blockedLines) > 0 {
@@ -1099,18 +1151,28 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// travels with the sale so computeSaleTotals and the
 			// fiscal.sign.ask payload tax the charge identically (ADR-0061).
 			ServiceChargeTaxBasisBP: chargeTaxBasisBP,
-			OrderType:               d.Engine.OrderType(),
-			TableID:                 d.Engine.TableID(),
-			Lines:                   saleLines,
-			Payments:                payments,
-			Note:                    in.Note,
-			RegisterID:              registerID,
-			CashierID:               cashierID,
-			CustomerID:              customerID,
-			AllowNegativeInventory:  allowNegative,
-			ActorID:                 cashierID,
-			Offline:                 offline,
-			VoucherIssues:           voucherIssues,
+			// ADR-0073: the DERIVED summary of the lines (independent
+			// review B1) — never Engine.OrderType(), which is the default
+			// for NEW lines: "bulk Takeaway → scan → flip the line to dine
+			// in" leaves that default at takeaway while every line is
+			// dine-in, and CompleteSale's legacy header rule would then
+			// rewrite the lines. Each line's own mode rides on saleLines.
+			// Derived from the SAME line snapshot (`lines`, captured above)
+			// rather than a second engine read (second-round review LOW-3):
+			// a bulk flip landing between the two reads would otherwise
+			// send a "takeaway" header over dine-in lines.
+			OrderType:              pos.SummarizeOrderType(lines, d.Engine.OrderType()),
+			TableID:                d.Engine.TableID(),
+			Lines:                  saleLines,
+			Payments:               payments,
+			Note:                   in.Note,
+			RegisterID:             registerID,
+			CashierID:              cashierID,
+			CustomerID:             customerID,
+			AllowNegativeInventory: allowNegative,
+			ActorID:                cashierID,
+			Offline:                offline,
+			VoucherIssues:          voucherIssues,
 		}
 		saleID, err := completeTender(r.Context(), d, d.Engine, repo, saleInput, payments, getSessionUserID(r))
 		if err != nil {
@@ -1320,6 +1382,11 @@ type receiptLine struct {
 	SKU           string // only set when the receipt design shows SKUs
 	Qty           int
 	TotalAfterTax int64
+	// OrderType (ut-docs#1181, ADR-0073 Decision 7): set ONLY when the sale
+	// is mixed, so a uniform sale's receipt renders exactly as before and a
+	// mixed one marks each line "" (dine-in) / "takeaway" for the template.
+	OrderType string
+	Mixed     bool
 }
 
 type receiptPayment struct {
@@ -1491,6 +1558,18 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 	if err != nil {
 		return "", err
 	}
+	mixed := false
+	{
+		dine, take := false, false
+		for _, l := range lines {
+			if pos.NormalizeLineOrderType(l.OrderType) == pos.OrderTypeTakeaway {
+				take = true
+			} else {
+				dine = true
+			}
+		}
+		mixed = dine && take
+	}
 	var rlines []receiptLine
 	for _, l := range lines {
 		lineBase := pos.AmountForQuantity(l.UnitPrice, l.Qty)
@@ -1504,6 +1583,8 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 			Name:          l.Name,
 			Qty:           int(l.Qty),
 			TotalAfterTax: lineTotal.Minor(),
+			Mixed:         mixed,
+			OrderType:     pos.NormalizeLineOrderType(l.OrderType),
 		}
 		if design.ShowSKU {
 			rl.SKU = l.SKU
@@ -1546,8 +1627,11 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		}
 	}
 	data := map[string]any{
-		"ReceiptNo":          receiptNo,
-		"Lines":              rlines,
+		"ReceiptNo": receiptNo,
+		"Lines":     rlines,
+		// ADR-0073 Decision 7: a mixed sale shows a Mixed header line and a
+		// per-line marker; uniform sales render exactly as before.
+		"MixedOrder":         mixed,
 		"Payments":           paymentViews,
 		"Subtotal":           subtotal,
 		"TaxTotal":           taxTotal,
@@ -1616,10 +1700,19 @@ func publishSaleCompleted(ctx context.Context, d *common.Deps, saleID string) {
 	if err != nil || !ok {
 		return
 	}
+	_, _ = plugins.SharedBus(d.Db).PublishSaleCompleted(ctx, saleCompletedEventFor(detail))
+}
+
+// saleCompletedEventFor maps the persisted sale snapshot to the stable
+// sale.completed contract (internal/plugins/ipc.go). Pure, so the mapping —
+// including ADR-0073's derived header + per-line order types — is unit-
+// testable without a live plugin bus.
+func saleCompletedEventFor(detail data.SaleDetail) plugins.SaleCompletedEvent {
 	ev := plugins.SaleCompletedEvent{
 		SaleID:        detail.ID,
 		ReceiptNo:     detail.ReceiptNo,
 		SaleType:      detail.SaleType,
+		OrderType:     detail.OrderType,
 		Currency:      detail.Currency,
 		SubtotalCents: detail.Subtotal,
 		DiscountCents: detail.DiscountTotal,
@@ -1640,6 +1733,7 @@ func publishSaleCompleted(ctx context.Context, d *common.Deps, saleID string) {
 			TaxRateBP:      l.TaxRateBP,
 			TaxCents:       l.TaxAmount,
 			TotalCents:     l.LineTotal,
+			OrderType:      l.OrderType,
 		})
 	}
 	for i, p := range detail.Payments {
@@ -1656,7 +1750,7 @@ func publishSaleCompleted(ctx context.Context, d *common.Deps, saleID string) {
 			TraceID:     p.TraceID,
 		})
 	}
-	_, _ = plugins.SharedBus(d.Db).PublishSaleCompleted(ctx, ev)
+	return ev
 }
 
 // publishStockAdjusted publishes a single "stock.adjusted" event for
