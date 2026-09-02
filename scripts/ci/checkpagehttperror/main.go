@@ -99,7 +99,13 @@ func skipRoute(route string) bool {
 
 // allowMarker is the escape hatch: a violation on a source line carrying
 // this comment (anywhere on the line — before or after the call) is
-// deliberate and not reported.
+// deliberate and not reported. It covers two different kinds of
+// "deliberate", distinguishable only by the reason text after the marker,
+// not by the marker itself: a small, permanent architectural exception
+// (a page with no base layout to render into — see setup_page.go's and
+// order_tracking.go's own comments) versus a tracked TODO citing a
+// follow-up issue (ut-docs#1458's own bulk migration). Don't conflate the
+// two when deciding whether a marker still belongs on a given line.
 const allowMarker = "page-error:allow"
 
 type violation struct {

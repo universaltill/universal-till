@@ -141,7 +141,56 @@ the docs-shots PNG churn are harmless.
 
 ## Review round 2 — scoped to the fixes above
 
-[Filled in after the reviewer's scoped re-review completes.]
+Re-verified independently, not just re-running the guard and trusting
+green: copied `internal/pages` to a scratch dir, stripped every
+`page-error:allow` comment, and re-ran the checker — **45 sites detected**,
+an exact match against round 1's own independent AST analysis (all 16
+helper-indirected sites, all 28 `LocalizedError`/`LogAndLocalizedError`
+sites, plus the 3 permanent exceptions). `tables_page.go:66` and
+`my_reports_page.go:69` — the two blockers named in round 1 — are
+confirmed gone from that list. 42 of the 45 markers cite ut-docs#1458; the
+remaining 3 are exactly the permanent architectural exceptions
+(`setup_page.go`, `order_tracking.go` ×2) and ut-docs#1458's own exit
+criterion ("zero markers **referencing this issue**") is worded so those
+three don't dilute it.
+
+- **`requirePageManager` split** — confirmed sound: a byte-for-byte copy
+  of `requireManager`'s check with `RenderError` swapped in;
+  `requireManager` itself is untouched and still serves the fragment/API
+  routes, so no behavior change there.
+- **`TestTablesPagePermissions`** — confirmed real by running it in
+  isolation (`-run 'TestTablesPagePermissions$' -count=1`): fails against
+  the old bare-body 403, passes against the fix.
+- **`localClosures`'s flat per-`FuncDecl` scan** — probed the whole tree
+  for two failure modes: (1) two same-named local closures colliding
+  within one `FuncDecl` (none found — the one adjacent case, `writeJSON`
+  as both a package-level func and a local closure in `ai_api.go`, is
+  inert since `locals` is scoped per-`FuncDecl` and package-level funcs
+  are never followed), and (2) the `var f func(...); f = func(){...}`
+  recursive-closure idiom, which `localClosures` can't see (requires
+  `:=` or `var x = func`) — zero live instances of that shape either.
+  The `visited`-by-name cycle guard is sound: `locals` rebuilds per
+  `FuncDecl` and `visited` resets per route, so same-named closures in
+  different functions can't cross-contaminate.
+- **B3 (dropped e2e spec)** — agreed dropping was correct. One
+  real-failure path does exist today (the `auth` Playwright project runs
+  with real auth, so a cashier hitting `GET /tables` there would produce
+  the genuine 403 through no interception) but reaching it needs a new
+  admin→create-cashier→re-login flow for a spec that would only cover the
+  403 path (already covered by `TestTablesPagePermissions` at the Go
+  layer and by the existing `nav-rail-lock-reachable-1346.spec.ts` for
+  "the rail paints and is clickable") — not the reported 500 repo
+  failure, which has no deterministic trigger under either e2e project.
+  Noted as an option on ut-docs#1458, not worth blocking on.
+- **N1/N2/N3** — confirmed resolved; N3 specifically verified in real
+  `-v` output (`[page-error] GET /tables 403`, no trailing `<nil>`), not
+  just by the non-panic test.
+
+Minor notes for the next reader (not fixed, not blocking): `page-error:allow`
+now carries two meanings (3 permanent exceptions vs. 42 tracked TODOs) —
+worth a line in the guard's doc comment; `bareErrorCall` matches the
+literal identifier `common` and would miss an aliased import (no file
+does this today).
 
 ## Tests
 
@@ -192,4 +241,9 @@ the docs-shots PNG churn are harmless.
 
 ## Verdict
 
-[Filled in after round 2.]
+**Safe to merge.** Both review rounds ran real verification (build/vet/
+test/guards, plus an independent re-derivation of the guard's detection
+surface with the allow-markers stripped, not just trusting a green run)
+rather than reading the diff alone. Deferred, tracked: ut-docs#1457
+(native Android error bar) and ut-docs#1458 (~40 remaining page-route
+sites, each already marked and guard-enforced against silent regrowth).
