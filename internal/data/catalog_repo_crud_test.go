@@ -2,6 +2,7 @@ package data_test
 
 import (
 	"context"
+	"errors"
 	"strings"
 	"testing"
 
@@ -383,6 +384,44 @@ func TestValidateLookup(t *testing.T) {
 	}
 	if err := repo.ValidateLookup(ctx, "categories", "does-not-exist", true); err == nil {
 		t.Fatal("expected an unknown id to fail")
+	}
+}
+
+// ut-docs#1430: GetLookup is ReadLookup's single-row counterpart, used to
+// resolve one category/brand name without a whole-table read (mirrors
+// GetTaxCode/ErrTaxCodeNotFound alongside ListAllTaxCodes).
+func TestGetLookup(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	defer db.Close()
+	repo := data.NewCatalogRepo(db)
+	ctx := context.Background()
+
+	testsupport.SeedCategory(t, db, "c1", "Drinks", true)
+	testsupport.SeedCategory(t, db, "c2", "Retired Category", false)
+
+	l, err := repo.GetLookup(ctx, "categories", "c1")
+	if err != nil {
+		t.Fatalf("GetLookup: %v", err)
+	}
+	if l.ID != "c1" || l.Name != "Drinks" {
+		t.Fatalf("unexpected lookup: %+v", l)
+	}
+
+	// Unlike ReadLookup (active-only), a single-row GetLookup must still
+	// resolve a retired/inactive row's name -- an item that already points
+	// at a since-deactivated category must keep showing its real name, not
+	// silently fall back to empty (same rationale as ListAllTaxCodes'
+	// ut-docs#1178 review finding for tax codes).
+	l, err = repo.GetLookup(ctx, "categories", "c2")
+	if err != nil {
+		t.Fatalf("GetLookup on inactive row: %v", err)
+	}
+	if l.Name != "Retired Category" {
+		t.Fatalf("expected an inactive category to still resolve, got %+v", l)
+	}
+
+	if _, err := repo.GetLookup(ctx, "categories", "does-not-exist"); !errors.Is(err, data.ErrLookupNotFound) {
+		t.Fatalf("expected ErrLookupNotFound, got %v", err)
 	}
 }
 

@@ -311,9 +311,17 @@ ORDER BY v.name`)
 // from the bool, not an active-only view. A missing id is (zero, false,
 // nil), not an error.
 func (r *CatalogRepo) GetItem(ctx context.Context, itemID string) (catalogtypes.ItemInput, bool, error) {
+	return getItemExec(ctx, r.db, itemID)
+}
+
+// getItemExec is GetItem's actual logic, generalized over the execer
+// interface (see ensureInventoryRowExec) so UpdateItemReturningWasActive can
+// run the same read against a caller-held *sql.Tx instead of the repo's
+// *sql.DB.
+func getItemExec(ctx context.Context, ex execer, itemID string) (catalogtypes.ItemInput, bool, error) {
 	var itm catalogtypes.ItemInput
 	var tax, cat, brand, desc sql.NullString
-	err := r.db.QueryRowContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data FROM items WHERE id = ?`, itemID).
+	err := ex.QueryRowContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data FROM items WHERE id = ?`, itemID).
 		Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData)
 	if errors.Is(err, sql.ErrNoRows) {
 		return catalogtypes.ItemInput{}, false, nil
@@ -876,8 +884,8 @@ FROM tax_codes WHERE id = ?`, id).Scan(&v.ID, &v.Name, &v.RateBP, &takeaway, &ac
 // same ordering as ListTaxCodes, just without the WHERE is_active = 1
 // filter, so the tax-code management UI (ut-docs#259) can show and
 // reactivate a retired code. ListTaxCodes itself is UNCHANGED: it must keep
-// excluding inactive codes, exactly as today, because catalog_lookups.html's
-// read-only autocomplete depends on that.
+// excluding inactive codes, exactly as today, because the catalog page's
+// tax-code select (web/ui/pages/catalog.html) depends on that.
 func (r *CatalogRepo) ListAllTaxCodes(ctx context.Context) ([]TaxCodeView, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, name, rate_basis_points, takeaway_rate_basis_points, is_active
@@ -1049,6 +1057,28 @@ func (r *CatalogRepo) ReadLookup(ctx context.Context, table string) ([]Lookup, e
 		res = append(res, l)
 	}
 	return res, rows.Err()
+}
+
+// ErrLookupNotFound reports that GetLookup's id doesn't exist in the given
+// lookup table (ut-docs#1430).
+var ErrLookupNotFound = errors.New("lookup not found")
+
+// GetLookup looks up a single row (category/brand/etc.) by id, wrapping
+// sql.ErrNoRows as ErrLookupNotFound. Single-row equivalent of ReadLookup,
+// for call sites (a per-mutation row re-render) that need just one name and
+// would otherwise pay a whole-table read for it -- same rationale as
+// GetTaxCode/ErrTaxCodeNotFound alongside ListAllTaxCodes (ut-docs#1430,
+// mirroring ut-docs#1363's row_oob.go single-row taxCodeName resolution).
+func (r *CatalogRepo) GetLookup(ctx context.Context, table string, id string) (Lookup, error) {
+	var l Lookup
+	err := r.db.QueryRowContext(ctx, `SELECT id, name FROM `+table+` WHERE id = ?`, id).Scan(&l.ID, &l.Name)
+	if errors.Is(err, sql.ErrNoRows) {
+		return Lookup{}, ErrLookupNotFound
+	}
+	if err != nil {
+		return Lookup{}, err
+	}
+	return l, nil
 }
 
 // ValidateLookup checks existence of ids in a lookup table.
@@ -1412,11 +1442,80 @@ func (r *CatalogRepo) SetItemLeadTimeDays(ctx context.Context, itemID string, da
 }
 
 func (r *CatalogRepo) UpdateItem(ctx context.Context, in catalogtypes.ItemInput) error {
+	return updateItemExec(ctx, r.db, in)
+}
+
+// UpdateItemReturningWasActive wraps the read of the item's previous
+// is_active state and the update itself in a single BEGIN IMMEDIATE
+// transaction (ut-docs#1399, follow-up to ut-docs#1365). The catalog-update
+// handler's OOB-mode decision — re-render the row in place, or APPEND a new
+// row, because an inactive item has none rendered yet — is derived from
+// that previous state. With the read outside the write (the original shape:
+// GetItem then UpdateItem as two separate calls), two genuinely concurrent
+// updates on the SAME item can both read the pre-update is_active before
+// either write lands, so both decide APPEND and both emit a row — the
+// server-side half of #1365's duplicate-row bug that a client-side
+// double-click fix can't reach.
+//
+// BEGIN IMMEDIATE (the DSN's _txlock=immediate, ut-docs#311 — same idiom as
+// AddBarcode's check-then-insert fix, ut-docs#304) takes the write lock at
+// BEGIN, before the read runs, so a second concurrent call blocks until the
+// first commits and then reads the ALREADY-updated is_active — it correctly
+// sees the row as active and chooses in-place update, not another append.
+func (r *CatalogRepo) UpdateItemReturningWasActive(ctx context.Context, in catalogtypes.ItemInput) (bool, error) {
+	// Reject an input that is invalid on its face BEFORE opening the
+	// transaction (review, ut-docs#1399). BEGIN IMMEDIATE takes the
+	// database-wide write lock at BEGIN and waits up to busy_timeout(5000)
+	// for it, so validating only inside updateItemExec would make a
+	// malformed request queue behind a live sale's writer for up to five
+	// seconds just to be told "id required" — and hold that lock itself
+	// once acquired. UpdateItem's own validation is unchanged; this is the
+	// same check run earlier, so the error text callers match on is too.
+	if err := validateItemUpdate(in); err != nil {
+		return true, err
+	}
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return true, fmt.Errorf("update item: begin: %w", err)
+	}
+	// No-op after a successful Commit (sql.ErrTxDone).
+	defer func() { _ = tx.Rollback() }()
+	// Same conservative default as the pre-fix handler: a read error (as
+	// opposed to a clean "not found") is swallowed here, not propagated —
+	// only the write's own error is a reason to fail the request.
+	wasActive := true
+	if prev, ok, err := getItemExec(ctx, tx, in.ID); err == nil && ok {
+		wasActive = prev.IsActive
+	}
+	if err := updateItemExec(ctx, tx, in); err != nil {
+		return true, err
+	}
+	if err := tx.Commit(); err != nil {
+		return true, fmt.Errorf("update item: commit: %w", err)
+	}
+	return wasActive, nil
+}
+
+// validateItemUpdate is the item-update input validation shared by
+// updateItemExec and UpdateItemReturningWasActive — the latter runs it
+// before BEGIN so a malformed input never takes the write lock. Keeping one
+// copy keeps the two paths' error text identical.
+func validateItemUpdate(in catalogtypes.ItemInput) error {
 	if in.ID == "" {
 		return errors.New("id required")
 	}
 	if in.Name == "" {
 		return errors.New("name required")
+	}
+	return nil
+}
+
+// updateItemExec is UpdateItem's actual logic, generalized over the execer
+// interface (see ensureInventoryRowExec) so UpdateItemReturningWasActive can
+// run it against a caller-held *sql.Tx instead of the repo's *sql.DB.
+func updateItemExec(ctx context.Context, ex execer, in catalogtypes.ItemInput) error {
+	if err := validateItemUpdate(in); err != nil {
+		return err
 	}
 	if in.Unit == "" {
 		in.Unit = "each"
@@ -1425,7 +1524,7 @@ func (r *CatalogRepo) UpdateItem(ctx context.Context, in catalogtypes.ItemInput)
 	if !in.IsActive {
 		active = 0
 	}
-	_, err := r.db.ExecContext(ctx, `
+	_, err := ex.ExecContext(ctx, `
 UPDATE items
 SET sku = COALESCE(NULLIF(?, ''), sku),
     name = ?,

@@ -36,6 +36,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/plugins/oauth"
+	"github.com/universaltill/universal-till/internal/recovery"
 	"github.com/universaltill/universal-till/internal/server"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/updates"
@@ -97,23 +98,53 @@ func Run(ctx context.Context) error {
 	}
 	defer dataDirLock.Release()
 
-	paths.MigrateLegacyData(cfg.DBPath)
+	// From here on, a failure is handled by ut-docs#1436/ADR-0075's
+	// boot-failure recovery mode instead of exiting: this process already
+	// exclusively owns the data directory (the lock above), so nothing
+	// below can race a second writer the way #1097 did — every failure
+	// past this point is retriable in place. db.ErrDataDirLocked above is
+	// deliberately NOT part of this loop; see recovery.Classify's doc
+	// comment for why that stays a hard exit.
+	var database *db.DB
+	for {
+		paths.MigrateLegacyData(cfg.DBPath)
 
-	if applied, err := db.ApplyPendingRestore(cfg.DBPath); err != nil {
-		return err
-	} else if applied {
-		log.Infof("staged backup restore applied to %s", cfg.DBPath)
-	}
-	// Best-effort housekeeping, never fatal: a sweep failure must not block
-	// boot (offline-first — startup can't depend on this succeeding).
-	if n, err := db.SweepOrphanedJoinSnapshots(cfg.DBPath); err != nil {
-		log.Warnf("sweep orphaned join snapshots: %v", err)
-	} else if n > 0 {
-		log.Infof("swept %d orphaned join-snapshot file(s)", n)
-	}
-	database, err := db.Open(cfg.DBPath)
-	if err != nil {
-		return err
+		var attemptErr error
+		if applied, restoreErr := db.ApplyPendingRestore(cfg.DBPath); restoreErr != nil {
+			attemptErr = fmt.Errorf("apply pending restore: %w", restoreErr)
+		} else {
+			if applied {
+				log.Infof("staged backup restore applied to %s", cfg.DBPath)
+			}
+			// Best-effort housekeeping, never fatal: a sweep failure must
+			// not block boot (offline-first — startup can't depend on this
+			// succeeding).
+			if n, sweepErr := db.SweepOrphanedJoinSnapshots(cfg.DBPath); sweepErr != nil {
+				log.Warnf("sweep orphaned join snapshots: %v", sweepErr)
+			} else if n > 0 {
+				log.Infof("swept %d orphaned join-snapshot file(s)", n)
+			}
+			database, attemptErr = db.Open(cfg.DBPath)
+		}
+
+		if attemptErr == nil {
+			break
+		}
+
+		failure, recoverable := recovery.Classify(attemptErr)
+		if !recoverable {
+			return attemptErr
+		}
+		result, recErr := recovery.Serve(ctx, cfg, failure)
+		if recErr != nil {
+			return fmt.Errorf("boot-failure recovery mode: %w", recErr)
+		}
+		if result == recovery.Shutdown {
+			// ctx was cancelled while recovery mode was serving (SIGTERM
+			// etc.) — a clean shutdown, not a failure to report.
+			return nil
+		}
+		// result == recovery.Retry: loop back and re-attempt.
 	}
 	defer database.Close()
 

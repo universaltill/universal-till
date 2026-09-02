@@ -537,8 +537,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				}, elev)
 			return
 		}
-		bp := int64(math.Round(pct * 100))
-		fixedMinor := int64(math.Round(fixedMaj * 100))
+		bp := int64(math.Round(pct * 100)) // basis points, not money -- stays *100 regardless of currency
+		// ut-docs#1400: currency.Decimals-aware, not a hardcoded *100 -- a
+		// hardcoded conversion stored a 100x-too-large fee on a 0-decimal
+		// shop (IRR/IRT/IQD/AFN/JPY).
+		fixedMinor := httpx.MinorFromMajor(fixedMaj, httpx.ActiveCurrency().Decimals)
 		raw, _ := json.Marshal(map[string]int64{
 			"bp":    bp,
 			"fixed": fixedMinor,

@@ -1,0 +1,75 @@
+<!doctype html>
+<html lang="{{ locale }}" dir="{{ dir }}">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>{{ T "recovery.title" }}</title>
+<style>
+  body { font-family: system-ui, sans-serif; margin: 0; padding: 2rem; background: #1a1a1a; color: #f0f0f0; }
+  .card { max-width: 32rem; margin: 2rem auto; background: #262626; border-radius: 0.75rem; padding: 2rem; }
+  h1 { font-size: 1.5rem; margin-top: 0; }
+  .detail { font-family: monospace; font-size: 0.85rem; background: #1a1a1a; padding: 0.75rem; border-radius: 0.5rem; word-break: break-word; }
+  .ref { color: #999; font-size: 0.85rem; margin-block-start: 0.5rem; }
+  button { font-size: 1.1rem; padding: 0.75rem 1.5rem; border-radius: 0.5rem; border: none; background: #3b82f6; color: white; cursor: pointer; margin-block-start: 1.5rem; }
+  button:disabled { opacity: 0.6; cursor: default; }
+  .safe-mode { margin-block-start: 1.5rem; padding-block-start: 1.5rem; border-block-start: 1px solid #444; }
+  .safe-mode a { color: #60a5fa; }
+</style>
+</head>
+<body>
+<div class="card">
+  <h1>{{ T "recovery.title" }}</h1>
+  <p>{{ .Message }}</p>
+  <div class="detail">{{ .Detail }}</div>
+  <p class="ref">{{ T "recovery.ref_code" }}: {{ .RefCode }}</p>
+  <button id="retry-btn" type="button">{{ T "recovery.retry_button" }}</button>
+  {{ if .SafeModeAvailable }}
+  <div class="safe-mode">
+    <p>{{ T "recovery.safe_mode_banner" }}</p>
+    <p><a href="/recovery/safe-mode">{{ T "recovery.safe_mode_sales_today" }}</a></p>
+  </div>
+  {{ end }}
+</div>
+<script>
+var T = {
+  retrying: "{{ T "recovery.retrying" }}",
+  retry_button: "{{ T "recovery.retry_button" }}",
+  taking_longer: "{{ T "recovery.taking_longer" }}"
+};
+document.getElementById("retry-btn").addEventListener("click", function () {
+  var btn = this;
+  btn.disabled = true;
+  btn.textContent = T.retrying;
+  fetch("/api/recovery/retry", { method: "POST" }).catch(function () {});
+  // A migration re-run (the failure this feature exists for) can genuinely
+  // take well over the first few seconds on a real shop database —
+  // independent review (ut-docs#1436) found the original 15s budget gave
+  // up exactly during that case, leaving the button re-enabled with no
+  // explanation while the server was still legitimately restarting. Poll
+  // quickly at first (catches the common fast case promptly), then keep
+  // trying much longer with an honest "still working" message rather than
+  // silently going idle. GET / succeeding — even back onto recovery mode
+  // again, if the retry failed for the same reason — reloads the page
+  // either way, which is always the right outcome to show.
+  var attempts = 0;
+  var poll = function () {
+    attempts++;
+    fetch("/", { method: "GET", cache: "no-store" })
+      .then(function () { location.reload(); })
+      .catch(function () {
+        if (attempts === 30) {
+          btn.textContent = T.taking_longer;
+        }
+        if (attempts < 150) {
+          setTimeout(poll, attempts < 30 ? 500 : 2000);
+        } else {
+          btn.disabled = false;
+          btn.textContent = T.retry_button;
+        }
+      });
+  };
+  setTimeout(poll, 500);
+});
+</script>
+</body>
+</html>

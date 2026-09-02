@@ -84,7 +84,10 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 			if err != nil || major <= 0 {
 				return data.PromotionInput{}, "promotions.error.value_invalid", false
 			}
-			value = money.FromMinor(int64(math.Round(major * 100))).Minor()
+			// ut-docs#1400: currency.Decimals-aware, not a hardcoded *100 --
+			// a hardcoded conversion stored a 100x-too-large value on a
+			// 0-decimal shop (IRR/IRT/IQD/AFN/JPY).
+			value = money.FromMinor(httpx.MinorFromMajor(major, httpx.ActiveCurrency().Decimals)).Minor()
 		case "percent":
 			pct, err := strconv.ParseFloat(strings.TrimSpace(r.PostFormValue("value_percent")), 64)
 			// A percent discount over 100% is never a real promotion: the

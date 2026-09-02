@@ -439,8 +439,10 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		// ResetTransactionHistory's explicit column list and GetSaleDetail's
 		// LEFT JOIN against `tables` both hit this fixture's real schema.
 		`CREATE TABLE tables (id TEXT PRIMARY KEY, label TEXT NOT NULL, area_zone TEXT NOT NULL DEFAULT '', seat_count INTEGER NOT NULL DEFAULT 0, shape TEXT NOT NULL DEFAULT 'rect', pos_x INTEGER NOT NULL DEFAULT 0, pos_y INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`,
-		// table_claims: column-identical to internal/db/migrations/
-		// 077_table_claims.sql (ut-docs#1390) -- POSRepo.IsTableFree /
+		// table_claims: column-identical to the real table in
+		// internal/db/migrations/001_init.sql (originally added by
+		// migration 077_table_claims.sql, ut-docs#1390, since folded into
+		// the baseline by the ADR-0074 squash) -- POSRepo.IsTableFree /
 		// ListTablesWithState read it on every table pick, hold, resume,
 		// tender and reset, same drift rule as the comments above.
 		`CREATE TABLE table_claims (table_id TEXT PRIMARY KEY REFERENCES tables(id), claimed_at TEXT NOT NULL);`,

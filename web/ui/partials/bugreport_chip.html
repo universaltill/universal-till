@@ -2,10 +2,15 @@
         data-testid="bugreport-toggle" aria-expanded="false"
         aria-controls="bugreport-panel"
         title="{{ T "issuereport.nav_label" }}" aria-label="{{ T "issuereport.nav_label" }}">
-  <!-- ico-boost (ut-docs#1348, product owner, live on the tablet): 🐞 reads
-       visibly smaller than 👤/🔒 and the rest of the rail at the same
-       font-size — same per-glyph ink-coverage gap app.css's .ico-boost
-       comment already documents for ☰/♻️/🔒, just not caught for this glyph
-       in that first pass. -->
-  <span class="nav-toggle-ico ico-boost" aria-hidden="true">🐞</span>
+  <!-- Inline SVG (ut-docs#1423): #1348's `.ico-boost` font-size bump fixed
+       the 🐞 emoji on desktop Chromium and still left it small on the
+       tablet's own emoji font. See internal/httpx/icons.go. -->
+  <span class="nav-toggle-ico" aria-hidden="true">{{ icon "bug" }}</span>
+  <!-- Always visually hidden (not .nav-toggle-label, which becomes visible in
+       the <=480px top bar): the phone-width budget (ut-docs#413) never had
+       room for a bug-report label, and the emoji used to be the button's
+       only text node. Screen readers already had the aria-label; this keeps
+       a text node for the phone-width layout guard's "every control has a
+       label" check now that the icon is a decorative SVG. -->
+  <span class="visually-hidden">{{ T "issuereport.nav_label" }}</span>
 </button>

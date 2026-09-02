@@ -30,8 +30,6 @@
 </div>
 {{ end }}
 
-{{ template "catalog_lookups" . }}
-
 <div class="catalog-layout">
   <div class="catalog-list">
     {{ template "catalog_table" . }}
@@ -77,8 +75,8 @@
         <label>{{ T "catalog.tax_code" }} <select name="taxCode" id="item-tax"><option value="">{{ T "catalog.tax_code.none" }}</option>{{ range .TaxCodes }}<option value="{{ .ID }}">{{ .Name }}{{ if not .IsActive }} ({{ T "catalog.tax_code.inactive" }}){{ end }}</option>{{ end }}</select></label>
       </div>
       <div class="field-pair">
-        <label>{{ T "catalog.category" }} <input type="text" name="categoryId" id="item-category" list="categories-list"></label>
-        <label>{{ T "catalog.brand" }} <input type="text" name="brandId" id="item-brand" list="brands-list"></label>
+        <label>{{ T "catalog.category" }} <select name="categoryId" id="item-category"><option value="">{{ T "catalog.category.none" }}</option>{{ range .Categories }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}</select></label>
+        <label>{{ T "catalog.brand" }} <select name="brandId" id="item-brand"><option value="">{{ T "catalog.brand.none" }}</option>{{ range .Brands }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}</select></label>
       </div>
       <div class="field-checks">
         <label><input type="checkbox" name="isWeighed" id="item-weighed" value="1"> {{ T "catalog.sold_by_weight" }}</label>
@@ -273,7 +271,10 @@
         document.getElementById('item-description').value = bits.join(' · ');
         document.getElementById('item-image-url').value = p.image_url || '';
         if (p.brand) {
-          document.querySelectorAll('#brands-list option').forEach(function (opt) {
+          // Matches against the brand <select>'s own options (ut-docs#1430
+          // replaced the old #brands-list datalist with this select; same
+          // id/name data, just no longer duplicated in a separate element).
+          document.querySelectorAll('#item-brand option').forEach(function (opt) {
             if (opt.textContent.trim().toLowerCase() === p.brand.toLowerCase()) {
               document.getElementById('item-brand').value = opt.value;
             }

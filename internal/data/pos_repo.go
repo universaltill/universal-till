@@ -296,7 +296,12 @@ func (r *POSRepo) LookupActiveVariant(ctx context.Context, variantID string) (*c
 	}
 	var v catalogtypes.VariantInput
 	var cost sql.NullInt64
-	if err = r.db.QueryRowContext(ctx, `SELECT id, item_id, sku, name, price, cost_price, is_active FROM item_variants WHERE id = ?`, variantID).
+	// COALESCE(sku, '') — ut-docs#1205 (same landmine class as ut-docs#1176):
+	// item_variants.sku is a nullable UNIQUE column, and CatalogRepo.CreateVariant
+	// stores NULL for a variant created with no SKU. Scanning that straight
+	// into VariantInput.SKU (a non-nullable string) fails with "converting
+	// NULL to string is unsupported" the first time this hits such a variant.
+	if err = r.db.QueryRowContext(ctx, `SELECT id, item_id, COALESCE(sku, ''), name, price, cost_price, is_active FROM item_variants WHERE id = ?`, variantID).
 		Scan(&v.ID, &v.ItemID, &v.SKU, &v.Name, &v.Price, &cost, &v.IsActive); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, fmt.Errorf("variant not found: %s", variantID)

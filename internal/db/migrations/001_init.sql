@@ -1,76 +1,72 @@
--- Create schema_migrations table to track applied migrations
-
--- 001_init.sql (DDL)
-
-PRAGMA foreign_keys = ON;
+-- 001_init.sql — Universal Till baseline schema and seed rows.
+--
+-- Generated 2026-09-02 by a one-off dump from a fresh Open() against the
+-- previous 78-migration ledger (ADR-0074 Decision 2, ut-docs#1425). Schema
+-- and seed-row equivalence between that ledger and this file was proven by
+-- a test run once before the old files were deleted; its recorded output is
+-- in the ut-docs#1425 review record.
+--
+-- This file may be edited freely until the first paying shop goes live on
+-- it (ADR-0074 Decision 1); it is append-only from that point on.
+--
+-- Conventions: schema_migrations (the applied-migration ledger) is created
+-- and populated by internal/db/db.go, never by a migration file. Every
+-- other table below is listed in creation order as SQLite recorded it —
+-- this is NOT a strict FK-dependency order (SQLite resolves FOREIGN KEY
+-- targets at DML time, not CREATE TABLE time, so a handful of tables here
+-- reference one defined later, e.g. promotions.customer_id -> customers,
+-- several tables' table_id -> tables; harmless, confirmed by a clean fresh
+-- Open, but don't assume forward references can't happen when editing).
 
 -- ----------------------------------------
--- Schema migrations
+-- Schema
 -- ----------------------------------------
-CREATE TABLE IF NOT EXISTS schema_migrations (
-    version     INTEGER PRIMARY KEY,
-    applied_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- ----------------------------------------
--- Global settings
--- ----------------------------------------
-CREATE TABLE IF NOT EXISTS settings (
+CREATE TABLE settings (
     key         TEXT PRIMARY KEY,
     value       TEXT NOT NULL,
     updated_at  TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
 
--- Promotions / coupons
-CREATE TABLE IF NOT EXISTS promotions (
-    code        TEXT PRIMARY KEY,                -- e.g., PROMO50
+CREATE TABLE promotions (
+    code        TEXT PRIMARY KEY,                
     type        TEXT NOT NULL DEFAULT 'amount'   CHECK (type IN ('amount','percent')),
-    value       INTEGER NOT NULL,                -- minor units or basis points (1% = 100)
+    value       INTEGER NOT NULL,                
     description TEXT,
     starts_at   TEXT,
     ends_at     TEXT,
-    customer_id TEXT,                            -- optional targeted customer
-    is_active   INTEGER NOT NULL DEFAULT 1,
+    customer_id TEXT,                            
+    is_active   INTEGER NOT NULL DEFAULT 1, is_sample_data INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (customer_id) REFERENCES customers (id)
 );
 
--- ----------------------------------------
--- Tax / catalog lookup tables
--- ----------------------------------------
-CREATE TABLE IF NOT EXISTS tax_codes (
+CREATE TABLE tax_codes (
     id                  TEXT PRIMARY KEY,
-    name                TEXT NOT NULL UNIQUE,         -- "Standard VAT", "Zero-rated"
-    rate_basis_points   INTEGER NOT NULL,            -- e.g. 2000 = 20.00%
+    name                TEXT NOT NULL UNIQUE,         
+    rate_basis_points   INTEGER NOT NULL,            
     is_active           INTEGER NOT NULL DEFAULT 1
-);
+, takeaway_rate_basis_points INTEGER);
 
-CREATE TABLE IF NOT EXISTS categories (
+CREATE TABLE categories (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
     parent_id   TEXT,
-    sort_order  INTEGER NOT NULL DEFAULT 0,
+    sort_order  INTEGER NOT NULL DEFAULT 0, color TEXT,
     FOREIGN KEY (parent_id) REFERENCES categories (id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_categories_parent ON categories (parent_id);
+CREATE INDEX idx_categories_parent ON categories (parent_id);
 
-CREATE TABLE IF NOT EXISTS brands (
+CREATE TABLE brands (
     id      TEXT PRIMARY KEY,
     name    TEXT NOT NULL UNIQUE
 );
 
--- ----------------------------------------
--- Stock locations
--- ----------------------------------------
-CREATE TABLE IF NOT EXISTS stock_locations (
+CREATE TABLE stock_locations (
     id      TEXT PRIMARY KEY,
     name    TEXT NOT NULL UNIQUE
-);
+, is_active INTEGER NOT NULL DEFAULT 1, address_street TEXT, address_postcode TEXT, address_city TEXT);
 
--- ----------------------------------------
--- People / tills / payment methods
--- ----------------------------------------
-CREATE TABLE IF NOT EXISTS customers (
+CREATE TABLE customers (
     id          TEXT PRIMARY KEY,
     name        TEXT NOT NULL,
     phone       TEXT,
@@ -78,98 +74,95 @@ CREATE TABLE IF NOT EXISTS customers (
     address     TEXT,
     loyalty_no  TEXT UNIQUE,
     created_at  TEXT NOT NULL DEFAULT (datetime('now'))
-);
+, is_sample_data INTEGER NOT NULL DEFAULT 0);
 
-CREATE INDEX IF NOT EXISTS idx_customers_phone ON customers (phone);
+CREATE INDEX idx_customers_phone ON customers (phone);
 
-
-CREATE TABLE IF NOT EXISTS registers (
+CREATE TABLE registers (
     id          TEXT PRIMARY KEY,
-    name        TEXT NOT NULL UNIQUE,        -- "Front Till"
+    name        TEXT NOT NULL UNIQUE,        
     location_id TEXT,
     is_active   INTEGER NOT NULL DEFAULT 1,
     FOREIGN KEY (location_id) REFERENCES stock_locations (id)
 );
 
-CREATE TABLE IF NOT EXISTS users (
+CREATE TABLE users (
     id          TEXT PRIMARY KEY,
     username    TEXT NOT NULL UNIQUE,
     display_name TEXT NOT NULL,
-    role        TEXT NOT NULL DEFAULT 'cashier', -- cashier|manager|admin
+    role        TEXT NOT NULL DEFAULT 'cashier', 
     pin_hash    TEXT,
     is_active   INTEGER NOT NULL DEFAULT 1
 );
 
-CREATE TABLE IF NOT EXISTS payment_methods (
-    id          TEXT PRIMARY KEY,            -- cash, card, gift, store_credit
+CREATE TABLE payment_methods (
+    id          TEXT PRIMARY KEY,            
     name        TEXT NOT NULL UNIQUE,
-    type        TEXT NOT NULL,              -- cash|card|voucher|credit
+    type        TEXT NOT NULL,              
     is_active   INTEGER NOT NULL DEFAULT 1,
     sort_order  INTEGER NOT NULL DEFAULT 0
-);
+, plugin_id TEXT);
 
--- ----------------------------------------
--- Items / variants / barcodes / images
--- ----------------------------------------
-CREATE TABLE IF NOT EXISTS items (
-    id              TEXT PRIMARY KEY,           -- uuid or your code
-    sku             TEXT UNIQUE,                -- internal SKU / PLU
+CREATE TABLE items (
+    id              TEXT PRIMARY KEY,           
+    sku             TEXT UNIQUE,                
     name            TEXT NOT NULL,
     description     TEXT,
     category_id     TEXT,
     brand_id        TEXT,
-    unit            TEXT NOT NULL DEFAULT 'each',  -- each, kg, liter, etc
-    base_price      INTEGER NOT NULL,           -- minor units (pence)
-    cost_price      INTEGER,                    -- optional, minor units
-    tax_code_id     TEXT,                       -- maps to tax table
-    reorder_level   INTEGER NOT NULL DEFAULT 0, -- low-stock threshold (qty)
+    unit            TEXT NOT NULL DEFAULT 'each',  
+    base_price      INTEGER NOT NULL,           
+    cost_price      INTEGER,                    
+    tax_code_id     TEXT,                       
+    reorder_level   INTEGER NOT NULL DEFAULT 0, 
     is_active       INTEGER NOT NULL DEFAULT 1,
     is_weighed      INTEGER NOT NULL DEFAULT 0,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-    updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now')), lead_time_days INTEGER NOT NULL DEFAULT 0, is_sample_data INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (category_id) REFERENCES categories (id),
     FOREIGN KEY (brand_id)    REFERENCES brands (id),
     FOREIGN KEY (tax_code_id) REFERENCES tax_codes (id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_items_category ON items (category_id);
-CREATE INDEX IF NOT EXISTS idx_items_active   ON items (is_active);
+CREATE INDEX idx_items_category ON items (category_id);
 
-CREATE TABLE IF NOT EXISTS item_barcodes (
+CREATE INDEX idx_items_active   ON items (is_active);
+
+CREATE TABLE item_barcodes (
     barcode       TEXT PRIMARY KEY,
     item_id       TEXT NOT NULL,
-    barcode_type  TEXT DEFAULT 'EAN13',   -- EAN13, UPC, QR, etc
+    barcode_type  TEXT DEFAULT 'EAN13',   
     is_primary    INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_item_barcodes_item ON item_barcodes (item_id);
+CREATE INDEX idx_item_barcodes_item ON item_barcodes (item_id);
 
-CREATE TABLE IF NOT EXISTS item_images (
+CREATE TABLE item_images (
     id          TEXT PRIMARY KEY,
     item_id     TEXT NOT NULL,
-    role        TEXT NOT NULL DEFAULT 'thumbnail', -- thumbnail, gallery, label
-    path        TEXT NOT NULL,                     -- e.g. /public/assets/items/itm001/thumb.png
+    role        TEXT NOT NULL DEFAULT 'thumbnail', 
+    path        TEXT NOT NULL,                     
     sort_order  INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_item_images_item ON item_images (item_id);
+CREATE INDEX idx_item_images_item ON item_images (item_id);
 
-CREATE TABLE IF NOT EXISTS item_variants (
+CREATE TABLE item_variants (
     id          TEXT PRIMARY KEY,
-    item_id     TEXT NOT NULL,   -- parent item
+    item_id     TEXT NOT NULL,   
     sku         TEXT UNIQUE,
-    name        TEXT NOT NULL,   -- "330ml", "500ml Bottle"
-    price       INTEGER NOT NULL, -- minor units
+    name        TEXT NOT NULL,   
+    price       INTEGER NOT NULL, 
     cost_price  INTEGER,
     is_active   INTEGER NOT NULL DEFAULT 1,
     FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_variants_item ON item_variants (item_id);
+CREATE INDEX idx_variants_item ON item_variants (item_id);
 
-CREATE TABLE IF NOT EXISTS variant_barcodes (
+CREATE TABLE variant_barcodes (
     barcode       TEXT PRIMARY KEY,
     variant_id    TEXT NOT NULL,
     barcode_type  TEXT DEFAULT 'EAN13',
@@ -177,15 +170,12 @@ CREATE TABLE IF NOT EXISTS variant_barcodes (
     FOREIGN KEY (variant_id) REFERENCES item_variants (id) ON DELETE CASCADE
 );
 
--- ----------------------------------------
--- Inventory / price history
--- ----------------------------------------
-CREATE TABLE IF NOT EXISTS inventory (
+CREATE TABLE inventory (
     id          TEXT PRIMARY KEY,
     item_id     TEXT,
     variant_id  TEXT,
     location_id TEXT NOT NULL,
-    quantity    REAL NOT NULL DEFAULT 0,    -- REAL for weighed items
+    quantity    REAL NOT NULL DEFAULT 0,    
     reorder_level REAL DEFAULT 0,
     updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (item_id)     REFERENCES items (id),
@@ -197,10 +187,10 @@ CREATE TABLE IF NOT EXISTS inventory (
     )
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_inventory_item
+CREATE UNIQUE INDEX ux_inventory_item
     ON inventory (item_id, variant_id, location_id);
 
-CREATE TABLE IF NOT EXISTS price_history (
+CREATE TABLE price_history (
     id          TEXT PRIMARY KEY,
     item_id     TEXT,
     variant_id  TEXT,
@@ -215,20 +205,17 @@ CREATE TABLE IF NOT EXISTS price_history (
     )
 );
 
-CREATE INDEX IF NOT EXISTS idx_price_history_item
+CREATE INDEX idx_price_history_item
     ON price_history (item_id, variant_id);
 
--- ----------------------------------------
--- Sales / lines / payments / discounts / returns
--- ----------------------------------------
-CREATE TABLE IF NOT EXISTS sales (
-    id              TEXT PRIMARY KEY,               -- uuid
-    receipt_no      TEXT NOT NULL UNIQUE,           -- visible receipt number
-    status          TEXT NOT NULL DEFAULT 'completed', -- open|parked|completed|voided|refunded
-    sale_type       TEXT NOT NULL DEFAULT 'sale',   -- sale|return
-    tender_type     TEXT NOT NULL DEFAULT 'unknown', -- cash|card|split
-    offline         INTEGER NOT NULL DEFAULT 0,     -- 0|1
-    sync_status     TEXT NOT NULL DEFAULT 'queued', -- queued|synced|failed
+CREATE TABLE sales (
+    id              TEXT PRIMARY KEY,               
+    receipt_no      TEXT NOT NULL UNIQUE,           
+    status          TEXT NOT NULL DEFAULT 'completed', 
+    sale_type       TEXT NOT NULL DEFAULT 'sale',   
+    tender_type     TEXT NOT NULL DEFAULT 'unknown', 
+    offline         INTEGER NOT NULL DEFAULT 0,     
+    sync_status     TEXT NOT NULL DEFAULT 'queued', 
     sync_attempts   INTEGER NOT NULL DEFAULT 0,
     sync_next_attempt_at TEXT,
     sync_last_error TEXT,
@@ -236,40 +223,42 @@ CREATE TABLE IF NOT EXISTS sales (
     cashier_id      TEXT,
     customer_id     TEXT,
     currency        TEXT NOT NULL DEFAULT 'GBP',
-    subtotal        INTEGER NOT NULL,              -- sum lines before tax/discount
+    subtotal        INTEGER NOT NULL,              
     discount_total  INTEGER NOT NULL DEFAULT 0,
     tax_total       INTEGER NOT NULL DEFAULT 0,
-    total           INTEGER NOT NULL,              -- final total
-    rounding        INTEGER NOT NULL DEFAULT 0,    -- +/- pennies
+    total           INTEGER NOT NULL,              
+    rounding        INTEGER NOT NULL DEFAULT 0,    
     note            TEXT,
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     completed_at    TEXT,
-    voided_at       TEXT,
+    voided_at       TEXT, till_id TEXT NOT NULL DEFAULT '', service_charge_amount INTEGER NOT NULL DEFAULT 0, order_type TEXT NOT NULL DEFAULT '', order_status TEXT NOT NULL DEFAULT '', order_status_updated_at TEXT, kitchen_print_failed_at TEXT, receipt_print_failed_at TEXT, table_id TEXT REFERENCES tables(id), tracking_token TEXT, service_charge_tax_basis_bp INTEGER NOT NULL DEFAULT 0, voucher_issue_total INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (customer_id) REFERENCES customers (id),
     FOREIGN KEY (register_id) REFERENCES registers (id),
     FOREIGN KEY (cashier_id)  REFERENCES users (id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_sales_created ON sales (created_at);
-CREATE INDEX IF NOT EXISTS idx_sales_status  ON sales (status);
-CREATE INDEX IF NOT EXISTS idx_sales_sync_queue ON sales (sync_status, sync_next_attempt_at);
+CREATE INDEX idx_sales_created ON sales (created_at);
 
-CREATE TABLE IF NOT EXISTS sale_lines (
+CREATE INDEX idx_sales_status  ON sales (status);
+
+CREATE INDEX idx_sales_sync_queue ON sales (sync_status, sync_next_attempt_at);
+
+CREATE TABLE sale_lines (
     id               TEXT PRIMARY KEY,
     sale_id          TEXT NOT NULL,
     line_no          INTEGER NOT NULL,
     item_id          TEXT,
     variant_id       TEXT,
-    name_snapshot    TEXT NOT NULL,  -- item name at time of sale
+    name_snapshot    TEXT NOT NULL,  
     sku_snapshot     TEXT,
     barcode_snapshot TEXT,
-    quantity         REAL NOT NULL,  -- REAL for weighed items
-    unit_price       INTEGER NOT NULL, -- price before line discount
+    quantity         REAL NOT NULL,  
+    unit_price       INTEGER NOT NULL, 
     line_discount    INTEGER NOT NULL DEFAULT 0,
-    tax_rate_bp      INTEGER NOT NULL, -- basis points
+    tax_rate_bp      INTEGER NOT NULL, 
     tax_amount       INTEGER NOT NULL,
     total_before_tax INTEGER NOT NULL,
-    total_after_tax  INTEGER NOT NULL,
+    total_after_tax  INTEGER NOT NULL, order_type TEXT NOT NULL DEFAULT '',
     FOREIGN KEY (sale_id)    REFERENCES sales (id) ON DELETE CASCADE,
     FOREIGN KEY (item_id)    REFERENCES items (id),
     FOREIGN KEY (variant_id) REFERENCES item_variants (id),
@@ -279,51 +268,48 @@ CREATE TABLE IF NOT EXISTS sale_lines (
     )
 );
 
-CREATE UNIQUE INDEX IF NOT EXISTS ux_sale_lines_sale_line
+CREATE UNIQUE INDEX ux_sale_lines_sale_line
     ON sale_lines (sale_id, line_no);
 
-CREATE TABLE IF NOT EXISTS payments (
+CREATE TABLE payments (
     id          TEXT PRIMARY KEY,
     sale_id     TEXT NOT NULL,
-    method_id   TEXT NOT NULL,      -- cash/card/etc
-    amount      INTEGER NOT NULL,   -- minor units
+    method_id   TEXT NOT NULL,      
+    amount      INTEGER NOT NULL,   
     currency    TEXT NOT NULL DEFAULT 'GBP',
-    reference   TEXT,               -- card auth code, txn id
+    reference   TEXT,               
     change_given INTEGER NOT NULL DEFAULT 0,
-    paid_at     TEXT NOT NULL DEFAULT (datetime('now')),
+    paid_at     TEXT NOT NULL DEFAULT (datetime('now')), tip_amount INTEGER NOT NULL DEFAULT 0, masked_pan TEXT, auth_code TEXT, terminal_id TEXT, trace_id TEXT, tip_recipient TEXT NOT NULL DEFAULT 'employee', voucher_id TEXT,
     FOREIGN KEY (sale_id)  REFERENCES sales (id) ON DELETE CASCADE,
     FOREIGN KEY (method_id) REFERENCES payment_methods (id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_payments_sale ON payments (sale_id);
+CREATE INDEX idx_payments_sale ON payments (sale_id);
 
-CREATE TABLE IF NOT EXISTS sale_discounts (
+CREATE TABLE sale_discounts (
     id          TEXT PRIMARY KEY,
     sale_id     TEXT NOT NULL,
-    line_id     TEXT,          -- null means whole-sale discount
-    type        TEXT NOT NULL, -- percent|fixed
-    value       INTEGER NOT NULL,  -- percent in bp or fixed minor units
-    amount      INTEGER NOT NULL,  -- computed amount applied
+    line_id     TEXT,          
+    type        TEXT NOT NULL, 
+    value       INTEGER NOT NULL,  
+    amount      INTEGER NOT NULL,  
     reason      TEXT,
     FOREIGN KEY (sale_id) REFERENCES sales (id) ON DELETE CASCADE,
     FOREIGN KEY (line_id) REFERENCES sale_lines (id) ON DELETE CASCADE
 );
 
-CREATE INDEX IF NOT EXISTS idx_sale_discounts_sale ON sale_discounts (sale_id);
+CREATE INDEX idx_sale_discounts_sale ON sale_discounts (sale_id);
 
-CREATE TABLE IF NOT EXISTS sale_links (
+CREATE TABLE sale_links (
     id               TEXT PRIMARY KEY,
-    sale_id          TEXT NOT NULL,  -- the return sale
+    sale_id          TEXT NOT NULL,  
     original_sale_id TEXT NOT NULL,
     reason           TEXT,
     FOREIGN KEY (sale_id)          REFERENCES sales (id) ON DELETE CASCADE,
     FOREIGN KEY (original_sale_id) REFERENCES sales (id)
 );
 
--- ----------------------------------------
--- Shifts / cash drawer
--- ----------------------------------------
-CREATE TABLE IF NOT EXISTS shifts (
+CREATE TABLE shifts (
     id            TEXT PRIMARY KEY,
     register_id   TEXT NOT NULL,
     cashier_id    TEXT NOT NULL,
@@ -332,25 +318,22 @@ CREATE TABLE IF NOT EXISTS shifts (
     opening_cash  INTEGER NOT NULL DEFAULT 0,
     closing_cash  INTEGER,
     expected_cash INTEGER,
-    note          TEXT,
+    note          TEXT, new_float INTEGER, count_protocol TEXT,
     FOREIGN KEY (register_id) REFERENCES registers (id),
     FOREIGN KEY (cashier_id)  REFERENCES users (id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_shifts_register_open
+CREATE INDEX idx_shifts_register_open
     ON shifts (register_id, opened_at);
 
--- ----------------------------------------
--- Stock movements
--- ----------------------------------------
-CREATE TABLE IF NOT EXISTS stock_movements (
+CREATE TABLE stock_movements (
     id          TEXT PRIMARY KEY,
     item_id     TEXT,
     variant_id  TEXT,
     location_id TEXT NOT NULL,
-    sale_line_id TEXT,           -- nullable for manual adjustments
-    type        TEXT NOT NULL,   -- sale|return|adjust|receive|waste|transfer
-    quantity    REAL NOT NULL,   -- negative for sale, positive for return/receive
+    sale_line_id TEXT,           
+    type        TEXT NOT NULL,   
+    quantity    REAL NOT NULL,   
     cost_price  INTEGER,
     created_at  TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (item_id)      REFERENCES items (id),
@@ -363,95 +346,89 @@ CREATE TABLE IF NOT EXISTS stock_movements (
     )
 );
 
-CREATE INDEX IF NOT EXISTS idx_stock_movements_item
+CREATE INDEX idx_stock_movements_item
     ON stock_movements (item_id, variant_id, created_at);
 
--- ----------------------------------------
--- Audit log
--- ----------------------------------------
-CREATE TABLE IF NOT EXISTS audit_log (
+CREATE TABLE audit_log (
     id          TEXT PRIMARY KEY,
-    actor_id    TEXT,            -- user who did action
-    entity_type TEXT NOT NULL,   -- sale|item|price|inventory|shift|plugin
+    actor_id    TEXT,            
+    entity_type TEXT NOT NULL,   
     entity_id   TEXT NOT NULL,
-    action      TEXT NOT NULL,   -- create|update|void|refund|install|uninstall
+    action      TEXT NOT NULL,   
     data_json   TEXT,
-    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')), blocked_actor_id TEXT REFERENCES users(id),
     FOREIGN KEY (actor_id) REFERENCES users (id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_audit_entity
+CREATE INDEX idx_audit_entity
     ON audit_log (entity_type, entity_id);
 
--- ----------------------------------------
--- Plugin catalog & installed plugins
--- ----------------------------------------
-CREATE TABLE IF NOT EXISTS plugin_catalog (
-    id                TEXT NOT NULL,  -- plugin id
+CREATE TABLE plugin_catalog (
+    id                TEXT NOT NULL,  
     version           TEXT NOT NULL,
     name              TEXT NOT NULL,
     description       TEXT,
     author            TEXT,
     website           TEXT,
     repository_url    TEXT,
-    runtime           TEXT NOT NULL,  -- go|wasm|node|python|native
+    runtime           TEXT NOT NULL,  
     entrypoint        TEXT NOT NULL,
-    package_url       TEXT NOT NULL,  -- where to download
-    sha256            TEXT NOT NULL,  -- integrity check
-    signature         TEXT,           -- optional signed manifest
+    package_url       TEXT NOT NULL,  
+    sha256            TEXT NOT NULL,  
+    signature         TEXT,           
     size_bytes        INTEGER,
-    min_pos_version   TEXT NOT NULL,  -- compatibility floor
-    max_pos_version   TEXT,           -- optional ceiling
-    api_version       TEXT NOT NULL,  -- plugin API contract version
-    tags_json         TEXT,           -- ["loyalty","payments"]
-    capabilities_json TEXT,           -- ["payments:charge","devices:usb"]
+    min_pos_version   TEXT NOT NULL,  
+    max_pos_version   TEXT,           
+    api_version       TEXT NOT NULL,  
+    tags_json         TEXT,           
+    capabilities_json TEXT,           
     published_at      TEXT NOT NULL,
     is_deprecated     INTEGER NOT NULL DEFAULT 0,
     PRIMARY KEY (id, version)
 );
 
-CREATE TABLE IF NOT EXISTS plugins (
-    id                TEXT PRIMARY KEY,       -- e.g. "com.universaltill.loyalty"
+CREATE TABLE plugins (
+    id                TEXT PRIMARY KEY,       
     name              TEXT NOT NULL,
-    version           TEXT NOT NULL,          -- semver "1.2.0"
-    install_state     TEXT NOT NULL DEFAULT 'installed', -- installed|disabled|broken|installing|uninstalling
+    version           TEXT NOT NULL,          
+    install_state     TEXT NOT NULL DEFAULT 'installed', 
     description       TEXT,
     author            TEXT,
     website           TEXT,
-    entrypoint        TEXT NOT NULL,          -- executable / wasm / go module / js bundle
-    runtime           TEXT NOT NULL DEFAULT 'go', -- go|wasm|node|python|native
+    entrypoint        TEXT NOT NULL,          
+    runtime           TEXT NOT NULL DEFAULT 'go', 
     installed_from_url TEXT,
     installed_sha256  TEXT,
     is_active         INTEGER NOT NULL DEFAULT 1,
-    trust_level       TEXT NOT NULL DEFAULT 'untrusted', -- untrusted|trusted|system
+    trust_level       TEXT NOT NULL DEFAULT 'untrusted', 
     installed_at      TEXT NOT NULL DEFAULT (datetime('now')),
     updated_at        TEXT NOT NULL DEFAULT (datetime('now')),
     UNIQUE (id, version),
     FOREIGN KEY (id, version) REFERENCES plugin_catalog (id, version)
 );
 
-CREATE INDEX IF NOT EXISTS idx_plugins_active ON plugins (is_active);
+CREATE INDEX idx_plugins_active ON plugins (is_active);
 
-CREATE TABLE IF NOT EXISTS plugin_entries (
-    id              TEXT PRIMARY KEY,                 -- uuid
+CREATE TABLE plugin_entries (
+    id              TEXT PRIMARY KEY,                 
     plugin_id       TEXT NOT NULL,
 
-    type            TEXT NOT NULL,                    -- page|button|popup|payment|device|integration|report|pricing|tax|import|export|hardware|background_job|scheduler|receipt_template|customer_facing|auth|notification|delivery|theme
-    key             TEXT NOT NULL,                    -- unique inside plugin (e.g. "loyalty.page")
+    type            TEXT NOT NULL,                    
+    key             TEXT NOT NULL,                    
     label           TEXT NOT NULL,
 
-    icon_path       TEXT,                             -- optional icon for menus/buttons
+    icon_path       TEXT,                             
     sort_order      INTEGER NOT NULL DEFAULT 0,
     is_active       INTEGER NOT NULL DEFAULT 1,
 
-    -- Navigation / placement (nullable depending on type)
-    parent_page_key TEXT,                             -- for buttons/popups: which page they belong to
-    menu_group      TEXT,                             -- for pages: top menu group like "Sales", "Admin"
-    route           TEXT,                             -- for pages: internal route "/loyalty"
-    target_action   TEXT,                             -- for buttons/actions: action name to invoke
-    trigger_event   TEXT,                             -- for popups/hooks: event name (e.g. "sale.completed")
+    
+    parent_page_key TEXT,                             
+    menu_group      TEXT,                             
+    route           TEXT,                             
+    target_action   TEXT,                             
+    trigger_event   TEXT,                             
 
-    -- Arbitrary plugin-defined config, stored as JSON text
+    
     config_json     TEXT,
 
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
@@ -484,2865 +461,801 @@ CREATE TABLE IF NOT EXISTS plugin_entries (
     ))
 );
 
-CREATE INDEX IF NOT EXISTS idx_plugin_entries_plugin       ON plugin_entries (plugin_id);
-CREATE INDEX IF NOT EXISTS idx_plugin_entries_type         ON plugin_entries (type);
-CREATE INDEX IF NOT EXISTS idx_plugin_entries_parent_page  ON plugin_entries (parent_page_key);
+CREATE INDEX idx_plugin_entries_plugin       ON plugin_entries (plugin_id);
 
-CREATE TABLE IF NOT EXISTS plugin_settings (
-    id          TEXT PRIMARY KEY,        -- uuid
+CREATE INDEX idx_plugin_entries_type         ON plugin_entries (type);
+
+CREATE INDEX idx_plugin_entries_parent_page  ON plugin_entries (parent_page_key);
+
+CREATE TABLE plugin_settings (
+    id          TEXT PRIMARY KEY,        
     plugin_id   TEXT NOT NULL,
-    key         TEXT NOT NULL,           -- e.g. "apiKey", "terminalIp"
-    value_json  TEXT NOT NULL,           -- store typed configs
-    scope       TEXT NOT NULL DEFAULT 'global', -- global|register|user
-    scope_id    TEXT,                    -- register_id/user_id if scoped
+    key         TEXT NOT NULL,           
+    value_json  TEXT NOT NULL,           
+    scope       TEXT NOT NULL DEFAULT 'global', 
+    scope_id    TEXT,                    
     updated_at  TEXT NOT NULL DEFAULT (datetime('now')),
     FOREIGN KEY (plugin_id) REFERENCES plugins (id) ON DELETE CASCADE,
     UNIQUE (plugin_id, key, scope, scope_id)
 );
 
-CREATE INDEX IF NOT EXISTS idx_plugin_settings_plugin ON plugin_settings (plugin_id);
+CREATE INDEX idx_plugin_settings_plugin ON plugin_settings (plugin_id);
 
-CREATE TABLE IF NOT EXISTS plugin_hooks (
+CREATE TABLE plugin_hooks (
     id          TEXT PRIMARY KEY,
     plugin_id   TEXT NOT NULL,
-    event       TEXT NOT NULL,      -- e.g. "sale.completed"
-    action      TEXT NOT NULL,      -- e.g. "loyalty.awardPoints"
+    event       TEXT NOT NULL,      
+    action      TEXT NOT NULL,      
     priority    INTEGER NOT NULL DEFAULT 100,
     is_active   INTEGER NOT NULL DEFAULT 1,
-    config_json TEXT,               -- optional per-hook config
+    config_json TEXT,               
     FOREIGN KEY (plugin_id) REFERENCES plugins (id) ON DELETE CASCADE,
     UNIQUE (plugin_id, event, action)
 );
 
-CREATE INDEX IF NOT EXISTS idx_plugin_hooks_event ON plugin_hooks (event);
+CREATE INDEX idx_plugin_hooks_event ON plugin_hooks (event);
 
-CREATE TABLE IF NOT EXISTS plugin_permissions (
+CREATE TABLE plugin_permissions (
     id          TEXT PRIMARY KEY,
     plugin_id   TEXT NOT NULL,
-    permission  TEXT NOT NULL,      -- e.g. "payments:charge", "devices:usb", "sales:read"
+    permission  TEXT NOT NULL,      
     granted     INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (plugin_id) REFERENCES plugins (id) ON DELETE CASCADE,
     UNIQUE (plugin_id, permission)
 );
 
--- ----------------------------------------
--- Shortcut buttons (POS UI shortcuts)
--- ----------------------------------------
-CREATE TABLE IF NOT EXISTS shortcut_buttons (
+CREATE TABLE shortcut_buttons (
     barcode     TEXT PRIMARY KEY,
     item_id     TEXT NOT NULL,
     label       TEXT NOT NULL,
-    image_path  TEXT,
+    image_path  TEXT, sort_order INTEGER NOT NULL DEFAULT 0,
     FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE
 );
 
--- Insert defaults and samples --------------------------------
+CREATE TABLE held_sales (
+    id          TEXT PRIMARY KEY,
+    label       TEXT NOT NULL DEFAULT '',
+    total_minor INTEGER NOT NULL DEFAULT 0,
+    line_count  INTEGER NOT NULL DEFAULT 0,
+    payload     TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now'))
+, table_id TEXT REFERENCES tables(id));
 
--- sample customers
-INSERT OR IGNORE INTO customers (id, name, phone, email, address, loyalty_no) VALUES
-('cust-001', 'Alice Carter', '+441234567890', 'alice@example.com', '10 High St, London', 'LOY-ALICE'),
-('cust-002', 'Ben Singh', '+441122334455', 'ben@example.com', '22 Market Rd, Manchester', 'LOY-BEN'),
-('cust-003', 'Chloe Martin', '+447700900123', 'chloe@example.com', '5 Queen Sq, Bristol', 'LOY-CHLOE');
+CREATE TABLE sessions (
+    id          TEXT PRIMARY KEY,
+    token_hash  TEXT NOT NULL UNIQUE,
+    user_id     TEXT NOT NULL,
+    created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    expires_at  TEXT NOT NULL,
+    revoked_at  TEXT, last_seen_at TEXT,
+    FOREIGN KEY (user_id) REFERENCES users (id)
+);
 
+CREATE INDEX idx_sessions_user ON sessions (user_id);
 
-INSERT OR IGNORE INTO
-    payment_methods (id, name, type, sort_order)
-VALUES ('cash', 'Cash', 'cash', 1),
-    ('card', 'Card', 'card', 2),
-    (
-        'gift',
-        'Gift Card',
-        'voucher',
-        3
-    );
+CREATE TABLE plugin_install_status (
+    listing_id      TEXT PRIMARY KEY,
+    plugin_id       TEXT,
+    plugin_name     TEXT,
+    target_version  TEXT,
+    current_version TEXT,
+    state           TEXT NOT NULL,
+    message_key     TEXT,
+    retryable       INTEGER NOT NULL DEFAULT 0,
+    updated_at      TEXT NOT NULL
+);
 
--- some defaults
-INSERT OR IGNORE INTO
-    settings (key, value)
-VALUES ('store.name', 'My Store'),
-    ('store.currency', 'GBP'),
-    ('pos.tax_inclusive', 'false');
+CREATE TABLE translation_overrides (
+    locale     TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    value      TEXT NOT NULL,
+    updated_at TEXT NOT NULL,
+    updated_by TEXT NOT NULL DEFAULT '',
+    PRIMARY KEY (locale, key)
+);
 
--- ---------------------------
--- Stock locations
--- ---------------------------
-INSERT INTO
-    stock_locations (id, name)
-VALUES ('loc_main', 'Main Store'),
-    ('loc_back', 'Back Store'),
-    ('loc_wh', 'Warehouse');
+CREATE TABLE related_items (
+    item_id         TEXT NOT NULL,
+    related_item_id TEXT NOT NULL,
+    support         INTEGER NOT NULL,   
+    score           REAL NOT NULL,      
+    updated_at      TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (item_id, related_item_id),
+    FOREIGN KEY (item_id)         REFERENCES items (id) ON DELETE CASCADE,
+    FOREIGN KEY (related_item_id) REFERENCES items (id) ON DELETE CASCADE
+);
 
+CREATE TABLE plugin_storage (
+    plugin_id  TEXT NOT NULL,
+    key        TEXT NOT NULL,
+    value      BLOB NOT NULL,
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    PRIMARY KEY (plugin_id, key)
+);
 
--- ---------------------------
--- Tax codes (basis points)
--- ---------------------------
-INSERT INTO
-    tax_codes (
-        id,
-        name,
-        rate_basis_points,
-        is_active
+CREATE TABLE report_archive (
+    id           TEXT PRIMARY KEY,
+    kind         TEXT NOT NULL,             
+    period       TEXT NOT NULL,             
+    content_json TEXT NOT NULL,
+    created_at   TEXT NOT NULL DEFAULT (datetime('now')), cloud_acked_at TEXT, z_number INTEGER, prev_z_number INTEGER, prev_closed_at TEXT, first_receipt TEXT, last_receipt TEXT,
+    UNIQUE (kind, period)
+);
+
+CREATE TABLE invoices (
+    id                  TEXT PRIMARY KEY,
+    series              TEXT NOT NULL,              
+    invoice_no          INTEGER NOT NULL,           
+    display_no          TEXT NOT NULL UNIQUE,       
+    kind                TEXT NOT NULL DEFAULT 'invoice' CHECK (kind IN ('invoice','credit_note')),
+    sale_id             TEXT NOT NULL,
+    original_invoice_id TEXT,                       
+    customer_name       TEXT NOT NULL,
+    customer_address    TEXT NOT NULL DEFAULT '',
+    customer_vat_no     TEXT NOT NULL DEFAULT '',
+    seller_json         TEXT NOT NULL,              
+    net_total           INTEGER NOT NULL,           
+    tax_total           INTEGER NOT NULL,
+    gross_total         INTEGER NOT NULL,
+    vat_breakdown_json  TEXT NOT NULL,              
+    issued_at           TEXT NOT NULL,
+    issued_by           TEXT NOT NULL,
+    FOREIGN KEY (sale_id)             REFERENCES sales (id),
+    FOREIGN KEY (original_invoice_id) REFERENCES invoices (id)
+);
+
+CREATE UNIQUE INDEX ux_invoices_series_no ON invoices (series, invoice_no);
+
+CREATE UNIQUE INDEX ux_invoices_sale_kind ON invoices (sale_id, kind);
+
+CREATE INDEX idx_invoices_issued ON invoices (issued_at);
+
+CREATE TABLE item_modifier_groups (
+    id          TEXT PRIMARY KEY,
+    item_id     TEXT NOT NULL,
+    name        TEXT NOT NULL,
+    required    INTEGER NOT NULL DEFAULT 0,   
+    min_select  INTEGER NOT NULL DEFAULT 0,
+    max_select  INTEGER NOT NULL DEFAULT 1,   
+    sort_order  INTEGER NOT NULL DEFAULT 0,
+    is_active   INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE,
+    CHECK (min_select >= 0 AND max_select >= min_select)
+);
+
+CREATE INDEX idx_item_modifier_groups_item
+    ON item_modifier_groups (item_id);
+
+CREATE TABLE item_modifier_options (
+    id                TEXT PRIMARY KEY,
+    group_id          TEXT NOT NULL,
+    name              TEXT NOT NULL,
+    price_delta_minor INTEGER NOT NULL DEFAULT 0,  
+    sort_order        INTEGER NOT NULL DEFAULT 0,
+    is_active         INTEGER NOT NULL DEFAULT 1,
+    FOREIGN KEY (group_id) REFERENCES item_modifier_groups (id) ON DELETE CASCADE,
+    CHECK (price_delta_minor >= 0)
+);
+
+CREATE INDEX idx_item_modifier_options_group
+    ON item_modifier_options (group_id);
+
+CREATE TABLE sale_line_modifiers (
+    id                     TEXT PRIMARY KEY,
+    sale_line_id           TEXT NOT NULL,
+    group_id               TEXT,             
+    option_id              TEXT,             
+    group_name_snapshot    TEXT NOT NULL,
+    option_name_snapshot   TEXT NOT NULL,
+    price_delta_minor      INTEGER NOT NULL,
+    FOREIGN KEY (sale_line_id) REFERENCES sale_lines (id) ON DELETE CASCADE
+);
+
+CREATE INDEX idx_sale_line_modifiers_line
+    ON sale_line_modifiers (sale_line_id);
+
+CREATE TABLE pending_pairings (
+    id           TEXT PRIMARY KEY,
+    device_name  TEXT NOT NULL,
+    commitment   TEXT NOT NULL,
+    token        TEXT NOT NULL DEFAULT '',
+    requested_at TEXT NOT NULL,
+    expires_at   TEXT NOT NULL,
+    status       TEXT NOT NULL DEFAULT 'pending'
+);
+
+CREATE INDEX idx_pending_pairings_status ON pending_pairings(status);
+
+CREATE INDEX idx_pending_pairings_expires_at ON pending_pairings(expires_at);
+
+CREATE TABLE "tills" (
+    id           TEXT PRIMARY KEY,
+    name         TEXT NOT NULL,
+    bearer_hash  TEXT UNIQUE,
+    enrolled_at  TEXT NOT NULL DEFAULT (datetime('now')),
+    last_seen_at TEXT
+);
+
+CREATE TABLE issue_reports_sent (
+    id               TEXT PRIMARY KEY,
+    note             TEXT NOT NULL DEFAULT '',
+    captured_at      TEXT NOT NULL,
+    had_audio        INTEGER NOT NULL DEFAULT 0,
+    had_video        INTEGER NOT NULL DEFAULT 0,
+    image_count      INTEGER NOT NULL DEFAULT 0,
+    status           TEXT NOT NULL DEFAULT 'sent',
+    github_issue_url TEXT NOT NULL DEFAULT '',
+    last_synced_at   TEXT
+);
+
+CREATE INDEX idx_issue_reports_sent_captured_at ON issue_reports_sent(captured_at);
+
+CREATE TABLE order_status_events (
+    id         TEXT PRIMARY KEY,
+    receipt_no TEXT NOT NULL,
+    status     TEXT NOT NULL,
+    actor_id   TEXT,
+    created_at TEXT NOT NULL
+);
+
+CREATE INDEX idx_order_status_events_receipt ON order_status_events(receipt_no, created_at);
+
+CREATE TABLE kitchen_stations (
+    id               TEXT PRIMARY KEY,
+    name             TEXT NOT NULL,
+    destination_type TEXT NOT NULL DEFAULT 'printer' CHECK (destination_type IN ('printer','display')),
+    printer_address  TEXT,
+    enabled          INTEGER NOT NULL DEFAULT 1,
+    created_at       TEXT NOT NULL,
+    updated_at       TEXT NOT NULL
+);
+
+CREATE TABLE item_station_routes (
+    item_id    TEXT NOT NULL REFERENCES items(id) ON DELETE CASCADE,
+    station_id TEXT NOT NULL REFERENCES kitchen_stations(id) ON DELETE CASCADE,
+    PRIMARY KEY (item_id, station_id)
+);
+
+CREATE INDEX idx_item_station_routes_station ON item_station_routes(station_id);
+
+CREATE TABLE category_station_routes (
+    category_id TEXT NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
+    station_id  TEXT NOT NULL REFERENCES kitchen_stations(id) ON DELETE CASCADE,
+    PRIMARY KEY (category_id, station_id)
+);
+
+CREATE INDEX idx_category_station_routes_station ON category_station_routes(station_id);
+
+CREATE TABLE roles (
+    role TEXT PRIMARY KEY 
+);
+
+CREATE TABLE permission_actions (
+    action TEXT PRIMARY KEY
+);
+
+CREATE TABLE role_permissions (
+    role    TEXT NOT NULL REFERENCES roles(role),
+    action  TEXT NOT NULL REFERENCES permission_actions(action),
+    granted INTEGER NOT NULL DEFAULT 0, 
+    PRIMARY KEY (role, action)
+);
+
+CREATE TABLE reset_batches (
+    id          TEXT PRIMARY KEY,
+    created_at  TEXT NOT NULL,
+    actor_id    TEXT,
+    sales_count INTEGER NOT NULL DEFAULT 0
+);
+
+-- ----------------------------------------
+-- Reset archives (ADR-0042, ut-docs#187) — restated here after ADR-0074's
+-- squash deleted this invariant's original home (migration 040's header).
+-- ----------------------------------------
+-- POSRepo.ResetTransactionHistory does not destroy transactional data:
+-- every row it clears is moved into a *_archive twin, tagged with one
+-- reset_batches row per reset event, and is restorable whole-batch as long
+-- as the till has not traded since (see reset_archive_repo.go).
+-- report_archive above is NOT part of this mechanism (ADR-0040 §9) — it is
+-- a separate retained legal record with its own retention pruning.
+--
+-- Every table below must stay column-identical to its live counterpart,
+-- plus reset_batch_id, with three deliberate relaxations: no FKs to live
+-- tables (an archived row must not pin, or be broken by, live rows that
+-- can change or vanish after the reset — sale_id/sale_line_id links only
+-- make sense WITHIN the same batch); no PRIMARY KEY/UNIQUE constraints (a
+-- shop that resets, trades, and resets again legitimately archives the
+-- same receipt_no/display_no in two different batches); NOT NULL and
+-- single-table CHECK constraints are kept. Whoever adds a column to a live
+-- table that has an archive twin must add the same column here too, in
+-- the same change (internal/data/reset_test.go pins this).
+CREATE TABLE sales_archive (
+    id              TEXT NOT NULL,
+    receipt_no      TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    sale_type       TEXT NOT NULL,
+    tender_type     TEXT NOT NULL,
+    offline         INTEGER NOT NULL,
+    sync_status     TEXT NOT NULL,
+    sync_attempts   INTEGER NOT NULL,
+    sync_next_attempt_at TEXT,
+    sync_last_error TEXT,
+    register_id     TEXT,
+    cashier_id      TEXT,
+    customer_id     TEXT,
+    currency        TEXT NOT NULL,
+    subtotal        INTEGER NOT NULL,
+    discount_total  INTEGER NOT NULL,
+    tax_total       INTEGER NOT NULL,
+    total           INTEGER NOT NULL,
+    rounding        INTEGER NOT NULL,
+    note            TEXT,
+    created_at      TEXT NOT NULL,
+    completed_at    TEXT,
+    voided_at       TEXT,
+    till_id         TEXT NOT NULL,
+    service_charge_amount INTEGER NOT NULL,
+    order_type      TEXT NOT NULL,
+    order_status    TEXT NOT NULL,
+    order_status_updated_at TEXT,
+    kitchen_print_failed_at TEXT,
+    receipt_print_failed_at TEXT,
+    reset_batch_id  TEXT NOT NULL REFERENCES reset_batches (id)
+, table_id TEXT REFERENCES tables(id), tracking_token TEXT, service_charge_tax_basis_bp INTEGER NOT NULL DEFAULT 0, voucher_issue_total INTEGER NOT NULL DEFAULT 0);
+
+CREATE INDEX idx_sales_archive_batch ON sales_archive (reset_batch_id);
+
+CREATE TABLE sale_lines_archive (
+    id               TEXT NOT NULL,
+    sale_id          TEXT NOT NULL,
+    line_no          INTEGER NOT NULL,
+    item_id          TEXT,
+    variant_id       TEXT,
+    name_snapshot    TEXT NOT NULL,
+    sku_snapshot     TEXT,
+    barcode_snapshot TEXT,
+    quantity         REAL NOT NULL,
+    unit_price       INTEGER NOT NULL,
+    line_discount    INTEGER NOT NULL,
+    tax_rate_bp      INTEGER NOT NULL,
+    tax_amount       INTEGER NOT NULL,
+    total_before_tax INTEGER NOT NULL,
+    total_after_tax  INTEGER NOT NULL,
+    reset_batch_id   TEXT NOT NULL REFERENCES reset_batches (id), order_type TEXT NOT NULL DEFAULT '',
+    CHECK (
+        (item_id IS NOT NULL AND variant_id IS NULL)
+        OR (item_id IS NULL AND variant_id IS NOT NULL)
     )
-VALUES (
-        'tax_std',
-        'Standard VAT',
-        2000,
-        1
-    ),
-    (
-        'tax_red',
-        'Reduced VAT',
-        500,
-        1
-    ),
-    (
-        'tax_zero',
-        'Zero-rated',
-        0,
-        1
-    );
+);
 
--- ---------------------------
--- Brands
--- ---------------------------
-INSERT INTO
-    brands (id, name)
-VALUES ('br_coca', 'Coca-Cola'),
-    ('br_pepsi', 'PepsiCo'),
-    ('br_nestle', 'Nestlé'),
-    ('br_unilev', 'Unilever'),
-    ('br_kell', 'Kellogg''s'),
-    ('br_heinz', 'Heinz'),
-    ('br_walk', 'Walkers'),
-    ('br_generic', 'Generic');
+CREATE INDEX idx_sale_lines_archive_batch ON sale_lines_archive (reset_batch_id);
 
--- ---------------------------
--- Categories (some hierarchy)
--- ---------------------------
-INSERT INTO
-    categories (
-        id,
-        name,
-        parent_id,
-        sort_order
+CREATE TABLE sale_line_modifiers_archive (
+    id                   TEXT NOT NULL,
+    sale_line_id         TEXT NOT NULL,
+    group_id             TEXT,
+    option_id            TEXT,
+    group_name_snapshot  TEXT NOT NULL,
+    option_name_snapshot TEXT NOT NULL,
+    price_delta_minor    INTEGER NOT NULL,
+    reset_batch_id       TEXT NOT NULL REFERENCES reset_batches (id)
+);
+
+CREATE INDEX idx_sale_line_modifiers_archive_batch ON sale_line_modifiers_archive (reset_batch_id);
+
+CREATE TABLE sale_discounts_archive (
+    id             TEXT NOT NULL,
+    sale_id        TEXT NOT NULL,
+    line_id        TEXT,
+    type           TEXT NOT NULL,
+    value          INTEGER NOT NULL,
+    amount         INTEGER NOT NULL,
+    reason         TEXT,
+    reset_batch_id TEXT NOT NULL REFERENCES reset_batches (id)
+);
+
+CREATE INDEX idx_sale_discounts_archive_batch ON sale_discounts_archive (reset_batch_id);
+
+CREATE TABLE sale_links_archive (
+    id               TEXT NOT NULL,
+    sale_id          TEXT NOT NULL,
+    original_sale_id TEXT NOT NULL,
+    reason           TEXT,
+    reset_batch_id   TEXT NOT NULL REFERENCES reset_batches (id)
+);
+
+CREATE INDEX idx_sale_links_archive_batch ON sale_links_archive (reset_batch_id);
+
+CREATE TABLE payments_archive (
+    id             TEXT NOT NULL,
+    sale_id        TEXT NOT NULL,
+    method_id      TEXT NOT NULL,
+    amount         INTEGER NOT NULL,
+    currency       TEXT NOT NULL,
+    reference      TEXT,
+    change_given   INTEGER NOT NULL,
+    paid_at        TEXT NOT NULL,
+    tip_amount     INTEGER NOT NULL,
+    reset_batch_id TEXT NOT NULL REFERENCES reset_batches (id)
+, masked_pan TEXT, auth_code TEXT, terminal_id TEXT, trace_id TEXT, tip_recipient TEXT NOT NULL DEFAULT 'employee', voucher_id TEXT);
+
+CREATE INDEX idx_payments_archive_batch ON payments_archive (reset_batch_id);
+
+CREATE TABLE invoices_archive (
+    id                  TEXT NOT NULL,
+    series              TEXT NOT NULL,
+    invoice_no          INTEGER NOT NULL,
+    display_no          TEXT NOT NULL,
+    kind                TEXT NOT NULL CHECK (kind IN ('invoice','credit_note')),
+    sale_id             TEXT NOT NULL,
+    original_invoice_id TEXT,
+    customer_name       TEXT NOT NULL,
+    customer_address    TEXT NOT NULL,
+    customer_vat_no     TEXT NOT NULL,
+    seller_json         TEXT NOT NULL,
+    net_total           INTEGER NOT NULL,
+    tax_total           INTEGER NOT NULL,
+    gross_total         INTEGER NOT NULL,
+    vat_breakdown_json  TEXT NOT NULL,
+    issued_at           TEXT NOT NULL,
+    issued_by           TEXT NOT NULL,
+    reset_batch_id      TEXT NOT NULL REFERENCES reset_batches (id)
+);
+
+CREATE INDEX idx_invoices_archive_batch ON invoices_archive (reset_batch_id);
+
+CREATE TABLE held_sales_archive (
+    id             TEXT NOT NULL,
+    label          TEXT NOT NULL,
+    total_minor    INTEGER NOT NULL,
+    line_count     INTEGER NOT NULL,
+    payload        TEXT NOT NULL,
+    created_at     TEXT NOT NULL,
+    reset_batch_id TEXT NOT NULL REFERENCES reset_batches (id)
+, table_id TEXT REFERENCES tables(id));
+
+CREATE INDEX idx_held_sales_archive_batch ON held_sales_archive (reset_batch_id);
+
+CREATE TABLE shifts_archive (
+    id             TEXT NOT NULL,
+    register_id    TEXT NOT NULL,
+    cashier_id     TEXT NOT NULL,
+    opened_at      TEXT NOT NULL,
+    closed_at      TEXT,
+    opening_cash   INTEGER NOT NULL,
+    closing_cash   INTEGER,
+    expected_cash  INTEGER,
+    note           TEXT,
+    reset_batch_id TEXT NOT NULL REFERENCES reset_batches (id)
+, new_float INTEGER, count_protocol TEXT);
+
+CREATE INDEX idx_shifts_archive_batch ON shifts_archive (reset_batch_id);
+
+CREATE TABLE stock_movements_archive (
+    id             TEXT NOT NULL,
+    item_id        TEXT,
+    variant_id     TEXT,
+    location_id    TEXT NOT NULL,
+    sale_line_id   TEXT,
+    type           TEXT NOT NULL,
+    quantity       REAL NOT NULL,
+    cost_price     INTEGER,
+    created_at     TEXT NOT NULL,
+    reset_batch_id TEXT NOT NULL REFERENCES reset_batches (id),
+    CHECK (
+        (item_id IS NOT NULL AND variant_id IS NULL)
+        OR (item_id IS NULL AND variant_id IS NOT NULL)
     )
-VALUES ('cat_food', 'Food', NULL, 1),
-    (
-        'cat_drink',
-        'Drinks',
-        NULL,
-        2
-    ),
-    (
-        'cat_snack',
-        'Snacks',
-        'cat_food',
-        1
-    ),
-    (
-        'cat_dairy',
-        'Dairy',
-        'cat_food',
-        2
-    ),
-    (
-        'cat_bakery',
-        'Bakery',
-        'cat_food',
-        3
-    ),
-    (
-        'cat_frozen',
-        'Frozen',
-        'cat_food',
-        4
-    ),
-    (
-        'cat_house',
-        'Household',
-        NULL,
-        3
-    ),
-    (
-        'cat_clean',
-        'Cleaning',
-        'cat_house',
-        1
-    ),
-    (
-        'cat_personal',
-        'Personal Care',
-        'cat_house',
-        2
-    ),
-    (
-        'cat_produce',
-        'Produce',
-        NULL,
-        4
-    );
+);
 
--- ---------------------------
--- 50 Items
--- prices are in pence
--- ---------------------------
-INSERT INTO
-    items (
-        id,
-        sku,
-        name,
-        description,
-        category_id,
-        brand_id,
-        unit,
-        base_price,
-        cost_price,
-        tax_code_id,
-        is_active,
-        is_weighed
-    )
-VALUES (
-        'itm001',
-        'SKU-0001',
-        'Coca-Cola Can 330ml',
-        'Classic cola can',
-        'cat_drink',
-        'br_coca',
-        'each',
-        120,
-        60,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm002',
-        'SKU-0002',
-        'Pepsi Can 330ml',
-        'Cola can',
-        'cat_drink',
-        'br_pepsi',
-        'each',
-        115,
-        58,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm003',
-        'SKU-0003',
-        'Sparkling Water 500ml',
-        'Carbonated water',
-        'cat_drink',
-        'br_generic',
-        'each',
-        85,
-        30,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm004',
-        'SKU-0004',
-        'Still Water 1.5L',
-        'Spring water bottle',
-        'cat_drink',
-        'br_generic',
-        'each',
-        110,
-        40,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm005',
-        'SKU-0005',
-        'Orange Juice 1L',
-        '100% orange juice',
-        'cat_drink',
-        'br_nestle',
-        'each',
-        220,
-        120,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm006',
-        'SKU-0006',
-        'Apple Juice 1L',
-        'Pressed apple juice',
-        'cat_drink',
-        'br_generic',
-        'each',
-        210,
-        110,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm007',
-        'SKU-0007',
-        'Semi-Skimmed Milk 2L',
-        'Fresh milk',
-        'cat_dairy',
-        'br_generic',
-        'each',
-        190,
-        120,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm008',
-        'SKU-0008',
-        'Whole Milk 1L',
-        'Fresh milk',
-        'cat_dairy',
-        'br_generic',
-        'each',
-        110,
-        70,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm009',
-        'SKU-0009',
-        'Butter 250g',
-        'Salted butter',
-        'cat_dairy',
-        'br_unilev',
-        'each',
-        215,
-        140,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm010',
-        'SKU-0010',
-        'Cheddar Cheese 400g',
-        'Mature cheddar',
-        'cat_dairy',
-        'br_generic',
-        'each',
-        320,
-        210,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm011',
-        'SKU-0011',
-        'White Bread Loaf',
-        'Sliced loaf',
-        'cat_bakery',
-        'br_generic',
-        'each',
-        140,
-        80,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm012',
-        'SKU-0012',
-        'Brown Bread Loaf',
-        'Wholemeal loaf',
-        'cat_bakery',
-        'br_generic',
-        'each',
-        150,
-        85,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm013',
-        'SKU-0013',
-        'Croissant Pack x4',
-        'Buttery croissants',
-        'cat_bakery',
-        'br_generic',
-        'each',
-        200,
-        120,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm014',
-        'SKU-0014',
-        'Chocolate Muffin x2',
-        'Bakery muffins',
-        'cat_bakery',
-        'br_generic',
-        'each',
-        180,
-        100,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm015',
-        'SKU-0015',
-        'Walkers Ready Salted 45g',
-        'Crisps',
-        'cat_snack',
-        'br_walk',
-        'each',
-        95,
-        45,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm016',
-        'SKU-0016',
-        'Walkers Cheese & Onion 45g',
-        'Crisps',
-        'cat_snack',
-        'br_walk',
-        'each',
-        95,
-        45,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm017',
-        'SKU-0017',
-        'Salted Peanuts 200g',
-        'Roasted peanuts',
-        'cat_snack',
-        'br_generic',
-        'each',
-        170,
-        90,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm018',
-        'SKU-0018',
-        'Mixed Nuts 200g',
-        'Assorted nuts',
-        'cat_snack',
-        'br_generic',
-        'each',
-        240,
-        135,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm019',
-        'SKU-0019',
-        'Milk Chocolate Bar 100g',
-        'Chocolate bar',
-        'cat_snack',
-        'br_nestle',
-        'each',
-        130,
-        70,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm020',
-        'SKU-0020',
-        'Dark Chocolate Bar 100g',
-        '70% cocoa',
-        'cat_snack',
-        'br_nestle',
-        'each',
-        140,
-        75,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm021',
-        'SKU-0021',
-        'Kellogg''s Cornflakes 500g',
-        'Breakfast cereal',
-        'cat_food',
-        'br_kell',
-        'each',
-        280,
-        160,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm022',
-        'SKU-0022',
-        'Oat Granola 750g',
-        'Crunchy oats',
-        'cat_food',
-        'br_generic',
-        'each',
-        340,
-        200,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm023',
-        'SKU-0023',
-        'Frozen Peas 1kg',
-        'Garden peas',
-        'cat_frozen',
-        'br_generic',
-        'each',
-        160,
-        90,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm024',
-        'SKU-0024',
-        'Frozen Chips 1.5kg',
-        'Straight cut fries',
-        'cat_frozen',
-        'br_generic',
-        'each',
-        210,
-        125,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm025',
-        'SKU-0025',
-        'Vanilla Ice Cream 1L',
-        'Ice cream tub',
-        'cat_frozen',
-        'br_unilev',
-        'each',
-        350,
-        220,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm026',
-        'SKU-0026',
-        'Bananas',
-        'Loose bananas per kg',
-        'cat_produce',
-        'br_generic',
-        'kg',
-        120,
-        70,
-        'tax_zero',
-        1,
-        1
-    ),
-    (
-        'itm027',
-        'SKU-0027',
-        'Apples',
-        'Loose apples per kg',
-        'cat_produce',
-        'br_generic',
-        'kg',
-        180,
-        95,
-        'tax_zero',
-        1,
-        1
-    ),
-    (
-        'itm028',
-        'SKU-0028',
-        'Tomatoes',
-        'Loose tomatoes per kg',
-        'cat_produce',
-        'br_generic',
-        'kg',
-        210,
-        120,
-        'tax_zero',
-        1,
-        1
-    ),
-    (
-        'itm029',
-        'SKU-0029',
-        'Onions',
-        'Loose onions per kg',
-        'cat_produce',
-        'br_generic',
-        'kg',
-        90,
-        50,
-        'tax_zero',
-        1,
-        1
-    ),
-    (
-        'itm030',
-        'SKU-0030',
-        'Potatoes 2.5kg Bag',
-        'Maris Piper',
-        'cat_produce',
-        'br_generic',
-        'each',
-        260,
-        160,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm031',
-        'SKU-0031',
-        'Heinz Baked Beans 415g',
-        'Tinned beans',
-        'cat_food',
-        'br_heinz',
-        'each',
-        140,
-        80,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm032',
-        'SKU-0032',
-        'Tomato Ketchup 460g',
-        'Bottle ketchup',
-        'cat_food',
-        'br_heinz',
-        'each',
-        250,
-        150,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm033',
-        'SKU-0033',
-        'Pasta Spaghetti 500g',
-        'Dry pasta',
-        'cat_food',
-        'br_generic',
-        'each',
-        125,
-        70,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm034',
-        'SKU-0034',
-        'Rice Basmati 1kg',
-        'Long grain rice',
-        'cat_food',
-        'br_generic',
-        'each',
-        210,
-        130,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm035',
-        'SKU-0035',
-        'Olive Oil 500ml',
-        'Extra virgin',
-        'cat_food',
-        'br_generic',
-        'each',
-        520,
-        350,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm036',
-        'SKU-0036',
-        'Laundry Detergent 1.5L',
-        'Color safe',
-        'cat_clean',
-        'br_unilev',
-        'each',
-        650,
-        420,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm037',
-        'SKU-0037',
-        'Dishwashing Liquid 500ml',
-        'Lemon scent',
-        'cat_clean',
-        'br_unilev',
-        'each',
-        180,
-        95,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm038',
-        'SKU-0038',
-        'Paper Towels x2',
-        'Kitchen roll',
-        'cat_house',
-        'br_generic',
-        'each',
-        220,
-        120,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm039',
-        'SKU-0039',
-        'Toilet Paper x9',
-        'Soft tissue',
-        'cat_house',
-        'br_generic',
-        'each',
-        590,
-        400,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm040',
-        'SKU-0040',
-        'All-Purpose Cleaner 750ml',
-        'Spray cleaner',
-        'cat_clean',
-        'br_generic',
-        'each',
-        240,
-        135,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm041',
-        'SKU-0041',
-        'Shampoo 400ml',
-        'Daily care shampoo',
-        'cat_personal',
-        'br_unilev',
-        'each',
-        310,
-        190,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm042',
-        'SKU-0042',
-        'Conditioner 400ml',
-        'Moisture conditioner',
-        'cat_personal',
-        'br_unilev',
-        'each',
-        310,
-        190,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm043',
-        'SKU-0043',
-        'Soap Bar 2x100g',
-        'Bath soap',
-        'cat_personal',
-        'br_unilev',
-        'each',
-        160,
-        90,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm044',
-        'SKU-0044',
-        'Toothpaste 75ml',
-        'Mint toothpaste',
-        'cat_personal',
-        'br_generic',
-        'each',
-        210,
-        120,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm045',
-        'SKU-0045',
-        'Toothbrush Medium',
-        'Manual brush',
-        'cat_personal',
-        'br_generic',
-        'each',
-        140,
-        70,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm046',
-        'SKU-0046',
-        'Energy Drink 250ml',
-        'Caffeinated drink',
-        'cat_drink',
-        'br_generic',
-        'each',
-        155,
-        80,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm047',
-        'SKU-0047',
-        'Protein Bar 60g',
-        'Chocolate protein bar',
-        'cat_snack',
-        'br_generic',
-        'each',
-        210,
-        120,
-        'tax_std',
-        1,
-        0
-    ),
-    (
-        'itm048',
-        'SKU-0048',
-        'Instant Coffee 200g',
-        'Freeze dried coffee',
-        'cat_drink',
-        'br_nestle',
-        'each',
-        460,
-        310,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm049',
-        'SKU-0049',
-        'Tea Bags x80',
-        'Black tea',
-        'cat_drink',
-        'br_generic',
-        'each',
-        295,
-        180,
-        'tax_zero',
-        1,
-        0
-    ),
-    (
-        'itm050',
-        'SKU-0050',
-        'Sugar 1kg',
-        'Granulated sugar',
-        'cat_food',
-        'br_generic',
-        'each',
-        135,
-        75,
-        'tax_zero',
-        1,
-        0
-    );
+CREATE INDEX idx_stock_movements_archive_batch ON stock_movements_archive (reset_batch_id);
 
--- ---------------------------
--- Item barcodes (1 each)
--- ---------------------------
-INSERT INTO
-    item_barcodes (
-        barcode,
-        item_id,
-        barcode_type,
-        is_primary
-    )
-VALUES (
-        '5000000000011',
-        'itm001',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000028',
-        'itm002',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000035',
-        'itm003',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000042',
-        'itm004',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000059',
-        'itm005',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000066',
-        'itm006',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000073',
-        'itm007',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000080',
-        'itm008',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000097',
-        'itm009',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000103',
-        'itm010',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000110',
-        'itm011',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000127',
-        'itm012',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000134',
-        'itm013',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000141',
-        'itm014',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000158',
-        'itm015',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000165',
-        'itm016',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000172',
-        'itm017',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000189',
-        'itm018',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000196',
-        'itm019',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000202',
-        'itm020',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000219',
-        'itm021',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000226',
-        'itm022',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000233',
-        'itm023',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000240',
-        'itm024',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000257',
-        'itm025',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000264',
-        'itm026',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000271',
-        'itm027',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000288',
-        'itm028',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000295',
-        'itm029',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000301',
-        'itm030',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000318',
-        'itm031',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000325',
-        'itm032',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000332',
-        'itm033',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000349',
-        'itm034',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000356',
-        'itm035',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000363',
-        'itm036',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000370',
-        'itm037',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000387',
-        'itm038',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000394',
-        'itm039',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000400',
-        'itm040',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000417',
-        'itm041',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000424',
-        'itm042',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000431',
-        'itm043',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000448',
-        'itm044',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000455',
-        'itm045',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000462',
-        'itm046',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000479',
-        'itm047',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000486',
-        'itm048',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000493',
-        'itm049',
-        'EAN13',
-        1
-    ),
-    (
-        '5000000000509',
-        'itm050',
-        'EAN13',
-        1
-    );
+CREATE TABLE country_settings (
+    code             TEXT PRIMARY KEY,
+    name_key         TEXT NOT NULL,
+    currency         TEXT NOT NULL DEFAULT '',
+    currency_symbol  TEXT NOT NULL DEFAULT '',
+    tax_rate_bp      INTEGER NOT NULL DEFAULT 0 CHECK (tax_rate_bp >= 0),
+    tax_inclusive    INTEGER NOT NULL DEFAULT 1 CHECK (tax_inclusive IN (0,1)),
+    archive_min_days INTEGER NOT NULL CHECK (archive_min_days >= 0),
+    is_builtin       INTEGER NOT NULL DEFAULT 0 CHECK (is_builtin IN (0,1)),
+    updated_at       TEXT NOT NULL
+, default_locale TEXT NOT NULL DEFAULT '');
 
--- ---------------------------
--- Item images (thumbnail paths)
--- ---------------------------
-INSERT INTO
-    item_images (
-        id,
-        item_id,
-        role,
-        path,
-        sort_order
-    )
-VALUES (
-        'img001',
-        'itm001',
-        'thumbnail',
-        '/public/assets/items/itm001/thumb.png',
-        0
-    ),
-    (
-        'img002',
-        'itm002',
-        'thumbnail',
-        '/public/assets/items/itm002/thumb.png',
-        0
-    ),
-    (
-        'img003',
-        'itm003',
-        'thumbnail',
-        '/public/assets/items/itm003/thumb.png',
-        0
-    ),
-    (
-        'img004',
-        'itm004',
-        'thumbnail',
-        '/public/assets/items/itm004/thumb.png',
-        0
-    ),
-    (
-        'img005',
-        'itm005',
-        'thumbnail',
-        '/public/assets/items/itm005/thumb.png',
-        0
-    ),
-    (
-        'img006',
-        'itm006',
-        'thumbnail',
-        '/public/assets/items/itm006/thumb.png',
-        0
-    ),
-    (
-        'img007',
-        'itm007',
-        'thumbnail',
-        '/public/assets/items/itm007/thumb.png',
-        0
-    ),
-    (
-        'img008',
-        'itm008',
-        'thumbnail',
-        '/public/assets/items/itm008/thumb.png',
-        0
-    ),
-    (
-        'img009',
-        'itm009',
-        'thumbnail',
-        '/public/assets/items/itm009/thumb.png',
-        0
-    ),
-    (
-        'img010',
-        'itm010',
-        'thumbnail',
-        '/public/assets/items/itm010/thumb.png',
-        0
-    ),
-    (
-        'img011',
-        'itm011',
-        'thumbnail',
-        '/public/assets/items/itm011/thumb.png',
-        0
-    ),
-    (
-        'img012',
-        'itm012',
-        'thumbnail',
-        '/public/assets/items/itm012/thumb.png',
-        0
-    ),
-    (
-        'img013',
-        'itm013',
-        'thumbnail',
-        '/public/assets/items/itm013/thumb.png',
-        0
-    ),
-    (
-        'img014',
-        'itm014',
-        'thumbnail',
-        '/public/assets/items/itm014/thumb.png',
-        0
-    ),
-    (
-        'img015',
-        'itm015',
-        'thumbnail',
-        '/public/assets/items/itm015/thumb.png',
-        0
-    ),
-    (
-        'img016',
-        'itm016',
-        'thumbnail',
-        '/public/assets/items/itm016/thumb.png',
-        0
-    ),
-    (
-        'img017',
-        'itm017',
-        'thumbnail',
-        '/public/assets/items/itm017/thumb.png',
-        0
-    ),
-    (
-        'img018',
-        'itm018',
-        'thumbnail',
-        '/public/assets/items/itm018/thumb.png',
-        0
-    ),
-    (
-        'img019',
-        'itm019',
-        'thumbnail',
-        '/public/assets/items/itm019/thumb.png',
-        0
-    ),
-    (
-        'img020',
-        'itm020',
-        'thumbnail',
-        '/public/assets/items/itm020/thumb.png',
-        0
-    ),
-    (
-        'img021',
-        'itm021',
-        'thumbnail',
-        '/public/assets/items/itm021/thumb.png',
-        0
-    ),
-    (
-        'img022',
-        'itm022',
-        'thumbnail',
-        '/public/assets/items/itm022/thumb.png',
-        0
-    ),
-    (
-        'img023',
-        'itm023',
-        'thumbnail',
-        '/public/assets/items/itm023/thumb.png',
-        0
-    ),
-    (
-        'img024',
-        'itm024',
-        'thumbnail',
-        '/public/assets/items/itm024/thumb.png',
-        0
-    ),
-    (
-        'img025',
-        'itm025',
-        'thumbnail',
-        '/public/assets/items/itm025/thumb.png',
-        0
-    ),
-    (
-        'img026',
-        'itm026',
-        'thumbnail',
-        '/public/assets/items/itm026/thumb.png',
-        0
-    ),
-    (
-        'img027',
-        'itm027',
-        'thumbnail',
-        '/public/assets/items/itm027/thumb.png',
-        0
-    ),
-    (
-        'img028',
-        'itm028',
-        'thumbnail',
-        '/public/assets/items/itm028/thumb.png',
-        0
-    ),
-    (
-        'img029',
-        'itm029',
-        'thumbnail',
-        '/public/assets/items/itm029/thumb.png',
-        0
-    ),
-    (
-        'img030',
-        'itm030',
-        'thumbnail',
-        '/public/assets/items/itm030/thumb.png',
-        0
-    ),
-    (
-        'img031',
-        'itm031',
-        'thumbnail',
-        '/public/assets/items/itm031/thumb.png',
-        0
-    ),
-    (
-        'img032',
-        'itm032',
-        'thumbnail',
-        '/public/assets/items/itm032/thumb.png',
-        0
-    ),
-    (
-        'img033',
-        'itm033',
-        'thumbnail',
-        '/public/assets/items/itm033/thumb.png',
-        0
-    ),
-    (
-        'img034',
-        'itm034',
-        'thumbnail',
-        '/public/assets/items/itm034/thumb.png',
-        0
-    ),
-    (
-        'img035',
-        'itm035',
-        'thumbnail',
-        '/public/assets/items/itm035/thumb.png',
-        0
-    ),
-    (
-        'img036',
-        'itm036',
-        'thumbnail',
-        '/public/assets/items/itm036/thumb.png',
-        0
-    ),
-    (
-        'img037',
-        'itm037',
-        'thumbnail',
-        '/public/assets/items/itm037/thumb.png',
-        0
-    ),
-    (
-        'img038',
-        'itm038',
-        'thumbnail',
-        '/public/assets/items/itm038/thumb.png',
-        0
-    ),
-    (
-        'img039',
-        'itm039',
-        'thumbnail',
-        '/public/assets/items/itm039/thumb.png',
-        0
-    ),
-    (
-        'img040',
-        'itm040',
-        'thumbnail',
-        '/public/assets/items/itm040/thumb.png',
-        0
-    ),
-    (
-        'img041',
-        'itm041',
-        'thumbnail',
-        '/public/assets/items/itm041/thumb.png',
-        0
-    ),
-    (
-        'img042',
-        'itm042',
-        'thumbnail',
-        '/public/assets/items/itm042/thumb.png',
-        0
-    ),
-    (
-        'img043',
-        'itm043',
-        'thumbnail',
-        '/public/assets/items/itm043/thumb.png',
-        0
-    ),
-    (
-        'img044',
-        'itm044',
-        'thumbnail',
-        '/public/assets/items/itm044/thumb.png',
-        0
-    ),
-    (
-        'img045',
-        'itm045',
-        'thumbnail',
-        '/public/assets/items/itm045/thumb.png',
-        0
-    ),
-    (
-        'img046',
-        'itm046',
-        'thumbnail',
-        '/public/assets/items/itm046/thumb.png',
-        0
-    ),
-    (
-        'img047',
-        'itm047',
-        'thumbnail',
-        '/public/assets/items/itm047/thumb.png',
-        0
-    ),
-    (
-        'img048',
-        'itm048',
-        'thumbnail',
-        '/public/assets/items/itm048/thumb.png',
-        0
-    ),
-    (
-        'img049',
-        'itm049',
-        'thumbnail',
-        '/public/assets/items/itm049/thumb.png',
-        0
-    ),
-    (
-        'img050',
-        'itm050',
-        'thumbnail',
-        '/public/assets/items/itm050/thumb.png',
-        0
-    );
+CREATE TABLE fiscal_tse_signatures (
+    sale_id             TEXT PRIMARY KEY,
+    transaction_number  INTEGER NOT NULL DEFAULT 0,
+    signature_counter   INTEGER NOT NULL DEFAULT 0,
+    serial_number       TEXT NOT NULL DEFAULT '',
+    start_time          TEXT NOT NULL DEFAULT '',
+    log_time            TEXT NOT NULL DEFAULT '',
+    signature           TEXT NOT NULL,
+    signature_algorithm TEXT NOT NULL DEFAULT '',
+    created_at          TEXT NOT NULL DEFAULT (datetime('now'))
+);
 
--- ---------------------------
--- Inventory (Main Store)
--- quantity REAL supports weighted items
--- ---------------------------
-INSERT INTO
-    inventory (
-        id,
-        item_id,
-        variant_id,
-        location_id,
-        quantity,
-        reorder_level
-    )
-VALUES (
-        'inv001',
-        'itm001',
-        NULL,
-        'loc_main',
-        40,
-        10
-    ),
-    (
-        'inv002',
-        'itm002',
-        NULL,
-        'loc_main',
-        38,
-        10
-    ),
-    (
-        'inv003',
-        'itm003',
-        NULL,
-        'loc_main',
-        55,
-        12
-    ),
-    (
-        'inv004',
-        'itm004',
-        NULL,
-        'loc_main',
-        35,
-        8
-    ),
-    (
-        'inv005',
-        'itm005',
-        NULL,
-        'loc_main',
-        20,
-        5
-    ),
-    (
-        'inv006',
-        'itm006',
-        NULL,
-        'loc_main',
-        18,
-        5
-    ),
-    (
-        'inv007',
-        'itm007',
-        NULL,
-        'loc_main',
-        25,
-        6
-    ),
-    (
-        'inv008',
-        'itm008',
-        NULL,
-        'loc_main',
-        30,
-        6
-    ),
-    (
-        'inv009',
-        'itm009',
-        NULL,
-        'loc_main',
-        22,
-        4
-    ),
-    (
-        'inv010',
-        'itm010',
-        NULL,
-        'loc_main',
-        15,
-        4
-    ),
-    (
-        'inv011',
-        'itm011',
-        NULL,
-        'loc_main',
-        28,
-        6
-    ),
-    (
-        'inv012',
-        'itm012',
-        NULL,
-        'loc_main',
-        24,
-        6
-    ),
-    (
-        'inv013',
-        'itm013',
-        NULL,
-        'loc_main',
-        12,
-        3
-    ),
-    (
-        'inv014',
-        'itm014',
-        NULL,
-        'loc_main',
-        14,
-        3
-    ),
-    (
-        'inv015',
-        'itm015',
-        NULL,
-        'loc_main',
-        60,
-        15
-    ),
-    (
-        'inv016',
-        'itm016',
-        NULL,
-        'loc_main',
-        58,
-        15
-    ),
-    (
-        'inv017',
-        'itm017',
-        NULL,
-        'loc_main',
-        26,
-        6
-    ),
-    (
-        'inv018',
-        'itm018',
-        NULL,
-        'loc_main',
-        19,
-        5
-    ),
-    (
-        'inv019',
-        'itm019',
-        NULL,
-        'loc_main',
-        42,
-        10
-    ),
-    (
-        'inv020',
-        'itm020',
-        NULL,
-        'loc_main',
-        40,
-        10
-    ),
-    (
-        'inv021',
-        'itm021',
-        NULL,
-        'loc_main',
-        17,
-        4
-    ),
-    (
-        'inv022',
-        'itm022',
-        NULL,
-        'loc_main',
-        14,
-        4
-    ),
-    (
-        'inv023',
-        'itm023',
-        NULL,
-        'loc_main',
-        23,
-        5
-    ),
-    (
-        'inv024',
-        'itm024',
-        NULL,
-        'loc_main',
-        16,
-        4
-    ),
-    (
-        'inv025',
-        'itm025',
-        NULL,
-        'loc_main',
-        11,
-        3
-    ),
-    (
-        'inv026',
-        'itm026',
-        NULL,
-        'loc_main',
-        52.5,
-        10
-    ),
-    (
-        'inv027',
-        'itm027',
-        NULL,
-        'loc_main',
-        33.0,
-        8
-    ),
-    (
-        'inv028',
-        'itm028',
-        NULL,
-        'loc_main',
-        27.0,
-        6
-    ),
-    (
-        'inv029',
-        'itm029',
-        NULL,
-        'loc_main',
-        45.0,
-        9
-    ),
-    (
-        'inv030',
-        'itm030',
-        NULL,
-        'loc_main',
-        20,
-        5
-    ),
-    (
-        'inv031',
-        'itm031',
-        NULL,
-        'loc_main',
-        36,
-        8
-    ),
-    (
-        'inv032',
-        'itm032',
-        NULL,
-        'loc_main',
-        14,
-        3
-    ),
-    (
-        'inv033',
-        'itm033',
-        NULL,
-        'loc_main',
-        32,
-        7
-    ),
-    (
-        'inv034',
-        'itm034',
-        NULL,
-        'loc_main',
-        21,
-        5
-    ),
-    (
-        'inv035',
-        'itm035',
-        NULL,
-        'loc_main',
-        9,
-        2
-    ),
-    (
-        'inv036',
-        'itm036',
-        NULL,
-        'loc_main',
-        10,
-        2
-    ),
-    (
-        'inv037',
-        'itm037',
-        NULL,
-        'loc_main',
-        18,
-        4
-    ),
-    (
-        'inv038',
-        'itm038',
-        NULL,
-        'loc_main',
-        16,
-        4
-    ),
-    (
-        'inv039',
-        'itm039',
-        NULL,
-        'loc_main',
-        12,
-        3
-    ),
-    (
-        'inv040',
-        'itm040',
-        NULL,
-        'loc_main',
-        14,
-        3
-    ),
-    (
-        'inv041',
-        'itm041',
-        NULL,
-        'loc_main',
-        13,
-        3
-    ),
-    (
-        'inv042',
-        'itm042',
-        NULL,
-        'loc_main',
-        12,
-        3
-    ),
-    (
-        'inv043',
-        'itm043',
-        NULL,
-        'loc_main',
-        22,
-        5
-    ),
-    (
-        'inv044',
-        'itm044',
-        NULL,
-        'loc_main',
-        20,
-        5
-    ),
-    (
-        'inv045',
-        'itm045',
-        NULL,
-        'loc_main',
-        24,
-        5
-    ),
-    (
-        'inv046',
-        'itm046',
-        NULL,
-        'loc_main',
-        30,
-        7
-    ),
-    (
-        'inv047',
-        'itm047',
-        NULL,
-        'loc_main',
-        26,
-        6
-    ),
-    (
-        'inv048',
-        'itm048',
-        NULL,
-        'loc_main',
-        8,
-        2
-    ),
-    (
-        'inv049',
-        'itm049',
-        NULL,
-        'loc_main',
-        11,
-        2
-    ),
-    (
-        'inv050',
-        'itm050',
-        NULL,
-        'loc_main',
-        28,
-        6
-    );
+CREATE UNIQUE INDEX ux_plugin_settings_global
+    ON plugin_settings (plugin_id, key)
+    WHERE scope = 'global';
 
--- ---------------------------
--- Price history (one current row each)
--- ---------------------------
-INSERT INTO
-    price_history (
-        id,
-        item_id,
-        variant_id,
-        price,
-        starts_at,
-        ends_at
-    )
-VALUES (
-        'ph001',
-        'itm001',
-        NULL,
-        120,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph002',
-        'itm002',
-        NULL,
-        115,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph003',
-        'itm003',
-        NULL,
-        85,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph004',
-        'itm004',
-        NULL,
-        110,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph005',
-        'itm005',
-        NULL,
-        220,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph006',
-        'itm006',
-        NULL,
-        210,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph007',
-        'itm007',
-        NULL,
-        190,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph008',
-        'itm008',
-        NULL,
-        110,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph009',
-        'itm009',
-        NULL,
-        215,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph010',
-        'itm010',
-        NULL,
-        320,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph011',
-        'itm011',
-        NULL,
-        140,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph012',
-        'itm012',
-        NULL,
-        150,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph013',
-        'itm013',
-        NULL,
-        200,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph014',
-        'itm014',
-        NULL,
-        180,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph015',
-        'itm015',
-        NULL,
-        95,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph016',
-        'itm016',
-        NULL,
-        95,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph017',
-        'itm017',
-        NULL,
-        170,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph018',
-        'itm018',
-        NULL,
-        240,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph019',
-        'itm019',
-        NULL,
-        130,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph020',
-        'itm020',
-        NULL,
-        140,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph021',
-        'itm021',
-        NULL,
-        280,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph022',
-        'itm022',
-        NULL,
-        340,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph023',
-        'itm023',
-        NULL,
-        160,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph024',
-        'itm024',
-        NULL,
-        210,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph025',
-        'itm025',
-        NULL,
-        350,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph026',
-        'itm026',
-        NULL,
-        120,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph027',
-        'itm027',
-        NULL,
-        180,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph028',
-        'itm028',
-        NULL,
-        210,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph029',
-        'itm029',
-        NULL,
-        90,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph030',
-        'itm030',
-        NULL,
-        260,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph031',
-        'itm031',
-        NULL,
-        140,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph032',
-        'itm032',
-        NULL,
-        250,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph033',
-        'itm033',
-        NULL,
-        125,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph034',
-        'itm034',
-        NULL,
-        210,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph035',
-        'itm035',
-        NULL,
-        520,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph036',
-        'itm036',
-        NULL,
-        650,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph037',
-        'itm037',
-        NULL,
-        180,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph038',
-        'itm038',
-        NULL,
-        220,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph039',
-        'itm039',
-        NULL,
-        590,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph040',
-        'itm040',
-        NULL,
-        240,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph041',
-        'itm041',
-        NULL,
-        310,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph042',
-        'itm042',
-        NULL,
-        310,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph043',
-        'itm043',
-        NULL,
-        160,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph044',
-        'itm044',
-        NULL,
-        210,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph045',
-        'itm045',
-        NULL,
-        140,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph046',
-        'itm046',
-        NULL,
-        155,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph047',
-        'itm047',
-        NULL,
-        210,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph048',
-        'itm048',
-        NULL,
-        460,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph049',
-        'itm049',
-        NULL,
-        295,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph050',
-        'itm050',
-        NULL,
-        135,
-        '2025-01-01',
-        NULL
-    );
+CREATE TABLE tables (
+    id         TEXT PRIMARY KEY,
+    label      TEXT NOT NULL,                
+    area_zone  TEXT NOT NULL DEFAULT '',     
+    seat_count INTEGER NOT NULL DEFAULT 0,
+    shape      TEXT NOT NULL DEFAULT 'rect' CHECK (shape IN ('rect','round')),
+    pos_x      INTEGER NOT NULL DEFAULT 0,   
+    pos_y      INTEGER NOT NULL DEFAULT 0,
+    enabled    INTEGER NOT NULL DEFAULT 1,
+    created_at TEXT NOT NULL,
+    updated_at TEXT NOT NULL
+);
 
--- ---------------------------
--- Variants for a subset (12 items)
--- Each variant is sellable, with its own price & barcode
--- ---------------------------
+CREATE INDEX idx_held_sales_table ON held_sales(table_id);
 
-INSERT INTO
-    item_variants (
-        id,
-        item_id,
-        sku,
-        name,
-        price,
-        cost_price,
-        is_active
-    )
-VALUES (
-        'var001',
-        'itm001',
-        'SKU-0001-6P',
-        'Pack of 6',
-        650,
-        330,
-        1
-    ),
-    (
-        'var002',
-        'itm001',
-        'SKU-0001-12P',
-        'Pack of 12',
-        1200,
-        640,
-        1
-    ),
-    (
-        'var003',
-        'itm002',
-        'SKU-0002-6P',
-        'Pack of 6',
-        630,
-        320,
-        1
-    ),
-    (
-        'var004',
-        'itm005',
-        'SKU-0005-500',
-        '500ml Bottle',
-        140,
-        75,
-        1
-    ),
-    (
-        'var005',
-        'itm005',
-        'SKU-0005-1L',
-        '1L Bottle',
-        220,
-        120,
-        1
-    ),
-    (
-        'var006',
-        'itm015',
-        'SKU-0015-MP',
-        'Multipack x6',
-        520,
-        260,
-        1
-    ),
-    (
-        'var007',
-        'itm021',
-        'SKU-0021-1K',
-        '1kg Family Box',
-        420,
-        250,
-        1
-    ),
-    (
-        'var008',
-        'itm024',
-        'SKU-0024-1K',
-        '1kg Bag',
-        160,
-        90,
-        1
-    ),
-    (
-        'var009',
-        'itm024',
-        'SKU-0024-2K',
-        '2kg Bag',
-        280,
-        160,
-        1
-    ),
-    (
-        'var010',
-        'itm041',
-        'SKU-0041-250',
-        '250ml Bottle',
-        210,
-        120,
-        1
-    ),
-    (
-        'var011',
-        'itm041',
-        'SKU-0041-400',
-        '400ml Bottle',
-        310,
-        190,
-        1
-    ),
-    (
-        'var012',
-        'itm046',
-        'SKU-0046-4P',
-        '4 Pack',
-        540,
-        280,
-        1
-    );
+CREATE INDEX idx_sales_table ON sales(table_id);
 
-INSERT INTO
-    variant_barcodes (
-        barcode,
-        variant_id,
-        barcode_type,
-        is_primary
-    )
-VALUES (
-        '6000000000018',
-        'var001',
-        'EAN13',
-        1
-    ),
-    (
-        '6000000000025',
-        'var002',
-        'EAN13',
-        1
-    ),
-    (
-        '6000000000032',
-        'var003',
-        'EAN13',
-        1
-    ),
-    (
-        '6000000000049',
-        'var004',
-        'EAN13',
-        1
-    ),
-    (
-        '6000000000056',
-        'var005',
-        'EAN13',
-        1
-    ),
-    (
-        '6000000000063',
-        'var006',
-        'EAN13',
-        1
-    ),
-    (
-        '6000000000070',
-        'var007',
-        'EAN13',
-        1
-    ),
-    (
-        '6000000000087',
-        'var008',
-        'EAN13',
-        1
-    ),
-    (
-        '6000000000094',
-        'var009',
-        'EAN13',
-        1
-    ),
-    (
-        '6000000000100',
-        'var010',
-        'EAN13',
-        1
-    ),
-    (
-        '6000000000117',
-        'var011',
-        'EAN13',
-        1
-    ),
-    (
-        '6000000000124',
-        'var012',
-        'EAN13',
-        1
-    );
+CREATE UNIQUE INDEX idx_sales_tracking_token ON sales(tracking_token) WHERE tracking_token IS NOT NULL;
 
--- Inventory for variants (Main Store)
-INSERT INTO
-    inventory (
-        id,
-        item_id,
-        variant_id,
-        location_id,
-        quantity,
-        reorder_level
-    )
-VALUES (
-        'inv051',
-        NULL,
-        'var001',
-        'loc_main',
-        12,
-        3
-    ),
-    (
-        'inv052',
-        NULL,
-        'var002',
-        'loc_main',
-        8,
-        2
-    ),
-    (
-        'inv053',
-        NULL,
-        'var003',
-        'loc_main',
-        10,
-        2
-    ),
-    (
-        'inv054',
-        NULL,
-        'var004',
-        'loc_main',
-        20,
-        5
-    ),
-    (
-        'inv055',
-        NULL,
-        'var005',
-        'loc_main',
-        15,
-        4
-    ),
-    (
-        'inv056',
-        NULL,
-        'var006',
-        'loc_main',
-        14,
-        3
-    ),
-    (
-        'inv057',
-        NULL,
-        'var007',
-        'loc_main',
-        7,
-        2
-    ),
-    (
-        'inv058',
-        NULL,
-        'var008',
-        'loc_main',
-        9,
-        2
-    ),
-    (
-        'inv059',
-        NULL,
-        'var009',
-        'loc_main',
-        6,
-        2
-    ),
-    (
-        'inv060',
-        NULL,
-        'var010',
-        'loc_main',
-        11,
-        3
-    ),
-    (
-        'inv061',
-        NULL,
-        'var011',
-        'loc_main',
-        9,
-        2
-    ),
-    (
-        'inv062',
-        NULL,
-        'var012',
-        'loc_main',
-        13,
-        3
-    );
+CREATE TABLE sale_charges (
+    sale_id      TEXT    NOT NULL REFERENCES sales (id),
+    seq          INTEGER NOT NULL,   
+    key          TEXT    NOT NULL,   
+    label        TEXT    NOT NULL DEFAULT '', 
+    amount_minor INTEGER NOT NULL,   
+                                      
+                                      
+    tax_basis_bp INTEGER NOT NULL DEFAULT 0, 
+                                      
+    base         TEXT    NOT NULL DEFAULT 'net_lines',
+    PRIMARY KEY (sale_id, seq)
+);
 
--- Price history for variants
-INSERT INTO
-    price_history (
-        id,
-        item_id,
-        variant_id,
-        price,
-        starts_at,
-        ends_at
-    )
-VALUES (
-        'ph051',
-        NULL,
-        'var001',
-        650,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph052',
-        NULL,
-        'var002',
-        1200,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph053',
-        NULL,
-        'var003',
-        630,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph054',
-        NULL,
-        'var004',
-        140,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph055',
-        NULL,
-        'var005',
-        220,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph056',
-        NULL,
-        'var006',
-        520,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph057',
-        NULL,
-        'var007',
-        420,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph058',
-        NULL,
-        'var008',
-        160,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph059',
-        NULL,
-        'var009',
-        280,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph060',
-        NULL,
-        'var010',
-        210,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph061',
-        NULL,
-        'var011',
-        310,
-        '2025-01-01',
-        NULL
-    ),
-    (
-        'ph062',
-        NULL,
-        'var012',
-        540,
-        '2025-01-01',
-        NULL
-    );
+CREATE TABLE sale_charges_archive (
+    sale_id        TEXT    NOT NULL,
+    seq            INTEGER NOT NULL,
+    key            TEXT    NOT NULL,
+    label          TEXT    NOT NULL DEFAULT '',
+    amount_minor   INTEGER NOT NULL,
+    tax_basis_bp   INTEGER NOT NULL DEFAULT 0,
+    base           TEXT    NOT NULL DEFAULT 'net_lines',
+    reset_batch_id TEXT    NOT NULL REFERENCES reset_batches (id)
+);
 
--- Demo plugins were previously seeded here (com.unitill.plugins.*). They were
--- database rows with no files behind them: their pages rendered nothing, their
--- menu entries duplicated real plugins (a decoy "FAQ" next to the marketplace
--- FAQ) and their tiles confused the plugins manager. Real plugins come from
--- the marketplace or file import.
+CREATE INDEX idx_sale_charges_archive_batch ON sale_charges_archive (reset_batch_id);
 
--- sample promotions (amount = minor units, percent = basis points)
-INSERT OR IGNORE INTO promotions (code, type, value, description, is_active) VALUES
-('PROMO50', 'amount', 50, '50p off', 1),
-('PROMO500', 'amount', 500, '£5 off', 1),
-('DISC10', 'percent', 1000, '10% off basket', 1);
+CREATE TABLE worker_allocations (
+    id            TEXT    NOT NULL PRIMARY KEY,
+    source_type   TEXT    NOT NULL CHECK (source_type IN ('tip', 'service_charge', 'yuzde_usulu_pool')),
+    source_id     TEXT    NOT NULL DEFAULT '',   
+    cashier_id    TEXT    NOT NULL,              
+    amount_minor  INTEGER NOT NULL,              
+    allocated_at  TEXT    NOT NULL,              
+    note          TEXT    NOT NULL DEFAULT ''    
+);
 
+CREATE INDEX idx_worker_allocations_cashier ON worker_allocations (cashier_id);
 
--- Shortcut labels MUST match the item the barcode maps to (itmNNN in items):
--- a mislabelled tile charges the customer for a different product.
-INSERT INTO shortcut_buttons (barcode, item_id, label, image_path) VALUES
-  ('2000010000017', 'itm001', 'Coca-Cola 330ml', '/public/assets/items/itm001/thumb.png'),
-  ('2000010000024', 'itm002', 'Pepsi 330ml', '/public/assets/items/itm002/thumb.png'),
-  ('2000010000031', 'itm003', 'Sparkling Water 500ml', '/public/assets/items/itm003/thumb.png'),
-  ('2000010000048', 'itm004', 'Still Water 1.5L', '/public/assets/items/itm004/thumb.png'),
-  ('2000010000055', 'itm005', 'Orange Juice 1L', '/public/assets/items/itm005/thumb.png'),
-  ('2000010000062', 'itm006', 'Apple Juice 1L', '/public/assets/items/itm006/thumb.png'),
-  ('2000010000079', 'itm007', 'Semi-Skimmed Milk 2L', '/public/assets/items/itm007/thumb.png'),
-  ('2000010000086', 'itm008', 'Whole Milk 1L', '/public/assets/items/itm008/thumb.png'),
-  ('2000010000093', 'itm009', 'Butter 250g', '/public/assets/items/itm009/thumb.png'),
-  ('2000010000109', 'itm010', 'Cheddar Cheese 400g', '/public/assets/items/itm010/thumb.png');
+CREATE INDEX idx_worker_allocations_source ON worker_allocations (source_type, source_id);
+
+CREATE INDEX idx_worker_allocations_allocated_at ON worker_allocations (allocated_at);
+
+CREATE TABLE worker_allocations_archive (
+    id            TEXT    NOT NULL,
+    source_type   TEXT    NOT NULL CHECK (source_type IN ('tip', 'service_charge', 'yuzde_usulu_pool')),
+    source_id     TEXT    NOT NULL DEFAULT '',
+    cashier_id    TEXT    NOT NULL,
+    amount_minor  INTEGER NOT NULL,
+    allocated_at  TEXT    NOT NULL,
+    note          TEXT    NOT NULL DEFAULT '',
+    reset_batch_id TEXT   NOT NULL REFERENCES reset_batches (id)
+);
+
+CREATE INDEX idx_worker_allocations_archive_batch ON worker_allocations_archive (reset_batch_id);
+
+CREATE TABLE vouchers (
+    id                TEXT PRIMARY KEY,             
+    holder_label      TEXT,                         
+    original_amount   INTEGER NOT NULL,             
+    balance           INTEGER NOT NULL,             
+    currency          TEXT NOT NULL DEFAULT 'EUR',
+    voucher_type      TEXT NOT NULL DEFAULT 'multi_purpose'
+                          CHECK (voucher_type IN ('multi_purpose')),
+    status            TEXT NOT NULL DEFAULT 'active'
+                          CHECK (status IN ('active','redeemed','void')),
+    issued_sale_id    TEXT,                         
+    created_at        TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE voucher_transactions (
+    id           TEXT PRIMARY KEY,
+    voucher_id   TEXT NOT NULL REFERENCES vouchers (id),
+    sale_id      TEXT,                              
+    type         TEXT NOT NULL CHECK (type IN ('issue','redemption')),
+    amount       INTEGER NOT NULL,                  
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_voucher_tx_voucher ON voucher_transactions (voucher_id);
+
+CREATE UNIQUE INDEX ux_report_archive_kind_znumber
+    ON report_archive (kind, z_number) WHERE z_number IS NOT NULL;
+
+CREATE TABLE sync_journal_quarantine (
+    id             TEXT PRIMARY KEY,
+    till_id        TEXT NOT NULL,
+    sale_id        TEXT NOT NULL,
+    receipt_no     TEXT NOT NULL,
+    reason         TEXT NOT NULL,
+    payload_json   TEXT NOT NULL,
+    quarantined_at TEXT NOT NULL,
+    UNIQUE (sale_id)
+);
+
+CREATE INDEX idx_sync_journal_quarantine_till ON sync_journal_quarantine (till_id);
+
+CREATE INDEX idx_sales_status_created_dt
+    ON sales (status, datetime(created_at));
+
+CREATE INDEX idx_audit_log_entity_action_created_dt
+    ON audit_log (entity_type, action, datetime(created_at));
+
+CREATE INDEX idx_variant_barcodes_variant
+    ON variant_barcodes (variant_id);
+
+CREATE INDEX idx_sale_links_sale
+    ON sale_links (sale_id);
+
+CREATE INDEX idx_sale_links_original_sale
+    ON sale_links (original_sale_id);
+
+CREATE TABLE table_claims (
+    table_id   TEXT PRIMARY KEY REFERENCES tables(id),
+    claimed_at TEXT NOT NULL
+);
+
+-- ----------------------------------------
+-- Seed rows
+-- ----------------------------------------
+-- settings (2 rows)
+INSERT INTO "settings" ("key", "value") VALUES
+    ('store.name', 'My Store'),
+    ('store.currency', 'GBP');
+
+-- tax_codes (3 rows)
+INSERT INTO "tax_codes" ("id", "name", "rate_basis_points", "is_active", "takeaway_rate_basis_points") VALUES
+    ('tax_std', 'Standard VAT', 2000, 1, NULL),
+    ('tax_red', 'Reduced VAT', 500, 1, NULL),
+    ('tax_zero', 'Zero-rated', 0, 1, NULL);
+
+-- stock_locations (3 rows)
+INSERT INTO "stock_locations" ("id", "name", "is_active", "address_street", "address_postcode", "address_city") VALUES
+    ('loc_main', 'Main Store', 1, NULL, NULL, NULL),
+    ('loc_back', 'Back Store', 1, NULL, NULL, NULL),
+    ('loc_wh', 'Warehouse', 1, NULL, NULL, NULL);
+
+-- users (2 rows)
+INSERT INTO "users" ("id", "username", "display_name", "role", "pin_hash", "is_active") VALUES
+    ('system', 'system', 'System', 'admin', NULL, 1),
+    ('kiosk', 'kiosk', 'Self-order kiosk', 'cashier', NULL, 1);
+
+-- payment_methods (3 rows)
+INSERT INTO "payment_methods" ("id", "name", "type", "is_active", "sort_order", "plugin_id") VALUES
+    ('cash', 'Cash', 'cash', 1, 1, NULL),
+    ('card', 'Card', 'card', 1, 2, NULL),
+    ('gift', 'Gift Card', 'voucher', 1, 3, NULL);
+
+-- roles (4 rows)
+INSERT INTO "roles" ("role") VALUES
+    ('cashier'),
+    ('manager'),
+    ('admin'),
+    ('super_admin');
+
+-- permission_actions (19 rows)
+INSERT INTO "permission_actions" ("action") VALUES
+    ('refund'),
+    ('eod_report'),
+    ('cash_adjustment'),
+    ('price_override'),
+    ('void'),
+    ('user_management'),
+    ('settings'),
+    ('reports'),
+    ('audit'),
+    ('plugin_management'),
+    ('data_management'),
+    ('sync_management'),
+    ('import_export'),
+    ('issue_reporting'),
+    ('fiscal_tse_override'),
+    ('permission_management'),
+    ('tax_code_management'),
+    ('stock_location_management'),
+    ('worker_allocation');
+
+-- role_permissions (54 rows)
+INSERT INTO "role_permissions" ("role", "action", "granted") VALUES
+    ('admin', 'refund', 1),
+    ('admin', 'eod_report', 1),
+    ('admin', 'cash_adjustment', 1),
+    ('admin', 'price_override', 1),
+    ('admin', 'void', 1),
+    ('admin', 'user_management', 1),
+    ('admin', 'settings', 1),
+    ('manager', 'refund', 1),
+    ('manager', 'eod_report', 1),
+    ('manager', 'cash_adjustment', 1),
+    ('manager', 'price_override', 1),
+    ('manager', 'void', 1),
+    ('manager', 'user_management', 1),
+    ('manager', 'settings', 1),
+    ('super_admin', 'refund', 1),
+    ('super_admin', 'eod_report', 1),
+    ('super_admin', 'cash_adjustment', 1),
+    ('super_admin', 'price_override', 1),
+    ('super_admin', 'void', 1),
+    ('super_admin', 'user_management', 1),
+    ('super_admin', 'settings', 1),
+    ('admin', 'audit', 1),
+    ('admin', 'reports', 1),
+    ('manager', 'audit', 1),
+    ('manager', 'reports', 1),
+    ('super_admin', 'audit', 1),
+    ('super_admin', 'reports', 1),
+    ('admin', 'plugin_management', 1),
+    ('manager', 'plugin_management', 1),
+    ('super_admin', 'plugin_management', 1),
+    ('admin', 'data_management', 1),
+    ('admin', 'sync_management', 1),
+    ('manager', 'data_management', 1),
+    ('manager', 'sync_management', 1),
+    ('super_admin', 'data_management', 1),
+    ('super_admin', 'sync_management', 1),
+    ('admin', 'import_export', 1),
+    ('admin', 'issue_reporting', 1),
+    ('manager', 'import_export', 1),
+    ('manager', 'issue_reporting', 1),
+    ('super_admin', 'import_export', 1),
+    ('super_admin', 'issue_reporting', 1),
+    ('admin', 'fiscal_tse_override', 1),
+    ('super_admin', 'fiscal_tse_override', 1),
+    ('super_admin', 'permission_management', 1),
+    ('admin', 'tax_code_management', 1),
+    ('manager', 'tax_code_management', 1),
+    ('super_admin', 'tax_code_management', 1),
+    ('admin', 'stock_location_management', 1),
+    ('manager', 'stock_location_management', 1),
+    ('super_admin', 'stock_location_management', 1),
+    ('admin', 'worker_allocation', 1),
+    ('manager', 'worker_allocation', 1),
+    ('super_admin', 'worker_allocation', 1);
+
+-- country_settings (14 rows)
+INSERT INTO "country_settings" ("code", "name_key", "currency", "currency_symbol", "tax_rate_bp", "tax_inclusive", "archive_min_days", "is_builtin", "updated_at", "default_locale") VALUES
+    ('GB', 'setup.country.gb', 'GBP', '£', 2000, 1, 3650, 1, '1970-01-01T00:00:00Z', 'en-GB'),
+    ('IR', 'setup.country.ir', 'IRT', '', 1000, 1, 3650, 1, '1970-01-01T00:00:00Z', 'fa-IR'),
+    ('US', 'setup.country.us', 'USD', '$', 0, 0, 3650, 1, '1970-01-01T00:00:00Z', 'en-US'),
+    ('DE', 'setup.country.de', 'EUR', '€', 1900, 1, 3650, 1, '1970-01-01T00:00:00Z', 'de-DE'),
+    ('FR', 'setup.country.fr', 'EUR', '€', 2000, 1, 3650, 1, '1970-01-01T00:00:00Z', 'fr-FR'),
+    ('ES', 'setup.country.es', 'EUR', '€', 2100, 1, 3650, 1, '1970-01-01T00:00:00Z', 'es-ES'),
+    ('IT', 'setup.country.it', 'EUR', '€', 2200, 1, 3650, 1, '1970-01-01T00:00:00Z', 'it-IT'),
+    ('NL', 'setup.country.nl', 'EUR', '€', 2100, 1, 3650, 1, '1970-01-01T00:00:00Z', 'nl-NL'),
+    ('TR', 'setup.country.tr', 'TRY', '₺', 2000, 1, 3650, 1, '1970-01-01T00:00:00Z', 'tr-TR'),
+    ('AE', 'setup.country.ae', 'AED', '', 500, 1, 3650, 1, '1970-01-01T00:00:00Z', 'ar-AE'),
+    ('SA', 'setup.country.sa', 'SAR', '', 1500, 1, 3650, 1, '1970-01-01T00:00:00Z', 'ar-SA'),
+    ('IN', 'setup.country.in', 'INR', '₹', 1800, 1, 3650, 1, '1970-01-01T00:00:00Z', 'en-IN'),
+    ('PK', 'setup.country.pk', 'PKR', '', 1800, 1, 3650, 1, '1970-01-01T00:00:00Z', 'ur-PK'),
+    ('OTHER', 'setup.country.other', '', '', 0, 1, 3650, 1, '1970-01-01T00:00:00Z', '');
+
+-- ----------------------------------------
+-- Schema lineage (ADR-0074 Decision 3)
+-- ----------------------------------------
+-- A database that carries schema_migrations rows but no schema_lineage row
+-- predates the 2026-09 baseline reset; db.Open refuses to start on it.
+CREATE TABLE schema_lineage (
+    id           INTEGER PRIMARY KEY CHECK (id = 1),
+    reset_marker TEXT NOT NULL,
+    reset_at     TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP
+);
+INSERT INTO schema_lineage (id, reset_marker) VALUES (1, '2026-09-migration-baseline-reset');

@@ -55,7 +55,17 @@ type fiscalSignAskPayload struct {
 	// CompleteSale runs, which honors a pre-set SaleInput.SaleID) — so the
 	// signer's own records and core's unsigned_fiscal_signing /
 	// fiscal_signing_resolved audit markers correlate on the same id.
-	SaleID     string                 `json:"sale_id"`
+	SaleID string `json:"sale_id"`
+	// SaleType lets the signer tell a refund/return apart from a sale
+	// (ut-docs#1203, contract 1.6.0) — before it existed a €2.40 refund and
+	// a €2.40 sale produced byte-for-byte identical payloads, so a DSFinV-K
+	// signer had no way to record the return as a Rückgabe rather than as
+	// positive turnover (an irreversible wrong TSE record). Mirrors
+	// pos.SaleInput.SaleType verbatim and carries the exact two values it
+	// already uses — "sale" | "return" — the same key and values the sibling
+	// plugins.SaleCompletedEvent.SaleType already puts on the wire. Never
+	// omitted: every sale has a type.
+	SaleType   string                 `json:"sale_type"`
 	Currency   string                 `json:"currency"`
 	Total      int64                  `json:"total"`
 	TenderedAt string                 `json:"tendered_at"`
@@ -405,8 +415,19 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 			Tip:    p.TipAmount.Minor(),
 		})
 	}
+	// Mirrors pos.CompleteSale's own empty-SaleType fallback (internal/pos/
+	// sales.go): this function runs BEFORE CompleteSale on the same
+	// *SaleInput, so a future caller relying on CompleteSale's default
+	// would otherwise ship an empty sale_type on the signed record while
+	// the sale itself is later recorded as "sale" — the payload must never
+	// disagree with what CompleteSale ultimately persists.
+	saleType := in.SaleType
+	if saleType == "" {
+		saleType = "sale"
+	}
 	return fiscalSignAskPayload{
 		SaleID:        in.SaleID,
+		SaleType:      saleType,
 		Currency:      in.Currency,
 		Total:         total.Minor(),
 		TenderedAt:    now.Format(time.RFC3339),

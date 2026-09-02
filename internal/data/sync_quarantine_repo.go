@@ -8,12 +8,14 @@ import (
 )
 
 // JournalQuarantineEntry is one poison LAN-sync journal entry the primary
-// skipped rather than applied (ut-docs#1127, ADR-0065) -- see
-// internal/db/migrations/074_sync_journal_quarantine.sql for the table this
-// mirrors and why it exists (the durable, queryable record of a quarantined
-// entry; the Problems-panel Warnf next to InsertJournalQuarantine's call
-// site is the immediate operator signal, this is what survives past the
-// 50-entry Problems ring and a restart).
+// skipped rather than applied (ut-docs#1127, ADR-0065) -- the table this
+// mirrors (sync_journal_quarantine, originally added by migration
+// 074_sync_journal_quarantine.sql, since folded into
+// internal/db/migrations/001_init.sql by the ADR-0074 squash) is the
+// durable, queryable record of a quarantined entry; the Problems-panel
+// Warnf next to InsertJournalQuarantine's call site is the immediate
+// operator signal, this is what survives past the 50-entry Problems ring
+// and a restart.
 type JournalQuarantineEntry struct {
 	ID            string
 	TillID        string

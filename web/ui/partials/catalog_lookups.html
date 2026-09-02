@@ -1,8 +1,0 @@
-{{ define "catalog_lookups" }}
-<datalist id="categories-list">
-  {{ range .Categories }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
-</datalist>
-<datalist id="brands-list">
-  {{ range .Brands }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
-</datalist>
-{{ end }}

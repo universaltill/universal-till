@@ -84,8 +84,8 @@ func TestListTaxCodes(t *testing.T) {
 	}
 
 	// Regression guard (ut-docs#259): ListTaxCodes must keep excluding
-	// inactive codes exactly as today -- catalog_lookups.html's read-only
-	// autocomplete depends on it. ListAllTaxCodes (below) is the one that
+	// inactive codes exactly as today -- the catalog page's tax-code select
+	// depends on it. ListAllTaxCodes (below) is the one that
 	// grew the inactive-inclusive behaviour; this function must not.
 	for _, row := range rows {
 		if row.ID == "tax_retired" {

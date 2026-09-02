@@ -43,15 +43,18 @@ var CrossDeviceLinkActionable = selfupdate.DownloadLinkActionableNow
 var baseFuncs = template.FuncMap{
 	"div100":    func(cents int64) float64 { return float64(cents) / 100.0 },
 	"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
-	// taxCodeName: a safe default so any renderer that pulls in
-	// catalog_table.html without caring about tax codes (e.g. a test
-	// exercising an unrelated part of the page) still parses — Go's
-	// html/template requires every function a template text references to
-	// be registered at Parse time, whether or not that branch executes.
-	// The catalog package's own render call sites (ut-docs#1178) override
-	// this with the real ID→name lookup via FuncsFor(locale)'s returned
-	// map before rendering.
+	// taxCodeName / categoryName / brandName: safe defaults so any renderer
+	// that pulls in catalog_table.html/catalog_row.html without caring
+	// about tax codes or lookups (e.g. a test exercising an unrelated part
+	// of the page) still parses — Go's html/template requires every
+	// function a template text references to be registered at Parse time,
+	// whether or not that branch executes. The catalog package's own
+	// render call sites (ut-docs#1178, ut-docs#1430) override these with
+	// the real ID→name lookups via FuncsFor(locale)'s returned map before
+	// rendering.
 	"taxCodeName":     func(*string) string { return "" },
+	"categoryName":    func(*string) string { return "" },
+	"brandName":       func(*string) string { return "" },
 	"appversion":      func() string { return buildinfo.Version },
 	"updateavailable": func() bool { return updates.Current().Available },
 	"latestversion":   func() string { return updates.Current().Latest },
@@ -97,6 +100,8 @@ var baseFuncs = template.FuncMap{
 	// claimed by another topic (the settings cards). Locale-less fallback for
 	// the same reason as helpHref above; FuncsFor overrides it locale-bound.
 	"helpLink": func(id string) template.HTML { return helpLinkHTML(id, DefaultLocale()) },
+	// {{ icon "lock" }} — inline SVG rail icons (icons.go, ut-docs#1423).
+	"icon": iconHTML,
 }
 
 // helpLinkHTML renders the same .help-hint markup nav.html's automatic "?"

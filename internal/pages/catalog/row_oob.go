@@ -146,11 +146,23 @@ func writeCatalogRowOOB(w io.Writer, r *http.Request, repo *data.CatalogRepo, fu
 			return err
 		}
 	}
-	// Copy before adding taxCodeName — funcs may be shared with the
-	// caller's own panel render.
-	rowFuncs := make(template.FuncMap, len(funcs)+1)
+	// Same single-row rationale as taxName above (ut-docs#1430): the items
+	// table's category column needs just this one item's category name, not
+	// a whole-table lookup read.
+	categoryName := ""
+	if itm.CategoryID != nil && *itm.CategoryID != "" {
+		if l, err := repo.GetLookup(ctx, "categories", *itm.CategoryID); err == nil {
+			categoryName = l.Name
+		} else if !errors.Is(err, data.ErrLookupNotFound) {
+			return err
+		}
+	}
+	// Copy before adding taxCodeName/categoryName — funcs may be shared
+	// with the caller's own panel render.
+	rowFuncs := make(template.FuncMap, len(funcs)+2)
 	maps.Copy(rowFuncs, funcs)
 	rowFuncs["taxCodeName"] = func(*string) string { return taxName }
+	rowFuncs["categoryName"] = func(*string) string { return categoryName }
 	name := "catalog_row_update_oob"
 	if insert {
 		name = "catalog_row_insert_oob"

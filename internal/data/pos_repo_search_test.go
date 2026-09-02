@@ -2,9 +2,11 @@ package data
 
 import (
 	"context"
+	"database/sql"
 	"testing"
 
 	"github.com/google/uuid"
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
@@ -55,5 +57,44 @@ func TestPOSRepo_LookupActiveVariant_ValidatesInput(t *testing.T) {
 
 	if _, err := repo.LookupActiveVariant(ctx, variantID); err == nil {
 		t.Fatal("expected error for inactive variant")
+	}
+}
+
+// TestPOSRepo_LookupActiveVariant_TolerantOfNullSKU is ut-docs#1205 (same
+// landmine class as ut-docs#1176): item_variants.sku is a nullable UNIQUE
+// column, and CatalogRepo.CreateVariant stores NULL for a variant created
+// with no SKU. Before the COALESCE(sku, ”) fix, calling LookupActiveVariant
+// on such a variant failed with "sql: Scan error … converting NULL to
+// string is unsupported" instead of returning the variant with SKU == "".
+func TestPOSRepo_LookupActiveVariant_TolerantOfNullSKU(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	catalogRepo := NewCatalogRepo(db)
+	posRepo := NewPOSRepo(db)
+	ctx := context.Background()
+
+	itemID := uuid.NewString()
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: itemID, SKU: "SKU-20", Name: "Item", BasePrice: 100, IsActive: true})
+
+	variantID, err := catalogRepo.CreateVariant(ctx, catalogtypes.VariantInput{
+		ItemID: itemID, Name: "No-SKU Variant", Price: 250, IsActive: true, // SKU left blank → stored as NULL
+	})
+	if err != nil {
+		t.Fatalf("CreateVariant: %v", err)
+	}
+
+	var sku sql.NullString
+	if err := db.QueryRowContext(ctx, `SELECT sku FROM item_variants WHERE id = ?`, variantID).Scan(&sku); err != nil {
+		t.Fatalf("query sku: %v", err)
+	}
+	if sku.Valid {
+		t.Fatalf("test setup: expected a NULL sku for a variant created with no SKU, got %q", sku.String)
+	}
+
+	v, err := posRepo.LookupActiveVariant(ctx, variantID)
+	if err != nil {
+		t.Fatalf("LookupActiveVariant on a NULL-SKU variant: %v", err)
+	}
+	if v.SKU != "" {
+		t.Fatalf("expected NULL sku to read as \"\", got %q", v.SKU)
 	}
 }

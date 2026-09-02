@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
-	_ "image/jpeg"
 	"image/png"
 	"io"
 	"log"
@@ -25,6 +23,7 @@ import (
 	"github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/imaging"
 	productlookup "github.com/universaltill/universal-till/internal/lookup"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -244,6 +243,8 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		funcs["taxCodeName"] = taxCodeNameFunc(taxCodes)
+		funcs["categoryName"] = lookupNameFunc(cats)
+		funcs["brandName"] = lookupNameFunc(brands)
 		barcodes, _ := repo.ItemBarcodes(r.Context())
 		variants, _ := repo.ItemVariants(r.Context())
 		data := map[string]any{
@@ -261,7 +262,6 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			filepath.Join("web", "ui", "pages", "catalog.html"),
 			filepath.Join("web", "ui", "partials", "nav.html"),
 			filepath.Join("web", "ui", "partials", "bugreport_panel.html"),
-			filepath.Join("web", "ui", "partials", "catalog_lookups.html"),
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
 			filepath.Join("web", "ui", "partials", "catalog_row.html"),
 			filepath.Join("web", "ui", "partials", "catalog_variants.html"),
@@ -351,12 +351,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// row — an in-place update would target a missing id, which htmx
 		// answers with a console error and no visible row. Reachable for
 		// real: deactivate a row while the edit form still holds that item,
-		// then save. Read errs conservatively as "was active" (in-place).
-		wasActive := true
-		if prev, ok, err := repo.GetItem(r.Context(), itemInput.ID); err == nil && ok {
-			wasActive = prev.IsActive
-		}
-		if err := pos.UpdateItem(r.Context(), d.Db, itemInput); err != nil {
+		// then save. Read+write run atomically (ut-docs#1399) so two
+		// genuinely concurrent updates on the same item can't both read the
+		// pre-update state and both append a row — see
+		// UpdateItemReturningWasActive's doc comment.
+		wasActive, err := pos.UpdateItemReturningWasActive(r.Context(), d.Db, itemInput)
+		if err != nil {
 			skuAwareError(w, r, http.StatusBadRequest, err)
 			return
 		}
@@ -598,7 +598,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		defer file.Close()
-		img, _, err := image.Decode(io.LimitReader(file, 10<<20))
+		raw, readErr := io.ReadAll(io.LimitReader(file, 10<<20))
+		if readErr != nil {
+			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
+			return
+		}
+		img, err := imaging.Decode(raw)
 		if err != nil {
 			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
 			return
@@ -662,7 +667,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		defer file.Close()
-		img, _, err := image.Decode(io.LimitReader(file, 10<<20))
+		raw, readErr := io.ReadAll(io.LimitReader(file, 10<<20))
+		if readErr != nil {
+			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
+			return
+		}
+		img, err := imaging.Decode(raw)
 		if err != nil {
 			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
 			return
@@ -987,7 +997,7 @@ func saveLookupImage(ctx context.Context, c *productlookup.Client, itemID, imgUR
 	if err != nil {
 		return err
 	}
-	img, _, err := image.Decode(bytes.NewReader(raw))
+	img, err := imaging.Decode(raw)
 	if err != nil {
 		return err
 	}
@@ -1144,6 +1154,25 @@ func taxCodeNameFunc(taxCodes []data.TaxCodeView) func(id *string) string {
 	names := make(map[string]string, len(taxCodes))
 	for _, tc := range taxCodes {
 		names[tc.ID] = tc.Name
+	}
+	return func(id *string) string {
+		if id == nil {
+			return ""
+		}
+		return names[*id]
+	}
+}
+
+// lookupNameFunc returns a template func resolving a stored lookup id
+// (category/brand) to its display name (ut-docs#1430) instead of letting
+// the raw id render -- same shape and *string-nil handling as
+// taxCodeNameFunc above, generalized since categories and brands are both
+// plain id/name lookup tables. Built from the already-fetched cats/brands
+// list at the /catalog route, so this costs no extra query.
+func lookupNameFunc(lookups []lookup) func(id *string) string {
+	names := make(map[string]string, len(lookups))
+	for _, l := range lookups {
+		names[l.ID] = l.Name
 	}
 	return func(id *string) string {
 		if id == nil {

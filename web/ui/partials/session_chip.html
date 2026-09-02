@@ -1,15 +1,15 @@
 <span class="session-chip">
   {{ if .isManager }}
   <a class="session-admin-link nav-toggle" href="/users">
-    <span class="nav-toggle-ico" aria-hidden="true">👥</span>
+    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "users" }}</span>
     <span class="nav-toggle-label">{{ T "users.title" }}</span>
   </a>
   <a class="session-admin-link nav-toggle" href="/promotions">
-    <span class="nav-toggle-ico" aria-hidden="true">🏷️</span>
+    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "tag" }}</span>
     <span class="nav-toggle-label">{{ T "promotions.title" }}</span>
   </a>
   <a class="session-admin-link nav-toggle" href="/translations">
-    <span class="nav-toggle-ico" aria-hidden="true">🌐</span>
+    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "globe" }}</span>
     <span class="nav-toggle-label">{{ T "translations.title" }}</span>
   </a>
   {{ end }}
@@ -27,12 +27,12 @@
        clamping it is a real (if small) visual change that wants its own
        card and its own phone-width test; see the review doc. -->
   <a class="session-user nav-toggle" href="/pin" title="{{ T "auth.change_pin" }}">
-    <span class="nav-toggle-ico" aria-hidden="true">👤</span>
+    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "user" }}</span>
     <span class="nav-toggle-label">{{ .name }}</span>
   </a>
   <form method="post" action="/api/auth/logout" class="session-lock">
     <button type="submit" class="nav-toggle btn-lock">
-      <span class="nav-toggle-ico ico-boost" aria-hidden="true">🔒</span>
+      <span class="nav-toggle-ico" aria-hidden="true">{{ icon "lock" }}</span>
       <span class="nav-toggle-label">{{ T "auth.lock" }}</span>
     </button>
   </form>

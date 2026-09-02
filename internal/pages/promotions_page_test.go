@@ -263,6 +263,34 @@ func TestPromotionsPageCreate_AmountAndList(t *testing.T) {
 	}
 }
 
+// ut-docs#1400: parsePromotionForm's "amount" case hardcoded `* 100`
+// regardless of the active currency's decimals -- an operator entering
+// "500" for ¥500 on a 0-decimal shop (IRR/IRT/IQD/AFN/JPY) got 50000 minor
+// units persisted instead of 500. Mirrors shifts_page_test.go's
+// TestShiftsPage_CarryForwardDisplayIsCurrencyAware currency-switch pattern.
+func TestPromotionsPageCreate_AmountIsCurrencyDecimalsAware(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	httpx.InitCurrency("IRT")
+	t.Cleanup(func() { httpx.InitCurrency("GBP") })
+
+	rec := postForm(mux, "/api/promotions", url.Values{
+		"code": {"YEN500"}, "type": {"amount"}, "value_amount": {"500"},
+	}, &manager)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/promotions" {
+		t.Fatalf("create: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	var value int64
+	if err := d.Db.QueryRow(`SELECT value FROM promotions WHERE code = 'YEN500'`).Scan(&value); err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if value != 500 {
+		t.Fatalf("value = %d, want 500 minor units under a 0-decimal currency (not 50000)", value)
+	}
+}
+
 func TestPromotionsPageCreate_Percent(t *testing.T) {
 	mux, d := newPromotionsTestMux(t)
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
