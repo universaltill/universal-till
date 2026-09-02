@@ -26,6 +26,14 @@ func UpdateItem(ctx context.Context, db *sql.DB, in ItemInput) error {
 	return data.NewCatalogRepo(db).UpdateItem(ctx, catalogtypes.ItemInput(in))
 }
 
+// UpdateItemReturningWasActive is UpdateItem plus the item's previous
+// is_active state, read and written atomically (ut-docs#1399) so a caller
+// deciding an OOB re-render mode from that state can't race a concurrent
+// update on the same item.
+func UpdateItemReturningWasActive(ctx context.Context, db *sql.DB, in ItemInput) (bool, error) {
+	return data.NewCatalogRepo(db).UpdateItemReturningWasActive(ctx, catalogtypes.ItemInput(in))
+}
+
 func CreateVariant(ctx context.Context, db *sql.DB, in VariantInput) (string, error) {
 	return data.NewCatalogRepo(db).CreateVariant(ctx, catalogtypes.VariantInput(in))
 }

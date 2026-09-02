@@ -351,12 +351,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// row — an in-place update would target a missing id, which htmx
 		// answers with a console error and no visible row. Reachable for
 		// real: deactivate a row while the edit form still holds that item,
-		// then save. Read errs conservatively as "was active" (in-place).
-		wasActive := true
-		if prev, ok, err := repo.GetItem(r.Context(), itemInput.ID); err == nil && ok {
-			wasActive = prev.IsActive
-		}
-		if err := pos.UpdateItem(r.Context(), d.Db, itemInput); err != nil {
+		// then save. Read+write run atomically (ut-docs#1399) so two
+		// genuinely concurrent updates on the same item can't both read the
+		// pre-update state and both append a row — see
+		// UpdateItemReturningWasActive's doc comment.
+		wasActive, err := pos.UpdateItemReturningWasActive(r.Context(), d.Db, itemInput)
+		if err != nil {
 			skuAwareError(w, r, http.StatusBadRequest, err)
 			return
 		}
