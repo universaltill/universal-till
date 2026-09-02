@@ -265,7 +265,80 @@ Manual checklist for whoever does it:
    navigation restriction refusing it, not the link being absent/disabled).
    This is the concrete case that motivated `shouldOverrideUrlLoading`.
 
+## Camera, microphone and screenshots (ut-docs#1435)
+
+Two gaps in the bug-report panel (🐞) on Android, both in `MainActivity`:
+
+- **Screenshots** — Android's WebView implements no `getDisplayMedia` at
+  all, so the panel's screenshot button (a one-frame display capture on
+  every other platform) could only ever show "not available here".
+  `KioskBridge.captureScreenshot()` is a second `window.AndroidKiosk`
+  bridge method: a synchronous native capture of the WebView's current
+  content, returned as a `data:image/png;base64,...` URL (`""` on any
+  failure — nothing ever throws across the bridge). `PixelCopy` of the
+  Activity window, clipped to the WebView's own bounds, on API 26+;
+  `View.draw` onto a software canvas on API 24-25. The bridge method
+  runs on a WebView background thread and blocks on a `CountDownLatch`
+  (5 s timeout) for the UI-thread copy, then encodes the PNG on that
+  background thread — keeping the Android UI thread free, though the
+  call is still synchronous from the page's own JS, so the panel itself
+  is unresponsive for the (normally sub-second) capture. See the
+  bridge method's own KDoc for the corrected version of this claim.
+  `bugreport_panel.html` prefers this bridge whenever it exists and
+  falls through to its unchanged `getDisplayMedia` branches otherwise.
+  Exposure is safe on the same grounds as `exitLockdown` — navigation
+  is confined to the till's own origin, so the only thing capturable is
+  the page the operator is already looking at.
+- **Microphone (and camera) for `getUserMedia`** — a plain WebView's
+  `WebChromeClient.onPermissionRequest` default is an unconditional
+  `deny()`, and the app declared no CAMERA/RECORD_AUDIO permission, so
+  the panel's voice note was silently refused on every Android till
+  (the panel's own "mic error" text, never an OS prompt). Now
+  `onPermissionRequest` grants — **only for the till's own loopback
+  authority, failing closed while it is unknown**, mirroring
+  `shouldOverrideUrlLoading` — after checking/requesting the real Android
+  runtime permissions via a `RequestMultiplePermissions` launcher, holding
+  the `PermissionRequest` across the dialog and resolving it with exactly
+  the subset the OS actually granted. Requested lazily, only when a page
+  starts a capture; never at boot (unlike `POST_NOTIFICATIONS`). The
+  manifest declares `CAMERA`, `RECORD_AUDIO`, `MODIFY_AUDIO_SETTINGS`, and
+  deliberately **no** `<uses-feature android.hardware.camera>` — a till
+  without a camera must stay installable.
+
+**Not in this change (follow-up cards):** screen *recording* on Android
+(needs MediaProjection + a `mediaProjection` foreground service — the
+panel still says "not available here" for it), and the catalog page's
+in-page camera viewfinder (the `CAMERA` half of the plumbing above is
+wired but has no first consumer yet).
+
+**Verification status:** as with the kiosk work above, not compiled or
+run against a device/SDK in the session that wrote it. The panel-side
+wiring IS driven for real by `e2e/tests/android-screenshot-bridge-1435.spec.ts`
+(a stubbed `window.AndroidKiosk`, both bridge outcomes, and the desktop
+path proven untouched). Manual checklist for the TECLAST P50T:
+
+1. Open 🐞 on the sale screen, press "📷 Take screenshot" — a thumbnail
+   of the sale screen must appear within a second, with no OS prompt.
+   Press it several times; remove one with ✕. Save the report and confirm
+   the image is attached under My Reports.
+2. Press "🎤 Record voice note" for the first time — Android's own
+   microphone permission dialog must appear (this is the FIRST time the
+   app has ever asked; it must not have asked at launch). Allow it:
+   recording starts, stop it, the preview plays.
+3. Press it again — no dialog this time, recording starts immediately.
+4. Revoke the microphone permission under Settings → Apps → Universal
+   Till → Permissions, return to the till and press record again — the
+   dialog (or, after a "don't ask again", the panel's mic-error text) must
+   appear; the app must not crash and the till underneath must keep
+   working.
+5. Confirm the "Record screen" button still reads "not available here"
+   — expected until the MediaProjection follow-up lands.
+
 ## Not yet done
+
+- Screen recording in the bug-report panel on Android (MediaProjection)
+  and an in-page camera viewfinder for catalog photos — both split out of
+  ut-docs#1435 as their own cards; see that section above.
 
 - Physical hardware integrations (printer/scanner/card reader) — the
   `runtime:"go"` process-spawning plugin type doesn't port to mobile at
