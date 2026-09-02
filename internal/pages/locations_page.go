@@ -32,7 +32,7 @@ func registerLocations(mux *http.ServeMux, d *common.Deps) {
 	// changes.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		if !canPerform(d, r, "stock_location_management") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required") // page-error:allow not yet migrated, tracked in ut-docs#1458
 			return auth.User{}, false
 		}
 		u, _ := auth.FromContext(r.Context())
@@ -47,7 +47,7 @@ func registerLocations(mux *http.ServeMux, d *common.Deps) {
 	renderLocations := func(w http.ResponseWriter, r *http.Request, errKey string) {
 		locs, err := posRepo.ListStockLocationsForAdmin(r.Context())
 		if err != nil {
-			http.Error(w, "failed to load locations", http.StatusInternalServerError)
+			http.Error(w, "failed to load locations", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
 			return
 		}
 		httpx.Render("ui/pages/locations.html", map[string]any{

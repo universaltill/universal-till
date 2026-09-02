@@ -40,13 +40,12 @@ func registerPermissionSettings(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("GET /users/permissions", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, lockoutAction) {
-			http.Error(w, "super_admin required", http.StatusForbidden)
+			httpx.RenderError(w, r, http.StatusForbidden, "permissions.error.super_admin_required", nil)
 			return
 		}
 		grants, err := authRepo.ListRolePermissionMatrix(r.Context())
 		if err != nil {
-			logging.L().Errorf("permission matrix: list: %v", err)
-			http.Error(w, "failed to load permission matrix", http.StatusInternalServerError)
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
 

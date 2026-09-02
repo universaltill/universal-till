@@ -555,7 +555,8 @@
   "products.no_matches": "Eşleşen ürün yok.",
   "products.search_ph": "Ürünlerde ara…",
   "products.add": "Ürün ekle",
-  "products.title": "Ürünler",  "products.uncategorized": "Kategorisiz",
+  "products.title": "Ürünler",
+  "products.uncategorized": "Kategorisiz",
   "receipt.auth_code": "Onay kodu",
   "receipt.auto_reset": "60 sn içinde otomatik sıfırlanır...",
   "receipt.change": "Para üstü",
@@ -1846,5 +1847,8 @@
   "recovery.safe_mode_col_receipt": "Fiş",
   "recovery.safe_mode_col_total": "Toplam",
   "recovery.safe_mode_col_time": "Saat",
-  "recovery.taking_longer": "Hâlâ çalışıyor — bir veritabanı güncellemesinden sonra bu birkaç dakika sürebilir."
+  "recovery.taking_longer": "Hâlâ çalışıyor — bir veritabanı güncellemesinden sonra bu birkaç dakika sürebilir.",
+  "error.page.title": "Bir şeyler ters gitti",
+  "permissions.error.super_admin_required": "Süper yönetici gerekli",
+  "tables.error.load_failed": "Masalar yüklenemedi. Tekrar deneyin veya çalışmaya menüden devam edin."
 }

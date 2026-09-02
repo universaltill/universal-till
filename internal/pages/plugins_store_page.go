@@ -72,7 +72,7 @@ func PluginStoreHandler(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		if d.CatalogRepo == nil {
-			http.Error(w, "Marketplace not configured", http.StatusServiceUnavailable)
+			httpx.RenderError(w, r, http.StatusServiceUnavailable, "plugins.install.error.configuration", nil)
 			return
 		}
 

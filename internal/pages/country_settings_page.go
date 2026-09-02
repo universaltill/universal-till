@@ -67,7 +67,7 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 	// manager/admin/super_admin, the same set IsManager() recognized.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		if !canPerform(d, r, "settings") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required") // page-error:allow not yet migrated, tracked in ut-docs#1458
 			return auth.User{}, false
 		}
 		u, _ := auth.FromContext(r.Context())
@@ -101,7 +101,7 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 	renderPage := func(w http.ResponseWriter, r *http.Request, errKey string) {
 		countries, err := countryRepo.List(r.Context())
 		if err != nil {
-			http.Error(w, "failed to load country settings", http.StatusInternalServerError)
+			http.Error(w, "failed to load country settings", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
 			return
 		}
 

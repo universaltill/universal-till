@@ -61,7 +61,7 @@ func readCappedOrReject(r io.Reader, limit int64) ([]byte, error) {
 func registerIssueReportPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/report-issue", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "issue_reporting") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required") // page-error:allow not yet migrated, tracked in ut-docs#1458
 			return
 		}
 		httpx.Render("ui/pages/report_issue.html", map[string]any{

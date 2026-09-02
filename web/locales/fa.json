@@ -555,7 +555,8 @@
   "products.no_matches": "محصولی مطابق یافت نشد.",
   "products.search_ph": "جستجوی محصولات…",
   "products.add": "افزودن محصول",
-  "products.title": "محصولات",  "products.uncategorized": "دسته‌بندی‌نشده",
+  "products.title": "محصولات",
+  "products.uncategorized": "دسته‌بندی‌نشده",
   "receipt.auth_code": "کد تأیید",
   "receipt.auto_reset": "بازنشانی خودکار تا ۶۰ ثانیه…",
   "receipt.change": "باقی‌مانده",
@@ -1846,5 +1847,8 @@
   "recovery.safe_mode_col_receipt": "رسید",
   "recovery.safe_mode_col_total": "جمع کل",
   "recovery.safe_mode_col_time": "زمان",
-  "recovery.taking_longer": "هنوز در حال کار است — پس از به‌روزرسانی پایگاه داده ممکن است چند دقیقه طول بکشد."
+  "recovery.taking_longer": "هنوز در حال کار است — پس از به‌روزرسانی پایگاه داده ممکن است چند دقیقه طول بکشد.",
+  "error.page.title": "مشکلی پیش آمد",
+  "permissions.error.super_admin_required": "نیاز به دسترسی مدیر ارشد",
+  "tables.error.load_failed": "بارگذاری میزها ممکن نشد. دوباره تلاش کنید یا از منو برای ادامه کار استفاده کنید."
 }
