@@ -994,6 +994,8 @@
   "shifts.amount_hint": "negatif nakit çıkarır",
   "shifts.cashier": "Kasiyer",
   "shifts.close": "Vardiyayı kapat",
+  "shifts.close_success": "Vardiya kapatıldı. Beklenen: %s, Gerçek: %s, Fark: %s",
+  "shifts.close_success_with_skim": "Vardiya kapatıldı. Beklenen: %s, Gerçek: %s, Fark: %s, Çekim: %s, Yeni kasa: %s",
   "shifts.closed_at": "Kapandı",
   "shifts.counted": "Sayılan",
   "shifts.counted_cash": "Sayılan nakit",

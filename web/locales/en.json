@@ -994,6 +994,8 @@
   "shifts.amount_hint": "negative removes cash",
   "shifts.cashier": "Cashier",
   "shifts.close": "Close Shift",
+  "shifts.close_success": "Shift closed. Expected: %s, Actual: %s, Variance: %s",
+  "shifts.close_success_with_skim": "Shift closed. Expected: %s, Actual: %s, Variance: %s, Skim: %s, New float: %s",
   "shifts.closed_at": "Closed",
   "shifts.counted": "Counted",
   "shifts.counted_cash": "Counted cash",

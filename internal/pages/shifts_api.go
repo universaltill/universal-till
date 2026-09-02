@@ -671,19 +671,31 @@ func respondCloseSuccess(w http.ResponseWriter, r *http.Request, data ShiftClose
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, http.StatusOK, map[string]any{"data": data, "error": nil})
 	} else {
-		msg := fmt.Sprintf("<div class='success'>Shift closed. Expected: £%.2f, Actual: £%.2f, Variance: £%.2f</div>",
-			float64(data.ExpectedCash)/100, float64(data.ClosingCash)/100, float64(data.Variance)/100)
+		// ut-docs#1289/#1401: was a hardcoded `£%.2f` + `/100` — wrong symbol
+		// and wrong scale on any non-GBP or 0-decimal-currency shop
+		// (IRR/IRT/IQD/AFN/JPY), and never routed through T() at all. Now
+		// currency-aware (httpx.FormatMoney, the same minor→display
+		// formatter #1274/#1290 established for this page) and translated,
+		// with the amounts interpolated into a locale template rather than
+		// baked into the English sentence.
+		locale := httpx.ResolveLocale(w, r)
+		expected := httpx.FormatMoney(data.ExpectedCash, locale)
+		actual := httpx.FormatMoney(data.ClosingCash, locale)
+		variance := httpx.FormatMoney(data.Variance, locale)
+		var msg string
 		if data.Skim != 0 {
 			// ut-docs#1006 review finding 9: the HTML path (what the close
 			// form actually renders) previously dropped the skim/new-float
 			// figures the JSON path already returned — an operator who just
 			// skimmed the drawer got no on-screen confirmation of the new
 			// float they left it on.
-			msg = fmt.Sprintf("<div class='success'>Shift closed. Expected: £%.2f, Actual: £%.2f, Variance: £%.2f, Skim: £%.2f, New float: £%.2f</div>",
-				float64(data.ExpectedCash)/100, float64(data.ClosingCash)/100, float64(data.Variance)/100,
-				float64(-data.Skim)/100, float64(data.NewFloat)/100)
+			skim := httpx.FormatMoney(-data.Skim, locale)
+			newFloat := httpx.FormatMoney(data.NewFloat, locale)
+			msg = fmt.Sprintf(httpx.T(locale, "shifts.close_success_with_skim"), expected, actual, variance, skim, newFloat)
+		} else {
+			msg = fmt.Sprintf(httpx.T(locale, "shifts.close_success"), expected, actual, variance)
 		}
-		writeHTML(w, http.StatusOK, msg)
+		writeHTML(w, http.StatusOK, "<div class='success'>"+html.EscapeString(msg)+"</div>")
 	}
 }
 

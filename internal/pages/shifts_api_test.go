@@ -5,11 +5,13 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -188,6 +190,99 @@ func TestCloseShift_ComputesExpectedCashAndVariance(t *testing.T) {
 	}
 	if data, hasData, errVal, hasError := envelopeOf(t, rec.Body.Bytes()); !hasData || string(data) != "null" || !hasError || string(errVal) == "null" {
 		t.Fatalf(`expected { "data": null, "error": "…" } closing an already-closed shift, got %s`, rec.Body.String())
+	}
+}
+
+// TestCloseShift_HTMLSummaryIsCurrencyAwareAndTranslated: respondCloseSuccess's
+// HTML-fragment path (the close form's actual on-screen confirmation, not
+// the JSON envelope) used to hardcode a GBP `£%.2f` conversion and English
+// prose outside T() entirely (ut-docs#1289/#1401 — same root cause as
+// #1274's CarryForwardDisplay). On a 0-decimal-currency shop (IRT/toman)
+// that both showed the wrong symbol and silently divided a whole-unit
+// amount by 100. Covers both the plain-close and skim variants, and that a
+// non-English locale actually renders translated prose.
+func TestCloseShift_HTMLSummaryIsCurrencyAwareAndTranslated(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	chdirRoot(t)
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("load i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	httpx.InitCurrency("IRT")
+	t.Cleanup(func() { httpx.InitCurrency("GBP") }) // ut-docs#970 convention: process-global, reset for later tests in this package.
+
+	openAndGetID := func() string {
+		rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"reg1","cashier_id":"user1","opening_cash":5000}`)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
+		}
+		var id string
+		if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts WHERE closed_at IS NULL`).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	// Plain close, no skim: 5000 IRT opening, 4900 IRT counted — expected
+	// stays 5000 (no sales), variance -100. A 0-decimal currency's minor
+	// units ARE its major units, so a correct render shows "5,000"/"4,900",
+	// never "50.00"/"49.00" (the old `/100` corruption).
+	shiftID := openAndGetID()
+	rec := postShiftForm(t, mux, "/api/shifts/close", "shift_id="+shiftID+"&closing_cash=4900")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("close: %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "تومان") {
+		t.Fatalf("expected the IRT symbol in the close summary, got:\n%s", body)
+	}
+	if strings.Contains(body, "£") {
+		t.Fatalf("expected NO leftover GBP symbol once currency is 0-decimal, got:\n%s", body)
+	}
+	if strings.Contains(body, "50.00") || strings.Contains(body, "49.00") {
+		t.Fatalf("expected NO /100-corrupted 2-decimal amount for a 0-decimal currency, got:\n%s", body)
+	}
+	if !strings.Contains(body, "5,000") || !strings.Contains(body, "4,900") {
+		t.Fatalf("expected the whole-unit IRT amounts (5,000 / 4,900), got:\n%s", body)
+	}
+	if !strings.Contains(body, "Shift closed. Expected:") {
+		t.Fatalf("expected the translated shifts.close_success template, got:\n%s", body)
+	}
+
+	// Skim variant: the New float / Skim figures must be equally
+	// currency-aware, not just the three plain-close figures.
+	shiftID = openAndGetID()
+	rec = postShiftForm(t, mux, "/api/shifts/close", "shift_id="+shiftID+"&closing_cash=5000&skim=3000&skim_reason=to+safe")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("close with skim: %d: %s", rec.Code, rec.Body.String())
+	}
+	body = rec.Body.String()
+	if strings.Contains(body, "£") || strings.Contains(body, "30.00") {
+		t.Fatalf("expected the skim/new-float figures to be currency-aware too, got:\n%s", body)
+	}
+	if !strings.Contains(body, "Skim:") || !strings.Contains(body, "New float:") {
+		t.Fatalf("expected the translated shifts.close_success_with_skim template, got:\n%s", body)
+	}
+
+	// A non-English locale actually renders translated prose, not the
+	// English template with formatted numbers spliced in.
+	shiftID = openAndGetID()
+	req := httptest.NewRequest(http.MethodPost, "/api/shifts/close", strings.NewReader("shift_id="+shiftID+"&closing_cash=4900"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "ut_lang", Value: "fa"})
+	recFa := httptest.NewRecorder()
+	mux.ServeHTTP(recFa, req)
+	if recFa.Code != http.StatusOK {
+		t.Fatalf("close (fa locale): %d: %s", recFa.Code, recFa.Body.String())
+	}
+	if !strings.Contains(recFa.Body.String(), "شیفت بسته شد") {
+		t.Fatalf("expected the fa translation of shifts.close_success, got:\n%s", recFa.Body.String())
 	}
 }
 
