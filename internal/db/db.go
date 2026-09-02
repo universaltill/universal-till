@@ -2,12 +2,13 @@ package db
 
 import (
 	"database/sql"
+	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 
-	"fmt"
-
+	"github.com/universaltill/universal-till/internal/logging"
 	_ "modernc.org/sqlite" // pure Go SQLite driver
 )
 
@@ -140,8 +141,8 @@ func (db *DB) applyMigration(m migration) error {
 	}
 	defer tx.Rollback()
 
-	if _, err := tx.Exec(m.SQL); err != nil {
-		return fmt.Errorf("exec migration %d (%s): %w", m.Version, m.Name, err)
+	if err := execMigrationStatements(tx, m); err != nil {
+		return err
 	}
 
 	if _, err := tx.Exec(`INSERT INTO schema_migrations (version) VALUES (?)`, m.Version); err != nil {
@@ -153,4 +154,130 @@ func (db *DB) applyMigration(m migration) error {
 	}
 
 	return nil
+}
+
+// addColumnStmt recognises one `ALTER TABLE [schema.]<t> ADD [COLUMN] <c> …`
+// statement. It is matched against a literal-masked statement (see
+// splitStatements), so text inside a quoted string can never match.
+var addColumnStmt = regexp.MustCompile("(?is)^\\s*ALTER\\s+TABLE\\s+(?:[\"`]?\\w+[\"`]?\\.)?[\"`]?(\\w+)[\"`]?\\s+ADD\\s+(?:COLUMN\\s+)?[\"`]?(\\w+)[\"`]?\\b")
+
+// onSkippedAddColumn is a test seam: called for every ADD COLUMN the runner
+// skips, so a test can assert a fresh install skips nothing.
+var onSkippedAddColumn func(version int, table, column string)
+
+// execMigrationStatements runs one migration statement by statement, all
+// inside the migration's transaction, and makes ADD COLUMN idempotent
+// (ut-docs#1412). SQLite has CREATE TABLE/INDEX IF NOT EXISTS but no ADD
+// COLUMN IF NOT EXISTS, so an additive migration that re-runs against a
+// database which already carries its column dies with "duplicate column
+// name" — which is what happened when a till had run a pre-merge build
+// whose migration was later renumbered (078 on v0.9.0: the Android shell
+// showed a white screen). 077's header states the convention that every
+// migration must be re-runnable; this supplies the missing half.
+//
+// Each ADD COLUMN is checked against pragma_table_info immediately before
+// it would execute — never up front — so a migration that rebuilds a table
+// (CREATE x_new … DROP TABLE x … RENAME TO x, as 030 does) and then adds a
+// column sees the rebuilt table, not the old one (independent review,
+// finding 3). Everything that is not an ADD COLUMN whose column already
+// exists runs unchanged; an ADD COLUMN against a table that does not exist
+// still fails loudly. Statement splitting and matching are both blind to
+// the contents of single-quoted literals, and `--` comments are removed
+// before splitting, so neither a semicolon nor DDL-shaped text inside a
+// string can confuse the runner (review findings 1, 2, 4, 5).
+func execMigrationStatements(tx *sql.Tx, m migration) error {
+	for _, st := range splitStatements(stripLineComments(m.SQL)) {
+		if sm := addColumnStmt.FindStringSubmatch(st.masked); sm != nil {
+			table, column := sm[1], sm[2]
+			var n int
+			if err := tx.QueryRow(`SELECT COUNT(*) FROM pragma_table_info(?) WHERE name = ?`, table, column).Scan(&n); err != nil {
+				return fmt.Errorf("inspect migration %d (%s): check column %s.%s: %w", m.Version, m.Name, table, column, err)
+			}
+			if n > 0 {
+				logging.L().Warnf("migration %d (%s): column %s.%s already exists, skipping its ADD COLUMN (ut-docs#1412)", m.Version, m.Name, table, column)
+				if onSkippedAddColumn != nil {
+					onSkippedAddColumn(m.Version, table, column)
+				}
+				continue
+			}
+		}
+		if _, err := tx.Exec(st.text); err != nil {
+			return fmt.Errorf("exec migration %d (%s): %w", m.Version, m.Name, err)
+		}
+	}
+	return nil
+}
+
+// statement is one SQL statement of a migration: text is what executes,
+// masked is the same bytes with every character inside a single-quoted
+// literal replaced by a space (same length, same offsets) for matching.
+type statement struct {
+	text, masked string
+}
+
+// splitStatements splits comment-free SQL on semicolons outside
+// single-quoted literals (” inside a literal is two toggles and stays
+// balanced). A final statement without a trailing semicolon is kept.
+// Blank statements are dropped. No migration uses triggers or BEGIN…END
+// blocks (checked 2026-09-02); if one ever does, this splitter must learn
+// them first.
+func splitStatements(s string) []statement {
+	var out []statement
+	var text, masked strings.Builder
+	inQuote := false
+	flush := func() {
+		if strings.TrimSpace(text.String()) != "" {
+			out = append(out, statement{text: text.String(), masked: masked.String()})
+		}
+		text.Reset()
+		masked.Reset()
+	}
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\'':
+			inQuote = !inQuote
+			text.WriteByte(c)
+			masked.WriteByte(c)
+		case inQuote:
+			text.WriteByte(c)
+			masked.WriteByte(' ')
+		case c == ';':
+			text.WriteByte(c)
+			masked.WriteByte(c)
+			flush()
+		default:
+			text.WriteByte(c)
+			masked.WriteByte(c)
+		}
+	}
+	flush()
+	return out
+}
+
+// stripLineComments removes `-- …` comments outside single-quoted strings.
+// (No shipped migration carries `--` inside a literal today; the quote
+// tracking is there so one safely can.)
+func stripLineComments(s string) string {
+	var b strings.Builder
+	b.Grow(len(s))
+	inQuote := false
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		switch {
+		case c == '\'':
+			inQuote = !inQuote
+			b.WriteByte(c)
+		case !inQuote && c == '-' && i+1 < len(s) && s[i+1] == '-':
+			for i < len(s) && s[i] != '\n' {
+				i++
+			}
+			if i < len(s) {
+				b.WriteByte('\n')
+			}
+		default:
+			b.WriteByte(c)
+		}
+	}
+	return b.String()
 }

@@ -63,6 +63,12 @@ class MainActivity : AppCompatActivity() {
             when {
                 address != null -> {
                     allowedHost = address
+                    // Restore onCreate's release-build GONE: TillService is
+                    // START_STICKY, so a failed first start (which forces the
+                    // bar VISIBLE below) can be followed by a successful
+                    // restart, and the bar must not stay up showing the
+                    // internal bind address to a shop worker (ut-docs#412).
+                    statusView.visibility = if (BuildConfig.DEBUG) View.VISIBLE else View.GONE
                     statusView.text = getString(R.string.status_running, address)
                     // Avoid reloading a URL the WebView already has. This
                     // matters now that the manifest's configChanges keeps
@@ -76,7 +82,16 @@ class MainActivity : AppCompatActivity() {
                         webView.loadUrl("http://$address")
                     }
                 }
-                error != null -> statusView.text = getString(R.string.status_failed, error)
+                error != null -> {
+                    // ut-docs#1412: the bar is GONE in release builds (see
+                    // onCreate) — correct while the till runs, but a start
+                    // failure then left a blank white WebView with the only
+                    // explanation buried in the notification shade (real
+                    // device, v0.9.0, migration error). A failure is the one
+                    // moment the message must be on screen in every build.
+                    statusView.visibility = View.VISIBLE
+                    statusView.text = getString(R.string.status_failed, error)
+                }
             }
         }
     }
