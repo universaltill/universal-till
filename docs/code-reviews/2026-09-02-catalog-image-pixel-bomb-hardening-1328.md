@@ -89,6 +89,25 @@ before attempting to parse a truncated buffer.
 upload leaves no `thumb.png` behind; `TestVariantImageUpload_RejectsOversizedImage`
 didn't have the equivalent check for the variant thumbnail path. Added.
 
+### Coverage added by a concurrent run on this same branch
+
+An overlapping run of this pipeline (per the standing lane-ownership rules,
+several runs of the same hourly cloud routine can be mid-flight at once)
+picked up this same card independently and pushed to this branch while this
+session was still finishing its own review-fix pass. It reconciled by
+taking this session's push as the base rather than force-overwriting it,
+and added exactly the one piece of coverage this pass's findings still
+lacked: `internal/pages/import_bkp_image_test.go`'s
+`TestImport_BkpOversizedImageWarnsAndFallsBackToPlaceholder` — the `.bkp`
+commit-time image path (`internal/pages/import_page.go`) was wired onto
+`imaging.Decode` from the first commit but, unlike the two catalog upload
+handlers, had no test proving the guard actually fires there. It does:
+a real 42M-pixel PNG resolved from the archive's `documents.zip` is
+rejected, falls back to the placeholder icon, and surfaces the existing
+`import.status.image_undecodable` warning — same pattern as the sibling
+dangling-image-path test. Verified independently in this pass (full gate
++ guards re-run on the reconciled tree, below).
+
 ## Follow-ups filed (not this card's scope)
 
 - **ut-docs#1416** — downscale an accepted-but-large photo instead of
@@ -171,7 +190,20 @@ bash scripts/ci/guard-docs-shots.sh                       → pass (re-run after
                                                               screenshotted routes so the guard hashes the
                                                               whole file, but no actual UI markup changed,
                                                               so zero PNGs regenerated this time)
+bash scripts/ci/guard-htmx-loaded.sh                       → pass
 ```
+
+Re-run in full on the final tree after the concurrent-run reconciliation above
+(new commit `598129c`) — all clean, same results.
+
+`build` on GitHub Actions failed once on this PR (commit `4aecb5e`) with
+`guard-htmx-loaded.sh` flagging `web/ui/pages/setup.html` — a file this diff
+never touches. `git diff` confirmed `setup.html` unchanged across the PR's
+base-commit gap, and a local `git merge origin/main` reproducing the exact
+PR-merge tree passed the guard clean; re-running the failed job once (per
+this pipeline's flake protocol) came back green with no further changes
+needed. Recorded here since a future reader of this PR's checks history
+will see one red run.
 
 `internal/pages` full-package `-race` is known to time out in this sandbox
 independent of this diff (ut-docs#1366/#1394); `-race` was scoped to the
