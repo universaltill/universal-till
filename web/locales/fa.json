@@ -994,6 +994,8 @@
   "shifts.amount_hint": "منفی یعنی خروج وجه",
   "shifts.cashier": "صندوقدار",
   "shifts.close": "بستن شیفت",
+  "shifts.close_success": "شیفت بسته شد. مورد انتظار: %s، واقعی: %s، اختلاف: %s",
+  "shifts.close_success_with_skim": "شیفت بسته شد. مورد انتظار: %s، واقعی: %s، اختلاف: %s، برداشت: %s، موجودی جدید: %s",
   "shifts.closed_at": "بسته شده",
   "shifts.counted": "شمارش‌شده",
   "shifts.counted_cash": "وجه شمارش‌شده",

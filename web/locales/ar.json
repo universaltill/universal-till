@@ -994,6 +994,8 @@
   "shifts.amount_hint": "السالب يزيل النقد",
   "shifts.cashier": "الصرّاف",
   "shifts.close": "إغلاق الوردية",
+  "shifts.close_success": "تم إغلاق الوردية. المتوقع: %s، الفعلي: %s، الفرق: %s",
+  "shifts.close_success_with_skim": "تم إغلاق الوردية. المتوقع: %s، الفعلي: %s، الفرق: %s، السحب: %s، الرصيد الجديد: %s",
   "shifts.closed_at": "أُغلقت",
   "shifts.counted": "المعدود",
   "shifts.counted_cash": "النقد المعدود",
