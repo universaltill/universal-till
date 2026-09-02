@@ -9,8 +9,10 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"reflect"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -704,6 +706,152 @@ func TestFiscalSignPayload_TaxInclusiveFlagMirrorsSaleInput(t *testing.T) {
 				t.Fatalf("wire payload tax_inclusive = %v (present=%v), want %v", got, ok, tc.taxInclusive)
 			}
 		})
+	}
+}
+
+// An empty SaleInput.SaleType must never reach the wire as "" — the
+// contract promises exactly two values, never a third silent one. Today's
+// only production dispatcher (pos_api.go's completeTender) always sets
+// SaleType explicitly before dispatch, so this can't happen in practice
+// yet — but pos.CompleteSale ITSELF defaults an empty SaleType to "sale"
+// (internal/pos/sales.go), and buildFiscalSignPayload runs before
+// CompleteSale, on the same *SaleInput. A future caller that relies on
+// CompleteSale's own default (the way it's tempting to, since it's right
+// there) would silently ship an empty sale_type on the signed record.
+// Mirror CompleteSale's own fallback here too, defensively, so the payload
+// can never disagree with what the sale is ultimately recorded as.
+func TestFiscalSignPayload_EmptySaleTypeDefaultsToSale(t *testing.T) {
+	in := &pos.SaleInput{
+		SaleID:       "sale-type-empty",
+		Currency:     "EUR",
+		TaxInclusive: true,
+		Lines: []pos.SaleLineInput{
+			{Name: "Thing", Qty: 1, UnitPrice: money.FromMinor(240), TaxRateBasisPoints: 1900},
+		},
+	}
+	payload := buildFiscalSignPayload(in, time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC))
+	if payload.SaleType != "sale" {
+		t.Fatalf("payload.SaleType = %q, want %q (CompleteSale's own default)", payload.SaleType, "sale")
+	}
+}
+
+// ut-docs#1203 (contract 1.6.0): the payload carries the sale's type so a
+// DSFinV-K signer can tell a return from a sale of the same absolute amount
+// — mirrors pos.SaleInput.SaleType verbatim (the same two values the sibling
+// plugins.SaleCompletedEvent.SaleType already puts on the wire). Never
+// omitted: every sale has a type.
+func TestFiscalSignPayload_SaleTypeMirrorsSaleInput(t *testing.T) {
+	cases := []struct {
+		name     string
+		saleType string
+	}{
+		{name: "sale", saleType: "sale"},
+		{name: "return (refund)", saleType: "return"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			in := &pos.SaleInput{
+				SaleID:       "sale-type",
+				SaleType:     tc.saleType,
+				Currency:     "EUR",
+				TaxInclusive: true,
+				Lines: []pos.SaleLineInput{
+					{Name: "Thing", Qty: 1, UnitPrice: money.FromMinor(240), TaxRateBasisPoints: 1900},
+				},
+			}
+			payload := buildFiscalSignPayload(in, time.Date(2026, 9, 2, 10, 0, 0, 0, time.UTC))
+			if payload.SaleType != tc.saleType {
+				t.Fatalf("payload.SaleType = %q, want %q", payload.SaleType, tc.saleType)
+			}
+			raw, err := json.Marshal(payload)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var wire map[string]any
+			if err := json.Unmarshal(raw, &wire); err != nil {
+				t.Fatal(err)
+			}
+			if got, ok := wire["sale_type"]; !ok || got != tc.saleType {
+				t.Fatalf("wire payload sale_type = %v (present=%v), want %q", got, ok, tc.saleType)
+			}
+		})
+	}
+}
+
+// ut-docs#1203 (contract 1.6.0), dispatch-level: a refund/return-shaped
+// SaleInput — built exactly the way internal/pages/refund_page.go and
+// inventory_api.go build theirs (SaleType "return", OriginalSaleID set) —
+// sent through the REAL dispatchFiscalSignAsk + shared bus reaches the
+// subscribed signer with `sale_type: "return"` on the wire, and an
+// otherwise-identical "sale" input differs from it in that one key alone.
+// Before 1.6.0 the two payloads were byte-for-byte identical (the exact
+// defect: a €2.40 refund signed as €2.40 of positive turnover).
+//
+// Deliberately stops at the dispatch function rather than driving the
+// refund handlers themselves: today neither refund_page.go nor
+// inventory_api.go calls dispatchFiscalSignAsk at all (pos_api.go's
+// completeTender is its only caller), so there is no end-to-end refund
+// path whose dispatched payload could be intercepted — that gap is a
+// separate follow-up, not something this contract-field change closes.
+func TestFiscalSignAsk_ReturnDispatchCarriesSaleType(t *testing.T) {
+	_, dp := newFiscalSignDeps(t)
+	var mu sync.Mutex
+	var captured [][]byte
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-spy", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		mu.Lock()
+		captured = append(captured, append([]byte(nil), ev.Payload...))
+		mu.Unlock()
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+
+	// Same shape for both, pre-set SaleID so the two payloads are comparable
+	// (dispatch mints one only when empty; nothing is persisted here).
+	mk := func(saleType string) *pos.SaleInput {
+		return &pos.SaleInput{
+			SaleID:         "sale-type-probe",
+			SaleType:       saleType,
+			ActorID:        "cashier-1",
+			Currency:       "EUR",
+			TaxInclusive:   true,
+			OriginalSaleID: "orig-1",
+			Lines: []pos.SaleLineInput{
+				{Name: "Thing", Qty: 1, UnitPrice: money.FromMinor(240), TaxRateBasisPoints: 1900},
+			},
+			Payments:               []pos.PaymentInput{{MethodID: "cash", Amount: money.FromMinor(240), Currency: "EUR"}},
+			AllowNegativeInventory: true,
+		}
+	}
+	ctx := context.Background()
+	for _, st := range []string{"sale", "return"} {
+		if res := dispatchFiscalSignAsk(ctx, dp, mk(st)); res.Outcome != fiscalSignApproved {
+			t.Fatalf("%s: dispatch outcome = %v (%s), want approved", st, res.Outcome, res.Reason)
+		}
+	}
+	mu.Lock()
+	defer mu.Unlock()
+	if len(captured) != 2 {
+		t.Fatalf("signer saw %d payloads, want 2", len(captured))
+	}
+	wires := make([]map[string]any, 2)
+	for i, raw := range captured {
+		if err := json.Unmarshal(raw, &wires[i]); err != nil {
+			t.Fatalf("payload %d: %v\n%s", i, err, raw)
+		}
+	}
+	if got, ok := wires[0]["sale_type"]; !ok || got != "sale" {
+		t.Fatalf("sale dispatch: wire sale_type = %v (present=%v), want \"sale\"\n%s", got, ok, captured[0])
+	}
+	if got, ok := wires[1]["sale_type"]; !ok || got != "return" {
+		t.Fatalf("return dispatch: wire sale_type = %v (present=%v), want \"return\"\n%s", got, ok, captured[1])
+	}
+	// Everything else must be identical — sale_type is the ONLY thing that
+	// tells the two apart (tendered_at is wall-clock, so it is excluded).
+	for _, w := range wires {
+		delete(w, "sale_type")
+		delete(w, "tendered_at")
+	}
+	if !reflect.DeepEqual(wires[0], wires[1]) {
+		t.Fatalf("sale and return payloads differ beyond sale_type:\n sale:   %s\n return: %s", captured[0], captured[1])
 	}
 }
 
