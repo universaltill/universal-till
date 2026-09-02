@@ -47,7 +47,7 @@ func newHoldTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		t.Fatalf("create tables: %v", err)
 	}
 	// ut-docs#1390: hold releases the live basket's table claim and resume
-	// re-claims it, so the claims table (migration 077) is part of every
+	// re-claims it, so the claims table (migration 078) is part of every
 	// hold/resume round trip, table-assigned or not (release is a no-op
 	// DELETE either way) -- column-identical to the migration.
 	if _, err := db.Exec(`CREATE TABLE table_claims (table_id TEXT PRIMARY KEY REFERENCES tables(id), claimed_at TEXT NOT NULL);`); err != nil {

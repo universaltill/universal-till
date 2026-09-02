@@ -94,6 +94,17 @@
         <span class="sb-item sb-update">⬆&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.unavailable_here" }}</span>
         {{ end }}
       {{ end }}
+      {{ if psuunderpowered }}
+      <!-- ut-docs#1232: persistent, non-dismissible — mirrors sb-update's
+           always-visible treatment. Never a toast/modal (offline-first
+           status-chip rule, universal-till/CLAUDE.md): a shop owner running
+           a kiosk with no desktop chrome would never see the OS-level
+           warning this is surfacing instead. A real link (not a plain
+           span) to the matching help topic — the remediation text in
+           title="" has no hover on a touchscreen till, so the chip itself
+           has to be the way in (independent review finding). -->
+      <a class="sb-item sb-power" href="/help/power-supply" title="{{ T "status.psu_underpowered_hint" }}">⚡&nbsp;{{ T "status.psu_underpowered" }}</a>
+      {{ end }}
       <span class="sb-item sb-ver" title="Universal Till">Universal&nbsp;Till&nbsp;v{{ appversion }}</span>
     </footer>
     <script>

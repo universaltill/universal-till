@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"math"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -53,10 +54,13 @@ type SaleInput struct {
 	// the follow-up card that makes ut-plugin-tax-{de,uk} actually answer
 	// the hook, before any plugin can set it non-zero in production.
 	ServiceChargeTaxBasisBP int
-	// OrderType is "" (dine-in/standard) or pos.OrderTypeTakeaway --
-	// whatever the checkout's basket already carries (Service.OrderType);
-	// persisted so a completed sale's receipt/journal/kitchen ticket can
-	// show it after the fact.
+	// OrderType is the sale's SUMMARY order type (ADR-0073 Decision 1):
+	// "" (all dine-in), pos.OrderTypeTakeaway (all takeaway) or
+	// pos.OrderTypeMixed. CompleteSale DERIVES it from the lines'
+	// own SaleLineInput.OrderType and ignores a caller-supplied value,
+	// with one legacy exception: a "takeaway" header whose lines all carry
+	// no order type (a pre-ADR-0073 peer's journal, or an old held sale)
+	// means every line was takeaway, so those lines are filled in first.
 	OrderType string
 	// TableID (ut-docs#820, ADR-0054) is the dining table this sale was
 	// served at, or "" when none was assigned -- whatever the checkout's
@@ -152,6 +156,14 @@ type SaleLineInput struct {
 	LineDiscount       money.Money // fixed minor units
 	LocationID         string      // stock movement location
 	Modifiers          []data.SelectedModifier
+	// OrderType (ut-docs#1181, ADR-0073): this line's own consumption
+	// mode, "" (dine-in) or OrderTypeTakeaway. Anything else (including
+	// OrderTypeMixed) is clamped to dine-in at the CompleteSale choke point.
+	// TaxRateBasisPoints is still the money authority -- the tender path
+	// resolved it through the tax plugin for THIS mode -- this field is the
+	// provenance that travels with it (receipt, kitchen, journal, sync,
+	// refund, sale.completed).
+	OrderType string
 }
 
 // json tags (independent review, ut-docs#543): PaymentInput is never
@@ -403,6 +415,27 @@ func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucher
 	return subtotal, taxTotal, serviceCharge, voucherIssueTotal, total, nil
 }
 
+// summarizeLineInputs is SummarizeOrderType over SaleLineInputs (no lines
+// -> "" -- a persisted sale always has lines, validateLine rejects none).
+func summarizeLineInputs(lines []SaleLineInput) string {
+	dineIn, takeaway := false, false
+	for _, l := range lines {
+		if NormalizeLineOrderType(l.OrderType) == OrderTypeTakeaway {
+			takeaway = true
+		} else {
+			dineIn = true
+		}
+	}
+	switch {
+	case dineIn && takeaway:
+		return OrderTypeMixed
+	case takeaway:
+		return OrderTypeTakeaway
+	default:
+		return ""
+	}
+}
+
 // netPayments validates the payment list and returns the sum that must cover
 // `total` (the sale's computed total, passed in so a tracked voucher
 // redemption can be capped at what the sale still needs at its point in the
@@ -557,15 +590,56 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 	if in.Currency == "" {
 		in.Currency = "GBP"
 	}
-	// Clamp to the known values here, not just at the live checkout's own
-	// form-parsing (internal/pages/pos_api.go) -- the LAN sync journal
-	// replay path (internal/pages/sync_sales.go) passes a remote peer's
-	// OrderType straight through, and this is the one choke point every
-	// caller (cashier, kiosk, sync replay) goes through before it reaches
-	// storage/the kitchen ticket printer.
-	if in.OrderType != OrderTypeTakeaway {
-		in.OrderType = ""
+	// ADR-0073: normalize every LINE's order type at this one choke point
+	// (cashier, kiosk, sync replay, refund, return all pass through here),
+	// then DERIVE the header summary from the lines. A caller-supplied
+	// header is only consulted for the legacy case -- "takeaway" with no
+	// line carrying a value -- where it is the only record of the lines'
+	// mode (pre-1.5.0 LAN journal, pre-ADR-0073 held sale). Anything else a
+	// caller wrote in the header is discarded, so a mixed sale can never be
+	// labelled "takeaway" and "mixed" can never land on a line.
+	anyLineTyped := false
+	for i := range in.Lines {
+		in.Lines[i].OrderType = NormalizeLineOrderType(in.Lines[i].OrderType)
+		if in.Lines[i].OrderType != "" {
+			anyLineTyped = true
+		}
 	}
+	if !anyLineTyped && in.OrderType == OrderTypeTakeaway {
+		for i := range in.Lines {
+			in.Lines[i].OrderType = OrderTypeTakeaway
+		}
+	}
+	// A legacy RETURN (second-round review, ut-docs#1181): the pre-ADR-0073
+	// refund path never set a header on a return, so an old-build peer's
+	// journaled return arrives with header "" AND untyped lines — the
+	// takeaway rule above cannot fire. Inherit each line's mode from the
+	// ORIGINAL sale's persisted lines (matched the same way the refund
+	// pool is keyed: item, variant, unit price) — the runtime twin of
+	// migration 078's sale_links backfill — or the whole refund pool would
+	// be keyed per mode while this return's lines sit under dine-in, and a
+	// fully-refunded takeaway unit could be refunded again.
+	if !anyLineTyped && in.SaleType == "return" && in.OriginalSaleID != "" {
+		if orig, err := repo.ListSaleLineSnapshots(ctx, in.OriginalSaleID); err == nil && len(orig) > 0 {
+			modeFor := map[string]string{}
+			for _, o := range orig {
+				if o.OrderType == OrderTypeTakeaway {
+					modeFor[o.ItemID+"|"+o.VariantID+"|"+strconv.FormatInt(o.UnitPrice, 10)] = OrderTypeTakeaway
+				}
+			}
+			for i := range in.Lines {
+				l := in.Lines[i]
+				k := l.ItemID + "|" + l.VariantID + "|" + strconv.FormatInt(l.UnitPrice.Minor(), 10)
+				if l.VariantID != "" {
+					k = "|" + l.VariantID + "|" + strconv.FormatInt(l.UnitPrice.Minor(), 10)
+				}
+				if m, ok := modeFor[k]; ok {
+					in.Lines[i].OrderType = m
+				}
+			}
+		}
+	}
+	in.OrderType = summarizeLineInputs(in.Lines)
 	// ut-docs#744: a variant resolved by barcode carries BOTH ItemID and
 	// VariantID upstream (ui.PriceResolverAdapter deliberately keeps ItemID
 	// alongside VariantID on the live BasketLine -- internal/pages/tax_hook.go's
@@ -746,6 +820,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					TaxAmount:      lineTax.Minor(),
 					TotalBeforeTax: totalBeforeTax.Minor(),
 					TotalAfterTax:  totalAfterTax.Minor(),
+					OrderType:      l.OrderType,
 				})
 
 				for _, m := range l.Modifiers {

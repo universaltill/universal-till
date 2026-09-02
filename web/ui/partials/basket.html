@@ -48,20 +48,31 @@
          the same swap target the instant a newer one fires -- both
          segments need the identical treatment or either would be an
          un-synced hole in an otherwise-fixed set. -->
+    <!-- ut-docs#1181 (ADR-0073): .OrderType is now the DERIVED summary of
+         the lines -- "" (all dine in), "takeaway" (all takeaway) or "mixed".
+         The two segments stay the fast whole-basket action (one tap
+         converts EVERY line and sets the default for new ones). On a mixed
+         basket neither segment is "checked": a filled segment would claim a
+         state the basket isn't in, so instead a Mixed chip carries the
+         status and the segments read as the bulk actions they are ("All
+         dine in" / "All takeaway"). Per-line control lives on each row. -->
+    {{ if eq .OrderType "mixed" }}
+    <span class="order-type-mixed" data-testid="order-type-mixed" role="status" title="{{ T "basket.order_type.mixed_hint" }}">⚖️ {{ T "basket.order_type.mixed" }}</span>
+    {{ end }}
     <div class="order-type-toggle-group" role="radiogroup" aria-label="{{ T "basket.order_type.label" }}">
-      <button type="button" class="order-type-option{{ if ne .OrderType "takeaway" }} is-active{{ end }}"
-              role="radio" aria-checked="{{ if ne .OrderType "takeaway" }}true{{ else }}false{{ end }}"
+      <button type="button" class="order-type-option{{ if eq .OrderType "" }} is-active{{ end }}"
+              role="radio" aria-checked="{{ if eq .OrderType "" }}true{{ else }}false{{ end }}"
               data-testid="order-type-dine-in"
               hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "" }}'
               hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
-        🍽️ {{ T "basket.order_type.dine_in" }}
+        🍽️ {{ if eq .OrderType "mixed" }}{{ T "basket.order_type.all_dine_in" }}{{ else }}{{ T "basket.order_type.dine_in" }}{{ end }}
       </button>
       <button type="button" class="order-type-option{{ if eq .OrderType "takeaway" }} is-active{{ end }}"
               role="radio" aria-checked="{{ if eq .OrderType "takeaway" }}true{{ else }}false{{ end }}"
               data-testid="order-type-takeaway"
               hx-post="/api/pos/order-type" hx-vals='{{ jsonVals "order_type" "takeaway" }}'
               hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">
-        🥡 {{ T "basket.order_type.takeaway" }}
+        🥡 {{ if eq .OrderType "mixed" }}{{ T "basket.order_type.all_takeaway" }}{{ else }}{{ T "basket.order_type.takeaway" }}{{ end }}
       </button>
     </div>
     <!-- Table assignment (ut-docs#820, ADR-0054): was an always-expanded
@@ -98,6 +109,31 @@
                       {{ end }}
                     </ul>
                     {{ end }}
+                    <!-- ut-docs#1181 (ADR-0073 Decision 2): THIS line's mode.
+                         Same always-both-visible two-segment shape as the
+                         whole-basket control above (ut-docs#1379's lesson: a
+                         label-changing single switch reads as "tap to switch
+                         TO"), but ICON-ONLY at the remove button's size --
+                         the product owner's live feedback (2026-09-02) was
+                         that a labelled pair per line is far too heavy and
+                         spills out of the ~10rem item column. The words ride
+                         as title (tooltip) + visually-hidden text, so the
+                         screen-reader name is still "Dine in"/"Takeaway".
+                         Keyed by LineKey never SKU (ADR-0020), and on the
+                         same hx-sync guard as every other #basket trigger
+                         (ut-docs#1337). One tap re-rates this line only. -->
+                    <div class="line-order-type" role="radiogroup" aria-label="{{ T "basket.order_type.line_label" }}">
+                      <button type="button" class="line-order-type-option{{ if ne .OrderType "takeaway" }} is-active{{ end }}"
+                              role="radio" aria-checked="{{ if ne .OrderType "takeaway" }}true{{ else }}false{{ end }}"
+                              data-testid="line-order-type-{{ .LineKey }}-dine-in" title="{{ T "basket.order_type.dine_in" }}"
+                              hx-post="/api/pos/line-order-type" hx-vals='{{ jsonVals "key" .LineKey "order_type" "" }}'
+                              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">🍽️<span class="visually-hidden">{{ T "basket.order_type.dine_in" }}</span></button>
+                      <button type="button" class="line-order-type-option{{ if eq .OrderType "takeaway" }} is-active{{ end }}"
+                              role="radio" aria-checked="{{ if eq .OrderType "takeaway" }}true{{ else }}false{{ end }}"
+                              data-testid="line-order-type-{{ .LineKey }}-takeaway" title="{{ T "basket.order_type.takeaway" }}"
+                              hx-post="/api/pos/line-order-type" hx-vals='{{ jsonVals "key" .LineKey "order_type" "takeaway" }}'
+                              hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">🥡<span class="visually-hidden">{{ T "basket.order_type.takeaway" }}</span></button>
+                    </div>
                   </span>
                 </div>
               </td>
@@ -134,6 +170,27 @@
                          hx-target="#basket"
                          hx-swap="outerHTML"
                          hx-sync="#basket:replace" />
+                  <!-- Phone tier (<=480px, ut-docs#413's breakpoint): the ITEM
+                       column is ~32px there (ut-docs#1314), too narrow for the
+                       pill under the item name, so the SAME control renders
+                       here in the qty column, stacked vertically. Exactly one
+                       of the two instances is displayed at any width
+                       (app.css) -- display:none removes the other from the
+                       accessibility tree too, so a screen reader never meets
+                       two radiogroups for one line. Same <tr>, so "tbody tr"
+                       counts in the e2e suite are unchanged. -->
+                  <div class="line-order-type line-order-type-phone" role="radiogroup" aria-label="{{ T "basket.order_type.line_label" }}">
+                    <button type="button" class="line-order-type-option{{ if ne .OrderType "takeaway" }} is-active{{ end }}"
+                            role="radio" aria-checked="{{ if ne .OrderType "takeaway" }}true{{ else }}false{{ end }}"
+                            data-testid="line-order-type-phone-{{ .LineKey }}-dine-in" title="{{ T "basket.order_type.dine_in" }}"
+                            hx-post="/api/pos/line-order-type" hx-vals='{{ jsonVals "key" .LineKey "order_type" "" }}'
+                            hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">🍽️<span class="visually-hidden">{{ T "basket.order_type.dine_in" }}</span></button>
+                    <button type="button" class="line-order-type-option{{ if eq .OrderType "takeaway" }} is-active{{ end }}"
+                            role="radio" aria-checked="{{ if eq .OrderType "takeaway" }}true{{ else }}false{{ end }}"
+                            data-testid="line-order-type-phone-{{ .LineKey }}-takeaway" title="{{ T "basket.order_type.takeaway" }}"
+                            hx-post="/api/pos/line-order-type" hx-vals='{{ jsonVals "key" .LineKey "order_type" "takeaway" }}'
+                            hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">🥡<span class="visually-hidden">{{ T "basket.order_type.takeaway" }}</span></button>
+                  </div>
                 </div>
               </td>
               <td>{{ money .PriceCents }}</td>

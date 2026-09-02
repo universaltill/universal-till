@@ -72,6 +72,11 @@ type SaleLineSnapshot struct {
 	UnitPrice  int64
 	TaxRateBP  int
 	LocationID string
+	// OrderType (ut-docs#1181, ADR-0073): the line's own consumption mode
+	// ("" dine-in | "takeaway"), copied verbatim onto a refund/return line
+	// so provenance survives even though the persisted TaxRateBP already
+	// fixes the money.
+	OrderType string
 }
 
 type SaleJournalEntry struct {
@@ -337,7 +342,7 @@ func (r *POSRepo) FindSaleIDByReceipt(ctx context.Context, receiptNo string) (st
 // ListSaleLineSnapshots returns sale line snapshots for a sale.
 func (r *POSRepo) ListSaleLineSnapshots(ctx context.Context, saleID string) ([]SaleLineSnapshot, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, tax_rate_bp
+SELECT id, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, tax_rate_bp, COALESCE(order_type, '')
 FROM sale_lines
 WHERE sale_id = ?
 ORDER BY line_no
@@ -353,8 +358,9 @@ ORDER BY line_no
 			qty                                       float64
 			unitPrice                                 int64
 			taxRateBP                                 int
+			orderType                                 string
 		)
-		if err := rows.Scan(&id, &itemID, &variantID, &name, &sku, &barcode, &qty, &unitPrice, &taxRateBP); err != nil {
+		if err := rows.Scan(&id, &itemID, &variantID, &name, &sku, &barcode, &qty, &unitPrice, &taxRateBP, &orderType); err != nil {
 			return nil, fmt.Errorf("scan line: %w", err)
 		}
 		res = append(res, SaleLineSnapshot{
@@ -368,6 +374,7 @@ ORDER BY line_no
 			UnitPrice:  unitPrice,
 			TaxRateBP:  taxRateBP,
 			LocationID: "",
+			OrderType:  orderType,
 		})
 	}
 	return res, rows.Err()
@@ -3155,33 +3162,44 @@ func (r *POSRepo) OriginalSaleIDFor(ctx context.Context, returnSaleID string) (s
 
 // RefundLineKey identifies a refundable line across the original sale and
 // its return sales: same item/variant at the same unit price.
-func RefundLineKey(itemID, variantID string, unitPrice int64) string {
-	return itemID + "|" + variantID + "|" + strconv.FormatInt(unitPrice, 10)
+//
+// orderType (ut-docs#1181, ADR-0073 Decision 6) is part of the key: the
+// same product sold once dine-in and once takeaway has the SAME gross unit
+// price and DIFFERENT tax rates, so a price-only key would let both units
+// be refunded against the higher-rate row and reclaim VAT that was never
+// collected at that rate. "" (dine-in) keeps the pre-ADR-0073 key shape
+// byte-identical for every uniform sale.
+func RefundLineKey(itemID, variantID string, unitPrice int64, orderType string) string {
+	k := itemID + "|" + variantID + "|" + strconv.FormatInt(unitPrice, 10)
+	if orderType != "" {
+		k += "|" + orderType
+	}
+	return k
 }
 
 // ReturnedQuantities sums, per line key, what previous returns linked to
 // the original sale already gave back — the double-refund guard's input.
 func (r *POSRepo) ReturnedQuantities(ctx context.Context, originalSaleID string) (map[string]float64, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT COALESCE(l.item_id, ''), COALESCE(l.variant_id, ''), l.unit_price, SUM(l.quantity)
+SELECT COALESCE(l.item_id, ''), COALESCE(l.variant_id, ''), l.unit_price, COALESCE(l.order_type, ''), SUM(l.quantity)
 FROM sale_lines l
 JOIN sale_links k ON k.sale_id = l.sale_id
 JOIN sales s ON s.id = l.sale_id AND s.sale_type = 'return' AND s.status = 'completed'
 WHERE k.original_sale_id = ?
-GROUP BY l.item_id, l.variant_id, l.unit_price`, originalSaleID)
+GROUP BY l.item_id, l.variant_id, l.unit_price, l.order_type`, originalSaleID)
 	if err != nil {
 		return nil, fmt.Errorf("returned quantities: %w", err)
 	}
 	defer rows.Close()
 	out := map[string]float64{}
 	for rows.Next() {
-		var itemID, variantID string
+		var itemID, variantID, orderType string
 		var unitPrice int64
 		var qty float64
-		if err := rows.Scan(&itemID, &variantID, &unitPrice, &qty); err != nil {
+		if err := rows.Scan(&itemID, &variantID, &unitPrice, &orderType, &qty); err != nil {
 			return nil, fmt.Errorf("scan returned qty: %w", err)
 		}
-		out[RefundLineKey(itemID, variantID, unitPrice)] = qty
+		out[RefundLineKey(itemID, variantID, unitPrice, orderType)] = qty
 	}
 	return out, rows.Err()
 }
@@ -3809,6 +3827,9 @@ type SaleLineRow struct {
 	TaxAmount      int64
 	TotalBeforeTax int64
 	TotalAfterTax  int64
+	// OrderType (ut-docs#1181, ADR-0073): "" (dine-in) or "takeaway" — the
+	// line's own mode, already normalized by pos.CompleteSale.
+	OrderType string
 }
 
 // InsertSaleLinesBatch writes many sale_lines rows via chunked multi-row
@@ -3817,7 +3838,7 @@ func (r *POSRepo) InsertSaleLinesBatch(ctx context.Context, tx *sql.Tx, rows []S
 	if len(rows) == 0 {
 		return nil
 	}
-	const cols = 15
+	const cols = 16
 	exec := r.exec(tx)
 	chunk := batchChunkSize(cols)
 	for start := 0; start < len(rows); start += chunk {
@@ -3829,13 +3850,13 @@ func (r *POSRepo) InsertSaleLinesBatch(ctx context.Context, tx *sql.Tx, rows []S
 		placeholders := make([]string, 0, len(part))
 		args := make([]any, 0, len(part)*cols)
 		for _, row := range part {
-			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 			args = append(args, row.ID, row.SaleID, row.LineNo, nullIfEmpty(row.ItemID), nullIfEmpty(row.VariantID),
 				row.Name, row.SKU, row.Barcode, row.Qty, row.UnitPrice, row.LineDiscount,
-				row.TaxRateBP, row.TaxAmount, row.TotalBeforeTax, row.TotalAfterTax)
+				row.TaxRateBP, row.TaxAmount, row.TotalBeforeTax, row.TotalAfterTax, row.OrderType)
 		}
 		if _, err := exec.ExecContext(ctx, `
-INSERT INTO sale_lines (id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+INSERT INTO sale_lines (id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, order_type)
 VALUES `+strings.Join(placeholders, ", "), args...); err != nil {
 			return fmt.Errorf("insert sale lines batch: %w", err)
 		}
@@ -5588,6 +5609,13 @@ type SaleDetailLine struct {
 	TaxAmount    int64    `json:"tax_amount"`
 	LineTotal    int64    `json:"line_total"`
 	Modifiers    []string `json:"modifiers"` // chosen customization option names (ADR-0020), e.g. "Extra shot"
+	// OrderType (ut-docs#1181, ADR-0073): this line's own consumption mode,
+	// "" (dine-in) or "takeaway" — never "mixed", which is a header-only
+	// summary. omitempty keeps the LAN-sync journal wire additive (contract
+	// 1.5.0): a pre-1.5.0 peer simply lacks the key, and applyJournal
+	// treats an absent line value under a "takeaway" header as takeaway
+	// (the only meaning it could have had on that peer).
+	OrderType string `json:"order_type,omitempty"`
 }
 
 type SaleDetailPayment struct {
@@ -5655,7 +5683,7 @@ WHERE s.receipt_no = ?`, receiptNo).Scan(
 	lineRows, err := r.db.QueryContext(ctx, `
 SELECT id, name_snapshot, COALESCE(sku_snapshot, ''), COALESCE(item_id, ''),
        COALESCE(variant_id, ''), COALESCE(tax_rate_bp, 0), quantity, unit_price,
-       line_discount, tax_amount, total_after_tax
+       line_discount, tax_amount, total_after_tax, COALESCE(order_type, '')
 FROM sale_lines WHERE sale_id = ? ORDER BY line_no`, d.ID)
 	if err != nil {
 		return SaleDetail{}, false, fmt.Errorf("get sale lines: %w", err)
@@ -5664,7 +5692,7 @@ FROM sale_lines WHERE sale_id = ? ORDER BY line_no`, d.ID)
 	for lineRows.Next() {
 		var id string
 		var l SaleDetailLine
-		if err := lineRows.Scan(&id, &l.Name, &l.SKU, &l.ItemID, &l.VariantID, &l.TaxRateBP, &l.Qty, &l.UnitPrice, &l.LineDiscount, &l.TaxAmount, &l.LineTotal); err != nil {
+		if err := lineRows.Scan(&id, &l.Name, &l.SKU, &l.ItemID, &l.VariantID, &l.TaxRateBP, &l.Qty, &l.UnitPrice, &l.LineDiscount, &l.TaxAmount, &l.LineTotal, &l.OrderType); err != nil {
 			lineRows.Close()
 			return SaleDetail{}, false, fmt.Errorf("scan sale line: %w", err)
 		}
