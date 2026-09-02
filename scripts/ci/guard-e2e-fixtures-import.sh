@@ -35,6 +35,11 @@
 # it is for login.spec.ts's fresh install — importing `test` from
 # fixtures.ts here would break the fixture itself, not just be redundant.
 #
+# nav-rail-svg-icons-lock-1423.spec.ts (ut-docs#1423) is exempt for exactly
+# the #1346 reason above: it measures the same `#session-chip` (the 🔒 lock
+# icon's box vs. every other rail icon), so it is auth-project-only too and
+# the reset fixture would 401 there the same way.
+#
 # Explicit first argument runs this guard against a fixture directory
 # instead of the real tree (see guard-e2e-fixtures-import_test.sh).
 set -euo pipefail
@@ -49,7 +54,7 @@ if [ ! -d "$TESTS_DIR" ]; then
   exit 1
 fi
 
-EXEMPT_FILES=('login.spec.ts' 'nav-rail-lock-reachable-1346.spec.ts')
+EXEMPT_FILES=('login.spec.ts' 'nav-rail-lock-reachable-1346.spec.ts' 'nav-rail-svg-icons-lock-1423.spec.ts')
 
 is_exempt() {
   local base="$1" f

@@ -55,14 +55,16 @@ test.describe('sale-screen nav rail icon consistency (ut-docs#1348)', () => {
     expect(Math.abs(helpCenter - refCenter), 'help icon must be centered like every other rail icon').toBeLessThan(3);
   });
 
-  test('the bug-report glyph carries the same .ico-boost treatment as lock (profile as the visual reference)', async ({
+  test('the bug-report icon is an inline SVG like every other rail icon (ut-docs#1423 superseded the .ico-boost emoji bump)', async ({
     page,
   }) => {
     await page.goto('/catalog');
     const bugIco = page.locator('#bugreport-toggle .nav-toggle-ico');
     await expect(bugIco).toBeVisible();
-    await expect(bugIco, 'ut-docs#1348: 🐞 read visibly smaller than 👤/🔒 without the same boost').toHaveClass(
-      /\bico-boost\b/,
-    );
+    // #1348 fixed this with a per-glyph emoji font-size bump (.ico-boost)
+    // that held on desktop Chromium and not on the tablet's own emoji font;
+    // #1423 replaced every rail emoji with one SVG set. The size-parity
+    // assertion itself lives in nav-rail-svg-icons-1423.spec.ts.
+    await expect(bugIco.locator('svg[data-icon="bug"]')).toBeVisible();
   });
 });

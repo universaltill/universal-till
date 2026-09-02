@@ -31,11 +31,11 @@
        (ut-docs#413) not worth re-litigating here. -->
   <div class="nav-primary">
     <a href="/" class="nav-toggle" data-testid="nav-till">
-      <span class="nav-toggle-ico" aria-hidden="true">🧾</span>
+      <span class="nav-toggle-ico" aria-hidden="true">{{ icon "receipt" }}</span>
       <span class="nav-toggle-label">{{ T "nav.till" }}</span>
     </a>
     <a href="/menu" class="nav-toggle" data-testid="nav-menu">
-      <span class="nav-toggle-ico ico-boost" aria-hidden="true">☰</span>
+      <span class="nav-toggle-ico" aria-hidden="true">{{ icon "menu" }}</span>
       <span class="nav-toggle-label">{{ T "nav.menu" }}</span>
     </a>
     <!-- Moved from index.html's own header row (was a second full-width
@@ -52,7 +52,7 @@
          index.html still renders its OWN small phone-only fallback row for
          Inventory, shown only at <=480px -- see index.html's own comment. -->
     <a href="/inventory" class="nav-toggle nav-rail-only" data-testid="kiosk-inventory-link">
-      <span class="nav-toggle-ico" aria-hidden="true">📦</span>
+      <span class="nav-toggle-ico" aria-hidden="true">{{ icon "package" }}</span>
       <span class="nav-toggle-label">{{ T "kiosk.inventory" }}</span>
     </a>
     <!-- ut-docs#1349 (product owner, reported twice live): Orders was only
@@ -63,7 +63,7 @@
          (hidden at <=480px) because the Menu tile already covers phone
          width and ut-docs#413 has no spare budget in that top-bar wrap. -->
     <a href="/orders" class="nav-toggle nav-rail-only" data-testid="nav-orders">
-      <span class="nav-toggle-ico" aria-hidden="true">🛎️</span>
+      <span class="nav-toggle-ico" aria-hidden="true">{{ icon "bell" }}</span>
       <span class="nav-toggle-label">{{ T "nav.orders" }}</span>
     </a>
   </div>
@@ -85,10 +85,13 @@
          fixed-size override left it pinned to flex-start instead. Now
          `.nav-toggle` like every sibling here; `.help-hint` itself is
          untouched and keeps its own small-circle look everywhere else it's
-         used (`helpLink`, next to a page heading). -->
+         used (`helpLink`, next to a page heading).
+         2026-09-02 (ut-docs#1423): every rail icon is now an inline SVG via
+         the icon template func (internal/httpx/icons.go) — emoji sized differently per
+         device font, see that file. -->
     <a class="nav-toggle" href="{{ helpHref }}" title="{{ T "help.open" }}"
        aria-label="{{ T "help.open" }}" data-testid="help-hint">
-      <span class="nav-toggle-ico" aria-hidden="true">?</span>
+      <span class="nav-toggle-ico" aria-hidden="true">{{ icon "help" }}</span>
       <span class="nav-toggle-label">{{ T "help.open" }}</span>
     </a>
     <!-- 🐞 bug-report toggle (ut-docs#346). Same trick as the sync/session

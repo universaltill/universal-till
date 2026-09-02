@@ -97,6 +97,8 @@ var baseFuncs = template.FuncMap{
 	// claimed by another topic (the settings cards). Locale-less fallback for
 	// the same reason as helpHref above; FuncsFor overrides it locale-bound.
 	"helpLink": func(id string) template.HTML { return helpLinkHTML(id, DefaultLocale()) },
+	// {{ icon "lock" }} — inline SVG rail icons (icons.go, ut-docs#1423).
+	"icon": iconHTML,
 }
 
 // helpLinkHTML renders the same .help-hint markup nav.html's automatic "?"

@@ -44,7 +44,7 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 // (verified: `playwright test --project=auth --list`), so it always finds
 // the wizard-created admin operator already in place and never races
 // login.spec.ts's own "brand-new till" first assertion.
-const AUTH_ONLY_SPECS = /(login|nav-rail-lock-reachable-1346)\.spec\.ts$/;
+const AUTH_ONLY_SPECS = /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423)\.spec\.ts$/;
 
 export default defineConfig({
   testDir: './tests',
