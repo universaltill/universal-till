@@ -6,8 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"image"
-	_ "image/jpeg"
 	"image/png"
 	"io"
 	"log"
@@ -25,6 +23,7 @@ import (
 	"github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/imaging"
 	productlookup "github.com/universaltill/universal-till/internal/lookup"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
@@ -598,8 +597,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		defer file.Close()
-		img, _, err := image.Decode(io.LimitReader(file, 10<<20))
-		if err != nil {
+		raw, readErr := io.ReadAll(io.LimitReader(file, 10<<20))
+		img, err := imaging.Decode(raw)
+		if readErr != nil || err != nil {
 			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
 			return
 		}
@@ -662,8 +662,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		defer file.Close()
-		img, _, err := image.Decode(io.LimitReader(file, 10<<20))
-		if err != nil {
+		raw, readErr := io.ReadAll(io.LimitReader(file, 10<<20))
+		img, err := imaging.Decode(raw)
+		if readErr != nil || err != nil {
 			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
 			return
 		}
@@ -987,7 +988,7 @@ func saveLookupImage(ctx context.Context, c *productlookup.Client, itemID, imgUR
 	if err != nil {
 		return err
 	}
-	img, _, err := image.Decode(bytes.NewReader(raw))
+	img, err := imaging.Decode(raw)
 	if err != nil {
 		return err
 	}
