@@ -9,40 +9,42 @@ import (
 )
 
 // TestMigrations_AddColumnReplaySafe (ut-docs#1412): a till that ran a
-// pre-merge build of ut-docs#1181 already had sale_lines.order_type when
-// v0.9.0 arrived with that DDL renumbered to 078 — schema_migrations said
-// 77, so 078 re-ran and died with "duplicate column name: order_type", and
-// the Android shell showed a white screen. 077's own header states the
-// convention: every migration must be re-runnable against an
-// already-migrated database. ADD COLUMN has no IF NOT EXISTS in SQLite, so
-// the runner has to supply that idempotence itself. Because this rewinds
-// to 77, every future ADD COLUMN migration is replay-tested here too.
+// pre-merge build already had a column when the release arrived with that
+// DDL renumbered — the ledger said one less, so the migration re-ran and
+// died with "duplicate column name", and the Android shell showed a white
+// screen. Every migration must be re-runnable against an already-migrated
+// database; ADD COLUMN has no IF NOT EXISTS in SQLite, so the runner has
+// to supply that idempotence itself. The 78-file ledger this was first
+// pinned against is gone (ADR-0074), but the property still matters for
+// any future renumbering, so it is pinned here with a synthetic ADD COLUMN
+// migration: apply it, drop only its ledger row (columns stay in place —
+// exactly the shape a renumbered migration leaves behind on a device), and
+// apply the same file again.
 func TestMigrations_AddColumnReplaySafe(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "replay.db")
-	d, err := Open(path)
+	d, err := Open(filepath.Join(t.TempDir(), "replay.db"))
 	if err != nil {
 		t.Fatal(err)
-	}
-	// Columns stay in place; only the ledger is rewound — exactly the shape
-	// a renumbered migration leaves behind on a device.
-	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 78`); err != nil {
-		t.Fatalf("rewind schema_migrations: %v", err)
-	}
-	if err := d.Close(); err != nil {
-		t.Fatal(err)
-	}
-	d, err = Open(path)
-	if err != nil {
-		t.Fatalf("reopen replaying 078 against a database that already has its columns: %v", err)
 	}
 	defer d.Close()
 
-	var n int
-	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('sale_lines') WHERE name = 'order_type'`).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("sale_lines.order_type count = %d err=%v, want exactly 1", n, err)
+	const version = 9100
+	sql := "ALTER TABLE settings ADD COLUMN replay_probe TEXT NOT NULL DEFAULT '';\n"
+	if err := runMigrationSQL(t, d, version, sql); err != nil {
+		t.Fatalf("first application: %v", err)
 	}
-	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = 78`).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("schema_migrations has version 78 %d time(s) err=%v, want 1 (replay must be recorded)", n, err)
+	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version = ?`, version); err != nil {
+		t.Fatalf("rewind ledger row: %v", err)
+	}
+	if err := runMigrationSQL(t, d, version, sql); err != nil {
+		t.Fatalf("replaying an ADD COLUMN against a database that already has its column: %v", err)
+	}
+
+	if n := columnCount(t, d, "settings", "replay_probe"); n != 1 {
+		t.Fatalf("settings.replay_probe count = %d, want exactly 1", n)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, version).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("schema_migrations has version %d %d time(s) err=%v, want 1 (replay must be recorded)", version, n, err)
 	}
 }
 

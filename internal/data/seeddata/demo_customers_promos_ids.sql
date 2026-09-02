@@ -1,8 +1,11 @@
 -- Demo customer/promotion ID lists (ut-docs#567) — loaded into TEMP tables
 -- so the removal script (remove_demo_customers_promos.sql) can target the
 -- demo rows precisely by ID/code instead of guessing with LIKE patterns.
--- Shared verbatim by migration 038_demo_customers_promos_opt_in.sql and
--- DemoSeedRepo.RemoveDemoCustomersPromos.
+-- Executed verbatim by DemoSeedRepo.RemoveDemoCustomersPromos (until the
+-- ADR-0074 migration squash, ut-docs#1425, this was also shared verbatim
+-- by migration 038_demo_customers_promos_opt_in.sql, now deleted); the ID
+-- lists are guarded against drift by
+-- TestDemoCustomersPromosIDsMatchSeedData (internal/db/demo_seed_test.go).
 -- DROP first: TEMP tables are per-connection and a pooled connection may
 -- have run this script before.
 DROP TABLE IF EXISTS temp.demo_seed_customers;

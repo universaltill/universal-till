@@ -1,8 +1,10 @@
 -- Demo catalogue ID lists (ut-docs#539) — loaded into TEMP tables so the
 -- removal script (remove_demo.sql) can target the demo rows precisely by ID
--- instead of guessing with LIKE patterns. Shared verbatim by migration
--- 036_demo_seed_opt_in.sql and DemoSeedRepo.RemoveDemoCatalogue; the ID
--- lists are guarded against demo_catalogue.sql by tests in this package.
+-- instead of guessing with LIKE patterns. Executed verbatim by
+-- DemoSeedRepo.RemoveDemoCatalogue (until the ADR-0074 migration squash,
+-- ut-docs#1425, this was also shared verbatim by migration
+-- 036_demo_seed_opt_in.sql, now deleted); the ID lists are guarded against
+-- demo_catalogue.sql by tests in this package.
 --
 -- demo_seed_items also carries each item's seeded sku/name/base_price
 -- (ut-docs#566) — the "pristine" reference values remove_demo.sql compares
@@ -10,7 +12,8 @@
 -- sold or stock-adjusted) is recognised as touched and kept, not just one
 -- with trading history. Values are a literal copy of demo_catalogue.sql's
 -- items INSERT, same duplication convention as the ID lists themselves;
--- guarded against drift by TestMigration036MatchesSeedData.
+-- guarded against drift by TestDemoSeedItemsPristineValuesMatchCatalogue
+-- (internal/db/demo_seed_test.go).
 -- DROP first: TEMP tables are per-connection and a pooled connection may
 -- have run this script before.
 DROP TABLE IF EXISTS temp.demo_seed_items;

@@ -3,10 +3,12 @@
 -- Extracted from 001_init.sql's original unconditional seed, with the
 -- corrected EAN-13 check digits from migrations 023 and 031 already applied
 -- (i.e. exactly the rows a migrated database contained before 036 made the
--- catalogue opt-in). This file is the single source of truth for what the
+-- catalogue opt-in — both migrations deleted by the ADR-0074 squash,
+-- ut-docs#1425). This file is the single source of truth for what the
 -- demo catalogue is: the opt-in seeding path executes it verbatim
--- (data.DemoSeedRepo.SeedDemoCatalogue), and migration 036's removal ID
--- lists are guarded against it by TestMigration036MatchesSeedData.
+-- (data.DemoSeedRepo.SeedDemoCatalogue), and the removal ID lists are
+-- guarded against it by TestDemoSeedItemsPristineValuesMatchCatalogue
+-- (internal/db/demo_seed_test.go).
 --
 -- Structural defaults (tax_codes tax_std/tax_red/tax_zero, stock_locations
 -- loc_main/loc_back/loc_wh, payment methods) are NOT part of the demo

@@ -24,10 +24,13 @@ func openAuthTestDB(t *testing.T) *sql.DB {
 		 role TEXT NOT NULL DEFAULT 'cashier', pin_hash TEXT, is_active INTEGER NOT NULL DEFAULT 1)`,
 		`CREATE TABLE sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL,
 		 created_at TEXT NOT NULL DEFAULT (datetime('now')), expires_at TEXT NOT NULL, revoked_at TEXT, last_seen_at TEXT)`,
-		// Column names/types/PK mirror migration 039_role_permissions.sql
-		// (the roles/permission_actions FK parents are omitted here since
-		// this hand-rolled schema only ever inserts values that would be
-		// valid against them — keep it in sync if 039 changes shape).
+		// Column names/types/PK mirror the real role_permissions table in
+		// internal/db/migrations/001_init.sql (the roles/permission_actions
+		// FK parents are omitted here since this hand-rolled schema only
+		// ever inserts values that would be valid against them — keep it in
+		// sync if the real table's shape changes; ut-docs#1425 review F7 —
+		// this used to point at migration 039_role_permissions.sql, deleted
+		// by the ADR-0074 squash).
 		`CREATE TABLE role_permissions (role TEXT NOT NULL, action TEXT NOT NULL, granted INTEGER NOT NULL DEFAULT 0,
 		 PRIMARY KEY (role, action))`,
 	} {
