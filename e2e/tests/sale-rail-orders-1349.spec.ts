@@ -22,7 +22,9 @@ test.describe('sale-screen "Orders" rail shortcut (ut-docs#1349)', () => {
     // affordance — same requirement nav.html's own top comment states for
     // every rail item (no hover on a touchscreen till).
     await expect(orders).toHaveAccessibleName(/.+/);
-    await expect(orders.locator('.nav-toggle-ico')).toHaveText('🛎️');
+    // ut-docs#1423: rail icons are inline SVG now, not emoji text.
+    await expect(orders.locator('.nav-toggle-ico svg[data-icon="bell"]')).toBeVisible();
+    await expect(orders.locator('.nav-toggle-ico')).toHaveText('');
 
     // Same visual box treatment as an existing sibling: centered, same class.
     const ordersBox = (await orders.boundingBox())!;
