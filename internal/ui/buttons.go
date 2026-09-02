@@ -249,12 +249,17 @@ type SearchResult struct {
 //
 // "code" prefers Barcode, falling back to SKU when Barcode is empty
 // (ut-docs#1220): a SKU-only item — loose produce, services, anything with
-// no barcode row — otherwise posts code="", which ButtonStore.Add rejects
-// as a 400, silently breaking "add as button" for exactly the items an
-// operator is most likely to search up by SKU. The button-code resolution
-// chain (PriceResolverAdapter) already accepts either a barcode or a SKU as
-// "code", so this fallback changes nothing about how a code resolves —
-// only which identifier gets sent when both exist for the same item.
+// no barcode row — otherwise posts code="", which used to make
+// ButtonStore.Add reject the add as a 400. As of ut-docs#1459, Add itself
+// synthesizes a stable code from itemId when code is still empty here (an
+// item with neither a barcode nor a SKU), so this function is left posting
+// "" in that remaining case rather than duplicating that fallback — Add is
+// the single choke point every caller (this template, the raw API) goes
+// through, so it's the one place that needs to know how to cope with no
+// code at all. The button-code resolution chain (PriceResolverAdapter)
+// already accepts a barcode, a SKU, or Add's synthesized code as "code", so
+// neither fallback changes how a code resolves — only which identifier
+// gets sent/stored for a given item.
 func (r SearchResult) AddVals() string {
 	code := r.Barcode
 	if code == "" {
@@ -337,12 +342,36 @@ func (s *ButtonStore) UpdateOrder(ctx context.Context, codes []string) error {
 	return s.repo.UpdateOrder(ctx, codes)
 }
 
+// synthesizedButtonCodePrefix marks a shortcut-button code that ButtonStore.Add
+// generated itself (ut-docs#1459) rather than one carrying a real barcode or
+// SKU — see Add below. Never a real barcode/SKU value, so it's a safe
+// signal for anywhere downstream that must not present it as if it were
+// one (PriceResolverAdapter.resolve blanks it off the basket line's SKU
+// rather than let a raw item UUID reach a receipt or the journal).
+const synthesizedButtonCodePrefix = "item:"
+
 func (s *ButtonStore) Add(btn Button) error {
 	btn.Label = strings.TrimSpace(btn.Label)
 	btn.Code = strings.TrimSpace(btn.Code)
 	btn.ItemID = strings.TrimSpace(btn.ItemID)
-	if btn.Label == "" || btn.Code == "" || btn.ItemID == "" {
-		return errors.New("label, code, and itemId are required")
+	if btn.Label == "" || btn.ItemID == "" {
+		return errors.New("label and itemId are required")
+	}
+	if btn.Code == "" {
+		// ut-docs#1459: an item with neither a barcode nor a SKU (loose
+		// produce with no identifier at all, or any CSV row imported with
+		// both columns blank) reaches here with code="" even after
+		// AddVals's barcode->SKU fallback (ut-docs#1220) — there is
+		// nothing left to fall back to. shortcut_buttons.barcode is this
+		// table's PRIMARY KEY, so "no code" isn't a state the row can be
+		// in at all; itemId already uniquely identifies the item (items.id
+		// is itself a primary key), so a stable synthetic code derived
+		// from it is a safe substitute for real cataloguing data. Prefixed
+		// so it can never collide with a real scanned barcode or a
+		// human-entered SKU. Deterministic per item, so re-adding the same
+		// codeless item (or the ON CONFLICT(barcode) upsert below) targets
+		// the same row rather than creating a duplicate.
+		btn.Code = synthesizedButtonCodePrefix + btn.ItemID
 	}
 	return s.repo.AddButton(context.Background(), data.ShortcutButton{
 		Label:    btn.Label,
@@ -537,8 +566,20 @@ func (a PriceResolverAdapter) resolve(ctx context.Context, code string) (pos.Bas
 	if !ok {
 		return pos.BasketLine{}, false
 	}
+	// ut-docs#1459: for a shortcut-button match, row.SKU is actually the
+	// button's own code (data.POSRepo.toShortcutLine), not the item's real
+	// SKU — and that code is now sometimes ButtonStore.Add's synthesized
+	// "item:<uuid>" rather than a real barcode/SKU. Never let that internal
+	// id reach a basket line: it flows straight to sale_lines.sku_snapshot
+	// and prints on the receipt / shows in the journal when the shop has
+	// "Show SKU" on, exactly the raw-UUID-leak class ut-docs#1176 already
+	// fixed once for the catalog's own SKU column.
+	sku := row.SKU
+	if strings.HasPrefix(sku, synthesizedButtonCodePrefix) {
+		sku = ""
+	}
 	line := pos.BasketLine{
-		SKU:        row.SKU,
+		SKU:        sku,
 		Name:       row.Name,
 		Qty:        1,
 		PriceCents: money.FromMinor(row.Price),

@@ -127,22 +127,25 @@ func TestButtonsHTTPAdd_ErrorPaths(t *testing.T) {
 func TestButtonsHTTPAdd_StoreValidationErrorRendersNonEmptyHTMLBody(t *testing.T) {
 	h, _ := newButtonsHTTP(t, "buttons_admin.html")
 
-	// Missing code -> ButtonStore.Add's "label, code, and itemId are
-	// required" validation error.
-	form := url.Values{"label": {"X"}, "itemId": {"i1"}}
+	// Missing label -> ButtonStore.Add's "label and itemId are required"
+	// validation error. (Missing code alone no longer errors as of
+	// ut-docs#1459 -- Add now synthesizes a stable code from itemId, so
+	// this test's original "missing code" trigger would silently start
+	// asserting a 200, not the 400 it means to pin.)
+	form := url.Values{"itemId": {"i1"}}
 	req := httptest.NewRequest("POST", "/api/buttons/add", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	h.Add(rec, req)
 
 	if rec.Code != 400 {
-		t.Fatalf("Add with missing code = %d, want 400", rec.Code)
+		t.Fatalf("Add with missing label = %d, want 400", rec.Code)
 	}
 	body := rec.Body.String()
 	if strings.TrimSpace(body) == "" {
 		t.Fatalf("expected a non-empty HTML error body, got blank response")
 	}
-	if strings.Contains(body, "label, code, and itemId are required") {
+	if strings.Contains(body, "label and itemId are required") {
 		t.Fatalf("raw Go validation error text leaked into the operator-facing response: %s", body)
 	}
 	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
