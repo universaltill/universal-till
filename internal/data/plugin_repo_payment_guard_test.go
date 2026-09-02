@@ -2,7 +2,6 @@ package data
 
 import (
 	"context"
-	"os"
 	"path/filepath"
 	"testing"
 
@@ -231,63 +230,6 @@ func TestSyncPluginPaymentMethods_DeactivateIsOwnershipAware(t *testing.T) {
 	if got.Active != 0 || got.PluginID != "com.a.pay" {
 		t.Fatalf("owner disabled: row must deactivate and stay A's, got %+v", got)
 	}
-}
-
-func TestMigration021_RepairsHijackedBuiltins(t *testing.T) {
-	d := pgOpenDB(t, "repair.db")
-
-	// Recreate the pre-fix damage on a real schema: built-in captured,
-	// renamed, and deactivated by the old sync — with the hijacker's
-	// payment entry still installed.
-	pgPlugin(t, d, "com.evil.tender", 0)
-	pgEntry(t, d, "pe-evil", "com.evil.tender", "cash", "Evil Cash")
-	mustExec(t, d, `UPDATE payment_methods SET plugin_id = 'com.evil.tender', name = 'Evil Cash', is_active = 0 WHERE id = 'cash'`)
-
-	sqlBytes, err := os.ReadFile(repairMigrationPath(t))
-	if err != nil {
-		t.Fatalf("read repair migration: %v", err)
-	}
-	if _, err := d.DB.Exec(string(sqlBytes)); err != nil {
-		t.Fatalf("re-exec repair migration (must be idempotent): %v", err)
-	}
-
-	got, _ := pgMethod(t, d, "cash")
-	if got.PluginID != "" || got.Active != 1 {
-		t.Fatalf("hijacked built-in not repaired: %+v (want plugin ownership cleared + active)", got)
-	}
-	// Names are deliberately NOT reset (operators may rename tenders) —
-	// ADR-0031's explicit promise.
-	if got.Name != "Evil Cash" {
-		t.Fatalf("repair must not touch names, got %q", got.Name)
-	}
-	// The hijacking ENTRY must be disarmed too: both payment dispatch
-	// gates match on entry key alone, so a live entry with key 'cash'
-	// would still receive (and could veto) payment.cash.* events.
-	var entryActive int
-	if err := d.DB.QueryRow(`SELECT is_active FROM plugin_entries WHERE id = 'pe-evil'`).Scan(&entryActive); err != nil {
-		t.Fatalf("read hijacker entry: %v", err)
-	}
-	if entryActive != 0 {
-		t.Fatal("migration must deactivate legacy payment entries squatting on built-in keys")
-	}
-
-	// A genuine plugin-backed method must NOT be touched by the repair.
-	mustExec(t, d, `INSERT INTO payment_methods (id, name, type, is_active, sort_order, plugin_id) VALUES ('okpay','OK Pay','card',0,100,'com.evil.tender')`)
-	if _, err := d.DB.Exec(string(sqlBytes)); err != nil {
-		t.Fatalf("repair migration second run: %v", err)
-	}
-	if got, _ := pgMethod(t, d, "okpay"); got.PluginID != "com.evil.tender" || got.Active != 0 {
-		t.Fatalf("repair must only touch the seeded built-ins, got %+v", got)
-	}
-}
-
-func repairMigrationPath(t *testing.T) string {
-	t.Helper()
-	matches, err := filepath.Glob(filepath.Join("..", "db", "migrations", "021_*.sql"))
-	if err != nil || len(matches) != 1 {
-		t.Fatalf("expected exactly one 021 migration, got %v (err=%v)", matches, err)
-	}
-	return matches[0]
 }
 
 // Follow-up from PR #102's review (ut-docs#16): a shop-created tender

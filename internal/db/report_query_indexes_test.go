@@ -7,12 +7,17 @@ import (
 	"testing"
 )
 
-// TestMigration076ReportQueryIndexesMakeDateRangePredicatesSargable runs the
-// actual production query shapes from internal/data/pos_repo.go through
-// SQLite's own planner (EXPLAIN QUERY PLAN) against a fresh migrated DB and
-// confirms migration 076's expression indexes are what the planner picks —
-// not a full scan, and not falling back to an existing equality-only index
-// the way these queries did before this migration (ut-docs#1319).
+// The report-query indexes below were introduced by migration 076
+// (ut-docs#1319) and now live in the 001 baseline (ADR-0074); every test in
+// this file asserts the final state of a fresh Open, so none needed the
+// old ledger.
+//
+// TestReportQueryIndexesMakeDateRangePredicatesSargable runs the actual
+// production query shapes from internal/data/pos_repo.go through SQLite's
+// own planner (EXPLAIN QUERY PLAN) against a fresh migrated DB and confirms
+// the expression indexes are what the planner picks — not a full scan, and
+// not falling back to an existing equality-only index the way these
+// queries did before those indexes existed (ut-docs#1319).
 //
 // Deliberately does NOT run ANALYZE: this product never calls ANALYZE
 // anywhere (grep confirms), so a real till's sqlite_stat1 table never
@@ -24,7 +29,7 @@ import (
 // composite (status, datetime(created_at)) shape actually wins under the
 // real no-ANALYZE conditions, which is why this test asserts against real
 // migrated schema rather than trusting the reasoning alone.
-func TestMigration076ReportQueryIndexesMakeDateRangePredicatesSargable(t *testing.T) {
+func TestReportQueryIndexesMakeDateRangePredicatesSargable(t *testing.T) {
 	d, err := Open(filepath.Join(t.TempDir(), "m076-plan.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -96,20 +101,20 @@ func TestMigration076ReportQueryIndexesMakeDateRangePredicatesSargable(t *testin
 	}
 }
 
-// TestMigration076DateRangeSummaryStaysUnfixed is a documentation-accuracy
+// TestReportQueryIndexesDateRangeSummaryStaysUnfixed is a documentation-accuracy
 // regression guard (review finding, ut-docs#1319): an earlier draft of
 // migration 076's own comments wrongly claimed dateRangeSummary/
 // EndOfDay(Range) were fixed by idx_sales_status_created_dt. They are not —
 // pos_repo.go's dateRangeSummary uses date(created_at, 'localtime') BETWEEN,
 // not datetime(created_at), the same non-indexable 'localtime' shape the
-// migration deliberately leaves unfixed for worker_allocations/payments (see
-// 076_report_query_indexes.sql's own comment for why). This test proves the
-// composite index demotes to a status-only search for this exact query
-// shape rather than silently becoming sargable (which would make the
-// migration's comment right by accident) or silently regressing further.
-// If this ever starts failing because the plan changed, the migration's own
-// "NOT fixed" section needs a matching update, not just this test.
-func TestMigration076DateRangeSummaryStaysUnfixed(t *testing.T) {
+// migration deliberately left unfixed for worker_allocations/payments (see
+// TestReportQueryIndexesDidNotIndexLocaltimeExpressions below for why). This
+// test proves the composite index demotes to a status-only search for this
+// exact query shape rather than silently becoming sargable (which would
+// make that old claim right by accident) or silently regressing further.
+// If this ever starts failing because the plan changed, this file's own
+// "NOT fixed" notes need a matching update, not just this test.
+func TestReportQueryIndexesDateRangeSummaryStaysUnfixed(t *testing.T) {
 	d, err := Open(filepath.Join(t.TempDir(), "m076-daterangesummary.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -147,14 +152,14 @@ func TestMigration076DateRangeSummaryStaysUnfixed(t *testing.T) {
 	// (which would show as "<expr>>? AND <expr><?" the way the datetime()
 	// cases above do).
 	if !strings.Contains(full, "idx_sales_status_created_dt (status=?)") {
-		t.Fatalf("query plan = %q, expected dateRangeSummary's date(...,'localtime') predicate to stay unfixed (status-only search) — if this changed, update 076_report_query_indexes.sql's comment to match", full)
+		t.Fatalf("query plan = %q, expected dateRangeSummary's date(...,'localtime') predicate to stay unfixed (status-only search) — if this changed, update this file's NOT-fixed notes to match", full)
 	}
 	if strings.Contains(full, "<expr>") {
 		t.Fatalf("query plan = %q, unexpectedly sargable on the date range — investigate before declaring this fixed", full)
 	}
 }
 
-// TestMigration076DidNotIndexLocaltimeExpressions is a regression guard for
+// TestReportQueryIndexesDidNotIndexLocaltimeExpressions is a regression guard for
 // a real bug caught while building this migration: SQLite classifies
 // date()/datetime()'s 'localtime' modifier as non-deterministic (it depends
 // on the host's timezone database), and refuses to let a non-deterministic
@@ -168,7 +173,7 @@ func TestMigration076DateRangeSummaryStaysUnfixed(t *testing.T) {
 // to both tables still succeed after 076 — if a future migration
 // reintroduces a 'localtime'-expression index on either table, this fails
 // immediately instead of silently shipping a checkout-breaking migration.
-func TestMigration076DidNotIndexLocaltimeExpressions(t *testing.T) {
+func TestReportQueryIndexesDidNotIndexLocaltimeExpressions(t *testing.T) {
 	d, err := Open(filepath.Join(t.TempDir(), "m076-localtime-writes.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -192,11 +197,11 @@ func TestMigration076DidNotIndexLocaltimeExpressions(t *testing.T) {
 	}
 }
 
-// TestMigration076PlainIndexesExist confirms the three plain (non-expression)
+// TestReportQueryIndexesPlainIndexesExist confirms the three plain (non-expression)
 // indexes this migration adds are actually used for the equality lookups
 // they exist to fix (ut-docs#1319): variant_barcodes.variant_id and
 // sale_links' two FK-style columns, all previously unindexed.
-func TestMigration076PlainIndexesExist(t *testing.T) {
+func TestReportQueryIndexesPlainIndexesExist(t *testing.T) {
 	d, err := Open(filepath.Join(t.TempDir(), "m076-plain.db"))
 	if err != nil {
 		t.Fatal(err)
@@ -237,38 +242,5 @@ func TestMigration076PlainIndexesExist(t *testing.T) {
 				t.Fatalf("query plan = %q, want it to use index %s", full, tc.wantIndex)
 			}
 		})
-	}
-}
-
-// TestMigration076IsIdempotentOnCleanData confirms 076 replaying against a
-// till that already has it applied is a genuine no-op (every statement is
-// IF NOT EXISTS) — the standard rewind-and-reopen shape used by every other
-// *_migration_test.go in this package.
-func TestMigration076IsIdempotentOnCleanData(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "m076-idempotent.db")
-	d, err := Open(path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	rewindSaleLineOrderType078(t, d) // 078 replays too after a >= 76 rewind
-	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= 76`); err != nil {
-		t.Fatalf("rewind schema_migrations: %v", err)
-	}
-	if err := d.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	d, err = Open(path) // replays 076 a second time
-	if err != nil {
-		t.Fatalf("reopen replaying 076 a second time: %v", err)
-	}
-	defer d.Close()
-
-	var n int
-	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type = 'index' AND name = 'idx_sales_status_created_dt'`).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	if n != 1 {
-		t.Fatalf("idx_sales_status_created_dt count after re-applying 076 = %d, want exactly 1", n)
 	}
 }

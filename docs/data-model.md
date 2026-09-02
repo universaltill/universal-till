@@ -4,7 +4,20 @@ This document describes the physical relational schema implemented by `001_init.
 and subsequent migrations.
 
 - DB engine: SQLite
-- Migrations: `internal/db/migrations/*.sql`
+- Migrations: `internal/db/migrations/*.sql` — `001_init.sql` is a single
+  squashed baseline (ADR-0074, 2026-09): a dump of the schema plus every seed
+  row the previous 78-file ledger produced. It may be edited freely until the
+  first paying shop goes live on it; append-only from then on.
+- Ledger: `schema_migrations(version, applied_at, name, checksum)` is created
+  by `internal/db/db.go`, never by a migration file. On every boot the runner
+  compares each applied version's recorded `name`/`checksum` with the on-disk
+  file and refuses to start on a mismatch (a file renamed or edited after being
+  applied) rather than silently skipping a step.
+- Lineage: `schema_lineage(id=1, reset_marker, reset_at)` is written by the
+  baseline. A database with ledger rows but no lineage row predates the reset
+  and `db.Open` refuses it with "database predates the schema reset — delete
+  the data directory and start again"; there is no upgrade path from the
+  pre-reset schema by design.
 - Foreign keys: `PRAGMA foreign_keys = ON`
 
 ## Money & quantities
@@ -19,6 +32,7 @@ and subsequent migrations.
 ### 1. Lookup & configuration
 
 - `schema_migrations`
+- `schema_lineage`
 - `settings`
 - `tax_codes`
 - `categories`
