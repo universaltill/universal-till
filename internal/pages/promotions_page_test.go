@@ -10,6 +10,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -337,6 +338,47 @@ func TestPromotionsPageEdit_UpdatesButNotCode(t *testing.T) {
 	var auditCount int
 	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_type = 'promotion' AND entity_id = 'EDITME2' AND action = 'promotion_edit'`).Scan(&auditCount); err != nil || auditCount != 1 {
 		t.Fatalf("audit rows for edit = %d, err=%v", auditCount, err)
+	}
+}
+
+// ut-docs#1290: newPromotionView's ValueAmountMajor prefill (the amount-type
+// edit input's value attribute) hardcoded a 2-decimal `%.2f` against `/100`,
+// same defect class as ut-docs#1274's CarryForwardDisplay -- silently wrong
+// on a 0-decimal currency (IRR/IRT/IQD/AFN/JPY), where minor units ARE major
+// units (500 minor rendered "5.00" instead of "500"). Inserts the row
+// directly at a known minor value so this test isolates the display/prefill
+// fix from the (separate, out-of-scope) value_amount write-path parsing.
+func TestPromotionsPageList_ValueAmountMajorIsCurrencyAware(t *testing.T) {
+	mux, d := newPromotionsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	if _, err := d.Db.Exec(`INSERT INTO promotions(code, type, value, is_active) VALUES('IRTPROMO', 'amount', 500, 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	get := func() string {
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/promotions", nil), manager)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /promotions = %d: %s", rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	httpx.InitCurrency("GBP")
+	body := get()
+	if !strings.Contains(body, `value="5.00"`) {
+		t.Fatalf("expected the 2-decimal prefill for GBP, got:\n%s", body)
+	}
+
+	httpx.InitCurrency("IRT")
+	t.Cleanup(func() { httpx.InitCurrency("GBP") }) // ut-docs#970 convention: process-global, reset for later tests in this package.
+	body = get()
+	if !strings.Contains(body, `value="500"`) {
+		t.Fatalf("expected the 0-decimal prefill \"500\" (no /100) for IRT, got:\n%s", body)
+	}
+	if strings.Contains(body, `value="5.00"`) {
+		t.Fatalf("expected NO 2-decimal prefill left over once currency is 0-decimal, got:\n%s", body)
 	}
 }
 
