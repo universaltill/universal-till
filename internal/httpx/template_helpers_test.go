@@ -349,6 +349,72 @@ func TestBaseLayoutUpdateChipHasNoLinkWhenDownloadLinkNotActionable(t *testing.T
 	}
 }
 
+// ut-docs#1232: the status bar's underpowered-PSU chip must render, be
+// persistent (never dismissible, never a toast/modal, per the offline-first
+// status-chip rule), carry the translated label, and — since the
+// remediation text lives in title="" with no hover on a touchscreen till —
+// be a real link to the matching help topic rather than an inert span
+// (independent review finding).
+func TestBaseLayoutPSUChipRendersWhenUnderpowered(t *testing.T) {
+	InitI18n(realI18n(t), "en")
+	funcs := FuncsFor("en")
+	funcs["psuunderpowered"] = func() bool { return true }
+	r, err := NewRenderer(
+		filepath.Join("web", "ui", "layouts", "base.html"),
+		filepath.Join("web", "ui", "pages", "pin.html"),
+		funcs,
+	)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	w := httptest.NewRecorder()
+	data := map[string]any{"title": "Change PIN", "theme": "", "menuItems": nil, "errKey": ""}
+	if err := r.Render(w, "base", data); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	body := w.Body.String()
+	idx := strings.Index(body, `class="sb-item sb-power"`)
+	if idx == -1 {
+		t.Fatalf("expected the status-bar PSU chip to render, got %.500s", body)
+	}
+	end := strings.Index(body[idx:], "</a>")
+	if end == -1 {
+		t.Fatalf("expected the PSU chip to be a link (<a>...</a>) to its help topic, got %.500s", body[idx:])
+	}
+	chip := body[idx : idx+end]
+	if !strings.Contains(chip, `href="/help/power-supply"`) {
+		t.Fatalf("expected the PSU chip to link to its help topic, got %q", chip)
+	}
+	if !strings.Contains(chip, "Power supply too weak") {
+		t.Fatalf("expected the translated status.psu_underpowered label, got %q", chip)
+	}
+}
+
+// The negative control: the chip must not render at all when the till
+// isn't a Raspberry Pi, or is one with a healthy supply — pihealth.Current()
+// defaults to zero (Underpowered=false) in both cases.
+func TestBaseLayoutPSUChipAbsentWhenHealthy(t *testing.T) {
+	InitI18n(realI18n(t), "en")
+	funcs := FuncsFor("en")
+	funcs["psuunderpowered"] = func() bool { return false }
+	r, err := NewRenderer(
+		filepath.Join("web", "ui", "layouts", "base.html"),
+		filepath.Join("web", "ui", "pages", "pin.html"),
+		funcs,
+	)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	w := httptest.NewRecorder()
+	data := map[string]any{"title": "Change PIN", "theme": "", "menuItems": nil, "errKey": ""}
+	if err := r.Render(w, "base", data); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if body := w.Body.String(); strings.Contains(body, "sb-power") {
+		t.Fatalf("expected no PSU chip when psuunderpowered is false, got %.500s", body)
+	}
+}
+
 func TestNewMuxDispatchesRegisteredRoutes(t *testing.T) {
 	mux := NewMux()
 	mux.HandleFunc("/ping", func(w http.ResponseWriter, r *http.Request) {

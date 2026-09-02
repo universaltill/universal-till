@@ -23,6 +23,7 @@ import (
 	"github.com/universaltill/universal-till/internal/manual"
 	moneypkg "github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/paths"
+	"github.com/universaltill/universal-till/internal/pihealth"
 	"github.com/universaltill/universal-till/internal/selfupdate"
 	"github.com/universaltill/universal-till/internal/updates"
 	uiassets "github.com/universaltill/universal-till/web"
@@ -79,7 +80,13 @@ var baseFuncs = template.FuncMap{
 	"enrolled":                  func() bool { return enroll.CurrentStatus().Registered },
 	"enrolstore":                func() string { return enroll.CurrentStatus().StoreID },
 	"enroldevice":               func() string { return enroll.CurrentStatus().DeviceID },
-	"jsonVals":                  jsonVals,
+	// psuunderpowered: ut-docs#1232 — a Raspberry Pi whose power supply
+	// can't negotiate 5V/5A restricts USB peripheral current (this till's
+	// own touchscreen is USB) with no on-screen warning today; the status
+	// bar's persistent chip surfaces internal/pihealth's local, offline
+	// check. Always false on non-Pi platforms.
+	"psuunderpowered": func() bool { return pihealth.Current().Underpowered },
+	"jsonVals":        jsonVals,
 	// Default target for the nav's contextual "?" — the manual's index.
 	// Render() overrides this per request with the topic documenting the page
 	// actually being rendered; fragment renderers that also parse nav.html

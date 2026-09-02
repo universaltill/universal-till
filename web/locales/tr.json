@@ -1024,6 +1024,8 @@
   "shifts.variance": "Fark",
   "status.offline": "Çevrimdışı",
   "status.online": "Çevrimiçi",
+  "status.psu_underpowered": "Güç kaynağı yetersiz",
+  "status.psu_underpowered_hint": "Bu cihazın güç kaynağı yeterli akım sağlayamıyor — dokunmatik ekran gibi USB çevre birimleri düzgün çalışmayabilir. Bu kart için resmi güç kaynağıyla değiştirin.",
   "status.register_till": "Pazar yeri: bağlı değil",
   "status.update_available": "Güncelleme mevcut",
   "status.update_now": "Şimdi güncelle",
