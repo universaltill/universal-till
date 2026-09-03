@@ -79,18 +79,9 @@
         <p class="muted" style="font-size:.82rem">{{ T "shifts.count_protocol_hint" }}</p>
         <input type="hidden" name="count_protocol" id="count-protocol">
         <div id="denom-grid" style="display:grid; grid-template-columns:repeat(3, 1fr); gap:.4rem">
-          <label>£50 <input type="number" min="0" step="1" data-denom="5000" class="denom-count"></label>
-          <label>£20 <input type="number" min="0" step="1" data-denom="2000" class="denom-count"></label>
-          <label>£10 <input type="number" min="0" step="1" data-denom="1000" class="denom-count"></label>
-          <label>£5 <input type="number" min="0" step="1" data-denom="500" class="denom-count"></label>
-          <label>£2 <input type="number" min="0" step="1" data-denom="200" class="denom-count"></label>
-          <label>£1 <input type="number" min="0" step="1" data-denom="100" class="denom-count"></label>
-          <label>50p <input type="number" min="0" step="1" data-denom="50" class="denom-count"></label>
-          <label>20p <input type="number" min="0" step="1" data-denom="20" class="denom-count"></label>
-          <label>10p <input type="number" min="0" step="1" data-denom="10" class="denom-count"></label>
-          <label>5p <input type="number" min="0" step="1" data-denom="5" class="denom-count"></label>
-          <label>2p <input type="number" min="0" step="1" data-denom="2" class="denom-count"></label>
-          <label>1p <input type="number" min="0" step="1" data-denom="1" class="denom-count"></label>
+          {{ range currency.Denominations }}
+          <label>{{ money . }} <input type="number" min="0" step="1" data-denom="{{ . }}" class="denom-count"></label>
+          {{ end }}
         </div>
       </details>
       <button type="submit" class="btn primary" style="width:100%">{{ T "shifts.close" }}</button>
