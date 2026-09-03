@@ -73,6 +73,22 @@ func exempt(path string) bool {
 		// the pilot tablet: POST /api/setup/language -> 303, POST
 		// /api/setup/tax-plugin -> 401, same request, same boot.
 		"/api/setup/tax-plugin",
+		// ut-docs#1509: the wizard's restore/import step (setup.html's
+		// hx-post="/api/import"). Fourth route to ship behind this wall with
+		// a handler that already authorises itself: import_page.go's
+		// ut-docs#1168 first-boot exemption is preview-only, REFUSES any
+		// request carrying a session, requires NeedsFirstBoot, and fails
+		// closed on a nil AuthSvc — none of which ever ran, because the
+		// middleware answered 401 first and a first-boot till has no
+		// operator to sign in as. Same "the handler authenticates itself"
+		// tier as /api/sync/pair-request and /api/settings/exit-to-os below.
+		//
+		// This does NOT open import on a configured till: there,
+		// canPerform fails, no session is present, NeedsFirstBoot is false,
+		// and the handler answers 403 — and even inside the first-boot
+		// window it can only PREVIEW (commit=1 is refused; the wizard's
+		// real commit rides the final submit as the just-created admin).
+		"/api/import",
 		// ut-docs#1165: step 1's background update-check + its explicit
 		// apply action — same first-boot-only window as /api/setup/language
 		// above (NeedsFirstBoot refuses both once an operator exists).
