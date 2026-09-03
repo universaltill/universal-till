@@ -317,13 +317,14 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// must actually send the money back (e.g. refund the Stripe charge),
 		// and a failed provider refund must stop the return. No subscriber =
 		// no gate (cash and hook-less methods behave as before).
-		if blocked := blockingPaymentEvent(r.Context(), d, method, "refund", map[string]any{
+		refundResp, blocked := blockingPaymentEventWithResponse(r.Context(), d, method, "refund", map[string]any{
 			"method":           method,
 			"amount":           refundTotal.Minor(),
 			"currency":         detail.Currency,
 			"original_sale_id": detail.ID,
 			"original_receipt": detail.ReceiptNo,
-		}); blocked != nil {
+		})
+		if blocked != nil {
 			// ut-docs#950: `blocked` is a plugin-originated error -- whatever
 			// text a third-party payment plugin's payment.<key>.refund hook
 			// returned -- so it must never reach the operator verbatim, same
@@ -411,6 +412,11 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if signRes.Outcome == fiscalSignApproved {
 			recordFiscalTSEEvidence(r.Context(), repo, saleID, actorID, signRes.Evidence)
 		}
+		// A fiscal DEVICE's refund slip (Turkey's ÖKC iade fişi), when the
+		// refund's payment leg went through a device plugin: persisted
+		// against the return's own sale row, same as completeTender does
+		// for a sale (fiscal_device_hook.go).
+		recordFiscalDeviceEvidence(r.Context(), d, repo, saleID, actorID, pickDeviceEvidence(nil, refundResp))
 		// Mirror the restock to inventory connectors (best-effort, non-blocking).
 		publishStockAdjustedForSale(r.Context(), d, saleInput)
 		// A replica's refund is a journaled sale like any other (ADR-0011

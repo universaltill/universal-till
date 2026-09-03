@@ -128,42 +128,58 @@ legal record.
 
 ## Steps for engineering (what we build, in order)
 
-These are ours. Steps E1–E3 need no device and can start now; E4 onward
-needs Step 4 above.
+These are ours. **Status 2026-09-03:** E2 and E3 are built and tested
+(`plugins/tax-tr`, `scripts/okc-sim`, `/fiscal-device`, the tender path
+and both receipt renderers); E4 exists as a working plugin with the bridge
+driver complete and every maker driver as a fail-closed scaffold. What
+remains needs Step 3–4 above (a maker's integrator pack and a device on a
+LAN) plus the ADR in E1.
 
-### E1 — Write the ADR for the Turkish device seam (ut-docs, document-first)
+### E1 — Write the ADR for the Turkish device seam (ut-docs, document-first) — *open*
 Germany's `fiscal.sign.ask` fires *after* payment and lets the sale
 proceed unsigned if the signer is down (ADR-0044). Turkey is different:
 the device *takes the payment and prints the receipt*, so it must be
-called *at* tender and the sale cannot proceed without it. Proposal: the
-ÖKC plugin implements the blocking `payment.<key>.authorize` seam (already
-used by the demo terminal and QR pay) as a "pay on device" tender, returns
-the device's receipt and Z numbers, and sets `fiscal.tse_configured` once
-paired. Needs an ADR in ut-docs before code (ADR-0007).
+called *at* tender and the sale cannot proceed without it. The code now
+does exactly this: the ÖKC plugin implements the existing blocking
+`payment.<key>.authorize` seam (payment-provider contract) as a "pay on
+device" tender, answers with a `fiscal_device` evidence block core
+persists (`internal/fiscal/device.go`, `fiscal_device_receipts`), and the
+first receipt flips `fiscal.tse_configured`. No new extension point was
+added — it reuses one ADR-0041 already migrated — but the additive
+authorize payload (`currency, total, tax_inclusive, lines[]`) and the
+evidence block are contract changes that need recording in ut-docs
+(`reference/payment-provider-contract.md`) and an ADR registering the
+"device market" reading of `fiscal.tse_configured`.
 
-### E2 — Build an ÖKC simulator
-A small Go program that speaks the GMP-3 wired flow and a Hugin-PC-Link-
-style REST flow on localhost: accepts a basket, "takes" cash or card,
-returns a receipt number, keeps a Z counter, can be told to fail or time
-out. Lives under `e2e/` or `scripts/` as test support. Lets us build and
-test the whole flow before a real device exists and keeps CI honest after.
+### E2 — Build an ÖKC simulator — *done*
+`scripts/okc-sim` (library in `plugins/tax-tr/okc/sim`): a stateful
+stand-in device on TCP speaking the bridge protocol — receipt counter, Z
+counter, idempotency on the till's event id, and switchable failure modes
+(decline all, silent, slow). `go run ./scripts/okc-sim` and point the
+plugin at it. Used by the driver tests and by the runtime test that runs
+the real `.wasm` through the till's WASM host.
 
-### E3 — Core: "pay on device" tender and record fields
-- A tender path that hands the basket to the payment plugin and waits
-  (bounded) for the device result; on failure the sale stays open with a
-  clear chip, never a modal (offline-first rule).
-- Store the device's receipt number, Z number and device serial on the
-  sale (migration in `internal/db`, repo method in `internal/data`).
-- End-of-day shows the device's Z status next to our totals.
-- Turkey status page (like Germany's fiscal register): pair the device
-  (maker, IP, port), show connection state, last Z, and a "?" help topic
-  in `en`, `tr`, `fa`, `ar`.
+### E3 — Core: "pay on device" tender and record fields — *done*
+- The authorize payload now carries the basket (`lines[]` with VAT rates,
+  `currency`, `total`, discounts) so a device can print; a declined,
+  silent or unreachable device refuses the tender and keeps the basket
+  (the existing decline toast, no modal).
+- `fiscal_device_receipts` stores receipt number, kind, serial, Z number
+  and issue time per sale and per refund (`data.FiscalDeviceReceipt`);
+  both receipt renderers print them.
+- `/fiscal-device` (manager, Türkiye + plugin active): plugin state and
+  device address, confirmed/not, last receipt, today's count, confirm and
+  unpair with audit. Help topic `fiscal-device` in `en`, `tr`, `fa`, `ar`.
+- Still open: showing the device's Z status inside end-of-day (today the
+  page shows the last Z number the device reported).
 
-### E4 — `ut-plugin-tax-tr` against the first maker
-New plugin repo in the org, WASM runtime with the `tcp:<host>:<port>` and
-`net:` permissions (ADR-0001 amendment), GMP-3 wired first, then the
-maker's REST API. Bilgi fişi, refund and void mapping. Tested against the
-simulator in CI and the real device by hand.
+### E4 — `ut-plugin-tax-tr` against the first maker — *plugin built, maker drivers pending*
+`plugins/tax-tr` (WASM, `tcp:*`): sale, refund and settle legs, settings
+for driver/host/port/timeouts, the **bridge** driver complete and tested
+end to end through the till's runtime. `gmp3`, `hugin-pclink`,
+`pavo-rest` and `token-x` are scaffolds that refuse every tender with a
+clear log line until filled in from the maker's integrator pack against a
+test device (Steps 3–4). Moves to its own repo when first published.
 
 ### E5 — Second maker, then Android-on-device
 Add the pilot region's second most common maker. If a maker admits

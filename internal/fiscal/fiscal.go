@@ -123,12 +123,14 @@ type Gate struct {
 // RequiresHardGate reports whether country is a market whose sales are
 // hard-gated on fiscal readiness: Germany (ADR-0048) and Turkey (Law No.
 // 3100's YN ÖKC mandate, ut-docs#1208, reference/turkey-compliance.md §1).
-// Turkey has no fiscal-signing plugin yet (no ut-plugin-tax-tr), which is
-// exactly why it belongs here rather than waiting for one — per ADR-0050
-// Decision 2, the enforcement point that notices a plugin's absence must be
-// core's, not the absent plugin's, the same reasoning that already gates DE
-// while ut-plugin-tax-de is itself an incomplete skeleton. A TR shop that
-// declares fiscal.system_of_record with no fiscal.tse_configured now hits
+// Turkey's signer is the ÖKC device itself, driven by the ut-plugin-tax-tr
+// payment plugin (plugins/tax-tr, device.go in this package); the gate
+// belongs here rather than in that plugin — per ADR-0050 Decision 2, the
+// enforcement point that notices a plugin's absence must be core's, not
+// the absent plugin's, the same reasoning that already gates DE while
+// ut-plugin-tax-de is itself an incomplete skeleton. A TR shop that
+// declares fiscal.system_of_record with no fiscal.tse_configured (for TR:
+// no device has yet proven it prints, fiscal_device_hook.go) hits
 // BlockedNeverConfigured instead of silently completing an unsigned sale.
 // The next fiscalised market (ADR-0047's list) is a further one-line
 // addition here.

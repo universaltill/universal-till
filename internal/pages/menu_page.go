@@ -37,6 +37,7 @@ var iconFor = map[string]string{
 	"/tills":            "🖥️",
 	"/report-issue":     "🐞",
 	"/fiscal-register":  "📋",
+	"/fiscal-device":    "🧾",
 	// ut-docs#1371: /orders had no entry here, so every Orders tile fell
 	// through to the "▪️" no-icon fallback below — the exact "plain black
 	// square" the report described, not a font-coverage gap. 🛎️ (service
@@ -96,6 +97,14 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 			// visibility-only fix, not a reachability one.
 			if d.CurrentState().Country == "DE" && fiscalRegisterPluginActive(r.Context(), d) {
 				add("/fiscal-register", "fiscalregister.title")
+			}
+			// Türkiye fiscal-device page (YN ÖKC, fiscal_device_page.go):
+			// same shape as the German tile — country AND the Turkish
+			// fiscal-device plugin installed and active, so a TR shop with
+			// no plugin (shadow mode beside its existing register) never
+			// sees a tile for a device the till isn't driving.
+			if d.CurrentState().Country == "TR" && fiscalDevicePluginActive(r.Context(), d) {
+				add("/fiscal-device", "fiscaldevice.title")
 			}
 		}
 		// ut-docs#903: locations_page.go/registers_page.go moved off the

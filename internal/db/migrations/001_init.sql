@@ -974,6 +974,20 @@ CREATE TABLE fiscal_tse_signatures (
     created_at          TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+CREATE TABLE fiscal_device_receipts (
+    sale_id      TEXT PRIMARY KEY,
+    device_kind  TEXT NOT NULL DEFAULT 'okc',
+    maker        TEXT NOT NULL DEFAULT '',
+    serial       TEXT NOT NULL DEFAULT '',
+    receipt_no   TEXT NOT NULL,
+    receipt_kind TEXT NOT NULL DEFAULT 'mali_fis',
+    z_no         INTEGER NOT NULL DEFAULT 0,
+    issued_at    TEXT NOT NULL DEFAULT '',
+    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE INDEX idx_fiscal_device_receipts_created ON fiscal_device_receipts (created_at);
+
 CREATE UNIQUE INDEX ux_plugin_settings_global
     ON plugin_settings (plugin_id, key)
     WHERE scope = 'global';

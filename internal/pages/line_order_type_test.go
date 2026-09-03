@@ -301,7 +301,7 @@ func TestRenderReceipt_MixedSaleMarksLines_UniformUnchanged(t *testing.T) {
 		{Name: "Coffee", Qty: 1, UnitPrice: 100, OrderType: ""},
 		{Name: "Coffee", Qty: 1, UnitPrice: 100, OrderType: pos.OrderTypeTakeaway},
 	}
-	html, err := renderReceipt(funcs, "1", mixed, nil, 200, 0, 200, false, 0, "", 0, nil, false, false, false, false, nil, "S", receiptDesign{}, "")
+	html, err := renderReceipt(funcs, "1", mixed, nil, 200, 0, 200, false, 0, "", 0, nil, false, false, false, false, nil, nil, "S", receiptDesign{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -309,7 +309,7 @@ func TestRenderReceipt_MixedSaleMarksLines_UniformUnchanged(t *testing.T) {
 		t.Fatalf("mixed receipt lacks markers: %s", html)
 	}
 	uniform := []pos.SaleLineInput{{Name: "Coffee", Qty: 1, UnitPrice: 100, OrderType: pos.OrderTypeTakeaway}}
-	html, err = renderReceipt(funcs, "2", uniform, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, "S", receiptDesign{}, "")
+	html, err = renderReceipt(funcs, "2", uniform, nil, 100, 0, 100, false, 0, "", 0, nil, false, false, false, false, nil, nil, "S", receiptDesign{}, "")
 	if err != nil {
 		t.Fatal(err)
 	}

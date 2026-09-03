@@ -1,0 +1,67 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "fiscaldevice.title" }} {{ helpLink "fiscal-device" }}</h1>
+</div>
+
+<p class="muted">{{ T "fiscaldevice.intro" }}</p>
+
+{{ if .msgKey }}<p class="login-ok">{{ T .msgKey }}</p>{{ end }}
+
+<div class="users-layout">
+  <div class="card">
+    <h3>{{ T "fiscaldevice.plugin.title" }}</h3>
+    {{ if .pluginActive }}
+    <p>✓ {{ T "fiscaldevice.plugin.active" }} <span class="muted" style="font-family:monospace">{{ .pluginID }}</span></p>
+    <table class="table">
+      <tbody>
+        <tr><th>{{ T "fiscaldevice.device.driver" }}</th><td>{{ if .driver }}{{ .driver }}{{ else }}bridge{{ end }}</td></tr>
+        <tr><th>{{ T "fiscaldevice.device.host" }}</th><td>{{ if .host }}{{ .host }}{{ else }}127.0.0.1{{ end }}</td></tr>
+        <tr><th>{{ T "fiscaldevice.device.port" }}</th><td>{{ if .port }}{{ .port }}{{ else }}4711{{ end }}</td></tr>
+        <tr><th>{{ T "fiscaldevice.device.maker" }}</th><td>{{ if .maker }}{{ .maker }}{{ else }}—{{ end }}</td></tr>
+      </tbody>
+    </table>
+    <p><a class="btn secondary" href="/plugins/{{ .pluginID }}/settings">{{ T "fiscaldevice.plugin.settings_link" }}</a></p>
+    <p class="muted">{{ T "fiscaldevice.driver.note" }}</p>
+    {{ else }}
+    <p>{{ T "fiscaldevice.plugin.missing" }}</p>
+    <p><a class="btn secondary" href="/plugins">{{ T "nav.plugins" }}</a></p>
+    {{ end }}
+  </div>
+
+  <div class="card">
+    <h3>{{ T "fiscaldevice.state.title" }}</h3>
+    <p>{{ if .configured }}✓ {{ T "fiscaldevice.state.confirmed" }}{{ else }}⚠ {{ T "fiscaldevice.state.not_confirmed" }}{{ end }}</p>
+    <p class="muted">{{ if .systemOfRecord }}{{ T "fiscaldevice.state.system_of_record" }}{{ else }}{{ T "fiscaldevice.state.shadow" }}{{ end }}</p>
+    <div style="display:flex; gap:.5rem; flex-wrap:wrap">
+      {{ if not .configured }}
+      <form method="post" action="/api/fiscal-device/confirm">
+        <button type="submit" class="btn primary">{{ T "fiscaldevice.actions.confirm" }}</button>
+      </form>
+      {{ else }}
+      <form method="post" action="/api/fiscal-device/unpair">
+        <button type="submit" class="btn secondary">{{ T "fiscaldevice.actions.unpair" }}</button>
+      </form>
+      {{ end }}
+    </div>
+    <p class="muted">{{ if not .configured }}{{ T "fiscaldevice.actions.confirm_help" }}{{ else }}{{ T "fiscaldevice.actions.unpair_help" }}{{ end }}</p>
+  </div>
+
+  <div class="card">
+    <h3>{{ T "fiscaldevice.last.title" }}</h3>
+    {{ if .latest }}
+    <table class="table">
+      <tbody>
+        <tr><th>{{ T "fiscaldevice.last.receipt_no" }}</th><td>{{ .latest.ReceiptNo }}</td></tr>
+        <tr><th>{{ T "fiscaldevice.last.kind" }}</th><td>{{ .latest.ReceiptKind }}</td></tr>
+        <tr><th>{{ T "fiscaldevice.last.serial" }}</th><td>{{ if .latest.Serial }}{{ .latest.Serial }}{{ else }}—{{ end }}</td></tr>
+        <tr><th>{{ T "fiscaldevice.last.z_no" }}</th><td>{{ if .latest.ZNo }}{{ .latest.ZNo }}{{ else }}—{{ end }}</td></tr>
+        <tr><th>{{ T "fiscaldevice.last.issued_at" }}</th><td>{{ if .latest.IssuedAt }}{{ .latest.IssuedAt }}{{ else }}{{ .latest.CreatedAt }}{{ end }}</td></tr>
+      </tbody>
+    </table>
+    {{ else }}
+    <p class="empty">{{ T "fiscaldevice.last.none" }}</p>
+    {{ end }}
+    <p>{{ T "fiscaldevice.today.count" }}: <strong>{{ .countToday }}</strong></p>
+  </div>
+</div>
+{{ end }}
