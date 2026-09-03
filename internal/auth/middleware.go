@@ -60,6 +60,19 @@ func exempt(path string) bool {
 		// session because a first-boot till has no operators to mint one.
 		// TestSetupLanguageInstallExemptFromAuthMiddleware pins this entry.
 		"/api/setup/language",
+		// ut-docs#1507: the wizard's step-3 "install the Germany tax plugin"
+		// action (ut-docs#1180). Identical window and identical omission to
+		// /api/setup/language directly above: setup_tax_catalog.go's handler
+		// already documents itself as "Auth-exempt on the same first-boot-only
+		// window as POST /api/setup/language — NeedsFirstBoot is the gate",
+		// but that exemption only exists if the path is listed HERE. It
+		// wasn't, so the tile rendered, the operator pressed Install, and the
+		// middleware answered a raw JSON 401 ("sign in required") before the
+		// handler ran — on a first-boot till, which by definition has no
+		// operator to sign in as, so it could never succeed. Reproduced on
+		// the pilot tablet: POST /api/setup/language -> 303, POST
+		// /api/setup/tax-plugin -> 401, same request, same boot.
+		"/api/setup/tax-plugin",
 		// ut-docs#1165: step 1's background update-check + its explicit
 		// apply action — same first-boot-only window as /api/setup/language
 		// above (NeedsFirstBoot refuses both once an operator exists).

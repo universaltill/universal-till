@@ -330,6 +330,15 @@ func TestMiddlewareExemptsFirstBootPairingRoutes(t *testing.T) {
 		// found missing from exempt() the same way as the routes above
 		// (every bare-mux test green, real app 401ing).
 		"/api/setup/language",
+		// ut-docs#1507: the wizard's install-the-fiscal-plugin action
+		// (ut-docs#1180's step-3 tile). Same first-boot-only window and the
+		// same failure mode AGAIN — setup_tax_catalog.go's handler doc even
+		// claims "Auth-exempt on the same first-boot-only window as POST
+		// /api/setup/language", but the middleware entry was never added, so
+		// every Install click on a real German till answered the raw JSON
+		// 401 below instead of installing. internal/pages' own tests drive
+		// the handler on a bare mux, so they never saw the wall.
+		"/api/setup/tax-plugin",
 	} {
 		rec := httptest.NewRecorder()
 		h.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, p, nil))
