@@ -665,7 +665,13 @@
        produces "language" today — setup_base_plugins.go — but nothing
        enforces that at this handler). -->
   <div class="chip-row" id="pending-plugin-{{ .CanonicalType }}" data-testid="pending-base-plugin" style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap; margin:.3rem 0">
-    <span class="chip">{{ printf (T "setup.base_plugins.pending") .LocaleUpper }}</span>
+    <!-- ut-docs#1506 review finding N1: this chip used to say "language
+         pack" unconditionally, but ut-docs#591's pending list can now hold a
+         "tax" spec too (queued by the setup wizard's step-3 skip/Next
+         actions) — a German shop skipping the fiscal plugin saw "Installing
+         your free DE language pack", which is both wrong and the operator's
+         only way to recognise (and dismiss) this exact pending item. -->
+    <span class="chip">{{ if eq .CanonicalType "tax" }}{{ printf (T "setup.base_plugins.pending_tax") .LocaleUpper }}{{ else }}{{ printf (T "setup.base_plugins.pending") .LocaleUpper }}{{ end }}</span>
     <button class="btn secondary" data-testid="pending-base-plugin-dismiss"
             hx-post="/api/settings/dismiss-pending-base-plugin"
             hx-vals='{{ jsonVals "canonical_type" .CanonicalType "locale" .Locale }}'

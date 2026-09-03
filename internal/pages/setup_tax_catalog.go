@@ -289,3 +289,59 @@ func setupTaxPluginInstallHandler(d *common.Deps, svc *auth.Service) http.Handle
 		http.Redirect(w, r, resume+"&tax_plugin_pending=1", http.StatusSeeOther)
 	}
 }
+
+// setupTaxPluginSkipHandler is POST /api/setup/tax-plugin-skip (ut-docs#1506):
+// step 3's "Skip for now" action, when it's leaving a still-not-installed
+// fiscal plugin behind. Before this handler existed, "Skip for now" only
+// ever cleared the TSE business-identity fields and jumped to step 4 —
+// the pending/retry list (StartBasePluginRetry, ut-docs#591) was populated
+// SOLELY inside setupTaxPluginInstallHandler's failure branch above, so an
+// operator who never pressed Install got no retry at all, despite the
+// tile's own copy promising "we'll keep retrying in the background until
+// you are [online]". A German shop could finish setup with no fiscal
+// plugin, no queue entry and no warning (root-caused on a real pilot
+// device — see the ticket).
+//
+// This makes the skip path feed the SAME pending list the install failure
+// path does — one retry mechanism, two doors into it — via
+// addPendingBasePlugins (setup_base_plugins.go), not a second
+// load/dedupe/save sequence. Auth-exempt on the same first-boot-only
+// window as its install sibling.
+func setupTaxPluginSkipHandler(d *common.Deps, svc *auth.Service) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		firstBoot, err := svc.NeedsFirstBoot(r.Context())
+		if err != nil || !firstBoot {
+			http.Redirect(w, r, "/login", http.StatusSeeOther)
+			return
+		}
+		_ = r.ParseForm()
+		country := strings.ToUpper(strings.TrimSpace(r.PostFormValue("country")))
+		locale, ok := countryTaxLocale[country]
+		if !ok {
+			// Genuinely forged — no country to resume the wizard on.
+			http.Redirect(w, r, "/setup", http.StatusSeeOther)
+			return
+		}
+		// tax_plugin_skip_ack=1 (distinct from tax_plugin_pending above) tells
+		// renderWizard this round-trip was an explicit skip, not a failed
+		// install attempt: it resumes on step 4 (where "Skip for now" was
+		// always headed) instead of step 3, and shows the stronger
+		// skip_warning copy instead of install_pending's softer "still
+		// installing" note.
+		resume := "/setup?tax_country=" + url.QueryEscape(country) + "&tax_plugin_skip_ack=1"
+
+		// Same re-check as the install handler: re-resolve against the real
+		// catalog + install-status store rather than trusting the POST body,
+		// so a forged/stale request (e.g. the plugin installed itself via the
+		// background retry between page render and this click) queues
+		// nothing extra.
+		if match, _ := setupInstallableTaxPlugin(r.Context(), d, country); match != nil {
+			spec := basePluginSpec{CanonicalType: "tax", Locale: locale}
+			if err := addPendingBasePlugins(r.Context(), d, []basePluginSpec{spec}); err != nil {
+				logging.L().Errorf("setup wizard: persist skipped tax plugin as pending: %v", err)
+			}
+		}
+
+		http.Redirect(w, r, resume, http.StatusSeeOther)
+	}
+}

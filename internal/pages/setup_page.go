@@ -319,6 +319,15 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if r.URL.Query().Get("tax_plugin_pending") == "1" {
 			data["taxPluginPending"] = true
 		}
+		// tax_plugin_skip_ack: set by POST /api/setup/tax-plugin-skip's
+		// redirect (ut-docs#1506) — distinct from tax_plugin_pending above,
+		// which only ever fires from a FAILED install attempt. This one means
+		// the operator explicitly skipped a fiscal plugin the tile called
+		// required; startStep below sends them on to step 4 (where "Skip for
+		// now" always meant to land them), not back to step 3, while still
+		// surfacing the stronger skip_warning copy on the step they land on.
+		taxPluginSkipAck := resumeTaxCountry != "" && r.URL.Query().Get("tax_plugin_skip_ack") == "1"
+		data["taxPluginSkipped"] = taxPluginSkipAck
 		// Which step an error re-render lands on: business-identity errors
 		// (setup.error.tse_*) belong to step 3, everything else (PIN, save)
 		// to the PIN step (7). On a POST re-render the identity fields the
@@ -331,13 +340,16 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		}
 		data["errStep"] = errStep
 		// startStep is the step the wizard actually opens on: an error
-		// re-render lands on errStep, a tax-plugin install round-trip returns
-		// to step 3 (the Germany-only business-identity step its tile lives
-		// on), and everything else starts at 1.
+		// re-render lands on errStep, an explicit tax-plugin skip (ut-docs#1506)
+		// moves on to step 4, a tax-plugin install round-trip returns to step
+		// 3 (the Germany-only business-identity step its tile lives on), and
+		// everything else starts at 1.
 		startStep := 1
 		switch {
 		case errKey != "":
 			startStep = errStep
+		case taxPluginSkipAck:
+			startStep = 4
 		case resumeTaxCountry != "":
 			startStep = 3
 		}
@@ -441,6 +453,13 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	// prompted, never silent). Same auth-exempt, NeedsFirstBoot-gated tier as
 	// POST /api/setup/language above.
 	mux.HandleFunc("POST /api/setup/tax-plugin", setupTaxPluginInstallHandler(d, svc))
+
+	// ut-docs#1506: the same step's "Skip for now" action, when it's leaving
+	// the fiscal plugin above uninstalled — queues the SAME background retry
+	// the install handler's failure branch does, so "we'll keep retrying"
+	// holds regardless of which door the operator left through. Same
+	// auth-exempt, NeedsFirstBoot-gated tier.
+	mux.HandleFunc("POST /api/setup/tax-plugin-skip", setupTaxPluginSkipHandler(d, svc))
 
 	// ut-docs#1165: step 1's background "a newer version exists — update
 	// before continuing?" check and its explicit apply action. Same
