@@ -40,9 +40,12 @@ var currencyRegistry = []CurrencyInfo{
 		// Notes: $100,50,20,10,5,1. Coins: 25c,10c,5c,1c.
 		Denominations: []int64{10000, 5000, 2000, 1000, 500, 100, 25, 10, 5, 1}},
 	{Code: "EUR", Name: "Euro (€)", Display: "€", Decimals: 2,
-		// Notes: €100,50,20,10,5 (€200/€500 excluded — being phased out,
-		// rare in a till drawer). Coins: €2,1, 50c,20c,10c,5c,2c,1c.
-		Denominations: []int64{10000, 5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 2, 1}},
+		// Notes: €200,100,50,20,10,5. Coins: €2,1, 50c,20c,10c,5c,2c,1c.
+		// €500 excluded — issuance discontinued in 2019; still legal
+		// tender but actively withdrawn, so not a till-drawer row. €200
+		// is NOT in that category (current Europa-series note, still
+		// issued), so it is listed — review of ut-docs#1291.
+		Denominations: []int64{20000, 10000, 5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 2, 1}},
 	{Code: "IRR", Name: "Iranian Rial (ریال)", Display: "ریال", Suffix: true, Decimals: 0,
 		// Rial coins are obsolete; only banknotes circulate.
 		Denominations: []int64{1000000, 500000, 100000, 50000, 20000, 10000, 5000, 2000, 1000}},
@@ -56,8 +59,11 @@ var currencyRegistry = []CurrencyInfo{
 		// Notes: 1000,500,200,100,50,20,10,5. Coins: 1dh, 50,25 fils.
 		Denominations: []int64{100000, 50000, 20000, 10000, 5000, 2000, 1000, 500, 100, 50, 25}},
 	{Code: "SAR", Name: "Saudi Riyal (ر.س)", Display: "ر.س", Suffix: true, Decimals: 2,
-		// Notes: 500,200,100,50,10,5,1. Coins: 50,25,10,5,1 halala.
-		Denominations: []int64{50000, 20000, 10000, 5000, 1000, 500, 100, 50, 25, 10, 5, 1}},
+		// Notes: 500,200,100,50,10,5,1. Coins: 2 and 1 riyal, then
+		// 50,25,10,5,1 halala. The 2-riyal coin (200 halalas, sixth
+		// series 2016) was missing from the first draft — review of
+		// ut-docs#1291.
+		Denominations: []int64{50000, 20000, 10000, 5000, 1000, 500, 200, 100, 50, 25, 10, 5, 1}},
 	{Code: "IQD", Name: "Iraqi Dinar (د.ع)", Display: "د.ع", Suffix: true, Decimals: 0,
 		// Fils coins are obsolete; only banknotes circulate.
 		Denominations: []int64{50000, 25000, 10000, 5000, 1000, 500, 250}},

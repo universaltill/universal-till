@@ -283,16 +283,39 @@ func TestShiftsPage_DenomGridIsCurrencyAware(t *testing.T) {
 		return rec.Body.String()
 	}
 
+	// Scope the label assertions to the #denom-grid block itself. Review of
+	// ut-docs#1291: this shift's opening cash is 5000 minor units, so the
+	// page renders "£50.00" in the summary above the form regardless of what
+	// the grid does — an unscoped strings.Contains(body, "£50.00") passes
+	// even against the old hardcoded "£50"/"1p" grid, which would have made
+	// the GBP half of this test decorative rather than load-bearing.
+	gridOf := func(body string) string {
+		t.Helper()
+		i := strings.Index(body, `id="denom-grid"`)
+		if i < 0 {
+			t.Fatalf("no #denom-grid rendered on /shifts:\n%s", body)
+		}
+		rest := body[i:]
+		// The grid holds only <label>/<input> children, so the first
+		// closing </div> is the grid's own.
+		j := strings.Index(rest, "</div>")
+		if j < 0 {
+			t.Fatalf("unterminated #denom-grid:\n%s", rest)
+		}
+		return rest[:j]
+	}
+
 	httpx.InitCurrency("GBP")
 	body := get()
+	grid := gridOf(body)
 	// Denomination labels use the same `money`-formatted convention as the
 	// rest of this page's currency-aware fields (£X.XX, ut-docs#1274) —
 	// not the old two-tier "£50"/"1p" note-vs-coin shorthand.
-	if !strings.Contains(body, `data-denom="5000"`) || !strings.Contains(body, "£50.00") {
-		t.Fatalf("expected the GBP £50.00 denomination in the count-protocol grid, got:\n%s", body)
+	if !strings.Contains(grid, `data-denom="5000"`) || !strings.Contains(grid, "£50.00") {
+		t.Fatalf("expected the GBP £50.00 denomination in the count-protocol grid, got:\n%s", grid)
 	}
-	if !strings.Contains(body, `data-denom="1"`) || !strings.Contains(body, "£0.01") {
-		t.Fatalf("expected the GBP £0.01 denomination in the count-protocol grid, got:\n%s", body)
+	if !strings.Contains(grid, `data-denom="1"`) || !strings.Contains(grid, "£0.01") {
+		t.Fatalf("expected the GBP £0.01 denomination in the count-protocol grid, got:\n%s", grid)
 	}
 
 	// JPY: 0-decimal, prefix symbol, a different denomination set — must
@@ -302,20 +325,23 @@ func TestShiftsPage_DenomGridIsCurrencyAware(t *testing.T) {
 	httpx.InitCurrency("JPY")
 	t.Cleanup(func() { httpx.InitCurrency("GBP") }) // ut-docs#970 convention: process-global, reset for later tests in this package.
 	body = get()
-	if !strings.Contains(body, `data-denom="10000"`) || !strings.Contains(body, "¥10,000") {
-		t.Fatalf("expected the JPY ¥10,000 denomination in the count-protocol grid, got:\n%s", body)
+	grid = gridOf(body)
+	if !strings.Contains(grid, `data-denom="10000"`) || !strings.Contains(grid, "¥10,000") {
+		t.Fatalf("expected the JPY ¥10,000 denomination in the count-protocol grid, got:\n%s", grid)
 	}
-	if !strings.Contains(body, `data-denom="1"`) || !strings.Contains(body, "¥1") {
-		t.Fatalf("expected the JPY ¥1 denomination in the count-protocol grid, got:\n%s", body)
+	if !strings.Contains(grid, `data-denom="1"`) || !strings.Contains(grid, "¥1") {
+		t.Fatalf("expected the JPY ¥1 denomination in the count-protocol grid, got:\n%s", grid)
 	}
+	// Deliberately page-wide, not grid-scoped: under a JPY shop the GBP
+	// symbol should not survive anywhere on /shifts.
 	if strings.Contains(body, "£") {
-		t.Fatalf("expected NO leftover GBP symbol in the count-protocol grid once currency is JPY, got:\n%s", body)
+		t.Fatalf("expected NO leftover GBP symbol once currency is JPY, got:\n%s", body)
 	}
 	// GBP's £2/200p and £20/2000p denominations have no JPY equivalent
 	// (JPY has no 2- or 20-based note/coin) — a leftover hardcoded GBP
 	// grid would still show these.
-	if strings.Contains(body, `data-denom="2000"`) || strings.Contains(body, `data-denom="200"`) {
-		t.Fatalf("expected NO leftover GBP-only denominations (2000/200) in the count-protocol grid once currency is JPY, got:\n%s", body)
+	if strings.Contains(grid, `data-denom="2000"`) || strings.Contains(grid, `data-denom="200"`) {
+		t.Fatalf("expected NO leftover GBP-only denominations (2000/200) in the count-protocol grid once currency is JPY, got:\n%s", grid)
 	}
 }
 
