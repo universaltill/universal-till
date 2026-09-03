@@ -73,6 +73,16 @@ func exempt(path string) bool {
 		// the pilot tablet: POST /api/setup/language -> 303, POST
 		// /api/setup/tax-plugin -> 401, same request, same boot.
 		"/api/setup/tax-plugin",
+		// ut-docs#1506: the same step's "Skip for now" action, when it's
+		// leaving that fiscal plugin uninstalled — same first-boot-only
+		// window, same handler-authenticates-itself shape, and the exact
+		// same omission would reproduce here that #1507 (immediately above)
+		// fixed for the Install button: without this entry the middleware
+		// answers 401 before setupTaxPluginSkipHandler's own NeedsFirstBoot
+		// gate ever runs, on a first-boot till that by definition has no
+		// operator to sign in as. TestSetupWizardEndpointsClearTheSessionWall
+		// pins this entry.
+		"/api/setup/tax-plugin-skip",
 		// ut-docs#1509: the wizard's restore/import step (setup.html's
 		// hx-post="/api/import"). Fourth route to ship behind this wall with
 		// a handler that already authorises itself: import_page.go's

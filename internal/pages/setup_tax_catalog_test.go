@@ -539,6 +539,260 @@ func TestSetupGETResumeShowsTaxPluginPendingNote(t *testing.T) {
 	}
 }
 
+// --- setupTaxPluginSkipHandler (POST /api/setup/tax-plugin-skip) ---
+//
+// ut-docs#1506: before this handler existed, step 3's "Skip for now" only
+// ever cleared the TSE business-identity fields and advanced to step 4 —
+// nothing joined the ut-docs#591 pending/retry list, so the tile's own
+// "we'll keep retrying in the background" promise was false for anyone who
+// left through this door instead of a failed Install click. These tests
+// mirror TestSetupTaxPluginInstallFailureJoinsPendingList and its siblings
+// above, one door over.
+
+// A skip while a real, not-yet-installed match exists queues the SAME
+// tax/de spec the install handler's failure branch would, and the
+// background retry (ut-docs#591) actually finishes the job later — the
+// literal promise this card exists to make true.
+func TestSetupTaxPluginSkipQueuesPendingAndBackgroundRetryInstallsIt(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	rec := postForm(mux, "/api/setup/tax-plugin-skip", url.Values{"country": {"DE"}}, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("POST /api/setup/tax-plugin-skip: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/setup?tax_country=DE&tax_plugin_skip_ack=1" {
+		t.Fatalf("skip redirect = %q, want /setup?tax_country=DE&tax_plugin_skip_ack=1", loc)
+	}
+
+	pending, err := loadPendingBasePlugins(t.Context(), dp)
+	if err != nil {
+		t.Fatalf("loadPendingBasePlugins: %v", err)
+	}
+	if len(pending) != 1 || pending[0] != (basePluginSpec{CanonicalType: "tax", Locale: "de"}) {
+		t.Fatalf("expected the tax/de spec queued for background retry after a skip, got %+v", pending)
+	}
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); active {
+		t.Fatal("a skip must never install anything itself")
+	}
+
+	// The EXISTING background retry (ut-docs#591) finishes the job later —
+	// no second retry mechanism for the skip path.
+	basePluginRetryTick(t.Context(), dp)
+	if pending, _ := loadPendingBasePlugins(t.Context(), dp); len(pending) != 0 {
+		t.Fatalf("expected the pending list cleared after the retry tick, got %+v", pending)
+	}
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); !active {
+		t.Fatal("expected the background retry to install the plugin the skip left pending")
+	}
+}
+
+// A forged/stale country (no catalog match, or not tax-mapped at all) is
+// rejected clean — nothing queued, same posture as the install handler's
+// own reject test.
+func TestSetupTaxPluginSkipRejectsCountryWithNoMatch(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	for _, country := range []string{"US", "FR"} {
+		rec := postForm(mux, "/api/setup/tax-plugin-skip", url.Values{"country": {country}}, nil)
+		if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup" {
+			t.Fatalf("POST with country=%s: code=%d loc=%q, want 303 -> /setup",
+				country, rec.Code, rec.Header().Get("Location"))
+		}
+	}
+	if pending, _ := loadPendingBasePlugins(t.Context(), dp); len(pending) != 0 {
+		t.Fatalf("a rejected country must not be queued, got %+v", pending)
+	}
+}
+
+// A stale skip for a listing that's already installed+active queues
+// nothing — there's genuinely nothing left to retry.
+func TestSetupTaxPluginSkipNoOpWhenAlreadyInstalled(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	spec := basePluginSpec{CanonicalType: "tax", Locale: "de"}
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("seed install: %v", err)
+	}
+	resetTaxCatalogForTest(t) // clear the TTL cache so the re-check hits the DB, not a stale cached "installable" answer
+
+	rec := postForm(mux, "/api/setup/tax-plugin-skip", url.Values{"country": {"DE"}}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/setup?tax_country=DE&tax_plugin_skip_ack=1" {
+		t.Fatalf("skip for an already-installed plugin: code=%d loc=%q, want 303 -> /setup?tax_country=DE&tax_plugin_skip_ack=1",
+			rec.Code, rec.Header().Get("Location"))
+	}
+	if pending, _ := loadPendingBasePlugins(t.Context(), dp); len(pending) != 0 {
+		t.Fatalf("nothing should be queued once the plugin is already active, got %+v", pending)
+	}
+}
+
+// Same first-boot-only window as its install sibling.
+func TestSetupTaxPluginSkipRefusedAfterFirstBoot(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, svc, _ := newFullAuthDeps(t)
+	id, err := svc.Repo().CreateUser(t.Context(), "boss", "Boss", "admin")
+	if err != nil {
+		t.Fatal(err)
+	}
+	hash, err := auth.HashPIN("1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := svc.Repo().SetUserPIN(t.Context(), id, hash); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postForm(mux, "/api/setup/tax-plugin-skip", url.Values{"country": {"DE"}}, nil)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/login" {
+		t.Fatalf("POST /api/setup/tax-plugin-skip after first boot: code=%d loc=%q, want 303 -> /login",
+			rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// --- Wizard render: the skip round-trip resumes step 4 and warns plainly ---
+
+// Unlike the install failure round-trip (resumes step 3, softer
+// install_pending note), an explicit skip resumes step 4 — where "Skip for
+// now" was always headed — but with the stronger skip_warning note visible
+// on landing, not buried back on step 3 behind another click.
+func TestSetupGETResumeStep4AfterTaxPluginSkipAndShowsWarning(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	resetSetupLanguageCatalog()
+	t.Cleanup(resetSetupLanguageCatalog)
+	withOSLocale(t, "", "") // see TestSetupGETResumesStep3ForTaxCountry's comment
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	body := getSetup(mux, "?tax_country=DE&tax_plugin_skip_ack=1", "").Body.String()
+	if !strings.Contains(body, "step: 4,") {
+		t.Errorf("GET /setup?tax_country=DE&tax_plugin_skip_ack=1 must open the wizard on step 4, got:\n%s", body)
+	}
+	if !strings.Contains(body, "data-tax-plugin-skipped") {
+		t.Errorf("expected the skip_warning note on the resumed page, got:\n%s", body)
+	}
+}
+
+// tax_plugin_skip_ack alone (no tax_country) must not fake the warning or
+// steer the wizard — same "not forgeable on its own" posture as
+// TestSetupGETTaxCountryResumeIsNotForgeable.
+func TestSetupGETTaxPluginSkipAckWithoutTaxCountryIsIgnored(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	resetSetupLanguageCatalog()
+	t.Cleanup(resetSetupLanguageCatalog)
+	withOSLocale(t, "", "")
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	body := getSetup(mux, "?tax_plugin_skip_ack=1", "").Body.String()
+	if !strings.Contains(body, "step: 1,") {
+		t.Errorf("GET /setup?tax_plugin_skip_ack=1 (no tax_country) must open on step 1, got:\n%s", body)
+	}
+	if strings.Contains(body, "data-tax-plugin-skipped") {
+		t.Error("tax_plugin_skip_ack alone, without tax_country, must not show the skip warning")
+	}
+}
+
+// The step 3 render must target the skip at the new tax-plugin-skip form
+// (not just leave it a client-only step change) whenever the tile is
+// actually showing — this is what makes the queue-on-skip fix reachable
+// from the real UI, not just from a direct POST in a test.
+func TestSetupWizardSkipButtonTargetsSkipFormWhenTileShowing(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	form := url.Values{
+		"pin": {"1234"}, "pin_confirm": {"9999"}, // mismatch -> error re-render, tile present
+		"country": {"DE"}, "currency": {"EUR"},
+	}
+	body := postFormRaw(mux, "/api/setup", form).Body.String()
+	if !strings.Contains(body, `action="/api/setup/tax-plugin-skip"`) {
+		t.Errorf("expected the tax-plugin-skip form present while the tile is showing, got:\n%s", body)
+	}
+	if !strings.Contains(body, `form="tax-plugin-skip"`) {
+		t.Errorf("expected the Skip button wired to form=tax-plugin-skip while the tile is showing, got:\n%s", body)
+	}
+}
+
+// ut-docs#1506 review finding B1: Skip was not the only door off step 3 that
+// left the tile's plugin uninstalled with nothing queued — Next (the
+// PRIMARY button) did too, and an operator who filled in the TSE fields (the
+// step's actual content) and pressed Next is arguably the MORE likely path
+// than Skip. Next must stay a pure client-side step change (a full
+// round-trip would lose whatever was just typed into the TSE fields, since
+// nothing repopulates them on a bare GET resume) — so it fires the same
+// queue request in the background via htmx instead of navigating.
+func TestSetupWizardNextButtonQueuesTaxPluginInBackgroundWhenTileShowing(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	form := url.Values{
+		"pin": {"1234"}, "pin_confirm": {"9999"}, // mismatch -> error re-render, tile present
+		"country": {"DE"}, "currency": {"EUR"},
+	}
+	body := postFormRaw(mux, "/api/setup", form).Body.String()
+	if !strings.Contains(body, `hx-post="/api/setup/tax-plugin-skip" hx-include="#tax-plugin-skip" hx-swap="none"`) {
+		t.Errorf("expected the Next button wired to fire the background queue request while the tile is showing, got:\n%s", body)
+	}
+}
+
+// The opposite of the test above: once the plugin is already installed (no
+// tile), Next must NOT carry the background-queue wiring — there's nothing
+// left to queue, and the hx-post attributes would 404 the include target
+// (the tax-plugin-skip form only renders alongside the tile).
+func TestSetupWizardNextButtonHasNoBackgroundQueueWhenTileAbsent(t *testing.T) {
+	resetTaxCatalogForTest(t)
+	mux, dp := newRealDBDeps(t)
+	initTestPaths(t)
+	mkt := newFakeMarketplace(t, map[string]string{"listing-tax-de": "ut-plugin-tax-de"})
+	mkt.setCatalog(deTaxCatalogEntry("listing-tax-de", "ut-plugin-tax-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	rec := postForm(mux, "/api/setup/tax-plugin", url.Values{"country": {"DE"}}, nil)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("install: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if active, _ := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-tax-de"); !active {
+		t.Fatal("expected the tax plugin installed")
+	}
+
+	form := url.Values{
+		"pin": {"1234"}, "pin_confirm": {"9999"},
+		"country": {"DE"}, "currency": {"EUR"},
+	}
+	body := postFormRaw(mux, "/api/setup", form).Body.String()
+	if strings.Contains(body, `hx-post="/api/setup/tax-plugin-skip"`) {
+		t.Error("Next must not carry the background-queue wiring once the plugin is already installed (no tile, no include target)")
+	}
+}
+
 // postFormRaw posts to POST /api/setup directly (unlike postForm, no
 // pre-auth user context is needed here — the wizard's own handler is
 // auth-exempt during first boot).

@@ -229,17 +229,58 @@
           <p class="muted">{{ T "setup.tse.custody_note" }}</p>
           <div class="setup-nav">
             <button type="button" class="btn secondary" @click="step = 2">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" @click="step = 4">{{ T "setup.next" }}</button>
+            <!-- ut-docs#1506 review finding B1: Skip is not the only door off
+                 this step that leaves the tile's plugin uninstalled — Next
+                 is the PRIMARY button, and an operator who dutifully filled
+                 in the TSE fields (the step's actual content) and pressed
+                 Next left through this door with nothing queued either, the
+                 exact bug this card exists to fix. Unlike Skip, Next must
+                 stay a pure client-side step change (no page reload) — a
+                 full round-trip here would lose whatever the operator just
+                 typed into the TSE fields, since nothing repopulates them on
+                 a bare GET resume. So instead of a real submit, this fires
+                 the SAME queue-on-tax-plugin-skip request in the background
+                 (hx-post, hx-swap="none" — the response is discarded,
+                 nothing on screen depends on it) alongside Alpine's normal
+                 step=4, using the tax-plugin-skip form's own hidden country
+                 input via hx-include so no request body is duplicated here.
+                 "click once" keeps a double-click or Back-then-Next-again
+                 from firing it twice — harmless either way since
+                 addPendingBasePlugins already dedupes, but no reason to. -->
+            <button type="button" class="btn primary"
+                    {{ if .installableTaxPlugin }}hx-post="/api/setup/tax-plugin-skip" hx-include="#tax-plugin-skip" hx-swap="none" hx-trigger="click once"{{ end }}
+                    @click="step = 4">{{ T "setup.next" }}</button>
             <!-- Skip clears the fields so a half-typed form can't fail the
-                 final submit's all-or-nothing validation later. -->
-            <button type="button" class="btn secondary" style="margin-top:.4rem"
-                    @click="document.querySelectorAll('.tse-field').forEach(el => el.value = ''); step = 4">{{ T "setup.tse.skip" }}</button>
+                 final submit's all-or-nothing validation later.
+                 ut-docs#1506: when the tile above is still showing (a fiscal
+                 plugin genuinely not installed yet), Skip must ALSO queue it
+                 for background retry — "Skip for now" used to silently skip
+                 both the optional TSE fields AND the plugin the tile just
+                 called required, with nothing queued and no warning. So this
+                 button becomes a real submit, targeting the out-of-form
+                 tax-plugin-skip form below (same form= trick the Install
+                 button above uses), instead of a pure client-side step
+                 change — the server queues the pending spec and redirects
+                 back with tax_plugin_skip_ack=1, which is what drives step
+                 4's skip_warning note. When there's no tile (nothing to
+                 queue), it stays the original client-only step change. -->
+            <button type="{{ if .installableTaxPlugin }}submit{{ else }}button{{ end }}" class="btn secondary" style="margin-top:.4rem"
+                    {{ if .installableTaxPlugin }}form="tax-plugin-skip"{{ end }}
+                    @click="document.querySelectorAll('.tse-field').forEach(el => el.value = '');{{ if not .installableTaxPlugin }} step = 4;{{ end }}">{{ T "setup.tse.skip" }}</button>
           </div>
         </section>
 
         <!-- Step 4 · shop name -->
         <section x-show="step === 4" x-cloak data-step="4">
           <h1>{{ T "setup.store.title" }}</h1>
+          <!-- ut-docs#1506: shown once, right after an explicit tax-plugin
+               skip landed here (tax_plugin_skip_ack=1) — the operator
+               deliberately left a legally-required plugin uninstalled, so
+               unlike step 3's softer install_pending note this says plainly
+               what that means, not just that a background retry exists. -->
+          {{ if .taxPluginSkipped }}
+            <p class="login-error" data-tax-plugin-skipped>{{ T "setup.tax_plugin.skip_warning" }}</p>
+          {{ end }}
           <input type="text" name="store_name" maxlength="60" placeholder="{{ T "setup.store.placeholder" }}">
           <label>{{ T "setup.till_name.title" }}
             <input type="text" name="till_name" maxlength="60" value="{{ T "setup.till_name.default" }}">
@@ -398,6 +439,13 @@
            catalog cache, so the body can't pick an arbitrary listing. -->
       {{ if .installableTaxPlugin }}
       <form method="post" action="/api/setup/tax-plugin" id="tax-plugin-install" hidden>
+        <input type="hidden" name="country" value="{{ .installableTaxPlugin.Country }}">
+      </form>
+      <!-- ut-docs#1506: step 3's "Skip for now" button's own form, same
+           out-of-wizard-form placement/reasoning as tax-plugin-install just
+           above — queues the same spec for background retry instead of
+           silently dropping it. -->
+      <form method="post" action="/api/setup/tax-plugin-skip" id="tax-plugin-skip" hidden>
         <input type="hidden" name="country" value="{{ .installableTaxPlugin.Country }}">
       </form>
       {{ end }}
