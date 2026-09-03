@@ -65,6 +65,8 @@ jobs:
         run: bash scripts/ci/guard-i18n_test.sh
       - name: i18n coverage guard ToastMessage regression test
         run: bash scripts/ci/guard-i18n_toast_test.sh
+      - name: i18n coverage guard Go-side key-call regression test
+        run: bash scripts/ci/guard-i18n_keycall_test.sh
       - name: Compliance-claims wording guard
         run: bash scripts/ci/guard-compliance-claims.sh
       - name: Compliance-claims wording guard regression test
