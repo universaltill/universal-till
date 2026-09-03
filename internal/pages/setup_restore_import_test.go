@@ -360,7 +360,14 @@ func TestImportPage_StagedIDPrefillsCommitOnlyForm(t *testing.T) {
 // directly rather than driving Alpine/htmx, which no Go test can do.
 func TestSetupWizardUploadFormHasBusyIndicator(t *testing.T) {
 	mux, _ := newSetupRestoreImportDeps(t)
-	rec := getSetup(mux, "", "")
+	// ut-docs#1515 CI failure: a bare GET /setup with no ut_lang cookie hits
+	// the first-visit OS-locale-detection redirect (setup_page.go, same
+	// mechanism TestSetupWizardRedirectsToDetectedEnglishAndPrefillsGB
+	// covers) whenever the runner's own OS locale happens to match a core
+	// locale — true on the GitHub Actions runner, false in some local dev
+	// sandboxes, so this passed locally and failed in CI. A "repeat visit"
+	// ut_lang cookie renders directly regardless of environment.
+	rec := getSetup(mux, "", "en")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /setup: code=%d body=%s", rec.Code, rec.Body.String())
 	}
@@ -408,7 +415,14 @@ func TestSetupWizardUploadFormHasBusyIndicator(t *testing.T) {
 // exists to close.
 func TestSetupWizardUploadPanelHasExplicitCurrencyConfirmControl(t *testing.T) {
 	mux, _ := newSetupRestoreImportDeps(t)
-	rec := getSetup(mux, "", "")
+	// ut-docs#1515 CI failure: a bare GET /setup with no ut_lang cookie hits
+	// the first-visit OS-locale-detection redirect (setup_page.go, same
+	// mechanism TestSetupWizardRedirectsToDetectedEnglishAndPrefillsGB
+	// covers) whenever the runner's own OS locale happens to match a core
+	// locale — true on the GitHub Actions runner, false in some local dev
+	// sandboxes, so this passed locally and failed in CI. A "repeat visit"
+	// ut_lang cookie renders directly regardless of environment.
+	rec := getSetup(mux, "", "en")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /setup: code=%d body=%s", rec.Code, rec.Body.String())
 	}
