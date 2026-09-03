@@ -1020,6 +1020,7 @@
   "shifts.open": "مفتوحة",
   "shifts.open_new": "فتح وردية",
   "shifts.open_since": "الوردية مفتوحة منذ",
+  "shifts.open_success": "فُتحت الوردية: %s",
   "shifts.opened_at": "فُتحت",
   "shifts.opening_cash": "النقد الافتتاحي",
   "shifts.payout": "صرف (إخراج نقد)",
