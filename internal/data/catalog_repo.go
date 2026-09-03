@@ -1240,6 +1240,16 @@ INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base
 VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 `, in.ID, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed))
 	if err != nil {
+		// ut-docs#1510: unlike CreateItem, this branch never translated a
+		// UNIQUE(sku) violation into the distinguishable ErrSKUExists — a
+		// caller committing many rows in a loop (the catalog importer) could
+		// only tell "some DB error" from "that SKU is already in use," so a
+		// genuine race between two concurrent imports of the same SKU surfaced
+		// as a raw failed-row instead of the same clean "already in catalog"
+		// skip a sequential re-import gets. Mirrors CreateItem's own check.
+		if isUniqueViolation(err) {
+			return "", ErrSKUExists
+		}
 		return "", fmt.Errorf("insert item: %w", err)
 	}
 	// Same reasoning as CreateItem: the item is already valid and sellable

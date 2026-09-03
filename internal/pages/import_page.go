@@ -298,6 +298,29 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		}
 		var err error
 
+		// ut-docs#1510: a staged commit is already single-use (the
+		// takeStagedCatalogUpload above hands the copy to exactly one
+		// caller), but a DIRECT commit — "Import" pressed without ever
+		// previewing — has no staged_id for two requests to race over. A
+		// double-tap there is two independent requests carrying the same
+		// bytes; reserve this exact content before touching the DB, so the
+		// second request is rejected instead of both inserting rows an
+		// operator would then see duplicated (worst for a row with neither
+		// barcode nor SKU, which no UNIQUE constraint catches either).
+		if commit {
+			hash, herr := hashImportUpload(file)
+			if herr != nil {
+				log.Printf("[import] hash upload for commit lock: %v", herr)
+				http.Error(w, T("import.error.invalid_file"), http.StatusInternalServerError)
+				return
+			}
+			if !reserveImportCommit(hash) {
+				http.Error(w, T("import.error.already_in_progress"), http.StatusConflict)
+				return
+			}
+			defer releaseImportCommit(hash)
+		}
+
 		// Format auto-detection (ut-docs#511): sniff the ZIP local-file-
 		// header magic before choosing a parser — a speedy kasse / pepperm
 		// cashbox .bkp is a plain ZIP, everything else on this page is a
@@ -830,6 +853,18 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				})
 				if err != nil {
 					_ = tx.Rollback()
+					// ut-docs#1510: a genuine race on this row's SKU (two
+					// concurrent commits importing the same source, or a
+					// plain re-import that landed between this request's own
+					// preview-time check and its commit) now surfaces as the
+					// same clean "already in catalog" skip the preview-time
+					// SKUExists check already gives a sequential re-import —
+					// not a raw item_failed that names nothing.
+					if errors.Is(err, data.ErrSKUExists) {
+						rows[i].Status = T("import.status.sku_already_in_catalog")
+						rows[i].Skipped = true
+						continue
+					}
 					log.Printf("[import] create item %q: %v", it.Name, err)
 					rows[i].Status = T("import.status.item_failed")
 					rows[i].Failed = true
@@ -1288,8 +1323,16 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			// div), but form-associating it makes clicking it a genuine
 			// submit of that form — same htmx hx-post/multipart encoding
 			// the top Import button already triggers, no hx-include/
-			// hx-encoding duplication needed.
-			fmt.Fprintf(&b, `<div style="margin-block-start:.8rem"><button class="btn primary" type="submit" form="import-form" onclick="document.getElementById('import-commit').value='1'">%s</button></div>`,
+			// hx-encoding duplication needed. hx-disabled-elt="this" of its
+			// own (ut-docs#1510 independent review): the outer form's own
+			// hx-disabled-elt="find button[type=submit]" resolves relative
+			// to the FORM element (form.querySelector), so it does NOT
+			// reach a button living outside it like this one — only
+			// hx-indicator's plain (document-wide) selector does. Without
+			// this, the button most likely to be double-tapped (the one
+			// right after a long preview) would show the busy indicator
+			// but stay clickable.
+			fmt.Fprintf(&b, `<div style="margin-block-start:.8rem"><button class="btn primary" type="submit" form="import-form" hx-disabled-elt="this" onclick="document.getElementById('import-commit').value='1'">%s</button></div>`,
 				htmlEscape(T("import.import")))
 		}
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
