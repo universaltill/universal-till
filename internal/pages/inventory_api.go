@@ -467,13 +467,28 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			returnLines = append(returnLines, returnLine)
 		}
 
-		// Calculate return total (sum of line totals). Arithmetic preserved
-		// exactly (truncating int64 conversion + integer tax division).
+		// Calculate return total (sum of line totals) using the SAME
+		// per-line math pos.CompleteSale's own computeSaleTotals uses
+		// (pos.AmountForQuantity's half-away-from-zero rounding,
+		// pos.ComputeTaxBasisPoints's half-up tax) — not a hand-rolled
+		// truncating int64 conversion + integer tax division, which could
+		// disagree with CompleteSale by a minor unit on an entirely
+		// ordinary price (e.g. 99p @ 20% VAT) and reject with "payments do
+		// not cover total". That mismatch predates this file's fiscal.sign.ask
+		// dispatch (ut-docs#1405) but is newly load-bearing now that dispatch
+		// fires BEFORE CompleteSale: a rejected return would otherwise still
+		// have been signed — an irreversible TSE record for a return that
+		// never persisted, exactly the harm ADR-0044 D1's ordering exists to
+		// prevent. This return carries no SaleDiscount/ServiceCharge/vouchers
+		// (returnInput below sets none), so summing per-line
+		// pos.ComputeTaxBasisPoints results is algebraically identical to
+		// computeSaleTotals's own VATBandsForSale apportionment in this case
+		// (apportionment only redistributes when discountTotal > 0).
 		var returnTotal money.Money
 		for _, line := range returnLines {
-			lineBase := money.FromMinor(int64(line.Qty * float64(line.UnitPrice.Minor())))
-			lineTax := money.FromMinor((lineBase.Minor() * int64(line.TaxRateBasisPoints)) / 10000)
-			returnTotal = returnTotal.Add(lineBase).Add(lineTax)
+			lineBase := pos.AmountForQuantity(line.UnitPrice, line.Qty)
+			_, lineGross := pos.ComputeTaxBasisPoints(lineBase, line.TaxRateBasisPoints, false)
+			returnTotal = returnTotal.Add(lineGross)
 		}
 
 		// For returns, payment represents the refund amount
@@ -526,6 +541,22 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			Currency:               "GBP",
 			AllowNegativeInventory: true, // Returns add inventory
 		}
+
+		// fiscal.sign.ask (ADR-0044 Decision 1, ut-docs#999/#1405): a return
+		// moves real money and is aufzeichnungspflichtig under KassenSichV
+		// exactly like a sale, same reasoning as the ADR-0048 gate just
+		// above — so it gets a real signing attempt too, mirroring
+		// completeTender's ordering (pos_api.go): after any payment-provider
+		// interaction (none on this path — the return always pays via the
+		// fixed "cash" method above, so there is no provider webhook to wait
+		// on), before CompleteSale persists. Never blocks or refuses the
+		// return — any failure lands on the proceed-and-declare surface
+		// below. returnInput.SaleType is already "return" (set above), so
+		// buildFiscalSignPayload's SaleType field (contract 1.6.0,
+		// ut-docs#1203) lets a signer tell this apart from a sale of the
+		// same amount.
+		signRes := dispatchFiscalSignAsk(ctx, dp, &returnInput)
+
 		returnSaleID, err := pos.CompleteSale(ctx, dp.Db, returnInput)
 		if err != nil {
 			respondReturnError(w, r, http.StatusInternalServerError, err.Error())
@@ -546,6 +577,22 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			}, time.Now().UTC().Format(time.RFC3339), ""); auditErr != nil {
 				log.Printf("fiscal gate: unsigned_override audit marker for return %s failed: %v", returnSaleID, auditErr)
 			}
+		}
+		// fiscal.sign.ask proceed-and-declare (ADR-0044/ADR-0041 Decision E,
+		// ut-docs#999/#1405): the return is already committed — a failed (or
+		// known-offline-skipped) signing dispatch is now DECLARED, never
+		// unwound, exactly the way completeTender declares a sale's own
+		// signing gap. Never re-attempted for a completed return (ADR-0056,
+		// ut-docs#839). Best-effort, log-only on failure, same as the
+		// unsigned_override block above.
+		if signRes.Outcome.isFailure() || signRes.Outcome == fiscalSignSkippedOffline {
+			declareUnsignedFiscalSale(ctx, repo, returnSaleID, actorID, signRes)
+		}
+		// ut-docs#585 (contract v1.1.0): an approved answer that carried the
+		// §6 KassenSichV evidence gets it persisted against the return's own
+		// sale row, same as completeTender does for a sale.
+		if signRes.Outcome == fiscalSignApproved {
+			recordFiscalTSEEvidence(ctx, repo, returnSaleID, actorID, signRes.Evidence)
 		}
 		// Mirror the restock to inventory connectors (best-effort, non-blocking).
 		publishStockAdjustedForSale(ctx, dp, returnInput)
