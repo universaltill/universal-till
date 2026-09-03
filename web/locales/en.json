@@ -998,6 +998,7 @@
   "shifts.adjust": "Adjustment (±)",
   "shifts.adjust_type": "Type",
   "shifts.adjustment": "Cash adjustment / payout",
+  "shifts.adjustment_success": "Adjustment recorded: %s",
   "shifts.amount": "Amount",
   "shifts.amount_hint": "negative removes cash",
   "shifts.cashier": "Cashier",

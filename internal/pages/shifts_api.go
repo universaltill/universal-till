@@ -717,7 +717,15 @@ func respondAdjustmentSuccess(w http.ResponseWriter, r *http.Request, data CashA
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, http.StatusOK, map[string]any{"data": data, "error": nil})
 	} else {
-		writeHTML(w, http.StatusOK, fmt.Sprintf("<div class='success'>Adjustment recorded: %s</div>", data.AdjustmentID))
+		// ut-docs#1504: was a hardcoded, untranslated "Adjustment recorded: %s"
+		// and never escaped — same defect class #1289/#1406 fixed on the
+		// sibling respondShiftSuccess/respondCloseSuccess in this file.
+		// data.AdjustmentID comes from pos.RecordCashAdjustment (server-
+		// generated), never user input, but escaping keeps this function
+		// consistent with its siblings.
+		locale := httpx.ResolveLocale(w, r)
+		msg := fmt.Sprintf(httpx.T(locale, "shifts.adjustment_success"), data.AdjustmentID)
+		writeHTML(w, http.StatusOK, "<div class='success'>"+html.EscapeString(msg)+"</div>")
 	}
 }
 

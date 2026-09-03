@@ -998,6 +998,7 @@
   "shifts.adjust": "Düzeltme (±)",
   "shifts.adjust_type": "Tür",
   "shifts.adjustment": "Nakit düzeltme / ödeme",
+  "shifts.adjustment_success": "Düzeltme kaydedildi: %s",
   "shifts.amount": "Tutar",
   "shifts.amount_hint": "negatif nakit çıkarır",
   "shifts.cashier": "Kasiyer",
