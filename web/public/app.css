@@ -525,6 +525,14 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 .catalog-form label { display: flex; flex-direction: column; gap: .2rem;
                       font-size: .82rem; margin-bottom: .55rem; }
 .field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+/* Same [hidden]-override precedent as .field-checks below (and .btn/
+   .suggest-strip/.pos-notice elsewhere): an author rule's own `display`
+   always beats the UA `[hidden]` style regardless of specificity, so a
+   `hidden`-attributed .field-pair would stay visibly grid-displayed. Not
+   yet hit in shipped markup (ut-docs#1472's viewfinder deliberately keeps
+   `hidden` on an unstyled wrapper instead), but guarded here so the next
+   edit that puts `hidden` directly on a .field-pair doesn't fail silently. */
+.field-pair[hidden] { display: none; }
 .field-checks { display: flex; gap: 1rem; margin: .3rem 0 .7rem; }
 .field-checks label { flex-direction: row; align-items: center; gap: .4rem; margin: 0; }
 /* Same [hidden]-override precedent as .btn/.suggest-strip/.pos-notice above:
@@ -2134,8 +2142,9 @@ body.login-screen {
   gap: 0.75rem;
 }
 .ai-identify-panel h3 { margin: 0; }
-/* Shared by both camera overlays (AI identify + ut-docs#548 barcode scan) —
-   a class, not an ID, since two distinct <video> elements now use it. */
+/* Shared by all three camera previews (AI identify + ut-docs#548 barcode
+   scan + ut-docs#1472 catalog photo viewfinder) — a class, not an ID,
+   since multiple distinct <video> elements use it. */
 .camera-overlay-video {
   inline-size: 100%;
   border-radius: 8px;

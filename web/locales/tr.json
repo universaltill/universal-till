@@ -127,6 +127,8 @@
   "catalog.image_types": "Görsel (PNG/JPEG)",
   "catalog.take_photo": "Fotoğraf Çek",
   "catalog.choose_file": "Dosya Seç",
+  "catalog.viewfinder.capture": "Çek",
+  "catalog.viewfinder.not_ready": "Kamera henüz hazır değil — birazdan tekrar deneyin.",
   "catalog.item_image": "Ürün görseli",
   "catalog.keypad.capture_label": "Fiziksel tuşa basın (veya bir kod yazın)",
   "catalog.keypad.capture_placeholder": "Tuşa basılması bekleniyor…",

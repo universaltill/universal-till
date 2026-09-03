@@ -102,6 +102,31 @@
           <button type="button" class="btn secondary" id="image-camera-btn">{{ T "catalog.take_photo" }}</button>
           <button type="button" class="btn secondary" id="image-choose-btn">{{ T "catalog.choose_file" }}</button>
         </div>
+        <!-- ut-docs#1472: live in-page viewfinder, preferred over the OS
+             camera round-trip (image-file-camera below) when the platform
+             actually supports getUserMedia — see the script below for the
+             feature-detect + fallback. Hidden until image-camera-btn opens
+             it; canvas is never shown, it only exists to grab a still frame. -->
+        <!-- The `hidden` toggle lives on this outer, otherwise-unstyled div
+             on purpose: cascade ORIGIN is resolved before specificity, so an
+             author-stylesheet rule (.field-pair's `display: grid`, app.css)
+             always beats the UA stylesheet's `[hidden] { display: none }`
+             regardless of specificity — a `hidden` div that was ALSO
+             `.field-pair` never actually hid. Layout lives on the inner
+             div instead, which is never hidden. -->
+        <div id="image-viewfinder" hidden>
+          <!-- .camera-overlay-video (app.css) is the sizing/aspect-ratio
+               class shared by the AI-identify and #548 barcode-scan camera
+               previews — without it the video renders at its raw
+               intrinsic width, overflowing this 360px-ish sticky panel. -->
+          <video id="image-viewfinder-video" class="camera-overlay-video" autoplay playsinline muted></video>
+          <div class="field-pair">
+            <button type="button" class="btn secondary" id="image-viewfinder-capture-btn">{{ T "catalog.viewfinder.capture" }}</button>
+            <button type="button" class="btn secondary" id="image-viewfinder-cancel-btn">{{ T "common.cancel" }}</button>
+          </div>
+          <div id="image-viewfinder-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+        </div>
+        <canvas id="image-viewfinder-canvas" hidden></canvas>
         <!-- Two triggers, one canonical submitted field: real <button>
              elements (not a bare <label for>, which review found is NOT
              keyboard-Tab-reachable and has no default Enter/Space
@@ -459,7 +484,106 @@
   // standard trick and gets keyboard focus/Enter/Space activation for
   // free from the <button> itself, unlike a bare <label for> on a hidden
   // input (not tab-reachable, no default key activation).
-  document.getElementById('image-camera-btn').addEventListener('click', function () { imageFileCamera.click(); });
+  // ut-docs#1472: live in-page viewfinder for the catalog photo, replacing
+  // the OS camera round-trip (image-file-camera, still the fallback below)
+  // on any platform that actually supports getUserMedia. Feature detection
+  // only, never platform sniffing — a desktop/laptop with a webcam gets the
+  // same viewfinder for free, and a device with no camera (or a rejected
+  // getUserMedia call, e.g. NotFoundError/NotAllowedError) falls straight
+  // back to the picker, same as before this card.
+  var viewfinder = document.getElementById('image-viewfinder');
+  var viewfinderVideo = document.getElementById('image-viewfinder-video');
+  var viewfinderCanvas = document.getElementById('image-viewfinder-canvas');
+  var viewfinderCaptureBtn = document.getElementById('image-viewfinder-capture-btn');
+  var viewfinderCancelBtn = document.getElementById('image-viewfinder-cancel-btn');
+  var viewfinderMsg = document.getElementById('image-viewfinder-msg');
+  var cameraBtn = document.getElementById('image-camera-btn');
+  var VIEWFINDER_MSG = { notReady: "{{ T "catalog.viewfinder.not_ready" }}" };
+  var viewfinderStream = null;
+  // True from the moment getUserMedia is requested until stopViewfinder()
+  // runs (covering both "already open" and "still starting") so a second
+  // click on the trigger button — reachable either before the first
+  // request resolves, or again once the feed is already showing — can't
+  // fire a second, overlapping getUserMedia call and leak the first
+  // stream's tracks.
+  var viewfinderBusy = false;
+
+  function stopViewfinder() {
+    viewfinderBusy = false;
+    if (viewfinderStream) {
+      viewfinderStream.getTracks().forEach(function (t) { t.stop(); });
+      viewfinderStream = null;
+    }
+    viewfinderVideo.srcObject = null;
+    viewfinderMsg.textContent = '';
+    // Drop the retained frame rather than leaving the canvas holding the
+    // last capture in memory until the next open.
+    viewfinderCanvas.width = 0;
+    viewfinderCanvas.height = 0;
+    var hadFocusInside = viewfinder.contains(document.activeElement);
+    viewfinder.hidden = true;
+    if (hadFocusInside) cameraBtn.focus();
+  }
+
+  // ut-docs#1472 review: the stream must also be released if the operator
+  // collapses the "Item image" <details> panel while it's open — otherwise
+  // the camera (and its OS-level recording indicator) stays live with the
+  // panel that showed it no longer even visible.
+  cameraBtn.closest('details').addEventListener('toggle', function (ev) {
+    if (!ev.target.open) stopViewfinder();
+  });
+
+  function openViewfinder() {
+    viewfinderBusy = true;
+    navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
+      .then(function (stream) {
+        viewfinderStream = stream;
+        viewfinderVideo.srcObject = stream;
+        viewfinder.hidden = false;
+        // autoplay is normally enough, but some engines need an explicit
+        // nudge for a MediaStream assigned programmatically after the
+        // element already exists — muted, so this is allowed without a
+        // user gesture.
+        viewfinderVideo.play().catch(function () {});
+        viewfinderCaptureBtn.focus();
+      })
+      .catch(function () { viewfinderBusy = false; imageFileCamera.click(); });
+  }
+
+  cameraBtn.addEventListener('click', function () {
+    if (viewfinderBusy) return; // already open or a request is in flight
+    if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+      openViewfinder();
+    } else {
+      imageFileCamera.click();
+    }
+  });
+  viewfinderCancelBtn.addEventListener('click', stopViewfinder);
+  viewfinderCaptureBtn.addEventListener('click', function () {
+    // getUserMedia resolving is not the same as a decoded frame existing —
+    // the video can still read 0x0 for a brief window right after start.
+    // Report it and let the operator try again a moment later, rather than
+    // silently vanishing with no photo and no explanation.
+    var w = viewfinderVideo.videoWidth, h = viewfinderVideo.videoHeight;
+    if (!w || !h) { renderNotice(viewfinderMsg, 'error', VIEWFINDER_MSG.notReady); return; }
+    // Bound the upload client-side same as the AI-identify camera capture
+    // (app.js) — max 1024px long edge, JPEG: a full-resolution PNG both
+    // wastes bandwidth and risks the server's 10MB upload cap silently
+    // truncating instead of erroring.
+    var scale = Math.min(1, 1024 / Math.max(w, h));
+    viewfinderCanvas.width = Math.round(w * scale);
+    viewfinderCanvas.height = Math.round(h * scale);
+    viewfinderCanvas.getContext('2d').drawImage(viewfinderVideo, 0, 0, viewfinderCanvas.width, viewfinderCanvas.height);
+    viewfinderCanvas.toBlob(function (blob) {
+      if (!blob) { renderNotice(viewfinderMsg, 'error', VIEWFINDER_MSG.notReady); return; }
+      var file = new File([blob], 'catalog-photo.jpg', { type: blob.type });
+      var dt = new DataTransfer();
+      dt.items.add(file);
+      imageFileInput.files = dt.files;
+      imageFileNameEl.textContent = file.name;
+      stopViewfinder();
+    }, 'image/jpeg', 0.85);
+  });
   document.getElementById('image-choose-btn').addEventListener('click', function () { imageFileInput.click(); });
   imageFileCamera.addEventListener('change', function () {
     if (this.files && this.files[0]) {

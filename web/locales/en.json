@@ -127,6 +127,8 @@
   "catalog.image_types": "Image (PNG/JPEG)",
   "catalog.take_photo": "Take a Photo",
   "catalog.choose_file": "Choose File",
+  "catalog.viewfinder.capture": "Capture",
+  "catalog.viewfinder.not_ready": "Camera not ready yet — try again in a moment.",
   "catalog.item_image": "Item image",
   "catalog.keypad.capture_label": "Press the physical key (or type a code)",
   "catalog.keypad.capture_placeholder": "Waiting for key press…",

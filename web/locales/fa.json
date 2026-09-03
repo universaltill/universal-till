@@ -127,6 +127,8 @@
   "catalog.image_types": "تصویر (PNG/JPEG)",
   "catalog.take_photo": "گرفتن عکس",
   "catalog.choose_file": "انتخاب فایل",
+  "catalog.viewfinder.capture": "ثبت عکس",
+  "catalog.viewfinder.not_ready": "دوربین هنوز آماده نیست — کمی بعد دوباره امتحان کنید.",
   "catalog.item_image": "تصویر کالا",
   "catalog.keypad.capture_label": "کلید فیزیکی را فشار دهید (یا کدی را تایپ کنید)",
   "catalog.keypad.capture_placeholder": "در انتظار فشردن کلید…",

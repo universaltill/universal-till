@@ -103,8 +103,21 @@ test('taking a photo (capture input) uploads via the same canonical file field',
 // replaced. Confirm both are actual <button> elements, and that keyboard
 // focus + Enter on the camera trigger opens the native file chooser (a
 // <label> would not fire a filechooser event this way).
+//
+// ut-docs#1472: image-camera-btn now tries a live getUserMedia viewfinder
+// FIRST (see catalog-camera-viewfinder-1472.spec.ts for that path) and only
+// falls back to this native file chooser when getUserMedia is unavailable
+// or rejects — exactly what a real camera-less CI runner does, so stub the
+// rejection explicitly rather than relying on the runner's actual (and
+// non-deterministic) camera hardware/permission behavior.
 test('take-photo/choose-file triggers are real buttons, keyboard-activatable', async ({ page }) => {
   const assertClean = watchConsole(page);
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, 'mediaDevices', {
+      configurable: true,
+      value: { getUserMedia: async () => { throw new Error('no camera in CI'); } },
+    });
+  });
 
   await page.goto('/catalog');
   await page.locator('.catalog-row', { hasText: 'Apple Juice 1L' }).click();
@@ -121,6 +134,7 @@ test('take-photo/choose-file triggers are real buttons, keyboard-activatable', a
     page.keyboard.press('Enter'),
   ]);
   expect(chooser.isMultiple()).toBe(false);
+  await expect(page.locator('#image-viewfinder')).toBeHidden();
 
   assertClean();
 });
