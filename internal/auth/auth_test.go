@@ -6,6 +6,9 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"regexp"
+	"strings"
 	"testing"
 	"time"
 
@@ -512,5 +515,65 @@ func TestCan(t *testing.T) {
 	}
 	if can, err := svc.Can(ctx, manager, "no-such-action"); err != nil || can {
 		t.Fatalf("Can(manager, unknown action) = %v, %v; want false, nil", can, err)
+	}
+}
+
+// The setup wizard's endpoints must ALL clear the session wall, because a
+// first-boot till has no operators and therefore cannot mint a session.
+// Four routes have now shipped broken this way — the first-boot pairing trio
+// (ut-docs#289), /api/setup/language (ut-docs#1092), /api/setup/tax-plugin
+// (ut-docs#1507) and /api/import (ut-docs#1509) — each found by a human
+// hitting a 401 on real hardware, because internal/pages mounts handlers on a
+// bare mux with no middleware in front and so cannot see this class at all.
+//
+// Rather than pin one more hand-written list that the next wizard endpoint
+// won't be added to, this reads the endpoints out of the wizard template
+// itself. A new action=/hx-post=/hx-get=/fetch() target in setup.html is
+// therefore checked from the moment it is written.
+func TestSetupWizardEndpointsClearTheSessionWall(t *testing.T) {
+	const tmpl = "../../web/ui/pages/setup.html"
+	raw, err := os.ReadFile(tmpl)
+	if err != nil {
+		// Deliberately fatal, never skipped: a silently-skipped test here
+		// restores exactly the blind spot this exists to close.
+		t.Fatalf("read wizard template %s: %v", tmpl, err)
+	}
+
+	// action="…" / hx-post="…" / hx-get="…" / fetch('…') — the four ways
+	// setup.html actually calls the server today.
+	re := regexp.MustCompile(`(?:action|hx-post|hx-get)="(/api/[^"]+)"|fetch\(['"](/api/[^'"]+)['"]`)
+	found := map[string]bool{}
+	for _, m := range re.FindAllStringSubmatch(string(raw), -1) {
+		ep := m[1]
+		if ep == "" {
+			ep = m[2]
+		}
+		// Strip any query string; the middleware matches on path only.
+		if i := strings.IndexByte(ep, '?'); i >= 0 {
+			ep = ep[:i]
+		}
+		found[ep] = true
+	}
+	if len(found) == 0 {
+		t.Fatalf("no /api endpoints parsed out of %s — the regex has gone stale, "+
+			"which would make this test silently vacuous", tmpl)
+	}
+
+	db := openAuthTestDB(t)
+	svc := NewService(db)
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusOK)
+	})
+	h := Middleware(inner, svc)
+
+	for ep := range found {
+		rec := httptest.NewRecorder()
+		h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, ep, nil))
+		if rec.Code != http.StatusOK {
+			t.Errorf("wizard endpoint %s = %d, want 200 — a first-boot till has no "+
+				"operators, so it can never hold a session; add it to the exempt "+
+				"switch in middleware.go (its handler must gate itself with "+
+				"NeedsFirstBoot, as /api/import and /api/setup/* all do)", ep, rec.Code)
+		}
 	}
 }
