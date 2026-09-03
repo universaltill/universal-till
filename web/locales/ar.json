@@ -127,6 +127,8 @@
   "catalog.image_types": "صورة (PNG/JPEG)",
   "catalog.take_photo": "التقاط صورة",
   "catalog.choose_file": "اختيار ملف",
+  "catalog.viewfinder.capture": "التقاط",
+  "catalog.viewfinder.not_ready": "الكاميرا غير جاهزة بعد — حاول مرة أخرى بعد قليل.",
   "catalog.item_image": "صورة الصنف",
   "catalog.keypad.capture_label": "اضغط المفتاح الفعلي (أو اكتب رمزاً)",
   "catalog.keypad.capture_placeholder": "بانتظار ضغط المفتاح…",
