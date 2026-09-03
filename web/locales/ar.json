@@ -998,6 +998,7 @@
   "shifts.adjust": "تعديل (±)",
   "shifts.adjust_type": "النوع",
   "shifts.adjustment": "تعديل نقدي / صرف",
+  "shifts.adjustment_success": "تم تسجيل التعديل: %s",
   "shifts.amount": "المبلغ",
   "shifts.amount_hint": "السالب يزيل النقد",
   "shifts.cashier": "الصرّاف",
