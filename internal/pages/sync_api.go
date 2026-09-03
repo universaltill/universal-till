@@ -20,6 +20,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/lanip"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -94,42 +95,24 @@ func advertisableHost(host string) (string, error) {
 	return net.JoinHostPort(lan, port), nil
 }
 
-// lanIPv4 picks this host's first up, non-loopback IPv4 address. Deliberately
-// enumerates interfaces rather than dialling out: the till is offline-first
-// (ADR-0003) and must be able to pair two boxes on an isolated shop LAN with
-// no gateway, no DNS and no internet at all.
+// lanIPv4 picks an address another till on the shop LAN can dial. The
+// enumeration this used to do by hand now lives in internal/lanip, which adds
+// the route-probe fallback Android needs — enumeration is denied there, so
+// this returned an error on every Android till and "show pairing code"
+// rendered nothing at all (ut-docs#1499/#1501). Kept as a thin wrapper: it is
+// the name the pairing code path and its tests already speak.
+//
+// Still enumeration-first, never a dial-out requirement: the till is
+// offline-first (ADR-0003) and must pair two boxes on an isolated shop LAN
+// with no gateway, no DNS and no internet at all.
 func lanIPv4() (string, error) {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return "", fmt.Errorf("cannot list network interfaces: %w", err)
-	}
-	for _, ifc := range ifaces {
-		if ifc.Flags&net.FlagUp == 0 || ifc.Flags&net.FlagLoopback != 0 {
-			continue
-		}
-		addrs, err := ifc.Addrs()
-		if err != nil {
-			continue
-		}
-		for _, a := range addrs {
-			var ip net.IP
-			switch v := a.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			if ip == nil || ip.IsLoopback() || ip.IsLinkLocalUnicast() {
-				continue
-			}
-			if v4 := ip.To4(); v4 != nil {
-				return v4.String(), nil
-			}
-		}
-	}
-	return "", fmt.Errorf("this till has no network address other than loopback — " +
-		"connect it to the shop network before pairing another till")
+	return lanipIPv4()
 }
+
+// lanipIPv4 is a seam over lanip.IPv4 so a test can drive the
+// no-LAN-address path — the exact path sync_api_test.go used to document as
+// untestable "without mocking net.Interfaces()".
+var lanipIPv4 = lanip.IPv4
 
 // encodeEnrollCode packs the primary's URL + one-time token into ONE opaque,
 // copy-pasteable code (base64url of the JSON), so the manual pairing "code"
@@ -258,7 +241,17 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			// NOT r.Host directly — see advertisableHost (ut-docs#362).
 			advHost, err := advertisableHost(r.Host)
 			if err != nil {
-				common.LogAndLocalizedError(w, r, http.StatusConflict, "sync.error.no_lan_address", "sync_api", err)
+				// 200, not 409: this response is swapped in by htmx, and
+				// htmx does not swap non-2xx — a 409 here reached the
+				// operator as a completely blank panel, which is exactly
+				// what the "show pairing code does nothing" report was
+				// (ut-docs#1499). Same class as ut-docs#1455. The status
+				// is the only thing that changes; the message, the log and
+				// the refusal to mint an undialable code all stand.
+				logging.L().Warnf("sync_api: cannot mint an enrolment code: %v", err)
+				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				fmt.Fprintf(w, `<p class="error" role="alert">%s</p>`,
+					html.EscapeString(httpx.T(httpx.ResolveLocale(w, r), "sync.error.no_lan_address")))
 				return
 			}
 			primaryURL = scheme + "://" + advHost

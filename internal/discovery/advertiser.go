@@ -2,13 +2,14 @@ package discovery
 
 import (
 	"context"
-	"net"
+	"errors"
 	"strconv"
 	"sync"
 	"time"
 
 	"github.com/hashicorp/mdns"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/lanip"
 	"github.com/universaltill/universal-till/internal/logging"
 )
 
@@ -104,6 +105,13 @@ func (a *Advertiser) tick(ctx context.Context) {
 	switch {
 	case primary && a.server == nil:
 		srv, err := a.startLocked(ctx)
+		if errors.Is(err, ErrNoLANAddress) {
+			// Not a fault: a till that is not on a network yet simply has
+			// nothing true to say. Logged at info so it explains a quiet
+			// Tills page without reading like a failure (ut-docs#1501).
+			logging.L().Infof("lan discovery: not advertising yet — this till has no LAN address (will retry)")
+			return
+		}
 		if err != nil {
 			logging.L().Warnf("lan discovery: failed to start mDNS advertiser (will retry): %v", err)
 			return
@@ -140,7 +148,11 @@ func (a *Advertiser) startLocked(ctx context.Context) (mdnsServer, error) {
 	if port == 0 {
 		port = 8080 // config.Init's own UT_LISTEN_ADDR default; NewMDNSService requires a non-zero port
 	}
-	zone, err := mdns.NewMDNSService(id, ServiceName, "", "", port, localIPs(), txtRecord(name, id))
+	ips := lanIPs()
+	if len(ips) == 0 {
+		return nil, ErrNoLANAddress
+	}
+	zone, err := mdns.NewMDNSService(id, ServiceName, "", mdnsHostName(id), port, ips, txtRecord(name, id))
 	if err != nil {
 		return nil, err
 	}
@@ -160,32 +172,25 @@ func txtRecord(shopName, tillID string) []string {
 	}
 }
 
-// localIPs gathers this host's non-loopback IPv4 addresses for the mDNS
-// service record, falling back to loopback only if none are found — so
-// mdns.NewMDNSService (which otherwise falls back to a DNS lookup of the
-// machine hostname when given an empty IP list) never depends on the
-// host's own name actually resolving, which containers/sandboxes commonly
-// don't provide.
-func localIPs() []net.IP {
-	var ips []net.IP
-	addrs, err := net.InterfaceAddrs()
-	if err == nil {
-		for _, addr := range addrs {
-			var ip net.IP
-			switch v := addr.(type) {
-			case *net.IPNet:
-				ip = v.IP
-			case *net.IPAddr:
-				ip = v.IP
-			}
-			if ip == nil || ip.IsLoopback() || ip.To4() == nil {
-				continue
-			}
-			ips = append(ips, ip)
-		}
-	}
-	if len(ips) == 0 {
-		ips = append(ips, net.IPv4(127, 0, 0, 1))
-	}
-	return ips
+// ErrNoLANAddress is returned by startLocked when this till has no address a
+// peer could dial. Advertising anyway — which this code did until
+// ut-docs#1501, by falling back to 127.0.0.1 — is worse than staying quiet:
+// the record still reaches every till on the LAN, still shows up as a
+// joinable shop, and then fails on the OTHER device with "cannot reach that
+// primary". Silence is honest, and tick() retries every 30s, so a till whose
+// Wi-Fi comes up late starts advertising on its own.
+var ErrNoLANAddress = errors.New("no LAN address to advertise")
+
+// lanIPs is a seam over lanip.IPv4s so a test can drive the
+// no-address-available path without unplugging the machine running it.
+var lanIPs = lanip.IPv4s
+
+// mdnsHostName is the SRV target this till publishes. Passing it explicitly
+// (rather than leaving it empty and letting hashicorp/mdns call os.Hostname)
+// matters on Android, where the hostname is literally "localhost": a
+// third-party mDNS client resolving that name gets its OWN loopback, no
+// matter how correct the A record we attach to it is. The till id is a UUID,
+// so it is already a valid DNS label.
+func mdnsHostName(tillID string) string {
+	return tillID + ".local."
 }
