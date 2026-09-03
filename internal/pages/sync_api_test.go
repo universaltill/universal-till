@@ -4,7 +4,9 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"html"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -1658,5 +1660,74 @@ func TestSyncPromote_ClearIdentityFailureIsLocalized(t *testing.T) {
 	}
 	if strings.Contains(body, "readonly database") {
 		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+// --- ut-docs#1501: the "show pairing code" half of the pairing failure.
+//
+// The comment above (ut-docs#946) recorded this path as untestable without
+// mocking net.Interfaces(). internal/lanip now owns that enumeration and
+// exposes a seam, so the case a real Android till hits every single time is
+// covered here for real — no fake repo, no fake HTTP, just "this device has
+// no LAN address", which is what Android's denied enumeration looks like.
+
+func TestSyncEnrollToken_NoLANAddressRendersAVisibleMessage(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newSyncAPITestDeps(t)
+
+	prev := lanipIPv4
+	lanipIPv4 = func() (string, error) {
+		return "", errors.New("this till has no network address other than loopback")
+	}
+	t.Cleanup(func() { lanipIPv4 = prev })
+
+	// The Host an Android WebView always presents: its own loopback.
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/enroll-token", nil)
+	req.Host = "127.0.0.1:41234"
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	// 200, because htmx does not swap non-2xx: the 409 this used to answer
+	// reached the operator as a blank panel and nothing else, which is
+	// precisely the bug report ("I press show pair code but it didn't show
+	// anything").
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 — htmx discards non-2xx and the operator sees nothing", rec.Code)
+	}
+	body := rec.Body.String()
+	// Escaped, because the message is written into HTML — compare like for
+	// like rather than loosening the assertion to a substring of a word.
+	if want := html.EscapeString(httpx.T("en", "sync.error.no_lan_address")); !strings.Contains(body, want) {
+		t.Fatalf("body %q does not contain the localized reason %q", body, want)
+	}
+	if strings.Contains(body, "<img") {
+		t.Fatal("minted a QR code anyway — a code carrying an undialable address is worse than none")
+	}
+}
+
+// The other half of the same bug: with a LAN address available, a loopback
+// Host must still produce a dialable code rather than an error.
+func TestSyncEnrollToken_LoopbackHostStillMintsADialableCode(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newSyncAPITestDeps(t)
+
+	prev := lanipIPv4
+	lanipIPv4 = func() (string, error) { return "192.168.1.136", nil }
+	t.Cleanup(func() { lanipIPv4 = prev })
+
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/enroll-token", nil)
+	req.Host = "127.0.0.1:41234"
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	code := rec.Body.String()
+	if !strings.Contains(code, "<img") {
+		t.Fatalf("expected a QR code in the response, got %q", code)
+	}
+	if strings.Contains(code, "127.0.0.1") {
+		t.Fatalf("the rendered code still mentions loopback: %q", code)
 	}
 }
