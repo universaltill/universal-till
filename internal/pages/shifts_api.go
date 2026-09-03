@@ -655,7 +655,14 @@ func respondShiftSuccess(w http.ResponseWriter, r *http.Request, data ShiftOpenR
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, http.StatusOK, map[string]any{"data": data, "error": nil})
 	} else {
-		writeHTML(w, http.StatusOK, fmt.Sprintf("<div class='success'>Shift opened: %s</div>", data.ShiftID))
+		// ut-docs#1406: was hardcoded English prose never routed through T()
+		// (invisible to guard-i18n.sh, which scans template markup, not
+		// Go-side fmt.Sprintf) and emitted the shift ID unescaped. Now
+		// translated, and HTML-escaped to match the pattern #1289 established
+		// for respondCloseSuccess.
+		locale := httpx.ResolveLocale(w, r)
+		msg := fmt.Sprintf(httpx.T(locale, "shifts.open_success"), data.ShiftID)
+		writeHTML(w, http.StatusOK, "<div class='success'>"+html.EscapeString(msg)+"</div>")
 	}
 }
 

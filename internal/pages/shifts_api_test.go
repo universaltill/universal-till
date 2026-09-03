@@ -144,6 +144,57 @@ func TestOpenShift_DefaultsCashierToSessionUser(t *testing.T) {
 	}
 }
 
+// TestRespondShiftSuccess_TranslatedAndEscaped: respondShiftSuccess's
+// HTML-fragment path (the open form's on-screen confirmation, not the JSON
+// envelope) used to hardcode English prose outside T() entirely and emit the
+// shift ID unescaped (ut-docs#1406 — the same defect class #1289 fixed for
+// respondCloseSuccess). Now the message is T()-routed (shifts.open_success)
+// and HTML-escaped. Tested directly against the helper, the shared choke
+// point the open form's fragment renders through.
+func TestRespondShiftSuccess_TranslatedAndEscaped(t *testing.T) {
+	chdirRoot(t)
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("load i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+
+	// English (default) locale renders the en template with the shift ID.
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/shifts/open", nil)
+	respondShiftSuccess(rec, req, ShiftOpenResponse{ShiftID: "abc-123", Success: true})
+	if !strings.Contains(rec.Body.String(), "Shift opened: abc-123") {
+		t.Fatalf("expected the en shifts.open_success template, got:\n%s", rec.Body.String())
+	}
+
+	// A non-English locale actually renders translated prose, not the
+	// English template with the ID spliced in.
+	recFa := httptest.NewRecorder()
+	reqFa := httptest.NewRequest(http.MethodPost, "/api/shifts/open", nil)
+	reqFa.AddCookie(&http.Cookie{Name: "ut_lang", Value: "fa"})
+	respondShiftSuccess(recFa, reqFa, ShiftOpenResponse{ShiftID: "abc-123", Success: true})
+	bodyFa := recFa.Body.String()
+	if !strings.Contains(bodyFa, "شیفت باز شد") {
+		t.Fatalf("expected the fa translation of shifts.open_success, got:\n%s", bodyFa)
+	}
+	if strings.Contains(bodyFa, "Shift opened:") {
+		t.Fatalf("expected NO leftover English prose under the fa locale, got:\n%s", bodyFa)
+	}
+
+	// The rendered message is HTML-escaped (matching #1289's pattern) — a
+	// shift ID carrying markup must not reach the fragment raw.
+	recEsc := httptest.NewRecorder()
+	reqEsc := httptest.NewRequest(http.MethodPost, "/api/shifts/open", nil)
+	respondShiftSuccess(recEsc, reqEsc, ShiftOpenResponse{ShiftID: `<img src=x onerror=alert(1)>`, Success: true})
+	bodyEsc := recEsc.Body.String()
+	if strings.Contains(bodyEsc, "<img") {
+		t.Fatalf("expected the shift ID to be HTML-escaped, got %s", bodyEsc)
+	}
+	if !strings.Contains(bodyEsc, "&lt;img") {
+		t.Fatalf("expected an escaped &lt;img&gt; in the body, got %s", bodyEsc)
+	}
+}
+
 func TestCloseShift_ComputesExpectedCashAndVariance(t *testing.T) {
 	mux, dp := newShiftsAPITestDeps(t)
 	ctx := context.Background()

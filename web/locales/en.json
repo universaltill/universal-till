@@ -1020,6 +1020,7 @@
   "shifts.open": "open",
   "shifts.open_new": "Open Shift",
   "shifts.open_since": "Shift open since",
+  "shifts.open_success": "Shift opened: %s",
   "shifts.opened_at": "Opened",
   "shifts.opening_cash": "Opening cash",
   "shifts.payout": "Payout (cash out)",

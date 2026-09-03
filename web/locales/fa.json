@@ -1020,6 +1020,7 @@
   "shifts.open": "باز",
   "shifts.open_new": "باز کردن شیفت",
   "shifts.open_since": "شیفت باز از",
+  "shifts.open_success": "شیفت باز شد: %s",
   "shifts.opened_at": "باز شده",
   "shifts.opening_cash": "وجه ابتدای شیفت",
   "shifts.payout": "برداشت (خروج وجه)",
