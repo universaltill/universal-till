@@ -471,7 +471,17 @@
       <section x-show="step === 6 && restoreChoice === 'csv_excel'" x-cloak data-step="6-upload">
         <h2>{{ T "setup.restore.upload_title" }}</h2>
         <p class="muted">{{ T "import.help" }}</p>
-        <form id="import-form" hx-post="/api/import" hx-target="#setup-restore-result" hx-swap="innerHTML" enctype="multipart/form-data">
+        <!-- ut-docs#1515: hx-indicator + hx-disabled-elt — ut-docs#1510 added
+             exactly this pattern to import.html's own upload form but missed
+             this one, so the wizard's Preview button on a real .bkp (up to
+             thousands of receipt PDFs to parse past) went dead with no
+             feedback at all, inviting a second tap. Same selector shape,
+             own busy element below (a distinct id from import.html's
+             #import-busy — the two never render on the same page, but
+             reusing the id would still be a document-wide htmx-indicator
+             match on the wrong element if that ever changed). -->
+        <form id="import-form" hx-post="/api/import" hx-target="#setup-restore-result" hx-swap="innerHTML" enctype="multipart/form-data"
+              hx-indicator="#setup-restore-busy" hx-disabled-elt="find button[type=submit]">
           <input type="hidden" name="commit" value="0">
           <!-- ut-docs#1168 review: tells POST /api/import to suppress the
                problem-grid/barcode-opt-in controls and the repeated Import
@@ -486,11 +496,84 @@
           <label>{{ T "import.file" }} <input type="file" name="file" accept=".csv,text/csv,.bkp,application/zip,application/octet-stream" required></label>
           <button class="btn primary" type="submit" style="margin-top:.5rem">{{ T "import.preview" }}</button>
         </form>
+        <!-- Touch-legible on purpose, same treatment as import.html's own
+             #import-busy (ut-docs#1510 review: "not a 12px inline
+             spinner") — hidden by app.css's .htmx-indicator rule until
+             htmx marks the form busy. -->
+        <div id="setup-restore-busy" class="htmx-indicator" style="margin-top:.6rem; font-size:1.05rem; font-weight:600">
+          <span class="animate-spin" aria-hidden="true">⏳</span> {{ T "import.busy" }}
+        </div>
         <div id="setup-restore-result" style="margin-top:.8rem; overflow-x:auto"></div>
         <p class="muted" x-show="restoreStagedId !== ''" data-setup-preview-ready>{{ T "setup.restore.preview_ready" }}</p>
+        <!-- ut-docs#1515: a detected/pre-filled country's currency is correct
+             far more often than not, so step 2's tile is rarely clicked —
+             but ut-docs#970's own review made currencyTouched the one signal
+             that guards auto-confirming a currency (commitStagedImportForSetup
+             in setup_page.go: "ONLY attempted when currencyTouched"). Silently
+             auto-committing here regardless would reopen exactly the bug that
+             review closed. So when a preview is staged and the operator never
+             explicitly touched currency, ask for one explicit confirmation
+             right here: checking it sets the SAME currencyTouched flag step
+             2's tile click sets, so the wizard's final submit auto-commits
+             exactly as if they'd clicked the tile. Leaving it unchecked is
+             still safe — Next stays disabled rather than silently dropping
+             them on /import with no explanation, which is what ut-docs#1515
+             reported.
+             Independent review (ut-docs#1515), finding 1 (blocker): also
+             gated on `currency !== ''` — country/currency detection can
+             match no seeded country at all (this till's own CI host is one
+             such case), leaving `currency` blank. Asking the operator to
+             confirm a currency that isn't even shown, then marking the till
+             "confirmed" against an empty string, would reopen the exact
+             ut-docs#970 hole this control exists to close: setup_page.go's
+             `v != "" && IsKnownCurrency(v)` never actually sets
+             KeyCurrencyConfirmed for a blank currency, but
+             commitStagedImportForSetup's own gate doesn't check that —
+             only currencyTouched — so it would still run. With nothing to
+             confirm, this now falls back to exactly the pre-existing
+             behaviour instead: Next stays enabled, and an unconfirmed
+             currency lands the operator on /import with the explanatory
+             message below (import.staged_from_setup_confirm_currency)
+             rather than a silent one. -->
+        <div x-data="{ neededConfirm: false }" x-init="$watch('restoreStagedId', (v) => { if (v !== '' && !currencyTouched && currency !== '') neededConfirm = true })">
+          <!-- Independent review, finding 7: a plain
+               `x-show="!currencyTouched"` here made this block vanish the
+               INSTANT its own checkbox set currencyTouched — the same
+               self-hiding-container class this file's own step 6 review
+               (ut-docs#617, comment above on "asking" vs "choice") already
+               fixed once. `neededConfirm` is a one-way latch, set the
+               moment a preview first stages while currency is genuinely
+               unconfirmed, and never cleared — so this stays on screen as a
+               visible record of what was confirmed instead of disappearing,
+               and the checkbox reflects (:checked) rather than only sets
+               (@change) currencyTouched, so unchecking it after the fact is
+               still possible (and correctly re-disables Next below). -->
+          <!-- Second review round: the latch is deliberately NOT the only
+               condition. `neededConfirm` is never cleared, but step 6's Back
+               button (below) resets restoreStagedId to '' — so on a
+               Back-then-"Yes"-again round trip the panel re-shows with
+               nothing staged, and a latch-only x-show would leave this
+               warn block asking to confirm a currency for a file that is no
+               longer staged, while its own explanatory hint <p> below
+               (which does test restoreStagedId) stays hidden — the two
+               visibly disagreeing. Pairing the latch with the same
+               "something is actually staged" test keeps them in sync and
+               still satisfies finding 7: ticking the box changes only
+               currencyTouched, never restoreStagedId, so the block does
+               not vanish out from under the operator the way the original
+               x-show="!currencyTouched" did. -->
+          <div x-show="neededConfirm && restoreStagedId !== ''" class="notice-block-warn" style="margin-top:.6rem" data-setup-confirm-currency>
+            <label style="display:flex; align-items:center; gap:.4rem">
+              <span class="row-warn-icon" aria-hidden="true">⚠</span>
+              <input type="checkbox" :checked="currencyTouched" @change="currencyTouched = $event.target.checked">
+              <span>{{ T "setup.restore.confirm_currency" }} <strong x-text="currency"></strong></span>
+            </label>
+          </div>
+        </div>
+        <p class="muted" x-show="restoreStagedId !== '' && !currencyTouched && currency !== ''" data-setup-confirm-currency-hint>{{ T "setup.restore.confirm_currency_hint" }}</p>
         <div class="setup-nav">
           <button type="button" class="btn secondary" @click="restoreAsking = false; restoreChoice = ''; restoreStagedId = ''">{{ T "setup.back" }}</button>
-          <button type="button" class="btn primary" @click="step = 7">{{ T "setup.next" }}</button>
+          <button type="button" class="btn primary" :disabled="restoreStagedId !== '' && !currencyTouched && currency !== ''" @click="step = 7">{{ T "setup.next" }}</button>
         </div>
       </section>
       <script>
