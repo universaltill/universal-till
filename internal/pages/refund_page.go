@@ -350,6 +350,25 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			Note:                    "refund of " + detail.ReceiptNo,
 			AllowNegativeInventory:  true, // returns only add stock back
 		}
+
+		// fiscal.sign.ask (ADR-0044 Decision 1, ut-docs#999/#1405): a refund
+		// moves real money and is aufzeichnungspflichtig under KassenSichV
+		// exactly like a sale (the same reasoning the ADR-0048 gate above
+		// already applies), so it gets a real signing attempt too — not just
+		// the gate check. Dispatched here, after the payment-provider refund
+		// webhook above has resolved and saleInput is final, mirroring
+		// completeTender's own ordering (pos_api.go) exactly: after any
+		// payment-provider interaction, before CompleteSale persists. Never
+		// blocks or refuses the refund — any failure lands on the
+		// proceed-and-declare surface below, same as a sale's.
+		// saleInput.SaleType is already "return" (set above), so
+		// buildFiscalSignPayload's SaleType field (contract 1.6.0,
+		// ut-docs#1203) lets a signer tell this apart from a sale of the
+		// same amount — the exact gap that blocked the first attempt at
+		// this dispatch (universal-till PR #594, closed unmerged; see
+		// docs/code-reviews/2026-09-03-fiscal-sign-refund-return-dispatch-1405.md).
+		signRes := dispatchFiscalSignAsk(r.Context(), d, &saleInput)
+
 		saleID, err := pos.CompleteSale(r.Context(), d.Db, saleInput)
 		if err != nil {
 			// Same underlying call pos_api.go's completeTender wraps --
@@ -374,6 +393,23 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			}, time.Now().UTC().Format(time.RFC3339), ""); auditErr != nil {
 				log.Printf("fiscal gate: unsigned_override audit marker for refund %s failed: %v", saleID, auditErr)
 			}
+		}
+		// fiscal.sign.ask proceed-and-declare (ADR-0044/ADR-0041 Decision E,
+		// ut-docs#999/#1405): the refund is already committed — a failed (or
+		// known-offline-skipped) signing dispatch is now DECLARED, never
+		// unwound, exactly the way completeTender declares a sale's own
+		// signing gap. Never re-attempted for a completed refund (ADR-0056,
+		// ut-docs#839). Best-effort, log-only on failure, same as the
+		// unsigned_override block above.
+		if signRes.Outcome.isFailure() || signRes.Outcome == fiscalSignSkippedOffline {
+			declareUnsignedFiscalSale(r.Context(), repo, saleID, actorID, signRes)
+		}
+		// ut-docs#585 (contract v1.1.0): an approved answer that carried the
+		// §6 KassenSichV evidence gets it persisted against the refund's own
+		// sale row, same as completeTender does for a sale. Evidence is only
+		// ever non-nil on approved.
+		if signRes.Outcome == fiscalSignApproved {
+			recordFiscalTSEEvidence(r.Context(), repo, saleID, actorID, signRes.Evidence)
 		}
 		// Mirror the restock to inventory connectors (best-effort, non-blocking).
 		publishStockAdjustedForSale(r.Context(), d, saleInput)
