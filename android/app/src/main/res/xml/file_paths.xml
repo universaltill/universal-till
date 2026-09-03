@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- ut-docs#1246: the ONLY path this app's FileProvider exposes — the
+     app-private external files dir that downloadAndInstallUpdate() writes the
+     release APK into. Deliberately not the shared Downloads collection: a
+     narrower grant, no storage permission needed, and a half-written APK never
+     appears in the operator's Files app. -->
+<paths>
+    <external-files-path
+        name="updates"
+        path="Download/" />
+</paths>

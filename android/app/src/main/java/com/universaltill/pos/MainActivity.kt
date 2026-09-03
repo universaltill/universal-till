@@ -37,11 +37,13 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
 import androidx.appcompat.app.AppCompatDelegate
 import androidx.core.content.ContextCompat
+import androidx.core.content.FileProvider
 import androidx.core.os.LocaleListCompat
 import androidx.core.view.WindowCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import java.io.ByteArrayOutputStream
+import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicReference
@@ -253,6 +255,30 @@ class MainActivity : AppCompatActivity() {
         }
 
         /**
+         * ut-docs#1246: the Android half of in-app update. The Go core can
+         * never self-swap here — it ships as a native library inside the APK
+         * and only the package installer may replace an app's own code — so
+         * `selfupdate.Supported()` is false on android by design and the till
+         * had no actionable update control at all. Every build meant telling
+         * the operator to download and reinstall an APK by hand.
+         *
+         * **Takes no URL, deliberately.** The release APK is resolved from
+         * [UPDATE_APK_URL], a compile-time constant, so nothing the page
+         * renders can steer what gets installed — an argument would turn a
+         * JS-reachable bridge into "install arbitrary package".
+         *
+         * Reaching this is gated on a manager PIN by settings.html's
+         * #android-update form (POST /api/update/android-install), because
+         * installing forces the kiosk pin to drop — the same capability
+         * exit-to-os guards. Android separately enforces that the new APK
+         * carries this app's signing key.
+         */
+        @JavascriptInterface
+        fun installUpdate() {
+            runOnUiThread { downloadAndInstallUpdate() }
+        }
+
+        /**
          * Native screenshot for the bug-report panel (ut-docs#1435). Android's
          * WebView implements no `getDisplayMedia` at all, so the panel's
          * screenshot button — which every other platform backs with a one-
@@ -390,6 +416,117 @@ class MainActivity : AppCompatActivity() {
             } finally {
                 bitmap.recycle()
             }
+        }
+    }
+
+    /**
+     * Enqueues the release APK and hands the finished file to the system
+     * package installer. Downloads into the app's own external files dir: no
+     * storage permission needed, it is what [FileProvider] exposes (see
+     * res/xml/file_paths.xml), and a half-written APK never appears in the
+     * operator's Files app. Never crashes the till — a failure leaves the
+     * operator able to install by hand.
+     */
+    private fun downloadAndInstallUpdate() {
+        try {
+            val dest = File(getExternalFilesDir(Environment.DIRECTORY_DOWNLOADS), UPDATE_APK_NAME)
+            if (dest.exists()) {
+                dest.delete() // a stale partial from an interrupted attempt must never be installed
+            }
+            val request =
+                DownloadManager.Request(Uri.parse(UPDATE_APK_URL)).apply {
+                    setMimeType(APK_MIME)
+                    setTitle(getString(R.string.app_name))
+                    setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+                    setDestinationInExternalFilesDir(
+                        this@MainActivity,
+                        Environment.DIRECTORY_DOWNLOADS,
+                        UPDATE_APK_NAME,
+                    )
+                }
+            val manager = getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            pollDownload(manager, manager.enqueue(request), dest)
+        } catch (e: Exception) {
+            statusView.visibility = View.VISIBLE
+            statusView.text = getString(R.string.status_failed, e.message ?: "update download failed")
+        }
+    }
+
+    /**
+     * Watches [id] to a terminal state, then hands the file to the installer.
+     *
+     * POLLED, not a completion broadcast: DownloadManager's
+     * ACTION_DOWNLOAD_COMPLETE comes from the system, so a receiver must be
+     * registered RECEIVER_EXPORTED to hear it at all — verified the hard way
+     * on a real tablet, where a RECEIVER_NOT_EXPORTED registration silently
+     * never fired and the 142MB APK just sat on disk. Exporting it would let
+     * any app on the device spoof "your download finished"; polling has no
+     * receiver to leak and explicit terminal states. Bounded by
+     * [UPDATE_POLL_LIMIT] so a stalled download cannot poll for the life of
+     * the till.
+     */
+    private fun pollDownload(
+        manager: DownloadManager,
+        id: Long,
+        dest: File,
+        tick: Int = 0,
+    ) {
+        if (tick > UPDATE_POLL_LIMIT) {
+            statusView.visibility = View.VISIBLE
+            statusView.text = getString(R.string.status_failed, "update download timed out")
+            return
+        }
+        val status =
+            manager.query(DownloadManager.Query().setFilterById(id)).use { c ->
+                if (!c.moveToFirst()) {
+                    DownloadManager.STATUS_FAILED
+                } else {
+                    c.getInt(c.getColumnIndexOrThrow(DownloadManager.COLUMN_STATUS))
+                }
+            }
+        when (status) {
+            DownloadManager.STATUS_SUCCESSFUL -> launchPackageInstaller(dest)
+            DownloadManager.STATUS_FAILED -> {
+                statusView.visibility = View.VISIBLE
+                statusView.text = getString(R.string.status_failed, "update download failed")
+            }
+            else -> webView.postDelayed({ pollDownload(manager, id, dest, tick + 1) }, UPDATE_POLL_MS)
+        }
+    }
+
+    /**
+     * Hands [apk] to the system installer via [FileProvider]. A `file://` URI
+     * is rejected from API 24 (FileUriExposedException) — this app's own
+     * minSdk — so the content:// grant is the only route.
+     */
+    private fun launchPackageInstaller(apk: File) {
+        try {
+            // The till runs pinned in lock-task (kiosk) mode, and Android
+            // silently REFUSES to start any non-allowlisted activity from a
+            // pinned app — "Attempted Lock Task Mode violation
+            // r=...packageinstaller/...InstallStart" in logcat, no dialog, no
+            // exception. That is exactly what "I pressed Update and nothing
+            // happened" looked like on a real tablet. Release the pin first,
+            // the same way KioskBridge.exitLockdown does for exit-to-OS;
+            // kioskUnlocked stops onResume immediately re-pinning and
+            // re-blocking it. Authorised by a manager PIN before we get here.
+            kioskUnlocked = true
+            releaseKioskLock()
+            clearImmersiveMode()
+            val uri = FileProvider.getUriForFile(this, "$packageName.updates", apk)
+            val intent =
+                Intent(Intent.ACTION_VIEW).apply {
+                    setDataAndType(uri, APK_MIME)
+                    addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                }
+            startActivity(intent)
+        } catch (e: Exception) {
+            // Most likely ActivityNotFoundException, or "install unknown apps"
+            // not yet granted. Surface it — the fallback is a manual install,
+            // which the operator can only choose if they know this failed.
+            statusView.visibility = View.VISIBLE
+            statusView.text = getString(R.string.status_failed, e.message ?: "install failed")
         }
     }
 
@@ -866,6 +1003,21 @@ class MainActivity : AppCompatActivity() {
     }
 
     companion object {
+        // ut-docs#1246: the release APK's STABLE url — release.yml republishes
+        // this same filename on every release, so the shell never resolves a
+        // version or calls the GitHub API. Compile-time constant on purpose:
+        // installUpdate() takes no argument, so page content can never
+        // redirect an install.
+        private const val UPDATE_APK_URL =
+            "https://github.com/universaltill/universal-till/releases/latest/download/unitill-pos-android-latest.apk"
+        private const val UPDATE_APK_NAME = "unitill-pos-update.apk"
+        private const val APK_MIME = "application/vnd.android.package-archive"
+
+        // ~5 minutes at 750ms: enough for a ~140MB APK on shop WiFi, bounded
+        // so a stalled download cannot poll forever.
+        private const val UPDATE_POLL_MS = 750L
+        private const val UPDATE_POLL_LIMIT = 400
+
         // ut-docs#414: the exact locale codes this app ships native string
         // resources for (values-fa/, values-tr/, values-ar/, plus the
         // default values/ for "en") — matches

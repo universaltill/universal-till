@@ -82,6 +82,16 @@
         {{ if canselfupdate }}
         <button type="button" class="sb-item sb-update" id="sb-update-btn"
                 data-latest="{{ latestversion }}">⬆&nbsp;{{ T "status.update_now" }}&nbsp;v{{ latestversion }}</button>
+        {{ else if updateinstallbridge }}
+        <!-- ut-docs#1246: Android. canselfupdate is false because the Go core
+             ships inside the APK and only the package installer may replace an
+             app's own code — but the native shell can drive that installer, so
+             this is NOT the dead end the kiosk branch below describes. The
+             bridge takes no url (it resolves the release APK itself), so this
+             markup cannot steer what gets installed. An <a href> would not work
+             here either: shouldOverrideUrlLoading confines the WebView to the
+             till's own loopback origin. -->
+        <a class="sb-item sb-update" href="/settings#android-update" data-testid="sb-android-update">⬆&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</a>
         {{ else if updatedownloadlink }}
         <a class="sb-item sb-update" href="https://www.universaltill.com/download"
            rel="noopener" target="_blank">⬆&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</a>
