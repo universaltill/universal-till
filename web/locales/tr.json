@@ -1020,6 +1020,7 @@
   "shifts.open": "açık",
   "shifts.open_new": "Vardiya aç",
   "shifts.open_since": "Vardiya şu andan beri açık",
+  "shifts.open_success": "Vardiya açıldı: %s",
   "shifts.opened_at": "Açıldı",
   "shifts.opening_cash": "Açılış nakiti",
   "shifts.payout": "Ödeme (nakit çıkışı)",

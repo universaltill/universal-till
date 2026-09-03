@@ -655,7 +655,13 @@ func respondShiftSuccess(w http.ResponseWriter, r *http.Request, data ShiftOpenR
 	if strings.Contains(r.Header.Get("Accept"), "application/json") {
 		writeJSON(w, http.StatusOK, map[string]any{"data": data, "error": nil})
 	} else {
-		writeHTML(w, http.StatusOK, fmt.Sprintf("<div class='success'>Shift opened: %s</div>", data.ShiftID))
+		// ut-docs#1406: was a hardcoded, untranslated "Shift opened: %s" and
+		// never escaped — same defect class #1289 fixed on respondCloseSuccess.
+		// data.ShiftID is uuid.NewString(), never user input, but escaping
+		// keeps the two sibling functions consistent.
+		locale := httpx.ResolveLocale(w, r)
+		msg := fmt.Sprintf(httpx.T(locale, "shifts.open_success"), data.ShiftID)
+		writeHTML(w, http.StatusOK, "<div class='success'>"+html.EscapeString(msg)+"</div>")
 	}
 }
 

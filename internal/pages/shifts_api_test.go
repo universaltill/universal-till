@@ -118,6 +118,63 @@ func TestOpenShift_JSONAndValidation(t *testing.T) {
 	}
 }
 
+// TestOpenShift_HTMLSummaryIsTranslated: the HTML-fragment path of
+// POST /api/shifts/open (what the sale-screen "Open Shift" form actually
+// renders) previously hardcoded untranslated English prose, invisible to
+// guard-i18n.sh because it lives in a Go fmt.Sprintf, not template markup —
+// same defect class #1289 fixed on the sibling respondCloseSuccess
+// (ut-docs#1406).
+func TestOpenShift_HTMLSummaryIsTranslated(t *testing.T) {
+	chdirRoot(t)
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("load i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	// English locale: sanity check the fragment still renders correctly.
+	// This alone does NOT prove the fix — en.json's translated string is
+	// textually identical to the old hardcoded literal, so this assertion
+	// would pass unchanged against the pre-fix code too. The real
+	// regression proof is the fa-locale assertion below, which only
+	// passes once the message is actually routed through T().
+	rec := postShiftForm(t, mux, "/api/shifts/open", "register_id=reg1&cashier_id=user1&opening_cash=5000")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "Shift opened:") {
+		t.Fatalf("expected the shifts.open_success template, got:\n%s", body)
+	}
+
+	var shiftID string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts WHERE closed_at IS NULL`).Scan(&shiftID); err != nil {
+		t.Fatal(err)
+	}
+	if rec := postShiftForm(t, mux, "/api/shifts/close", "shift_id="+shiftID+"&closing_cash=5000"); rec.Code != http.StatusOK {
+		t.Fatalf("close: %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// A non-English locale actually renders translated prose, not the
+	// English template spliced in — this is the assertion that fails
+	// pre-fix (see ut-docs#1406's review record).
+	req := httptest.NewRequest(http.MethodPost, "/api/shifts/open", strings.NewReader("register_id=reg1&cashier_id=user1&opening_cash=5000"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.AddCookie(&http.Cookie{Name: "ut_lang", Value: "fa"})
+	recFa := httptest.NewRecorder()
+	mux.ServeHTTP(recFa, req)
+	if recFa.Code != http.StatusOK {
+		t.Fatalf("open (fa locale): %d: %s", recFa.Code, recFa.Body.String())
+	}
+	if !strings.Contains(recFa.Body.String(), "شیفت باز شد") {
+		t.Fatalf("expected the fa translation of shifts.open_success, got:\n%s", recFa.Body.String())
+	}
+}
+
 func TestOpenShift_DefaultsCashierToSessionUser(t *testing.T) {
 	mux, dp := newShiftsAPITestDeps(t)
 	ctx := context.Background()
