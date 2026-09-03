@@ -259,6 +259,66 @@ func TestShiftsPage_LabelsAndPatternsAreCurrencyAware(t *testing.T) {
 	}
 }
 
+// ut-docs#1291: the count-protocol cash-count grid (#denom-grid) hardcoded
+// GBP physical note/coin denominations (£50..1p) regardless of shop
+// currency. Must render from httpx.CurrencyInfo.Denominations instead, with
+// no leftover GBP values/labels once a different currency is active.
+func TestShiftsPage_DenomGridIsCurrencyAware(t *testing.T) {
+	mux, dp := newShiftsPageTestDeps(t)
+	ctx := t.Context()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO shifts(id,register_id,cashier_id,opened_at,opening_cash) VALUES('shift1','reg1','user1','2026-01-01T09:00:00Z',5000)`); err != nil {
+		t.Fatal(err)
+	}
+
+	get := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/shifts", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /shifts = %d: %s", rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	httpx.InitCurrency("GBP")
+	body := get()
+	// Denomination labels use the same `money`-formatted convention as the
+	// rest of this page's currency-aware fields (£X.XX, ut-docs#1274) —
+	// not the old two-tier "£50"/"1p" note-vs-coin shorthand.
+	if !strings.Contains(body, `data-denom="5000"`) || !strings.Contains(body, "£50.00") {
+		t.Fatalf("expected the GBP £50.00 denomination in the count-protocol grid, got:\n%s", body)
+	}
+	if !strings.Contains(body, `data-denom="1"`) || !strings.Contains(body, "£0.01") {
+		t.Fatalf("expected the GBP £0.01 denomination in the count-protocol grid, got:\n%s", body)
+	}
+
+	// JPY: 0-decimal, prefix symbol, a different denomination set — must
+	// show ¥-labelled JPY denominations and NO leftover GBP symbol
+	// anywhere in the grid (the whole page, in fact, since GBP's £ never
+	// appears once the shop's currency is JPY).
+	httpx.InitCurrency("JPY")
+	t.Cleanup(func() { httpx.InitCurrency("GBP") }) // ut-docs#970 convention: process-global, reset for later tests in this package.
+	body = get()
+	if !strings.Contains(body, `data-denom="10000"`) || !strings.Contains(body, "¥10,000") {
+		t.Fatalf("expected the JPY ¥10,000 denomination in the count-protocol grid, got:\n%s", body)
+	}
+	if !strings.Contains(body, `data-denom="1"`) || !strings.Contains(body, "¥1") {
+		t.Fatalf("expected the JPY ¥1 denomination in the count-protocol grid, got:\n%s", body)
+	}
+	if strings.Contains(body, "£") {
+		t.Fatalf("expected NO leftover GBP symbol in the count-protocol grid once currency is JPY, got:\n%s", body)
+	}
+	// GBP's £2/200p and £20/2000p denominations have no JPY equivalent
+	// (JPY has no 2- or 20-based note/coin) — a leftover hardcoded GBP
+	// grid would still show these.
+	if strings.Contains(body, `data-denom="2000"`) || strings.Contains(body, `data-denom="200"`) {
+		t.Fatalf("expected NO leftover GBP-only denominations (2000/200) in the count-protocol grid once currency is JPY, got:\n%s", body)
+	}
+}
+
 // ut-docs#1274: CarryForwardDisplay hardcoded `%d.%02d` against `/100`
 // (internal/pages/shifts_page.go) -- silently wrong on a 0-decimal currency,
 // where minor units ARE major units (500 IRT prefilled as "5.00" instead of

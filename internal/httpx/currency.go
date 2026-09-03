@@ -19,25 +19,65 @@ type CurrencyInfo struct {
 	Display  string // symbol or word
 	Suffix   bool   // display goes after the number (logical order)
 	Decimals int    // minor units per major = 10^Decimals
+	// Denominations lists the currency's real circulating physical
+	// banknotes and coins, in minor units, strictly descending (largest
+	// first — the order the shift-close cash-count grid renders in,
+	// ut-docs#1291). Unlike Decimals/Display this has no algorithmic
+	// derivation — different currencies have entirely different physical
+	// denominations, not just a different symbol or decimal count — so
+	// every registry entry lists its own.
+	Denominations []int64
 }
 
 // The registry the Settings picker offers. Minor units in the database are
 // the smallest unit of the SELECTED currency: pence for GBP, whole rials for
 // IRR, whole tomans for IRT — switching currency does not convert amounts.
 var currencyRegistry = []CurrencyInfo{
-	{Code: "GBP", Name: "British Pound (£)", Display: "£", Decimals: 2},
-	{Code: "USD", Name: "US Dollar ($)", Display: "$", Decimals: 2},
-	{Code: "EUR", Name: "Euro (€)", Display: "€", Decimals: 2},
-	{Code: "IRR", Name: "Iranian Rial (ریال)", Display: "ریال", Suffix: true, Decimals: 0},
-	{Code: "IRT", Name: "Iranian Toman (تومان)", Display: "تومان", Suffix: true, Decimals: 0},
-	{Code: "TRY", Name: "Turkish Lira (₺)", Display: "₺", Decimals: 2},
-	{Code: "AED", Name: "UAE Dirham (د.إ)", Display: "د.إ", Suffix: true, Decimals: 2},
-	{Code: "SAR", Name: "Saudi Riyal (ر.س)", Display: "ر.س", Suffix: true, Decimals: 2},
-	{Code: "IQD", Name: "Iraqi Dinar (د.ع)", Display: "د.ع", Suffix: true, Decimals: 0},
-	{Code: "AFN", Name: "Afghan Afghani (؋)", Display: "؋", Suffix: true, Decimals: 0},
-	{Code: "INR", Name: "Indian Rupee (₹)", Display: "₹", Decimals: 2},
-	{Code: "PKR", Name: "Pakistani Rupee (₨)", Display: "₨", Decimals: 2},
-	{Code: "JPY", Name: "Japanese Yen (¥)", Display: "¥", Decimals: 0},
+	{Code: "GBP", Name: "British Pound (£)", Display: "£", Decimals: 2,
+		// Notes: £50,20,10,5. Coins: £2,1, 50p,20p,10p,5p,2p,1p.
+		Denominations: []int64{5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 2, 1}},
+	{Code: "USD", Name: "US Dollar ($)", Display: "$", Decimals: 2,
+		// Notes: $100,50,20,10,5,1. Coins: 25c,10c,5c,1c.
+		Denominations: []int64{10000, 5000, 2000, 1000, 500, 100, 25, 10, 5, 1}},
+	{Code: "EUR", Name: "Euro (€)", Display: "€", Decimals: 2,
+		// Notes: €100,50,20,10,5 (€200/€500 excluded — being phased out,
+		// rare in a till drawer). Coins: €2,1, 50c,20c,10c,5c,2c,1c.
+		Denominations: []int64{10000, 5000, 2000, 1000, 500, 200, 100, 50, 20, 10, 5, 2, 1}},
+	{Code: "IRR", Name: "Iranian Rial (ریال)", Display: "ریال", Suffix: true, Decimals: 0,
+		// Rial coins are obsolete; only banknotes circulate.
+		Denominations: []int64{1000000, 500000, 100000, 50000, 20000, 10000, 5000, 2000, 1000}},
+	{Code: "IRT", Name: "Iranian Toman (تومان)", Display: "تومان", Suffix: true, Decimals: 0,
+		// Same physical notes as IRR, quoted at 1/10th (1 toman = 10 rials).
+		Denominations: []int64{100000, 50000, 10000, 5000, 2000, 1000, 500, 200, 100}},
+	{Code: "TRY", Name: "Turkish Lira (₺)", Display: "₺", Decimals: 2,
+		// Notes: ₺200,100,50,20,10,5. Coins: ₺1, 50kr,25kr,10kr,5kr.
+		Denominations: []int64{20000, 10000, 5000, 2000, 1000, 500, 100, 50, 25, 10, 5}},
+	{Code: "AED", Name: "UAE Dirham (د.إ)", Display: "د.إ", Suffix: true, Decimals: 2,
+		// Notes: 1000,500,200,100,50,20,10,5. Coins: 1dh, 50,25 fils.
+		Denominations: []int64{100000, 50000, 20000, 10000, 5000, 2000, 1000, 500, 100, 50, 25}},
+	{Code: "SAR", Name: "Saudi Riyal (ر.س)", Display: "ر.س", Suffix: true, Decimals: 2,
+		// Notes: 500,200,100,50,10,5,1. Coins: 50,25,10,5,1 halala.
+		Denominations: []int64{50000, 20000, 10000, 5000, 1000, 500, 100, 50, 25, 10, 5, 1}},
+	{Code: "IQD", Name: "Iraqi Dinar (د.ع)", Display: "د.ع", Suffix: true, Decimals: 0,
+		// Fils coins are obsolete; only banknotes circulate.
+		Denominations: []int64{50000, 25000, 10000, 5000, 1000, 500, 250}},
+	{Code: "AFN", Name: "Afghan Afghani (؋)", Display: "؋", Suffix: true, Decimals: 0,
+		// Notes: 1000..10. Coins: 5,2,1 (rarely seen but still legal tender).
+		Denominations: []int64{1000, 500, 100, 50, 20, 10, 5, 2, 1}},
+	{Code: "INR", Name: "Indian Rupee (₹)", Display: "₹", Decimals: 2,
+		// Notes: 500,200,100,50,20,10 (2000 excluded — withdrawn from
+		// circulation). Coins: 20,10,5,2,1 rupee (paise coins obsolete);
+		// the ₹20/₹10 coin values coincide with the ₹20/₹10 note values,
+		// so each appears once.
+		Denominations: []int64{50000, 20000, 10000, 5000, 2000, 1000, 500, 200, 100}},
+	{Code: "PKR", Name: "Pakistani Rupee (₨)", Display: "₨", Decimals: 2,
+		// Notes: 5000,1000,500,100,50,20,10. Coins: 10,5,2,1 rupee (paisa
+		// coins obsolete); the ₨10 coin value coincides with the ₨10 note.
+		Denominations: []int64{500000, 100000, 50000, 10000, 5000, 2000, 1000, 500, 200, 100}},
+	{Code: "JPY", Name: "Japanese Yen (¥)", Display: "¥", Decimals: 0,
+		// Notes: 10000,5000,1000 (2000 excluded — rare, not commonly
+		// stocked in a till). Coins: 500,100,50,10,5,1.
+		Denominations: []int64{10000, 5000, 1000, 500, 100, 50, 10, 5, 1}},
 }
 
 // Currencies returns the registry for the Settings picker.

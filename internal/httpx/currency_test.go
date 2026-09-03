@@ -189,6 +189,38 @@ func TestMoneyPlaceholderAttr(t *testing.T) {
 	}
 }
 
+// ut-docs#1291: the shift-close cash-count grid (shifts.html's #denom-grid)
+// used to hardcode GBP physical note/coin denominations regardless of shop
+// currency. Every registry entry must carry its own real denominations list,
+// strictly descending (largest first, the order the grid renders in) —
+// an empty or unsorted list would silently regress a currency's count-
+// protocol grid to nothing, or render it in a confusing order.
+func TestCurrencyRegistry_DenominationsPresentAndDescending(t *testing.T) {
+	for _, c := range Currencies() {
+		if len(c.Denominations) == 0 {
+			t.Errorf("%s: Denominations is empty", c.Code)
+			continue
+		}
+		for i, d := range c.Denominations {
+			if d <= 0 {
+				t.Errorf("%s: Denominations[%d] = %d, want > 0", c.Code, i, d)
+			}
+			if i > 0 && d >= c.Denominations[i-1] {
+				t.Errorf("%s: Denominations not strictly descending at index %d (%d >= %d)", c.Code, i, d, c.Denominations[i-1])
+			}
+		}
+	}
+}
+
+// CurrencyByCode's unknown-code fallback (ut-docs#970) must not silently
+// fabricate a plausible-looking Denominations slice either — nil is the
+// honest answer, same spirit as the fallback's other zero-value fields.
+func TestCurrencyByCode_UnknownCodeHasNoDenominations(t *testing.T) {
+	if got := CurrencyByCode("XYZ").Denominations; got != nil {
+		t.Errorf("CurrencyByCode(unknown).Denominations = %v, want nil", got)
+	}
+}
+
 func TestLocalizeDigits(t *testing.T) {
 	if got := LocalizeDigits("12,345.60", "fa-IR"); got != "۱۲٬۳۴۵٫۶۰" {
 		t.Errorf("fa digits = %q", got)
