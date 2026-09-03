@@ -25,6 +25,12 @@
 #      w.Write/fmt.Fprint*, not a struct-field assignment (ut-docs#237: five
 #      real cases shipped in pos_api.go until #213 localized them; nothing
 #      stopped a sixth from shipping the same way).
+#   7. Every string-literal key argument passed to httpx.RenderError,
+#      common.LocalizedError, common.LogAndLocalizedError or httpx.T itself
+#      must resolve in en.json (ut-docs#1461) — checks 1-2 only validate
+#      template {{ T "key" }} usage, so a typo'd key built in Go and handed
+#      to one of these call shapes was invisible to any check and silently
+#      fell back to rendering the raw key text at runtime.
 # Fails CI so a new page/string can't ship untranslated.
 set -euo pipefail
 
@@ -260,9 +266,149 @@ if toast_hits:
     for f, i, literal in toast_hits:
         print(f"  {f}:{i}: {literal!r}")
 
+# 7. Go-side i18n key literals passed to httpx.RenderError,
+#    common.LocalizedError, common.LogAndLocalizedError, and httpx.T must
+#    resolve in en.json (ut-docs#1461, follow-up from #1455's review).
+#    Checks 1-2 above only validate template {{ T "key" }} usage; a
+#    msgKey/key argument built in Go and passed as a string literal to one
+#    of these four call shapes was invisible to any check, so a typo'd key
+#    silently fell back to rendering the raw key text at runtime -- most
+#    visibly on RenderError's full-page kiosk error screen, where the
+#    typo'd key becomes the page's entire heading and body. Only a literal
+#    double-quoted string argument can be verified statically; a key built
+#    from a variable/expression (e.g. a classifyTenderError(err) helper, or
+#    a plugin's entry.Label) can't be, and is silently skipped rather than
+#    reported -- this narrows to what a static pass can actually prove,
+#    same tradeoff as every other check in this script.
+#
+#    Argument parsing is paren/string-aware, not a plain comma split: a
+#    real call site here passes a nested call as the locale argument (e.g.
+#    httpx.T(httpx.ResolveLocale(w, r), "some.key")), and naively treating
+#    the first comma as the argument boundary misreads that inner comma.
+#    Every real call site found here is single-line; a call whose argument
+#    list wraps onto a second line can't be verified by this pass (known
+#    gap, same class as check 5's web/public/ note above) and is skipped,
+#    not reported as missing.
+def split_args(s):
+    args, depth, cur, i, in_str = [], 0, [], 0, False
+    while i < len(s):
+        c = s[i]
+        if in_str:
+            cur.append(c)
+            if c == '\\' and i + 1 < len(s):
+                cur.append(s[i + 1])
+                i += 2
+                continue
+            if c == '"':
+                in_str = False
+        elif c == '"':
+            in_str = True
+            cur.append(c)
+        elif c in '([{':
+            depth += 1
+            cur.append(c)
+        elif c in ')]}':
+            depth -= 1
+            cur.append(c)
+        elif c == ',' and depth == 0:
+            args.append(''.join(cur))
+            cur = []
+        else:
+            cur.append(c)
+        i += 1
+    if cur:
+        args.append(''.join(cur))
+    return [a.strip() for a in args]
+
+def literal_key(arg):
+    m = re.fullmatch(r'"((?:[^"\\]|\\.)*)"', arg)
+    return m.group(1).replace('\\"', '"') if m else None
+
+# (prefix, index of the key argument, 0-based -- None means "work it out
+# from the argument count", see bare T( below)
+CALL_SPECS = [
+    ("httpx.RenderError(", 3),           # w, r, status, msgKey, err
+    ("common.LocalizedError(", 3),       # w, r, status, key
+    ("common.LogAndLocalizedError(", 3), # w, r, status, key, logTag, err
+    ("httpx.T(", 1),                     # locale, key
+    ("T(", None),
+]
+# Bare T( (no "httpx."/other package qualifier) has two real shapes in this
+# codebase, and both matter: internal/httpx's own definition calls itself as
+# T(locale, key) (2 args); several handlers (import_page.go,
+# catalog/handlers.go, invoice_page.go) bind a *locale* up front and build a
+# single-argument closure -- `T := funcs["T"].(func(string) string)` or
+# `T := func(k string) string { return httpx.T(locale, k) }` -- then call it
+# as T(key) (1 arg) dozens of times each. An earlier version of this check
+# only looked for the 2-arg shape, and only inside internal/httpx, on the
+# theory that "T(" elsewhere would be a different identifier -- independent
+# review (ut-docs#1461) found that theory false: it left ~80 real call
+# sites across those three files completely unchecked. There is no OTHER
+# meaning of a bare, unqualified "T(" call anywhere in this codebase (this
+# was confirmed by inspection, not assumed), so this scans every file, and
+# picks the key argument by whichever of the two known shapes matches the
+# actual argument count -- 1 arg means it's the closure form (key is
+# args[0]), 2 means it's httpx's own T(locale, key) (key is args[1]); any
+# other count is a shape this check doesn't recognise and is skipped rather
+# than guessed at.
+BARE_T_RE = re.compile(r'(?<!\.)\bT\(')
+
+key_call_hits = []
+for f in sorted(glob.glob("internal/**/*.go", recursive=True)):
+    if f.endswith("_test.go"):
+        continue
+    lines = open(f, encoding="utf-8").read().splitlines()
+    for lineno, line in enumerate(lines, 1):
+        if "i18n:ignore" in line:
+            continue
+        for prefix, key_idx in CALL_SPECS:
+            start = 0
+            while True:
+                pos = line.find(prefix, start)
+                if pos == -1:
+                    break
+                start = pos + len(prefix)
+                if prefix == "T(" and BARE_T_RE.match(line, pos) is None:
+                    continue
+                depth, j, in_str = 1, pos + len(prefix), False
+                while j < len(line) and depth > 0:
+                    c = line[j]
+                    if in_str:
+                        if c == '\\':
+                            j += 1
+                        elif c == '"':
+                            in_str = False
+                    elif c == '"':
+                        in_str = True
+                    elif c == '(':
+                        depth += 1
+                    elif c == ')':
+                        depth -= 1
+                    j += 1
+                if depth != 0:
+                    continue  # call wraps past this line -- can't verify here
+                args = split_args(line[pos + len(prefix):j - 1])
+                idx = key_idx
+                if idx is None:
+                    idx = {1: 0, 2: 1}.get(len(args))
+                    if idx is None:
+                        continue  # unrecognised bare-T( shape -- can't verify
+                if len(args) <= idx:
+                    continue
+                key = literal_key(args[idx])
+                if key is not None and key not in base:
+                    key_call_hits.append((f, lineno, prefix.rstrip("("), key))
+
+if key_call_hits:
+    fail = True
+    print("guard-i18n: Go-side i18n key literal missing from en.json:")
+    for f, i, call, k in key_call_hits:
+        print(f"  {f}:{i}: {call}(...): {k!r}")
+
 if fail:
     sys.exit(1)
 print(f"✓ i18n guard: {len(used)} template keys resolve; all locales match en.json; "
       f"no hardcoded Go-side response strings found; no hand-written hx-vals literals found; "
-      f"no hardcoded inline-JS status strings found; no hardcoded ToastMessage literals found")
+      f"no hardcoded inline-JS status strings found; no hardcoded ToastMessage literals found; "
+      f"no missing Go-side i18n key literals found")
 PY
