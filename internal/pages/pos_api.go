@@ -168,15 +168,29 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// blockingPaymentEvent (refund_page.go) is the same gate the refund
 	// flow uses for payment.<key>.refund; no subscriber = no gate
 	// (back-compat with post-settle-only plugins like qrpay).
+	// Additive basket fields for a fiscal-DEVICE payment plugin (Turkey's
+	// YN ÖKC, fiscal_device_hook.go): the device prints the legal receipt
+	// itself, so it needs the lines and VAT rates, not just an amount.
+	// Computed once per tender; ignored by every other payment plugin.
+	deviceExtras := deviceAuthorizePayloadExtras(saleInput, payments)
+	var deviceEvidence *fiscal.DeviceEvidence
 	for i, p := range payments {
-		resp, err := blockingPaymentEventWithResponse(ctx, d, p.MethodID, "authorize", map[string]any{
+		payload := map[string]any{
 			"method":    p.MethodID,
 			"amount":    p.Amount.Minor(),
 			"reference": p.Reference,
-		})
+		}
+		for k, v := range deviceExtras {
+			payload[k] = v
+		}
+		resp, err := blockingPaymentEventWithResponse(ctx, d, p.MethodID, "authorize", payload)
 		if err != nil {
 			return "", &paymentDeclinedError{Method: p.MethodID}
 		}
+		// A fiscal-device plugin's approved answer carries what the device
+		// printed (`fiscal_device`); persisted against the sale below, once
+		// the sale row exists. Absent for every other plugin.
+		deviceEvidence = pickDeviceEvidence(deviceEvidence, resp)
 		// A card-terminal plugin (e.g. a reader that prompts the customer
 		// for a tip) can report the tip it actually captured back on its
 		// authorize response — this overrides whatever tip (if any) the
@@ -229,6 +243,12 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	if err != nil {
 		return "", err
 	}
+
+	// What the fiscal device printed for this sale (Turkey's ÖKC), if a
+	// device plugin took the tender: persisted now that the sale row
+	// exists; the first receipt ever recorded also marks the device as
+	// confirmed (fiscal_device_hook.go). Best-effort, never unwinds.
+	recordFiscalDeviceEvidence(ctx, d, repo, saleID, actorID, deviceEvidence)
 
 	// Every sale completed during an active TSE-override window gets its
 	// own audit marker (entity sale, action unsigned_override) — a per-sale
@@ -1314,7 +1334,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if tseErr != nil {
 			tseSignature = nil
 		}
-		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable, unsignedOverride, unsignedFiscalSigning, unsignedCannotSign, tseSignature,
+		// Same derivation for a fiscal DEVICE's receipt (Turkey's ÖKC): the
+		// sale's own fiscal_device_receipts row, absent = no block.
+		deviceReceipt, _, devErr := repo.GetFiscalDeviceReceipt(r.Context(), saleID)
+		if devErr != nil {
+			deviceReceipt = nil
+		}
+		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable, unsignedOverride, unsignedFiscalSigning, unsignedCannotSign, tseSignature, deviceReceipt,
 			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d), tableLabelForReceipt)
 		if renderErr != nil {
 			printerUnavailable = true
@@ -1549,7 +1575,7 @@ func normalizeLegalLines(text string, lines []string) []string {
 	return out
 }
 
-func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, storeName string, design receiptDesign, tableLabel string) (string, error) {
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, deviceReceipt *data.FiscalDeviceReceipt, storeName string, design receiptDesign, tableLabel string) (string, error) {
 	// Fixed file set, parsed once and cloned per call thereafter
 	// (ut-docs#1320) — this runs on every completed sale.
 	t, err := httpx.ClonedTemplate("pages.renderReceipt", "receipt.html", funcs,
@@ -1656,6 +1682,12 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		"UnsignedCannotSign": unsignedCannotSign,
 		// ut-docs#585: recorded TSE signing evidence — nil means no block.
 		"TSESignature": tseView,
+		// Fiscal DEVICE receipt (Turkey's YN ÖKC, fiscal_device_hook.go):
+		// the device printed the legal receipt; this copy shows its
+		// receipt number, serial and Z counter so the two can be matched.
+		// nil means no block — factual data display, no compliance claim
+		// (ADR-0040).
+		"DeviceReceipt": deviceReceipt,
 		// Receipt design (docs: receipt-designer.md): the on-screen copy
 		// follows the same owner-styled design as the thermal print.
 		"StoreName": storeName,

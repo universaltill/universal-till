@@ -339,6 +339,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerLocations(mux, dp)
 	registerRegisters(mux, dp)        // registers admin: create/rename/deactivate tills (ut-docs#651)
 	registerFiscalRegisterDE(mux, dp) // §146a Abs. 4 AO fiscal register (ut-docs#665)
+	registerFiscalDeviceTR(mux, dp)   // Türkiye YN ÖKC fiscal-device status page (ut-docs#1280 core half)
 	registerPromotions(mux, dp)       // promo-code admin: create/edit/deactivate/list (ut-docs#634)
 	registerKitchenStations(mux, dp)  // kitchen station routing (ut-docs#516)
 	registerTables(mux, dp)           // table floor plan (ut-docs#814, ADR-0054)

@@ -1,0 +1,37 @@
+{
+  "id": "com.universaltill.tax-tr",
+  "name": "Türkiye fiscal device (YN ÖKC)",
+  "version": "0.1.0",
+  "description": "Pay on the shop's certified cash register (YN ÖKC): the device takes the money and prints the legal receipt; the till keeps the device's receipt number on every sale.",
+  "author": "Universal Till Contributors",
+  "website": "https://universaltill.com",
+  "executable": "plugin.wasm",
+  "entrypoint": "./plugin.wasm",
+  "runtime": "wasm",
+  "canonical_type": "payment",
+  "device_arch": "any",
+  "min_pos_version": "1.0.0",
+  "entries": [
+    {
+      "type": "payment",
+      "key": "okc",
+      "label": "Yazarkasa (ÖKC)",
+      "sort_order": 5,
+      "trigger_event": "payment.okc.requested"
+    }
+  ],
+  "hooks": [
+    { "event": "payment.okc.authorize", "action": "okc.authorize" },
+    { "event": "payment.okc.requested", "action": "okc.settled" },
+    { "event": "payment.okc.refund", "action": "okc.refund" }
+  ],
+  "settings": [
+    { "key": "okc.driver", "default_value": "bridge" },
+    { "key": "okc.host", "default_value": "127.0.0.1" },
+    { "key": "okc.port", "default_value": "4711" },
+    { "key": "okc.maker", "default_value": "" },
+    { "key": "okc.connect_timeout_ms", "default_value": "3000" },
+    { "key": "okc.read_timeout_ms", "default_value": "8000" }
+  ],
+  "permissions": ["tcp:*", "storage.local.1MB"]
+}

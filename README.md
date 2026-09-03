@@ -64,6 +64,11 @@
 - Cash drawers
 - Customer displays
 - Payment terminals (via plugins)
+- Turkish certified cash registers (YN ÖKC) as a "pay on the device"
+  tender — the device takes the money and prints the legal receipt, the
+  till keeps its receipt number on every sale (`plugins/tax-tr`, with a
+  simulator under `scripts/okc-sim` for development before a device is in
+  hand; maker drivers land as their integrator packs arrive)
 - Digital scales
 - Any standard keyboard/mouse/touchscreen
 

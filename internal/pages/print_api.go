@@ -249,6 +249,23 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	// English literals match this renderer's existing convention (locale
 	// "en", latin digits — see the locale note at the top of this
 	// function).
+	// Fiscal DEVICE receipt (Turkey's YN ÖKC, fiscal_device_hook.go): the
+	// device printed the legal receipt; this thermal copy carries its
+	// receipt number, serial and Z counter so the two can be matched. Same
+	// per-sale derivation and skip-what-is-absent policy as the TSE block
+	// below. English literals per this renderer's locale note.
+	if dev, ok, devErr := data.NewPOSRepo(d.Db).GetFiscalDeviceReceipt(ctx, detail.ID); devErr == nil && ok {
+		doc.Meta = append(doc.Meta, "Fiscal device receipt no.: "+dev.ReceiptNo)
+		if dev.Serial != "" {
+			doc.Meta = append(doc.Meta, "Fiscal device serial: "+dev.Serial)
+		}
+		if dev.ZNo != 0 {
+			doc.Meta = append(doc.Meta, "Fiscal device Z no.: "+strconv.FormatInt(dev.ZNo, 10))
+		}
+		if dev.IssuedAt != "" {
+			doc.Meta = append(doc.Meta, "Fiscal device issued at: "+dev.IssuedAt)
+		}
+	}
 	if sig, ok, sigErr := data.NewPOSRepo(d.Db).GetFiscalTSESignature(ctx, detail.ID); sigErr == nil && ok {
 		if sig.SerialNumber != "" {
 			doc.Meta = append(doc.Meta, "TSE serial: "+sig.SerialNumber)
