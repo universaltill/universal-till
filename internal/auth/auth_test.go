@@ -577,3 +577,60 @@ func TestSetupWizardEndpointsClearTheSessionWall(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#1516 — regression introduced by ut-docs#1509. /api/import was added
+// to exempt(), but exempt() short-circuits BEFORE the session cookie is
+// resolved, so a signed-in manager reached import_page.go with no user in
+// context at all: canPerform failed, the handler's hasSession check saw
+// nothing, NeedsFirstBoot was false on a configured till, and the operator
+// got 403 "manager or admin required" for the ordinary, authenticated import
+// they are fully entitled to perform. htmx does not swap non-2xx, so on the
+// real till the spinner flashed and nothing appeared.
+//
+// /api/import is not like the other exempt paths. Those either authenticate
+// themselves out-of-band (bearer tokens on /api/sync/*, a live manager PIN on
+// /api/settings/exit-to-os) or are first-boot-only. This one needs BOTH: it
+// must be reachable with no session during first boot, and it must still see
+// the session when there is one. That is optional auth, not exemption.
+func TestImportKeepsTheSessionWhileStayingReachableAtFirstBoot(t *testing.T) {
+	db := openAuthTestDB(t)
+	svc := NewService(db)
+
+	var sawUser *User
+	inner := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if u, ok := FromContext(r.Context()); ok {
+			cp := u
+			sawUser = &cp
+		}
+		w.WriteHeader(http.StatusOK)
+	})
+	h := Middleware(inner, svc)
+
+	// 1. No session (first boot): must still reach the handler, which then
+	//    applies its own NeedsFirstBoot gate.
+	rec := httptest.NewRecorder()
+	h.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/import", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("anonymous POST /api/import = %d, want 200 (first-boot restore must reach the handler)", rec.Code)
+	}
+	if sawUser != nil {
+		t.Errorf("anonymous request carried a user: %+v", *sawUser)
+	}
+
+	// 2. Signed in: the handler MUST see the session, or canPerform can never
+	//    authorise a manager's ordinary import.
+	seedOperator(t, db, "boss", "manager", "4321")
+	token := loginFor(t, svc, "4321")
+	sawUser = nil
+	rec = httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/import", nil)
+	req.AddCookie(&http.Cookie{Name: CookieName, Value: token})
+	h.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("signed-in POST /api/import = %d, want 200", rec.Code)
+	}
+	if sawUser == nil {
+		t.Fatal("signed-in POST /api/import reached the handler with NO user in context — " +
+			"exempt() skips cookie resolution; /api/import needs optional auth, not exemption")
+	}
+}
