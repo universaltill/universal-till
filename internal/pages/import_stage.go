@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"io"
@@ -178,6 +179,80 @@ func commitStagedImportForSetup(ctx context.Context, mux *http.ServeMux, adminUs
 		return false
 	}
 	return true
+}
+
+// importCommitLock (ut-docs#1510) closes the one duplicate-import gap
+// takeStagedCatalogUpload's exclusivity doesn't cover: a DIRECT commit —
+// "Import" pressed without ever previewing first, so there is no staged_id
+// for two requests to race over. A double-tap there sends two independent
+// POST /api/import requests, each carrying its own byte-identical copy of
+// the uploaded file. For a row with neither barcode nor SKU there is no DB
+// UNIQUE constraint to catch the resulting duplicate (items.sku stores NULL,
+// and SQLite treats every NULL as distinct under UNIQUE) — the only place
+// left to stop it is before either request starts inserting rows.
+//
+// The guard is a content hash, not a client-supplied token: two requests
+// racing to commit are recognised as "the same import" because they carry
+// identical bytes, which is exactly what a double-tap (or a second browser
+// tab still holding the same file selection) produces. A deliberate second
+// import of a DIFFERENT file, or a re-import of the same file well after the
+// first finished, both hash differently in time or content and proceed
+// normally — this only rejects a genuine overlap.
+var (
+	importCommitMu   sync.Mutex
+	importCommitLock = map[string]time.Time{}
+)
+
+// importCommitLockTTL bounds how long a hash may be held: normally released
+// by the handler's own defer the moment its commit finishes, this is only
+// the backstop for a request that panics or whose goroutine is killed
+// without unwinding — matching stagedCatalogTTL's role for the preview
+// registry above.
+const importCommitLockTTL = 2 * time.Minute
+
+// reserveImportCommit claims exclusive rights to commit the exact bytes
+// hashed as key. false means another commit with the same content is
+// already in flight — the caller must reject the request, not proceed.
+func reserveImportCommit(hash string) bool {
+	importCommitMu.Lock()
+	defer importCommitMu.Unlock()
+	for k, t := range importCommitLock {
+		if time.Since(t) > importCommitLockTTL {
+			delete(importCommitLock, k)
+		}
+	}
+	if _, inFlight := importCommitLock[hash]; inFlight {
+		return false
+	}
+	importCommitLock[hash] = time.Now()
+	return true
+}
+
+// releaseImportCommit hands the hash back once a reserved commit's request
+// has finished, success or failure — always via defer, right after a
+// successful reserveImportCommit.
+func releaseImportCommit(hash string) {
+	importCommitMu.Lock()
+	defer importCommitMu.Unlock()
+	delete(importCommitLock, hash)
+}
+
+// hashImportUpload hashes the upload's full bytes for reserveImportCommit,
+// leaving file re-wound to the start for every downstream read (sniffing,
+// staging, parsing) — the same seek-then-read contract stageCatalogUpload
+// above already relies on.
+func hashImportUpload(file io.ReadSeeker) (string, error) {
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return "", fmt.Errorf("seek upload to hash: %w", err)
+	}
+	h := sha256.New()
+	if _, err := io.Copy(h, file); err != nil {
+		return "", fmt.Errorf("hash upload: %w", err)
+	}
+	if _, err := file.Seek(0, io.SeekStart); err != nil {
+		return "", fmt.Errorf("seek upload after hash: %w", err)
+	}
+	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // forceableImportIssue is ut-docs#601's explicit allow-list: the only two

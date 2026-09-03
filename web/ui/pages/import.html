@@ -24,13 +24,34 @@
        form itself declares multipart, and ParseMultipartForm rejects a
        urlencoded body outright (ErrNotMultipart -> 400), which silently
        broke this exact "press Import" button before this fix. -->
-  <form id="import-form" hx-post="/api/import" hx-target="#import-result" hx-swap="innerHTML" enctype="multipart/form-data">
+  <!-- ut-docs#1510: hx-indicator + hx-disabled-elt — a real pilot import
+       (217 items/22 categories, plus thousands of receipt PDFs to parse
+       past in a .bkp) can leave the screen looking inert for a real
+       stretch, which is exactly what invites the second tap this card
+       exists to stop. "find button[type=submit]" disables every submit
+       button IN THIS FORM while a request from either one is in flight —
+       Preview and Import share the one form, so neither can be pressed
+       again mid-request, whichever one the operator pressed first. Same
+       pattern as setup.html's join-form indicator. hx-indicator uses a
+       plain selector, resolved document-wide by htmx, so the button that
+       reappears after a preview (below, server-rendered, form="import-form",
+       living OUTSIDE this <form> in the swapped #import-result div) still
+       shows the busy indicator — but "find" resolves relative to the FORM
+       (form.querySelector), so hx-disabled-elt does NOT reach a button
+       outside it: that repeated button gets its own hx-disabled-elt="this"
+       right on itself (see import_page.go, where it's rendered) instead of
+       inheriting this form's. Independent review, ut-docs#1510: confirmed
+       against the vendored htmx source before writing this down as fact,
+       not assumed. -->
+  <form id="import-form" hx-post="/api/import" hx-target="#import-result" hx-swap="innerHTML" enctype="multipart/form-data"
+        hx-indicator="#import-busy" hx-disabled-elt="find button[type=submit]">
     <input type="hidden" name="commit" value="1">
     <input type="hidden" name="staged_id" value="{{ .stagedID }}">
     <button class="btn primary" type="submit">{{ T "import.import" }}</button>
   </form>
   {{ else }}
-  <form id="import-form" hx-post="/api/import" hx-target="#import-result" hx-swap="innerHTML" enctype="multipart/form-data">
+  <form id="import-form" hx-post="/api/import" hx-target="#import-result" hx-swap="innerHTML" enctype="multipart/form-data"
+        hx-indicator="#import-busy" hx-disabled-elt="find button[type=submit]">
     <input type="hidden" name="commit" id="import-commit" value="0">
     <!-- ut-docs#1247: accept is a UX hint only (the server sniffs real
          content, never trusts extension/MIME — see catimport.ParseBkp /
@@ -48,6 +69,13 @@
     </div>
   </form>
   {{ end }}
+  <!-- Touch-legible on purpose (ut-docs#1510 review: "not a 12px inline
+       spinner") — this is the only feedback the operator gets that
+       anything happened at all while a big file parses. Hidden by
+       app.css's .htmx-indicator rule until htmx marks the form busy. -->
+  <div id="import-busy" class="htmx-indicator" style="margin-top:.6rem; font-size:1.05rem; font-weight:600">
+    <span class="animate-spin" aria-hidden="true">⏳</span> {{ T "import.busy" }}
+  </div>
   <div id="import-result" style="margin-top:.8rem; overflow-x:auto"></div>
 </div>
 
