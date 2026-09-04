@@ -165,17 +165,29 @@ func TestArchiveReport_ReceiptRangeRoundTrips(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
 
-	if _, err := dbx.repo.ArchiveReport(ctx, "eod", "2026-01-01", []byte(`{}`), "R010", "R042", time.Time{}); err != nil {
+	// ADR-0066 Decision 5: ArchivedReportsInRange now filters on each row's
+	// own created_at, not a period BETWEEN text compare -- a zero closedAt
+	// stamps the schema default's real "now" into created_at regardless of
+	// what period string is given, so the range query below must bound
+	// around today, not a fixed "2026-01-01" literal. Today's LOCAL date,
+	// not UTC's (2026-09-04 review of ut-docs#1141): created_at is stored
+	// UTC-naive but the range filter compares it as
+	// datetime(created_at, 'localtime') against these LOCAL date bounds, so
+	// a UTC-formatted bound silently misses the row on any host whose local
+	// date differs from UTC's at the moment the test runs.
+	today := time.Now().Format("2006-01-02")
+
+	if _, err := dbx.repo.ArchiveReport(ctx, "eod", today, []byte(`{}`), "R010", "R042", time.Time{}); err != nil {
 		t.Fatal(err)
 	}
 
-	listed := findArchived(t, dbx.repo, "eod", "2026-01-01")
+	listed := findArchived(t, dbx.repo, "eod", today)
 	if listed.FirstReceipt != "R010" || listed.LastReceipt != "R042" {
 		t.Fatalf("ListArchivedReports: expected receipt range R010..R042, got %q..%q",
 			listed.FirstReceipt, listed.LastReceipt)
 	}
 
-	ranged, err := dbx.repo.ArchivedReportsInRange(ctx, "2026-01-01", "2026-01-01")
+	ranged, err := dbx.repo.ArchivedReportsInRange(ctx, today, today)
 	if err != nil {
 		t.Fatal(err)
 	}
