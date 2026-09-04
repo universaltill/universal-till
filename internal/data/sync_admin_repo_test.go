@@ -651,3 +651,111 @@ func TestAdminApplyDeactivatesUndeletable(t *testing.T) {
 		t.Fatal("undeletable item not deactivated")
 	}
 }
+
+// ut-docs#1546, reported from the pilot pair on 2026-09-04: "I added a table
+// in the main till but it didn't sync with the secondary (pi)."
+//
+// The floor plan and kitchen routing are shop-wide setup, not per-till state,
+// and were simply absent from adminTables — so a satellite could not see the
+// tables at all, could therefore neither take nor settle a table order, and
+// sent kitchen tickets nowhere. This is a coverage test as much as a
+// regression test: the failure mode is a table being forgotten, so it asserts
+// the data actually lands rather than that some code path ran.
+func TestAdminDumpApplyRoundTrip_FloorPlanAndKitchenRouting(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO categories (id, name) VALUES ('cat-hot', 'Hot Drinks')`)
+	mustExec(t, primary, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm-esp', 'ESP', 'Espresso', 250)`)
+	mustExec(t, primary, `INSERT INTO tables (id, label, area_zone, seat_count, created_at, updated_at)
+		VALUES ('tbl-1', 'Table 1', 'Terrace', 4, '2026-09-04', '2026-09-04')`)
+	mustExec(t, primary, `INSERT INTO kitchen_stations (id, name, destination_type, created_at, updated_at)
+		VALUES ('stn-bar', 'Bar', 'printer', '2026-09-04', '2026-09-04')`)
+	mustExec(t, primary, `INSERT INTO item_station_routes (item_id, station_id) VALUES ('itm-esp', 'stn-bar')`)
+	mustExec(t, primary, `INSERT INTO category_station_routes (category_id, station_id) VALUES ('cat-hot', 'stn-bar')`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var label, zone string
+	var seats int
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT label, area_zone, seat_count FROM tables WHERE id = 'tbl-1'`).Scan(&label, &zone, &seats); err != nil {
+		t.Fatalf("the floor plan did not reach the satellite — it cannot take a table order at all: %v", err)
+	}
+	if label != "Table 1" || zone != "Terrace" || seats != 4 {
+		t.Errorf("table synced with wrong content: %q / %q / %d", label, zone, seats)
+	}
+
+	var station string
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT name FROM kitchen_stations WHERE id = 'stn-bar'`).Scan(&station); err != nil {
+		t.Fatalf("kitchen stations did not sync — tickets from the satellite go nowhere: %v", err)
+	}
+
+	for _, q := range []struct{ what, sql string }{
+		{"item→station route", `SELECT COUNT(*) FROM item_station_routes WHERE item_id='itm-esp' AND station_id='stn-bar'`},
+		{"category→station route", `SELECT COUNT(*) FROM category_station_routes WHERE category_id='cat-hot' AND station_id='stn-bar'`},
+	} {
+		var n int
+		if err := replica.DB.QueryRowContext(ctx, q.sql).Scan(&n); err != nil || n != 1 {
+			t.Errorf("%s did not sync (n=%d, err=%v) — the satellite would print to the wrong station or none", q.what, n, err)
+		}
+	}
+
+	// And a deletion on the primary must propagate, not leave a ghost table
+	// an operator can still seat customers at.
+	mustExec(t, primary, `DELETE FROM tables WHERE id = 'tbl-1'`)
+	bundle2, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("second dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle2); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	var n int
+	if err := replica.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM tables WHERE id='tbl-1'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("a table removed on the primary is still on the satellite (n=%d, err=%v)", n, err)
+	}
+}
+
+// ut-docs#1546 review: a kitchen station's name and routing are shop-wide, but
+// its printer_address is till-local — the field takes a network address OR a
+// device path, and a satellite inheriting the primary's "/dev/usb/lp0" prints
+// to whatever is plugged into its own first USB port, or nowhere.
+func TestAdminDumpApplyRoundTrip_KitchenStationPrinterAddressStaysLocal(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO kitchen_stations (id, name, destination_type, printer_address, created_at, updated_at)
+		VALUES ('stn-kitchen', 'Kitchen', 'printer', '/dev/usb/lp0', '2026-09-04', '2026-09-04')`)
+	mustExec(t, replica, `INSERT INTO kitchen_stations (id, name, destination_type, printer_address, created_at, updated_at)
+		VALUES ('stn-kitchen', 'Old name', 'printer', '192.168.1.50:9100', '2026-09-04', '2026-09-04')`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var name, addr string
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT name, printer_address FROM kitchen_stations WHERE id = 'stn-kitchen'`).Scan(&name, &addr); err != nil {
+		t.Fatalf("station missing after apply: %v", err)
+	}
+	if name != "Kitchen" {
+		t.Errorf("the station's shop-wide name should follow the primary, got %q", name)
+	}
+	if addr != "192.168.1.50:9100" {
+		t.Errorf("printer_address must stay the satellite's own — it inherited %q from the primary, so its kitchen tickets go to the wrong device or nowhere", addr)
+	}
+}

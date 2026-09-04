@@ -54,7 +54,7 @@
 <div class="card">
   <h2>{{ T "settings.update.title" }} {{ helpLink "updates" }}</h2>
   <p class="muted">Universal Till v{{ appversion }}{{ if updateavailable }} &mdash; &#11014;&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}{{ end }}</p>
-  {{ if updateinstallbridge }}
+  {{ if and updateinstallbridge updateavailable }}
   <!-- ut-docs#1246 / ut-docs#1534: Android in-app update. Behind a manager PIN
        for the same reason exit-to-os is: installing requires the native shell
        to drop the kiosk pin (Android silently refuses to start the package
@@ -91,7 +91,8 @@
         data-locked="{{ T "auth.error.locked" }}"
         data-pinneeded="{{ T "settings.update.android.pin_needed" }}"
         data-nobridge="{{ T "settings.update.android.no_bridge" }}"
-        data-wrongpin="{{ T "settings.display.exit_to_os_error" }}">
+        data-wrongpin="{{ T "settings.display.exit_to_os_error" }}"
+        data-uptodate="{{ T "settings.update.up_to_date" }}">
     <span id="android-update"></span>
     <!-- The PIN is hidden when the session alone will authorise (ut-docs#1537):
          a manager on an ordinary till should not have to retype a PIN. It is
@@ -167,6 +168,18 @@
         }
         if (res.status === 429) { msg.textContent = T('locked'); return; }
         if (!res.ok) { msg.textContent = T('failed'); return; }
+        return res.json().catch(function () { return {}; }).then(function (body) {
+        // ut-docs#1545: the server answers 200 + already_current when the till
+        // turns out to be up to date. Reading only res.status made the
+        // endpoint guard useless in a browser — the page went on to download
+        // ~140MB anyway, which is the exact complaint the guard was added for.
+        // The desktop chip has always parsed this body; this one did not.
+        // (Caught by a driven-browser review, not by reading the diff.)
+        var data = body && body.data;
+        if (data && data.already_current) {
+          msg.textContent = T('uptodate');
+          return;
+        }
         // Authorised. The bridge takes no url — it resolves the release
         // APK itself — so nothing here chooses what gets installed.
         if (window.AndroidKiosk && window.AndroidKiosk.installUpdate) {
@@ -179,6 +192,7 @@
           return;
         }
         msg.textContent = T('nobridge');
+        });
       }).catch(function () { btn.disabled = false; msg.textContent = T('failed'); });
     });
   })();

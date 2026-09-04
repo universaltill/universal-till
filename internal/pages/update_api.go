@@ -39,7 +39,11 @@ var (
 	autoUpdateCurrent   = updates.Current
 	autoUpdateCheckNow  = updates.CheckNow
 	autoUpdateSupported = selfupdate.Supported
-	autoUpdateApply     = selfupdate.Apply
+	// androidInstallCheckNow: the freshness re-check for the Android install
+	// endpoint (ut-docs#1545). A seam so a test can exercise both answers
+	// without reaching the releases API.
+	androidInstallCheckNow = updates.CheckNow
+	autoUpdateApply        = selfupdate.Apply
 	// autoUpdateBuildVersion is buildinfo.Version, but the manual Update-now
 	// button's own handler (`POST /api/update/apply`, above) does NOT use
 	// this seam or the guard built on it -- an explicit user action stays
@@ -343,8 +347,32 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 	// the bridge takes no URL. A caller who forges a success response gains
 	// no ability to install anything of their choosing.
 	mux.HandleFunc("POST /api/update/android-install", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#1545: re-check freshness before authorising an install. The
+		// native bridge compares no versions — it just fetches
+		// releases/latest — so without this an operator already on the newest
+		// build spends a ~140MB download and is handed an installer for the
+		// version they are running. Reported from the pilot tablet: "even if
+		// there is no new version ... after 10~15 seconds it shows the
+		// download window." The desktop endpoint has guarded this since
+		// 2026-07-28; Android never learned it.
+		//
+		// Order matters in both directions (review finding). The check is an
+		// OUTBOUND call, so it must not be reachable by someone who could
+		// never install anyway — a cashier tapping repeatedly would burn the
+		// shop's unauthenticated GitHub rate budget and starve the daily
+		// background check. But it must still precede AuthorizeManager, so a
+		// correct manager PIN is never spent on a no-op. Hence: cheap local
+		// permission test, then network, then PIN.
 		_ = r.ParseForm()
 		pin := strings.TrimSpace(r.Form.Get("manager_pin"))
+		if pin == "" && !androidUpdateSessionAuthorizes(d, r) {
+			respondUpdateApply(w, http.StatusForbidden, false, "manager PIN required")
+			return
+		}
+		if st := androidInstallCheckNow(r.Context()); !st.Available {
+			respondUpdateApplyCurrent(w)
+			return
+		}
 		if pin == "" {
 			// ut-docs#1537: no PIN offered. A signed-in manager on an
 			// ORDINARY till may authorise from their session alone — the same

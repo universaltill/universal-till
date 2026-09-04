@@ -50,6 +50,18 @@ var CrossDeviceLinkActionable = selfupdate.DownloadLinkActionableNow
 // original value (e.g. via t.Cleanup) after overriding it.
 var UpdateInstallBridge = selfupdate.InstallBridgeAvailableNow
 
+// UpdateAvailable / LatestVersion are the seams behind the updateavailable and
+// latestversion template funcs (ut-docs#1545). Same reason as
+// UpdateInstallBridge above: the Android update control is gated on freshness
+// as well as platform now, and without seams a test cannot render the "an
+// update exists" branch at all — it would depend on whatever the real releases
+// API happened to answer when the suite ran. They move together: stubbing
+// availability without the version renders a bare "v". Restore the originals
+// (e.g. via t.Cleanup) after overriding.
+var UpdateAvailable = func() bool { return updates.Current().Available }
+
+var LatestVersion = func() string { return updates.Current().Latest }
+
 var baseFuncs = template.FuncMap{
 	"div100":    func(cents int64) float64 { return float64(cents) / 100.0 },
 	"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
@@ -66,8 +78,8 @@ var baseFuncs = template.FuncMap{
 	"categoryName":    func(*string) string { return "" },
 	"brandName":       func(*string) string { return "" },
 	"appversion":      func() string { return buildinfo.Version },
-	"updateavailable": func() bool { return updates.Current().Available },
-	"latestversion":   func() string { return updates.Current().Latest },
+	"updateavailable": func() bool { return UpdateAvailable() },
+	"latestversion":   func() string { return LatestVersion() },
 	"canselfupdate":   func() bool { return selfupdate.Supported() },
 	// updatedownloadlink: whether the status-bar chip's fallback (when
 	// canselfupdate is false) may show an actionable website link — false on

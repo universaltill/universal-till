@@ -98,6 +98,7 @@
                 data-failed="{{ T "settings.update.android.failed" }}"
                 data-locked="{{ T "auth.error.locked" }}"
                 data-nobridge="{{ T "settings.update.android.no_bridge" }}"
+                data-uptodate="{{ T "settings.update.up_to_date" }}"
         >⬆&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</button>
         {{ else if updatedownloadlink }}
         <a class="sb-item sb-update" href="https://www.universaltill.com/download"
@@ -193,6 +194,17 @@
                 }
                 if (res.status === 429) { abtn.textContent = abtn.getAttribute('data-locked'); abtn.disabled = false; return; }
                 if (!res.ok) { abtn.textContent = abtn.getAttribute('data-failed'); abtn.disabled = false; return; }
+                return res.json().catch(function () { return {}; }).then(function (body) {
+                // ut-docs#1545: 200 + already_current means the cached "update
+                // available" that put this chip on screen was stale and the
+                // till is in fact current. Say so; do not start a ~140MB
+                // download for the version already running.
+                var data = body && body.data;
+                if (data && data.already_current) {
+                  abtn.textContent = abtn.getAttribute('data-uptodate');
+                  abtn.disabled = false;
+                  return;
+                }
                 if (window.AndroidKiosk && window.AndroidKiosk.installUpdate) {
                   // Stays "downloading": the APK is large and the shell gives
                   // no progress back, so the honest state is "in progress
@@ -213,6 +225,7 @@
                 }
                 abtn.textContent = abtn.getAttribute('data-nobridge');
                 abtn.disabled = false;
+                });
               })
               .catch(function () { abtn.textContent = abtn.getAttribute('data-failed'); abtn.disabled = false; });
           });
