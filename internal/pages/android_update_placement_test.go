@@ -152,11 +152,14 @@ func TestAndroidInstallFormReachableByCashierButPINGated(t *testing.T) {
 	if rec.Code == http.StatusOK {
 		t.Errorf("a wrong PIN authorised an install: %s", rec.Body.String())
 	}
-	// And a manager session with no PIN is refused too — the PIN, not the
-	// role, is what authorises dropping the kiosk pin.
+	// A MANAGER session with no PIN is deliberately allowed on an ordinary
+	// till as of ut-docs#1537 — the same gate the desktop chip uses, and with
+	// nothing pinned there is no kiosk lock for it to release. The case where
+	// the PIN is still mandatory (self-order mode) is pinned by
+	// TestAndroidInstallRequiresPINInSelfOrderModeEvenForAManagerSession.
 	rec = postForm(api, "/api/update/android-install", url.Values{"manager_pin": {""}}, &mgrUser)
-	if rec.Code != http.StatusForbidden {
-		t.Errorf("blank PIN from a manager session = %d, want 403: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Errorf("manager session with no PIN on an ordinary till = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 }
 

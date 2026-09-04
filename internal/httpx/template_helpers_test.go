@@ -651,3 +651,64 @@ func TestIsRTL(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#1537: on Android the chip must be an ACTIONABLE BUTTON that installs,
+// not a link that navigates to Settings. The owner's report was blunt — "it
+// should update the app even when I click on the bottom of the screen on the
+// update green button" — and ut-docs#1534 had only made the destination
+// reachable, not the chip itself useful.
+//
+// This also pins that the chip carries its own translated strings as data-*
+// attributes: the handler lives in base.html's inline JS, which cannot call
+// T() at click time, and the previous desktop handler's answer to that was
+// hardcoded English marked `i18n:ignore` (ut-docs#205). A German till must not
+// flash English at the operator mid-update.
+func TestBaseLayoutAndroidUpdateChipIsAnInstallButton(t *testing.T) {
+	InitI18n(realI18n(t), "en")
+	funcs := FuncsFor("en")
+	funcs["updateavailable"] = func() bool { return true }
+	funcs["canselfupdate"] = func() bool { return false }
+	funcs["updatedownloadlink"] = func() bool { return false }
+	funcs["updateinstallbridge"] = func() bool { return true }
+	funcs["latestversion"] = func() string { return "9.9.9" }
+	r, err := NewRenderer(
+		filepath.Join("web", "ui", "layouts", "base.html"),
+		filepath.Join("web", "ui", "pages", "pin.html"),
+		funcs,
+	)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	w := httptest.NewRecorder()
+	data := map[string]any{"title": "Change PIN", "theme": "", "menuItems": nil, "errKey": ""}
+	if err := r.Render(w, "base", data); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	body := w.Body.String()
+
+	idx := strings.Index(body, `id="sb-android-update-btn"`)
+	if idx == -1 {
+		t.Fatalf("expected an Android install button in the status bar, got %.800s", body)
+	}
+	end := strings.Index(body[idx:], "</button>")
+	if end == -1 {
+		t.Fatalf("expected the Android update chip to be a <button>, not a link — a link only navigates, which is the bug (ut-docs#1537), got %.500s", body[idx:])
+	}
+	chip := body[idx : idx+end]
+	if strings.Contains(chip, "href=") {
+		t.Errorf("the Android update chip must not be a navigation link, got %q", chip)
+	}
+	if !strings.Contains(chip, "9.9.9") {
+		t.Errorf("the chip should name the available version, got %q", chip)
+	}
+	// Every state the click handler can reach must have a translated string
+	// available to it, or that state renders as nothing at all.
+	for _, attr := range []string{"data-confirm", "data-downloading", "data-failed", "data-locked", "data-nobridge"} {
+		if !strings.Contains(chip, attr+`="`) {
+			t.Errorf("chip is missing %s, so that state would render empty in a non-English locale: %q", attr, chip)
+		}
+	}
+	if strings.Contains(chip, `data-confirm=""`) || strings.Contains(chip, `data-downloading=""`) {
+		t.Errorf("a chip state resolved to an empty string — the key is missing from the locale: %q", chip)
+	}
+}

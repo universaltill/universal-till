@@ -101,7 +101,12 @@ func newFullAuthDeps(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps)
 			t.Fatalf("seed role %s: %v", role, err)
 		}
 	}
-	permissionCatalog := []string{"refund", "eod_report", "cash_adjustment", "price_override", "void", "user_management", "settings"}
+	// Keep in step with the real seed data (see the drift note above): a
+	// fixture missing an action silently makes every canPerform() gate on it
+	// look denied, so a handler can pass its test for the wrong reason.
+	// plugin_management added for ut-docs#1537 — it is granted to
+	// manager/admin/super_admin in production and gates the updater.
+	permissionCatalog := []string{"refund", "eod_report", "cash_adjustment", "price_override", "void", "user_management", "settings", "plugin_management"}
 	for _, action := range permissionCatalog {
 		if _, err := db.Exec(`INSERT INTO permission_actions (action) VALUES (?)`, action); err != nil {
 			t.Fatalf("seed permission_action %s: %v", action, err)

@@ -1869,5 +1869,10 @@
   "recovery.taking_longer": "هنوز در حال کار است — پس از به‌روزرسانی پایگاه داده ممکن است چند دقیقه طول بکشد.",
   "error.page.title": "مشکلی پیش آمد",
   "permissions.error.super_admin_required": "نیاز به دسترسی مدیر ارشد",
-  "tables.error.load_failed": "بارگذاری میزها ممکن نشد. دوباره تلاش کنید یا از منو برای ادامه کار استفاده کنید."
+  "tables.error.load_failed": "بارگذاری میزها ممکن نشد. دوباره تلاش کنید یا از منو برای ادامه کار استفاده کنید.",
+  "settings.update.android.confirm": "برای نصب دوباره بزنید",
+  "settings.update.android.downloading": "در حال دانلود — وقتی آماده شد اندروید تأیید می‌خواهد",
+  "settings.update.android.failed": "به‌روزرسانی شروع نشد — اتصال را بررسی کنید و دوباره تلاش کنید",
+  "settings.update.android.pin_needed": "برای نصب این به‌روزرسانی پین مدیر را وارد کنید",
+  "settings.update.android.no_bridge": "این به‌روزرسانی فقط از خود برنامه صندوق نصب می‌شود"
 }
