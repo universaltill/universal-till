@@ -1335,7 +1335,7 @@
        section never disappears while there's something real to see. -->
   <p class="muted" style="margin-top:.6rem">
     {{ T "sync.quarantine_settings_help" }}
-    {{ if gt .QuarantineCount 0 }}<strong>{{ .QuarantineCount }} {{ T "sync.chip_quarantined" }}</strong>{{ end }}
+    {{ if gt .QuarantineCount 0 }}<strong>{{ .QuarantineCount }} {{ if eq .QuarantineCount 1 }}{{ T "sync.chip_quarantined_one" }}{{ else }}{{ T "sync.chip_quarantined_other" }}{{ end }}</strong>{{ end }}
   </p>
   <a class="btn secondary" href="/sync-quarantine">{{ T "sync.quarantine_open" }}</a>
   {{ end }}
