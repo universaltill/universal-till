@@ -53,7 +53,93 @@
 {{ end }}
 <div class="card">
   <h2>{{ T "settings.update.title" }} {{ helpLink "updates" }}</h2>
-  <p class="muted">Universal Till v{{ appversion }}</p>
+  <p class="muted">Universal Till v{{ appversion }}{{ if updateavailable }} &mdash; &#11014;&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}{{ end }}</p>
+  {{ if updateinstallbridge }}
+  <!-- ut-docs#1246 / ut-docs#1534: Android in-app update. Behind a manager PIN
+       for the same reason exit-to-os is: installing requires the native shell
+       to drop the kiosk pin (Android silently refuses to start the package
+       installer from a pinned app), so an ungated button would be a one-tap
+       kiosk escape for any cashier.
+
+       Rendered to EVERY role, not wrapped in the isManager gate the
+       check/schedule controls below it use — the PIN is the actual boundary
+       (POST /api/update/android-install verifies it server-side and never
+       consults the session role), and login.html renders the exit-to-os form
+       to anonymous visitors on exactly that reasoning. Hiding it from a
+       cashier hid nothing and cost something real: base.html shows the
+       "Update available — Download" chip to every role, so a cashier who
+       tapped it arrived at a page with no form, no anchor and no explanation
+       — the same dead end this card exists to fix (review finding 4).
+
+       It lives HERE, under the "Software update" heading, and not beside
+       exit-to-os where it was first written. That placement was the whole of
+       ut-docs#1534: the status chip links to /settings#android-update, the
+       operator arrives looking for an update, and the card they land on
+       offered only "Check for updates" — whose Android answer was another
+       link to a PIN box filed under "Exit to OS" far below. Reported from a
+       real tablet as "it just brings me to the software update section and
+       does not install". The install path itself was fine; nobody could
+       reach it. The PIN gate is unchanged by the move. -->
+  <form id="android-update-form" class="set-row">
+    <label id="android-update">{{ T "shifts.manager_pin" }}
+      <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off">
+    </label>
+    <button class="btn secondary" type="submit" id="android-update-btn">⬆&nbsp;{{ T "settings.update.download" }}</button>
+    <div id="android-update-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+  </form>
+  <script>
+  (function () {
+    var form = document.getElementById('android-update-form');
+    if (!form) return;
+    // The browser performs its #android-update jump at parse time, but the
+    // enrol-devices panel at the top of this page is hx-trigger="load" and
+    // swaps in AFTER that, reflowing everything below it — so the jump lands
+    // short and the operator is left looking at a different card
+    // (ut-docs#1534). Re-apply it once htmx has settled, and once more on a
+    // timer for the case where that panel errors and never fires a settle.
+    if (location.hash === '#android-update') {
+      var reveal = function () { form.scrollIntoView({ block: 'center' }); };
+      reveal();
+      // Listen on the enrol-devices panel ITSELF, not on document.body.
+      // htmx:afterSettle bubbles, and nav.html has four hx-trigger="load"
+      // chips that settle within milliseconds — a body-level {once:true}
+      // listener is burned by whichever of those lands first and is gone
+      // before the panel this actually guards against ever swaps in
+      // (ut-docs#1534 review, finding 1). That panel calls enroll.Fleet over
+      // the network with a 15s timeout, so on shop wifi it can reflow the
+      // masonry columns many seconds after the browser's own anchor jump.
+      // hx-swap="innerHTML" leaves the element in place, so one listener
+      // holds; no {once} needed, it settles once per load.
+      var panel = document.querySelector('[hx-get="/api/enrol/devices"]');
+      if (panel) { panel.addEventListener('htmx:afterSettle', reveal); }
+      setTimeout(reveal, 800);
+    }
+    var msg = document.getElementById('android-update-msg');
+    var btn = document.getElementById('android-update-btn');
+    form.addEventListener('submit', function (ev) {
+      ev.preventDefault();
+      var pin = form.querySelector('[name="manager_pin"]').value;
+      btn.disabled = true;
+      msg.textContent = '';
+      fetch('/api/update/android-install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+        body: new URLSearchParams({ manager_pin: pin }).toString()
+      }).then(function (res) {
+        btn.disabled = false;
+        form.querySelector('[name="manager_pin"]').value = '';
+        if (!res.ok) { msg.textContent = '✗'; return; }
+        // Authorised. The bridge takes no url — it resolves the release
+        // APK itself — so nothing here chooses what gets installed.
+        if (window.AndroidKiosk && window.AndroidKiosk.installUpdate) {
+          window.AndroidKiosk.installUpdate();
+          msg.textContent = '✓';
+        }
+      }).catch(function () { btn.disabled = false; msg.textContent = '✗'; });
+    });
+  })();
+  </script>
+  {{ end }}
   {{ if .isManager }}
   <div class="set-row">
     <button class="btn btn-touch" hx-post="/api/update/check" hx-target="#update-check-msg" hx-swap="innerHTML"
@@ -221,51 +307,6 @@
     <div class="set-gap">
       <h3 style="margin:0 0 .3rem">{{ T "settings.display.exit_to_os_title" }}</h3>
       <p class="muted">{{ T "settings.display.exit_to_os_help" }}</p>
-      {{ if updateinstallbridge }}
-      <!-- ut-docs#1246: Android in-app update, behind the SAME manager-PIN gate
-           as exit-to-os directly below — and for the same reason. Installing
-           requires the native shell to drop the kiosk pin (Android refuses to
-           start the package installer from a pinned app), so an ungated button
-           would be a one-tap kiosk escape for any cashier. The status chip in
-           base.html links here rather than calling the bridge itself. -->
-      <form id="android-update-form" class="set-row">
-        <label id="android-update">{{ T "shifts.manager_pin" }}
-          <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off">
-        </label>
-        <button class="btn secondary" type="submit" id="android-update-btn">⬆&nbsp;{{ T "settings.update.download" }}</button>
-        <div id="android-update-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
-      </form>
-      <script>
-      (function () {
-        var form = document.getElementById('android-update-form');
-        if (!form) return;
-        var msg = document.getElementById('android-update-msg');
-        var btn = document.getElementById('android-update-btn');
-        form.addEventListener('submit', function (ev) {
-          ev.preventDefault();
-          var pin = form.querySelector('[name="manager_pin"]').value;
-          btn.disabled = true;
-          msg.textContent = '';
-          fetch('/api/update/android-install', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-            body: new URLSearchParams({ manager_pin: pin }).toString()
-          }).then(function (res) {
-            btn.disabled = false;
-            form.querySelector('[name="manager_pin"]').value = '';
-            if (!res.ok) { msg.textContent = '✗'; return; }
-            // Authorised. The bridge takes no url — it resolves the release
-            // APK itself — so nothing here chooses what gets installed.
-            if (window.AndroidKiosk && window.AndroidKiosk.installUpdate) {
-              window.AndroidKiosk.installUpdate();
-              msg.textContent = '✓';
-            }
-          }).catch(function () { btn.disabled = false; msg.textContent = '✗'; });
-        });
-      })();
-      </script>
-      {{ end }}
-
       <form id="exit-to-os-form" class="set-row">
         <label>{{ T "settings.display.exit_to_os_pin_label" }}
           <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off">

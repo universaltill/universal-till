@@ -124,6 +124,30 @@ func DownloadLinkActionableNow() bool {
 	return DownloadLinkActionable(runtime.GOOS)
 }
 
+// InstallBridgeAvailable reports whether the native shell around this build
+// can drive the OS package installer on the operator's behalf. Today that is
+// Android only: the Go core ships as a native library inside the APK and only
+// the package installer may replace an app's own code, so Supported() is
+// false there by design — but MainActivity.KioskBridge.installUpdate() can
+// hand a downloaded APK to that installer, which is a real update path and
+// not the dead end an unsupported unix kiosk has.
+//
+// One owner for the predicate, deliberately (ut-docs#1534 review): both the
+// updateinstallbridge template func (via httpx.UpdateInstallBridge) and
+// internal/pages/update_api.go's updateUnavailableHTML branch on it, and
+// keeping the two "in step" by comment alone is exactly how the Settings page
+// and the status chip drifted apart in the first place.
+func InstallBridgeAvailable(goos string) bool {
+	return goos == "android"
+}
+
+// InstallBridgeAvailableNow is InstallBridgeAvailable for the running
+// process's own GOOS — the zero-arg form template funcs need, same shape as
+// DownloadLinkActionableNow above.
+func InstallBridgeAvailableNow() bool {
+	return InstallBridgeAvailable(runtime.GOOS)
+}
+
 // supportedFor is the OS/location POLICY gate (pure, no filesystem access):
 // which install shapes can *ever* self-update. The final writability
 // precondition is applied by Supported(), not here.
