@@ -613,6 +613,7 @@
   "reports.eod.exists": "Today's report already exists (see the list below)",
   "reports.eod.failed": "Report failed",
   "reports.eod.net": "Net",
+  "reports.eod.period_range": "%s – %s",
   "reports.eod.range_downloaded": "downloaded",
   "reports.eod.range_from": "From",
   "reports.eod.range_loading": "generating…",

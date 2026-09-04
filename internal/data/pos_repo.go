@@ -2081,6 +2081,18 @@ func (r *POSRepo) EndOfDayRange(ctx context.Context, from, to string) (EODReport
 	return rep, err
 }
 
+// EndOfDayInstant is EndOfDay's close-to-close sibling (ADR-0066, card 2 /
+// ut-docs#1141) — a thin exported wrapper around dateRangeSummaryInstant so
+// internal/pages' generateEOD can reach it (dateRangeSummaryInstant itself
+// is unexported, matching EndOfDay/EndOfDayRange's own division of labor
+// around dateRangeSummary). Used only by the "eod" kind's generation path,
+// never by EndOfDayRange or any calendar-day caller. Deliberately leaves
+// rep.From/rep.To unset — those are display-only (ADR-0066 Decision 6) and
+// the caller formats them in the shop's local offset, not UTC.
+func (r *POSRepo) EndOfDayInstant(ctx context.Context, from, to time.Time) (EODReport, error) {
+	return r.dateRangeSummaryInstant(ctx, from, to)
+}
+
 // dateRangeSummary is the shared aggregation body behind EndOfDay and
 // EndOfDayRange. date(created_at, 'localtime') BETWEEN date(?) AND date(?)
 // is equivalent to date(created_at, 'localtime') = date(?) when from == to,
@@ -3024,11 +3036,15 @@ func (r *POSRepo) HasArchivedReport(ctx context.Context, kind, period string) (b
 
 // PruneReportArchiveOlderThan deletes report_archive rows whose period is
 // strictly before cutoff (ADR-0040 §2, till-mode age-based retention).
-// period is stored "YYYY-MM-DD" (see generateEOD), which sorts and
-// range-compares correctly as plain text, so cutoff is the same format and
-// no date parsing happens here. A single DELETE statement, never
-// read-then-delete, so a prune can't race an in-flight archive write.
-// Returns the number of rows removed.
+// period was always stored "YYYY-MM-DD" pre-ADR-0066; since ADR-0066 a
+// "eod" row's period is instead the close instant (RFC3339, local offset —
+// see ArchiveReport's doc comment), but it still sorts and range-compares
+// correctly against a bare cutoff date as plain text (a same-day RFC3339
+// value is a strict suffix extension of its date prefix, so
+// `'2026-08-24' < '2026-08-24T19:19:00+02:00'` holds), so cutoff stays the
+// same "YYYY-MM-DD" format and no date parsing happens here. A single
+// DELETE statement, never read-then-delete, so a prune can't race an
+// in-flight archive write. Returns the number of rows removed.
 func (r *POSRepo) PruneReportArchiveOlderThan(ctx context.Context, cutoff string) (int64, error) {
 	res, err := r.db.ExecContext(ctx, `DELETE FROM report_archive WHERE period < ?`, cutoff)
 	if err != nil {
@@ -3072,10 +3088,36 @@ func (r *POSRepo) ReportArchiveCoverage(ctx context.Context) (ReportArchiveCover
 // span limit is enforced here, same division of responsibility as
 // data_api.go's export handler).
 func (r *POSRepo) ArchivedReportsInRange(ctx context.Context, from, to string) ([]ArchivedReportRow, error) {
+	// ADR-0066 Decision 5 / ut-docs#1141: filters on the row's own
+	// created_at, not period. A raw `period BETWEEN from AND to` bound
+	// against "YYYY-MM-DD" text silently excludes a "eod" row whose period
+	// is now an RFC3339 close instant falling on the range's own last day
+	// ("2026-08-24T19:19:00+02:00" sorts after the bare date "2026-08-24").
+	// datetime(...) on both sides normalizes text form (report_archive's
+	// created_at is either the schema default's space-separated form or an
+	// explicit closedAt write — see ArchiveReport's doc comment) without
+	// bucketing to a calendar day, matching this file's other instant
+	// window queries. `to` is exclusive at the calendar day AFTER the
+	// requested end date, so the whole of that last day is included.
+	//
+	// 'localtime' is load-bearing, not decoration (2026-09-04 review of
+	// ut-docs#1141): created_at is stored UTC-naive on BOTH paths above,
+	// while from/to are LOCAL calendar dates the shop owner typed — the
+	// same dates a new-format row's own local-offset `period` displays, and
+	// the same dates the old `period BETWEEN` filter matched against. Drop
+	// 'localtime' and the requested range silently becomes a UTC day
+	// window, so a close made just after local midnight goes missing from
+	// an export for its own local day and turns up under the previous one
+	// (ADR-0057's bug class; ArchiveReport's own double-close guard already
+	// compares date(created_at, 'localtime') for exactly this reason). See
+	// TestArchivedReportsInRange_ComparesLocalDayNotUTCDay.
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, kind, period, content_json, created_at,
        z_number, prev_z_number, prev_closed_at, first_receipt, last_receipt
-FROM report_archive WHERE period BETWEEN ? AND ? ORDER BY period`, from, to)
+FROM report_archive
+WHERE datetime(created_at, 'localtime') >= datetime(?)
+  AND datetime(created_at, 'localtime') < datetime(?, '+1 day')
+ORDER BY period`, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("archived reports in range: %w", err)
 	}

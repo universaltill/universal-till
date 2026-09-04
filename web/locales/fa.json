@@ -613,6 +613,7 @@
   "reports.eod.exists": "گزارش امروز از قبل موجود است (فهرست پایین)",
   "reports.eod.failed": "گزارش ناموفق بود",
   "reports.eod.net": "خالص",
+  "reports.eod.period_range": "%s – %s",
   "reports.eod.range_downloaded": "دانلود شد",
   "reports.eod.range_from": "از",
   "reports.eod.range_loading": "در حال ساخت…",
