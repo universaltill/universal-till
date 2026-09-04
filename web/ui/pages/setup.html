@@ -611,50 +611,76 @@
       <section x-show="step === 99" x-cloak>
         <h1>{{ T "setup.join.title" }}</h1>
         <p class="muted">{{ T "setup.join.help" }}</p>
-        <!-- hx-indicator + hx-disabled-elt: completeJoin allows the primary a
-             60s timeout and then downloads a whole DB snapshot, so on a real
-             LAN join this button can sit inert for close to a minute. Without
-             feedback the operator presses it again, which burns the one-time
-             enrolment token — the retry then fails with "code used or
-             expired?" and they are worse off than when they started. -->
-        <form hx-post="/api/setup/join" hx-target="#setup-join-msg" hx-swap="innerHTML"
-              hx-indicator="#setup-join-msg" hx-disabled-elt="find button[type=submit]">
-          <!-- ut-docs#1179: was a raw '{"token":"…","url":"http://…"}' placeholder — the
-               wire shape, not something an operator can type or recognise. Reuse the same
-               friendly hint tills.html's join form already uses, so both screens read
-               consistently. -->
-          <label>{{ T "tills.join_code" }}
-            <input type="text" name="code" placeholder="{{ T "tills.join_code_ph" }}" required>
+        {{/* ut-docs#1548: was a paste-a-code form, an <hr>, then a LAN
+             discovery block below it — two ways to do the same thing, one
+             above the other, each with its own till-name field. Same
+             .tab-bar/.tab/.tab-panel pattern + roving-tabindex nav as
+             tills.html's own fix and index.html's payment-method tabs;
+             nested x-data scope, same pattern this wizard's own step 5
+             (shopType) already uses inside the root step-nav x-data. */}}
+        <div x-data="{
+          tab: 'discover',
+          focusTab(dir) {
+            const tabs = Array.from(this.$el.querySelectorAll('[role=tab]'));
+            if (!tabs.length) return;
+            const i = Math.max(0, tabs.indexOf(document.activeElement));
+            const next = tabs[(i + dir + tabs.length) % tabs.length];
+            next.click(); next.focus();
+          }
+        }">
+          <div class="tab-bar" role="tablist" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
+            <button type="button" id="setup-tab-discover" class="tab" role="tab" :class="tab === 'discover' && 'active'" :aria-selected="tab === 'discover'" :tabindex="tab === 'discover' ? 0 : -1" aria-controls="setup-panel-discover" @click="tab = 'discover'">{{ T "tills.join_tabs.discover" }}</button>
+            <button type="button" id="setup-tab-code" class="tab" role="tab" :class="tab === 'code' && 'active'" :aria-selected="tab === 'code'" :tabindex="tab === 'code' ? 0 : -1" aria-controls="setup-panel-code" @click="tab = 'code'">{{ T "tills.join_tabs.code" }}</button>
+          </div>
+          <label>{{ T "tills.pairing.your_till_name" }}
+            <input type="text" id="setup-pairing-till-name" name="name" placeholder="Till 2" required>
           </label>
-          <label>{{ T "tills.join_name" }}
-            <input type="text" name="name" placeholder="Till 2">
-          </label>
-          <button class="btn primary" type="submit">{{ T "tills.join_btn" }}</button>
-          <div id="setup-join-msg" aria-live="polite" style="min-height:1.4rem; margin-top:.4rem"></div>
-        </form>
-        <!-- ut-docs#289: LAN discovery + approve-to-pair, first-boot flavour.
-             Same mechanism the Tills page uses (ADR-0033 parts 1+3), pointed
-             at the middleware-exempt, NeedsFirstBoot-gated /api/setup/*
-             routes — a first-boot till has no session, so the /api/sync/*
-             flavour is unreachable from here by design. Discovery only LISTS
-             candidates; enrolment still requires pressing "Request to pair"
-             here and the primary manager approving after comparing the
-             6-digit code. The manual-code form above stays as the
-             documented fallback. -->
-        <hr style="margin:1rem 0; border:none; border-top:1px dashed #d1d5db">
-        <!-- ut-docs#289 review (F4): tills.html disambiguates its own two
-             identically-labelled "till name" inputs with a heading per
-             section; this step had none, so add one here too rather than
-             leaning on the <hr> alone. -->
-        <h3>{{ T "tills.discovery.title" }}</h3>
-        <p class="muted">{{ T "setup.join.discover_help" }}</p>
-        <label>{{ T "tills.pairing.your_till_name" }}
-          <input type="text" id="setup-pairing-till-name" name="name" placeholder="Till 2" required>
-        </label>
-        <button id="setup-discover-btn" class="btn secondary" type="button">{{ T "tills.discovery.find_button" }}</button>
-        <div id="setup-discover-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
-        <div id="setup-discover-results"></div>
-        <div id="setup-pairing-status-host" aria-live="polite"></div>
+          {{/* Action-neutral wording, not tills.pairing.error.name_required —
+               see tills.html's own comment on the same element. */}}
+          <p id="setup-pairing-till-name-error" class="field-error-msg" role="alert" hidden>{{ T "tills.pairing.error.name_required_field" }}</p>
+          <!-- ut-docs#289: LAN discovery + approve-to-pair, first-boot flavour.
+               Same mechanism the Tills page uses (ADR-0033 parts 1+3), pointed
+               at the middleware-exempt, NeedsFirstBoot-gated /api/setup/*
+               routes — a first-boot till has no session, so the /api/sync/*
+               flavour is unreachable from here by design. Discovery only LISTS
+               candidates; enrolment still requires pressing "Request to pair"
+               here and the primary manager approving after comparing the
+               6-digit code. The paste-a-code tab stays as the documented
+               fallback. -->
+          <div class="tab-panel" id="setup-panel-discover" role="tabpanel" aria-labelledby="setup-tab-discover" x-show="tab === 'discover'">
+            <p class="muted">{{ T "setup.join.discover_help" }}</p>
+            <button id="setup-discover-btn" class="btn secondary" type="button">{{ T "tills.discovery.find_button" }}</button>
+            <div id="setup-discover-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+            <div id="setup-discover-results"></div>
+            <div id="setup-pairing-status-host" aria-live="polite"></div>
+          </div>
+          <div class="tab-panel" id="setup-panel-code" role="tabpanel" aria-labelledby="setup-tab-code" x-show="tab === 'code'" x-cloak>
+            <!-- hx-indicator + hx-disabled-elt: completeJoin allows the primary a
+                 60s timeout and then downloads a whole DB snapshot, so on a real
+                 LAN join this button can sit inert for close to a minute. Without
+                 feedback the operator presses it again, which burns the one-time
+                 enrolment token — the retry then fails with "code used or
+                 expired?" and they are worse off than when they started.
+                 ut-docs#1548: #setup-pairing-till-name moved out of this form
+                 (now shared with the discover tab) and made required, same
+                 explicit reportValidity() guard the discover button already
+                 needs for the same reason (ut-docs#1540) — was previously the
+                 one till-name field in this wizard that was NOT required. -->
+            <form hx-post="/api/setup/join" hx-include="#setup-pairing-till-name" hx-target="#setup-join-msg" hx-swap="innerHTML"
+                  hx-indicator="#setup-join-msg" hx-disabled-elt="find button[type=submit]"
+                  hx-on::before-request="var n=document.getElementById('setup-pairing-till-name');n.value=n.value.trim();if(!n.reportValidity()){event.preventDefault();}">
+              <!-- ut-docs#1179: was a raw '{"token":"…","url":"http://…"}' placeholder — the
+                   wire shape, not something an operator can type or recognise. Reuse the same
+                   friendly hint tills.html's join form already uses, so both screens read
+                   consistently. -->
+              <label>{{ T "tills.join_code" }}
+                <input type="text" name="code" placeholder="{{ T "tills.join_code_ph" }}" required>
+              </label>
+              <button class="btn primary" type="submit">{{ T "tills.join_btn" }}</button>
+              <div id="setup-join-msg" aria-live="polite" style="min-height:1.4rem; margin-top:.4rem"></div>
+            </form>
+          </div>
+        </div>
         <div class="setup-nav">
           <button type="button" class="btn secondary" @click="step = 1">{{ T "setup.back" }}</button>
         </div>
@@ -770,6 +796,25 @@
               btn.disabled = false;
               msg.textContent = i18n.error;
             });
+        });
+      })();
+    </script>
+    <!-- ut-docs#1548: same required-field visual affordance as tills.html —
+         see that file's own comment for why this can't just be :invalid. -->
+    <script>
+      (function () {
+        var input = document.getElementById('setup-pairing-till-name');
+        var error = document.getElementById('setup-pairing-till-name-error');
+        if (!input || !error) return;
+        input.addEventListener('invalid', function () {
+          input.classList.add('field-invalid');
+          error.hidden = false;
+        });
+        input.addEventListener('input', function () {
+          if (input.validity.valid) {
+            input.classList.remove('field-invalid');
+            error.hidden = true;
+          }
         });
       })();
     </script>

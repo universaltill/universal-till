@@ -410,6 +410,37 @@ body.sale-screen .session-admin-link { display: none; }
 .catalog-row { cursor: pointer; }
 .catalog-row:hover td { background: var(--surface-2); }
 .catalog-name { font-weight: 600; }
+
+/* ---------- Tills / pairing (ut-docs#1548) ---------- */
+/* Same escape-hatch pattern .users-list .table / .settings-grid .card .table
+   already use — with even ONE pending request, the pending-pairings table
+   pushed the WHOLE PAGE past the viewport, forcing the operator to scroll
+   sideways to reach Approve. This rule is the load-bearing half of that
+   fix; re-measured during independent review with it removed and one
+   seeded request: 97px over at 1024x600, 117px at 1280x800 (the PIN-dedup
+   markup change alone does NOT fix it — it was still 97px over).
+   e2e/tests/tills-pairing-layout-1548.spec.ts seeds a real pending request
+   precisely so it fails on that, rather than measuring an empty list. */
+.pairing-table { display: block; overflow-x: auto; }
+/* Narrow the manager-PIN box from the ~245px an `input`'s default size=20
+   plus this sheet's padding gives it, so the device/code columns keep more
+   of the row. NOT about the placeholder: an <input> never grows to fit its
+   placeholder text, so the (untrusted, unbounded) device name embedded in
+   it was never what widened the row. Cosmetic on its own — the rule above
+   is what stops the page overflowing — but it means the table needs its
+   internal scroll far less often. max-width keeps the 12rem from itself
+   overflowing a narrower kiosk viewport. */
+.pairing-table input[type="password"] { width: 12rem; max-width: 100%; }
+/* Generic required-field affordance: `required` alone is invisible until
+   submit (ut-docs#1548) — a placeholder that looks like a filled value
+   (e.g. "Till 2") reads as already-answered, which is what produced every
+   "pairing failed" report in ut-docs#1540. Toggled by a page-local script
+   on the field's `invalid`/`input` events, not by :invalid alone, which
+   would paint the border red before the operator has touched anything.
+   Logical margin so the message hangs under the field in RTL too. */
+.field-invalid { border-color: var(--danger); }
+.field-error-msg { color: var(--danger); font-size: .85rem;
+                   margin-block: .2rem 0; margin-inline: 0; }
 /* ut-docs#1221: the Designer's reorder tiles used to be HTML5
    draggable="true" elements, which needed a `-webkit-user-drag: element`
    workaround here (WebKitGTK can suppress HTML5 DnD on a user-select:none

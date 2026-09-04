@@ -18,25 +18,83 @@
     <p class="muted">{{ T "tills.add_help" }}</p>
     <button class="btn primary" hx-post="/api/sync/enroll-token" hx-target="#till-qr" hx-swap="innerHTML">{{ T "tills.show_qr" }}</button>
     <div id="till-qr" style="margin-top:.6rem"></div>
-    <hr style="margin:1rem 0; border:none; border-top:1px dashed #d1d5db">
   {{ end }}
+  {{/* ut-docs#1548: "join an existing shop" competing for attention with
+       the QR-add flow above is only a real problem once this till is
+       ESTABLISHED as a primary — i.e. other tills have actually enrolled
+       to it (.Tills non-empty). A standalone till that hasn't paired
+       anything yet is `not .SyncPrimary` too (every till defaults to
+       "primary" until it either joins or gets joined), but has nothing
+       to lose by also offering "join a different shop" — that's exactly
+       the state a fresh single-till setup is in, and this page's own
+       e2e coverage (tills-lan-discovery.spec.ts) exercises discovery
+       from exactly that state.
+
+       So the ONE state this hides in is an ESTABLISHED PRIMARY: no
+       .SyncPrimary (nothing to join back to) but .Tills non-empty (real
+       satellites that "join" would abandon). A REPLICA (.SyncPrimary set)
+       keeps it deliberately: /api/sync/join has no replica guard and
+       re-pairing a replica at a different primary is a supported escape
+       hatch, .Tills is non-empty there anyway (ut-docs#405 syncs the
+       roster down, so a `not .Tills` test alone would hide it), and the
+       QR block above is already hidden on a replica — hiding this too
+       would render this whole .card empty. */}}
+  {{ if or .SyncPrimary (not .Tills) }}
+  <div class="tills-join" x-data="{
+    tab: 'discover',
+    focusTab(dir) {
+      const tabs = Array.from(this.$el.querySelectorAll('[role=tab]'));
+      if (!tabs.length) return;
+      const i = Math.max(0, tabs.indexOf(document.activeElement));
+      const next = tabs[(i + dir + tabs.length) % tabs.length];
+      next.click(); next.focus();
+    }
+  }">
     <h3>{{ T "tills.join" }}</h3>
     <p class="muted">{{ T "tills.join_help" }}</p>
-    <form hx-post="/api/sync/join" hx-target="#join-msg" hx-swap="innerHTML">
-      <label>{{ T "tills.join_code" }} <input type="text" name="code" placeholder="{{ T "tills.join_code_ph" }}" required></label>
-      <label>{{ T "tills.join_name" }} <input type="text" name="name" placeholder="Till 2"></label>
-      <button class="btn" type="submit">{{ T "tills.join_btn" }}</button>
-      <div id="join-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
-    </form>
-    <hr style="margin:1rem 0; border:none; border-top:1px dashed #d1d5db">
-    <h3>{{ T "tills.discovery.title" }}</h3>
-    <p class="muted">{{ T "tills.discovery.help" }}</p>
+    {{/* ut-docs#1548: was two stacked cards (paste-a-code, then LAN
+         discovery below it), each with its own till-name field — now two
+         tabs sharing ONE. Same .tab-bar/.tab/.tab-panel pattern and
+         roving-tabindex keyboard nav as index.html's payment-method tabs
+         (tender/split), Alpine already loaded site-wide via base.html. */}}
+    <div class="tab-bar" role="tablist" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
+      <button type="button" id="tills-tab-discover" class="tab" role="tab" :class="tab === 'discover' && 'active'" :aria-selected="tab === 'discover'" :tabindex="tab === 'discover' ? 0 : -1" aria-controls="tills-panel-discover" @click="tab = 'discover'">{{ T "tills.join_tabs.discover" }}</button>
+      <button type="button" id="tills-tab-code" class="tab" role="tab" :class="tab === 'code' && 'active'" :aria-selected="tab === 'code'" :tabindex="tab === 'code' ? 0 : -1" aria-controls="tills-panel-code" @click="tab = 'code'">{{ T "tills.join_tabs.code" }}</button>
+    </div>
     <label>{{ T "tills.pairing.your_till_name" }}
       <input type="text" id="pairing-till-name" name="name" placeholder="Till 2" required></label>
-    <button id="discover-btn" class="btn secondary" type="button">{{ T "tills.discovery.find_button" }}</button>
-    <div id="discover-msg" class="muted" aria-live="polite" style="min-height:1.2rem; margin-inline-start:0"></div>
-    <div id="discover-results"></div>
-    <div id="pairing-status-host"></div>
+    {{/* Independent review, ut-docs#1548: NOT tills.pairing.error.name_required
+         — that key's copy names the discover tab's action in every locale
+         ("…before you can request pairing" / "…قبل إرسال طلب الإقران" /
+         "…göndermeden önce"), and pairing_join.go's pair-start handler still
+         uses it for exactly that. This message sits ABOVE both tabs and also
+         fires for Join (paste-a-code), which enrols with a one-time token and
+         never files a pairing request — so it gets the action-neutral
+         "<field> is required" wording the rest of the app already uses
+         (locations/registers/taxcodes .error.required). */}}
+    <p id="pairing-till-name-error" class="field-error-msg" role="alert" hidden>{{ T "tills.pairing.error.name_required_field" }}</p>
+    <div class="tab-panel" id="tills-panel-discover" role="tabpanel" aria-labelledby="tills-tab-discover" x-show="tab === 'discover'">
+      <p class="muted">{{ T "tills.discovery.help" }}</p>
+      <button id="discover-btn" class="btn secondary" type="button">{{ T "tills.discovery.find_button" }}</button>
+      <div id="discover-msg" class="muted" aria-live="polite" style="min-height:1.2rem; margin-inline-start:0"></div>
+      <div id="discover-results"></div>
+      <div id="pairing-status-host"></div>
+    </div>
+    <div class="tab-panel" id="tills-panel-code" role="tabpanel" aria-labelledby="tills-tab-code" x-show="tab === 'code'" x-cloak>
+      <!-- ut-docs#1548: #pairing-till-name moved out of this form (now
+           shared with the discover tab), so its own `required` is no
+           longer natively checked on submit — same explicit
+           reportValidity() guard the discover button already needs for
+           the same reason (ut-docs#1540). -->
+      <form hx-post="/api/sync/join" hx-include="#pairing-till-name" hx-target="#join-msg" hx-swap="innerHTML"
+            hx-on::before-request="var n=document.getElementById('pairing-till-name');n.value=n.value.trim();if(!n.reportValidity()){event.preventDefault();}">
+        <label>{{ T "tills.join_code" }} <input type="text" name="code" placeholder="{{ T "tills.join_code_ph" }}" required></label>
+        <button class="btn" type="submit">{{ T "tills.join_btn" }}</button>
+        <div id="join-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+      </form>
+    </div>
+  </div>
+  {{ end }}
   </div>
 
   <div class="card">
@@ -169,6 +227,29 @@
         btn.disabled = false;
         msg.textContent = i18n.error;
       });
+  });
+})();
+(function () {
+  // ut-docs#1548: `required` alone is invisible until submit — the field's
+  // own reportValidity() (called by the discover button and the code-paste
+  // form above, both outside a native form-boundary for this field or with
+  // it hx-included) fires a transient native tooltip, but the AC wants a
+  // persistent red border + message. Listen for the `invalid` event
+  // reportValidity()/checkValidity() dispatch and mirror it into
+  // .field-invalid/.field-error-msg instead, clearing on the next valid
+  // input so it doesn't linger once the operator fixes it.
+  var input = document.getElementById('pairing-till-name');
+  var error = document.getElementById('pairing-till-name-error');
+  if (!input || !error) return;
+  input.addEventListener('invalid', function () {
+    input.classList.add('field-invalid');
+    error.hidden = false;
+  });
+  input.addEventListener('input', function () {
+    if (input.validity.valid) {
+      input.classList.remove('field-invalid');
+      error.hidden = true;
+    }
   });
 })();
 </script>

@@ -74,6 +74,16 @@ test.describe.serial('first-boot setup and PIN login', () => {
       const msg = p.locator('#setup-join-msg');
       await expect(msg).toBeEmpty();
 
+      // ut-docs#1548: the paste-a-code form now lives in its own tab
+      // (discover is the default) — switch to it before the code input
+      // is even visible. The till-name field is shared with the discover
+      // tab and is now required there too (previously this form's own
+      // name field was the one till-name input in the wizard that was
+      // NOT required) — reportValidity() blocks the request client-side
+      // without it, which would leave #setup-join-msg empty for a reason
+      // unrelated to what this test is actually proving.
+      await p.locator('button:visible', { hasText: 'Paste a pairing code' }).click();
+      await p.locator('#setup-pairing-till-name:visible').fill('Till 2');
       await p.locator('input[name="code"]:visible').fill('not-a-real-pairing-code');
       await p.locator('button:visible', { hasText: 'Join' }).click();
 
