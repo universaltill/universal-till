@@ -956,6 +956,14 @@ label { font-size: .85rem; color: var(--text); }
 label:has(> input:where(:not([type="checkbox"]):not([type="radio"]))),
 label:has(> select),
 label:has(> textarea) { display: flex; flex-direction: column; gap: .2rem; }
+/* Same [hidden]-override precedent as .btn/.field-pair/.field-checks: the
+   author `display` above beats the UA `[hidden]{display:none}` rule whatever
+   the specificity, so a `hidden`-attributed label containing an input stays
+   fully visible. Found by review on ut-docs#1537's update form, whose PIN row
+   is meant to appear only once the server has actually asked for a PIN — it
+   was showing to everyone, and the feature only "worked" because an empty PIN
+   still takes the session path. */
+label[hidden] { display: none; }
 /* Vertical rhythm for forms whose fields are direct children (the payout
    dialog, change-PIN): stacked labels would otherwise butt straight together. */
 .stacked-form { display: flex; flex-direction: column; gap: .6rem; }

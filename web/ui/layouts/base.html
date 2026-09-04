@@ -91,7 +91,14 @@
              markup cannot steer what gets installed. An <a href> would not work
              here either: shouldOverrideUrlLoading confines the WebView to the
              till's own loopback origin. -->
-        <a class="sb-item sb-update" href="/settings#android-update" data-testid="sb-android-update">⬆&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</a>
+        <button type="button" class="sb-item sb-update" id="sb-android-update-btn"
+                data-testid="sb-android-update" data-latest="{{ latestversion }}"
+                data-confirm="{{ T "settings.update.android.confirm" }}"
+                data-downloading="{{ T "settings.update.android.downloading" }}"
+                data-failed="{{ T "settings.update.android.failed" }}"
+                data-locked="{{ T "auth.error.locked" }}"
+                data-nobridge="{{ T "settings.update.android.no_bridge" }}"
+        >⬆&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</button>
         {{ else if updatedownloadlink }}
         <a class="sb-item sb-update" href="https://www.universaltill.com/download"
            rel="noopener" target="_blank">⬆&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</a>
@@ -131,6 +138,85 @@
         window.addEventListener('online', update);
         window.addEventListener('offline', update);
         update();
+      })();
+      (function () {
+        // ut-docs#1537: the Android chip INSTALLS, the same way the desktop
+        // chip below does — the owner's words were "it should update the app
+        // even when I click on the bottom of the screen on the update green
+        // button". Same two-click confirm, because this chip sits on the sale
+        // screen and a mis-tap mid-trade must not restart the till.
+        //
+        // The POST carries no PIN. The server authorises a manager session on
+        // an ordinary till and refuses one in self-order mode, where the kiosk
+        // pin is real (see update_api.go). A 403 is therefore not an error to
+        // report — it means "this caller has to use the PIN form", so send
+        // them to it.
+        var abtn = document.getElementById('sb-android-update-btn');
+        if (abtn) {
+          var aLabel = abtn.textContent, aArmed = false, aTimer = null;
+          abtn.addEventListener('click', function () {
+            if (!aArmed) {
+              aArmed = true;
+              abtn.textContent = '⬆\u00a0' + abtn.getAttribute('data-confirm');
+              aTimer = setTimeout(function () { aArmed = false; abtn.textContent = aLabel; }, 4000);
+              return;
+            }
+            aArmed = false; clearTimeout(aTimer);
+            abtn.disabled = true;
+            abtn.textContent = abtn.getAttribute('data-downloading');
+            fetch('/api/update/android-install', { method: 'POST' })
+              .then(function (res) {
+                if (res.status === 403) {
+                  // This caller needs the PIN form (a cashier, or a self-order
+                  // kiosk). Navigating there works from any other page — but
+                  // when we are ALREADY on /settings, assigning the same URL
+                  // is a fragment-only navigation that does not reload, and a
+                  // complete no-op when the hash already matches. The chip
+                  // would sit disabled saying "Downloading" forever: the exact
+                  // "success and failure look identical" failure this card
+                  // exists to kill (review finding 2).
+                  if (window.location.pathname === '/settings') {
+                    abtn.textContent = aLabel;
+                    abtn.disabled = false;
+                    var f = document.getElementById('android-update-form');
+                    if (f) {
+                      var pl = document.getElementById('android-update-pin-label');
+                      if (pl) { pl.hidden = false; }
+                      f.scrollIntoView({ block: 'center' });
+                      var pi = f.querySelector('[name="manager_pin"]');
+                      if (pi) { pi.focus(); }
+                    }
+                    return;
+                  }
+                  window.location.href = '/settings#android-update';
+                  return;
+                }
+                if (res.status === 429) { abtn.textContent = abtn.getAttribute('data-locked'); abtn.disabled = false; return; }
+                if (!res.ok) { abtn.textContent = abtn.getAttribute('data-failed'); abtn.disabled = false; return; }
+                if (window.AndroidKiosk && window.AndroidKiosk.installUpdate) {
+                  // Stays "downloading": the APK is large and the shell gives
+                  // no progress back, so the honest state is "in progress
+                  // until Android's installer appears".
+                  window.AndroidKiosk.installUpdate();
+                  // ...but re-arm when the operator comes BACK to this screen.
+                  // The first install of a build sends them to Android's
+                  // "allow this app to install apps" settings, and the manual
+                  // tells them to tap the chip again afterwards — which they
+                  // cannot do if it is still disabled (review finding 6).
+                  document.addEventListener('visibilitychange', function onBack() {
+                    if (document.visibilityState !== 'visible') { return; }
+                    document.removeEventListener('visibilitychange', onBack);
+                    abtn.textContent = aLabel;
+                    abtn.disabled = false;
+                  });
+                  return;
+                }
+                abtn.textContent = abtn.getAttribute('data-nobridge');
+                abtn.disabled = false;
+              })
+              .catch(function () { abtn.textContent = abtn.getAttribute('data-failed'); abtn.disabled = false; });
+          });
+        }
       })();
       (function () {
         var btn = document.getElementById('sb-update-btn');

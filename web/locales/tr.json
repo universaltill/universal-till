@@ -1869,5 +1869,10 @@
   "recovery.taking_longer": "Hâlâ çalışıyor — bir veritabanı güncellemesinden sonra bu birkaç dakika sürebilir.",
   "error.page.title": "Bir şeyler ters gitti",
   "permissions.error.super_admin_required": "Süper yönetici gerekli",
-  "tables.error.load_failed": "Masalar yüklenemedi. Tekrar deneyin veya çalışmaya menüden devam edin."
+  "tables.error.load_failed": "Masalar yüklenemedi. Tekrar deneyin veya çalışmaya menüden devam edin.",
+  "settings.update.android.confirm": "Yüklemek için tekrar dokunun",
+  "settings.update.android.downloading": "İndiriliyor — hazır olduğunda Android onay isteyecek",
+  "settings.update.android.failed": "Güncelleme başlatılamadı — bağlantıyı denetleyip tekrar deneyin",
+  "settings.update.android.pin_needed": "Bu güncellemeyi yüklemek için yönetici PIN'ini girin",
+  "settings.update.android.no_bridge": "Bu güncelleme yalnızca kasa uygulamasının kendisinden yüklenebilir"
 }

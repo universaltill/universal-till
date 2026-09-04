@@ -1869,5 +1869,10 @@
   "recovery.taking_longer": "Still working — this can take a few minutes after a database update.",
   "error.page.title": "Something went wrong",
   "permissions.error.super_admin_required": "Super admin required",
-  "tables.error.load_failed": "Couldn't load tables. Try again, or use the menu to keep working."
+  "tables.error.load_failed": "Couldn't load tables. Try again, or use the menu to keep working.",
+  "settings.update.android.confirm": "Tap again to install",
+  "settings.update.android.downloading": "Downloading — Android will ask you to confirm when it is ready",
+  "settings.update.android.failed": "Could not start the update — check the connection and try again",
+  "settings.update.android.pin_needed": "Enter the manager PIN to install this update",
+  "settings.update.android.no_bridge": "This update can only be installed from the till app itself"
 }
