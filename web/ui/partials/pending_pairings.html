@@ -1,6 +1,12 @@
 <div id="pending-pairings" hx-get="/ui/tills/pending-pairings" hx-trigger="every 30s" hx-target="this" hx-swap="outerHTML">
 {{ if .Pending }}
-<table class="table">
+<!-- ut-docs#1548: display:block + overflow-x:auto is the same escape-hatch
+     pattern .users-list .table / .settings-grid .card .table already use
+     (app.css) — a kiosk-width till (1024px) with a wide manager-PIN input
+     (below) plus the code column pushed this table 40-59px past the
+     viewport, forcing the operator to scroll the WHOLE PAGE sideways just
+     to reach Approve. -->
+<table class="table pairing-table">
   <thead><tr><th>{{ T "tills.pairing.device_label" }}</th><th>{{ T "tills.pairing.code_label" }}</th><th></th></tr></thead>
   <tbody>
     {{ range .Pending }}
@@ -8,17 +14,26 @@
       <td>{{ .DeviceName }}</td>
       <td style="font-weight:bold; letter-spacing:.15em">{{ .VerificationCode }}</td>
       <td>
-        <!-- ut-docs#1540: hx-indicator + hx-disabled-elt (same proven
+        <!-- ut-docs#1548: ONE manager-PIN input per pending request, not
+             one per form. Before this, Approve and Deny were two separate
+             <form>s each carrying its own PIN input — with two pending
+             requests that was FOUR boxes on screen, and an operator who
+             filled one then pressed the other button submitted an empty
+             PIN. The input now lives outside both forms; each form pulls
+             its value via hx-include, the same technique this page's own
+             discovery button already uses (hx-include="#pairing-till-name"
+             below) to include a field it isn't a descendant of.
+
+             ut-docs#1540: hx-indicator + hx-disabled-elt (same proven
              pattern as import.html's ut-docs#1510 fix) — approve/deny had
              no in-flight feedback at all, so a manager pressing Approve on
              a slow/LAN-flaky connection saw the button just sit there and
              reasonably assumed nothing happened. "find button[type=submit]"
              scopes hx-disabled-elt to THIS form's own button, not the
-             sibling approve/deny form's (they're separate <form>s in the
-             same <td>). The eventual full-page reload (HX-Refresh, below)
-             still does the real confirming — refreshing this list AND the
-             Enrolled Tills table — this indicator is only for the gap
-             before that response comes back.
+             sibling approve/deny form's. The eventual full-page reload
+             (HX-Refresh) still does the real confirming — refreshing this
+             list AND the Enrolled Tills table — this indicator is only for
+             the gap before that response comes back.
 
              The PIN box names its own device so two pending rows can't be
              confused, with the FIXED half first in both the placeholder and
@@ -26,21 +41,25 @@
              unbounded LAN input (pairing_api.go trims it and checks only
              that it is non-empty), and a placeholder clips at the input's
              width — leading with it would push "Manager PIN" out of view
-             for a long name or a long locale, in LTR and RTL alike. -->
-        <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-swap="none"
+             for a long name or a long locale, in LTR and RTL alike.
+             ut-docs#1548: the input's own width is now capped (app.css
+             .pairing-table) — purely to leave the device/code columns more
+             of the row. Note it was never the placeholder widening things:
+             an <input> does not grow to fit its placeholder text, so a long
+             device name never affected the row width either way. What
+             actually overflowed the page was this table's own width, fixed
+             by .pairing-table's display:block + overflow-x:auto. -->
+        <input type="password" name="manager_pin" id="pin-{{ .ID }}" inputmode="numeric" autocomplete="off"
+               aria-label="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}"
+               placeholder="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}">
+        <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-include="#pin-{{ .ID }}" hx-swap="none"
               hx-indicator="#pair-busy-{{ .ID }}" hx-disabled-elt="find button[type=submit]"
               hx-on::after-request="if(!event.detail.successful){document.getElementById('pin-error-{{ .ID }}').hidden=false}">
-          <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off"
-                 aria-label="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}"
-                 placeholder="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}">
           <button class="btn primary" type="submit">{{ T "tills.pairing.approve_btn" }}</button>
         </form>
-        <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/deny" hx-swap="none"
+        <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/deny" hx-include="#pin-{{ .ID }}" hx-swap="none"
               hx-indicator="#pair-busy-{{ .ID }}" hx-disabled-elt="find button[type=submit]"
               hx-on::after-request="if(!event.detail.successful){document.getElementById('pin-error-{{ .ID }}').hidden=false}">
-          <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off"
-                 aria-label="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}"
-                 placeholder="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}">
           <button class="btn secondary" type="submit">{{ T "tills.pairing.deny_btn" }}</button>
         </form>
         <span id="pair-busy-{{ .ID }}" class="htmx-indicator muted" role="status">{{ T "tills.pairing.processing" }}</span>
