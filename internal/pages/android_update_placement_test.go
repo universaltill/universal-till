@@ -1,14 +1,17 @@
 package pages
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/updates"
 )
 
 // ut-docs#1534. The install machinery from ut-docs#1246 works; the operator
@@ -51,6 +54,12 @@ func renderSettingsAs(t *testing.T, mux *http.ServeMux, user auth.User, bridge b
 	orig := httpx.UpdateInstallBridge
 	httpx.UpdateInstallBridge = func() bool { return bridge }
 	t.Cleanup(func() { httpx.UpdateInstallBridge = orig })
+	// ut-docs#1545: the control is gated on an update actually existing now,
+	// so these render tests have to say one does. Without the seam this would
+	// depend on whatever the real releases API answered when the suite ran.
+	origAvail := httpx.UpdateAvailable
+	httpx.UpdateAvailable = func() bool { return true }
+	t.Cleanup(func() { httpx.UpdateAvailable = origAvail })
 
 	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
 	req = auth.WithUser(req, user)
@@ -186,5 +195,83 @@ func TestSetupWizardAndroidUpdateLineHasNoLink(t *testing.T) {
 	}
 	if kiosk := setupUnavailableHTML("en", "0.2.51", "linux"); kiosk != updateUnavailableHTML("en", "0.2.51", "linux") {
 		t.Errorf("unix kiosk wizard line diverged from the settings line: %q", kiosk)
+	}
+}
+
+// ut-docs#1545, reported from the pilot tablet: "even if there is no new
+// version ... after 10~15 seconds it shows the download window."
+//
+// Two independent guards, because the template's `updateavailable` comes from
+// a cached check that is up to 24h stale by design (updates.Start's daily
+// ticker) — so the control can legitimately render on a till that has since
+// become current, and the endpoint has to be the one that says no.
+func TestAndroidUpdateControlHiddenWhenAlreadyCurrent(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+
+	origBridge := httpx.UpdateInstallBridge
+	httpx.UpdateInstallBridge = func() bool { return true }
+	t.Cleanup(func() { httpx.UpdateInstallBridge = origBridge })
+	origAvail := httpx.UpdateAvailable
+	httpx.UpdateAvailable = func() bool { return false }
+	t.Cleanup(func() { httpx.UpdateAvailable = origAvail })
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req = auth.WithUser(req, mgrUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if strings.Contains(rec.Body.String(), `id="android-update-form"`) {
+		t.Error("the install control renders on a till with no update available — a PIN and a ~140MB download that can only reinstall the running version")
+	}
+}
+
+func TestAndroidInstallRefusesWhenAlreadyCurrent(t *testing.T) {
+	_, _, d := newFullAuthDeps(t)
+	api := http.NewServeMux()
+	registerUpdateAPI(api, d)
+
+	orig := androidInstallCheckNow
+	androidInstallCheckNow = func(context.Context) updates.Status { return updates.Status{Available: false} }
+	t.Cleanup(func() { androidInstallCheckNow = orig })
+
+	rec := postForm(api, "/api/update/android-install", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("already-current = %d, want 200 with already_current: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "already_current") {
+		t.Errorf("expected an already_current answer so the page can say 'up to date' instead of downloading, got: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `"authorized"`) {
+		t.Errorf("a till with no update available must never be authorised to install, got: %s", rec.Body.String())
+	}
+}
+
+// ut-docs#1545 (independent review, 2026-09-04). The server-side half of this
+// card is inert on its own: BOTH Android install surfaces — the settings form
+// and base.html's status-bar chip — treated any HTTP 200 as "authorised" and
+// went straight into window.AndroidKiosk.installUpdate(). The endpoint's
+// already_current answer IS a 200 (the { data, error } envelope), so on the
+// exact stale-cache path the endpoint guard exists for, the ~140MB download
+// still happened and the reported symptom ("after 10~15 seconds it shows the
+// download window") survived the fix.
+//
+// This is a source-level guard, deliberately: driving the real branch needs
+// the native bridge, so there is no Android-free way to assert the behaviour
+// end-to-end here. It pins the two things whose absence reproduces the bug —
+// the surface reads data.already_current, and it has a translated string to
+// say so with. web/ui/layouts/base.html's desktop chip has read this field
+// since 2026-07-28; these two are the ones that never did.
+func TestAndroidInstallSurfacesHonourAlreadyCurrent(t *testing.T) {
+	for _, f := range []string{"web/ui/pages/settings.html", "web/ui/layouts/base.html"} {
+		b, err := os.ReadFile(f)
+		if err != nil {
+			t.Fatalf("read %s: %v", f, err)
+		}
+		src := string(b)
+		if !strings.Contains(src, "already_current") {
+			t.Errorf("%s posts to /api/update/android-install but never reads data.already_current — a 200 that means 'you are up to date' is treated as authorisation and downloads ~140MB to reinstall the running build (ut-docs#1545)", f)
+		}
+		if !strings.Contains(src, `data-uptodate="{{ T "settings.update.up_to_date" }}"`) {
+			t.Errorf("%s has no translated 'already up to date' string to show for that answer — the operator would get silence or a wrong message (ut-docs#1545)", f)
+		}
 	}
 }

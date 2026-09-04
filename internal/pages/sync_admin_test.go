@@ -169,6 +169,8 @@ func TestSyncChip_ReplicaMode(t *testing.T) {
 		t.Fatalf("replica chip must never render the primary's URL, got %q", body)
 	}
 	// ut-docs#405: was a bare <span>, not clickable at all.
+	// ut-docs#1539: and it is a rail MENU BUTTON now, so the link carries the
+	// same nav-toggle dress as every other rail item.
 	if !strings.Contains(body, `<a href="/tills"`) {
 		t.Fatalf("expected the replica chip to be a clickable link to the local /tills page, got %q", body)
 	}
@@ -265,8 +267,17 @@ func TestSyncChip_PrimaryModeWithTills(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `<a href="/tills"`) {
 		t.Fatalf("expected the primary chip to stay a clickable link to /tills, got %q", rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "1") {
-		t.Fatalf("expected the till count in the chip, got %q", rec.Body.String())
+	// ut-docs#1539: the ONE rail item ut-docs#1423 missed — was a bare "⇅"
+	// emoji, now the same .nav-toggle + inline-SVG-icon pattern as every
+	// other rail control.
+	if strings.Contains(rec.Body.String(), "⇅") || strings.Contains(rec.Body.String(), "⚠") {
+		t.Fatalf("expected no emoji glyph left in the rail chip, got %q", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `class="nav-toggle"`) {
+		t.Fatalf("expected the primary chip to render as a rail .nav-toggle, got %q", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `class="nav-badge"`) {
+		t.Fatalf("expected NO badge dot once the enrolled till is fresh/online, got %q", rec.Body.String())
 	}
 	// ut-docs#1539: "1 Kassen"/"1 tills" — a single enrolled till must use
 	// the singular form ("1 till<", checked against the closing tag right

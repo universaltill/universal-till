@@ -25,6 +25,7 @@ The Android app cannot replace itself the way the desktop versions do, so it han
 2. Android downloads the new app — around 140 MB, so give it a moment on a slow connection; the chip says "Downloading" the whole time — and then shows its own "Do you want to install this update?" screen. Confirm there.
 3. The first time you do this, Android may ask you to allow Universal Till to install apps. Allow it, then tap the chip again.
 4. Settings → Software update does the same thing, and also shows which version you are running and which is available.
+5. The manager PIN box and the Download button only appear when a new version is actually available — on an up-to-date till there is nothing there to tap. If the till re-checks as you tap and finds you are already on the newest build, it tells you so instead of downloading anything.
 
 You are asked for a manager PIN in two cases: you are signed in as a cashier, or the till is in self-order mode. In self-order mode installing would also unlock the kiosk, so the PIN is required there even for a manager.
 

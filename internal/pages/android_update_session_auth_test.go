@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"context"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -8,6 +9,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/updates"
 )
 
 // ut-docs#1537. The product owner, on a real tablet: "it should update the app
@@ -117,5 +119,39 @@ func TestAndroidUpdateSessionAuthorizesFailsClosed(t *testing.T) {
 	bare := &common.Deps{Db: d.Db, AuthSvc: d.AuthSvc}
 	if androidUpdateSessionAuthorizes(bare, mgrReq()) {
 		t.Error("with no settings store the mode is unknowable — that must mean 'assume pinned', not 'assume free'")
+	}
+}
+
+// ut-docs#1545 review (second concurrent cycle sweeping this PR), finding 6:
+// the freshness check is an outbound call to the releases API. A cashier with
+// no PIN must be refused BEFORE it is made — otherwise repeated taps burn the
+// shop's unauthenticated GitHub rate budget and starve the daily background
+// check that keeps every till current.
+func TestAndroidInstallRefusesCashierBeforeAnyNetworkCall(t *testing.T) {
+	api, d := androidInstallMux(t)
+	_ = d
+
+	called := 0
+	orig := androidInstallCheckNow
+	androidInstallCheckNow = func(context.Context) updates.Status {
+		called++
+		return updates.Status{Available: true}
+	}
+	t.Cleanup(func() { androidInstallCheckNow = orig })
+
+	rec := postForm(api, "/api/update/android-install", url.Values{}, &cashUser)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier with no PIN = %d, want 403", rec.Code)
+	}
+	if called != 0 {
+		t.Errorf("the release check ran %d time(s) for a caller who could never install — that is a free outbound request per tap", called)
+	}
+
+	// A manager, by contrast, is allowed to trigger it.
+	if rec := postForm(api, "/api/update/android-install", url.Values{}, &mgrUser); rec.Code != http.StatusOK {
+		t.Fatalf("manager session = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	if called != 1 {
+		t.Errorf("expected exactly one release check for the authorised caller, got %d", called)
 	}
 }
