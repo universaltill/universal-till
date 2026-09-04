@@ -56,8 +56,13 @@
        of only a CRM customer name or a bare timestamp. Static (no server
        round-trip to open) since it needs no per-open data. -->
   <dialog id="hold-modal" class="modifier-modal" aria-labelledby="hold-modal-title">
+    <!-- ut-docs#1386: the actual basket-reset for Hold Sale happens here (on
+         this form's submit), not on the button in .tender-default-footer
+         that only opens this dialog — so the #payment-overlay-closing fix
+         belongs on this after-request handler, same reasoning as New Sale's
+         above. -->
     <form hx-post="/api/pos/hold" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-          hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('hold-modal'); m.close(); this.reset(); }">
+          hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('hold-modal'); m.close(); this.reset(); var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
       <h3 id="hold-modal-title">{{ T "hold.modal.title" }}</h3>
       <input type="text" id="hold-label-input" name="label" maxlength="64"
              aria-labelledby="hold-modal-title" placeholder="{{ T "hold.modal.placeholder" }}" autofocus>
@@ -237,9 +242,18 @@
          action in this row; New Sale/Hold Sale are both "before you get
          there" utility actions. -->
     <div class="tender-default-footer">
+      <!-- ut-docs#1386: New Sale resets the live basket (hx-post below) but
+           sits outside #payment-overlay, so a tap here while the overlay is
+           open (real hit target since ut-docs#1385 made it non-modal) left
+           a stale Tender panel showing payment state for a basket that no
+           longer exists. Same after-request close-if-open pattern as the
+           pay-grid/quick-pay buttons above: only close on a genuine success
+           (not a 200 carrying an inline toast error), and only if it's
+           actually open — a no-op the rest of the time. -->
       <button class="btn secondary" type="button" data-testid="kiosk-checkout-start"
               hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-              onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)">
+              onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)"
+              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
         🛒 {{ T "kiosk.checkout_start" }}</button>
       <button class="btn secondary" type="button"
               onclick="document.getElementById('hold-modal').show(); document.getElementById('hold-label-input').focus();">
