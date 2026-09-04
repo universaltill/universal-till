@@ -578,6 +578,11 @@ func TestCreateReturn_ValidationErrors(t *testing.T) {
 	if rec := postInvJSON(t, mux, "/api/inventory/return", `{"receipt_no":"NO-SUCH-RECEIPT","reason":"x","lines":[{"line_id":"x","quantity":1}]}`); rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for an unknown receipt_no, got %d: %s", rec.Code, rec.Body.String())
 	}
+	// original_sale_id that parses but matches no row (ut-docs#1494's new
+	// GetSaleDetailByID lookup, ahead of ListSaleLineSnapshots).
+	if rec := postInvJSON(t, mux, "/api/inventory/return", `{"original_sale_id":"no-such-sale-id","reason":"x","lines":[{"line_id":"x","quantity":1}]}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for an unknown original_sale_id, got %d: %s", rec.Code, rec.Body.String())
+	}
 	if rec := postInvJSON(t, mux, "/api/inventory/return", `{"original_sale_id":"`+saleID+`","reason":"x","lines":[{"line_id":"does-not-exist","quantity":1}]}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for an unknown line_id, got %d: %s", rec.Code, rec.Body.String())
 	}
