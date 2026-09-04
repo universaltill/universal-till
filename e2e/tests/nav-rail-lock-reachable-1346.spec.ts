@@ -75,3 +75,109 @@ test.describe('nav rail Lock button stays reachable at 1024x600 with a full mana
     assertClean();
   });
 });
+
+// ut-docs#1539 (independent review, BLOCKER): this file's own comment above
+// names the exact hazard — "a sync-chip/fiscal-chip wrapping to two lines
+// pushes Lock further off-screen" — and ut-docs#1539 does more than wrap
+// them: each migrates from a ~21px pill to a full .nav-toggle
+// (min-height: 48px, app.css), stacked in the SAME `.nav-right` column as
+// the 3 admin links + operator + Lock this file already measures as having
+// ZERO headroom. Nothing in this repo had ever rendered either migrated
+// chip in a real browser before this test — `scripts/e2e_seed` never
+// enrols a till or configures fiscalisation, and the two existing rail-icon
+// specs (nav-rail-svg-icons-1423, nav-rail-icon-consistency-1348) target
+// specific always-present icons, never iterate the rail, and never trigger
+// either chip. This closes that gap for the sync chip (the one item
+// reachable from a plain API round-trip in a test — enrolling a till via
+// the same two-call flow a real replica uses, no UI pairing dance needed);
+// the fiscal chip shares the identical `.nav-toggle` box model (same
+// min-height, same icon/badge structure) but needs a live TSE-provisioning
+// flow to trigger for real, which is heavier tooling this pass didn't add
+// — tracked as a known gap, not silently assumed safe.
+test.describe('nav rail Lock button stays reachable with an enrolled-till sync chip present (ut-docs#1539)', () => {
+  test('sync chip renders as a nav-toggle and Lock is still a real hit-test target at 1024x600', async ({
+    page,
+  }) => {
+    const assertClean = watchConsole(page);
+    await ensureOperator(page);
+
+    // page.request, NOT the top-level `request` fixture: the latter is its
+    // own APIRequestContext with no cookies at all, so the manager-gated
+    // enroll-token call below would 401 regardless of ensureOperator above
+    // (confirmed — that was this test's first failure while drafting it).
+    // page.request shares the browser context's cookies, i.e. the real
+    // session ensureOperator just established.
+    const api = page.request;
+
+    // Mint a real enrolment code the way the Tills page's own QR flow does
+    // (POST /api/sync/enroll-token, manager-gated), then complete the
+    // enrolment the way a real satellite till would (POST /api/sync/enroll
+    // — token-authenticated, no session needed) — no UI pairing dance,
+    // but the same two real server calls, not a DB-level shortcut.
+    const tokenResp = await api.post('/api/sync/enroll-token');
+    expect(tokenResp.ok(), `enroll-token: ${tokenResp.status()} ${await tokenResp.text()}`).toBe(true);
+    const tokenHtml = await tokenResp.text();
+    const codeMatch = tokenHtml.match(/<code[^>]*>([^<]+)<\/code>/);
+    expect(codeMatch, `expected a <code> enrolment string in: ${tokenHtml}`).not.toBeNull();
+    const code = codeMatch![1].trim();
+    // encodeEnrollCode (sync_api.go) is base64url(JSON({url, token})).
+    const decoded = JSON.parse(Buffer.from(code, 'base64url').toString('utf8')) as { token: string };
+
+    const enrollResp = await api.post('/api/sync/enroll', {
+      data: { token: decoded.token, name: 'E2E Rail Headroom Till' },
+    });
+    expect(enrollResp.ok(), `enroll: ${enrollResp.status()} ${await enrollResp.text()}`).toBe(true);
+    const enrolled = (await enrollResp.json()).data as { till_id: string };
+
+    await page.setViewportSize({ width: 1024, height: 600 });
+    // A fresh navigation, not a soft reload of a page loaded before
+    // enrolment — `#sync-chip` only fetches on `hx-trigger="load, ..."`
+    // (nav.html), so the chip needs a fresh page load to pick up the newly
+    // enrolled till at all.
+    await page.goto('/settings');
+
+    // The just-enrolled till has never authenticated (`last_seen_at` is
+    // NULL) -> stale -> class=warn -> the badge-carrying, WORST-case box
+    // for this measurement, not the quiet ok state.
+    const syncLink = page.locator('.sync-chip.warn a.nav-toggle');
+    await expect(syncLink).toBeVisible();
+    await expect(syncLink.locator('svg[data-icon="sync"]')).toBeVisible();
+    await expect(syncLink.locator('.nav-badge')).toBeVisible();
+
+    // Same crowded-rail sanity check as the test above, now WITH the sync
+    // chip also present.
+    await expect(page.locator('.session-admin-link')).toHaveCount(3);
+
+    const lockBtn = page.locator('.session-lock button.btn-lock');
+    await lockBtn.scrollIntoViewIfNeeded();
+    const hit = await lockBtn.evaluate((el) => {
+      const r = el.getBoundingClientRect();
+      const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+      return !!at && (at === el || el.contains(at));
+    });
+
+    // The `auth` project reuses ONE server across every spec FILE in this
+    // run, same as the `default` project (playwright.config.ts) — an
+    // enrolled till left behind here is real, persistent server state that
+    // leaks into whatever spec runs next (confirmed while drafting this:
+    // it pushed nav-rail-svg-icons-lock-1423.spec.ts's icon count from 11
+    // to 12). Revoke it NOW, still authenticated (revoke is manager-gated,
+    // and the Lock click right below ends this session) and BEFORE the hit
+    // assertion below, so a failed assertion still leaves the server clean
+    // for whatever spec runs next — this test's own job is measuring the
+    // rail with the chip PRESENT, not leaving it enrolled afterward.
+    const revokeResp = await api.post(`/api/sync/tills/${enrolled.till_id}/revoke`);
+    expect(revokeResp.ok(), `revoke: ${revokeResp.status()} ${await revokeResp.text()}`).toBe(true);
+
+    expect(
+      hit,
+      'Lock must stay a real hit-test target with the migrated sync chip also occupying .nav-right',
+    ).toBe(true);
+
+    await Promise.all([
+      page.waitForURL((u) => u.pathname === '/login'),
+      lockBtn.click(), // no force: must be a genuinely landable click
+    ]);
+    assertClean();
+  });
+});

@@ -142,8 +142,8 @@ body.tracking-screen { -webkit-user-select: text; user-select: text; }
   color: var(--muted); border: 1px solid var(--border);
 }
 /* A tag flagging something that needs attention (e.g. a failing bug-report
-   upload, ut-docs#637) — same warn tint .sync-chip.warn already uses below,
-   reused here rather than inventing a second warning color. */
+   upload, ut-docs#637) — same warn tint .sync-banner below uses, reused
+   here rather than inventing a second warning color. */
 .tag.warn { background: rgba(217, 119, 6, .12); color: var(--warning); border-color: var(--warning); }
 
 /* ---------- Navigation: left icon rail (>480px), top bar (<=480px) ----------
@@ -253,6 +253,10 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
   display: inline-flex; align-items: center; justify-content: center;
   inline-size: 1.6rem; block-size: 1.6rem;
   font-size: 1.25rem; line-height: 1;
+  /* ut-docs#1539: anchors .nav-badge below (an alert dot for offline/
+     quarantined/degraded states). No other .nav-toggle-ico has a
+     positioned descendant, so this costs them nothing. */
+  position: relative;
 }
 .nav-toggle-ico svg { inline-size: 1.5rem; block-size: 1.5rem; display: block; }
 /* 2026-08-30 (product owner, live on the tablet): icon-only in the rail,
@@ -269,12 +273,20 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
   position: absolute; width: 1px; height: 1px; margin: -1px;
   padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
-/* .sync-chip/.fiscal-chip carry real variable-length status text (till
-   name, queue/roster counts) — not a fixed icon+label pair, so they keep
-   their own pill markup rather than adopting .nav-toggle, just restyled to
-   wrap within the rail's column instead of sitting inline in a row. */
-.sync-chip, .fiscal-chip { margin-inline-start: 0; white-space: normal;
-  text-align: center; align-self: center; }
+/* ut-docs#1539: a small alert indicator on a rail icon (offline/queued
+   replica, quarantined sync entries, a stale roster, a degraded fiscal
+   signer) — replaces the old .sync-chip.warn/.fiscal-chip.warn
+   whole-button recolouring the product owner explicitly rejected ("if it
+   is a menu button it should be correct"). The 1px border is --brand (the
+   rail's true background, ut-docs#298) — one layer further out than the
+   .nav-toggle it actually sits against (a translucent
+   rgba(255,255,255,.12) tint over --brand), so the ring reads slightly
+   darker than its immediate surround rather than an exact match; still
+   enough separation to read as sitting ON the icon rather than merging
+   into it, without adding a second custom color for a 1px ring alone. */
+.nav-badge { position: absolute; inset-block-start: -.1rem; inset-inline-end: -.1rem;
+  inline-size: .55rem; block-size: .55rem; border-radius: 50%;
+  background: var(--warning); border: 1px solid var(--brand); }
 
 @media (max-width: 480px) {
   /* Reverts the rail back to the previous horizontal top bar wholesale —
@@ -318,8 +330,6 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
     padding: 0; overflow: visible; clip-path: none; white-space: nowrap;
     font-size: 1rem;
   }
-  .sync-chip, .fiscal-chip { margin-inline-start: .6rem; white-space: nowrap;
-    text-align: start; }
 }
 
 /* Menu page: the tiles ARE the navigation — drop the redundant admin link
@@ -1587,8 +1597,8 @@ a.btn, a.btn:hover { text-decoration: none; }
 .journal-till-status { margin-block-end: .5rem; font-size: .8rem; }
 .journal-truncated-notice { margin-block-end: .5rem; font-size: .8rem; }
 /* B2 (ut-docs#550 review): an honest "can't show that here" notice for an
-   explicit cross-till ask on a replica -- same warn tint .sync-chip.warn /
-   .tag.warn already use, so it reads as a real notice, not muted status text. */
+   explicit cross-till ask on a replica -- same warn tint .tag.warn /
+   .sync-banner already use, so it reads as a real notice, not muted status text. */
 .journal-replica-notice { margin-block-end: .75rem; padding: .5rem .75rem;
                            border-radius: var(--radius); font-size: .85rem;
                            background: rgba(217, 119, 6, .12); color: var(--warning); }
@@ -2033,42 +2043,29 @@ body.login-screen {
 .login-setup { display: flex; flex-direction: column; gap: .8rem; text-align: start; }
 .login-setup input { width: 100%; }
 
-/* Multi-till sync chip in the nav (ADR-0011 D4). ut-docs#405: .ok/.warn
-   used to hardcode literal hex pairs instead of the --success/--warning
-   tokens :root already defines, AND the opaque background clashed with
-   whatever a shipped theme (e.g. "monarch") painted underneath — both
-   contributed to the reported "text and background are some colours I
-   cannot see the till name" bug. `.sync-chip` is a link, unlike a plain
-   status-text element, so it hits a problem that class of element never
-   would (see below).
-   Every shipped theme (web/public/themes/*.css) sets its own `.nav a {
-   color: … }`, loaded in base.html AFTER this file — at equal specificity
-   to a bare `.sync-chip a`, the theme's rule would win and silently
-   override `color: inherit` back to the theme's plain nav-link color,
-   making --success/--warning never actually reach the chip's text despite
-   being set on the parent. `.nav .sync-chip a` outranks `.nav a` on
-   specificity alone (independent of load order), so `inherit` — and
-   therefore the ok/warn color — actually wins here. */
-/* margin-inline-start is set back to .6rem only in the <=480px top-bar
-   media query above -- in the default rail layout, spacing between chips
-   comes from .nav-right's own `gap` (column flex) instead. */
-.sync-chip { display: inline-flex; align-items: center;
-  padding: .15rem .55rem; border-radius: 999px; font-size: .8rem; font-weight: 600; }
-.sync-chip.ok { background: rgba(22, 163, 74, .12); color: var(--success); }
-.sync-chip.warn { background: rgba(217, 119, 6, .12); color: var(--warning); }
-.nav .sync-chip a { color: inherit; }
+/* Multi-till sync chip in the nav (ADR-0011 D4) and the fiscalisation
+   status chip (ut-docs#685). ut-docs#1539: both used to be their own
+   tinted pill (.ok green / .warn amber background+text, hardcoded here)
+   — the ONE/TWO rail items ut-docs#1423 missed migrating to a plain
+   .nav-toggle. That pill design is what #405 had to work around (a
+   `.sync-chip a { color: inherit }` specificity fight against every
+   shipped theme's own `.nav a { color: … }` — see the git history on this
+   comment if that workaround is ever needed again for a similar case).
+   Migrating to .nav-toggle removes the whole problem at the root: every
+   rail item, chips included, now shares one plain white color with no
+   per-state override, so there is nothing left for a theme's `.nav a`
+   rule to fight over. State now shows as a small .nav-badge dot (above)
+   on the icon instead of recolouring the button — per the product owner's
+   own rule ("if it is a menu button it should be correct"), a permanent
+   navigation control shouldn't change color depending on transient state.
+   `.sync-chip`/`.fiscal-chip` themselves are now bare wrappers (htmx
+   swap target + the state-class hook sync_admin_test.go's/
+   fiscal_chip_test.go's TestSyncChip_*/TestFiscalChip_* assert on,
+   "sync-chip ok"/"sync-chip warn"/"fiscal-chip ok"/"fiscal-chip warn") —
+   no box styling of their own, nothing to define here. */
 .sync-banner { background: rgba(217, 119, 6, .12); color: var(--warning); border-radius: .5rem;
   padding: .6rem .9rem; margin-block-end: .8rem; }
 .sync-banner a { color: inherit; font-weight: 700; text-decoration: underline; }
-
-/* Fiscalisation status chip (ut-docs#685) — same pill shape/tint as
-   .sync-chip above; empty (no TSE configured) renders nothing, so there is
-   no zero-state style to define. No link inside, so none of .sync-chip's
-   `a`-specificity workaround is needed here. */
-.fiscal-chip { display: inline-flex; align-items: center;
-  padding: .15rem .55rem; border-radius: 999px; font-size: .8rem; font-weight: 600; }
-.fiscal-chip.ok { background: rgba(22, 163, 74, .12); color: var(--success); }
-.fiscal-chip.warn { background: rgba(217, 119, 6, .12); color: var(--warning); }
 
 /* Operator chip + lock button in the nav. Column by default (the rail);
    the <=480px block right below restores the previous horizontal row for

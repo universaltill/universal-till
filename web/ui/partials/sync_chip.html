@@ -1,23 +1,59 @@
+{{/* ut-docs#1539: was a bare (unclickable-looking, but see ut-docs#405) span
+     with a "⇅" emoji and its own tinted pill background — the ONE rail item
+     ut-docs#1423 missed when every other rail control moved to .nav-toggle +
+     an inline SVG (internal/httpx/icons.go — an emoji sizes differently per
+     device font, the reason #1423 exists at all). Now a real .nav-toggle,
+     the same weight as its bug-report/session neighbours. The outer
+     <span class="sync-chip {{.class}}"> stays only as a state marker (CSS
+     hook + what sync_admin_test.go's TestSyncChip_* assert on, "sync-chip
+     ok"/"sync-chip warn") — no longer painted as its own pill.
+     Per the product owner's own rule ("if it is a menu button it should be
+     correct"): this is a permanent navigation control once a shop has
+     satellites, so status stops recolouring the whole button. Offline /
+     queued / quarantined / a stale roster now show as a small dot badge on
+     the icon instead (title carries the detail text) — "at most a badge",
+     per the card. A full notification-tray surface for these transient
+     states is a separate, larger UI concept this codebase doesn't have yet
+     anywhere — tracked as a follow-up (ut-docs#1546) rather than invented
+     unreviewed here.
+     Independent review (2026-09-04): the badge is aria-hidden (decorative,
+     same as every other .nav-toggle-ico glyph) and .nav-toggle-label is
+     visually-hidden in the rail — between them, the alert state used to be
+     conveyed by colour ALONE for anyone not reading the title tooltip
+     (WCAG 1.4.1; the old markup had a real " ⚠" TEXT node in the label,
+     which this migration silently dropped). Fixed by giving the anchor an
+     explicit aria-label that restates the same state text already used
+     for `title` plus the full label content — takes over as the element's
+     whole accessible name, so .nav-toggle-label's own text is marked
+     aria-hidden right alongside it to avoid double-announcing the same
+     content in browse-mode screen readers. */}}
 <span class="sync-chip {{ .class }}">
   {{ if .isReplica -}}
-  {{/* ut-docs#405: was a plain (unclickable) <span> — /tills is a LOCAL
-       route (relative href, this till's own server), never the primary's
-       origin, so this can't strand an operator the way linking straight to
-       primaryURL would (ut-docs#390). */}}
-  <a href="/tills" title="{{ if .offline }}{{ T "sync.chip_offline" }}{{ else }}{{ T "sync.chip_following" }}{{ end }}">⇅ {{ .label }}{{ if .offline }} ⚠{{ end }}{{ if .queued }} · {{ .queued }} {{ T "sync.chip_queued" }}{{ end }}</a>
+  {{/* ut-docs#405: /tills is a LOCAL route (relative href, this till's own
+       server), never the primary's origin — can't strand an operator the
+       way linking straight to primaryURL would (ut-docs#390). */}}
+  <a href="/tills" class="nav-toggle"
+     title="{{ if .offline }}{{ T "sync.chip_offline" }}{{ else }}{{ T "sync.chip_following" }}{{ end }}"
+     aria-label="{{ if .offline }}{{ T "sync.chip_offline" }}{{ else }}{{ T "sync.chip_following" }}{{ end }} — {{ .label }}{{ if .queued }} · {{ .queued }} {{ if eq .queued 1 }}{{ T "sync.chip_queued_one" }}{{ else }}{{ T "sync.chip_queued_other" }}{{ end }}{{ end }}">
+    {{/* Queued sales while still "online" is real backlog worth flagging —
+         not just the offline case (independent review: queued previously
+         surfaced as neither a badge nor visible text at rail width). */}}
+    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "sync" }}{{ if or .offline .queued }}<span class="nav-badge" aria-hidden="true"></span>{{ end }}</span>
+    <span class="nav-toggle-label" aria-hidden="true">{{ .label }}{{ if .queued }} · {{ .queued }} {{ if eq .queued 1 }}{{ T "sync.chip_queued_one" }}{{ else }}{{ T "sync.chip_queued_other" }}{{ end }}{{ end }}</span>
+  </a>
   {{- else -}}
-  {{/* ut-docs#405: was a bare replica count with no name at all — this
-       till's own name (tillNameOrDefault, same source Settings/​/tills
-       already use) now leads, the count stays as a secondary detail. */}}
-  {{/* ut-docs#1133: a quarantined entry is the one primary-side warn
-       condition worth its own link target -- send the operator straight to
-       the list that explains it rather than the tills roster, which has
+  {{/* ut-docs#1133 (ADR-0065 follow-up): a quarantined entry outlives the
+       till that caused it, so it gets its own link target straight to the
+       list that explains it rather than the tills roster, which has
        nothing to say about it. The title must follow the same branch as
-       the href (independent review, 2026-08-26 caught these drifting: the
-       tooltip kept saying "open the Tills page" while the link pointed at
-       /sync-quarantine). .count can be 0 here (every till that ever pushed
-       a quarantined entry may since have been revoked) -- the "· N tills"
-       segment only renders when there's a roster to report. */}}
-  <a href="{{ if .quarantined }}/sync-quarantine{{ else }}/tills{{ end }}" title="{{ if .quarantined }}{{ T "sync.chip_quarantine_title" }}{{ else }}{{ T "sync.chip_tills_title" }}{{ end }}">⇅ {{ .label }}{{ if .count }} · {{ .count }} {{ T "sync.chip_tills" }}{{ end }}{{ if .quarantined }} · {{ .quarantined }} {{ T "sync.chip_quarantined" }}{{ end }}{{ if eq .class "warn" }} ⚠{{ end }}</a>
+       the href (independent review, 2026-08-26 caught these drifting). */}}
+  <a href="{{ if .quarantined }}/sync-quarantine{{ else }}/tills{{ end }}" class="nav-toggle"
+     title="{{ if .quarantined }}{{ T "sync.chip_quarantine_title" }}{{ else }}{{ T "sync.chip_tills_title" }}{{ end }}"
+     aria-label="{{ if .quarantined }}{{ T "sync.chip_quarantine_title" }}{{ else }}{{ T "sync.chip_tills_title" }}{{ end }} — {{ .label }}{{ if .count }} · {{ .count }} {{ if eq .count 1 }}{{ T "sync.chip_till_one" }}{{ else }}{{ T "sync.chip_till_other" }}{{ end }}{{ end }}{{ if .quarantined }} · {{ .quarantined }} {{ if eq .quarantined 1 }}{{ T "sync.chip_quarantined_one" }}{{ else }}{{ T "sync.chip_quarantined_other" }}{{ end }}{{ end }}">
+    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "sync" }}{{ if or .quarantined (eq .class "warn") }}<span class="nav-badge" aria-hidden="true"></span>{{ end }}</span>
+    {{/* ut-docs#405: this till's own name leads, same source (tillNameOrDefault)
+         Settings/​/tills already use; the count stays a secondary detail. */}}
+    <span class="nav-toggle-label" aria-hidden="true">{{ .label }}{{ if .count }} · {{ .count }} {{ if eq .count 1 }}{{ T "sync.chip_till_one" }}{{ else }}{{ T "sync.chip_till_other" }}{{ end }}{{ end }}{{ if .quarantined }} · {{ .quarantined }} {{ if eq .quarantined 1 }}{{ T "sync.chip_quarantined_one" }}{{ else }}{{ T "sync.chip_quarantined_other" }}{{ end }}{{ end }}</span>
+  </a>
   {{- end }}
 </span>
