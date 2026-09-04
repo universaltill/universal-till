@@ -80,7 +80,13 @@
         <label>{{ T "inventory.quantity" }} <input type="text" inputmode="decimal" name="quantity" pattern="-?[0-9]+(\.[0-9]{1,2})?" required placeholder="{{ T "inventory.qty_placeholder" }}"></label>
       </div>
       <div class="field-pair">
-        <label>{{ T "inventory.cost_optional" }} <input type="text" inputmode="decimal" id="stock-cost" pattern="{{ if eq currency.Decimals 0 }}[0-9]+{{ else }}[0-9]+(\.[0-9]{1,2})?{{ end }}"></label>
+        <!-- ut-docs#1282 review nit: hand-rolled decimals ternary replaced
+             with the shared moneypattern helper (ut-docs#1274,
+             internal/httpx/currency.go) -- same convention as
+             shifts.html/menu.html/catalog_variants.html's money fields, so
+             a future 3-decimal currency (KWD/BHD/OMR) doesn't need this
+             call site updated in lockstep with the others. -->
+        <label>{{ T "inventory.cost_optional" }} <input type="text" inputmode="decimal" id="stock-cost" {{ moneypattern currency.Decimals false }}></label>
         <input type="hidden" name="cost_price" id="stock-cost-minor">
       </div>
       <label>{{ T "inventory.reason" }} <input type="text" name="reason" placeholder="{{ T "inventory.reason_placeholder" }}"></label>
@@ -169,10 +175,25 @@
     if (row.dataset.location) loc.value = row.dataset.location;
   });
 
-  // Cost in pounds → minor units.
+  // Cost, major units → minor units (ut-docs#1282: was a hardcoded * 100,
+  // wrong by 100x on a 0-decimal currency like IRR/JPY -- window.utCurrency
+  // delegates to the shop's real configured decimals, same pattern already
+  // used for shifts.html/menu.html/catalog.html's money fields). cost_price
+  // is optional server-side (inventory_api.go keys on cpStr != "") -- a
+  // blank input must round-trip to an empty posted value, NOT "0", so the
+  // blank check happens on the raw text before calling toMinor() (which
+  // itself treats "" as the numeric value 0, not "leave this blank"). The
+  // isNaN check is a belt-and-braces hardening (review nit): the field's
+  // own pattern= already blocks a real user-driven submit from reaching
+  // here with anything non-numeric, but toMinor() itself never returns
+  // NaN (isNaN(num) ? 0 : ...), so a non-numeric value reaching this via a
+  // non-native path (e.g. a programmatic dispatch that bypasses
+  // constraint validation) would otherwise silently post "0" instead of
+  // staying blank.
   document.getElementById('stock-form').addEventListener('submit', function () {
-    var pounds = parseFloat(document.getElementById('stock-cost').value || '');
-    document.getElementById('stock-cost-minor').value = isNaN(pounds) ? '' : Math.round(pounds * 100);
+    var raw = (document.getElementById('stock-cost').value || '').trim();
+    document.getElementById('stock-cost-minor').value =
+      raw === '' || isNaN(Number(raw)) ? '' : window.utCurrency.toMinor(raw);
   });
 
   // Search filter over stock rows. The table is re-rendered from the server
