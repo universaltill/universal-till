@@ -124,8 +124,15 @@ func TestSetupPairStartFirstBootGate(t *testing.T) {
 		t.Fatalf("during first boot: expected 200 (error state in the body), got %d: %s",
 			rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "required") {
-		t.Fatalf("expected the missing-fields error state, got: %s", rec.Body.String())
+	// ut-docs#1540: the message now names the field as the SCREEN labels it,
+	// instead of the server-side "base_url, till_id and name are all
+	// required" — three JSON keys the operator cannot see, and the literal
+	// text behind every "pairing failed" report from the pilot hardware.
+	if !strings.Contains(rec.Body.String(), "Give this till a name first") {
+		t.Fatalf("expected the missing-name error naming the visible field, got: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "base_url") {
+		t.Fatalf("the operator must never be shown server-side field names, got: %s", rec.Body.String())
 	}
 
 	seedOperatorWithPIN(t, svc)

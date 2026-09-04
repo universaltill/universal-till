@@ -431,6 +431,24 @@ func translator() *config.I18n {
 
 // T translates a key for a locale outside templates (handlers building toasts
 // or fragments). Falls back to the key itself, mirroring the template func.
+// TCount renders a count with its noun in the right grammatical number:
+// keyBase+"_one" for exactly 1, keyBase+"_other" otherwise, with n
+// substituted for the key's %d.
+//
+// This is a TWO-FORM selector, which is correct for en/de/tr/fa. Arabic has
+// six CLDR categories (zero/one/two/few/many/other) and gets only the one/other
+// split here — still a real improvement on what it replaces, which was a bare
+// plural noun concatenated after any number and therefore said "1 Kassen" and
+// "1 tills" (ut-docs#1539). A full CLDR plural implementation is a separate,
+// larger piece of work; do not mistake this for one.
+func TCount(locale, keyBase string, n int) string {
+	suffix := "_other"
+	if n == 1 {
+		suffix = "_one"
+	}
+	return fmt.Sprintf(T(locale, keyBase+suffix), n)
+}
+
 func T(locale, key string) string {
 	if t := translator(); t != nil {
 		return t.T(locale, key)

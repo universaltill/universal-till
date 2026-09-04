@@ -92,7 +92,20 @@ func pairWaitView(w http.ResponseWriter, r *http.Request, statusURL, status, cod
 		"code":      code,
 		"shopName":  shopName,
 		"errMsg":    errMsg,
-		"polling":   status == "waiting",
+		// ut-docs#1540: "error" polls too, not just "waiting". An error that
+		// stops polling is an error the operator can never see clear — on real
+		// hardware it survived a successful pair AND its approval, so the Pi's
+		// screen still read "pairing failed" while it was already joined. One
+		// more poll resolves it: either an attempt is genuinely in flight (the
+		// waiting view swaps in) or there is none (the neutral "no attempt in
+		// progress" view does), and both are true statements where the frozen
+		// error was a false one.
+		//
+		// "joined" and "expired" stay terminal — both need a human action next
+		// (restart, retry) and nothing a poll could discover changes that —
+		// and the neutral idle state does not poll either, so an untouched
+		// wizard page makes no background requests.
+		"polling": status == "waiting" || status == "error",
 	})(w, r)
 }
 
@@ -152,8 +165,18 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 		baseURL := strings.TrimSuffix(strings.TrimSpace(r.Form.Get("base_url")), "/")
 		primaryTillID := strings.TrimSpace(r.Form.Get("till_id"))
 		name := strings.TrimSpace(r.Form.Get("name"))
-		if baseURL == "" || primaryTillID == "" || name == "" {
-			pairWaitView(w, r, statusURL, "error", "", "", "base_url, till_id and name are all required")
+		if name == "" {
+			// ut-docs#1540: the operator sees ONE field here, labelled "This
+			// till's name", and leaving it blank was the actual cause of every
+			// "pairing failed" reported from the pilot hardware — the input
+			// carries a placeholder that reads as a filled value. Name it the
+			// way the screen names it; "base_url, till_id and name are all
+			// required" told them nothing they could act on.
+			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(httpx.ResolveLocale(w, r), "tills.pairing.name_required"))
+			return
+		}
+		if baseURL == "" || primaryTillID == "" {
+			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(httpx.ResolveLocale(w, r), "tills.discovery.error"))
 			return
 		}
 		if !validPrimaryBaseURL(baseURL) {

@@ -164,5 +164,28 @@
       });
   });
 })();
+
+// ut-docs#1540: one shared result handler for approve/deny. Lives on the PAGE,
+// not in the partial — the partial is swapped every 30s, so a listener defined
+// inside it would be re-registered on every refresh.
+//
+// The point of it is the SUCCESS path. Approving used to render nothing at
+// all: the row just disappeared on the next poll, and the product owner, who
+// had approved correctly, reported "nothing happened". A privileged action
+// that succeeds silently is indistinguishable from one that failed.
+window.tillPairResult = function (event, id, kind) {
+  var host = document.getElementById('pending-pairings');
+  var err = document.getElementById('pin-error-' + id);
+  var msg = document.getElementById('pairing-action-msg');
+  var ok = event.detail && event.detail.successful;
+  if (err) { err.hidden = !!ok; }
+  if (!ok) { return; }
+  var pin = document.getElementById('pin-' + id);
+  if (pin) { pin.value = ''; }
+  if (msg && host) { msg.textContent = host.getAttribute('data-' + kind) || ''; }
+  // Refresh the roster now rather than leaving the approved row on screen for
+  // up to 30 more seconds looking un-actioned.
+  if (host && window.htmx) { window.htmx.trigger(host, 'pairing-changed'); }
+};
 </script>
 {{ end }}

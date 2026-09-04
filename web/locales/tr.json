@@ -1869,5 +1869,11 @@
   "recovery.taking_longer": "Hâlâ çalışıyor — bir veritabanı güncellemesinden sonra bu birkaç dakika sürebilir.",
   "error.page.title": "Bir şeyler ters gitti",
   "permissions.error.super_admin_required": "Süper yönetici gerekli",
-  "tables.error.load_failed": "Masalar yüklenemedi. Tekrar deneyin veya çalışmaya menüden devam edin."
+  "tables.error.load_failed": "Masalar yüklenemedi. Tekrar deneyin veya çalışmaya menüden devam edin.",
+  "tills.pairing.name_required": "Önce bu kasaya bir ad verin — ana kasa bunu kasa listesinde gösterir.",
+  "tills.pairing.approved": "Onaylandı — diğer kasa birkaç saniye içinde katılmayı tamamlayacak.",
+  "tills.pairing.denied": "Reddedildi — o kasanın katılmasına izin verilmedi.",
+  "sync.chip_tills_one": "%d kasa",
+  "sync.chip_tills_other": "%d kasa",
+  "sync.chip_label": "Kasalar"
 }

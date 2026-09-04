@@ -1869,5 +1869,11 @@
   "recovery.taking_longer": "Still working — this can take a few minutes after a database update.",
   "error.page.title": "Something went wrong",
   "permissions.error.super_admin_required": "Super admin required",
-  "tables.error.load_failed": "Couldn't load tables. Try again, or use the menu to keep working."
+  "tables.error.load_failed": "Couldn't load tables. Try again, or use the menu to keep working.",
+  "tills.pairing.name_required": "Give this till a name first — the primary shows it in its list of tills.",
+  "tills.pairing.approved": "Approved — the other till will finish joining within a few seconds.",
+  "tills.pairing.denied": "Denied — that till was not allowed to join.",
+  "sync.chip_tills_one": "%d till",
+  "sync.chip_tills_other": "%d tills",
+  "sync.chip_label": "Tills"
 }

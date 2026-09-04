@@ -1,23 +1,41 @@
-<div id="pending-pairings" hx-get="/ui/tills/pending-pairings" hx-trigger="every 30s" hx-target="this" hx-swap="outerHTML">
+<!-- ut-docs#1540. Two things the pilot hardware exposed on 2026-09-04:
+
+     1. Each row carried TWO manager-PIN inputs — one inside the approve form,
+        one inside the deny form, adjacent and unlabelled. The product owner
+        read that as a single form demanding two PINs. One input per row now,
+        shared by both actions via hx-include.
+     2. Approving said nothing. hx-swap="none" plus a success path that
+        rendered no feedback meant the row simply vanished on the next 30s
+        refresh — the owner approved successfully and reported "nothing
+        happened". Same htmx trap as ut-docs#1510/#1516: invisible is
+        indistinguishable from broken.
+
+     Strings ride on data-* attributes rather than being inlined in the JS
+     handlers — guard-i18n.sh forbids hardcoded inline-JS status text, and a
+     German till must not flash English at the manager. -->
+<div id="pending-pairings" hx-get="/ui/tills/pending-pairings" hx-trigger="every 30s, pairing-changed" hx-target="this" hx-swap="outerHTML"
+     data-approved="{{ T "tills.pairing.approved" }}" data-denied="{{ T "tills.pairing.denied" }}">
 {{ if .Pending }}
+<p id="pairing-action-msg" class="muted" role="status" aria-live="polite" style="min-height:1.2rem"></p>
 <table class="table">
-  <thead><tr><th>{{ T "tills.pairing.device_label" }}</th><th>{{ T "tills.pairing.code_label" }}</th><th></th></tr></thead>
+  <thead><tr><th>{{ T "tills.pairing.device_label" }}</th><th>{{ T "tills.pairing.code_label" }}</th><th>{{ T "tills.pairing.manager_pin" }}</th><th></th></tr></thead>
   <tbody>
     {{ range .Pending }}
     <tr>
       <td>{{ .DeviceName }}</td>
       <td style="font-weight:bold; letter-spacing:.15em">{{ .VerificationCode }}</td>
       <td>
-        <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-swap="none"
-              hx-on::after-request="if(!event.detail.successful){document.getElementById('pin-error-{{ .ID }}').hidden=false}">
-          <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off" placeholder="{{ T "tills.pairing.manager_pin" }}">
-          <button class="btn primary" type="submit">{{ T "tills.pairing.approve_btn" }}</button>
-        </form>
-        <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/deny" hx-swap="none"
-              hx-on::after-request="if(!event.detail.successful){document.getElementById('pin-error-{{ .ID }}').hidden=false}">
-          <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off" placeholder="{{ T "tills.pairing.manager_pin" }}">
-          <button class="btn secondary" type="submit">{{ T "tills.pairing.deny_btn" }}</button>
-        </form>
+        <label class="visually-hidden" for="pin-{{ .ID }}">{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}</label>
+        <input type="password" id="pin-{{ .ID }}" name="manager_pin" inputmode="numeric" autocomplete="off"
+               placeholder="{{ T "tills.pairing.manager_pin" }}">
+      </td>
+      <td>
+        <button class="btn primary" type="button"
+                hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-include="#pin-{{ .ID }}" hx-swap="none"
+                hx-on::after-request="window.tillPairResult(event, '{{ .ID }}', 'approved')">{{ T "tills.pairing.approve_btn" }}</button>
+        <button class="btn secondary" type="button"
+                hx-post="/api/sync/pair-requests/{{ .ID }}/deny" hx-include="#pin-{{ .ID }}" hx-swap="none"
+                hx-on::after-request="window.tillPairResult(event, '{{ .ID }}', 'denied')">{{ T "tills.pairing.deny_btn" }}</button>
         <p id="pin-error-{{ .ID }}" class="muted" role="alert" hidden>{{ T "tills.pairing.pin_error" }}</p>
       </td>
     </tr>

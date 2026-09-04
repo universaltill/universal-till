@@ -2046,7 +2046,21 @@ body.login-screen {
    comes from .nav-right's own `gap` (column flex) instead. */
 .sync-chip { display: inline-flex; align-items: center;
   padding: .15rem .55rem; border-radius: 999px; font-size: .8rem; font-weight: 600; }
-.sync-chip.ok { background: rgba(22, 163, 74, .12); color: var(--success); }
+/* ut-docs#1539: the sync chip is a rail MENU BUTTON now (nav-toggle + inline
+   SVG), so it must not carry a pill background of its own — the wrapper is
+   just a positioning context for the status dot. The old .ok/.warn tints
+   recoloured the whole navigation control to signal an alert, which is what
+   made it read as "out of design" next to the bug-report and session buttons.
+   Status is a dot on the button instead. */
+.sync-chip { position: relative; background: none; padding: 0; }
+.sync-chip .sync-toggle { position: relative; }
+.sync-chip.warn .sync-toggle::after,
+.sync-chip.offline .sync-toggle::after {
+  content: ""; position: absolute; inset-block-start: .25rem; inset-inline-end: .25rem;
+  inline-size: .5rem; block-size: .5rem; border-radius: 50%;
+  background: var(--warn, #d97706); box-shadow: 0 0 0 2px var(--nav-bg, #1e293b);
+}
+.sync-chip.ok { background: none; }
 .sync-chip.warn { background: rgba(217, 119, 6, .12); color: var(--warning); }
 .nav .sync-chip a { color: inherit; }
 .sync-banner { background: rgba(217, 119, 6, .12); color: var(--warning); border-radius: .5rem;

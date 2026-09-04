@@ -188,13 +188,28 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 		// every other identity surface (Settings, /tills) already shows.
 		label := tillNameOrDefault(r.Context(), d, httpx.ResolveLocale(w, r))
 		httpx.RenderPartial("ui/partials/sync_chip.html", map[string]any{
-			"isReplica":   false,
-			"class":       class,
-			"label":       label,
-			"count":       len(list),
+			"isReplica": false,
+			"class":     class,
+			"label":     label,
+			"count":     len(list),
+			// ut-docs#1539: pre-rendered here rather than "{{ .count }} {{ T
+			// "sync.chip_tills" }}" in the template — that concatenation of a
+			// number and a bare plural noun is exactly what produced "1
+			// Kassen" (and "1 tills") on the pilot tablet.
+			"countLabel":  countLabelOrEmpty(httpx.ResolveLocale(w, r), len(list)),
 			"quarantined": quarantined,
 		})(w, r)
 	})
+}
+
+// countLabelOrEmpty is the chip's "· N tills" segment, correctly pluralised,
+// or "" when there is no roster to report (the template's own {{ if }} then
+// drops the separator too).
+func countLabelOrEmpty(locale string, n int) string {
+	if n == 0 {
+		return ""
+	}
+	return httpx.TCount(locale, "sync.chip_tills", n)
 }
 
 // withinLast reports whether an RFC3339 timestamp is fresher than d.

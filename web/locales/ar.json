@@ -1869,5 +1869,11 @@
   "recovery.taking_longer": "لا يزال قيد العمل — قد يستغرق هذا بضع دقائق بعد تحديث قاعدة البيانات.",
   "error.page.title": "حدث خطأ ما",
   "permissions.error.super_admin_required": "مطلوب صلاحية مدير النظام",
-  "tables.error.load_failed": "تعذّر تحميل الطاولات. حاول مجددًا، أو استخدم القائمة لمواصلة العمل."
+  "tables.error.load_failed": "تعذّر تحميل الطاولات. حاول مجددًا، أو استخدم القائمة لمواصلة العمل.",
+  "tills.pairing.name_required": "امنح هذا الجهاز اسمًا أولًا — يعرضه الجهاز الرئيسي في قائمة أجهزته.",
+  "tills.pairing.approved": "تمت الموافقة — سيكمل الجهاز الآخر الانضمام خلال ثوانٍ.",
+  "tills.pairing.denied": "تم الرفض — لم يُسمح لذلك الجهاز بالانضمام.",
+  "sync.chip_tills_one": "%d جهاز",
+  "sync.chip_tills_other": "%d أجهزة",
+  "sync.chip_label": "الأجهزة"
 }

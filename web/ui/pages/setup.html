@@ -648,8 +648,15 @@
              leaning on the <hr> alone. -->
         <h3>{{ T "tills.discovery.title" }}</h3>
         <p class="muted">{{ T "setup.join.discover_help" }}</p>
+        <!-- ut-docs#1540: `required` is not decoration here. This field is
+             mandatory server-side, and leaving it blank was the sole cause of
+             every "pairing failed" reported from the pilot hardware — the
+             placeholder reads as a filled value, so an operator has no reason
+             to think anything is missing. The discover button below also
+             refuses to search until it has a name, so the failure is caught
+             before a request is ever sent. -->
         <label>{{ T "tills.pairing.your_till_name" }}
-          <input type="text" id="setup-pairing-till-name" name="name" placeholder="Till 2">
+          <input type="text" id="setup-pairing-till-name" name="name" placeholder="Till 2" required>
         </label>
         <button id="setup-discover-btn" class="btn secondary" type="button">{{ T "tills.discovery.find_button" }}</button>
         <div id="setup-discover-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
@@ -726,12 +733,24 @@
           noneFound: "{{ T "tills.discovery.none_found" }}",
           resultName: "{{ T "tills.discovery.result_name" }}",
           error: "{{ T "tills.discovery.error" }}",
-          requestBtn: "{{ T "tills.pairing.request_btn" }}"
+          requestBtn: "{{ T "tills.pairing.request_btn" }}",
+          nameRequired: "{{ T "tills.pairing.name_required" }}"
         };
         function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
         function escAttr(s) { return esc(s).replace(/"/g, '&quot;'); }
         btn.addEventListener('click', function () {
           btn.disabled = true;
+          var nameEl = document.getElementById('setup-pairing-till-name');
+          if (nameEl && !nameEl.value.trim()) {
+            // Catch it here rather than letting the operator pick a primary,
+            // press "Request to pair" and get a failure whose cause is three
+            // steps behind them (ut-docs#1540).
+            msg.textContent = i18n.nameRequired;
+            out.innerHTML = '';
+            nameEl.focus();
+            btn.disabled = false;
+            return;
+          }
           msg.textContent = i18n.searching;
           out.innerHTML = '';
           fetch('/api/setup/discover-primaries')

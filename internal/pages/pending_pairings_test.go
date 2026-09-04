@@ -93,8 +93,15 @@ func TestPendingPairingsUI_EmptyStateWhenNonePending(t *testing.T) {
 	if strings.Contains(body, "<table") {
 		t.Fatalf("expected the empty-state branch (no table) when nothing is pending, got: %s", body)
 	}
-	if !strings.Contains(body, `hx-trigger="every 30s"`) {
+	// ut-docs#1540 added a `pairing-changed` trigger alongside the timer, so
+	// an approve refreshes the roster immediately instead of leaving the
+	// actioned row on screen for up to 30 more seconds. The timer itself must
+	// survive — that is what this assertion has always been about.
+	if !strings.Contains(body, "every 30s") {
 		t.Fatalf("expected the list to keep polling even when empty, got: %s", body)
+	}
+	if !strings.Contains(body, "pairing-changed") {
+		t.Fatalf("expected an event trigger so an approve can refresh the roster at once, got: %s", body)
 	}
 }
 

@@ -119,16 +119,23 @@ func TestPairStart_SurfacesUnreachablePrimary(t *testing.T) {
 	rec := postPairStart(t, rmux, "http://127.0.0.1:1", "some-till-id", "Bar Till")
 	// Always 200 — htmx (vendored 1.9.12 here) does not swap non-2xx
 	// responses by default, so a non-200 render would be invisible to the
-	// manager. The failure is encoded in the body as the "error" state
-	// instead (no self-polling hx-trigger, so it doesn't loop forever).
+	// manager. The failure is encoded in the body as the "error" state.
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 (error encoded in the body, not the status) when the primary is unreachable, got %d: %s", rec.Code, rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "cannot reach that primary") {
 		t.Fatalf("expected the rendered error state naming the failure, got: %s", rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), "hx-trigger") {
-		t.Fatal("error state must not keep polling")
+	// ut-docs#1540 REVERSES the original assertion here, deliberately. The
+	// error state MUST keep polling. Not polling made it terminal: on real
+	// hardware the panel showed "pairing failed" straight through a later
+	// successful pair and its approval on the primary, because it never asked
+	// again. The original worry — that it would "loop forever" — is answered
+	// by what the next poll returns: with no attempt in flight, pair-status
+	// renders the neutral idle state, which does NOT poll. So it self-clears
+	// after exactly one poll rather than lying indefinitely.
+	if !strings.Contains(rec.Body.String(), "hx-trigger") {
+		t.Fatal("error state must keep polling so the operator can see it clear (ut-docs#1540)")
 	}
 }
 

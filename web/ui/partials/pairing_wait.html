@@ -2,6 +2,14 @@
      /api/sync/pair-status, the first-boot wizard /api/setup/pair-status (the
      sync route is not middleware-exempt, so a first-boot till polling it
      would only ever see 401s). Set by pairWaitView (pairing_join.go). -->
+<!-- ut-docs#1540: this polls in EVERY state except "joined". It used to poll
+     only while waiting, which made an error terminal: the panel that showed
+     "Pairing failed" never asked again, so it kept saying that straight
+     through a later successful pair AND its approval on the primary. Confirmed
+     on real hardware 2026-09-04 — the Pi had genuinely joined while its own
+     screen still read "pairing failed". A status panel that cannot notice the
+     problem going away is worse than no panel. "joined" is the onely terminal
+     state: the till must restart to finish, so nothing after it can change. -->
 <div id="pairing-status"
      {{ if .polling }}hx-get="{{ .statusURL }}" hx-trigger="every 15s" hx-target="this" hx-swap="outerHTML"{{ end }}>
 {{ if eq .status "waiting" }}
