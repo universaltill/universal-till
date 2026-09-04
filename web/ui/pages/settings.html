@@ -62,14 +62,19 @@
        kiosk escape for any cashier.
 
        Rendered to EVERY role, not wrapped in the isManager gate the
-       check/schedule controls below it use — the PIN is the actual boundary
-       (POST /api/update/android-install verifies it server-side and never
-       consults the session role), and login.html renders the exit-to-os form
-       to anonymous visitors on exactly that reasoning. Hiding it from a
-       cashier hid nothing and cost something real: base.html shows the
-       "Update available — Download" chip to every role, so a cashier who
-       tapped it arrived at a page with no form, no anchor and no explanation
-       — the same dead end this card exists to fix (review finding 4).
+       check/schedule controls below it use. base.html shows the "Update
+       available" chip to every role, so hiding this form from a cashier
+       removed no capability and just recreated ut-docs#1534's own bug one
+       role down: tap the chip, land on a page with nothing on it.
+
+       As of ut-docs#1537 the endpoint authorises TWO ways, and this form
+       reflects that: a manager session alone on an ordinary till (the same
+       gate the desktop chip uses — nothing is pinned there, so there is no
+       kiosk lock to release), or a manager PIN. The PIN input below stays
+       hidden until the server actually asks for it, which it does for a
+       cashier and — always, whatever the session says — in self-order mode,
+       where the kiosk pin is real and the browser can still be holding a
+       live manager cookie (ut-docs#1253).
 
        It lives HERE, under the "Software update" heading, and not beside
        exit-to-os where it was first written. That placement was the whole of
@@ -80,8 +85,22 @@
        real tablet as "it just brings me to the software update section and
        does not install". The install path itself was fine; nobody could
        reach it. The PIN gate is unchanged by the move. -->
-  <form id="android-update-form" class="set-row">
-    <label id="android-update">{{ T "shifts.manager_pin" }}
+  <form id="android-update-form" class="set-row"
+        data-downloading="{{ T "settings.update.android.downloading" }}"
+        data-failed="{{ T "settings.update.android.failed" }}"
+        data-locked="{{ T "auth.error.locked" }}"
+        data-pinneeded="{{ T "settings.update.android.pin_needed" }}"
+        data-nobridge="{{ T "settings.update.android.no_bridge" }}"
+        data-wrongpin="{{ T "settings.display.exit_to_os_error" }}">
+    <span id="android-update"></span>
+    <!-- The PIN is hidden when the session alone will authorise (ut-docs#1537):
+         a manager on an ordinary till should not have to retype a PIN. It is
+         rendered VISIBLE up front whenever the server already knows it will
+         demand one — a cashier, or self-order mode — rather than making them
+         submit once, get a 403 and only then discover the field (review NIT).
+         The 403 branch still reveals it, for the case where the answer changes
+         between render and submit. -->
+    <label id="android-update-pin-label" {{ if not .androidUpdateSessionAuth }}{{ else }}hidden{{ end }}>{{ T "shifts.manager_pin" }}
       <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off">
     </label>
     <button class="btn secondary" type="submit" id="android-update-btn">⬆&nbsp;{{ T "settings.update.download" }}</button>
@@ -116,26 +135,51 @@
     }
     var msg = document.getElementById('android-update-msg');
     var btn = document.getElementById('android-update-btn');
+    var pinLabel = document.getElementById('android-update-pin-label');
+    var pinInput = form.querySelector('[name="manager_pin"]');
+    var T = function (k) { return form.getAttribute('data-' + k); };
+
+    // ut-docs#1537: every branch below says something. The old handler wrote a
+    // bare "✗" for a wrong PIN, a lockout and a dead network alike, and wrote
+    // NOTHING at all when the bridge was missing after the PIN had already
+    // been spent — success and silence looked identical, which is exactly what
+    // "I press download and nothing happens" felt like on the tablet.
     form.addEventListener('submit', function (ev) {
       ev.preventDefault();
-      var pin = form.querySelector('[name="manager_pin"]').value;
+      var pin = pinInput ? pinInput.value : '';
       btn.disabled = true;
-      msg.textContent = '';
+      msg.textContent = T('downloading');
       fetch('/api/update/android-install', {
         method: 'POST',
         headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ manager_pin: pin }).toString()
+        body: new URLSearchParams(pin ? { manager_pin: pin } : {}).toString()
       }).then(function (res) {
         btn.disabled = false;
-        form.querySelector('[name="manager_pin"]').value = '';
-        if (!res.ok) { msg.textContent = '✗'; return; }
+        if (pinInput) { pinInput.value = ''; }
+        if (res.status === 403) {
+          // Either this caller needs the PIN (cashier, or a self-order kiosk
+          // where the session is not trusted), or the PIN they gave was wrong.
+          var hadPin = !!pin;
+          if (pinLabel) { pinLabel.hidden = false; }
+          if (pinInput) { pinInput.focus(); }
+          msg.textContent = hadPin ? T('wrongpin') : T('pinneeded');
+          return;
+        }
+        if (res.status === 429) { msg.textContent = T('locked'); return; }
+        if (!res.ok) { msg.textContent = T('failed'); return; }
         // Authorised. The bridge takes no url — it resolves the release
         // APK itself — so nothing here chooses what gets installed.
         if (window.AndroidKiosk && window.AndroidKiosk.installUpdate) {
           window.AndroidKiosk.installUpdate();
-          msg.textContent = '✓';
+          // Left disabled and "downloading": ~140MB with no progress callback
+          // from the shell, so the honest state is in-progress until Android's
+          // own installer takes over the screen.
+          btn.disabled = true;
+          msg.textContent = T('downloading');
+          return;
         }
-      }).catch(function () { btn.disabled = false; msg.textContent = '✗'; });
+        msg.textContent = T('nobridge');
+      }).catch(function () { btn.disabled = false; msg.textContent = T('failed'); });
     });
   })();
   </script>

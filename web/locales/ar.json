@@ -1872,5 +1872,10 @@
   "recovery.taking_longer": "لا يزال قيد العمل — قد يستغرق هذا بضع دقائق بعد تحديث قاعدة البيانات.",
   "error.page.title": "حدث خطأ ما",
   "permissions.error.super_admin_required": "مطلوب صلاحية مدير النظام",
-  "tables.error.load_failed": "تعذّر تحميل الطاولات. حاول مجددًا، أو استخدم القائمة لمواصلة العمل."
+  "tables.error.load_failed": "تعذّر تحميل الطاولات. حاول مجددًا، أو استخدم القائمة لمواصلة العمل.",
+  "settings.update.android.confirm": "اضغط مرة أخرى للتثبيت",
+  "settings.update.android.downloading": "جارٍ التنزيل — سيطلب أندرويد تأكيدك عند الانتهاء",
+  "settings.update.android.failed": "تعذّر بدء التحديث — تحقّق من الاتصال وحاول مجددًا",
+  "settings.update.android.pin_needed": "أدخل رمز المدير لتثبيت هذا التحديث",
+  "settings.update.android.no_bridge": "لا يمكن تثبيت هذا التحديث إلا من تطبيق الجهاز نفسه"
 }

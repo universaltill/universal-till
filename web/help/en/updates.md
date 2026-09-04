@@ -21,9 +21,11 @@ The till checks for new versions and tells you when one is available; on most pl
 
 The Android app cannot replace itself the way the desktop versions do, so it hands the new version to Android's own installer instead. The steps are slightly different:
 
-1. Tap the update chip in the status bar, or open Settings → Software update. The heading line shows the version you are running and the version available.
-2. Enter the manager PIN and tap Download. The manager PIN is required because installing has to release the kiosk lock, which is the same thing Exit to OS guards.
-3. Android downloads the new app — around 140 MB, so give it a moment on a slow connection — and then shows its own "Do you want to install this update?" screen. Confirm there.
-4. The first time you do this, Android may ask you to allow Universal Till to install apps. Allow it, then tap Download again.
+1. Tap the green update chip at the bottom of the screen, then tap it again to confirm. That is the whole thing — signed in as a manager you are not asked for a PIN, exactly as on Windows and Mac.
+2. Android downloads the new app — around 140 MB, so give it a moment on a slow connection; the chip says "Downloading" the whole time — and then shows its own "Do you want to install this update?" screen. Confirm there.
+3. The first time you do this, Android may ask you to allow Universal Till to install apps. Allow it, then tap the chip again.
+4. Settings → Software update does the same thing, and also shows which version you are running and which is available.
+
+You are asked for a manager PIN in two cases: you are signed in as a cashier, or the till is in self-order mode. In self-order mode installing would also unlock the kiosk, so the PIN is required there even for a manager.
 
 During first-time setup the till will tell you an update exists but will not offer to install it — finish setting the till up, then update from Settings.

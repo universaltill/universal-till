@@ -204,6 +204,28 @@ func updateUnavailableHTML(locale, latest, goos string) string {
 		html.EscapeString(httpx.T(locale, "settings.update.unavailable_here")))
 }
 
+// androidUpdateSessionAuthorizes reports whether POST
+// /api/update/android-install would accept this caller on their session alone,
+// with no manager PIN (ut-docs#1537). The ONE owner of that decision — the
+// handler calls it too, so the Settings page cannot render a PIN-less button
+// the endpoint will then refuse, or hide a PIN field it is about to demand.
+//
+// Fails closed on every uncertainty: no settings store, an unreadable
+// display.mode, self-order mode, or a caller without plugin_management.
+func androidUpdateSessionAuthorizes(d *common.Deps, r *http.Request) bool {
+	if !canPerform(d, r, "plugin_management") {
+		return false
+	}
+	if d.Settings == nil {
+		return false
+	}
+	mode, _, err := d.Settings.Get(r.Context(), "display.mode")
+	if err != nil {
+		return false
+	}
+	return mode != "self_order"
+}
+
 // setupUnavailableHTML is updateUnavailableHTML for the FIRST-BOOT WIZARD,
 // where /settings does not yet exist as a destination: there is no manager
 // account to authorise with, and internal/auth/middleware.go bounces the
@@ -324,6 +346,38 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		pin := strings.TrimSpace(r.Form.Get("manager_pin"))
 		if pin == "" {
+			// ut-docs#1537: no PIN offered. A signed-in manager on an
+			// ORDINARY till may authorise from their session alone — the same
+			// gate the desktop status-bar chip already uses (POST
+			// /api/update/apply → canPerform), and for the same reason: they
+			// have already proved who they are, and since ut-docs#1508 the app
+			// does not pin itself at all outside self-order mode, so there is
+			// no kiosk lock for this to release.
+			//
+			// In SELF-ORDER mode the pin is real and the session is not
+			// trustworthy evidence: entering self-order never logs the till
+			// out (ut-docs#1253), so the kiosk's own browser can still be
+			// carrying a live manager cookie. Authorising from it would let a
+			// customer standing at the machine tap the update chip and walk
+			// the till out of its kiosk. There, the PIN stays mandatory.
+			// display.mode is a server-side setting, so this decision is made
+			// here rather than trusting the page to report whether it is
+			// pinned.
+			if androidUpdateSessionAuthorizes(d, r) {
+				// settingsActorID, not a bare FromContext: with UT_AUTH
+				// disabled canPerform returns true with NO user in context, so
+				// a bare read writes actor_id NULL for a privileged action.
+				// Same fallback every other manager-gated handler here uses.
+				//
+				// The payload distinguishes this from the PIN path, which
+				// writes the same action name — an audit trail that cannot
+				// tell "a manager typed a PIN" from "a manager's cookie was
+				// live" is not much of an audit trail (review finding 4).
+				now := time.Now().UTC().Format(time.RFC3339)
+				_ = data.NewPOSRepo(d.Db).InsertAudit(r.Context(), nil, settingsActorID(r), "update", "android", "update_authorized", map[string]any{"via": "session"}, now, "")
+				respondUpdateApply(w, http.StatusOK, true, "authorized")
+				return
+			}
 			respondUpdateApply(w, http.StatusForbidden, false, "manager PIN required")
 			return
 		}
@@ -343,7 +397,7 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
-		_ = data.NewPOSRepo(d.Db).InsertAudit(r.Context(), nil, approver.ID, "update", "android", "update_authorized", nil, now, "")
+		_ = data.NewPOSRepo(d.Db).InsertAudit(r.Context(), nil, approver.ID, "update", "android", "update_authorized", map[string]any{"via": "pin"}, now, "")
 		respondUpdateApply(w, http.StatusOK, true, "authorized")
 	})
 
