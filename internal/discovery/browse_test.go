@@ -123,6 +123,150 @@ func TestCandidateFromEntry_RejectsEntryWithoutPort(t *testing.T) {
 	}
 }
 
+// TestPrinterCandidateFromEntry_PrefersTyTXTField — the Bonjour Printing
+// Specification's "ty=" TXT key is a printer's own friendly description
+// ("HP LaserJet 4100 series"), which is a far better operator-facing name
+// than the raw mDNS instance name.
+func TestPrinterCandidateFromEntry_PrefersTyTXTField(t *testing.T) {
+	e := &mdns.ServiceEntry{
+		Name:       "HP0123AB._pdl-datastream._tcp.local.",
+		InfoFields: []string{"txtvers=1", "ty=HP LaserJet 4100 series", "product=(HP LaserJet 4100 Series)"},
+		AddrV4:     net.IPv4(192, 168, 1, 70),
+		Port:       9100,
+	}
+	c, ok := printerCandidateFromEntry(e)
+	if !ok {
+		t.Fatal("expected a candidate to be extracted")
+	}
+	if c.Name != "HP LaserJet 4100 series" {
+		t.Fatalf("got Name=%q, want the ty= TXT value", c.Name)
+	}
+	if c.Address != "192.168.1.70:9100" {
+		t.Fatalf("got Address=%q, want %q", c.Address, "192.168.1.70:9100")
+	}
+}
+
+// TestPrinterCandidateFromEntry_FallsBackToInstanceNameWithoutTy covers a
+// printer that answers with a TXT record (required for hashicorp/mdns to
+// even report the entry — see client.go's complete()) but no "ty=" key.
+func TestPrinterCandidateFromEntry_FallsBackToInstanceNameWithoutTy(t *testing.T) {
+	e := &mdns.ServiceEntry{
+		Name:       "Kitchen Printer._pdl-datastream._tcp.local.",
+		InfoFields: []string{"txtvers=1"},
+		AddrV4:     net.IPv4(192, 168, 1, 71),
+		Port:       9100,
+	}
+	c, ok := printerCandidateFromEntry(e)
+	if !ok {
+		t.Fatal("expected a candidate to be extracted")
+	}
+	if c.Name != "Kitchen Printer" {
+		t.Fatalf("got Name=%q, want the mDNS instance name %q", c.Name, "Kitchen Printer")
+	}
+}
+
+// TestPrinterCandidateFromEntry_LeavesNameEmptyWhenNeitherIsUsable — a
+// malformed/degenerate instance name and no ty= must still produce a usable
+// candidate (unlike till discovery, there's no id to key on, so a missing
+// name doesn't disqualify the printer) but with an EMPTY Name, not a
+// hardcoded English default: Go has no way to route a literal like
+// "Printer" through web/locales/*.json, so an ar/fa/tr operator would see a
+// Latin string mid-sentence. The UI supplies the localized fallback label
+// instead (kitchen_stations.html's discover-printers script).
+func TestPrinterCandidateFromEntry_LeavesNameEmptyWhenNeitherIsUsable(t *testing.T) {
+	e := &mdns.ServiceEntry{
+		Name:       "",
+		InfoFields: []string{"txtvers=1"},
+		AddrV4:     net.IPv4(192, 168, 1, 72),
+		Port:       9100,
+	}
+	c, ok := printerCandidateFromEntry(e)
+	if !ok {
+		t.Fatal("expected a candidate to be extracted")
+	}
+	if c.Name != "" {
+		t.Fatalf("got Name=%q, want empty — the UI supplies the localized fallback, not Go", c.Name)
+	}
+}
+
+// TestPrinterCandidateFromEntry_FallsBackToV6Addr mirrors
+// TestCandidateFromEntry_FallsBackToV6Addr for the printer parser.
+func TestPrinterCandidateFromEntry_FallsBackToV6Addr(t *testing.T) {
+	e := &mdns.ServiceEntry{
+		Name:       "Printer._pdl-datastream._tcp.local.",
+		InfoFields: []string{"txtvers=1"},
+		AddrV6:     net.ParseIP("fe80::2"),
+		Port:       9100,
+	}
+	c, ok := printerCandidateFromEntry(e)
+	if !ok {
+		t.Fatal("expected a candidate to be extracted")
+	}
+	if c.Address != "[fe80::2]:9100" {
+		t.Fatalf("got Address=%q, want %q", c.Address, "[fe80::2]:9100")
+	}
+}
+
+// TestPrinterCandidateFromEntry_RejectsEntryWithoutUsableAddress mirrors
+// the till-candidate rejection rule: no address, nothing to print to.
+func TestPrinterCandidateFromEntry_RejectsEntryWithoutUsableAddress(t *testing.T) {
+	e := &mdns.ServiceEntry{
+		Name:       "Printer._pdl-datastream._tcp.local.",
+		InfoFields: []string{"txtvers=1"},
+		Port:       9100,
+	}
+	if _, ok := printerCandidateFromEntry(e); ok {
+		t.Fatal("expected an entry with neither AddrV4 nor AddrV6 to be rejected")
+	}
+}
+
+// TestPrinterCandidateFromEntry_RejectsEntryWithoutPort mirrors
+// TestCandidateFromEntry_RejectsEntryWithoutPort for the printer parser.
+func TestPrinterCandidateFromEntry_RejectsEntryWithoutPort(t *testing.T) {
+	e := &mdns.ServiceEntry{
+		Name:       "Printer._pdl-datastream._tcp.local.",
+		InfoFields: []string{"txtvers=1"},
+		AddrV4:     net.IPv4(192, 168, 1, 73),
+	}
+	if _, ok := printerCandidateFromEntry(e); ok {
+		t.Fatal("expected an entry with port 0 to be rejected")
+	}
+}
+
+// TestBrowsePrinters_UsesPrinterServiceNameAndParser is a light integration
+// check that BrowsePrinters is wired to the printer service name/parser
+// (not accidentally reusing Browse's till wiring) — the retry/IPv6/cap
+// logic itself is already exhaustively covered against Browse above via
+// the shared scan/scanOnce generics, so this doesn't re-test all of that.
+func TestBrowsePrinters_UsesPrinterServiceNameAndParser(t *testing.T) {
+	forceIPv6Supported(t, true)
+
+	orig := mdnsQuery
+	t.Cleanup(func() { mdnsQuery = orig })
+	var gotService string
+	mdnsQuery = func(p *mdns.QueryParam) error {
+		gotService = p.Service
+		p.Entries <- &mdns.ServiceEntry{
+			Name:       "Bar Printer._pdl-datastream._tcp.local.",
+			InfoFields: []string{"ty=Bar Printer Model X"},
+			AddrV4:     net.IPv4(192, 168, 1, 74),
+			Port:       9100,
+		}
+		return nil
+	}
+
+	got, err := BrowsePrinters(context.Background(), 3*time.Second)
+	if err != nil {
+		t.Fatalf("BrowsePrinters: %v", err)
+	}
+	if gotService != PrinterServiceName {
+		t.Fatalf("got mdns.Query service=%q, want %q", gotService, PrinterServiceName)
+	}
+	if len(got) != 1 || got[0].Name != "Bar Printer Model X" || got[0].Address != "192.168.1.74:9100" {
+		t.Fatalf("got %+v, want one candidate named %q at %q", got, "Bar Printer Model X", "192.168.1.74:9100")
+	}
+}
+
 // forceIPv6Supported overrides the ipv6Supported seam for the duration of
 // the test, so Browse's control flow is deterministic regardless of
 // whatever IPv6 support the machine actually running this test has —

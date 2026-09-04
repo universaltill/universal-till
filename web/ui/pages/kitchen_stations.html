@@ -49,9 +49,19 @@
     <h3>{{ T "kitchenstations.new.title" }}</h3>
     <form method="post" action="/api/kitchen-stations" autocomplete="off">
       <label>{{ T "kitchenstations.col.name" }} <input type="text" name="name" required /></label>
-      <label>{{ T "kitchenstations.col.address" }} <input type="text" name="printer_address" dir="ltr" /></label>
+      <label>{{ T "kitchenstations.col.address" }} <input type="text" id="new-station-address" name="printer_address" dir="ltr" /></label>
       <p class="muted">{{ T "kitchenstations.address_help" }}</p>
-      <button type="submit" class="btn primary" style="width:100%">{{ T "kitchenstations.new.submit" }}</button>
+      {{/* Discover printers (ut-docs#140): offers LAN candidates to fill the
+           address field above — never auto-submits, manual entry stays the
+           primary path. Placed before Create station so discovery logically
+           precedes creation in both tab order and reading order. type="button"
+           so it can sit inside this form without submitting it. See the
+           script block at the end of this file. */}}
+      <button id="discover-printers-btn" type="button" class="btn secondary" style="width:100%">{{ T "kitchenstations.discover.find_button" }}</button>
+      <p class="muted">{{ T "kitchenstations.discover.help" }}</p>
+      <div id="discover-printers-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+      <div id="discover-printers-results"></div>
+      <button type="submit" class="btn primary" style="width:100%; margin-block-start:.5rem">{{ T "kitchenstations.new.submit" }}</button>
     </form>
   </div>
 </div>
@@ -178,4 +188,63 @@
   {{ end }}
 </div>
 {{ end }}
+
+<script>
+(function () {
+  // Printer LAN discovery (ut-docs#140), same click-to-scan shape as
+  // tills.html's till discovery: plain fetch(), no htmx — a discovered
+  // candidate only fills the create-station form's address field, it never
+  // auto-submits or auto-wires anything (security-first: offered, not
+  // trusted).
+  var btn = document.getElementById('discover-printers-btn');
+  if (!btn) return;
+  var msg = document.getElementById('discover-printers-msg');
+  var out = document.getElementById('discover-printers-results');
+  var addressInput = document.getElementById('new-station-address');
+  var i18n = {
+    searching: "{{ T "kitchenstations.discover.searching" }}",
+    noneFound: "{{ T "kitchenstations.discover.none_found" }}",
+    genericName: "{{ T "kitchenstations.discover.generic_name" }}",
+    error: "{{ T "kitchenstations.discover.error" }}",
+    useBtn: "{{ T "kitchenstations.discover.use_btn" }}"
+  };
+  function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+  btn.addEventListener('click', function () {
+    btn.disabled = true;
+    msg.textContent = i18n.searching;
+    out.innerHTML = '';
+    fetch('/api/kitchen-stations/discover-printers')
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        btn.disabled = false;
+        var list = (j.data && j.data.printers) || [];
+        if (!list.length) { msg.textContent = i18n.noneFound; return; }
+        msg.textContent = '';
+        var ul = document.createElement('ul');
+        ul.style.listStyle = 'none';
+        ul.style.paddingInlineStart = '0';
+        ul.style.margin = '.4rem 0';
+        list.forEach(function (p) {
+          var li = document.createElement('li');
+          li.style.padding = '.3rem 0';
+          li.innerHTML = esc(p.name || i18n.genericName) + ' — <span class="muted" dir="ltr">' + esc(p.address) + '</span> ';
+          var use = document.createElement('button');
+          use.type = 'button';
+          use.className = 'btn secondary';
+          use.textContent = i18n.useBtn;
+          use.addEventListener('click', function () {
+            if (addressInput) { addressInput.value = p.address; addressInput.focus(); }
+          });
+          li.appendChild(use);
+          ul.appendChild(li);
+        });
+        out.appendChild(ul);
+      })
+      .catch(function () {
+        btn.disabled = false;
+        msg.textContent = i18n.error;
+      });
+  });
+})();
+</script>
 {{ end }}
