@@ -174,7 +174,24 @@ val generateAar =
             // (.goreleaser.yaml, internal/buildinfo/buildinfo.go) via the same
             // versionName property release.yml's android-app job passes as
             // -PversionName="$VERSION".
-            "-ldflags", "-X github.com/universaltill/universal-till/internal/buildinfo.Version=$goVersionForLdflags",
+            //
+            // ut-docs#1538: "-s -w" strips the Go symbol table and DWARF
+            // debug data. Per the issue's own local `gomobile bind` build
+            // against NDK 28.2 (not re-verified from this environment — no
+            // Android SDK/NDK available here either, same gap as the
+            // -target restriction's own comment above): 63,946,288 ->
+            // 49,535,368 bytes, ~22.5% (14.4 MB) off libgojni.so — the
+            // single biggest remaining lever after that -target
+            // architecture restriction. Panic tracebacks are NOT affected: Go's
+            // runtime unwinder reads pclntab (the function/line lookup
+            // table used by runtime.Callers/debug.Stack), which is separate
+            // from and untouched by -s (drops the symbol table) and -w
+            // (drops DWARF) — verified independently with a standalone
+            // recovered-panic and an uncaught-panic repro built with these
+            // exact flags, both producing full function-name+file:line
+            // stacks. The bug-report feature (which captures Go panics) is
+            // unaffected.
+            "-ldflags", "-X github.com/universaltill/universal-till/internal/buildinfo.Version=$goVersionForLdflags -s -w",
             "-o", "android/app/libs/unitill-mobile.aar",
             "./mobile",
         )
