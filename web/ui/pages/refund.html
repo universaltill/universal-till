@@ -19,6 +19,12 @@
   <p class="muted">{{ T "refund.help" }}</p>
   <form id="refund-form" hx-post="/api/refund" hx-swap="none">
     <input type="hidden" name="receipt" value="{{ .Sale.ReceiptNo }}">
+    <!-- ut-docs#1493: kept current by web/public/app.js's updateOfflineFlag()
+         (navigator.onLine), same #offline-flag id the sale screen
+         (index.html) and self-order checkout use -- lets a known-offline
+         refund skip the fiscal.sign.ask cloud call instead of burning the
+         3s budget (ADR-0044 D1). -->
+    <input type="hidden" id="offline-flag" name="offline" value="0">
     <table class="table">
       <thead><tr><th>{{ T "journal.detail.item" }}</th><th>{{ T "refund.col.sold" }}</th><th>{{ T "refund.col.remaining" }}</th><th>{{ T "journal.detail.price" }}</th><th>{{ T "refund.col.refund_qty" }}</th></tr></thead>
       <tbody>
