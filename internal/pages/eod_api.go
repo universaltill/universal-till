@@ -157,13 +157,33 @@ func fmtRateBP(bp int) string {
 	return sign + strings.TrimRight(fmt.Sprintf("%d.%02d", bp/100, bp%100), "0") + "%"
 }
 
+// eodPeriodMeta renders the report's period header line: "END OF DAY <day>"
+// for a legacy calendar-day report (rep.Day set), or a close-to-close
+// "Zeitraum" line matching the reference document's own worked example
+// (ADR-0066 Decision 6, ut-docs#1141) when rep.Day is empty (the "eod"
+// kind's new path). Fixed vocabulary, not routed through T() — same
+// convention as "Erstellt von"/"Anmerkung" below (a jurisdiction/
+// fiscal-format label an auditor reads regardless of the till's
+// operator-UI locale). rep.From is empty only on the till's first-ever
+// close (ADR-0066 Decision 3, unbounded lower bound) — "bis" (German
+// "until") rather than a bare leading " - " for that open-ended case.
+func eodPeriodMeta(rep data.EODReport) string {
+	if rep.Day != "" {
+		return "END OF DAY " + rep.Day
+	}
+	if rep.From == "" {
+		return "Zeitraum bis " + rep.To
+	}
+	return "Zeitraum " + rep.From + " - " + rep.To
+}
+
 // buildEODDoc renders the Z-report for the receipt printer.
 func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 	money := func(minor int64) string { return httpx.FormatMoney(minor, "en") }
 	doc := print.Doc{
 		StoreName: storeName,
 		Meta: []string{
-			"END OF DAY " + rep.Day,
+			eodPeriodMeta(rep),
 			"Generated " + rep.GeneratedAt,
 		},
 		Charset: charset,
@@ -356,8 +376,19 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 	return doc
 }
 
-// generateEOD produces, archives and (best-effort) prints the day's report.
-// Idempotent per day: returns createdNew=false when already archived.
+// generateEOD produces, archives and (best-effort) prints the close-to-close
+// report (ADR-0066). Idempotent per local calendar day: returns
+// createdNew=false when a close already happened today (ArchiveReport's
+// atomic double-close guard, ut-docs#1140 — the real correctness boundary;
+// see eodDue's pre-check below for the cheap up-front version).
+//
+// The window is [previous close, now) — ADR-0066 Decision 2/3: `from` comes
+// from LatestArchivedAt (nil on the till's first-ever close → unbounded
+// lower bound), `to` is time.Now() captured ONCE here so the query window,
+// the archived period, and the NEXT close's `from` (read back via
+// LatestArchivedAt off this row's own created_at) all agree — a second,
+// independent clock read anywhere in this path would leave a sub-second gap
+// or overlap between consecutive closes (Decision 5's clock-skew fix).
 //
 // actor/blockedActorID (ut-docs#794) let the two very different callers
 // each get the audit attribution they need from the SAME function, rather
@@ -373,24 +404,53 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 // report itself (rep.Annotation) and printed on the Z-Bon — "" for the
 // unattended scheduler tick (same "no operator involved" convention as
 // actor="system" above), or whatever the manual run's form supplied.
-func generateEOD(ctx context.Context, d *common.Deps, day, actor, blockedActorID, annotation string) (data.EODReport, bool, error) {
+func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, annotation string) (data.EODReport, bool, error) {
 	repo := data.NewPOSRepo(d.Db)
-	rep, err := repo.EndOfDay(ctx, day)
+	latest, err := repo.LatestArchivedAt(ctx, "eod")
+	if err != nil {
+		return data.EODReport{}, false, err
+	}
+	var from time.Time
+	if latest != nil {
+		from = *latest
+	}
+	to := time.Now()
+	rep, err := repo.EndOfDayInstant(ctx, from, to)
 	if err != nil {
 		return rep, false, err
 	}
 	// Per-VAT-rate breakdown (ut-docs#1003) + method x VAT-rate cross-tab
-	// (ut-docs#1004), computed here, not inside EndOfDay, because the
-	// banding math needs internal/pos (see eod_tax_bands.go).
-	// attachEODBands reads the sales ONCE and fills both from that single
-	// snapshot (ut-docs#1004 review finding: two independent reads a
-	// moment apart could let a sale completing in between appear in one
-	// breakdown and not the other). Must succeed BEFORE the report is
-	// archived: the archive is write-once per day, so a report archived
-	// without these tables could never be repaired.
-	if err := attachEODBands(ctx, repo, &rep); err != nil {
+	// (ut-docs#1004): SalesForTaxBandsInstant DIRECTLY, never the existing
+	// attachEODBands/rep.Day=="" fallback into the calendar-date
+	// SalesForTaxBands (ADR-0066 Decision 6) — SQLite's date() parses an
+	// RFC3339 bound without error, so that fallback would silently degrade
+	// this report to calendar-day banding with no error and no test
+	// failure, breaking sum(band.Tax) == TaxNet in the one artifact an
+	// accountant reconciles against. One snapshot read (same ut-docs#1004
+	// review finding attachEODBands' own doc comment cites: two independent
+	// reads a moment apart could let a sale completing in between appear in
+	// one breakdown and not the other), computed here, not inside
+	// EndOfDayInstant, because the banding math needs internal/pos (see
+	// eod_tax_bands.go). Must succeed BEFORE the report is archived: the
+	// archive is write-once per period, so a report archived without these
+	// tables could never be repaired.
+	salesForBands, err := repo.SalesForTaxBandsInstant(ctx, from, to)
+	if err != nil {
 		return rep, false, err
 	}
+	rep.TaxBands = computeEODTaxBandsFromSales(salesForBands)
+	rep.MethodTaxBands = computeEODMethodTaxBandsFromSales(salesForBands)
+	// Display-only period (ADR-0066 Decision 6): the shop's LOCAL offset,
+	// never UTC — a UTC-stamped close on a till at a large positive offset
+	// would display a calendar date shifted from the shop's own, the exact
+	// confusion ADR-0057 removed. from stays "" (omitempty) on the till's
+	// first-ever close — there is no previous close instant to show.
+	// rep.Day is left empty (its zero value) — this is the "eod" kind's new
+	// path, not EndOfDay's calendar-day one.
+	if !from.IsZero() {
+		rep.From = from.Local().Format(time.RFC3339)
+	}
+	rep.To = to.Local().Format(time.RFC3339)
 	// Who generated it, plus the annotation (ut-docs#1012). GeneratedBy
 	// resolves actor (a user id) to its display name via the same
 	// users-table join precedent internal/data's audit/order-status
@@ -408,23 +468,35 @@ func generateEOD(ctx context.Context, d *common.Deps, day, actor, blockedActorID
 		}
 	}
 	rep.Annotation = strings.TrimSpace(annotation)
+	// period = the close instant itself, same local-offset RFC3339 form as
+	// rep.To (ADR-0066 Decisions 4 and 6 — period's text form matches what
+	// gets displayed, and stays sort-safe against old calendar-date periods
+	// since a same-day RFC3339 value is a strict text extension of its date
+	// prefix). This is now report_archive's own unique key for this row,
+	// replacing the old "day" string as the audit entry's entity_id too.
+	period := rep.To
 	raw, err := json.Marshal(rep)
 	if err != nil {
 		return rep, false, err
 	}
 	// rep.FirstReceipt/LastReceipt (MIN/MAX receipt_no, computed in
-	// EndOfDay) ride along as queryable columns (ut-docs#1080) so a future
-	// accounting export (ut-docs#1036) needn't parse content_json.
-	created, err := repo.ArchiveReport(ctx, "eod", day, raw, rep.FirstReceipt, rep.LastReceipt, time.Time{})
+	// EndOfDayInstant) ride along as queryable columns (ut-docs#1080) so a
+	// future accounting export (ut-docs#1036) needn't parse content_json.
+	// closedAt=to (ADR-0066 Decision 4/5): written INTO created_at instead
+	// of a second, independent datetime('now') read — this is both the
+	// clock-skew fix (the next close's `from`, read back via
+	// LatestArchivedAt, must be byte-identical to this `to`) and what arms
+	// the atomic double-close guard folded into this same insert.
+	created, err := repo.ArchiveReport(ctx, "eod", period, raw, rep.FirstReceipt, rep.LastReceipt, to)
 	if err != nil || !created {
 		return rep, created, err
 	}
 	payload := map[string]any{"net": rep.Net, "sales": rep.SalesCount}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if blockedActorID != "" {
-		_ = repo.InsertAuditElevated(ctx, nil, actor, blockedActorID, "report", day, "eod_generated", payload, now, "")
+		_ = repo.InsertAuditElevated(ctx, nil, actor, blockedActorID, "report", period, "eod_generated", payload, now, "")
 	} else {
-		_ = repo.InsertAudit(ctx, nil, actor, "report", day, "eod_generated", payload, now, "")
+		_ = repo.InsertAudit(ctx, nil, actor, "report", period, "eod_generated", payload, now, "")
 	}
 	if cfg := printerConfig(ctx, d); cfg.Enabled() {
 		doc := buildEODDoc(rep, storeNameOrDefault(ctx, d), cfg.Charset)
@@ -459,8 +531,14 @@ func reportPruneDue(today, lastPruneDay string) bool {
 	return today != lastPruneDay
 }
 
-// reportRetentionCutoff is "now minus 10 calendar years" formatted to match
-// report_archive.period's "YYYY-MM-DD" text format (ADR-0040 §2, till mode).
+// reportRetentionCutoff is "now minus 10 calendar years" formatted
+// "YYYY-MM-DD" (ADR-0040 §2, till mode) — the bound PruneReportArchiveOlderThan
+// compares as plain text against report_archive.period. Since ADR-0066 a
+// "eod" row's period is no longer always this format (it's the close
+// instant, RFC3339, for a close generated under the new scheme), but this
+// bare-date cutoff still compares correctly against either form (see
+// PruneReportArchiveOlderThan's own doc comment) — no change needed here
+// beyond this note.
 // Deliberately calendar years (AddDate), not a fixed day count: 10 calendar
 // years always spans at least data.GlobalArchiveMinDays (3650) days — every
 // 10-year span contains 2 or 3 leap days, so this window is always a few
@@ -535,18 +613,29 @@ func eodSchedulerTick(ctx context.Context, d *common.Deps, repo *data.POSRepo) {
 	}
 	enabled := get(keyEODEnabled) == "true"
 	hhmm := get(keyEODTime)
-	day := time.Now().Format("2006-01-02")
-	done, err := repo.HasArchivedReport(ctx, "eod", day)
+	now := time.Now()
+	// alreadyDone (ADR-0066 Decision 5, ut-docs#1140/#1141): moved off
+	// HasArchivedReport(ctx, "eod", day) — there is no "day" concept for
+	// the "eod" kind anymore — to LatestArchivedAt's result falling on
+	// TODAY's LOCAL calendar day. This is the cheap up-front pre-check
+	// only, so a due-but-already-closed tick doesn't even attempt
+	// generation; the actual guard against a double-close is the atomic
+	// insert-time predicate ArchiveReport folds into its INSERT (Decision
+	// 4). latest is parsed UTC-naive (see LatestArchivedAt's own doc
+	// comment) — convert with .Local(), never time.ParseInLocation, so
+	// this doesn't reproduce ADR-0057's original off-UTC bug class.
+	latest, err := repo.LatestArchivedAt(ctx, "eod")
 	if err != nil {
 		return
 	}
-	if !eodDue(time.Now(), enabled, hhmm, done) {
+	done := latest != nil && latest.Local().Format("2006-01-02") == now.Format("2006-01-02")
+	if !eodDue(now, enabled, hhmm, done) {
 		return
 	}
-	if _, created, err := generateEOD(ctx, d, day, "system", "", ""); err != nil {
+	if _, created, err := generateEOD(ctx, d, "system", "", ""); err != nil {
 		logging.L().Errorf("eod scheduled run: %v", err)
 	} else if created {
-		logging.L().Infof("end-of-day report generated for %s", day)
+		logging.L().Infof("end-of-day report generated")
 	}
 }
 
@@ -621,7 +710,10 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 		// same choice InsertAuditElevated already makes for the audit
 		// entry's primary actor (blockedActorID rides along there, but
 		// the printed report only ever shows the one name).
-		day := time.Now().Format("2006-01-02")
+		// ADR-0066 Decision 5: a manual run IS a close now, exactly like the
+		// scheduler's — its window is [LatestArchivedAt(ctx,"eod"), now),
+		// computed inside generateEOD itself; no "day" request concept
+		// threaded through here anymore.
 		locale := httpx.ResolveLocale(w, r)
 		// annotation (ut-docs#1012): an optional free-text form value —
 		// no dedicated UI input yet (see the issue's close-out note), but
@@ -634,7 +726,7 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		rep, created, err := generateEOD(r.Context(), d, day, actorID, blockedActorID, annotation)
+		rep, created, err := generateEOD(r.Context(), d, actorID, blockedActorID, annotation)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)

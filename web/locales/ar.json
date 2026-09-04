@@ -613,6 +613,7 @@
   "reports.eod.exists": "تقرير اليوم موجود مسبقاً (انظر القائمة أدناه)",
   "reports.eod.failed": "فشل التقرير",
   "reports.eod.net": "الصافي",
+  "reports.eod.period_range": "%s – %s",
   "reports.eod.range_downloaded": "تم التنزيل",
   "reports.eod.range_from": "من",
   "reports.eod.range_loading": "جارٍ الإنشاء…",

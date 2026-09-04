@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"strings"
 	"sync"
 	"testing"
@@ -240,7 +241,11 @@ func newEODTestDeps(t *testing.T) *common.Deps {
 func TestGenerateEOD_ArchivesOnceThenIdempotent(t *testing.T) {
 	dp := newEODTestDeps(t)
 
-	_, created, err := generateEOD(t.Context(), dp, "2026-01-01", "system", "", "")
+	// ADR-0066 / ut-docs#1141: generateEOD no longer takes a day argument —
+	// its window is [LatestArchivedAt, now), computed internally. Capture
+	// the real period (rep.To, the close instant) from the return value
+	// rather than assuming a caller-supplied literal.
+	rep, created, err := generateEOD(t.Context(), dp, "system", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -248,10 +253,12 @@ func TestGenerateEOD_ArchivesOnceThenIdempotent(t *testing.T) {
 		t.Fatal("expected the first generation for this day to report created=true")
 	}
 
-	// Running it again for the SAME day must not re-archive (idempotent —
-	// StartEODScheduler polls every 30s and must not spam a fresh report
-	// each tick).
-	_, created, err = generateEOD(t.Context(), dp, "2026-01-01", "system", "", "")
+	// Running it again the SAME real local day must not re-archive
+	// (idempotent — StartEODScheduler polls every 30s and must not spam a
+	// fresh report each tick). The window has moved on (from is now this
+	// close's own to), but ArchiveReport's atomic same-local-day guard
+	// (ADR-0066 Decision 4) still blocks a second close today.
+	_, created, err = generateEOD(t.Context(), dp, "system", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -260,9 +267,9 @@ func TestGenerateEOD_ArchivesOnceThenIdempotent(t *testing.T) {
 	}
 
 	repo := data.NewPOSRepo(dp.Db)
-	has, err := repo.HasArchivedReport(t.Context(), "eod", "2026-01-01")
+	has, err := repo.HasArchivedReport(t.Context(), "eod", rep.To)
 	if err != nil || !has {
-		t.Fatalf("expected the report archived, got has=%v err=%v", has, err)
+		t.Fatalf("expected the report archived under period %q, got has=%v err=%v", rep.To, has, err)
 	}
 
 	// ut-docs#1080 AC, exercised through the REAL production call path
@@ -300,7 +307,7 @@ func TestGenerateEOD_ResolvesGeneratedByAndCarriesAnnotation(t *testing.T) {
 		t.Fatalf("create user: %v", err)
 	}
 
-	rep, created, err := generateEOD(t.Context(), dp, "2026-01-01", userID, "", "  till reconciled against safe count  ")
+	rep, created, err := generateEOD(t.Context(), dp, userID, "", "  till reconciled against safe count  ")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -321,7 +328,7 @@ func TestGenerateEOD_ResolvesGeneratedByAndCarriesAnnotation(t *testing.T) {
 // than the raw lowercase id.
 func TestGenerateEOD_SystemActorResolvesToSeededDisplayName(t *testing.T) {
 	dp := newEODTestDeps(t)
-	rep, _, err := generateEOD(t.Context(), dp, "2026-01-01", "system", "", "")
+	rep, _, err := generateEOD(t.Context(), dp, "system", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -339,7 +346,7 @@ func TestGenerateEOD_SystemActorResolvesToSeededDisplayName(t *testing.T) {
 // report generation over a display-name lookup miss.
 func TestGenerateEOD_UnresolvableActorFallsBackToRawString(t *testing.T) {
 	dp := newEODTestDeps(t)
-	rep, _, err := generateEOD(t.Context(), dp, "2026-01-01", "no-such-user-id", "", "")
+	rep, _, err := generateEOD(t.Context(), dp, "no-such-user-id", "", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -375,10 +382,12 @@ func TestEODSchedulerTick_RunsAndWritesPlainSystemAudit(t *testing.T) {
 
 	eodSchedulerTick(t.Context(), dp, repo)
 
-	today := time.Now().Format("2006-01-02")
-	has, err := repo.HasArchivedReport(t.Context(), "eod", today)
-	if err != nil || !has {
-		t.Fatalf("expected the tick to have archived today's report, got has=%v err=%v", has, err)
+	// ADR-0066: period is now the close instant (rep.To), not a bare
+	// calendar date — LatestArchivedAt returning non-nil is "the tick
+	// archived something".
+	latest, err := repo.LatestArchivedAt(t.Context(), "eod")
+	if err != nil || latest == nil {
+		t.Fatalf("expected the tick to have archived today's report, got latest=%v err=%v", latest, err)
 	}
 
 	var actorID string
@@ -405,12 +414,11 @@ func TestEODSchedulerTick_NotDueGeneratesNothing(t *testing.T) {
 
 	eodSchedulerTick(t.Context(), dp, repo)
 
-	today := time.Now().Format("2006-01-02")
-	has, err := repo.HasArchivedReport(t.Context(), "eod", today)
+	latest, err := repo.LatestArchivedAt(t.Context(), "eod")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if has {
+	if latest != nil {
 		t.Fatal("expected no report archived when EOD is disabled")
 	}
 }
@@ -604,10 +612,10 @@ func TestPostEODRun_RejectsControlCharacterAnnotation(t *testing.T) {
 
 	// Confirm the rejected attempt did NOT consume the day's one-shot
 	// archive slot: a valid follow-up request for the same day must still
-	// succeed.
+	// succeed. ADR-0066: period is now the close instant, not a bare date,
+	// so "nothing archived yet" is LatestArchivedAt returning nil.
 	repo := data.NewPOSRepo(dp.Db)
-	today := time.Now().Format("2006-01-02")
-	if has, _ := repo.HasArchivedReport(t.Context(), "eod", today); has {
+	if latest, _ := repo.LatestArchivedAt(t.Context(), "eod"); latest != nil {
 		t.Fatal("a rejected annotation must not have archived a report")
 	}
 	rec = httptest.NewRecorder()
@@ -635,13 +643,17 @@ func TestPostEODPrint_RequiresManager(t *testing.T) {
 	// ut-docs#794 review finding (nit): the period is now validated to
 	// exist BEFORE elevating (don't burn a PIN entry on a request that
 	// 404s either way), so this test needs a real archived report or it
-	// 404s before ever reaching checkOrElevate — seed one directly.
-	if _, _, err := generateEOD(t.Context(), dp, "2026-01-01", "system", "", ""); err != nil {
+	// 404s before ever reaching checkOrElevate — seed one directly. ADR-0066:
+	// period is now the close instant (rep.To, an RFC3339 string with a
+	// real local offset) rather than a caller-supplied date — capture it
+	// and URL-escape it into the request path (":"/"+" in the offset).
+	rep, _, err := generateEOD(t.Context(), dp, "system", "", "")
+	if err != nil {
 		t.Fatalf("setup: generateEOD: %v", err)
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/print/2026-01-01", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/print/"+url.PathEscape(rep.To), nil)
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
@@ -661,7 +673,7 @@ func TestPostEODPrint_RequiresManager(t *testing.T) {
 // covered (TestPostEODPrint_RequiresManager), same as every other site.
 func TestPostEODPrint_NoPrinterConfiguredFailsGracefully(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, _ := newEODAPITestMux(t)
+	mux, dp := newEODAPITestMux(t)
 
 	// Archive a report first.
 	rec := httptest.NewRecorder()
@@ -670,12 +682,20 @@ func TestPostEODPrint_NoPrinterConfiguredFailsGracefully(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("setup: expected 200 generating the report, got %d", rec.Code)
 	}
-	today := time.Now().Format("2006-01-02")
+	// ADR-0066: period is now the close instant, not a bare calendar date —
+	// look up the real value the run just archived rather than assuming a
+	// literal date string.
+	repo := data.NewPOSRepo(dp.Db)
+	rows, err := repo.ListArchivedReports(t.Context(), 1)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("setup: expected exactly one archived report, got %+v err=%v", rows, err)
+	}
+	period := rows[0].Period
 
 	// No printer configured (printer.mode defaults to "off") — reprinting
 	// must fail cleanly (502), not panic or hang trying to reach hardware.
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/reports/eod/print/"+today, nil)
+	req = httptest.NewRequest(http.MethodPost, "/api/reports/eod/print/"+url.PathEscape(period), nil)
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadGateway {
 		t.Fatalf("expected 502 with no printer configured, got %d: %s", rec.Code, rec.Body.String())
@@ -1132,12 +1152,20 @@ func TestPostReportArchiveExport_JSONAndCSVDownloads(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newEODAPITestMux(t)
 
-	if _, _, err := generateEOD(t.Context(), dp, "2026-01-15", "system", "", ""); err != nil {
+	// ADR-0066: the close instant is real "now", not a fixed 2026 date —
+	// bound the export range around today so the seeded row genuinely
+	// falls inside it, and assert against the real period generateEOD
+	// returns rather than a hardcoded literal.
+	rep, _, err := generateEOD(t.Context(), dp, "system", "", "")
+	if err != nil {
 		t.Fatalf("setup: generateEOD: %v", err)
 	}
+	now := time.Now()
+	from := now.AddDate(0, 0, -1).Format("2006-01-02")
+	to := now.AddDate(0, 0, 1).Format("2006-01-02")
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/reports/archive/export", strings.NewReader("from=2026-01-01&to=2026-01-31&format=json"))
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/archive/export", strings.NewReader("from="+from+"&to="+to+"&format=json"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -1151,12 +1179,12 @@ func TestPostReportArchiveExport_JSONAndCSVDownloads(t *testing.T) {
 	if err := json.Unmarshal(rec.Body.Bytes(), &rows); err != nil {
 		t.Fatalf("json export: expected a JSON array body: %v (%s)", err, rec.Body.String())
 	}
-	if len(rows) != 1 || rows[0].Period != "2026-01-15" {
-		t.Fatalf("json export: expected the seeded 2026-01-15 report, got %+v", rows)
+	if len(rows) != 1 || rows[0].Period != rep.To {
+		t.Fatalf("json export: expected the seeded %q report, got %+v", rep.To, rows)
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/reports/archive/export", strings.NewReader("from=2026-01-01&to=2026-01-31&format=csv"))
+	req = httptest.NewRequest(http.MethodPost, "/api/reports/archive/export", strings.NewReader("from="+from+"&to="+to+"&format=csv"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -1166,7 +1194,7 @@ func TestPostReportArchiveExport_JSONAndCSVDownloads(t *testing.T) {
 	if !strings.Contains(cd, "attachment") {
 		t.Fatalf("csv export: expected attachment Content-Disposition, got %q", cd)
 	}
-	if !strings.Contains(rec.Body.String(), "2026-01-15") {
+	if !strings.Contains(rec.Body.String(), rep.To) {
 		t.Fatalf("csv export: expected the seeded period in the CSV body, got %s", rec.Body.String())
 	}
 }
@@ -1230,7 +1258,8 @@ func TestPostEODPrint_ListArchivedReportsErrorIsLocalized(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newEODAPITestMux(t)
 
-	if _, _, err := generateEOD(t.Context(), dp, "2026-01-01", "system", "", ""); err != nil {
+	rep, _, err := generateEOD(t.Context(), dp, "system", "", "")
+	if err != nil {
 		t.Fatalf("setup: generateEOD: %v", err)
 	}
 	if _, err := dp.Db.Exec(`ALTER TABLE report_archive DROP COLUMN content_json`); err != nil {
@@ -1238,7 +1267,7 @@ func TestPostEODPrint_ListArchivedReportsErrorIsLocalized(t *testing.T) {
 	}
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/print/2026-01-01", nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/reports/eod/print/"+url.PathEscape(rep.To), nil)
 	mux.ServeHTTP(rec, req)
 
 	if rec.Code != http.StatusInternalServerError {

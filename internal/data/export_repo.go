@@ -71,11 +71,14 @@ type EODCloseExport struct {
 	Report  EODReport `json:"report"`
 }
 
-// EODClosesForExport returns every archived day-close ("eod" kind) whose
-// period falls in [from, to], oldest first, as export-payload closes —
-// ArchivedReportsInRange plus the EODClosesFromArchive conversion. Same
-// caller-bounds-the-range division of responsibility as
-// ArchivedReportsInRange itself.
+// EODClosesForExport returns every archived day-close ("eod" kind) that was
+// CLOSED in the local calendar days [from, to], oldest first, as
+// export-payload closes — ArchivedReportsInRange plus the
+// EODClosesFromArchive conversion. Same caller-bounds-the-range division of
+// responsibility as ArchivedReportsInRange itself. Bounded on the row's own
+// created_at, not its period string, since ADR-0066 (a "eod" period is the
+// close instant now, not a "YYYY-MM-DD" date) — see ArchivedReportsInRange's
+// own doc comment.
 func (r *POSRepo) EODClosesForExport(ctx context.Context, from, to string) ([]EODCloseExport, error) {
 	rows, err := r.ArchivedReportsInRange(ctx, from, to)
 	if err != nil {

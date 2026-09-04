@@ -1246,14 +1246,34 @@ func TestExportDispatch_RequiresManager(t *testing.T) {
 
 // seedArchivedEODClose archives one day-close ("eod" kind) with a minimal
 // cross-tab content blob, via the real repo write path (so z_number is
-// assigned the same way generateEOD's archival assigns it).
-func seedArchivedEODClose(t *testing.T, db *sql.DB, period string) {
+// assigned the same way generateEOD's archival assigns it). closedAt is
+// written into created_at (ADR-0066 Decision 5) — the field the export
+// range query filters on — so callers must pass a real, "now"-anchored
+// instant (edcAnchor below) rather than time.Time{}: with a zero closedAt
+// every row gets the schema default's real "now" regardless of what
+// `period` string it's given, which stopped being controllable-by-literal
+// once ArchivedReportsInRange moved off a `period BETWEEN` text compare.
+func seedArchivedEODClose(t *testing.T, db *sql.DB, period string, closedAt time.Time) {
 	t.Helper()
 	if _, err := data.NewPOSRepo(db).ArchiveReport(context.Background(), "eod", period,
 		[]byte(`{"day":"`+period+`","gross":11900,"method_tax_bands":[{"method":"cash","rate_bp":1900,"net":10000,"tax":1900,"gross":11900}]}`),
-		"R-1", "R-9", time.Time{}); err != nil {
+		"R-1", "R-9", closedAt); err != nil {
 		t.Fatalf("archive eod close %s: %v", period, err)
 	}
+}
+
+// edcAnchor returns a real, host-clock-anchored close instant plus a
+// [from, to] query range (YYYY-MM-DD, inclusive of `to`'s whole day) that
+// is guaranteed to contain it — ADR-0066 Decision 5: the export range now
+// filters on each archived row's own created_at, not its period string, so
+// a fixed 2026-08 literal no longer reliably falls inside any query range
+// once the calendar rolls past August.
+func edcAnchor() (closedAt time.Time, from, to string) {
+	now := time.Now().UTC()
+	closedAt = time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, time.UTC)
+	from = closedAt.AddDate(0, 0, -1).Format("2006-01-02")
+	to = closedAt.AddDate(0, 0, 1).Format("2006-01-02")
+	return
 }
 
 // TestExportDispatch_PayloadIncludesEODClosesData is ut-docs#1005's parity
@@ -1267,7 +1287,8 @@ func TestExportDispatch_PayloadIncludesEODClosesData(t *testing.T) {
 	mux, dp := newDataAPITestDeps(t)
 	seedExportPluginWithEntities(t, dp.Db, "com.t.exp11", "datev", "DATEV Export", []string{"eod_closes"}, false)
 	grantExportPluginPermission(t, dp.Db, "com.t.exp11", "sales:read")
-	seedArchivedEODClose(t, dp.Db, "2026-08-21")
+	closedAt, from, to := edcAnchor()
+	seedArchivedEODClose(t, dp.Db, "2026-08-21", closedAt)
 
 	var captured plugins.Event
 	bus := plugins.SharedBus(dp.Db)
@@ -1282,7 +1303,7 @@ func TestExportDispatch_PayloadIncludesEODClosesData(t *testing.T) {
 		t.Fatalf("subscribe: %v", err)
 	}
 
-	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-08-01"}, "to": {"2026-08-31"}}, nil)
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {from}, "to": {to}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -1324,7 +1345,8 @@ func TestExportDispatch_OmitsEODClosesWhenEntityNotDeclared(t *testing.T) {
 	mux, dp := newDataAPITestDeps(t)
 	seedExportPluginWithEntities(t, dp.Db, "com.t.exp12", "datev", "DATEV Export", nil, false)
 	grantExportPluginPermission(t, dp.Db, "com.t.exp12", "sales:read")
-	seedArchivedEODClose(t, dp.Db, "2026-08-21")
+	closedAt, from, to := edcAnchor()
+	seedArchivedEODClose(t, dp.Db, "2026-08-21", closedAt)
 
 	var captured plugins.Event
 	bus := plugins.SharedBus(dp.Db)
@@ -1339,7 +1361,7 @@ func TestExportDispatch_OmitsEODClosesWhenEntityNotDeclared(t *testing.T) {
 		t.Fatalf("subscribe: %v", err)
 	}
 
-	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-08-01"}, "to": {"2026-08-31"}}, nil)
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {from}, "to": {to}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -1363,7 +1385,8 @@ func TestExportDispatch_OmitsEODClosesWithoutSalesReadPermission(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newDataAPITestDeps(t)
 	seedExportPluginWithEntities(t, dp.Db, "com.t.exp13", "datev", "DATEV Export", []string{"eod_closes"}, false)
-	seedArchivedEODClose(t, dp.Db, "2026-08-21")
+	closedAt, from, to := edcAnchor()
+	seedArchivedEODClose(t, dp.Db, "2026-08-21", closedAt)
 
 	var captured plugins.Event
 	bus := plugins.SharedBus(dp.Db)
@@ -1378,7 +1401,7 @@ func TestExportDispatch_OmitsEODClosesWithoutSalesReadPermission(t *testing.T) {
 		t.Fatalf("subscribe: %v", err)
 	}
 
-	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-08-01"}, "to": {"2026-08-31"}}, nil)
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {from}, "to": {to}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 (missing sales:read must not fail the whole request), got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -1412,7 +1435,8 @@ func TestExportDispatch_EODClosesEntrySkipsSalesGatherAndCap(t *testing.T) {
 	mux, dp := newDataAPITestDeps(t)
 	seedExportPluginWithEntities(t, dp.Db, "com.t.exp14", "datev", "DATEV Export", []string{"eod_closes"}, false)
 	grantExportPluginPermission(t, dp.Db, "com.t.exp14", "sales:read")
-	seedArchivedEODClose(t, dp.Db, "2026-08-21")
+	closedAt, from, to := edcAnchor()
+	seedArchivedEODClose(t, dp.Db, "2026-08-21", closedAt)
 
 	mustExec := func(q string, args ...any) {
 		t.Helper()
@@ -1441,7 +1465,7 @@ func TestExportDispatch_EODClosesEntrySkipsSalesGatherAndCap(t *testing.T) {
 		t.Fatalf("subscribe: %v", err)
 	}
 
-	rec := postForm(mux, "/api/data/export", url.Values{"from": {"2026-08-01"}, "to": {"2026-08-31"}}, nil)
+	rec := postForm(mux, "/api/data/export", url.Values{"from": {from}, "to": {to}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 (the sales cap must not apply to an eod_closes entry), got %d: %s", rec.Code, rec.Body.String())
 	}
