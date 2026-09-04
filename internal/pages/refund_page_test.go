@@ -482,6 +482,269 @@ VALUES('line-refund-charge-uneven', ?, 1, 'itm1', 'Apple', 'ABC', 3, 100, 0, 0, 
 	}
 }
 
+// TestPostRefund_SplitRefundServiceChargeTaxSumsExactly is ut-docs#1215's
+// regression case, reproducing the independent reviewer's exact reported
+// scenario from ut-docs#243's review
+// (docs/code-reviews/2026-08-28-service-charge-refund-proration-243.md,
+// finding N2): an exclusive sale with two lines that mix a per-line
+// discount AND different tax rates, plus a service charge apportioned
+// across bands (not a flat basis), refunded in two SEPARATE partial
+// requests rather than one full refund.
+//
+//	Line A: 1 @ 200, tax rate 0%,  line discount 100 -> net 100
+//	Line B: 1 @ 100, tax rate 20%, no discount        -> net 100
+//	Service charge: 30 (basis 0 -> apportioned by net share, ADR-0061)
+//
+// Original apportionment (equal net shares, 100:100): band 0% = 15 (tax
+// 0), band 20% = 15 (tax 3) -- 3 total charge tax, 20 total line tax (all
+// on line B), 23 total tax, 253 total (200 subtotal + 23 tax + 30 charge).
+//
+// Refunding line B THEN line A, each as its own request, used to recover
+// only 2 of the 3 charge-tax units (a 1-unit discrepancy). Both before and
+// after the fix, each request's tax bands are (re)derived from THAT
+// request's own line subset (pos.ServiceChargeTax(serviceChargeRefund,
+// ChargeTaxLinesFromSale(lines), ...) is unchanged) -- what changed is the
+// CHARGE AMOUNT fed into that recomputation: pre-fix it was prorated by
+// gross share (refundGross/origGross), post-fix by net-after-discount
+// share (refundNetWeight/origNetWeight), matching the basis
+// ApportionServiceChargeTax itself weighs by (ADR-0061). In THIS
+// particular sale (each refund happens to touch exactly one whole rate
+// group), that basis switch is what recovers the missing unit. Since each
+// refunded line's own tax rate is fixed and unambiguous, the line-tax
+// component (20, all from line B) can't drift -- so asserting the total
+// tax summed across both partial refunds equals the original sale's exact
+// 23 isolates and proves the charge-tax component landed on the full 3,
+// not 2. This is NOT a general exactness guarantee for every split-refund
+// shape (see the code comment above the fix, and
+// TestPostRefund_LineDiscountedMultiPartialRefundNeverExceedsOriginalServiceCharge
+// below for the case where it still under-refunds by design, bounded by
+// an explicit clamp rather than by luck of the arithmetic).
+func TestPostRefund_SplitRefundServiceChargeTaxSumsExactly(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-charge-split-1215", "R-REFUND-CHARGE-SPLIT-1215"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 200, 0, 23, 253, 30, 0, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-split-a', ?, 1, 'itm-a', 'Widget A', 'A', 1, 200, 100, 0, 0, 100, 100)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-split-b', ?, 2, 'itm-b', 'Widget B', 'B', 1, 100, 0, 2000, 20, 100, 120)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-split-1215', ?, 'cash', 253, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Refund line B (index 1) alone, then line A (index 0) alone, as two
+	// separate requests -- the split-refund shape the bug needs.
+	for _, form := range []string{"qty_1=1", "qty_0=1"} {
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&"+form))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("refund (%s) failed: %d %s", form, rec.Code, rec.Body.String())
+		}
+	}
+
+	var totalCharge, totalTax, totalTotal int64
+	if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(service_charge_amount), 0), COALESCE(SUM(tax_total), 0), COALESCE(SUM(total), 0) FROM sales WHERE sale_type = 'return'`).Scan(&totalCharge, &totalTax, &totalTotal); err != nil {
+		t.Fatalf("sum return sales: %v", err)
+	}
+	if totalCharge != 30 {
+		t.Fatalf("two split refunds covering every unit must sum to the full 30 service charge, got %d", totalCharge)
+	}
+	if totalTax != 23 {
+		t.Fatalf("split refund tax must sum to the original sale's exact 23 (20 line tax + 3 charge tax) -- got %d (pre-fix this landed on 22, one charge-tax unit short)", totalTax)
+	}
+	if totalTotal != 253 {
+		t.Fatalf("split refund totals must sum to the original sale's exact 253, got %d", totalTotal)
+	}
+}
+
+// TestPostRefund_LineDiscountedMultiPartialRefundNeverExceedsOriginalServiceCharge
+// is ut-docs#1215's independent review finding B1: prorating the line
+// discount for a partial-quantity refund floors (`int64(float64(l.
+// LineDiscount) * share)`, ~30 lines up), so each request's own refunded
+// net is slightly LARGER than its true proportional share -- summed across
+// several sequential partial refunds of the SAME line, the cumulative net
+// can exceed the original line's net entirely. Feeding that inflated net
+// straight into the service-charge proration (uncapped) let the charge
+// itself be over-refunded: a real driven repro during review turned a 299
+// charge into 300 paid back (3 refunds of 1 unit each, single 0%-rate
+// line, a 10 line discount that doesn't divide evenly by 3). The fix is
+// the explicit clamp in the handler (against
+// data.RefundedServiceChargeTotal, i.e. what's ACTUALLY already been paid
+// back) -- this test pins that the cumulative charge refunded can never
+// exceed the original 299, no matter how the per-request math floors.
+func TestPostRefund_LineDiscountedMultiPartialRefundNeverExceedsOriginalServiceCharge(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-b1-1215", "R-REFUND-B1-1215"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 290, 0, 0, 589, 299, 0, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-b1', ?, 1, 'itm-b1', 'Widget', 'W1', 3, 100, 10, 0, 0, 290, 290)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-b1', ?, 'cash', 589, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("refund %d failed: %d %s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+
+	var totalCharge int64
+	if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(service_charge_amount), 0) FROM sales WHERE sale_type = 'return'`).Scan(&totalCharge); err != nil {
+		t.Fatalf("sum return service charges: %v", err)
+	}
+	if totalCharge > 299 {
+		t.Fatalf("three 1-of-3 refunds must never pay back more than the original 299 service charge, got %d (over-refund)", totalCharge)
+	}
+	if totalCharge != 299 {
+		t.Fatalf("expected the clamp to recover the exact original 299 in this fixture (100+100+99, the last request absorbing the clamp), got %d", totalCharge)
+	}
+	// Deliberately not asserting on the overall `total`/subtotal here: the
+	// per-request line-discount flooring above also over-refunds the
+	// SUBTOTAL by a similar minor unit, independently of the service
+	// charge -- a real, pre-existing gap (present with or without this
+	// card's fix, confirmed during review) that this card does not fix.
+	// Tracked separately so it isn't lost: ut-docs#1531.
+}
+
+// TestPostRefund_FullRefundOfFullyDiscountedLineWithChargeStillSucceeds is
+// ut-docs#1215's independent review finding B2: switching the service-
+// charge proration guard from `origGross > 0` to `origNetWeight > 0`
+// (net-after-discount can be zero even when gross is positive -- e.g.
+// every line is 100% line-discounted) made a previously-refundable sale
+// fail outright: the charge refund computed to 0, so the required payment
+// was 0, and pos.CompleteSale rejects a non-positive payment amount. This
+// pins that such a sale -- a fully line-discounted line, still carrying a
+// legitimate service charge (ADR-0061's own zero-weight rule already
+// allows this on the SALE side, landing the whole charge+tax on the
+// highest band) -- can still be refunded in full, via the gross fallback.
+func TestPostRefund_FullRefundOfFullyDiscountedLineWithChargeStillSucceeds(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-b2-1215", "R-REFUND-B2-1215"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 0, 0, 6, 36, 30, 0, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-b2', ?, 1, 'itm-b2', 'Widget', 'W2', 1, 100, 100, 2000, 0, 0, 0)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-b2', ?, 'cash', 36, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refund failed: %d %s (pre-fix regression: this used to 400 with a fully line-discounted line)", rec.Code, rec.Body.String())
+	}
+
+	var returnCharge, returnTax, returnTotal int64
+	if err := dp.Db.QueryRow(`SELECT service_charge_amount, tax_total, total FROM sales WHERE sale_type = 'return'`).Scan(&returnCharge, &returnTax, &returnTotal); err != nil {
+		t.Fatalf("read return sale: %v", err)
+	}
+	if returnCharge != 30 || returnTax != 6 || returnTotal != 36 {
+		t.Fatalf("expected the full charge/tax/total (30/6/36) back via the gross fallback, got %d/%d/%d", returnCharge, returnTax, returnTotal)
+	}
+}
+
+// TestPostRefund_RefundingOnlyAFullyDiscountedLineStillSucceeds is
+// ut-docs#1215's independent review finding B3 (round 2): the B2 fallback
+// above keys on the WHOLE SALE's net weight (`origNetWeight == 0`), so it
+// doesn't engage when the sale overall has positive net weight but THIS
+// PARTICULAR request only refunds a comped/BOGO/staff-freebie line (net
+// 0, gross > 0) while a DIFFERENT, unrefunded line elsewhere in the sale
+// is what makes origNetWeight positive. Driven repro during review: a
+// sale with a comped line (3 @ 100, fully line-discounted, net 0) plus a
+// full-price line (1 @ 100, net 100) and a 50 service charge -- refunding
+// the comped line ALONE used to 400 ("Sale could not be completed") on
+// this branch even though the identical request succeeds on main. Fixed
+// by keying the fallback on THIS REQUEST's own refundNetWeight too, not
+// just the sale's origNetWeight.
+func TestPostRefund_RefundingOnlyAFullyDiscountedLineStillSucceeds(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-b3-1215", "R-REFUND-B3-1215"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 100, 0, 0, 150, 50, 0, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	// Line 0: the comped line -- 3 units @ 100, fully line-discounted
+	// (net 0), still positive gross (300).
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-b3-comped', ?, 1, 'itm-b3-comped', 'Comped Widget', 'C1', 3, 100, 300, 0, 0, 0, 0)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	// Line 1: full-price -- 1 unit @ 100, no discount (net 100). This is
+	// what makes origNetWeight positive for the sale overall.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-b3-full', ?, 2, 'itm-b3-full', 'Full Widget', 'F1', 1, 100, 0, 0, 0, 100, 100)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-b3', ?, 'cash', 150, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Refund the comped line (index 0) ALONE first -- the exact shape B3
+	// found broken (this request's own refundNetWeight is 0, even though
+	// the sale's origNetWeight is 100 from the untouched full-price line).
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=3"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refunding the comped line alone failed: %d %s (this must succeed -- it works on main today)", rec.Code, rec.Body.String())
+	}
+
+	// Then refund the full-price line (index 1) in a SEPARATE request --
+	// the clamp (B1) must still land the cumulative charge on the exact
+	// original 50, not over- or under-shoot it.
+	req2 := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_1=1"))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("refunding the remaining full-price line failed: %d %s", rec2.Code, rec2.Body.String())
+	}
+
+	var totalCharge int64
+	if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(service_charge_amount), 0) FROM sales WHERE sale_type = 'return'`).Scan(&totalCharge); err != nil {
+		t.Fatalf("sum return service charges: %v", err)
+	}
+	if totalCharge != 50 {
+		t.Fatalf("expected the two refunds to land on the exact original 50 service charge (37 gross-fallback + 13 clamped), got %d", totalCharge)
+	}
+}
+
 func TestRefundPage_ShowsRefundableLines(t *testing.T) {
 	mux, dp, _ := newRefundTestDeps(t)
 	_, receiptNo := seedCompletedSaleForRefund(t, dp)

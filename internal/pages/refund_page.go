@@ -212,6 +212,18 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
 			return
 		}
+		// Double-refund guard for the service charge itself (ut-docs#1215
+		// review finding B1): how much of the ORIGINAL charge prior
+		// completed returns already paid back, so THIS request's own
+		// proration (below) can be clamped to never push the cumulative
+		// total past the original charge -- same failure class as the
+		// per-line quantity guard `returned` feeds above, just for the
+		// charge instead of the lines.
+		alreadyRefundedCharge, err := repo.RefundedServiceChargeTotal(r.Context(), detail.ID)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
+			return
+		}
 		locID, err := repo.EnsureStockLocation(r.Context())
 		if err != nil {
 			// Same generic internal-DB-failure class as the ReturnedQuantities
@@ -225,11 +237,26 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			return
 		}
 
+		// Needed below for the service-charge proration basis (net, not
+		// gross -- ut-docs#1215) as well as computeRefundTotal further
+		// down; hoisted here since it only depends on detail, not on which
+		// lines end up refunded.
+		inclusive := saleIsTaxInclusive(detail)
+
 		// Collect requested quantities; enforce the double-refund guard.
 		var lines []pos.SaleLineInput
 		var refundGross, origGross int64
+		var refundNetWeight int64
+		// origNetWeight is the SAME true (tax-exclusive), net-after-line-
+		// discount basis ApportionServiceChargeTax itself weighs bands by
+		// (pos.TrueNetWeight) -- summed across every ORIGINAL line, not just
+		// the ones this request refunds. Used below to prorate the service
+		// charge by net share instead of gross share (ut-docs#1215).
+		var origNetWeight int64
 		for _, l := range detail.Lines {
 			origGross += int64(float64(l.UnitPrice) * l.Qty)
+			net := pos.AmountForQuantity(money.FromMinor(l.UnitPrice), l.Qty).Sub(money.FromMinor(l.LineDiscount))
+			origNetWeight += pos.TrueNetWeight(net, l.TaxRateBP, inclusive).Minor()
 		}
 		// Same TRUE-pool accounting as refundableLines (the page's display
 		// computation) — using each line's own l.Qty - returned[key] here
@@ -271,6 +298,10 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				OrderType: l.OrderType,
 			})
 			refundGross += int64(float64(l.UnitPrice) * qty)
+			// Same true-net basis as origNetWeight above, this time over just
+			// the lines THIS request refunds (ut-docs#1215).
+			refundNet := pos.AmountForQuantity(money.FromMinor(l.UnitPrice), qty).Sub(money.FromMinor(lineDiscount))
+			refundNetWeight += pos.TrueNetWeight(refundNet, l.TaxRateBP, inclusive).Minor()
 		}
 		if len(lines) == 0 {
 			http.Error(w, "select at least one item to refund", http.StatusBadRequest)
@@ -282,16 +313,71 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if detail.DiscountTotal > 0 && origGross > 0 {
 			saleDiscount = detail.DiscountTotal * refundGross / origGross
 		}
-		// Service charge (ut-docs#243): prorated by the SAME refunded-share
-		// fraction as the discount above, not "never refunded" -- a full
-		// refund of every line (refundGross == origGross) returns the exact
-		// original amount back (integer division is exact in that case),
-		// and a partial refund returns its proportional share. Before this,
-		// the charge was silently kept by the shop on every refund because
-		// this SaleInput never carried it at all.
+		// Service charge (ut-docs#243, refined ut-docs#1215): prorated by
+		// NET-AFTER-DISCOUNT -- the same true, tax-exclusive weighting basis
+		// ApportionServiceChargeTax itself uses (ADR-0061 Decision 2), NOT
+		// by gross. Gross-basis proration (the original #243 fix, matching
+		// SaleDiscount's own gross proration one line up -- a deliberately
+		// different basis, see N4 in
+		// docs/code-reviews/2026-08-28-service-charge-refund-proration-243.md)
+		// is exact for a single full refund but drifts on a SPLIT/partial
+		// refund of a sale that mixes per-line discounts and different tax
+		// rates alongside a charge apportioned across bands (not a flat
+		// basis): the tax this amount feeds below (pos.ServiceChargeTax,
+		// and pos.CompleteSale's own computeSaleTotals for the persisted
+		// return) weighs by NET, so a gross-derived amount mixes two
+		// different bases. Net-after-discount throughout matches that
+		// downstream weighting for the common case (see ut-docs#1215's own
+		// derivation for exactly which split-refund shapes it fixes and
+		// which it doesn't -- it is NOT a general exactness guarantee, only
+		// a closer approximation than gross was); a per-line-discounted,
+		// multi-request split can still drift by a minor unit in EITHER
+		// direction, which is exactly why the clamp below exists.
 		var serviceChargeRefund int64
-		if detail.ServiceCharge > 0 && origGross > 0 {
-			serviceChargeRefund = detail.ServiceCharge * refundGross / origGross
+		if detail.ServiceCharge > 0 {
+			switch {
+			case origNetWeight > 0 && refundNetWeight > 0:
+				serviceChargeRefund = detail.ServiceCharge * refundNetWeight / origNetWeight
+			case origGross > 0:
+				// Review findings B2 (round 1) + B3 (round 2): the net
+				// basis can't apportion anything either when the WHOLE
+				// sale's net-after-discount is zero (origNetWeight == 0,
+				// B2's shape: every line fully line-discounted) OR when
+				// only THIS REQUEST's own refunded lines have zero net
+				// while other, unrefunded lines in the sale carry the
+				// sale's net (refundNetWeight == 0, B3's shape: refunding
+				// a comped/BOGO/staff-freebie line on its own, gross > 0
+				// but net == 0, while a different line elsewhere in the
+				// same sale is what makes origNetWeight positive). Either
+				// way, fall back to the gross fraction (this card's
+				// pre-fix basis, and the same edge
+				// ApportionServiceChargeTax's own zero-weight rule exists
+				// to handle on the sale side) so the sale stays refundable
+				// instead of computing a $0 charge refund that then fails
+				// CompleteSale's payment-must-be-positive check. Safe
+				// against B1 either way: the clamp below applies
+				// regardless of which branch produced the raw figure.
+				serviceChargeRefund = detail.ServiceCharge * refundGross / origGross
+			}
+			// Review finding B1: clamp against what's ACTUALLY left to
+			// refund, not just this request's own fraction of the whole.
+			// Flooring the per-request prorated line discount above (line
+			// ~277) makes each request's own refundNetWeight/refundGross
+			// slightly larger than its true proportional share, so the SUM
+			// of independently-computed per-request figures across several
+			// sequential partial refunds of the same sale can exceed the
+			// original charge -- a real money over-refund, verified via a
+			// driven repro during review. This clamp is what actually
+			// guarantees the invariant TestPostRefund_
+			// UnevenSequentialRefundsNeverExceedTheOriginalServiceCharge
+			// pins ("never more"): it no longer holds by luck of the
+			// arithmetic, it's now enforced.
+			if remaining := detail.ServiceCharge - alreadyRefundedCharge; serviceChargeRefund > remaining {
+				if remaining < 0 {
+					remaining = 0
+				}
+				serviceChargeRefund = remaining
+			}
 		}
 
 		method := strings.TrimSpace(r.Form.Get("method"))
@@ -306,9 +392,9 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			return
 		}
 
-		inclusive := saleIsTaxInclusive(detail)
 		// Engine computes the refund total from the same inputs as the
-		// original sale; the payment must cover it exactly.
+		// original sale; the payment must cover it exactly. (`inclusive`
+		// was already resolved above, before the service-charge proration.)
 		refundTotal := computeRefundTotal(lines, money.FromMinor(saleDiscount), money.FromMinor(serviceChargeRefund), detail.ServiceChargeTaxBasisBP, inclusive)
 
 		// Payment-provider refund (payment-provider contract): if the refund
