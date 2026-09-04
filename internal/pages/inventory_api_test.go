@@ -10,6 +10,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -488,6 +489,74 @@ func TestCreateReturn_ByReceiptNo(t *testing.T) {
 		`{"receipt_no":"`+receiptNo+`","reason":"faulty","lines":[{"line_id":"`+lineID+`","quantity":1}]}`)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 looking up by receipt_no, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// seedInclusiveEURSaleForReturn seeds a German-shop-shaped original sale —
+// EUR currency, VAT-inclusive pricing (unit_price is the gross, tax-included
+// price, and the sale header's own arithmetic makes
+// pos.InferTaxInclusive/saleIsTaxInclusive read it as inclusive) — for
+// ut-docs#1494's regression coverage: CreateReturn must derive the return's
+// Currency/TaxInclusive from THIS sale, not the English-market default.
+func seedInclusiveEURSaleForReturn(t *testing.T, dp *common.Deps) (saleID, lineID string) {
+	t.Helper()
+	ctx := context.Background()
+	saleID = "sale-return-eur-inclusive"
+	// subtotal(120) == subtotal - discount(0) + serviceCharge(0) +
+	// voucherIssueTotal(0) with taxTotal(20) != 0 -> InferTaxInclusive true.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, 'R-RETURN-EUR-1', 'completed', 'sale', 'EUR', 120, 0, 20, 120, datetime('now'), datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	lineID = "line-return-eur-1"
+	// unit_price is the gross (tax-inclusive) selling price, as an
+	// inclusive-priced shop's catalog prices are.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES(?, ?, 1, 'itm1', 'Apple', 'ABC', 1, 120, 2000, 20, 100, 120)`, lineID, saleID); err != nil {
+		t.Fatal(err)
+	}
+	return saleID, lineID
+}
+
+// TestCreateReturn_UsesOriginalSaleCurrencyAndTaxMode is the regression test
+// for ut-docs#1494: CreateReturn used to hardcode Currency:"GBP" and leave
+// TaxInclusive at its false zero value regardless of the original sale, so a
+// German (EUR, inclusive-priced) shop's return was signed and persisted as
+// "currency":"GBP","tax_inclusive":false. It must instead derive both from
+// the original sale, same source refund_page.go's sibling flow reads.
+func TestCreateReturn_UsesOriginalSaleCurrencyAndTaxMode(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	saleID, lineID := seedInclusiveEURSaleForReturn(t, dp)
+
+	rec := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"faulty","lines":[{"line_id":"`+lineID+`","quantity":1}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	respData, hasData, errVal, hasError := envelopeOf(t, rec.Body.Bytes())
+	if !hasData || !hasError {
+		t.Fatalf("expected a {data,error} envelope, got %s", rec.Body.String())
+	}
+	if string(errVal) != "null" {
+		t.Fatalf("expected error:null on success, got %s: full body %s", errVal, rec.Body.String())
+	}
+	var parsed struct {
+		ReturnSaleID string `json:"return_sale_id"`
+	}
+	if err := json.Unmarshal(respData, &parsed); err != nil || parsed.ReturnSaleID == "" {
+		t.Fatalf("expected a return_sale_id in the response data, got %s (err: %v)", respData, err)
+	}
+
+	repo := data.NewPOSRepo(dp.Db)
+	returnDetail, found, err := repo.GetSaleDetailByID(context.Background(), parsed.ReturnSaleID)
+	if err != nil || !found {
+		t.Fatalf("expected to find the persisted return sale %q: found=%v err=%v", parsed.ReturnSaleID, found, err)
+	}
+	if returnDetail.Currency != "EUR" {
+		t.Fatalf("return was persisted as currency %q, want EUR (from the original sale) — the ut-docs#1494 hardcoded-GBP bug", returnDetail.Currency)
+	}
+	if !saleIsTaxInclusive(returnDetail) {
+		t.Fatalf("return sale %+v does not read back as tax-inclusive, want it to match the original EUR-inclusive sale's pricing mode", returnDetail)
 	}
 }
 
