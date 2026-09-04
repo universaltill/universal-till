@@ -107,3 +107,48 @@ func TestRefundFiscalSignAsk_UnreachableDeclaredProceedsAndDeclares(t *testing.T
 	}
 	assertNoFiscalSignRetryQueue(t, dp)
 }
+
+// (iii) Known-offline short-circuit (ut-docs#1493): the refund POST body's
+// own "offline" field (the #offline-flag hidden input, same convention
+// completeTender's sale path already uses) must thread into
+// dispatchFiscalSignAsk exactly like TestFiscalSignAsk_KnownOfflineShortCircuits
+// already proves for a sale — never dispatching to the signer at all (never
+// burning the fiscalSignAskBudget on a cloud call already known to fail),
+// and declaring the honest "known-offline" reason rather than a generic
+// backend-timeout one.
+func TestRefundFiscalSignAsk_KnownOfflineShortCircuits(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	t.Cleanup(func() { plugins.SharedBus(dp.Db).ResetSubscribers() })
+	var invocations atomic.Int32
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-offline-refund", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		invocations.Add(1)
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2&offline=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("known-offline refund must still complete, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := invocations.Load(); n != 0 {
+		t.Fatalf("known-offline refund must never dispatch to the signer, got %d invocations", n)
+	}
+	var refundSaleID string
+	if err := dp.Db.QueryRow(`SELECT id FROM sales WHERE sale_type = 'return'`).Scan(&refundSaleID); err != nil {
+		t.Fatalf("expected a return sale row: %v", err)
+	}
+	var markerPayload string
+	if err := dp.Db.QueryRow(`SELECT data_json FROM audit_log WHERE entity_type='sale' AND entity_id=? AND action='unsigned_fiscal_signing'`, refundSaleID).
+		Scan(&markerPayload); err != nil {
+		t.Fatalf("expected an unsigned_fiscal_signing marker for the offline refund: %v", err)
+	}
+	if !strings.Contains(markerPayload, "known-offline") || !strings.Contains(markerPayload, `"known_offline":true`) {
+		t.Fatalf("marker payload should carry the honest known-offline reason (not a generic backend-timeout one), got %s", markerPayload)
+	}
+	assertNoFiscalSignRetryQueue(t, dp)
+}

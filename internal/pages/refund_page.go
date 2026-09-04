@@ -435,6 +435,17 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			OriginalSaleID:          detail.ID,
 			Note:                    "refund of " + detail.ReceiptNo,
 			AllowNegativeInventory:  true, // returns only add stock back
+			// ut-docs#1493: mirrors completeTender's (pos_api.go) own
+			// offline-flag handling — the till's navigator.onLine-derived
+			// offline state, threaded from #offline-flag via the "offline"
+			// form field (review finding: unlike index.html, this page
+			// carries no #offline-override manual-toggle checkbox, so —
+			// deliberately, per this card's non-goals — that toggle does
+			// NOT reach this signal; navigator.onLine alone drives it
+			// here), so a known-offline refund also gets ADR-0044 D1's
+			// known-offline short-circuit instead of burning the full 3s
+			// fiscalSignAskBudget on a cloud call already known to fail.
+			Offline: formFlagTruthy(r.Form.Get("offline")),
 		}
 
 		// fiscal.sign.ask (ADR-0044 Decision 1, ut-docs#999/#1405): a refund
