@@ -92,7 +92,16 @@ var adminTables = []adminTable{
 	// in review, ut-docs#1546): retire in place via the table's own
 	// `enabled` column, same shape as the is_active fallback above.
 	{name: "tables", pk: []string{"id"}, hasIsActive: true, activeCol: "enabled"},
-	{name: "kitchen_stations", pk: []string{"id"}},
+	// printer_address is till-LOCAL and must not travel (ut-docs#1546 review,
+	// caught independently by a second concurrent cycle sweeping this same
+	// PR). The field accepts a network address OR a device path (see
+	// help/*/kitchen-stations.md), and a device path is local by
+	// construction: a satellite inheriting the primary's "/dev/usb/lp0" would
+	// print the primary's kitchen tickets to whatever happens to be plugged
+	// into its own first USB port, or nowhere. With the column skipped, a
+	// routed line falls back to the satellite's own default kitchen printer
+	// (kitchen_print.go). Same shape as payment_methods' skipCols above.
+	{name: "kitchen_stations", pk: []string{"id"}, skipCols: []string{"printer_address"}},
 	{name: "item_station_routes", pk: []string{"item_id", "station_id"}},
 	{name: "category_station_routes", pk: []string{"category_id", "station_id"}},
 	{name: "translation_overrides", pk: []string{"locale", "key"}},

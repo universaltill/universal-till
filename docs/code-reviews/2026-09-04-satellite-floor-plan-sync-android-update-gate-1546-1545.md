@@ -205,3 +205,64 @@ covering the new disappearing behaviour; `make docs-shots` regenerated
 - ut-docs#1546: a guard that fails when a new shop-wide table is added to
   the schema without a conscious sync decision — not built this pass.
 - The `update_api.go` freshness-check-before-auth ordering nit above.
+
+## Addendum — a second concurrent cycle independently swept the same PR
+
+While this review was in flight, a second run of this pipeline's own lane
+also picked up PR #769 and pushed its own resolution (`f08d243`, no claim
+marker, ~25 minutes after this cycle's PR-comment claim) — the residual
+race `scrum-master` SKILL.md step 0c's PR-claim mechanism explicitly
+accepts as a possible outcome. That push did not merge `main` (so it would
+have hit the same #1539-supersession conflict this review already resolved,
+and its title/body still claimed #1539) and rebuilt the `#1539` portion of
+its own working tree from saved file snapshots over a fresh checkout rather
+than merging — which is how it independently regressed the same
+`label[hidden]` CSS rule and the #1540 help-doc text this review's own
+merge-conflict resolution took `main`'s version to avoid. Its own
+independent review (Fable 5.1, documented in that push's
+`docs/code-reviews/2026-09-04-sync-gap-update-gate-rail-chip.md`) found
+those two regressions plus, genuinely independently of this review, two real
+defects this review had not caught:
+
+- **`kitchen_stations.printer_address` was syncing to satellites.** The
+  column accepts a network address *or a device path*; a satellite
+  inheriting the primary's `/dev/usb/lp0` would print kitchen tickets to
+  whatever is plugged into its own first USB port, or nowhere. Cherry-picked
+  onto this branch: `skipCols: []string{"printer_address"}}`, same shape as
+  `payment_methods`' existing skip, with
+  `TestAdminDumpApplyRoundTrip_KitchenStationPrinterAddressStaysLocal`
+  (re-verified personally: reverting the skip fails the test with the
+  station's `printer_address` overwritten by the primary's value; restoring
+  passes).
+- **A cashier with no PIN could still trigger the Android install endpoint's
+  outbound releases-API call.** `androidInstallCheckNow` ran before any
+  permission check, so a cashier tapping repeatedly burns the shop's
+  unauthenticated GitHub rate budget and can starve the daily background
+  check. Cherry-picked: reordered to cheap local permission test → network
+  call → PIN, so an unauthorised caller never reaches the network, while a
+  correct manager PIN still can't be spent on a no-op (unchanged from this
+  review's own ordering rationale). Added
+  `TestAndroidInstallRefusesCashierBeforeAnyNetworkCall` (re-verified
+  personally: reverting the reorder makes the network call run for a
+  refused cashier and shows a stale call count for the authorised path;
+  restoring passes).
+
+Their `label[hidden]`/help-doc regressions were never present on this
+branch (this review's merge took `main`'s version of both from the start,
+per the "Background" section above) — no action needed for those two. Their
+recorded-but-deliberately-unfixed `tables` ghost-row finding is superseded
+by this review's own fix for the same gap (see SHOULD-FIX above), which
+goes further (retires in place rather than leaving a recorded ghost). Their
+one genuinely new, not-yet-tracked finding — **neither the `tables` nor
+`kitchen_stations` admin page is replica-gated**, so a satellite operator
+can edit shop-wide floor-plan/routing config and watch it silently revert
+on the next sync pull — is added as a comment on ut-docs#1546 rather than
+fixed here (same "needs a UX/architecture decision" bar as the
+roles/permissions gap already deferred there).
+
+This branch (`cd2ea4d` → amended) is pushed over `f08d243` (force, with the
+rationale above recorded in a PR comment) as the more complete resolution —
+it carries everything real from both reviews, merges current `main`
+correctly, and has no unreviewed regression. Re-ran the full gate after the
+cherry-picks: `gofmt`/`build`/`vet` clean, `go test ./internal/...` (all
+packages) green, guards re-run clean.

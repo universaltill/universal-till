@@ -726,6 +726,41 @@ func TestAdminDumpApplyRoundTrip_FloorPlanAndKitchenRouting(t *testing.T) {
 	}
 }
 
+// ut-docs#1546 review: a kitchen station's name and routing are shop-wide, but
+// its printer_address is till-local — the field takes a network address OR a
+// device path, and a satellite inheriting the primary's "/dev/usb/lp0" prints
+// to whatever is plugged into its own first USB port, or nowhere.
+func TestAdminDumpApplyRoundTrip_KitchenStationPrinterAddressStaysLocal(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO kitchen_stations (id, name, destination_type, printer_address, created_at, updated_at)
+		VALUES ('stn-kitchen', 'Kitchen', 'printer', '/dev/usb/lp0', '2026-09-04', '2026-09-04')`)
+	mustExec(t, replica, `INSERT INTO kitchen_stations (id, name, destination_type, printer_address, created_at, updated_at)
+		VALUES ('stn-kitchen', 'Old name', 'printer', '192.168.1.50:9100', '2026-09-04', '2026-09-04')`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var name, addr string
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT name, printer_address FROM kitchen_stations WHERE id = 'stn-kitchen'`).Scan(&name, &addr); err != nil {
+		t.Fatalf("station missing after apply: %v", err)
+	}
+	if name != "Kitchen" {
+		t.Errorf("the station's shop-wide name should follow the primary, got %q", name)
+	}
+	if addr != "192.168.1.50:9100" {
+		t.Errorf("printer_address must stay the satellite's own — it inherited %q from the primary, so its kitchen tickets go to the wrong device or nowhere", addr)
+	}
+}
+
 // A table hard-removed on the primary while the SATELLITE still has a local
 // sale referencing it (found in review, ut-docs#1546) — the plain DELETE
 // above can never hit this path because tbl-1 has no referencing rows
