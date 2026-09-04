@@ -354,6 +354,10 @@ type ReturnRequest struct {
 	ReceiptNo      string              `json:"receipt_no"`
 	Lines          []ReturnLineRequest `json:"lines"`
 	Reason         string              `json:"reason"`
+	// Offline (ut-docs#1493): the till's declared offline state, same
+	// signal completeTender (pos_api.go) already threads into
+	// SaleInput.Offline — mirrored here for the JSON request path.
+	Offline bool `json:"offline,omitempty"`
 }
 
 type ReturnLineRequest struct {
@@ -393,6 +397,10 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			req.ReceiptNo = r.FormValue("receipt_no")
 			req.Reason = r.FormValue("reason")
 			// Note: Form handling for lines array would need custom parsing
+			// ut-docs#1493: same "offline" form field as the refund/sale
+			// paths (#offline-flag, formFlagTruthy) — form-encoded submits
+			// go through r.Form here since ParseForm already ran above.
+			req.Offline = formFlagTruthy(r.Form.Get("offline"))
 		}
 
 		// Extract actor from session
@@ -564,6 +572,10 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			Currency:               originalDetail.Currency,
 			TaxInclusive:           inclusive,
 			AllowNegativeInventory: true, // Returns add inventory
+			// ut-docs#1493: same known-offline short-circuit (ADR-0044 D1)
+			// as the refund/sale paths — see refund_page.go's identical
+			// comment.
+			Offline: req.Offline,
 		}
 
 		// fiscal.sign.ask (ADR-0044 Decision 1, ut-docs#999/#1405): a return

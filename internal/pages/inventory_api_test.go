@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
@@ -557,6 +558,74 @@ func TestCreateReturn_UsesOriginalSaleCurrencyAndTaxMode(t *testing.T) {
 	}
 	if !saleIsTaxInclusive(returnDetail) {
 		t.Fatalf("return sale %+v does not read back as tax-inclusive, want it to match the original EUR-inclusive sale's pricing mode", returnDetail)
+	}
+}
+
+// TestCreateReturn_FiscalSignAsk_ApprovedHasNoMarker establishes baseline
+// fiscal.sign.ask dispatch coverage for CreateReturn (ut-docs#1405 added
+// the dispatch here with no dedicated test — refund_page.go's sibling
+// flow already had this pair via refund_fiscal_sign_test.go) before the
+// ut-docs#1493 known-offline test below: a normal (online) return still
+// dispatches exactly once and completes with no unsigned marker.
+func TestCreateReturn_FiscalSignAsk_ApprovedHasNoMarker(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	t.Cleanup(func() { plugins.SharedBus(dp.Db).ResetSubscribers() })
+	var invocations atomic.Int32
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-return-ok", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		invocations.Add(1)
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+	saleID, _, lineID := seedCompletedSaleForReturn(t, dp)
+
+	rec := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"faulty","lines":[{"line_id":"`+lineID+`","quantity":1}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := invocations.Load(); n != 1 {
+		t.Fatalf("fiscal.sign.ask must be dispatched exactly once for the return, got %d invocations", n)
+	}
+	if n := countAuditRows(t, dp, "unsigned_fiscal_signing"); n != 0 {
+		t.Fatalf("approved return must carry no unsigned_fiscal_signing marker, got %d", n)
+	}
+}
+
+// TestCreateReturn_FiscalSignAsk_KnownOfflineShortCircuits is ut-docs#1493's
+// regression coverage for the inventory-return path: mirrors
+// TestRefundFiscalSignAsk_KnownOfflineShortCircuits (refund_fiscal_sign_test.go)
+// and TestFiscalSignAsk_KnownOfflineShortCircuits (the sale path) — the
+// return request's own "offline" field must thread into
+// dispatchFiscalSignAsk and skip the signer entirely (ADR-0044 D1) instead
+// of burning the fiscalSignAskBudget on a call already known to fail.
+func TestCreateReturn_FiscalSignAsk_KnownOfflineShortCircuits(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	t.Cleanup(func() { plugins.SharedBus(dp.Db).ResetSubscribers() })
+	var invocations atomic.Int32
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-return-offline", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		invocations.Add(1)
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+	saleID, _, lineID := seedCompletedSaleForReturn(t, dp)
+
+	rec := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"faulty","offline":true,"lines":[{"line_id":"`+lineID+`","quantity":1}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("known-offline return must still complete, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := invocations.Load(); n != 0 {
+		t.Fatalf("known-offline return must never dispatch to the signer, got %d invocations", n)
+	}
+	var returnSaleID string
+	if err := dp.Db.QueryRow(`SELECT id FROM sales WHERE sale_type = 'return'`).Scan(&returnSaleID); err != nil {
+		t.Fatalf("expected a return sale row: %v", err)
+	}
+	var markerPayload string
+	if err := dp.Db.QueryRow(`SELECT data_json FROM audit_log WHERE entity_type='sale' AND entity_id=? AND action='unsigned_fiscal_signing'`, returnSaleID).
+		Scan(&markerPayload); err != nil {
+		t.Fatalf("expected an unsigned_fiscal_signing marker for the offline return: %v", err)
+	}
+	if !strings.Contains(markerPayload, "known-offline") || !strings.Contains(markerPayload, `"known_offline":true`) {
+		t.Fatalf("marker payload should carry the honest known-offline reason (not a generic backend-timeout one), got %s", markerPayload)
 	}
 }
 

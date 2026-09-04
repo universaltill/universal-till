@@ -263,6 +263,26 @@ func TestRefundPage_UnknownReceiptRedirectsToJournal(t *testing.T) {
 	}
 }
 
+// TestRefundPage_RendersOfflineFlag is ut-docs#1493's template-render
+// regression check: a broken template edit could still return 200 (this
+// test's siblings don't touch this part of the page), so this asserts the
+// hidden #offline-flag input the fix depends on actually renders — without
+// it, a real browser submit could never carry the offline signal to
+// POST /api/refund no matter what refund_page.go's handler does with it.
+func TestRefundPage_RendersOfflineFlag(t *testing.T) {
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/refund/"+receiptNo, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /refund/%s: %d", receiptNo, rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `id="offline-flag" name="offline" value="0"`) {
+		t.Fatal("refund-form is missing its hidden offline-flag input (ut-docs#1493)")
+	}
+}
+
 func seedCompletedSaleForRefund(t *testing.T, dp *common.Deps) (saleID, receiptNo string) {
 	t.Helper()
 	ctx := context.Background()

@@ -124,6 +124,9 @@
     <details class="catalog-extra">
       <summary>{{ T "inventory.return_title" }}</summary>
       <form id="return-form" hx-post="/api/inventory/return" hx-swap="innerHTML" hx-target="#return-result">
+        <!-- ut-docs#1493: same known-offline short-circuit signal as
+             refund.html/index.html -- see refund.html's identical comment. -->
+        <input type="hidden" id="offline-flag" name="offline" value="0">
         <label>{{ T "inventory.original_receipt" }} <input type="text" name="receipt_no" required placeholder="000000123"></label>
         <label>{{ T "inventory.reason" }} <input type="text" name="reason" required placeholder="{{ T "inventory.return_reason_placeholder" }}"></label>
         <p class="muted" style="font-size:.8rem">{{ T "inventory.return_note" }}</p>
