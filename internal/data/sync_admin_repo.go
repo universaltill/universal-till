@@ -25,8 +25,11 @@ func NewSyncAdminRepo(db *sql.DB) *SyncAdminRepo { return &SyncAdminRepo{db: db}
 type adminTable struct {
 	name        string
 	pk          []string
-	hasIsActive bool     // fallback when a hard delete is FK-blocked (sales history)
-	unique      []string // non-PK UNIQUE columns, mangled on that fallback: a
+	hasIsActive bool   // fallback when a hard delete is FK-blocked (sales history)
+	activeCol   string // overrides the retire-in-place column name when the
+	// table's own soft-delete flag isn't literally named "is_active" (e.g.
+	// tables.enabled). Only meaningful together with hasIsActive.
+	unique []string // non-PK UNIQUE columns, mangled on that fallback: a
 	// kept-but-retired row must release values like sku/username, or the
 	// primary's row upserts into a UNIQUE violation and the whole apply
 	// rolls back — on every pull, forever.
@@ -73,7 +76,7 @@ var adminTables = []adminTable{
 	{name: "related_items", pk: []string{"item_id", "related_item_id"}},
 	{name: "promotions", pk: []string{"code"}, hasIsActive: true},
 	{name: "shortcut_buttons", pk: []string{"barcode"}},
-	// ut-docs#1542: the floor plan and kitchen routing are shop-wide setup,
+	// ut-docs#1546: the floor plan and kitchen routing are shop-wide setup,
 	// not per-till state, and were missing from this list entirely. Reported
 	// from the pilot pair on 2026-09-04 — "I added a table in the main till
 	// but it didn't sync with the secondary" — and it is worse than one
@@ -81,7 +84,14 @@ var adminTables = []adminTable{
 	// neither take nor settle a table order, and kitchen tickets routed on
 	// the primary went nowhere from the satellite. Ordered after items and
 	// categories because the two route tables carry FKs onto both.
-	{name: "tables", pk: []string{"id"}},
+	// A hard delete is FK-blocked once a table has ever been referenced by a
+	// sale/held-sale — the app itself never hard-deletes a table (it always
+	// soft-disables via SetTableEnabled, tables.enabled), but the sync
+	// fallback needs to mirror that convention too, or a hard-deleted-but-
+	// used row would silently stay a permanent ghost on the satellite (found
+	// in review, ut-docs#1546): retire in place via the table's own
+	// `enabled` column, same shape as the is_active fallback above.
+	{name: "tables", pk: []string{"id"}, hasIsActive: true, activeCol: "enabled"},
 	{name: "kitchen_stations", pk: []string{"id"}},
 	{name: "item_station_routes", pk: []string{"item_id", "station_id"}},
 	{name: "category_station_routes", pk: []string{"category_id", "station_id"}},
@@ -458,7 +468,11 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 		if t.hasIsActive || len(t.unique) > 0 {
 			var sets []string
 			if t.hasIsActive {
-				sets = append(sets, "is_active = 0")
+				col := t.activeCol
+				if col == "" {
+					col = "is_active"
+				}
+				sets = append(sets, col+" = 0")
 			}
 			pk := t.pk[0]
 			for _, c := range t.unique {

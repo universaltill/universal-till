@@ -55,7 +55,7 @@
   <h2>{{ T "settings.update.title" }} {{ helpLink "updates" }}</h2>
   <p class="muted">Universal Till v{{ appversion }}{{ if updateavailable }} &mdash; &#11014;&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}{{ end }}</p>
   {{ if and updateinstallbridge updateavailable }}
-  <!-- ut-docs#1541: gated on updateavailable, not just on the platform. The
+  <!-- ut-docs#1545: gated on updateavailable, not just on the platform. The
        PIN box and Download button used to render on every Android till
        whatever version it was on, so an operator already up to date was shown
        a control that could only waste a ~140MB download on the build they
@@ -99,6 +99,7 @@
         data-locked="{{ T "auth.error.locked" }}"
         data-pinneeded="{{ T "settings.update.android.pin_needed" }}"
         data-nobridge="{{ T "settings.update.android.no_bridge" }}"
+        data-uptodate="{{ T "settings.update.up_to_date" }}"
         data-wrongpin="{{ T "settings.display.exit_to_os_error" }}">
     <span id="android-update"></span>
     <!-- The PIN is hidden when the session alone will authorise (ut-docs#1537):
@@ -175,18 +176,37 @@
         }
         if (res.status === 429) { msg.textContent = T('locked'); return; }
         if (!res.ok) { msg.textContent = T('failed'); return; }
-        // Authorised. The bridge takes no url — it resolves the release
-        // APK itself — so nothing here chooses what gets installed.
-        if (window.AndroidKiosk && window.AndroidKiosk.installUpdate) {
-          window.AndroidKiosk.installUpdate();
-          // Left disabled and "downloading": ~140MB with no progress callback
-          // from the shell, so the honest state is in-progress until Android's
-          // own installer takes over the screen.
-          btn.disabled = true;
-          msg.textContent = T('downloading');
-          return;
-        }
-        msg.textContent = T('nobridge');
+        // ut-docs#1545: a 200 is NOT "go ahead and download". The endpoint's
+        // freshness re-check answers { data: { already_current: true } } with
+        // status 200 (the { data, error } envelope, CLAUDE.md / ut-docs#387),
+        // and that is the WHOLE point of the server-side half of this fix:
+        // the template's `updateavailable` comes from a check up to 24h stale,
+        // so this control can legitimately render on a till that has since
+        // become current. Treating any 200 as authorisation walked straight
+        // past that answer into installUpdate() and downloaded ~140MB to
+        // reinstall the running build — exactly the symptom reported from the
+        // pilot tablet ("even if there is no new version ... after 10~15
+        // seconds it shows the download window"). base.html's status-bar chip
+        // reads the same field for the same reason; keep the two in step.
+        return res.json().catch(function () { return {}; }).then(function (payload) {
+          var data = payload && payload.data;
+          if (data && data.already_current) {
+            msg.textContent = T('uptodate');
+            return;
+          }
+          // Authorised. The bridge takes no url — it resolves the release
+          // APK itself — so nothing here chooses what gets installed.
+          if (window.AndroidKiosk && window.AndroidKiosk.installUpdate) {
+            window.AndroidKiosk.installUpdate();
+            // Left disabled and "downloading": ~140MB with no progress callback
+            // from the shell, so the honest state is in-progress until Android's
+            // own installer takes over the screen.
+            btn.disabled = true;
+            msg.textContent = T('downloading');
+            return;
+          }
+          msg.textContent = T('nobridge');
+        });
       }).catch(function () { btn.disabled = false; msg.textContent = T('failed'); });
     });
   })();
@@ -1343,7 +1363,7 @@
        section never disappears while there's something real to see. -->
   <p class="muted" style="margin-top:.6rem">
     {{ T "sync.quarantine_settings_help" }}
-    {{ if gt .QuarantineCount 0 }}<strong>{{ .QuarantineCount }} {{ T "sync.chip_quarantined" }}</strong>{{ end }}
+    {{ if gt .QuarantineCount 0 }}<strong>{{ .QuarantineCount }} {{ if eq .QuarantineCount 1 }}{{ T "sync.chip_quarantined_one" }}{{ else }}{{ T "sync.chip_quarantined_other" }}{{ end }}</strong>{{ end }}
   </p>
   <a class="btn secondary" href="/sync-quarantine">{{ T "sync.quarantine_open" }}</a>
   {{ end }}

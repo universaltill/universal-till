@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -652,7 +653,7 @@ func TestAdminApplyDeactivatesUndeletable(t *testing.T) {
 	}
 }
 
-// ut-docs#1542, reported from the pilot pair on 2026-09-04: "I added a table
+// ut-docs#1546, reported from the pilot pair on 2026-09-04: "I added a table
 // in the main till but it didn't sync with the secondary (pi)."
 //
 // The floor plan and kitchen routing are shop-wide setup, not per-till state,
@@ -722,5 +723,54 @@ func TestAdminDumpApplyRoundTrip_FloorPlanAndKitchenRouting(t *testing.T) {
 	var n int
 	if err := replica.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM tables WHERE id='tbl-1'`).Scan(&n); err != nil || n != 0 {
 		t.Errorf("a table removed on the primary is still on the satellite (n=%d, err=%v)", n, err)
+	}
+}
+
+// A table hard-removed on the primary while the SATELLITE still has a local
+// sale referencing it (found in review, ut-docs#1546) — the plain DELETE
+// above can never hit this path because tbl-1 has no referencing rows
+// anywhere. Here the satellite's own history makes the delete FK-blocked
+// locally, exactly the "sales history" case every other adminTable's
+// hasIsActive fallback already exists for; tables must retire in place
+// (enabled=0) the same way, not silently keep a full ghost row an operator
+// could still seat customers at.
+func TestAdminApply_TableRetiredInPlaceWhenFKBlockedBySatelliteSaleHistory(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO tables (id, label, area_zone, seat_count, created_at, updated_at)
+		VALUES ('tbl-1', 'Table 1', 'Terrace', 4, '2026-09-04', '2026-09-04')`)
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	// The satellite took an order at this table before the primary removed it.
+	mustExec(t, replica, `INSERT INTO sales (id, receipt_no, subtotal, total, table_id)
+		VALUES ('sale-1', 'R-0001', 500, 500, 'tbl-1')`)
+
+	mustExec(t, primary, `DELETE FROM tables WHERE id = 'tbl-1'`)
+	bundle2, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("second dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle2); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+
+	var enabled int
+	err = replica.DB.QueryRowContext(ctx, `SELECT enabled FROM tables WHERE id='tbl-1'`).Scan(&enabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("the table row is gone entirely — the satellite's own sale (sale-1) now references a nonexistent table")
+	}
+	if err != nil {
+		t.Fatalf("query retired table: %v", err)
+	}
+	if enabled != 0 {
+		t.Errorf("a table the primary removed, but the satellite has sale history against, must retire in place (enabled=0) — got enabled=%d, an operator could still seat customers at it", enabled)
 	}
 }

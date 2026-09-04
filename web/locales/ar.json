@@ -1058,8 +1058,12 @@
   "sync.chip_following": "متصل بالصندوق الأساسي",
   "sync.chip_offline": "الصندوق الأساسي غير قابل للوصول — تُوضع المبيعات في قائمة الانتظار وتتزامن عند عودته",
   "sync.chip_quarantine_title": "عناصر المزامنة المعزولة — افتح القائمة",
-  "sync.chip_quarantined": "معزول",
-  "sync.chip_queued": "في الانتظار",
+  "sync.chip_quarantined_one": "معزول",
+  "sync.chip_quarantined_other": "معزول",
+  "sync.chip_queued_one": "في الانتظار",
+  "sync.chip_queued_other": "في الانتظار",
+  "sync.chip_till_one": "صندوق",
+  "sync.chip_till_other": "صناديق",
   "sync.chip_tills_title": "الصناديق المسجّلة — افتح صفحة الصناديق",
   "sync.error.server": "حدث خطأ ما. يرجى المحاولة مجددًا.",
   "sync.error.bad_path": "مسار غير صالح",
@@ -1876,7 +1880,5 @@
   "settings.update.android.downloading": "جارٍ التنزيل — سيطلب أندرويد تأكيدك عند الانتهاء",
   "settings.update.android.failed": "تعذّر بدء التحديث — تحقّق من الاتصال وحاول مجددًا",
   "settings.update.android.pin_needed": "أدخل رمز المدير لتثبيت هذا التحديث",
-  "settings.update.android.no_bridge": "لا يمكن تثبيت هذا التحديث إلا من تطبيق الجهاز نفسه",
-  "sync.chip_tills_one": "%d جهاز",
-  "sync.chip_tills_other": "%d أجهزة"
+  "settings.update.android.no_bridge": "لا يمكن تثبيت هذا التحديث إلا من تطبيق الجهاز نفسه"
 }

@@ -37,12 +37,6 @@ var railIcons = map[string]string{
 	"help": `<circle cx="12" cy="12" r="10"/><path d="M9.09 9a3 3 0 0 1 5.83 1c0 2-3 3-3 3"/><path d="M12 17h.01"/>`,
 	// Bug report (issuereport.nav_label)
 	"bug": `<path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/>`,
-	// Linked tills / sync status (ut-docs#1539). Two stacked
-	// devices with a link between them — the rail's only "this shop has more
-	// than one till" affordance. Added because the sync chip was the last rail
-	// item still drawing itself with an emoji (⇅), which ut-docs#1423 removed
-	// everywhere else precisely because emoji size differently per device font.
-	"tills": `<rect x="2" y="3" width="9" height="7" rx="1"/><rect x="13" y="14" width="9" height="7" rx="1"/><path d="M6.5 10v3a2 2 0 0 0 2 2h4"/><path d="M17.5 14v-3a2 2 0 0 0-2-2h-4"/>`,
 	// Users admin (users.title)
 	"users": `<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>`,
 	// Promotions (promotions.title)
@@ -53,6 +47,14 @@ var railIcons = map[string]string{
 	"user": `<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>`,
 	// Lock (auth.lock)
 	"lock": `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`,
+	// Sync chip / tills (sync.chip_tills_title, ut-docs#1539) — the one
+	// rail item ut-docs#1423 missed, still a bare "⇅" emoji + tinted pill
+	// until now. Two-way arrows, same visual idea as the emoji it replaces.
+	"sync": `<path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/>`,
+	// Fiscal chip (fiscal.chip_ok_title, ut-docs#1539) — was plain ✓/⚠ text
+	// with no icon and no link at all. A shield mirrors the "signed and
+	// verifiable" idea the ✓ glyph stood in for.
+	"fiscal": `<path d="M20 13c0 5-3.5 7.5-7.35 8.95a1 1 0 0 1-.6-.01C8.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.79 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.

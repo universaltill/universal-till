@@ -171,10 +171,22 @@ func TestSyncChip_ReplicaMode(t *testing.T) {
 	// ut-docs#405: was a bare <span>, not clickable at all.
 	// ut-docs#1539: and it is a rail MENU BUTTON now, so the link carries the
 	// same nav-toggle dress as every other rail item.
-	if !strings.Contains(body, `href="/tills"`) {
+	if !strings.Contains(body, `<a href="/tills"`) {
 		t.Fatalf("expected the replica chip to be a clickable link to the local /tills page, got %q", body)
 	}
-	assertRailMenuButton(t, body)
+	// ut-docs#1539: the ONE rail item ut-docs#1423 missed — was a bare "⇅"
+	// emoji, now the same .nav-toggle + inline-SVG-icon pattern as every
+	// other rail control, with an offline badge dot instead of a trailing
+	// "⚠" glyph appended to the label text.
+	if strings.Contains(body, "⇅") || strings.Contains(body, "⚠") {
+		t.Fatalf("expected no emoji glyph left in the rail chip, got %q", body)
+	}
+	if !strings.Contains(body, `class="nav-toggle"`) {
+		t.Fatalf("expected the replica chip to render as a rail .nav-toggle, got %q", body)
+	}
+	if !strings.Contains(body, `class="nav-badge"`) {
+		t.Fatalf("expected an offline badge dot on the icon for a stale/offline replica, got %q", body)
+	}
 
 	if err := dp.Settings.Set(ctx, "sync.last_contact_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
 		t.Fatalf("set last_contact_at: %v", err)
@@ -183,6 +195,9 @@ func TestSyncChip_ReplicaMode(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if !strings.Contains(rec.Body.String(), `sync-chip ok`) {
 		t.Fatalf("expected a fresh replica to render class=ok, got %q", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `class="nav-badge"`) {
+		t.Fatalf("expected NO badge dot once the replica is fresh/online, got %q", rec.Body.String())
 	}
 }
 
@@ -224,6 +239,14 @@ func TestSyncChip_PrimaryModeWithTills(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `sync-chip warn`) {
 		t.Fatalf("expected an unseen enrolled till to render class=warn, got %q", rec.Body.String())
 	}
+	// ut-docs#1539 (independent review): the stale-roster warn path reaches
+	// the badge through `{{ if or .quarantined (eq .class "warn") }}` — a
+	// different branch than the quarantine-driven warn case
+	// TestSyncChip_PrimaryModeWarnsAndLinksToQuarantineWhenEntriesExist
+	// already covers, so it needs its own assertion.
+	if !strings.Contains(rec.Body.String(), `class="nav-badge"`) {
+		t.Fatalf("expected a badge dot on the icon for a stale (never-seen) enrolled till, got %q", rec.Body.String())
+	}
 
 	// TillByBearerHash bumps last_seen_at as a side effect of authenticating
 	// (see syncTill / registerSyncAdmin's admin-bundle endpoint) -- simulate
@@ -241,18 +264,58 @@ func TestSyncChip_PrimaryModeWithTills(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "Front Counter") {
 		t.Fatalf("expected the primary's own name in the chip label, got %q", rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `href="/tills"`) {
+	if !strings.Contains(rec.Body.String(), `<a href="/tills"`) {
 		t.Fatalf("expected the primary chip to stay a clickable link to /tills, got %q", rec.Body.String())
 	}
-	assertRailMenuButton(t, rec.Body.String())
-	// ut-docs#1539: "1 till", never "1 tills". The old markup concatenated a
-	// count with a bare plural noun, so it read "1 tills" in English and
-	// "1 Kassen" in German — reported from the pilot tablet.
-	if !strings.Contains(rec.Body.String(), "<bdi>1 till</bdi>") {
-		t.Fatalf("expected a correctly singular till count, got %q", rec.Body.String())
+	// ut-docs#1539: the ONE rail item ut-docs#1423 missed — was a bare "⇅"
+	// emoji, now the same .nav-toggle + inline-SVG-icon pattern as every
+	// other rail control.
+	if strings.Contains(rec.Body.String(), "⇅") || strings.Contains(rec.Body.String(), "⚠") {
+		t.Fatalf("expected no emoji glyph left in the rail chip, got %q", rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "1") {
-		t.Fatalf("expected the till count in the chip, got %q", rec.Body.String())
+	if !strings.Contains(rec.Body.String(), `class="nav-toggle"`) {
+		t.Fatalf("expected the primary chip to render as a rail .nav-toggle, got %q", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), `class="nav-badge"`) {
+		t.Fatalf("expected NO badge dot once the enrolled till is fresh/online, got %q", rec.Body.String())
+	}
+	// ut-docs#1539: "1 Kassen"/"1 tills" — a single enrolled till must use
+	// the singular form ("1 till<", checked against the closing tag right
+	// after so "1 tills" — which also contains "1 till" as a substring —
+	// can't false-pass this).
+	if !strings.Contains(rec.Body.String(), "1 till<") {
+		t.Fatalf("expected the singular form for a count of 1, got %q", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "1 tills") {
+		t.Fatalf("expected NOT the plural form for a count of 1, got %q", rec.Body.String())
+	}
+}
+
+// ut-docs#1539: a second enrolled till must use the plural form — the
+// literal "1 Kassen"/"1 tills" bug report was about the count=1 case
+// reading wrong, but a bare, unconditional plural key was ALSO wrong for
+// English ("1 tills"), so the fix (real one/other keys) needs coverage on
+// both sides of the boundary, not just the count=1 case.
+func TestSyncChip_PrimaryModeWithMultipleTills(t *testing.T) {
+	dp := newMigratedSyncDeps(t, "primary-multi.db")
+	initPagesI18n(t)
+	ctx := t.Context()
+	tills := data.NewTillsRepo(dp.Db)
+	if _, err := tills.InsertTill(ctx, "Replica 1", hashBearer("token-1")); err != nil {
+		t.Fatalf("enrol till 1: %v", err)
+	}
+	if _, err := tills.InsertTill(ctx, "Replica 2", hashBearer("token-2")); err != nil {
+		t.Fatalf("enrol till 2: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	registerSyncAdmin(mux, dp)
+	req := httptest.NewRequest(http.MethodGet, "/ui/sync-chip", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if !strings.Contains(body, "2 tills") {
+		t.Fatalf("expected the plural form for a count of 2, got %q", body)
 	}
 }
 
@@ -298,10 +361,12 @@ func TestSyncChip_PrimaryModeWarnsAndLinksToQuarantineWhenEntriesExist(t *testin
 	if !strings.Contains(body, `sync-chip warn`) {
 		t.Fatalf("expected a nonzero quarantine count to force class=warn even with a fresh till, got %q", body)
 	}
-	if !strings.Contains(body, `href="/sync-quarantine"`) {
+	if !strings.Contains(body, `<a href="/sync-quarantine"`) {
 		t.Fatalf("expected the chip to link to /sync-quarantine when quarantined entries exist, got %q", body)
 	}
-	assertRailMenuButton(t, body)
+	if !strings.Contains(body, `class="nav-badge"`) {
+		t.Fatalf("expected a badge dot on the icon when quarantined entries exist, got %q", body)
+	}
 }
 
 // StartSyncPull must register its goroutine on the caller's wg (ut-docs#153),
@@ -561,26 +626,5 @@ func TestSyncPullTick_StockCorrectionsRunWhenQueueEmpty(t *testing.T) {
 	}
 	if v, _, _ := replica.Settings.Get(ctx, "sync.stock_version"); v == "" {
 		t.Fatalf("expected sync.stock_version set after a stock poll")
-	}
-}
-
-// assertRailMenuButton pins ut-docs#1539: the sync chip is a rail menu button,
-// dressed exactly like the bug-report and session items beside it. The product
-// owner's rule on finding it in the rail — "if it is a notification it can come
-// up from somewhere else; if it is a menu button it should be correct."
-//
-// The regression this guards is that ut-docs#1423 moved every rail item to an
-// inline SVG *because* emoji size differently per device font, and this one
-// item was missed: it kept drawing itself with a ⇅ glyph inside a tinted pill,
-// in a rail of plain icon buttons.
-func assertRailMenuButton(t *testing.T, body string) {
-	t.Helper()
-	for _, want := range []string{`class="nav-toggle sync-toggle"`, `class="nav-toggle-ico"`, `class="nav-toggle-label"`, `data-icon="tills"`} {
-		if !strings.Contains(body, want) {
-			t.Errorf("sync chip is missing %s — it must wear the same rail dress as every other menu button (ut-docs#1539), got %q", want, body)
-		}
-	}
-	if strings.Contains(body, "⇅") || strings.Contains(body, "⚠") {
-		t.Errorf("no emoji glyphs in the rail — that is ut-docs#1423's whole point; status belongs on the badge, got %q", body)
 	}
 }

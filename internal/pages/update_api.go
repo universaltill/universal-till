@@ -40,7 +40,7 @@ var (
 	autoUpdateCheckNow  = updates.CheckNow
 	autoUpdateSupported = selfupdate.Supported
 	// androidInstallCheckNow: the freshness re-check for the Android install
-	// endpoint (ut-docs#1541). A seam so a test can exercise both answers
+	// endpoint (ut-docs#1545). A seam so a test can exercise both answers
 	// without reaching the GitHub API.
 	androidInstallCheckNow = updates.CheckNow
 	autoUpdateApply        = selfupdate.Apply
@@ -347,7 +347,7 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 	// the bridge takes no URL. A caller who forges a success response gains
 	// no ability to install anything of their choosing.
 	mux.HandleFunc("POST /api/update/android-install", func(w http.ResponseWriter, r *http.Request) {
-		// ut-docs#1541: re-check freshness BEFORE authorising anything. The
+		// ut-docs#1545: re-check freshness BEFORE authorising anything. The
 		// desktop endpoint above has done this since 2026-07-28, when the
 		// status bar was caught offering "Update now v0.2.40" on a till
 		// already running v0.2.41; the Android endpoint never learned it. The

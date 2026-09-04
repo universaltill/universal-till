@@ -109,9 +109,19 @@ func fiscalChipHandler(dp *common.Deps) http.HandlerFunc {
 			}
 		}
 
+		// ut-docs#1539 (independent review): /fiscal-register is gated on
+		// "settings" (requireManager above, fiscal_register_page.go) — a
+		// cashier following this chip's link would hit a hard 403. Every
+		// other permission-sensitive rail control already handles this by
+		// not rendering the link at all for a session that can't use it
+		// (session_chip.html's `{{ if .isManager }}` admin links,
+		// nav.html's own doc comment on /ui/bugreport-chip's manager
+		// gating) — canManage follows the same "settings" action
+		// settings_page.go's own isManager flag already uses.
 		httpx.RenderPartial("ui/partials/fiscal_chip.html", map[string]any{
-			"class": class,
-			"count": count,
+			"class":     class,
+			"count":     count,
+			"canManage": canPerform(dp, r, "settings"),
 		})(w, r)
 	}
 }

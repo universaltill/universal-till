@@ -1058,8 +1058,12 @@
   "sync.chip_following": "Connected to the primary till",
   "sync.chip_offline": "Primary till unreachable — sales are queued and will sync when it is back",
   "sync.chip_quarantine_title": "Quarantined sync entries — open the list",
-  "sync.chip_quarantined": "quarantined",
-  "sync.chip_queued": "queued",
+  "sync.chip_quarantined_one": "quarantined",
+  "sync.chip_quarantined_other": "quarantined",
+  "sync.chip_queued_one": "queued",
+  "sync.chip_queued_other": "queued",
+  "sync.chip_till_one": "till",
+  "sync.chip_till_other": "tills",
   "sync.chip_tills_title": "Enrolled tills — open the Tills page",
   "sync.error.server": "Something went wrong. Please try again.",
   "sync.error.bad_path": "Invalid path",
@@ -1876,7 +1880,5 @@
   "settings.update.android.downloading": "Downloading — Android will ask you to confirm when it is ready",
   "settings.update.android.failed": "Could not start the update — check the connection and try again",
   "settings.update.android.pin_needed": "Enter the manager PIN to install this update",
-  "settings.update.android.no_bridge": "This update can only be installed from the till app itself",
-  "sync.chip_tills_one": "%d till",
-  "sync.chip_tills_other": "%d tills"
+  "settings.update.android.no_bridge": "This update can only be installed from the till app itself"
 }
