@@ -8,16 +8,42 @@
       <td>{{ .DeviceName }}</td>
       <td style="font-weight:bold; letter-spacing:.15em">{{ .VerificationCode }}</td>
       <td>
+        <!-- ut-docs#1540: hx-indicator + hx-disabled-elt (same proven
+             pattern as import.html's ut-docs#1510 fix) — approve/deny had
+             no in-flight feedback at all, so a manager pressing Approve on
+             a slow/LAN-flaky connection saw the button just sit there and
+             reasonably assumed nothing happened. "find button[type=submit]"
+             scopes hx-disabled-elt to THIS form's own button, not the
+             sibling approve/deny form's (they're separate <form>s in the
+             same <td>). The eventual full-page reload (HX-Refresh, below)
+             still does the real confirming — refreshing this list AND the
+             Enrolled Tills table — this indicator is only for the gap
+             before that response comes back.
+
+             The PIN box names its own device so two pending rows can't be
+             confused, with the FIXED half first in both the placeholder and
+             the aria-label (ut-docs#1540 review): device_name is untrusted,
+             unbounded LAN input (pairing_api.go trims it and checks only
+             that it is non-empty), and a placeholder clips at the input's
+             width — leading with it would push "Manager PIN" out of view
+             for a long name or a long locale, in LTR and RTL alike. -->
         <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/approve" hx-swap="none"
+              hx-indicator="#pair-busy-{{ .ID }}" hx-disabled-elt="find button[type=submit]"
               hx-on::after-request="if(!event.detail.successful){document.getElementById('pin-error-{{ .ID }}').hidden=false}">
-          <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off" placeholder="{{ T "tills.pairing.manager_pin" }}">
+          <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off"
+                 aria-label="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}"
+                 placeholder="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}">
           <button class="btn primary" type="submit">{{ T "tills.pairing.approve_btn" }}</button>
         </form>
         <form style="display:inline" hx-post="/api/sync/pair-requests/{{ .ID }}/deny" hx-swap="none"
+              hx-indicator="#pair-busy-{{ .ID }}" hx-disabled-elt="find button[type=submit]"
               hx-on::after-request="if(!event.detail.successful){document.getElementById('pin-error-{{ .ID }}').hidden=false}">
-          <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off" placeholder="{{ T "tills.pairing.manager_pin" }}">
+          <input type="password" name="manager_pin" inputmode="numeric" autocomplete="off"
+                 aria-label="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}"
+                 placeholder="{{ T "tills.pairing.manager_pin" }} — {{ .DeviceName }}">
           <button class="btn secondary" type="submit">{{ T "tills.pairing.deny_btn" }}</button>
         </form>
+        <span id="pair-busy-{{ .ID }}" class="htmx-indicator muted" role="status">{{ T "tills.pairing.processing" }}</span>
         <p id="pin-error-{{ .ID }}" class="muted" role="alert" hidden>{{ T "tills.pairing.pin_error" }}</p>
       </td>
     </tr>
