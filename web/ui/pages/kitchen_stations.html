@@ -214,7 +214,13 @@
     msg.textContent = i18n.searching;
     out.innerHTML = '';
     fetch('/api/kitchen-stations/discover-printers')
-      .then(function (r) { return r.json(); })
+      // A non-2xx (403 for a non-manager, 500 from the scan itself) still
+      // parses as JSON, and its body has no data.printers — so without this
+      // the .then() below reported a real failure as the reassuring "no
+      // printers found on this network" and the operator would go looking
+      // for a cable fault that isn't there. Throw instead, so the .catch()
+      // shows the error message (ut-docs#1556 review follow-up).
+      .then(function (r) { if (!r.ok) throw new Error('discover-printers HTTP ' + r.status); return r.json(); })
       .then(function (j) {
         btn.disabled = false;
         var list = (j.data && j.data.printers) || [];
