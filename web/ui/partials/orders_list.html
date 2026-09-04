@@ -1,7 +1,12 @@
 {{/* Root re-arms the 15s poll on every swap (ut-docs#517a) — same pattern
      as pending_pairings.html: the outerHTML swap replaces the element that
-     carried the trigger, so the trigger must travel with the fragment. */}}
-<div id="orders" hx-get="/ui/orders" hx-trigger="every 15s" hx-target="this" hx-swap="outerHTML">
+     carried the trigger, so the trigger must travel with the fragment.
+     ADR-0079 (ut-docs#1571): the same root also listens for "orders-push",
+     dispatched on body by orders.html's EventSource listener on every
+     order-status SSE event — an immediate re-load of this same fragment
+     instead of waiting for the next tick. Both triggers live on this one
+     element for the same swap-replaces-the-trigger reason. */}}
+<div id="orders" hx-get="/ui/orders" hx-trigger="every 15s, orders-push from:body" hx-target="this" hx-swap="outerHTML">
   {{ if not .Orders }}
   <p class="muted">{{ T "orders.empty" }}</p>
   {{ else }}

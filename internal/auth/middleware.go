@@ -51,7 +51,16 @@ func exempt(path string) bool {
 		// no-op the whole feature exactly like the /api/sync/stock incident
 		// this switch's own comment documents (independent review caught
 		// this before merge).
-		"/api/sync/orders", "/api/setup/join",
+		"/api/sync/orders",
+		// ADR-0079 (ut-docs#1571): the primary-side order-status SSE stream a
+		// replica's background bridge (order_status_stream_bridge.go) holds
+		// open with its sync bearer — syncTill-authed in the handler exactly
+		// like /api/sync/orders above. Deliberately an exact entry here and
+		// NOT a widening of the /api/sync/orders/{id}/status rule further
+		// down (whose one-segment + /status bound exists precisely so no
+		// unlisted /api/sync/orders/<x> route is ever exempted by accident).
+		// TestSyncPullPathsAreExempt pins this entry.
+		"/api/sync/orders/stream", "/api/setup/join",
 		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status",
 		// ut-docs#1092: the wizard's install-a-catalog-language action —
 		// same first-boot-only window as /api/setup itself (its handler's

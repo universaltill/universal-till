@@ -77,6 +77,22 @@ async function capture(page: Page, id: string, locale: string, route: string) {
   const sep = route.includes('?') ? '&' : '?';
   let url = `${route}${sep}lang=${locale}`;
   if (pinnedQuery[id]) url += `&${pinnedQuery[id]}`;
+  // ADR-0079 (ut-docs#1571): /orders opens a live Server-Sent Events stream
+  // (GET /api/orders/stream) the moment it loads — a request that, by
+  // design, never completes. goto's `networkidle` below waits for 500ms of
+  // NO in-flight requests, so on that page it would never resolve (found
+  // live on the first docs-shots run after the change: all four
+  // order-status captures timed out at page.goto). A screenshot doesn't
+  // need live push, so answer the stream with a 204 here. Deliberately a
+  // non-200 status and NOT route.abort(): per the EventSource spec a network
+  // error (what abort() looks like) or a 500/502/503/504 makes the browser
+  // RECONNECT on a timer — more requests, still never idle — whereas any
+  // other non-200 status "fails the connection": CLOSED, one error event,
+  // no retry. Deterministically idle, no timing games. Registered per
+  // capture because each test gets a fresh page fixture. Any future e2e
+  // spec that navigates to /orders with `networkidle` needs the same
+  // treatment (none in e2e/tests/ does today).
+  await page.route('**/api/orders/stream', (r) => r.fulfill({ status: 204 }));
   await page.goto(url, { waitUntil: 'networkidle' });
 
   // The locale actually took: RTL locales must render flipped, same

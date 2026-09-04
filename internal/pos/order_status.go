@@ -92,11 +92,16 @@ func OrderStatusAllowed(current, next string) bool {
 // OrderStatusChanged is the event published on every APPLIED status write —
 // dropped (stale) writes never publish. At is RFC3339 UTC, same format the
 // journal row persists.
+//
+// Also a wire type since ADR-0079 (ut-docs#1571): the SSE stream endpoints
+// (/api/orders/stream, /api/sync/orders/stream) JSON-encode it verbatim and
+// the replica bridge decodes it back — hence the snake_case tags, per the
+// product-wide JSON convention.
 type OrderStatusChanged struct {
-	ReceiptNo string
-	Status    string
-	ActorID   string
-	At        string
+	ReceiptNo string `json:"receipt_no"`
+	Status    string `json:"status"`
+	ActorID   string `json:"actor_id"`
+	At        string `json:"at"`
 }
 
 // orderStatusSubBuffer is each subscriber's channel capacity. Small on
@@ -114,9 +119,10 @@ const orderStatusSubBuffer = 16
 // never block the publisher (a status tap on the shop floor) — when a
 // subscriber's buffer is full the event is dropped for that subscriber only.
 type OrderStatusBroadcaster struct {
-	mu   sync.Mutex
-	next int
-	subs map[int]chan OrderStatusChanged
+	mu     sync.Mutex
+	next   int
+	subs   map[int]chan OrderStatusChanged
+	closed bool
 }
 
 func NewOrderStatusBroadcaster() *OrderStatusBroadcaster {
@@ -126,12 +132,20 @@ func NewOrderStatusBroadcaster() *OrderStatusBroadcaster {
 // Subscribe registers a new subscriber and returns its receive channel plus
 // an idempotent cancel func. cancel closes the channel (under the same lock
 // Publish sends under, so there is no send-on-closed race).
+//
+// After Close, Subscribe hands back an already-closed channel and registers
+// nothing: a stream handler that races process shutdown sees "closed" on
+// its first receive and returns at once instead of waiting forever.
 func (b *OrderStatusBroadcaster) Subscribe() (<-chan OrderStatusChanged, func()) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
+	ch := make(chan OrderStatusChanged, orderStatusSubBuffer)
+	if b.closed {
+		close(ch)
+		return ch, func() {}
+	}
 	id := b.next
 	b.next++
-	ch := make(chan OrderStatusChanged, orderStatusSubBuffer)
 	b.subs[id] = ch
 	cancel := func() {
 		b.mu.Lock()
@@ -145,7 +159,8 @@ func (b *OrderStatusBroadcaster) Subscribe() (<-chan OrderStatusChanged, func())
 }
 
 // Publish delivers ev to every subscriber whose buffer has room and drops it
-// for any that are full. Never blocks.
+// for any that are full. Never blocks. A no-op after Close (the subscriber
+// map is empty by then).
 func (b *OrderStatusBroadcaster) Publish(ev OrderStatusChanged) {
 	b.mu.Lock()
 	defer b.mu.Unlock()
@@ -154,5 +169,33 @@ func (b *OrderStatusBroadcaster) Publish(ev OrderStatusChanged) {
 		case ch <- ev:
 		default: // full buffer — drop for this subscriber, latest-state semantics
 		}
+	}
+}
+
+// SubscriberCount reports how many live subscriptions exist. Diagnostic —
+// the SSE handler tests use it to prove unsubscribe-on-disconnect actually
+// runs (ADR-0079); nothing on the hot path should branch on it.
+func (b *OrderStatusBroadcaster) SubscriberCount() int {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return len(b.subs)
+}
+
+// Close releases every live subscriber (closing their channels, under the
+// same lock Publish sends under — no send-on-closed race) and makes the
+// broadcaster inert for the rest of the process lifetime. Wired to app.Run's
+// bgCtx in pages.Init (ADR-0079): the SSE stream handlers block on their
+// subscriber channel between events, and a replica's bridge holds one such
+// stream open on its primary indefinitely — without this, every primary
+// shutdown (a self-update restart included) would sit out
+// http.Server.Shutdown's full timeout waiting on a connection that was never
+// going to end on its own. Idempotent.
+func (b *OrderStatusBroadcaster) Close() {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	b.closed = true
+	for id, ch := range b.subs {
+		delete(b.subs, id)
+		close(ch)
 	}
 }
