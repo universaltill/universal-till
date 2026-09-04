@@ -3182,6 +3182,27 @@ func RefundLineKey(itemID, variantID string, unitPrice int64, orderType string) 
 	return k
 }
 
+// RefundedServiceChargeTotal sums the service_charge_amount already paid
+// back by every completed return linked to originalSaleID — the double-
+// refund guard for the SERVICE CHARGE, same shape as ReturnedQuantities'
+// per-line-quantity guard (ut-docs#1215). The refund handler clamps its own
+// proposed service-charge refund against (original charge − this total) so
+// the cumulative amount paid back across any number of sequential partial
+// refunds can never exceed the original charge, regardless of which
+// proration basis (or floor-rounding path) produced the proposed figure.
+func (r *POSRepo) RefundedServiceChargeTotal(ctx context.Context, originalSaleID string) (int64, error) {
+	var total int64
+	err := r.db.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(s.service_charge_amount), 0)
+FROM sales s
+JOIN sale_links k ON k.sale_id = s.id
+WHERE k.original_sale_id = ? AND s.sale_type = 'return' AND s.status = 'completed'`, originalSaleID).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("refunded service charge total: %w", err)
+	}
+	return total, nil
+}
+
 // ReturnedQuantities sums, per line key, what previous returns linked to
 // the original sale already gave back — the double-refund guard's input.
 func (r *POSRepo) ReturnedQuantities(ctx context.Context, originalSaleID string) (map[string]float64, error) {
