@@ -253,6 +253,8 @@ func TestRouteRegistryResolvesKnownPages(t *testing.T) {
 		"/backoffice":   "alerts",
 		"/menu":         "menu",
 		"/translations": "translations",
+		// In-POS Bluetooth pairing panel (ut-docs#76).
+		"/bluetooth-devices": "bluetooth-devices",
 		// /self-order and /self-order/shop are deliberately NOT claimed here
 		// (ut-docs#326 review): those pages render via RenderPartial with no
 		// base layout/nav, so they carry no "?" to resolve in the first

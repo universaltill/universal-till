@@ -1,0 +1,200 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "bluetoothdevices.title" }}</h1>
+</div>
+
+{{ if .errKey }}<p class="login-error">{{ T .errKey }}</p>{{ end }}
+
+<p class="muted">{{ T "bluetoothdevices.intro" }}</p>
+
+{{/* Degraded states (ADR-0078 consequences): a box with no Bluetooth
+     (most non-Pi targets) or one whose D-Bus policy grant is missing gets
+     a status notice — the page still renders in full, never an error page,
+     and nothing here can block a sale either way. */}}
+{{ if .unavailable }}
+<p class="tag warn" data-testid="bluetooth-unavailable">{{ T "bluetoothdevices.bluez_unavailable" }}</p>
+{{ else if .accessDenied }}
+<p class="tag warn" data-testid="bluetooth-access-denied">{{ T "bluetoothdevices.access_denied" }}</p>
+{{ end }}
+
+<div class="users-layout">
+  <div class="card users-list">
+    <h3>{{ T "bluetoothdevices.paired_heading" }}</h3>
+    {{ if not .devices }}
+    <p class="muted" data-testid="bt-paired-list">{{ T "bluetoothdevices.none_paired" }}</p>
+    {{ else }}
+    <table class="table" data-testid="bt-paired-list">
+      <thead>
+        <tr>
+          <th>{{ T "bluetoothdevices.col.name" }}</th>
+          <th>{{ T "bluetoothdevices.col.address" }}</th>
+          <th>{{ T "bluetoothdevices.col.status" }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .devices }}
+        <tr data-address="{{ .Address }}">
+          <td>{{ if .Name }}{{ .Name }}{{ else }}<span class="muted">{{ T "bluetoothdevices.generic_name" }}</span>{{ end }}</td>
+          {{/* A Bluetooth address is LTR machine text whatever the page direction. */}}
+          <td dir="ltr" class="muted">{{ .Address }}</td>
+          <td>{{ if .Connected }}<span class="tag">{{ T "bluetoothdevices.connected" }}</span>{{ else }}<span class="muted">{{ T "bluetoothdevices.disconnected" }}</span>{{ end }}</td>
+          <td class="users-actions">
+            <button type="button" class="btn secondary bt-forget-btn" data-address="{{ .Address }}">{{ T "bluetoothdevices.forget_button" }}</button>
+          </td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    {{ end }}
+    <div id="bt-paired-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+  </div>
+
+  <div class="card users-form">
+    <h3>{{ T "bluetoothdevices.candidates_heading" }}</h3>
+    <p class="muted">{{ T "bluetoothdevices.scan_help" }}</p>
+    {{/* Bounded per-click scan (ut-docs#76, same shape as kitchen-stations'
+         discover-printers): candidates are only OFFERED — a device is
+         paired solely by the manager clicking Pair on it below. Disabled
+         outright when the notice above says there is no Bluetooth to scan
+         with. See the script block at the end of this file. */}}
+    <button id="bt-scan-btn" type="button" class="btn primary" style="width:100%" {{ if or .unavailable .accessDenied }}disabled{{ end }}>{{ T "bluetoothdevices.scan_button" }}</button>
+    <div id="bt-scan-msg" class="muted" aria-live="polite" style="min-height:1.2rem; margin-block-start:.5rem"></div>
+    <div id="bt-scan-results"></div>
+    <p class="muted" style="margin-block-start:.5rem">{{ T "bluetoothdevices.candidates_help" }}</p>
+  </div>
+</div>
+
+<script>
+(function () {
+  // Bluetooth pairing panel (ut-docs#76). Plain fetch(), no htmx — the
+  // list/scan/pair/forget calls are JSON, and each mutating action reloads
+  // the page so the paired list is re-read from BlueZ (the source of truth)
+  // rather than patched client-side. Every visible string comes from the
+  // template-populated T lookup below (CLAUDE.md: inline-script status text
+  // is user-facing too).
+  var T = {
+    scanning: "{{ T "bluetoothdevices.scanning" }}",
+    noDevicesFound: "{{ T "bluetoothdevices.no_devices_found" }}",
+    scanError: "{{ T "bluetoothdevices.scan_error" }}",
+    pairButton: "{{ T "bluetoothdevices.pair_button" }}",
+    pairing: "{{ T "bluetoothdevices.pairing" }}",
+    pairedConfirm: "{{ T "bluetoothdevices.paired_confirm" }}",
+    pairError: "{{ T "bluetoothdevices.pair_error" }}",
+    pairRefused: "{{ T "bluetoothdevices.pair_refused" }}",
+    forgetting: "{{ T "bluetoothdevices.forgetting" }}",
+    forgottenConfirm: "{{ T "bluetoothdevices.forgotten_confirm" }}",
+    forgetError: "{{ T "bluetoothdevices.forget_error" }}",
+    notFound: "{{ T "bluetoothdevices.not_found" }}",
+    genericName: "{{ T "bluetoothdevices.generic_name" }}",
+    inputDevice: "{{ T "bluetoothdevices.input_device" }}",
+    bluezUnavailable: "{{ T "bluetoothdevices.bluez_unavailable" }}",
+    accessDenied: "{{ T "bluetoothdevices.access_denied" }}"
+  };
+  // error.code (bluetooth_devices_page.go's apiError) → what the manager reads.
+  function messageFor(code, fallback) {
+    switch (code) {
+      case 'bluetooth_unavailable': return T.bluezUnavailable;
+      case 'bluetooth_access_denied': return T.accessDenied;
+      case 'bluetooth_not_found': return T.notFound;
+      case 'bluetooth_pairing_failed': return T.pairRefused;
+      default: return fallback;
+    }
+  }
+  function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
+  function post(url, address) {
+    return fetch(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ address: address })
+    }).then(function (r) { return r.json(); });
+  }
+
+  var scanBtn = document.getElementById('bt-scan-btn');
+  var scanMsg = document.getElementById('bt-scan-msg');
+  var scanOut = document.getElementById('bt-scan-results');
+  var pairedMsg = document.getElementById('bt-paired-msg');
+
+  function renderCandidates(list) {
+    scanOut.innerHTML = '';
+    var ul = document.createElement('ul');
+    ul.style.listStyle = 'none';
+    ul.style.paddingInlineStart = '0';
+    ul.style.margin = '.4rem 0';
+    list.forEach(function (dev) {
+      var li = document.createElement('li');
+      li.style.padding = '.3rem 0';
+      li.style.display = 'flex';
+      li.style.flexWrap = 'wrap';
+      li.style.alignItems = 'center';
+      li.style.gap = '.5rem';
+      var label = document.createElement('span');
+      var isInput = (dev.icon || '').indexOf('input-') === 0;
+      label.innerHTML = esc(dev.name || T.genericName) +
+        (isInput ? ' <span class="tag">' + esc(T.inputDevice) + '</span>' : '') +
+        ' <span class="muted" dir="ltr">' + esc(dev.address) + '</span>';
+      var pair = document.createElement('button');
+      pair.type = 'button';
+      pair.className = 'btn secondary';
+      pair.textContent = T.pairButton;
+      pair.addEventListener('click', function () {
+        pair.disabled = true;
+        scanMsg.textContent = T.pairing;
+        post('/api/bluetooth-devices/pair', dev.address)
+          .then(function (j) {
+            if (j.error) {
+              pair.disabled = false;
+              scanMsg.textContent = messageFor(j.error.code, T.pairError);
+              return;
+            }
+            scanMsg.textContent = T.pairedConfirm;
+            window.location.reload();
+          })
+          .catch(function () { pair.disabled = false; scanMsg.textContent = T.pairError; });
+      });
+      li.appendChild(label);
+      li.appendChild(pair);
+      ul.appendChild(li);
+    });
+    scanOut.appendChild(ul);
+  }
+
+  if (scanBtn) {
+    scanBtn.addEventListener('click', function () {
+      scanBtn.disabled = true;
+      scanMsg.textContent = T.scanning;
+      scanOut.innerHTML = '';
+      fetch('/api/bluetooth-devices/scan')
+        .then(function (r) { return r.json(); })
+        .then(function (j) {
+          scanBtn.disabled = false;
+          if (j.error) { scanMsg.textContent = messageFor(j.error.code, T.scanError); return; }
+          var list = (j.data && j.data.devices) || [];
+          if (!list.length) { scanMsg.textContent = T.noDevicesFound; return; }
+          scanMsg.textContent = '';
+          renderCandidates(list);
+        })
+        .catch(function () { scanBtn.disabled = false; scanMsg.textContent = T.scanError; });
+    });
+  }
+
+  Array.prototype.forEach.call(document.querySelectorAll('.bt-forget-btn'), function (btn) {
+    btn.addEventListener('click', function () {
+      btn.disabled = true;
+      pairedMsg.textContent = T.forgetting;
+      post('/api/bluetooth-devices/forget', btn.getAttribute('data-address'))
+        .then(function (j) {
+          if (j.error) {
+            btn.disabled = false;
+            pairedMsg.textContent = messageFor(j.error.code, T.forgetError);
+            return;
+          }
+          pairedMsg.textContent = T.forgottenConfirm;
+          window.location.reload();
+        })
+        .catch(function () { btn.disabled = false; pairedMsg.textContent = T.forgetError; });
+    });
+  });
+})();
+</script>
+{{ end }}

@@ -52,6 +52,7 @@
 - Kitchen station routing (send each category — or a single item — to its own kitchen printer; discover network printers already on the LAN instead of typing an address by hand)
 - Table floor plan and assignment (draw your dining room, name each table, drag it into place; assign an order to a table from the basket or move a held order to a different free table, and the plan's free/open-order status lights up live)
 - Barcode scanning (USB/Bluetooth scanner, or a device camera — no dedicated hardware required)
+- In-POS Bluetooth pairing (a manager scans for, pairs, trusts and forgets a Bluetooth scanner or scale from a Settings-side panel on the Linux/Raspberry Pi kiosk — no OS settings or SSH; the .deb ships the scoped D-Bus grant the till service needs, ADR-0078)
 - Multi-currency support
 - Tax calculation (configurable by region)
 - Employee management
@@ -60,6 +61,7 @@
 
 ### Hardware Support
 - USB barcode scanners
+- Bluetooth HID barcode scanners and scales (paired from inside the POS on Linux/Raspberry Pi)
 - Thermal receipt printers (ESC/POS)
 - Cash drawers
 - Customer displays

@@ -31,12 +31,15 @@ var iconFor = map[string]string{
 	"/locations":        "📍",
 	"/registers":        "🧮",
 	"/kitchen-stations": "🍳",
-	"/tables":           "🪑",
-	"/country-settings": "🌍",
-	"/translations":     "🌐",
-	"/tills":            "🖥️",
-	"/report-issue":     "🐞",
-	"/fiscal-register":  "📋",
+	// ut-docs#76: Unicode has no Bluetooth glyph; the antenna-bars sign is
+	// the nearest "wireless device" reading on a touch tile.
+	"/bluetooth-devices": "📶",
+	"/tables":            "🪑",
+	"/country-settings":  "🌍",
+	"/translations":      "🌐",
+	"/tills":             "🖥️",
+	"/report-issue":      "🐞",
+	"/fiscal-register":   "📋",
 	// ut-docs#1371: /orders had no entry here, so every Orders tile fell
 	// through to the "▪️" no-icon fallback below — the exact "plain black
 	// square" the report described, not a font-coverage gap. 🛎️ (service
@@ -74,6 +77,7 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 		if canPerform(d, r, "settings") {
 			add("/users", "users.title")
 			add("/kitchen-stations", "kitchenstations.title")
+			add("/bluetooth-devices", "nav.bluetooth_devices") // ut-docs#76
 			add("/tables", "tables.title")
 			add("/country-settings", "countrysettings.title")
 			add("/translations", "translations.title")
