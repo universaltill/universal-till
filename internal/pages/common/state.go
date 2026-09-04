@@ -313,7 +313,63 @@ func EffectiveServiceChargeRateBP(st RuntimeState) int {
 // SaveState writes every field in one transaction (store.SetMany), so a
 // mid-way failure (disk full, SQLITE_BUSY) never leaves a partial mix of
 // old and new settings behind — matching Store.SaveRuntimeConfig's guarantee.
+//
+// WindowMode and LaunchOnStartup (ut-docs#608 scaffold) are OUT-OF-BAND
+// managed: a separate process — the `provision-desktop-kiosk-defaults` CLI,
+// run once by packaging/scripts/postinstall.sh — can write them straight to
+// the DB without this server process ever observing it in its own cached
+// RuntimeState (common.Deps.State, populated once at boot by LoadState).
+// Every SaveState caller except the two handlers that deliberately set a
+// NEW value (POST /api/settings/window-mode,
+// POST /api/settings/launch-on-startup — both set the matching *Changed
+// field below) builds st from a stale d.CurrentState() snapshot and was
+// never asked to touch these two fields. So unless the caller marks its
+// intent, re-read the live persisted value here and let it win, instead of
+// silently reverting whatever the out-of-band writer most recently set.
+// ut-docs#1555: this is exactly how finishing the first-boot setup wizard
+// was reverting a freshly-provisioned Pi's kiosk mode back to windowed —
+// postinstall.sh's own `systemctl try-restart` closes most of the window,
+// but not all of it (a save that races the restart, or one that runs before
+// it). This fix closes the persistence race — the DB row itself can no
+// longer be silently reverted — but it is NOT a substitute for that
+// restart: SaveState takes st BY VALUE, so its own corrected WindowMode/
+// LaunchOnStartup never reaches back to the caller's in-memory
+// d.CurrentState()/d.SetState(st) — those still cache whatever stale value
+// the caller already had. The restart is what keeps the IN-MEMORY half
+// (GET /api/window-mode, the desktop shell's autostart reconciliation)
+// correct; removing it on the strength of this fix alone would reopen
+// exactly the "shell reads launch_on_startup=false and deletes its own
+// autostart entry" failure postinstall.sh's own comment already documents.
 func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) error {
+	// writeWindowMode/writeLaunchOnStartup: normally always true (both keys
+	// are always part of this transaction, like every other field here).
+	// Set false only on a transient store.Get error for a field this call
+	// wasn't asked to change — leaving the persisted row untouched is safer
+	// than either trusting a possibly-stale st value (the bug this whole
+	// guard exists to close) or aborting the entire save over one field
+	// (ut-docs#1555 review finding F3).
+	writeWindowMode, writeLaunchOnStartup := true, true
+	if !st.WindowModeChanged {
+		v, ok, err := store.Get(ctx, KeyWindowMode)
+		switch {
+		case err != nil:
+			writeWindowMode = false
+		case ok && strings.TrimSpace(v) != "":
+			st.WindowMode = ClampWindowMode(v)
+		}
+	}
+	if !st.LaunchOnStartupChanged {
+		v, ok, err := store.Get(ctx, KeyLaunchOnStartup)
+		switch {
+		case err != nil:
+			writeLaunchOnStartup = false
+		case ok && strings.TrimSpace(v) != "":
+			if b, err := strconv.ParseBool(v); err == nil {
+				st.LaunchOnStartup = b
+			}
+		}
+	}
+
 	kv := map[string]string{
 		KeyTheme:                       st.Theme,
 		KeyCurrency:                    st.Currency,
@@ -326,8 +382,12 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 		"pos.allow_negative_inventory": strconv.FormatBool(st.AllowNegativeInventory),
 		KeyIdleLock:                    strconv.Itoa(st.IdleLockMinutes),
 		KeyKioskIdleReset:              strconv.Itoa(st.KioskIdleResetSeconds),
-		KeyWindowMode:                  ClampWindowMode(st.WindowMode),
-		KeyLaunchOnStartup:             strconv.FormatBool(st.LaunchOnStartup),
+	}
+	if writeWindowMode {
+		kv[KeyWindowMode] = ClampWindowMode(st.WindowMode)
+	}
+	if writeLaunchOnStartup {
+		kv[KeyLaunchOnStartup] = strconv.FormatBool(st.LaunchOnStartup)
 	}
 	if st.UIScale > 0 {
 		kv[KeyUIScale] = strconv.FormatFloat(st.UIScale, 'f', -1, 64)
@@ -335,6 +395,13 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 	if st.OSKMode != "" {
 		kv[KeyOSK] = st.OSKMode
 	}
+	// The Get-then-SetMany above is NOT one transaction (ut-docs#1555 review
+	// finding F4): a deliberate window-mode/launch-on-startup change racing
+	// a concurrent unrelated Settings save could theoretically interleave
+	// and lose the deliberate change. Narrow in practice (Settings writes
+	// are operator-paced, one operator per till) and accepted rather than
+	// wrapped in an explicit store-level transaction for two single-key
+	// reads.
 	return store.SetMany(ctx, kv)
 }
 
