@@ -428,6 +428,22 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			return
 		}
 
+		// Fetch the original sale's own currency/pricing-mode (ut-docs#1494):
+		// a return must be signed and persisted in the ORIGINAL sale's
+		// currency and inclusive/exclusive mode, not a hardcoded English-
+		// market default — same source refund_page.go's sibling flow
+		// already reads (saleIsTaxInclusive(detail)/detail.Currency).
+		originalDetail, found, err := repo.GetSaleDetailByID(ctx, originalSaleID)
+		if err != nil {
+			respondReturnError(w, r, http.StatusInternalServerError, fmt.Sprintf("fetch original sale: %v", err))
+			return
+		}
+		if !found {
+			respondReturnError(w, r, http.StatusNotFound, "original sale not found")
+			return
+		}
+		inclusive := saleIsTaxInclusive(originalDetail)
+
 		// Fetch original sale lines
 		snapshots, err := repo.ListSaleLineSnapshots(ctx, originalSaleID)
 		if err != nil {
@@ -484,10 +500,17 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 		// pos.ComputeTaxBasisPoints results is algebraically identical to
 		// computeSaleTotals's own VATBandsForSale apportionment in this case
 		// (apportionment only redistributes when discountTotal > 0).
+		// `inclusive` (ut-docs#1494) must match the pricing mode this same
+		// return's returnInput.TaxInclusive carries below — this used to be
+		// hardcoded `false`, which happened to agree with TaxInclusive's own
+		// former hardcoded zero value, but would disagree (and reject a
+		// perfectly good return with "payments do not cover total") for any
+		// tax-inclusive-priced shop now that TaxInclusive reflects the
+		// original sale's real pricing mode.
 		var returnTotal money.Money
 		for _, line := range returnLines {
 			lineBase := pos.AmountForQuantity(line.UnitPrice, line.Qty)
-			_, lineGross := pos.ComputeTaxBasisPoints(lineBase, line.TaxRateBasisPoints, false)
+			_, lineGross := pos.ComputeTaxBasisPoints(lineBase, line.TaxRateBasisPoints, inclusive)
 			returnTotal = returnTotal.Add(lineGross)
 		}
 
@@ -538,7 +561,8 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			Payments:               []pos.PaymentInput{{MethodID: "cash", Amount: returnTotal}},
 			ActorID:                actorID,
 			Note:                   req.Reason,
-			Currency:               "GBP",
+			Currency:               originalDetail.Currency,
+			TaxInclusive:           inclusive,
 			AllowNegativeInventory: true, // Returns add inventory
 		}
 
