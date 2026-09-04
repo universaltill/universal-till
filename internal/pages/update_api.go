@@ -178,8 +178,13 @@ func updateUnavailableHTML(locale, latest, goos string) string {
 	// work either way: shouldOverrideUrlLoading confines the WebView to the
 	// till's own loopback origin, so an off-origin download link is refused
 	// before it starts.
-	if goos == "android" {
-		return fmt.Sprintf(`<span>⬆ %s v%s — <a href="#android-update" data-testid="android-update-install">%s</a></span>`,
+	if selfupdate.InstallBridgeAvailable(goos) {
+		// ut-docs#1534: an ABSOLUTE path, not a bare "#android-update"
+		// fragment. This same line renders into the status bar on every
+		// page, where a same-page fragment silently navigates nowhere — the
+		// operator taps "Download" and the till does nothing. Same-origin,
+		// so shouldOverrideUrlLoading still lets the WebView follow it.
+		return fmt.Sprintf(`<span>⬆ %s v%s — <a href="/settings#android-update" data-testid="android-update-install">%s</a></span>`,
 			html.EscapeString(httpx.T(locale, "status.update_available")),
 			html.EscapeString(latest),
 			html.EscapeString(httpx.T(locale, "settings.update.download")))
@@ -197,6 +202,28 @@ func updateUnavailableHTML(locale, latest, goos string) string {
 		html.EscapeString(httpx.T(locale, "status.update_available")),
 		html.EscapeString(latest),
 		html.EscapeString(httpx.T(locale, "settings.update.unavailable_here")))
+}
+
+// setupUnavailableHTML is updateUnavailableHTML for the FIRST-BOOT WIZARD,
+// where /settings does not yet exist as a destination: there is no manager
+// account to authorise with, and internal/auth/middleware.go bounces the
+// route to /login, which throws away the Alpine wizard's step state
+// (ut-docs#1534 review, finding 3 — a regression introduced by making the
+// Android link absolute: as a bare "#android-update" fragment it had been an
+// inert no-op here, so the harm was invisible).
+//
+// Android therefore gets the plain statement of fact and no link at all on
+// this screen. The update is real and the operator will be able to install it
+// from Settings the moment setup finishes; sending them there mid-wizard just
+// loses their progress. Every other platform is unchanged — a website link on
+// Windows/macOS is as actionable at first boot as anywhere else.
+func setupUnavailableHTML(locale, latest, goos string) string {
+	if selfupdate.InstallBridgeAvailable(goos) {
+		return fmt.Sprintf(`<span>⬆ %s v%s</span>`,
+			html.EscapeString(httpx.T(locale, "status.update_available")),
+			html.EscapeString(latest))
+	}
+	return updateUnavailableHTML(locale, latest, goos)
 }
 
 // registerUpdateAPI exposes the manager-gated in-app updater. It downloads the
