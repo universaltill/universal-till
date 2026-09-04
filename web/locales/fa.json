@@ -1060,7 +1060,6 @@
   "sync.chip_quarantine_title": "موارد قرنطینه‌شدهٔ همگام‌سازی — باز کردن فهرست",
   "sync.chip_quarantined": "قرنطینه‌شده",
   "sync.chip_queued": "در صف",
-  "sync.chip_tills": "صندوق",
   "sync.chip_tills_title": "صندوق‌های ثبت‌شده — باز کردن صفحه صندوق‌ها",
   "sync.error.server": "مشکلی پیش آمد. دوباره تلاش کنید.",
   "sync.error.bad_path": "مسیر نامعتبر",
@@ -1877,5 +1876,7 @@
   "settings.update.android.downloading": "در حال دانلود — وقتی آماده شد اندروید تأیید می‌خواهد",
   "settings.update.android.failed": "به‌روزرسانی شروع نشد — اتصال را بررسی کنید و دوباره تلاش کنید",
   "settings.update.android.pin_needed": "برای نصب این به‌روزرسانی پین مدیر را وارد کنید",
-  "settings.update.android.no_bridge": "این به‌روزرسانی فقط از خود برنامه صندوق نصب می‌شود"
+  "settings.update.android.no_bridge": "این به‌روزرسانی فقط از خود برنامه صندوق نصب می‌شود",
+  "sync.chip_tills_one": "%d صندوق",
+  "sync.chip_tills_other": "%d صندوق"
 }

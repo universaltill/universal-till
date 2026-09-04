@@ -54,8 +54,16 @@
 <div class="card">
   <h2>{{ T "settings.update.title" }} {{ helpLink "updates" }}</h2>
   <p class="muted">Universal Till v{{ appversion }}{{ if updateavailable }} &mdash; &#11014;&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}{{ end }}</p>
-  {{ if updateinstallbridge }}
-  <!-- ut-docs#1246 / ut-docs#1534: Android in-app update. Behind a manager PIN
+  {{ if and updateinstallbridge updateavailable }}
+  <!-- ut-docs#1541: gated on updateavailable, not just on the platform. The
+       PIN box and Download button used to render on every Android till
+       whatever version it was on, so an operator already up to date was shown
+       a control that could only waste a ~140MB download on the build they
+       were already running. The endpoint refuses that case too — belt and
+       braces, because this template's updateavailable comes from a cached
+       check that can be up to 24h stale.
+
+       ut-docs#1246 / ut-docs#1534: Android in-app update. Behind a manager PIN
        for the same reason exit-to-os is: installing requires the native shell
        to drop the kiosk pin (Android silently refuses to start the package
        installer from a pinned app), so an ungated button would be a one-tap

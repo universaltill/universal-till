@@ -269,12 +269,17 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
   position: absolute; width: 1px; height: 1px; margin: -1px;
   padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
 }
-/* .sync-chip/.fiscal-chip carry real variable-length status text (till
-   name, queue/roster counts) — not a fixed icon+label pair, so they keep
-   their own pill markup rather than adopting .nav-toggle, just restyled to
-   wrap within the rail's column instead of sitting inline in a row. */
-.sync-chip, .fiscal-chip { margin-inline-start: 0; white-space: normal;
+/* .fiscal-chip carries real variable-length status text — not a fixed
+   icon+label pair — so it keeps its own pill markup, restyled to wrap within
+   the rail's column instead of sitting inline in a row.
+   ut-docs#1539: .sync-chip is NO LONGER in that group. It adopted .nav-toggle
+   and is a rail menu button now, so it must stretch with its siblings —
+   `align-self: center` shrink-wrapped it to 48px beside 63px tiles, measured
+   in a real browser during review, which is the same visual mismatch
+   ut-docs#1423 existed to remove. */
+.fiscal-chip { margin-inline-start: 0; white-space: normal;
   text-align: center; align-self: center; }
+.sync-chip { margin-inline-start: 0; align-self: stretch; display: block; }
 
 @media (max-width: 480px) {
   /* Reverts the rail back to the previous horizontal top bar wholesale —
@@ -956,14 +961,6 @@ label { font-size: .85rem; color: var(--text); }
 label:has(> input:where(:not([type="checkbox"]):not([type="radio"]))),
 label:has(> select),
 label:has(> textarea) { display: flex; flex-direction: column; gap: .2rem; }
-/* Same [hidden]-override precedent as .btn/.field-pair/.field-checks: the
-   author `display` above beats the UA `[hidden]{display:none}` rule whatever
-   the specificity, so a `hidden`-attributed label containing an input stays
-   fully visible. Found by review on ut-docs#1537's update form, whose PIN row
-   is meant to appear only once the server has actually asked for a PIN — it
-   was showing to everyone, and the feature only "worked" because an empty PIN
-   still takes the session path. */
-label[hidden] { display: none; }
 /* Vertical rhythm for forms whose fields are direct children (the payout
    dialog, change-PIN): stacked labels would otherwise butt straight together. */
 .stacked-form { display: flex; flex-direction: column; gap: .6rem; }
@@ -2036,27 +2033,44 @@ body.login-screen {
 /* Multi-till sync chip in the nav (ADR-0011 D4). ut-docs#405: .ok/.warn
    used to hardcode literal hex pairs instead of the --success/--warning
    tokens :root already defines, AND the opaque background clashed with
-   whatever a shipped theme (e.g. "monarch") painted underneath — both
-   contributed to the reported "text and background are some colours I
-   cannot see the till name" bug. `.sync-chip` is a link, unlike a plain
-   status-text element, so it hits a problem that class of element never
-   would (see below).
-   Every shipped theme (web/public/themes/*.css) sets its own `.nav a {
-   color: … }`, loaded in base.html AFTER this file — at equal specificity
-   to a bare `.sync-chip a`, the theme's rule would win and silently
-   override `color: inherit` back to the theme's plain nav-link color,
-   making --success/--warning never actually reach the chip's text despite
-   being set on the parent. `.nav .sync-chip a` outranks `.nav a` on
-   specificity alone (independent of load order), so `inherit` — and
-   therefore the ok/warn color — actually wins here. */
+   whatever a shipped theme painted underneath — both contributed to the
+   reported "text and background are some colours I cannot see the till name"
+   bug.
+
+   ut-docs#1539 ends that whole class of problem by removing the pill: the
+   chip is a .nav-toggle now and inherits the rail's own colours like every
+   other menu button, so there is no chip-specific text/background pair left
+   to clash with a theme, and no need for the `.nav .sync-chip a` specificity
+   trick that used to keep `color: inherit` from being overridden by a
+   theme's `.nav a`. */
 /* margin-inline-start is set back to .6rem only in the <=480px top-bar
    media query above -- in the default rail layout, spacing between chips
    comes from .nav-right's own `gap` (column flex) instead. */
-.sync-chip { display: inline-flex; align-items: center;
-  padding: .15rem .55rem; border-radius: 999px; font-size: .8rem; font-weight: 600; }
-.sync-chip.ok { background: rgba(22, 163, 74, .12); color: var(--success); }
-.sync-chip.warn { background: rgba(217, 119, 6, .12); color: var(--warning); }
-.nav .sync-chip a { color: inherit; }
+/* ut-docs#1539: the sync chip is a rail MENU BUTTON now (nav-toggle + inline
+   SVG), so it must not carry a pill background of its own — the wrapper is
+   just a positioning context for the status dot. The old .ok/.warn tints
+   recoloured the whole navigation control to signal an alert, which is what
+   made it read as "out of design" next to the bug-report and session buttons.
+   Status is a dot on the button instead. */
+/* ut-docs#1539: no pill, no tint, no colour override — the sync chip is a rail
+   MENU BUTTON and must look like one. The old .ok/.warn rules recoloured the
+   whole navigation tile (icon and label) amber to signal an alert, which is
+   what made it read as "out of design" beside the bug-report and session
+   buttons. Status is a dot on the button instead.
+   The first draft of this fix left .sync-chip.warn and `.nav .sync-chip a`
+   in place below it — both more specific — so the tile still went fully
+   orange; caught by measuring the rendered rail in a browser, not by reading
+   the stylesheet. */
+.sync-chip { position: relative; background: none; padding: 0; }
+.sync-chip .sync-toggle { position: relative; display: flex; }
+.sync-chip.warn .sync-toggle::after {
+  content: ""; position: absolute; inset-block-start: .25rem; inset-inline-end: .25rem;
+  inline-size: .5rem; block-size: .5rem; border-radius: 50%;
+  /* Real tokens: --warn and --nav-bg do not exist. The ring must be the rail's
+     own colour (--brand, what .nav paints) or it draws a navy halo on the
+     amber and slate themes. */
+  background: var(--warning); box-shadow: 0 0 0 2px var(--brand);
+}
 .sync-banner { background: rgba(217, 119, 6, .12); color: var(--warning); border-radius: .5rem;
   padding: .6rem .9rem; margin-block-end: .8rem; }
 .sync-banner a { color: inherit; font-weight: 700; text-decoration: underline; }

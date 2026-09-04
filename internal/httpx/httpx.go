@@ -50,6 +50,14 @@ var CrossDeviceLinkActionable = selfupdate.DownloadLinkActionableNow
 // original value (e.g. via t.Cleanup) after overriding it.
 var UpdateInstallBridge = selfupdate.InstallBridgeAvailableNow
 
+// UpdateAvailable is the seam behind the updateavailable template func
+// (ut-docs#1541). Same reason as UpdateInstallBridge above: the update UI is
+// now gated on BOTH platform and freshness, and without a seam a test cannot
+// render the "an update exists" branch at all — it would depend on whatever
+// the real GitHub API happened to say when the suite ran. Restore the original
+// value (e.g. via t.Cleanup) after overriding it.
+var UpdateAvailable = func() bool { return updates.Current().Available }
+
 var baseFuncs = template.FuncMap{
 	"div100":    func(cents int64) float64 { return float64(cents) / 100.0 },
 	"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
@@ -66,7 +74,7 @@ var baseFuncs = template.FuncMap{
 	"categoryName":    func(*string) string { return "" },
 	"brandName":       func(*string) string { return "" },
 	"appversion":      func() string { return buildinfo.Version },
-	"updateavailable": func() bool { return updates.Current().Available },
+	"updateavailable": func() bool { return UpdateAvailable() },
 	"latestversion":   func() string { return updates.Current().Latest },
 	"canselfupdate":   func() bool { return selfupdate.Supported() },
 	// updatedownloadlink: whether the status-bar chip's fallback (when
@@ -431,6 +439,32 @@ func translator() *config.I18n {
 
 // T translates a key for a locale outside templates (handlers building toasts
 // or fragments). Falls back to the key itself, mirroring the template func.
+// TCount renders a count with its noun in the right grammatical number:
+// keyBase+"_one" for exactly 1, keyBase+"_other" otherwise, with n substituted
+// for the key's %d.
+//
+// This is a TWO-FORM selector, correct for en/de/tr/fa. Arabic has six CLDR
+// categories and gets only the one/other split — still a real improvement on
+// what it replaces, which was a bare plural noun concatenated after any number
+// and therefore said "1 Kassen" and "1 tills" (ut-docs#1539). A full CLDR
+// implementation is separate, larger work; do not mistake this for one.
+func TCount(locale, keyBase string, n int) string {
+	suffix := "_other"
+	if n == 1 {
+		suffix = "_one"
+	}
+	form := T(locale, keyBase+suffix)
+	// Only substitute when there is something to substitute into. T falls back
+	// to the key itself when a key is missing, and Sprintf on a string with no
+	// verb appends "%!(EXTRA int=1)" — a Go internal rendered onto a shop's
+	// till. Some languages also legitimately omit the numeral from the
+	// singular. Neither case should reach the screen.
+	if !strings.Contains(form, "%") {
+		return form
+	}
+	return fmt.Sprintf(form, n)
+}
+
 func T(locale, key string) string {
 	if t := translator(); t != nil {
 		return t.T(locale, key)

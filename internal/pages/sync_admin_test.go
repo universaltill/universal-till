@@ -169,9 +169,12 @@ func TestSyncChip_ReplicaMode(t *testing.T) {
 		t.Fatalf("replica chip must never render the primary's URL, got %q", body)
 	}
 	// ut-docs#405: was a bare <span>, not clickable at all.
-	if !strings.Contains(body, `<a href="/tills"`) {
+	// ut-docs#1539: and it is a rail MENU BUTTON now, so the link carries the
+	// same nav-toggle dress as every other rail item.
+	if !strings.Contains(body, `href="/tills"`) {
 		t.Fatalf("expected the replica chip to be a clickable link to the local /tills page, got %q", body)
 	}
+	assertRailMenuButton(t, body)
 
 	if err := dp.Settings.Set(ctx, "sync.last_contact_at", time.Now().UTC().Format(time.RFC3339)); err != nil {
 		t.Fatalf("set last_contact_at: %v", err)
@@ -238,8 +241,15 @@ func TestSyncChip_PrimaryModeWithTills(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), "Front Counter") {
 		t.Fatalf("expected the primary's own name in the chip label, got %q", rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), `<a href="/tills"`) {
+	if !strings.Contains(rec.Body.String(), `href="/tills"`) {
 		t.Fatalf("expected the primary chip to stay a clickable link to /tills, got %q", rec.Body.String())
+	}
+	assertRailMenuButton(t, rec.Body.String())
+	// ut-docs#1539: "1 till", never "1 tills". The old markup concatenated a
+	// count with a bare plural noun, so it read "1 tills" in English and
+	// "1 Kassen" in German — reported from the pilot tablet.
+	if !strings.Contains(rec.Body.String(), "<bdi>1 till</bdi>") {
+		t.Fatalf("expected a correctly singular till count, got %q", rec.Body.String())
 	}
 	if !strings.Contains(rec.Body.String(), "1") {
 		t.Fatalf("expected the till count in the chip, got %q", rec.Body.String())
@@ -288,9 +298,10 @@ func TestSyncChip_PrimaryModeWarnsAndLinksToQuarantineWhenEntriesExist(t *testin
 	if !strings.Contains(body, `sync-chip warn`) {
 		t.Fatalf("expected a nonzero quarantine count to force class=warn even with a fresh till, got %q", body)
 	}
-	if !strings.Contains(body, `<a href="/sync-quarantine"`) {
+	if !strings.Contains(body, `href="/sync-quarantine"`) {
 		t.Fatalf("expected the chip to link to /sync-quarantine when quarantined entries exist, got %q", body)
 	}
+	assertRailMenuButton(t, body)
 }
 
 // StartSyncPull must register its goroutine on the caller's wg (ut-docs#153),
@@ -550,5 +561,26 @@ func TestSyncPullTick_StockCorrectionsRunWhenQueueEmpty(t *testing.T) {
 	}
 	if v, _, _ := replica.Settings.Get(ctx, "sync.stock_version"); v == "" {
 		t.Fatalf("expected sync.stock_version set after a stock poll")
+	}
+}
+
+// assertRailMenuButton pins ut-docs#1539: the sync chip is a rail menu button,
+// dressed exactly like the bug-report and session items beside it. The product
+// owner's rule on finding it in the rail — "if it is a notification it can come
+// up from somewhere else; if it is a menu button it should be correct."
+//
+// The regression this guards is that ut-docs#1423 moved every rail item to an
+// inline SVG *because* emoji size differently per device font, and this one
+// item was missed: it kept drawing itself with a ⇅ glyph inside a tinted pill,
+// in a rail of plain icon buttons.
+func assertRailMenuButton(t *testing.T, body string) {
+	t.Helper()
+	for _, want := range []string{`class="nav-toggle sync-toggle"`, `class="nav-toggle-ico"`, `class="nav-toggle-label"`, `data-icon="tills"`} {
+		if !strings.Contains(body, want) {
+			t.Errorf("sync chip is missing %s — it must wear the same rail dress as every other menu button (ut-docs#1539), got %q", want, body)
+		}
+	}
+	if strings.Contains(body, "⇅") || strings.Contains(body, "⚠") {
+		t.Errorf("no emoji glyphs in the rail — that is ut-docs#1423's whole point; status belongs on the badge, got %q", body)
 	}
 }

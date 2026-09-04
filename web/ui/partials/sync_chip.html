@@ -1,10 +1,22 @@
+<!-- ut-docs#1539: a RAIL MENU BUTTON, not a status pill. The product owner's
+     rule, on seeing it appear the moment a satellite joined: "if it is a
+     notification it can come up from somewhere else; if it is a menu button it
+     should be correct." It is permanent once the shop has more than one till
+     and it navigates to a real page, so it is a menu button and wears the same
+     nav-toggle + inline-SVG dress as every other rail item (ut-docs#1423).
+     The alarm states keep a small dot on the button instead of recolouring the
+     whole control — recolouring a navigation item to signal an alert was the
+     category error. -->
 <span class="sync-chip {{ .class }}">
   {{ if .isReplica -}}
   {{/* ut-docs#405: was a plain (unclickable) <span> — /tills is a LOCAL
        route (relative href, this till's own server), never the primary's
        origin, so this can't strand an operator the way linking straight to
        primaryURL would (ut-docs#390). */}}
-  <a href="/tills" title="{{ if .offline }}{{ T "sync.chip_offline" }}{{ else }}{{ T "sync.chip_following" }}{{ end }}">⇅ {{ .label }}{{ if .offline }} ⚠{{ end }}{{ if .queued }} · {{ .queued }} {{ T "sync.chip_queued" }}{{ end }}</a>
+  <a class="nav-toggle sync-toggle" href="/tills" title="{{ if .offline }}{{ T "sync.chip_offline" }}{{ else }}{{ T "sync.chip_following" }}{{ end }}">
+    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "tills" }}</span>
+    <span class="nav-toggle-label"><bdi>{{ .label }}</bdi>{{ if .queued }} · <bdi>{{ .queued }} {{ T "sync.chip_queued" }}</bdi>{{ end }}</span>
+  </a>
   {{- else -}}
   {{/* ut-docs#405: was a bare replica count with no name at all — this
        till's own name (tillNameOrDefault, same source Settings/​/tills
@@ -18,6 +30,13 @@
        /sync-quarantine). .count can be 0 here (every till that ever pushed
        a quarantined entry may since have been revoked) -- the "· N tills"
        segment only renders when there's a roster to report. */}}
-  <a href="{{ if .quarantined }}/sync-quarantine{{ else }}/tills{{ end }}" title="{{ if .quarantined }}{{ T "sync.chip_quarantine_title" }}{{ else }}{{ T "sync.chip_tills_title" }}{{ end }}">⇅ {{ .label }}{{ if .count }} · {{ .count }} {{ T "sync.chip_tills" }}{{ end }}{{ if .quarantined }} · {{ .quarantined }} {{ T "sync.chip_quarantined" }}{{ end }}{{ if eq .class "warn" }} ⚠{{ end }}</a>
+  <a class="nav-toggle sync-toggle" href="{{ if .quarantined }}/sync-quarantine{{ else }}/tills{{ end }}" title="{{ if .quarantined }}{{ T "sync.chip_quarantine_title" }}{{ else }}{{ T "sync.chip_tills_title" }}{{ end }}">
+    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "tills" }}</span>
+    <!-- ut-docs#1539 review: <bdi> on each segment. Without it a Latin till name
+       in an RTL locale drags the following count across the label — measured in
+       Arabic at 430px, "Front Counter · 1 جهاز" rendered as
+       "جهاز Front Counter · 1", with the number stuck to the wrong run. -->
+    <span class="nav-toggle-label"><bdi>{{ .label }}</bdi>{{ if .countLabel }} · <bdi>{{ .countLabel }}</bdi>{{ end }}{{ if .quarantined }} · <bdi>{{ .quarantined }} {{ T "sync.chip_quarantined" }}</bdi>{{ end }}</span>
+  </a>
   {{- end }}
 </span>

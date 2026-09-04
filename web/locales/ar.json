@@ -1060,7 +1060,6 @@
   "sync.chip_quarantine_title": "عناصر المزامنة المعزولة — افتح القائمة",
   "sync.chip_quarantined": "معزول",
   "sync.chip_queued": "في الانتظار",
-  "sync.chip_tills": "صناديق",
   "sync.chip_tills_title": "الصناديق المسجّلة — افتح صفحة الصناديق",
   "sync.error.server": "حدث خطأ ما. يرجى المحاولة مجددًا.",
   "sync.error.bad_path": "مسار غير صالح",
@@ -1877,5 +1876,7 @@
   "settings.update.android.downloading": "جارٍ التنزيل — سيطلب أندرويد تأكيدك عند الانتهاء",
   "settings.update.android.failed": "تعذّر بدء التحديث — تحقّق من الاتصال وحاول مجددًا",
   "settings.update.android.pin_needed": "أدخل رمز المدير لتثبيت هذا التحديث",
-  "settings.update.android.no_bridge": "لا يمكن تثبيت هذا التحديث إلا من تطبيق الجهاز نفسه"
+  "settings.update.android.no_bridge": "لا يمكن تثبيت هذا التحديث إلا من تطبيق الجهاز نفسه",
+  "sync.chip_tills_one": "%d جهاز",
+  "sync.chip_tills_other": "%d أجهزة"
 }

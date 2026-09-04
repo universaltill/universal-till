@@ -1060,7 +1060,6 @@
   "sync.chip_quarantine_title": "Quarantined sync entries — open the list",
   "sync.chip_quarantined": "quarantined",
   "sync.chip_queued": "queued",
-  "sync.chip_tills": "tills",
   "sync.chip_tills_title": "Enrolled tills — open the Tills page",
   "sync.error.server": "Something went wrong. Please try again.",
   "sync.error.bad_path": "Invalid path",
@@ -1877,5 +1876,7 @@
   "settings.update.android.downloading": "Downloading — Android will ask you to confirm when it is ready",
   "settings.update.android.failed": "Could not start the update — check the connection and try again",
   "settings.update.android.pin_needed": "Enter the manager PIN to install this update",
-  "settings.update.android.no_bridge": "This update can only be installed from the till app itself"
+  "settings.update.android.no_bridge": "This update can only be installed from the till app itself",
+  "sync.chip_tills_one": "%d till",
+  "sync.chip_tills_other": "%d tills"
 }

@@ -1060,7 +1060,6 @@
   "sync.chip_quarantine_title": "Karantinadaki eşitleme öğeleri — listeyi aç",
   "sync.chip_quarantined": "karantinada",
   "sync.chip_queued": "kuyrukta",
-  "sync.chip_tills": "kasa",
   "sync.chip_tills_title": "Kayıtlı kasalar — Kasalar sayfasını açın",
   "sync.error.server": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
   "sync.error.bad_path": "Geçersiz yol",
@@ -1877,5 +1876,7 @@
   "settings.update.android.downloading": "İndiriliyor — hazır olduğunda Android onay isteyecek",
   "settings.update.android.failed": "Güncelleme başlatılamadı — bağlantıyı denetleyip tekrar deneyin",
   "settings.update.android.pin_needed": "Bu güncellemeyi yüklemek için yönetici PIN'ini girin",
-  "settings.update.android.no_bridge": "Bu güncelleme yalnızca kasa uygulamasının kendisinden yüklenebilir"
+  "settings.update.android.no_bridge": "Bu güncelleme yalnızca kasa uygulamasının kendisinden yüklenebilir",
+  "sync.chip_tills_one": "%d kasa",
+  "sync.chip_tills_other": "%d kasa"
 }
