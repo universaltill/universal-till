@@ -49,7 +49,7 @@
 - Receipt printing (thermal and regular)
 - Order status tracking (new → preparing → ready → collected, one-tap for kitchen staff; on linked tills every till sees and updates the whole shop's orders, with silent local fallback when the main till is unreachable)
 - Customer order tracking via QR (self-order kiosk checkout shows a QR; the customer follows their order's status — and nothing else — live on their own phone over the shop's network)
-- Kitchen station routing (send each category — or a single item — to its own kitchen printer)
+- Kitchen station routing (send each category — or a single item — to its own kitchen printer; discover network printers already on the LAN instead of typing an address by hand)
 - Table floor plan and assignment (draw your dining room, name each table, drag it into place; assign an order to a table from the basket or move a held order to a different free table, and the plan's free/open-order status lights up live)
 - Barcode scanning (USB/Bluetooth scanner, or a device camera — no dedicated hardware required)
 - Multi-currency support
@@ -478,7 +478,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 - [x] Self-hosted AI assistant plugin (camera item ID, "Ask your till")
 - [x] Webhook connector plugin (`ut-plugin-integration-webhook`) — reference/template for real ERP connectors, not itself a finished SAP/Dynamics integration (ADR-0014)
 - [x] Cloud sync service (optional, self-hostable)
-- [x] Multi-till LAN sync — one primary, replicas join by QR scan (ADR-0011); tills can also auto-discover primaries over mDNS and pair directly — no code to scan or type: select a discovered primary, the manager approves from a verification-code compare, done (ADR-0033). Available both on a configured till's Tills page and on a brand-new till's first-boot "Join an existing shop" screen (ut-docs#289)
+- [x] Multi-till LAN sync — one primary, replicas join by QR scan (ADR-0011); tills can also auto-discover primaries over mDNS and pair directly — no code to scan or type: select a discovered primary, the manager approves from a verification-code compare, done (ADR-0033). Available both on a configured till's Tills page and on a brand-new till's first-boot "Join an existing shop" screen (ut-docs#289). The same LAN auto-discovery finds network printers for kitchen station routing (ut-docs#140)
 - [x] Universal Till ID — self-hosted Zitadel (ADR-0012)
 - [x] Self-order kiosk + item modifiers (ADR-0020) — **in-store, network-attached device; not the same as remote online ordering or per-table ordering below**
 - [x] Android app, live-verified (ADR-0023)

@@ -5,18 +5,35 @@ package pages
 // real render of web/ui/pages/kitchen_stations.html.
 
 import (
+	"context"
+	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
 )
+
+// stubBrowsePrinters lets tests swap in a canned BrowsePrinters result
+// instead of waiting out a real (bounded but multi-second) LAN scan on
+// every test run — same pattern as discovery_api_test.go's stubBrowse.
+func stubBrowsePrinters(t *testing.T, candidates []discovery.PrinterCandidate, err error) {
+	t.Helper()
+	orig := discoveryBrowsePrinters
+	discoveryBrowsePrinters = func(ctx context.Context, timeout time.Duration) ([]discovery.PrinterCandidate, error) {
+		return candidates, err
+	}
+	t.Cleanup(func() { discoveryBrowsePrinters = orig })
+}
 
 func newKitchenStationsTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
@@ -223,5 +240,86 @@ func TestKitchenStationsPage_ItemSearch(t *testing.T) {
 	mux.ServeHTTP(getRec, req)
 	if getRec.Code != http.StatusOK || !strings.Contains(getRec.Body.String(), "Pork Pie") {
 		t.Fatalf("search render: code=%d, body missing match", getRec.Code)
+	}
+}
+
+// Printer discovery (ut-docs#140): mirrors discovery_api_test.go's coverage
+// of the analogous till-discovery endpoint — manager gating, the JSON
+// response shape, empty-vs-null, and the error path.
+
+func TestDiscoverPrintersAPI_RejectsNonManager(t *testing.T) {
+	mux, _ := newKitchenStationsTestMux(t)
+	cashier := auth.User{ID: "c1", Role: "cashier", DisplayName: "Cash"}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/kitchen-stations/discover-printers", nil), cashier)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier discover-printers = %d, want 403", rec.Code)
+	}
+}
+
+func TestDiscoverPrintersAPI_ReturnsCandidatesFound(t *testing.T) {
+	mux, _ := newKitchenStationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	stubBrowsePrinters(t, []discovery.PrinterCandidate{
+		{Name: "Bar Printer", Address: "192.168.1.70:9100"},
+	}, nil)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/kitchen-stations/discover-printers", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Data struct {
+			Printers []struct {
+				Name    string `json:"name"`
+				Address string `json:"address"`
+			} `json:"printers"`
+		} `json:"data"`
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if out.Error != nil {
+		t.Fatalf("expected error: null, got %v", out.Error)
+	}
+	if len(out.Data.Printers) != 1 || out.Data.Printers[0].Name != "Bar Printer" || out.Data.Printers[0].Address != "192.168.1.70:9100" {
+		t.Fatalf("unexpected printers payload: %+v", out.Data.Printers)
+	}
+}
+
+func TestDiscoverPrintersAPI_ReturnsEmptyArrayNotNullWhenNoneFound(t *testing.T) {
+	mux, _ := newKitchenStationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	stubBrowsePrinters(t, nil, nil)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/kitchen-stations/discover-printers", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), `"printers":[]`) {
+		t.Fatalf("expected an empty array, not null, got body: %s", rec.Body.String())
+	}
+}
+
+func TestDiscoverPrintersAPI_ScanFailureReturns500WithoutLeakingRawError(t *testing.T) {
+	mux, _ := newKitchenStationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	stubBrowsePrinters(t, nil, errors.New("write udp6 [::]:1234->[ff02::fb]:5353: sendto: no route to host"))
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/kitchen-stations/discover-printers", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("expected 500, got %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), "sendto") {
+		t.Fatalf("raw network error leaked into the response body: %s", rec.Body.String())
 	}
 }

@@ -2,15 +2,29 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/discovery"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
+
+// discoverPrintersTimeout bounds the LAN scan the "Discover printers"
+// button runs per click — same duration and same bounded, per-click (never
+// ambient/background) shape as discoverBrowseTimeout in discovery_api.go.
+const discoverPrintersTimeout = 4 * time.Second
+
+// discoveryBrowsePrinters is a package var over discovery.BrowsePrinters,
+// same seam-for-testability pattern as discoveryBrowse in discovery_api.go
+// — lets a test substitute a fast fake instead of waiting out a real
+// multi-second network scan.
+var discoveryBrowsePrinters = discovery.BrowsePrinters
 
 // stationCheck is one station checkbox: checked when the row (category or
 // item) is currently routed to it.
@@ -148,6 +162,38 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		renderPage(w, r, r.URL.Query().Get("err"))
+	})
+
+	// Discover printers (ut-docs#140): a bounded, per-click mDNS scan for
+	// network printers already broadcasting themselves, offered as
+	// candidates for the new-station form's address field — never
+	// auto-trusted or auto-wired (security-first: discovery only presents,
+	// the operator still confirms by clicking a candidate and submitting
+	// the create form themselves). Manager-gated, same as every other route
+	// on this page.
+	mux.HandleFunc("GET /api/kitchen-stations/discover-printers", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := requireManager(w, r); !ok {
+			return
+		}
+		candidates, err := discoveryBrowsePrinters(r.Context(), discoverPrintersTimeout)
+		if err != nil {
+			// Never put the raw driver/network error in the response (same
+			// rule discovery_api.go's discoverPrimariesHandler follows,
+			// ut-docs#303/#538): log it server-side, generic marker to the
+			// client — the page's own "kitchenstations.discover.error"
+			// i18n string is what the operator actually sees.
+			log.Printf("[discovery] printer LAN scan failed: %v", err)
+			http.Error(w, "discovery scan failed", http.StatusInternalServerError)
+			return
+		}
+		if candidates == nil {
+			candidates = []discovery.PrinterCandidate{}
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data":  map[string]any{"printers": candidates},
+			"error": nil,
+		})
 	})
 
 	mux.HandleFunc("POST /api/kitchen-stations", func(w http.ResponseWriter, r *http.Request) {
