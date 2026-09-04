@@ -173,6 +173,13 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// middleware first, so cross-till orders silently never work.
 		"/api/sync/orders",
 		"/api/sync/orders/R-0001/status",
+		// ADR-0079 (ut-docs#1571): the primary-side order-status SSE stream a
+		// replica's background bridge holds open. Bearer-authed in the
+		// handler (syncTill), same as /api/sync/orders — and NOT covered by
+		// the {id}/status exemption (rest="stream" has no /status suffix),
+		// so without its own entry the bridge authenticates perfectly and is
+		// still 401'd here: the /api/sync/stock failure class, again.
+		"/api/sync/orders/stream",
 	} {
 		if !exempt(p) {
 			t.Errorf("%s is not exempt — this middleware will 401 it before the "+

@@ -340,8 +340,14 @@ func TestOrdersListFragment_RearmsPolling(t *testing.T) {
 		t.Fatalf("status = %d, want 200", rec.Code)
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `hx-get="/ui/orders"`) || !strings.Contains(body, `hx-trigger="every 15s"`) {
-		t.Fatalf("fragment root must re-arm the 15s poll after each swap, got %q", body)
+	// ADR-0079 (ut-docs#1571): the same root also listens for the page's
+	// SSE-driven "orders-push" nudge (dispatched on body by orders.html's
+	// EventSource listener) so a status change on ANOTHER till re-renders the
+	// board in ~1s instead of on the next 15s tick. Both triggers live on the
+	// one fragment root, for the same swap-replaces-the-trigger reason — the
+	// 15s poll is the offline-first fallback and stays exactly as it was.
+	if !strings.Contains(body, `hx-get="/ui/orders"`) || !strings.Contains(body, `hx-trigger="every 15s, orders-push from:body"`) {
+		t.Fatalf("fragment root must re-arm the 15s poll AND the orders-push SSE nudge after each swap, got %q", body)
 	}
 }
 
@@ -355,5 +361,26 @@ func TestOrdersPage_Renders(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), `hx-get="/ui/orders`) {
 		t.Fatalf("page must load the orders list fragment, got %q", rec.Body.String())
+	}
+}
+
+// ADR-0079 (ut-docs#1571): the page opens a native EventSource on the local
+// order-status stream and turns every event into the "orders-push" htmx nudge
+// the fragment root listens for. Native EventSource reconnects with its own
+// backoff — no hand-rolled reconnect JS, and no new user-facing string.
+func TestOrdersPage_OpensOrderStatusEventSource(t *testing.T) {
+	mux, _, _ := newOrderStatusTestDeps(t)
+	req := httptest.NewRequest(http.MethodGet, "/orders", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `new EventSource('/api/orders/stream')`) {
+		t.Fatalf("page must open an EventSource on /api/orders/stream, got %q", body)
+	}
+	if !strings.Contains(body, `'order-status'`) || !strings.Contains(body, `'orders-push'`) {
+		t.Fatalf("page must translate order-status events into the orders-push htmx trigger, got %q", body)
 	}
 }

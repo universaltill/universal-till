@@ -300,8 +300,20 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	StartAutoUpdateScheduler(bgCtx, dp, wg)         // background unattended update (ut-docs#79); joined by app.Run's drain
 	StartBasePluginRetry(bgCtx, dp, wg)             // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
 	StartTSEProvisionRetry(bgCtx, dp, wg)           // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain
-	dropStaleFiscalSignRetryQueue(bgCtx, dp)        // one-time drop of the pre-1.4.0 re-sign queue — retry-signing removed (ADR-0056, ut-docs#839)
-	registerInvoices(mux, dp)                       // VAT invoices + credit notes (G31)
+	StartOrderStatusStreamBridge(bgCtx, dp, wg)     // replica: hold the primary's order-status SSE stream open and republish locally (ADR-0079, ut-docs#1571); joined by app.Run's drain
+	// ADR-0079: release every open order-status SSE stream (browser
+	// EventSources, and on a primary the replicas' bridges) the instant
+	// shutdown begins — server.Start's own Shutdown fires on this same
+	// bgCtx.Done(), and would otherwise wait its full timeout on connections
+	// that never end on their own. Joined by app.Run's drain.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-bgCtx.Done()
+		dp.OrderStatus.Close()
+	}()
+	dropStaleFiscalSignRetryQueue(bgCtx, dp) // one-time drop of the pre-1.4.0 re-sign queue — retry-signing removed (ADR-0056, ut-docs#839)
+	registerInvoices(mux, dp)                // VAT invoices + credit notes (G31)
 	registerHoldAPI(mux, dp)
 	registerSuggestions(mux, dp)
 	registerTablePicker(mux, dp) // basket table-assignment picker (ut-docs#820, ADR-0054)

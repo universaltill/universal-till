@@ -9,4 +9,22 @@
        page (ut-docs#517a). */}}
   <div id="orders" hx-get="/ui/orders" hx-trigger="load" hx-swap="outerHTML"></div>
 </div>
+{{/* ADR-0079 (ut-docs#1571): live push. A native EventSource on the local
+     order-status stream; every event fires the "orders-push" htmx trigger
+     the fragment root (orders_list.html) listens for via `from:body`, so a
+     status change on ANY till re-renders the board in ~1s instead of on the
+     next 15s tick. The poll stays exactly as-is as the offline-first
+     fallback. EventSource reconnects with its own backoff — no reconnect
+     logic here, deliberately. Dispatched on body (not on #orders) because
+     the outerHTML swap replaces #orders on every render; the body listener
+     is what `from:body` re-binds to. Nothing rendered — no i18n strings. */}}
+<script>
+  (function () {
+    if (!window.EventSource) return;
+    var es = new EventSource('/api/orders/stream');
+    es.addEventListener('order-status', function () {
+      if (window.htmx) htmx.trigger(document.body, 'orders-push');
+    });
+  })();
+</script>
 {{ end }}

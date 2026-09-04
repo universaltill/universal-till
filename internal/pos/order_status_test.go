@@ -1,6 +1,7 @@
 package pos
 
 import (
+	"encoding/json"
 	"testing"
 	"time"
 )
@@ -168,5 +169,78 @@ func TestOrderStatusBroadcaster_SlowSubscriberNeverBlocksPublish(t *testing.T) {
 		}
 	case <-time.After(2 * time.Second):
 		t.Fatal("healthy subscriber starved by an unrelated slow subscriber")
+	}
+}
+
+// ADR-0079 (ut-docs#1571): OrderStatusChanged is now also a WIRE type — the
+// SSE stream endpoints JSON-encode it verbatim — so it must marshal
+// snake_case like every other JSON body this product emits (CLAUDE.md:
+// "JSON snake_case"), not as Go field names.
+func TestOrderStatusChanged_MarshalsSnakeCase(t *testing.T) {
+	b, err := json.Marshal(OrderStatusChanged{ReceiptNo: "R-0001", Status: OrderStatusReady, ActorID: "op-1", At: "2026-09-04T10:00:00Z"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `{"receipt_no":"R-0001","status":"ready","actor_id":"op-1","at":"2026-09-04T10:00:00Z"}`
+	if string(b) != want {
+		t.Fatalf("marshal = %s, want %s", b, want)
+	}
+	var back OrderStatusChanged
+	if err := json.Unmarshal(b, &back); err != nil {
+		t.Fatal(err)
+	}
+	if back.ReceiptNo != "R-0001" || back.Status != OrderStatusReady || back.ActorID != "op-1" || back.At != "2026-09-04T10:00:00Z" {
+		t.Fatalf("round-trip = %+v", back)
+	}
+}
+
+// SubscriberCount lets the SSE handler tests prove the unsubscribe-on-
+// disconnect path actually runs (ADR-0079); Close releases every live
+// subscriber at process shutdown so a long-lived stream handler blocked on
+// its channel returns instead of holding http.Server.Shutdown open. After
+// Close the broadcaster is inert: Publish is a no-op and Subscribe hands
+// back an already-closed channel, so a handler racing shutdown exits at once.
+func TestOrderStatusBroadcaster_SubscriberCountAndClose(t *testing.T) {
+	b := NewOrderStatusBroadcaster()
+	if got := b.SubscriberCount(); got != 0 {
+		t.Fatalf("fresh broadcaster has %d subscribers, want 0", got)
+	}
+	_, cancel1 := b.Subscribe()
+	ch2, cancel2 := b.Subscribe()
+	defer cancel2()
+	if got := b.SubscriberCount(); got != 2 {
+		t.Fatalf("after two Subscribe: %d, want 2", got)
+	}
+	cancel1()
+	cancel1() // idempotent
+	if got := b.SubscriberCount(); got != 1 {
+		t.Fatalf("after cancel: %d, want 1", got)
+	}
+
+	b.Close()
+	if got := b.SubscriberCount(); got != 0 {
+		t.Fatalf("after Close: %d subscribers, want 0", got)
+	}
+	select {
+	case _, ok := <-ch2:
+		if ok {
+			t.Fatal("Close must close the live subscriber channel, got a value instead")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Close must close the live subscriber channel")
+	}
+	b.Publish(OrderStatusChanged{ReceiptNo: "R-0009"}) // must not panic
+	ch3, cancel3 := b.Subscribe()
+	defer cancel3()
+	select {
+	case _, ok := <-ch3:
+		if ok {
+			t.Fatal("Subscribe after Close must hand back a closed channel, got a value")
+		}
+	case <-time.After(time.Second):
+		t.Fatal("Subscribe after Close must hand back an already-closed channel")
+	}
+	if got := b.SubscriberCount(); got != 0 {
+		t.Fatalf("Subscribe after Close must not register anything, got %d", got)
 	}
 }
