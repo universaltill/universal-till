@@ -108,6 +108,61 @@ func TestBuildEODDoc_Cancellations(t *testing.T) {
 	}
 }
 
+// ADR-0066 / ut-docs#1141: eodPeriodMeta's close-to-close "Zeitraum" line —
+// the new "eod" path (Day=="") must NOT print the legacy "END OF DAY <day>"
+// header, and must render the reference document's own "Zeitraum From - To"
+// vocabulary, or "Zeitraum bis To" on the till's very first close (From
+// unbounded/empty, ADR-0066 Decision 3).
+func TestBuildEODDoc_CloseToCloseMetaLine(t *testing.T) {
+	rep := data.EODReport{
+		// Day intentionally empty: the new "eod" path.
+		From: "2026-08-23T19:10:00+02:00", To: "2026-08-24T19:19:00+02:00",
+		GeneratedAt: "2026-08-24T19:19:00Z",
+		SalesCount:  1, Gross: 500, Net: 500,
+	}
+	// eodPeriodMeta's full value is asserted exactly by TestEodPeriodMeta
+	// below; here the receipt is only 42 print.Width columns wide, so a
+	// full RFC3339-to-RFC3339 line legitimately clips (same print-width
+	// constraint TestBuildEODDoc_GeneratedByAndAnnotation's own comment
+	// notes) — check the un-clippable prefix instead.
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	if strings.Contains(out, "END OF DAY") {
+		t.Errorf("close-to-close report must not print the legacy END OF DAY header, got:\n%s", out)
+	}
+	if !strings.Contains(out, "Zeitraum 2026-08-23T19:10:00+02:00") {
+		t.Errorf("expected the Zeitraum From - To line, got:\n%s", out)
+	}
+
+	// The till's first-ever close: From is empty (unbounded lower bound).
+	rep.From = ""
+	out = string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	if !strings.Contains(out, "Zeitraum bis 2026-08-24T19:19:00+02:00") {
+		t.Errorf("expected the open-ended Zeitraum bis line for the first-ever close, got:\n%s", out)
+	}
+}
+
+// eodPeriodMeta directly, independent of print-width truncation concerns —
+// pins the exact three cases (legacy day, bounded range, unbounded first
+// close) as pure string values.
+func TestEodPeriodMeta(t *testing.T) {
+	cases := []struct {
+		name string
+		rep  data.EODReport
+		want string
+	}{
+		{"legacy calendar day", data.EODReport{Day: "2026-07-14"}, "END OF DAY 2026-07-14"},
+		{"close-to-close bounded", data.EODReport{From: "2026-08-23T19:10:00+02:00", To: "2026-08-24T19:19:00+02:00"},
+			"Zeitraum 2026-08-23T19:10:00+02:00 - 2026-08-24T19:19:00+02:00"},
+		{"till's first-ever close (unbounded)", data.EODReport{To: "2026-08-24T19:19:00+02:00"},
+			"Zeitraum bis 2026-08-24T19:19:00+02:00"},
+	}
+	for _, c := range cases {
+		if got := eodPeriodMeta(c.rep); got != c.want {
+			t.Errorf("%s: eodPeriodMeta = %q, want %q", c.name, got, c.want)
+		}
+	}
+}
+
 // ut-docs#1012 #2: GeneratedBy/Annotation print as footer lines matching
 // the reference Z-Bon's own "Erstellt von" / "Anmerkung" vocabulary.
 // Annotation is optional — omitted entirely when blank, even when

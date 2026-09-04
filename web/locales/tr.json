@@ -613,6 +613,7 @@
   "reports.eod.exists": "Bugünün raporu zaten var (aşağıdaki listeye bakın)",
   "reports.eod.failed": "Rapor başarısız",
   "reports.eod.net": "Net",
+  "reports.eod.period_range": "%s – %s",
   "reports.eod.range_downloaded": "indirildi",
   "reports.eod.range_from": "Başlangıç",
   "reports.eod.range_loading": "oluşturuluyor…",

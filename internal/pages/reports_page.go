@@ -397,6 +397,15 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				// every period. Gated behind CanRunEOD with Net/Sales —
 				// it's derived from the same report history.
 				HasVariance bool
+				// From/To (ADR-0066 Decision 6, ut-docs#1141): set only
+				// for a close-to-close "eod" report (rep.Day == "", the
+				// new path) — the template renders "From – To" in place
+				// of the bare Period column for these rows, matching the
+				// reference document's own Zeitraum line. Empty for a
+				// legacy calendar-date row, which keeps showing its
+				// plain Period as before (no regression on the
+				// historical path).
+				From, To string
 			}
 			var eodRows []eodRow
 			// ut-docs#794 review finding (residual on the blocker-1 fix):
@@ -425,6 +434,9 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 							row.Net = rep.Net
 							row.Sales = rep.SalesCount
 							row.HasVariance = rep.CashReconciliation != nil && rep.CashReconciliation.Variance != 0
+							if rep.Day == "" {
+								row.From, row.To = rep.From, rep.To
+							}
 						}
 					}
 					eodRows = append(eodRows, row)
