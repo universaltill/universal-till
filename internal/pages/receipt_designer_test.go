@@ -5,6 +5,7 @@ import (
 	"context"
 	"image"
 	"image/color"
+	"image/gif"
 	"image/png"
 	"mime/multipart"
 	"net/http"
@@ -15,6 +16,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -226,6 +228,71 @@ func TestReceiptDesignerLogo_RejectsInvalidImage(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("expected 422 for an invalid image, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// newOversizedPNGBytes is a real, fully valid, fully decodable PNG whose
+// pixel count sits just over imaging.MaxPixels — the actual pixel-bomb
+// shape (ut-docs#1328/#1417): a solid color compresses to a tiny file
+// while still being genuinely decodable, proving the guard rejects it via
+// the cheap dimension check rather than some unrelated "corrupt file"
+// reason.
+func newOversizedPNGBytes(t *testing.T) []byte {
+	t.Helper()
+	const w, h = 7000, 6000
+	if int64(w)*int64(h) <= imaging.MaxPixels {
+		t.Fatalf("test fixture %dx%d must exceed imaging.MaxPixels (%d)", w, h, imaging.MaxPixels)
+	}
+	img := image.NewGray(image.Rect(0, 0, w, h))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode oversized test png: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// TestReceiptDesignerLogo_RejectsPixelBombImage is the ut-docs#1417
+// regression at this handler's actual real-world reachable point: before
+// this fix, the validation gate here (print.RasterLogo(raw) == nil) used
+// raw image.Decode with no dimension check, so a small, well-formed file
+// declaring an enormous width×height would still be decoded in full
+// before being written verbatim to receiptLogoPath() — and re-decoded on
+// every subsequent receipt print. Must now be rejected the same way an
+// undecodable file already is.
+func TestReceiptDesignerLogo_RejectsPixelBombImage(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newReceiptDesignerTestDeps(t)
+	req := logoUploadRequest(t, nil, newOversizedPNGBytes(t))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnprocessableEntity {
+		t.Fatalf("expected 422 for a pixel-bomb image, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(receiptLogoPath()); !os.IsNotExist(err) {
+		t.Fatalf("expected no logo file written for a rejected upload, stat err: %v", err)
+	}
+}
+
+// TestReceiptDesignerLogo_AcceptsGIF is the compatibility guard for the
+// fix above: web/ui/pages/receipt_designer.html's file picker advertises
+// image/gif, so bounding this upload's decode must not silently narrow it
+// to png/jpeg only.
+func TestReceiptDesignerLogo_AcceptsGIF(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newReceiptDesignerTestDeps(t)
+	img := image.NewPaletted(image.Rect(0, 0, 8, 8), color.Palette{color.Black, color.White})
+	var buf bytes.Buffer
+	if err := gif.Encode(&buf, img, nil); err != nil {
+		t.Fatalf("encode test gif: %v", err)
+	}
+	req := logoUploadRequest(t, nil, buf.Bytes())
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected a valid GIF logo to be accepted, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if _, err := os.Stat(receiptLogoPath()); err != nil {
+		t.Fatalf("expected the gif logo file written: %v", err)
 	}
 }
 

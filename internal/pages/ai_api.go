@@ -6,7 +6,7 @@ import (
 	"fmt"
 	"image"
 	"image/jpeg"
-	_ "image/png"
+	"image/png"
 	"io"
 	"log"
 	"net/http"
@@ -19,6 +19,7 @@ import (
 	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"golang.org/x/image/draw"
@@ -57,21 +58,39 @@ func registerAIAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": data, "error": errField})
 	}
 
-	readPhoto := func(r *http.Request) ([]byte, string, error) {
+	// decodedPhoto carries both the raw uploaded bytes (still needed
+	// as-is for the AI backend request — svc.Identify below sends the
+	// original photo, not a re-encode) and the already-decoded image
+	// (needed by the confirm handler to persist a fresh re-encode). One
+	// struct, one decode: readPhoto's bounded decode is the only full
+	// image.Decode either handler needs — a second call would double
+	// peak memory on the same file for no benefit (ut-docs#1417 review).
+	type decodedPhoto struct {
+		Raw       []byte
+		MediaType string
+		Img       image.Image
+	}
+
+	readPhoto := func(r *http.Request) (decodedPhoto, error) {
 		file, _, err := r.FormFile("photo")
 		if err != nil {
-			return nil, "", fmt.Errorf("photo file required")
+			return decodedPhoto{}, fmt.Errorf("photo file required")
 		}
 		defer file.Close()
 		raw, err := io.ReadAll(io.LimitReader(file, maxIdentifyPhotoBytes+1))
 		if err != nil || len(raw) == 0 || len(raw) > maxIdentifyPhotoBytes {
-			return nil, "", fmt.Errorf("photo missing or larger than 4MB")
+			return decodedPhoto{}, fmt.Errorf("photo missing or larger than 4MB")
 		}
-		_, format, err := image.Decode(bytes.NewReader(raw))
-		if err != nil || (format != "jpeg" && format != "png") {
-			return nil, "", fmt.Errorf("photo must be a valid JPEG or PNG")
+		// Bounded decode (ut-docs#1417): the raw stdlib image.Decode this
+		// used to call has no dimension check, so a small, well-formed
+		// file declaring an enormous width×height allocates a decode
+		// buffer for that declared size regardless — the exact pixel-bomb
+		// class ut-docs#1328 fixed at the catalog upload call sites.
+		img, format, err := imaging.DecodeBoundedFormats(raw, imaging.MaxPixels, imaging.DefaultFormats())
+		if err != nil {
+			return decodedPhoto{}, fmt.Errorf("photo must be a valid JPEG or PNG")
 		}
-		return raw, "image/" + format, nil
+		return decodedPhoto{Raw: raw, MediaType: "image/" + format, Img: img}, nil
 	}
 
 	mux.HandleFunc("POST /api/pos/identify", func(w http.ResponseWriter, r *http.Request) {
@@ -84,7 +103,7 @@ func registerAIAPI(mux *http.ServeMux, d *common.Deps) {
 			writeJSON(w, http.StatusBadRequest, nil, "invalid upload")
 			return
 		}
-		photo, mediaType, err := readPhoto(r)
+		photo, err := readPhoto(r)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, nil, err.Error())
 			return
@@ -104,7 +123,7 @@ func registerAIAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		refs := loadReferenceImages(items)
 
-		res, err := svc.Identify(r.Context(), photo, mediaType, items, refs)
+		res, err := svc.Identify(r.Context(), photo.Raw, photo.MediaType, items, refs)
 		if err != nil {
 			log.Printf("warning: ai identify failed: %v", err)
 			writeJSON(w, http.StatusBadGateway, nil, "identification unavailable")
@@ -174,22 +193,48 @@ func registerAIAPI(mux *http.ServeMux, d *common.Deps) {
 			writeJSON(w, http.StatusNotFound, nil, "item not found")
 			return
 		}
-		photo, mediaType, err := readPhoto(r)
+		photo, err := readPhoto(r)
 		if err != nil {
 			writeJSON(w, http.StatusBadRequest, nil, err.Error())
 			return
 		}
-		ext := ".jpg"
-		if mediaType == "image/png" {
-			ext = ".png"
-		}
+		// Re-encode to a fresh PNG rather than persisting the raw upload
+		// bytes verbatim (ut-docs#1417) — same convention the catalog
+		// image-upload handlers already use, reusing the image readPhoto
+		// already decoded (not a second decode of the same bytes). This
+		// protects every file written FROM NOW ON: a hostile file could
+		// never reach disk in the first place (readPhoto's bounded decode
+		// already rejected it before this point), and re-encoding also
+		// normalizes away anything a decode+encode round trip would drop
+		// (e.g. trailing bytes past the real image data). It does NOT
+		// retroactively touch any file already on disk from before this
+		// fix shipped — those still exist as whatever the old client
+		// uploaded, `.jpg` or `.png` alike (refImageNames matches both
+		// extensions). loadRefJPEG's own bounded decode is what protects
+		// those pre-existing files on every future identify call.
 		dir := filepath.Join(itemAssetDir(), itemID, "ai_ref")
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			writeJSON(w, http.StatusInternalServerError, nil, "cannot store reference image")
 			return
 		}
-		name := fmt.Sprintf("%d%s", time.Now().UnixNano(), ext)
-		if err := os.WriteFile(filepath.Join(dir, name), photo, 0o644); err != nil {
+		name := fmt.Sprintf("%d.png", time.Now().UnixNano())
+		outPath := filepath.Join(dir, name)
+		out, err := os.Create(outPath)
+		if err != nil {
+			writeJSON(w, http.StatusInternalServerError, nil, "cannot store reference image")
+			return
+		}
+		encErr := png.Encode(out, photo.Img)
+		closeErr := out.Close()
+		if encErr != nil || closeErr != nil {
+			// Don't leave a partial/corrupt file behind (ut-docs#1417
+			// review): unlike the catalog handlers' fixed thumb.png name
+			// (which self-heals on the next upload), this filename is a
+			// unique nanosecond timestamp — left in place, it would
+			// silently poison every future identify call for this item
+			// (latestAIRef picks the newest name, and loadReferenceImages
+			// has no fallback to thumb.png when that decode then fails).
+			_ = os.Remove(outPath)
 			writeJSON(w, http.StatusInternalServerError, nil, "cannot store reference image")
 			return
 		}
@@ -225,13 +270,20 @@ func loadReferenceImages(items []ai.CatalogItem) []ai.RefImage {
 // loadRefJPEG reads an image and re-encodes it as a small JPEG (max 160px
 // long edge). Full-size thumbs would put megabytes of base64 on every
 // identify request for no recognition benefit.
+//
+// Decoded via the bounded internal/imaging helper (ut-docs#1417), not raw
+// image.Decode: this file re-runs on EVERY identify call, for up to
+// maxReferenceImages items, so an unbounded decode here turns one hostile
+// file already on disk (from before this fix shipped, or from any other
+// path that once wrote to this tree) into a repeatable OOM rather than a
+// one-time risk — the confirm handler re-encoding at write time only
+// protects files written after this fix ships, not ones already present.
 func loadRefJPEG(path string) ([]byte, bool) {
-	f, err := os.Open(path)
+	raw, err := os.ReadFile(path)
 	if err != nil {
 		return nil, false
 	}
-	defer f.Close()
-	src, _, err := image.Decode(f)
+	src, err := imaging.Decode(raw)
 	if err != nil {
 		return nil, false
 	}
