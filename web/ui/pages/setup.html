@@ -649,7 +649,7 @@
         <h3>{{ T "tills.discovery.title" }}</h3>
         <p class="muted">{{ T "setup.join.discover_help" }}</p>
         <label>{{ T "tills.pairing.your_till_name" }}
-          <input type="text" id="setup-pairing-till-name" name="name" placeholder="Till 2">
+          <input type="text" id="setup-pairing-till-name" name="name" placeholder="Till 2" required>
         </label>
         <button id="setup-discover-btn" class="btn secondary" type="button">{{ T "tills.discovery.find_button" }}</button>
         <div id="setup-discover-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
@@ -747,6 +747,21 @@
                   + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + esc(p.till_id) + '</span> '
                   + '<button type="button" class="btn secondary" hx-post="/api/setup/pair-start" '
                   + 'hx-vals="' + escAttr(vals) + '" hx-include="#setup-pairing-till-name" '
+                  // ut-docs#1540: this button lives outside any <form>, so
+                  // the till-name input's own `required` attribute is
+                  // never natively checked on click — htmx only validates
+                  // hx-include'd elements when hx-validate="true" is set,
+                  // and even then only calls checkValidity(), so a failed
+                  // check would block the request SILENTLY (see the card's
+                  // own investigation). Trim in place first (the server
+                  // trims too, so nothing changes semantically) so that a
+                  // whitespace-only entry becomes empty and `required`
+                  // actually fires — testing value.trim() by hand instead
+                  // would cancel the request with NO message, which is the
+                  // very "the button does nothing" symptom this card is
+                  // fixing. reportValidity() then shows the native bubble
+                  // on the offending field, same as a real form submit.
+                  + 'hx-on::before-request="var n=document.getElementById(\'setup-pairing-till-name\');n.value=n.value.trim();if(!n.reportValidity()){event.preventDefault();}" '
                   + 'hx-target="#setup-pairing-status-host" hx-swap="innerHTML">' + esc(i18n.requestBtn) + '</button></li>';
               }).join('') + '</ul>';
               htmx.process(out);

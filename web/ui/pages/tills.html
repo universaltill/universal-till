@@ -32,7 +32,7 @@
     <h3>{{ T "tills.discovery.title" }}</h3>
     <p class="muted">{{ T "tills.discovery.help" }}</p>
     <label>{{ T "tills.pairing.your_till_name" }}
-      <input type="text" id="pairing-till-name" name="name" placeholder="Till 2"></label>
+      <input type="text" id="pairing-till-name" name="name" placeholder="Till 2" required></label>
     <button id="discover-btn" class="btn secondary" type="button">{{ T "tills.discovery.find_button" }}</button>
     <div id="discover-msg" class="muted" aria-live="polite" style="min-height:1.2rem; margin-inline-start:0"></div>
     <div id="discover-results"></div>
@@ -154,6 +154,13 @@
             + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + esc(p.till_id) + '</span> '
             + '<button type="button" class="btn secondary" hx-post="/api/sync/pair-start" '
             + 'hx-vals="' + escAttr(vals) + '" hx-include="#pairing-till-name" '
+            // ut-docs#1540: same required-field guard as the setup wizard's
+            // discovery button — this one lives outside a <form> too, so
+            // the input's own `required` attribute needs an explicit
+            // reportValidity() call to actually surface to the operator.
+            // Trimming in place first is what makes a whitespace-only
+            // entry fail `required` instead of cancelling silently.
+            + 'hx-on::before-request="var n=document.getElementById(\'pairing-till-name\');n.value=n.value.trim();if(!n.reportValidity()){event.preventDefault();}" '
             + 'hx-target="#pairing-status-host" hx-swap="innerHTML">' + esc(i18n.requestBtn) + '</button></li>';
         }).join('') + '</ul>';
         htmx.process(out);
