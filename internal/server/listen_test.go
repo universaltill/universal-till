@@ -63,9 +63,20 @@ func TestListenWithFallback_WildcardHostFallsBackToLoopback(t *testing.T) {
 	wildcardHosts := []string{"", "0.0.0.0", "::", "::0", "0:0:0:0:0:0:0:0", "::ffff:0.0.0.0"}
 	for _, host := range wildcardHosts {
 		t.Run(host, func(t *testing.T) {
-			busy, err := net.Listen("tcp", "127.0.0.1:0")
+			// ut-docs#1413: occupy the port on the SAME host spelling under
+			// test, not on a hardcoded "127.0.0.1:0". A port already held on
+			// 127.0.0.1 collides with a wildcard bind on the same port on
+			// Linux, but on macOS a dual-stack wildcard bind can succeed
+			// alongside an existing 127.0.0.1 listener on that port — so the
+			// collision this test relies on to drive listenWithFallback into
+			// its fallback path silently stopped happening there, and the
+			// fallback-degrades-to-loopback behaviour below went untested on
+			// darwin even though CI (Linux) stayed green. Binding the exact
+			// same address (host *and* port) twice fails identically on
+			// every OS, so this can't drift out of sync with the platform.
+			busy, err := net.Listen("tcp", net.JoinHostPort(host, "0"))
 			if err != nil {
-				t.Fatalf("occupy a port: %v", err)
+				t.Fatalf("occupy a port on %q: %v", host, err)
 			}
 			defer busy.Close()
 			_, portStr, err := net.SplitHostPort(busy.Addr().String())
@@ -73,10 +84,9 @@ func TestListenWithFallback_WildcardHostFallsBackToLoopback(t *testing.T) {
 				t.Fatalf("split busy addr: %v", err)
 			}
 
-			// A wildcard bind on an already (loopback-)occupied port fails,
-			// exactly like the real ":8080" default does when something else
-			// holds the port on this host — that failure is what drives
-			// listenWithFallback into its fallback path.
+			// A second bind on the identical wildcard host+port fails on
+			// every OS — that failure is what drives listenWithFallback
+			// into its fallback path.
 			addr := net.JoinHostPort(host, portStr)
 			ln, actual, err := listenWithFallback(addr)
 			if err != nil {
