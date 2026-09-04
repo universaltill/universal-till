@@ -638,15 +638,222 @@ VALUES('line-refund-b1', ?, 1, 'itm-b1', 'Widget', 'W1', 3, 100, 10, 0, 0, 290, 
 	if totalCharge > 299 {
 		t.Fatalf("three 1-of-3 refunds must never pay back more than the original 299 service charge, got %d (over-refund)", totalCharge)
 	}
-	if totalCharge != 299 {
-		t.Fatalf("expected the clamp to recover the exact original 299 in this fixture (100+100+99, the last request absorbing the clamp), got %d", totalCharge)
+	// 298, not 299, now that ut-docs#1531's running per-key discount clamp
+	// has landed (100+100+98 -- the third request's now-EXACT line net
+	// (96, was 97) lowers its own net-weight share of the charge proration
+	// by one). This is the service-charge clamp's own pre-existing,
+	// explicitly documented characteristic (see the "drift by a minor unit
+	// in EITHER direction" comment ~15 lines up): it only ever guards
+	// against OVER-refund, never tops the last request up to the exact
+	// remainder, so the 1-unit drift this fixture happened to show as an
+	// overage before #1531 now shows as a shortfall instead -- not a new
+	// bug, just which direction this specific fixture's rounding lands in.
+	if totalCharge != 298 {
+		t.Fatalf("expected 100+100+98=298 in this fixture post-#1531 (never-exceeds is the real invariant above), got %d", totalCharge)
 	}
-	// Deliberately not asserting on the overall `total`/subtotal here: the
-	// per-request line-discount flooring above also over-refunds the
-	// SUBTOTAL by a similar minor unit, independently of the service
-	// charge -- a real, pre-existing gap (present with or without this
-	// card's fix, confirmed during review) that this card does not fix.
-	// Tracked separately so it isn't lost: ut-docs#1531.
+	// ut-docs#1531 itself: the line SUBTOTAL (unlike the charge) now
+	// recovers EXACTLY the original line's net, no drift in either
+	// direction -- 97+97+96=290, the promise the old comment here deferred.
+	var totalSubtotal int64
+	if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(total), 0) FROM sales WHERE sale_type = 'return'`).Scan(&totalSubtotal); err != nil {
+		t.Fatalf("sum return totals: %v", err)
+	}
+	if want := int64(290 + 298); totalSubtotal != want {
+		t.Fatalf("expected the three returns' total (line net 290 + charge 298) to equal %d exactly, got %d", want, totalSubtotal)
+	}
+}
+
+// TestPostRefund_MultiPartialRefundNeverExceedsOriginalLineNet is
+// ut-docs#1531's own acceptance criterion, isolated from the service-charge
+// interaction the sibling B1 test above now also covers: a per-line-
+// discounted, multi-partial (3+) refund of the same line whose discount
+// does not divide evenly by the number of partial refunds must never let
+// the cumulative refunded subtotal exceed the original line's net, at any
+// intermediate step, and must land exactly on it once every unit is back.
+//
+// Same driven repro as the card: 3 @ 100, a line discount of 10 (10/3 does
+// not divide evenly), refunded 1 unit at a time across 3 separate requests.
+// Before the running per-key clamp in the handler, each request
+// independently floored its own share (`int64(float64(10) * (1.0/3))` = 3
+// every time), so the true 10 discount only ever came back as 3*3=9 --
+// summed net 97+97+97=291, one minor unit over the line's actual 290 net.
+func TestPostRefund_MultiPartialRefundNeverExceedsOriginalLineNet(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-1531", "R-REFUND-1531"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 290, 0, 0, 290, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-1531', ?, 1, 'itm-1531', 'Widget', 'W1', 3, 100, 10, 0, 0, 290, 290)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-1531', ?, 'cash', 290, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	const originalLineNet = 290
+	var cumulative int64
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("refund %d failed: %d %s", i+1, rec.Code, rec.Body.String())
+		}
+		var total int64
+		if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(total), 0) FROM sales WHERE sale_type = 'return'`).Scan(&total); err != nil {
+			t.Fatalf("sum return totals after refund %d: %v", i+1, err)
+		}
+		if total > originalLineNet {
+			t.Fatalf("refund %d: cumulative refunded subtotal %d exceeds the original line's net %d (over-refund)", i+1, total, originalLineNet)
+		}
+		cumulative = total
+	}
+	if cumulative != originalLineNet {
+		t.Fatalf("expected the three 1-of-3 refunds to sum to exactly the original line net %d, got %d", originalLineNet, cumulative)
+	}
+}
+
+// TestPostRefund_SiblingLinesWithDifferentDiscountsDoNotCrossAttribute is
+// ut-docs#1531's own independent-review finding F1: two ORIGINAL lines can
+// share a refund-line key (same item/variant/price/mode) while carrying
+// DIFFERENT LineDiscount amounts -- e.g. the same product scanned twice as
+// separate lines, only one of which a cashier manually discounted.
+// Aggregating discount by key (this card's main fix) is only exact when
+// every line under a key shares one discount rate; naively pooling it here
+// would let one line's discount be given back against the OTHER line's own
+// refund. This pins the fallback: a non-uniform key's lines are each
+// refunded against their OWN discount, independently, exactly as before
+// this card (no cross-attribution) rather than a blended/wrong amount.
+func TestPostRefund_SiblingLinesWithDifferentDiscountsDoNotCrossAttribute(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-f1-1531", "R-REFUND-F1-1531"
+	// subtotal = 100 (line 0, undiscounted) + 50 (line 1, net after its own
+	// 50 discount) = 150.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 150, 0, 0, 150, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	// Both lines: same item/variant/price/mode -> SAME refund-line key.
+	// Line 0: no discount (net 100). Line 1: 50 discount (net 50).
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-f1-a', ?, 1, 'itm-f1', 'Widget', 'W1', 1, 100, 0, 0, 0, 100, 100)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-f1-b', ?, 2, 'itm-f1', 'Widget', 'W1', 1, 100, 50, 0, 0, 50, 50)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-f1', ?, 'cash', 150, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Refund line 1 (the discounted one) ALONE first.
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_1=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refunding the discounted line failed: %d %s", rec.Code, rec.Body.String())
+	}
+	var afterFirst int64
+	if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(total), 0) FROM sales WHERE sale_type = 'return'`).Scan(&afterFirst); err != nil {
+		t.Fatalf("sum return totals: %v", err)
+	}
+	// Bug shape (pooled-by-key, no fallback): floor(50*1/2)=25 net 75 --
+	// 25 over the discounted line's true 50 net. Must be exactly 50.
+	if afterFirst != 50 {
+		t.Fatalf("refunding line 1 (discount 50) alone: expected exactly its own net 50, got %d (cross-attributed from/to line 0)", afterFirst)
+	}
+
+	// Then refund line 0 (the undiscounted one) alone.
+	req2 := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("refunding the undiscounted line failed: %d %s", rec2.Code, rec2.Body.String())
+	}
+	var total int64
+	if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(total), 0) FROM sales WHERE sale_type = 'return'`).Scan(&total); err != nil {
+		t.Fatalf("sum return totals: %v", err)
+	}
+	// Bug shape: line 0 would have been shorted to 100-25=75 too high a
+	// discount taken previously would leave 100-25=75; must be exactly 100
+	// more (150 total), not blended.
+	if total != 150 {
+		t.Fatalf("expected both lines' true nets (50 + 100 = 150) with no cross-attribution, got %d", total)
+	}
+}
+
+// TestPostRefund_FractionalQuantityNeverExceedsOriginalLineNet is ut-docs#1531
+// review finding F4: cumulativeQty (keyQty[key]-pool[key]) is a float, and a
+// fractional original Qty need not land exactly on the key's total even
+// after every unit has genuinely been refunded. Flooring a target discount
+// against a cumulativeQty that's a hair short of the true total under-shoots
+// by a minor unit, reviving the exact over-refund this card exists to
+// eliminate. Pins the epsilon snap that treats "within 1e-9 of fully
+// refunded" as exactly fully refunded.
+//
+// Round-2 review finding B2: an earlier version of this test used 0.3 sliced
+// as three 0.1s -- textbook float64 (0.1+0.1+0.1 == 0.30000000000000004),
+// but on the SAFE side of the boundary (cumulativeQty ends up slightly ABOVE
+// the true total, not below), so it passed identically with the epsilon
+// snap disabled -- a false-pass that would have let a future refactor
+// delete the snap and ship green. 0.9 sliced as three 0.3s lands on the
+// dangerous side instead (cumulativeQty 0.89999999999999991118, a hair
+// BELOW the true 0.90000000000000002220) and was confirmed, driven against
+// the real handler, to fail without the snap (870 > true net 869) and pass
+// with it.
+func TestPostRefund_FractionalQuantityNeverExceedsOriginalLineNet(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-f4-1531", "R-REFUND-F4-1531"
+	// 0.9 units @ 1000, discount 31 -> net 869 (900 - 31).
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 869, 0, 0, 869, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-f4', ?, 1, 'itm-f4', 'Weighed Widget', 'WW1', 0.9, 1000, 31, 0, 0, 869, 869)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-f4', ?, 'cash', 869, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	const originalLineNet = 869
+	var cumulative int64
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=0.3"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("refund %d failed: %d %s", i+1, rec.Code, rec.Body.String())
+		}
+		var total int64
+		if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(total), 0) FROM sales WHERE sale_type = 'return'`).Scan(&total); err != nil {
+			t.Fatalf("sum return totals after refund %d: %v", i+1, err)
+		}
+		if total > originalLineNet {
+			t.Fatalf("refund %d: cumulative refunded subtotal %d exceeds the original line's net %d (over-refund, float-boundary miss)", i+1, total, originalLineNet)
+		}
+		cumulative = total
+	}
+	if cumulative != originalLineNet {
+		t.Fatalf("expected three 0.3-of-0.9 refunds to sum to exactly the original line net %d, got %d", originalLineNet, cumulative)
+	}
 }
 
 // TestPostRefund_FullRefundOfFullyDiscountedLineWithChargeStillSucceeds is

@@ -378,6 +378,75 @@ VALUES('rline1','return1',1,'itm1','Apple','SKU1',1,100,2000,10,100,110)`); err 
 	}
 }
 
+// TestReturnedLineDiscounts is ut-docs#1531 review finding N4:
+// ReturnedLineDiscounts had no direct data-layer test, only indirect
+// coverage through the refund handler's own HTTP-level tests. Mirrors
+// TestReturnChain_ReceiptsAndReturnedQuantities above exactly, with a line
+// discount on both the original and the return line so the SUM(line_discount)
+// grouping (not just SUM(quantity)) is what's actually pinned.
+func TestReturnedLineDiscounts(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO items(id,sku,name,base_price,is_active,is_weighed,unit) VALUES('itm1','SKU1','Apple',100,1,0,'each')`); err != nil {
+		t.Fatal(err)
+	}
+	seedLifecycleSale(t, dbx, "sale1", "R-ORIG", "sale", "completed", "2026-01-01T10:00:00Z", 190, 20)
+	// 2 units @ 100, a 10 line discount on the original line.
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line1','sale1',1,'itm1','Apple','SKU1',2,100,10,2000,18,190,190)`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Before any return exists, nothing to report.
+	before, err := dbx.repo.ReturnedLineDiscounts(ctx, "sale1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := RefundLineKey("itm1", "", 100, "")
+	if got := before[key]; got != 0 {
+		t.Fatalf("expected 0 discount returned before any return exists, got %d", got)
+	}
+
+	// A completed partial return of 1 unit, itself carrying a 5 discount
+	// (the return's OWN line_discount, i.e. what the refund handler
+	// actually persisted for that request).
+	seedLifecycleSale(t, dbx, "return1", "R-RETURN", "return", "completed", "2026-01-01T11:00:00Z", 95, 9)
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('rline1','return1',1,'itm1','Apple','SKU1',1,100,5,2000,9,95,95)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertSaleLink(ctx, nil, "link1", "return1", "sale1", "damaged"); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := dbx.repo.ReturnedLineDiscounts(ctx, "sale1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := after[key]; got != 5 {
+		t.Fatalf("expected 5 discount already returned at key %q, got %+v", key, after)
+	}
+
+	// A NON-completed (e.g. pending/voided) return must not count -- same
+	// status='completed' filter ReturnedQuantities itself uses.
+	seedLifecycleSale(t, dbx, "return2", "R-RETURN-2", "return", "voided", "2026-01-01T12:00:00Z", 100, 0)
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('rline2','return2',1,'itm1','Apple','SKU1',1,100,100,2000,0,0,0)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertSaleLink(ctx, nil, "link2", "return2", "sale1", "damaged"); err != nil {
+		t.Fatal(err)
+	}
+	stillOnlyCompleted, err := dbx.repo.ReturnedLineDiscounts(ctx, "sale1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stillOnlyCompleted[key]; got != 5 {
+		t.Fatalf("expected the voided return's discount to be excluded (still 5), got %d", got)
+	}
+}
+
 func TestSaleExistsAndSetSaleProvenance(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()

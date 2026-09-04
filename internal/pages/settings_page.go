@@ -857,6 +857,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		st := d.CurrentState()
 		st.WindowMode = mode
+		st.WindowModeChanged = true // ut-docs#1555: this save DOES mean to change it
 		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
@@ -904,6 +905,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		st := d.CurrentState()
 		st.LaunchOnStartup = b
+		st.LaunchOnStartupChanged = true // ut-docs#1555: this save DOES mean to change it
 		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return

@@ -39,7 +39,11 @@ var (
 	autoUpdateCurrent   = updates.Current
 	autoUpdateCheckNow  = updates.CheckNow
 	autoUpdateSupported = selfupdate.Supported
-	autoUpdateApply     = selfupdate.Apply
+	// androidInstallCheckNow: the freshness re-check for the Android install
+	// endpoint (ut-docs#1545). A seam so a test can exercise both answers
+	// without reaching the GitHub API.
+	androidInstallCheckNow = updates.CheckNow
+	autoUpdateApply        = selfupdate.Apply
 	// autoUpdateBuildVersion is buildinfo.Version, but the manual Update-now
 	// button's own handler (`POST /api/update/apply`, above) does NOT use
 	// this seam or the guard built on it -- an explicit user action stays
@@ -343,8 +347,37 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 	// the bridge takes no URL. A caller who forges a success response gains
 	// no ability to install anything of their choosing.
 	mux.HandleFunc("POST /api/update/android-install", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#1545: re-check freshness BEFORE authorising the actual
+		// install. The desktop endpoint above has done this since
+		// 2026-07-28, when the status bar was caught offering "Update now
+		// v0.2.40" on a till already running v0.2.41; the Android endpoint
+		// never learned it. The native bridge compares no versions — it just
+		// fetches releases/latest — so without this an operator already on
+		// the newest build spends a ~140MB download and is handed an
+		// installer for the version they are running. Reported from the
+		// pilot tablet: "even if there is no new version ... after 10~15
+		// seconds it shows the download window."
+		//
+		// Ordered carefully (ut-docs#1545 review, second concurrent cycle
+		// sweeping this PR, finding 6): the freshness check is an OUTBOUND
+		// network call to the releases API, so it must not be reachable by
+		// anyone who could not install anyway — a cashier tapping repeatedly
+		// would otherwise burn the shop's unauthenticated GitHub rate budget
+		// and starve the daily background check that keeps every till
+		// current. But it must still come before AuthorizeManager, so a
+		// correct manager PIN is never spent on a no-op.
+		//
+		// So: cheap local permission test first, network second, PIN last.
 		_ = r.ParseForm()
 		pin := strings.TrimSpace(r.Form.Get("manager_pin"))
+		if pin == "" && !androidUpdateSessionAuthorizes(d, r) {
+			respondUpdateApply(w, http.StatusForbidden, false, "manager PIN required")
+			return
+		}
+		if st := androidInstallCheckNow(r.Context()); !st.Available {
+			respondUpdateApplyCurrent(w)
+			return
+		}
 		if pin == "" {
 			// ut-docs#1537: no PIN offered. A signed-in manager on an
 			// ORDINARY till may authorise from their session alone — the same
@@ -363,6 +396,10 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			// display.mode is a server-side setting, so this decision is made
 			// here rather than trusting the page to report whether it is
 			// pinned.
+			//
+			// Already established above (the pre-check that gates the
+			// network call); re-asked here so this branch stays readable on
+			// its own and so the decision keeps exactly one owner.
 			if androidUpdateSessionAuthorizes(d, r) {
 				// settingsActorID, not a bare FromContext: with UT_AUTH
 				// disabled canPerform returns true with NO user in context, so

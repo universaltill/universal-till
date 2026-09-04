@@ -224,6 +224,15 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
 			return
 		}
+		// Double-refund guard for each line's OWN discount (ut-docs#1531,
+		// same class as B1 above but for the line subtotal instead of the
+		// service charge): how much line_discount prior completed returns
+		// already gave back, per refund-line key.
+		returnedDiscount, err := repo.ReturnedLineDiscounts(r.Context(), detail.ID)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
+			return
+		}
 		locID, err := repo.EnsureStockLocation(r.Context())
 		if err != nil {
 			// Same generic internal-DB-failure class as the ReturnedQuantities
@@ -267,6 +276,55 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// exactly correct but the old check rejected line 0 alone as
 		// "only 1 left").
 		pool := refundLinePool(detail.Lines, returned)
+		// keyQty/keyDiscount: the ORIGINAL totals aggregated per refund-line
+		// key (summed across every original line sharing it, same fungible-
+		// pool basis refundLinePool itself uses) — the denominator/basis for
+		// the running discount clamp below (ut-docs#1531).
+		//
+		// keyUniform tracks whether every original line sharing a key
+		// applies the SAME discount rate (discount per unit). Aggregating
+		// discount by key is only exact when it does: two lines of the same
+		// item/price/mode can carry DIFFERENT LineDiscount (e.g. one scanned
+		// line manually discounted, its identical sibling not) — pooling
+		// their discounts by key in that case would let one line's discount
+		// be given back against the OTHER line's refund (review finding F1
+		// on this card: a driven repro over-refunded one line by 25 minor
+		// units while shorting its sibling by the same amount). The uniform
+		// case (by far the common one — includes every key with only ONE
+		// original line, which is what every existing fixture in this file
+		// covers) gets the exact per-key clamp below; a non-uniform key
+		// falls back to the pre-#1531 independent per-line floor for its
+		// lines, i.e. today's existing (bounded, previously-accepted)
+		// behavior — not a regression, since that's exactly what shipped
+		// before this card for every key shape.
+		keyQty := map[string]float64{}
+		keyDiscount := map[string]int64{}
+		keyUniform := map[string]bool{}
+		keyRefRate := map[string]struct {
+			discount int64
+			qty      float64
+		}{}
+		for _, l := range detail.Lines {
+			key := data.RefundLineKey(l.ItemID, l.VariantID, l.UnitPrice, l.OrderType)
+			keyQty[key] += l.Qty
+			keyDiscount[key] += l.LineDiscount
+			ref, seen := keyRefRate[key]
+			if !seen {
+				keyRefRate[key] = struct {
+					discount int64
+					qty      float64
+				}{l.LineDiscount, l.Qty}
+				keyUniform[key] = true
+				continue
+			}
+			// Cross-multiply instead of dividing, so a zero-qty line (should
+			// never happen for a real sold line, but costs nothing to guard)
+			// can't divide-by-zero: l.LineDiscount/l.Qty == ref.discount/ref.qty
+			// iff l.LineDiscount*ref.qty == ref.discount*l.Qty.
+			if float64(l.LineDiscount)*ref.qty != float64(ref.discount)*l.Qty {
+				keyUniform[key] = false
+			}
+		}
 		for i, l := range detail.Lines {
 			raw := strings.TrimSpace(r.Form.Get("qty_" + strconv.Itoa(i)))
 			if raw == "" || raw == "0" {
@@ -284,9 +342,89 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				return
 			}
 			pool[key] -= qty
-			// Prorate the line discount for partial-quantity refunds.
-			share := qty / l.Qty
-			lineDiscount := int64(float64(l.LineDiscount) * share)
+			// Running per-key discount clamp (ut-docs#1531), replacing a
+			// per-request-only floor proration: flooring `LineDiscount *
+			// share` independently on EVERY partial-refund request
+			// under-discounts each one, so the cumulative net given back
+			// across several sequential partials of the same line can
+			// exceed the line's own true net (driven repro: 3 @ 100, a 10
+			// discount that doesn't divide by 3, refunded 1 unit at a time
+			// — three independent floors each round down instead of one
+			// rounding down and the rest making it up).
+			//
+			// Fix: target the CUMULATIVE discount that should have been
+			// given back by the end of THIS request —
+			// floor(keyDiscount * cumulativeQtyRefunded / keyQty), exact
+			// once the full quantity is refunded — and hand back only the
+			// remainder over what prior completed returns already paid.
+			// keyQty[key]-pool[key] is the cumulative quantity refunded for
+			// this key so far, including this line's own `qty` just
+			// subtracted above; same clamp shape as
+			// RefundedServiceChargeTotal's guard, applied per line-key
+			// instead of once for the whole sale. Only valid when the key's
+			// lines share one discount rate (keyUniform) — see the comment
+			// on keyUniform's declaration above for the non-uniform case.
+			var lineDiscount int64
+			if kq := keyQty[key]; kq > 0 && keyUniform[key] {
+				cumulativeQty := kq - pool[key]
+				var targetDiscount int64
+				if cumulativeQty >= kq-1e-9 {
+					// Review finding F4: cumulativeQty is a float and need
+					// not land exactly on kq even when every unit under this
+					// key has genuinely been refunded (e.g. a fractional
+					// original Qty like 0.30000000000000004) — floor()
+					// against a cumulativeQty that's a hair short of kq
+					// under-shoots the target by one minor unit, reviving
+					// the exact over-refund this card exists to eliminate.
+					// Snap to the exact total once within the same 1e-9
+					// epsilon `remaining+1e-9` above already uses.
+					targetDiscount = keyDiscount[key]
+				} else {
+					targetDiscount = int64(float64(keyDiscount[key]) * cumulativeQty / kq)
+				}
+				lineDiscount = targetDiscount - returnedDiscount[key]
+			} else if l.Qty > 0 {
+				// Non-uniform-discount key (rare — see keyUniform's
+				// declaration above): fall back to the pre-#1531
+				// independent floor, per original line.
+				share := qty / l.Qty
+				lineDiscount = int64(float64(l.LineDiscount) * share)
+			}
+			// l.Qty <= 0 (degenerate; shouldn't occur for a real sold line)
+			// falls through with lineDiscount left at its zero value.
+			//
+			// Review finding N3: clamp negative here, ONCE, so it covers
+			// every branch above uniformly (not just the per-key one).
+			if lineDiscount < 0 {
+				lineDiscount = 0
+			}
+			// Review finding F3 (round 2 fix, B1): never let a single
+			// request's own discount exceed its own gross, whichever branch
+			// above computed it — guards against a negative (nonsensical)
+			// line net, including against pre-#1531 return rows already on
+			// disk whose recorded discounts don't reconcile with this
+			// clamp's own bookkeeping. Gross MUST use the same rounding
+			// basis as refundNet below (pos.AmountForQuantity, i.e.
+			// money.MulQty's math.Round) and pos.CompleteSale's own line
+			// base (pos/sales.go's lineBase check) — a plain
+			// int64(float64(UnitPrice)*qty) truncates where those round,
+			// so on a fractional qty whose gross has a .5+ fraction the cap
+			// could land ONE BELOW the real gross: a fully-discounted
+			// (comped) line then can't recover its full discount, leaving 1
+			// minor unit of net the shop pays out despite never having
+			// collected it, AND (since that leaves this request's own
+			// refundNetWeight at 1 instead of 0) silently disengaging
+			// ut-docs#1215 finding B3's zero-net-weight service-charge
+			// fallback -- a regression of an already-fixed, already-tested
+			// behaviour class with no fractional-quantity test to catch it.
+			if gross := pos.AmountForQuantity(money.FromMinor(l.UnitPrice), qty).Minor(); lineDiscount > gross {
+				lineDiscount = gross
+			}
+			// Track by the ACTUAL amount given back this request, not the
+			// theoretical target -- so a request capped by the gross guard
+			// just above doesn't lose the difference; the next request's own
+			// target still accounts for what was really persisted.
+			returnedDiscount[key] += lineDiscount
 			lines = append(lines, pos.SaleLineInput{
 				ItemID: l.ItemID, VariantID: l.VariantID, SKU: l.SKU, Name: l.Name,
 				Qty: qty, UnitPrice: money.FromMinor(l.UnitPrice),

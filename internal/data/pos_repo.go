@@ -3272,6 +3272,45 @@ GROUP BY l.item_id, l.variant_id, l.unit_price, l.order_type`, originalSaleID)
 	return out, rows.Err()
 }
 
+// ReturnedLineDiscounts sums, per line key, how much line_discount previous
+// completed returns linked to the original sale already gave back -- the
+// double-refund guard's input for the LINE SUBTOTAL, same shape as
+// ReturnedQuantities' per-line-quantity guard and RefundedServiceChargeTotal's
+// charge guard (ut-docs#1531). The refund handler clamps its own proposed
+// per-request line_discount against (this key's true share of the original
+// discount − what's already been paid back) so the cumulative discount given
+// back across any number of sequential partial refunds of the same KEY
+// (not necessarily one original line -- the handler's own keyUniform check
+// decides when that distinction matters) tracks toward the line's own
+// original net once every unit is back,
+// regardless of how the per-request floor-rounding lands along the way --
+// see the refund handler's own keyUniform/gross-cap guards (review
+// findings F1/F3 on this card) for the edge cases this table alone
+// doesn't cover.
+func (r *POSRepo) ReturnedLineDiscounts(ctx context.Context, originalSaleID string) (map[string]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT COALESCE(l.item_id, ''), COALESCE(l.variant_id, ''), l.unit_price, COALESCE(l.order_type, ''), SUM(l.line_discount)
+FROM sale_lines l
+JOIN sale_links k ON k.sale_id = l.sale_id
+JOIN sales s ON s.id = l.sale_id AND s.sale_type = 'return' AND s.status = 'completed'
+WHERE k.original_sale_id = ?
+GROUP BY l.item_id, l.variant_id, l.unit_price, l.order_type`, originalSaleID)
+	if err != nil {
+		return nil, fmt.Errorf("returned line discounts: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var itemID, variantID, orderType string
+		var unitPrice, discount int64
+		if err := rows.Scan(&itemID, &variantID, &unitPrice, &orderType, &discount); err != nil {
+			return nil, fmt.Errorf("scan returned line discount: %w", err)
+		}
+		out[RefundLineKey(itemID, variantID, unitPrice, orderType)] = discount
+	}
+	return out, rows.Err()
+}
+
 // OriginalReceiptFor resolves the original sale's receipt number for a
 // return sale (refund receipts reference it), and the reverse direction
 // lists returns made against a sale.

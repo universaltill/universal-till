@@ -86,13 +86,37 @@ func (p *replicaPairing) set(s *pendingJoinState) {
 // setup route — a first-boot till polling /api/sync/pair-status would only
 // ever collect 401s and hang on "waiting" forever.
 func pairWaitView(w http.ResponseWriter, r *http.Request, statusURL, status, code, shopName, errMsg string) {
+	pairWaitViewPolling(w, r, statusURL, status, code, shopName, errMsg, status == "waiting")
+}
+
+// pairWaitViewPolling is pairWaitView with the self-poll decided by the
+// CALLER rather than inferred from status (ut-docs#1540 review).
+//
+// Whether an "error" render may keep polling depends entirely on whether
+// there is an active attempt behind it, which only the caller knows:
+//
+//   - pairStartHandler's error branches return BEFORE rp.set(), so there is
+//     no active attempt. A poll from there renders the "idle" view — it
+//     would silently replace the just-rendered, field-specific message
+//     ("This till's name is required…", "cannot reach that primary: …")
+//     with "No pairing attempt in progress." 15 seconds later, or, if an
+//     EARLIER attempt is still in flight, resurrect that older attempt's
+//     "waiting" screen and its stale verification code. Those renders stay
+//     terminal, and the retry re-renders this same div anyway: the
+//     "Request to pair" button posts with hx-target on the status host and
+//     hx-swap="innerHTML".
+//   - pairStatusHandler's error branches DO have active state, so the poll
+//     re-renders the same stored errMsg (nothing is lost) and can pick up a
+//     new "waiting"/"joined" state started from another tab or device
+//     against this till's single replicaPairing.
+func pairWaitViewPolling(w http.ResponseWriter, r *http.Request, statusURL, status, code, shopName, errMsg string, polling bool) {
 	httpx.RenderPartial("ui/partials/pairing_wait.html", map[string]any{
 		"statusURL": statusURL,
 		"status":    status,
 		"code":      code,
 		"shopName":  shopName,
 		"errMsg":    errMsg,
-		"polling":   status == "waiting",
+		"polling":   polling,
 	})(w, r)
 }
 
@@ -153,7 +177,19 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 		primaryTillID := strings.TrimSpace(r.Form.Get("till_id"))
 		name := strings.TrimSpace(r.Form.Get("name"))
 		if baseURL == "" || primaryTillID == "" || name == "" {
-			pairWaitView(w, r, statusURL, "error", "", "", "base_url, till_id and name are all required")
+			// ut-docs#1540: name the field the operator actually sees on
+			// screen ("This till's name"), never the raw JSON keys this
+			// handler reads its form values into — base_url/till_id are
+			// supplied by this page's own JS (from the discovery result),
+			// never typed by a person, so a real gap here is always the
+			// till-name box (now client-validated above this handler too,
+			// so this branch is defense-in-depth, not the normal path).
+			locale := httpx.ResolveLocale(w, r)
+			msg := httpx.T(locale, "tills.pairing.error.missing_request")
+			if name == "" {
+				msg = httpx.T(locale, "tills.pairing.error.name_required")
+			}
+			pairWaitView(w, r, statusURL, "error", "", "", msg)
 			return
 		}
 		if !validPrimaryBaseURL(baseURL) {
@@ -229,8 +265,13 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 		}
 		if state.status != "waiting" {
 			// Terminal already — re-render idempotently (a stray extra poll
-			// racing the swap that stopped it, or a page reload).
-			pairWaitView(w, r, statusURL, state.status, "", state.shopName, state.errMsg)
+			// racing the swap that stopped it, or a page reload). An "error"
+			// here keeps polling (ut-docs#1540): the stored errMsg is
+			// re-rendered every tick, so nothing is lost, and this is the one
+			// path by which a fresh attempt started from another tab/device
+			// against this till's single replicaPairing reaches a screen still
+			// sitting on the old failure. "joined"/"expired" stay terminal.
+			pairWaitViewPolling(w, r, statusURL, state.status, "", state.shopName, state.errMsg, state.status == "error")
 			return
 		}
 		if pairingJoinNow().Sub(state.requestedAt) > pairingRequestTTL {
@@ -268,7 +309,7 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 			next := *state
 			next.status, next.errMsg = "error", fmt.Sprintf("unexpected response from the primary (%s)", resp.Status)
 			rp.active = &next
-			pairWaitView(w, r, statusURL, "error", "", "", next.errMsg)
+			pairWaitViewPolling(w, r, statusURL, "error", "", "", next.errMsg, true)
 			return
 		}
 		var out struct {
@@ -280,7 +321,7 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 			next := *state
 			next.status, next.errMsg = "error", "unexpected response from the primary"
 			rp.active = &next
-			pairWaitView(w, r, statusURL, "error", "", "", next.errMsg)
+			pairWaitViewPolling(w, r, statusURL, "error", "", "", next.errMsg, true)
 			return
 		}
 
@@ -292,7 +333,7 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 			// key, not English prose — this must go through httpx.T.
 			next.status, next.errMsg = "error", friendlyJoinError(httpx.ResolveLocale(w, r), err)
 			rp.active = &next
-			pairWaitView(w, r, statusURL, "error", "", "", next.errMsg)
+			pairWaitViewPolling(w, r, statusURL, "error", "", "", next.errMsg, true)
 			return
 		}
 		next := *state

@@ -47,6 +47,14 @@ var railIcons = map[string]string{
 	"user": `<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>`,
 	// Lock (auth.lock)
 	"lock": `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`,
+	// Sync chip / tills (sync.chip_tills_title, ut-docs#1539) — the one
+	// rail item ut-docs#1423 missed, still a bare "⇅" emoji + tinted pill
+	// until now. Two-way arrows, same visual idea as the emoji it replaces.
+	"sync": `<path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/>`,
+	// Fiscal chip (fiscal.chip_ok_title, ut-docs#1539) — was plain ✓/⚠ text
+	// with no icon and no link at all. A shield mirrors the "signed and
+	// verifiable" idea the ✓ glyph stood in for.
+	"fiscal": `<path d="M20 13c0 5-3.5 7.5-7.35 8.95a1 1 0 0 1-.6-.01C8.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.79 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.

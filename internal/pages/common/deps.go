@@ -192,6 +192,22 @@ type RuntimeState struct {
 	KioskIdleResetSeconds        int     // self-order kiosk: reload to start after N idle seconds (ADR-0020); 0 = off
 	WindowMode                   string  // ut-docs#608 scaffold: fullscreen|kiosk|maximized|normal
 	LaunchOnStartup              bool    // ut-docs#608 scaffold: launch this till on OS boot
+	// WindowModeChanged/LaunchOnStartupChanged mark that THIS save is
+	// deliberately setting a new WindowMode/LaunchOnStartup value, as
+	// opposed to carrying forward whatever CurrentState() happened to
+	// have cached (ut-docs#1555). Both fields are out-of-band managed —
+	// a separate process (provision-desktop-kiosk-defaults, run by
+	// packaging/scripts/postinstall.sh) can write them straight to the
+	// DB without this server ever observing it in d.State — so
+	// SaveState re-reads the live persisted value instead of trusting a
+	// possibly-stale st.WindowMode/st.LaunchOnStartup UNLESS the caller
+	// sets the matching *Changed flag. Only
+	// POST /api/settings/window-mode and
+	// POST /api/settings/launch-on-startup (settings_page.go) set these;
+	// every other SaveState caller leaves them false by default (the
+	// zero value), which is exactly "I'm not touching this field."
+	WindowModeChanged      bool
+	LaunchOnStartupChanged bool
 }
 
 // CurrentState returns a consistent copy of the runtime state for rendering.
@@ -207,6 +223,8 @@ func (d *Deps) UpdateState(fn func(*RuntimeState)) RuntimeState {
 	d.StateMu.Lock()
 	defer d.StateMu.Unlock()
 	fn(&d.State)
+	d.State.WindowModeChanged = false
+	d.State.LaunchOnStartupChanged = false
 	return d.State
 }
 
@@ -215,9 +233,27 @@ func (d *Deps) UpdateState(fn func(*RuntimeState)) RuntimeState {
 // memory (ut-docs#157) use this instead of UpdateState, so a failed save
 // never becomes the new in-memory state — otherwise it would silently ride
 // along on the next unrelated successful save.
+//
+// Always clears WindowModeChanged/LaunchOnStartupChanged before caching
+// (ut-docs#1555 review finding F1): those two fields are a PER-SAVE intent
+// signal for SaveState ("this call means to change the field"), never a
+// property of the cached state itself. Without this, the first deliberate
+// window-mode/launch-on-startup change (POST /api/settings/window-mode or
+// .../launch-on-startup) would set the flag true on st, this method would
+// cache that true value into d.State, and every SUBSEQUENT SaveState call
+// for the rest of the process's life — theme, currency, idle-lock, the
+// wizard, anything — would read `d.CurrentState()` with the flag still
+// true and skip the out-of-band re-read entirely, silently reinstating the
+// exact clobber this whole fix exists to prevent. Demonstrated in review
+// with a throwaway repro; see TestDeps_SetStateClearsWindowAndLaunchChangedFlags
+// / TestDeps_UpdateStateClearsWindowAndLaunchChangedFlags and
+// TestSaveState_DeliberateChangeDoesNotStickyBlockLaterOutOfBandProtection
+// (deps_test.go) for the permanent regression tests.
 func (d *Deps) SetState(st RuntimeState) {
 	d.StateMu.Lock()
 	defer d.StateMu.Unlock()
+	st.WindowModeChanged = false
+	st.LaunchOnStartupChanged = false
 	d.State = st
 }
 

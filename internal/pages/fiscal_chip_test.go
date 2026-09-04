@@ -8,6 +8,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/fiscal"
 )
 
@@ -36,7 +37,13 @@ func TestFiscalChip_ConfiguredNoSales_RendersOK(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodGet, "/ui/fiscal-chip", nil)
+	// ut-docs#1539 (independent review): /fiscal-register is gated on the
+	// "settings" permission (requireManager, fiscal_register_page.go) and
+	// hard-403s a session without it — newFiscalTestDeps runs with real
+	// auth (UT_AUTH=""), so a manager session is required to see the link
+	// at all; TestFiscalChip_CashierSessionGetsNoLink covers the deny path.
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/fiscal-chip", nil), manager)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -44,6 +51,58 @@ func TestFiscalChip_ConfiguredNoSales_RendersOK(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "fiscal-chip ok") {
 		t.Fatalf("expected class=ok with no sales yet, got %q", rec.Body.String())
+	}
+	// ut-docs#1539: was plain ✓/⚠ status text with no icon and no link at
+	// all — confirmed to be in the same unmigrated state as sync_chip.html.
+	body := rec.Body.String()
+	if strings.Contains(body, "✓") || strings.Contains(body, "⚠") {
+		t.Fatalf("expected no emoji/glyph text left in the rail chip, got %q", body)
+	}
+	if !strings.Contains(body, `class="nav-toggle"`) {
+		t.Fatalf("expected the fiscal chip to render as a rail .nav-toggle, got %q", body)
+	}
+	if !strings.Contains(body, `href="/fiscal-register"`) {
+		t.Fatalf("expected the fiscal chip to link to /fiscal-register for a manager session, got %q", body)
+	}
+	if strings.Contains(body, `class="nav-badge"`) {
+		t.Fatalf("expected NO badge dot on the healthy/ok state, got %q", body)
+	}
+}
+
+// ut-docs#1539 (independent review, BLOCKER): before this migration, the OK
+// state was a plain, non-clickable <span> — every cashier could see it, and
+// there was nothing to click. Turning it into a real <a href="/fiscal-register">
+// unconditionally would have handed every cashier a permanent rail button
+// that hard-403s (requireManager gates that page on "settings"), the exact
+// dead-end pattern /tills and /sync-quarantine avoid by redirecting instead.
+// The chip must still SHOW status to a cashier (offline-first: everyone can
+// see the till is healthy) — it just must not be a link for them.
+func TestFiscalChip_CashierSessionGetsNoLink(t *testing.T) {
+	mux, dp := newFiscalTestDeps(t)
+	initPagesI18n(t)
+	if err := dp.Settings.Set(context.Background(), fiscal.KeyTSEConfigured, "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	cashier := auth.User{ID: "c1", Role: "cashier", DisplayName: "Cash"}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/fiscal-chip", nil), cashier)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "fiscal-chip ok") {
+		t.Fatalf("expected class=ok with no sales yet, got %q", body)
+	}
+	if !strings.Contains(body, `class="nav-toggle"`) {
+		t.Fatalf("expected a cashier to still see the chip as a rail item, got %q", body)
+	}
+	if strings.Contains(body, "href=") {
+		t.Fatalf("expected NO href for a cashier session (settings permission required), got %q", body)
+	}
+	if !strings.Contains(body, `<a class="nav-toggle"`) {
+		t.Fatalf("expected an <a> with no href (plain text, not a dead-end link) for a cashier, got %q", body)
 	}
 }
 
@@ -93,6 +152,9 @@ func TestFiscalChip_ConfiguredLastSaleGapped_RendersWarnWithCount(t *testing.T) 
 	// (independent review, ut-docs#685).
 	if !strings.Contains(body, "· 1 ") {
 		t.Fatalf("expected the unresolved count (· 1 …) rendered, got %q", body)
+	}
+	if !strings.Contains(body, `class="nav-badge"`) {
+		t.Fatalf("expected a badge dot on the icon for the degraded/warn state, got %q", body)
 	}
 }
 

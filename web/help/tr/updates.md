@@ -24,6 +24,7 @@ Android uygulaması kendini masaüstü sürümleri gibi değiştiremez; bunun ye
 2. Android yeni uygulamayı indirir (yaklaşık 140 MB, yavaş bağlantıda biraz zaman tanıyın; bu süre boyunca rozet "İndiriliyor" yazar) ve ardından kendi "Bu güncellemeyi yüklemek istiyor musunuz?" ekranını gösterir. Oradan onaylayın.
 3. Bunu ilk yapışınızda Android, Universal Till'in uygulama yüklemesine izin vermenizi isteyebilir. İzin verin, sonra rozete tekrar dokunun.
 4. Ayarlar → Yazılım güncelleme de aynı işi yapar; ayrıca hangi sürümde olduğunuzu ve hangi sürümün mevcut olduğunu gösterir.
+5. Yönetici PIN kutusu ve İndir düğmesi yalnızca gerçekten yeni bir sürüm varken görünür — güncel bir kasada dokunulacak bir şey yoktur. Kasa siz dokunurken yeniden denetleyip zaten en yeni sürümde olduğunuzu görürse, hiçbir şey indirmeden bunu söyler.
 
 İki durumda yönetici PIN'i istenir: kasiyer olarak oturum açtıysanız ya da kasa self-servis sipariş modundaysa. Self-servis modda kurulum aynı zamanda kiosk kilidini açacağı için, orada yönetici olsanız bile PIN gerekir.
 

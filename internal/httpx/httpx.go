@@ -50,6 +50,14 @@ var CrossDeviceLinkActionable = selfupdate.DownloadLinkActionableNow
 // original value (e.g. via t.Cleanup) after overriding it.
 var UpdateInstallBridge = selfupdate.InstallBridgeAvailableNow
 
+// UpdateAvailable is the seam behind the updateavailable template func
+// (ut-docs#1545). Same reason as UpdateInstallBridge above: the update UI is
+// now gated on BOTH platform and freshness, and without a seam a test cannot
+// render the "an update exists" branch at all — it would depend on whatever
+// the real GitHub API happened to say when the suite ran. Restore the original
+// value (e.g. via t.Cleanup) after overriding it.
+var UpdateAvailable = func() bool { return updates.Current().Available }
+
 var baseFuncs = template.FuncMap{
 	"div100":    func(cents int64) float64 { return float64(cents) / 100.0 },
 	"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
@@ -66,7 +74,7 @@ var baseFuncs = template.FuncMap{
 	"categoryName":    func(*string) string { return "" },
 	"brandName":       func(*string) string { return "" },
 	"appversion":      func() string { return buildinfo.Version },
-	"updateavailable": func() bool { return updates.Current().Available },
+	"updateavailable": func() bool { return UpdateAvailable() },
 	"latestversion":   func() string { return updates.Current().Latest },
 	"canselfupdate":   func() bool { return selfupdate.Supported() },
 	// updatedownloadlink: whether the status-bar chip's fallback (when
