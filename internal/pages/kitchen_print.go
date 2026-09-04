@@ -345,19 +345,32 @@ func sendKitchenTicket(ctx context.Context, target kitchenTarget) error {
 // station with a printer address. A shop that only configures stations —
 // and never fills the legacy setting — must still print (ut-docs#516).
 func kitchenPrintingEnabled(ctx context.Context, d *common.Deps) bool {
-	if printerConfig(ctx, d).KitchenEnabled() {
-		return true
+	enabled, _ := kitchenPrintingEnabledChecked(ctx, d)
+	return enabled
+}
+
+// kitchenPrintingEnabledChecked is kitchenPrintingEnabled plus the first
+// genuine read error hit (settings, or ListKitchenStations), if any — so a
+// caller that must not confuse "couldn't tell" with "off" (the async print
+// path, ut-docs#1153) can react to it instead of silently no-op'ing.
+func kitchenPrintingEnabledChecked(ctx context.Context, d *common.Deps) (bool, error) {
+	cfg, cfgErr := printerConfigChecked(ctx, d)
+	if cfgErr != nil {
+		return false, cfgErr
+	}
+	if cfg.KitchenEnabled() {
+		return true, nil
 	}
 	stations, err := data.NewPOSRepo(d.Db).ListKitchenStations(ctx)
 	if err != nil {
-		return false
+		return false, err
 	}
 	for _, s := range stations {
 		if s.Enabled && s.DestinationType == "printer" && strings.TrimSpace(s.PrinterAddress) != "" {
-			return true
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // printKitchenAsync sends kitchen tickets without ever blocking the caller:
@@ -375,12 +388,24 @@ func printKitchenAsync(d *common.Deps, receiptNo string, actorID string) {
 		defer d.AsyncWork.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), printAsyncTimeout)
 		defer cancel()
-		if !kitchenPrintingEnabled(ctx, d) {
+		posRepo := data.NewPOSRepo(d.Db)
+		enabled, enabledErr := kitchenPrintingEnabledChecked(ctx, d)
+		if enabledErr != nil {
+			// A genuine read failure (settings or station list), not
+			// "kitchen printing off everywhere" (ut-docs#1153) — must not
+			// take the silent no-op path below.
+			wctx, wcancel := recordPrintFailureCtx()
+			defer wcancel()
+			_ = posRepo.InsertAudit(wctx, nil, actorID, "sale", receiptNo, "kitchen_print_failed",
+				map[string]any{"error": "kitchen settings read failed: " + enabledErr.Error()}, time.Now().UTC().Format(time.RFC3339), "")
+			_ = posRepo.SetKitchenPrintFailed(wctx, receiptNo, time.Now().UTC().Format(time.RFC3339))
+			return
+		}
+		if !enabled {
 			// No attempt (kitchen printing off everywhere) — must neither
 			// overwrite a real prior failure nor falsely clear one.
 			return
 		}
-		posRepo := data.NewPOSRepo(d.Db)
 		total, failures, err := printKitchenFn(ctx, d, receiptNo, actorID)
 		if err != nil {
 			// Fresh context: a hung/out-of-paper printer burns the whole

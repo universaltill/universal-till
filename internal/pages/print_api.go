@@ -41,15 +41,41 @@ func parseDrawerPin(v string) int {
 	return 2
 }
 
-// printerConfig reads the printer.* settings into a print.Config.
+// printerConfig reads the printer.* settings into a print.Config. Callers
+// that don't need to distinguish "genuinely off" from "settings read
+// failed" (everything except the async print paths, ut-docs#1153) use this.
 func printerConfig(ctx context.Context, d *common.Deps) print.Config {
+	cfg, _ := printerConfigChecked(ctx, d)
+	return cfg
+}
+
+// printerConfigChecked is printerConfig plus the first error hit while
+// reading the underlying settings, if any. data.SettingsRepo.Get already
+// distinguishes "key not set" (ok=false, err=nil) from a genuine read
+// failure (err!=nil) — this surfaces that distinction instead of discarding
+// it, so the async print paths can tell "off" from "couldn't tell" and
+// avoid silently no-op'ing a real DB fault (ut-docs#1153).
+func printerConfigChecked(ctx context.Context, d *common.Deps) (print.Config, error) {
+	var firstErr error
 	get := func(key, def string) string {
-		if v, ok, _ := d.Settings.Get(ctx, key); ok && strings.TrimSpace(v) != "" {
+		if firstErr != nil {
+			// Already know the read is broken (review nit, ut-docs#1153):
+			// don't fire 6 more doomed queries once the first one fails —
+			// the caller only wants a definite error, not a fully-filled
+			// (and here, meaningless) cfg.
+			return def
+		}
+		v, ok, err := d.Settings.Get(ctx, key)
+		if err != nil {
+			firstErr = err
+			return def
+		}
+		if ok && strings.TrimSpace(v) != "" {
 			return strings.TrimSpace(v)
 		}
 		return def
 	}
-	return print.Config{
+	cfg := print.Config{
 		Mode:           get(keyPrinterMode, "off"),
 		Address:        get(keyPrinterAddress, ""),
 		Device:         get(keyPrinterDevice, ""),
@@ -58,6 +84,7 @@ func printerConfig(ctx context.Context, d *common.Deps) print.Config {
 		KitchenAddress: get(keyPrinterKitchen, ""),
 		DrawerPin:      parseDrawerPin(get(keyPrinterDrawerPin, "2")),
 	}
+	return cfg, firstErr
 }
 
 // receiptDesign mirrors the receipt.* settings (docs: receipt-designer.md).
@@ -325,13 +352,25 @@ func printReceiptAsync(d *common.Deps, receiptNo string, actorID string) {
 		defer d.AsyncWork.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), printAsyncTimeout)
 		defer cancel()
-		cfg := printerConfig(ctx, d)
+		posRepo := data.NewPOSRepo(d.Db)
+		cfg, cfgErr := printerConfigChecked(ctx, d)
+		if cfgErr != nil {
+			// The settings read itself failed (SQLite busy, disk error, ...)
+			// — this is NOT "printing off" and must not be treated as one
+			// (ut-docs#1153): a paid order's receipt would silently vanish
+			// with no audit row and no /orders warning.
+			wctx, wcancel := recordPrintFailureCtx()
+			defer wcancel()
+			_ = posRepo.InsertAudit(wctx, nil, actorID, "sale", receiptNo, "print_failed",
+				map[string]any{"error": "printer settings read failed: " + cfgErr.Error()}, time.Now().UTC().Format(time.RFC3339), "")
+			_ = posRepo.SetReceiptPrintFailed(wctx, receiptNo, time.Now().UTC().Format(time.RFC3339))
+			return
+		}
 		if !cfg.Enabled() || !cfg.AutoPrint {
 			// No attempt (printing off/manual) — must neither overwrite a
 			// real prior failure nor falsely clear one.
 			return
 		}
-		posRepo := data.NewPOSRepo(d.Db)
 		if err := printReceiptFn(ctx, d, receiptNo); err != nil {
 			wctx, wcancel := recordPrintFailureCtx()
 			defer wcancel()
