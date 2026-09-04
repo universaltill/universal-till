@@ -63,11 +63,26 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		// (see commitStagedImportForSetup) lands the now-logged-in operator
 		// here instead of a bare /import, so the file they already browsed to
 		// and previewed is still one click away rather than a re-upload.
+		stagedID := strings.TrimSpace(r.URL.Query().Get("staged_id"))
+		// ut-docs#1515: distinguish WHY a staged preview landed here instead
+		// of committing itself — the overwhelmingly common reason is
+		// ut-docs#970's currencyTouched gate (see commitStagedImportForSetup),
+		// not a transient failure, and the operator deserves the real reason
+		// rather than a bare "press Import" with no explanation. Read the
+		// same flag POST /api/import itself gates on; a settings-read error
+		// fails safe here too (shows the explanatory message rather than
+		// silently claiming the currency is fine).
+		currencyUnconfirmed := false
+		if stagedID != "" {
+			confirmedVal, _, cerr := d.Settings.Get(r.Context(), common.KeyCurrencyConfirmed)
+			currencyUnconfirmed = cerr != nil || confirmedVal != "true"
+		}
 		httpx.Render("ui/pages/import.html", map[string]any{
-			"title":     "Import",
-			"theme":     d.CurrentState().Theme,
-			"menuItems": d.MenuSnapshot(),
-			"stagedID":  strings.TrimSpace(r.URL.Query().Get("staged_id")),
+			"title":               "Import",
+			"theme":               d.CurrentState().Theme,
+			"menuItems":           d.MenuSnapshot(),
+			"stagedID":            stagedID,
+			"currencyUnconfirmed": currencyUnconfirmed,
 		})(w, r)
 	})
 

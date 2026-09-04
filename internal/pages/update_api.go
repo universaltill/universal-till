@@ -39,7 +39,11 @@ var (
 	autoUpdateCurrent   = updates.Current
 	autoUpdateCheckNow  = updates.CheckNow
 	autoUpdateSupported = selfupdate.Supported
-	autoUpdateApply     = selfupdate.Apply
+	// androidInstallCheckNow: the freshness re-check for the Android install
+	// endpoint (ut-docs#1545). A seam so a test can exercise both answers
+	// without reaching the GitHub API.
+	androidInstallCheckNow = updates.CheckNow
+	autoUpdateApply        = selfupdate.Apply
 	// autoUpdateBuildVersion is buildinfo.Version, but the manual Update-now
 	// button's own handler (`POST /api/update/apply`, above) does NOT use
 	// this seam or the guard built on it -- an explicit user action stays
@@ -178,8 +182,13 @@ func updateUnavailableHTML(locale, latest, goos string) string {
 	// work either way: shouldOverrideUrlLoading confines the WebView to the
 	// till's own loopback origin, so an off-origin download link is refused
 	// before it starts.
-	if goos == "android" {
-		return fmt.Sprintf(`<span>⬆ %s v%s — <a href="#android-update" data-testid="android-update-install">%s</a></span>`,
+	if selfupdate.InstallBridgeAvailable(goos) {
+		// ut-docs#1534: an ABSOLUTE path, not a bare "#android-update"
+		// fragment. This same line renders into the status bar on every
+		// page, where a same-page fragment silently navigates nowhere — the
+		// operator taps "Download" and the till does nothing. Same-origin,
+		// so shouldOverrideUrlLoading still lets the WebView follow it.
+		return fmt.Sprintf(`<span>⬆ %s v%s — <a href="/settings#android-update" data-testid="android-update-install">%s</a></span>`,
 			html.EscapeString(httpx.T(locale, "status.update_available")),
 			html.EscapeString(latest),
 			html.EscapeString(httpx.T(locale, "settings.update.download")))
@@ -197,6 +206,50 @@ func updateUnavailableHTML(locale, latest, goos string) string {
 		html.EscapeString(httpx.T(locale, "status.update_available")),
 		html.EscapeString(latest),
 		html.EscapeString(httpx.T(locale, "settings.update.unavailable_here")))
+}
+
+// androidUpdateSessionAuthorizes reports whether POST
+// /api/update/android-install would accept this caller on their session alone,
+// with no manager PIN (ut-docs#1537). The ONE owner of that decision — the
+// handler calls it too, so the Settings page cannot render a PIN-less button
+// the endpoint will then refuse, or hide a PIN field it is about to demand.
+//
+// Fails closed on every uncertainty: no settings store, an unreadable
+// display.mode, self-order mode, or a caller without plugin_management.
+func androidUpdateSessionAuthorizes(d *common.Deps, r *http.Request) bool {
+	if !canPerform(d, r, "plugin_management") {
+		return false
+	}
+	if d.Settings == nil {
+		return false
+	}
+	mode, _, err := d.Settings.Get(r.Context(), "display.mode")
+	if err != nil {
+		return false
+	}
+	return mode != "self_order"
+}
+
+// setupUnavailableHTML is updateUnavailableHTML for the FIRST-BOOT WIZARD,
+// where /settings does not yet exist as a destination: there is no manager
+// account to authorise with, and internal/auth/middleware.go bounces the
+// route to /login, which throws away the Alpine wizard's step state
+// (ut-docs#1534 review, finding 3 — a regression introduced by making the
+// Android link absolute: as a bare "#android-update" fragment it had been an
+// inert no-op here, so the harm was invisible).
+//
+// Android therefore gets the plain statement of fact and no link at all on
+// this screen. The update is real and the operator will be able to install it
+// from Settings the moment setup finishes; sending them there mid-wizard just
+// loses their progress. Every other platform is unchanged — a website link on
+// Windows/macOS is as actionable at first boot as anywhere else.
+func setupUnavailableHTML(locale, latest, goos string) string {
+	if selfupdate.InstallBridgeAvailable(goos) {
+		return fmt.Sprintf(`<span>⬆ %s v%s</span>`,
+			html.EscapeString(httpx.T(locale, "status.update_available")),
+			html.EscapeString(latest))
+	}
+	return updateUnavailableHTML(locale, latest, goos)
 }
 
 // registerUpdateAPI exposes the manager-gated in-app updater. It downloads the
@@ -294,9 +347,74 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 	// the bridge takes no URL. A caller who forges a success response gains
 	// no ability to install anything of their choosing.
 	mux.HandleFunc("POST /api/update/android-install", func(w http.ResponseWriter, r *http.Request) {
+		// ut-docs#1545: re-check freshness BEFORE authorising the actual
+		// install. The desktop endpoint above has done this since
+		// 2026-07-28, when the status bar was caught offering "Update now
+		// v0.2.40" on a till already running v0.2.41; the Android endpoint
+		// never learned it. The native bridge compares no versions — it just
+		// fetches releases/latest — so without this an operator already on
+		// the newest build spends a ~140MB download and is handed an
+		// installer for the version they are running. Reported from the
+		// pilot tablet: "even if there is no new version ... after 10~15
+		// seconds it shows the download window."
+		//
+		// Ordered carefully (ut-docs#1545 review, second concurrent cycle
+		// sweeping this PR, finding 6): the freshness check is an OUTBOUND
+		// network call to the releases API, so it must not be reachable by
+		// anyone who could not install anyway — a cashier tapping repeatedly
+		// would otherwise burn the shop's unauthenticated GitHub rate budget
+		// and starve the daily background check that keeps every till
+		// current. But it must still come before AuthorizeManager, so a
+		// correct manager PIN is never spent on a no-op.
+		//
+		// So: cheap local permission test first, network second, PIN last.
 		_ = r.ParseForm()
 		pin := strings.TrimSpace(r.Form.Get("manager_pin"))
+		if pin == "" && !androidUpdateSessionAuthorizes(d, r) {
+			respondUpdateApply(w, http.StatusForbidden, false, "manager PIN required")
+			return
+		}
+		if st := androidInstallCheckNow(r.Context()); !st.Available {
+			respondUpdateApplyCurrent(w)
+			return
+		}
 		if pin == "" {
+			// ut-docs#1537: no PIN offered. A signed-in manager on an
+			// ORDINARY till may authorise from their session alone — the same
+			// gate the desktop status-bar chip already uses (POST
+			// /api/update/apply → canPerform), and for the same reason: they
+			// have already proved who they are, and since ut-docs#1508 the app
+			// does not pin itself at all outside self-order mode, so there is
+			// no kiosk lock for this to release.
+			//
+			// In SELF-ORDER mode the pin is real and the session is not
+			// trustworthy evidence: entering self-order never logs the till
+			// out (ut-docs#1253), so the kiosk's own browser can still be
+			// carrying a live manager cookie. Authorising from it would let a
+			// customer standing at the machine tap the update chip and walk
+			// the till out of its kiosk. There, the PIN stays mandatory.
+			// display.mode is a server-side setting, so this decision is made
+			// here rather than trusting the page to report whether it is
+			// pinned.
+			//
+			// Already established above (the pre-check that gates the
+			// network call); re-asked here so this branch stays readable on
+			// its own and so the decision keeps exactly one owner.
+			if androidUpdateSessionAuthorizes(d, r) {
+				// settingsActorID, not a bare FromContext: with UT_AUTH
+				// disabled canPerform returns true with NO user in context, so
+				// a bare read writes actor_id NULL for a privileged action.
+				// Same fallback every other manager-gated handler here uses.
+				//
+				// The payload distinguishes this from the PIN path, which
+				// writes the same action name — an audit trail that cannot
+				// tell "a manager typed a PIN" from "a manager's cookie was
+				// live" is not much of an audit trail (review finding 4).
+				now := time.Now().UTC().Format(time.RFC3339)
+				_ = data.NewPOSRepo(d.Db).InsertAudit(r.Context(), nil, settingsActorID(r), "update", "android", "update_authorized", map[string]any{"via": "session"}, now, "")
+				respondUpdateApply(w, http.StatusOK, true, "authorized")
+				return
+			}
 			respondUpdateApply(w, http.StatusForbidden, false, "manager PIN required")
 			return
 		}
@@ -316,7 +434,7 @@ func registerUpdateAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
-		_ = data.NewPOSRepo(d.Db).InsertAudit(r.Context(), nil, approver.ID, "update", "android", "update_authorized", nil, now, "")
+		_ = data.NewPOSRepo(d.Db).InsertAudit(r.Context(), nil, approver.ID, "update", "android", "update_authorized", map[string]any{"via": "pin"}, now, "")
 		respondUpdateApply(w, http.StatusOK, true, "authorized")
 	})
 

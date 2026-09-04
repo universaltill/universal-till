@@ -203,16 +203,35 @@ class MainActivity : AppCompatActivity() {
             ContextCompat.checkSelfPermission(this, permission) == PackageManager.PERMISSION_GRANTED
         }
 
-    // ut-docs#1254: whether a manager has deliberately left kiosk mode.
-    // Set true ONLY by [KioskBridge.exitLockdown] (the server's own
-    // purpose-built "exit to OS" escape hatch, internal/pages/
-    // settings_page.go's /api/settings/exit-to-os — see the bridge's own
-    // KDoc for why that, and not simply reaching /settings, is the right
-    // signal). Reset to false defensively on every onResume and whenever
-    // WebView navigation leaves the manager-facing /login or /settings
-    // pages, so an unlock never silently outlives the moment it was
-    // granted for.
-    private var kioskUnlocked = false
+    // ut-docs#1508: the pin state this Activity INTENDS to be in — set by
+    // [engageKioskLock]/[releaseKioskLock] themselves, so every path that
+    // changes the pin (page navigation, the PIN-gated bridge, the package
+    // installer) updates it without having to remember to. Defaults to
+    // false: a till boots unpinned, matching the product owner's explicit
+    // rule (this ticket's body, verbatim): "for the till, we can only hide
+    // the bottom OS menu but let it go to the OS. Only it cannot go to the
+    // OS if it is on the self-ordering mode." Before this ticket, onResume
+    // pinned unconditionally on EVERY screen — including the pre-enrollment
+    // setup wizard, which is how the product owner got bricked on
+    // 2026-09-03: the wizard hit a bare JSON error page (ut-docs#1507, a
+    // *deliberate* guard-page-http-error.sh exception — the wizard has no
+    // operator layout to render into) with Home/Recents both blocked by a
+    // pin that should never have engaged there at all.
+    //
+    // Deliberately the INTENDED state, not a query of the OS's actual
+    // lock-task state: both setters swallow their exceptions (see
+    // engageKioskLock), so re-asserting the intent on every resume is also
+    // what retries a call the device refused the first time.
+    //
+    // Read by onResume (review finding, ut-docs#1508): deriving the resume
+    // decision from "is the CURRENT url /self-order" instead would silently
+    // DROP a genuine self-order pin the moment the customer taps
+    // self_order.html's 🔒 exit link to /login and the screen then blinks
+    // off and on — a no-PIN escape out of the one mode that must stay
+    // pinned. onPageFinished deliberately leaves the pin alone on the
+    // manager-facing pages for exactly that reason; onResume has to agree
+    // with it.
+    private var kioskPinned = false
 
     /**
      * The native side of the server's existing "exit to OS" escape hatch
@@ -248,7 +267,6 @@ class MainActivity : AppCompatActivity() {
         @JavascriptInterface
         fun exitLockdown() {
             runOnUiThread {
-                kioskUnlocked = true
                 releaseKioskLock()
                 clearImmersiveMode()
             }
@@ -501,16 +519,20 @@ class MainActivity : AppCompatActivity() {
      */
     private fun launchPackageInstaller(apk: File) {
         try {
-            // The till runs pinned in lock-task (kiosk) mode, and Android
+            // If the till is pinned in lock-task (kiosk) mode — after
+            // ut-docs#1508 that means a genuine self-order pin the manager
+            // carried into /settings, which onPageFinished deliberately
+            // leaves engaged there (only the PIN-gated exitLockdown()
+            // releases it); ordinary till use never pins at all — Android
             // silently REFUSES to start any non-allowlisted activity from a
-            // pinned app — "Attempted Lock Task Mode violation
-            // r=...packageinstaller/...InstallStart" in logcat, no dialog, no
-            // exception. That is exactly what "I pressed Update and nothing
-            // happened" looked like on a real tablet. Release the pin first,
-            // the same way KioskBridge.exitLockdown does for exit-to-OS;
-            // kioskUnlocked stops onResume immediately re-pinning and
-            // re-blocking it. Authorised by a manager PIN before we get here.
-            kioskUnlocked = true
+            // pinned app: "Attempted Lock Task Mode violation
+            // r=...packageinstaller/...InstallStart" in logcat, no dialog,
+            // no exception. That is exactly what "I pressed Update and
+            // nothing happened" looked like on a real tablet. This is only
+            // reachable from settings.html's manager-PIN-gated
+            // #android-update form. Release defensively, the same way
+            // KioskBridge.exitLockdown does for exit-to-OS — a no-op if the
+            // pin was already off, which it is in the ordinary case.
             releaseKioskLock()
             clearImmersiveMode()
             val uri = FileProvider.getUriForFile(this, "$packageName.updates", apk)
@@ -657,6 +679,7 @@ class MainActivity : AppCompatActivity() {
      * navigation) is safe.
      */
     private fun engageKioskLock() {
+        kioskPinned = true
         try {
             val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
             if (dpm != null && dpm.isDeviceOwnerApp(packageName)) {
@@ -678,6 +701,7 @@ class MainActivity : AppCompatActivity() {
 
     /** Releases Lock Task / screen-pinning. Same never-crash posture as [engageKioskLock]. */
     private fun releaseKioskLock() {
+        kioskPinned = false
         try {
             stopLockTask()
         } catch (e: Exception) {
@@ -792,22 +816,48 @@ class MainActivity : AppCompatActivity() {
                 //     change. Fixed by adding that manifest declaration.
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
-                    // ut-docs#1254: unlocking is [KioskBridge.exitLockdown]'s
-                    // job, not this method's — see its KDoc for why. This
-                    // side only ever RE-LOCKS: /login and /settings are the
-                    // two manager-facing screens exitLockdown can be called
-                    // from, so navigation landing anywhere else (the sale
-                    // screen, /self-order, ...) means the manager is done
-                    // and the till is handed back — re-engage defensively
-                    // even if onResume's own reset (below) never fires
-                    // because the Activity was never actually backgrounded.
+                    // ut-docs#1254/#1508: unlocking via a manager PIN is
+                    // [KioskBridge.exitLockdown]'s job, not this method's —
+                    // see its KDoc for why. This side tracks which of the
+                    // three page classes navigation just landed on and
+                    // engages/releases the pin accordingly:
+                    //  - /login, /settings(/*) — manager-facing. Leave the
+                    //    lock state exactly as exitLockdown() left it; only
+                    //    the PIN-gated bridge call changes it here.
+                    //  - /self-order(/*) — the ONLY mode Lock Task may ever
+                    //    engage for (ut-docs#1508: app-pinning belongs to
+                    //    self-ordering only, never ordinary till use). Pin
+                    //    on arrival, same as before.
+                    //  - anything else (the sale screen, the setup wizard,
+                    //    any other operator page) — ordinary till use. The
+                    //    OS bar stays hidden (applyImmersiveMode), but the
+                    //    pin is released unconditionally, without requiring
+                    //    exitLockdown(): a manager coming back from
+                    //    /self-order, or a wizard page that just rendered a
+                    //    bare error (a deliberate guard-page-http-error.sh
+                    //    exception — the wizard has no operator layout to
+                    //    render into), must never be one Lock Task pin away
+                    //    from a bricked till.
                     url?.let {
                         val path = Uri.parse(it).path ?: ""
                         val managerFacing = path == "/login" || path == "/settings" || path.startsWith("/settings/")
-                        if (!managerFacing && kioskUnlocked) {
-                            kioskUnlocked = false
-                            engageKioskLock()
-                            applyImmersiveMode()
+                        // Exact-or-subtree, the same shape as managerFacing
+                        // above and as the server's own auth exemption
+                        // (internal/auth/middleware.go): a bare
+                        // startsWith("/self-order") would also pin a future
+                        // "/self-orders"-style route that has nothing to do
+                        // with the customer-facing kiosk.
+                        val selfOrder = path == "/self-order" || path.startsWith("/self-order/")
+                        when {
+                            managerFacing -> { /* lock state unchanged; exitLockdown() owns it */ }
+                            selfOrder -> {
+                                engageKioskLock()
+                                applyImmersiveMode()
+                            }
+                            else -> {
+                                releaseKioskLock()
+                                applyImmersiveMode()
+                            }
                         }
                     }
                     view?.evaluateJavascript("document.documentElement.lang") { result ->
@@ -966,24 +1016,45 @@ class MainActivity : AppCompatActivity() {
         // just be a documented no-op the broad catch in engageKioskLock
         // silently swallows. onResume below always runs one lifecycle step
         // after onCreate, on every cold launch as much as every real
-        // resume — a till boots straight into kiosk mode with no separate
-        // "wait for the first page load" step, exactly as before, just
-        // without the redundant call.
+        // resume, with no separate "wait for the first page load" step.
+        // (ut-docs#1508: a cold launch no longer means kiosk-pinned — see
+        // onResume's own comment on [kioskPinned]'s `false` default.)
     }
 
     override fun onResume() {
         super.onResume()
-        // ut-docs#1254: unconditionally re-lock on every resume — the
-        // FIRST call on a cold launch (a till boots straight into kiosk
-        // mode) and every later one, even if exitLockdown() granted an
-        // unlock earlier: resuming after a real background (Home/Recents/
-        // another app) is exactly the point a kiosk must default back to
-        // secure, not trust that whatever the manager was doing out there
-        // is still what's wanted. Both calls are idempotent when already
-        // applied.
-        kioskUnlocked = false
+        // ut-docs#1254/#1508: re-assert the OS-bar-hidden state on every
+        // resume unconditionally — the FIRST call on a cold launch and
+        // every later one, even if exitLockdown() granted an unlock
+        // earlier: resuming after a real background (Home/Recents/another
+        // app) is exactly the point the chrome must default back to
+        // hidden, not trust that whatever the manager was doing out there
+        // is still what's wanted.
+        //
+        // The PIN is different: this only RE-ASSERTS whatever pin state the
+        // app is already in ([kioskPinned]) — it never decides one. Only
+        // onPageFinished (landing on / leaving a self-order page) and the
+        // PIN-gated [KioskBridge.exitLockdown] ever change it, so a resume
+        // can neither pin a till that wasn't pinned (ut-docs#1508 — app-
+        // pinning belongs to self-ordering, never ordinary till use) nor
+        // drop a genuine self-order pin that no manager PIN has released
+        // (review finding: the screen blinking off and on while a customer
+        // sits on the 🔒 → /login prompt must not be a way out).
+        //
+        // On a cold launch [kioskPinned] still holds its `false` default —
+        // the WebView hasn't loaded anything yet — so a till boots unpinned
+        // and stays that way until a page load says otherwise. Note that on
+        // a self-order-mode till "otherwise" arrives almost immediately:
+        // TillService's listener loads the root "/", which the server
+        // 303-redirects to /self-order (internal/pages/init.go's
+        // SetAnonymousRootRedirect), and onPageFinished pins on that
+        // landing. Both calls are idempotent when already applied.
         applyImmersiveMode()
-        engageKioskLock()
+        if (kioskPinned) {
+            engageKioskLock()
+        } else {
+            releaseKioskLock()
+        }
     }
 
     override fun onDestroy() {

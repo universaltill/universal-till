@@ -17,7 +17,20 @@
        fresh `file` field). Same "nothing saved until Import" contract as
        every other commit on this page — this is a convenience, not a
        bypass; the operator still presses Import for real. -->
+  {{ if .currencyUnconfirmed }}
+  <!-- ut-docs#1515: the common reason a staged wizard preview lands here at
+       all is ut-docs#970's own safety gate — the operator's country/
+       currency step was pre-filled correctly (OS locale detection) and
+       never explicitly touched, so setup_page.go's commitStagedImportForSetup
+       is deliberately never even attempted (see its own "ONLY attempted
+       when currencyTouched" comment) rather than silently confirming a
+       currency nobody chose. The generic import.staged_from_setup message
+       below doesn't say why an extra step is needed here — this one does,
+       so pressing Import isn't a mystery second click. -->
+  <p class="muted" data-setup-staged-import-unconfirmed-currency>{{ T "import.staged_from_setup_confirm_currency" }}</p>
+  {{ else }}
   <p class="muted" data-setup-staged-import>{{ T "import.staged_from_setup" }}</p>
+  {{ end }}
   <!-- enctype="multipart/form-data" even with no file input (review
        finding): POST /api/import's very first step is
        r.ParseMultipartForm — htmx posts a plain form urlencoded unless the

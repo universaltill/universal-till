@@ -767,6 +767,66 @@ func TestRecordCashAdjustment(t *testing.T) {
 	}
 }
 
+// TestRecordCashAdjustment_HTMLSummaryIsTranslated: the HTML-fragment path
+// of POST /api/shifts/adjustment previously hardcoded untranslated,
+// unescaped English prose ("Adjustment recorded: %s"), invisible to
+// guard-i18n.sh because it lives inside a Go fmt.Sprintf passed to
+// writeHTML, not template markup or one of the guard's other matched
+// call shapes — same defect class #1289/#1406 already fixed on the sibling
+// respondShiftSuccess/respondCloseSuccess in this file (ut-docs#1504).
+func TestRecordCashAdjustment_HTMLSummaryIsTranslated(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, dp := newShiftsAPITestDeps(t)
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	rec := postShiftJSON(t, mux, "/api/shifts/open", `{"register_id":"reg1","cashier_id":"user1","opening_cash":5000}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("open shift: %d: %s", rec.Code, rec.Body.String())
+	}
+	var shiftID string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT id FROM shifts LIMIT 1`).Scan(&shiftID); err != nil {
+		t.Fatal(err)
+	}
+
+	// English locale: sanity check the fragment still renders correctly.
+	// This alone does NOT prove the fix — en.json's translated string is
+	// textually identical to the old hardcoded literal, so this assertion
+	// would pass unchanged against the pre-fix code too. The real
+	// regression proof is the fa-locale assertion below, which only
+	// passes once the message is actually routed through T().
+	req := httptest.NewRequest(http.MethodPost, "/api/shifts/adjustment",
+		strings.NewReader(`shift_id=`+shiftID+`&type=adjustment&amount=200&reason=float+top-up`))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, auth.User{ID: "user1"})
+	recEn := httptest.NewRecorder()
+	mux.ServeHTTP(recEn, req)
+	if recEn.Code != http.StatusOK {
+		t.Fatalf("adjustment: %d: %s", recEn.Code, recEn.Body.String())
+	}
+	if body := recEn.Body.String(); !strings.Contains(body, "Adjustment recorded:") {
+		t.Fatalf("expected the shifts.adjustment_success template, got:\n%s", body)
+	}
+
+	// A non-English locale actually renders translated prose, not the
+	// English template spliced in — this is the assertion that fails
+	// pre-fix (see #1289/#1406's own review record for this same class).
+	reqFa := httptest.NewRequest(http.MethodPost, "/api/shifts/adjustment",
+		strings.NewReader(`shift_id=`+shiftID+`&type=adjustment&amount=200&reason=float+top-up`))
+	reqFa.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	reqFa.AddCookie(&http.Cookie{Name: "ut_lang", Value: "fa"})
+	reqFa = auth.WithUser(reqFa, auth.User{ID: "user1"})
+	recFa := httptest.NewRecorder()
+	mux.ServeHTTP(recFa, reqFa)
+	if recFa.Code != http.StatusOK {
+		t.Fatalf("adjustment (fa locale): %d: %s", recFa.Code, recFa.Body.String())
+	}
+	if !strings.Contains(recFa.Body.String(), "اصلاح ثبت شد") {
+		t.Fatalf("expected the fa translation of shifts.adjustment_success, got:\n%s", recFa.Body.String())
+	}
+}
+
 func TestRecordCashAdjustment_RequiresManagerPINWhenAmountRemovesCash(t *testing.T) {
 	// UT_AUTH is unset in this test process, so auth.Disabled(...) is
 	// false — a negative amount must require a manager PIN, same gate as

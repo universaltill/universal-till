@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -214,6 +215,25 @@ func testPNGBytes(t *testing.T) []byte {
 	return buf.Bytes()
 }
 
+// oversizedPNGBytes is a real, fully valid, fully decodable PNG whose pixel
+// count sits just over imaging.MaxPixels — the actual pixel-bomb shape
+// (ut-docs#1328/#1417): a solid color compresses to a tiny file while
+// still being genuinely decodable, proving the guard rejects it via the
+// cheap dimension check rather than some unrelated "corrupt file" reason.
+func oversizedPNGBytes(t *testing.T) []byte {
+	t.Helper()
+	const w, h = 7000, 6000
+	if int64(w)*int64(h) <= imaging.MaxPixels {
+		t.Fatalf("test fixture %dx%d must exceed imaging.MaxPixels (%d)", w, h, imaging.MaxPixels)
+	}
+	src := image.NewGray(image.Rect(0, 0, w, h))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, src); err != nil {
+		t.Fatal(err)
+	}
+	return buf.Bytes()
+}
+
 func TestIdentifyAPI_NotConfiguredReturns404(t *testing.T) {
 	mux, _, _ := newAIAPITestDeps(t)
 	req := multipartPhotoRequest(t, "/api/pos/identify", testPNGBytes(t), nil)
@@ -357,5 +377,108 @@ func TestConfirmAPI_NotConfiguredReturns404(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 when AI identify isn't configured, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestIdentifyAPI_RejectsPixelBombPhoto is the ut-docs#1417 regression:
+// before this fix, readPhoto's raw image.Decode had no dimension check, so
+// a small, well-formed file declaring an enormous width×height would still
+// be decoded in full. Must now be rejected the same class of error as an
+// invalid photo, without attempting the full decode.
+func TestIdentifyAPI_RejectsPixelBombPhoto(t *testing.T) {
+	mux, dp, _ := newAIAPITestDeps(t)
+	dp.AI = fakeIdentifyServer(t, ai.IdentifyResult{})
+
+	req := multipartPhotoRequest(t, "/api/pos/identify", oversizedPNGBytes(t), nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a pixel-bomb photo, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestConfirmAPI_RejectsPixelBombPhotoAndWritesNoFile is the confirm-path
+// half of the ut-docs#1417 regression: the oversized upload must be
+// rejected before ANY file lands under ai_ref/ — not merely reported as
+// invalid after being written.
+func TestConfirmAPI_RejectsPixelBombPhotoAndWritesNoFile(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newAIAPITestDeps(t)
+	dp.AI = fakeIdentifyServer(t, ai.IdentifyResult{})
+
+	req := multipartPhotoRequest(t, "/api/pos/identify/confirm", oversizedPNGBytes(t), map[string]string{"item_id": "itm1"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a pixel-bomb photo, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if _, err := os.Stat(paths.Data("public", "assets", "items", "itm1", "ai_ref")); !os.IsNotExist(err) {
+		t.Fatalf("expected no ai_ref dir/file written for a rejected upload, stat err: %v", err)
+	}
+}
+
+// TestConfirmAPI_SavesReEncodedFileNotRawUpload is the write-side half of
+// ut-docs#1417: a valid, in-bound confirm upload must be persisted as a
+// freshly re-encoded PNG, not the raw multipart upload written verbatim —
+// this is what protects any file already on disk once identify's own
+// bounded re-decode (loadRefJPEG) runs against it later. Trailing junk
+// appended after the real PNG data proves this more robustly than a plain
+// byte-equality check would: Go's PNG encoder is deterministic, so a
+// trivial fixture image can legitimately re-encode to the exact same
+// bytes it started as, which would make a bare "stored != raw" assertion
+// pass or fail by coincidence rather than actually proving a decode
+// occurred. Trailing bytes a decoder ignores (everything after IEND)
+// cannot survive a genuine decode-then-re-encode round trip, so their
+// absence is real evidence — a verbatim write would keep them.
+func TestConfirmAPI_SavesReEncodedFileNotRawUpload(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newAIAPITestDeps(t)
+	dp.AI = fakeIdentifyServer(t, ai.IdentifyResult{})
+
+	junk := []byte("SHOULD-NOT-SURVIVE-A-REENCODE")
+	raw := append(append([]byte{}, testPNGBytes(t)...), junk...)
+	req := multipartPhotoRequest(t, "/api/pos/identify/confirm", raw, map[string]string{"item_id": "itm1"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	dir := paths.Data("public", "assets", "items", "itm1", "ai_ref")
+	entries, err := os.ReadDir(dir)
+	if err != nil || len(entries) != 1 {
+		t.Fatalf("expected exactly one saved reference image, got %d entries, err=%v", len(entries), err)
+	}
+	name := entries[0].Name()
+	if !strings.HasSuffix(name, ".png") {
+		t.Fatalf("expected the persisted file to be a .png, got %q", name)
+	}
+	stored, err := os.ReadFile(filepath.Join(dir, name))
+	if err != nil {
+		t.Fatalf("read stored reference image: %v", err)
+	}
+	if bytes.Contains(stored, junk) {
+		t.Fatal("expected the stored file to be a fresh re-encode (trailing junk after the real PNG data must not survive), got a verbatim write")
+	}
+	if _, err := png.Decode(bytes.NewReader(stored)); err != nil {
+		t.Fatalf("expected the stored file to itself be a valid, decodable PNG: %v", err)
+	}
+}
+
+// TestLoadRefJPEG_RejectsPreExistingPixelBombFile is the defense-in-depth
+// half of ut-docs#1417: a hostile file already on disk (written before
+// this fix shipped, or by any means other than the confirm handler) must
+// still be rejected on every subsequent identify call, not just at
+// upload time.
+func TestLoadRefJPEG_RejectsPreExistingPixelBombFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "thumb.png")
+	if err := os.WriteFile(path, oversizedPNGBytes(t), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := loadRefJPEG(path); ok {
+		t.Fatal("expected a pre-existing pixel-bomb file to be rejected, not decoded")
 	}
 }

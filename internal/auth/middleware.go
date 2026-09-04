@@ -73,22 +73,16 @@ func exempt(path string) bool {
 		// the pilot tablet: POST /api/setup/language -> 303, POST
 		// /api/setup/tax-plugin -> 401, same request, same boot.
 		"/api/setup/tax-plugin",
-		// ut-docs#1509: the wizard's restore/import step (setup.html's
-		// hx-post="/api/import"). Fourth route to ship behind this wall with
-		// a handler that already authorises itself: import_page.go's
-		// ut-docs#1168 first-boot exemption is preview-only, REFUSES any
-		// request carrying a session, requires NeedsFirstBoot, and fails
-		// closed on a nil AuthSvc — none of which ever ran, because the
-		// middleware answered 401 first and a first-boot till has no
-		// operator to sign in as. Same "the handler authenticates itself"
-		// tier as /api/sync/pair-request and /api/settings/exit-to-os below.
-		//
-		// This does NOT open import on a configured till: there,
-		// canPerform fails, no session is present, NeedsFirstBoot is false,
-		// and the handler answers 403 — and even inside the first-boot
-		// window it can only PREVIEW (commit=1 is refused; the wizard's
-		// real commit rides the final submit as the just-created admin).
-		"/api/import",
+		// ut-docs#1506: the same step's "Skip for now" action, when it's
+		// leaving that fiscal plugin uninstalled — same first-boot-only
+		// window, same handler-authenticates-itself shape, and the exact
+		// same omission would reproduce here that #1507 (immediately above)
+		// fixed for the Install button: without this entry the middleware
+		// answers 401 before setupTaxPluginSkipHandler's own NeedsFirstBoot
+		// gate ever runs, on a first-boot till that by definition has no
+		// operator to sign in as. TestSetupWizardEndpointsClearTheSessionWall
+		// pins this entry.
+		"/api/setup/tax-plugin-skip",
 		// ut-docs#1165: step 1's background update-check + its explicit
 		// apply action — same first-boot-only window as /api/setup/language
 		// above (NeedsFirstBoot refuses both once an operator exists).
@@ -175,6 +169,27 @@ func exempt(path string) bool {
 
 // Middleware gates every route behind a live session. Browsers are redirected
 // to /login; API calls get 401 JSON. The operator lands in the context.
+// optionalAuth paths are reachable WITHOUT a session but must still receive
+// one when the caller has it. This is a distinct tier from exempt(), and the
+// distinction is not cosmetic: exempt() returns before the cookie is ever
+// read, so a path listed there can never see who is calling.
+//
+// ut-docs#1516: /api/import was put in exempt() by ut-docs#1509 to unblock the
+// first-boot wizard restore, and that silently broke the ordinary case — a
+// signed-in manager pressing Import reached import_page.go with no user in
+// context, so canPerform failed, the handler's hasSession check saw nothing,
+// NeedsFirstBoot was false on a configured till, and the answer was 403
+// "manager or admin required". htmx does not swap non-2xx, so the operator saw
+// the spinner flash and nothing else. Import is the one route that genuinely
+// needs both halves: anonymous during first boot (preview only, gated by the
+// handler's NeedsFirstBoot branch) and session-aware afterwards.
+//
+// Anything added here MUST authorise itself in the handler — this tier only
+// promises "no 401 from the middleware", never "no authorisation required".
+func optionalAuth(path string) bool {
+	return path == "/api/import"
+}
+
 func Middleware(next http.Handler, svc *Service) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if exempt(r.URL.Path) {
@@ -186,6 +201,13 @@ func Middleware(next http.Handler, svc *Service) http.Handler {
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u)))
 				return
 			}
+		}
+		// Resolved above when a valid cookie was present; reaching here with
+		// an optional-auth path means there is no usable session, which is a
+		// legitimate state for it rather than a 401.
+		if optionalAuth(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Content-Type", "application/json")

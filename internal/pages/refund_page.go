@@ -212,6 +212,27 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
 			return
 		}
+		// Double-refund guard for the service charge itself (ut-docs#1215
+		// review finding B1): how much of the ORIGINAL charge prior
+		// completed returns already paid back, so THIS request's own
+		// proration (below) can be clamped to never push the cumulative
+		// total past the original charge -- same failure class as the
+		// per-line quantity guard `returned` feeds above, just for the
+		// charge instead of the lines.
+		alreadyRefundedCharge, err := repo.RefundedServiceChargeTotal(r.Context(), detail.ID)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
+			return
+		}
+		// Double-refund guard for each line's OWN discount (ut-docs#1531,
+		// same class as B1 above but for the line subtotal instead of the
+		// service charge): how much line_discount prior completed returns
+		// already gave back, per refund-line key.
+		returnedDiscount, err := repo.ReturnedLineDiscounts(r.Context(), detail.ID)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
+			return
+		}
 		locID, err := repo.EnsureStockLocation(r.Context())
 		if err != nil {
 			// Same generic internal-DB-failure class as the ReturnedQuantities
@@ -225,11 +246,26 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			return
 		}
 
+		// Needed below for the service-charge proration basis (net, not
+		// gross -- ut-docs#1215) as well as computeRefundTotal further
+		// down; hoisted here since it only depends on detail, not on which
+		// lines end up refunded.
+		inclusive := saleIsTaxInclusive(detail)
+
 		// Collect requested quantities; enforce the double-refund guard.
 		var lines []pos.SaleLineInput
 		var refundGross, origGross int64
+		var refundNetWeight int64
+		// origNetWeight is the SAME true (tax-exclusive), net-after-line-
+		// discount basis ApportionServiceChargeTax itself weighs bands by
+		// (pos.TrueNetWeight) -- summed across every ORIGINAL line, not just
+		// the ones this request refunds. Used below to prorate the service
+		// charge by net share instead of gross share (ut-docs#1215).
+		var origNetWeight int64
 		for _, l := range detail.Lines {
 			origGross += int64(float64(l.UnitPrice) * l.Qty)
+			net := pos.AmountForQuantity(money.FromMinor(l.UnitPrice), l.Qty).Sub(money.FromMinor(l.LineDiscount))
+			origNetWeight += pos.TrueNetWeight(net, l.TaxRateBP, inclusive).Minor()
 		}
 		// Same TRUE-pool accounting as refundableLines (the page's display
 		// computation) — using each line's own l.Qty - returned[key] here
@@ -240,6 +276,55 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// exactly correct but the old check rejected line 0 alone as
 		// "only 1 left").
 		pool := refundLinePool(detail.Lines, returned)
+		// keyQty/keyDiscount: the ORIGINAL totals aggregated per refund-line
+		// key (summed across every original line sharing it, same fungible-
+		// pool basis refundLinePool itself uses) — the denominator/basis for
+		// the running discount clamp below (ut-docs#1531).
+		//
+		// keyUniform tracks whether every original line sharing a key
+		// applies the SAME discount rate (discount per unit). Aggregating
+		// discount by key is only exact when it does: two lines of the same
+		// item/price/mode can carry DIFFERENT LineDiscount (e.g. one scanned
+		// line manually discounted, its identical sibling not) — pooling
+		// their discounts by key in that case would let one line's discount
+		// be given back against the OTHER line's refund (review finding F1
+		// on this card: a driven repro over-refunded one line by 25 minor
+		// units while shorting its sibling by the same amount). The uniform
+		// case (by far the common one — includes every key with only ONE
+		// original line, which is what every existing fixture in this file
+		// covers) gets the exact per-key clamp below; a non-uniform key
+		// falls back to the pre-#1531 independent per-line floor for its
+		// lines, i.e. today's existing (bounded, previously-accepted)
+		// behavior — not a regression, since that's exactly what shipped
+		// before this card for every key shape.
+		keyQty := map[string]float64{}
+		keyDiscount := map[string]int64{}
+		keyUniform := map[string]bool{}
+		keyRefRate := map[string]struct {
+			discount int64
+			qty      float64
+		}{}
+		for _, l := range detail.Lines {
+			key := data.RefundLineKey(l.ItemID, l.VariantID, l.UnitPrice, l.OrderType)
+			keyQty[key] += l.Qty
+			keyDiscount[key] += l.LineDiscount
+			ref, seen := keyRefRate[key]
+			if !seen {
+				keyRefRate[key] = struct {
+					discount int64
+					qty      float64
+				}{l.LineDiscount, l.Qty}
+				keyUniform[key] = true
+				continue
+			}
+			// Cross-multiply instead of dividing, so a zero-qty line (should
+			// never happen for a real sold line, but costs nothing to guard)
+			// can't divide-by-zero: l.LineDiscount/l.Qty == ref.discount/ref.qty
+			// iff l.LineDiscount*ref.qty == ref.discount*l.Qty.
+			if float64(l.LineDiscount)*ref.qty != float64(ref.discount)*l.Qty {
+				keyUniform[key] = false
+			}
+		}
 		for i, l := range detail.Lines {
 			raw := strings.TrimSpace(r.Form.Get("qty_" + strconv.Itoa(i)))
 			if raw == "" || raw == "0" {
@@ -257,9 +342,89 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				return
 			}
 			pool[key] -= qty
-			// Prorate the line discount for partial-quantity refunds.
-			share := qty / l.Qty
-			lineDiscount := int64(float64(l.LineDiscount) * share)
+			// Running per-key discount clamp (ut-docs#1531), replacing a
+			// per-request-only floor proration: flooring `LineDiscount *
+			// share` independently on EVERY partial-refund request
+			// under-discounts each one, so the cumulative net given back
+			// across several sequential partials of the same line can
+			// exceed the line's own true net (driven repro: 3 @ 100, a 10
+			// discount that doesn't divide by 3, refunded 1 unit at a time
+			// — three independent floors each round down instead of one
+			// rounding down and the rest making it up).
+			//
+			// Fix: target the CUMULATIVE discount that should have been
+			// given back by the end of THIS request —
+			// floor(keyDiscount * cumulativeQtyRefunded / keyQty), exact
+			// once the full quantity is refunded — and hand back only the
+			// remainder over what prior completed returns already paid.
+			// keyQty[key]-pool[key] is the cumulative quantity refunded for
+			// this key so far, including this line's own `qty` just
+			// subtracted above; same clamp shape as
+			// RefundedServiceChargeTotal's guard, applied per line-key
+			// instead of once for the whole sale. Only valid when the key's
+			// lines share one discount rate (keyUniform) — see the comment
+			// on keyUniform's declaration above for the non-uniform case.
+			var lineDiscount int64
+			if kq := keyQty[key]; kq > 0 && keyUniform[key] {
+				cumulativeQty := kq - pool[key]
+				var targetDiscount int64
+				if cumulativeQty >= kq-1e-9 {
+					// Review finding F4: cumulativeQty is a float and need
+					// not land exactly on kq even when every unit under this
+					// key has genuinely been refunded (e.g. a fractional
+					// original Qty like 0.30000000000000004) — floor()
+					// against a cumulativeQty that's a hair short of kq
+					// under-shoots the target by one minor unit, reviving
+					// the exact over-refund this card exists to eliminate.
+					// Snap to the exact total once within the same 1e-9
+					// epsilon `remaining+1e-9` above already uses.
+					targetDiscount = keyDiscount[key]
+				} else {
+					targetDiscount = int64(float64(keyDiscount[key]) * cumulativeQty / kq)
+				}
+				lineDiscount = targetDiscount - returnedDiscount[key]
+			} else if l.Qty > 0 {
+				// Non-uniform-discount key (rare — see keyUniform's
+				// declaration above): fall back to the pre-#1531
+				// independent floor, per original line.
+				share := qty / l.Qty
+				lineDiscount = int64(float64(l.LineDiscount) * share)
+			}
+			// l.Qty <= 0 (degenerate; shouldn't occur for a real sold line)
+			// falls through with lineDiscount left at its zero value.
+			//
+			// Review finding N3: clamp negative here, ONCE, so it covers
+			// every branch above uniformly (not just the per-key one).
+			if lineDiscount < 0 {
+				lineDiscount = 0
+			}
+			// Review finding F3 (round 2 fix, B1): never let a single
+			// request's own discount exceed its own gross, whichever branch
+			// above computed it — guards against a negative (nonsensical)
+			// line net, including against pre-#1531 return rows already on
+			// disk whose recorded discounts don't reconcile with this
+			// clamp's own bookkeeping. Gross MUST use the same rounding
+			// basis as refundNet below (pos.AmountForQuantity, i.e.
+			// money.MulQty's math.Round) and pos.CompleteSale's own line
+			// base (pos/sales.go's lineBase check) — a plain
+			// int64(float64(UnitPrice)*qty) truncates where those round,
+			// so on a fractional qty whose gross has a .5+ fraction the cap
+			// could land ONE BELOW the real gross: a fully-discounted
+			// (comped) line then can't recover its full discount, leaving 1
+			// minor unit of net the shop pays out despite never having
+			// collected it, AND (since that leaves this request's own
+			// refundNetWeight at 1 instead of 0) silently disengaging
+			// ut-docs#1215 finding B3's zero-net-weight service-charge
+			// fallback -- a regression of an already-fixed, already-tested
+			// behaviour class with no fractional-quantity test to catch it.
+			if gross := pos.AmountForQuantity(money.FromMinor(l.UnitPrice), qty).Minor(); lineDiscount > gross {
+				lineDiscount = gross
+			}
+			// Track by the ACTUAL amount given back this request, not the
+			// theoretical target -- so a request capped by the gross guard
+			// just above doesn't lose the difference; the next request's own
+			// target still accounts for what was really persisted.
+			returnedDiscount[key] += lineDiscount
 			lines = append(lines, pos.SaleLineInput{
 				ItemID: l.ItemID, VariantID: l.VariantID, SKU: l.SKU, Name: l.Name,
 				Qty: qty, UnitPrice: money.FromMinor(l.UnitPrice),
@@ -271,6 +436,10 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				OrderType: l.OrderType,
 			})
 			refundGross += int64(float64(l.UnitPrice) * qty)
+			// Same true-net basis as origNetWeight above, this time over just
+			// the lines THIS request refunds (ut-docs#1215).
+			refundNet := pos.AmountForQuantity(money.FromMinor(l.UnitPrice), qty).Sub(money.FromMinor(lineDiscount))
+			refundNetWeight += pos.TrueNetWeight(refundNet, l.TaxRateBP, inclusive).Minor()
 		}
 		if len(lines) == 0 {
 			http.Error(w, "select at least one item to refund", http.StatusBadRequest)
@@ -282,16 +451,71 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		if detail.DiscountTotal > 0 && origGross > 0 {
 			saleDiscount = detail.DiscountTotal * refundGross / origGross
 		}
-		// Service charge (ut-docs#243): prorated by the SAME refunded-share
-		// fraction as the discount above, not "never refunded" -- a full
-		// refund of every line (refundGross == origGross) returns the exact
-		// original amount back (integer division is exact in that case),
-		// and a partial refund returns its proportional share. Before this,
-		// the charge was silently kept by the shop on every refund because
-		// this SaleInput never carried it at all.
+		// Service charge (ut-docs#243, refined ut-docs#1215): prorated by
+		// NET-AFTER-DISCOUNT -- the same true, tax-exclusive weighting basis
+		// ApportionServiceChargeTax itself uses (ADR-0061 Decision 2), NOT
+		// by gross. Gross-basis proration (the original #243 fix, matching
+		// SaleDiscount's own gross proration one line up -- a deliberately
+		// different basis, see N4 in
+		// docs/code-reviews/2026-08-28-service-charge-refund-proration-243.md)
+		// is exact for a single full refund but drifts on a SPLIT/partial
+		// refund of a sale that mixes per-line discounts and different tax
+		// rates alongside a charge apportioned across bands (not a flat
+		// basis): the tax this amount feeds below (pos.ServiceChargeTax,
+		// and pos.CompleteSale's own computeSaleTotals for the persisted
+		// return) weighs by NET, so a gross-derived amount mixes two
+		// different bases. Net-after-discount throughout matches that
+		// downstream weighting for the common case (see ut-docs#1215's own
+		// derivation for exactly which split-refund shapes it fixes and
+		// which it doesn't -- it is NOT a general exactness guarantee, only
+		// a closer approximation than gross was); a per-line-discounted,
+		// multi-request split can still drift by a minor unit in EITHER
+		// direction, which is exactly why the clamp below exists.
 		var serviceChargeRefund int64
-		if detail.ServiceCharge > 0 && origGross > 0 {
-			serviceChargeRefund = detail.ServiceCharge * refundGross / origGross
+		if detail.ServiceCharge > 0 {
+			switch {
+			case origNetWeight > 0 && refundNetWeight > 0:
+				serviceChargeRefund = detail.ServiceCharge * refundNetWeight / origNetWeight
+			case origGross > 0:
+				// Review findings B2 (round 1) + B3 (round 2): the net
+				// basis can't apportion anything either when the WHOLE
+				// sale's net-after-discount is zero (origNetWeight == 0,
+				// B2's shape: every line fully line-discounted) OR when
+				// only THIS REQUEST's own refunded lines have zero net
+				// while other, unrefunded lines in the sale carry the
+				// sale's net (refundNetWeight == 0, B3's shape: refunding
+				// a comped/BOGO/staff-freebie line on its own, gross > 0
+				// but net == 0, while a different line elsewhere in the
+				// same sale is what makes origNetWeight positive). Either
+				// way, fall back to the gross fraction (this card's
+				// pre-fix basis, and the same edge
+				// ApportionServiceChargeTax's own zero-weight rule exists
+				// to handle on the sale side) so the sale stays refundable
+				// instead of computing a $0 charge refund that then fails
+				// CompleteSale's payment-must-be-positive check. Safe
+				// against B1 either way: the clamp below applies
+				// regardless of which branch produced the raw figure.
+				serviceChargeRefund = detail.ServiceCharge * refundGross / origGross
+			}
+			// Review finding B1: clamp against what's ACTUALLY left to
+			// refund, not just this request's own fraction of the whole.
+			// Flooring the per-request prorated line discount above (line
+			// ~277) makes each request's own refundNetWeight/refundGross
+			// slightly larger than its true proportional share, so the SUM
+			// of independently-computed per-request figures across several
+			// sequential partial refunds of the same sale can exceed the
+			// original charge -- a real money over-refund, verified via a
+			// driven repro during review. This clamp is what actually
+			// guarantees the invariant TestPostRefund_
+			// UnevenSequentialRefundsNeverExceedTheOriginalServiceCharge
+			// pins ("never more"): it no longer holds by luck of the
+			// arithmetic, it's now enforced.
+			if remaining := detail.ServiceCharge - alreadyRefundedCharge; serviceChargeRefund > remaining {
+				if remaining < 0 {
+					remaining = 0
+				}
+				serviceChargeRefund = remaining
+			}
 		}
 
 		method := strings.TrimSpace(r.Form.Get("method"))
@@ -306,9 +530,9 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			return
 		}
 
-		inclusive := saleIsTaxInclusive(detail)
 		// Engine computes the refund total from the same inputs as the
-		// original sale; the payment must cover it exactly.
+		// original sale; the payment must cover it exactly. (`inclusive`
+		// was already resolved above, before the service-charge proration.)
 		refundTotal := computeRefundTotal(lines, money.FromMinor(saleDiscount), money.FromMinor(serviceChargeRefund), detail.ServiceChargeTaxBasisBP, inclusive)
 
 		// Payment-provider refund (payment-provider contract): if the refund
@@ -349,6 +573,17 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			OriginalSaleID:          detail.ID,
 			Note:                    "refund of " + detail.ReceiptNo,
 			AllowNegativeInventory:  true, // returns only add stock back
+			// ut-docs#1493: mirrors completeTender's (pos_api.go) own
+			// offline-flag handling — the till's navigator.onLine-derived
+			// offline state, threaded from #offline-flag via the "offline"
+			// form field (review finding: unlike index.html, this page
+			// carries no #offline-override manual-toggle checkbox, so —
+			// deliberately, per this card's non-goals — that toggle does
+			// NOT reach this signal; navigator.onLine alone drives it
+			// here), so a known-offline refund also gets ADR-0044 D1's
+			// known-offline short-circuit instead of burning the full 3s
+			// fiscalSignAskBudget on a cloud call already known to fail.
+			Offline: formFlagTruthy(r.Form.Get("offline")),
 		}
 
 		// fiscal.sign.ask (ADR-0044 Decision 1, ut-docs#999/#1405): a refund

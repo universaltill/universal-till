@@ -350,3 +350,149 @@ func TestImportPage_StagedIDPrefillsCommitOnlyForm(t *testing.T) {
 		t.Fatalf("bare GET /import should still offer a file picker, got: %s", rec2.Body.String())
 	}
 }
+
+// ut-docs#1515 (AC3/AC5): the wizard's own upload/preview form must carry
+// the same busy-indicator/double-tap-guard pattern ut-docs#1510 gave
+// import.html — a real .bkp (thousands of receipt PDFs to parse past) can
+// leave the screen looking inert for a real stretch, and the wizard's form
+// was the one ut-docs#1510 missed. Same template-derived style as
+// TestSetupWizardEndpointsClearTheSessionWall: assert on the markup
+// directly rather than driving Alpine/htmx, which no Go test can do.
+func TestSetupWizardUploadFormHasBusyIndicator(t *testing.T) {
+	mux, _ := newSetupRestoreImportDeps(t)
+	// ut-docs#1515 CI failure: a bare GET /setup with no ut_lang cookie hits
+	// the first-visit OS-locale-detection redirect (setup_page.go, same
+	// mechanism TestSetupWizardRedirectsToDetectedEnglishAndPrefillsGB
+	// covers) whenever the runner's own OS locale happens to match a core
+	// locale — true on the GitHub Actions runner, false in some local dev
+	// sandboxes, so this passed locally and failed in CI. A "repeat visit"
+	// ut_lang cookie renders directly regardless of environment.
+	rec := getSetup(mux, "", "en")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		// Independent review (ut-docs#1515): these two are asserted as ONE
+		// contiguous string on purpose. setup.html already carried
+		// hx-disabled-elt="find button[type=submit]" on the step-99 join
+		// form long before this card, so asserting it on its own would pass
+		// identically with or without the fix — a vacuous assertion that
+		// wouldn't notice the upload form losing its double-tap guard.
+		// Pinning it next to this form's own hx-indicator ties it to this
+		// element specifically.
+		`hx-indicator="#setup-restore-busy" hx-disabled-elt="find button[type=submit]"`,
+		`id="setup-restore-busy"`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /setup missing %q (wizard upload form busy indicator)", want)
+		}
+	}
+}
+
+// ut-docs#1515 (AC1): the detected/pre-filled country's currency is correct
+// far more often than not, so step 2's tile is rarely clicked, and
+// ut-docs#970's currencyTouched safety gate then means the wizard's staged
+// preview never even attempts to auto-commit (see
+// TestWizardRestoreImport_SkipsAutoCommitWhenCurrencyNeverTouched — that
+// behaviour is deliberate and must NOT change). The fix is an explicit
+// confirmation control on the upload panel itself: checking it sets the
+// very same currencyTouched flag a step-2 tile click sets, and the "Next"
+// button must refuse to proceed with a staged import until either that
+// flag is set OR there is nothing staged to commit. This can only assert on
+// the markup (a Go test can't drive Alpine's @click/@change), but it pins
+// the actual mechanism: the SAME currencyTouched flag, not a parallel one
+// that the server-side commit gate never sees.
+//
+// Independent review (ut-docs#1515), finding 1 (blocker): both the control
+// and Next's disabled condition must ALSO check `currency !== ”` — country
+// detection can match no seeded country at all, leaving currency blank, and
+// confirming a currency that isn't even shown would mark the till
+// "confirmed" against an empty string (setup_page.go never actually
+// persists KeyCurrencyConfirmed for a blank currency, but
+// commitStagedImportForSetup's own gate only checks currencyTouched, so it
+// would still run) — reopening the exact ut-docs#970 hole this control
+// exists to close.
+func TestSetupWizardUploadPanelHasExplicitCurrencyConfirmControl(t *testing.T) {
+	mux, _ := newSetupRestoreImportDeps(t)
+	// ut-docs#1515 CI failure: a bare GET /setup with no ut_lang cookie hits
+	// the first-visit OS-locale-detection redirect (setup_page.go, same
+	// mechanism TestSetupWizardRedirectsToDetectedEnglishAndPrefillsGB
+	// covers) whenever the runner's own OS locale happens to match a core
+	// locale — true on the GitHub Actions runner, false in some local dev
+	// sandboxes, so this passed locally and failed in CI. A "repeat visit"
+	// ut_lang cookie renders directly regardless of environment.
+	rec := getSetup(mux, "", "en")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /setup: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`data-setup-confirm-currency`,
+		`@change="currencyTouched = $event.target.checked"`,
+		`:disabled="restoreStagedId !== '' && !currencyTouched && currency !== ''"`,
+		// Second review round: the `currency !== ''` guard on the WATCHER is
+		// load-bearing too, and was pinned by nothing — reverting just this
+		// half left the whole suite green. Without it the latch fires for a
+		// blank currency, so the block renders "confirm the currency:" with
+		// nothing after it, and ticking it (which is what the block asks
+		// for) sets currencyTouched — and setup_page.go's auto-commit gate
+		// checks ONLY currencyTouched, not that the currency is real
+		// (unlike the KeyCurrencyConfirmed set beside it, which does test
+		// `v != "" && IsKnownCurrency(v)`), so the import would commit
+		// against a currency nobody ever saw. Same non-vacuity reasoning as
+		// the busy-indicator assertion above: pin the guard, not just the
+		// expression that happens to sit next to it.
+		`$watch('restoreStagedId', (v) => { if (v !== '' && !currencyTouched && currency !== '') neededConfirm = true })`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("GET /setup missing %q (explicit currency-confirm control)", want)
+		}
+	}
+}
+
+// ut-docs#1515 (AC2): when a staged preview lands the operator on /import
+// instead of auto-committing, they must be told WHY, not just handed a bare
+// "press Import" — the overwhelmingly common reason is ut-docs#970's own
+// currencyTouched gate, not a failure. GET /import must show the
+// currency-specific explanation while the till's currency is genuinely
+// unconfirmed, and fall back to the original generic message once it is.
+func TestImportPage_StagedIDExplainsUnconfirmedCurrency(t *testing.T) {
+	mux, dp := newSetupRestoreImportDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO users (id, username, display_name, role, pin_hash, is_active)
+		VALUES ('admin-1', 'admin', 'Admin', 'admin', 'x', 1)`); err != nil {
+		t.Fatalf("seed admin: %v", err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/import?staged_id=deadbeef", nil), auth.User{ID: "admin-1", Role: "admin"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /import?staged_id=... (currency unconfirmed): code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-setup-staged-import-unconfirmed-currency`) {
+		t.Fatalf("expected the currency-unconfirmed explanation, got: %s", body)
+	}
+	if strings.Contains(body, `data-setup-staged-import>`) {
+		t.Fatalf("must not ALSO render the generic staged-import message, got: %s", body)
+	}
+
+	// Confirm the currency exactly the way a real commit does (ut-docs#970),
+	// then the same staged landing page must fall back to the original
+	// generic message — the explanation is specifically about the
+	// unconfirmed-currency case, not a permanent replacement.
+	if err := dp.Settings.Set(t.Context(), common.KeyCurrencyConfirmed, "true"); err != nil {
+		t.Fatalf("mark currency confirmed: %v", err)
+	}
+	req2 := auth.WithUser(httptest.NewRequest(http.MethodGet, "/import?staged_id=deadbeef", nil), auth.User{ID: "admin-1", Role: "admin"})
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	body2 := rec2.Body.String()
+	if !strings.Contains(body2, `data-setup-staged-import>`) {
+		t.Fatalf("expected the generic staged-import message once currency is confirmed, got: %s", body2)
+	}
+	if strings.Contains(body2, `data-setup-staged-import-unconfirmed-currency`) {
+		t.Fatalf("must not show the unconfirmed-currency explanation once currency IS confirmed, got: %s", body2)
+	}
+}

@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -41,6 +40,24 @@ import (
 // value (e.g. via t.Cleanup) after overriding it.
 var CrossDeviceLinkActionable = selfupdate.DownloadLinkActionableNow
 
+// UpdateInstallBridge is the platform seam behind the updateinstallbridge
+// template func (ut-docs#1246): true only where the native shell can drive
+// the OS package installer, which today means Android. A var — not a direct
+// call — for the same reason as CrossDeviceLinkActionable above:
+// a test rendering settings.html can then exercise BOTH branches instead of
+// only the one its own GOOS gives, and the Android update UI is otherwise
+// untestable on every machine that builds it (ut-docs#1534). Restore the
+// original value (e.g. via t.Cleanup) after overriding it.
+var UpdateInstallBridge = selfupdate.InstallBridgeAvailableNow
+
+// UpdateAvailable is the seam behind the updateavailable template func
+// (ut-docs#1545). Same reason as UpdateInstallBridge above: the update UI is
+// now gated on BOTH platform and freshness, and without a seam a test cannot
+// render the "an update exists" branch at all — it would depend on whatever
+// the real GitHub API happened to say when the suite ran. Restore the original
+// value (e.g. via t.Cleanup) after overriding it.
+var UpdateAvailable = func() bool { return updates.Current().Available }
+
 var baseFuncs = template.FuncMap{
 	"div100":    func(cents int64) float64 { return float64(cents) / 100.0 },
 	"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
@@ -57,7 +74,7 @@ var baseFuncs = template.FuncMap{
 	"categoryName":    func(*string) string { return "" },
 	"brandName":       func(*string) string { return "" },
 	"appversion":      func() string { return buildinfo.Version },
-	"updateavailable": func() bool { return updates.Current().Available },
+	"updateavailable": func() bool { return UpdateAvailable() },
 	"latestversion":   func() string { return updates.Current().Latest },
 	"canselfupdate":   func() bool { return selfupdate.Supported() },
 	// updatedownloadlink: whether the status-bar chip's fallback (when
@@ -73,8 +90,9 @@ var baseFuncs = template.FuncMap{
 	// chip fell through to the unix-kiosk dead-end text and the operator was
 	// told to reinstall by hand for every build (ut-docs#1246). Keep in step
 	// with internal/pages/update_api.go's updateUnavailableHTML, which makes
-	// the same distinction for the Settings page.
-	"updateinstallbridge": func() bool { return runtime.GOOS == "android" },
+	// the same distinction for the Settings page. Indirected through the
+	// UpdateInstallBridge var above so a test can stub the platform seam.
+	"updateinstallbridge": func() bool { return UpdateInstallBridge() },
 	// crossdevicelinkactionable: whether a link to ANOTHER device (a replica
 	// linking to its primary till's own UI, ut-docs#390) is safe to make
 	// clickable — false on a unix kiosk (fullscreen, no chrome, no way back

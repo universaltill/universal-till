@@ -75,6 +75,25 @@ func TestPrinterConfig_Defaults(t *testing.T) {
 	}
 }
 
+// ut-docs#1153: printerConfig used to discard the error from the underlying
+// settings read entirely, so a genuine DB failure was indistinguishable
+// from "not configured". printerConfigChecked must surface it; printerConfig
+// itself (still used by 4 other call sites) must keep discarding it rather
+// than changing shape or panicking.
+func TestPrinterConfigChecked_SurfacesSettingsReadError(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	if _, err := dp.Db.Exec(`DROP TABLE settings`); err != nil {
+		t.Fatalf("drop settings table: %v", err)
+	}
+	if _, err := printerConfigChecked(context.Background(), dp); err == nil {
+		t.Fatal("expected printerConfigChecked to surface the settings read error, got nil")
+	}
+	cfg := printerConfig(context.Background(), dp)
+	if cfg.Enabled() {
+		t.Fatal("printerConfig on a broken settings read should fall back to defaults (Enabled()=false), not panic or report enabled")
+	}
+}
+
 // ut-docs#425: printReceiptAsync/printKitchenAsync fire best-effort
 // goroutines after tender that read Settings (and, on failure, write an
 // audit row) through d.Db, with no caller left holding a handle to them —
@@ -540,6 +559,75 @@ func TestAsyncPrintFailureIsRecordedWhenPrintCtxExpired(t *testing.T) {
 	}
 	if !gotReceipt || !gotKitchen {
 		t.Errorf("both print failures must be audited (receipt=%v kitchen=%v)", gotReceipt, gotKitchen)
+	}
+}
+
+// ut-docs#1153: printerConfig/kitchenPrintingEnabled used to discard the
+// error from the underlying settings read, treating a genuine DB failure
+// identically to "printing off" — no attempt, no audit row, no /orders
+// warning. Forcing an actual read error (dropping the settings table
+// entirely, not just leaving it empty) reproduces the reported gap: this
+// must now be audited and flagged exactly like any other print failure.
+func TestAsyncPrintFailureIsRecordedWhenSettingsReadFails(t *testing.T) {
+	dp := newPrintFlagTestDeps(t)
+	seedReceiptSale(t, dp, "sale-sr", "R-SR1", "sale", "", 120, 0, 0)
+	ctx := context.Background()
+
+	if _, err := dp.Db.Exec(`DROP TABLE settings`); err != nil {
+		t.Fatalf("drop settings table: %v", err)
+	}
+
+	printReceiptAsync(dp, "R-SR1", "")
+	printKitchenAsync(dp, "R-SR1", "")
+	dp.WaitForAsyncWork()
+
+	entry := findRecentOrder(t, dp, "R-SR1")
+	if entry.ReceiptPrintFailedAt == "" {
+		t.Error("a settings-read failure must flag the sale's receipt print, not silently no-op, got empty")
+	}
+	if entry.KitchenPrintFailedAt == "" {
+		t.Error("a settings-read failure must flag the sale's kitchen print, not silently no-op, got empty")
+	}
+
+	audits, err := data.NewPOSRepo(dp.Db).ListAudit(ctx, data.AuditFilters{Limit: 50})
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	var gotReceipt, gotKitchen bool
+	for _, a := range audits {
+		if a.EntityID != "R-SR1" {
+			continue
+		}
+		switch a.Action {
+		case "print_failed":
+			gotReceipt = true
+		case "kitchen_print_failed":
+			gotKitchen = true
+		}
+	}
+	if !gotReceipt || !gotKitchen {
+		t.Errorf("both settings-read failures must be audited (receipt=%v kitchen=%v)", gotReceipt, gotKitchen)
+	}
+}
+
+// Regression guard for the fix above: a printer that is genuinely
+// unconfigured (settings table present and readable, just no rows) must
+// still take the silent "no attempt" path — the fix must not turn every
+// disabled printer into a false failure flag.
+func TestAsyncPrintNoFailureFlagWhenPrinterGenuinelyOff(t *testing.T) {
+	dp := newPrintFlagTestDeps(t)
+	seedReceiptSale(t, dp, "sale-off", "R-OFF1", "sale", "", 120, 0, 0)
+
+	printReceiptAsync(dp, "R-OFF1", "")
+	printKitchenAsync(dp, "R-OFF1", "")
+	dp.WaitForAsyncWork()
+
+	entry := findRecentOrder(t, dp, "R-OFF1")
+	if entry.ReceiptPrintFailedAt != "" {
+		t.Errorf("a genuinely unconfigured printer must not set ReceiptPrintFailedAt, got %q", entry.ReceiptPrintFailedAt)
+	}
+	if entry.KitchenPrintFailedAt != "" {
+		t.Errorf("a genuinely unconfigured printer must not set KitchenPrintFailedAt, got %q", entry.KitchenPrintFailedAt)
 	}
 }
 

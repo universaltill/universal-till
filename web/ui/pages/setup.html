@@ -229,17 +229,58 @@
           <p class="muted">{{ T "setup.tse.custody_note" }}</p>
           <div class="setup-nav">
             <button type="button" class="btn secondary" @click="step = 2">{{ T "setup.back" }}</button>
-            <button type="button" class="btn primary" @click="step = 4">{{ T "setup.next" }}</button>
+            <!-- ut-docs#1506 review finding B1: Skip is not the only door off
+                 this step that leaves the tile's plugin uninstalled — Next
+                 is the PRIMARY button, and an operator who dutifully filled
+                 in the TSE fields (the step's actual content) and pressed
+                 Next left through this door with nothing queued either, the
+                 exact bug this card exists to fix. Unlike Skip, Next must
+                 stay a pure client-side step change (no page reload) — a
+                 full round-trip here would lose whatever the operator just
+                 typed into the TSE fields, since nothing repopulates them on
+                 a bare GET resume. So instead of a real submit, this fires
+                 the SAME queue-on-tax-plugin-skip request in the background
+                 (hx-post, hx-swap="none" — the response is discarded,
+                 nothing on screen depends on it) alongside Alpine's normal
+                 step=4, using the tax-plugin-skip form's own hidden country
+                 input via hx-include so no request body is duplicated here.
+                 "click once" keeps a double-click or Back-then-Next-again
+                 from firing it twice — harmless either way since
+                 addPendingBasePlugins already dedupes, but no reason to. -->
+            <button type="button" class="btn primary"
+                    {{ if .installableTaxPlugin }}hx-post="/api/setup/tax-plugin-skip" hx-include="#tax-plugin-skip" hx-swap="none" hx-trigger="click once"{{ end }}
+                    @click="step = 4">{{ T "setup.next" }}</button>
             <!-- Skip clears the fields so a half-typed form can't fail the
-                 final submit's all-or-nothing validation later. -->
-            <button type="button" class="btn secondary" style="margin-top:.4rem"
-                    @click="document.querySelectorAll('.tse-field').forEach(el => el.value = ''); step = 4">{{ T "setup.tse.skip" }}</button>
+                 final submit's all-or-nothing validation later.
+                 ut-docs#1506: when the tile above is still showing (a fiscal
+                 plugin genuinely not installed yet), Skip must ALSO queue it
+                 for background retry — "Skip for now" used to silently skip
+                 both the optional TSE fields AND the plugin the tile just
+                 called required, with nothing queued and no warning. So this
+                 button becomes a real submit, targeting the out-of-form
+                 tax-plugin-skip form below (same form= trick the Install
+                 button above uses), instead of a pure client-side step
+                 change — the server queues the pending spec and redirects
+                 back with tax_plugin_skip_ack=1, which is what drives step
+                 4's skip_warning note. When there's no tile (nothing to
+                 queue), it stays the original client-only step change. -->
+            <button type="{{ if .installableTaxPlugin }}submit{{ else }}button{{ end }}" class="btn secondary" style="margin-top:.4rem"
+                    {{ if .installableTaxPlugin }}form="tax-plugin-skip"{{ end }}
+                    @click="document.querySelectorAll('.tse-field').forEach(el => el.value = '');{{ if not .installableTaxPlugin }} step = 4;{{ end }}">{{ T "setup.tse.skip" }}</button>
           </div>
         </section>
 
         <!-- Step 4 · shop name -->
         <section x-show="step === 4" x-cloak data-step="4">
           <h1>{{ T "setup.store.title" }}</h1>
+          <!-- ut-docs#1506: shown once, right after an explicit tax-plugin
+               skip landed here (tax_plugin_skip_ack=1) — the operator
+               deliberately left a legally-required plugin uninstalled, so
+               unlike step 3's softer install_pending note this says plainly
+               what that means, not just that a background retry exists. -->
+          {{ if .taxPluginSkipped }}
+            <p class="login-error" data-tax-plugin-skipped>{{ T "setup.tax_plugin.skip_warning" }}</p>
+          {{ end }}
           <input type="text" name="store_name" maxlength="60" placeholder="{{ T "setup.store.placeholder" }}">
           <label>{{ T "setup.till_name.title" }}
             <input type="text" name="till_name" maxlength="60" value="{{ T "setup.till_name.default" }}">
@@ -400,6 +441,13 @@
       <form method="post" action="/api/setup/tax-plugin" id="tax-plugin-install" hidden>
         <input type="hidden" name="country" value="{{ .installableTaxPlugin.Country }}">
       </form>
+      <!-- ut-docs#1506: step 3's "Skip for now" button's own form, same
+           out-of-wizard-form placement/reasoning as tax-plugin-install just
+           above — queues the same spec for background retry instead of
+           silently dropping it. -->
+      <form method="post" action="/api/setup/tax-plugin-skip" id="tax-plugin-skip" hidden>
+        <input type="hidden" name="country" value="{{ .installableTaxPlugin.Country }}">
+      </form>
       {{ end }}
 
       <!-- ut-docs#1168: step 6's real Browse/Preview control — outside the
@@ -423,7 +471,17 @@
       <section x-show="step === 6 && restoreChoice === 'csv_excel'" x-cloak data-step="6-upload">
         <h2>{{ T "setup.restore.upload_title" }}</h2>
         <p class="muted">{{ T "import.help" }}</p>
-        <form id="import-form" hx-post="/api/import" hx-target="#setup-restore-result" hx-swap="innerHTML" enctype="multipart/form-data">
+        <!-- ut-docs#1515: hx-indicator + hx-disabled-elt — ut-docs#1510 added
+             exactly this pattern to import.html's own upload form but missed
+             this one, so the wizard's Preview button on a real .bkp (up to
+             thousands of receipt PDFs to parse past) went dead with no
+             feedback at all, inviting a second tap. Same selector shape,
+             own busy element below (a distinct id from import.html's
+             #import-busy — the two never render on the same page, but
+             reusing the id would still be a document-wide htmx-indicator
+             match on the wrong element if that ever changed). -->
+        <form id="import-form" hx-post="/api/import" hx-target="#setup-restore-result" hx-swap="innerHTML" enctype="multipart/form-data"
+              hx-indicator="#setup-restore-busy" hx-disabled-elt="find button[type=submit]">
           <input type="hidden" name="commit" value="0">
           <!-- ut-docs#1168 review: tells POST /api/import to suppress the
                problem-grid/barcode-opt-in controls and the repeated Import
@@ -438,11 +496,84 @@
           <label>{{ T "import.file" }} <input type="file" name="file" accept=".csv,text/csv,.bkp,application/zip,application/octet-stream" required></label>
           <button class="btn primary" type="submit" style="margin-top:.5rem">{{ T "import.preview" }}</button>
         </form>
+        <!-- Touch-legible on purpose, same treatment as import.html's own
+             #import-busy (ut-docs#1510 review: "not a 12px inline
+             spinner") — hidden by app.css's .htmx-indicator rule until
+             htmx marks the form busy. -->
+        <div id="setup-restore-busy" class="htmx-indicator" style="margin-top:.6rem; font-size:1.05rem; font-weight:600">
+          <span class="animate-spin" aria-hidden="true">⏳</span> {{ T "import.busy" }}
+        </div>
         <div id="setup-restore-result" style="margin-top:.8rem; overflow-x:auto"></div>
         <p class="muted" x-show="restoreStagedId !== ''" data-setup-preview-ready>{{ T "setup.restore.preview_ready" }}</p>
+        <!-- ut-docs#1515: a detected/pre-filled country's currency is correct
+             far more often than not, so step 2's tile is rarely clicked —
+             but ut-docs#970's own review made currencyTouched the one signal
+             that guards auto-confirming a currency (commitStagedImportForSetup
+             in setup_page.go: "ONLY attempted when currencyTouched"). Silently
+             auto-committing here regardless would reopen exactly the bug that
+             review closed. So when a preview is staged and the operator never
+             explicitly touched currency, ask for one explicit confirmation
+             right here: checking it sets the SAME currencyTouched flag step
+             2's tile click sets, so the wizard's final submit auto-commits
+             exactly as if they'd clicked the tile. Leaving it unchecked is
+             still safe — Next stays disabled rather than silently dropping
+             them on /import with no explanation, which is what ut-docs#1515
+             reported.
+             Independent review (ut-docs#1515), finding 1 (blocker): also
+             gated on `currency !== ''` — country/currency detection can
+             match no seeded country at all (this till's own CI host is one
+             such case), leaving `currency` blank. Asking the operator to
+             confirm a currency that isn't even shown, then marking the till
+             "confirmed" against an empty string, would reopen the exact
+             ut-docs#970 hole this control exists to close: setup_page.go's
+             `v != "" && IsKnownCurrency(v)` never actually sets
+             KeyCurrencyConfirmed for a blank currency, but
+             commitStagedImportForSetup's own gate doesn't check that —
+             only currencyTouched — so it would still run. With nothing to
+             confirm, this now falls back to exactly the pre-existing
+             behaviour instead: Next stays enabled, and an unconfirmed
+             currency lands the operator on /import with the explanatory
+             message below (import.staged_from_setup_confirm_currency)
+             rather than a silent one. -->
+        <div x-data="{ neededConfirm: false }" x-init="$watch('restoreStagedId', (v) => { if (v !== '' && !currencyTouched && currency !== '') neededConfirm = true })">
+          <!-- Independent review, finding 7: a plain
+               `x-show="!currencyTouched"` here made this block vanish the
+               INSTANT its own checkbox set currencyTouched — the same
+               self-hiding-container class this file's own step 6 review
+               (ut-docs#617, comment above on "asking" vs "choice") already
+               fixed once. `neededConfirm` is a one-way latch, set the
+               moment a preview first stages while currency is genuinely
+               unconfirmed, and never cleared — so this stays on screen as a
+               visible record of what was confirmed instead of disappearing,
+               and the checkbox reflects (:checked) rather than only sets
+               (@change) currencyTouched, so unchecking it after the fact is
+               still possible (and correctly re-disables Next below). -->
+          <!-- Second review round: the latch is deliberately NOT the only
+               condition. `neededConfirm` is never cleared, but step 6's Back
+               button (below) resets restoreStagedId to '' — so on a
+               Back-then-"Yes"-again round trip the panel re-shows with
+               nothing staged, and a latch-only x-show would leave this
+               warn block asking to confirm a currency for a file that is no
+               longer staged, while its own explanatory hint <p> below
+               (which does test restoreStagedId) stays hidden — the two
+               visibly disagreeing. Pairing the latch with the same
+               "something is actually staged" test keeps them in sync and
+               still satisfies finding 7: ticking the box changes only
+               currencyTouched, never restoreStagedId, so the block does
+               not vanish out from under the operator the way the original
+               x-show="!currencyTouched" did. -->
+          <div x-show="neededConfirm && restoreStagedId !== ''" class="notice-block-warn" style="margin-top:.6rem" data-setup-confirm-currency>
+            <label style="display:flex; align-items:center; gap:.4rem">
+              <span class="row-warn-icon" aria-hidden="true">⚠</span>
+              <input type="checkbox" :checked="currencyTouched" @change="currencyTouched = $event.target.checked">
+              <span>{{ T "setup.restore.confirm_currency" }} <strong x-text="currency"></strong></span>
+            </label>
+          </div>
+        </div>
+        <p class="muted" x-show="restoreStagedId !== '' && !currencyTouched && currency !== ''" data-setup-confirm-currency-hint>{{ T "setup.restore.confirm_currency_hint" }}</p>
         <div class="setup-nav">
           <button type="button" class="btn secondary" @click="restoreAsking = false; restoreChoice = ''; restoreStagedId = ''">{{ T "setup.back" }}</button>
-          <button type="button" class="btn primary" @click="step = 7">{{ T "setup.next" }}</button>
+          <button type="button" class="btn primary" :disabled="restoreStagedId !== '' && !currencyTouched && currency !== ''" @click="step = 7">{{ T "setup.next" }}</button>
         </div>
       </section>
       <script>
@@ -480,50 +611,76 @@
       <section x-show="step === 99" x-cloak>
         <h1>{{ T "setup.join.title" }}</h1>
         <p class="muted">{{ T "setup.join.help" }}</p>
-        <!-- hx-indicator + hx-disabled-elt: completeJoin allows the primary a
-             60s timeout and then downloads a whole DB snapshot, so on a real
-             LAN join this button can sit inert for close to a minute. Without
-             feedback the operator presses it again, which burns the one-time
-             enrolment token — the retry then fails with "code used or
-             expired?" and they are worse off than when they started. -->
-        <form hx-post="/api/setup/join" hx-target="#setup-join-msg" hx-swap="innerHTML"
-              hx-indicator="#setup-join-msg" hx-disabled-elt="find button[type=submit]">
-          <!-- ut-docs#1179: was a raw '{"token":"…","url":"http://…"}' placeholder — the
-               wire shape, not something an operator can type or recognise. Reuse the same
-               friendly hint tills.html's join form already uses, so both screens read
-               consistently. -->
-          <label>{{ T "tills.join_code" }}
-            <input type="text" name="code" placeholder="{{ T "tills.join_code_ph" }}" required>
+        {{/* ut-docs#1548: was a paste-a-code form, an <hr>, then a LAN
+             discovery block below it — two ways to do the same thing, one
+             above the other, each with its own till-name field. Same
+             .tab-bar/.tab/.tab-panel pattern + roving-tabindex nav as
+             tills.html's own fix and index.html's payment-method tabs;
+             nested x-data scope, same pattern this wizard's own step 5
+             (shopType) already uses inside the root step-nav x-data. */}}
+        <div x-data="{
+          tab: 'discover',
+          focusTab(dir) {
+            const tabs = Array.from(this.$el.querySelectorAll('[role=tab]'));
+            if (!tabs.length) return;
+            const i = Math.max(0, tabs.indexOf(document.activeElement));
+            const next = tabs[(i + dir + tabs.length) % tabs.length];
+            next.click(); next.focus();
+          }
+        }">
+          <div class="tab-bar" role="tablist" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
+            <button type="button" id="setup-tab-discover" class="tab" role="tab" :class="tab === 'discover' && 'active'" :aria-selected="tab === 'discover'" :tabindex="tab === 'discover' ? 0 : -1" aria-controls="setup-panel-discover" @click="tab = 'discover'">{{ T "tills.join_tabs.discover" }}</button>
+            <button type="button" id="setup-tab-code" class="tab" role="tab" :class="tab === 'code' && 'active'" :aria-selected="tab === 'code'" :tabindex="tab === 'code' ? 0 : -1" aria-controls="setup-panel-code" @click="tab = 'code'">{{ T "tills.join_tabs.code" }}</button>
+          </div>
+          <label>{{ T "tills.pairing.your_till_name" }}
+            <input type="text" id="setup-pairing-till-name" name="name" placeholder="Till 2" required>
           </label>
-          <label>{{ T "tills.join_name" }}
-            <input type="text" name="name" placeholder="Till 2">
-          </label>
-          <button class="btn primary" type="submit">{{ T "tills.join_btn" }}</button>
-          <div id="setup-join-msg" aria-live="polite" style="min-height:1.4rem; margin-top:.4rem"></div>
-        </form>
-        <!-- ut-docs#289: LAN discovery + approve-to-pair, first-boot flavour.
-             Same mechanism the Tills page uses (ADR-0033 parts 1+3), pointed
-             at the middleware-exempt, NeedsFirstBoot-gated /api/setup/*
-             routes — a first-boot till has no session, so the /api/sync/*
-             flavour is unreachable from here by design. Discovery only LISTS
-             candidates; enrolment still requires pressing "Request to pair"
-             here and the primary manager approving after comparing the
-             6-digit code. The manual-code form above stays as the
-             documented fallback. -->
-        <hr style="margin:1rem 0; border:none; border-top:1px dashed #d1d5db">
-        <!-- ut-docs#289 review (F4): tills.html disambiguates its own two
-             identically-labelled "till name" inputs with a heading per
-             section; this step had none, so add one here too rather than
-             leaning on the <hr> alone. -->
-        <h3>{{ T "tills.discovery.title" }}</h3>
-        <p class="muted">{{ T "setup.join.discover_help" }}</p>
-        <label>{{ T "tills.pairing.your_till_name" }}
-          <input type="text" id="setup-pairing-till-name" name="name" placeholder="Till 2">
-        </label>
-        <button id="setup-discover-btn" class="btn secondary" type="button">{{ T "tills.discovery.find_button" }}</button>
-        <div id="setup-discover-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
-        <div id="setup-discover-results"></div>
-        <div id="setup-pairing-status-host" aria-live="polite"></div>
+          {{/* Action-neutral wording, not tills.pairing.error.name_required —
+               see tills.html's own comment on the same element. */}}
+          <p id="setup-pairing-till-name-error" class="field-error-msg" role="alert" hidden>{{ T "tills.pairing.error.name_required_field" }}</p>
+          <!-- ut-docs#289: LAN discovery + approve-to-pair, first-boot flavour.
+               Same mechanism the Tills page uses (ADR-0033 parts 1+3), pointed
+               at the middleware-exempt, NeedsFirstBoot-gated /api/setup/*
+               routes — a first-boot till has no session, so the /api/sync/*
+               flavour is unreachable from here by design. Discovery only LISTS
+               candidates; enrolment still requires pressing "Request to pair"
+               here and the primary manager approving after comparing the
+               6-digit code. The paste-a-code tab stays as the documented
+               fallback. -->
+          <div class="tab-panel" id="setup-panel-discover" role="tabpanel" aria-labelledby="setup-tab-discover" x-show="tab === 'discover'">
+            <p class="muted">{{ T "setup.join.discover_help" }}</p>
+            <button id="setup-discover-btn" class="btn secondary" type="button">{{ T "tills.discovery.find_button" }}</button>
+            <div id="setup-discover-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+            <div id="setup-discover-results"></div>
+            <div id="setup-pairing-status-host" aria-live="polite"></div>
+          </div>
+          <div class="tab-panel" id="setup-panel-code" role="tabpanel" aria-labelledby="setup-tab-code" x-show="tab === 'code'" x-cloak>
+            <!-- hx-indicator + hx-disabled-elt: completeJoin allows the primary a
+                 60s timeout and then downloads a whole DB snapshot, so on a real
+                 LAN join this button can sit inert for close to a minute. Without
+                 feedback the operator presses it again, which burns the one-time
+                 enrolment token — the retry then fails with "code used or
+                 expired?" and they are worse off than when they started.
+                 ut-docs#1548: #setup-pairing-till-name moved out of this form
+                 (now shared with the discover tab) and made required, same
+                 explicit reportValidity() guard the discover button already
+                 needs for the same reason (ut-docs#1540) — was previously the
+                 one till-name field in this wizard that was NOT required. -->
+            <form hx-post="/api/setup/join" hx-include="#setup-pairing-till-name" hx-target="#setup-join-msg" hx-swap="innerHTML"
+                  hx-indicator="#setup-join-msg" hx-disabled-elt="find button[type=submit]"
+                  hx-on::before-request="var n=document.getElementById('setup-pairing-till-name');n.value=n.value.trim();if(!n.reportValidity()){event.preventDefault();}">
+              <!-- ut-docs#1179: was a raw '{"token":"…","url":"http://…"}' placeholder — the
+                   wire shape, not something an operator can type or recognise. Reuse the same
+                   friendly hint tills.html's join form already uses, so both screens read
+                   consistently. -->
+              <label>{{ T "tills.join_code" }}
+                <input type="text" name="code" placeholder="{{ T "tills.join_code_ph" }}" required>
+              </label>
+              <button class="btn primary" type="submit">{{ T "tills.join_btn" }}</button>
+              <div id="setup-join-msg" aria-live="polite" style="min-height:1.4rem; margin-top:.4rem"></div>
+            </form>
+          </div>
+        </div>
         <div class="setup-nav">
           <button type="button" class="btn secondary" @click="step = 1">{{ T "setup.back" }}</button>
         </div>
@@ -616,6 +773,21 @@
                   + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + esc(p.till_id) + '</span> '
                   + '<button type="button" class="btn secondary" hx-post="/api/setup/pair-start" '
                   + 'hx-vals="' + escAttr(vals) + '" hx-include="#setup-pairing-till-name" '
+                  // ut-docs#1540: this button lives outside any <form>, so
+                  // the till-name input's own `required` attribute is
+                  // never natively checked on click — htmx only validates
+                  // hx-include'd elements when hx-validate="true" is set,
+                  // and even then only calls checkValidity(), so a failed
+                  // check would block the request SILENTLY (see the card's
+                  // own investigation). Trim in place first (the server
+                  // trims too, so nothing changes semantically) so that a
+                  // whitespace-only entry becomes empty and `required`
+                  // actually fires — testing value.trim() by hand instead
+                  // would cancel the request with NO message, which is the
+                  // very "the button does nothing" symptom this card is
+                  // fixing. reportValidity() then shows the native bubble
+                  // on the offending field, same as a real form submit.
+                  + 'hx-on::before-request="var n=document.getElementById(\'setup-pairing-till-name\');n.value=n.value.trim();if(!n.reportValidity()){event.preventDefault();}" '
                   + 'hx-target="#setup-pairing-status-host" hx-swap="innerHTML">' + esc(i18n.requestBtn) + '</button></li>';
               }).join('') + '</ul>';
               htmx.process(out);
@@ -624,6 +796,25 @@
               btn.disabled = false;
               msg.textContent = i18n.error;
             });
+        });
+      })();
+    </script>
+    <!-- ut-docs#1548: same required-field visual affordance as tills.html —
+         see that file's own comment for why this can't just be :invalid. -->
+    <script>
+      (function () {
+        var input = document.getElementById('setup-pairing-till-name');
+        var error = document.getElementById('setup-pairing-till-name-error');
+        if (!input || !error) return;
+        input.addEventListener('invalid', function () {
+          input.classList.add('field-invalid');
+          error.hidden = false;
+        });
+        input.addEventListener('input', function () {
+          if (input.validity.valid) {
+            input.classList.remove('field-invalid');
+            error.hidden = true;
+          }
         });
       })();
     </script>

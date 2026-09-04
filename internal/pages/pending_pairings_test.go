@@ -6,6 +6,8 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/universaltill/universal-till/internal/httpx"
 )
 
 // --- GET /ui/tills/pending-pairings: the primary-side approve/deny card
@@ -204,5 +206,84 @@ func TestApprovePairRequest_NoHXRefreshOnPINFailure(t *testing.T) {
 	}
 	if rec.Header().Get("HX-Refresh") == "true" {
 		t.Fatal("must not set HX-Refresh on a failed approve — that would wipe the PIN-required error from view")
+	}
+}
+
+// TestPendingPairingsUI_PINFieldsBoundToTheirOwnDeviceAndShowBusyFeedback
+// guards ut-docs#1540's remaining two UI defects on this list: with two
+// pending requests, each row's manager-PIN field must be visibly
+// associated with its own device (not read as one form wanting two PINs),
+// and pressing approve/deny must give some in-flight feedback rather than
+// leaving the operator looking at a button that appears to do nothing
+// (same hx-indicator/hx-disabled-elt pattern as import.html's ut-docs#1510
+// fix).
+func TestPendingPairingsUI_PINFieldsBoundToTheirOwnDeviceAndShowBusyFeedback(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+	registerPendingPairingsUI(mux, dp)
+
+	postPairRequest(t, mux, "Kitchen Till", commitOf("bind-secret-1"), "10.0.0.41:1234")
+	postPairRequest(t, mux, "Bar Till", commitOf("bind-secret-2"), "10.0.0.42:1234")
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/tills/pending-pairings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	// Assert the placeholder specifically, not just "the device name appears
+	// somewhere": the aria-label alone would satisfy a looser check, and the
+	// point is that a SIGHTED operator can tell the two rows' PIN boxes
+	// apart. The fixed half leads, so a long device name (or a long locale)
+	// clips the name rather than the field's purpose.
+	pin := httpx.T("en", "tills.pairing.manager_pin")
+	for _, device := range []string{"Kitchen Till", "Bar Till"} {
+		if !strings.Contains(body, `placeholder="`+pin+` — `+device+`"`) {
+			t.Fatalf("expected the PIN field for %q to be visibly labelled with its own device name, got: %s", device, body)
+		}
+		if !strings.Contains(body, `aria-label="`+pin+` — `+device+`"`) {
+			t.Fatalf("expected the PIN field for %q to carry a matching aria-label, got: %s", device, body)
+		}
+	}
+	if !strings.Contains(body, "hx-indicator=") || !strings.Contains(body, "hx-disabled-elt=") {
+		t.Fatalf("expected approve/deny to show in-flight busy feedback (hx-indicator + hx-disabled-elt), got: %s", body)
+	}
+}
+
+// ut-docs#1548: before this fix, Approve and Deny were two separate <form>s
+// each carrying its own manager_pin input — with two pending requests that
+// was FOUR boxes on screen, and an operator who filled one then pressed the
+// other button submitted an empty PIN. Assert exactly ONE manager_pin input
+// per pending row, both forms referencing it via hx-include rather than
+// each declaring their own.
+func TestPendingPairingsUI_OneManagerPINInputPerRequest(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+	registerPendingPairingsUI(mux, dp)
+
+	postPairRequest(t, mux, "Kitchen Till", commitOf("dedup-secret-1"), "10.0.0.51:1234")
+	postPairRequest(t, mux, "Bar Till", commitOf("dedup-secret-2"), "10.0.0.52:1234")
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/tills/pending-pairings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	gotPINInputs := strings.Count(body, `name="manager_pin"`)
+	if gotPINInputs != 2 {
+		t.Fatalf("expected exactly 1 manager_pin input per pending request (2 requests -> 2 inputs), got %d in: %s",
+			gotPINInputs, body)
+	}
+	// Both forms must pull the PIN via hx-include (an id-anchored selector,
+	// one per request) rather than each declaring its own input.
+	gotIncludes := strings.Count(body, `hx-include="#pin-`)
+	if gotIncludes != 4 { // 2 requests x (approve form + deny form)
+		t.Fatalf("expected approve AND deny forms to hx-include the shared PIN input for both requests (4 total), got %d in: %s",
+			gotIncludes, body)
 	}
 }

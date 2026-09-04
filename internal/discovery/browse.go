@@ -25,12 +25,34 @@ type Candidate struct {
 	BaseURL string `json:"base_url"`
 }
 
-// maxCandidates caps how many primaries one scan will collect. Discovery
-// is a LAN-open surface — any host can answer and no responder is
-// authenticated — so a rogue or malfunctioning peer must not be able to
-// grow the result slice (and the JSON response built from it) without
-// bound. A real shop LAN has a handful of tills; 64 is far above any
-// legitimate deployment while still being a hard ceiling.
+// PrinterServiceName is the standard Bonjour/mDNS service type for raw
+// AppSocket/JetDirect network printing — the same "host:port, port 9100 by
+// default" shape internal/print.TransportForAddress already speaks in
+// "network" mode (see transport.go: no ":" means ":9100" is appended). This
+// is deliberately NOT "_ipp._tcp": IPP is an HTTP-based protocol this
+// codebase has no transport for, so discovering it would offer a device
+// this till can't actually print to (ut-docs#140's scoped-down slice —
+// IPP-only printers are a follow-up once/if an IPP transport exists).
+const PrinterServiceName = "_pdl-datastream._tcp"
+
+// PrinterCandidate is one network printer found by BrowsePrinters. JSON
+// tags match Candidate's convention — snake_case for the discover-printers
+// API response.
+type PrinterCandidate struct {
+	Name string `json:"name"`
+	// Address is a bare "host:port" — exactly what internal/print.
+	// TransportForAddress's "network" mode and the kitchen-stations
+	// printer_address form field already expect, so a discovered candidate
+	// can be written straight into that field with no reshaping.
+	Address string `json:"address"`
+}
+
+// maxCandidates caps how many primaries (or printers) one scan will
+// collect. Discovery is a LAN-open surface — any host can answer and no
+// responder is authenticated — so a rogue or malfunctioning peer must not
+// be able to grow the result slice (and the JSON response built from it)
+// without bound. A real shop LAN has a handful of tills or printers; 64 is
+// far above any legitimate deployment while still being a hard ceiling.
 const maxCandidates = 64
 
 // mdnsQuery is a seam over mdns.Query so tests can drive Browse's full
@@ -83,12 +105,37 @@ func detectIPv6Support() bool {
 // attempt entirely and goes straight to the same v4-only scan the retry
 // above would have reached anyway — see ipv6Supported (ut-docs#272).
 func Browse(ctx context.Context, timeout time.Duration) ([]Candidate, error) {
+	return scan(ctx, timeout, ServiceName, candidateFromEntry)
+}
+
+// BrowsePrinters queries the LAN for network printers advertising
+// PrinterServiceName (the Bonjour AppSocket/JetDirect service type) and
+// returns whatever answers within timeout — the printer-discovery half of
+// ut-docs#140, extending the same proven mechanism Browse already uses for
+// till-to-till discovery to a second device class. Same bounded,
+// synchronous, click-to-scan shape as Browse: never an ambient background
+// browser, and results are OFFERED candidates only — nothing here pairs or
+// trusts a device, the kitchen-stations form still requires the operator to
+// pick one (or type an address by hand) and save.
+func BrowsePrinters(ctx context.Context, timeout time.Duration) ([]PrinterCandidate, error) {
+	return scan(ctx, timeout, PrinterServiceName, printerCandidateFromEntry)
+}
+
+// scan runs Browse/BrowsePrinters' shared retry policy against whichever
+// mDNS service type and entry parser the caller supplies — the v4+v6
+// attempt, the "already collected something, keep it" partial-failure
+// rule, and the v4-only retry (or v4-only-first fast path on a host with no
+// IPv6 support) are all identical between device classes; only the wire
+// format (service name) and how a candidate is extracted from an answer
+// differ. See Browse's doc comment above for why each branch exists — this
+// is that same logic, generalized.
+func scan[T any](ctx context.Context, timeout time.Duration, serviceName string, parse func(*mdns.ServiceEntry) (T, bool)) ([]T, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
 	}
 
 	if !ipv6Supported() {
-		v4Candidates, v4Err := browseOnce(ctx, timeout, true)
+		v4Candidates, v4Err := scanOnce(ctx, timeout, serviceName, true, parse)
 		if v4Err == nil || len(v4Candidates) > 0 {
 			return v4Candidates, nil
 		}
@@ -98,7 +145,7 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Candidate, error) {
 		return nil, fmt.Errorf("lan scan failed (v4-only, no IPv6 support: %w)", v4Err)
 	}
 
-	candidates, err := browseOnce(ctx, timeout, false)
+	candidates, err := scanOnce(ctx, timeout, serviceName, false, parse)
 	if err == nil {
 		return candidates, nil
 	}
@@ -109,12 +156,12 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Candidate, error) {
 		return candidates, nil
 	}
 	if ctxErr := ctx.Err(); ctxErr != nil {
-		// Cancelled mid-scan (e.g. the manager closed the Tills tab) — this
-		// is the caller giving up, not a network failure to retry through.
+		// Cancelled mid-scan (e.g. the manager closed the tab) — this is
+		// the caller giving up, not a network failure to retry through.
 		return nil, ctxErr
 	}
 
-	v4Candidates, v4Err := browseOnce(ctx, timeout, true)
+	v4Candidates, v4Err := scanOnce(ctx, timeout, serviceName, true, parse)
 	if v4Err == nil || len(v4Candidates) > 0 {
 		return v4Candidates, nil
 	}
@@ -129,20 +176,20 @@ func Browse(ctx context.Context, timeout time.Duration) ([]Candidate, error) {
 	return nil, fmt.Errorf("lan scan failed (v4+v6: %w; v4-only retry: %w)", err, v4Err)
 }
 
-// browseOnce runs exactly one mdns.Query scan and reports whatever
-// candidates it collected alongside whatever error mdnsQuery returned —
-// both, independently; the caller (Browse) decides what a given
-// combination means. disableIPv6 lets Browse retry with the IPv6 leg of
-// the query turned off (see Browse's doc comment).
-func browseOnce(ctx context.Context, timeout time.Duration, disableIPv6 bool) ([]Candidate, error) {
+// scanOnce runs exactly one mdns.Query scan against serviceName and reports
+// whatever candidates it collected alongside whatever error mdnsQuery
+// returned — both, independently; the caller (scan) decides what a given
+// combination means. disableIPv6 lets scan retry with the IPv6 leg of the
+// query turned off (see Browse's doc comment).
+func scanOnce[T any](ctx context.Context, timeout time.Duration, serviceName string, disableIPv6 bool, parse func(*mdns.ServiceEntry) (T, bool)) ([]T, error) {
 	entries := make(chan *mdns.ServiceEntry, 32)
 	var mu sync.Mutex
-	candidates := make([]Candidate, 0)
+	candidates := make([]T, 0)
 	collected := make(chan struct{})
 	go func() {
 		defer close(collected)
 		for e := range entries {
-			c, ok := candidateFromEntry(e)
+			c, ok := parse(e)
 			if !ok {
 				continue
 			}
@@ -157,7 +204,7 @@ func browseOnce(ctx context.Context, timeout time.Duration, disableIPv6 bool) ([
 		}
 	}()
 
-	params := mdns.DefaultParams(ServiceName)
+	params := mdns.DefaultParams(serviceName)
 	params.Timeout = timeout
 	params.Entries = entries
 	params.DisableIPv6 = disableIPv6
@@ -226,13 +273,57 @@ func candidateFromEntry(e *mdns.ServiceEntry) (Candidate, bool) {
 	if name == "" {
 		name = "this shop" // same fallback as storeNameOrDefault, for a malformed/older advertiser
 	}
-	ip := e.AddrV4
-	if ip == nil {
-		ip = e.AddrV6
-	}
+	ip := entryAddr(e)
 	if ip == nil || e.Port == 0 {
 		return Candidate{}, false
 	}
 	baseURL := "http://" + net.JoinHostPort(ip.String(), strconv.Itoa(e.Port))
 	return Candidate{Name: name, TillID: id, BaseURL: baseURL}, true
+}
+
+// printerCandidateFromEntry extracts a PrinterCandidate from an mDNS
+// AppSocket/JetDirect answer. Per the Bonjour Printing Specification, a
+// compliant printer's TXT record carries a "ty=" key with a friendly
+// description ("HP LaserJet 4100 series") — preferred as Name when present.
+// Falling that, the mDNS instance name (e.g.
+// "HP LaserJet 4100._pdl-datastream._tcp.local.") is trimmed to just the
+// instance portion. A printer answering with neither still gets a usable
+// candidate — unlike till discovery, there is no id to key on, so name is
+// cosmetic, not load-bearing — but Name is left empty rather than defaulted
+// to an English literal here: this is Go, not a template, so it has no way
+// to route a fallback through web/locales/*.json (guard-i18n.sh's Go-side
+// check doesn't reach this value either, since it never touches an HTTP
+// response body directly, just a JSON field an operator later reads). The
+// UI supplies a localized generic label when Name is empty (see
+// kitchen_stations.html's discover-printers script). An entry with no
+// usable address or port is rejected — nothing to print to.
+func printerCandidateFromEntry(e *mdns.ServiceEntry) (PrinterCandidate, bool) {
+	var name string
+	for _, field := range e.InfoFields {
+		k, v, ok := strings.Cut(field, "=")
+		if ok && k == "ty" && v != "" {
+			name = v
+			break
+		}
+	}
+	if name == "" {
+		if instance, _, ok := strings.Cut(e.Name, "."+PrinterServiceName); ok {
+			name = instance
+		}
+	}
+	ip := entryAddr(e)
+	if ip == nil || e.Port == 0 {
+		return PrinterCandidate{}, false
+	}
+	return PrinterCandidate{Name: name, Address: net.JoinHostPort(ip.String(), strconv.Itoa(e.Port))}, true
+}
+
+// entryAddr picks AddrV4, falling back to AddrV6 — shared by both entry
+// parsers above (Browse's IPv4-preferred, IPv6-fallback address choice was
+// previously inlined in candidateFromEntry only).
+func entryAddr(e *mdns.ServiceEntry) net.IP {
+	if e.AddrV4 != nil {
+		return e.AddrV4
+	}
+	return e.AddrV6
 }

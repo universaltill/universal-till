@@ -155,23 +155,53 @@ GitHub Releases API mechanism the other platforms already use).
   emulator, and upgrading an existing install with a newer signed build
   (same key) succeeded with no uninstall needed.
 
-## Kiosk lock-down (ut-docs#1254)
+## Kiosk lock-down (ut-docs#1254, corrected by ut-docs#1508)
 
 What's implemented now, all in `MainActivity`:
 
-- **Screen-pinning Lock Task** (`startLockTask()`) engages automatically
-  on launch and is re-asserted on every `onResume` (defense in depth —
-  both calls are idempotent). Home and Recents are blocked while pinned.
+- **Screen-pinning Lock Task** (`startLockTask()`) engages ONLY while the
+  WebView is showing a `/self-order*` page — never for ordinary till use
+  (the sale screen, the setup wizard, `/login`, `/settings`). Product
+  owner's rule (ut-docs#1508, verbatim in spirit): "for the till, we can
+  only hide the bottom OS menu but let it go to the OS. Only it cannot go
+  to the OS if it is on the self-ordering mode." `onPageFinished` decides,
+  from which page class navigation just landed on, whether to engage or
+  release the pin; the resulting intent is recorded in `kioskPinned`, and
+  `onResume` only ever RE-ASSERTS that state on a foreground return —
+  never decides one of its own (defense in depth — all calls are
+  idempotent). That split matters both ways: a resume can't pin a till
+  that wasn't pinned (the ut-docs#1508 bug), and it can't drop a genuine
+  self-order pin that no manager PIN has released (independent review:
+  deriving the resume decision from the *current URL* instead would have
+  unpinned a kiosk parked on the `/login` prompt — one tap from the
+  self-order screen's 🔒 exit link — as soon as the screen blinked off
+  and on). Home and Recents are blocked only while actually pinned.
+  **Before this ticket**, the pin engaged unconditionally on every screen
+  including the pre-enrollment setup wizard — which is how the product
+  owner got bricked on 2026-09-03: the wizard hit a bare JSON error page
+  (ut-docs#1507, a *deliberate* `guard-page-http-error.sh` exception —
+  the wizard has no operator layout to render an escape link into) with
+  Home/Recents both blocked by a pin that should never have engaged
+  there. **Not yet done** (split out of ut-docs#1508's own acceptance
+  criteria and tracked as its own card, ut-docs#1513): a physical-button
+  and remote unlock path for
+  self-order specifically, so an operator isn't limited to the documented
+  unpin gesture below or a working web UI even while genuinely
+  self-order-pinned — both need new cross-repo design (a hardware
+  decision, and an ut-cloud-side remote channel) out of scope for this fix.
 - **Immersive full-screen** (androidx `WindowInsetsControllerCompat`)
-  hides the status and navigation bars as a cosmetic second layer; a
-  swipe reveals them transiently and they auto-hide again.
+  hides the status and navigation bars as a cosmetic second layer,
+  **in every mode, self-order or not** — a swipe reveals them
+  transiently and they auto-hide again. This is what "hide the bottom OS
+  menu but let it go to the OS" means in ordinary till mode: the bar is
+  hidden, but nothing (no Lock Task) stops the operator reaching it.
 - **Navigation is confined to the till's own loopback origin**
   (`WebViewClient.shouldOverrideUrlLoading`) — a link this app doesn't
   control the far end of can't navigate this WebView off-origin. This
   isn't only kiosk hygiene: the exit bridge below (`addJavascriptInterface`)
   is only safe to expose because of it.
-- **Exit = the server's own existing "exit to OS" escape hatch, no
-  native-side auth.** `/api/settings/exit-to-os`
+- **Exit from self-order = the server's own existing "exit to OS" escape
+  hatch, no native-side auth.** `/api/settings/exit-to-os`
   (`internal/pages/settings_page.go`, ut-docs#1099) already does a live
   manager-PIN check server-side, and is reachable from both `/settings`
   (a signed-in operator) and `/login` (a fully anonymous, un-signed-in
@@ -185,17 +215,18 @@ What's implemented now, all in `MainActivity`:
   earlier draft of this card claimed safety from the WebView "only ever"
   loading loopback content, which was false — an ungated in-page link
   (`my_reports.html`'s GitHub issue link) could otherwise navigate this
-  same WebView, and the bridge, to an untrusted origin). Re-locking is
-  defensive on two fronts: `onPageFinished` re-engages
-  the moment navigation leaves `/login`/`/settings` for any other page
-  (the manager is done, till handed back), and `onResume` unconditionally
-  re-locks on every foreground return regardless of prior unlock state.
-  An earlier draft of this card watched for the WebView simply *landing*
-  on `/settings` as its unlock signal — wrong on two counts: it would
-  never fire for the `/login`-based self-order escape hatch at all (no
-  navigation happens there), and it would unlock for any signed-in
-  operator merely viewing Settings, not only a manager who actually used
-  the PIN-gated exit action. Fixed before this shipped.
+  same WebView, and the bridge, to an untrusted origin). **Since
+  ut-docs#1508**, `/login`/`/settings` are already unpinned on arrival
+  whenever the till wasn't self-order-pinned to begin with (ordinary till
+  use never pins at all) — `exitLockdown()` still matters for the one
+  case that needs it: releasing a **genuine self-order pin** on the way
+  into a manager PIN prompt reached from the self-order screen itself.
+  That pin deliberately SURVIVES the navigation to `/login`/`/settings`
+  (`onPageFinished` leaves the lock state alone on those two page
+  classes) and every background/foreground cycle, until either the PIN
+  goes in or navigation lands somewhere outside self-order — otherwise
+  merely tapping the 🔒 exit link would be the escape the PIN exists to
+  gate.
 
 **Known limitation, by design of the mode itself:** without Device Owner
 provisioning, Lock Task is standard Android *screen-pinning*, and a user
@@ -235,35 +266,55 @@ on the actual TECLAST P50T test rig — per the ticket's own acceptance
 criteria — is a required follow-up, tracked as its own board card.
 Manual checklist for whoever does it:
 
-1. Install the APK, launch it — confirm the app pins itself (a
-   "screen is pinned" toast/hint appears on first pin) and the
-   status/nav bars are hidden.
-2. Press Home and open Recents — both must be no-ops; the notification
-   shade must not open (a swipe from the top may transiently show the
-   status bar, which then auto-hides — that's the expected immersive
-   behavior, not a failure).
-3. Perform the documented unpin gesture (long-press Back + Overview on
+1. Install the APK, launch it — confirm the app does **NOT** pin itself
+   (no "screen is pinned" toast/hint) but the status/nav bars ARE
+   hidden. Press Home — it must work normally, returning to the
+   launcher; relaunch the app and confirm it comes back to the sale
+   screen, still unpinned. This is the ut-docs#1508 behavior change:
+   ordinary till use is never pinned.
+2. If the till is mid-setup (first boot, before enrollment), drive the
+   wizard through a step that fails (e.g. disconnect network briefly on
+   a step that calls out) — confirm the resulting error page, even if
+   it's a bare/unstyled one, still leaves Home/Recents reachable. This
+   is the concrete incident ut-docs#1508 reports: a wizard error page
+   used to be an unrecoverable dead end because the pin was on.
+3. From the sale screen, switch this device to **Self-order kiosk**
+   (Settings → Display → device profile, manager PIN) and confirm that
+   once the screen lands on `/self-order`, the app now pins itself (the
+   "screen is pinned" hint) and the status/nav bars are hidden.
+4. With the self-order screen pinned, press Home and open Recents —
+   both must be no-ops; the notification shade must not open (a swipe
+   from the top may transiently show the status bar, which then
+   auto-hides — expected immersive behavior, not a failure).
+5. Perform the documented unpin gesture (long-press Back + Overview on
    3-button nav, or swipe-up-and-hold on gesture nav — check which
-   navigation mode the device is actually using) —
-   confirm it *does* unpin. That is the known screen-pinning limitation
-   above, not a bug; note whether it matters for the pilot shop.
-4. From the login screen's "exit to OS" collapsible (or the Settings
-   page's own exit-to-os form) enter a correct manager PIN — confirm the
-   success message appears AND the app unpins/bars return (the JS→native
-   bridge firing, not just the server-side call succeeding).
-5. Repeat from the *other* of those two forms (whichever #4 didn't use) —
-   both must trigger the same native unlock.
-6. Navigate away afterward (e.g. back to the sale screen, or self-order's
-   own idle-reset redirect) — confirm the app re-pins and the bars hide
-   again.
-7. Background/foreground the app (Home, then relaunch — reachable while
-   unpinned, or via the OS's own recent-apps affordance while pinned if
-   any) and confirm `onResume` re-asserts the pin without crashing, even
-   if step 4/5's unlock was still active.
-8. From My Reports (`/my-reports`), tap the "open GitHub issue"
-   link — confirm the WebView does NOT navigate to github.com (the
-   navigation restriction refusing it, not the link being absent/disabled).
-   This is the concrete case that motivated `shouldOverrideUrlLoading`.
+   navigation mode the device is actually using) — confirm it *does*
+   unpin. That is the known screen-pinning limitation above, not a bug;
+   note whether it matters for the pilot shop.
+6. Re-pin (repeat step 3), then tap the self-order screen's 🔒 manager
+   entry point into `/login` **without** entering a PIN — confirm the
+   app is STILL pinned there (Home/Recents still no-ops), then press the
+   power button to blank the screen and wake it again and confirm it is
+   still pinned afterwards. This is the independent-review case: the
+   `/login` prompt is one tap from the customer-facing screen, so if a
+   screen blink released the pin, the PIN gate would be decorative.
+   Let the kiosk idle-reset timer run out too — it must bounce back to
+   `/self-order`, still pinned.
+7. Now enter a correct manager PIN on that same `/login` prompt —
+   confirm the success message appears AND the app unpins/bars return
+   (the JS→native bridge firing, not just the server-side call
+   succeeding), landing on a manager screen that is itself NOT pinned.
+8. From that manager screen, switch the device profile back to
+   **Register** and confirm the sale screen loads unpinned, with no
+   stray pin left over from the self-order session.
+9. Background/foreground the app at each of the states above (Home,
+   then relaunch) and confirm `onResume` re-asserts exactly the pin
+   state that state was in — pinned on `/self-order` and on a `/login`
+   reached from it, unpinned everywhere else — without crashing.
+10. From My Reports (`/my-reports`), tap the "open GitHub issue"
+    link — confirm the WebView does NOT navigate to github.com (the
+    navigation restriction refusing it, not the link being absent/disabled).
+    This is the concrete case that motivated `shouldOverrideUrlLoading`.
 
 ## Camera, microphone and screenshots (ut-docs#1435)
 

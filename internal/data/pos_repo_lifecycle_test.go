@@ -2,7 +2,10 @@ package data
 
 import (
 	"context"
+	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -375,6 +378,75 @@ VALUES('rline1','return1',1,'itm1','Apple','SKU1',1,100,2000,10,100,110)`); err 
 	}
 }
 
+// TestReturnedLineDiscounts is ut-docs#1531 review finding N4:
+// ReturnedLineDiscounts had no direct data-layer test, only indirect
+// coverage through the refund handler's own HTTP-level tests. Mirrors
+// TestReturnChain_ReceiptsAndReturnedQuantities above exactly, with a line
+// discount on both the original and the return line so the SUM(line_discount)
+// grouping (not just SUM(quantity)) is what's actually pinned.
+func TestReturnedLineDiscounts(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO items(id,sku,name,base_price,is_active,is_weighed,unit) VALUES('itm1','SKU1','Apple',100,1,0,'each')`); err != nil {
+		t.Fatal(err)
+	}
+	seedLifecycleSale(t, dbx, "sale1", "R-ORIG", "sale", "completed", "2026-01-01T10:00:00Z", 190, 20)
+	// 2 units @ 100, a 10 line discount on the original line.
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line1','sale1',1,'itm1','Apple','SKU1',2,100,10,2000,18,190,190)`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Before any return exists, nothing to report.
+	before, err := dbx.repo.ReturnedLineDiscounts(ctx, "sale1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	key := RefundLineKey("itm1", "", 100, "")
+	if got := before[key]; got != 0 {
+		t.Fatalf("expected 0 discount returned before any return exists, got %d", got)
+	}
+
+	// A completed partial return of 1 unit, itself carrying a 5 discount
+	// (the return's OWN line_discount, i.e. what the refund handler
+	// actually persisted for that request).
+	seedLifecycleSale(t, dbx, "return1", "R-RETURN", "return", "completed", "2026-01-01T11:00:00Z", 95, 9)
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('rline1','return1',1,'itm1','Apple','SKU1',1,100,5,2000,9,95,95)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertSaleLink(ctx, nil, "link1", "return1", "sale1", "damaged"); err != nil {
+		t.Fatal(err)
+	}
+
+	after, err := dbx.repo.ReturnedLineDiscounts(ctx, "sale1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := after[key]; got != 5 {
+		t.Fatalf("expected 5 discount already returned at key %q, got %+v", key, after)
+	}
+
+	// A NON-completed (e.g. pending/voided) return must not count -- same
+	// status='completed' filter ReturnedQuantities itself uses.
+	seedLifecycleSale(t, dbx, "return2", "R-RETURN-2", "return", "voided", "2026-01-01T12:00:00Z", 100, 0)
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('rline2','return2',1,'itm1','Apple','SKU1',1,100,100,2000,0,0,0)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := dbx.repo.InsertSaleLink(ctx, nil, "link2", "return2", "sale1", "damaged"); err != nil {
+		t.Fatal(err)
+	}
+	stillOnlyCompleted, err := dbx.repo.ReturnedLineDiscounts(ctx, "sale1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := stillOnlyCompleted[key]; got != 5 {
+		t.Fatalf("expected the voided return's discount to be excluded (still 5), got %d", got)
+	}
+}
+
 func TestSaleExistsAndSetSaleProvenance(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
@@ -543,21 +615,175 @@ func TestArchivedReportsInRange_BoundedAndOrdered(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
 
-	for _, p := range []string{"2026-01-05", "2026-01-01", "2026-01-10", "2025-12-31"} {
-		if _, err := dbx.repo.ArchiveReport(ctx, "eod", p, []byte(`{"p":"`+p+`"}`), "", "", time.Time{}); err != nil {
-			t.Fatalf("seed archive %s: %v", p, err)
-		}
+	// ADR-0066 Decision 5: the range filter moved off a `period BETWEEN`
+	// text compare onto each row's own created_at, so every seeded row
+	// needs a genuinely distinct created_at (an explicit closedAt) -- with
+	// a zero closedAt every row here would share the SAME real-now
+	// created_at regardless of what period text it was given, and the
+	// test would no longer prove anything about range bounding. Anchored
+	// on the host's own real "now" (never a hardcoded year) so this
+	// doesn't rot; days spaced far enough apart that the "eod" kind's
+	// atomic same-local-day guard (ADR-0066 Decision 4) never fires
+	// between them.
+	// LOCAL noon, never UTC (2026-09-04 review of ut-docs#1141): the range
+	// filter compares datetime(created_at, 'localtime') against these same
+	// LOCAL date bounds, so a UTC-anchored seed would encode UTC-day
+	// semantics and flip this test's meaning on a non-UTC host — the exact
+	// mistake eod_zreport_local_day_869_test.go's own doc comment records.
+	// Noon keeps every same-day instant safely inside its calendar day for
+	// any real IANA offset (-12..+14).
+	anchor := time.Now()
+	at := func(daysAgo int) time.Time {
+		return time.Date(anchor.Year(), anchor.Month(), anchor.Day(), 12, 0, 0, 0, time.Local).AddDate(0, 0, -daysAgo)
 	}
+	seed := func(daysAgo int) string {
+		closedAt := at(daysAgo)
+		period := closedAt.Format("2006-01-02")
+		if _, err := dbx.repo.ArchiveReport(ctx, "eod", period, []byte(`{"p":"`+period+`"}`), "", "", closedAt); err != nil {
+			t.Fatalf("seed archive %s: %v", period, err)
+		}
+		return period
+	}
+	pLower := seed(10) // range's lower bound itself: included
+	pMid := seed(6)    // inside: included
+	seed(1)            // after the range's upper bound: excluded
+	seed(11)           // before the range's lower bound: excluded
 
-	rows, err := dbx.repo.ArchivedReportsInRange(ctx, "2026-01-01", "2026-01-09")
+	from := at(10).Format("2006-01-02")
+	to := at(2).Format("2006-01-02")
+	rows, err := dbx.repo.ArchivedReportsInRange(ctx, from, to)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(rows) != 2 {
 		t.Fatalf("expected 2 rows in range, got %d: %+v", len(rows), rows)
 	}
-	if rows[0].Period != "2026-01-01" || rows[1].Period != "2026-01-05" {
-		t.Fatalf("expected rows ordered by period, got %+v", rows)
+	if rows[0].Period != pLower || rows[1].Period != pMid {
+		t.Fatalf("expected rows ordered by period (%s, %s), got %+v", pLower, pMid, rows)
+	}
+}
+
+// TestArchivedReportsInRange_NewFormatPeriodOnRangeLastDayNotDropped pins
+// ADR-0066 Decision 5's own named regression directly at the query layer:
+// "an RFC3339 period falling on the export range's own last day sorts
+// after that bare date bound and is silently excluded." A pre-cutover
+// legacy row (bare calendar-date period) and a post-cutover row (RFC3339
+// close-instant period, via a real closedAt) land on DIFFERENT days within
+// the same range -- the new-format row on the range's own last day, where
+// the old `period BETWEEN` text compare would have wrongly excluded it
+// (an RFC3339 string like "2026-08-24T21:00:00Z" sorts after the bare
+// date bound "2026-08-24"). Both must come back.
+func TestArchivedReportsInRange_NewFormatPeriodOnRangeLastDayNotDropped(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	// Legacy row, well inside the range but not on its last day -- direct
+	// SQL, not ArchiveReport with a zero closedAt, so its created_at is
+	// exactly this literal rather than whatever "now" happens to be.
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO report_archive (id, kind, period, content_json, created_at)
+VALUES ('legacy-lastday', 'eod', '2026-08-10', '{}', '2026-08-10 20:00:00')`); err != nil {
+		t.Fatal(err)
+	}
+
+	// New-format row landing exactly on the range's own last day. LOCAL
+	// noon, and a local-offset RFC3339 period (exactly what generateEOD
+	// writes) — the range filter compares against the shop's local day, so
+	// a UTC-literal seed would encode UTC-day semantics and flip this
+	// test's meaning on a non-UTC host (2026-09-04 review of ut-docs#1141;
+	// same lesson eod_zreport_local_day_869_test.go's doc comment records).
+	// The regression this test pins is unaffected: a local-offset RFC3339
+	// period like "2026-08-24T12:00:00+14:00" still sorts AFTER the bare
+	// date bound "2026-08-24" under the old `period BETWEEN` filter.
+	newClosedAt := time.Date(2026, 8, 24, 12, 0, 0, 0, time.Local)
+	newPeriod := newClosedAt.Format(time.RFC3339)
+	created, err := dbx.repo.ArchiveReport(ctx, "eod", newPeriod, []byte(`{}`), "", "", newClosedAt)
+	if err != nil || !created {
+		t.Fatalf("archive new-format close: created=%v err=%v", created, err)
+	}
+
+	rows, err := dbx.repo.ArchivedReportsInRange(ctx, "2026-08-01", "2026-08-24")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 2 {
+		t.Fatalf("expected both the legacy and new-format close in range, got %d: %+v", len(rows), rows)
+	}
+	var gotLegacy, gotNew bool
+	for _, r := range rows {
+		if r.Period == "2026-08-10" {
+			gotLegacy = true
+		}
+		if r.Period == newPeriod {
+			gotNew = true
+		}
+	}
+	if !gotLegacy || !gotNew {
+		t.Fatalf("expected both periods present, got legacy=%v new=%v rows=%+v", gotLegacy, gotNew, rows)
+	}
+}
+
+// TestArchivedReportsInRange_ComparesLocalDayNotUTCDay is the review finding
+// on ADR-0066 Decision 5's export-filter change (2026-09-04 review of
+// ut-docs#1141): moving the filter off `period BETWEEN` onto created_at is
+// right, but created_at is stored UTC-naive (schema default datetime('now'),
+// or ArchiveReport's closedAt.UTC() write) while from/to are LOCAL calendar
+// dates typed by the shop owner — the same dates the row's own `period`
+// string now displays in the shop's local offset. Comparing the two without
+// 'localtime' silently reinterprets the requested range as a UTC day window,
+// so a close made just after LOCAL midnight is missing from an export for
+// its own local day and instead turns up under the previous one. That is the
+// exact bug class ADR-0057 exists to remove, and the exact comparison
+// ArchiveReport's own double-close guard already gets right (see
+// TestArchiveReport_GuardComparesLocalDayNotUTCDay, whose subprocess-TZ
+// technique and rationale this test mirrors — modernc.org/sqlite's
+// 'localtime' resolves from the process TZ, cached on first use, so only a
+// genuine fresh process with TZ pre-set proves anything here).
+func TestArchivedReportsInRange_ComparesLocalDayNotUTCDay(t *testing.T) {
+	if os.Getenv("UT_TEST_RANGE_TZ") == "1" {
+		runArchivedReportsInRangeLocalDayBody(t)
+		return
+	}
+	cmd := exec.Command(os.Args[0], "-test.run=^TestArchivedReportsInRange_ComparesLocalDayNotUTCDay$", "-test.v")
+	cmd.Env = append(os.Environ(), "UT_TEST_RANGE_TZ=1", "TZ=Pacific/Kiritimati")
+	out, err := cmd.CombinedOutput()
+	if err != nil || !strings.Contains(string(out), "--- PASS") {
+		t.Fatalf("subprocess (TZ=Pacific/Kiritimati) failed: err=%v\n%s", err, out)
+	}
+}
+
+func runArchivedReportsInRangeLocalDayBody(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	// A close just after LOCAL midnight on 2026-08-27 (UTC+14), i.e. still
+	// on 2026-08-26 in UTC. generateEOD would store its period as the
+	// local-offset instant "2026-08-27T01:00:00+14:00" — so 2026-08-27 is
+	// the date the shop owner sees and the date they would ask an export
+	// for.
+	closedAt := time.Date(2026, 8, 26, 11, 0, 0, 0, time.UTC) // local 2026-08-27 01:00
+	period := closedAt.In(time.FixedZone("UTC+14", 14*60*60)).Format(time.RFC3339)
+	created, err := dbx.repo.ArchiveReport(ctx, "eod", period, []byte(`{}`), "", "", closedAt)
+	if err != nil || !created {
+		t.Fatalf("archive after-local-midnight close: created=%v err=%v", created, err)
+	}
+
+	rows, err := dbx.repo.ArchivedReportsInRange(ctx, "2026-08-27", "2026-08-27")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 1 || rows[0].Period != period {
+		t.Fatalf("want the close returned for an export of its OWN local day 2026-08-27 (period %s); "+
+			"a comparison without 'localtime' reads the range as a UTC day and drops it, got %+v", period, rows)
+	}
+
+	// And it must NOT also answer for the previous local day — the window
+	// is genuinely shifted, not merely widened.
+	rows, err = dbx.repo.ArchivedReportsInRange(ctx, "2026-08-26", "2026-08-26")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(rows) != 0 {
+		t.Fatalf("want no rows for local day 2026-08-26 (the close belongs to 2026-08-27 locally), got %+v", rows)
 	}
 }
 
