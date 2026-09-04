@@ -683,7 +683,27 @@ function initOfflineOverride(updateFn){
     }
     navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
       .then(function(s){ stream = s; video.srcObject = s; })
-      .catch(function(){ setStatus(msgs.msgCameraError); });
+      .catch(function(err){
+        if (err && err.name) {
+          switch (err.name) {
+            case 'NotFoundError':
+            case 'OverconstrainedError':
+              setStatus(msgs.msgCameraNotFound);
+              break;
+            case 'NotAllowedError':
+            case 'SecurityError':
+              setStatus(msgs.msgCameraPermissionDenied);
+              break;
+            case 'NotReadableError':
+              setStatus(msgs.msgCameraBusy);
+              break;
+            default:
+              setStatus(msgs.msgCameraError);
+          }
+        } else {
+          setStatus(msgs.msgCameraError);
+        }
+      });
   }
 
   function close(){
@@ -849,7 +869,27 @@ function initOfflineOverride(updateFn){
         video.srcObject = s;
         rafID = requestAnimationFrame(scanFrame);
       })
-      .catch(function(){ setStatus(msgs.msgCameraError); });
+      .catch(function(err){
+        if (err && err.name) {
+          switch (err.name) {
+            case 'NotFoundError':
+            case 'OverconstrainedError':
+              setStatus(msgs.msgCameraNotFound);
+              break;
+            case 'NotAllowedError':
+            case 'SecurityError':
+              setStatus(msgs.msgCameraPermissionDenied);
+              break;
+            case 'NotReadableError':
+              setStatus(msgs.msgCameraBusy);
+              break;
+            default:
+              setStatus(msgs.msgCameraError);
+          }
+        } else {
+          setStatus(msgs.msgCameraError);
+        }
+      });
   }
 
   function close(){

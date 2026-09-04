@@ -428,6 +428,9 @@
      the result feeds the same /api/pos/scan submit as any other scan. -->
 <div id="barcode-scan-overlay" class="ai-identify-overlay" hidden
      data-msg-camera-error="{{ T "scan.camera.camera_error" }}"
+     data-msg-camera-busy="{{ T "scan.camera.camera_busy" }}"
+     data-msg-camera-not-found="{{ T "scan.camera.camera_not_found" }}"
+     data-msg-camera-permission-denied="{{ T "scan.camera.camera_permission_denied" }}"
      data-msg-scanning="{{ T "scan.camera.scanning" }}">
   <div class="ai-identify-panel">
     <h3>{{ T "scan.camera.title" }}</h3>
@@ -447,7 +450,10 @@
      data-msg-no-match="{{ T "ai.identify.no_match" }}"
      data-msg-suggested="{{ T "ai.identify.suggested" }}"
      data-msg-error="{{ T "ai.identify.error" }}"
-     data-msg-camera-error="{{ T "ai.identify.camera_error" }}">
+     data-msg-camera-error="{{ T "ai.identify.camera_error" }}"
+     data-msg-camera-busy="{{ T "ai.identify.camera_busy" }}"
+     data-msg-camera-not-found="{{ T "ai.identify.camera_not_found" }}"
+     data-msg-camera-permission-denied="{{ T "ai.identify.camera_permission_denied" }}">
   <div class="ai-identify-panel">
     <h3>{{ T "ai.identify.title" }}</h3>
     <video id="ai-identify-video" class="camera-overlay-video" autoplay playsinline muted></video>
