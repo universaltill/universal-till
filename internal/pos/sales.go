@@ -443,6 +443,18 @@ func summarizeLineInputs(lines []SaleLineInput) string {
 func netPayments(payments []PaymentInput, total money.Money) (money.Money, error) {
 	var sum money.Money
 	if len(payments) == 0 {
+		// ut-docs#1561: a marginal (per-request) net can legitimately compute
+		// to EXACTLY zero for an otherwise-valid partial refund of a heavily-
+		// discounted line — the running per-key discount clamp in
+		// refund_page.go (ut-docs#1531) can land a later partial request's
+		// own line net at exactly 0 even though earlier and later requests
+		// against the same original line are genuinely nonzero. A zero total
+		// needs no payment at all (a stock-only return/adjustment); every
+		// other (nonzero) total still requires at least one payment, same as
+		// before this card.
+		if total.IsZero() {
+			return 0, nil
+		}
 		return 0, errors.New("sale requires at least one payment")
 	}
 	for i, p := range payments {

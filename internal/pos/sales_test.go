@@ -306,6 +306,31 @@ func TestCompleteSale_RejectsUnderpayment(t *testing.T) {
 	}
 }
 
+// TestNetPayments_ZeroTotalAllowsNoPayments is ut-docs#1561: a genuinely
+// zero total (e.g. a partial refund whose marginal net lands at exactly 0
+// once a running discount clamp has caught up) needs no payment row at all
+// -- a stock-only return/adjustment. Every nonzero total still requires at
+// least one payment, unchanged from before this card (pinned by the sibling
+// test below).
+func TestNetPayments_ZeroTotalAllowsNoPayments(t *testing.T) {
+	net, err := netPayments(nil, 0)
+	if err != nil {
+		t.Fatalf("expected a zero total with no payments to succeed, got %v", err)
+	}
+	if net != 0 {
+		t.Fatalf("expected net 0, got %d", net)
+	}
+}
+
+// TestNetPayments_NonzeroTotalStillRequiresAPayment pins the general rule
+// ut-docs#1561 deliberately leaves untouched: a NONZERO total with no
+// payments must still fail exactly as before this card.
+func TestNetPayments_NonzeroTotalStillRequiresAPayment(t *testing.T) {
+	if _, err := netPayments(nil, money.FromMinor(1)); err == nil {
+		t.Fatalf("expected a nonzero total with no payments to fail")
+	}
+}
+
 // ut-docs#543: card-present reconciliation fields (masked PAN, auth code,
 // terminal/trace ID) are optional metadata on a payment, same shape as
 // TipAmount -- they must persist when a caller (a future card-terminal
