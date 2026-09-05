@@ -569,7 +569,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			ServiceCharge:           money.FromMinor(serviceChargeRefund),
 			ServiceChargeTaxBasisBP: detail.ServiceChargeTaxBasisBP,
 			Lines:                   lines,
-			Payments:                []pos.PaymentInput{{MethodID: method, Amount: refundTotal, Currency: detail.Currency}},
+			Payments:                refundPayments(method, refundTotal, detail.Currency),
 			OriginalSaleID:          detail.ID,
 			Note:                    "refund of " + detail.ReceiptNo,
 			AllowNegativeInventory:  true, // returns only add stock back
@@ -736,4 +736,20 @@ func computeRefundTotal(lines []pos.SaleLineInput, saleDiscount, serviceCharge m
 		return 0
 	}
 	return total
+}
+
+// refundPayments builds the refund's payment row. ut-docs#1561: the
+// fungible-pool discount clamp above (ut-docs#1531) can land a partial
+// request's own refundTotal at EXACTLY zero even though the refund itself is
+// legitimate (e.g. a heavily-discounted line's later installments, once
+// earlier requests already gave back the bulk of the discount) — that case
+// is a stock-only return with nothing to tender, so it gets no payment row
+// at all, matching pos.netPayments' own zero-total/zero-payments allowance.
+// Every nonzero refundTotal still gets exactly one payment row, unchanged
+// from before this card.
+func refundPayments(method string, refundTotal money.Money, currency string) []pos.PaymentInput {
+	if refundTotal.IsZero() {
+		return nil
+	}
+	return []pos.PaymentInput{{MethodID: method, Amount: refundTotal, Currency: currency}}
 }

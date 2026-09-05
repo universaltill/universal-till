@@ -112,17 +112,19 @@ func computeEODMethodTaxBandsFromSales(sales []data.EODTaxBandSale) []data.Metho
 			totalTendered += p.Amount
 		}
 		if totalTendered == 0 {
-			// pos.CompleteSale always records >=1 payment for a completed
-			// sale, but that alone doesn't guarantee totalTendered > 0: a
-			// 100%-discounted sale (amount == change_given on its one
-			// payment, or a payment set that nets to zero) satisfies
-			// CompleteSale's "at least one payment" check yet has nothing
-			// to apportion by. Skipping is safe (that sale's own bands are
-			// zero too), but it silently drops the sale from
-			// MethodTaxBands while TaxBands still includes it — logged so
-			// a genuinely hand-broken row is visible rather than quietly
-			// unbalancing the reconciliation identity (ut-docs#1004 review
-			// finding).
+			// pos.CompleteSale records >=1 payment for any NONZERO total (a
+			// 100%-discounted sale — amount == change_given on its one
+			// payment, or a payment set that nets to zero — satisfies
+			// CompleteSale's "at least one payment" check yet has nothing to
+			// apportion by). A completed sale/return whose total is EXACTLY
+			// zero can now carry zero payments at all (ut-docs#1561: a
+			// stock-only return, e.g. a heavily-discounted line's later
+			// partial-refund installments), landing here the same way.
+			// Skipping is safe (that sale's own bands are zero too), but it
+			// silently drops the sale from MethodTaxBands while TaxBands
+			// still includes it — logged so a genuinely hand-broken row is
+			// visible rather than quietly unbalancing the reconciliation
+			// identity (ut-docs#1004 review finding).
 			logging.L().Warnf("eod method tax bands: sale %s has zero total tendered, skipped from cross-tab", s.ID)
 			continue
 		}

@@ -96,6 +96,19 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
 - Installed plugins are Ed25519-verified before they run
   (`internal/plugins/manifest_verifier.go`). Never run an unverified plugin.
 
+## Agent worktree hygiene
+- `.claude/worktrees/` (real registered git worktrees created by
+  `Agent(isolation: "worktree")` / `EnterWorktree` with a `name`) is
+  gitignored, not repo content — nothing removes them automatically when a
+  run ends, so they accumulate (233 MB / 4 stale worktrees found
+  2026-09-04, poisoning repo-wide greps with duplicate hits at old
+  commits — ut-docs#1567). Run `make prune-worktrees`
+  (`scripts/prune-stale-worktrees.sh`) periodically or whenever a
+  repo-wide search feels off; it only ever removes a worktree that is
+  fully merged into `origin/main`, clean, and past the retention window
+  (default 3 days) — anything still holding unmerged or uncommitted work
+  is left alone and reported.
+
 ## Before committing
 - `gofmt -l .` (no output), `go build ./...`, `go test ./...`, and every
   CI-blocking guard in `.github/workflows/ci.yml`'s `build` job — currently:

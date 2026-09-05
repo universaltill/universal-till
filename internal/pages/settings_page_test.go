@@ -1048,9 +1048,9 @@ func TestSettingsPage_PrinterAddressFieldsAreLTR(t *testing.T) {
 	body := rec.Body.String()
 
 	for _, want := range []string{
-		`name="address" value="" placeholder="192.168.1.50:9100" dir="ltr"`,
+		`name="address" id="printer-address-input" value="" placeholder="192.168.1.50:9100" dir="ltr"`,
 		`name="device" value="" placeholder="/dev/usb/lp0" dir="ltr"`,
-		`name="kitchenAddr" value="" placeholder="192.168.1.60:9100" dir="ltr"`,
+		`name="kitchenAddr" id="printer-kitchen-addr-input" value="" placeholder="192.168.1.60:9100" dir="ltr"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected printer field with dir=\"ltr\": %s\ngot:\n%s", want, body)
@@ -2010,6 +2010,9 @@ func TestSettingsPage_PrinterCardHidesTestPrintAndDesignerLinkFromCashier(t *tes
 	if strings.Contains(body, `href="/receipt-designer"`) {
 		t.Error("cashier render leaks the flat-denied receipt-designer link")
 	}
+	if strings.Contains(body, `id="printer-discover-btn"`) {
+		t.Error("cashier render leaks the manager-only Find-printers button (ut-docs#1556) — the underlying discover-printers endpoint is hard manager-gated, so an un-gated button here would be the same visible-but-silently-blocked bug")
+	}
 
 	mgrReq := httptest.NewRequest(http.MethodGet, "/settings", nil)
 	mgrReq = auth.WithUser(mgrReq, mgrUser)
@@ -2018,6 +2021,34 @@ func TestSettingsPage_PrinterCardHidesTestPrintAndDesignerLinkFromCashier(t *tes
 	mgrBody := mgrRec.Body.String()
 	if !strings.Contains(mgrBody, `hx-post="/api/print/test"`) || !strings.Contains(mgrBody, `href="/receipt-designer"`) {
 		t.Error("manager render is missing the Test print button or receipt-designer link")
+	}
+	if !strings.Contains(mgrBody, `id="printer-discover-btn"`) {
+		t.Error("manager render is missing the Find-printers button (ut-docs#1556)")
+	}
+}
+
+// ut-docs#1556: the settings page's Find-printers button reuses the exact
+// same manager-gated endpoint kitchen_stations.html already calls
+// (GET /api/kitchen-stations/discover-printers) — no new route is
+// introduced. This locks in that the printer card's two address fields
+// (receipt + kitchen) both have their own input id for the page's JS to
+// target, so a future edit can't silently drop one field's "Use for X"
+// wiring without a visible test failure.
+func TestSettingsPage_PrinterCardHasDiscoverableAddressFieldIDs(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req = auth.WithUser(req, mgrUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, id := range []string{"printer-address-input", "printer-kitchen-addr-input", "printer-discover-results", "printer-discover-msg"} {
+		if !strings.Contains(body, `id="`+id+`"`) {
+			t.Errorf("manager render is missing expected element id=%q", id)
+		}
 	}
 }
 
