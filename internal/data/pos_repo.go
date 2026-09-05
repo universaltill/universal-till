@@ -6094,33 +6094,6 @@ FROM payment_methods WHERE is_active = 1 AND type != 'cash' ORDER BY sort_order,
 	return out, rows.Err()
 }
 
-// ListPaymentMethodIDs returns active payment method ids ordered by id.
-func (r *POSRepo) ListPaymentMethodIDs(ctx context.Context) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id FROM payment_methods WHERE is_active = 1 ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	seen := make(map[string]struct{})
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			continue
-		}
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
-}
-
 // SearchItemsForShortcuts finds active items and primary barcodes to add as shortcuts.
 func (r *POSRepo) SearchItemsForShortcuts(ctx context.Context, q string, offset, limit int) ([]ShortcutSearchResult, error) {
 	like := "%" + strings.TrimSpace(q) + "%"

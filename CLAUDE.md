@@ -110,7 +110,10 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   is left alone and reported.
 
 ## Before committing
-- `gofmt -l .` (no output), `go build ./...`, `go test ./...`, and every
+- `gofmt -l .` (no output), `go build ./...`, `go test ./...`,
+  `golangci-lint run ./...` (0 issues — `.golangci.yml` enables `unused`;
+  `cmd/unitill-desktop` is excluded there until a `-tags=desktop` pass with
+  real GTK/WebKit headers lands, ut-docs#1581), and every
   CI-blocking guard in `.github/workflows/ci.yml`'s `build` job — currently:
   `guard-data-access.sh`, `guard-kiosk-engine.sh`, `guard-plugin-menu-read.sh`,
   `guard-page-http-error.sh`,

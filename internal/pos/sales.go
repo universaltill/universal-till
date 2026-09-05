@@ -1083,12 +1083,6 @@ func validateLine(l SaleLineInput) error {
 	return nil
 }
 
-func generateReceiptNo() string {
-	// numeric-ish receipt no derived from timestamp for readability
-	n := time.Now().UnixNano() % 1000000000
-	return fmt.Sprintf("%09d", n)
-}
-
 func valueOrDefault(val, def string) string {
 	if val != "" {
 		return val

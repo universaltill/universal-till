@@ -40,9 +40,11 @@ func TestSetupWizardListsInstallableCatalogLanguagesAndCachesFetch(t *testing.T)
 	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
 	d.Cfg.Marketplace = mkt.config()
 	// ut-docs#1196 correction: this test's hit-count assertion below is now
-	// scoped to capability=language via catalogHitsFor, not the raw
-	// catalogHits() total. The original CI failures here ("got 2") were
-	// misdiagnosed as a net/http.Transport idle-connection-retry race
+	// scoped to capability=language via catalogHitsFor, not the raw total
+	// across every capability (the unscoped accessor for that total was
+	// itself removed as dead code by ut-docs#1565, once every caller had
+	// migrated to catalogHitsFor). The original CI failures here ("got 2")
+	// were misdiagnosed as a net/http.Transport idle-connection-retry race
 	// (fixed, at the time, by disabling keep-alives below) — that race is
 	// real and rare, but it was NOT what CI was hitting. The actual cause:
 	// ut-docs#1180 (this same PR) made GET /setup also browse the
