@@ -45,6 +45,14 @@ type PrinterCandidate struct {
 	// printer_address form field already expect, so a discovered candidate
 	// can be written straight into that field with no reshaping.
 	Address string `json:"address"`
+	// PDL is the raw Bonjour "pdl=" TXT value: the comma-separated page
+	// description languages the device says it accepts. Never serialized —
+	// it exists so discovery can tell an ESC/POS receipt printer from an
+	// office printer WITHOUT writing to it (see nonESCPOSPDL). The HP
+	// OfficeJet that printed a stray page per probe during development
+	// declares its PCL/PWG-raster support right here, in its own
+	// advertisement; reading it is free and costs no paper (ut-docs#1606).
+	PDL string `json:"-"`
 }
 
 // maxCandidates caps how many primaries (or printers) one scan will
@@ -303,12 +311,19 @@ func candidateFromEntry(e *mdns.ServiceEntry) (Candidate, bool) {
 // kitchen_stations.html's discover-printers script). An entry with no
 // usable address or port is rejected — nothing to print to.
 func printerCandidateFromEntry(e *mdns.ServiceEntry) (PrinterCandidate, bool) {
-	var name string
+	var name, pdl string
 	for _, field := range e.InfoFields {
 		k, v, ok := strings.Cut(field, "=")
-		if ok && k == "ty" && v != "" {
-			name = v
-			break
+		if !ok {
+			continue
+		}
+		switch k {
+		case "ty":
+			if v != "" && name == "" {
+				name = v
+			}
+		case "pdl":
+			pdl = v
 		}
 	}
 	if name == "" {
@@ -320,7 +335,11 @@ func printerCandidateFromEntry(e *mdns.ServiceEntry) (PrinterCandidate, bool) {
 	if ip == nil || e.Port == 0 {
 		return PrinterCandidate{}, false
 	}
-	return PrinterCandidate{Name: name, Address: net.JoinHostPort(ip.String(), strconv.Itoa(e.Port))}, true
+	return PrinterCandidate{
+		Name:    name,
+		Address: net.JoinHostPort(ip.String(), strconv.Itoa(e.Port)),
+		PDL:     pdl,
+	}, true
 }
 
 // entryMatchesService reports whether an mDNS answer actually belongs to the
