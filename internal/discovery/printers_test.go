@@ -64,8 +64,9 @@ func (c *fakeConn) SetWriteDeadline(t time.Time) error { return nil }
 
 // device describes what a stubbed host does when dialled.
 type device struct {
-	reply []byte        // what it answers to a read; empty = silence
-	delay time.Duration // how long it takes to answer
+	reply     []byte        // what it answers to a read; empty = silence
+	delay     time.Duration // how long it takes to answer
+	failDials int           // refuse this many dials before finally accepting (simulates a cold ARP entry, ut-docs#1608) — counts EVERY dial to this address, including SpeaksESCPOS's own probe dial, not just Listens' phase-1 dial
 }
 
 // dialRecorder captures every dial and every byte written, per address.
@@ -103,10 +104,19 @@ func stubDial(t *testing.T, devices map[string]device) *dialRecorder {
 	dialProbe = func(ctx context.Context, addr string, timeout time.Duration) (net.Conn, error) {
 		dev, ok := devices[addr]
 		rec.mu.Lock()
+		attempt := 0
+		for _, d := range rec.dialled {
+			if d == addr {
+				attempt++
+			}
+		}
 		rec.dialled = append(rec.dialled, addr)
 		rec.mu.Unlock()
 		if !ok {
 			return nil, errors.New("connection refused")
+		}
+		if attempt < dev.failDials {
+			return nil, errors.New("connection refused (cold ARP entry)")
 		}
 		c := &fakeConn{reply: append([]byte(nil), dev.reply...), delay: dev.delay}
 		rec.mu.Lock()
@@ -190,9 +200,15 @@ func TestDiscoverPrinters_NeverWritesToADeviceThatDeclaresAnotherLanguage(t *tes
 // TestSweepPrinters_DoesNotWriteToSkippedAddresses — the exclusion must reach
 // the sweep too, not just the mDNS branch. The HP listens on :9100, so a
 // sweep that ignored skip would find and probe it independently.
+//
+// .9 genuinely misses its first dial (failDials: 1), which forces the retry
+// pass (ut-docs#1608) to actually run in this test — without it, a skipped
+// address never entering the retry pass would be true only because the
+// retry pass never ran at all, which would prove nothing.
 func TestSweepPrinters_DoesNotWriteToSkippedAddresses(t *testing.T) {
-	stubSubnet(t, []string{"192.168.1.111", "192.168.1.245"}, nil)
+	stubSubnet(t, []string{"192.168.1.9", "192.168.1.111", "192.168.1.245"}, nil)
 	rec := stubDial(t, map[string]device{
+		"192.168.1.9:9100":   {reply: []byte{0x16}, failDials: 1},
 		"192.168.1.111:9100": {reply: []byte{0x16}},
 		"192.168.1.245:9100": {reply: []byte{0x16}},
 	})
@@ -206,11 +222,20 @@ func TestSweepPrinters_DoesNotWriteToSkippedAddresses(t *testing.T) {
 	}
 	for _, a := range rec.dialledAddrs() {
 		if a == "192.168.1.245:9100" {
-			t.Fatal("sweep dialled a skipped address — it must not be touched at all")
+			t.Fatal("sweep dialled a skipped address — it must not be touched at all, including during the retry pass")
 		}
 	}
-	if len(got) != 1 || got[0].Address != "192.168.1.111:9100" {
-		t.Fatalf("got %+v, want only the thermal printer", got)
+	if len(got) != 2 {
+		t.Fatalf("got %+v, want both non-skipped printers — .9 (found only via the retry pass) and .111", got)
+	}
+	for _, want := range []string{"192.168.1.9:9100", "192.168.1.111:9100"} {
+		found := false
+		for _, c := range got {
+			found = found || c.Address == want
+		}
+		if !found {
+			t.Fatalf("got %+v, missing %s", got, want)
+		}
 	}
 }
 
@@ -386,7 +411,10 @@ func TestSweepPrinters_ReturnsAddressOrderedNumerically(t *testing.T) {
 	}
 }
 
-// TestSweepPrinters_OnlyTouchesPort9100 pins the security scope.
+// TestSweepPrinters_OnlyTouchesPort9100 pins the security scope. Neither host
+// has a configured device, so both miss on the first dial and get retried
+// once (ut-docs#1608) — exactly 2 dials per host, never a different port or
+// a third, unbounded address.
 func TestSweepPrinters_OnlyTouchesPort9100(t *testing.T) {
 	stubSubnet(t, []string{"192.168.1.10", "192.168.1.11"}, nil)
 	rec := stubDial(t, map[string]device{})
@@ -395,13 +423,57 @@ func TestSweepPrinters_OnlyTouchesPort9100(t *testing.T) {
 		t.Fatalf("SweepPrinters: %v", err)
 	}
 	dialled := rec.dialledAddrs()
+	counts := map[string]int{}
 	for _, a := range dialled {
 		if _, port, _ := net.SplitHostPort(a); port != "9100" {
 			t.Fatalf("sweep dialled %q — it must only ever touch the raw-print port 9100", a)
 		}
+		counts[a]++
 	}
-	if len(dialled) != 2 {
-		t.Fatalf("dialled %d addresses, want exactly the 2 subnet hosts", len(dialled))
+	if len(counts) != 2 {
+		t.Fatalf("dialled %d distinct addresses, want exactly the 2 subnet hosts: %v", len(counts), dialled)
+	}
+	for addr, n := range counts {
+		if n != 2 {
+			t.Fatalf("dialled %s %d time(s), want exactly 2 (the initial pass plus one retry on the miss)", addr, n)
+		}
+	}
+}
+
+// TestSweepPrinters_RetriesAMissOnceWithAColdARPCache is the regression test
+// for ut-docs#1608: a printer that fails the very first dial (a cold ARP
+// entry racing 250+ other simultaneous resolutions on the sweep's own
+// concurrent dials) must still be found, via the one retry pass over misses
+// only. A stubbed conn cannot express ARP timing directly — dialProbe here
+// simply refuses the first attempt and accepts the second, the same shape
+// the issue itself proposed, since the mechanism (a miss that succeeds on a
+// later, unhurried retry) is what matters, not real ARP resolution.
+func TestSweepPrinters_RetriesAMissOnceWithAColdARPCache(t *testing.T) {
+	stubSubnet(t, []string{"192.168.1.9", "192.168.1.111"}, nil)
+	rec := stubDial(t, map[string]device{
+		"192.168.1.9:9100":   {reply: []byte{0x16}}, // warm from the start, unaffected by the fix
+		"192.168.1.111:9100": {reply: []byte{0x16}, failDials: 1},
+	})
+
+	got, err := SweepPrinters(context.Background(), nil)
+	if err != nil {
+		t.Fatalf("SweepPrinters: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %+v, want both printers — the one that missed its first dial must still be "+
+			"found by the retry pass, not silently dropped", got)
+	}
+	n := 0
+	for _, a := range rec.dialledAddrs() {
+		if a == "192.168.1.111:9100" {
+			n++
+		}
+	}
+	// Exactly 3: the phase-1 miss, the retry that finds it, and the ESC/POS
+	// probe that then confirms it (SpeaksESCPOS dials again, over the same
+	// dialProbe seam — see failDials' own comment).
+	if n != 3 {
+		t.Fatalf("dialled the missed host %d time(s), want exactly 3 (the initial miss, the retry that finds it, and the ESC/POS probe)", n)
 	}
 }
 
