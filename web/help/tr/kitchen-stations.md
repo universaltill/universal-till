@@ -31,3 +31,5 @@ Hedefi **Ekran** veya **Yazıcı ve ekran** olan istasyonun kendi canlı sipari�
 
 - İstasyonu silmek yerine devre dışı bırakın — ürünleri siz yeniden etkinleştirene kadar varsayılan mutfak yazıcısına döner.
 - Bir yazıcıya ulaşılamaması diğer istasyonları veya satışın kendisini asla durdurmaz.
+- İstasyonlar ve yönlendirme mağaza geneli öğelerdir ve her zaman **ana kasadan** yönetilir: katılmış bir kasada bir istasyon eklemek, yeniden adlandırmak, hedefini değiştirmek veya kategori/ürün yönlendirmesini düzenlemek, uygulanmak yerine sizi ana kasaya yönlendiren bir mesaj gösterir.
+- **Yazıcı adresi kasıtlı olarak kasaya özgü olan tek istisnadır**: katılmış bir kasada Mutfak istasyonlarını açın, o istasyonun kendi adresini yine de orada ayarlayabilirsiniz, çünkü her kasanın aynı paylaşılan istasyon için kendi bağlı yazıcısı olabilir. Siz ayarlayana kadar o istasyonun fişleri, katılmış kasanın kendi varsayılan mutfak yazıcısında (Ayarlar) yazdırılır.

@@ -66,6 +66,26 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "kitchen_station", targetID, action, nil, now, "")
 	}
 
+	// requirePrimary gates station create/active, category routes and item
+	// routes on this till being the primary (ut-docs#1585). kitchen_stations/
+	// category_station_routes/item_station_routes all sync shop-wide as
+	// admin tables (adminTables, ut-docs#1546) via a one-way primary-wins
+	// pull, so a write accepted on a joined till would silently vanish on
+	// the very next admin pull -- refuse it up front instead, with a clear
+	// localized message, same pattern as registers_page.go's requirePrimary
+	// (ut-docs#1590). NOT used by the station update route below: that
+	// route has its own narrower carve-out, because printer_address is
+	// deliberately till-local and never synced (skipCols in
+	// sync_admin_repo.go) -- see the comment at that handler for why it
+	// splits the write instead of reusing this gate wholesale.
+	requirePrimary := func(w http.ResponseWriter, r *http.Request) bool {
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			http.Redirect(w, r, "/kitchen-stations?err=kitchenstations.error.replica_use_primary", http.StatusSeeOther)
+			return false
+		}
+		return true
+	}
+
 	checksFor := func(stations []data.KitchenStation, routed []string) []stationCheck {
 		set := map[string]bool{}
 		for _, id := range routed {
@@ -230,6 +250,9 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 		if !ok {
 			return
 		}
+		if !requirePrimary(w, r) {
+			return
+		}
 		name, destinationType, address, errKey := stationForm(r)
 		if errKey != "" {
 			http.Redirect(w, r, "/kitchen-stations?err="+errKey, http.StatusSeeOther)
@@ -255,6 +278,45 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 			http.Redirect(w, r, "/kitchen-stations?err="+errKey, http.StatusSeeOther)
 			return
 		}
+		// A joined till gets a narrower rule than requirePrimary's blanket
+		// refusal above (ut-docs#1585): printer_address is till-local and
+		// never synced (skipCols in sync_admin_repo.go), so a joined till
+		// legitimately sets its own address here
+		// (TestAdminDumpApplyRoundTrip_KitchenStationPrinterAddressStaysLocal
+		// pins this as intended behavior — without it, a multi-till shop
+		// would have no way to point a shared station at each till's own
+		// printer). name/destination_type are shop-wide and primary-owned,
+		// so a change to either of those is still refused -- only an
+		// address-only edit is let through, via
+		// SetKitchenStationPrinterAddress, not the full UpdateKitchenStation.
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			current, found, err := posRepo.GetKitchenStation(r.Context(), id)
+			if err != nil {
+				http.Redirect(w, r, "/kitchen-stations?err=kitchenstations.error.update", http.StatusSeeOther)
+				return
+			}
+			if !found {
+				http.Redirect(w, r, "/kitchen-stations?err=kitchenstations.error.not_found", http.StatusSeeOther)
+				return
+			}
+			// TrimSpace on both sides even though current.Name/DestinationType
+			// are already trimmed, persisted values (Create/UpdateKitchenStation
+			// only ever write stationForm's trimmed output) -- a defensive
+			// belt-and-suspenders against a stray untrimmed value ever reaching
+			// the DB some other way, so a joined till can never be permanently
+			// unable to set its own printer address over whitespace alone.
+			if name != strings.TrimSpace(current.Name) || destinationType != strings.TrimSpace(current.DestinationType) {
+				http.Redirect(w, r, "/kitchen-stations?err=kitchenstations.error.replica_use_primary", http.StatusSeeOther)
+				return
+			}
+			if err := posRepo.SetKitchenStationPrinterAddress(r.Context(), id, address); err != nil {
+				http.Redirect(w, r, "/kitchen-stations?err=kitchenstations.error.update", http.StatusSeeOther)
+				return
+			}
+			audit(r, actor.ID, id, "kitchen_station_update")
+			http.Redirect(w, r, "/kitchen-stations", http.StatusSeeOther)
+			return
+		}
 		if err := posRepo.UpdateKitchenStation(r.Context(), id, name, destinationType, address); err != nil {
 			key := "kitchenstations.error.update"
 			if strings.Contains(err.Error(), "not found") {
@@ -270,6 +332,9 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/kitchen-stations/{id}/active", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := requireManager(w, r)
 		if !ok {
+			return
+		}
+		if !requirePrimary(w, r) {
 			return
 		}
 		id := r.PathValue("id")
@@ -312,12 +377,18 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 		if !ok {
 			return
 		}
+		if !requirePrimary(w, r) {
+			return
+		}
 		setRoutes(w, r, posRepo.SetCategoryStationRoutes, r.PathValue("categoryID"), "kitchen_station_category_routes", actor.ID)
 	})
 
 	mux.HandleFunc("POST /api/kitchen-stations/routes/items/{itemID}", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := requireManager(w, r)
 		if !ok {
+			return
+		}
+		if !requirePrimary(w, r) {
 			return
 		}
 		setRoutes(w, r, posRepo.SetItemStationRoutes, r.PathValue("itemID"), "kitchen_station_item_routes", actor.ID)

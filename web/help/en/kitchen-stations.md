@@ -32,3 +32,5 @@ A station whose destination is **Display** or **Printer and display** has its ow
 
 - Deactivate a station instead of deleting it — its items fall back to the default kitchen printer until you reactivate it.
 - One printer being unreachable never blocks the other stations or the sale itself.
+- Stations and routing are shop-wide and always managed from the **main till**: on a joined till, adding a station, renaming one, changing its destination, or editing category/item routing shows a message pointing you back to the main till, rather than accepting a change that would only apply locally.
+- A station's **printer address is the one exception, and it's per-till on purpose**: open Kitchen stations on a joined till and you can still set that station's own address there, since each till may have its own printer plugged in for the same shared station. Until you set it, that station's tickets print on the joined till's own default kitchen printer from Settings instead.
