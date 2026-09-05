@@ -112,7 +112,7 @@ func TestRefundableLines_DifferentModesDoNotSharePool(t *testing.T) {
 		{Name: "Apple", SKU: "A1", ItemID: "i1", UnitPrice: 100, Qty: 1, OrderType: "takeaway"},
 	}}
 	// One takeaway unit already returned must not eat the dine-in unit.
-	lines := refundableLines(detail, map[string]float64{data.RefundLineKey("i1", "", 100, "takeaway"): 1})
+	lines := refundableLines(detail, map[string]float64{data.RefundLineKey("i1", "", 100, "takeaway"): 1}, map[string]float64{})
 	if lines[0].Remaining != 1 || lines[1].Remaining != 0 {
 		t.Fatalf("expected dine-in 1 / takeaway 0 remaining, got %+v", lines)
 	}
