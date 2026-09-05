@@ -57,7 +57,7 @@ func SweepPrinters(ctx context.Context, skip map[string]bool) ([]PrinterCandidat
 	if err != nil {
 		return nil, err
 	}
-	return probeListeners(ctx, listeners, skip), nil
+	return probeListeners(ctx, listeners, skip, nil), nil
 }
 
 // sweepListeners is phase 1: who is accepting connections on :9100?
@@ -146,11 +146,21 @@ func sweepListeners(ctx context.Context, skip map[string]bool) ([]string, error)
 // 1 produced — never against a whole subnet — and never against anything in
 // skip. Excluding by advertisement before reaching here is what stops an
 // office printer emitting a page for every probe it receives (ut-docs#1606).
-func probeListeners(ctx context.Context, listeners []string, skip map[string]bool) []PrinterCandidate {
+//
+// skip carries what the mDNS browse ruled out; trusted carries what it ruled
+// IN — an address whose own advertisement names a raw/ESC/POS format, which
+// therefore bypasses the IPP guard below. Both are empty when the browse
+// failed, which is the case ut-docs#1607 is about: with no advertisements at
+// all, officePrinterOverIPP is the only thing standing between an office
+// printer and a stray page.
+func probeListeners(ctx context.Context, listeners []string, skip, trusted map[string]bool) []PrinterCandidate {
 	found := make([]PrinterCandidate, 0, len(listeners))
 	var mu sync.Mutex
 	forEachBounded(ctx, listeners, func(addr string) {
 		if skip[addr] {
+			return
+		}
+		if !trusted[addr] && isOfficePrinter(ctx, addr) {
 			return
 		}
 		if !SpeaksESCPOS(ctx, addr) {
