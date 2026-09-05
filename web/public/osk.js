@@ -559,6 +559,16 @@
     // Open for a DIFFERENT field (e.g. the qty pad): retarget to this
     // form's field instead of making the operator tap twice.
     if (open && (!target || current === target)) { hide(); return; }
+    // `target.focus()` here fires focusout/focusin synchronously, which
+    // calls deferHideCheck() (below) — and `pointerDown` is still true at
+    // this point (its own `pointerup` listener, registered before this one,
+    // hasn't run yet for THIS event) so it registers a one-shot `pointerup`
+    // listener during this same dispatch. Per DOM semantics that listener
+    // does not fire for the event currently being dispatched — only the
+    // NEXT press flushes it. Benign, not a bug: hideIfFocusLeftOSK()
+    // re-reads document.activeElement at fire time regardless of when that
+    // is, so the delayed check can only ever hide when focus is genuinely
+    // off an OSK field by then (independent review, ut-docs#1306).
     if (target) { target.focus(); show(target); }
   });
   document.addEventListener('click', function (ev) {
@@ -570,43 +580,104 @@
     // so this guard is really just documentation of that invariant.
     if (wantsOSK(ev.target)) show(ev.target);
   });
+  // Re-check at fire time and hide only if focus has genuinely settled off
+  // an OSK-able field — shared by both focusin and focusout below. Focus can
+  // legitimately move AGAIN before this runs (e.g. the data-osk-toggle path:
+  // pointerdown here, pointerup re-focuses an OSK-able field), so this never
+  // hides unconditionally.
+  function hideIfFocusLeftOSK() {
+    var a = document.activeElement;
+    if (!wantsOSK(a) && (!osk || !osk.contains(a))) hide();
+  }
+  // Whether *a* pointer press is currently in flight — down, but not yet
+  // released. A single flag, not tracked per `pointerId`: under multi-touch
+  // (two fingers down, one lifted) it can read `false` while a different
+  // pointer is still genuinely down, falling back to the immediate timer
+  // for that narrow window — accepted, because multi-touch is real touch,
+  // already shielded from this race by implicit pointer capture (see
+  // `enableFallback`'s own comment above). `pointercancel` (a touch scroll
+  // gesture taking over mid-press, etc.) also clears it: without this, a
+  // canceled press would leave it stuck `true`, and every focus change
+  // after that would wait on a `pointerup` that may not arrive again for a
+  // while.
+  var pointerDown = false;
+  document.addEventListener('pointerdown', function () { pointerDown = true; });
+  document.addEventListener('pointerup', function () { pointerDown = false; });
+  document.addEventListener('pointercancel', function () { pointerDown = false; });
+  // Whether the CURRENT press already has a pending hide-check enqueued
+  // (independent review, ut-docs#1306): the flag above only protects the
+  // NEXT focus change from starting a fresh wait on a wedged press — it
+  // does nothing for a check already waiting on THIS press's `pointerup`
+  // once that press instead ends in `pointercancel` (a touch-scroll
+  // takeover is routine on this exact touch-till hardware) or never
+  // resolves at all (pointer released outside the window/tab, no capture).
+  // Either way, a check enqueued below via `deferHideCheck` would otherwise
+  // wait forever: `current` keeps pointing at the old field and the
+  // `position:fixed` OSK sheet keeps covering the bottom of the screen —
+  // which this file's own show() comment already documents as something
+  // that "swallows the tap silently" — until some unrelated later press
+  // happens to fire a `pointerup` and flush it.
+  // Defers hideIfFocusLeftOSK() past whatever pointer press is currently in
+  // flight (ut-docs#1306, same race class ut-docs#1262 fixed for the enable
+  // path). hide() removes body.osk-padded, which on the sale screen reflows
+  // the tender panel enough to matter (ut-docs#1231: confirmed live, tapping
+  // the scan-row's "Add" submit button moved it ~200px). A press's
+  // mousedown/mouseup/click are each hit-tested independently at a fixed
+  // screen coordinate — no implicit capture the way a real touch tap gets —
+  // so that reflow landing between mousedown and mouseup can shift the
+  // still-in-flight tap's target out from under it and silently drop it.
+  // The bug in the code this replaced: focusin/focusout fire as part of
+  // mousedown, so scheduling the reflow via `setTimeout(fn, 0)` right then
+  // still runs it almost immediately — long before mouseup/click for any
+  // real, human-scale press (confirmed: a 120ms held press interleaves the
+  // timeout BEFORE mouseup/click, not after — ut-docs#1262 review's own
+  // instrumented probe, reproduced here for focusin/focusout specifically).
+  // Waiting for THIS press's own `pointerup` instead of a fixed duration
+  // closes the race for a press of any length, not just short ones —
+  // `pointerup` only ever fires once an interaction's hit-testing is
+  // already resolved, the same reasoning #1262 used to move its own trigger
+  // from `pointerdown` to `click`. `settleMs` (0 for focusin, 50 for
+  // focusout) is applied AFTER the press resolves, not instead of it — it's
+  // the original grace window that lets a re-tap onto another OSK-able
+  // field preempt the hide, unchanged from before this fix.
+  function deferHideCheck(settleMs) {
+    if (pointerDown) {
+      // Whichever of these fires first flushes the check; `done` stops the
+      // other two from running it a second time. `pointerup`/`pointercancel`
+      // cover a press that resolves normally or gets cancelled (both are
+      // real, ordinary outcomes — not just error paths). The 1s backstop is
+      // for the residual case neither event fires for at all (e.g. the
+      // pointer released outside the window, which gets no `pointerup`
+      // without capture) — 1s is far longer than any real tap or hold this
+      // file already reasons about (the review's own 120ms probe), so it
+      // never races a still-genuinely-in-flight press, only ever catches
+      // one that's already gone silent.
+      var done = false;
+      var run = function () {
+        if (done) return;
+        done = true;
+        setTimeout(hideIfFocusLeftOSK, settleMs);
+      };
+      document.addEventListener('pointerup', run, { once: true });
+      document.addEventListener('pointercancel', run, { once: true });
+      setTimeout(run, 1000);
+    } else {
+      // No press in flight — this focus change came from something else
+      // (keyboard Tab, a programmatic .focus() elsewhere), so nothing is
+      // racing this reflow; the original next-tick/50ms defer is safe as-is.
+      setTimeout(hideIfFocusLeftOSK, settleMs);
+    }
+  }
   document.addEventListener('focusin', function (ev) {
     if (!enabled) return;
     // Focus moving somewhere non-OSK-able closes the keyboard; opening is
     // click-only (above).
     if (wantsOSK(ev.target) || (osk && osk.contains(ev.target))) return;
-    // Deferred one tick (ut-docs#1231), not called synchronously like it
-    // used to be: focusin fires as part of mousedown, i.e. BEFORE mouseup —
-    // hide() removes body.osk-padded, which on the sale screen reflows the
-    // tender panel (ut-docs#1231's products/tender rebalance made that
-    // reflow large enough to matter: confirmed live, tapping the scan-row's
-    // "Add" submit button — a non-OSK-able target — moved the button up to
-    // ~200px between mousedown and mouseup). A real mouse/pointer click only
-    // fires `click` when mousedown and mouseup share the same target
-    // element, so a reflow landing in that window can silently turn a
-    // tap into a no-op — reproduced with zero other specs running
-    // (e2e/tests/sale-screen-osk-scan-submit-1177.spec.ts). Deferring
-    // mirrors the same pattern focusout already uses just below: `setTimeout`
-    // pushes the reflow to its own macrotask, after the current mousedown
-    // -> mouseup -> click (-> submit) sequence has already dispatched
-    // synchronously against the pre-reflow layout, so the click that
-    // triggered the close is never the one it breaks.
-    // Re-check at fire time (same guard focusout already applies), don't
-    // just hide() unconditionally: focus can legitimately move AGAIN before
-    // this timer fires — e.g. the data-osk-toggle path (pointerdown here,
-    // pointerup re-focuses an OSK-able field) — and an unconditional hide()
-    // would undo that second, more current focus change.
-    setTimeout(function () {
-      var a = document.activeElement;
-      if (!wantsOSK(a) && (!osk || !osk.contains(a))) hide();
-    }, 0);
+    deferHideCheck(0);
   });
   document.addEventListener('focusout', function (ev) {
     // If focus lands on another OSK-able field, its click re-shows it.
-    setTimeout(function () {
-      var a = document.activeElement;
-      if (!wantsOSK(a) && (!osk || !osk.contains(a))) hide();
-    }, 50);
+    deferHideCheck(50);
   });
 
   // On-demand affordance: reveal any data-osk-toggle buttons (they ship
