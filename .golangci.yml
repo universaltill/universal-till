@@ -1,0 +1,58 @@
+# Lint gate (ut-docs#1565): before this file existed there was NO lint gate
+# in CI at all — the only static analysis was a single
+# `go vet -tags desktop ./cmd/unitill-desktop` scoped to one package. A
+# 2026-09-04 measurement found 97 unreachable functions across ~1,242
+# commits on main, because nothing had ever objected to one. Cleanup
+# without a gate just regrows, so `unused` is the one linter this file
+# turns on for real; everything else stays off deliberately (start
+# permissive — the goal here is the gate, not a style argument) until a
+# separate task turns more on.
+#
+# Deliberately NOT built with the `desktop` tag here (unlike the
+# desktop-shell CI job's build/vet steps): that would pull in
+# cmd/unitill-desktop's real cgo+GTK/WebKit files, which this gate cannot
+# verify without a GTK-dev-headers-capable build environment. A whole-
+# program `deadcode -tags=desktop` baseline check that DOES need that
+# build, plus a `-tags=desktop` golangci-lint pass over cmd/unitill-desktop
+# itself, is tracked as a separate follow-up: ut-docs#1581.
+#
+# `.claude/worktrees/` holds full duplicate copies of the tree at old
+# commits (stale isolated-agent worktrees, ut-docs#1567) — excluded so a
+# re-accumulation can never poison this analysis with stale duplicate
+# findings.
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - unused
+  exclusions:
+    paths:
+      - .claude/worktrees
+      - dist-shells
+      # cmd/unitill-desktop only ever ships with the `desktop` build tag
+      # (and, on Linux, cgo + real GTK/WebKit headers) — no real release
+      # builds this package the way an untagged `./...` lint pass would.
+      # Linting it that way produces false "unused" positives on genuine
+      # code, in two different ways: attach_gate_other.go's/
+      # startup_gate_other.go's non-desktop-and-linux stub variants are
+      # only called from their `desktop`-tagged sibling files (never
+      # compiled by this pass); shell_poll.go carries no build tag of its
+      # own at all, but its two symbols (shellPollClientTimeout,
+      # newShellPollClient) are only ever called from webview_fallback.go
+      # (tag `desktop && !darwin`), so an untagged pass reports them dead
+      # too. Deleting any of these would break the real desktop build, not
+      # clean it up. A `-tags=desktop` pass over this package specifically,
+      # in a job that installs GTK/WebKit dev headers first (mirroring the
+      # existing desktop-shell CI job), is tracked as a follow-up
+      # (ut-docs#1581) rather than guessed at here without a way to verify
+      # it — that follow-up should also cover this package's untagged,
+      # currently entirely-unlinted non-test files (attach_gate.go,
+      # autostart.go, autostart_install_flag.go, control.go,
+      # shell_poll.go, startup_gate.go, window_mode.go), which this
+      # blanket exclusion means nothing lints today.
+      - cmd/unitill-desktop
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

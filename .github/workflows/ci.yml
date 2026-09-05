@@ -39,6 +39,20 @@ jobs:
             echo "Run: gofmt -w <file>"
             exit 1
           fi
+      - name: Lint (golangci-lint, unused)
+        # ut-docs#1565: there was no lint gate at all before this — see
+        # .golangci.yml's own header comment for scope (unused only for
+        # now; cmd/unitill-desktop excluded here, tracked as a follow-up
+        # that needs GTK/WebKit dev headers, same as the desktop-shell
+        # job below, to lint it under the `desktop` tag it actually ships
+        # with rather than produce false positives on per-platform stubs).
+        # v6 only supports golangci-lint v1; the v2.5.0 pinned below (and
+        # .golangci.yml's own `version: "2"` config schema) needs v8+
+        # (independent review, ut-docs#1565: v6 would have made this gate
+        # unable to run at all, caught before it ever reached real CI).
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.5.0
       - name: Data-access policy guard
         run: bash scripts/ci/guard-data-access.sh
       - name: Data-access policy guard regression test

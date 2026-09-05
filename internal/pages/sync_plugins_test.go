@@ -66,11 +66,10 @@ type fakeMarketplace struct {
 
 	mu        sync.Mutex
 	tokenHits int // POST /v1/downloads/tokens count — proves (non-)reinstall
-	// catHits counts GET /v1/catalog/plugins — proves the setup wizard's
-	// language-catalog TTL cache (ut-docs#1092) really avoids a refetch.
-	catHits int
-	// catHitsByCapability counts the same requests, keyed by the request's
-	// own `capability` query param ("language", "tax", ...). ut-docs#1180
+	// catHitsByCapability counts GET /v1/catalog/plugins — proves the setup
+	// wizard's language-catalog TTL cache (ut-docs#1092) really avoids a
+	// refetch — keyed by the request's own `capability` query param
+	// ("language", "tax", ...). ut-docs#1180
 	// (review): the wizard now browses more than one capability on a single
 	// GET /setup render (language for step 1, tax for step 3 when the
 	// resolved country is DE) — a hit-count assertion scoped to just one of
@@ -142,12 +141,6 @@ func (m *fakeMarketplace) downloadTokenHits() int {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	return m.tokenHits
-}
-
-func (m *fakeMarketplace) catalogHits() int {
-	m.mu.Lock()
-	defer m.mu.Unlock()
-	return m.catHits
 }
 
 // catalogHitsFor returns the GET /v1/catalog/plugins hit count for a single
@@ -283,7 +276,6 @@ func newFakeMarketplace(t *testing.T, pluginIDByListing map[string]string) *fake
 		switch {
 		case r.Method == http.MethodGet && r.URL.Path == "/v1/catalog/plugins":
 			m.mu.Lock()
-			m.catHits++
 			if m.catHitsByCapability == nil {
 				m.catHitsByCapability = map[string]int{}
 			}
