@@ -200,6 +200,16 @@ nfpms:
       - src: packaging/pos.env.example
         dst: /opt/unitill/pos.env
         type: config|noreplace
+      # D-Bus system-bus grant for the in-POS Bluetooth pairing panel
+      # (ut-docs#76, ADR-0078): the pos service user has no console session,
+      # so BlueZ's default policy denies it; this file allows exactly the six
+      # org.bluez interfaces internal/bluetooth calls. Package-owned (same
+      # mechanism as the systemd unit above) rather than written by
+      # postinstall.sh, so it is versioned, diffable and removed on purge.
+      # dbus-daemon watches system.d/ — no reload step. Linux/Pi only: the
+      # macOS/Windows sections carry nothing for this feature by design.
+      - src: packaging/linux/dbus-unitill-bluetooth.conf
+        dst: /etc/dbus-1/system.d/unitill-bluetooth.conf
       # Desktop app shell (per-arch, prebuilt by the linux-shells CI job) +
       # its applications-menu entry and icon.
       - src: "dist-shells/linux-{{ .Arch }}/unitill-desktop"
