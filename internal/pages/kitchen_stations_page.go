@@ -39,8 +39,9 @@ type stationCheck struct {
 // printer), a category × station routing matrix (the primary mechanism —
 // "nobody configures 229 items by hand"), and per-item overrides found via
 // search. Manager/admin only, modelled on registerLocations. Stations are
-// soft-disabled, never deleted. This slice only creates 'printer' stations;
-// the 'display' destination is the KDS follow-up (ut-docs#544).
+// soft-disabled, never deleted. Each station has a destination type
+// (ut-docs#544): 'printer' (a ticket), 'display' (a kitchen screen at
+// /kitchen-display/{id}, kitchen_display.go) or 'both'.
 func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 	catRepo := data.NewCatalogRepo(d.Db)
@@ -196,27 +197,45 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 		})
 	})
 
+	// stationForm validates the shared create/edit form fields. An omitted
+	// destination_type means 'printer' (the pre-#544 form had no such field,
+	// and any caller still posting without it keeps its old behavior). The
+	// printer address is required only when the station prints: a station
+	// with no address would silently swallow every line routed to it (code
+	// review, ut-docs#516: TransportForAddress("") returns a nil transport
+	// with no error, which reads as "unconfigured" further down the pipeline
+	// rather than failing loud here) — but a display-only station never
+	// prints, so demanding an address there would just force a fake value.
+	stationForm := func(r *http.Request) (name, destinationType, address, errKey string) {
+		_ = r.ParseForm()
+		name = strings.TrimSpace(r.PostFormValue("name"))
+		destinationType = strings.TrimSpace(r.PostFormValue("destination_type"))
+		address = strings.TrimSpace(r.PostFormValue("printer_address"))
+		if destinationType == "" {
+			destinationType = data.KitchenDestinationPrinter
+		}
+		switch {
+		case name == "":
+			errKey = "kitchenstations.error.required"
+		case !data.ValidKitchenDestinationType(destinationType):
+			errKey = "kitchenstations.error.destination_invalid"
+		case address == "" && (data.KitchenStation{DestinationType: destinationType}).PrintsTickets():
+			errKey = "kitchenstations.error.address_required"
+		}
+		return name, destinationType, address, errKey
+	}
+
 	mux.HandleFunc("POST /api/kitchen-stations", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := requireManager(w, r)
 		if !ok {
 			return
 		}
-		_ = r.ParseForm()
-		name := strings.TrimSpace(r.PostFormValue("name"))
-		address := strings.TrimSpace(r.PostFormValue("printer_address"))
-		if name == "" {
-			http.Redirect(w, r, "/kitchen-stations?err=kitchenstations.error.required", http.StatusSeeOther)
+		name, destinationType, address, errKey := stationForm(r)
+		if errKey != "" {
+			http.Redirect(w, r, "/kitchen-stations?err="+errKey, http.StatusSeeOther)
 			return
 		}
-		// A station with no address would silently swallow every line routed
-		// to it (code review, ut-docs#516): TransportForAddress("") returns a
-		// nil transport with no error, which reads as "unconfigured" further
-		// down the pipeline rather than failing loud here at creation time.
-		if address == "" {
-			http.Redirect(w, r, "/kitchen-stations?err=kitchenstations.error.address_required", http.StatusSeeOther)
-			return
-		}
-		id, err := posRepo.CreateKitchenStation(r.Context(), name, address)
+		id, err := posRepo.CreateKitchenStation(r.Context(), name, destinationType, address)
 		if err != nil {
 			http.Redirect(w, r, "/kitchen-stations?err=kitchenstations.error.create", http.StatusSeeOther)
 			return
@@ -231,18 +250,12 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		id := r.PathValue("id")
-		_ = r.ParseForm()
-		name := strings.TrimSpace(r.PostFormValue("name"))
-		address := strings.TrimSpace(r.PostFormValue("printer_address"))
-		if name == "" {
-			http.Redirect(w, r, "/kitchen-stations?err=kitchenstations.error.required", http.StatusSeeOther)
+		name, destinationType, address, errKey := stationForm(r)
+		if errKey != "" {
+			http.Redirect(w, r, "/kitchen-stations?err="+errKey, http.StatusSeeOther)
 			return
 		}
-		if address == "" {
-			http.Redirect(w, r, "/kitchen-stations?err=kitchenstations.error.address_required", http.StatusSeeOther)
-			return
-		}
-		if err := posRepo.UpdateKitchenStation(r.Context(), id, name, address); err != nil {
+		if err := posRepo.UpdateKitchenStation(r.Context(), id, name, destinationType, address); err != nil {
 			key := "kitchenstations.error.update"
 			if strings.Contains(err.Error(), "not found") {
 				key = "kitchenstations.error.not_found"

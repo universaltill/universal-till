@@ -44,7 +44,7 @@ func TestKitchenStationCRUD(t *testing.T) {
 	_, repo := openStationTestDB(t)
 	ctx := context.Background()
 
-	id, err := repo.CreateKitchenStation(ctx, "Grill", "192.168.1.60:9100")
+	id, err := repo.CreateKitchenStation(ctx, "Grill", KitchenDestinationPrinter, "192.168.1.60:9100")
 	if err != nil {
 		t.Fatalf("CreateKitchenStation: %v", err)
 	}
@@ -66,7 +66,8 @@ func TestKitchenStationCRUD(t *testing.T) {
 	if !s.Enabled {
 		t.Fatal("new station must be enabled")
 	}
-	// This slice only creates printer stations (display is ut-docs#544).
+	// Created as a printer station (display/both are covered in
+	// kitchen_display_repo_test.go, ut-docs#544).
 	if s.DestinationType != "printer" {
 		t.Fatalf("DestinationType = %q, want printer", s.DestinationType)
 	}
@@ -74,7 +75,7 @@ func TestKitchenStationCRUD(t *testing.T) {
 		t.Fatalf("timestamps must be set: %+v", s)
 	}
 
-	if err := repo.UpdateKitchenStation(ctx, id, "Char Grill", "/dev/usb/lp1"); err != nil {
+	if err := repo.UpdateKitchenStation(ctx, id, "Char Grill", KitchenDestinationPrinter, "/dev/usb/lp1"); err != nil {
 		t.Fatalf("UpdateKitchenStation: %v", err)
 	}
 	list, err = repo.ListKitchenStations(ctx)
@@ -104,7 +105,7 @@ func TestKitchenStationCRUD(t *testing.T) {
 func TestKitchenStationUpdate_NotFound(t *testing.T) {
 	_, repo := openStationTestDB(t)
 	ctx := context.Background()
-	if err := repo.UpdateKitchenStation(ctx, "nope", "X", ""); err == nil {
+	if err := repo.UpdateKitchenStation(ctx, "nope", "X", KitchenDestinationPrinter, ""); err == nil {
 		t.Fatal("UpdateKitchenStation on missing id must error")
 	}
 	if err := repo.SetKitchenStationEnabled(ctx, "nope", false); err == nil {
@@ -117,8 +118,8 @@ func TestSetItemStationRoutes_ReplaceAll(t *testing.T) {
 	seedStationCatalog(t, dbo)
 	ctx := context.Background()
 
-	grill, _ := repo.CreateKitchenStation(ctx, "Grill", "g:9100")
-	bar, _ := repo.CreateKitchenStation(ctx, "Bar", "b:9100")
+	grill, _ := repo.CreateKitchenStation(ctx, "Grill", KitchenDestinationPrinter, "g:9100")
+	bar, _ := repo.CreateKitchenStation(ctx, "Bar", KitchenDestinationPrinter, "b:9100")
 
 	if err := repo.SetItemStationRoutes(ctx, "itm-burger", []string{grill, bar}); err != nil {
 		t.Fatalf("SetItemStationRoutes: %v", err)
@@ -155,8 +156,8 @@ func TestSetCategoryStationRoutes_ReplaceAll(t *testing.T) {
 	seedStationCatalog(t, dbo)
 	ctx := context.Background()
 
-	grill, _ := repo.CreateKitchenStation(ctx, "Grill", "g:9100")
-	bar, _ := repo.CreateKitchenStation(ctx, "Bar", "b:9100")
+	grill, _ := repo.CreateKitchenStation(ctx, "Grill", KitchenDestinationPrinter, "g:9100")
+	bar, _ := repo.CreateKitchenStation(ctx, "Bar", KitchenDestinationPrinter, "b:9100")
 
 	if err := repo.SetCategoryStationRoutes(ctx, "cat-drinks", []string{grill, bar}); err != nil {
 		t.Fatalf("SetCategoryStationRoutes: %v", err)
@@ -206,8 +207,8 @@ func TestResolveKitchenStations_ItemOverridesCategory(t *testing.T) {
 	seedStationCatalog(t, dbo)
 	ctx := context.Background()
 
-	grill, _ := repo.CreateKitchenStation(ctx, "Grill", "g:9100")
-	bar, _ := repo.CreateKitchenStation(ctx, "Bar", "b:9100")
+	grill, _ := repo.CreateKitchenStation(ctx, "Grill", KitchenDestinationPrinter, "g:9100")
+	bar, _ := repo.CreateKitchenStation(ctx, "Bar", KitchenDestinationPrinter, "b:9100")
 
 	// Category rule: everything in Food goes to the Bar (deliberately odd,
 	// so the override is unambiguous).
@@ -234,7 +235,7 @@ func TestResolveKitchenStations_CategoryFallbackAndUnrouted(t *testing.T) {
 	seedStationCatalog(t, dbo)
 	ctx := context.Background()
 
-	bar, _ := repo.CreateKitchenStation(ctx, "Bar", "b:9100")
+	bar, _ := repo.CreateKitchenStation(ctx, "Bar", KitchenDestinationPrinter, "b:9100")
 	if err := repo.SetCategoryStationRoutes(ctx, "cat-drinks", []string{bar}); err != nil {
 		t.Fatal(err)
 	}
@@ -262,8 +263,8 @@ func TestResolveKitchenStations_MultiStationDuplication(t *testing.T) {
 	seedStationCatalog(t, dbo)
 	ctx := context.Background()
 
-	grill, _ := repo.CreateKitchenStation(ctx, "Grill", "g:9100")
-	bar, _ := repo.CreateKitchenStation(ctx, "Bar", "b:9100")
+	grill, _ := repo.CreateKitchenStation(ctx, "Grill", KitchenDestinationPrinter, "g:9100")
+	bar, _ := repo.CreateKitchenStation(ctx, "Bar", KitchenDestinationPrinter, "b:9100")
 	if err := repo.SetItemStationRoutes(ctx, "itm-burger", []string{grill, bar}); err != nil {
 		t.Fatal(err)
 	}
@@ -286,8 +287,8 @@ func TestResolveKitchenStations_DisabledItemOverrideDoesNotFallBackToCategory(t 
 	seedStationCatalog(t, dbo)
 	ctx := context.Background()
 
-	grill, _ := repo.CreateKitchenStation(ctx, "Grill", "g:9100")
-	bar, _ := repo.CreateKitchenStation(ctx, "Bar", "b:9100")
+	grill, _ := repo.CreateKitchenStation(ctx, "Grill", KitchenDestinationPrinter, "g:9100")
+	bar, _ := repo.CreateKitchenStation(ctx, "Bar", KitchenDestinationPrinter, "b:9100")
 	// itm-burger's category (Food) routes to Bar...
 	if err := repo.SetCategoryStationRoutes(ctx, "cat-food", []string{bar}); err != nil {
 		t.Fatal(err)
@@ -314,8 +315,8 @@ func TestResolveKitchenStations_EnabledOnly(t *testing.T) {
 	seedStationCatalog(t, dbo)
 	ctx := context.Background()
 
-	grill, _ := repo.CreateKitchenStation(ctx, "Grill", "g:9100")
-	bar, _ := repo.CreateKitchenStation(ctx, "Bar", "b:9100")
+	grill, _ := repo.CreateKitchenStation(ctx, "Grill", KitchenDestinationPrinter, "g:9100")
+	bar, _ := repo.CreateKitchenStation(ctx, "Bar", KitchenDestinationPrinter, "b:9100")
 	if err := repo.SetItemStationRoutes(ctx, "itm-burger", []string{grill, bar}); err != nil {
 		t.Fatal(err)
 	}
@@ -346,7 +347,7 @@ func TestListItemStationOverrides(t *testing.T) {
 	seedStationCatalog(t, dbo)
 	ctx := context.Background()
 
-	grill, _ := repo.CreateKitchenStation(ctx, "Grill", "g:9100")
+	grill, _ := repo.CreateKitchenStation(ctx, "Grill", KitchenDestinationPrinter, "g:9100")
 	if err := repo.SetItemStationRoutes(ctx, "itm-burger", []string{grill}); err != nil {
 		t.Fatal(err)
 	}
@@ -372,7 +373,7 @@ func TestAllCategoryStationRoutes(t *testing.T) {
 	seedStationCatalog(t, dbo)
 	ctx := context.Background()
 
-	bar, _ := repo.CreateKitchenStation(ctx, "Bar", "b:9100")
+	bar, _ := repo.CreateKitchenStation(ctx, "Bar", KitchenDestinationPrinter, "b:9100")
 	if err := repo.SetCategoryStationRoutes(ctx, "cat-drinks", []string{bar}); err != nil {
 		t.Fatal(err)
 	}

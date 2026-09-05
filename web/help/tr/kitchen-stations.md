@@ -3,20 +3,29 @@ id: kitchen-stations
 title: Mutfak istasyonları
 section: İşi yürütme
 order: 235
-summary: "Her yiyecek kategorisini — veya tek bir ürünü — kendi mutfak yazıcısına yönlendirin; ızgara siparişi ızgarada, içecek siparişi barda yazdırılsın."
-routes: [/kitchen-stations]
+summary: "Her yiyecek kategorisini — veya tek bir ürünü — kendi mutfak yazıcısına veya mutfak ekranına yönlendirin; ızgara siparişi ızgarada, içecek siparişi barda yazdırılsın."
+routes: [/kitchen-stations, /kitchen-display/{station_id}]
 ---
 
 # Mutfak istasyonları
 
-Her yiyecek kategorisini — veya tek bir ürünü — kendi mutfak yazıcısına yönlendirin; ızgara siparişi ızgarada, içecek siparişi barda yazdırılsın.
+Her yiyecek kategorisini — veya tek bir ürünü — kendi mutfak yazıcısına veya mutfak ekranına yönlendirin; ızgara siparişi ızgarada, içecek siparişi barda yazdırılsın.
 
 ## Nasıl kullanılır
 
-1. Menüden **Mutfak istasyonları**nı açın (yalnızca yönetici) ve yemeğin hazırlandığı her yer için bir istasyon oluşturun — örneğin "Izgara" veya "Bar" — yazıcısının ağ adresi veya aygıt yoluyla. Yazıcı bu ağda zaten varsa önce **Bu ağda yazıcı bul**'a tıklayın — bulduklarını listeler, böylece adresi elle yazmak yerine birini seçebilirsiniz; siz istasyonu kaydetmeden hiçbir şey eklenmez.
+1. Menüden **Mutfak istasyonları**nı açın (yalnızca yönetici) ve yemeğin hazırlandığı her yer için bir istasyon oluşturun — örneğin "Izgara" veya "Bar". **Hedef**ini seçin: **Yazıcı** (bir fiş), **Ekran** (bir mutfak ekranı — aşağıya bakın) veya **Yazıcı ve ekran**. Yazdıran bir istasyonun yazıcısının ağ adresi veya aygıt yolu gerekir; yalnızca ekran olan istasyona gerekmez. Yazıcı bu ağda zaten varsa önce **Bu ağda yazıcı bul**'a tıklayın — bulduklarını listeler, böylece adresi elle yazmak yerine birini seçebilirsiniz; siz istasyonu kaydetmeden hiçbir şey eklenmez.
 2. **Kategori yönlendirme** bölümünde her kategorinin ürünlerinin yazdırılacağı istasyonları işaretleyin. Yönlendirmenin ana yolu budur — tek işaret kategorideki tüm ürünleri kapsar.
 3. Farklı bir yere gitmesi gereken tek tük ürün için **Ürün istisnaları** altında ürünü arayıp istasyonlarını işaretleyin. Ürün istisnası yalnızca o ürün için kategori kuralının yerine geçer.
-4. Satış tamamlandığında her istasyon yalnızca kendi satırlarını içeren kendi fişini yazdırır. İki istasyona yönlendirilen ürün ikisinde de yazdırılır. Hiçbir yere yönlendirilmeyen her şey, eskisi gibi Ayarlar'daki varsayılan mutfak yazıcısında yazdırılır.
+4. Satış tamamlandığında yazdıran her istasyon yalnızca kendi satırlarını içeren kendi fişini yazdırır. İki istasyona yönlendirilen ürün ikisinde de yazdırılır. Hiçbir yere yönlendirilmeyen her şey — tek istasyonu yalnızca ekran olan bir ürün dahil — eskisi gibi Ayarlar'daki varsayılan mutfak yazıcısında yazdırılır.
+
+## Mutfak ekranı (fiş yerine veya fişin yanında bir ekran)
+
+Hedefi **Ekran** veya **Yazıcı ve ekran** olan istasyonun kendi canlı sipariş ekranı vardır. İstasyonun yanındaki **Ekranı görüntüle**'ye tıklayarak açın, sonra o pencereyi bu kasaya bağlı ikinci monitöre taşıyın — bu kasadaki bir sayfadır, eşleştirme ya da ağ gerekmez.
+
+- Ekran, en az bir ürünü bu istasyona yönlendirilmiş siparişleri en yeniden başlayarak listeler; Siparişler sayfasındaki aynı tek dokunuşlu **Hazırlanıyor** / **Hazır** / **Teslim alındı** düğmeleriyle. Birkaç saniyede bir ve herhangi bir siparişin durumu değiştiği anda kendini yeniler.
+- Durum her ürüne değil, siparişin tamamına aittir: iki istasyon için ürün içeren bir sipariş iki ekranda da görünür; birinde Hazır veya Teslim alındı işaretlemek ikisini de günceller.
+- Ekran bu kasada alınan siparişleri gösterir. Birden çok bağlı kasası olan bir dükkânda, başka bir kasada alınan siparişler bu kasaya eşitlendikten sonra bu ekranda görünür — bu kasanın kendi Siparişler sayfasının ana kasaya ulaşamadığında gösterdiğinin aynısı.
+- Devre dışı bırakılan istasyonun ekranı siz yeniden etkinleştirene kadar çalışmaz; yalnızca yazıcı olan istasyonun ekranı yoktur.
 
 ## Bilmekte fayda var
 

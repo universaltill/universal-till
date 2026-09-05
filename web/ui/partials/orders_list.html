@@ -5,10 +5,14 @@
      dispatched on body by orders.html's EventSource listener on every
      order-status SSE event — an immediate re-load of this same fragment
      instead of waiting for the next tick. Both triggers live on this one
-     element for the same swap-replaces-the-trigger reason. */}}
-<div id="orders" hx-get="/ui/orders" hx-trigger="every 15s, orders-push from:body" hx-target="this" hx-swap="outerHTML">
+     element for the same swap-replaces-the-trigger reason.
+     Shared with the per-station kitchen display (ut-docs#544): the caller
+     passes FragmentURL (its own re-fetch URL — /ui/orders, or
+     /ui/kitchen-display/{station_id}) and EmptyKey (its own empty-state
+     text); the rows, buttons and warnings are identical on both boards. */}}
+<div id="orders" hx-get="{{ .FragmentURL }}" hx-trigger="every 15s, orders-push from:body" hx-target="this" hx-swap="outerHTML">
   {{ if not .Orders }}
-  <p class="muted">{{ T "orders.empty" }}</p>
+  <p class="muted">{{ T .EmptyKey }}</p>
   {{ else }}
   <table class="table">
     <thead>

@@ -1,8 +1,9 @@
 package data
 
 // Kitchen station routing (universaltill/ut-docs#516): named prep stations
-// ("Grill", "Bar") each with their own printer, plus the routing rules that
-// decide which station(s) a sold item's kitchen ticket line goes to.
+// ("Grill", "Bar") each with their own printer and/or kitchen screen
+// (ut-docs#544), plus the routing rules that decide which station(s) a
+// sold item's kitchen ticket line — or on-screen order — goes to.
 //
 // Precedence lives in ONE place — ResolveKitchenStations — so no routing
 // logic leaks into internal/pages: item_station_routes rows OVERRIDE
@@ -14,6 +15,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -21,9 +23,40 @@ import (
 	"github.com/google/uuid"
 )
 
+// Kitchen station destination types (kitchen_stations.destination_type, a
+// CHECK-constrained vocabulary in 001_init.sql). 'printer' prints a ticket
+// (ut-docs#516); 'display' shows the station's orders on a kitchen screen
+// (/kitchen-display/{id}, ut-docs#544); 'both' does both — added in #544
+// because #516's review flagged that the original two-value CHECK couldn't
+// represent a station that prints AND shows (the common "grill has a
+// screen for the cooks and a ticket for the pass" setup).
+const (
+	KitchenDestinationPrinter = "printer"
+	KitchenDestinationDisplay = "display"
+	KitchenDestinationBoth    = "both"
+)
+
+// ValidKitchenDestinationType reports whether t is one of the three
+// destination types — exact match, no trimming/case-folding: the value
+// comes from a fixed <select>, so anything else is a bug or tampering.
+func ValidKitchenDestinationType(t string) bool {
+	switch t {
+	case KitchenDestinationPrinter, KitchenDestinationDisplay, KitchenDestinationBoth:
+		return true
+	}
+	return false
+}
+
+func validateKitchenDestinationType(t string) error {
+	if !ValidKitchenDestinationType(t) {
+		return fmt.Errorf("kitchen station: invalid destination type %q (want printer, display or both)", t)
+	}
+	return nil
+}
+
 // KitchenStation is one prep station tickets can route to. DestinationType
-// is 'printer' for everything this slice creates; 'display' is admitted by
-// the schema for the Kitchen Display slice (ut-docs#544) but has no UI yet.
+// is one of the KitchenDestination* constants; PrinterAddress is meaningful
+// only when PrintsTickets() (a display-only station legitimately has none).
 type KitchenStation struct {
 	ID              string
 	Name            string
@@ -32,6 +65,19 @@ type KitchenStation struct {
 	Enabled         bool
 	CreatedAt       string
 	UpdatedAt       string
+}
+
+// PrintsTickets reports whether the station is a print destination
+// ('printer' or 'both') — the kitchen_print.go filter (ut-docs#544).
+func (s KitchenStation) PrintsTickets() bool {
+	return s.DestinationType == KitchenDestinationPrinter || s.DestinationType == KitchenDestinationBoth
+}
+
+// ShowsOnDisplay reports whether the station has a kitchen screen
+// ('display' or 'both') — gates /kitchen-display/{id} and the admin page's
+// "View display" link (ut-docs#544).
+func (s KitchenStation) ShowsOnDisplay() bool {
+	return s.DestinationType == KitchenDestinationDisplay || s.DestinationType == KitchenDestinationBoth
 }
 
 // ItemStationOverride is one item that carries item-level routes, as the
@@ -70,26 +116,54 @@ FROM kitchen_stations ORDER BY name`)
 	return out, nil
 }
 
-// CreateKitchenStation adds a new, enabled 'printer' station. This slice
-// only creates printer stations — the 'display' destination is ut-docs#544.
-func (r *POSRepo) CreateKitchenStation(ctx context.Context, name, printerAddress string) (string, error) {
+// GetKitchenStation loads one station by id. ok=false with a nil error
+// means no such station.
+func (r *POSRepo) GetKitchenStation(ctx context.Context, id string) (KitchenStation, bool, error) {
+	var s KitchenStation
+	var enabled int
+	err := r.db.QueryRowContext(ctx, `
+SELECT id, name, destination_type, COALESCE(printer_address, ''), enabled, created_at, updated_at
+FROM kitchen_stations WHERE id = ?`, id).Scan(&s.ID, &s.Name, &s.DestinationType, &s.PrinterAddress, &enabled, &s.CreatedAt, &s.UpdatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return KitchenStation{}, false, nil
+	}
+	if err != nil {
+		return KitchenStation{}, false, fmt.Errorf("get kitchen station: %w", err)
+	}
+	s.Enabled = enabled == 1
+	return s, true, nil
+}
+
+// CreateKitchenStation adds a new, enabled station of the given destination
+// type (validated against the KitchenDestination* vocabulary before any
+// write — the schema CHECK is the backstop, not the error message).
+// Whether printerAddress is required is the caller's (form's) rule: it
+// depends on the type, and the repo stays a plain persistence layer.
+func (r *POSRepo) CreateKitchenStation(ctx context.Context, name, destinationType, printerAddress string) (string, error) {
+	if err := validateKitchenDestinationType(destinationType); err != nil {
+		return "", fmt.Errorf("create kitchen station: %w", err)
+	}
 	id := uuid.NewString()
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := r.db.ExecContext(ctx, `
 INSERT INTO kitchen_stations (id, name, destination_type, printer_address, enabled, created_at, updated_at)
-VALUES (?, ?, 'printer', ?, 1, ?, ?)`, id, name, printerAddress, now, now); err != nil {
+VALUES (?, ?, ?, ?, 1, ?, ?)`, id, name, destinationType, printerAddress, now, now); err != nil {
 		return "", fmt.Errorf("create kitchen station: %w", err)
 	}
 	return id, nil
 }
 
-// UpdateKitchenStation changes a station's display name and printer address;
-// the id (and every routing row keyed by it) is unaffected.
-func (r *POSRepo) UpdateKitchenStation(ctx context.Context, id, name, printerAddress string) error {
+// UpdateKitchenStation changes a station's display name, destination type
+// and printer address; the id (and every routing row keyed by it) is
+// unaffected. An invalid destination type is rejected before any write.
+func (r *POSRepo) UpdateKitchenStation(ctx context.Context, id, name, destinationType, printerAddress string) error {
+	if err := validateKitchenDestinationType(destinationType); err != nil {
+		return fmt.Errorf("update kitchen station: %w", err)
+	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := r.db.ExecContext(ctx, `
-UPDATE kitchen_stations SET name = ?, printer_address = ?, updated_at = ? WHERE id = ?`,
-		name, printerAddress, now, id)
+UPDATE kitchen_stations SET name = ?, destination_type = ?, printer_address = ?, updated_at = ? WHERE id = ?`,
+		name, destinationType, printerAddress, now, id)
 	if err != nil {
 		return fmt.Errorf("update kitchen station: %w", err)
 	}
@@ -97,6 +171,80 @@ UPDATE kitchen_stations SET name = ?, printer_address = ?, updated_at = ? WHERE 
 		return fmt.Errorf("update kitchen station: %s not found", id)
 	}
 	return nil
+}
+
+// ListRecentOrdersForStation is the station-scoped twin of ListRecentOrders
+// (order_status_repo.go) for a kitchen display (ut-docs#544): the same row
+// shape, the same completed/non-terminal filter, the same newest-first
+// order and cap — restricted to sales with at least one line whose item
+// ROUTES TO stationID.
+//
+// "Routes to" must mean exactly what ResolveKitchenStations means, or a
+// ticket and a screen would disagree about the same order. That precedence
+// is re-stated here in SQL rather than by calling ResolveKitchenStations per
+// order (which would be N+1 over the whole open queue on every 15s poll):
+//
+//   - the station must be enabled (a disabled station routes nothing —
+//     ResolveKitchenStations' enabled filter);
+//   - a line's item matches if it has an item_station_routes row for THIS
+//     station; OR it has NO item_station_routes rows at all AND its
+//     category has a category_station_routes row for this station. Item
+//     rows CLAIM the tier by existence, whatever station they point at —
+//     an item overridden to some other station never falls back to its
+//     category rule (TestListRecentOrdersForStation_ItemRowsClaimTierEvenWhenTheyMissThisStation
+//     mirrors ResolveKitchenStations' disabled-override test);
+//   - a variant-only line (item_id NULL) never matches — the same
+//     limitation buildKitchenTargets has, not a new one.
+//
+// EXISTS (not JOIN) so an order with several lines routed here is listed
+// once, and the outer query stays a plain scan of `sales` with the same
+// shape as ListRecentOrders. Order status is per ORDER, not per line: an
+// order whose lines split across two display stations is listed on both,
+// and advancing it on either clears it from both — matches every other
+// board's granularity today.
+func (r *POSRepo) ListRecentOrdersForStation(ctx context.Context, stationID string, limit int) ([]OrderListEntry, error) {
+	if limit <= 0 {
+		limit = 50
+	}
+	rows, err := r.db.QueryContext(ctx, `
+SELECT s.receipt_no, COALESCE(s.order_type, ''), s.order_status, COALESCE(s.order_status_updated_at, ''), s.created_at,
+       COALESCE(s.kitchen_print_failed_at, ''), COALESCE(s.receipt_print_failed_at, '')
+FROM sales s
+WHERE s.sale_type = 'sale' AND s.status = 'completed'
+  AND s.order_status NOT IN ('collected', 'cancelled')
+  AND EXISTS (SELECT 1 FROM kitchen_stations ks WHERE ks.id = ?1 AND ks.enabled = 1)
+  AND EXISTS (
+    SELECT 1
+    FROM sale_lines l
+    JOIN items i ON i.id = l.item_id
+    WHERE l.sale_id = s.id
+      AND (
+        EXISTS (SELECT 1 FROM item_station_routes ir WHERE ir.item_id = i.id AND ir.station_id = ?1)
+        OR (
+          NOT EXISTS (SELECT 1 FROM item_station_routes ir2 WHERE ir2.item_id = i.id)
+          AND EXISTS (SELECT 1 FROM category_station_routes cr WHERE cr.category_id = i.category_id AND cr.station_id = ?1)
+        )
+      )
+  )
+ORDER BY s.created_at DESC
+LIMIT ?2
+`, stationID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list recent orders for station: %w", err)
+	}
+	defer rows.Close()
+	var out []OrderListEntry
+	for rows.Next() {
+		var e OrderListEntry
+		if err := rows.Scan(&e.ReceiptNo, &e.OrderType, &e.Status, &e.StatusUpdatedAt, &e.CreatedAt, &e.KitchenPrintFailedAt, &e.ReceiptPrintFailedAt); err != nil {
+			return nil, fmt.Errorf("scan recent order for station: %w", err)
+		}
+		out = append(out, e)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list recent orders for station: %w", err)
+	}
+	return out, nil
 }
 
 // SetKitchenStationEnabled soft-disables/re-enables a station, mirroring

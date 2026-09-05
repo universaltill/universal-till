@@ -703,7 +703,7 @@ CREATE INDEX idx_order_status_events_receipt ON order_status_events(receipt_no, 
 CREATE TABLE kitchen_stations (
     id               TEXT PRIMARY KEY,
     name             TEXT NOT NULL,
-    destination_type TEXT NOT NULL DEFAULT 'printer' CHECK (destination_type IN ('printer','display')),
+    destination_type TEXT NOT NULL DEFAULT 'printer' CHECK (destination_type IN ('printer','display','both')),
     printer_address  TEXT,
     enabled          INTEGER NOT NULL DEFAULT 1,
     created_at       TEXT NOT NULL,

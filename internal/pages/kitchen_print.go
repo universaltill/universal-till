@@ -191,9 +191,12 @@ type kitchenSendFailure struct {
 //     to the pre-#516 single ticket.
 //
 // Station tickets come first (sorted by name, deterministic), the default
-// bucket last. Only 'printer' stations receive tickets this slice
-// ('display' is ut-docs#544); a line whose every resolved station is
-// non-printer joins the default bucket rather than silently vanishing.
+// bucket last. Only stations that print (destination 'printer' or 'both' —
+// data.KitchenStation.PrintsTickets) receive tickets; a 'display'-only
+// station (ut-docs#544) shows its orders on a kitchen screen instead, so a
+// line whose every resolved station is display-only joins the default
+// bucket rather than silently vanishing — exactly as it did before the
+// display type had a UI.
 func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo string) ([]kitchenTarget, error) {
 	repo := data.NewPOSRepo(d.Db)
 	detail, ok, err := repo.GetSaleDetail(ctx, receiptNo)
@@ -226,8 +229,8 @@ func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo string) 
 	for _, l := range detail.Lines {
 		routed := false
 		for _, s := range routes[l.ItemID] {
-			if s.DestinationType != "printer" {
-				continue // display stations are ut-docs#544
+			if !s.PrintsTickets() {
+				continue // display-only station: on-screen, never a ticket (ut-docs#544)
 			}
 			// A station with no configured address can't be sent to — fall
 			// back to the default bucket instead of silently dropping the
@@ -366,7 +369,7 @@ func kitchenPrintingEnabledChecked(ctx context.Context, d *common.Deps) (bool, e
 		return false, err
 	}
 	for _, s := range stations {
-		if s.Enabled && s.DestinationType == "printer" && strings.TrimSpace(s.PrinterAddress) != "" {
+		if s.Enabled && s.PrintsTickets() && strings.TrimSpace(s.PrinterAddress) != "" {
 			return true, nil
 		}
 	}

@@ -655,7 +655,7 @@ func TestCleanupObsoleteItems_ItemWithKitchenStationRouteCascades(t *testing.T) 
 	x(`INSERT INTO items (id, name, base_price, is_active) VALUES ('obs2','Old Grill Item',100,0)`)
 
 	repo := data.NewPOSRepo(d.DB)
-	stationID, err := repo.CreateKitchenStation(context.Background(), "Grill", "g:9100")
+	stationID, err := repo.CreateKitchenStation(context.Background(), "Grill", data.KitchenDestinationPrinter, "g:9100")
 	if err != nil {
 		t.Fatalf("CreateKitchenStation: %v", err)
 	}

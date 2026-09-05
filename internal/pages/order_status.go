@@ -380,6 +380,67 @@ func streamOrderStatus(w http.ResponseWriter, r *http.Request, d *common.Deps) {
 	}
 }
 
+// orderRow is one rendered row of ui/partials/orders_list.html — shared by
+// the shop-wide /ui/orders board and the per-station /ui/kitchen-display
+// fragment (ut-docs#544), so the two can never drift in shape.
+type orderRow struct {
+	ReceiptNo       string
+	OrderType       string
+	StatusKey       string
+	Status          string
+	StatusUpdatedAt string
+	CreatedAt       string
+	// ut-docs#517a: latest kitchen/receipt print attempt failed —
+	// surfaced as an inline warning next to the status.
+	KitchenPrintFailed bool
+	ReceiptPrintFailed bool
+	// ut-docs#1350 review round 2: a row sourced from the PRIMARY's
+	// board may name a receipt this till's own DB has never heard of
+	// (sales only ever journal replica→primary, never back down) —
+	// linking it to /journal/{receipt_no} would 404. This is
+	// checked PER ROW, not assumed false for the whole primary-
+	// sourced batch: a replica's OWN sale journals to the primary
+	// too, so once it's landed there, a row for a sale THIS till
+	// actually took is both primary-sourced AND locally resolvable
+	// — a blanket "primary-sourced ⇒ no link" would wrongly kill a
+	// working link on the till's own orders every time the primary
+	// is reachable (caught by review: the help docs would then be
+	// describing behavior the code didn't actually have).
+	JournalLinkable bool
+}
+
+// orderRowsFor maps repo entries to rendered rows. fromPrimary=true runs the
+// per-row local-existence check described on orderRow.JournalLinkable;
+// entries read from this till's own DB are always linkable.
+func orderRowsFor(ctx context.Context, repo *data.POSRepo, entries []data.OrderListEntry, fromPrimary bool) []orderRow {
+	rows := make([]orderRow, 0, len(entries))
+	for _, e := range entries {
+		linkable := true
+		if fromPrimary {
+			// Bounded to the page's own 50-row cap; a local existence
+			// check per row is a handful of sub-millisecond embedded-
+			// SQLite lookups on a 15s poll, not a hot path.
+			var err error
+			linkable, err = repo.ReceiptExists(ctx, e.ReceiptNo)
+			if err != nil {
+				linkable = false // fail closed to "no link", never a 404
+			}
+		}
+		rows = append(rows, orderRow{
+			ReceiptNo:          e.ReceiptNo,
+			OrderType:          e.OrderType,
+			StatusKey:          orderStatusLabelKey(e.Status),
+			Status:             e.Status,
+			StatusUpdatedAt:    e.StatusUpdatedAt,
+			CreatedAt:          e.CreatedAt,
+			KitchenPrintFailed: e.KitchenPrintFailedAt != "",
+			ReceiptPrintFailed: e.ReceiptPrintFailedAt != "",
+			JournalLinkable:    linkable,
+		})
+	}
+	return rows
+}
+
 func registerOrderStatus(mux *http.ServeMux, d *common.Deps) {
 	// Minimal recent-orders page: list + one-tap buttons, loaded as a
 	// fragment so a tap can swap just the row's status cell.
@@ -417,58 +478,12 @@ func registerOrderStatus(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
-		type orderRow struct {
-			ReceiptNo       string
-			OrderType       string
-			StatusKey       string
-			Status          string
-			StatusUpdatedAt string
-			CreatedAt       string
-			// ut-docs#517a: latest kitchen/receipt print attempt failed —
-			// surfaced as an inline warning next to the status.
-			KitchenPrintFailed bool
-			ReceiptPrintFailed bool
-			// ut-docs#1350 review round 2: a row sourced from the PRIMARY's
-			// board may name a receipt this till's own DB has never heard of
-			// (sales only ever journal replica→primary, never back down) —
-			// linking it to /journal/{receipt_no} would 404. This is
-			// checked PER ROW, not assumed false for the whole primary-
-			// sourced batch: a replica's OWN sale journals to the primary
-			// too, so once it's landed there, a row for a sale THIS till
-			// actually took is both primary-sourced AND locally resolvable
-			// — a blanket "primary-sourced ⇒ no link" would wrongly kill a
-			// working link on the till's own orders every time the primary
-			// is reachable (caught by review: the help docs would then be
-			// describing behavior the code didn't actually have).
-			JournalLinkable bool
-		}
-		repo := data.NewPOSRepo(d.Db)
-		rows := make([]orderRow, 0, len(entries))
-		for _, e := range entries {
-			linkable := true
-			if fromPrimary {
-				// Bounded to the page's own 50-row cap; a local existence
-				// check per row is a handful of sub-millisecond embedded-
-				// SQLite lookups on a 15s poll, not a hot path.
-				var err error
-				linkable, err = repo.ReceiptExists(r.Context(), e.ReceiptNo)
-				if err != nil {
-					linkable = false // fail closed to "no link", never a 404
-				}
-			}
-			rows = append(rows, orderRow{
-				ReceiptNo:          e.ReceiptNo,
-				OrderType:          e.OrderType,
-				StatusKey:          orderStatusLabelKey(e.Status),
-				Status:             e.Status,
-				StatusUpdatedAt:    e.StatusUpdatedAt,
-				CreatedAt:          e.CreatedAt,
-				KitchenPrintFailed: e.KitchenPrintFailedAt != "",
-				ReceiptPrintFailed: e.ReceiptPrintFailedAt != "",
-				JournalLinkable:    linkable,
-			})
-		}
-		httpx.RenderPartial("ui/partials/orders_list.html", map[string]any{"Orders": rows})(w, r)
+		rows := orderRowsFor(r.Context(), data.NewPOSRepo(d.Db), entries, fromPrimary)
+		httpx.RenderPartial("ui/partials/orders_list.html", map[string]any{
+			"Orders":      rows,
+			"FragmentURL": "/ui/orders",
+			"EmptyKey":    "orders.empty",
+		})(w, r)
 	})
 
 	// One-tap status change. Any operator may fire it (same reasoning as
