@@ -67,6 +67,24 @@ func SweepPrinters(ctx context.Context, skip map[string]bool) ([]PrinterCandidat
 // paper merely by being found. That property is what lets DiscoverPrinters
 // start this phase before it knows which devices to exclude — the exclusion
 // list only has to exist before phase 2, which is the part that writes.
+//
+// A host whose ARP entry is cold gets one retry, after the rest of the
+// subnet has been dialled once (ut-docs#1608). escposDialTimeout budgets
+// 700ms per host, and for a host with no ARP entry that has to cover ARP
+// resolution as well as the TCP handshake — the sweep's own 253 simultaneous
+// dials flood the ARP queue, so the one host that matters can lose that race
+// even though it is genuinely online. This is worst on a till's first boot,
+// when every host on the LAN is cold. By the time the first pass has
+// finished, every host it dialled (including the miss) has an ARP entry, so
+// a retry no longer races the whole subnet for THAT host.
+//
+// This is not a cheap, narrow retry in the common case, and callers of
+// SweepPrinters must budget for that (see discoverPrintersTimeout in
+// internal/pages): on a typical shop LAN almost every one of the ~253
+// addresses has no device at all, and an address with no host behind it
+// times out the same way whether or not its ARP entry was ever going to
+// resolve — so `missed` is usually close to the whole subnet, and this is
+// a second near-full sweep, not a handful of retries.
 func sweepListeners(ctx context.Context, skip map[string]bool) ([]string, error) {
 	if err := ctx.Err(); err != nil {
 		return nil, err
@@ -77,6 +95,7 @@ func sweepListeners(ctx context.Context, skip map[string]bool) ([]string, error)
 	}
 
 	listeners := make([]string, 0, 8)
+	var missed []string
 	var mu sync.Mutex
 	forEachBounded(ctx, hosts, func(h string) {
 		addr := net.JoinHostPort(h, strconv.Itoa(RawPrintPort))
@@ -84,12 +103,39 @@ func sweepListeners(ctx context.Context, skip map[string]bool) ([]string, error)
 			return
 		}
 		if !Listens(ctx, addr, escposDialTimeout) {
+			mu.Lock()
+			missed = append(missed, addr)
+			mu.Unlock()
 			return
 		}
 		mu.Lock()
 		listeners = append(listeners, addr)
 		mu.Unlock()
 	})
+
+	// ctx.Err() is checked again here (as well as inside forEachBounded, which
+	// governs the dials themselves) so a subnet-full of misses against an
+	// already-expired context doesn't spin up one abandoned goroutine per
+	// miss for no reason.
+	if len(missed) > 0 && ctx.Err() == nil {
+		forEachBounded(ctx, missed, func(addr string) {
+			// missed is built entirely from addresses that already passed
+			// the skip check above, so this is defensive, not load-bearing —
+			// but skip is a security-scoped exclusion list (an excluded
+			// device must never be dialled at all, not even read-only), so
+			// re-checking costs nothing and keeps that guarantee explicit
+			// here too, not just implied by where missed is populated.
+			if skip[addr] {
+				return
+			}
+			if !Listens(ctx, addr, escposDialTimeout) {
+				return
+			}
+			mu.Lock()
+			listeners = append(listeners, addr)
+			mu.Unlock()
+		})
+	}
 	return listeners, nil
 }
 

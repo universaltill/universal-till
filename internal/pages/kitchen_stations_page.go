@@ -20,18 +20,28 @@ import (
 // shape as discoverBrowseTimeout in discovery_api.go.
 //
 // Longer than the 4s a pure mDNS browse needed (ut-docs#1606), because the
-// scan now also sweeps the till's own subnet. The budget it has to cover:
-// an mDNS browse (a third of this) running concurrently with a connect-only
-// pass over a /24 — 254 addresses at discovery.sweepConcurrency 64 in flight
-// and a 700ms dial budget, so about 2.8s — and then an ESC/POS probe of
-// whatever was found listening, which waits up to escposReadTimeout (3s)
-// because cheap embedded printers connect fast and answer slowly.
+// scan now also sweeps the till's own subnet, and longer again since
+// ut-docs#1608 added a retry pass over whatever phase 1 misses (a printer
+// whose ARP entry is cold — worst case, right after boot, every host's
+// entry is cold — can lose the race between ARP resolution and the 700ms
+// dial budget on the first pass; the retry runs once the miss's own attempt
+// has warmed its ARP entry). The budget has to cover, in sequence: an mDNS
+// browse (a third of this) running concurrently with phase 1's connect-only
+// pass over a /24 — 254 addresses at discovery.sweepConcurrency 64 in
+// flight and a 700ms dial budget, so ~2.8s, doubled to ~5.6s worst case by
+// the retry pass (on a typical LAN almost every address that isn't a real
+// device "misses" too, so the retry is a second near-full sweep, not a
+// targeted one) — then an ESC/POS probe of whatever was found listening
+// (up to escposReadTimeout, 3s, since cheap embedded printers connect fast
+// and answer slowly), then the same probe again for whatever mDNS browsed
+// that the sweep didn't already verify. Worst case: ~5.6s + ~3.7s + ~3.7s
+// ≈ 13s.
 //
 // Cutting the scan short does not fail loudly; it silently returns fewer
 // printers, which is exactly the "my printer isn't in the list" bug this card
 // exists to fix. So the budget leaves real headroom rather than finishing
 // just barely.
-const discoverPrintersTimeout = 12 * time.Second
+const discoverPrintersTimeout = 20 * time.Second
 
 // discoveryBrowsePrinters is a package var over discovery.DiscoverPrinters,
 // same seam-for-testability pattern as discoveryBrowse in discovery_api.go
