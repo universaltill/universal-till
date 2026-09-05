@@ -746,3 +746,26 @@ func TestPrintKitchen_ShopStationNamedKitchenStaysUntranslated(t *testing.T) {
 		t.Error("a real routed shop station must never be flagged isDefault")
 	}
 }
+
+// ut-docs#1533 (residual gap left by #1153): buildKitchenTargets reads
+// printer settings via the unchecked printerConfig, discarding a genuine
+// settings-read error and silently falling back to defaults instead of
+// surfacing it — unlike its neighbouring GetSaleDetail/ResolveKitchenStations
+// errors just above it, which already propagate normally. Dropping the
+// settings table (not just leaving a key unset) forces a genuine read
+// error, the same technique #1153's own tests used; buildKitchenTargets
+// must now return it instead of quietly building a ticket off defaulted
+// config.
+func TestBuildKitchenTargets_SurfacesSettingsReadError(t *testing.T) {
+	dp, dbase := kitchenRoutingDeps(t)
+	ctx := context.Background()
+	seedKitchenSale(t, dbase, "R-1533", "itm-steak")
+
+	if _, err := dbase.DB.Exec(`DROP TABLE settings`); err != nil {
+		t.Fatalf("drop settings table: %v", err)
+	}
+
+	if _, err := buildKitchenTargets(ctx, dp, "R-1533"); err == nil {
+		t.Fatal("expected buildKitchenTargets to surface the settings read error, got nil")
+	}
+}
