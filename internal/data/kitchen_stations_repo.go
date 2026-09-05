@@ -201,6 +201,26 @@ UPDATE kitchen_stations SET name = ?, destination_type = ?, destination_both = ?
 	return nil
 }
 
+// SetKitchenStationPrinterAddress changes only a station's printer address.
+// This column is deliberately till-local and skipped by shop-wide admin
+// sync (sync_admin_repo.go's adminTables skipCols, ut-docs#1546) — a
+// satellite legitimately sets its own value here even though the rest of
+// the row (name, destination type) is primary-owned (ut-docs#1585). Same
+// not-found handling as UpdateKitchenStation.
+func (r *POSRepo) SetKitchenStationPrinterAddress(ctx context.Context, id, printerAddress string) error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := r.db.ExecContext(ctx, `
+UPDATE kitchen_stations SET printer_address = ?, updated_at = ? WHERE id = ?`,
+		printerAddress, now, id)
+	if err != nil {
+		return fmt.Errorf("set kitchen station printer address: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return fmt.Errorf("set kitchen station printer address: %s not found", id)
+	}
+	return nil
+}
+
 // ListRecentOrdersForStation is the station-scoped twin of ListRecentOrders
 // (order_status_repo.go) for a kitchen display (ut-docs#544): the same row
 // shape, the same completed/non-terminal filter, the same newest-first

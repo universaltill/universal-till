@@ -87,6 +87,23 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 		return u, true
 	}
 
+	// requirePrimary gates every mutation (create/update/position/active)
+	// on this till being the primary (ut-docs#1585). tables syncs shop-wide
+	// as an admin table (adminTables, ut-docs#1546) via a one-way
+	// primary-wins pull, so a write accepted on a satellite would silently
+	// vanish (a new table deleted, an edit reverted) on the very next admin
+	// pull -- refuse it up front instead, with a clear localized message,
+	// same pattern as registers_page.go's requirePrimary (ut-docs#1590).
+	// The redirect-based routes below use this; the JS-driven position
+	// endpoint answers with a status code instead (see below).
+	requirePrimary := func(w http.ResponseWriter, r *http.Request) bool {
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			http.Redirect(w, r, "/tables?err=tables.error.replica_use_primary", http.StatusSeeOther)
+			return false
+		}
+		return true
+	}
+
 	audit := func(r *http.Request, actorID, targetID, action string) {
 		now := time.Now().UTC().Format(time.RFC3339)
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "table", targetID, action, nil, now, "")
@@ -191,6 +208,9 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 		if !ok {
 			return
 		}
+		if !requirePrimary(w, r) {
+			return
+		}
 		label, zone, shape, seats, errKey := parseTableForm(r)
 		if errKey != "" {
 			http.Redirect(w, r, "/tables?err="+errKey, http.StatusSeeOther)
@@ -223,6 +243,9 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 		if !ok {
 			return
 		}
+		if !requirePrimary(w, r) {
+			return
+		}
 		id := r.PathValue("id")
 		label, zone, shape, seats, errKey := parseTableForm(r)
 		if errKey != "" {
@@ -249,6 +272,15 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 		if !ok {
 			return
 		}
+		// A JS fetch caller, not a redirect target -- answers with a status
+		// code like every other failure on this route (ut-docs#1585). 409
+		// Conflict, same code plugins_store_page.go's replica gate uses, so
+		// the client can tell "you're on a replica" apart from a generic
+		// failure (persistPosition in tables.html's own <script>).
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			http.Error(w, "replica", http.StatusConflict)
+			return
+		}
 		id := r.PathValue("id")
 		_ = r.ParseForm()
 		x, errX := strconv.Atoi(strings.TrimSpace(r.PostFormValue("pos_x")))
@@ -272,6 +304,9 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/tables/{id}/active", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := requireManager(w, r)
 		if !ok {
+			return
+		}
+		if !requirePrimary(w, r) {
 			return
 		}
 		id := r.PathValue("id")

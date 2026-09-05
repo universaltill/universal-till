@@ -102,6 +102,100 @@ func TestKitchenStationsPagePermissions(t *testing.T) {
 	}
 }
 
+// ut-docs#1585: kitchen_stations and category_station_routes/
+// item_station_routes sync shop-wide as admin tables (adminTables,
+// ut-docs#1546) via a one-way primary-wins pull — a write accepted on a
+// satellite would silently vanish on the very next admin pull, with
+// nothing explaining why. Every mutating action (station create/update/
+// active, category routes, item routes) must refuse on a replica with a
+// clear, localized signal, same pattern as registers_page.go's
+// requirePrimary (ut-docs#1590).
+func TestKitchenStationsPage_MutationsRefusedOnReplica(t *testing.T) {
+	mux, d := newKitchenStationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	// A station that existed before this till became a replica (synced
+	// down from the primary) — used below to check update/active/routes,
+	// since create itself is refused and can't produce one.
+	const stationID = "station-existing"
+	if _, err := d.Db.Exec(`INSERT INTO kitchen_stations (id, name, destination_type, printer_address, enabled, created_at, updated_at) VALUES (?, 'Existing', 'printer', 'g:9100', 1, datetime('now'), datetime('now'))`, stationID); err != nil {
+		t.Fatalf("seed station: %v", err)
+	}
+
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("set primary_url: %v", err)
+	}
+
+	rec := postForm(mux, "/api/kitchen-stations", url.Values{"name": {"Satellite Grill"}, "printer_address": {"s:9100"}}, &manager)
+	if rec.Header().Get("Location") != "/kitchen-stations?err=kitchenstations.error.replica_use_primary" {
+		t.Fatalf("create on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var count int
+	if err := d.Db.QueryRow(`SELECT count(*) FROM kitchen_stations WHERE name = 'Satellite Grill'`).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("station must not be created on a replica, found %d rows", count)
+	}
+
+	rec = postForm(mux, "/api/kitchen-stations/"+stationID, url.Values{"name": {"Renamed"}, "printer_address": {"g:9100"}}, &manager)
+	if rec.Header().Get("Location") != "/kitchen-stations?err=kitchenstations.error.replica_use_primary" {
+		t.Fatalf("update (name change) on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var name string
+	if err := d.Db.QueryRow(`SELECT name FROM kitchen_stations WHERE id = ?`, stationID).Scan(&name); err != nil || name != "Existing" {
+		t.Fatalf("name must not change on a replica: name=%q err=%v", name, err)
+	}
+
+	// ut-docs#1585: printer_address is till-local (never synced) -- an
+	// address-only edit (name/destination_type unchanged) is the one
+	// mutation a replica is still allowed to make on this page.
+	rec = postForm(mux, "/api/kitchen-stations/"+stationID, url.Values{"name": {"Existing"}, "printer_address": {"192.168.1.99:9100"}}, &manager)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/kitchen-stations" {
+		t.Fatalf("address-only update on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var addr string
+	if err := d.Db.QueryRow(`SELECT printer_address FROM kitchen_stations WHERE id = ?`, stationID).Scan(&addr); err != nil || addr != "192.168.1.99:9100" {
+		t.Fatalf("address-only update must persist on a replica: addr=%q err=%v", addr, err)
+	}
+
+	rec = postForm(mux, "/api/kitchen-stations/"+stationID+"/active", url.Values{"active": {"0"}}, &manager)
+	if rec.Header().Get("Location") != "/kitchen-stations?err=kitchenstations.error.replica_use_primary" {
+		t.Fatalf("deactivate on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var enabled int
+	if err := d.Db.QueryRow(`SELECT enabled FROM kitchen_stations WHERE id = ?`, stationID).Scan(&enabled); err != nil || enabled != 1 {
+		t.Fatalf("station must not be deactivated on a replica: enabled=%d err=%v", enabled, err)
+	}
+
+	rec = postForm(mux, "/api/kitchen-stations/routes/categories/cat-food", url.Values{"station_id": {stationID}}, &manager)
+	if rec.Header().Get("Location") != "/kitchen-stations?err=kitchenstations.error.replica_use_primary" {
+		t.Fatalf("category routes on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var n int
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM category_station_routes WHERE category_id = 'cat-food'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("category route must not be written on a replica: n=%d err=%v", n, err)
+	}
+
+	rec = postForm(mux, "/api/kitchen-stations/routes/items/itm-pie", url.Values{"station_id": {stationID}}, &manager)
+	if rec.Header().Get("Location") != "/kitchen-stations?err=kitchenstations.error.replica_use_primary" {
+		t.Fatalf("item routes on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM item_station_routes WHERE item_id = 'itm-pie'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("item route must not be written on a replica: n=%d err=%v", n, err)
+	}
+
+	// GET /kitchen-stations itself is unaffected — a replica still
+	// reports, it just never decides (ADR-0036's framing for the same
+	// primary/replica split).
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/kitchen-stations", nil), manager)
+	getRec := httptest.NewRecorder()
+	mux.ServeHTTP(getRec, req)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET /kitchen-stations on replica: code=%d", getRec.Code)
+	}
+}
+
 func TestKitchenStationsPage_CreateUpdateDeactivateAndRender(t *testing.T) {
 	mux, d := newKitchenStationsTestMux(t)
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}

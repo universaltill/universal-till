@@ -201,7 +201,7 @@
   'use strict';
   // Page-local i18n lookup (guard-i18n: no hardcoded prose in inline JS),
   // same pattern as bugreport_panel.html.
-  var TT = { saveFailed: "{{ T "tables.error.save_position" }}" };
+  var TT = { saveFailed: "{{ T "tables.error.save_position" }}", replicaUsePrimary: "{{ T "tables.error.replica_use_primary" }}" };
 
   var section = document.getElementById('floorplan-section');
   var toggle = document.getElementById('tables-edit-toggle');
@@ -273,7 +273,7 @@
       body: new URLSearchParams({ pos_x: node.dataset.x, pos_y: node.dataset.y })
     }).then(function (res) {
       status.hidden = res.ok;
-      if (!res.ok) status.textContent = TT.saveFailed;
+      if (!res.ok) status.textContent = (res.status === 409) ? TT.replicaUsePrimary : TT.saveFailed;
     }).catch(function () {
       status.hidden = false;
       status.textContent = TT.saveFailed;

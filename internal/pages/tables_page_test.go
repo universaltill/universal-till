@@ -96,6 +96,78 @@ func TestTablesPagePermissions(t *testing.T) {
 	}
 }
 
+// ut-docs#1585: tables sync shop-wide as an admin table (adminTables,
+// ut-docs#1546) via a one-way primary-wins pull — a write accepted on a
+// satellite would silently vanish (a new table deleted, an edit reverted)
+// on the very next admin pull, with nothing explaining why. All four
+// mutating actions (create/update/position/active) must refuse on a
+// replica with a clear, localized signal, same pattern as
+// registers_page.go's requirePrimary (ut-docs#1590).
+func TestTablesPage_MutationsRefusedOnReplica(t *testing.T) {
+	mux, d := newTablesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	// A table that existed before this till became a replica (synced down
+	// from the primary) — used below to check update/position/deactivate,
+	// since create itself is refused and can't produce one.
+	const tableID = "table-existing"
+	if _, err := d.Db.Exec(`INSERT INTO tables (id, label, shape, seat_count, enabled, pos_x, pos_y, created_at, updated_at) VALUES (?, 'Existing', 'rect', 4, 1, 500, 500, datetime('now'), datetime('now'))`, tableID); err != nil {
+		t.Fatalf("seed table: %v", err)
+	}
+
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("set primary_url: %v", err)
+	}
+
+	rec := postForm(mux, "/api/tables", url.Values{"label": {"Satellite Table"}, "shape": {"rect"}}, &manager)
+	if rec.Header().Get("Location") != "/tables?err=tables.error.replica_use_primary" {
+		t.Fatalf("create on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var count int
+	if err := d.Db.QueryRow(`SELECT count(*) FROM tables WHERE label = 'Satellite Table'`).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("table must not be created on a replica, found %d rows", count)
+	}
+
+	rec = postForm(mux, "/api/tables/"+tableID, url.Values{"label": {"Renamed"}, "shape": {"rect"}}, &manager)
+	if rec.Header().Get("Location") != "/tables?err=tables.error.replica_use_primary" {
+		t.Fatalf("update on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var label string
+	if err := d.Db.QueryRow(`SELECT label FROM tables WHERE id = ?`, tableID).Scan(&label); err != nil || label != "Existing" {
+		t.Fatalf("label must not change on a replica: label=%q err=%v", label, err)
+	}
+
+	rec = postForm(mux, "/api/tables/"+tableID+"/position", url.Values{"pos_x": {"1"}, "pos_y": {"1"}}, &manager)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("position on replica: code=%d, want 409", rec.Code)
+	}
+	var px, py int
+	if err := d.Db.QueryRow(`SELECT pos_x, pos_y FROM tables WHERE id = ?`, tableID).Scan(&px, &py); err != nil || px != 500 || py != 500 {
+		t.Fatalf("position must not change on a replica: %d,%d err=%v", px, py, err)
+	}
+
+	rec = postForm(mux, "/api/tables/"+tableID+"/active", url.Values{"active": {"0"}}, &manager)
+	if rec.Header().Get("Location") != "/tables?err=tables.error.replica_use_primary" {
+		t.Fatalf("deactivate on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var enabled int
+	if err := d.Db.QueryRow(`SELECT enabled FROM tables WHERE id = ?`, tableID).Scan(&enabled); err != nil || enabled != 1 {
+		t.Fatalf("table must not be deactivated on a replica: enabled=%d err=%v", enabled, err)
+	}
+
+	// GET /tables itself is unaffected — a replica still reports, it just
+	// never decides (ADR-0036's framing for the same primary/replica split).
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/tables", nil), manager)
+	getRec := httptest.NewRecorder()
+	mux.ServeHTTP(getRec, req)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET /tables on replica: code=%d", getRec.Code)
+	}
+}
+
 func TestTablesPage_CreateEditPositionDeactivateAndRender(t *testing.T) {
 	mux, d := newTablesTestMux(t)
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}

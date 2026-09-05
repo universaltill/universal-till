@@ -86,6 +86,23 @@ func TestKitchenStationCRUD(t *testing.T) {
 		t.Fatalf("update not persisted: %+v", list[0])
 	}
 
+	// ut-docs#1585: printer_address changes independently of the rest of
+	// the row — the till-local field a replica is still allowed to set
+	// itself (sync_admin_repo.go's skipCols).
+	if err := repo.SetKitchenStationPrinterAddress(ctx, id, "192.168.1.99:9100"); err != nil {
+		t.Fatalf("SetKitchenStationPrinterAddress: %v", err)
+	}
+	got, found, err := repo.GetKitchenStation(ctx, id)
+	if err != nil || !found {
+		t.Fatalf("GetKitchenStation: found=%v err=%v", found, err)
+	}
+	if got.PrinterAddress != "192.168.1.99:9100" || got.Name != "Char Grill" {
+		t.Fatalf("SetKitchenStationPrinterAddress must change only the address: %+v", got)
+	}
+	if err := repo.SetKitchenStationPrinterAddress(ctx, "nope", "x"); err == nil {
+		t.Fatal("SetKitchenStationPrinterAddress on a missing station must error")
+	}
+
 	if err := repo.SetKitchenStationEnabled(ctx, id, false); err != nil {
 		t.Fatalf("SetKitchenStationEnabled: %v", err)
 	}
