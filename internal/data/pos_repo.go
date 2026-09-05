@@ -3311,6 +3311,82 @@ GROUP BY l.item_id, l.variant_id, l.unit_price, l.order_type`, originalSaleID)
 	return out, rows.Err()
 }
 
+// ReturnedLineDiscountsByOriginalLine sums, per ORIGINAL sale_lines.id
+// (not per RefundLineKey), how much line_discount previous completed
+// returns already gave back against that specific original line
+// (ut-docs#1560, the follow-up to #1531's own per-key clamp).
+//
+// ReturnedLineDiscounts pools every original line sharing a key together,
+// which is only exact when they all apply the SAME discount rate
+// (#1531's keyUniform check). When sibling lines under one key carry
+// DIFFERENT line_discount amounts, that pooling is wrong -- refunding one
+// line's discount could be attributed against a sibling's remaining net.
+// This method is the non-uniform fallback's own equivalent of the per-key
+// table: it only sees discount recorded against refund_of_line_id, so it
+// requires every return line that wants exact per-line tracking to have
+// been written with that column set (ut-docs#1560's refund_page.go change
+// sets it unconditionally, uniform or not). A return row written before
+// this column existed has refund_of_line_id NULL and is invisible here --
+// not a regression, since the non-uniform case had no exact tracking at
+// all before this; it just means the clamp starts counting from zero for
+// discount already given back before this fix shipped, same as any other
+// additive-column migration.
+func (r *POSRepo) ReturnedLineDiscountsByOriginalLine(ctx context.Context, originalSaleID string) (map[string]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT l.refund_of_line_id, SUM(l.line_discount)
+FROM sale_lines l
+JOIN sale_links k ON k.sale_id = l.sale_id
+JOIN sales s ON s.id = l.sale_id AND s.sale_type = 'return' AND s.status = 'completed'
+WHERE k.original_sale_id = ? AND l.refund_of_line_id IS NOT NULL
+GROUP BY l.refund_of_line_id`, originalSaleID)
+	if err != nil {
+		return nil, fmt.Errorf("returned line discounts by original line: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var lineID string
+		var discount int64
+		if err := rows.Scan(&lineID, &discount); err != nil {
+			return nil, fmt.Errorf("scan returned line discount by original line: %w", err)
+		}
+		out[lineID] = discount
+	}
+	return out, rows.Err()
+}
+
+// ReturnedQuantitiesByOriginalLine sums, per ORIGINAL sale_lines.id, how
+// much quantity previous completed returns already gave back against that
+// specific original line — the per-line counterpart to
+// ReturnedLineDiscountsByOriginalLine, giving the non-uniform refund
+// clamp's own cumulative-quantity input (same role ReturnedQuantities plays
+// for the per-key double-refund guard, just scoped to one original line
+// instead of the whole fungible key pool). Same NULL/pre-fix caveat as
+// ReturnedLineDiscountsByOriginalLine above.
+func (r *POSRepo) ReturnedQuantitiesByOriginalLine(ctx context.Context, originalSaleID string) (map[string]float64, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT l.refund_of_line_id, SUM(l.quantity)
+FROM sale_lines l
+JOIN sale_links k ON k.sale_id = l.sale_id
+JOIN sales s ON s.id = l.sale_id AND s.sale_type = 'return' AND s.status = 'completed'
+WHERE k.original_sale_id = ? AND l.refund_of_line_id IS NOT NULL
+GROUP BY l.refund_of_line_id`, originalSaleID)
+	if err != nil {
+		return nil, fmt.Errorf("returned quantities by original line: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var lineID string
+		var qty float64
+		if err := rows.Scan(&lineID, &qty); err != nil {
+			return nil, fmt.Errorf("scan returned quantity by original line: %w", err)
+		}
+		out[lineID] = qty
+	}
+	return out, rows.Err()
+}
+
 // OriginalReceiptFor resolves the original sale's receipt number for a
 // return sale (refund receipts reference it), and the reverse direction
 // lists returns made against a sale.
@@ -3937,6 +4013,9 @@ type SaleLineRow struct {
 	// OrderType (ut-docs#1181, ADR-0073): "" (dine-in) or "takeaway" — the
 	// line's own mode, already normalized by pos.CompleteSale.
 	OrderType string
+	// RefundOfLineID (ut-docs#1560): for a return line, the original
+	// sale_lines.id it was refunded against; "" for an original line.
+	RefundOfLineID string
 }
 
 // InsertSaleLinesBatch writes many sale_lines rows via chunked multi-row
@@ -3945,7 +4024,7 @@ func (r *POSRepo) InsertSaleLinesBatch(ctx context.Context, tx *sql.Tx, rows []S
 	if len(rows) == 0 {
 		return nil
 	}
-	const cols = 16
+	const cols = 17
 	exec := r.exec(tx)
 	chunk := batchChunkSize(cols)
 	for start := 0; start < len(rows); start += chunk {
@@ -3957,13 +4036,14 @@ func (r *POSRepo) InsertSaleLinesBatch(ctx context.Context, tx *sql.Tx, rows []S
 		placeholders := make([]string, 0, len(part))
 		args := make([]any, 0, len(part)*cols)
 		for _, row := range part {
-			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 			args = append(args, row.ID, row.SaleID, row.LineNo, nullIfEmpty(row.ItemID), nullIfEmpty(row.VariantID),
 				row.Name, row.SKU, row.Barcode, row.Qty, row.UnitPrice, row.LineDiscount,
-				row.TaxRateBP, row.TaxAmount, row.TotalBeforeTax, row.TotalAfterTax, row.OrderType)
+				row.TaxRateBP, row.TaxAmount, row.TotalBeforeTax, row.TotalAfterTax, row.OrderType,
+				nullIfEmpty(row.RefundOfLineID))
 		}
 		if _, err := exec.ExecContext(ctx, `
-INSERT INTO sale_lines (id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, order_type)
+INSERT INTO sale_lines (id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, order_type, refund_of_line_id)
 VALUES `+strings.Join(placeholders, ", "), args...); err != nil {
 			return fmt.Errorf("insert sale lines batch: %w", err)
 		}
@@ -5705,6 +5785,13 @@ type SaleDetailVoucherIssue struct {
 }
 
 type SaleDetailLine struct {
+	// ID is this original sale_lines row's own database id (ut-docs#1560),
+	// needed so the refund handler can record, per return line, which
+	// specific original line it was refunded against (refund_of_line_id) --
+	// not part of the wire contract (json:"-"): nothing outside this
+	// process needs it, and exposing it would be one more field every
+	// consumer of the sync/journal wire has to consider additive-safe.
+	ID           string   `json:"-"`
 	Name         string   `json:"name"`
 	SKU          string   `json:"sku"`
 	ItemID       string   `json:"item_id"`
@@ -5803,6 +5890,7 @@ FROM sale_lines WHERE sale_id = ? ORDER BY line_no`, d.ID)
 			lineRows.Close()
 			return SaleDetail{}, false, fmt.Errorf("scan sale line: %w", err)
 		}
+		l.ID = id
 		lineIDs = append(lineIDs, id)
 		d.Lines = append(d.Lines, l)
 	}

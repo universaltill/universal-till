@@ -173,6 +173,14 @@ func TestVerifyAppliedMigrations_AllowlistedVersionRerunsInPlace(t *testing.T) {
 // TestFreshBaselineRecordsNameAndChecksum pins the wiring end to end: a
 // fresh Open records the real 001_init.sql's name and checksum, and a
 // reopen against the unchanged file verifies clean (no false positive).
+//
+// This no longer asserts "exactly one embedded migration" — that was only
+// ever true in the narrow window right after the ADR-0074 squash, before
+// any new migration legitimately landed on top of the baseline (the first
+// being 002_refund_of_line_id.sql, ut-docs#1560). What this test actually
+// pins is narrower and still holds regardless of how many migrations exist
+// today: migs[0] (loadMigrations sorts by version) is always version 1,
+// 001_init.sql, the baseline itself.
 func TestFreshBaselineRecordsNameAndChecksum(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "fresh.db")
 	d, err := Open(path)
@@ -183,8 +191,8 @@ func TestFreshBaselineRecordsNameAndChecksum(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(migs) != 1 {
-		t.Fatalf("expected exactly one embedded migration (the ADR-0074 baseline), got %d", len(migs))
+	if len(migs) < 1 || migs[0].Version != 1 || migs[0].Name != "001_init.sql" {
+		t.Fatalf("expected migs[0] to be the version-1 ADR-0074 baseline (001_init.sql), got %+v", migs)
 	}
 	var name, checksum string
 	if err := d.QueryRow(`SELECT name, checksum FROM schema_migrations WHERE version = 1`).Scan(&name, &checksum); err != nil {

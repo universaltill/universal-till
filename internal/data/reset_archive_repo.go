@@ -148,7 +148,7 @@ var resetArchiveTables = []resetArchiveTable{
 	{"sale_discounts", "id, sale_id, line_id, type, value, amount, reason"},
 	{"stock_movements", "id, item_id, variant_id, location_id, sale_line_id, type, quantity, cost_price, created_at"},
 	{"sale_line_modifiers", "id, sale_line_id, group_id, option_id, group_name_snapshot, option_name_snapshot, price_delta_minor"},
-	{"sale_lines", "id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, order_type"},
+	{"sale_lines", "id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, order_type, refund_of_line_id"},
 	{"sale_charges", "sale_id, seq, key, label, amount_minor, tax_basis_bp, base"},
 	{"sales", "id, receipt_no, status, sale_type, tender_type, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, rounding, note, created_at, completed_at, voided_at, till_id, service_charge_amount, order_type, order_status, order_status_updated_at, kitchen_print_failed_at, receipt_print_failed_at, table_id, tracking_token, service_charge_tax_basis_bp, voucher_issue_total"},
 	{"held_sales", "id, label, total_minor, line_count, payload, created_at, table_id"},
@@ -377,6 +377,28 @@ func (r *POSRepo) RestoreResetBatch(ctx context.Context, batchID, actorID string
 					return 0, fmt.Errorf("restore batch %q: credit notes: %w", batchID, ErrArchiveReferencesRemoved)
 				}
 				return 0, fmt.Errorf("restore: credit notes: %w", err)
+			}
+		} else if t.live == "sale_lines" {
+			// sale_lines self-FK (refund_of_line_id → sale_lines.id,
+			// ut-docs#1560): same trap and same fix as invoices above --
+			// re-insert original (non-return) lines before return lines so
+			// row-by-row FK enforcement can't trip on the SELECT's
+			// arbitrary row order.
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO sale_lines (`+t.cols+`) SELECT `+t.cols+` FROM sale_lines_archive WHERE reset_batch_id = ? AND refund_of_line_id IS NULL`,
+				batchID); err != nil {
+				if isForeignKeyViolation(err) {
+					return 0, fmt.Errorf("restore batch %q: sale_lines (original): %w", batchID, ErrArchiveReferencesRemoved)
+				}
+				return 0, fmt.Errorf("restore: sale_lines (original): %w", err)
+			}
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO sale_lines (`+t.cols+`) SELECT `+t.cols+` FROM sale_lines_archive WHERE reset_batch_id = ? AND refund_of_line_id IS NOT NULL`,
+				batchID); err != nil {
+				if isForeignKeyViolation(err) {
+					return 0, fmt.Errorf("restore batch %q: sale_lines (return): %w", batchID, ErrArchiveReferencesRemoved)
+				}
+				return 0, fmt.Errorf("restore: sale_lines (return): %w", err)
 			}
 		} else {
 			res, err := tx.ExecContext(ctx, fmt.Sprintf(

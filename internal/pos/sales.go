@@ -164,6 +164,13 @@ type SaleLineInput struct {
 	// provenance that travels with it (receipt, kitchen, journal, sync,
 	// refund, sale.completed).
 	OrderType string
+	// RefundOfLineID (ut-docs#1560): for a RETURN line, the original
+	// sale_lines.id (data.SaleDetailLine.ID) it was refunded against; ""
+	// for a normal sale line. Lets the refund double-refund-discount guard
+	// track cumulative discount per ORIGINAL line instead of per fungible
+	// RefundLineKey pool, which is only exact when every line sharing a
+	// key applies the same discount rate.
+	RefundOfLineID string
 }
 
 // json tags (independent review, ut-docs#543): PaymentInput is never
@@ -833,6 +840,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					TotalBeforeTax: totalBeforeTax.Minor(),
 					TotalAfterTax:  totalAfterTax.Minor(),
 					OrderType:      l.OrderType,
+					RefundOfLineID: l.RefundOfLineID,
 				})
 
 				for _, m := range l.Modifiers {

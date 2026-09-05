@@ -233,6 +233,21 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
 			return
 		}
+		// Same double-refund guard, scoped per ORIGINAL LINE instead of per
+		// key (ut-docs#1560): the non-uniform-discount branch below needs
+		// its own exact cumulative-target clamp, the same shape #1531 gave
+		// the uniform per-key case, since pooling by key is only exact when
+		// every sibling line under it shares one discount rate.
+		returnedDiscountByLine, err := repo.ReturnedLineDiscountsByOriginalLine(r.Context(), detail.ID)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
+			return
+		}
+		returnedQtyByLine, err := repo.ReturnedQuantitiesByOriginalLine(r.Context(), detail.ID)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
+			return
+		}
 		locID, err := repo.EnsureStockLocation(r.Context())
 		if err != nil {
 			// Same generic internal-DB-failure class as the ReturnedQuantities
@@ -293,10 +308,15 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// case (by far the common one — includes every key with only ONE
 		// original line, which is what every existing fixture in this file
 		// covers) gets the exact per-key clamp below; a non-uniform key
-		// falls back to the pre-#1531 independent per-line floor for its
-		// lines, i.e. today's existing (bounded, previously-accepted)
-		// behavior — not a regression, since that's exactly what shipped
-		// before this card for every key shape.
+		// falls back to the SAME running-cumulative-target clamp, scoped per
+		// ORIGINAL LINE instead of per key (ut-docs#1560, below) — #1531
+		// shipped the per-line branch as a plain one-shot floor (today's
+		// then-existing, bounded, previously-accepted behavior), which
+		// under-refunded by a minor unit whenever the SAME original line was
+		// refunded across more than one sequential partial request, exactly
+		// the flooring-accumulation defect class #1531 fixed for the
+		// per-key case (confirmed via a 400-case fuzz sweep: ~17% of
+		// non-uniform-key cases).
 		keyQty := map[string]float64{}
 		keyDiscount := map[string]int64{}
 		keyUniform := map[string]bool{}
@@ -385,10 +405,32 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				lineDiscount = targetDiscount - returnedDiscount[key]
 			} else if l.Qty > 0 {
 				// Non-uniform-discount key (rare — see keyUniform's
-				// declaration above): fall back to the pre-#1531
-				// independent floor, per original line.
-				share := qty / l.Qty
-				lineDiscount = int64(float64(l.LineDiscount) * share)
+				// declaration above): the shared per-key pool can't be used
+				// for discount (that's exactly what makes the key
+				// non-uniform), so this scopes the SAME running-cumulative-
+				// target clamp the uniform branch uses above down to just
+				// THIS original line (ut-docs#1560) — flooring
+				// l.LineDiscount*share fresh on every independent request,
+				// as the old fallback did, under-refunds a line that's
+				// refunded across more than one sequential partial request
+				// the identical way #1531 already fixed for the per-key
+				// case (measured: ~17% of non-uniform-key cases in a 400-case
+				// fuzz sweep). alreadyReturnedQtyForLine + qty is this
+				// line's own cumulative quantity refunded so far, including
+				// this request; l.ID is this original line's own db id
+				// (refund_of_line_id on the return row records it below).
+				alreadyReturnedQtyForLine := returnedQtyByLine[l.ID]
+				cumulativeQtyForLine := alreadyReturnedQtyForLine + qty
+				var targetDiscount int64
+				if cumulativeQtyForLine >= l.Qty-1e-9 {
+					// Same epsilon-snap as the uniform branch's F4 fix above
+					// — a fractional l.Qty need not land exactly on itself
+					// even once every unit is genuinely refunded.
+					targetDiscount = l.LineDiscount
+				} else {
+					targetDiscount = int64(float64(l.LineDiscount) * cumulativeQtyForLine / l.Qty)
+				}
+				lineDiscount = targetDiscount - returnedDiscountByLine[l.ID]
 			}
 			// l.Qty <= 0 (degenerate; shouldn't occur for a real sold line)
 			// falls through with lineDiscount left at its zero value.
@@ -423,8 +465,12 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			// Track by the ACTUAL amount given back this request, not the
 			// theoretical target -- so a request capped by the gross guard
 			// just above doesn't lose the difference; the next request's own
-			// target still accounts for what was really persisted.
+			// target still accounts for what was really persisted. Tracked
+			// both by key (the uniform branch's own guard) and by original
+			// line (ut-docs#1560, the non-uniform branch's guard) --
+			// harmless to update both regardless of which branch ran.
 			returnedDiscount[key] += lineDiscount
+			returnedDiscountByLine[l.ID] += lineDiscount
 			lines = append(lines, pos.SaleLineInput{
 				ItemID: l.ItemID, VariantID: l.VariantID, SKU: l.SKU, Name: l.Name,
 				Qty: qty, UnitPrice: money.FromMinor(l.UnitPrice),
@@ -434,6 +480,13 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				// ADR-0073 Decision 6: the return line keeps the original
 				// line's mode; TaxRateBP above stays the money authority.
 				OrderType: l.OrderType,
+				// RefundOfLineID (ut-docs#1560): record which specific
+				// original line this return line came from, unconditionally
+				// (uniform key or not) -- this is what lets
+				// ReturnedLineDiscountsByOriginalLine/ReturnedQuantitiesByOriginalLine
+				// answer "how much has THIS line already given back" on a
+				// future request, instead of only the shared key pool.
+				RefundOfLineID: l.ID,
 			})
 			refundGross += int64(float64(l.UnitPrice) * qty)
 			// Same true-net basis as origNetWeight above, this time over just

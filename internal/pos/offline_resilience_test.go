@@ -370,6 +370,7 @@ func setupOfflineDB(t *testing.T) *sql.DB {
 			total_before_tax INTEGER NOT NULL, 
 			total_after_tax INTEGER NOT NULL,
 			order_type TEXT NOT NULL DEFAULT '',
+			refund_of_line_id TEXT,
 			FOREIGN KEY (sale_id) REFERENCES sales(id)
 		)`,
 		`CREATE TABLE payments (
