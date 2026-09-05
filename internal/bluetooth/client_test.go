@@ -290,6 +290,29 @@ func TestPair_AlreadyPairedDeviceSkipsPairButStillTrustsAndConnects(t *testing.T
 	}
 }
 
+func TestPair_ConnectFailureAfterSuccessfulTrustIsNotAFailure(t *testing.T) {
+	// Independent review finding (ut-docs#76): Pair+Trust are already
+	// committed in BlueZ by the time Connect runs, and a HID device
+	// commonly drops the ACL right after "Just Works" pairing as it
+	// switches into HID mode — BlueZ answers a generic Connect failure
+	// even though the (now trusted) device reconnects on its own
+	// seconds later. Reporting this as ErrPairingFailed would strand the
+	// manager: Scan filters out already-paired devices, so a "failed"
+	// pairing that actually succeeded could never be retried through
+	// this panel.
+	f := newFakeBus()
+	f.addAdapter("/org/bluez/hci0", true)
+	f.addDevice("/org/bluez/hci0", "AA:BB:CC:DD:EE:07", "New Scanner", false, false, false)
+	f.errs["org.bluez.Device1.Connect"] = dbus.Error{Name: "org.bluez.Error.Failed", Body: []any{"le-connection-abort-by-local"}}
+
+	if err := newClient(f).Pair(context.Background(), "AA:BB:CC:DD:EE:07"); err != nil {
+		t.Fatalf("a Connect failure after successful Pair+Trust must not fail Pair(), got %v", err)
+	}
+	if len(f.props) != 1 || f.props[0].method != "org.bluez.Device1.Trusted" {
+		t.Fatalf("Trusted=true must still have been set: %+v", f.props)
+	}
+}
+
 func TestPair_UnknownAddressIsNotFound(t *testing.T) {
 	f := newFakeBus()
 	f.addAdapter("/org/bluez/hci0", true)

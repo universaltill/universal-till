@@ -277,9 +277,19 @@ func (c *client) Pair(ctx context.Context, address string) error {
 	if err := c.bus.SetProperty(ctx, path, ifaceDevice, "Trusted", true); err != nil {
 		return classify(err)
 	}
-	if err := c.bus.Call(ctx, path, ifaceDevice+".Connect"); err != nil && !isBluezError(err, "AlreadyConnected") {
-		return classify(err)
-	}
+	// Pair and Trust are already committed in BlueZ by this point — a
+	// Connect failure here does not mean the pairing failed. This is
+	// common right after "Just Works" pairing a HID device: it briefly
+	// drops the ACL as it switches into HID mode, so BlueZ can answer
+	// e.g. ConnectionAttemptFailed on the immediate connect even though
+	// the (now trusted) device reconnects on its own seconds later.
+	// Reporting this as ErrPairingFailed would be worse than unhelpful:
+	// Scan (below) filters out devices that are already paired, so the
+	// manager would have no way to ever retry a "failed" pairing that in
+	// fact succeeded (independent review finding, ut-docs#76). Treat it
+	// as non-fatal; the reload the page does on success re-reads
+	// Connected from BlueZ and shows the true state either way.
+	_ = c.bus.Call(ctx, path, ifaceDevice+".Connect")
 	return nil
 }
 
