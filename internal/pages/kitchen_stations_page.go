@@ -16,15 +16,28 @@ import (
 )
 
 // discoverPrintersTimeout bounds the LAN scan the "Discover printers"
-// button runs per click — same duration and same bounded, per-click (never
-// ambient/background) shape as discoverBrowseTimeout in discovery_api.go.
-const discoverPrintersTimeout = 4 * time.Second
+// button runs per click — same bounded, per-click (never ambient/background)
+// shape as discoverBrowseTimeout in discovery_api.go.
+//
+// Longer than the 4s a pure mDNS browse needed (ut-docs#1606), because the
+// scan now also sweeps the till's own subnet. The budget it has to cover:
+// an mDNS browse (a third of this) running concurrently with a connect-only
+// pass over a /24 — 254 addresses at discovery.sweepConcurrency 64 in flight
+// and a 700ms dial budget, so about 2.8s — and then an ESC/POS probe of
+// whatever was found listening, which waits up to escposReadTimeout (3s)
+// because cheap embedded printers connect fast and answer slowly.
+//
+// Cutting the scan short does not fail loudly; it silently returns fewer
+// printers, which is exactly the "my printer isn't in the list" bug this card
+// exists to fix. So the budget leaves real headroom rather than finishing
+// just barely.
+const discoverPrintersTimeout = 12 * time.Second
 
-// discoveryBrowsePrinters is a package var over discovery.BrowsePrinters,
+// discoveryBrowsePrinters is a package var over discovery.DiscoverPrinters,
 // same seam-for-testability pattern as discoveryBrowse in discovery_api.go
 // — lets a test substitute a fast fake instead of waiting out a real
 // multi-second network scan.
-var discoveryBrowsePrinters = discovery.BrowsePrinters
+var discoveryBrowsePrinters = discovery.DiscoverPrinters
 
 // stationCheck is one station checkbox: checked when the row (category or
 // item) is currently routed to it.
@@ -185,13 +198,20 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 		renderPage(w, r, r.URL.Query().Get("err"))
 	})
 
-	// Discover printers (ut-docs#140): a bounded, per-click mDNS scan for
-	// network printers already broadcasting themselves, offered as
-	// candidates for the new-station form's address field — never
-	// auto-trusted or auto-wired (security-first: discovery only presents,
-	// the operator still confirms by clicking a candidate and submitting
-	// the create form themselves). Manager-gated, same as every other route
-	// on this page.
+	// Discover printers (ut-docs#140, ut-docs#1606): a bounded, per-click
+	// scan offering candidates for the new-station form's address field —
+	// never auto-trusted or auto-wired (security-first: discovery only
+	// presents, the operator still confirms by clicking a candidate and
+	// submitting the create form themselves). Manager-gated, same as every
+	// other route on this page.
+	//
+	// Two sources, one gate (see discovery.DiscoverPrinters): an mDNS browse
+	// for printers that advertise themselves, plus a :9100 sweep of the
+	// till's own subnet for the many cheap ESC/POS units that advertise
+	// nothing at all — and every candidate from either source must answer an
+	// ESC/POS status query before it is offered. Advertising as a printer is
+	// not the same as being able to print a receipt: an office inkjet on
+	// :9100 is a real printer that renders ESC/POS as a page of garbage.
 	mux.HandleFunc("GET /api/kitchen-stations/discover-printers", func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requireManager(w, r); !ok {
 			return
