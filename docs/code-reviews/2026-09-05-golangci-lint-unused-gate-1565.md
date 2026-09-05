@@ -115,6 +115,30 @@ re-verified deletion (`ListPaymentMethodIDs`), well under the bar for
 re-earning a second full pass. The gate, tests and guards below were
 re-run after every fix, not just at the end.
 
+**Round 1's fix also surfaced a real CI failure on push** (not from the
+review agent — from actually opening the PR and watching CI): the `@v8`
+fix made `golangci-lint` run for real, and `guard-docs-shots.sh` then
+failed because `index_page.go` registers `/` (a screenshotted route,
+the sale screen), so removing `collectPaymentMethods` and its now-unused
+imports still re-hashes the whole file — a known, documented,
+zero-pixel-impact trade-off the guard's own header comment accepts
+("this asymmetry means the residual risk is only ever over-inclusion").
+Fixed by running `make docs-shots` for real (pre-installed Chromium at
+`/opt/pw-browsers`, resolved via `resolve-chromium.sh` — non-fatal
+version-drift warning: reused 141.0.7390.37 vs. the pin's
+149.0.7827.55) and regenerating `web/help/img/manifest.json`. 4 of 96
+screenshots came out byte-different (`ar/multitill`, `ar/sell`,
+`en/invoices`, `fa/invoices`) — diffed old vs. new pixel-by-pixel
+(`PIL.ImageChops.difference`) and by eye: a handful of pixels in the
+left icon rail, consistent with anti-aliasing drift from the reused
+browser being 8 majors behind the pin, not a real layout or content
+change. Visual-check attestation: looked at both `invoices` renders
+(en) directly, side by side — no visible difference to the eye; did not
+separately re-check dark theme, RTL layout, or other viewports for
+these 4, since nothing in this diff touches theme/RTL/layout code and
+the byte-level diff is confined to a few dozen pixels in a fixed-size
+icon.
+
 ## Verified
 
 - `gofmt -l .` clean.
