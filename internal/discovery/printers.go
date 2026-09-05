@@ -75,14 +75,29 @@ func DiscoverPrinters(ctx context.Context, timeout time.Duration) ([]PrinterCand
 	// devices said about themselves. Phase 2 writes, so this has to be
 	// settled before it runs.
 	skip := make(map[string]bool, len(b.candidates))
+	// The other half of the same reading: an advertisement that names a raw
+	// format AND no page description language is an unambiguous claim to
+	// raw printing, better evidence than anything inferred from open ports,
+	// so it exempts that address from the IPP guard (ut-docs#1607). Receipt
+	// printers with an IPP-capable Ethernet interface exist, and hiding one
+	// would be a worse bug than the stray page the guard prevents.
+	//
+	// "Unambiguous" is doing real work there — see declaresRawPrinting.
+	// Exempting anything nonESCPOSPDL merely failed to reject let an office
+	// printer advertising "octet-stream,vnd.hp-PCL" bypass the guard
+	// entirely.
+	trusted := make(map[string]bool, len(b.candidates))
 	for _, c := range b.candidates {
-		if nonESCPOSPDL(c.PDL) {
+		switch {
+		case nonESCPOSPDL(c.PDL):
 			skip[c.Address] = true
+		case declaresRawPrinting(c.PDL):
+			trusted[c.Address] = true
 		}
 	}
 
-	swept := probeListeners(ctx, listeners, skip)
-	return mergePrinterCandidates(ctx, b.candidates, swept, skip), nil
+	swept := probeListeners(ctx, listeners, skip, trusted)
+	return mergePrinterCandidates(ctx, b.candidates, swept, skip, trusted), nil
 }
 
 // mergePrinterCandidates applies the ESC/POS gate and folds the two sources
@@ -99,7 +114,7 @@ func DiscoverPrinters(ctx context.Context, timeout time.Duration) ([]PrinterCand
 //
 // Where both sources see the same device, mDNS wins on name: a real name
 // always beats a bare address in front of an operator.
-func mergePrinterCandidates(ctx context.Context, browsed, swept []PrinterCandidate, skip map[string]bool) []PrinterCandidate {
+func mergePrinterCandidates(ctx context.Context, browsed, swept []PrinterCandidate, skip, trusted map[string]bool) []PrinterCandidate {
 	byAddr := make(map[string]PrinterCandidate, len(browsed)+len(swept))
 	order := make([]string, 0, len(browsed)+len(swept))
 
@@ -136,6 +151,13 @@ func mergePrinterCandidates(ctx context.Context, browsed, swept []PrinterCandida
 			case sem <- struct{}{}:
 				defer func() { <-sem }()
 			case <-ctx.Done():
+				return
+			}
+			// A candidate that advertised nothing about its formats gets
+			// the same IPP reading a swept address does (ut-docs#1607):
+			// appearing in _pdl-datastream._tcp says the device speaks
+			// raw-socket printing, not that it speaks ESC/POS.
+			if !trusted[c.Address] && isOfficePrinter(ctx, c.Address) {
 				return
 			}
 			if SpeaksESCPOS(ctx, c.Address) {
