@@ -59,6 +59,21 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "register", targetID, action, nil, now, "")
 	}
 
+	// requirePrimary gates every mutation (create/rename/activate) on this
+	// till being the primary (ut-docs#1590). registers is now synced
+	// shop-wide (sync_admin_repo.go's adminTables) via a one-way
+	// primary-wins pull, so a write accepted on a satellite would silently
+	// vanish (a new row deleted, an edit reverted) on the very next admin
+	// pull -- refuse it up front instead, with a clear localized message,
+	// same pattern as plugins_store_page.go's replica_use_primary gate.
+	requirePrimary := func(w http.ResponseWriter, r *http.Request) bool {
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			http.Redirect(w, r, "/registers?err=registers.error.replica_use_primary", http.StatusSeeOther)
+			return false
+		}
+		return true
+	}
+
 	renderRegisters := func(w http.ResponseWriter, r *http.Request, errKey string) {
 		regs, err := posRepo.ListRegistersForAdmin(r.Context())
 		if err != nil {
@@ -128,6 +143,9 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 		if !ok {
 			return
 		}
+		if !requirePrimary(w, r) {
+			return
+		}
 		_ = r.ParseForm()
 		name := strings.TrimSpace(r.PostFormValue("name"))
 		if name == "" {
@@ -150,6 +168,9 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/registers/{id}", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := requireManager(w, r)
 		if !ok {
+			return
+		}
+		if !requirePrimary(w, r) {
 			return
 		}
 		id := r.PathValue("id")
@@ -185,6 +206,9 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/registers/{id}/active", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := requireManager(w, r)
 		if !ok {
+			return
+		}
+		if !requirePrimary(w, r) {
 			return
 		}
 		id := r.PathValue("id")

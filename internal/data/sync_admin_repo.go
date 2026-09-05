@@ -50,33 +50,28 @@ type adminTable struct {
 
 // adminTables is the shop-wide state a replica mirrors. Deliberately NOT
 // here: inventory/stock (additive movements, D3), sales, sessions,
-// item_images (files don't travel — D2 limit),
-// registers and stock_locations (ut-docs#1584 — decided PER-TILL, not a
-// guess: both `name` fields read as shop-wide, but the admin pages that
-// create them (`/registers`, `/locations`) are gated only on the
-// `stock_location_management` permission, with no primary-only check the
-// way `settings_page.go`'s promote-only sections use `SyncPrimaryURL(ctx)
-// == ""` — so a manager can create a register or stock location directly
-// from a satellite today (POSRepo.CreateRegister/CreateStockLocation
-// have no primary-only guard). ApplyAdmin's one-way "primary wins" pull
-// (deleteMissing) only protects a synced row the DB's own FK blocks from
-// deleting (shift/sale/inventory history already references it); a
-// freshly satellite-created register or location has no such history yet,
-// so nothing would stop its very next admin pull from silently erasing
-// it — the primary's bundle has no idea it exists. role_permissions
-// avoided this exact class of bug via a dedicated skipPrune carve-out
-// (rolePermissionSkew, ut-docs#1589) for a row the primary's *current*
-// dump doesn't know about at all; registers/stock_locations have no
-// equivalent, so flipping either to sync needs `/registers`+`/locations`
-// creation gated
-// primary-only FIRST (ut-docs#1590 files that follow-up) — until then,
-// per-till is the only safe answer. See
-// TestAdminApplyLeavesRegistersAndStockLocationsUntouched for the
-// regression guard. Registers' shop-wide need is already met at
-// enrollment time regardless: CreateRegisterForEnrolment runs on the
-// PRIMARY (POST /api/sync/enroll), so a joining till's own register
-// already exists shop-wide before the till's first sale, via the initial
-// full-DB-snapshot join rather than ongoing sync.
+// item_images (files don't travel — D2 limit).
+//
+// registers and stock_locations were excluded here from ut-docs#1584 until
+// ut-docs#1590: both `name` fields read as shop-wide, but until #1590 the
+// admin pages that create them (`/registers`, `/locations`) had no
+// primary-only check, so a manager could create either directly on a
+// satellite — and a freshly-created row has no shift/sale/inventory
+// history yet to FK-block ApplyAdmin's deleteMissing from erasing it
+// outright on the very next admin pull. #1590 closed that gap
+// (POSRepo.CreateRegister/CreateStockLocation and their rename/activate
+// siblings now refuse on a replica via requirePrimary in
+// registers_page.go/locations_page.go, same pattern as
+// plugins_store_page.go's replica_use_primary gate), so both are now safe
+// to sync — see TestAdminApplyLeavesRegistersAndStockLocationsUntouched's
+// replacement, TestAdminDumpApplyRoundTrip_RegistersAndStockLocations, for
+// the regression guard covering the new behaviour. Registers' shop-wide
+// need was already met at enrollment time regardless:
+// CreateRegisterForEnrolment runs on the PRIMARY (POST /api/sync/enroll),
+// so a joining till's own register already exists shop-wide before the
+// till's first sale, via the initial full-DB-snapshot join rather than
+// ongoing sync.
+//
 // plugin install tables — rows without the Ed25519-verified plugin FILES
 // would leave a replica with phantom plugins, so the installed set travels
 // as its own registry bundle instead (GET /api/sync/plugins, ut-docs#460 /
@@ -95,6 +90,16 @@ var adminTables = []adminTable{
 	// from a not-yet-upgraded primary (ADR-0031).
 	{name: "payment_methods", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}, skipCols: []string{"plugin_id"}},
 	{name: "users", pk: []string{"id"}, hasIsActive: true, unique: []string{"username"}},
+	// ut-docs#1590: registers and stock_locations became safe to sync once
+	// /registers and /locations gated create/rename/activate to
+	// primary-only (see this var's own top comment for the full trace).
+	// stock_locations MUST precede registers here: registers.location_id
+	// FKs onto stock_locations(id), upserts run forward through this list
+	// (ApplyAdmin phase 2), and deletes run in reverse (phase 1) — so this
+	// order is also what lets a retired/deleted register clear before its
+	// stock location does.
+	{name: "stock_locations", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}},
+	{name: "registers", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}},
 	// ut-docs#1554: role_permissions is runtime-mutable (AuthRepo.
 	// SetRolePermission, from the permission matrix editor) and was missing
 	// from this list entirely — a manager revoking e.g. `refund` from

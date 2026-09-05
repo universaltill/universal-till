@@ -19,3 +19,4 @@ Tracks on-hand quantities per item and variant. Sales reduce stock automatically
 1. Open Inventory to see current stock levels.
 2. Record a delivery with goods-in; use an adjustment for waste, breakage or count corrections — enter a negative quantity to remove stock (on a touch till, tap the on-screen keyboard's "-" key first).
 3. The inventory page predicts how many days of stock remain and suggests how much to order; the reports page carries a low-stock alert chip too.
+4. Stock locations (Locations, manager only) are shop-wide and always managed from the **main till**: on a joined till, creating, renaming or deactivating one shows a message pointing you back to the main till instead.

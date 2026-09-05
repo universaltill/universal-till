@@ -961,44 +961,33 @@ func TestAdminApply_TableRetiredInPlaceWhenFKBlockedBySatelliteSaleHistory(t *te
 	}
 }
 
-// ut-docs#1584: registers and stock_locations are deliberately excluded from
-// adminTables (see that var's own top comment for the full trace) because
-// neither /registers nor /locations is gated primary-only — a manager can
-// create either directly on a satellite today — and a freshly-created row
-// has no shift/sale/inventory history yet to FK-block ApplyAdmin's
-// deleteMissing from erasing it outright. This test locks in the two halves
-// of that decision: (1) neither table is ever dumped at all, and (2) a
-// satellite's own locally-created register/location survives an admin pull
-// from a primary that has never heard of it. If either fails, someone
-// flipped these tables to sync without doing ut-docs#1590's primary-only
-// gating first — update this test (and the adminTables comment) only as
-// part of that follow-up, not as a side effect of an unrelated change.
-func TestAdminApplyLeavesRegistersAndStockLocationsUntouched(t *testing.T) {
+// ut-docs#1590: registers and stock_locations flipped from excluded
+// (ut-docs#1584) to synced now that /registers and /locations gate
+// create/rename/activate to primary-only (registers_page.go/
+// locations_page.go's requirePrimary — see adminTables' own top comment
+// for the full trace). This is the direct replacement for the old
+// TestAdminApplyLeavesRegistersAndStockLocationsUntouched, which pinned
+// the OLD (excluded) behaviour this same card intentionally reverses.
+// Mirrors TestAdminDumpApplyRoundTrip_FloorPlanAndKitchenRouting's shape:
+// both tables now dump, both sync to a replica that never heard of them,
+// and a primary-side delete propagates (no FK-blocking history here).
+func TestAdminDumpApplyRoundTrip_RegistersAndStockLocations(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")
 	replica := openMigratedDB(t, "replica.db")
 
-	// The primary knows about its own shop-wide register/location (on top of
-	// 001_init.sql's own seed rows, which both sides already carry
-	// identically from migration).
-	mustExec(t, primary, `INSERT INTO stock_locations (id, name, is_active) VALUES ('loc-primary', 'Primary HQ', 1)`)
-	mustExec(t, primary, `INSERT INTO registers (id, name, is_active) VALUES ('reg-primary', 'Front Till', 1)`)
-
-	// A manager created a DIFFERENT register and stock location directly on
-	// this satellite (via /registers, /locations) — the primary has never
-	// seen either, and neither has any sale/inventory history yet.
-	mustExec(t, replica, `INSERT INTO stock_locations (id, name, is_active) VALUES ('loc-satellite', 'Satellite Pop-up Store', 1)`)
-	mustExec(t, replica, `INSERT INTO registers (id, name, is_active) VALUES ('reg-satellite', 'Pop-up Till', 1)`)
+	mustExec(t, primary, `INSERT INTO stock_locations (id, name, is_active) VALUES ('loc-hq', 'HQ Store', 1)`)
+	mustExec(t, primary, `INSERT INTO registers (id, name, location_id, is_active) VALUES ('reg-front', 'Front Till', 'loc-hq', 1)`)
 
 	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
 	if err != nil {
 		t.Fatalf("dump: %v", err)
 	}
-	if _, ok := bundle.Tables["registers"]; ok {
-		t.Error("registers must not appear in the admin dump at all — ut-docs#1584 decided per-till")
+	if _, ok := bundle.Tables["stock_locations"]; !ok {
+		t.Fatal("stock_locations must appear in the admin dump now — ut-docs#1590 gated creation primary-only, making it safe to sync")
 	}
-	if _, ok := bundle.Tables["stock_locations"]; ok {
-		t.Error("stock_locations must not appear in the admin dump at all — ut-docs#1584 decided per-till")
+	if _, ok := bundle.Tables["registers"]; !ok {
+		t.Fatal("registers must appear in the admin dump now — ut-docs#1590 gated creation primary-only, making it safe to sync")
 	}
 
 	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
@@ -1006,11 +995,119 @@ func TestAdminApplyLeavesRegistersAndStockLocationsUntouched(t *testing.T) {
 	}
 
 	var locName string
-	if err := replica.QueryRow(`SELECT name FROM stock_locations WHERE id = 'loc-satellite'`).Scan(&locName); err != nil || locName != "Satellite Pop-up Store" {
-		t.Fatalf("satellite-created stock location wiped by an admin pull from a primary that never knew about it: got %q (err=%v)", locName, err)
+	if err := replica.QueryRow(`SELECT name FROM stock_locations WHERE id = 'loc-hq'`).Scan(&locName); err != nil || locName != "HQ Store" {
+		t.Fatalf("stock location did not reach the satellite: got %q (err=%v)", locName, err)
 	}
-	var regName string
-	if err := replica.QueryRow(`SELECT name FROM registers WHERE id = 'reg-satellite'`).Scan(&regName); err != nil || regName != "Pop-up Till" {
-		t.Fatalf("satellite-created register wiped by an admin pull from a primary that never knew about it: got %q (err=%v)", regName, err)
+	var regName, regLoc string
+	if err := replica.QueryRow(`SELECT name, location_id FROM registers WHERE id = 'reg-front'`).Scan(&regName, &regLoc); err != nil || regName != "Front Till" || regLoc != "loc-hq" {
+		t.Fatalf("register did not reach the satellite (or its FK to stock_locations broke — insert order matters): name=%q location_id=%q err=%v", regName, regLoc, err)
+	}
+
+	// A primary-side delete must propagate, not leave a ghost register/
+	// location an operator could still pick from the till's own settings.
+	mustExec(t, primary, `DELETE FROM registers WHERE id = 'reg-front'`)
+	mustExec(t, primary, `DELETE FROM stock_locations WHERE id = 'loc-hq'`)
+	bundle2, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("second dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	var n int
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM registers WHERE id='reg-front'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("a register removed on the primary is still on the satellite (n=%d, err=%v)", n, err)
+	}
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM stock_locations WHERE id='loc-hq'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("a stock location removed on the primary is still on the satellite (n=%d, err=%v)", n, err)
+	}
+}
+
+// Mirrors TestAdminApply_TableRetiredInPlaceWhenFKBlockedBySatelliteSaleHistory:
+// a register the primary removed, but that the satellite has already opened
+// a shift against, can't be hard-deleted (shifts.register_id FK) — it must
+// retire in place (is_active=0) instead, or the satellite's own shift now
+// references a nonexistent register.
+func TestAdminApply_RegisterRetiredInPlaceWhenFKBlockedBySatelliteShiftHistory(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO registers (id, name, is_active) VALUES ('reg-1', 'Front Till', 1)`)
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	// The satellite opened a shift on this register before the primary
+	// removed it.
+	mustExec(t, replica, `INSERT INTO users (id, username, display_name) VALUES ('u1', 'cashier1', 'Cashier One')`)
+	mustExec(t, replica, `INSERT INTO shifts (id, register_id, cashier_id) VALUES ('shift-1', 'reg-1', 'u1')`)
+
+	mustExec(t, primary, `DELETE FROM registers WHERE id = 'reg-1'`)
+	bundle2, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("second dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle2); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+
+	var active int
+	err = replica.QueryRow(`SELECT is_active FROM registers WHERE id='reg-1'`).Scan(&active)
+	if errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("the register row is gone entirely — the satellite's own shift (shift-1) now references a nonexistent register")
+	}
+	if err != nil {
+		t.Fatalf("query retired register: %v", err)
+	}
+	if active != 0 {
+		t.Errorf("a register the primary removed, but the satellite has shift history against, must retire in place (is_active=0) — got is_active=%d", active)
+	}
+}
+
+// Same fallback, for stock_locations: inventory.location_id FK-blocks the
+// hard delete, same shape as the register/shift case above.
+func TestAdminApply_StockLocationRetiredInPlaceWhenFKBlockedBySatelliteInventoryHistory(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO stock_locations (id, name, is_active) VALUES ('loc-1', 'Back Room', 1)`)
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	// The satellite recorded inventory at this location before the primary
+	// removed it.
+	mustExec(t, replica, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm-1', 'SKU-1', 'Widget', 100)`)
+	mustExec(t, replica, `INSERT INTO inventory (id, item_id, location_id, quantity) VALUES ('inv-1', 'itm-1', 'loc-1', 5)`)
+
+	mustExec(t, primary, `DELETE FROM stock_locations WHERE id = 'loc-1'`)
+	bundle2, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("second dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle2); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+
+	var active int
+	err = replica.QueryRow(`SELECT is_active FROM stock_locations WHERE id='loc-1'`).Scan(&active)
+	if errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("the stock location row is gone entirely — the satellite's own inventory row (inv-1) now references a nonexistent location")
+	}
+	if err != nil {
+		t.Fatalf("query retired stock location: %v", err)
+	}
+	if active != 0 {
+		t.Errorf("a stock location the primary removed, but the satellite has inventory against, must retire in place (is_active=0) — got is_active=%d", active)
 	}
 }
