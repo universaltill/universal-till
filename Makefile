@@ -10,7 +10,7 @@ VERSION?=0.1.0
 # release minutes later (ut-docs#369, found deploying a field hotfix).
 LDFLAGS=-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=$(VERSION)
 
-.PHONY: build run test test-race-pages e2e e2e-seed docs-shots
+.PHONY: build run test test-race-pages e2e e2e-seed docs-shots prune-worktrees
 
 build:
 	go build -trimpath -ldflags="$(LDFLAGS)" -o bin/$(BIN) .
@@ -46,6 +46,13 @@ test-race-pages:
 
 e2e-seed:
 	UT_DB_PATH=./data/e2e.db go run ./scripts/e2e_seed/main.go
+
+# Removes stale agent-created worktrees under .claude/worktrees/ that are
+# already fully merged into origin/main and past the retention window
+# (default 3 days) — see scripts/prune-stale-worktrees.sh (ut-docs#1567).
+# Never touches a worktree that still holds unmerged or uncommitted work.
+prune-worktrees:
+	bash scripts/prune-stale-worktrees.sh
 
 # Regenerates the user manual's screenshots (web/help/img/<locale>/<id>.png,
 # one per routed help topic per shipped locale) against a real till, then
