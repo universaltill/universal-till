@@ -408,6 +408,61 @@ func TestResetThenRestoreRoundTrip_CreditNote(t *testing.T) {
 	}
 }
 
+// ut-docs#1560, independent review: sale_lines.refund_of_line_id (a self-FK,
+// same shape as invoices.original_invoice_id above) needs the identical
+// two-phase archive/restore ordering — re-insert original lines before
+// return lines so row-by-row FK enforcement can't trip on the archive
+// SELECT's arbitrary row order. This was a real gap found live: the first
+// version of this card's fix added the column to sale_lines and
+// sale_lines_archive's schema and to the archive column list, but not the
+// two-phase restore split, silently DROPPING every return line's
+// refund_of_line_id on a reset/restore round-trip (it survived the row
+// itself, just NULLed the one column the fix exists to make exact) — which
+// would have reopened the exact under-refund bug this card fixes for any
+// shop that ever used the reset/restore feature.
+func TestResetThenRestoreRoundTrip_RefundOfLineID(t *testing.T) {
+	d, x, count := resetTestDB(t, "restore-refund-of-line-id.db")
+	x(`INSERT INTO items (id, name, base_price) VALUES ('i1','Widget',100)`)
+	x(`INSERT INTO sales (id, receipt_no, subtotal, total) VALUES ('s1','R1',300,300)`)
+	x(`INSERT INTO sale_lines (id, sale_id, line_no, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, item_id)
+	   VALUES ('l1','s1',1,'Widget',3,100,10,0,0,290,290,'i1')`)
+	x(`INSERT INTO sales (id, receipt_no, subtotal, total, sale_type) VALUES ('s2','R2',-97,-97,'return')`)
+	x(`INSERT INTO sale_links (id, sale_id, original_sale_id, reason) VALUES ('sl1','s2','s1','return')`)
+	x(`INSERT INTO sale_lines (id, sale_id, line_no, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, item_id, refund_of_line_id)
+	   VALUES ('l2','s2',1,'Widget',1,100,3,0,0,97,97,'i1','l1')`)
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	if c := count("sale_lines"); c != 0 {
+		t.Fatalf("sale_lines not cleared: %d", c)
+	}
+	var archivedRefundOf string
+	if err := d.DB.QueryRow(`SELECT COALESCE(refund_of_line_id,'') FROM sale_lines_archive WHERE id='l2' AND reset_batch_id=?`, batchID).Scan(&archivedRefundOf); err != nil {
+		t.Fatalf("read archived refund_of_line_id: %v", err)
+	}
+	if archivedRefundOf != "l1" {
+		t.Fatalf("archived refund_of_line_id = %q, want l1", archivedRefundOf)
+	}
+
+	if _, err := repo.RestoreResetBatch(ctx, batchID, ""); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if c := count("sale_lines"); c != 2 {
+		t.Fatalf("sale_lines after restore: %d, want 2", c)
+	}
+	var restoredRefundOf string
+	if err := d.DB.QueryRow(`SELECT COALESCE(refund_of_line_id,'') FROM sale_lines WHERE id='l2'`).Scan(&restoredRefundOf); err != nil {
+		t.Fatalf("read restored refund_of_line_id: %v", err)
+	}
+	if restoredRefundOf != "l1" {
+		t.Fatalf("restored refund_of_line_id = %q, want l1 -- a reset/restore round-trip must not silently drop which original line a return refunded against", restoredRefundOf)
+	}
+}
+
 func TestRestoreRefusesWhenShopHasTradedSinceReset(t *testing.T) {
 	d, x, count := resetTestDB(t, "traded.db")
 	seedFullSale(t, x)

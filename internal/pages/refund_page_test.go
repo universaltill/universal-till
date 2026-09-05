@@ -851,6 +851,89 @@ VALUES('line-refund-f1-b', ?, 2, 'itm-f1', 'Widget', 'W1', 1, 100, 50, 0, 0, 50,
 	}
 }
 
+// TestPostRefund_NonUniformKeySequentialPartialsNeverUnderRefundDiscount is
+// ut-docs#1560, the follow-up to #1531's own per-key clamp. #1531 fixed the
+// flooring-accumulation defect (refunding the SAME key across several
+// sequential partial requests under-discounts each one) for the UNIFORM
+// case, but deliberately left the non-uniform fallback as a one-shot floor
+// per request -- which reproduces the identical defect whenever the SAME
+// original line (not just the same key) is itself refunded across more
+// than one sequential partial request. A round-2 Opus review of #1531
+// found this via a 400-case fuzz sweep: ~17% of non-uniform-key cases still
+// under-refunded the discount by a minor unit.
+//
+// Setup: two sibling lines share a refund-line key (same item/variant/
+// price/mode) but carry DIFFERENT line_discount amounts, making the key
+// non-uniform. Line A (qty 3, discount 10 -- doesn't divide evenly by 3)
+// is refunded one unit at a time across three sequential requests, the
+// shape that exposes flooring accumulation. The old fallback
+// (floor(10*1/3)=3 every time) gives back 3+3+3=9, one minor unit short of
+// the line's true 10. The fix must give back exactly 10.
+func TestPostRefund_NonUniformKeySequentialPartialsNeverUnderRefundDiscount(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-1560-nonuniform", "R-REFUND-1560-NONUNIFORM"
+	// subtotal = (300-10=290, line A) + (100-0=100, line B) = 390.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 390, 0, 0, 390, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	// Both lines: same item/variant/price/mode -> SAME refund-line key.
+	// Line A (line 0): qty 3, discount 10 (net 290). Line B (line 1): qty
+	// 1, no discount (net 100) -- different discount RATE per unit, so the
+	// key is non-uniform and the per-key clamp falls back to this test's
+	// own per-line branch.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-1560-a', ?, 1, 'itm-1560', 'Widget', 'W1560', 3, 100, 10, 0, 0, 290, 290)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-1560-b', ?, 2, 'itm-1560', 'Widget', 'W1560', 1, 100, 0, 0, 0, 100, 100)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-1560', ?, 'cash', 390, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Refund line A (index 0) one unit at a time, three sequential requests.
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("refund %d of line A failed: %d %s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+
+	var totalDiscountGivenBack int64
+	if err := dp.Db.QueryRow(`
+SELECT COALESCE(SUM(l.line_discount), 0)
+FROM sale_lines l
+JOIN sales s ON s.id = l.sale_id
+WHERE s.sale_type = 'return' AND l.refund_of_line_id = 'line-1560-a'`).Scan(&totalDiscountGivenBack); err != nil {
+		t.Fatalf("sum returned discount for line A: %v", err)
+	}
+	// Bug shape (one-shot floor per request): floor(10*1/3)=3 three times
+	// = 9, one minor unit short. Must be exactly 10 -- line A's true
+	// discount, given back in full once every unit is refunded.
+	if totalDiscountGivenBack != 10 {
+		t.Fatalf("line A's cumulative discount given back across 3 sequential partial refunds: got %d, want exactly 10 (its own true discount)", totalDiscountGivenBack)
+	}
+
+	var totalReturned int64
+	if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(total), 0) FROM sales WHERE sale_type = 'return'`).Scan(&totalReturned); err != nil {
+		t.Fatalf("sum return totals: %v", err)
+	}
+	// Line A's true net is 290 (300 gross - 10 discount); nothing from line
+	// B was touched.
+	if totalReturned != 290 {
+		t.Fatalf("expected line A's true net (290) refunded in total, got %d", totalReturned)
+	}
+}
+
 // TestPostRefund_FractionalQuantityNeverExceedsOriginalLineNet is ut-docs#1531
 // review finding F4: cumulativeQty (keyQty[key]-pool[key]) is a float, and a
 // fractional original Qty need not land exactly on the key's total even
