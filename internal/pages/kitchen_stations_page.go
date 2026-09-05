@@ -19,22 +19,35 @@ import (
 // button runs per click — same bounded, per-click (never ambient/background)
 // shape as discoverBrowseTimeout in discovery_api.go.
 //
-// The budget is arithmetic, not a round number. DiscoverPrinters runs an
-// mDNS browse on a third of it, concurrently with a connect-only pass over
-// the till's own /24 (254 addresses at discovery.sweepConcurrency 64 in
-// flight, 700ms dial budget: about 2.8s, and it writes nothing). Then TWO
-// sequential probe passes — the swept listeners, then the browsed candidates
-// — each costing, per address, up to discovery.ippGuardBudget (2.5s, the
-// IPP office-printer check, ut-docs#1607) plus a 700ms dial and
-// discovery.escposReadTimeout (3s, because cheap embedded printers connect
-// fast and answer slowly). That is 6.2s a pass, 12.4s for both, against a
-// third of this spent browsing.
+// The budget is arithmetic, not a round number, and it now has to cover TWO
+// independent widenings stacked on top of each other (ut-docs#1607 and
+// ut-docs#1608, landed within minutes of each other): DiscoverPrinters runs
+// an mDNS browse on a third of this, concurrently with phase 1's
+// connect-only pass over the till's own /24 (254 addresses at
+// discovery.sweepConcurrency 64 in flight, 700ms dial budget — about 2.8s —
+// and it writes nothing). Phase 1 itself now retries every host that missed
+// its first dial, once, after the rest of the subnet has already been
+// dialled (ut-docs#1608: a printer whose ARP entry is cold, worst case right
+// after boot when every host's entry is cold, can lose the race between ARP
+// resolution and the 700ms dial budget). On a typical shop LAN almost every
+// address that isn't a real device "misses" too — an address with no host
+// behind it times out the same way whether or not its ARP entry was ever
+// going to resolve — so the retry is a second near-full sweep, not a
+// targeted one: phase 1's worst case is ~5.6s, not ~2.8s.
 //
-// Cutting the scan short does not fail loudly; it silently returns fewer
-// printers, which is exactly the "my printer isn't in the list" bug this card
-// exists to fix. So the budget covers the stacked worst case rather than the
-// typical one — a real scan on the product owner's LAN completes in under 7s.
-const discoverPrintersTimeout = 20 * time.Second
+// Then TWO sequential probe passes — the swept listeners, then the browsed
+// candidates — each costing, per address, up to discovery.ippGuardBudget
+// (2.5s, the IPP office-printer check, ut-docs#1607) plus a 700ms dial and
+// discovery.escposReadTimeout (3s, because cheap embedded printers connect
+// fast and answer slowly). That is 6.2s a pass, 12.4s for both.
+//
+// Worst case: max(browse ≈ a third of this, phase 1 ≈ 5.6s) + 12.4s for the
+// two probe passes. Cutting the scan short does not fail loudly; it
+// silently returns fewer printers, which is exactly the "my printer isn't
+// in the list" bug both these cards exist to fix. So the budget covers the
+// stacked worst case with real headroom, not the typical one — a real scan
+// on the product owner's LAN completes in under 7s.
+const discoverPrintersTimeout = 25 * time.Second
 
 // discoveryBrowsePrinters is a package var over discovery.DiscoverPrinters,
 // same seam-for-testability pattern as discoveryBrowse in discovery_api.go
