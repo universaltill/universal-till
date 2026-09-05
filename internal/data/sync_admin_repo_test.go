@@ -155,9 +155,10 @@ func TestAdminDumpApplyRoundTrip_TillRegisterIDNeverSyncs(t *testing.T) {
 	primary := openMigratedDB(t, "primary.db")
 	replica := openMigratedDB(t, "replica.db")
 
-	// Same shop-wide registers table on both sides (as a real admin sync
-	// would produce), but each till has resolved a DIFFERENT one as its
-	// own.
+	// registers doesn't admin-sync (ut-docs#1584 — per-till), so this test
+	// seeds the same rows by hand on both sides to simulate the shop-wide
+	// roster a real till would have (e.g. from the initial full-DB-snapshot
+	// join) — but each till has resolved a DIFFERENT one as its own.
 	for _, d := range []*db.DB{primary, replica} {
 		mustExec(t, d, `INSERT INTO registers (id, name, is_active) VALUES ('regA', 'Front Till', 1)`)
 		mustExec(t, d, `INSERT INTO registers (id, name, is_active) VALUES ('regB', 'Back Till', 1)`)
@@ -957,5 +958,59 @@ func TestAdminApply_TableRetiredInPlaceWhenFKBlockedBySatelliteSaleHistory(t *te
 	}
 	if enabled != 0 {
 		t.Errorf("a table the primary removed, but the satellite has sale history against, must retire in place (enabled=0) — got enabled=%d, an operator could still seat customers at it", enabled)
+	}
+}
+
+// ut-docs#1584: registers and stock_locations are deliberately excluded from
+// adminTables (see that var's own top comment for the full trace) because
+// neither /registers nor /locations is gated primary-only — a manager can
+// create either directly on a satellite today — and a freshly-created row
+// has no shift/sale/inventory history yet to FK-block ApplyAdmin's
+// deleteMissing from erasing it outright. This test locks in the two halves
+// of that decision: (1) neither table is ever dumped at all, and (2) a
+// satellite's own locally-created register/location survives an admin pull
+// from a primary that has never heard of it. If either fails, someone
+// flipped these tables to sync without doing ut-docs#1590's primary-only
+// gating first — update this test (and the adminTables comment) only as
+// part of that follow-up, not as a side effect of an unrelated change.
+func TestAdminApplyLeavesRegistersAndStockLocationsUntouched(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	// The primary knows about its own shop-wide register/location (on top of
+	// 001_init.sql's own seed rows, which both sides already carry
+	// identically from migration).
+	mustExec(t, primary, `INSERT INTO stock_locations (id, name, is_active) VALUES ('loc-primary', 'Primary HQ', 1)`)
+	mustExec(t, primary, `INSERT INTO registers (id, name, is_active) VALUES ('reg-primary', 'Front Till', 1)`)
+
+	// A manager created a DIFFERENT register and stock location directly on
+	// this satellite (via /registers, /locations) — the primary has never
+	// seen either, and neither has any sale/inventory history yet.
+	mustExec(t, replica, `INSERT INTO stock_locations (id, name, is_active) VALUES ('loc-satellite', 'Satellite Pop-up Store', 1)`)
+	mustExec(t, replica, `INSERT INTO registers (id, name, is_active) VALUES ('reg-satellite', 'Pop-up Till', 1)`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if _, ok := bundle.Tables["registers"]; ok {
+		t.Error("registers must not appear in the admin dump at all — ut-docs#1584 decided per-till")
+	}
+	if _, ok := bundle.Tables["stock_locations"]; ok {
+		t.Error("stock_locations must not appear in the admin dump at all — ut-docs#1584 decided per-till")
+	}
+
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var locName string
+	if err := replica.QueryRow(`SELECT name FROM stock_locations WHERE id = 'loc-satellite'`).Scan(&locName); err != nil || locName != "Satellite Pop-up Store" {
+		t.Fatalf("satellite-created stock location wiped by an admin pull from a primary that never knew about it: got %q (err=%v)", locName, err)
+	}
+	var regName string
+	if err := replica.QueryRow(`SELECT name FROM registers WHERE id = 'reg-satellite'`).Scan(&regName); err != nil || regName != "Pop-up Till" {
+		t.Fatalf("satellite-created register wiped by an admin pull from a primary that never knew about it: got %q (err=%v)", regName, err)
 	}
 }
