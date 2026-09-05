@@ -624,14 +624,16 @@ func (e *joinError) Error() string {
 }
 
 // friendlyJoinError renders a join/enrolment failure for the operator,
-// translated via httpx.T. Falls back to the raw error text (English,
-// HTML-escaped by the caller) for anything that isn't a *joinError —
-// defensive only, since every joinPrimary/completeJoin return path
-// produces one.
+// translated via httpx.T. Falls back to a translated generic message (the
+// raw error's text substituted in, same %s-placeholder convention as every
+// other kind above) for anything that isn't a *joinError — defensive only,
+// since every joinPrimary/completeJoin return path produces one, but
+// ut-docs#1544 found even this fallback reaching the operator as raw
+// English when it did fire.
 func friendlyJoinError(locale string, err error) string {
 	var je *joinError
 	if !errors.As(err, &je) {
-		return err.Error()
+		return fmt.Sprintf(httpx.T(locale, "tills.join_error.unexpected"), err.Error())
 	}
 	msg := httpx.T(locale, joinErrLocaleKey[je.kind])
 	if je.detail == "" {
