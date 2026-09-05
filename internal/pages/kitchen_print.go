@@ -206,7 +206,16 @@ func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo string) 
 	if !ok {
 		return nil, fmt.Errorf("receipt %s not found", receiptNo)
 	}
-	cfg := printerConfig(ctx, d)
+	// Checked, not the plain printerConfig wrapper (ut-docs#1533, residual
+	// gap left by #1153): a genuine settings-read error here used to be
+	// discarded and silently fall back to defaults (wrong charset, missing
+	// legacy kitchen address) instead of being noticed — unlike the
+	// GetSaleDetail/ResolveKitchenStations errors right above, which
+	// already propagate normally.
+	cfg, err := printerConfigChecked(ctx, d)
+	if err != nil {
+		return nil, err
+	}
 	locale := httpx.DefaultLocale()
 
 	itemIDs := make([]string, 0, len(detail.Lines))

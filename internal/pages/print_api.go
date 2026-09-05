@@ -131,6 +131,15 @@ func receiptLogoRaster(rd receiptDesign) []byte {
 }
 
 // receiptDesignFromSettings loads the saved design with friendly defaults.
+// Unlike printerConfig/kitchenPrintingEnabled (see printerConfigChecked), a
+// genuine settings-read error here is deliberately left unsurfaced —
+// reviewed, ut-docs#1533, residual gap left by #1153: this only feeds
+// cosmetic receipt formatting (header/footer lines, SKU/tax/barcode/logo
+// toggles), and buildReceiptDoc's callers unconditionally build and send
+// the receipt regardless of whether this read succeeded. A failure here
+// degrades the design silently; it never turns into a missed/failed
+// receipt the way a printer-config or kitchen-routing failure would, so
+// there is no failure-reporting obligation to satisfy.
 func receiptDesignFromSettings(ctx context.Context, d *common.Deps) receiptDesign {
 	get := func(key, def string) string {
 		if v, ok, _ := d.Settings.Get(ctx, key); ok {
