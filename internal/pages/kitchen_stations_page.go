@@ -19,19 +19,22 @@ import (
 // button runs per click — same bounded, per-click (never ambient/background)
 // shape as discoverBrowseTimeout in discovery_api.go.
 //
-// Longer than the 4s a pure mDNS browse needed (ut-docs#1606), because the
-// scan now also sweeps the till's own subnet. The budget it has to cover:
-// an mDNS browse (a third of this) running concurrently with a connect-only
-// pass over a /24 — 254 addresses at discovery.sweepConcurrency 64 in flight
-// and a 700ms dial budget, so about 2.8s — and then an ESC/POS probe of
-// whatever was found listening, which waits up to escposReadTimeout (3s)
-// because cheap embedded printers connect fast and answer slowly.
+// The budget is arithmetic, not a round number. DiscoverPrinters runs an
+// mDNS browse on a third of it, concurrently with a connect-only pass over
+// the till's own /24 (254 addresses at discovery.sweepConcurrency 64 in
+// flight, 700ms dial budget: about 2.8s, and it writes nothing). Then TWO
+// sequential probe passes — the swept listeners, then the browsed candidates
+// — each costing, per address, up to discovery.ippGuardBudget (2.5s, the
+// IPP office-printer check, ut-docs#1607) plus a 700ms dial and
+// discovery.escposReadTimeout (3s, because cheap embedded printers connect
+// fast and answer slowly). That is 6.2s a pass, 12.4s for both, against a
+// third of this spent browsing.
 //
 // Cutting the scan short does not fail loudly; it silently returns fewer
 // printers, which is exactly the "my printer isn't in the list" bug this card
-// exists to fix. So the budget leaves real headroom rather than finishing
-// just barely.
-const discoverPrintersTimeout = 12 * time.Second
+// exists to fix. So the budget covers the stacked worst case rather than the
+// typical one — a real scan on the product owner's LAN completes in under 7s.
+const discoverPrintersTimeout = 20 * time.Second
 
 // discoveryBrowsePrinters is a package var over discovery.DiscoverPrinters,
 // same seam-for-testability pattern as discoveryBrowse in discovery_api.go
