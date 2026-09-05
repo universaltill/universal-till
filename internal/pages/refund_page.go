@@ -68,13 +68,24 @@ func refundLinePool(lines []data.SaleDetailLine, returned map[string]float64) ma
 	return pool
 }
 
-// refundableLines computes what's left to give back per line.
-func refundableLines(detail data.SaleDetail, returned map[string]float64) []refundLineView {
+// refundableLines computes what's left to give back per line. returnedByLine
+// (keyed by original sale_lines.ID, ut-docs#1583) nets each line's OWN
+// already-returned quantity out of its own sold Qty before the shared-pool
+// cap runs -- using l.Qty alone (unadjusted for a return already recorded
+// against THAT specific line) let the POST handler's own per-request guard
+// disagree with this display once it was fixed to close a sequential
+// double-dip: the page offered a quantity the POST then refused, because
+// the display hadn't been netted the same way. Both must use the identical
+// basis so they can never disagree (the whole point of this card).
+func refundableLines(detail data.SaleDetail, returned map[string]float64, returnedByLine map[string]float64) []refundLineView {
 	pool := refundLinePool(detail.Lines, returned)
 	var out []refundLineView
 	for i, l := range detail.Lines {
 		key := data.RefundLineKey(l.ItemID, l.VariantID, l.UnitPrice, l.OrderType)
-		remaining := l.Qty
+		remaining := l.Qty - returnedByLine[l.ID]
+		if remaining < 0 {
+			remaining = 0
+		}
 		if remaining > pool[key] {
 			remaining = pool[key]
 		}
@@ -120,6 +131,15 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err) // page-error:allow not yet migrated, tracked in ut-docs#1458
 			return
 		}
+		// ut-docs#1583: loaded here (not just in the POST handler below) so
+		// the displayed/pre-filled max uses the identical per-line-netted
+		// basis the POST validation now enforces -- otherwise the page can
+		// offer a quantity the POST then refuses.
+		returnedByLine, err := repo.ReturnedQuantitiesByOriginalLine(r.Context(), detail.ID)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			return
+		}
 		methods := []string{"cash"}
 		for _, p := range detail.Payments {
 			if p.Method != "cash" {
@@ -144,7 +164,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			"theme":                d.CurrentState().Theme,
 			"menuItems":            d.MenuSnapshot(),
 			"Sale":                 detail,
-			"Lines":                refundableLines(detail, returned),
+			"Lines":                refundableLines(detail, returned, returnedByLine),
 			"Methods":              methods,
 			"AuthOff":              authOff,
 			"fiscalOverrideActive": fiscalOverrideActive,
@@ -356,7 +376,27 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				return
 			}
 			key := data.RefundLineKey(l.ItemID, l.VariantID, l.UnitPrice, l.OrderType)
+			// ut-docs#1583: cap at min(lineRemaining, pool[key]), not
+			// pool[key] alone -- matching refundableLines' own display cap
+			// above, so a hand-crafted POST can't request more against this
+			// specific original line than it ever sold, even when the
+			// shared fungible-pool total (sibling lines with the same key)
+			// would otherwise allow it. lineRemaining nets l.Qty against
+			// returnedQtyByLine[l.ID] (already loaded above for the
+			// non-uniform discount branch below) -- l.Qty alone is the
+			// line's ORIGINAL total sold quantity, unadjusted for any
+			// return already recorded against this specific line in a
+			// prior request, so capping at l.Qty alone still let the same
+			// line be double-dipped across two sequential requests
+			// (independent review finding on this card).
+			lineRemaining := l.Qty - returnedQtyByLine[l.ID]
+			if lineRemaining < 0 {
+				lineRemaining = 0
+			}
 			remaining := pool[key]
+			if remaining > lineRemaining {
+				remaining = lineRemaining
+			}
 			if qty > remaining+1e-9 {
 				http.Error(w, fmt.Sprintf("line %q: only %.3g left to refund", l.Name, remaining), http.StatusConflict)
 				return
