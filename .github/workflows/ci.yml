@@ -110,6 +110,15 @@ jobs:
         run: bash scripts/ci/guard-e2e-fixtures-import_test.sh
       - name: Brand asset guard
         run: bash scripts/ci/check-brand-assets.sh
+      - name: Stale-worktree prune script regression test
+        # scripts/prune-stale-worktrees.sh itself is a manual maintenance
+        # tool (run via `make prune-worktrees`, not part of this build),
+        # but its test is fully hermetic (own mktemp -d scratch git repo,
+        # no network writes, no shared state) so nothing stops it running
+        # here — without this, a regression in its safety checks (e.g.
+        # ut-docs#1567's locked-worktree finding) would go undetected
+        # indefinitely.
+        run: bash scripts/prune-stale-worktrees_test.sh
       - name: Makefile version-stamp guard
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
