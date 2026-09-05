@@ -11,6 +11,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/settings"
 )
 
 func newRegistersTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
@@ -20,7 +21,11 @@ func newRegistersTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
 
-	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(db)}
+	// Settings backs the replica check (SyncPrimaryURL) — left unset, this
+	// till is a primary/standalone, matching every pre-existing test in
+	// this file. ut-docs#1590's replica tests set sync.primary_url on the
+	// same store (same convention as journal_page_test.go).
+	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(db), Settings: settings.NewStore(db)}
 	mux := http.NewServeMux()
 	registerRegisters(mux, d)
 	return mux, d
@@ -51,6 +56,54 @@ func TestRegistersPageCreate_ReachableUnderAuthOff(t *testing.T) {
 	rec := postForm(mux, "/api/registers", url.Values{"name": {"Auth-Off Till"}}, nil)
 	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/registers" {
 		t.Fatalf("create under UT_AUTH=off: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
+// ut-docs#1590: a satellite-created register has no shift/sale history yet
+// to FK-block ApplyAdmin's deleteMissing, so a manager creating one directly
+// on a replica would have it silently wiped on the very next admin pull once
+// registers/stock_locations sync (see sync_admin_repo.go's adminTables). All
+// three mutating actions (create/rename/deactivate) must refuse on a
+// replica with a clear, localized error — never a silent accept.
+func TestRegistersPage_MutationsRefusedOnReplica(t *testing.T) {
+	mux, d := newRegistersTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	// A register that existed before this till became a replica (e.g.
+	// synced down from the primary, or created back when this till was
+	// still standalone) — used below to check rename/deactivate, since
+	// create itself is refused and can't produce one.
+	const regID = "reg-existing"
+	if _, err := d.Db.Exec(`INSERT INTO registers (id, name, is_active) VALUES (?, 'Existing Till', 1)`, regID); err != nil {
+		t.Fatalf("seed register: %v", err)
+	}
+
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("set primary_url: %v", err)
+	}
+
+	rec := postForm(mux, "/api/registers", url.Values{"name": {"Satellite Till"}}, &manager)
+	if rec.Header().Get("Location") != "/registers?err=registers.error.replica_use_primary" {
+		t.Fatalf("create on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var count int
+	if err := d.Db.QueryRow(`SELECT count(*) FROM registers WHERE name = 'Satellite Till'`).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("register must not be created on a replica, found %d rows", count)
+	}
+
+	// The pre-existing register must also refuse rename and deactivate —
+	// an existing row can be silently reverted by the next admin pull just
+	// as easily as a new one can be deleted by it.
+	rec = postForm(mux, "/api/registers/"+regID, url.Values{"name": {"Renamed"}}, &manager)
+	if rec.Header().Get("Location") != "/registers?err=registers.error.replica_use_primary" {
+		t.Fatalf("rename on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	rec = postForm(mux, "/api/registers/"+regID+"/active", url.Values{"active": {"0"}}, &manager)
+	if rec.Header().Get("Location") != "/registers?err=registers.error.replica_use_primary" {
+		t.Fatalf("deactivate on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
 	}
 }
 
