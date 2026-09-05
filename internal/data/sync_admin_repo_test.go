@@ -1067,6 +1067,30 @@ func TestAdminApply_RegisterRetiredInPlaceWhenFKBlockedBySatelliteShiftHistory(t
 	if active != 0 {
 		t.Errorf("a register the primary removed, but the satellite has shift history against, must retire in place (is_active=0) — got is_active=%d", active)
 	}
+
+	// ut-docs#1610: the retire also mangles registers.name to "Front
+	// Till~reg-1" to free the UNIQUE constraint. The /registers management
+	// page (ListRegistersForAdmin lists inactive registers too) must show the
+	// real name, never the raw mangled value.
+	admin, err := NewPOSRepo(replica.DB).ListRegistersForAdmin(ctx)
+	if err != nil {
+		t.Fatalf("ListRegistersForAdmin: %v", err)
+	}
+	found := false
+	for _, reg := range admin {
+		if reg.ID == "reg-1" {
+			found = true
+			if reg.Name != "Front Till" {
+				t.Errorf("ListRegistersForAdmin name for retired register = %q, want %q", reg.Name, "Front Till")
+			}
+			if reg.IsActive {
+				t.Errorf("ListRegistersForAdmin IsActive for retired register = true, want false")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("ListRegistersForAdmin must still list the retired register; got %+v", admin)
+	}
 }
 
 // Same fallback, for stock_locations: inventory.location_id FK-blocks the
@@ -1109,5 +1133,46 @@ func TestAdminApply_StockLocationRetiredInPlaceWhenFKBlockedBySatelliteInventory
 	}
 	if active != 0 {
 		t.Errorf("a stock location the primary removed, but the satellite has inventory against, must retire in place (is_active=0) — got is_active=%d", active)
+	}
+
+	// ut-docs#1610: the retire also mangles stock_locations.name to "Back
+	// Room~loc-1". Both readers that surface a location's name to staff —
+	// the pickers (ListStockLocations, no active filter) and the /locations
+	// management page (ListStockLocationsForAdmin) — must show the real name.
+	pos := NewPOSRepo(replica.DB)
+	picker, err := pos.ListStockLocations(ctx)
+	if err != nil {
+		t.Fatalf("ListStockLocations: %v", err)
+	}
+	found := false
+	for _, l := range picker {
+		if l.ID == "loc-1" {
+			found = true
+			if l.Name != "Back Room" {
+				t.Errorf("ListStockLocations name for retired location = %q, want %q", l.Name, "Back Room")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("ListStockLocations must still list the retired location (it has no active filter); got %+v", picker)
+	}
+	admin, err := pos.ListStockLocationsForAdmin(ctx)
+	if err != nil {
+		t.Fatalf("ListStockLocationsForAdmin: %v", err)
+	}
+	found = false
+	for _, l := range admin {
+		if l.ID == "loc-1" {
+			found = true
+			if l.Name != "Back Room" {
+				t.Errorf("ListStockLocationsForAdmin name for retired location = %q, want %q", l.Name, "Back Room")
+			}
+			if l.IsActive {
+				t.Errorf("ListStockLocationsForAdmin IsActive for retired location = true, want false")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("ListStockLocationsForAdmin must still list the retired location; got %+v", admin)
 	}
 }
