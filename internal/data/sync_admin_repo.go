@@ -50,7 +50,10 @@ type adminTable struct {
 
 // adminTables is the shop-wide state a replica mirrors. Deliberately NOT
 // here: inventory/stock (additive movements, D3), sales, sessions,
-// stock_locations (per-till), item_images (files don't travel — D2 limit),
+// item_images (files don't travel — D2 limit), registers and
+// stock_locations (still an OPEN decision, not a settled "per-till" as this
+// comment used to claim with no rationale — ut-docs#1554 found both look
+// plausibly shop-wide; ut-docs#1584 tracks deciding this properly),
 // plugin install tables — rows without the Ed25519-verified plugin FILES
 // would leave a replica with phantom plugins, so the installed set travels
 // as its own registry bundle instead (GET /api/sync/plugins, ut-docs#460 /
@@ -69,6 +72,23 @@ var adminTables = []adminTable{
 	// from a not-yet-upgraded primary (ADR-0031).
 	{name: "payment_methods", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}, skipCols: []string{"plugin_id"}},
 	{name: "users", pk: []string{"id"}, hasIsActive: true, unique: []string{"username"}},
+	// ut-docs#1554: role_permissions is runtime-mutable (AuthRepo.
+	// SetRolePermission, from the permission matrix editor) and was missing
+	// from this list entirely — a manager revoking e.g. `refund` from
+	// cashiers on the primary left every satellite still granting it, with
+	// nothing to catch the drift. This is the security-relevant half of
+	// #1554; roles and permission_actions are included alongside it even
+	// though today they're migration-seeded only (no runtime INSERT
+	// anywhere) and so happen to already match across tills — but that
+	// match holds only "because every till seeds them identically," the
+	// exact fragility #1554 calls out (a future custom-roles feature, or
+	// two tills mid-rollout on different migration versions, would break
+	// it silently). roles/permission_actions have no FK dependencies of
+	// their own; role_permissions FKs onto both, so it must apply after —
+	// ordered accordingly here.
+	{name: "roles", pk: []string{"role"}},
+	{name: "permission_actions", pk: []string{"action"}},
+	{name: "role_permissions", pk: []string{"role", "action"}},
 	{name: "items", pk: []string{"id"}, hasIsActive: true, unique: []string{"sku"}},
 	{name: "item_barcodes", pk: []string{"barcode"}},
 	{name: "item_variants", pk: []string{"id"}, hasIsActive: true, unique: []string{"sku"}},

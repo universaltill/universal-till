@@ -761,6 +761,59 @@ func TestAdminDumpApplyRoundTrip_KitchenStationPrinterAddressStaysLocal(t *testi
 	}
 }
 
+// ut-docs#1554: role_permissions is the security-relevant half of that
+// card — a manager revoking a grant on the primary must actually reach
+// every satellite, not just a newly-granted permission. Both DBs already
+// carry the identical migration-seeded roles/permission_actions/
+// role_permissions rows (that's the fragility #1554 called out: they only
+// match "because every till seeds them identically"), so this test proves
+// the two properties that seeding alone can never cover: a NEW grant made
+// on the primary reaches the satellite, and a REVOKED grant does too.
+func TestAdminDumpApplyRoundTrip_RolePermissions(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	// 'cashier' isn't seeded with 'audit' by migration 001_init.sql — grant
+	// it on the primary, as the permission matrix editor's
+	// AuthRepo.SetRolePermission would.
+	mustExec(t, primary, `INSERT INTO role_permissions (role, action, granted) VALUES ('cashier', 'audit', 1)
+		ON CONFLICT (role, action) DO UPDATE SET granted = excluded.granted`)
+	// A seeded grant, revoked on the primary — this is the actual bug
+	// #1554 fixed: before this change, nothing propagated this to a
+	// satellite at all.
+	mustExec(t, primary, `UPDATE role_permissions SET granted = 0 WHERE role = 'admin' AND action = 'refund'`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	// wireTrip: role_permissions.granted is the one INTEGER column this test
+	// asserts on, so it must cross the same JSON hop a real replica sees
+	// (numbers becoming float64) — every other ApplyAdmin call in this file
+	// does the same (see wireTrip's own doc comment above).
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var granted int
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT granted FROM role_permissions WHERE role = 'cashier' AND action = 'audit'`).Scan(&granted); err != nil {
+		t.Fatalf("new grant did not sync to the satellite: %v", err)
+	}
+	if granted != 1 {
+		t.Errorf("cashier/audit should be granted on the satellite, got granted=%d", granted)
+	}
+
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT granted FROM role_permissions WHERE role = 'admin' AND action = 'refund'`).Scan(&granted); err != nil {
+		t.Fatalf("admin/refund row missing on satellite after apply: %v", err)
+	}
+	if granted != 0 {
+		t.Errorf("admin/refund was revoked on the primary but the satellite still grants it (granted=%d) — this is the exact security gap #1554 fixed", granted)
+	}
+}
+
 // A table hard-removed on the primary while the SATELLITE still has a local
 // sale referencing it (found in review, ut-docs#1546) — the plain DELETE
 // above can never hit this path because tbl-1 has no referencing rows
