@@ -331,7 +331,7 @@ func TestBrowse_DoesNotLeakCollectorGoroutineWhenCancelledMidScan(t *testing.T) 
 		// A real scan keeps running for its full timeout even after the
 		// caller has given up; emulate that, then return as Query does.
 		time.Sleep(100 * time.Millisecond)
-		p.Entries <- &mdns.ServiceEntry{InfoFields: []string{"id=late-answer", "name=Late"}, AddrV4: net.IPv4(192, 168, 1, 51), Port: 8080}
+		p.Entries <- &mdns.ServiceEntry{Name: "late-answer._unitill-sync._tcp.local.", InfoFields: []string{"id=late-answer", "name=Late"}, AddrV4: net.IPv4(192, 168, 1, 51), Port: 8080}
 		close(queryReturned)
 		return nil
 	}
@@ -405,7 +405,7 @@ func TestBrowse_ReturnsCollectedCandidatesDespiteALateQueryError(t *testing.T) {
 	orig := mdnsQuery
 	t.Cleanup(func() { mdnsQuery = orig })
 	mdnsQuery = func(p *mdns.QueryParam) error {
-		p.Entries <- &mdns.ServiceEntry{InfoFields: []string{"id=till-real", "name=Real Till"}, AddrV4: net.IPv4(192, 168, 1, 60), Port: 8080}
+		p.Entries <- &mdns.ServiceEntry{Name: "till-real._unitill-sync._tcp.local.", InfoFields: []string{"id=till-real", "name=Real Till"}, AddrV4: net.IPv4(192, 168, 1, 60), Port: 8080}
 		return errors.New("write udp6 [::]:57143->[ff02::fb]:5353: sendto: no route to host")
 	}
 
@@ -445,7 +445,7 @@ func TestBrowse_RetriesIPv4OnlyWhenTheFullQueryFailsOutright(t *testing.T) {
 			// Mirrors the real library: fails instantly, nothing collected.
 			return errors.New("write udp6 [::]:57143->[ff02::fb]:5353: sendto: no route to host")
 		}
-		p.Entries <- &mdns.ServiceEntry{InfoFields: []string{"id=till-v4only", "name=V4 Only Till"}, AddrV4: net.IPv4(192, 168, 1, 61), Port: 8080}
+		p.Entries <- &mdns.ServiceEntry{Name: "till-v4only._unitill-sync._tcp.local.", InfoFields: []string{"id=till-v4only", "name=V4 Only Till"}, AddrV4: net.IPv4(192, 168, 1, 61), Port: 8080}
 		return nil
 	}
 
@@ -599,7 +599,7 @@ func TestBrowse_SkipsV4V6AttemptWhenHostHasNoIPv6Support(t *testing.T) {
 		mu.Lock()
 		calls = append(calls, p.DisableIPv6)
 		mu.Unlock()
-		p.Entries <- &mdns.ServiceEntry{InfoFields: []string{"id=till-noipv6", "name=No IPv6 Till"}, AddrV4: net.IPv4(192, 168, 1, 62), Port: 8080}
+		p.Entries <- &mdns.ServiceEntry{Name: "till-noipv6._unitill-sync._tcp.local.", InfoFields: []string{"id=till-noipv6", "name=No IPv6 Till"}, AddrV4: net.IPv4(192, 168, 1, 62), Port: 8080}
 		return nil
 	}
 
@@ -659,5 +659,158 @@ func TestBrowse_ReturnsErrorWhenTheV4OnlyAttemptFailsOnAHostWithNoIPv6Support(t 
 	if len(calls) != 1 || calls[0] != true {
 		t.Fatalf("got mdnsQuery calls (DisableIPv6 per call) = %v, want exactly one call with DisableIPv6=true — "+
 			"a host with no IPv6 support must never attempt the v4+v6 query even on the failure path", calls)
+	}
+}
+
+// TestBrowsePrinters_DropsAnswersFromOtherServices — hashicorp/mdns's client
+// assembles a ServiceEntry from ANY response packet it sees on the multicast
+// group during the query window; its receive loop keys entries by record name
+// and never checks them against params.Service. On a real shop LAN that means
+// ambient chatter from OTHER devices' browses reaches the parser looking
+// exactly like a printer answer.
+//
+// Observed on the product owner's LAN on 2026-09-05 (ut-docs#1605): an Apple
+// TV's _airplay._tcp on :7000 and an unrelated host on an ephemeral port were
+// both offered in the kitchen-stations printer list, each with its own "Use
+// for receipt printer" button — one tap from silently pointing the till at a
+// device that cannot print, after which receipts vanish with no operator-
+// visible cause. Only answers published under the queried service may survive.
+func TestBrowsePrinters_DropsAnswersFromOtherServices(t *testing.T) {
+	forceIPv6Supported(t, true)
+
+	orig := mdnsQuery
+	t.Cleanup(func() { mdnsQuery = orig })
+	mdnsQuery = func(p *mdns.QueryParam) error {
+		// One genuine printer, amid the noise a real LAN actually produced.
+		p.Entries <- &mdns.ServiceEntry{
+			Name:       "HP OfficeJet Pro 9020 series [79A4B2]._pdl-datastream._tcp.local.",
+			InfoFields: []string{"txtvers=1", "ty=HP OfficeJet Pro 9020 series"},
+			AddrV4:     net.IPv4(192, 168, 1, 245),
+			Port:       9100,
+		}
+		p.Entries <- &mdns.ServiceEntry{
+			Name:       "Living Room._airplay._tcp.local.",
+			InfoFields: []string{"txtvers=1"},
+			AddrV4:     net.IPv4(192, 168, 1, 223),
+			Port:       7000,
+		}
+		p.Entries <- &mdns.ServiceEntry{
+			Name:       "some-host._http._tcp.local.",
+			InfoFields: []string{"txtvers=1"},
+			AddrV4:     net.IPv4(192, 168, 1, 93),
+			Port:       55627,
+		}
+		return nil
+	}
+
+	got, err := BrowsePrinters(context.Background(), 3*time.Second)
+	if err != nil {
+		t.Fatalf("BrowsePrinters: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d candidates (%+v), want only the _pdl-datastream._tcp one — "+
+			"an answer from another service must never be offered as a printer", len(got), got)
+	}
+	if got[0].Address != "192.168.1.245:9100" {
+		t.Fatalf("got Address=%q, want the real printer at %q", got[0].Address, "192.168.1.245:9100")
+	}
+}
+
+// TestBrowsePrinters_KeepsPrinterOnNonStandardPort guards the filter from
+// being tightened into a port check: the SERVICE TYPE is what makes an answer
+// a printer, not the port number. A _pdl-datastream._tcp responder is free to
+// advertise a port other than 9100, and print.TransportForAddress already
+// speaks an explicit host:port, so such a printer must still be offered.
+func TestBrowsePrinters_KeepsPrinterOnNonStandardPort(t *testing.T) {
+	forceIPv6Supported(t, true)
+
+	orig := mdnsQuery
+	t.Cleanup(func() { mdnsQuery = orig })
+	mdnsQuery = func(p *mdns.QueryParam) error {
+		p.Entries <- &mdns.ServiceEntry{
+			Name:       "Kitchen._pdl-datastream._tcp.local.",
+			InfoFields: []string{"txtvers=1", "ty=Kitchen Printer"},
+			AddrV4:     net.IPv4(192, 168, 1, 80),
+			Port:       9101,
+		}
+		return nil
+	}
+
+	got, err := BrowsePrinters(context.Background(), 3*time.Second)
+	if err != nil {
+		t.Fatalf("BrowsePrinters: %v", err)
+	}
+	if len(got) != 1 || got[0].Address != "192.168.1.80:9101" {
+		t.Fatalf("got %+v, want the printer kept at %q — the service type is the filter, not the port",
+			got, "192.168.1.80:9101")
+	}
+}
+
+// TestBrowse_DropsAnswersFromOtherServices — the same protection for till
+// discovery. candidateFromEntry happens to reject foreign answers already,
+// but only by accident: it requires an "id=" TXT key that no other service
+// publishes. That is a property of our own advertiser, not a rule anyone
+// stated, and it would evaporate the moment a TXT convention changed. The
+// filter belongs to the scan layer, which is the layer that knows what was
+// asked for, so every device class present and future is covered.
+func TestBrowse_DropsAnswersFromOtherServices(t *testing.T) {
+	forceIPv6Supported(t, true)
+
+	orig := mdnsQuery
+	t.Cleanup(func() { mdnsQuery = orig })
+	mdnsQuery = func(p *mdns.QueryParam) error {
+		p.Entries <- &mdns.ServiceEntry{
+			Name:       "till-abc123._unitill-sync._tcp.local.",
+			InfoFields: []string{"id=abc123", "name=Haaft"},
+			AddrV4:     net.IPv4(192, 168, 1, 50),
+			Port:       8080,
+		}
+		// A foreign service that DOES carry an id= key — proving the scan
+		// layer rejects it on service name, not on TXT-shape luck.
+		p.Entries <- &mdns.ServiceEntry{
+			Name:       "impostor._airplay._tcp.local.",
+			InfoFields: []string{"id=deadbeef", "name=Not A Till"},
+			AddrV4:     net.IPv4(192, 168, 1, 223),
+			Port:       7000,
+		}
+		return nil
+	}
+
+	got, err := Browse(context.Background(), 3*time.Second)
+	if err != nil {
+		t.Fatalf("Browse: %v", err)
+	}
+	if len(got) != 1 || got[0].TillID != "abc123" {
+		t.Fatalf("got %+v, want only the _unitill-sync._tcp till", got)
+	}
+}
+
+// TestBrowsePrinters_MatchesServiceNameCaseInsensitively — DNS labels are
+// case-insensitive (RFC 6762 §16, RFC 4343) and a responder may echo back
+// whatever case it likes. A printer advertising "._PDL-DataStream._TCP." is
+// the same service as one advertising in lower case, so a case-sensitive
+// filter would quietly drop a real, working printer from the operator's list
+// — the same end result as the ut-docs#1605 bug, in the opposite direction.
+func TestBrowsePrinters_MatchesServiceNameCaseInsensitively(t *testing.T) {
+	forceIPv6Supported(t, true)
+
+	orig := mdnsQuery
+	t.Cleanup(func() { mdnsQuery = orig })
+	mdnsQuery = func(p *mdns.QueryParam) error {
+		p.Entries <- &mdns.ServiceEntry{
+			Name:       "Shouty Printer._PDL-DataStream._TCP.local.",
+			InfoFields: []string{"txtvers=1", "ty=Shouty Printer"},
+			AddrV4:     net.IPv4(192, 168, 1, 90),
+			Port:       9100,
+		}
+		return nil
+	}
+
+	got, err := BrowsePrinters(context.Background(), 3*time.Second)
+	if err != nil {
+		t.Fatalf("BrowsePrinters: %v", err)
+	}
+	if len(got) != 1 || got[0].Address != "192.168.1.90:9100" {
+		t.Fatalf("got %+v, want the printer kept — DNS labels are case-insensitive", got)
 	}
 }

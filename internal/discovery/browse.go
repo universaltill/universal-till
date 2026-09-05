@@ -189,6 +189,11 @@ func scanOnce[T any](ctx context.Context, timeout time.Duration, serviceName str
 	go func() {
 		defer close(collected)
 		for e := range entries {
+			// Drop answers that belong to some other service before they
+			// reach parse — see entryMatchesService (ut-docs#1605).
+			if !entryMatchesService(e, serviceName) {
+				continue
+			}
 			c, ok := parse(e)
 			if !ok {
 				continue
@@ -316,6 +321,45 @@ func printerCandidateFromEntry(e *mdns.ServiceEntry) (PrinterCandidate, bool) {
 		return PrinterCandidate{}, false
 	}
 	return PrinterCandidate{Name: name, Address: net.JoinHostPort(ip.String(), strconv.Itoa(e.Port))}, true
+}
+
+// entryMatchesService reports whether an mDNS answer actually belongs to the
+// service that was queried.
+//
+// This is not paranoia about a malicious peer — it is a plain defect in the
+// client library. hashicorp/mdns's receive loop builds a ServiceEntry out of
+// whatever PTR/SRV/TXT/A records arrive in ANY response packet on the
+// multicast group during the query window, keyed by record name, and never
+// once compares them against params.Service. mDNS is multicast, so that
+// window also catches every OTHER host's browses: an Apple TV answering some
+// Mac's _airplay._tcp browse on :7000 lands in params.Entries looking exactly
+// like a printer answering ours.
+//
+// Left unfiltered that reached the operator as real, tappable choices. On the
+// product owner's LAN (2026-09-05, ut-docs#1605) the kitchen-stations printer
+// list offered two AirPlay receivers and an unrelated host on an ephemeral
+// port alongside the one genuine printer, each with its own "Use for receipt
+// printer" button — and because those entries carry no printer "ty=" TXT key,
+// every one of them rendered under the UI's generic "Printer" label, visually
+// indistinguishable from the real device. Picking one silently configures the
+// till to print to something that cannot print: receipts then disappear with
+// no error the shop can act on.
+//
+// The check lives here, in scan, rather than in either parser because this is
+// the layer that knows which service was asked for — so it holds for tills,
+// printers, and any device class added later, instead of each parser having
+// to remember. Till discovery looked immune only by luck: candidateFromEntry
+// requires an "id=" TXT key no other service happens to publish, which is a
+// property of our own advertiser rather than a rule anyone stated.
+//
+// Matching is on the service label bounded by dots ("._pdl-datastream._tcp.")
+// so it cannot be satisfied by a mere substring of some longer instance name,
+// and is case-insensitive because DNS labels are (RFC 6762 §16, RFC 4343): a
+// responder may echo back any case it likes, and a printer answering
+// "._PDL-DataStream._TCP." is the same service as one answering in lower case.
+// Rejecting it would take a real, working printer off the operator's list.
+func entryMatchesService(e *mdns.ServiceEntry, serviceName string) bool {
+	return strings.Contains(strings.ToLower(e.Name), strings.ToLower("."+serviceName+"."))
 }
 
 // entryAddr picks AddrV4, falling back to AddrV6 — shared by both entry
