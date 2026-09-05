@@ -42,6 +42,23 @@ func (f *fakeKV) get(key string) string {
 }
 
 // resetState clears the package-level identity between tests.
+//
+// Deliberately does NOT touch attemptSem. A drain here looks like harmless
+// cleanup but isn't: several tests in this file call Init with
+// context.Background() and never cancel it, so its background loop
+// goroutine can genuinely still be running — holding attemptSem mid
+// critical-section — well after the test that started it has returned.
+// A non-blocking receive can't tell "stale token left behind" from
+// "another goroutine's live token"; it drains either one. Stealing a live
+// token lets a second goroutine wrongly believe it has exclusive access
+// while the first is still running, and when the first later calls
+// releaseAttempt, it drains the SECOND goroutine's token instead of
+// releasing its own — leaving that goroutine's own release permanently
+// blocked on an empty channel. (Found the hard way: this drain shipped
+// once, in the ut-docs#1298 fix, and produced exactly that hang under
+// `go test -race -count=5`.) acquireAttempt/releaseAttempt are always
+// correctly paired in production code, so there is nothing for a resetState
+// drain to legitimately clean up.
 func resetState() {
 	mu.Lock()
 	cur = identity{}
@@ -542,5 +559,126 @@ func TestFetchSigningKeyRejectsBadKey(t *testing.T) {
 	}
 	if kv.get(keyPublicKey) != "" {
 		t.Fatal("invalid key was persisted")
+	}
+}
+
+// RegisterNow must never block past its caller's own context deadline
+// waiting for the registration-attempt slot (ut-docs#1298). Three callers
+// (setup_page.go's autoRegisterForSetup, setup_base_plugins.go,
+// setup_tse.go) bound a single attempt with a short context.WithTimeout
+// (5s in practice) expecting that to cap the worst case — but if the
+// background loop already holds the slot around its own ~15s-bounded
+// signing-key fetch on a black-holed network, a caller queuing behind a
+// plain mutex would wait out that fetch first, roughly quadrupling its
+// intended bound. This holds the slot for far longer than the caller's
+// deadline and asserts RegisterNow gives up promptly instead of blocking
+// until the slot frees.
+func TestRegisterNowRespectsCallerContextWhenAttemptSlotHeld(t *testing.T) {
+	resetState()
+	if !acquireAttempt(context.Background()) {
+		t.Fatal("failed to seed the held attempt slot")
+	}
+	// Release from a timer, not from t.Cleanup: against the pre-fix plain
+	// sync.Mutex, RegisterNow would block on the lock for this entire
+	// delay, so this makes that regression fail fast (~1s, with the real
+	// assertion message below) instead of hanging until the package's
+	// 10-minute test timeout with no diagnostic — t.Cleanup only runs
+	// after the (still-blocked) test function itself returns, which never
+	// happens on its own against the old code.
+	go func() {
+		time.Sleep(600 * time.Millisecond) // comfortably past the 500ms assertion bound below
+		releaseAttempt()
+	}()
+
+	cfg := freshConfig("http://example.invalid") // never dialed: ctx expires before acquire
+	kv := newFakeKV()
+	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
+	defer cancel()
+
+	start := time.Now()
+	status, err := RegisterNow(ctx, cfg, kv)
+	elapsed := time.Since(start)
+
+	if err == nil {
+		t.Fatal("RegisterNow succeeded while the attempt slot was held — expected it to give up")
+	}
+	if elapsed > 500*time.Millisecond {
+		t.Fatalf("RegisterNow blocked past its caller's context deadline: took %v", elapsed)
+	}
+	if status.Registered {
+		t.Fatalf("status reports registered after a give-up attempt: %+v", status)
+	}
+}
+
+// The background loop (run, started by Init) must still eventually
+// acquire the attempt slot once it frees — the fix must not turn its
+// effectively-blocking wait into a give-up, only make it interruptible by
+// ctx. Holds the slot so Init's loop (which needs the signing key, since
+// no PublicKey is configured) starts out queued behind it, then confirms
+// the loop's fetch completes once the slot is released. Exercises run()
+// itself, not RegisterNow — a prior version of this test called
+// EnsureRegistered directly and never invoked Init at all, so it silently
+// tested nothing about the background loop (0% coverage on run(), per an
+// independent review of ut-docs#1298).
+func TestBackgroundLoopStillAcquiresAttemptSlotOnceFree(t *testing.T) {
+	resetState()
+	srv, _ := testMarketplace(t, 0)
+	kv := newFakeKV()
+	cfg := freshConfig(srv.URL)
+
+	if !acquireAttempt(context.Background()) {
+		t.Fatal("failed to seed the held attempt slot")
+	}
+	go func() {
+		time.Sleep(50 * time.Millisecond)
+		releaseAttempt()
+	}()
+
+	Init(context.Background(), cfg, kv, &sync.WaitGroup{})
+	waitFor(t, "signing key", func() bool { return kv.get(keyPublicKey) != "" })
+}
+
+// The other half of ut-docs#1298's fix to run(): acquireAttempt(ctx) must
+// itself observe cancellation while genuinely queued waiting for the slot
+// (not just while an in-flight HTTP call is cancelled — that path is
+// already covered by TestInit_BackgroundLoopJoinsOnCancel). Holds the slot
+// for the whole test so Init's loop can never acquire it, confirms the
+// loop is still running (wg.Wait hasn't returned) while queued, then
+// cancels ctx and confirms it exits promptly instead of waiting out the
+// held slot.
+func TestBackgroundLoopExitsPromptlyWhenCancelledWhileQueuedOnAttemptSlot(t *testing.T) {
+	resetState()
+	if !acquireAttempt(context.Background()) {
+		t.Fatal("failed to seed the held attempt slot")
+	}
+	defer releaseAttempt() // single goroutine, released after this test's own assertions
+
+	srv, _ := testMarketplace(t, 0)
+	kv := newFakeKV()
+	cfg := freshConfig(srv.URL) // no PublicKey configured -> Init's loop needs the key
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+
+	Init(ctx, cfg, kv, &wg)
+
+	waitDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(waitDone)
+	}()
+
+	// The slot is held for the whole test, so the loop can only be queued
+	// on acquireAttempt right now — wg.Wait() must NOT be done yet.
+	select {
+	case <-waitDone:
+		t.Fatal("wg.Wait() returned while the loop should still be queued on the held attempt slot")
+	case <-time.After(150 * time.Millisecond):
+	}
+
+	cancel()
+	select {
+	case <-waitDone:
+	case <-time.After(2 * time.Second):
+		t.Fatal("run() did not exit promptly after ctx cancel while queued on the attempt slot")
 	}
 }
