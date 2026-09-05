@@ -24,7 +24,7 @@ Hedefi **Ekran** veya **Yazıcı ve ekran** olan istasyonun kendi canlı sipari�
 
 - Ekran, en az bir ürünü bu istasyona yönlendirilmiş siparişleri en yeniden başlayarak listeler; Siparişler sayfasındaki aynı tek dokunuşlu **Hazırlanıyor** / **Hazır** / **Teslim alındı** düğmeleriyle. Birkaç saniyede bir ve herhangi bir siparişin durumu değiştiği anda kendini yeniler.
 - Durum her ürüne değil, siparişin tamamına aittir: iki istasyon için ürün içeren bir sipariş iki ekranda da görünür; birinde Hazır veya Teslim alındı işaretlemek ikisini de günceller.
-- Ekran bu kasada alınan siparişleri gösterir. Birden çok bağlı kasası olan bir dükkânda, başka bir kasada alınan siparişler bu kasaya eşitlendikten sonra bu ekranda görünür — bu kasanın kendi Siparişler sayfasının ana kasaya ulaşamadığında gösterdiğinin aynısı.
+- Ekran yalnızca **bu** kasada alınan siparişleri gösterir — kasanın kendi Siparişler sayfasının aksine, eşitlendikten sonra bile başka bir kasada alınan siparişleri göstermez. Birden çok bağlı kasası olan bir dükkânda, mutfak ekranını ilgili siparişleri gerçekten alan kasada açın.
 - Devre dışı bırakılan istasyonun ekranı siz yeniden etkinleştirene kadar çalışmaz; yalnızca yazıcı olan istasyonun ekranı yoktur.
 
 ## Bilmekte fayda var

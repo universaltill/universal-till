@@ -25,7 +25,7 @@ A station whose destination is **Display** or **Printer and display** has its ow
 
 - The screen lists the orders that have at least one item routed to this station, newest first, with the same one-tap **Preparing** / **Ready** / **Collected** buttons as the Orders page. It refreshes itself every few seconds and the moment any order's status changes.
 - Status belongs to the whole order, not to each item: an order with items for two stations shows on both screens, and marking it Ready or Collected on either screen updates both.
-- The screen shows the orders taken on this till. On a shop with several linked tills, orders taken on another till appear on this screen once they've synced to this till — the same as this till's own Orders page shows when it can't reach the main till.
+- The screen only shows orders taken on **this** till — unlike the till's own Orders page, it does not show orders taken on another till, even once they've synced. On a shop with several linked tills, open the kitchen display on the till that actually takes the relevant orders.
 - A deactivated station's screen stops working until you reactivate it; a printer-only station has no screen.
 
 ## Good to know

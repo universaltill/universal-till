@@ -54,6 +54,30 @@ func validateKitchenDestinationType(t string) error {
 	return nil
 }
 
+// dbDestinationColumns decomposes the public tri-state destination type into
+// the two physical columns kitchen_stations actually stores. destination_type
+// stays the original two-value CHECK-constrained column (001_init.sql);
+// destination_both is a plain additive flag (003_kitchen_station_display_flag.sql)
+// — 'both' is stored as ('printer', 1), never as a third destination_type
+// value, precisely to avoid ever needing to widen that CHECK again (see the
+// migration's own comment for why that's not a safe edit on this schema).
+func dbDestinationColumns(t string) (dbType string, both int) {
+	if t == KitchenDestinationBoth {
+		return KitchenDestinationPrinter, 1
+	}
+	return t, 0
+}
+
+// destinationFromColumns is dbDestinationColumns' inverse: reconstructs the
+// public tri-state value every reader of this table (ListKitchenStations,
+// GetKitchenStation, ResolveKitchenStations) presents to its own callers.
+func destinationFromColumns(dbType string, both int) string {
+	if both == 1 {
+		return KitchenDestinationBoth
+	}
+	return dbType
+}
+
 // KitchenStation is one prep station tickets can route to. DestinationType
 // is one of the KitchenDestination* constants; PrinterAddress is meaningful
 // only when PrintsTickets() (a display-only station legitimately has none).
@@ -94,7 +118,7 @@ type ItemStationOverride struct {
 // admin page, ordered by name.
 func (r *POSRepo) ListKitchenStations(ctx context.Context) ([]KitchenStation, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, destination_type, COALESCE(printer_address, ''), enabled, created_at, updated_at
+SELECT id, name, destination_type, destination_both, COALESCE(printer_address, ''), enabled, created_at, updated_at
 FROM kitchen_stations ORDER BY name`)
 	if err != nil {
 		return nil, fmt.Errorf("list kitchen stations: %w", err)
@@ -103,10 +127,11 @@ FROM kitchen_stations ORDER BY name`)
 	var out []KitchenStation
 	for rows.Next() {
 		var s KitchenStation
-		var enabled int
-		if err := rows.Scan(&s.ID, &s.Name, &s.DestinationType, &s.PrinterAddress, &enabled, &s.CreatedAt, &s.UpdatedAt); err != nil {
+		var enabled, both int
+		if err := rows.Scan(&s.ID, &s.Name, &s.DestinationType, &both, &s.PrinterAddress, &enabled, &s.CreatedAt, &s.UpdatedAt); err != nil {
 			return nil, fmt.Errorf("scan kitchen station: %w", err)
 		}
+		s.DestinationType = destinationFromColumns(s.DestinationType, both)
 		s.Enabled = enabled == 1
 		out = append(out, s)
 	}
@@ -120,16 +145,17 @@ FROM kitchen_stations ORDER BY name`)
 // means no such station.
 func (r *POSRepo) GetKitchenStation(ctx context.Context, id string) (KitchenStation, bool, error) {
 	var s KitchenStation
-	var enabled int
+	var enabled, both int
 	err := r.db.QueryRowContext(ctx, `
-SELECT id, name, destination_type, COALESCE(printer_address, ''), enabled, created_at, updated_at
-FROM kitchen_stations WHERE id = ?`, id).Scan(&s.ID, &s.Name, &s.DestinationType, &s.PrinterAddress, &enabled, &s.CreatedAt, &s.UpdatedAt)
+SELECT id, name, destination_type, destination_both, COALESCE(printer_address, ''), enabled, created_at, updated_at
+FROM kitchen_stations WHERE id = ?`, id).Scan(&s.ID, &s.Name, &s.DestinationType, &both, &s.PrinterAddress, &enabled, &s.CreatedAt, &s.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		return KitchenStation{}, false, nil
 	}
 	if err != nil {
 		return KitchenStation{}, false, fmt.Errorf("get kitchen station: %w", err)
 	}
+	s.DestinationType = destinationFromColumns(s.DestinationType, both)
 	s.Enabled = enabled == 1
 	return s, true, nil
 }
@@ -144,10 +170,11 @@ func (r *POSRepo) CreateKitchenStation(ctx context.Context, name, destinationTyp
 		return "", fmt.Errorf("create kitchen station: %w", err)
 	}
 	id := uuid.NewString()
+	dbType, both := dbDestinationColumns(destinationType)
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := r.db.ExecContext(ctx, `
-INSERT INTO kitchen_stations (id, name, destination_type, printer_address, enabled, created_at, updated_at)
-VALUES (?, ?, ?, ?, 1, ?, ?)`, id, name, destinationType, printerAddress, now, now); err != nil {
+INSERT INTO kitchen_stations (id, name, destination_type, destination_both, printer_address, enabled, created_at, updated_at)
+VALUES (?, ?, ?, ?, ?, 1, ?, ?)`, id, name, dbType, both, printerAddress, now, now); err != nil {
 		return "", fmt.Errorf("create kitchen station: %w", err)
 	}
 	return id, nil
@@ -160,10 +187,11 @@ func (r *POSRepo) UpdateKitchenStation(ctx context.Context, id, name, destinatio
 	if err := validateKitchenDestinationType(destinationType); err != nil {
 		return fmt.Errorf("update kitchen station: %w", err)
 	}
+	dbType, both := dbDestinationColumns(destinationType)
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := r.db.ExecContext(ctx, `
-UPDATE kitchen_stations SET name = ?, destination_type = ?, printer_address = ?, updated_at = ? WHERE id = ?`,
-		name, destinationType, printerAddress, now, id)
+UPDATE kitchen_stations SET name = ?, destination_type = ?, destination_both = ?, printer_address = ?, updated_at = ? WHERE id = ?`,
+		name, dbType, both, printerAddress, now, id)
 	if err != nil {
 		return fmt.Errorf("update kitchen station: %w", err)
 	}
@@ -438,7 +466,7 @@ func (r *POSRepo) ResolveKitchenStations(ctx context.Context, itemIDs []string) 
 	// existence still claims the tier), enabled flag carried for filtering.
 	hasItemRows := map[string]bool{}
 	itemRows, err := r.db.QueryContext(ctx, `
-SELECT r.item_id, s.id, s.name, s.destination_type, COALESCE(s.printer_address, ''), s.enabled
+SELECT r.item_id, s.id, s.name, s.destination_type, s.destination_both, COALESCE(s.printer_address, ''), s.enabled
 FROM item_station_routes r
 JOIN kitchen_stations s ON s.id = r.station_id
 WHERE r.item_id IN (`+placeholders+`)
@@ -452,7 +480,7 @@ ORDER BY s.name`, args...)
 
 	// Category tier: only for items with NO item-level rows.
 	catRows, err := r.db.QueryContext(ctx, `
-SELECT i.id, s.id, s.name, s.destination_type, COALESCE(s.printer_address, ''), s.enabled
+SELECT i.id, s.id, s.name, s.destination_type, s.destination_both, COALESCE(s.printer_address, ''), s.enabled
 FROM items i
 JOIN category_station_routes r ON r.category_id = i.category_id
 JOIN kitchen_stations s ON s.id = r.station_id
@@ -488,10 +516,11 @@ func collectStationRows(rows *sql.Rows, dst map[string][]KitchenStation, hasRows
 	for rows.Next() {
 		var itemID string
 		var s KitchenStation
-		var enabled int
-		if err := rows.Scan(&itemID, &s.ID, &s.Name, &s.DestinationType, &s.PrinterAddress, &enabled); err != nil {
+		var enabled, both int
+		if err := rows.Scan(&itemID, &s.ID, &s.Name, &s.DestinationType, &both, &s.PrinterAddress, &enabled); err != nil {
 			return fmt.Errorf("scan resolved kitchen station: %w", err)
 		}
+		s.DestinationType = destinationFromColumns(s.DestinationType, both)
 		hasRows[itemID] = true
 		if _, ok := dst[itemID]; !ok {
 			dst[itemID] = nil

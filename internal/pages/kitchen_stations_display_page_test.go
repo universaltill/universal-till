@@ -38,8 +38,18 @@ func TestKitchenStationsPage_DestinationTypeCreateRules(t *testing.T) {
 	if rec.Header().Get("Location") != "/kitchen-stations" {
 		t.Fatalf("create 'both' with address: loc=%q", rec.Header().Get("Location"))
 	}
-	if err := d.Db.QueryRow(`SELECT destination_type FROM kitchen_stations WHERE name = 'Grill'`).Scan(&dt); err != nil || dt != "both" {
-		t.Fatalf("both station row: dt=%q err=%v", dt, err)
+	// 'both' is stored as ('printer', destination_both=1) — the additive
+	// destination_both flag, not a third destination_type value (ut-docs#544
+	// migration 003: widening destination_type's CHECK constraint in place
+	// would edit an already-applied migration's checksum and hard-fail boot
+	// on every existing install, see that migration's own comment). The
+	// public Go-level KitchenStation.DestinationType still reads "both" —
+	// exercised via GetKitchenStation in TestKitchenStationsPage_DestinationTypeUpdateRules
+	// below and via the repo tests in kitchen_display_repo_test.go — this
+	// assertion is specifically checking the physical storage.
+	var both int
+	if err := d.Db.QueryRow(`SELECT destination_type, destination_both FROM kitchen_stations WHERE name = 'Grill'`).Scan(&dt, &both); err != nil || dt != "printer" || both != 1 {
+		t.Fatalf("both station row: dt=%q both=%d err=%v", dt, both, err)
 	}
 
 	// Omitted destination_type keeps the pre-#544 default (printer), so the
