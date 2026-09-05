@@ -44,9 +44,10 @@ func TestRequiresHardGate(t *testing.T) {
 }
 
 func TestEvaluateGate_NonGatedCountryNeverReadsSettings(t *testing.T) {
-	// A non-German shop must be completely unaffected — EvaluateGate must
-	// not even depend on a working settings store for it (regression pin
-	// for the "existing tender flow unchanged" acceptance criterion).
+	// A shop in a non-gated market (GB here — not DE/TR) must be completely
+	// unaffected: EvaluateGate must not even depend on a working settings
+	// store for it (regression pin for the "existing tender flow unchanged"
+	// acceptance criterion).
 	g, err := EvaluateGate(context.Background(), fakeSettings{err: errors.New("boom")}, "GB", time.Now())
 	if err != nil {
 		t.Fatalf("EvaluateGate(GB) = %v, want nil error", err)
@@ -209,8 +210,9 @@ func TestEvaluateGate_MalformedOverrideUntilFailsClosed(t *testing.T) {
 	}
 }
 
-// A German shop with a broken settings store fails closed with an error, not
-// silently open: the gate can't know the shop's declared posture.
+// A shop in a gated market (DE here; TR behaves identically) with a broken
+// settings store fails closed with an error, not silently open: the gate
+// can't know the shop's declared posture.
 func TestEvaluateGate_SettingsErrorPropagates(t *testing.T) {
 	_, err := EvaluateGate(context.Background(), fakeSettings{err: errors.New("disk gone")}, "DE", time.Now())
 	if err == nil {
