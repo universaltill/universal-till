@@ -50,10 +50,33 @@ type adminTable struct {
 
 // adminTables is the shop-wide state a replica mirrors. Deliberately NOT
 // here: inventory/stock (additive movements, D3), sales, sessions,
-// item_images (files don't travel — D2 limit), registers and
-// stock_locations (still an OPEN decision, not a settled "per-till" as this
-// comment used to claim with no rationale — ut-docs#1554 found both look
-// plausibly shop-wide; ut-docs#1584 tracks deciding this properly),
+// item_images (files don't travel — D2 limit),
+// registers and stock_locations (ut-docs#1584 — decided PER-TILL, not a
+// guess: both `name` fields read as shop-wide, but the admin pages that
+// create them (`/registers`, `/locations`) are gated only on the
+// `stock_location_management` permission, with no primary-only check the
+// way `settings_page.go`'s promote-only sections use `SyncPrimaryURL(ctx)
+// == ""` — so a manager can create a register or stock location directly
+// from a satellite today (POSRepo.CreateRegister/CreateStockLocation
+// have no primary-only guard). ApplyAdmin's one-way "primary wins" pull
+// (deleteMissing) only protects a synced row the DB's own FK blocks from
+// deleting (shift/sale/inventory history already references it); a
+// freshly satellite-created register or location has no such history yet,
+// so nothing would stop its very next admin pull from silently erasing
+// it — the primary's bundle has no idea it exists. role_permissions
+// avoided this exact class of bug via a dedicated skipPrune carve-out
+// (rolePermissionSkew, ut-docs#1589) for a row the primary's *current*
+// dump doesn't know about at all; registers/stock_locations have no
+// equivalent, so flipping either to sync needs `/registers`+`/locations`
+// creation gated
+// primary-only FIRST (ut-docs#1590 files that follow-up) — until then,
+// per-till is the only safe answer. See
+// TestAdminApplyLeavesRegistersAndStockLocationsUntouched for the
+// regression guard. Registers' shop-wide need is already met at
+// enrollment time regardless: CreateRegisterForEnrolment runs on the
+// PRIMARY (POST /api/sync/enroll), so a joining till's own register
+// already exists shop-wide before the till's first sale, via the initial
+// full-DB-snapshot join rather than ongoing sync.
 // plugin install tables — rows without the Ed25519-verified plugin FILES
 // would leave a replica with phantom plugins, so the installed set travels
 // as its own registry bundle instead (GET /api/sync/plugins, ut-docs#460 /
