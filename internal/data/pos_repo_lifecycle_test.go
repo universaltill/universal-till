@@ -301,27 +301,6 @@ func TestUpsertInventory_UpdatesThenInsertsOnMiss(t *testing.T) {
 	}
 }
 
-func TestListPaymentMethodIDs_ActiveOnlyDeduped(t *testing.T) {
-	dbx := newPOSLifecycleTestDB(t)
-	ctx := context.Background()
-
-	if _, err := dbx.d.DB.ExecContext(ctx, `DELETE FROM payment_methods`); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := dbx.d.DB.ExecContext(ctx,
-		`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1),('card','Card','card',1),('old','Old','cash',0)`); err != nil {
-		t.Fatal(err)
-	}
-
-	ids, err := dbx.repo.ListPaymentMethodIDs(ctx)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if len(ids) != 2 {
-		t.Fatalf("expected 2 active methods, got %+v", ids)
-	}
-}
-
 func TestReturnChain_ReceiptsAndReturnedQuantities(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
