@@ -811,6 +811,43 @@ VALUES('line-refund-1561', ?, 1, 'itm-1561', 'Widget', 'W1', 3, 100, 299, 0, 0, 
 	if cumulative != originalLineNet {
 		t.Fatalf("expected the three 1-of-3 refunds to sum to exactly the original line net %d, got %d", originalLineNet, cumulative)
 	}
+
+	// ut-docs#1580 (independent Opus review finding F3 on ut-docs#1561):
+	// the assertions above only check the money side (refunded subtotal).
+	// The actual harm the original card described was "only 1 of the 3
+	// units could ever actually come back" -- a regression where requests 2
+	// and 3 return 200 but silently persist no return line and no stock
+	// movement would still pass every check above. Assert the physical
+	// side too: all 3 return sale_lines exist, and all 3 units actually
+	// came back to both stock_movements and inventory.
+	var returnLines int
+	if err := dp.Db.QueryRow(`
+SELECT COUNT(*) FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.sale_type = 'return' AND sl.item_id = 'itm-1561'`).Scan(&returnLines); err != nil {
+		t.Fatalf("count return sale_lines: %v", err)
+	}
+	if returnLines != 3 {
+		t.Fatalf("expected 3 separate return sale_lines (one per 1-of-3 refund request), got %d -- a request could have returned 200 without actually persisting a return line", returnLines)
+	}
+
+	var stockReturned float64
+	if err := dp.Db.QueryRow(`
+SELECT COALESCE(SUM(quantity), 0) FROM stock_movements
+WHERE item_id = 'itm-1561' AND type = 'return'`).Scan(&stockReturned); err != nil {
+		t.Fatalf("sum stock_movements: %v", err)
+	}
+	if stockReturned != 3 {
+		t.Fatalf("expected all 3 units to be recorded as returned stock movements, got %v -- only some units may have actually come back", stockReturned)
+	}
+
+	var inventoryQty float64
+	if err := dp.Db.QueryRow(`SELECT quantity FROM inventory WHERE item_id = 'itm-1561'`).Scan(&inventoryQty); err != nil {
+		t.Fatalf("query inventory: %v", err)
+	}
+	if inventoryQty != 3 {
+		t.Fatalf("expected inventory to show all 3 units restored, got %v", inventoryQty)
+	}
 }
 
 // TestPostRefund_SiblingLinesWithDifferentDiscountsDoNotCrossAttribute is
