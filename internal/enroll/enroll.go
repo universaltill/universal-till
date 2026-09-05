@@ -142,9 +142,19 @@ func acquireAttempt(ctx context.Context) bool {
 	}
 }
 
-// releaseAttempt releases a slot previously acquired via acquireAttempt.
+// releaseAttempt releases a slot previously acquired via acquireAttempt. A
+// release with no matching acquire panics rather than blocking silently —
+// that failure class (an unpaired release stealing a live token from
+// another goroutine, permanently hanging its own eventual release) has
+// already happened once during this fix's own development; see resetState's
+// doc comment in enroll_test.go. A loud, immediate crash beats a silent,
+// undiagnosable hang.
 func releaseAttempt() {
-	<-attemptSem
+	select {
+	case <-attemptSem:
+	default:
+		panic("enroll: releaseAttempt called without a matching acquireAttempt")
+	}
 }
 
 // Status describes the till's registration state for UI surfaces (status-bar
@@ -180,7 +190,12 @@ func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, 
 		return CurrentStatus(), fmt.Errorf("marketplace endpoint is not configured")
 	}
 	if !acquireAttempt(ctx) {
-		return CurrentStatus(), fmt.Errorf("registration attempt already in progress")
+		// acquireAttempt only returns false via ctx's own Done case, so
+		// ctx.Err() is guaranteed non-nil here — wrap it rather than a
+		// static string, so a caller can errors.Is(err,
+		// context.DeadlineExceeded) and so the message names the real
+		// cause (the attempt slot was held) instead of guessing.
+		return CurrentStatus(), fmt.Errorf("registration attempt did not start before the caller's deadline (slot held by another attempt): %w", ctx.Err())
 	}
 	defer releaseAttempt()
 	var firstErr error
