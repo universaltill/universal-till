@@ -269,6 +269,50 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 	}
 	defer tx.Rollback()
 
+	// ut-docs#1589 (found in #1554's own review): roles/permission_actions
+	// are migration-seeded catalog tables nothing in this codebase ever
+	// DELETEs (additive-only) — verified by grep, and true today because no
+	// custom-roles feature exists yet (the day one does, this assumption
+	// needs re-checking; see the "future custom-roles feature" note on
+	// adminTables above). A replica one release ahead of its primary has
+	// extra role/action rows the primary's dump doesn't mention at all, and
+	// unconditionally pruning them was silently destroying that skew state
+	// with no warning — so both are exempted from deleteMissing entirely,
+	// the same shape as settings' own exemption below.
+	//
+	// role_permissions needs a narrower rule, not the same blanket skip: it
+	// DOES have a real, frequent same-version write path — a manager
+	// revoking or granting a permission from the matrix editor
+	// (AuthRepo.SetRolePermission) — and #1554 depends on the prune phase to
+	// heal a *locally fabricated* grant (a row a satellite wrote for a
+	// role/action the primary already knows about, but has no matching row
+	// for): blanket-exempting role_permissions the way settings is exempted
+	// would let that fabricated grant survive forever, silently more
+	// permissive than the primary — the opposite of #1554's fail-closed
+	// intent, and a real regression a first draft of this fix introduced
+	// (caught in this fix's own review). A *revoked* grant is safe either
+	// way: SetRolePermission always upserts (INSERT ... ON CONFLICT DO
+	// UPDATE SET granted = excluded.granted), so a revoke sets granted=0 on
+	// an existing row rather than deleting it — that row stays in the
+	// primary's dump and phase 2 below overwrites it with the primary's
+	// value regardless of what phase 1 does. So the only rows that need
+	// protecting here are ones referencing a role or action the primary's
+	// CURRENT dump doesn't know about at all — real version skew, not
+	// drift — and those are safe to protect without weakening #1554,
+	// because the primary literally cannot have an opinion on a grant for a
+	// role/action it doesn't know exists yet.
+	knownRoles := map[string]bool{}
+	for _, rec := range bundle.Tables["roles"] {
+		knownRoles[fmt.Sprint(rec["role"])] = true
+	}
+	knownActions := map[string]bool{}
+	for _, rec := range bundle.Tables["permission_actions"] {
+		knownActions[fmt.Sprint(rec["action"])] = true
+	}
+	rolePermissionSkew := func(rec map[string]any) bool {
+		return !knownRoles[fmt.Sprint(rec["role"])] || !knownActions[fmt.Sprint(rec["action"])]
+	}
+
 	// Phase 1 — deletes, children first, so UNIQUE collisions (e.g. a
 	// replica-local item holding a SKU the primary now uses) clear before
 	// the upserts land.
@@ -283,10 +327,15 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 		// be wiped on every pull (version skew). plugin_settings does its own
 		// scoped replace in applyPluginSettings — the generic prune would
 		// wipe this till's register/user-scoped rows (absent from the bundle).
-		if t.name == "settings" || t.name == "plugin_settings" {
+		if t.name == "settings" || t.name == "plugin_settings" ||
+			t.name == "roles" || t.name == "permission_actions" {
 			continue
 		}
-		if err := deleteMissing(ctx, tx, t, recs); err != nil {
+		var skipPrune func(map[string]any) bool
+		if t.name == "role_permissions" {
+			skipPrune = rolePermissionSkew
+		}
+		if err := deleteMissing(ctx, tx, t, recs, skipPrune); err != nil {
 			return err
 		}
 	}
@@ -460,7 +509,16 @@ func pkOf(t adminTable, rec map[string]any) string {
 	return strings.Join(parts, "\x1f")
 }
 
-func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[string]any) error {
+// deleteMissing prunes rows this table's PK set no longer includes in the
+// bundle. skipPrune, if non-nil, is consulted for each row that would
+// otherwise be pruned and additionally protects it when it returns true —
+// role_permissions uses this (ut-docs#1589) to distinguish "the primary's
+// current dump doesn't know this row's role/action at all" (version skew;
+// must NOT prune) from "the primary knows both but has no matching grant
+// row" (real same-version drift; must still prune, or a satellite-local
+// grant survives forever — see ApplyAdmin's own comment for why this
+// distinction matters).
+func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[string]any, skipPrune func(rec map[string]any) bool) error {
 	keep := make(map[string]bool, len(recs))
 	for _, rec := range recs {
 		keep[pkOf(t, rec)] = true
@@ -477,6 +535,9 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 	}
 	for _, rec := range existing {
 		if keep[pkOf(t, rec)] {
+			continue
+		}
+		if skipPrune != nil && skipPrune(rec) {
 			continue
 		}
 		where := make([]string, len(t.pk))

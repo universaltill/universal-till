@@ -814,6 +814,103 @@ func TestAdminDumpApplyRoundTrip_RolePermissions(t *testing.T) {
 	}
 }
 
+// ut-docs#1589 (found in #1554's own review): a replica one release ahead
+// of its primary has extra migration-seeded roles/permission_actions/
+// role_permissions rows the primary's dump doesn't mention at all — before
+// this fix, deleteMissing's generic prune phase silently deleted them on
+// every pull, with no warning. Simulates that skew directly: the replica
+// gets a role, an action and a grant the primary has never heard of, and
+// they must all survive an ApplyAdmin pull unpruned.
+func TestAdminDumpApplyRoundTrip_RolePermissions_SurvivesReplicaAheadOfPrimarySkew(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	// The replica is running a migration the primary hasn't reached yet: a
+	// new role, a new permission action, and a grant tying them together —
+	// none of which exist on the primary, so none appear in its dump.
+	mustExec(t, replica, `INSERT INTO roles (role) VALUES ('shift_lead')`)
+	mustExec(t, replica, `INSERT INTO permission_actions (action) VALUES ('inventory_count')`)
+	mustExec(t, replica, `INSERT INTO role_permissions (role, action, granted) VALUES ('shift_lead', 'refund', 1)`)
+	mustExec(t, replica, `INSERT INTO role_permissions (role, action, granted) VALUES ('cashier', 'inventory_count', 1)`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var count int
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM roles WHERE role = 'shift_lead'`).Scan(&count); err != nil {
+		t.Fatalf("query roles: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("replica's own newer-migration role 'shift_lead' was pruned by a sync pull from an older primary (count=%d) — version-skew data loss", count)
+	}
+
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM permission_actions WHERE action = 'inventory_count'`).Scan(&count); err != nil {
+		t.Fatalf("query permission_actions: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("replica's own newer-migration action 'inventory_count' was pruned by a sync pull from an older primary (count=%d) — version-skew data loss", count)
+	}
+
+	var granted int
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT granted FROM role_permissions WHERE role = 'shift_lead' AND action = 'refund'`).Scan(&granted); err != nil {
+		t.Errorf("shift_lead/refund grant was pruned by a sync pull from an older primary that has never heard of 'shift_lead': %v", err)
+	} else if granted != 1 {
+		t.Errorf("shift_lead/refund should still be granted, got granted=%d", granted)
+	}
+
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT granted FROM role_permissions WHERE role = 'cashier' AND action = 'inventory_count'`).Scan(&granted); err != nil {
+		t.Errorf("cashier/inventory_count grant was pruned by a sync pull from an older primary that has never heard of 'inventory_count': %v", err)
+	} else if granted != 1 {
+		t.Errorf("cashier/inventory_count should still be granted, got granted=%d", granted)
+	}
+}
+
+// ut-docs#1589 review finding: the skew fix above must NOT blanket-exempt
+// role_permissions the way roles/permission_actions are exempted, or it
+// silently reopens #1554's own bug in the opposite (over-permissive)
+// direction — a grant a satellite fabricated locally, for a role and
+// action the primary already knows about perfectly well, would then
+// survive every sync pull forever instead of being healed back to the
+// primary's (absent) state. Both DBs here are on the IDENTICAL migration —
+// no skew at all — so 'cashier' and 'audit' are known to both sides; only
+// the grant row itself is satellite-local.
+func TestAdminDumpApplyRoundTrip_RolePermissions_PrunesSameVersionLocalDrift(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	// A satellite-local edit (or a bug) grants 'cashier'/'audit' on the
+	// replica only — the primary has no opinion on this pairing at all.
+	mustExec(t, replica, `INSERT INTO role_permissions (role, action, granted) VALUES ('cashier', 'audit', 1)`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var count int
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM role_permissions WHERE role = 'cashier' AND action = 'audit'`).Scan(&count); err != nil {
+		t.Fatalf("query role_permissions: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("a satellite-local grant for a role/action the primary already knows about must still be pruned (primary wins) — got count=%d, ut-docs#1589's skew fix must not survive this case", count)
+	}
+}
+
 // A table hard-removed on the primary while the SATELLITE still has a local
 // sale referencing it (found in review, ut-docs#1546) — the plain DELETE
 // above can never hit this path because tbl-1 has no referencing rows
