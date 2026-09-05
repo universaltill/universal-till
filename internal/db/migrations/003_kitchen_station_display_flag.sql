@@ -1,0 +1,52 @@
+-- 003_kitchen_station_display_flag.sql — ut-docs#544 (Kitchen Display,
+-- HDMI-local slice).
+--
+-- A station needs to be able to print AND show on a kitchen screen at once
+-- ("the grill has a screen for the cooks and a ticket for the pass"), but
+-- kitchen_stations.destination_type is a two-value CHECK-constrained column
+-- (001_init.sql: CHECK (destination_type IN ('printer','display'))). Widening
+-- that CHECK to add 'both' looks like the obvious fix and was this card's
+-- first draft -- reverted after independent review reproduced, empirically,
+-- that it bricks every existing install:
+--
+--   - internal/db/db.go's verifyAppliedMigrations hard-fails Open() the
+--     instant an already-applied migration file's checksum drifts from what
+--     schema_migrations recorded (idempotentRerunVersions is empty -- version
+--     1 is not allowlisted for re-apply). Editing 001_init.sql after it has
+--     shipped changes that checksum on every device that already migrated.
+--   - 002_refund_of_line_id.sql's own header already documents this exact
+--     trap and ships an ADDITIVE migration instead, for the same reason.
+--   - SQLite has no ALTER TABLE for a CHECK constraint, so the only way to
+--     widen one is the 12-step rebuild (create a new table, copy rows, drop
+--     the old one, rename) -- and doing that here would ALSO have re-fired
+--     ON DELETE CASCADE on item_station_routes.station_id /
+--     category_station_routes.station_id: with foreign_keys=ON (permanently,
+--     via db.go's _pragma=foreign_keys(1) DSN parameter) and no way to
+--     toggle it off mid-transaction (SQLite treats PRAGMA foreign_keys as a
+--     no-op inside an active BEGIN, and applyMigration always wraps a
+--     migration's statements in one), DROPping kitchen_stations while any
+--     child row still points at it deletes every routing rule that row
+--     represents. Reproduced directly against this DB layer, not just read
+--     about: a rebuild-in-a-transaction test lost every item_station_routes
+--     row for the dropped table, silently, even though PRAGMA
+--     foreign_key_check reported zero violations right before commit.
+--
+-- So: 'both' is represented WITHOUT touching destination_type's CHECK at
+-- all. destination_both is a plain additive flag, ORed onto whichever of
+-- 'printer'/'display' destination_type already holds:
+--
+--   destination_type='printer', destination_both=0  -> printer only (today, unchanged)
+--   destination_type='display', destination_both=0  -> display only (today, unchanged)
+--   destination_type='printer', destination_both=1   -> both (the canonical
+--                                                        storage the repo
+--                                                        layer always writes
+--                                                        for 'both' -- see
+--                                                        internal/data/
+--                                                        kitchen_stations_repo.go's
+--                                                        dbDestinationColumns)
+--
+-- ('display', destination_both=1) is never written by this app but would be
+-- observably identical if it existed -- PrintsTickets()/ShowsOnDisplay() OR
+-- the flag onto whichever primary type is stored either way, so there's no
+-- silent-drift risk in leaving that combination unconstrained.
+ALTER TABLE kitchen_stations ADD COLUMN destination_both INTEGER NOT NULL DEFAULT 0 CHECK (destination_both IN (0,1));

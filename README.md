@@ -49,7 +49,8 @@
 - Receipt printing (thermal and regular)
 - Order status tracking (new → preparing → ready → collected, one-tap for kitchen staff; on linked tills every till sees and updates the whole shop's orders, with silent local fallback when the main till is unreachable)
 - Customer order tracking via QR (self-order kiosk checkout shows a QR; the customer follows their order's status — and nothing else — live on their own phone over the shop's network)
-- Kitchen station routing (send each category — or a single item — to its own kitchen printer; discover network printers already on the LAN instead of typing an address by hand)
+- Kitchen station routing (send each category — or a single item — to its own kitchen printer, kitchen display screen, or both; discover network printers already on the LAN instead of typing an address by hand)
+- Kitchen display (a per-station live order screen for a second monitor on the till — same one-tap status buttons and live refresh as the Orders page; the LAN-paired standalone display device is a follow-up)
 - Table floor plan and assignment (draw your dining room, name each table, drag it into place; assign an order to a table from the basket or move a held order to a different free table, and the plan's free/open-order status lights up live)
 - Barcode scanning (USB/Bluetooth scanner, or a device camera — no dedicated hardware required)
 - In-POS Bluetooth pairing (a manager scans for, pairs, trusts and forgets a Bluetooth scanner or scale from a Settings-side panel on the Linux/Raspberry Pi kiosk — no OS settings or SSH; the .deb ships the scoped D-Bus grant the till service needs, ADR-0078)
@@ -513,7 +514,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 
 ### Long-term
 - [ ] Employee scheduling, customer loyalty programs
-- [ ] Kitchen display system
+- [x] Kitchen display system — HDMI-local slice ([ut-docs#544](https://github.com/universaltill/ut-docs/issues/544)): a kitchen station can be a printer, a display, or both; a display-capable station gets a live per-station order screen at `/kitchen-display/{station_id}` (the `/orders` board scoped by the same item-over-category routing that decides tickets, same one-tap status endpoint, same 15s poll + SSE refresh) meant for a second monitor on the machine already running the till. Still to come: the LAN-paired standalone KDS device (its own pairing/auth/liveness), the cross-till proxy so a replica's screen reads the primary's board, and per-line status (today status is per order, so a split order shows on both screens and clears from both)
 - [ ] iOS app, further mobile platform work
 - [ ] Advanced analytics and BI
 - [ ] Hardware manufacturer partnerships, white-label licensing

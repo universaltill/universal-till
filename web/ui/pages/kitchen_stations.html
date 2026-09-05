@@ -14,6 +14,7 @@
       <thead>
         <tr>
           <th>{{ T "kitchenstations.col.name" }}</th>
+          <th>{{ T "kitchenstations.col.destination" }}</th>
           <th>{{ T "kitchenstations.col.address" }}</th>
           <th>{{ T "kitchenstations.col.status" }}</th>
           <th></th>
@@ -23,11 +24,23 @@
         {{ range .stations }}
         <tr>
           <td>{{ .Name }}</td>
+          <td>
+            {{ if eq .DestinationType "display" }}{{ T "kitchenstations.destination.display" }}{{ else if eq .DestinationType "both" }}{{ T "kitchenstations.destination.both" }}{{ else }}{{ T "kitchenstations.destination.printer" }}{{ end }}
+            {{/* Kitchen display (ut-docs#544): only an ENABLED display-capable
+                 station has a screen to open — the page 404s otherwise, so
+                 no dead link is offered. */}}
+            {{ if and .Enabled .ShowsOnDisplay }}<br /><a href="/kitchen-display/{{ .ID }}">{{ T "kitchenstations.view_display" }}</a>{{ end }}
+          </td>
           <td dir="ltr">{{ .PrinterAddress }}</td>
           <td>{{ if .Enabled }}{{ T "kitchenstations.active" }}{{ else }}<span class="muted">{{ T "kitchenstations.inactive" }}</span>{{ end }}</td>
           <td class="users-actions">
             <form method="post" action="/api/kitchen-stations/{{ .ID }}" class="users-inline">
               <input type="text" name="name" value="{{ .Name }}" required />
+              <select name="destination_type">
+                <option value="printer" {{ if eq .DestinationType "printer" }}selected{{ end }}>{{ T "kitchenstations.destination.printer" }}</option>
+                <option value="display" {{ if eq .DestinationType "display" }}selected{{ end }}>{{ T "kitchenstations.destination.display" }}</option>
+                <option value="both" {{ if eq .DestinationType "both" }}selected{{ end }}>{{ T "kitchenstations.destination.both" }}</option>
+              </select>
               <input type="text" name="printer_address" value="{{ .PrinterAddress }}" dir="ltr" />
               <button type="submit" class="btn secondary">{{ T "kitchenstations.save" }}</button>
             </form>
@@ -49,6 +62,18 @@
     <h3>{{ T "kitchenstations.new.title" }}</h3>
     <form method="post" action="/api/kitchen-stations" autocomplete="off">
       <label>{{ T "kitchenstations.col.name" }} <input type="text" name="name" required /></label>
+      {{/* Destination (ut-docs#544): printer (a ticket), display (a kitchen
+           screen — no address needed), or both. The address rule is
+           enforced server-side per type; the select stays a plain form
+           control so the page needs no JS to work. */}}
+      <label>{{ T "kitchenstations.col.destination" }}
+        <select name="destination_type">
+          <option value="printer" selected>{{ T "kitchenstations.destination.printer" }}</option>
+          <option value="display">{{ T "kitchenstations.destination.display" }}</option>
+          <option value="both">{{ T "kitchenstations.destination.both" }}</option>
+        </select>
+      </label>
+      <p class="muted">{{ T "kitchenstations.destination_help" }}</p>
       <label>{{ T "kitchenstations.col.address" }} <input type="text" id="new-station-address" name="printer_address" dir="ltr" /></label>
       <p class="muted">{{ T "kitchenstations.address_help" }}</p>
       {{/* Discover printers (ut-docs#140): offers LAN candidates to fill the

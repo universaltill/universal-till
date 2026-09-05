@@ -1,0 +1,28 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "kitchendisplay.title" }} · {{ .stationName }} {{ helpLink "kitchen-stations" }}</h1>
+</div>
+<div class="card">
+  {{/* Kitchen display, HDMI-local slice (ut-docs#544): orders.html scoped to
+       one station. Loads once here; the fragment's own root (orders_list.html,
+       shared with /orders) then re-arms the 15s poll on ITS OWN URL — a kiosk
+       order or a print-failure warning must appear on the screen without
+       anyone touching it, and the poll is the offline-first fallback. */}}
+  <div id="orders" hx-get="{{ .fragmentURL }}" hx-trigger="load" hx-swap="outerHTML"></div>
+</div>
+{{/* ADR-0079 (ut-docs#1571): live push, IDENTICAL to orders.html — the same
+     /api/orders/stream (any order-status change anywhere on this till) and
+     the same "orders-push" trigger the shared fragment root listens for via
+     `from:body`. Dispatched on body because the outerHTML swap replaces
+     #orders on every render. No second live-update mechanism, deliberately.
+     Nothing rendered — no i18n strings. */}}
+<script>
+  (function () {
+    if (!window.EventSource) return;
+    var es = new EventSource('/api/orders/stream');
+    es.addEventListener('order-status', function () {
+      if (window.htmx) htmx.trigger(document.body, 'orders-push');
+    });
+  })();
+</script>
+{{ end }}
