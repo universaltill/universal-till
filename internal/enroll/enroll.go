@@ -111,15 +111,41 @@ var (
 	// displayStoreID is what UI surfaces show as this till's store identity.
 	displayStoreID string
 
-	// attemptMu serializes registration attempts (background loop + the
+	// attemptSem serializes registration attempts (background loop + the
 	// Settings "Register now" button) so the marketplace never sees two
-	// concurrent registers from one till.
-	attemptMu sync.Mutex
+	// concurrent registers from one till — a 1-buffered channel rather than
+	// a plain sync.Mutex so an acquire can also observe a caller's context
+	// (ut-docs#1298). RegisterNow's callers bind a single attempt with a
+	// short context.WithTimeout (5s in practice) expecting that to cap the
+	// worst case; a plain mutex would let a caller queue behind the
+	// background loop's own longer-bounded (~15s httpClient.Timeout)
+	// signing-key fetch, roughly quadrupling the intended wait on a
+	// black-holed network. Acquire/release only through acquireAttempt/
+	// releaseAttempt below — never send/receive on this channel directly.
+	attemptSem = make(chan struct{}, 1)
 
 	// Overridable in tests.
 	httpClient  = &http.Client{Timeout: 15 * time.Second}
 	retryDelays = []time.Duration{30 * time.Second, 2 * time.Minute, 5 * time.Minute, 15 * time.Minute, 30 * time.Minute}
 )
+
+// acquireAttempt blocks until attemptSem is acquired or ctx is done,
+// whichever comes first, and reports which happened. A caller that gets
+// true owns the slot and must eventually call releaseAttempt; a caller that
+// gets false must not — there is nothing to release.
+func acquireAttempt(ctx context.Context) bool {
+	select {
+	case attemptSem <- struct{}{}:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// releaseAttempt releases a slot previously acquired via acquireAttempt.
+func releaseAttempt() {
+	<-attemptSem
+}
 
 // Status describes the till's registration state for UI surfaces (status-bar
 // chip, Settings card).
@@ -143,15 +169,20 @@ func CurrentStatus() Status {
 
 // RegisterNow performs one immediate, synchronous registration (and signing
 // key fetch) attempt — the Settings "Register now" button. The background
-// retry loop keeps running regardless; attempts are serialized.
+// retry loop keeps running regardless; attempts are serialized. Bounded by
+// ctx end to end (ut-docs#1298): if the attempt slot is held by the
+// background loop's own longer-bounded work when ctx expires, RegisterNow
+// gives up rather than blocking past its caller's own deadline.
 func RegisterNow(ctx context.Context, cfg *config.Config, kv Settings) (Status, error) {
 	eff := Effective(cfg)
 	m := eff.Marketplace
 	if m.EndpointURL == "" {
 		return CurrentStatus(), fmt.Errorf("marketplace endpoint is not configured")
 	}
-	attemptMu.Lock()
-	defer attemptMu.Unlock()
+	if !acquireAttempt(ctx) {
+		return CurrentStatus(), fmt.Errorf("registration attempt already in progress")
+	}
+	defer releaseAttempt()
 	var firstErr error
 	if s := CurrentStatus(); !s.Registered {
 		if err := register(ctx, m, cfg.StoreName, kv); err != nil {
@@ -308,7 +339,9 @@ func Effective(cfg *config.Config) config.Config {
 func run(ctx context.Context, m config.MarketplaceConfig, deviceName string, kv Settings, needKey, needDevice bool) {
 	log := logging.L()
 	for attempt := 0; ; attempt++ {
-		attemptMu.Lock()
+		if !acquireAttempt(ctx) {
+			return // ctx done while waiting for a concurrent RegisterNow to finish
+		}
 		// A RegisterNow call may have fetched the key between waits.
 		mu.RLock()
 		if cur.PublicKey != "" {
@@ -332,7 +365,7 @@ func run(ctx context.Context, m config.MarketplaceConfig, deviceName string, kv 
 				needDevice = false
 			}
 		}
-		attemptMu.Unlock()
+		releaseAttempt()
 		if !needKey && !needDevice {
 			return
 		}
