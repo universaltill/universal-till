@@ -1,9 +1,15 @@
-// Package fiscal implements the German TSE hard-gate policy engine
-// (ADR-0048, ut-docs#715): whether a shop that has declared itself the
-// system of record for a fiscalised market may complete a real sale right
-// now, based purely on shop-declared settings state — never on network
-// reachability (offline-first, ADR-0003; "TSE failing" is a narrower
-// condition than "TSE unreachable", see ADR-0048 Decision 1).
+// Package fiscal implements the multi-market fiscal-readiness hard-gate
+// policy engine (ADR-0048, ut-docs#715, ut-docs#1208): whether a shop that
+// has declared itself the system of record for a fiscalised market may
+// complete a real sale right now, based purely on shop-declared settings
+// state — never on network reachability (offline-first, ADR-0003; "TSE
+// failing" is a narrower condition than "TSE unreachable", see ADR-0048
+// Decision 1). Today's gated markets are Germany (ADR-0048) and Turkey
+// (ut-docs#1208); RequiresHardGate is the one-line extension point for
+// adding the next one from ADR-0047's list. The settings keys, API route
+// and on-disk path below still carry Germany-specific "TSE" naming
+// inherited from ADR-0048 — tracked for a possible rename in ut-docs#1587,
+// not yet decided.
 //
 // This package owns the policy only. Enforcement lives behind one shared
 // helper, internal/pages.enforceFiscalGate, called by every money-moving
