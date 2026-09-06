@@ -1,7 +1,11 @@
 <!-- statusURL: which pair-status route to poll — the manager flavour polls
      /api/sync/pair-status, the first-boot wizard /api/setup/pair-status (the
      sync route is not middleware-exempt, so a first-boot till polling it
-     would only ever see 401s). Set by pairWaitView (pairing_join.go). -->
+     would only ever see 401s). Set by pairWaitView (pairing_join.go).
+     restartURL / restartSupported (ut-docs#1550): the "joined" branch's
+     restart trigger, split the same way (/api/sync/pairing-restart vs
+     /api/setup/pairing-restart), and whether this platform can restart the
+     process in place at all (internal/procrestart.Supported). -->
 <div id="pairing-status"
      {{ if .polling }}hx-get="{{ .statusURL }}" hx-trigger="every 15s" hx-target="this" hx-swap="outerHTML"{{ end }}>
 {{ if eq .status "waiting" }}
@@ -9,7 +13,88 @@
   <p class="pairing-code" style="font-size:1.5rem; letter-spacing:.2em; font-weight:bold">{{ .code }}</p>
   <p class="muted">{{ T "tills.pairing.waiting_help" }}</p>
 {{ else if eq .status "joined" }}
-  <p>✓ {{ T "tills.joined" }}: {{ .shopName }} — {{ T "tills.restart_to_finish" }}</p>
+  <p>✓ {{ T "tills.joined" }}: {{ .shopName }}</p>
+  {{ if .restartSupported }}
+  <!-- The join is staged as a restore-pending.db that only the next process
+       start can apply (db.ApplyPendingRestore runs before db.Open), so the
+       till restarts ITSELF here. The first-boot wizard fires the button on
+       load automatically (a Pi kiosk has no shell to press anything from);
+       the manager-driven /tills flow does NOT auto-fire (review finding,
+       ut-docs#1550) — a configured till with a live basket/session should
+       restart only on the manager's explicit click, never silently the
+       instant the pair is approved. The button always stays
+       visible/clickable either way as the fallback. The script then waits
+       for /healthz to answer again: 200 means the new image is up and
+       landing at /login is right; a non-200 (e.g. the recovery screen at
+       "/", ADR-0075, when the restored snapshot fails to open) still means
+       something is answering, so it goes to "/" and lets that page take
+       over — never stops at a dead "restarting…" with nothing behind it. -->
+  <p id="pairing-restart-msg" class="muted" aria-live="polite" hidden>{{ T "tills.pairing.restarting" }}</p>
+  <button type="button" id="pairing-restart-btn" class="btn primary"
+          hx-post="{{ .restartURL }}" hx-trigger="{{ if .autoRestart }}load, {{ end }}click" hx-swap="none">{{ T "tills.pairing.restart_now" }}</button>
+  <script>
+    // Page-local, template-populated lookup — CLAUDE.md's i18n rule for
+    // inline <script> prose (same pattern as bugreport_panel.html).
+    var T = {
+      restarting: "{{ T "tills.pairing.restarting" }}",
+      restarting_slow: "{{ T "tills.pairing.restarting_slow" }}"
+    };
+    (function () {
+      var btn = document.getElementById('pairing-restart-btn');
+      var msg = document.getElementById('pairing-restart-msg');
+      var polling = false;
+      function waitForTill() {
+        if (polling) { return; }
+        polling = true;
+        msg.hidden = false;
+        msg.textContent = T.restarting;
+        // The server re-execs ~1.5s after answering (internal/procrestart's
+        // reexecDelay), so the first probe waits past that: polling straight
+        // away would see the OLD process's /healthz answer 200 and bounce to
+        // /login on the pre-join database. Then every 500ms — UNBOUNDED
+        // (review finding, ut-docs#1550): a first-boot snapshot restore can
+        // genuinely take longer than any fixed guess on slow Pi storage, and
+        // giving up left the operator stuck on this exact screen with a
+        // silently-dead button. Past ~30s the message just says so; the
+        // button (never disabled) stays the manual nudge throughout.
+        var tries = 0;
+        setTimeout(function () {
+          var iv = setInterval(function () {
+            tries++;
+            if (tries === 56) { msg.textContent = T.restarting_slow; }
+            fetch('/healthz', { cache: 'no-store' }).then(function (r) {
+              // ANY answer — 200 or not — means a process is listening
+              // again: 200 is the new image (go to /login), anything else
+              // is most likely the boot-failure recovery screen serving the
+              // same port (ADR-0075) with its own real retry UI at "/" —
+              // either way, stop polling and hand off rather than keep
+              // guessing at /healthz forever.
+              clearInterval(iv);
+              polling = false;
+              location.href = r.ok ? '/login' : '/';
+            }).catch(function () {
+              // Old process gone, new one not listening yet (or a
+              // recovery-mode boot still starting) — keep waiting.
+            });
+          }, 500);
+        }, 2500);
+      }
+      btn.addEventListener('htmx:afterRequest', function () { waitForTill(); });
+      // A press that lands while the till is still down (mid previous
+      // restart, or a slow boot) fails at the network level, not with a
+      // normal response — htmx marks that unsuccessful. Resuming the poll
+      // here, rather than doing nothing, is what makes a press during that
+      // window actually help instead of being a silent no-op.
+      btn.addEventListener('htmx:sendError', function () { waitForTill(); });
+      btn.addEventListener('htmx:responseError', function () { waitForTill(); });
+    })();
+  </script>
+  {{ else }}
+  <!-- No in-place restart on this platform (Windows — ut-docs#1614): give
+       the one instruction the operator can actually perform. Closing and
+       reopening the app runs the same ApplyPendingRestore-at-startup path. -->
+  <p>{{ T "tills.pairing.close_and_reopen" }}</p>
+  {{ end }}
 {{ else if eq .status "expired" }}
   <p class="muted">{{ T "tills.pairing.no_response" }}</p>
 {{ else if eq .status "error" }}

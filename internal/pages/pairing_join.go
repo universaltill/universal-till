@@ -12,9 +12,36 @@ import (
 	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/procrestart"
 )
+
+// Seams over internal/procrestart so the handler/template tests can observe
+// "a restart was scheduled" and render both platform branches without a
+// real syscall.Exec replacing the test binary — same hermetic convention as
+// update_api.go's autoUpdateApply/autoUpdateSupported over selfupdate.
+var (
+	pairingRestartFn        = procrestart.Restart
+	pairingRestartSupported = procrestart.Supported
+	// pairingRestorePending is a seam over db.PendingRestore so a test can
+	// force either branch without staging (or not staging) a real
+	// restore-pending file on disk.
+	pairingRestorePending = db.PendingRestore
+)
+
+// pairingRestartURLFor maps a pair-status route to its sibling restart
+// route, keeping the manager-vs-first-boot split (ut-docs#289) intact:
+// /api/sync/pair-status → /api/sync/pairing-restart (manager-gated) and
+// /api/setup/pair-status → /api/setup/pairing-restart (middleware-exempt).
+// Derived from statusURL rather than threaded as one more parameter through
+// every pairWaitView call site, since the two are only ever meaningful as a
+// pair — a first-boot wizard rendered with the manager-gated restart route
+// would 401 on the very click this card exists to fix.
+func pairingRestartURLFor(statusURL string) string {
+	return strings.TrimSuffix(statusURL, "pair-status") + "pairing-restart"
+}
 
 // Approve-to-pair, replica side (ADR-0033 part 3/3, ut-docs#185): once a
 // primary is found via discovery.Browse (#183) and selected on the Tills
@@ -117,6 +144,18 @@ func pairWaitViewPolling(w http.ResponseWriter, r *http.Request, statusURL, stat
 		"shopName":  shopName,
 		"errMsg":    errMsg,
 		"polling":   polling,
+		// ut-docs#1550: the "joined" branch either restarts the till itself
+		// (restartURL, where an in-place re-exec is possible) or tells the
+		// operator to close and reopen the app (Windows — ut-docs#1614).
+		"restartSupported": pairingRestartSupported(),
+		"restartURL":       pairingRestartURLFor(statusURL),
+		// autoRestart (review finding, ut-docs#1550): only the first-boot
+		// wizard fires the restart automatically on render — a Pi kiosk has
+		// no shell to press a button from. The manager-driven /tills flow
+		// restarts an already-configured, possibly-in-use till, so it stays
+		// an explicit click; statusURL is the one thing that already tells
+		// the two flavours apart (see pairingRestartURLFor).
+		"autoRestart": statusURL == "/api/setup/pair-status",
 	})(w, r)
 }
 
@@ -153,6 +192,56 @@ func registerPairingJoinAPI(mux *http.ServeMux, d *common.Deps) {
 	setupPairStartLimiter := newPairRateLimiter(time.Minute, 5)
 	mux.HandleFunc("POST /api/setup/pair-start", pairStartHandler(d, rp, client, rateLimited(setupPairStartLimiter, firstBootGate(d)), "/api/setup/pair-status"))
 	mux.HandleFunc("GET /api/setup/pair-status", pairStatusHandler(d, rp, client, firstBootGate(d), "/api/setup/pair-status"))
+	// ut-docs#1550: the "joined" screen's restart trigger, in the same two
+	// flavours. The setup flavour MUST be listed in internal/auth/
+	// middleware.go's exempt paths (next to /api/setup/pair-status) or the
+	// wizard's auto-restart only ever collects 401s — exactly the failure
+	// mode the pair-status comment above warns about. UNLIKE pair-status,
+	// this one DOES need the same rate limit as pair-start above (review
+	// finding, ut-docs#1550): pairingRestartHandler itself also refuses
+	// unless a restore is actually staged, but that alone doesn't stop an
+	// anonymous LAN caller from holding a first-boot till in a restart loop
+	// once a real join IS staged and in progress — the limiter bounds that
+	// window the same way it already bounds pair-start's SSRF-oracle risk.
+	setupPairingRestartLimiter := newPairRateLimiter(time.Minute, 5)
+	mux.HandleFunc("POST /api/sync/pairing-restart", pairingRestartHandler(d, managerGate(d)))
+	mux.HandleFunc("POST /api/setup/pairing-restart", pairingRestartHandler(d, rateLimited(setupPairingRestartLimiter, firstBootGate(d))))
+}
+
+// pairingRestartHandler schedules an in-place restart of this till so a
+// join staged by completeJoin (a restore-pending.db that only
+// db.ApplyPendingRestore, run once before db.Open at startup, can apply)
+// actually takes effect — the previous "restart this till to finish" text
+// with no button was a real dead end on a kiosk with no shell
+// (ut-docs#1550). procrestart.Restart only schedules a goroutine (the
+// re-exec fires ~1.5s later), so this response flushes long before the
+// process image is replaced; the page then polls /healthz until the new
+// image is up. Answers the standard { "data": …, "error": null } envelope.
+//
+// Refuses with 409 unless a restore is actually staged (review finding:
+// the first-boot route is otherwise an unauthenticated, unconditional
+// process-kill any anonymous device on the shop LAN could fire in a loop,
+// with nothing to gain — completeJoin stages the restore, via
+// db.StageRestoreFromReader, strictly BEFORE the state flips to "joined",
+// so this is true on every legitimate call and false on every abusive
+// one). Deliberately NOT gated on pairingRestartSupported() beyond that:
+// the template never renders the trigger where it's false, and on such a
+// platform Restart itself is a logged no-op, never a crash.
+func pairingRestartHandler(d *common.Deps, gate apiGate) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !gate(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if !pairingRestorePending(d.Cfg.DBPath) {
+			locale := httpx.ResolveLocale(w, r)
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": httpx.T(locale, "tills.pairing.nothing_to_restart")})
+			return
+		}
+		pairingRestartFn()
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]bool{"restarting": true}, "error": nil})
+	}
 }
 
 // pairStartHandler sends the pair request to the chosen primary and renders
