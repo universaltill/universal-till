@@ -2499,14 +2499,23 @@ func (r *POSRepo) EndOfDayInstant(ctx context.Context, from, to time.Time) (EODR
 }
 
 // dateRangeSummary is the shared aggregation body behind EndOfDay and
-// EndOfDayRange. date(created_at, 'localtime') BETWEEN date(?) AND date(?)
-// is equivalent to date(created_at, 'localtime') = date(?) when from == to,
-// so EndOfDay's behavior (and its existing tests) are unaffected by sharing
-// this with the range query. Every from/to comparison in this function
-// (and DepartmentsForDay's) wraps its RHS in date(...) too, even though
-// from/to always arrive as canonical "YYYY-MM-DD" text — one consistent
-// convention across all four fragments this file uses for a "day" argument,
-// rather than three bare and one wrapped.
+// EndOfDayRange. `local_date BETWEEN date(?) AND date(?)` is equivalent to
+// `local_date = date(?)` when from == to, so EndOfDay's behavior (and its
+// existing tests) are unaffected by sharing this with the range query.
+// Every from/to comparison in this function (and DepartmentsForDay's) wraps
+// its RHS in date(...) too, even though from/to always arrive as canonical
+// "YYYY-MM-DD" text — one consistent convention across every fragment this
+// file uses for a "day" argument, rather than some bare and some wrapped.
+//
+// ut-docs#1342: this function used to compare date(created_at, 'localtime')
+// directly, which SQLite refuses to let any index back (the 'localtime'
+// modifier is classified non-deterministic). It now compares against
+// sales.local_date/voided_local_date — plain columns populated at write
+// time (InsertSale, UpdateSaleStatus) using this exact same
+// date(x, 'localtime') conversion, so the result is identical; only where
+// the conversion happens changed, from every read to once per write. See
+// migration 007's header for the full rationale, including why this is a
+// write-time column rather than a generated/indexed expression.
 //
 // from/to are matched on the shop's LOCAL calendar day (ut-docs#869) — the
 // same convention DayTotal and ListSalesJournal's Day filter already use
@@ -2533,7 +2542,7 @@ SELECT
   COALESCE(SUM(CASE WHEN sale_type = 'sale' THEN tax_total ELSE -tax_total END), 0),
   COALESCE(MIN(receipt_no), ''), COALESCE(MAX(receipt_no), '')
 FROM sales
-WHERE status = 'completed' AND date(created_at, 'localtime') BETWEEN date(?) AND date(?)`,
+WHERE status = 'completed' AND local_date BETWEEN date(?) AND date(?)`,
 		from, to).Scan(&rep.SalesCount, &rep.Gross, &rep.RefundCount, &rep.RefundTotal,
 		&rep.TaxNet, &rep.FirstReceipt, &rep.LastReceipt)
 	if err != nil {
@@ -2550,20 +2559,34 @@ WHERE status = 'completed' AND date(created_at, 'localtime') BETWEEN date(?) AND
 	// count before a sale completes. Matched on voided_at's local
 	// calendar day (not created_at): a sale can complete one day and be
 	// voided the next, and the cancellation as an audit event belongs to
-	// the day it was actually cancelled. COALESCE(voided_at, created_at)
-	// makes a legacy/hand-inserted row with a NULL voided_at fail
-	// visible (it still lands on SOME day) rather than silently
-	// vanishing from every window's count — every row this repo itself
-	// writes always stamps voided_at (UpdateSaleStatus's own CASE WHEN),
-	// so this only guards a row this codebase didn't create. Never
-	// folded into Gross/Net/RefundTotal above — a voided sale carries no
-	// revenue and this is purely an informational count/total, same as
-	// the reference day-close's separate "Stornos" column.
+	// the day it was actually cancelled. Falling back to local_date when
+	// voided_local_date is NULL (a legacy/hand-inserted row with no
+	// voided_at) makes such a row fail visible — it still lands on SOME
+	// day — rather than silently vanishing from every window's count;
+	// every row this repo itself writes always stamps voided_at
+	// (UpdateSaleStatus's own CASE WHEN, which also stamps
+	// voided_local_date), so this only guards a row this codebase didn't
+	// create. Never folded into Gross/Net/RefundTotal above — a voided
+	// sale carries no revenue and this is purely an informational
+	// count/total, same as the reference day-close's separate "Stornos"
+	// column.
+	//
+	// ut-docs#1342: this used to be a single COALESCE(voided_at,
+	// created_at) wrapped in date(..., 'localtime'), which SQLite refuses
+	// to let any index back (classified non-deterministic). Split here
+	// into an OR of two plain range comparisons against the precomputed
+	// voided_local_date/local_date columns — same result as the original
+	// COALESCE, but each branch is sargable on its own column (a COALESCE
+	// across two columns cannot itself be satisfied by an index on
+	// either one).
 	err = r.db.QueryRowContext(ctx, `
 SELECT COUNT(*), COALESCE(SUM(total), 0)
 FROM sales
-WHERE status = 'voided' AND date(COALESCE(voided_at, created_at), 'localtime') BETWEEN date(?) AND date(?)`,
-		from, to).Scan(&rep.CancelCount, &rep.CancelTotal)
+WHERE status = 'voided' AND (
+  (voided_local_date IS NOT NULL AND voided_local_date BETWEEN date(?) AND date(?))
+  OR (voided_local_date IS NULL AND local_date BETWEEN date(?) AND date(?))
+)`,
+		from, to, from, to).Scan(&rep.CancelCount, &rep.CancelTotal)
 	if err != nil {
 		return rep, fmt.Errorf("eod cancellations: %w", err)
 	}
@@ -2585,7 +2608,7 @@ SELECT p.method_id,
   COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN p.amount - p.change_given END), 0)
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
-WHERE s.status = 'completed' AND date(s.created_at, 'localtime') BETWEEN date(?) AND date(?)
+WHERE s.status = 'completed' AND s.local_date BETWEEN date(?) AND date(?)
 GROUP BY p.method_id ORDER BY 2 DESC`, from, to)
 	if err != nil {
 		return rep, fmt.Errorf("eod methods: %w", err)
@@ -2625,7 +2648,7 @@ GROUP BY p.method_id ORDER BY 2 DESC`, from, to)
 SELECT p.method_id, COUNT(*), COALESCE(SUM(p.tip_amount), 0)
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
-WHERE p.tip_amount > 0 AND s.status = 'completed' AND date(s.created_at, 'localtime') BETWEEN date(?) AND date(?)
+WHERE p.tip_amount > 0 AND s.status = 'completed' AND s.local_date BETWEEN date(?) AND date(?)
 GROUP BY p.method_id ORDER BY p.method_id`, from, to)
 	if err != nil {
 		return rep, fmt.Errorf("eod tips: %w", err)
@@ -2726,7 +2749,7 @@ GROUP BY p.method_id ORDER BY p.method_id`, from, to)
 SELECT s.till_id, COALESCE(t.name, ''), COUNT(*), COALESCE(SUM(s.total), 0)
 FROM sales s
 LEFT JOIN tills t ON t.id = s.till_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.local_date = date(?)
 GROUP BY s.till_id ORDER BY 4 DESC`, from)
 	} else {
 		return rep, nil
@@ -3588,10 +3611,19 @@ func (r *POSRepo) SaleExists(ctx context.Context, saleID string) (bool, error) {
 }
 
 // SetSaleProvenance stamps a journaled-in sale with its source till and
-// original timestamp (CompleteSale wrote "now").
+// original timestamp (CompleteSale wrote "now"). local_date must be
+// recomputed from the ORIGIN's created_at here too (ut-docs#1342 review
+// finding) — InsertSale already stamped it from the receiving till's "now",
+// and leaving it there would silently book the sale to the ingest day
+// rather than the day it actually happened on the origin till, whenever
+// ingest crosses a local-calendar-day boundary (an offline replica
+// reconnecting the next morning being the obvious case). Same
+// COALESCE(...,”) guard as InsertSale's own write, for a malformed
+// createdAt arriving from a peer's journal.
 func (r *POSRepo) SetSaleProvenance(ctx context.Context, saleID, tillID, createdAt string) error {
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE sales SET till_id = ?, created_at = ? WHERE id = ?`, tillID, createdAt, saleID)
+		`UPDATE sales SET till_id = ?, created_at = ?, local_date = COALESCE(date(?, 'localtime'), '') WHERE id = ?`,
+		tillID, createdAt, createdAt, saleID)
 	if err != nil {
 		return fmt.Errorf("set provenance: %w", err)
 	}
@@ -4902,9 +4934,9 @@ func (r *POSRepo) InsertSale(ctx context.Context, tx *sql.Tx, p InsertSaleParams
 		offlineVal = 1
 	}
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, order_type, table_id, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total, rounding, note, created_at, completed_at)
-VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-`, p.SaleID, p.ReceiptNo, p.SaleType, p.TenderType, p.OrderType, nullIfEmpty(p.TableID), offlineVal, p.SyncStatus, p.SyncAttempts, nullIfEmpty(p.SyncNextAttemptAt), nullIfEmpty(p.SyncLastError), nullIfEmpty(p.RegisterID), nullIfEmpty(p.CashierID), nullIfEmpty(p.CustomerID), p.Currency, p.Subtotal, p.DiscountTotal, p.TaxTotal, p.Total, p.ServiceCharge, p.ServiceChargeTaxBasisBP, p.VoucherIssueTotal, nullIfEmpty(p.Note), p.CreatedAt, p.CreatedAt)
+INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, order_type, table_id, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total, rounding, note, created_at, completed_at, local_date)
+VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, COALESCE(date(?, 'localtime'), ''))
+`, p.SaleID, p.ReceiptNo, p.SaleType, p.TenderType, p.OrderType, nullIfEmpty(p.TableID), offlineVal, p.SyncStatus, p.SyncAttempts, nullIfEmpty(p.SyncNextAttemptAt), nullIfEmpty(p.SyncLastError), nullIfEmpty(p.RegisterID), nullIfEmpty(p.CashierID), nullIfEmpty(p.CustomerID), p.Currency, p.Subtotal, p.DiscountTotal, p.TaxTotal, p.Total, p.ServiceCharge, p.ServiceChargeTaxBasisBP, p.VoucherIssueTotal, nullIfEmpty(p.Note), p.CreatedAt, p.CreatedAt, p.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("insert sale: %w", err)
 	}
@@ -5009,10 +5041,10 @@ type CardPresentFields struct {
 // soft reference with no FK (see migration 072's header).
 func (r *POSRepo) InsertPayment(ctx context.Context, tx *sql.Tx, paymentID, saleID, methodID string, amount int64, currency, reference string, changeGiven int64, tipAmount int64, tipRecipient string, voucherID string, paidAt string, cardPresent CardPresentFields) error {
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO payments (id, sale_id, method_id, amount, currency, reference, change_given, tip_amount, tip_recipient, voucher_id, masked_pan, auth_code, terminal_id, trace_id, paid_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO payments (id, sale_id, method_id, amount, currency, reference, change_given, tip_amount, tip_recipient, voucher_id, masked_pan, auth_code, terminal_id, trace_id, paid_at, local_date)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(date(?, 'localtime'), ''))
 `, paymentID, saleID, methodID, amount, currency, nullIfEmpty(reference), changeGiven, tipAmount, tipRecipient, nullIfEmpty(voucherID),
-		nullIfEmpty(cardPresent.MaskedPAN), nullIfEmpty(cardPresent.AuthCode), nullIfEmpty(cardPresent.TerminalID), nullIfEmpty(cardPresent.TraceID), paidAt)
+		nullIfEmpty(cardPresent.MaskedPAN), nullIfEmpty(cardPresent.AuthCode), nullIfEmpty(cardPresent.TerminalID), nullIfEmpty(cardPresent.TraceID), paidAt, paidAt)
 	if err != nil {
 		return fmt.Errorf("insert payment: %w", err)
 	}
@@ -5571,9 +5603,11 @@ func (r *POSRepo) UpdateSaleStatus(ctx context.Context, tx *sql.Tx, saleID, stat
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := r.exec(tx).ExecContext(ctx, `
 UPDATE sales
-SET status = ?, voided_at = CASE WHEN ? = 'voided' THEN ? ELSE voided_at END
+SET status = ?,
+    voided_at = CASE WHEN ? = 'voided' THEN ? ELSE voided_at END,
+    voided_local_date = CASE WHEN ? = 'voided' THEN date(?, 'localtime') ELSE voided_local_date END
 WHERE id = ?
-`, status, status, now, saleID)
+`, status, status, now, status, now, saleID)
 	if err != nil {
 		return fmt.Errorf("update sale status: %w", err)
 	}

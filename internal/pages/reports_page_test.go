@@ -878,10 +878,10 @@ func TestReportsPage_TipsTabShowsReceivedVsAllocated(t *testing.T) {
 	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,cashier_id,created_at) VALUES('s1','R001','completed','sale','GBP',1000,0,0,1000,'worker1',datetime('now'))`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id,sale_id,method_id,amount,currency,change_given,tip_amount,tip_recipient,paid_at) VALUES('p1','s1','cash',1000,'GBP',0,500,'employee',datetime('now'))`); err != nil {
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id,sale_id,method_id,amount,currency,change_given,tip_amount,tip_recipient,paid_at,local_date) VALUES('p1','s1','cash',1000,'GBP',0,500,'employee',datetime('now'),date('now','localtime'))`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note) VALUES('wa1','tip','','worker1',300,datetime('now'),'shift payout')`); err != nil {
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('wa1','tip','','worker1',300,datetime('now'),'shift payout',date('now','localtime'))`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -959,7 +959,7 @@ func TestReportsPage_TipsTabRecordFormGatedOnWorkerAllocationPermission(t *testi
 	if err := authRepo.SetRolePermission(ctx, nil, "cashier", "reports", true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note) VALUES('wa1','tip','','u1',300,datetime('now'),'')`); err != nil {
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('wa1','tip','','u1',300,datetime('now'),'',date('now','localtime'))`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1041,10 +1041,10 @@ func TestReportsPage_TipsTabCashierFilterIgnoredWithoutWorkerAllocationPermissio
 	if err := authRepo.SetRolePermission(ctx, nil, "cashier", "reports", true); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note) VALUES('wa1','tip','','worker1',300,datetime('now'),'')`); err != nil {
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('wa1','tip','','worker1',300,datetime('now'),'',date('now','localtime'))`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note) VALUES('wa2','tip','','worker2',4242,datetime('now'),'')`); err != nil {
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('wa2','tip','','worker2',4242,datetime('now'),'',date('now','localtime'))`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1180,7 +1180,7 @@ func TestReportsPage_WorkerAllocationExport_ReturnsCSVWithRecordedRow(t *testing
 	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','Worker One','cashier',1)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note) VALUES('wa1','tip','','worker1',1234,'2026-08-25T18:00:00Z','shift payout')`); err != nil {
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('wa1','tip','','worker1',1234,'2026-08-25T18:00:00Z','shift payout',date('2026-08-25T18:00:00Z','localtime'))`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1267,11 +1267,11 @@ func TestReportsPage_RecordWorkerAllocation_RefreshedTabKeepsWindowAndCashierFil
 		t.Fatal(err)
 	}
 	// 30 days ago: outside the 14-day default, inside a 90-day window.
-	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note) VALUES('wa-old','tip','','worker1',700,datetime('now','-30 days'),'')`); err != nil {
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('wa-old','tip','','worker1',700,datetime('now','-30 days'),'',date('now','-30 days','localtime'))`); err != nil {
 		t.Fatal(err)
 	}
 	// Today, but a DIFFERENT worker -- must be excluded by the cashier filter.
-	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note) VALUES('wa-other','tip','','worker2',999,datetime('now'),'')`); err != nil {
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('wa-other','tip','','worker2',999,datetime('now'),'',date('now','localtime'))`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1417,7 +1417,7 @@ func TestReportsPage_WorkerAllocationExport_EscapesFormulaInjection(t *testing.T
 	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','=cmd|''/c calc''!A1','cashier',1)`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note) VALUES('wa1','tip','','worker1',500,'2026-08-25T18:00:00Z','+SUM(A1:A9)')`); err != nil {
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('wa1','tip','','worker1',500,'2026-08-25T18:00:00Z','+SUM(A1:A9)',date('2026-08-25T18:00:00Z','localtime'))`); err != nil {
 		t.Fatal(err)
 	}
 
