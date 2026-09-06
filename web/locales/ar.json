@@ -1697,6 +1697,8 @@
   "catalog.error.server": "حدث خطأ ما. يرجى المحاولة مجددًا.",
   "catalog.error.invalid_request": "طلب غير صالح — تحقق من التفاصيل وحاول مرة أخرى.",
   "catalog.error.sku_exists": "رمز SKU هذا مستخدم بالفعل — اختر رمزًا آخر.",
+  "catalog.error.image_too_large": "هذه الصورة كبيرة جدًا — جرّب صورة أصغر، أو اقصصها قبل الرفع.",
+  "catalog.error.image_invalid": "هذا الملف ليس صورة PNG أو JPEG صالحة.",
   "catalog.barcode_backfill.btn": "تعبئة الباركود من SKU",
   "catalog.barcode_backfill.heading": "تعبئة الباركود من SKU",
   "catalog.barcode_backfill.eligible_count": "يمكن اشتقاق باركود من SKU لعدد %d عنصر.",
