@@ -418,6 +418,36 @@
       </div>
     </div>
 
+    <!-- ut-docs#1542: #payment-overlay is a fixed, right-anchored 26rem
+         panel that does not reflow .tender-default-footer -- so at every
+         desktop viewport up to ~1440px wide, the ORIGINAL Hold Sale/New
+         Sale buttons in that footer sit geometrically under the open
+         overlay and are not reachable by a real click (measured live via
+         getBoundingClientRect, see the card). Rather than resize/reposition
+         the overlay (a much bigger, riskier change touching every
+         breakpoint this file's own comments already treat as
+         hard-won), this adds reachable DUPLICATE copies inside the
+         overlay itself -- the exact same shape this file already uses for
+         the phone-width New Sale duplicate (kiosk-checkout-start-phone,
+         ut-docs#1345): identical wiring, new testids so e2e can address
+         either copy unambiguously. This does NOT revert ut-docs#1252's
+         decision to keep the PRIMARY Hold Sale button in the default view
+         -- that button is untouched; these are additional, overlay-local
+         reachable copies for while the overlay is actually open. -->
+    <div class="tender-footer">
+      <!-- Same left-to-right order as .tender-default-footer (New Sale,
+           Hold Sale) -- independent review caught the first draft
+           inverting it, easy to misread as a meaningful difference. -->
+      <button class="btn secondary" type="button" data-testid="payment-overlay-new-sale"
+              hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)"
+              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
+        🛒 {{ T "kiosk.checkout_start" }}</button>
+      <button class="btn secondary" type="button" data-testid="payment-overlay-hold"
+              onclick="document.getElementById('hold-modal').show(); document.getElementById('hold-label-input').focus();">
+        {{ T "hold.action" }}</button>
+    </div>
+
     <div class="tender-footer single">
       <!-- Hold Sale moved to the default view (ut-docs#1252 independent
            review) -- only New Customer stays here. Closing the overlay
