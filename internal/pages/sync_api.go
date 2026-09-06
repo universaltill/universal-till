@@ -536,8 +536,12 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, html.EscapeString(friendlyJoinError(locale, err)))
 			return
 		}
-		fmt.Fprintf(w, `<span>✓ %s: %s — %s</span>`, httpx.T(locale, "tills.joined"),
-			shopName, httpx.T(locale, "tills.restart_to_finish"))
+		// ut-docs#1615: give the operator the same real restart action
+		// pairing_wait.html's "joined" branch gives the discovery-list flow
+		// (ut-docs#1550) instead of the old dead-end text — manager-driven,
+		// so no auto-fire (a configured, possibly-in-use till restarts only
+		// on the explicit click).
+		renderJoinSuccess(w, r, shopName, "/api/sync/pairing-restart", false)
 	})
 
 	// First-boot wizard fork (middleware-exempt like /setup, and refuses
@@ -562,8 +566,10 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, html.EscapeString(friendlyJoinError(locale, err)))
 			return
 		}
-		fmt.Fprintf(w, `<span>✓ %s: %s — %s</span>`, httpx.T(locale, "tills.joined"),
-			shopName, httpx.T(locale, "tills.restart_to_finish"))
+		// ut-docs#1615: same fix as /api/sync/join above, but auto-fires on
+		// render — a first-boot Pi kiosk has no shell to press a button
+		// from (same reasoning as pairing_wait.html's autoRestart).
+		renderJoinSuccess(w, r, shopName, "/api/setup/pairing-restart", true)
 	})
 
 	return tokens
