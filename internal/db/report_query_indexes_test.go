@@ -104,16 +104,24 @@ func TestReportQueryIndexesMakeDateRangePredicatesSargable(t *testing.T) {
 // TestReportQueryIndexesDateRangeSummaryStaysUnfixed is a documentation-accuracy
 // regression guard (review finding, ut-docs#1319): an earlier draft of
 // migration 076's own comments wrongly claimed dateRangeSummary/
-// EndOfDay(Range) were fixed by idx_sales_status_created_dt. They are not —
-// pos_repo.go's dateRangeSummary uses date(created_at, 'localtime') BETWEEN,
-// not datetime(created_at), the same non-indexable 'localtime' shape the
-// migration deliberately left unfixed for worker_allocations/payments (see
-// TestReportQueryIndexesDidNotIndexLocaltimeExpressions below for why). This
-// test proves the composite index demotes to a status-only search for this
-// exact query shape rather than silently becoming sargable (which would
-// make that old claim right by accident) or silently regressing further.
-// If this ever starts failing because the plan changed, this file's own
-// "NOT fixed" notes need a matching update, not just this test.
+// EndOfDay(Range) were fixed by idx_sales_status_created_dt. They were not,
+// via THIS index — pos_repo.go's dateRangeSummary used date(created_at,
+// 'localtime') BETWEEN, not datetime(created_at), the same non-indexable
+// 'localtime' shape the migration deliberately left unfixed for
+// worker_allocations/payments (see
+// TestReportQueryIndexesDidNotIndexLocaltimeExpressions below for why).
+// migration 007 (ut-docs#1342) later fixed dateRangeSummary itself, via a
+// DIFFERENT mechanism — pos_repo.go no longer runs this literal query at
+// all, it compares against the precomputed sales.local_date column instead
+// (see report_query_local_date_test.go). This test still holds: it asserts
+// the query PLAN for this exact literal SQL shape, which idx_sales_status_
+// created_dt genuinely still cannot make sargable, and stays true regardless
+// of what production code does or doesn't run it — proving the composite
+// index demotes to a status-only search for this shape rather than silently
+// becoming sargable (which would make the old 076-era claim right by
+// accident) or silently regressing further. If this ever starts failing
+// because the plan changed, this file's own "NOT fixed" notes need a
+// matching update, not just this test.
 func TestReportQueryIndexesDateRangeSummaryStaysUnfixed(t *testing.T) {
 	d, err := Open(filepath.Join(t.TempDir(), "m076-daterangesummary.db"))
 	if err != nil {
@@ -147,11 +155,15 @@ func TestReportQueryIndexesDateRangeSummaryStaysUnfixed(t *testing.T) {
 		t.Fatalf("plan rows: %v", err)
 	}
 	full := strings.Join(plan, " | ")
-	// Expect exactly "idx_sales_status_created_dt (status=?)" — the date
-	// bound reduced to a residual filter, NOT part of the index search
-	// (which would show as "<expr>>? AND <expr><?" the way the datetime()
-	// cases above do).
-	if !strings.Contains(full, "idx_sales_status_created_dt (status=?)") {
+	// Expect a status-only search on SOME (status, ...) composite index —
+	// the date bound reduced to a residual filter, NOT part of the index
+	// search (which would show as "<expr>>? AND <expr><?" the way the
+	// datetime() cases above do). Not pinned to idx_sales_status_created_dt
+	// specifically: migration 007 (ut-docs#1342) added more (status, X)
+	// composite indexes for other columns, and since none of them can serve
+	// THIS expression either, which equally-unhelpful one the planner picks
+	// is an implementation detail, not the invariant this test guards.
+	if !strings.Contains(full, "(status=?)") {
 		t.Fatalf("query plan = %q, expected dateRangeSummary's date(...,'localtime') predicate to stay unfixed (status-only search) — if this changed, update this file's NOT-fixed notes to match", full)
 	}
 	if strings.Contains(full, "<expr>") {

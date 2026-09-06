@@ -21,7 +21,10 @@ func setupStatusDB(t *testing.T) *sql.DB {
 	}
 	stmts := []string{
 		`PRAGMA foreign_keys = ON;`,
-		`CREATE TABLE sales (id TEXT PRIMARY KEY, status TEXT NOT NULL, voided_at TEXT, tender_type TEXT NOT NULL DEFAULT 'unknown', offline INTEGER NOT NULL DEFAULT 0, sync_status TEXT NOT NULL DEFAULT 'queued', sync_attempts INTEGER NOT NULL DEFAULT 0, sync_next_attempt_at TEXT, sync_last_error TEXT);`,
+		// voided_local_date: column-identical to
+		// internal/db/migrations/007_report_query_local_date_columns.sql
+		// (ut-docs#1342) -- UpdateSaleStatus always writes it now.
+		`CREATE TABLE sales (id TEXT PRIMARY KEY, status TEXT NOT NULL, voided_at TEXT, voided_local_date TEXT, tender_type TEXT NOT NULL DEFAULT 'unknown', offline INTEGER NOT NULL DEFAULT 0, sync_status TEXT NOT NULL DEFAULT 'queued', sync_attempts INTEGER NOT NULL DEFAULT 0, sync_next_attempt_at TEXT, sync_last_error TEXT);`,
 		`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT, entity_id TEXT, action TEXT, data_json TEXT, created_at TEXT, blocked_actor_id TEXT);`,
 		// vouchers/voucher_transactions: column-identical to the real
 		// tables in internal/db/migrations/001_init.sql (originally added

@@ -348,10 +348,12 @@ func setupOfflineDB(t *testing.T) *sql.DB {
 			service_charge_tax_basis_bp INTEGER NOT NULL DEFAULT 0,
 			voucher_issue_total INTEGER NOT NULL DEFAULT 0,
 			rounding INTEGER NOT NULL DEFAULT 0,
-			note TEXT, 
-			created_at TEXT NOT NULL, 
-			completed_at TEXT, 
-			voided_at TEXT
+			note TEXT,
+			created_at TEXT NOT NULL,
+			completed_at TEXT,
+			voided_at TEXT,
+			local_date TEXT NOT NULL DEFAULT '',
+			voided_local_date TEXT
 		)`,
 		`CREATE TABLE sale_lines (
 			id TEXT PRIMARY KEY, 
@@ -389,6 +391,7 @@ func setupOfflineDB(t *testing.T) *sql.DB {
 			trace_id TEXT,
 			voucher_id TEXT,
 			paid_at TEXT NOT NULL,
+			local_date TEXT NOT NULL DEFAULT '',
 			FOREIGN KEY (sale_id) REFERENCES sales(id)
 		)`,
 		`CREATE TABLE stock_movements (

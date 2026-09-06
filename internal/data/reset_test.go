@@ -366,6 +366,107 @@ func TestResetThenRestoreRoundTrip_SaleTrackingToken(t *testing.T) {
 	}
 }
 
+// ut-docs#1342 (independent review): sales.local_date/voided_local_date,
+// payments.local_date and worker_allocations.local_date (migration 007) must
+// round-trip through their _archive twins for exactly the reason 055/056/058
+// already established above — 040_reset_archive.sql's own header says the
+// archive is column-identical to the live table across every later ALTER,
+// and ResetTransactionHistory copies an EXPLICIT column list, so a missed
+// mirror silently drops the column instead of failing loudly. Concretely: a
+// shop that clears transaction history and restores the batch would get
+// every sale/payment/allocation back with local_date reset to the column
+// DEFAULT ” — and every rewritten report query in dateRangeSummary/
+// WorkerAllocationsSummary then drops those rows from every date-range
+// filter, zeroing out restored revenue with no error. Pinned here rather
+// than left to a manual column-list check, same as every earlier ALTER.
+func TestResetThenRestoreRoundTrip_LocalDateColumns(t *testing.T) {
+	d, x, count := resetTestDB(t, "restore_local_date.db")
+	seedFullSale(t, x)
+	// seedFullSale's raw INSERTs bypass InsertSale/InsertPayment (which
+	// would populate local_date themselves), so it must be stamped
+	// explicitly here — same as any other hand-rolled fixture in this repo
+	// that needs the column a real write path would otherwise supply.
+	if _, err := d.DB.Exec(`UPDATE sales SET local_date = '2026-01-01', voided_at = '2026-01-02T10:00:00Z', voided_local_date = '2026-01-02' WHERE id = 's1'`); err != nil {
+		t.Fatalf("seed sale local_date/voided_local_date: %v", err)
+	}
+	if _, err := d.DB.Exec(`UPDATE payments SET local_date = '2026-01-01' WHERE id = 'p1'`); err != nil {
+		t.Fatalf("seed payment local_date: %v", err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO worker_allocations (id, source_type, cashier_id, amount_minor, allocated_at, local_date) VALUES ('wa1', 'tip', 'u1', 50, '2026-01-01T12:00:00Z', '2026-01-01')`); err != nil {
+		t.Fatalf("seed worker_allocations: %v", err)
+	}
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	var archSaleLocalDate, archSaleVoidedLocalDate string
+	if err := d.DB.QueryRow(`SELECT local_date, COALESCE(voided_local_date,'') FROM sales_archive WHERE id='s1' AND reset_batch_id=?`, batchID).
+		Scan(&archSaleLocalDate, &archSaleVoidedLocalDate); err != nil {
+		t.Fatalf("read archived sale local_date: %v", err)
+	}
+	if archSaleLocalDate != "2026-01-01" || archSaleVoidedLocalDate != "2026-01-02" {
+		t.Fatalf("archived sales local_date/voided_local_date = %q/%q, want 2026-01-01/2026-01-02", archSaleLocalDate, archSaleVoidedLocalDate)
+	}
+	var archPayLocalDate string
+	if err := d.DB.QueryRow(`SELECT local_date FROM payments_archive WHERE id='p1' AND reset_batch_id=?`, batchID).Scan(&archPayLocalDate); err != nil {
+		t.Fatalf("read archived payment local_date: %v", err)
+	}
+	if archPayLocalDate != "2026-01-01" {
+		t.Fatalf("archived payments.local_date = %q, want 2026-01-01", archPayLocalDate)
+	}
+	var archWALocalDate string
+	if err := d.DB.QueryRow(`SELECT local_date FROM worker_allocations_archive WHERE id='wa1' AND reset_batch_id=?`, batchID).Scan(&archWALocalDate); err != nil {
+		t.Fatalf("read archived worker_allocations local_date: %v", err)
+	}
+	if archWALocalDate != "2026-01-01" {
+		t.Fatalf("archived worker_allocations.local_date = %q, want 2026-01-01", archWALocalDate)
+	}
+
+	if _, err := repo.RestoreResetBatch(ctx, batchID, ""); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if c := count("sales"); c != 2 {
+		t.Fatalf("sales after restore: %d rows, want 2", c)
+	}
+
+	var restoredSaleLocalDate, restoredSaleVoidedLocalDate string
+	if err := d.DB.QueryRow(`SELECT local_date, COALESCE(voided_local_date,'') FROM sales WHERE id='s1'`).
+		Scan(&restoredSaleLocalDate, &restoredSaleVoidedLocalDate); err != nil {
+		t.Fatalf("read restored sale local_date: %v", err)
+	}
+	if restoredSaleLocalDate != "2026-01-01" || restoredSaleVoidedLocalDate != "2026-01-02" {
+		t.Fatalf("restored sales local_date/voided_local_date = %q/%q, want 2026-01-01/2026-01-02", restoredSaleLocalDate, restoredSaleVoidedLocalDate)
+	}
+	var restoredPayLocalDate string
+	if err := d.DB.QueryRow(`SELECT local_date FROM payments WHERE id='p1'`).Scan(&restoredPayLocalDate); err != nil {
+		t.Fatalf("read restored payment local_date: %v", err)
+	}
+	if restoredPayLocalDate != "2026-01-01" {
+		t.Fatalf("restored payments.local_date = %q, want 2026-01-01", restoredPayLocalDate)
+	}
+	var restoredWALocalDate string
+	if err := d.DB.QueryRow(`SELECT local_date FROM worker_allocations WHERE id='wa1'`).Scan(&restoredWALocalDate); err != nil {
+		t.Fatalf("read restored worker_allocations local_date: %v", err)
+	}
+	if restoredWALocalDate != "2026-01-01" {
+		t.Fatalf("restored worker_allocations.local_date = %q, want 2026-01-01", restoredWALocalDate)
+	}
+
+	// The whole point: a rewritten report query must actually find the
+	// restored sale again, not just see a non-empty column value.
+	rep, err := repo.EndOfDay(ctx, "2026-01-01")
+	if err != nil {
+		t.Fatalf("EndOfDay after restore: %v", err)
+	}
+	if rep.SalesCount != 1 {
+		t.Fatalf("EndOfDay(2026-01-01).SalesCount after restore = %d, want 1 (the restored sale must be findable by date range again)", rep.SalesCount)
+	}
+}
+
 // Independent review, ut-docs#187: seedFullSale's one invoice has no credit
 // note, so the invoices self-FK two-phase archive/restore ordering
 // (original_invoice_id) was previously exercised by neither existing test —

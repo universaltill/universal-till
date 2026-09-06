@@ -65,10 +65,14 @@ func etbItem(t *testing.T, d *db.DB, id string, basePrice int64) {
 // etbSale inserts a sale row; subtotal mirrors total (no discount/charge —
 // the hand-inserted fixtures exercise the pure line-aggregation math; sales
 // WITH a discount or service charge go through pos.CompleteSale below).
+// local_date is set via date(?, 'localtime') on the same createdAt literal,
+// exactly as InsertSale does in production (ut-docs#1342) — this helper
+// bypasses that method, and dateRangeSummary/EndOfDay now filter on
+// local_date directly.
 func etbSale(t *testing.T, d *db.DB, id, createdAt, status, saleType string, taxTotal, total int64) {
 	t.Helper()
-	etbExec(t, d, `INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at)
-VALUES (?, ?, ?, ?, 'GBP', ?, 0, ?, ?, ?)`, id, "R-"+id, status, saleType, total, taxTotal, total, createdAt)
+	etbExec(t, d, `INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, local_date)
+VALUES (?, ?, ?, ?, 'GBP', ?, 0, ?, ?, ?, date(?, 'localtime'))`, id, "R-"+id, status, saleType, total, taxTotal, total, createdAt, createdAt)
 }
 
 func etbLine(t *testing.T, d *db.DB, saleID string, lineNo int, itemID, name string, qty float64, rateBP, taxAmt, before, after int64) {

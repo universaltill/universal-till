@@ -55,11 +55,16 @@ type posTestDB struct {
 	repo *POSRepo
 }
 
+// local_date is set via date(?, 'localtime') on the same createdAt literal,
+// exactly as InsertSale does in production (ut-docs#1342) — this helper
+// bypasses that method, and dateRangeSummary/EndOfDay now filter on
+// local_date directly. Set unconditionally: any test using this helper
+// that doesn't touch a local_date-filtered query is unaffected by it.
 func seedLifecycleSale(t *testing.T, dbx *posTestDB, id, receiptNo, saleType, status, createdAt string, total, taxTotal int64) {
 	t.Helper()
 	ctx := context.Background()
-	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
-VALUES(?, ?, ?, ?, 'GBP', ?, 0, ?, ?, ?, ?)`, id, receiptNo, status, saleType, total-taxTotal, taxTotal, total, createdAt, createdAt); err != nil {
+	if _, err := dbx.d.DB.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at, local_date)
+VALUES(?, ?, ?, ?, 'GBP', ?, 0, ?, ?, ?, ?, date(?, 'localtime'))`, id, receiptNo, status, saleType, total-taxTotal, taxTotal, total, createdAt, createdAt, createdAt); err != nil {
 		t.Fatalf("seed sale %s: %v", id, err)
 	}
 }
@@ -440,16 +445,66 @@ func TestSaleExistsAndSetSaleProvenance(t *testing.T) {
 	}
 
 	// SetSaleProvenance stamps a journaled-in (cloud-synced) sale with its
-	// originating till and true creation time.
+	// originating till and true creation time. local_date must be
+	// recomputed from that same origin timestamp too (ut-docs#1342 review
+	// finding) — InsertSale (via seedLifecycleSale) stamped it from the
+	// receiving till's own "now", and leaving it there would silently book
+	// the sale to the ingest day rather than the origin day; see
+	// TestEndOfDay_FindsJournaledSaleOnOriginDayNotIngestDay below for the
+	// end-to-end symptom this test alone wouldn't catch.
 	if err := dbx.repo.SetSaleProvenance(ctx, "sale1", "till-remote-1", "2025-12-25T08:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
-	var tillID, createdAt string
-	if err := dbx.d.DB.QueryRowContext(ctx, `SELECT till_id, created_at FROM sales WHERE id='sale1'`).Scan(&tillID, &createdAt); err != nil {
+	var tillID, createdAt, localDate string
+	if err := dbx.d.DB.QueryRowContext(ctx, `SELECT till_id, created_at, local_date FROM sales WHERE id='sale1'`).Scan(&tillID, &createdAt, &localDate); err != nil {
 		t.Fatal(err)
 	}
 	if tillID != "till-remote-1" || createdAt != "2025-12-25T08:00:00Z" {
 		t.Fatalf("provenance not applied: till_id=%q created_at=%q", tillID, createdAt)
+	}
+	if localDate != "2025-12-25" {
+		t.Fatalf("local_date not recomputed from the origin timestamp: local_date=%q, want 2025-12-25 (SetSaleProvenance must keep local_date in sync with the created_at it just overwrote)", localDate)
+	}
+}
+
+// TestEndOfDay_FindsJournaledSaleOnOriginDayNotIngestDay is the end-to-end
+// symptom of the local_date staleness TestSaleExistsAndSetSaleProvenance
+// pins at the column level: a LAN-sync journal-in (internal/pages'
+// applyJournal calls SetSaleProvenance after InsertSale has already run)
+// must leave the sale findable by EndOfDay on the day it actually happened
+// on the origin till, not the day it happened to be ingested — the core
+// offline-first scenario (a replica reconnecting after losing LAN
+// connectivity overnight), ut-docs#1342.
+func TestEndOfDay_FindsJournaledSaleOnOriginDayNotIngestDay(t *testing.T) {
+	dbx := newPOSLifecycleTestDB(t)
+	ctx := context.Background()
+
+	// InsertSale (via seedLifecycleSale) stamps local_date from ITS OWN
+	// created_at argument — here the ingest-time stand-in "2026-01-02" —
+	// exactly as CompleteSale does with the receiving till's wall-clock
+	// "now" for a journaled-in sale.
+	seedLifecycleSale(t, dbx, "sale1", "R1", "sale", "completed", "2026-01-02T00:30:00Z", 100, 20)
+
+	// The journal-in step: the true origin timestamp is a day EARLIER.
+	if err := dbx.repo.SetSaleProvenance(ctx, "sale1", "till-origin", "2026-01-01T23:58:00Z"); err != nil {
+		t.Fatal(err)
+	}
+
+	origin, err := dbx.repo.EndOfDay(ctx, "2026-01-01")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if origin.SalesCount != 1 || origin.Gross != 100 {
+		t.Fatalf("EndOfDay(origin day 2026-01-01) = SalesCount=%d Gross=%d, want 1/100 (the journaled-in sale must be found on the day it actually happened)",
+			origin.SalesCount, origin.Gross)
+	}
+
+	ingest, err := dbx.repo.EndOfDay(ctx, "2026-01-02")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ingest.SalesCount != 0 {
+		t.Fatalf("EndOfDay(ingest day 2026-01-02) = SalesCount=%d, want 0 (must not remain on the day it was merely received)", ingest.SalesCount)
 	}
 }
 
