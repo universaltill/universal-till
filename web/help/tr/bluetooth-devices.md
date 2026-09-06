@@ -24,4 +24,5 @@ Bluetooth barkod okuyucuyu veya teraziyi kasayla POS'un içinden eşleştirin �
 - Cihaz PIN isterse buradan eşleştirilemez. Neredeyse her Bluetooth okuyucu ve terazi PIN'siz eşleşir; ısrar eden nadir bir cihaz için kurulumu yapan kişiye danışın.
 - Menzil dışındaki ya da kapalı bir cihaz yalnızca *bağlı değil* olarak görünür; bu asla bir satışı ya da kasadaki başka bir şeyi durdurmaz.
 - Bluetooth'u olmayan bir kasada (adaptör yok ya da Bluetooth hizmeti çalışmıyor) sayfa bunu söyler ve tarama düğmesi kapalıdır — başka hiçbir şey değişmez.
+- Android bir kasada Bluetooth eşleştirme henüz kullanılamıyor — sayfa bunu açıkça söyler, var olmayan bir donanım veya ayar sorunu ima etmeden.
 - Eşleştirme ve unutma, kimin yaptığıyla birlikte denetim izine kaydedilir.

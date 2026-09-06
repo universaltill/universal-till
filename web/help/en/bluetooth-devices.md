@@ -25,4 +25,5 @@ Pair a Bluetooth barcode scanner or scale with the till from inside the POS — 
 - If the device asks for a PIN, it cannot be paired from here. Almost every Bluetooth scanner and scale pairs without one; for the rare one that insists, ask your installer.
 - A device that is out of range or switched off simply shows as *not connected*; that never stops a sale or anything else on the till.
 - On a till with no Bluetooth (no adapter, or the Bluetooth service not running) the page says so and the scan button is off — nothing else changes.
+- On an Android till, Bluetooth pairing isn't available yet — the page says so plainly, without suggesting a hardware or settings problem that isn't there.
 - Pairing and forgetting are recorded in the audit trail with who did it.

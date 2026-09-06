@@ -1492,6 +1492,7 @@
   "bluetoothdevices.list_error": "Could not read the paired devices from this till's Bluetooth.",
   "bluetoothdevices.bluez_unavailable": "Bluetooth is not available on this till — no Bluetooth adapter was found, or the Bluetooth service is not running.",
   "bluetoothdevices.access_denied": "This till's software is not allowed to use Bluetooth. Reinstall the Universal Till package to restore the permission, or contact support.",
+  "bluetoothdevices.platform_unsupported": "Bluetooth pairing is not available on this till yet — this device type does not support it. This is not a problem with this till's hardware or settings.",
   "tables.title": "Tables & floor plan",
   "tables.none": "No tables yet — add your first table below, then drag it into place on the plan.",
   "tables.plan_aria": "Floor plan showing each table and whether it is free or has an open order",

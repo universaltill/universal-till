@@ -246,6 +246,28 @@ func TestBluetoothDevicesPage_NoBluetoothDegradesToNoticeNotError(t *testing.T) 
 	}
 }
 
+func TestBluetoothDevicesPage_UnsupportedPlatformDoesNotBlameHardware(t *testing.T) {
+	// Android (ut-docs#1643): the adapter can be present and healthy, but
+	// there is no D-Bus/BlueZ transport. The page must show a distinct
+	// notice that does not claim the adapter is missing or the service
+	// isn't running — that would misdirect an operator toward a hardware
+	// fix that cannot help.
+	mux, _ := newBluetoothDevicesTestMux(t)
+	stubBluetooth(t, nil, bluetooth.ErrUnsupportedPlatform)
+
+	rec := btGet(mux, "/bluetooth-devices", &btManager)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /bluetooth-devices on an unsupported platform = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="bluetooth-unsupported"`) {
+		t.Fatal("expected the platform-unsupported notice")
+	}
+	if strings.Contains(body, `data-testid="bluetooth-unavailable"`) {
+		t.Error("must not also show the hardware-missing notice")
+	}
+}
+
 func TestBluetoothDevicesPage_AccessDeniedShowsPackagingHint(t *testing.T) {
 	mux, _ := newBluetoothDevicesTestMux(t)
 	// The ADR-0078 policy file is missing: distinct notice, since this is
@@ -308,6 +330,19 @@ func TestBluetoothListAPI_Unavailable503WithCode(t *testing.T) {
 	}
 	if out := decodeBT(t, rec); out.Error == nil || out.Error.Code != "bluetooth_unavailable" {
 		t.Fatalf("want error.code bluetooth_unavailable, got %s", rec.Body.String())
+	}
+}
+
+func TestBluetoothListAPI_UnsupportedPlatform503WithDistinctCode(t *testing.T) {
+	mux, _ := newBluetoothDevicesTestMux(t)
+	stubBluetooth(t, nil, bluetooth.ErrUnsupportedPlatform)
+
+	rec := btGet(mux, "/api/bluetooth-devices", &btManager)
+	if rec.Code != http.StatusServiceUnavailable {
+		t.Fatalf("list on an unsupported platform = %d, want 503", rec.Code)
+	}
+	if out := decodeBT(t, rec); out.Error == nil || out.Error.Code != "bluetooth_unsupported_platform" {
+		t.Fatalf("want error.code bluetooth_unsupported_platform, got %s", rec.Body.String())
 	}
 }
 
