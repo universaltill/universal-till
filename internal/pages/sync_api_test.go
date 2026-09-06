@@ -460,12 +460,20 @@ func TestSyncPromote_ElevatesOnValidApproverPIN(t *testing.T) {
 	if err := authRepo.SetUserPIN(ctx, mgrID, hash); err != nil {
 		t.Fatalf("set pin: %v", err)
 	}
+	// audit_log.blocked_actor_id has a real FK to users(id); the session
+	// injected below via auth.WithUser needs a matching real row. CreateUser
+	// assigns its own id (a UUID) independent of the username passed in, so
+	// the injected session must use the id it returns, not the username.
+	blockedID, err := authRepo.CreateUser(ctx, "blocked-cashier", "Blocked Cashier", "cashier")
+	if err != nil {
+		t.Fatalf("create blocked cashier: %v", err)
+	}
 	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
 		t.Fatalf("seed replica identity: %v", err)
 	}
 
 	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/sync/promote",
-		strings.NewReader("confirm=PROMOTE&override_pin=918273")), auth.User{ID: "blocked-cashier", Role: "cashier"})
+		strings.NewReader("confirm=PROMOTE&override_pin=918273")), auth.User{ID: blockedID, Role: "cashier"})
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -486,8 +494,8 @@ func TestSyncPromote_ElevatesOnValidApproverPIN(t *testing.T) {
 	if entries[0].ActorID != mgrID {
 		t.Fatalf("ActorID = %q, want the approver %q", entries[0].ActorID, mgrID)
 	}
-	if entries[0].BlockedActorID != "blocked-cashier" {
-		t.Fatalf("BlockedActorID = %q, want the originally-blocked session user", entries[0].BlockedActorID)
+	if entries[0].BlockedActorID != blockedID {
+		t.Fatalf("BlockedActorID = %q, want the originally-blocked session user %q", entries[0].BlockedActorID, blockedID)
 	}
 }
 

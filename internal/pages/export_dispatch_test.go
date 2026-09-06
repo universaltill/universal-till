@@ -472,10 +472,12 @@ func TestExportDispatch_PayloadIncludesSalesData(t *testing.T) {
 			t.Fatalf("exec %s: %v", q, err)
 		}
 	}
+	mustExec(`INSERT INTO items(id, name, base_price, is_active) VALUES('itm-widget','Widget',1000,1)`)
 	mustExec(`INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at)
 	          VALUES('sale1','R900','completed','sale','GBP',1000,0,200,1200,'2026-01-15T10:00:00Z')`)
-	mustExec(`INSERT INTO sale_lines(id, sale_id, line_no, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
-	          VALUES('line1','sale1',1,'Widget',1,1000,2000,200,1000,1200)`)
+	// sale_lines has a real CHECK requiring exactly one of item_id/variant_id set.
+	mustExec(`INSERT INTO sale_lines(id, sale_id, item_id, line_no, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+	          VALUES('line1','sale1','itm-widget',1,'Widget',1,1000,2000,200,1000,1200)`)
 	mustExec(`INSERT INTO payments(id, sale_id, method_id, amount, currency, paid_at)
 	          VALUES('pay1','sale1','cash',1200,'GBP','2026-01-15T10:00:00Z')`)
 	// Outside the requested range -- must not appear in the captured payload.

@@ -31,6 +31,14 @@ func newSyncSalesTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
+	// payments.method_id has a real FK to payment_methods(id). The real
+	// migration seed only ships cash/card/gift; several sync/voucher tests
+	// in this package use payment method id "voucher" directly (matching
+	// the live tender path's own EnsurePaymentMethod upsert convention),
+	// so seed it once here rather than in each test.
+	if _, err := db.Exec(`INSERT OR REPLACE INTO payment_methods (id, name, type, is_active, sort_order) VALUES ('voucher', 'Voucher', 'voucher', 1, 4)`); err != nil {
+		t.Fatalf("seed voucher payment method: %v", err)
+	}
 
 	cfg := &config.Config{
 		Theme:   "default",

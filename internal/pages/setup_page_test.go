@@ -43,6 +43,12 @@ func newFullAuthDeps(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps)
 	initAuthTestI18n(t)
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
+	// audit_log.actor_id has a real FK to users(id); mgrUser (settings_page_test.go)
+	// and other synthetic sessions injected via auth.WithUser across this
+	// helper's many callers need a matching real row.
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, role) VALUES ('m1', 'm1', 'Mgr', 'manager')`); err != nil {
+		t.Fatalf("seed test manager: %v", err)
+	}
 	svc := auth.NewService(db)
 	store := settings.NewStore(db)
 	engine := pos.NewServiceWithResolver(pos.Config{}, stubResolver{})

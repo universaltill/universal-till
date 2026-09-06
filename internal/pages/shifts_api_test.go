@@ -1285,6 +1285,9 @@ func TestPfandRueckgabe_TwoRegistersPaysOutOnThisTillsOwnShift(t *testing.T) {
 	for _, ins := range []string{
 		`INSERT INTO registers(id,name,is_active) VALUES('regA','Front Till',1)`,
 		`INSERT INTO registers(id,name,is_active) VALUES('regB','Back Till',1)`,
+		// shifts.cashier_id has a real FK to users(id); "user1" comes from
+		// seedForPages, but "user2" is local to this test.
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('user2','user2','User Two','','cashier')`,
 	} {
 		if _, err := dp.Db.ExecContext(ctx, ins); err != nil {
 			t.Fatal(err)
