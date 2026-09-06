@@ -1,7 +1,6 @@
 package pages
 
 import (
-	"database/sql"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,7 +12,6 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
-	utdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -31,94 +29,20 @@ func initAuthTestI18n(t *testing.T) {
 	httpx.InitI18n(i18n, "en")
 }
 
-// seedCountrySettingsTable applies the REAL country_settings DDL and seed
-// rows (ut-docs#660, ut-docs#1027) to a hand-rolled test schema, rather
-// than retyping them here — a hand-rolled copy is exactly the schema drift
-// the tester skill warns against; pulling the statements out of the
-// embedded 001 baseline can't drift because it IS the schema (it used to
-// execute the real 041/073 migration files for the same reason, until
-// ADR-0074 squashed them into the baseline). Self-contained (no FK to any
-// other table), so it's safe to layer onto any hand-rolled schema. Shared
-// by every fixture in this package that registers the setup wizard
-// (registerSetup), since wizardCountries queries this table on every
-// render.
-func seedCountrySettingsTable(t *testing.T, db *sql.DB) {
-	t.Helper()
-	stmts, err := utdb.BaselineStatementsFor("country_settings")
-	if err != nil {
-		t.Fatalf("read country_settings statements from the baseline: %v", err)
-	}
-	for _, s := range stmts {
-		if _, err := db.Exec(s); err != nil {
-			t.Fatalf("apply baseline country_settings statement: %v\n%s", err, s)
-		}
-	}
-}
-
-// newFullAuthDeps wires the auth/setup/settings handlers against a DB with the
-// real users/sessions/audit_log schema (nullable pin_hash, so AuthRepo.CreateUser
-// works) plus a settings table and a live Engine/Settings/AuthSvc — everything
-// the setup wizard and the settings API endpoints touch. Distinct from
-// newAuthTestMux, which has no settings table and no Engine.
+// newFullAuthDeps wires the auth/setup/settings handlers against a real
+// migrated schema (openPagesTestDB, ut-docs#1657/#1677) plus a live
+// Engine/Settings/AuthSvc — everything the setup wizard and the settings
+// API endpoints touch. Distinct from newAuthTestMux, which has no Engine.
+// Used to hand-roll its own users/sessions/audit_log/settings/registers/
+// roles/permission_actions/role_permissions schema plus its own
+// country_settings DDL (via the since-removed seedCountrySettingsTable) —
+// all now provided, schema and seed rows alike, by the real migration set.
 func newFullAuthDeps(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps) {
 	t.Helper()
 	chdirRoot(t)
 	initAuthTestI18n(t)
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
-	for _, s := range []string{
-		`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
-		 role TEXT NOT NULL DEFAULT 'cashier', pin_hash TEXT, is_active INTEGER NOT NULL DEFAULT 1)`,
-		`CREATE TABLE sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL,
-		 created_at TEXT NOT NULL DEFAULT (datetime('now')), expires_at TEXT NOT NULL, revoked_at TEXT, last_seen_at TEXT)`,
-		`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT NOT NULL,
-		 entity_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT, created_at TEXT NOT NULL, blocked_actor_id TEXT)`,
-		`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`,
-		`CREATE TABLE registers (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, location_id TEXT,
-		 is_active INTEGER NOT NULL DEFAULT 1)`,
-		// roles/permission_actions/role_permissions (ut-docs#710): settings_page.go's
-		// endpoints now gate via canPerform()/AuthSvc.Can(), which queries
-		// role_permissions for real — column-identical to
-		// internal/db/migrations/039_role_permissions.sql, same drift rule as
-		// ui_smoke_test.go's seedForPages (a drifted fixture here would let a
-		// canPerform()-gated test pass against a permission schema production
-		// doesn't have).
-		`CREATE TABLE roles (role TEXT PRIMARY KEY)`,
-		`CREATE TABLE permission_actions (action TEXT PRIMARY KEY)`,
-		`CREATE TABLE role_permissions (role TEXT NOT NULL REFERENCES roles(role), action TEXT NOT NULL REFERENCES permission_actions(action),
-		 granted INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (role, action))`,
-	} {
-		if _, err := db.Exec(s); err != nil {
-			t.Fatalf("setup schema: %v", err)
-		}
-	}
-	seedCountrySettingsTable(t, db)
-	// Seed grants identical to 039's own seed data: manager/admin/super_admin
-	// get every catalog action, cashier gets none (no rows inserted for
-	// cashier — Can() treats "no row" as denied).
-	for _, role := range []string{"cashier", "manager", "admin", "super_admin"} {
-		if _, err := db.Exec(`INSERT INTO roles (role) VALUES (?)`, role); err != nil {
-			t.Fatalf("seed role %s: %v", role, err)
-		}
-	}
-	// Keep in step with the real seed data (see the drift note above): a
-	// fixture missing an action silently makes every canPerform() gate on it
-	// look denied, so a handler can pass its test for the wrong reason.
-	// plugin_management added for ut-docs#1537 — it is granted to
-	// manager/admin/super_admin in production and gates the updater.
-	permissionCatalog := []string{"refund", "eod_report", "cash_adjustment", "price_override", "void", "user_management", "settings", "plugin_management"}
-	for _, action := range permissionCatalog {
-		if _, err := db.Exec(`INSERT INTO permission_actions (action) VALUES (?)`, action); err != nil {
-			t.Fatalf("seed permission_action %s: %v", action, err)
-		}
-	}
-	for _, role := range []string{"manager", "admin", "super_admin"} {
-		for _, action := range permissionCatalog {
-			if _, err := db.Exec(`INSERT INTO role_permissions (role, action, granted) VALUES (?, ?, 1)`, role, action); err != nil {
-				t.Fatalf("seed role_permission %s/%s: %v", role, action, err)
-			}
-		}
-	}
 	svc := auth.NewService(db)
 	store := settings.NewStore(db)
 	engine := pos.NewServiceWithResolver(pos.Config{}, stubResolver{})
