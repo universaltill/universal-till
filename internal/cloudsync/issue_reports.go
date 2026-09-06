@@ -237,6 +237,13 @@ func pullIssueReportStatusesPage(ctx context.Context, cfg *config.Config, db *sq
 				ID             string `json:"id"`
 				Status         string `json:"status"`
 				GithubIssueURL string `json:"github_issue_url"`
+				// ut-docs#1652: the filed TICKET's own state, a separate
+				// axis from Status (this report's delivery lifecycle, which
+				// stops at "filed"). A cloud predating ut-docs#1651 sends no
+				// such field, which decodes to "" — and "" must mean "keep
+				// showing the delivery status", never "blank the cell". Same
+				// correct-degradation shape as the "total" field above.
+				GithubIssueState string `json:"github_issue_state"`
 			} `json:"reports"`
 			Total int `json:"total"`
 		} `json:"data"`
@@ -253,7 +260,7 @@ func pullIssueReportStatusesPage(ctx context.Context, cfg *config.Config, db *sq
 			continue
 		}
 		// An id the till never retained is a silent no-op inside UpdateStatus.
-		if err := repo.UpdateStatus(ctx, item.ID, item.Status, item.GithubIssueURL); err != nil {
+		if err := repo.UpdateStatus(ctx, item.ID, item.Status, item.GithubIssueURL, item.GithubIssueState); err != nil {
 			logging.L().Warnf("cloudsync: issue report %s status not applied: %v", item.ID, err)
 		}
 	}

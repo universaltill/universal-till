@@ -24,7 +24,8 @@ The statuses mean:
 - **Couldn't send** — this report has been failing to upload for a while; a short reason appears underneath it (for example, finishing this till's enrolment). It's still saved and the till keeps retrying automatically — nothing is lost.
 - **Sent, awaiting review** — uploaded from this till; the cloud hasn't reported anything further yet.
 - **Received / Transcribing / Ready for review** — the report is being processed (voice notes are transcribed automatically).
-- **Filed on GitHub** — it became a tracked issue; follow the link to see progress.
+- **Filed on GitHub** — it became a tracked issue, and we don't yet know what has happened to it. Follow the link to see it.
+- **Open — being worked on** / **Fixed** / **Closed — not planned** — the tracked issue's own state, refreshed automatically. "Not planned" means it was looked at and deliberately not taken on; the issue itself says why.
 - **Discarded** — it was reviewed and closed without filing an issue.
 
 ## Offline
