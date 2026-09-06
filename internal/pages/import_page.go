@@ -1526,8 +1526,12 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 // taxDePluginID is the one plugin whose takeaway_rate_overrides setting the
 // import can populate — Germany's §12 UStG switch (ut-docs#512). Other
 // jurisdictions' plugins have their own setting shapes and are explicitly
-// out of this card's scope.
-const taxDePluginID = "com.universaltill.tax-de"
+// out of this card's scope. Aliases data.FiscalRegisterDEPluginID
+// (ut-docs#1670) rather than redeclaring the literal — sync_admin_repo.go's
+// scoped fiscal-register sync needs this same id and now shares one
+// source of truth with this package instead of two independently
+// maintained copies.
+const taxDePluginID = data.FiscalRegisterDEPluginID
 
 // mergeTakeawayOverrides folds the override pairs discovered by one import
 // commit into ut-plugin-tax-de's takeaway_rate_overrides setting (a JSON
