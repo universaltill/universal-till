@@ -628,6 +628,26 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// was already resolved above, before the service-charge proration.)
 		refundTotal := computeRefundTotal(lines, money.FromMinor(saleDiscount), money.FromMinor(serviceChargeRefund), detail.ServiceChargeTaxBasisBP, inclusive)
 
+		// fiscal.sign.start (ADR-0077 Decision 1, ut-docs#1519): fires HERE,
+		// immediately before the payment.<key>.refund webhook below —
+		// mirroring completeTender's ordering (pos_api.go): after every
+		// earlier check capable of refusing the refund outright (quantity/
+		// discount/service-charge validation above), before the one
+		// remaining step that can still fail (the provider webhook).
+		// Firing any earlier (e.g. right after the ADR-0048 gate, before
+		// this request's own line/quantity/discount validation) would start
+		// a TSE-side transaction for a refund a plain input mistake was
+		// always going to refuse — review finding, ut-docs#1519. The real
+		// saleInput isn't built until after the webhook resolves (below), so
+		// this carries only what the point actually needs (sale_type,
+		// offline) plus whatever SaleID gets minted here, threaded into the
+		// real saleInput once it exists so the two dispatches share an id.
+		fiscalStartCarrier := &pos.SaleInput{
+			SaleType: "return",
+			Offline:  formFlagTruthy(r.Form.Get("offline")),
+		}
+		dispatchFiscalSignStart(r.Context(), d, fiscalStartCarrier)
+
 		// Payment-provider refund (payment-provider contract): if the refund
 		// method belongs to a payment plugin that hooks `payment.<key>.refund`,
 		// it gets a BLOCKING call BEFORE the return is recorded — the provider
@@ -653,6 +673,11 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			return
 		}
 		saleInput := pos.SaleInput{
+			// SaleID carries forward whatever fiscalStartCarrier minted
+			// above (empty if fiscal.sign.start has no subscriber) — ADR-0077
+			// D1's shared-id requirement between the start and finish
+			// dispatches for the same refund.
+			SaleID:                  fiscalStartCarrier.SaleID,
 			SaleType:                "return",
 			CashierID:               actorID,
 			ActorID:                 actorID,

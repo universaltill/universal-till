@@ -525,8 +525,18 @@ func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event
 // (refund_page.go) for a refund's payment leg — a refund plugin's response
 // is just as likely to carry a gateway transaction token as an authorize
 // response, so it goes through the identical redaction path.
+// fiscal.sign.start (ADR-0077 D1, ut-docs#1519, review finding) is checked
+// by exact name, not by suffix: it is the first value-returning
+// EventBus.Ask hook whose event key deliberately does NOT end in
+// ".ask"/".authorize"/".refund" — that's the load-bearing compatibility
+// choice ADR-0077 D1 makes (see FiscalSignStartEvent's own doc comment) —
+// so the suffix check alone would silently let its answer (a
+// signer-controlled tx_id string, persisted and later echoed into every
+// fiscal.sign.ask request for the sale) bypass the redaction/size
+// discipline every other value-returning hook gets.
 func wasmResultLogLine(pluginID, eventType, out string) string {
-	if !strings.HasSuffix(eventType, ".ask") && !strings.HasSuffix(eventType, ".authorize") && !strings.HasSuffix(eventType, ".refund") {
+	if !strings.HasSuffix(eventType, ".ask") && !strings.HasSuffix(eventType, ".authorize") && !strings.HasSuffix(eventType, ".refund") &&
+		eventType != FiscalSignStartEvent {
 		return fmt.Sprintf("[wasm:%s] result: %s", pluginID, out)
 	}
 	return fmt.Sprintf("[wasm:%s] result (%s, %d bytes): %s", pluginID, eventType, len(out), safeAskResultForLog(out))
