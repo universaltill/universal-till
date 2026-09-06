@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
@@ -85,6 +86,43 @@ func TestPOSRepo_CurrentQtyBatch(t *testing.T) {
 	}
 	if len(empty) != 0 {
 		t.Errorf("CurrentQtyBatch(nil) = %v, want empty", empty)
+	}
+}
+
+// ut-docs#1353: a StockKey with both ItemID and VariantID set must be
+// rejected with a specific, actionable error rather than silently matching
+// stockKeyPredicate's item-level OR-branch and then losing that match when
+// the result is re-keyed by the DB row's own (single-field) identity —
+// which previously surfaced downstream as a misleading "insufficient
+// stock" error instead of naming the actual invalid input.
+func TestPOSRepo_CurrentQtyBatch_RejectsBothItemAndVariantSet(t *testing.T) {
+	dbo := openBatchDB(t)
+	seedBatchCatalog(t, dbo)
+	ctx := context.Background()
+	repo := NewPOSRepo(dbo.DB)
+
+	bad := StockKey{LocationID: "loc1", ItemID: "itmA", VariantID: "varC"}
+	got, err := repo.CurrentQtyBatch(ctx, nil, []StockKey{{LocationID: "loc1", ItemID: "itmA"}, bad})
+	if err == nil {
+		t.Fatalf("CurrentQtyBatch with a both-set key: got nil error, %v", got)
+	}
+	if !strings.Contains(err.Error(), "cannot specify both") {
+		t.Errorf("error = %q, want it to mention 'cannot specify both'", err.Error())
+	}
+}
+
+func TestPOSRepo_CurrentQty_RejectsBothItemAndVariantSet(t *testing.T) {
+	dbo := openBatchDB(t)
+	seedBatchCatalog(t, dbo)
+	ctx := context.Background()
+	repo := NewPOSRepo(dbo.DB)
+
+	_, found, err := repo.CurrentQty(ctx, nil, "loc1", "itmA", "varC")
+	if err == nil {
+		t.Fatalf("CurrentQty with both itemID and variantID set: got nil error, found=%v", found)
+	}
+	if !strings.Contains(err.Error(), "cannot specify both") {
+		t.Errorf("error = %q, want it to mention 'cannot specify both'", err.Error())
 	}
 }
 
