@@ -295,6 +295,28 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 		in.ServiceChargeTaxBasisBP = j.Sale.ServiceChargeTaxBasisBP
 	}
 	for _, p := range j.Sale.Payments {
+		// Same FK-upsert the live tender path (pos_api.go) and the refund
+		// path (refund_page.go) already do before inserting a payment --
+		// payments.method_id has a real FK to payment_methods(id), and a
+		// replica can complete a sale (e.g. voucher-tendered) using a
+		// method the primary's payment_methods table has no row for yet.
+		// Without this, that replica's journal entry fails the whole batch
+		// on a raw FK violation instead of replaying (ut-docs#1681).
+		//
+		// Guarded on non-empty, unlike CompleteSale's own downstream
+		// rejection of a missing method: EnsurePaymentMethod doesn't
+		// validate its id, so an unguarded call on a malformed/malicious
+		// peer's empty method would upsert a junk, nameless
+		// payment_methods row (which then sorts into the cashier's live
+		// tender list) before CompleteSale ever gets a chance to reject
+		// the entry the way it always has. Skipping the ensure here
+		// changes nothing about that rejection -- it still happens, just
+		// without the side effect.
+		if p.Method != "" {
+			if err := repo.EnsurePaymentMethod(ctx, p.Method); err != nil {
+				return false, "", err
+			}
+		}
 		in.Payments = append(in.Payments, pos.PaymentInput{
 			MethodID: p.Method, Amount: money.FromMinor(p.Amount),
 			ChangeGiven: money.FromMinor(p.ChangeGiven),
