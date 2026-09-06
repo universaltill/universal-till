@@ -1163,6 +1163,7 @@
   "tills.discovery.find_button": "Find a primary on this network",
   "tills.discovery.help": "Scan this network for a primary till already broadcasting itself — no need to type a pairing code by hand.",
   "tills.discovery.none_found": "No primaries found on this network.",
+  "tills.discovery.result_address": "Network address",
   "tills.discovery.result_name": "Till ID",
   "tills.discovery.searching": "Searching…",
   "tills.discovery.title": "LAN discovery",
