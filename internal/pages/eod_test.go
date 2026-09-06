@@ -266,6 +266,44 @@ func TestBuildEODDoc_ArticleGroupArticleOperatorSections_OmittedWhenEmpty(t *tes
 	}
 }
 
+// TestBuildEODDoc_OrderTypeSection is the ut-docs#1015 printed-receipt
+// requirement: BY ORDER TYPE prints as its own footer section, same
+// footerRow/omit-when-empty convention as BY ARTICLE GROUP/BY OPERATOR
+// above, with fixed English "Dine in"/"Takeaway" labels (this printed
+// report is not localized — see GUTSCHEINE/STORNOS's own fixed-vocabulary
+// precedent).
+func TestBuildEODDoc_OrderTypeSection(t *testing.T) {
+	rep := data.EODReport{
+		Day: "2026-09-06", GeneratedAt: "2026-09-06T21:30:00Z",
+		SalesCount: 2, Gross: 15000, Net: 15000, TaxNet: 2000,
+		OrderTypes: []data.OrderTypeSales{
+			{OrderType: "", Qty: 1, Net: money.FromMinor(10000), Gross: money.FromMinor(10000)},
+			{OrderType: "takeaway", Qty: 1, Net: money.FromMinor(5000), Gross: money.FromMinor(5000)},
+		},
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	for _, want := range []string{"BY ORDER TYPE", "Dine in", "£100.00", "Takeaway", "£50.00"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Z-report missing %q\n%s", want, out)
+		}
+	}
+}
+
+// TestBuildEODDoc_OrderTypeSection_OmittedWhenEmpty mirrors
+// TestBuildEODDoc_ArticleGroupArticleOperatorSections_OmittedWhenEmpty: a
+// range report never populates OrderTypes, so BY ORDER TYPE must not print
+// at all.
+func TestBuildEODDoc_OrderTypeSection_OmittedWhenEmpty(t *testing.T) {
+	rep := data.EODReport{
+		From: "2026-07-01", To: "2026-07-14", GeneratedAt: "2026-07-14T21:30:00Z",
+		SalesCount: 2, Gross: 15000, Net: 15000, TaxNet: 2000,
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	if strings.Contains(out, "BY ORDER TYPE") {
+		t.Errorf("range report must omit %q entirely, got:\n%s", "BY ORDER TYPE", out)
+	}
+}
+
 // TestBuildEODDoc_ArticleSection_LongNameDoesNotSwallowAmount is the fix for
 // ut-docs#1010 review finding 1: sale_lines.name_snapshot is free-text and
 // routinely exceeds the fixed 20-column pad BY DEPARTMENT/BY TILL's shared

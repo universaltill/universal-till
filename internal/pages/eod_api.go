@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/print"
 )
 
@@ -359,6 +360,23 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 			name := o.DisplayName
 			if name == "" {
 				name = "Unattributed"
+			}
+			doc.Footer = append(doc.Footer, footerRow(name, money(o.Gross.Minor())))
+		}
+	}
+	// Order-type (dine-in/takeaway) breakdown (ut-docs#1015) — same
+	// footer-section precedent as BY ARTICLE GROUP/BY ARTICLE/BY OPERATOR
+	// above, decomposed by sale_lines.order_type so a mixed sale's revenue
+	// splits across both buckets rather than needing a third "mixed" one.
+	// Fixed English labels, same as "Uncategorized"/"Unattributed" above —
+	// this printed report is not localized (see GUTSCHEINE/STORNOS's own
+	// fixed-vocabulary precedent below).
+	if len(rep.OrderTypes) > 0 {
+		doc.Footer = append(doc.Footer, "", "BY ORDER TYPE")
+		for _, o := range rep.OrderTypes {
+			name := "Dine in"
+			if o.OrderType == pos.OrderTypeTakeaway {
+				name = "Takeaway"
 			}
 			doc.Footer = append(doc.Footer, footerRow(name, money(o.Gross.Minor())))
 		}

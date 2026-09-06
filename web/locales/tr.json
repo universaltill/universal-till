@@ -618,6 +618,7 @@
   "reports.eod.by_article": "Ürüne göre",
   "reports.eod.by_article_group": "Ürün grubuna göre",
   "reports.eod.by_operator": "Kasiyere göre",
+  "reports.eod.by_order_type": "Sipariş türüne göre",
   "reports.eod.done": "Rapor oluşturuldu ve yazdırıldı",
   "reports.eod.exists": "Bugünün raporu zaten var (aşağıdaki listeye bakın)",
   "reports.eod.failed": "Rapor başarısız",

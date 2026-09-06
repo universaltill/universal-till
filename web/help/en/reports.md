@@ -97,6 +97,18 @@ collapsed on screen since a busy day can list dozens), and **BY OPERATOR**
 cashier actually rang the sale even when a manager approved an override on
 it, so the operator breakdown always reflects who was really on the till.
 
+## Dine in / takeaway breakdown
+
+Running End of day for a single day also adds a **BY ORDER TYPE** breakdown,
+on the printed report and on screen in the archived-report list: revenue and
+quantity split between **Dine in** and **Takeaway**, matching the labels on
+the sale screen's own dine-in/takeaway switch. A sale that mixed both (some
+items dine in, some takeaway) splits correctly across the two rows by its
+own items, rather than needing a third "mixed" row. Like the article-group/
+article/operator breakdowns above it, a row only appears when that mode had
+at least one sale — an all-dine-in day shows just the Dine in row, not an
+empty Takeaway line.
+
 ## Payment method and VAT rate together on the day-end (Z) report
 
 The printed day-end report includes a **BY METHOD & VAT RATE** table: the
