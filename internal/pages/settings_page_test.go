@@ -876,6 +876,55 @@ func TestSettingsPage_QuarantineSectionOnlyWhenRelevant(t *testing.T) {
 	}
 }
 
+// ut-docs#1613 review finding (M1): a restore staged in an EARLIER visit
+// must still show its restart trigger on a plain page render — otherwise an
+// operator who reloads (or the till itself relaunches) between staging and
+// clicking Restart now lands right back on the "restart the till to finish"
+// dead end this card exists to remove, with the restore still silently
+// staged on disk (db.PendingRestore is a persistent, on-disk fact; only
+// the POST /api/backup/restore response used to show this). Stubs the
+// backupRestorePending/backupRestartSupported seams directly (same
+// convention as backup_api_test.go) rather than staging a real restore —
+// this page-render test only needs to observe what the page does once
+// PendingRestore reports true, not re-prove StageRestore itself.
+func TestSettingsPage_ShowsRestartButtonWhenRestorePending(t *testing.T) {
+	dp := newMigratedSyncDeps(t, "settings-restore-pending.db")
+	dp.AuthSvc = auth.NewService(dp.Db)
+	initPagesI18n(t)
+	mux := http.NewServeMux()
+	registerSettings(mux, dp)
+
+	get := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		req = auth.WithUser(req, mgrUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	if body := get(); strings.Contains(body, `hx-post="/api/backup/restart-now"`) {
+		t.Fatalf("no restore staged: restart trigger should not appear, got:\n%s", body)
+	}
+
+	stubBackupRestorePending(t, true)
+	stubBackupRestartSupported(t, true)
+	body := get()
+	if !strings.Contains(body, `hx-post="/api/backup/restart-now"`) {
+		t.Fatalf("restore staged from an earlier visit: want the restart trigger on plain page load, got:\n%s", body)
+	}
+	if !strings.Contains(body, httpx.T("en", "settings.backup.restart_now")) {
+		t.Fatalf("want the visible Restart now button, got:\n%s", body)
+	}
+
+	stubBackupRestartSupported(t, false)
+	if body := get(); !strings.Contains(body, httpx.T("en", "tills.pairing.close_and_reopen")) {
+		t.Fatalf("restore staged but unsupported platform: want the close-and-reopen instruction, got:\n%s", body)
+	}
+}
+
 // The Settings page's till-register picker (ut-docs#268) persists this
 // till's own register identity under till.register_id — the register a
 // shift-scoped write (e.g. a Pfandrückgabe payout) resolves against.
