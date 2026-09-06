@@ -348,6 +348,13 @@ test.describe('phone-width layout (ut-docs#413)', () => {
     await page.goto('/');
     await page.waitForSelector('.pos-container');
 
+    // ut-docs#1542 (independent review): a plain `.tender-footer` selector
+    // is now ambiguous — #payment-overlay's own in-body duplicate row
+    // (New Sale/Hold Sale) added for that card shares the base class with
+    // the pre-existing `.tender-footer.single` (New Customer) row, and
+    // `querySelector` silently picks whichever is first in DOM order. Name
+    // both explicitly so this keeps meaning what it says for each one,
+    // rather than one row going unchecked without the test noticing.
     const cols = await page.evaluate(() => {
       const oneCol = (sel: string) => {
         const el = document.querySelector(sel);
@@ -356,11 +363,13 @@ test.describe('phone-width layout (ut-docs#413)', () => {
       };
       return {
         payGrid: oneCol('.pay-grid'),
-        tenderFooter: oneCol('.tender-footer'),
+        tenderFooterOverlayDuplicate: oneCol('.tender-footer:not(.single)'),
+        tenderFooterSingle: oneCol('.tender-footer.single'),
       };
     });
     expect(cols.payGrid, '.pay-grid must be a single column at 360px').toBe(1);
-    expect(cols.tenderFooter, '.tender-footer must be a single column at 360px').toBe(1);
+    expect(cols.tenderFooterOverlayDuplicate, '#payment-overlay\'s New Sale/Hold Sale duplicate row must be a single column at 360px').toBe(1);
+    expect(cols.tenderFooterSingle, '.tender-footer.single (New Customer) must be a single column at 360px').toBe(1);
   });
 
   // ut-docs#413 AC: truncation must be deliberate, not native mid-character
