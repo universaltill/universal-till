@@ -164,7 +164,7 @@
       scanBtn.disabled = true;
       scanMsg.textContent = T.scanning;
       scanOut.innerHTML = '';
-      fetch('/api/bluetooth-devices/scan')
+      fetch('/api/bluetooth-devices/scan', { method: 'POST' })
         .then(function (r) { return r.json(); })
         .then(function (j) {
           scanBtn.disabled = false;

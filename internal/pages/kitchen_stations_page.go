@@ -228,7 +228,12 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 	// ESC/POS status query before it is offered. Advertising as a printer is
 	// not the same as being able to print a receipt: an office inkjet on
 	// :9100 is a real printer that renders ESC/POS as a page of garbage.
-	mux.HandleFunc("GET /api/kitchen-stations/discover-printers", func(w http.ResponseWriter, r *http.Request) {
+	//
+	// POST, not GET (ut-docs#1582 independent-review finding): this kicks
+	// off a real network scan as a side effect, reachable by prefetch/link
+	// on a GET since the session cookie is SameSite=Lax — the same shape
+	// bluetooth_devices_page.go's scan endpoint was fixed alongside.
+	mux.HandleFunc("POST /api/kitchen-stations/discover-printers", func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requireManager(w, r); !ok {
 			return
 		}

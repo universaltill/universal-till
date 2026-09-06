@@ -47,11 +47,17 @@ func (a *agent) RequestPinCode(device dbus.ObjectPath) (string, *dbus.Error) {
 	return "", rejected()
 }
 
-// DisplayPinCode: the device wants us to show a PIN for the user to type
-// on IT (keyboard-style pairing). Nowhere to show it; acknowledge and let
-// the pairing continue — BlueZ treats the call as informational.
+// DisplayPinCode: the device wants us to show a PIN for the user to type on
+// IT (keyboard-style pairing). There is nowhere to show it — same
+// NoInputNoOutput constraint as RequestPinCode — so this is refused
+// outright, like RequestPinCode, rather than acknowledged. Acknowledging
+// used to let the pairing continue as if informational, but nothing on
+// this end can ever complete a code-entry pairing: BlueZ would then wait on
+// a device that will never see its PIN typed, and the pairing dies on the
+// 45s handler timeout instead of failing fast with an accurate "needs a
+// PIN, can't pair here" message (ut-docs#1582 independent-review finding).
 func (a *agent) DisplayPinCode(device dbus.ObjectPath, pincode string) *dbus.Error {
-	return a.check(device)
+	return rejected()
 }
 
 // RequestPasskey: numeric passkey entry. Refused — see the type comment.
@@ -59,9 +65,11 @@ func (a *agent) RequestPasskey(device dbus.ObjectPath) (uint32, *dbus.Error) {
 	return 0, rejected()
 }
 
-// DisplayPasskey is informational, like DisplayPinCode.
+// DisplayPasskey: refused outright, same reasoning as DisplayPinCode —
+// there is nowhere to show a passkey, and acknowledging only delays the
+// same dead-end pairing to the 45s timeout instead of failing fast.
 func (a *agent) DisplayPasskey(device dbus.ObjectPath, passkey uint32, entered uint16) *dbus.Error {
-	return a.check(device)
+	return rejected()
 }
 
 // RequestConfirmation: "does this passkey match?" — accepted for the one

@@ -44,13 +44,23 @@ type fakeBluetoothClient struct {
 	paired      []string
 	forgotten   []string
 	closed      int
+
+	// listCtxHadDeadline/scanCtxHadDeadline record whether the ctx the
+	// handler passed in was itself bounded (ut-docs#1582: an unbounded
+	// r.Context() on a read path lets a wedged bluetoothd park the handler
+	// goroutine indefinitely — pair/forget already bound theirs, list/scan
+	// didn't).
+	listCtxHadDeadline bool
+	scanCtxHadDeadline bool
 }
 
 func (f *fakeBluetoothClient) ListDevices(ctx context.Context) ([]bluetooth.Device, error) {
+	_, f.listCtxHadDeadline = ctx.Deadline()
 	return f.devices, f.listErr
 }
 
 func (f *fakeBluetoothClient) Scan(ctx context.Context, timeout time.Duration) ([]bluetooth.Device, error) {
+	_, f.scanCtxHadDeadline = ctx.Deadline()
 	f.scanTimeout = timeout
 	return f.candidates, f.scanErr
 }
@@ -176,7 +186,7 @@ func TestBluetoothDevicesPermissions_AllFiveRoutesRejectCashier(t *testing.T) {
 	if rec := btGet(mux, "/api/bluetooth-devices", &btCashier); rec.Code != http.StatusForbidden {
 		t.Errorf("cashier list = %d, want 403", rec.Code)
 	}
-	if rec := btGet(mux, "/api/bluetooth-devices/scan", &btCashier); rec.Code != http.StatusForbidden {
+	if rec := btPostJSON(mux, "/api/bluetooth-devices/scan", "", &btCashier); rec.Code != http.StatusForbidden {
 		t.Errorf("cashier scan = %d, want 403", rec.Code)
 	}
 	if rec := btPostJSON(mux, "/api/bluetooth-devices/pair", `{"address":"AA:BB:CC:DD:EE:01"}`, &btCashier); rec.Code != http.StatusForbidden {
@@ -186,7 +196,7 @@ func TestBluetoothDevicesPermissions_AllFiveRoutesRejectCashier(t *testing.T) {
 		t.Errorf("cashier forget = %d, want 403", rec.Code)
 	}
 	// No session at all (anonymous LAN client) is refused the same way.
-	if rec := btGet(mux, "/api/bluetooth-devices/scan", nil); rec.Code != http.StatusForbidden {
+	if rec := btPostJSON(mux, "/api/bluetooth-devices/scan", "", nil); rec.Code != http.StatusForbidden {
 		t.Errorf("anonymous scan = %d, want 403", rec.Code)
 	}
 	if len(fake.paired)+len(fake.forgotten) != 0 || fake.scanTimeout != 0 {
@@ -306,7 +316,7 @@ func TestBluetoothScanAPI_ReturnsCandidatesWithBoundedTimeout(t *testing.T) {
 	fake := &fakeBluetoothClient{candidates: []bluetooth.Device{{Address: "AA:BB:CC:DD:EE:09", Name: "New Scanner", Icon: "input-keyboard"}}}
 	stubBluetooth(t, fake, nil)
 
-	rec := btGet(mux, "/api/bluetooth-devices/scan", &btManager)
+	rec := btPostJSON(mux, "/api/bluetooth-devices/scan", "", &btManager)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("scan = %d: %s", rec.Code, rec.Body.String())
 	}
@@ -317,12 +327,15 @@ func TestBluetoothScanAPI_ReturnsCandidatesWithBoundedTimeout(t *testing.T) {
 	if fake.scanTimeout != discoverBluetoothTimeout {
 		t.Fatalf("scan must run with the bounded per-click timeout %v, got %v", discoverBluetoothTimeout, fake.scanTimeout)
 	}
+	if !fake.scanCtxHadDeadline {
+		t.Error("scan must bound its ctx with a deadline, not pass r.Context() through unbounded (ut-docs#1582)")
+	}
 	if fake.closed != 1 {
 		t.Errorf("client must be closed after the scan, closed=%d", fake.closed)
 	}
 
 	fake.candidates = nil
-	rec = btGet(mux, "/api/bluetooth-devices/scan", &btManager)
+	rec = btPostJSON(mux, "/api/bluetooth-devices/scan", "", &btManager)
 	if !strings.Contains(rec.Body.String(), `"devices":[]`) {
 		t.Fatalf("expected an empty array, not null: %s", rec.Body.String())
 	}
@@ -332,7 +345,7 @@ func TestBluetoothScanAPI_FailureReturns500WithoutLeakingRawError(t *testing.T) 
 	mux, _ := newBluetoothDevicesTestMux(t)
 	stubBluetooth(t, &fakeBluetoothClient{scanErr: errors.New("org.bluez.Error.NotReady: Resource Not Ready (hci0)")}, nil)
 
-	rec := btGet(mux, "/api/bluetooth-devices/scan", &btManager)
+	rec := btPostJSON(mux, "/api/bluetooth-devices/scan", "", &btManager)
 	if rec.Code != http.StatusInternalServerError {
 		t.Fatalf("scan failure = %d, want 500", rec.Code)
 	}
@@ -348,9 +361,49 @@ func TestBluetoothScanAPI_Unavailable503(t *testing.T) {
 	mux, _ := newBluetoothDevicesTestMux(t)
 	stubBluetooth(t, &fakeBluetoothClient{scanErr: bluetooth.ErrUnavailable}, nil)
 
-	rec := btGet(mux, "/api/bluetooth-devices/scan", &btManager)
+	rec := btPostJSON(mux, "/api/bluetooth-devices/scan", "", &btManager)
 	if rec.Code != http.StatusServiceUnavailable {
 		t.Fatalf("scan with no adapter = %d, want 503", rec.Code)
+	}
+}
+
+// ut-docs#1582 independent-review finding: a scan can power on the adapter
+// and always starts a discovery session — real state mutation reachable by
+// prefetch/link on a GET (SameSite=Lax). It must be POST-only now, same as
+// pair/forget.
+func TestBluetoothScanAPI_RejectsGET(t *testing.T) {
+	mux, _ := newBluetoothDevicesTestMux(t)
+	stubBluetooth(t, &fakeBluetoothClient{}, nil)
+
+	rec := btGet(mux, "/api/bluetooth-devices/scan", &btManager)
+	if rec.Code != http.StatusMethodNotAllowed {
+		t.Fatalf("GET /api/bluetooth-devices/scan = %d, want 405 (scan mutates adapter state, must be POST)", rec.Code)
+	}
+}
+
+// ut-docs#1582 independent-review finding: ListDevices is a single
+// ObjectManager read with no discovery involved, but the handler still
+// handed it an unbounded r.Context() — a wedged bluetoothd would park the
+// goroutine indefinitely. pair/forget already bound theirs; list/the page
+// render must too.
+func TestBluetoothListAPI_BoundsContextWithTimeout(t *testing.T) {
+	mux, _ := newBluetoothDevicesTestMux(t)
+	fake := &fakeBluetoothClient{}
+	stubBluetooth(t, fake, nil)
+
+	if rec := btGet(mux, "/api/bluetooth-devices", &btManager); rec.Code != http.StatusOK {
+		t.Fatalf("list = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !fake.listCtxHadDeadline {
+		t.Error("GET /api/bluetooth-devices must bound its ctx with a deadline (ut-docs#1582)")
+	}
+
+	fake.listCtxHadDeadline = false
+	if rec := btGet(mux, "/bluetooth-devices", &btManager); rec.Code != http.StatusOK {
+		t.Fatalf("page render = %d: %s", rec.Code, rec.Body.String())
+	}
+	if !fake.listCtxHadDeadline {
+		t.Error("GET /bluetooth-devices must bound its ctx with a deadline (ut-docs#1582)")
 	}
 }
 
@@ -403,8 +456,7 @@ func TestBluetoothPairAPI_ErrorPathsMapToStatusesWithoutLeaking(t *testing.T) {
 		t.Errorf("pair unknown device = %d, want 404", rec.Code)
 	}
 
-	fake.pairErr = errors.New("bluetooth: pairing failed: org.bluez.Error.AuthenticationFailed: Authentication Failed")
-	fake.pairErr = errors.Join(bluetooth.ErrPairingFailed, fake.pairErr)
+	fake.pairErr = errors.Join(bluetooth.ErrPairingFailed, errors.New("bluetooth: pairing failed: org.bluez.Error.AuthenticationFailed: Authentication Failed"))
 	rec := btPostJSON(mux, "/api/bluetooth-devices/pair", body, &btManager)
 	if rec.Code != http.StatusConflict {
 		t.Errorf("pair refused by device = %d, want 409", rec.Code)

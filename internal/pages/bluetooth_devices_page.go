@@ -6,7 +6,6 @@ import (
 	"errors"
 	"log"
 	"net/http"
-	"strings"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
@@ -39,6 +38,24 @@ const pairBluetoothTimeout = 45 * time.Second
 // forgetBluetoothTimeout bounds one RemoveDevice (a local operation that
 // only needs to disconnect first).
 const forgetBluetoothTimeout = 15 * time.Second
+
+// listBluetoothTimeout bounds a ListDevices call (a single ObjectManager
+// read, no discovery involved) — same reasoning as pair/forget's own
+// bounds: an unbounded r.Context() lets a wedged bluetoothd park the
+// handler goroutine indefinitely (ut-docs#1582 independent-review finding).
+const listBluetoothTimeout = 5 * time.Second
+
+// scanCallTimeout bounds the ctx handed to Scan itself, which is separate
+// from discoverBluetoothTimeout (the deliberate discovery WAIT duration
+// Scan already receives as its timeout argument). Scan's own D-Bus calls
+// around that wait — the initial ObjectManager read, SetProperty/
+// StartDiscovery, and the final re-read — run on this ctx too and are
+// exactly what ut-docs#1582 found unbounded. This must stay comfortably
+// longer than discoverBluetoothTimeout: a ctx deadline equal to (or
+// shorter than) it would make Scan's own internal wait-then-stop sequence
+// race the ctx and return ctx.Err() instead of the candidates it just
+// found, on every ordinary successful scan.
+const scanCallTimeout = discoverBluetoothTimeout + 15*time.Second
 
 // newBluetoothClient is a package var over bluetooth.NewDBusClient, same
 // seam-for-testability pattern as discoveryBrowsePrinters — handler tests
@@ -83,13 +100,16 @@ func registerBluetoothDevices(mux *http.ServeMux, d *common.Deps) {
 	// apiError writes the error envelope with a machine-readable code the
 	// page's own script maps to a translated string — never the raw D-Bus
 	// error text (ut-docs#303/#538's standing rule), which goes to the
-	// server log only via logBluetoothError.
+	// server log only via logBluetoothError. No separate "message" field:
+	// the JS only ever reads "code" (messageFor(j.error.code, ...)), so a
+	// duplicate "message": code was dead weight on every response
+	// (ut-docs#1582 independent-review finding).
 	apiError := func(w http.ResponseWriter, status int, code string) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"data":  nil,
-			"error": map[string]string{"code": code, "message": code},
+			"error": map[string]string{"code": code},
 		})
 	}
 	apiOK := func(w http.ResponseWriter, data any) {
@@ -126,24 +146,21 @@ func registerBluetoothDevices(mux *http.ServeMux, d *common.Deps) {
 		return c, true
 	}
 
-	// readAddress accepts {"address": "..."} (JSON) or address=... (form)
-	// and returns the canonical form — the only shape ever handed to a
-	// D-Bus call.
+	// readAddress accepts {"address": "..."} (JSON) — the only shape the
+	// page's own fetch() ever sends — and returns the canonical form, the
+	// only shape ever handed to a D-Bus call. There is deliberately no
+	// form-encoded fallback: it was unreachable from the product and only
+	// widened what these mutating endpoints accept (a form POST is a
+	// CORS-"simple" request, unlike the JSON one this page actually sends —
+	// ut-docs#1582 independent-review finding).
 	readAddress := func(w http.ResponseWriter, r *http.Request) (string, bool) {
-		var raw string
-		if strings.Contains(r.Header.Get("Content-Type"), "application/json") {
-			var body struct {
-				Address string `json:"address"`
-			}
-			if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
-				return "", false
-			}
-			raw = body.Address
-		} else {
-			_ = r.ParseForm()
-			raw = r.PostFormValue("address")
+		var body struct {
+			Address string `json:"address"`
 		}
-		return bluetooth.NormalizeAddress(raw)
+		if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&body); err != nil {
+			return "", false
+		}
+		return bluetooth.NormalizeAddress(body.Address)
 	}
 
 	mux.HandleFunc("GET /bluetooth-devices", func(w http.ResponseWriter, r *http.Request) {
@@ -159,7 +176,9 @@ func registerBluetoothDevices(mux *http.ServeMux, d *common.Deps) {
 		c, err := newBluetoothClient()
 		if err == nil {
 			defer c.Close()
-			devices, err = c.ListDevices(r.Context())
+			ctx, cancel := context.WithTimeout(r.Context(), listBluetoothTimeout)
+			defer cancel()
+			devices, err = c.ListDevices(ctx)
 		}
 		switch {
 		case err == nil:
@@ -197,7 +216,9 @@ func registerBluetoothDevices(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		defer c.Close()
-		devices, err := c.ListDevices(r.Context())
+		ctx, cancel := context.WithTimeout(r.Context(), listBluetoothTimeout)
+		defer cancel()
+		devices, err := c.ListDevices(ctx)
 		if err != nil {
 			apiFail(w, "list", err)
 			return
@@ -210,8 +231,13 @@ func registerBluetoothDevices(mux *http.ServeMux, d *common.Deps) {
 
 	// Scan (bounded, per click): candidates are OFFERED only — nothing is
 	// paired until the manager clicks Pair on one (security-first, same
-	// rule as discover-printers).
-	mux.HandleFunc("GET /api/bluetooth-devices/scan", func(w http.ResponseWriter, r *http.Request) {
+	// rule as discover-printers). POST, not GET: unlike list, a scan can
+	// power on the adapter (Adapter1.Powered=true) and always starts a
+	// discovery session — real adapter-state mutation, reachable by
+	// prefetch/link on a GET since the session cookie is SameSite=Lax
+	// (ut-docs#1582 independent-review finding; mirrors the identical shape
+	// already fixed in kitchen_stations_page.go's discover-printers route).
+	mux.HandleFunc("POST /api/bluetooth-devices/scan", func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := requireManager(w, r); !ok {
 			return
 		}
@@ -220,7 +246,9 @@ func registerBluetoothDevices(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		defer c.Close()
-		candidates, err := c.Scan(r.Context(), discoverBluetoothTimeout)
+		ctx, cancel := context.WithTimeout(r.Context(), scanCallTimeout)
+		defer cancel()
+		candidates, err := c.Scan(ctx, discoverBluetoothTimeout)
 		if err != nil {
 			apiFail(w, "scan", err)
 			return
