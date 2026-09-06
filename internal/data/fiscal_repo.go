@@ -217,6 +217,23 @@ LEFT JOIN stock_locations loc ON loc.id = reg.location_id
 // (ADR-0072 review finding B1) without duplicating the literal.
 const FiscalRegisterDEKeyPrefix = "fiscal_register:"
 
+// FiscalRegisterDEPluginID is the German tax plugin's id (ut-docs#1670).
+// Every OTHER plugin_storage accessor in this file scopes by plugin_id —
+// StorageGet/StorageSet/ListStorageByPrefix/DeleteStorageKey/DeleteStorage,
+// and DeleteStorageExceptPrefix most tellingly, added by the ADR-0072
+// review specifically to scope by *both* plugin_id and this same prefix
+// (plugin_repo.go). sync_admin_repo.go's scoped admin-bundle sync is the
+// one place that needs this id without a per-request caller to pass it in
+// (DumpAdmin/ApplyAdmin run generically, not per-plugin) — exported here,
+// next to the prefix it pairs with, rather than letting that package
+// reach for a literal copy of its own. internal/pages' taxDePluginID
+// aliases this constant so the id has exactly one source of truth; this
+// package still never hardcodes it into a query on its own account, and
+// NewFiscalRegisterDEStore's caller-passes-the-id convention (see that
+// type's own doc comment) is unaffected — this constant exists for the
+// sync layer, not as a second way to construct the store.
+const FiscalRegisterDEPluginID = "com.universaltill.tax-de"
+
 // fiscalRegisterDERecord is the JSON shape persisted in plugin_storage —
 // exactly the columns migration 059's table carried, nothing more (the
 // join-derived Register*/Location* display fields are resolved live by

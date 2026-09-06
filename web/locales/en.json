@@ -1391,6 +1391,7 @@
   "fiscalregister.error.invalid_date": "Dates must be in YYYY-MM-DD format",
   "fiscalregister.error.create": "Could not add the entry",
   "fiscalregister.error.decommission": "Could not mark the entry decommissioned",
+  "fiscalregister.error.replica_use_primary": "This till follows a primary till — manage the fiscal register on the primary till.",
   "fiscalregister.address.street": "Street",
   "fiscalregister.address.postcode": "Postcode",
   "fiscalregister.address.city": "City",

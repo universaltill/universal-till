@@ -1391,6 +1391,7 @@
   "fiscalregister.error.invalid_date": "Tarihler YYYY-MM-DD biçiminde olmalıdır",
   "fiscalregister.error.create": "Kayıt eklenemedi",
   "fiscalregister.error.decommission": "Kayıt hizmet dışı olarak işaretlenemedi",
+  "fiscalregister.error.replica_use_primary": "Bu kasa bir ana kasayı takip ediyor — mali kayıt defterini ana kasada yönetin.",
   "fiscalregister.address.street": "Cadde/Sokak",
   "fiscalregister.address.postcode": "Posta kodu",
   "fiscalregister.address.city": "Şehir",
