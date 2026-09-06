@@ -613,8 +613,9 @@ func TestMoveDirErrors(t *testing.T) {
 	}
 }
 
-// SetBeforeRestart's hook must run synchronously inside Apply's delayed
-// re-exec goroutine, strictly BEFORE reexecFn — it exists so a caller
+// SetBeforeRestart's hook must run CONCURRENTLY with Apply's flush-delay
+// sleep (started immediately, not after the sleep) but must still be fully
+// complete strictly BEFORE reexecFn runs — it exists so a caller
 // (internal/app) can cleanly stop hardware-plugin child processes that an
 // exec of this process alone would never reach (ut-docs#1616) — and Apply
 // must still return promptly regardless, same as every other Apply caller.
@@ -667,6 +668,52 @@ func TestApplyRunsBeforeRestartHookBeforeReexec(t *testing.T) {
 	defer mu.Unlock()
 	if len(order) != 2 || order[0] != "hook" || order[1] != "reexec" {
 		t.Fatalf("call order = %v, want [hook reexec]", order)
+	}
+}
+
+// The hook must START concurrently with the flush-delay sleep, not after it
+// — a silent regression back to sequential (hook only starts once the sleep
+// ends) would reintroduce the additive-latency bug this design fixed
+// (ut-docs#1616 review finding: web/ui/layouts/base.html's update-status
+// poll times off reexecDelay) without TestApplyRunsBeforeRestartHookBefore
+// Reexec catching it — that test only proves ordering (hook fully done
+// before reexec), not that the hook started early.
+func TestApplyHookStartsConcurrentlyNotAfterSleep(t *testing.T) {
+	fix := newInstallFixture(t)
+	t.Cleanup(func() { SetBeforeRestart(nil) })
+	reexecDelay = 200 * time.Millisecond
+
+	hookStarted := make(chan time.Time, 1)
+	SetBeforeRestart(func(context.Context) {
+		hookStarted <- time.Now()
+	})
+
+	name := archiveNameFor("0.2.0")
+	archive := makeTarGz(t, []tarEntry{{name: "unitill-pos", body: "NEW-BINARY-v2"}})
+	newReleaseServer(t, "v0.2.0", map[string][]byte{
+		name:            archive,
+		"checksums.txt": []byte(sha256hex(archive) + "  " + name + "\n"),
+	})
+
+	start := time.Now()
+	if err := Apply(context.Background()); err != nil {
+		t.Fatalf("Apply: %v", err)
+	}
+
+	select {
+	case startedAt := <-hookStarted:
+		if elapsed := startedAt.Sub(start); elapsed >= reexecDelay {
+			t.Fatalf("beforeRestart hook started %v after Apply() — it must start "+
+				"concurrently with the flush delay, not after it", elapsed)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("beforeRestart hook never started")
+	}
+
+	select {
+	case <-fix.reexecd:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reexecFn never ran")
 	}
 }
 

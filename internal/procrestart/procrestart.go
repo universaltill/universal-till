@@ -60,13 +60,14 @@ var (
 	reexecDelay = 1500 * time.Millisecond
 )
 
-// beforeRestart runs synchronously, immediately before Restart's delayed
-// goroutine re-execs, giving the caller a chance to cleanly stop anything
-// an exec of THIS process alone won't reach — specifically hardware-plugin
-// child processes (internal/plugins.Supervisor), which are not reparented,
-// cancelled or signalled by an exec of their parent (ut-docs#1616). No-op
-// by default: a caller with nothing to clean up (e.g. every test in this
-// package) never needs to set it.
+// beforeRestart runs concurrently with Restart's flush-delay sleep — started
+// as soon as Restart schedules its re-exec, not after the delay — and is
+// always fully complete before the re-exec itself, giving the caller a
+// chance to cleanly stop anything an exec of THIS process alone won't reach
+// — specifically hardware-plugin child processes (internal/plugins.Supervisor),
+// which are not reparented, cancelled or signalled by an exec of their
+// parent (ut-docs#1616). No-op by default: a caller with nothing to clean up
+// (e.g. every test in this package) never needs to set it.
 var beforeRestart = func(context.Context) {}
 
 // SetBeforeRestart registers the hook above. Call once at startup — from

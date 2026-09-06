@@ -82,11 +82,13 @@ func TestRestartSurvivesReexecError(t *testing.T) {
 	time.Sleep(20 * time.Millisecond)
 }
 
-// SetBeforeRestart's hook must run synchronously inside the delayed
-// goroutine, strictly BEFORE reexecFn — it exists so a caller (internal/app)
-// can cleanly stop hardware-plugin child processes that an exec of this
-// process alone would never reach (ut-docs#1616) — and Restart() must still
-// return immediately regardless, same as every other Restart() caller.
+// SetBeforeRestart's hook must run CONCURRENTLY with Restart's flush-delay
+// sleep (started immediately, not after the sleep) but must still be fully
+// complete strictly BEFORE reexecFn runs — it exists so a caller
+// (internal/app) can cleanly stop hardware-plugin child processes that an
+// exec of this process alone would never reach (ut-docs#1616) — and
+// Restart() must still return immediately regardless, same as every other
+// Restart() caller.
 func TestRestartRunsBeforeRestartHookBeforeReexec(t *testing.T) {
 	reexecd := stubSeams(t)
 	t.Cleanup(func() { SetBeforeRestart(nil) })
@@ -124,6 +126,43 @@ func TestRestartRunsBeforeRestartHookBeforeReexec(t *testing.T) {
 
 	if len(order) != 2 || order[0] != "hook" || order[1] != "reexec" {
 		t.Fatalf("call order = %v, want [hook reexec]", order)
+	}
+}
+
+// The hook must START concurrently with the flush-delay sleep, not after it
+// — a silent regression back to sequential (hook only starts once the sleep
+// ends) would reintroduce the additive-latency bug this design fixed
+// (ut-docs#1616 review finding: web/ui/partials/pairing_wait.html times its
+// first health probe off reexecDelay alone) without TestRestartRunsBefore
+// RestartHookBeforeReexec catching it — that test only proves ordering
+// (hook fully done before reexec), not that the hook started early.
+func TestRestartHookStartsConcurrentlyNotAfterSleep(t *testing.T) {
+	reexecd := stubSeams(t)
+	t.Cleanup(func() { SetBeforeRestart(nil) })
+	reexecDelay = 200 * time.Millisecond
+
+	hookStarted := make(chan time.Time, 1)
+	SetBeforeRestart(func(context.Context) {
+		hookStarted <- time.Now()
+	})
+
+	start := time.Now()
+	Restart()
+
+	select {
+	case startedAt := <-hookStarted:
+		if elapsed := startedAt.Sub(start); elapsed >= reexecDelay {
+			t.Fatalf("beforeRestart hook started %v after Restart() — it must start "+
+				"concurrently with the flush delay, not after it", elapsed)
+		}
+	case <-time.After(2 * time.Second):
+		t.Fatal("beforeRestart hook never started")
+	}
+
+	select {
+	case <-reexecd:
+	case <-time.After(2 * time.Second):
+		t.Fatal("reexecFn never ran")
 	}
 }
 
