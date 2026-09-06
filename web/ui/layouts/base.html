@@ -46,6 +46,29 @@
         data-notice-dismiss="{{ T "notice.dismiss" }}"
         {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}>
     {{ template "nav" . }}
+    <!-- ut-docs#1551: nav-level dismissible notice for a pending pairing
+         request -- a sibling of <nav>/<main>, not squeezed into the icon
+         rail, same "declared once here, empty on pages that never need
+         it" placement as #elevation-modal below. Placeholder only: nav.html
+         has no per-request data (comment above the sync/bugreport chips),
+         so GET /ui/pairing-notice (pending_pairings.go) fills it in after
+         render and on every 30s poll; empty body when nothing is pending,
+         this till is a replica, or the caller can't manage sync.
+
+         Default (innerHTML) swap, same as nav.html's #sync-chip/#bugreport-
+         chip spans, deliberately NOT hx-swap="outerHTML" -- an outerHTML
+         swap of an empty response DESTROYS this placeholder along with its
+         own hx-trigger, so the very first poll that finds nothing pending
+         would permanently kill all future polling (independent review,
+         ut-docs#1551: verified in a real browser -- a request arriving
+         after that first empty poll never showed the notice at all, and a
+         request already pending at load never cleared once resolved). The
+         mount id is deliberately DIFFERENT from pairing_notice.html's own
+         `#pairing-notice` root -- with innerHTML swap the two would
+         otherwise coexist as nested duplicate ids, and the partial's own
+         dismiss script (getElementById('pairing-notice')) would resolve to
+         this outer, dataset-less placeholder instead of the real banner. -->
+    <div id="pairing-notice-mount" hx-get="/ui/pairing-notice" hx-trigger="load, every 30s"></div>
     <main class="container">{{ template "content" . }}</main>
     <!-- Floating, NON-modal bug-report capture panel (ut-docs#346) — a
          sibling of <main>, not inside it, so it's independent of whatever
