@@ -416,6 +416,10 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				ArticleGroups []data.ArticleGroupSales
 				Articles      []data.ArticleSales
 				Operators     []data.OperatorSales
+				// OrderTypes (ut-docs#1015) is the same archived-report,
+				// same-gate, same-nil-when-absent breakdown as the three
+				// above.
+				OrderTypes []data.OrderTypeSales
 			}
 			var eodRows []eodRow
 			// ut-docs#794 review finding (residual on the blocker-1 fix):
@@ -447,6 +451,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 							row.ArticleGroups = rep.ArticleGroups
 							row.Articles = rep.Articles
 							row.Operators = rep.Operators
+							row.OrderTypes = rep.OrderTypes
 							if rep.Day == "" {
 								row.From, row.To = rep.From, rep.To
 							}

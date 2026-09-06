@@ -618,6 +618,7 @@
   "reports.eod.by_article": "بر اساس کالا",
   "reports.eod.by_article_group": "بر اساس گروه کالا",
   "reports.eod.by_operator": "بر اساس صندوق‌دار",
+  "reports.eod.by_order_type": "بر اساس نوع سفارش",
   "reports.eod.done": "گزارش ساخته و چاپ شد",
   "reports.eod.exists": "گزارش امروز از قبل موجود است (فهرست پایین)",
   "reports.eod.failed": "گزارش ناموفق بود",
