@@ -77,7 +77,11 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 		if canPerform(d, r, "settings") {
 			add("/users", "users.title")
 			add("/kitchen-stations", "kitchenstations.title")
-			add("/bluetooth-devices", "nav.bluetooth_devices") // ut-docs#76
+			// bluetoothdevices.title, not a separate nav.bluetooth_devices
+			// key — it duplicated the exact same string across all locales
+			// with nothing to keep the two in sync (ut-docs#1582 independent-
+			// review finding), unlike every sibling entry above/below.
+			add("/bluetooth-devices", "bluetoothdevices.title") // ut-docs#76
 			add("/tables", "tables.title")
 			add("/country-settings", "countrysettings.title")
 			add("/translations", "translations.title")
