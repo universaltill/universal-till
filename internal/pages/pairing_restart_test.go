@@ -304,6 +304,50 @@ func TestPairingWait_JoinedAutoRestartsWhenSupported(t *testing.T) {
 	}
 }
 
+// ut-docs#1620 (same shape ut-docs#1613 fixed on backup_restore_staged.html):
+// htmx:afterRequest used to call waitForTill() unconditionally, so a 403
+// (manager session lapsed) or 409 (pairingRestartHandler's own
+// "nothing staged" guard, on a stale double-click) claimed a restart that
+// never happened and bounced the operator to /login off the still-running
+// process. The handler-level refusal responses themselves are already
+// covered (TestPairingRestart_RefusesWhenNothingIsStaged and
+// TestPairingRestart_ManagerRouteRefusesWhenNothingIsStaged, both
+// pre-existing) — what changed here is purely what the client-side script
+// does with a non-2xx response, so this pins the rendered script's shape
+// directly: it must branch on success before polling, must be able to show
+// the server's own message instead, and must no longer carry the old
+// unconditional-on-every-response wiring.
+//
+// Review finding (independent Sonnet review, ut-docs#1620): the first draft
+// of this test only checked for the token "ev.detail.successful" anywhere in
+// the body, so it still PASSED against a deliberately inverted mutation
+// (`if (!ev.detail.successful) { waitForTill(); return; }` — the exact bug
+// class this card exists to prevent, just flipped) — a false-pass test. The
+// exact-statement check below pins the literal branch structure, which the
+// inverted mutation does not produce, and the negative check guards the
+// specific inversion directly rather than relying on a single positive
+// match to imply the correct direction.
+func TestPairingWait_JoinedRestartScriptHandlesNonSuccessResponse(t *testing.T) {
+	stubPairingRestartSupported(t, true)
+	body := renderJoined(t, "/api/sync/pair-status")
+	const wantBranch = "if (ev.detail.successful) { waitForTill(); return; }"
+	if !strings.Contains(body, wantBranch) {
+		t.Fatalf("want the exact success-branches-first statement %q, got: %s", wantBranch, body)
+	}
+	if strings.Contains(body, "if (!ev.detail.successful)") {
+		t.Fatalf("branch condition must not be inverted (a real success would show an error and a real failure would silently poll/redirect): %s", body)
+	}
+	if strings.Contains(body, "htmx:responseError") {
+		t.Fatalf("htmx:responseError must be gone — it fired for the same non-2xx cases afterRequest now handles and would re-trigger the poll it's meant to suppress: %s", body)
+	}
+	if !strings.Contains(body, httpx.T("en", "common.error.server")) {
+		t.Fatalf("want the fallback error text (common.error.server) available for a non-JSON error body, got: %s", body)
+	}
+	if !strings.Contains(body, "'✗ '") {
+		t.Fatalf("want the app-wide '✗ ' failure prefix (reports_tab_eod.html/plugins.html convention), got: %s", body)
+	}
+}
+
 // Where it isn't (Windows, ut-docs#1614 tracks a native restart there), the
 // screen must not show a button that does nothing: it gives the one
 // instruction the operator can physically perform — close and reopen the
