@@ -3892,7 +3892,16 @@ FROM sales WHERE receipt_no LIKE ? || '%'`,
 }
 
 // CurrentQty returns quantity and whether a matching inventory row existed.
+//
+// ut-docs#1353: reject "both set" up front, same as AggregateInventory's
+// sibling check just above — the WHERE clause below is an OR of two
+// exclusive branches, so a caller passing both would silently get whichever
+// branch happens to match an existing row (e.g. an item-level row) instead
+// of the specific, actionable error this now returns.
 func (r *POSRepo) CurrentQty(ctx context.Context, tx *sql.Tx, locationID, itemID, variantID string) (float64, bool, error) {
+	if itemID != "" && variantID != "" {
+		return 0, false, errors.New("cannot specify both itemID and variantID")
+	}
 	exec := r.exec(tx)
 	var qty float64
 	err := exec.QueryRowContext(ctx, `
@@ -3951,6 +3960,20 @@ func (r *POSRepo) CurrentQtyBatch(ctx context.Context, tx *sql.Tx, keys []StockK
 	out := make(map[StockKey]float64, len(keys))
 	if len(keys) == 0 {
 		return out, nil
+	}
+	// ut-docs#1353: reject "both set" up front, same as CurrentQty/
+	// AggregateInventory above — StockKey's own doc comment already
+	// requires "exactly one of item/variant". Without this, an invalid key
+	// silently matches stockKeyPredicate's item-level OR-branch, but the
+	// row scanned back below re-keys the result by the DB row's own
+	// item_id/variant_id (variant_id NULL, i.e. ""), not by the caller's
+	// original (invalid) key — so the caller's lookup by its own key finds
+	// nothing and reads as "no stock", surfacing downstream as a
+	// misleading "insufficient stock" error instead of this specific one.
+	for i, k := range keys {
+		if k.ItemID != "" && k.VariantID != "" {
+			return nil, fmt.Errorf("stock key %d: cannot specify both itemID and variantID", i+1)
+		}
 	}
 	// Dedupe, preserving first-seen order.
 	seen := make(map[StockKey]bool, len(keys))
