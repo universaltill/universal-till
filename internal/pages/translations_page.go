@@ -41,8 +41,8 @@ func registerTranslations(mux *http.ServeMux, d *common.Deps, i18n *config.I18n)
 	// /translations page route itself (ut-docs#1458, same fix class as
 	// tables_page.go's requirePageManager/#1455). requireManager stays as-is
 	// for /ui/translations-table and /api/translations/{set,clear}, which
-	// are all htmx fragments (hx-get/hx-post, hx-swap="outerHTML"/
-	// "innerHTML") that need the short body their JS callers expect.
+	// are all htmx fragments (hx-get/hx-post, hx-swap="outerHTML") that
+	// need the short body their JS callers expect.
 	requirePageManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		if !canPerform(d, r, "settings") {
 			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
