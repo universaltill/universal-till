@@ -16,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/money"
 )
 
 // POSRepo centralizes DB access for POS handlers.
@@ -947,6 +948,292 @@ ORDER BY revenue DESC`, args...)
 	return out, rows.Err()
 }
 
+// ArticleGroupSales is one article group's revenue for a reporting window. An
+// article group is an item's IMMEDIATE category (item.category_id →
+// categories.name) — deliberately NOT rolled up to the root the way
+// DeptSales/dept_roots is (ut-docs#1010): "Phones" (a child of "Electronics")
+// reports as its own group here, where DepartmentsForDay would fold it into
+// "Electronics". Net/Gross mirror export_repo.go's Net/Tax DTO convention
+// (sale_lines.total_before_tax / total_after_tax), not sales.total, so this
+// reconciles with ArticleSales/OperatorSales' own totals for the same day.
+type ArticleGroupSales struct {
+	Group string      `json:"group"`
+	Qty   float64     `json:"qty"`
+	Net   money.Money `json:"net"`
+	Gross money.Money `json:"gross"`
+}
+
+// ArticleGroupsForDay groups completed-sale revenue by the sold items' own
+// IMMEDIATE category for a single business day (used by the EOD Z-report's
+// "BY ARTICLE GROUP" section, ut-docs#1010). day is "YYYY-MM-DD", matched on
+// the shop's LOCAL calendar day (ut-docs#869), same convention as
+// DepartmentsForDay. Items with no category (or since-deleted) roll up to ""
+// (rendered as Uncategorized by callers, same as DepartmentsForDay).
+func (r *POSRepo) ArticleGroupsForDay(ctx context.Context, day string) ([]ArticleGroupSales, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT COALESCE(c.name, '') AS article_group,
+       SUM(sl.quantity) AS qty,
+       COALESCE(SUM(sl.total_before_tax), 0) AS net,
+       COALESCE(SUM(sl.total_after_tax), 0) AS gross
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+LEFT JOIN item_variants iv ON iv.id = sl.variant_id
+LEFT JOIN items it ON it.id = COALESCE(sl.item_id, iv.item_id)
+LEFT JOIN categories c ON c.id = it.category_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+GROUP BY article_group
+ORDER BY gross DESC`, day)
+	if err != nil {
+		return nil, fmt.Errorf("article groups for day: %w", err)
+	}
+	defer rows.Close()
+	var out []ArticleGroupSales
+	for rows.Next() {
+		var g ArticleGroupSales
+		var netMinor, grossMinor int64
+		if err := rows.Scan(&g.Group, &g.Qty, &netMinor, &grossMinor); err != nil {
+			return nil, fmt.Errorf("scan article group day: %w", err)
+		}
+		g.Net = money.FromMinor(netMinor)
+		g.Gross = money.FromMinor(grossMinor)
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// ArticleGroupsForInstantWindow is ArticleGroupsForDay's close-to-close
+// sibling (ADR-0066, ut-docs#1010/#1141's own EODInstant path), matched on
+// the same half-open instantWindow(s.created_at) [from, to) range
+// dateRangeSummaryInstant/DepartmentsForInstantWindow use, rather than one
+// local calendar day. This is what the LIVE "Run end-of-day" endpoint
+// actually calls (internal/pages' generateEOD → EndOfDayInstant →
+// dateRangeSummaryInstant) — ArticleGroupsForDay alone is unreachable from
+// that path (EndOfDay/EndOfDayRange are the scheduler-tick/ad-hoc-range
+// callers only).
+func (r *POSRepo) ArticleGroupsForInstantWindow(ctx context.Context, from, to time.Time) ([]ArticleGroupSales, error) {
+	win, args := instantWindow("s.created_at", from, to)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT COALESCE(c.name, '') AS article_group,
+       SUM(sl.quantity) AS qty,
+       COALESCE(SUM(sl.total_before_tax), 0) AS net,
+       COALESCE(SUM(sl.total_after_tax), 0) AS gross
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+LEFT JOIN item_variants iv ON iv.id = sl.variant_id
+LEFT JOIN items it ON it.id = COALESCE(sl.item_id, iv.item_id)
+LEFT JOIN categories c ON c.id = it.category_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND `+win+`
+GROUP BY article_group
+ORDER BY gross DESC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("article groups for instant window: %w", err)
+	}
+	defer rows.Close()
+	var out []ArticleGroupSales
+	for rows.Next() {
+		var g ArticleGroupSales
+		var netMinor, grossMinor int64
+		if err := rows.Scan(&g.Group, &g.Qty, &netMinor, &grossMinor); err != nil {
+			return nil, fmt.Errorf("scan article group instant window: %w", err)
+		}
+		g.Net = money.FromMinor(netMinor)
+		g.Gross = money.FromMinor(grossMinor)
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// ArticleSales is one article's (sale_lines.name_snapshot) revenue for a
+// reporting window — ArticleGroupsForDay's per-article-not-per-category
+// counterpart (ut-docs#1010).
+type ArticleSales struct {
+	Name  string      `json:"name"`
+	Qty   float64     `json:"qty"`
+	Net   money.Money `json:"net"`
+	Gross money.Money `json:"gross"`
+}
+
+// ArticleSalesForDay returns EVERY sold article for a single business day —
+// no LIMIT, unlike TopItems/SlowItems (ut-docs#1010's EOD "BY ARTICLE"
+// section needs the complete list, not a top/bottom-N slice). Grouped by
+// sl.name_snapshot, the same key TopItems already groups by (kept identical
+// for consistency; TopItems itself is untouched). day is matched on the
+// shop's LOCAL calendar day, same convention as DepartmentsForDay/
+// ArticleGroupsForDay.
+func (r *POSRepo) ArticleSalesForDay(ctx context.Context, day string) ([]ArticleSales, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT sl.name_snapshot,
+       SUM(sl.quantity) AS qty,
+       COALESCE(SUM(sl.total_before_tax), 0) AS net,
+       COALESCE(SUM(sl.total_after_tax), 0) AS gross
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+GROUP BY sl.name_snapshot
+ORDER BY gross DESC`, day)
+	if err != nil {
+		return nil, fmt.Errorf("article sales for day: %w", err)
+	}
+	defer rows.Close()
+	var out []ArticleSales
+	for rows.Next() {
+		var a ArticleSales
+		var netMinor, grossMinor int64
+		if err := rows.Scan(&a.Name, &a.Qty, &netMinor, &grossMinor); err != nil {
+			return nil, fmt.Errorf("scan article sales day: %w", err)
+		}
+		a.Net = money.FromMinor(netMinor)
+		a.Gross = money.FromMinor(grossMinor)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// ArticleSalesForInstantWindow is ArticleSalesForDay's close-to-close
+// sibling — see ArticleGroupsForInstantWindow's doc comment for why this
+// (not ArticleSalesForDay) is the one the live EOD endpoint actually calls.
+// Still no LIMIT. Grouped by sl.name_snapshot, same as ArticleSalesForDay/
+// TopItems.
+func (r *POSRepo) ArticleSalesForInstantWindow(ctx context.Context, from, to time.Time) ([]ArticleSales, error) {
+	win, args := instantWindow("s.created_at", from, to)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT sl.name_snapshot,
+       SUM(sl.quantity) AS qty,
+       COALESCE(SUM(sl.total_before_tax), 0) AS net,
+       COALESCE(SUM(sl.total_after_tax), 0) AS gross
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND `+win+`
+GROUP BY sl.name_snapshot
+ORDER BY gross DESC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("article sales for instant window: %w", err)
+	}
+	defer rows.Close()
+	var out []ArticleSales
+	for rows.Next() {
+		var a ArticleSales
+		var netMinor, grossMinor int64
+		if err := rows.Scan(&a.Name, &a.Qty, &netMinor, &grossMinor); err != nil {
+			return nil, fmt.Errorf("scan article sales instant window: %w", err)
+		}
+		a.Net = money.FromMinor(netMinor)
+		a.Gross = money.FromMinor(grossMinor)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// OperatorSales is one cashier's revenue for a reporting window (ut-docs#1010).
+// Attribution is sales.cashier_id alone — the operator who actually rang the
+// sale — NEVER the audit_log actor/blocked-actor pair a manager-override
+// elevation on that sale might separately record (InsertAuditElevated); see
+// OperatorSalesForDay's own doc comment. Net/Gross are derived from
+// sale_lines, the same as ArticleGroupSales/ArticleSales, so all three
+// reconcile to the same day total — NOT sales.total (which can include
+// service charge/rounding these article-level figures deliberately exclude).
+type OperatorSales struct {
+	CashierID   string      `json:"cashier_id"`
+	DisplayName string      `json:"display_name"`
+	Count       int         `json:"count"`
+	Net         money.Money `json:"net"`
+	Gross       money.Money `json:"gross"`
+}
+
+// OperatorSalesForDay groups completed-sale revenue by sales.cashier_id for
+// a single business day (EOD Z-report's "BY OPERATOR" section, ut-docs#1010).
+// day is matched on the shop's LOCAL calendar day, same convention as
+// DepartmentsForDay/ArticleGroupsForDay/ArticleSalesForDay.
+//
+// DisplayName resolves the same fallback chain reports_page.go's
+// workerAllocationDisplayNames uses for worker_allocations.cashier_id
+// (display_name if non-empty, else username), done here as a LEFT JOIN to
+// users rather than a second Go-side lookup query — this method already
+// returns one row per cashier, so the join adds no extra query. A cashier_id
+// with no matching user row (deleted account) falls back to the raw id.
+//
+// Count is the number of completed SALES (COUNT(DISTINCT s.id)), not sale
+// lines — a multi-line sale must count once per operator, not once per item.
+//
+// Dual attribution (ut-docs#1010 acceptance criterion): a manager-override
+// elevation on this sale (InsertAuditElevated, internal/pages/elevation.go's
+// checkOrElevate) records the elevation in audit_log — actor_id (the
+// approving manager) and blocked_actor_id (the originally-blocked cashier)
+// — entirely separately from sales.cashier_id, which this query is the only
+// column it reads. The elevation flow never rewrites cashier_id, so the
+// sale's revenue stays attributed to whoever actually rang it regardless of
+// any elevation recorded against it — see
+// TestOperatorSalesForDay_AttributionSurvivesManagerElevation.
+func (r *POSRepo) OperatorSalesForDay(ctx context.Context, day string) ([]OperatorSales, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT COALESCE(s.cashier_id, '') AS cashier_id,
+       COALESCE(NULLIF(u.display_name, ''), u.username, s.cashier_id, '') AS display_name,
+       COUNT(DISTINCT s.id) AS cnt,
+       COALESCE(SUM(sl.total_before_tax), 0) AS net,
+       COALESCE(SUM(sl.total_after_tax), 0) AS gross
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+LEFT JOIN users u ON u.id = s.cashier_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+GROUP BY COALESCE(s.cashier_id, '')
+ORDER BY gross DESC`, day)
+	if err != nil {
+		return nil, fmt.Errorf("operator sales for day: %w", err)
+	}
+	defer rows.Close()
+	var out []OperatorSales
+	for rows.Next() {
+		var o OperatorSales
+		var netMinor, grossMinor int64
+		if err := rows.Scan(&o.CashierID, &o.DisplayName, &o.Count, &netMinor, &grossMinor); err != nil {
+			return nil, fmt.Errorf("scan operator sales day: %w", err)
+		}
+		o.Net = money.FromMinor(netMinor)
+		o.Gross = money.FromMinor(grossMinor)
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// OperatorSalesForInstantWindow is OperatorSalesForDay's close-to-close
+// sibling — see ArticleGroupsForInstantWindow's doc comment for why this
+// (not OperatorSalesForDay) is the one the live EOD endpoint actually
+// calls. Same attribution/display-name/count conventions, including the
+// dual-attribution guarantee (sales.cashier_id alone, never audit_log's
+// elevation actor/blocked-actor pair) — see OperatorSalesForDay's doc
+// comment.
+func (r *POSRepo) OperatorSalesForInstantWindow(ctx context.Context, from, to time.Time) ([]OperatorSales, error) {
+	win, args := instantWindow("s.created_at", from, to)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT COALESCE(s.cashier_id, '') AS cashier_id,
+       COALESCE(NULLIF(u.display_name, ''), u.username, s.cashier_id, '') AS display_name,
+       COUNT(DISTINCT s.id) AS cnt,
+       COALESCE(SUM(sl.total_before_tax), 0) AS net,
+       COALESCE(SUM(sl.total_after_tax), 0) AS gross
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+LEFT JOIN users u ON u.id = s.cashier_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND `+win+`
+GROUP BY COALESCE(s.cashier_id, '')
+ORDER BY gross DESC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("operator sales for instant window: %w", err)
+	}
+	defer rows.Close()
+	var out []OperatorSales
+	for rows.Next() {
+		var o OperatorSales
+		var netMinor, grossMinor int64
+		if err := rows.Scan(&o.CashierID, &o.DisplayName, &o.Count, &netMinor, &grossMinor); err != nil {
+			return nil, fmt.Errorf("scan operator sales instant window: %w", err)
+		}
+		o.Net = money.FromMinor(netMinor)
+		o.Gross = money.FromMinor(grossMinor)
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
 // SalesByDay aggregates completed sales per day over [from, to). day is
 // grouped by the shop's LOCAL business day, not the raw stored UTC calendar
 // date: created_at is converted to local time ('localtime', the same
@@ -1871,6 +2158,17 @@ type EODReport struct {
 	Tips           []EODTip        `json:"tips"`        // tips by payment method, held out of revenue (ut-docs#1007)
 	Departments    []DeptSales     `json:"departments"` // per-department sales (E1b)
 	Tills          []TillSales     `json:"tills"`       // per-register sales (multi-till)
+	// ArticleGroups/Articles/Operators (ut-docs#1010) are single-day-only,
+	// gated on the SAME from==to check as Departments/Tills above — see
+	// dateRangeSummary's own inline comment on that gate. ArticleGroups
+	// groups by an item's IMMEDIATE category (unlike Departments' root-
+	// category rollup); Articles is every sold article, no top/bottom-N
+	// limit; Operators is per-cashier, attributed by sales.cashier_id alone
+	// (survives a manager-override elevation recorded separately in
+	// audit_log — see OperatorSalesForDay's doc comment).
+	ArticleGroups []ArticleGroupSales `json:"article_groups,omitempty"`
+	Articles      []ArticleSales      `json:"articles,omitempty"`
+	Operators     []OperatorSales     `json:"operators,omitempty"`
 	// Voucher liability flows (ut-docs#1008): count + amount (minor units) of
 	// vouchers issued and redeemed in the window, from voucher_transactions.
 	// Reported DISTINCTLY from article revenue: an issue is a 0% liability
@@ -2267,6 +2565,21 @@ GROUP BY p.method_id ORDER BY p.method_id`, from, to)
 		if depts, err := r.DepartmentsForDay(ctx, from); err == nil {
 			rep.Departments = depts
 		}
+		// Article-group/article/operator breakdowns (ut-docs#1010) — same
+		// single-day gate and same best-effort/swallow-the-error convention
+		// as Departments above: a breakdown query failing must not sink the
+		// whole Z-report (day-close still completes; the section is simply
+		// absent). NOT generalized to a range, same explicit non-goal as
+		// Departments/Tills (see this block's own doc comment).
+		if groups, err := r.ArticleGroupsForDay(ctx, from); err == nil {
+			rep.ArticleGroups = groups
+		}
+		if articles, err := r.ArticleSalesForDay(ctx, from); err == nil {
+			rep.Articles = articles
+		}
+		if operators, err := r.OperatorSalesForDay(ctx, from); err == nil {
+			rep.Operators = operators
+		}
 		// Cash-drawer reconciliation (ut-docs#1006) — single-day only, like
 		// the breakdowns around it (summing counted-vs-calculated across a
 		// multi-day range would be misleading). Best-effort on the same
@@ -2469,6 +2782,20 @@ GROUP BY p.method_id ORDER BY p.method_id`, margs...)
 	// Z-report (day-close still completes; the section is simply absent).
 	if depts, err := r.DepartmentsForInstantWindow(ctx, from, to); err == nil {
 		rep.Departments = depts
+	}
+	// Article groups/articles/operators (ut-docs#1010) — same best-effort,
+	// swallow-the-error convention as Departments above. This is the path
+	// the LIVE "Run end-of-day" endpoint actually calls (generateEOD →
+	// EndOfDayInstant → here), so these three MUST be populated here, not
+	// only in dateRangeSummary's EndOfDay/EndOfDayRange path.
+	if groups, err := r.ArticleGroupsForInstantWindow(ctx, from, to); err == nil {
+		rep.ArticleGroups = groups
+	}
+	if articles, err := r.ArticleSalesForInstantWindow(ctx, from, to); err == nil {
+		rep.Articles = articles
+	}
+	if operators, err := r.OperatorSalesForInstantWindow(ctx, from, to); err == nil {
+		rep.Operators = operators
 	}
 	if rc, rcErr := r.CashReconciliationForInstantWindow(ctx, from, to); rcErr == nil && rc != nil {
 		// CashSales comes from the report's own payment-method breakdown

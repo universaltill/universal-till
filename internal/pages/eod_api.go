@@ -177,6 +177,33 @@ func eodPeriodMeta(rep data.EODReport) string {
 	return "Zeitraum " + rep.From + " - " + rep.To
 }
 
+// footerRow right-aligns amount against label within print.Width columns,
+// clipping an overlong label instead of letting it overflow — the same
+// algorithm internal/print's own (unexported) kvRow uses for sale lines,
+// reimplemented here because eod_api.go builds doc.Footer as plain strings
+// and has no access to that unexported helper. Unlike a fixed "%-N s %s"
+// format (what BY DEPARTMENT/BY TILL and friends still use, since their
+// labels are short/controlled), this guarantees the amount is never pushed
+// past the printer's own line-clip by an overlong label (ut-docs#1010
+// review finding 1 — sale_lines.name_snapshot is free-text and can easily
+// exceed a fixed pad width). Rune-based throughout, matching kvRow/clip's
+// own reasoning: Width tracks visible columns, and a byte-based cut can
+// split a multi-byte character (£, ä/ö/ü/ß, ar/fa/tr text) mid-rune.
+func footerRow(label, amount string) string {
+	space := print.Width - utf8.RuneCountInString(label) - utf8.RuneCountInString(amount)
+	if space < 1 {
+		max := print.Width - utf8.RuneCountInString(amount) - 1
+		if max < 0 {
+			max = 0
+		}
+		if r := []rune(label); len(r) > max {
+			label = string(r[:max])
+		}
+		space = 1
+	}
+	return label + strings.Repeat(" ", space) + amount
+}
+
 // buildEODDoc renders the Z-report for the receipt printer.
 func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 	// printLocale: same grouping/decimal + date-order convention as the
@@ -290,6 +317,50 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 				name = "This till"
 			}
 			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", name, money(t.Revenue)))
+		}
+	}
+	// Article-group/article/operator breakdowns (ut-docs#1010) — same
+	// footer-section precedent as BY DEPARTMENT/BY TILL above: one heading
+	// line + one row per entry, printed with Gross (matching BY DEPARTMENT's
+	// own use of Revenue, its total_after_tax equivalent), and omitted
+	// entirely when the slice is empty (same "no line at all beats an empty
+	// section" convention every other optional section here follows).
+	// Single-day only — see EODReport.ArticleGroups/Articles/Operators' own
+	// doc comment; a range report simply has nothing here.
+	//
+	// Uses footerRow, NOT the "%-20s %s" sprintf every sibling section above
+	// uses (review finding 1): those names are short, controlled strings
+	// (a department/till name, "TOTAL", "Issued (n)"), so %-20s's fixed pad
+	// never overflows print.Width in practice. sale_lines.name_snapshot is
+	// free-text product name text where 34+ runes is completely ordinary —
+	// %-20s only pads, never truncates, so an overlong name silently pushes
+	// the amount past the printer's own line-clip with no error, deleting
+	// the actual revenue figure off a financial document. footerRow clips
+	// the label instead, guaranteeing the amount always survives.
+	if len(rep.ArticleGroups) > 0 {
+		doc.Footer = append(doc.Footer, "", "BY ARTICLE GROUP")
+		for _, g := range rep.ArticleGroups {
+			name := g.Group
+			if name == "" {
+				name = "Uncategorized"
+			}
+			doc.Footer = append(doc.Footer, footerRow(name, money(g.Gross.Minor())))
+		}
+	}
+	if len(rep.Articles) > 0 {
+		doc.Footer = append(doc.Footer, "", "BY ARTICLE")
+		for _, a := range rep.Articles {
+			doc.Footer = append(doc.Footer, footerRow(a.Name, money(a.Gross.Minor())))
+		}
+	}
+	if len(rep.Operators) > 0 {
+		doc.Footer = append(doc.Footer, "", "BY OPERATOR")
+		for _, o := range rep.Operators {
+			name := o.DisplayName
+			if name == "" {
+				name = "Unattributed"
+			}
+			doc.Footer = append(doc.Footer, footerRow(name, money(o.Gross.Minor())))
 		}
 	}
 	// Voucher liability flows (ut-docs#1008) — their own footer section,

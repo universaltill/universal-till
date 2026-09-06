@@ -42,6 +42,57 @@
         {{ if $canRunEOD }}<td>{{ .Sales }}</td><td>{{ money .Net }}</td>{{ end }}
         <td><button class="btn secondary" hx-post="/api/reports/eod/print/{{ .Period }}" hx-target="#eod-msg" hx-swap="innerHTML">🖨</button></td>
       </tr>
+      {{ if or .ArticleGroups .Articles .Operators }}
+      <!-- ut-docs#1010: per-article-group/per-article/per-operator
+           breakdowns for THIS archived report, same single-day-only
+           breakdowns as the printed Z-report's BY ARTICLE GROUP/BY
+           ARTICLE/BY OPERATOR sections (buildEODDoc) — see EODReport's own
+           doc comment for why a range report never has these (nil slices,
+           so this whole row is skipped for one, same as any archived
+           report predating this change). Article-group/operator counts are
+           small (few rows) so they render as plain tables; per-article can
+           run to ~80 rows, so it's collapsed behind a closed-by-default
+           <details> to keep the report list itself usable. -->
+      <tr>
+        <td colspan="{{ if $canRunEOD }}4{{ else }}2{{ end }}" style="padding-inline-start:1.5rem">
+          {{ if .ArticleGroups }}
+          <strong>{{ T "reports.eod.by_article_group" }}</strong>
+          <table class="table" style="margin:.3rem 0 .8rem">
+            <thead><tr><th><span class="visually-hidden">{{ T "reports.eod.by_article_group" }}</span></th><th style="text-align:end">{{ T "reports.eod.qty" }}</th><th style="text-align:end">{{ T "reports.eod.net" }}</th><th style="text-align:end">{{ T "reports.eod.gross" }}</th></tr></thead>
+            <tbody>
+              {{ range .ArticleGroups }}
+              <tr><td>{{ if .Group }}{{ .Group }}{{ else }}{{ T "reports.uncategorized" }}{{ end }}</td><td style="text-align:end">{{ .Qty }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
+              {{ end }}
+            </tbody>
+          </table>
+          {{ end }}
+          {{ if .Operators }}
+          <strong>{{ T "reports.eod.by_operator" }}</strong>
+          <table class="table" style="margin:.3rem 0 .8rem">
+            <thead><tr><th>{{ T "reports.eod.operator" }}</th><th style="text-align:end">{{ T "reports.sales" }}</th><th style="text-align:end">{{ T "reports.eod.net" }}</th><th style="text-align:end">{{ T "reports.eod.gross" }}</th></tr></thead>
+            <tbody>
+              {{ range .Operators }}
+              <tr><td>{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ T "reports.eod.unattributed" }}{{ end }}</td><td style="text-align:end">{{ .Count }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
+              {{ end }}
+            </tbody>
+          </table>
+          {{ end }}
+          {{ if .Articles }}
+          <details>
+            <summary style="cursor:pointer;padding-block:.4rem"><strong>{{ T "reports.eod.by_article" }}</strong> ({{ len .Articles }})</summary>
+            <table class="table" style="margin:.3rem 0 .8rem">
+              <thead><tr><th><span class="visually-hidden">{{ T "reports.eod.by_article" }}</span></th><th style="text-align:end">{{ T "reports.eod.qty" }}</th><th style="text-align:end">{{ T "reports.eod.net" }}</th><th style="text-align:end">{{ T "reports.eod.gross" }}</th></tr></thead>
+              <tbody>
+                {{ range .Articles }}
+                <tr><td>{{ .Name }}</td><td style="text-align:end">{{ .Qty }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
+                {{ end }}
+              </tbody>
+            </table>
+          </details>
+          {{ end }}
+        </td>
+      </tr>
+      {{ end }}
       {{ end }}
     </tbody>
   </table>
