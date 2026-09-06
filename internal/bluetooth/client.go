@@ -96,6 +96,14 @@ var (
 	// typically one that needs a PIN this agent cannot supply, or one
 	// that is no longer in pairing mode.
 	ErrPairingFailed = errors.New("bluetooth: pairing failed")
+	// ErrUnsupportedPlatform: this OS has no D-Bus/BlueZ transport at all
+	// (Android) — distinct from ErrUnavailable, which means the transport
+	// exists but found no bus/adapter/daemon. The distinction matters
+	// because the two need different operator-facing messages (ut-docs#1643):
+	// ErrUnavailable's "no adapter found, or the service is not running" is
+	// actively wrong here — the hardware can be present and healthy, the
+	// feature simply isn't implemented for this platform yet.
+	ErrUnsupportedPlatform = errors.New("bluetooth: not supported on this platform")
 )
 
 // maxCandidates caps how many devices one Scan reports. A busy shop floor

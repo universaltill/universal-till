@@ -10,11 +10,16 @@
 {{/* Degraded states (ADR-0078 consequences): a box with no Bluetooth
      (most non-Pi targets) or one whose D-Bus policy grant is missing gets
      a status notice — the page still renders in full, never an error page,
-     and nothing here can block a sale either way. */}}
+     and nothing here can block a sale either way. `.unsupported` (Android,
+     ut-docs#1643) is a distinct state: the platform has no D-Bus/BlueZ
+     transport at all, so the adapter can be present and healthy — the
+     unavailable/access-denied wording would misdiagnose a working radio. */}}
 {{ if .unavailable }}
 <p class="tag warn" data-testid="bluetooth-unavailable">{{ T "bluetoothdevices.bluez_unavailable" }}</p>
 {{ else if .accessDenied }}
 <p class="tag warn" data-testid="bluetooth-access-denied">{{ T "bluetoothdevices.access_denied" }}</p>
+{{ else if .unsupported }}
+<p class="tag warn" data-testid="bluetooth-unsupported">{{ T "bluetoothdevices.platform_unsupported" }}</p>
 {{ end }}
 
 <div class="users-layout">
@@ -58,7 +63,7 @@
          paired solely by the manager clicking Pair on it below. Disabled
          outright when the notice above says there is no Bluetooth to scan
          with. See the script block at the end of this file. */}}
-    <button id="bt-scan-btn" type="button" class="btn primary" style="width:100%" {{ if or .unavailable .accessDenied }}disabled{{ end }}>{{ T "bluetoothdevices.scan_button" }}</button>
+    <button id="bt-scan-btn" type="button" class="btn primary" style="width:100%" {{ if or .unavailable .accessDenied .unsupported }}disabled{{ end }}>{{ T "bluetoothdevices.scan_button" }}</button>
     <div id="bt-scan-msg" class="muted" aria-live="polite" style="min-height:1.2rem; margin-block-start:.5rem"></div>
     <div id="bt-scan-results"></div>
     <p class="muted" style="margin-block-start:.5rem">{{ T "bluetoothdevices.candidates_help" }}</p>
@@ -89,13 +94,15 @@
     genericName: "{{ T "bluetoothdevices.generic_name" }}",
     inputDevice: "{{ T "bluetoothdevices.input_device" }}",
     bluezUnavailable: "{{ T "bluetoothdevices.bluez_unavailable" }}",
-    accessDenied: "{{ T "bluetoothdevices.access_denied" }}"
+    accessDenied: "{{ T "bluetoothdevices.access_denied" }}",
+    platformUnsupported: "{{ T "bluetoothdevices.platform_unsupported" }}"
   };
   // error.code (bluetooth_devices_page.go's apiError) → what the manager reads.
   function messageFor(code, fallback) {
     switch (code) {
       case 'bluetooth_unavailable': return T.bluezUnavailable;
       case 'bluetooth_access_denied': return T.accessDenied;
+      case 'bluetooth_unsupported_platform': return T.platformUnsupported;
       case 'bluetooth_not_found': return T.notFound;
       case 'bluetooth_pairing_failed': return T.pairRefused;
       default: return fallback;

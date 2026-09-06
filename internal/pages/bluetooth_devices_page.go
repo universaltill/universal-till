@@ -124,6 +124,8 @@ func registerBluetoothDevices(mux *http.ServeMux, d *common.Deps) {
 			apiError(w, http.StatusServiceUnavailable, "bluetooth_unavailable")
 		case errors.Is(err, bluetooth.ErrAccessDenied):
 			apiError(w, http.StatusServiceUnavailable, "bluetooth_access_denied")
+		case errors.Is(err, bluetooth.ErrUnsupportedPlatform):
+			apiError(w, http.StatusServiceUnavailable, "bluetooth_unsupported_platform")
 		case errors.Is(err, bluetooth.ErrNotFound):
 			apiError(w, http.StatusNotFound, "bluetooth_not_found")
 		case errors.Is(err, bluetooth.ErrPairingFailed):
@@ -171,6 +173,7 @@ func registerBluetoothDevices(mux *http.ServeMux, d *common.Deps) {
 			devices      []bluetooth.Device
 			unavailable  bool
 			accessDenied bool
+			unsupported  bool
 			errKey       string
 		)
 		c, err := newBluetoothClient()
@@ -189,6 +192,14 @@ func registerBluetoothDevices(mux *http.ServeMux, d *common.Deps) {
 		case errors.Is(err, bluetooth.ErrAccessDenied):
 			log.Printf("[bluetooth] list failed: %v", err)
 			accessDenied = true
+		case errors.Is(err, bluetooth.ErrUnsupportedPlatform):
+			// Not a hardware/service problem (ADR-0078's degrade-to-notice
+			// consequence doesn't apply here) — the platform has no
+			// D-Bus/BlueZ transport at all, so the adapter can be present
+			// and healthy while this feature is simply unimplemented for
+			// it (ut-docs#1643). Distinct from `unavailable`, whose notice
+			// wrongly implies a hardware/service fix would help.
+			unsupported = true
 		default:
 			log.Printf("[bluetooth] list failed: %v", err)
 			errKey = "bluetoothdevices.list_error"
@@ -203,6 +214,7 @@ func registerBluetoothDevices(mux *http.ServeMux, d *common.Deps) {
 			"devices":      devices,
 			"unavailable":  unavailable,
 			"accessDenied": accessDenied,
+			"unsupported":  unsupported,
 			"errKey":       errKey,
 		})(w, r)
 	})

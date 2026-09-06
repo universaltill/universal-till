@@ -3,6 +3,7 @@ package bluetooth
 import (
 	"context"
 	"fmt"
+	"runtime"
 
 	"github.com/godbus/dbus/v5"
 )
@@ -21,6 +22,24 @@ import (
 // request dies half way. The system bus is a local unix socket — the
 // connect is microseconds, not a cost worth pooling.
 func NewDBusClient() (Client, error) {
+	return newDBusClientFor(runtime.GOOS)
+}
+
+// newDBusClientFor is NewDBusClient's OS-parameterized core, split out so a
+// test can exercise the platform gate below without needing to fake
+// runtime.GOOS — same pattern as internal/selfupdate's supportedFor/Supported.
+//
+// Android has no D-Bus system bus and no bluetoothd (ut-docs#1643):
+// dbus.ConnectSystemBus() there doesn't fail the way a Linux box with no
+// bus does. Gating on GOOS up front, before ever touching D-Bus, keeps this
+// case out of ErrUnavailable — telling an Android operator their (present,
+// healthy) adapter is missing or the service isn't running is a
+// misdiagnosis, not just an unhelpful message; ErrUnsupportedPlatform says
+// what is actually true instead.
+func newDBusClientFor(goos string) (Client, error) {
+	if goos == "android" {
+		return nil, ErrUnsupportedPlatform
+	}
 	conn, err := dbus.ConnectSystemBus()
 	if err != nil {
 		return nil, fmt.Errorf("%w: %v", ErrUnavailable, err)

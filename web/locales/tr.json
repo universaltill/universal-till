@@ -1493,6 +1493,7 @@
   "bluetoothdevices.list_error": "Bu kasanın Bluetooth'undan eşleşmiş cihazlar okunamadı.",
   "bluetoothdevices.bluez_unavailable": "Bu kasada Bluetooth kullanılamıyor — Bluetooth adaptörü bulunamadı ya da Bluetooth hizmeti çalışmıyor.",
   "bluetoothdevices.access_denied": "Bu kasanın yazılımının Bluetooth kullanmasına izin verilmiyor. İzni geri getirmek için Universal Till paketini yeniden kurun ya da destekle iletişime geçin.",
+  "bluetoothdevices.platform_unsupported": "Bluetooth eşleştirme bu kasada henüz kullanılamıyor — bu cihaz türü bunu desteklemiyor. Bu, kasanın donanımı veya ayarlarıyla ilgili bir sorun değildir.",
   "tables.title": "Masalar ve kat planı",
   "tables.none": "Henüz masa yok — ilk masanızı aşağıdan ekleyin, sonra planda yerine sürükleyin.",
   "tables.plan_aria": "Her masayı ve boş mu yoksa açık siparişi mi olduğunu gösteren kat planı",
