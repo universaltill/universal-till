@@ -584,6 +584,58 @@ func FuncsFor(locale string) template.FuncMap {
 		}
 		return FormatMoney(cents, locale)
 	}
+	// {{ date .IssuedAt }}: date-ordering convention follows the request
+	// locale (de-DE renders 06.09.2026, en-US renders 09/06/2026), digit
+	// shape follows locale too, same as money above (ut-docs#1130). Accepts
+	// either a time.Time or an RFC3339 string (the storage format for
+	// stamped-at-write timestamps like invoices.IssuedAt), both rendered in
+	// LOCAL time — right for a wall-clock event like "when this was issued
+	// at the till". An unparseable string is returned unchanged (not "") so
+	// a caller accidentally handed a non-RFC3339 string (e.g. an already
+	// "2006-01-02"-shaped date) degrades to its raw form, still visible,
+	// rather than a silently blank cell.
+	funcs["date"] = func(v any) string {
+		switch t := v.(type) {
+		case time.Time:
+			return FormatDate(t.Local(), locale)
+		case string:
+			parsed, err := time.Parse(time.RFC3339, t)
+			if err != nil {
+				return t
+			}
+			return FormatDate(parsed.Local(), locale)
+		default:
+			return ""
+		}
+	}
+	// {{ dateUTC .IssuedAt }}: FormatDate's date-ordering/digit-shape
+	// convention, WITHOUT the Local() conversion `date` above applies —
+	// for a value compared/filtered elsewhere in UTC (e.g. invoices.html's
+	// register list, whose from/to range is deliberately compared against
+	// the raw UTC IssuedAt string — see invoice_page.go's own comment on
+	// why `to` is left open). Using `date`'s Local conversion there would
+	// show a calendar date that can legitimately disagree with which
+	// from/to bucket the row is actually in.
+	funcs["dateUTC"] = func(v string) string {
+		parsed, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return v
+		}
+		return FormatDate(parsed, locale)
+	}
+	// {{ thousandssep }} / {{ decimalsep }}: the same grouping/decimal
+	// convention `money` above follows server-side, exposed for
+	// window.utCurrency's client-side money formatting (web/public/app.js)
+	// so a de-DE till doesn't show "€1.234,56" server-rendered next to
+	// "€1,234.56" client-rendered on the same screen (ut-docs#1130).
+	funcs["thousandssep"] = func() string {
+		t, _ := numberSeparators(locale)
+		return string(t)
+	}
+	funcs["decimalsep"] = func() string {
+		_, d := numberSeparators(locale)
+		return string(d)
+	}
 	funcs["currency"] = ActiveCurrency // {{ currency.Code }} etc.
 	funcs["currencies"] = Currencies   // the Settings picker options
 	// {{ moneypattern currency.Decimals false }} / {{ moneyplaceholder currency.Decimals 50 }}

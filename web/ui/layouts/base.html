@@ -41,6 +41,7 @@
   <body class="{{ if kiosk }}kiosk{{ end }}{{ if .saleScreen }} sale-screen{{ end }}{{ if .menuScreen }} menu-screen{{ end }}"
         data-currency="{{ currency.Code }}" data-currency-decimals="{{ currency.Decimals }}"
         data-currency-display="{{ currency.Display }}" data-currency-suffix="{{ if currency.Suffix }}1{{ end }}"
+        data-number-thousands="{{ thousandssep }}" data-number-decimal="{{ decimalsep }}"
         data-osk="{{ oskmode }}"
         data-notice-dismiss="{{ T "notice.dismiss" }}"
         {{ if idlelocksecs }}data-idle-lock="{{ idlelocksecs }}"{{ end }}>

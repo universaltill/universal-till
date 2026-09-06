@@ -173,8 +173,20 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	}
 	cfg := printerConfig(ctx, d)
 	rd := receiptDesignFromSettings(ctx, d)
-	locale := "en" // receipts print with latin digits; RTL needs bitmap mode (spec)
-	money := func(minor int64) string { return httpx.FormatMoney(minor, locale) }
+	// printLocale drives grouping/decimal-separator and date-order
+	// convention (ut-docs#1130) — the shop's own configured locale, not a
+	// per-request one, since a background/scheduled print has no request
+	// to resolve from (httpx.DefaultLocale's own doc). Digit SHAPE stays
+	// forced Latin regardless of printLocale: ESC/POS text mode can't
+	// render non-Latin numeral glyphs, RTL needs bitmap mode (spec) — so
+	// money/date below use the *Latin variants, not FormatMoney/FormatDate,
+	// even though those would also accept printLocale.
+	printLocale := httpx.DefaultLocale()
+	money := func(minor int64) string { return httpx.FormatMoneyLatin(minor, printLocale) }
+	receiptDate := detail.CreatedAt
+	if t, err := time.Parse(time.RFC3339, detail.CreatedAt); err == nil {
+		receiptDate = httpx.FormatDateLatin(t.Local(), printLocale) + " " + t.Local().Format("15:04")
+	}
 
 	doc := print.Doc{
 		StoreName: storeNameOrDefault(ctx, d),
@@ -182,7 +194,7 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 		Header:    rd.Header,
 		Meta: []string{
 			"Receipt " + detail.ReceiptNo,
-			detail.CreatedAt,
+			receiptDate,
 		},
 		Charset:   cfg.Charset,
 		DrawerPin: cfg.DrawerPin,
@@ -200,13 +212,14 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	}
 	// ADR-0073 Decision 7: a MIXED sale marks each line's mode; a uniform
 	// sale prints exactly as before. English literals match this renderer's
-	// existing convention (locale "en", latin digits — see above).
+	// existing convention (Latin digits forced regardless of printLocale
+	// — see above).
 	mixed := detail.OrderType == pos.OrderTypeMixed
 	if mixed {
 		doc.Meta = append(doc.Meta, "Mixed dine-in / takeaway")
 	}
 	for _, l := range detail.Lines {
-		qty := strconv.FormatFloat(l.Qty, 'f', -1, 64)
+		qty := httpx.FormatQtyLatin(l.Qty, printLocale)
 		name := l.Name
 		if rd.ShowSKU && l.SKU != "" {
 			name += " [" + l.SKU + "]"
@@ -282,9 +295,9 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	// general German-market rollout. Fields the signer didn't return are
 	// skipped — never placeholders — and a read error degrades to no
 	// lines, same conservative policy as the audit-derived notices.
-	// English literals match this renderer's existing convention (locale
-	// "en", latin digits — see the locale note at the top of this
-	// function).
+	// English literals match this renderer's existing convention (Latin
+	// digits forced regardless of printLocale — see the note at the top
+	// of this function).
 	if sig, ok, sigErr := data.NewPOSRepo(d.Db).GetFiscalTSESignature(ctx, detail.ID); sigErr == nil && ok {
 		if sig.SerialNumber != "" {
 			doc.Meta = append(doc.Meta, "TSE serial: "+sig.SerialNumber)
@@ -564,7 +577,10 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 			fail(http.StatusBadGateway, "settings.printer.test_failed")
 			return
 		}
-		one := print.RenderLabel(label.Name, httpx.FormatMoney(label.PriceMinor, "en"), label.Code, cfg.Charset)
+		// Same Latin-digit ESC/POS constraint as buildReceiptDoc/buildEODDoc
+		// above, but the store's own separator/decimal convention rather
+		// than a hardcoded "en" (ut-docs#1130 review finding).
+		one := print.RenderLabel(label.Name, httpx.FormatMoneyLatin(label.PriceMinor, httpx.DefaultLocale()), label.Code, cfg.Charset)
 		job := make([]byte, 0, len(one)*copies)
 		for range copies {
 			job = append(job, one...)

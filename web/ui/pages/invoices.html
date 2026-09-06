@@ -29,7 +29,7 @@
       <tr{{ if eq .Kind "credit_note" }} class="muted"{{ end }}>
         <td><a href="/invoice/{{ .DisplayNo }}"><strong>{{ .DisplayNo }}</strong></a>
           {{ if eq .Kind "credit_note" }} <span class="tag">{{ T "invoice.credit_note" }}</span>{{ end }}</td>
-        <td class="muted">{{ .IssuedAt }}</td>
+        <td class="muted">{{ dateUTC .IssuedAt }}</td>
         <td>{{ .CustomerName }}</td>
         <td class="muted">{{ .CustomerVATNo }}</td>
         <td><a href="/journal/{{ .ReceiptNo }}">#{{ .ReceiptNo }}</a></td>

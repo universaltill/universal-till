@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -151,7 +150,10 @@ func kitchenItemsFor(detail data.SaleDetail, cfg print.Config, locale string, li
 	var items []print.KitchenItem
 	for _, l := range lines {
 		items = append(items, print.KitchenItem{
-			Qty:       strconv.FormatFloat(l.Qty, 'f', -1, 64),
+			// Latin digits regardless of locale, same ESC/POS text-mode
+			// constraint as the sale receipt (print_api.go) — grouping/
+			// decimal convention still follows locale (ut-docs#1130).
+			Qty:       httpx.FormatQtyLatin(l.Qty, locale),
 			Name:      l.Name,
 			Modifiers: l.Modifiers,
 			Mode:      kitchenLineModeLabel(locale, cfg.Charset, detail.OrderType, l.OrderType),

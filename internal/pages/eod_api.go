@@ -179,12 +179,21 @@ func eodPeriodMeta(rep data.EODReport) string {
 
 // buildEODDoc renders the Z-report for the receipt printer.
 func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
-	money := func(minor int64) string { return httpx.FormatMoney(minor, "en") }
+	// printLocale: same grouping/decimal + date-order convention as the
+	// sale receipt's own printLocale (print_api.go), and the same reason
+	// for the *Latin variants below — ESC/POS text mode can't render
+	// non-Latin numeral glyphs, RTL needs bitmap mode (ut-docs#1130).
+	printLocale := httpx.DefaultLocale()
+	money := func(minor int64) string { return httpx.FormatMoneyLatin(minor, printLocale) }
+	generated := "Generated " + rep.GeneratedAt
+	if t, err := time.Parse(time.RFC3339, rep.GeneratedAt); err == nil {
+		generated = "Generated " + httpx.FormatDateLatin(t.Local(), printLocale) + " " + t.Local().Format("15:04")
+	}
 	doc := print.Doc{
 		StoreName: storeName,
 		Meta: []string{
 			eodPeriodMeta(rep),
-			"Generated " + rep.GeneratedAt,
+			generated,
 		},
 		Charset: charset,
 	}

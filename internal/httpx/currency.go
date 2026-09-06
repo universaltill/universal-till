@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"html/template"
 	"math"
+	"strconv"
 	"strings"
 )
 
@@ -174,8 +175,8 @@ func LocalizeDigits(s, locale string) string {
 	return b.String()
 }
 
-// groupThousands inserts commas into an unsigned integer string.
-func groupThousands(s string) string {
+// groupThousands inserts sep into an unsigned integer string every 3 digits.
+func groupThousands(s string, sep byte) string {
 	n := len(s)
 	if n <= 3 {
 		return s
@@ -187,18 +188,96 @@ func groupThousands(s string) string {
 	}
 	for i := head; i < n; i += 3 {
 		if b.Len() > 0 {
-			b.WriteByte(',')
+			b.WriteByte(sep)
 		}
 		b.WriteString(s[i : i+3])
 	}
 	return b.String()
 }
 
+// numberSeparators returns the thousands and decimal separator bytes for
+// locale's Latin-digit grouping convention (ut-docs#1130) — applied to a
+// plain "1234.56"-shaped string BEFORE any digit-shape substitution
+// (LocalizeDigits). Table-driven by locale base language, the same
+// per-locale-family pattern as localeDigits above. Covers every one of
+// this product's unconditionally-preset country defaults
+// (internal/data.BuiltinCountryDefaults — GB/US/DE/FR/ES/IT/NL/TR all set
+// store.locale directly at setup) plus every bundled UI locale
+// (web/locales/*.json: en/fa/ar/tr), not just the card's own DE headline
+// example — a table with only one non-default entry left every other
+// European default (and TR, a locale this product SHIPS, not just a
+// plugin-supplied one) still wrong, which was this review's own blocker
+// finding. Defaults to the international/English convention (comma
+// thousands, period decimal) for anything else not listed — including
+// fa/ur/ps/ar, whose own separator GLYPHS (٬ ٫) are substituted
+// afterward by LocalizeDigits.
+//
+// LATENT RISK, not yet real: this table is byte-value-agnostic of
+// LocalizeDigits' own separator-glyph substitution, which assumes
+// ','=thousands/'.'=decimal unconditionally (see its doc comment). The
+// two tables currently never overlap — no locale below is also a
+// digit-substituted one (fa/ur/ps/ar) — so nothing mis-swaps today. The
+// day a digit-substituted locale needs a non-default separator pair
+// (e.g. a Maghrebi Arabic variant using '.' for thousands), this needs a
+// role-aware substitution instead of LocalizeDigits' current byte-value
+// one, or grouping and decimal glyphs will silently swap.
+func numberSeparators(locale string) (thousands, decimal byte) {
+	lang := strings.ToLower(locale)
+	if i := strings.IndexAny(lang, "-_"); i > 0 {
+		lang = lang[:i]
+	}
+	switch lang {
+	// Continental-European convention: 1.234,56.
+	case "de", "es", "it", "nl", "tr":
+		return '.', ','
+	// French convention: a space groups thousands, comma decimals.
+	case "fr":
+		return ' ', ','
+	default:
+		return ',', '.'
+	}
+}
+
+// formatGrouped re-renders a plain decimal string v (Go's usual "-1234.56"
+// shape, one optional leading '-', one optional '.') using locale's
+// grouping/decimal-separator convention — shared by the FormatMoney* and
+// FormatQty* families below.
+func formatGrouped(v, locale string) string {
+	neg := strings.HasPrefix(v, "-")
+	if neg {
+		v = v[1:]
+	}
+	thousands, decimal := numberSeparators(locale)
+	intPart, fracPart, hasFrac := strings.Cut(v, ".")
+	out := groupThousands(intPart, thousands)
+	if hasFrac {
+		out += string(decimal) + fracPart
+	}
+	if neg {
+		out = "-" + out
+	}
+	return out
+}
+
 // FormatMoney renders minor units in the active currency for a locale:
-// decimals, symbol-vs-word placement, thousands grouping, and localized
-// digits all follow the currency + locale ("£1.23", "12,345 ریال" → rendered
-// as "۱۲٬۳۴۵ ریال" under a fa locale).
+// decimals, symbol-vs-word placement, thousands grouping/decimal
+// convention, and localized digits all follow the currency + locale
+// ("£1.23", "1.234,56 €" for de-DE, "12,345 ریال" → rendered as
+// "۱۲٬۳۴۵ ریال" under a fa locale).
 func FormatMoney(minor int64, locale string) string {
+	return formatMoney(minor, locale, true)
+}
+
+// FormatMoneyLatin is FormatMoney without digit-shape substitution — always
+// Latin (ASCII) digits, though grouping/decimal convention still follows
+// locale. For contexts that can't render non-Latin numeral glyphs in text
+// mode (ESC/POS receipt printing needs bitmap mode for that — see
+// buildReceiptDoc) but should still show a shop's own separator convention.
+func FormatMoneyLatin(minor int64, locale string) string {
+	return formatMoney(minor, locale, false)
+}
+
+func formatMoney(minor int64, locale string, digitShape bool) string {
 	c := ActiveCurrency()
 	neg := minor < 0
 	if neg {
@@ -206,18 +285,21 @@ func FormatMoney(minor int64, locale string) string {
 	}
 	var num string
 	if c.Decimals <= 0 {
-		num = groupThousands(fmt.Sprintf("%d", minor))
+		num = fmt.Sprintf("%d", minor)
 	} else {
 		pow := int64(1)
 		for i := 0; i < c.Decimals; i++ {
 			pow *= 10
 		}
-		num = fmt.Sprintf("%s.%0*d", groupThousands(fmt.Sprintf("%d", minor/pow)), c.Decimals, minor%pow)
+		num = fmt.Sprintf("%d.%0*d", minor/pow, c.Decimals, minor%pow)
 	}
 	if neg {
 		num = "-" + num
 	}
-	num = LocalizeDigits(num, locale)
+	num = formatGrouped(num, locale)
+	if digitShape {
+		num = LocalizeDigits(num, locale)
+	}
 	if c.Suffix {
 		return num + " " + c.Display
 	}
@@ -226,6 +308,21 @@ func FormatMoney(minor int64, locale string) string {
 		return c.Display + " " + num
 	}
 	return c.Display + num
+}
+
+// FormatQty renders a sale-line quantity following locale's grouping/
+// decimal convention (ut-docs#1130) — "1.5" renders "1,5" under a de-DE
+// locale, matching FormatMoney's decimal-separator swap, and digit shape
+// follows locale the same way too ("1.5" → "۱٫۵" under fa).
+func FormatQty(qty float64, locale string) string {
+	return LocalizeDigits(formatGrouped(strconv.FormatFloat(qty, 'f', -1, 64), locale), locale)
+}
+
+// FormatQtyLatin is FormatQty without digit-shape substitution — for
+// ESC/POS receipt/kitchen-ticket printing, same reasoning as
+// FormatMoneyLatin.
+func FormatQtyLatin(qty float64, locale string) string {
+	return formatGrouped(strconv.FormatFloat(qty, 'f', -1, 64), locale)
 }
 
 // FormatMajorPlain renders minor units as a plain decimal major-unit string
