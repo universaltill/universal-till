@@ -63,6 +63,7 @@ func newSyncPairingGateTestDeps(t *testing.T) *common.Deps {
 func TestSyncManagementEndpoints_RealSessionGatesByRole(t *testing.T) {
 	dp := newSyncPairingGateTestDeps(t)
 	stubBrowse(t, nil, nil) // discover-primaries: skip the real multi-second LAN scan
+	stubPairingRestart(t)   // pairing-restart: never syscall.Exec the test binary
 
 	mux := http.NewServeMux()
 	tokens := registerSyncAPI(mux, dp)
@@ -92,6 +93,10 @@ func TestSyncManagementEndpoints_RealSessionGatesByRole(t *testing.T) {
 		{name: "pending-pairings ui", method: http.MethodGet, path: "/ui/tills/pending-pairings", denyCode: http.StatusForbidden},
 		{name: "pair-start", method: http.MethodPost, path: "/api/sync/pair-start", denyCode: http.StatusForbidden},
 		{name: "pair-status", method: http.MethodGet, path: "/api/sync/pair-status", denyCode: http.StatusForbidden},
+		// ut-docs#1550: the joined screen's restart trigger goes through the
+		// exact same managerGate. Its restart seam is stubbed above so a
+		// manager getting past the gate never re-execs the test binary.
+		{name: "pairing-restart", method: http.MethodPost, path: "/api/sync/pairing-restart", denyCode: http.StatusForbidden},
 	}
 
 	for _, tc := range cases {

@@ -1,0 +1,87 @@
+// Package procrestart restarts the running till process in place — the same
+// PID, the same argv and environment — after a short delay that lets the
+// HTTP response which asked for it flush first.
+//
+// Why this exists (ut-docs#1550): joining a primary (internal/pages'
+// completeJoin) stages a downloaded database snapshot via
+// db.StageRestoreFromReader, and db.ApplyPendingRestore only ever runs once,
+// before db.Open() at process startup (internal/app/app.go). The process
+// genuinely has to restart for the join to take effect — that is structural,
+// not cosmetic — and a Pi kiosk operator has no shell to do it from, which
+// left the "joined — restart this till to finish" screen a real dead end.
+//
+// The mechanism is a deliberate, independent copy of the one
+// internal/selfupdate has used in production since its first release:
+// syscall.Exec of the current executable (reexec_unix.go). Because exec
+// replaces the image in the SAME process, the data-directory lock
+// (internal/db/lock.go) and the listening socket are both released through
+// their CLOEXEC flags at the instant of exec and re-acquired cleanly by the
+// new image's Run() — verified directly (an F_GETFD probe on both the lock
+// fd and the listener), not just inferred from selfupdate's own track
+// record. selfupdate is not reused directly, on purpose: its
+// reexecFn/reexecDelay are unexported, and it is a battle-tested
+// production-critical path with no reason to be touched for this feature.
+//
+// What this does NOT cover (review finding, ut-docs#1550, tracked as
+// ut-docs#1616): a hardware-plugin child process (internal/plugins,
+// exec.CommandContext with no SysProcAttr/process-group/Pdeathsig) is not
+// reparented, cancelled or signalled by an exec of ITS parent — the PID is
+// unchanged and the plugin's own context is never cancelled, so it survives
+// across the restart and the new image can spawn a second one. Pre-existing
+// in selfupdate too; narrowing the claim above rather than letting it read
+// as broader than the lock/socket case it actually proves.
+//
+// Windows is unsupported (reexec_windows.go): there is no in-place exec
+// there, so callers fall back to telling the operator to close and reopen
+// the app, which re-runs ApplyPendingRestore at the next start through the
+// exact same startup path. A native Windows restart is tracked separately
+// (ut-docs#1614).
+package procrestart
+
+import (
+	"os"
+	"time"
+
+	"github.com/universaltill/universal-till/internal/logging"
+)
+
+// Test seams. Production code never changes these; tests do, so Restart()
+// can be observed without a real syscall.Exec replacing the test binary
+// mid-run — the same convention as internal/selfupdate's own seams.
+var (
+	osExecutable = os.Executable
+	reexecFn     = reexec
+	// reexecDelay gives the in-flight HTTP response that requested the
+	// restart time to reach the browser before the process image is
+	// replaced — same value selfupdate.Apply uses for the same reason.
+	reexecDelay = 1500 * time.Millisecond
+)
+
+// Supported reports whether Restart can replace the process image on this
+// platform. It is a pure build-tag decision (see reexec_unix.go /
+// reexec_windows.go), so a template can branch on it to show either the
+// auto-restart flow or the honest "close and reopen" instruction.
+func Supported() bool {
+	return supported
+}
+
+// Restart schedules an in-place re-exec of the running executable after
+// reexecDelay and returns immediately. It never blocks the caller; a
+// re-exec failure is logged (there is no caller left to return it to) and
+// the operator can retry or restart by hand. If the running executable
+// cannot be located — practically impossible, but not worth a goroutine
+// that only fails later — nothing is scheduled and the error is logged.
+func Restart() {
+	exe, err := osExecutable()
+	if err != nil {
+		logging.L().Errorf("[procrestart] locate executable: %v (restart manually)", err)
+		return
+	}
+	logging.L().Infof("[procrestart] restarting %s in %v", exe, reexecDelay)
+	go func() {
+		time.Sleep(reexecDelay)
+		if err := reexecFn(exe); err != nil {
+			logging.L().Errorf("[procrestart] re-exec failed (restart manually): %v", err)
+		}
+	}()
+}

@@ -62,6 +62,14 @@ func exempt(path string) bool {
 		// TestSyncPullPathsAreExempt pins this entry.
 		"/api/sync/orders/stream", "/api/setup/join",
 		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status",
+		// ut-docs#1550: the wizard's "joined — restarting" trigger, the
+		// sibling of /api/setup/pair-status directly above and on the very
+		// same first-boot-only window (firstBootGate in the handler). A
+		// freshly-joined first-boot till has no operator to sign in as, so
+		// without this entry the auto-restart and its manual "Restart now"
+		// button both answer 401 before the handler ever runs.
+		// TestMiddlewareExemptsFirstBootPairingRoutes pins this entry.
+		"/api/setup/pairing-restart",
 		// ut-docs#1092: the wizard's install-a-catalog-language action —
 		// same first-boot-only window as /api/setup itself (its handler's
 		// NeedsFirstBoot gate refuses once an operator exists), and like
