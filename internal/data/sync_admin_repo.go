@@ -194,6 +194,118 @@ var adminTables = []adminTable{
 	{name: "tills", pk: []string{"id"}, redactCols: []string{"bearer_hash", "last_seen_at"}},
 }
 
+// nonAdminTables is every OTHER table in the schema, one reason each for why
+// it deliberately does NOT travel in the admin bundle. TestSchemaTablesAreClassified
+// (schema_drift_test.go) fails CI the moment a new migration adds a table
+// that ends up in neither this map nor adminTables above — the guard
+// ut-docs#1586 asked for after ut-docs#1546 showed a shop-wide table
+// (tables/kitchen_stations) can sit unsynced for a long time with nothing to
+// catch it.
+//
+// A wrong "safe to exclude" verdict here reproduces that exact bug, just
+// laundered through a passing CI check — so a table whose classification is
+// genuinely uncertain is flagged with an open question and its own follow-up
+// card below, NOT guessed into either list. Deciding those is explicitly
+// this card's non-goal (ut-docs#1586): a guard classifying "should probably
+// sync but doesn't yet" as settled would be exactly the rushed re-scoping
+// ut-docs#1554 split out to avoid.
+//
+// Grouped by why, not alphabetically — the reason is what matters to a
+// reviewer of a future migration, and several tables share one.
+var nonAdminTables = map[string]string{
+	// Already named in this var's own top comment above.
+	"sessions":    "till-local login sessions — meaningless off the issuing till",
+	"item_images": "item photos — files don't travel over this bundle (D2 limit)",
+
+	// Migration runner's own bookkeeping (created by internal/db's migrator,
+	// not a numbered migration file itself) — which migrations have applied
+	// to THIS till's database. Syncing it would be circular in the same way
+	// as sync_journal_quarantine/schema_lineage below.
+	"schema_migrations": "this till's own applied-migrations record — migration-runner-internal, not app data",
+
+	// Inventory/stock: D3's own additive-movement sync (ADR-0011), a
+	// separate mechanism from this bundle — already named above.
+	"inventory":               "current stock levels — D3's own additive-movement sync, not this bundle",
+	"stock_movements":         "additive stock ledger — D3's own sync stream",
+	"stock_movements_archive": "archived stock_movements rows — same D3 stream",
+
+	// Sales and everything hung off a sale_id/receipt: already named above
+	// ("sales"). A primary-wins bundle that prunes anything missing from the
+	// sender's dump (deleteMissing) is the wrong shape for an append-only
+	// ledger — a history row present locally but absent from the sender
+	// would be pruned as if deleted, erasing real transaction history
+	// instead of converging state. Each till keeps its own sales history;
+	// cross-till reporting is export_repo.go's job, not LAN admin sync's.
+	"sales":                       "per-till sale header — append-only ledger, wrong shape for this bundle",
+	"sales_archive":               "archived sales rows — same reasoning",
+	"held_sales":                  "a parked/suspended sale basket on this till — a primary-wins bundle with deleteMissing pruning would erase a satellite's own genuinely-parked orders on every pull, worse than not syncing; but this now means table occupancy doesn't cross tills even though the floor plan (tables) does — flagged in ut-docs#1672",
+	"held_sales_archive":          "archived held_sales rows — same reasoning",
+	"sale_lines":                  "sale line items, child of sales — same reasoning",
+	"sale_lines_archive":          "archived sale_lines — same reasoning",
+	"sale_line_modifiers":         "modifier selections on a sold line, child of sale_lines — same reasoning",
+	"sale_line_modifiers_archive": "archived sale_line_modifiers — same reasoning",
+	"sale_charges":                "per-sale service charges, child of sales — same reasoning",
+	"sale_charges_archive":        "archived sale_charges — same reasoning",
+	"sale_discounts":              "per-sale/line discounts, child of sales — same reasoning",
+	"sale_discounts_archive":      "archived sale_discounts — same reasoning",
+	"sale_links":                  "sale-to-original-sale links (refunds/reprints), child of sales — same reasoning",
+	"sale_links_archive":          "archived sale_links — same reasoning",
+	"payments":                    "tender records, FK'd to sales — same append-only-ledger reasoning",
+	"payments_archive":            "archived payments — same reasoning",
+	"invoices":                    "fiscal invoices/credit notes, FK'd to sales — same reasoning",
+	"invoices_archive":            "archived invoices — same reasoning",
+	"fiscal_sign_starts":          "in-flight German TSE signing state, keyed 1:1 on sale_id — per-sale, per-till",
+	"fiscal_tse_signatures":       "completed TSE signatures, keyed 1:1 on sale_id — per-sale, per-till",
+	"shifts":                      "cashier shift open/close, register-scoped — per-till operational history, same reasoning as sales",
+	"shifts_archive":              "archived shifts — same reasoning",
+	"worker_allocations":          "tip/service-charge pool allocations tied to a cashier + reset_batches — per-till operational history, same family as shifts/payments",
+	"worker_allocations_archive":  "archived worker_allocations — same reasoning",
+	"report_archive":              "this till's own X/Z report archive — per-till operational history, same reasoning as sales_archive",
+	"voucher_transactions":        "per-sale voucher issue/redemption ledger — same append-only reasoning as payments; ALSO gated on ut-docs#1668's open vouchers question below",
+
+	// Plugin install machinery — already named above. The installed SET
+	// travels as its own separately-fingerprinted bundle (SyncPluginsRepo,
+	// GET /api/sync/plugins) and each replica re-verifies every listing
+	// itself; these underlying rows never travel because a row without the
+	// Ed25519-verified plugin FILES would leave a replica with a phantom
+	// plugin.
+	"plugins":               "installed-plugin rows — travel via SyncPluginsRepo's own bundle, not this one",
+	"plugin_catalog":        "cached marketplace listing metadata — re-fetched from the marketplace, never synced till-to-till",
+	"plugin_entries":        "plugin-contributed menu/hook entries — recreated on re-install, not synced",
+	"plugin_hooks":          "plugin-contributed hooks — recreated on re-install, not synced",
+	"plugin_install_status": "install-progress bookkeeping — SyncPluginsRepo's own source table",
+	"plugin_permissions":    "granted permissions for one installed plugin instance — recreated on re-install",
+	"plugin_storage":        "plugin-private key/value storage in general, BUT its fiscal_register: prefix backs the shop-wide German TSE till-register (ADR-0072/ut-docs#1106, FiscalRegisterDEStore) with no requirePrimary gate on /fiscal-register — the #1546 shape, on the whole table not just that prefix; flagged, not decided, in ut-docs#1670",
+
+	// Sync's own internal bookkeeping — syncing the sync mechanism's state
+	// to itself would be circular.
+	"sync_journal_quarantine": "this till's own quarantined-sale bookkeeping — sync-internal",
+	"schema_lineage":          "this till's own migration/reset marker — sync-internal schema bookkeeping",
+	"pending_pairings":        "in-flight LAN pairing requests — ephemeral, till-local",
+
+	// Live/ephemeral operational state: a periodic, primary-wins bundle is
+	// the wrong mechanism for a lock or an event stream — applying a stale
+	// snapshot of either would actively misbehave (a claim from a till
+	// that's since gone offline would look permanently locked; a replayed
+	// status event would re-fire a KDS notification).
+	"table_claims":        "live table-service lock — ephemeral, re-established on demand, never meant to survive a periodic snapshot",
+	"order_status_events": "live KDS status-change event stream — operational, not admin config",
+	"reset_batches":       "this till's own EOD/Z-report reset marker — sync-adjacent bookkeeping, same family as report_archive",
+
+	// Local bookkeeping with no shop-wide meaning.
+	"issue_reports_sent": "dedup record of bug reports already sent FROM this till",
+	"audit_log":          "this till's own local action log (including per-till-scoped settings changes — see PerTillSettingPrefixes); a shop-wide combined audit view is a separate concern, not LAN admin sync's job",
+
+	// Genuinely open classification questions — excluded (not synced) rather
+	// than guessed into adminTables, each split into its own follow-up card
+	// per this var's own top comment.
+	"item_modifier_groups":  "catalog structure with no requirePrimary gate and not yet synced — looks like the ut-docs#1546 pattern; flagged, not decided, in ut-docs#1667",
+	"item_modifier_options": "catalog structure — same flag as item_modifier_groups, ut-docs#1667",
+	"vouchers":              "shop-wide voucher balance, runtime-mutable across tills — needs a concurrency design before it can safely sync (parallel to ut-docs#1554's role_permissions); flagged in ut-docs#1668",
+	"country_settings":      "admin-manageable per-jurisdiction defaults (tax/currency/retention) — reads shop-wide like settings, not yet confirmed safe to bundle; flagged in ut-docs#1669",
+	"price_history":         "NOT a pure append-only audit trail (AppendPriceHistoryItem/Variant UPDATE the prior row's ends_at, and item deletion DELETEs rows) and NOT inert to checkout — ResolveCurrentPrice consults an open price_history row BEFORE items' synced price, so it can override it. Currently latent (nothing in production writes this table yet), but a satellite that ever does would diverge on price silently. Needs an Architect pass before either classification is safe; flagged in ut-docs#1671",
+}
+
 // FiscalPendingSignRetriesSettingsKey is the settings.key the pre-1.4.0
 // fiscal-signing retry queue lived under. Duplicated from
 // internal/pages/common.KeyPendingFiscalSignRetries ("fiscal.pending_sign_retries")
