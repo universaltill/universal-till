@@ -967,7 +967,17 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				if len(it.ImageData) > 0 {
 					if img, derr := imaging.Decode(it.ImageData); derr != nil {
 						log.Printf("[import] decode image for item %q: %v", it.Name, derr)
-						warnings = append(warnings, T("import.status.image_undecodable"))
+						// ut-docs#1623: a real, decodable photo over
+						// imaging.MaxPixels is a distinct case from a
+						// genuinely corrupt/unsupported file — same
+						// errors.Is branch the manual-upload handlers
+						// already use (internal/pages/catalog/handlers.go)
+						// to tell the two apart.
+						if errors.Is(derr, imaging.ErrTooManyPixels) {
+							warnings = append(warnings, T("import.status.image_too_many_pixels"))
+						} else {
+							warnings = append(warnings, T("import.status.image_undecodable"))
+						}
 					} else {
 						img = imaging.DownscaleMaxEdge(img, imaging.MaxThumbEdge)
 						dir := paths.Data("public", "assets", "items", itemID)
