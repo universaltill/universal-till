@@ -209,10 +209,48 @@ not assumed.
   method is what caught the blocker; a reading based on recollection would
   plausibly have waved `onLockTaskModeChanged` through, since it *sounds*
   like an API that ought to exist.
+- A sibling session shipping ut-docs#1647 (PR #832) the same afternoon
+  *did* have an Android SDK and recorded
+  `gradlew :app:compileDebugKotlin BUILD SUCCESSFUL`. So SDK availability
+  is per-session luck, not a property of this repo's pipeline — which is
+  the argument for deferred item 3, not against it: whether a Kotlin
+  compile error reaches `main` currently depends on which session happened
+  to pick the card up.
 - API-level floors checked against `android/app/build.gradle.kts`:
   `minSdk = 24`, so both `ActivityManager.getLockTaskModeState()` (API 23)
   and `ActivityManager.LOCK_TASK_MODE_*` (API 23) are unconditionally
   available; `onWindowFocusChanged` is API 1.
+
+## Merge with `main` (post-review)
+
+`main` moved three PRs while this was in review, one of them
+(ut-docs#1647, PR #832) touching the same file. Merged rather than
+rebased, per this repo's standing merge rule. Conflicts and how each was
+resolved:
+
+- All four `strings.xml`: both sides appended a new key at the same spot.
+  Kept both, in the same order in every locale
+  (`kiosk_pin_not_engaged`, then `external_link_failed`) —
+  `guard-android-i18n` now reports 8 keys matching across ar/fa/tr.
+- Four screenshot PNGs: took `main`'s. These were this branch's
+  byte-noise-only regeneration; the guard hashes topic markdown and the
+  app surface, never the PNGs, so discarding them keeps the diff honest
+  and smaller.
+- `web/help/img/manifest.json` auto-merged correctly and was verified, not
+  assumed: this branch touches no file in the guard's surface fileset
+  (`web/ui/**`, `web/public/**`, non-test `internal/pages/**.go`), so the
+  merged surface hash is identically `main`'s, and the two sides' topic-hash
+  edits (`en/display` here, `my-reports`/`reports` there) are disjoint
+  lines. `guard-docs-shots` independently recomputes both and passes.
+- `MainActivity.kt` merged with no conflict — #832's changes are all in
+  `shouldOverrideUrlLoading`/`openInSystemBrowser`, this branch's are all
+  in the lock-task block. Verified both survive in the merged file, and
+  #832's new `guard-android-external-links.sh` + its 9-case regression
+  test both pass on the result.
+
+Full gate re-run on the merged tree: `gofmt`, `go build`, `go vet`,
+`go test ./...`, and all 21 CI-blocking guards in `ci.yml`'s `build` job —
+all green.
 
 ## Safe-to-merge verdict
 
