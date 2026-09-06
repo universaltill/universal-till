@@ -37,7 +37,8 @@
     // inline <script> prose (same pattern as bugreport_panel.html).
     var T = {
       restarting: "{{ T "tills.pairing.restarting" }}",
-      restarting_slow: "{{ T "tills.pairing.restarting_slow" }}"
+      restarting_slow: "{{ T "tills.pairing.restarting_slow" }}",
+      restart_failed: "{{ T "common.error.server" }}"
     };
     (function () {
       var btn = document.getElementById('pairing-restart-btn');
@@ -79,14 +80,51 @@
           }, 500);
         }, 2500);
       }
-      btn.addEventListener('htmx:afterRequest', function () { waitForTill(); });
+      // Review finding (ut-docs#1620, same shape ut-docs#1613 fixed on
+      // backup_restore_staged.html): htmx:afterRequest fires on EVERY
+      // completed response, success or not. The manager-gated route
+      // (/api/sync/pairing-restart) can answer 403 if the manager's
+      // session lapses between the join completing and the click, or 409
+      // on pairingRestartHandler's own "nothing staged" guard (a stale
+      // double-click after a restart already happened) — either way,
+      // unconditionally polling here claimed a restart that never
+      // happened and bounced the operator to /login off the still-running,
+      // unrestarted process. Now only a real success polls; a non-2xx
+      // parses the server's own translated message (the JSON `error`
+      // field for the 409 envelope, or the raw body for the plain-text
+      // 403 managerGate/common.LocalizedError returns) and shows it with
+      // the button left live, matching this app's existing '✗ ' error
+      // convention (e.g. reports_tab_eod.html, plugins.html).
+      btn.addEventListener('htmx:afterRequest', function (ev) {
+        if (ev.detail.successful) { waitForTill(); return; }
+        var text = T.restart_failed;
+        try {
+          var body = JSON.parse(ev.detail.xhr.responseText);
+          if (body && body.error) { text = body.error; }
+        } catch (e) {
+          // Not JSON (the plain-text 403 from managerGate's
+          // common.LocalizedError) — that response body IS already the
+          // translated message. trim() drops http.Error's trailing "\n"
+          // (review finding, ut-docs#1620) — harmless under normal
+          // whitespace collapse today, but fragile against a future
+          // white-space:pre-wrap on this element.
+          var raw = (ev.detail.xhr.responseText || '').trim();
+          if (raw) { text = raw; }
+        }
+        msg.hidden = false;
+        msg.textContent = '✗ ' + text;
+      });
       // A press that lands while the till is still down (mid previous
       // restart, or a slow boot) fails at the network level, not with a
-      // normal response — htmx marks that unsuccessful. Resuming the poll
-      // here, rather than doing nothing, is what makes a press during that
-      // window actually help instead of being a silent no-op.
+      // normal response — htmx marks that unsuccessful too, but as a send
+      // failure rather than a completed response, so afterRequest above
+      // never sees it. Resuming the poll here, rather than showing an
+      // error, is what makes a press during that window actually help
+      // instead of being a silent no-op. (htmx:responseError, which used
+      // to also call waitForTill() unconditionally here, is dropped: it
+      // fires for exactly the non-2xx cases afterRequest's branch above
+      // now handles, and re-triggering the poll from it would undo that.)
       btn.addEventListener('htmx:sendError', function () { waitForTill(); });
-      btn.addEventListener('htmx:responseError', function () { waitForTill(); });
     })();
   </script>
   {{ else }}
