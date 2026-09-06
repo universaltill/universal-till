@@ -84,6 +84,19 @@ sends the request an `annotation` value; there's no on-screen field for it
 yet, so this is mainly useful to an integration or a future till update —
 it prints as **Anmerkung** immediately under Erstellt von when present.
 
+## Article group, article and operator breakdowns
+
+Running End of day for a single day (not a date range) adds three more
+breakdowns, on the printed report and on screen in the archived-report list:
+**BY ARTICLE GROUP** (revenue by each article's own category — a subcategory
+like "Phones" shows on its own line here, rather than rolled up into its
+parent department the way the department breakdown does), **BY ARTICLE**
+(every article sold that day, not just the best/slowest sellers — shown
+collapsed on screen since a busy day can list dozens), and **BY OPERATOR**
+(revenue and sale count per cashier). Revenue stays attributed to whichever
+cashier actually rang the sale even when a manager approved an override on
+it, so the operator breakdown always reflects who was really on the till.
+
 ## Payment method and VAT rate together on the day-end (Z) report
 
 The printed day-end report includes a **BY METHOD & VAT RATE** table: the

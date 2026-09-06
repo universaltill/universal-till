@@ -47,6 +47,21 @@ Bir çekin satıldığı satış iptal edilirse, çek henüz hiç kullanılmamı
 harcanamaz. Çekin herhangi bir kısmı zaten harcanmışsa kasa o satışın
 iptalini reddeder: önce bekleyen çeki müşteriyle çözüme kavuşturun.
 
+## Ürün grubu, ürün ve kasiyer bazında dökümler
+
+Gün sonu raporunu tek bir gün için (tarih aralığı değil) çalıştırmak,
+hem yazdırılan raporda hem de arşivlenmiş rapor listesinde ekranda üç
+döküm daha ekler: **ürün grubuna göre** (her ürünün kendi kategorisine
+göre gelir — "Telefonlar" gibi bir alt kategori, departman dökümünde
+olduğu gibi üst departmanına dahil edilmek yerine burada kendi satırında
+gösterilir), **ürüne göre** (o gün satılan her ürün, sadece en çok/en az
+satanlar değil — yoğun bir gün onlarca satır listeleyebileceğinden
+ekranda katlanmış olarak gösterilir), ve **kasiyere göre** (kasiyer
+başına gelir ve satış sayısı). Bir yönetici bir satış üzerinde onay
+verse bile gelir her zaman satışı gerçekten gerçekleştiren kasiyere
+atfedilmeye devam eder, böylece kasiyer dökümü her zaman kasada
+gerçekte kimin çalıştığını yansıtır.
+
 ## Gün sonu (Z) raporunda ödeme yöntemi ve KDV oranı bir arada
 
 Yazdırılan gün sonu raporunda **BY METHOD & VAT RATE** tablosu bulunur:

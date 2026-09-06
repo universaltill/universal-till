@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/print"
 )
 
@@ -212,6 +213,100 @@ func TestBuildEODDoc_VoucherSection(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("Z-report voucher section missing %q\n%s", want, out)
 		}
+	}
+}
+
+// TestBuildEODDoc_ArticleGroupArticleOperatorSections is the ut-docs#1010
+// printed-receipt requirement: BY ARTICLE GROUP / BY ARTICLE / BY OPERATOR
+// print as their own footer sections, same "%-20s %s" row shape and same
+// "empty slice -> section omitted entirely" convention as BY DEPARTMENT /
+// BY TILL above.
+func TestBuildEODDoc_ArticleGroupArticleOperatorSections(t *testing.T) {
+	rep := data.EODReport{
+		Day: "2026-07-14", GeneratedAt: "2026-07-14T21:30:00Z",
+		SalesCount: 2, Gross: 15000, Net: 15000, TaxNet: 2000,
+		ArticleGroups: []data.ArticleGroupSales{
+			{Group: "Phones", Qty: 1, Net: money.FromMinor(10000), Gross: money.FromMinor(10000)},
+			{Group: "", Qty: 1, Net: money.FromMinor(5000), Gross: money.FromMinor(5000)},
+		},
+		Articles: []data.ArticleSales{
+			{Name: "Phone Case", Qty: 1, Net: money.FromMinor(10000), Gross: money.FromMinor(10000)},
+		},
+		Operators: []data.OperatorSales{
+			{CashierID: "cashier-a", DisplayName: "Cashier A", Count: 2, Net: money.FromMinor(15000), Gross: money.FromMinor(15000)},
+		},
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	for _, want := range []string{
+		"BY ARTICLE GROUP", "Phones", "£100.00", "Uncategorized", "£50.00",
+		"BY ARTICLE", "Phone Case",
+		"BY OPERATOR", "Cashier A", "£150.00",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("Z-report missing %q\n%s", want, out)
+		}
+	}
+}
+
+// TestBuildEODDoc_ArticleGroupArticleOperatorSections_OmittedWhenEmpty: a
+// range report (where ut-docs#1010's breakdowns are never populated, see
+// EODReport's own doc comment) must print none of the three new sections —
+// same "no line at all beats an empty section" convention as GUTSCHEINE/
+// STORNOS.
+func TestBuildEODDoc_ArticleGroupArticleOperatorSections_OmittedWhenEmpty(t *testing.T) {
+	rep := data.EODReport{
+		From: "2026-07-01", To: "2026-07-14", GeneratedAt: "2026-07-14T21:30:00Z",
+		SalesCount: 2, Gross: 15000, Net: 15000, TaxNet: 2000,
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	for _, unwanted := range []string{"BY ARTICLE GROUP", "BY ARTICLE", "BY OPERATOR"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("range report must omit %q entirely, got:\n%s", unwanted, out)
+		}
+	}
+}
+
+// TestBuildEODDoc_ArticleSection_LongNameDoesNotSwallowAmount is the fix for
+// ut-docs#1010 review finding 1: sale_lines.name_snapshot is free-text and
+// routinely exceeds the fixed 20-column pad BY DEPARTMENT/BY TILL's shared
+// "%-20s %s" convention was written for (those labels are short/controlled —
+// a department name, a till name, "TOTAL"). A name that long, formatted the
+// old way, pushes the amount past print.Width and the printer's own
+// line-clip silently drops it — the actual revenue figure vanishes from a
+// financial document with no error. footerRow (the fix) must clip the LABEL
+// instead, so the amount always survives intact in the rendered output.
+func TestBuildEODDoc_ArticleSection_LongNameDoesNotSwallowAmount(t *testing.T) {
+	longName := "Coca-Cola Zero Sugar 500ml Bottle 6-Pack Multibuy Offer" // 56 runes
+	// The article's own Gross (£777.77) is deliberately DIFFERENT from the
+	// report's overall Sales/NET total (£1,500.00) — otherwise a check for
+	// "does £777.77 appear anywhere in the output" could false-pass by
+	// matching the unrelated Sales/NET lines instead of the BY ARTICLE row
+	// actually under test (exactly the false-pass class this pipeline
+	// watches for: an earlier draft of this test asserted on "£1,500.00"
+	// while ALSO setting the report total to £1,500.00, so it kept passing
+	// even with the pre-fix "%-20s %s" formatting reinstated, because the
+	// substring matched the totals section instead).
+	rep := data.EODReport{
+		Day: "2026-07-14", GeneratedAt: "2026-07-14T21:30:00Z",
+		SalesCount: 1, Gross: 150000, Net: 150000,
+		Articles: []data.ArticleSales{
+			{Name: longName, Qty: 1, Net: money.FromMinor(77777), Gross: money.FromMinor(77777)},
+		},
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	lines := strings.Split(out, "\n")
+	var articleLine string
+	for i, l := range lines {
+		if strings.Contains(l, "BY ARTICLE") && i+1 < len(lines) {
+			articleLine = lines[i+1]
+			break
+		}
+	}
+	if articleLine == "" {
+		t.Fatalf("no BY ARTICLE section found in output:\n%s", out)
+	}
+	if !strings.Contains(articleLine, "£777.77") {
+		t.Fatalf("BY ARTICLE row for a long article name must still carry its own amount intact, got row %q from output:\n%s", articleLine, out)
 	}
 }
 

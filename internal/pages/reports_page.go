@@ -406,6 +406,16 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				// plain Period as before (no regression on the
 				// historical path).
 				From, To string
+				// ArticleGroups/Articles/Operators (ut-docs#1010) come from
+				// the same archived report's content_json the Net/Sales
+				// fields above already unmarshal from — gated behind
+				// CanRunEOD the same way, and left nil (no section
+				// rendered, see the template) for any report these weren't
+				// computed for (a range report, or one archived before
+				// this change).
+				ArticleGroups []data.ArticleGroupSales
+				Articles      []data.ArticleSales
+				Operators     []data.OperatorSales
 			}
 			var eodRows []eodRow
 			// ut-docs#794 review finding (residual on the blocker-1 fix):
@@ -434,6 +444,9 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 							row.Net = rep.Net
 							row.Sales = rep.SalesCount
 							row.HasVariance = rep.CashReconciliation != nil && rep.CashReconciliation.Variance != 0
+							row.ArticleGroups = rep.ArticleGroups
+							row.Articles = rep.Articles
+							row.Operators = rep.Operators
 							if rep.Day == "" {
 								row.From, row.To = rep.From, rep.To
 							}
