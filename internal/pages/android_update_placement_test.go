@@ -138,6 +138,16 @@ func TestAndroidInstallFormAbsentWithoutTheBridge(t *testing.T) {
 func TestAndroidInstallFormReachableByCashierButPINGated(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 
+	// Pin the freshness pre-check to "an update is available" (ut-docs#1680):
+	// without this override the handler falls through to the real
+	// updates.CheckNow, and whenever that live check reports "already
+	// current" it short-circuits every PIN-gated case below to 200 before
+	// the PIN is ever looked at — the assertions then depend on network
+	// timing/availability rather than the PIN gate this test exists to pin.
+	orig := androidInstallCheckNow
+	androidInstallCheckNow = func(context.Context) updates.Status { return updates.Status{Available: true} }
+	t.Cleanup(func() { androidInstallCheckNow = orig })
+
 	body := renderSettingsAs(t, mux, cashUser, true)
 	if !strings.Contains(body, `id="android-update-form"`) {
 		t.Error("a cashier following the update chip finds no install form — the chip is a dead end for that role")
