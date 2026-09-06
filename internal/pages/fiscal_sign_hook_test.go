@@ -163,6 +163,41 @@ func subscribeFiscalSignHandler(t *testing.T, dp *common.Deps, pluginID string, 
 	}
 }
 
+// seedFiscalSignStartPluginRows is seedFiscalSignPluginRows' twin for the
+// ADR-0077 D1 dispatch point.
+func seedFiscalSignStartPluginRows(t *testing.T, dp *common.Deps, pluginID string) {
+	t.Helper()
+	ctx := context.Background()
+	if _, err := dp.Db.ExecContext(ctx, `
+INSERT INTO plugins (id, name, version, install_state, entrypoint, runtime, is_active, trust_level)
+VALUES (?, ?, '1.0.0', 'installed', './plugin.wasm', 'wasm', 1, 'trusted')`,
+		pluginID, "Fiscal Sign Start "+pluginID); err != nil {
+		t.Fatalf("seed plugins: %v", err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `
+INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+VALUES (?, ?, 'fiscal.sign.start', 'fiscal.sign', 1)`, "hook-start-"+pluginID, pluginID); err != nil {
+		t.Fatalf("seed plugin_hooks: %v", err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `
+INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+VALUES (?, ?, 'events:receive', 1)`, "perm-start-"+pluginID, pluginID); err != nil {
+		t.Fatalf("seed plugin_permissions: %v", err)
+	}
+}
+
+// subscribeFiscalSignStartHandler registers an in-process Go handler as the
+// fiscal.sign.start (ADR-0077 D1) answerer — same shape as
+// subscribeFiscalSignHandler, for the new dispatch point.
+func subscribeFiscalSignStartHandler(t *testing.T, dp *common.Deps, pluginID string, h plugins.EventHandler) {
+	t.Helper()
+	seedFiscalSignStartPluginRows(t, dp, pluginID)
+	bus := plugins.SharedBus(dp.Db)
+	if _, err := bus.SubscribeWithHandler(context.Background(), pluginID, []string{fiscalSignStartEvent}, h); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+}
+
 func countAuditRows(t *testing.T, dp *common.Deps, action string) int {
 	t.Helper()
 	var n int
@@ -457,6 +492,12 @@ func TestFiscalSignAsk_ZeroPluginTillAllocatesNothing(t *testing.T) {
 	plugins.SharedBus(dp.Db).ResetSubscribers() // belt-and-braces: no leaked subscriber
 	in := pos.SaleInput{Currency: "EUR", Offline: false}
 	allocs := testing.AllocsPerRun(100, func() {
+		// ADR-0077 D1: extended (not a separate test) to also cover
+		// dispatchFiscalSignStart, per the ADR's own instruction — a till
+		// with neither fiscal.sign.start nor fiscal.sign.ask subscribed
+		// must pay for both zero-plugin fast paths combined, still zero
+		// allocs/op.
+		dispatchFiscalSignStart(context.Background(), dp, &in)
 		res := dispatchFiscalSignAsk(context.Background(), dp, &in)
 		if res.Outcome != fiscalSignNoSigner {
 			t.Fatalf("expected fiscalSignNoSigner, got %v", res.Outcome)
@@ -1236,5 +1277,215 @@ VALUES ('com.test.no-hook', 'No Hook', '1.0.0', 'installed', './plugin.wasm', 'w
 		if rec.Code != http.StatusOK {
 			t.Fatalf("expected 200 enabling %s with no active conflict, got %d: %s", id, rec.Code, rec.Body.String())
 		}
+	}
+}
+
+// --- ADR-0077 Decision 1: fiscal.sign.start (ut-docs#1519) -----------------
+
+// A known-offline tender must never dispatch fiscal.sign.start at all — same
+// short-circuit fiscal.sign.ask already has, extended to this second point
+// per ADR-0077 D1 (called out explicitly as missing from the ADR's own first
+// draft).
+func TestFiscalSignStart_KnownOfflineSkipsDispatch(t *testing.T) {
+	_, dp := newFiscalSignDeps(t)
+	var invocations atomic.Int32
+	subscribeFiscalSignStartHandler(t, dp, "com.test.fiscal-start-offline", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		invocations.Add(1)
+		return json.RawMessage(`{"status":"acknowledged","tx_id":"tx-1","tx_revision":1}`), nil
+	})
+	in := pos.SaleInput{Currency: "EUR", Offline: true}
+	dispatchFiscalSignStart(context.Background(), dp, &in)
+	dp.WaitForAsyncWork()
+	if n := invocations.Load(); n != 0 {
+		t.Fatalf("known-offline must never dispatch fiscal.sign.start, got %d invocations", n)
+	}
+}
+
+// dispatchFiscalSignStart must return to its caller immediately — the
+// dispatch (and the plugin's own handling of it) happens entirely on a
+// goroutine this call never waits for. Proven by having the subscribed
+// handler block on a channel this test controls: if dispatchFiscalSignStart
+// waited for it, this test would time out.
+func TestFiscalSignStart_NeverBlocksTheCaller(t *testing.T) {
+	_, dp := newFiscalSignDeps(t)
+	release := make(chan struct{})
+	subscribeFiscalSignStartHandler(t, dp, "com.test.fiscal-start-slow", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		<-release
+		return json.RawMessage(`{"status":"acknowledged","tx_id":"tx-slow","tx_revision":1}`), nil
+	})
+	// Release the handler before this test function returns, so the
+	// t.Cleanup(dp.WaitForAsyncWork) registered by newFiscalSignDeps doesn't
+	// hang waiting on a goroutine stuck forever on <-release.
+	defer close(release)
+
+	in := pos.SaleInput{Currency: "EUR"}
+	done := make(chan struct{})
+	go func() {
+		dispatchFiscalSignStart(context.Background(), dp, &in)
+		close(done)
+	}()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("dispatchFiscalSignStart must return immediately, not wait for the plugin's handler")
+	}
+}
+
+// The core round trip (ADR-0077 D1/D2): a subscribed fiscal.sign.start
+// handler's "acknowledged" answer is captured and persisted, THEN echoed
+// into the SAME sale's later fiscal.sign.ask ("finish") request as
+// started_tx_id/started_tx_revision.
+func TestFiscalSignStart_CapturesTxIDAndEchoesOnAskFinish(t *testing.T) {
+	_, dp := newFiscalSignDeps(t)
+	subscribeFiscalSignStartHandler(t, dp, "com.test.fiscal-start-ok", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		return json.RawMessage(`{"status":"acknowledged","tx_id":"tx-42","tx_revision":3}`), nil
+	})
+	var captured fiscalSignAskPayload
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-ask-capture", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		if err := json.Unmarshal(ev.Payload, &captured); err != nil {
+			t.Fatal(err)
+		}
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+
+	in := pos.SaleInput{Currency: "EUR"}
+	dispatchFiscalSignStart(context.Background(), dp, &in)
+	// The round trip runs on a goroutine (dispatchFiscalSignStart never
+	// waits for it) — wait for it to actually finish before asking
+	// "finish", exactly as a real tender's authorize-loop latency would in
+	// production (ADR-0077 D1: "genuinely likely to complete before finish
+	// fires in the common case").
+	dp.WaitForAsyncWork()
+
+	res := dispatchFiscalSignAsk(context.Background(), dp, &in)
+	if res.Outcome != fiscalSignApproved {
+		t.Fatalf("expected fiscalSignApproved, got %v (%s)", res.Outcome, res.Reason)
+	}
+	if captured.StartedTxID != "tx-42" || captured.StartedTxRevision != 3 {
+		t.Fatalf("expected started_tx_id/started_tx_revision echoed from the captured start round trip, got %+v", captured)
+	}
+
+	start, ok, err := data.NewPOSRepo(dp.Db).GetFiscalSignStart(context.Background(), in.SaleID)
+	if err != nil || !ok {
+		t.Fatalf("expected a persisted fiscal_sign_starts row, ok=%v err=%v", ok, err)
+	}
+	if start.TxID != "tx-42" || start.TxRevision != 3 {
+		t.Fatalf("persisted start mismatch: %+v", *start)
+	}
+}
+
+// A start answer that never reaches "acknowledged" (still a valid, honest
+// non-failure per the point's own best-effort framing — see
+// fiscalSignStartResponse's doc comment) must leave the later finish
+// dispatch's started_tx_id/started_tx_revision omitted, and must persist
+// nothing — the degraded case, not an error.
+func TestFiscalSignStart_UnacknowledgedAnswerLeavesAskFieldsOmitted(t *testing.T) {
+	_, dp := newFiscalSignDeps(t)
+	subscribeFiscalSignStartHandler(t, dp, "com.test.fiscal-start-pending", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		return json.RawMessage(`{"status":"pending"}`), nil
+	})
+	var captured fiscalSignAskPayload
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-ask-capture2", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		_ = json.Unmarshal(ev.Payload, &captured)
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+
+	in := pos.SaleInput{Currency: "EUR"}
+	dispatchFiscalSignStart(context.Background(), dp, &in)
+	dp.WaitForAsyncWork()
+	dispatchFiscalSignAsk(context.Background(), dp, &in)
+
+	if captured.StartedTxID != "" || captured.StartedTxRevision != 0 {
+		t.Fatalf("expected no echoed identifier for a non-acknowledged start answer, got %+v", captured)
+	}
+	if _, ok, err := data.NewPOSRepo(dp.Db).GetFiscalSignStart(context.Background(), in.SaleID); ok || err != nil {
+		t.Fatalf("expected no persisted fiscal_sign_starts row for a non-acknowledged answer, ok=%v err=%v", ok, err)
+	}
+}
+
+// ADR-0077 D1's shared-id requirement holds even when ONLY fiscal.sign.start
+// has a subscriber (a till mid-rollout of the two-phase dispatch, or a
+// signer that hasn't yet added the "finish" hook): SaleID is still minted so
+// a later fiscal.sign.start-only signer's own state (plugin_storage,
+// keyed by sale_id) has something stable to key against.
+func TestFiscalSignStart_MintsSaleIDWhenAskHasNoSubscriber(t *testing.T) {
+	_, dp := newFiscalSignDeps(t)
+	subscribeFiscalSignStartHandler(t, dp, "com.test.fiscal-start-only", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		return json.RawMessage(`{"status":"acknowledged","tx_id":"tx-only","tx_revision":1}`), nil
+	})
+	in := pos.SaleInput{Currency: "EUR"}
+	if in.SaleID != "" {
+		t.Fatal("precondition: SaleID must start empty")
+	}
+	dispatchFiscalSignStart(context.Background(), dp, &in)
+	if in.SaleID == "" {
+		t.Fatal("expected fiscal.sign.start (with a subscriber) to mint SaleID even with no fiscal.sign.ask subscriber")
+	}
+	dp.WaitForAsyncWork()
+
+	res := dispatchFiscalSignAsk(context.Background(), dp, &in)
+	if res.Outcome != fiscalSignNoSigner {
+		t.Fatalf("expected fiscalSignNoSigner (no ask subscriber installed), got %v", res.Outcome)
+	}
+}
+
+// ADR-0077 D1/D2, ut-docs#1519, review finding: completeTender's own
+// dispatchFiscalSignStart(ctx, d, &saleInput) → dispatchFiscalSignAsk(ctx,
+// d, &saleInput) call-site wiring (pos_api.go) shares one SaleID through
+// the REAL HTTP tender path — not just proven at the dispatch-function
+// level (the tests above call dispatchFiscalSignStart/dispatchFiscalSignAsk
+// directly). The persisted sale's own id must equal the fiscal_sign_starts
+// row's sale_id.
+func TestFiscalSignStart_SharesSaleIDWithFinishThroughTender(t *testing.T) {
+	mux, dp := newFiscalSignDeps(t)
+	subscribeFiscalSignStartHandler(t, dp, "com.test.fiscal-start-tender", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		return json.RawMessage(`{"status":"acknowledged","tx_id":"tx-tender-1","tx_revision":1}`), nil
+	})
+	var captured fiscalSignAskPayload
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-ask-tender", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		_ = json.Unmarshal(ev.Payload, &captured)
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := fiscalSignTender(t, mux, false)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	dp.WaitForAsyncWork()
+
+	var saleID string
+	if err := dp.Db.QueryRow(`SELECT id FROM sales`).Scan(&saleID); err != nil {
+		t.Fatal(err)
+	}
+	if captured.SaleID != saleID {
+		t.Fatalf("fiscal.sign.ask saw sale_id %q but the persisted sale is %q — the two dispatches disagree on which sale they cover", captured.SaleID, saleID)
+	}
+	// NOT asserting captured.StartedTxID/StartedTxRevision here: within one
+	// real HTTP request, dispatchFiscalSignStart's goroutine and
+	// dispatchFiscalSignAsk's own dispatch run back to back with nothing in
+	// between them waiting on the goroutine — ADR-0077 D1 says the round
+	// trip is "genuinely likely to complete before finish fires in the
+	// common case" because start has the whole (real, network-latency-bound)
+	// authorize loop's duration to answer, but an in-process test handler
+	// with no real latency can run either order. The isolated
+	// TestFiscalSignStart_CapturesTxIDAndEchoesOnAskFinish test already
+	// proves the echo itself works, by deliberately waiting for the
+	// goroutine (dp.WaitForAsyncWork) BEFORE calling dispatchFiscalSignAsk.
+	// This test's own job is narrower: prove the two dispatches agree on
+	// SaleID through the real handler wiring (just checked above), and that
+	// the goroutine's own persisted row (checked below, itself awaited) is
+	// keyed on that same id — the exact regression a dropped SaleID-carrier
+	// thread (review finding, ut-docs#1519) would produce.
+	var startSaleID, startTxID string
+	var startTxRevision int64
+	if err := dp.Db.QueryRow(`SELECT sale_id, tx_id, tx_revision FROM fiscal_sign_starts WHERE sale_id = ?`, saleID).
+		Scan(&startSaleID, &startTxID, &startTxRevision); err != nil {
+		t.Fatalf("expected a fiscal_sign_starts row keyed on the sale's own id %q: %v", saleID, err)
+	}
+	if startSaleID != saleID || startTxID != "tx-tender-1" || startTxRevision != 1 {
+		t.Fatalf("unexpected fiscal_sign_starts row: sale_id=%q tx_id=%q tx_revision=%d", startSaleID, startTxID, startTxRevision)
 	}
 }

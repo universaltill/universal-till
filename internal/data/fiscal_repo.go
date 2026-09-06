@@ -70,6 +70,59 @@ WHERE sale_id = ?
 	return &sig, true, nil
 }
 
+// FiscalSignStart is the best-effort tx_id/tx_revision round trip captured
+// from a fiscal.sign.start dispatch (ADR-0077 D1, ut-docs#1519), stored
+// verbatim against the sale/refund/return it was minted for (migration 005).
+// A row exists ONLY when a subscribed signer's start handler answered
+// {"status":"acknowledged",...} before the background dispatch goroutine was
+// abandoned — the common case, since start has the whole authorize loop's
+// duration to answer, but never assumed. No row is the honest degraded case,
+// not an error.
+type FiscalSignStart struct {
+	SaleID     string
+	TxID       string
+	TxRevision int64
+	// CreatedAt is stamped by the DB on insert; zero on the way in.
+	CreatedAt string
+}
+
+// RecordFiscalSignStart stores one sale's captured start identifier.
+// Idempotent by design (INSERT ... ON CONFLICT DO NOTHING on the sale_id
+// primary key), same as RecordFiscalTSESignature: a duplicated best-effort
+// call for the same sale never errors, duplicates, or overwrites the first
+// captured identifier.
+func (r *POSRepo) RecordFiscalSignStart(ctx context.Context, saleID, txID string, txRevision int64) error {
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO fiscal_sign_starts (sale_id, tx_id, tx_revision)
+VALUES (?, ?, ?)
+ON CONFLICT(sale_id) DO NOTHING
+`, saleID, txID, txRevision)
+	if err != nil {
+		return fmt.Errorf("insert fiscal_sign_starts: %w", err)
+	}
+	return nil
+}
+
+// GetFiscalSignStart loads the start identifier captured for a sale, if any.
+// (nil, false, nil) when none was captured — not an error: the fiscal.sign.ask
+// ("finish") dispatch degrades to omitting started_tx_id/started_tx_revision
+// exactly as it does for a till with no fiscal.sign.start subscriber at all.
+func (r *POSRepo) GetFiscalSignStart(ctx context.Context, saleID string) (*FiscalSignStart, bool, error) {
+	var s FiscalSignStart
+	err := r.db.QueryRowContext(ctx, `
+SELECT sale_id, tx_id, tx_revision, created_at
+FROM fiscal_sign_starts
+WHERE sale_id = ?
+`, saleID).Scan(&s.SaleID, &s.TxID, &s.TxRevision, &s.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("select fiscal_sign_starts: %w", err)
+	}
+	return &s, true, nil
+}
+
 // FiscalRegisterDE is one till/TSE pairing recorded for Germany's §146a
 // Abs. 4 AO till-notification duty (ut-docs#665) — the data the shop's own
 // Mein ELSTER filing needs, joined with the register's and its stock

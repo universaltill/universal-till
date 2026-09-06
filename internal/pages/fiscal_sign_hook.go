@@ -100,6 +100,16 @@ type fiscalSignAskPayload struct {
 	// existing signer that never reads them sees no shape change.
 	SaleDiscount  int64 `json:"sale_discount,omitempty"`
 	ServiceCharge int64 `json:"service_charge,omitempty"`
+	// StartedTxID / StartedTxRevision (ADR-0077 D2, ut-docs#1519) echo back
+	// the identifier core captured from this same sale's fiscal.sign.start
+	// dispatch, when the best-effort round trip completed in time — omitted
+	// (the common "goroutine hasn't completed yet" case, or a till with no
+	// fiscal.sign.start subscriber at all) exactly like SaleDiscount/
+	// ServiceCharge above when zero. Genuinely additive: an existing signer
+	// that has never heard of fiscal.sign.start ignores both fields exactly
+	// as it ignores any other unrecognized JSON, with zero behavior change.
+	StartedTxID       string `json:"started_tx_id,omitempty"`
+	StartedTxRevision int64  `json:"started_tx_revision,omitempty"`
 }
 
 type fiscalSignAskPayment struct {
@@ -245,6 +255,186 @@ type fiscalSignResult struct {
 	Evidence *fiscalTSEEvidence
 }
 
+// defaultedSaleType mirrors pos.CompleteSale's own empty-SaleType fallback
+// (internal/pos/sales.go): both fiscal dispatch payloads (fiscal.sign.start
+// and fiscal.sign.ask) run BEFORE CompleteSale on the same *SaleInput, so a
+// caller relying on CompleteSale's default alone would otherwise ship an
+// empty sale_type on the signed/started record while the sale itself is
+// later recorded as "sale" — the payload must never disagree with what
+// CompleteSale ultimately persists.
+func defaultedSaleType(saleType string) string {
+	if saleType == "" {
+		return "sale"
+	}
+	return saleType
+}
+
+// fiscalSignStartEvent is the ADR-0077 Decision 1 dispatch point — see
+// plugins.FiscalSignStartEvent's own doc comment for why it is a separate
+// event key from fiscal.sign.ask, not a new field/action on it.
+const fiscalSignStartEvent = plugins.FiscalSignStartEvent
+
+// fiscalSignStartAsyncTimeout bounds the background goroutine
+// dispatchFiscalSignStart spawns — NOT a deadline the tender path races
+// (nothing on that path waits for this goroutine at all, per ADR-0077 D1),
+// purely a safety ceiling so a wedged or slow-network signer can't leak the
+// goroutine forever. Sized a little above wasmRuntime's own netTimeout
+// (10s, the widened deadline a net:*/tcp:*-permitted plugin's handler gets)
+// since that is the slowest a well-behaved handler invoked via EventBus.Ask
+// is expected to take; a CPU-bound guest is separately bounded by wazero's
+// own WithCloseOnContextDone enforcement of the handler's own timeout. A
+// var, not a const, purely as a test seam (same pattern as
+// fiscalSignAskBudget above) — nothing outside _test.go ever reassigns it.
+var fiscalSignStartAsyncTimeout = 15 * time.Second
+
+// fiscalSignStartPayload is the event payload a subscribing signing plugin
+// receives for fiscal.sign.start — deliberately minimal (ADR-0077 D1): no
+// total, no VAT breakdown, no payments — none of that is final yet at this
+// point in the tender, and SIGN DE's own `start` doesn't need it either per
+// fiskaly's own integration guidance (quoted in ADR-0077's Context).
+type fiscalSignStartPayload struct {
+	SaleID    string `json:"sale_id"`
+	SaleType  string `json:"sale_type"`
+	StartedAt string `json:"started_at"`
+}
+
+// fiscalSignStartResponse is the JSON a plugin writes to stdout to answer
+// fiscal.sign.start. Contract fiscal-sign-ask.md's fiscal.sign.start section:
+// "acknowledged" is the only status this dispatch ever acts on — anything
+// else (a different status, no answer at all, a transport/handler error) is
+// silently ignored, matching the point's own best-effort framing: there is
+// nothing to declare or fall back to here, unlike fiscal.sign.ask, since a
+// missed round trip only means started_tx_id/started_tx_revision stay
+// omitted on the later finish dispatch.
+type fiscalSignStartResponse struct {
+	Status     string `json:"status"`
+	TxID       string `json:"tx_id"`
+	TxRevision int64  `json:"tx_revision"`
+}
+
+// dispatchFiscalSignStart fires the ADR-0077 Decision 1 fiscal.sign.start
+// point. Called from completeTender (and its refund/return mirrors)
+// immediately after the ADR-0048 hard gate has allowed the sale to proceed
+// and BEFORE dispatchFiscalSignAsk / the payment.<key>.authorize loop — that
+// ordering is load-bearing (ADR-0077 D1): firing after the one earlier check
+// capable of refusing the sale outright avoids creating a TSE-side
+// transaction for a sale that was never going to happen at all.
+//
+// The HasSubscribers check comes before ANY other work so a till with no
+// fiscal.sign.start subscriber pays exactly one map lookup under RLock — no
+// allocation, no goroutine (ADR-0041 Decision A's zero-plugin-cost guarantee,
+// extended by ADR-0077 D1 to cover this second dispatch point too).
+//
+// in is mutated: in.SaleID is minted here (if empty) so this dispatch and
+// the later fiscal.sign.ask dispatch for the same tender share an id — per
+// ADR-0077 D1, minting happens when EITHER dispatch has a subscriber, so
+// whichever of the two runs first (this one always does, by call order) does
+// the minting and the other sees a non-empty SaleID already there.
+//
+// Never blocks the tender path: the actual dispatch — and the best-effort
+// tx_id/tx_revision capture — runs on a goroutine tracked via d.AsyncWork
+// (same pattern as printReceiptAsync/kitchen_print.go), which this function
+// returns without waiting for.
+//
+// ctx is accepted (matching dispatchFiscalSignAsk's own signature) but
+// genuinely unused in this function's own body — review finding, ut-docs#1519:
+// the goroutine deliberately uses context.Background() instead (it must
+// outlive the request), and none of the synchronous pre-checks above it
+// (HasSubscribers, the offline check) take a context. Kept for call-site
+// symmetry with dispatchFiscalSignAsk and in case a future synchronous
+// pre-check here needs one.
+func dispatchFiscalSignStart(ctx context.Context, d *common.Deps, in *pos.SaleInput) {
+	bus := plugins.SharedBus(d.Db)
+	if !bus.HasSubscribers(fiscalSignStartEvent) {
+		return
+	}
+	if in.SaleID == "" {
+		in.SaleID = uuid.NewString()
+	}
+	// Known-offline short-circuit applies to fiscal.sign.start too (ADR-0077
+	// D1 — explicitly called out as missing from the ADR's own first draft):
+	// dispatch never reaches the plugin at all for a tender the till already
+	// knows is offline, exactly as it skips the existing fiscal.sign.ask
+	// dispatch today.
+	if in.Offline {
+		return
+	}
+	payload := fiscalSignStartPayload{
+		SaleID:    in.SaleID,
+		SaleType:  defaultedSaleType(in.SaleType),
+		StartedAt: time.Now().UTC().Format(time.RFC3339),
+	}
+	saleID := in.SaleID
+	repo := data.NewPOSRepo(d.Db)
+	d.AsyncWork.Add(1)
+	go func() {
+		defer d.AsyncWork.Done()
+		// fiscalSignStartAsyncTimeout is a context deadline, not an
+		// enforcement mechanism, for a Go handler — review finding,
+		// ut-docs#1519: EventBus.Ask calls the subscriber's handler
+		// synchronously and does not itself select on ctx.Done() around
+		// that call, so a handler that ignores its context argument is NOT
+		// interrupted by askCtx expiring; the goroutine's own call to Ask
+		// simply keeps waiting on that handler regardless. For a wasm
+		// signer this is moot for the opposite reason: WasmRuntime.HandleEvent
+		// applies its own tighter deadline (timeoutFor, at most netTimeout —
+		// currently 10s) via wazero's WithCloseOnContextDone, which actually
+		// terminates the guest. What this timeout DOES bound: a well-behaved
+		// Go handler (in-process, non-wasm — e.g. a future built-in signer)
+		// that itself honors ctx.Done(), and it bounds how long THIS
+		// goroutine's own stack frame is considered "in flight" for
+		// debugging/observability purposes. Not a budget the plugin is
+		// expected to race — nothing on the tender path waits for it either
+		// way.
+		//
+		// EventBus.Ask, not Publish, deliberately: fiscal.sign.start is not
+		// an ".ask"/".authorize"/".refund"-suffixed event, so
+		// WasmRuntime.Sync never puts it in Blocking dispatch mode, and a
+		// plain Publish would only enqueue it onto the plugin's own
+		// asynchronous channel-drain loop with no response ever surfaced
+		// back here. Ask bypasses dispatch-mode entirely and calls the
+		// subscriber's handler directly and synchronously — exactly the
+		// round trip this best-effort capture needs, just from this
+		// goroutine rather than the request path.
+		askCtx, cancel := context.WithTimeout(context.Background(), fiscalSignStartAsyncTimeout)
+		defer cancel()
+		resp, ok, err := bus.Ask(askCtx, fiscalSignStartEvent, payload)
+		if err != nil || !ok {
+			return
+		}
+		var parsed fiscalSignStartResponse
+		if json.Unmarshal(resp, &parsed) != nil {
+			return
+		}
+		// Validate the plugin's own answer before trusting it with a
+		// compliance-bearing record (CLAUDE.md: "Validate all external
+		// input (users, plugins, devices)" — review finding, ut-docs#1519):
+		// only "acknowledged" with a non-empty tx_id is ever acted on (see
+		// fiscalSignStartResponse's own doc comment), a length cap guards
+		// against a misbehaving/hostile plugin writing an unbounded string
+		// into a row later echoed verbatim into every fiscal.sign.ask
+		// request for this sale, and a negative revision is nonsensical
+		// (fiskaly's own revision numbering starts at 1 and only increases).
+		const maxFiscalSignStartTxIDLen = 256
+		if parsed.Status != "acknowledged" || parsed.TxID == "" ||
+			len(parsed.TxID) > maxFiscalSignStartTxIDLen || parsed.TxRevision < 0 {
+			return
+		}
+		recCtx, recCancel := context.WithTimeout(context.Background(), 5*time.Second)
+		defer recCancel()
+		if err := repo.RecordFiscalSignStart(recCtx, saleID, parsed.TxID, parsed.TxRevision); err != nil {
+			// Info, not Warn (review finding, ut-docs#1519): this point's
+			// own contract states it raises no operator alert on any
+			// failure — a failed best-effort persist here is not
+			// operator-actionable (unlike declareUnsignedFiscalSale's
+			// Warnf, which backs a real receipt/journal gap). Still logged,
+			// for developer-facing observability, just not into the
+			// Problems ring Warnf feeds.
+			logging.L().Infof("fiscal signing: persist fiscal.sign.start tx_id for sale %s: %v", saleID, err)
+		}
+	}()
+}
+
 // dispatchFiscalSignAsk runs the fiscal.sign.ask point for one tender.
 // Called from completeTender between the authorize loop and CompleteSale —
 // that ordering is load-bearing (ADR-0044 Decision 1): authorize can still
@@ -268,7 +458,6 @@ func dispatchFiscalSignAsk(ctx context.Context, d *common.Deps, in *pos.SaleInpu
 	if in.SaleID == "" {
 		in.SaleID = uuid.NewString()
 	}
-	payload := buildFiscalSignPayload(in, time.Now().UTC())
 	// Known-offline short-circuit (ADR-0044 Decision 1): the tender request
 	// itself carries the till's declared offline state (the #offline-flag /
 	// navigator.onLine signal, threaded through SaleInput.Offline — the same
@@ -276,10 +465,36 @@ func dispatchFiscalSignAsk(ctx context.Context, d *common.Deps, in *pos.SaleInpu
 	// Spending the 3s budget on a cloud call the till already knows cannot
 	// succeed would stall checkout on every single sale while offline — a
 	// real ADR-0003 regression even though it never exceeds the budget.
+	// Checked BEFORE building the payload / the ADR-0077 D2 lookup just
+	// below: a known-offline tender skips this dispatch entirely, so neither
+	// is worth doing.
 	if in.Offline {
 		return fiscalSignResult{
 			Outcome: fiscalSignSkippedOffline,
 			Reason:  "known-offline: dispatch skipped without contacting the signing plugin",
+		}
+	}
+	payload := buildFiscalSignPayload(in, time.Now().UTC())
+	// ADR-0077 D2: echo back whatever fiscal.sign.start (Decision 1) managed
+	// to capture for THIS sale — best-effort read, exactly as best-effort as
+	// the write it's reading. A miss (no row, or the read itself fails) just
+	// leaves the two fields at their zero value, which json:",omitempty"
+	// already omits from the wire payload — identical to a till with no
+	// fiscal.sign.start subscriber at all. Never blocks or slows this
+	// dispatch: one indexed lookup on the sale's own primary key.
+	//
+	// Guarded on fiscal.sign.start's own HasSubscribers (review finding,
+	// ut-docs#1519): without this, every till running ONLY a fiscal.sign.ask
+	// signer (the entire installed base until a signer also implements
+	// fiscal.sign.start, ut-docs#1521) pays this SELECT on every single
+	// sale, forever, for a row that provably never exists.
+	if bus.HasSubscribers(fiscalSignStartEvent) {
+		start, ok, err := data.NewPOSRepo(d.Db).GetFiscalSignStart(ctx, in.SaleID)
+		if err != nil {
+			logging.L().Warnf("fiscal signing: read fiscal.sign.start capture for sale %s: %v", in.SaleID, err)
+		} else if ok {
+			payload.StartedTxID = start.TxID
+			payload.StartedTxRevision = start.TxRevision
 		}
 	}
 	return askFiscalSign(ctx, bus, payload)
@@ -415,19 +630,9 @@ func buildFiscalSignPayload(in *pos.SaleInput, now time.Time) fiscalSignAskPaylo
 			Tip:    p.TipAmount.Minor(),
 		})
 	}
-	// Mirrors pos.CompleteSale's own empty-SaleType fallback (internal/pos/
-	// sales.go): this function runs BEFORE CompleteSale on the same
-	// *SaleInput, so a future caller relying on CompleteSale's default
-	// would otherwise ship an empty sale_type on the signed record while
-	// the sale itself is later recorded as "sale" — the payload must never
-	// disagree with what CompleteSale ultimately persists.
-	saleType := in.SaleType
-	if saleType == "" {
-		saleType = "sale"
-	}
 	return fiscalSignAskPayload{
 		SaleID:        in.SaleID,
-		SaleType:      saleType,
+		SaleType:      defaultedSaleType(in.SaleType),
 		Currency:      in.Currency,
 		Total:         total.Minor(),
 		TenderedAt:    now.Format(time.RFC3339),

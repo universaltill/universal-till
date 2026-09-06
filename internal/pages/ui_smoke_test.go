@@ -496,6 +496,12 @@ func seedForPages(t *testing.T, db *sql.DB) {
 		// render paths' GetFiscalTSESignature hit it directly, same drift
 		// rule as the comments above.
 		`CREATE TABLE fiscal_tse_signatures (sale_id TEXT PRIMARY KEY, transaction_number INTEGER NOT NULL DEFAULT 0, signature_counter INTEGER NOT NULL DEFAULT 0, serial_number TEXT NOT NULL DEFAULT '', start_time TEXT NOT NULL DEFAULT '', log_time TEXT NOT NULL DEFAULT '', signature TEXT NOT NULL, signature_algorithm TEXT NOT NULL DEFAULT '', created_at TEXT NOT NULL DEFAULT (datetime('now')));`,
+		// fiscal_sign_starts: column-identical to
+		// internal/db/migrations/005_fiscal_sign_starts.sql (ADR-0077 D1,
+		// ut-docs#1519) — dispatchFiscalSignStart's RecordFiscalSignStart and
+		// dispatchFiscalSignAsk's GetFiscalSignStart hit it directly, same
+		// drift rule as fiscal_tse_signatures above.
+		`CREATE TABLE fiscal_sign_starts (sale_id TEXT PRIMARY KEY, tx_id TEXT NOT NULL, tx_revision INTEGER NOT NULL DEFAULT 0, created_at TEXT NOT NULL DEFAULT (datetime('now')));`,
 		// report_archive: column-identical to 013_report_archive.sql plus
 		// 070_report_archive_zreport_numbering.sql's Z-number/receipt-range
 		// columns and partial unique index (ut-docs#1080) — same drift rule

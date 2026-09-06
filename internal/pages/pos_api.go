@@ -162,6 +162,15 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		return "", err
 	}
 
+	// fiscal.sign.start (ADR-0077 Decision 1, ut-docs#1519): fires HERE,
+	// immediately after the ADR-0048 gate has allowed the sale to proceed
+	// and before the payment.<key>.authorize loop below — so it runs in
+	// parallel with that loop's own latency rather than adding to it. Never
+	// blocks: the actual dispatch happens on a goroutine this call doesn't
+	// wait for. saleInput is mutated (SaleID minted if empty) so this
+	// dispatch and the fiscal.sign.ask dispatch further down share an id.
+	dispatchFiscalSignStart(ctx, d, &saleInput)
+
 	// Payment authorization (docs: wasm-runtime.md): a plugin method
 	// whose plugin hooks `payment.<key>.authorize` gets a BLOCKING call
 	// BEFORE the sale completes — a declined card must stop the sale.

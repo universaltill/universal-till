@@ -629,6 +629,59 @@ func TestCreateReturn_FiscalSignAsk_KnownOfflineShortCircuits(t *testing.T) {
 	}
 }
 
+// ADR-0077 D1/D2, ut-docs#1519, review finding: CreateReturn's own
+// fiscalStartCarrier → returnInput.SaleID threading is real, end to end
+// through the actual POST /api/inventory/return handler — not just proven
+// at the dispatchFiscalSignStart/dispatchFiscalSignAsk function level. The
+// persisted return sale's own id must equal the fiscal_sign_starts row's
+// sale_id; if the threading were ever dropped, CompleteSale would mint its
+// own id instead and this assertion would catch the silent decorrelation.
+func TestCreateReturn_FiscalSignStart_SharesSaleIDWithFinish(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	t.Cleanup(func() { plugins.SharedBus(dp.Db).ResetSubscribers() })
+	subscribeFiscalSignStartHandler(t, dp, "com.test.fiscal-start-return", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		return json.RawMessage(`{"status":"acknowledged","tx_id":"tx-return-1","tx_revision":1}`), nil
+	})
+	var captured fiscalSignAskPayload
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-ask-return", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		_ = json.Unmarshal(ev.Payload, &captured)
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+	saleID, _, lineID := seedCompletedSaleForReturn(t, dp)
+
+	rec := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"faulty","lines":[{"line_id":"`+lineID+`","quantity":1}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	dp.WaitForAsyncWork()
+
+	var returnSaleID string
+	if err := dp.Db.QueryRow(`SELECT id FROM sales WHERE sale_type = 'return'`).Scan(&returnSaleID); err != nil {
+		t.Fatalf("expected a return sale row: %v", err)
+	}
+	if captured.SaleID != returnSaleID {
+		t.Fatalf("fiscal.sign.ask saw sale_id %q but the persisted return sale is %q — the two dispatches disagree on which sale they cover", captured.SaleID, returnSaleID)
+	}
+	// NOT asserting captured.StartedTxID/StartedTxRevision here — see the
+	// same-named comment in fiscal_sign_hook_test.go's
+	// TestFiscalSignStart_SharesSaleIDWithFinishThroughTender: within one
+	// real HTTP request the two dispatches run back to back with nothing
+	// waiting on the goroutine in between, so an in-process test handler
+	// with no real latency can run either order. This test's own job is
+	// the SaleID-agreement check just above, plus the persisted-row check
+	// below (itself awaited via dp.WaitForAsyncWork).
+	var startSaleID, startTxID string
+	var startTxRevision int64
+	if err := dp.Db.QueryRow(`SELECT sale_id, tx_id, tx_revision FROM fiscal_sign_starts WHERE sale_id = ?`, returnSaleID).
+		Scan(&startSaleID, &startTxID, &startTxRevision); err != nil {
+		t.Fatalf("expected a fiscal_sign_starts row keyed on the return's own sale id %q: %v", returnSaleID, err)
+	}
+	if startSaleID != returnSaleID || startTxID != "tx-return-1" || startTxRevision != 1 {
+		t.Fatalf("unexpected fiscal_sign_starts row: sale_id=%q tx_id=%q tx_revision=%d", startSaleID, startTxID, startTxRevision)
+	}
+}
+
 func TestCreateReturn_ValidationErrors(t *testing.T) {
 	mux, dp := newInventoryAPITestDeps(t)
 	saleID, _, lineID := seedCompletedSaleForReturn(t, dp)
