@@ -600,14 +600,19 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		defer file.Close()
 		raw, readErr := io.ReadAll(io.LimitReader(file, 10<<20))
 		if readErr != nil {
-			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
+			common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_invalid")
 			return
 		}
 		img, err := imaging.Decode(raw)
 		if err != nil {
-			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
+			if errors.Is(err, imaging.ErrTooManyPixels) {
+				common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_too_large")
+				return
+			}
+			common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_invalid")
 			return
 		}
+		img = imaging.DownscaleMaxEdge(img, imaging.MaxThumbEdge)
 		dir := paths.Data("public", "assets", "items", itemID)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
@@ -669,14 +674,19 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		defer file.Close()
 		raw, readErr := io.ReadAll(io.LimitReader(file, 10<<20))
 		if readErr != nil {
-			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
+			common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_invalid")
 			return
 		}
 		img, err := imaging.Decode(raw)
 		if err != nil {
-			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
+			if errors.Is(err, imaging.ErrTooManyPixels) {
+				common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_too_large")
+				return
+			}
+			common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_invalid")
 			return
 		}
+		img = imaging.DownscaleMaxEdge(img, imaging.MaxThumbEdge)
 		dir := paths.Data("public", "assets", "items", itemID, "variants", variantID)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
@@ -1001,6 +1011,7 @@ func saveLookupImage(ctx context.Context, c *productlookup.Client, itemID, imgUR
 	if err != nil {
 		return err
 	}
+	img = imaging.DownscaleMaxEdge(img, imaging.MaxThumbEdge)
 	dir := paths.Data("public", "assets", "items", itemID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err

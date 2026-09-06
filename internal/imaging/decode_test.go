@@ -3,6 +3,7 @@ package imaging
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"hash/crc32"
 	"image"
 	"image/color"
@@ -105,6 +106,30 @@ func TestDecodeBounded_RejectsOverLimit(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exceed") {
 		t.Fatalf("expected a dimension-limit error, got: %v", err)
+	}
+}
+
+// TestDecodeBounded_OverLimitWrapsErrTooManyPixels is ut-docs#1416: a caller
+// must be able to tell "too large" apart from "corrupt/unsupported" via
+// errors.Is, not by matching the error string, so it can show the operator
+// a distinct "that photo is too large" message instead of a generic
+// invalid-file one.
+func TestDecodeBounded_OverLimitWrapsErrTooManyPixels(t *testing.T) {
+	raw := encodePNG(t, 100, 100) // 10,000 px
+	_, err := DecodeBounded(raw, 5_000)
+	if !errors.Is(err, ErrTooManyPixels) {
+		t.Fatalf("expected errors.Is(err, ErrTooManyPixels) to hold, got: %v", err)
+	}
+}
+
+// TestDecodeBounded_CorruptDataDoesNotMatchErrTooManyPixels guards the
+// other direction — a genuinely corrupt/unsupported file must NOT be
+// mistaken for the too-large case, or the operator gets told to shrink a
+// photo that was never decodable at all.
+func TestDecodeBounded_CorruptDataDoesNotMatchErrTooManyPixels(t *testing.T) {
+	_, err := DecodeBounded([]byte("not an image"), MaxPixels)
+	if errors.Is(err, ErrTooManyPixels) {
+		t.Fatalf("corrupt input must not match ErrTooManyPixels, got: %v", err)
 	}
 }
 

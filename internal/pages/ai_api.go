@@ -22,7 +22,6 @@ import (
 	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
-	"golang.org/x/image/draw"
 )
 
 const (
@@ -288,14 +287,7 @@ func loadRefJPEG(path string) ([]byte, bool) {
 		return nil, false
 	}
 	const maxEdge = 160
-	b := src.Bounds()
-	w, h := b.Dx(), b.Dy()
-	if w > maxEdge || h > maxEdge {
-		scale := float64(maxEdge) / float64(max(w, h))
-		dst := image.NewRGBA(image.Rect(0, 0, int(float64(w)*scale), int(float64(h)*scale)))
-		draw.ApproxBiLinear.Scale(dst, dst.Bounds(), src, b, draw.Over, nil)
-		src = dst
-	}
+	src = imaging.DownscaleMaxEdge(src, maxEdge)
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, src, &jpeg.Options{Quality: 70}); err != nil {
 		return nil, false

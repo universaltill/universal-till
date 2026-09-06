@@ -218,6 +218,70 @@ WHERE i.sku = '30001'`).Scan(&itemID, &imgPath)
 	}
 }
 
+// buildLargeAcceptedTestPNG returns a real, decodable PNG bigger than
+// imaging.MaxThumbEdge but comfortably within imaging.MaxPixels — ut-docs#1416's
+// "accepted photo" case, distinct from buildOversizedTestPNG's rejected one.
+func buildLargeAcceptedTestPNG(t *testing.T) []byte {
+	t.Helper()
+	const w, h = 2800, 2100
+	if int64(w)*int64(h) > imaging.MaxPixels {
+		t.Fatalf("test fixture %dx%d must stay within imaging.MaxPixels (%d)", w, h, imaging.MaxPixels)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode large accepted test png: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// TestImport_BkpDownscalesLargeAcceptedImage is ut-docs#1416's gap #1
+// applied to the .bkp commit path: a real photo resolved from the archive
+// that's accepted (within imaging.MaxPixels) but bigger than
+// imaging.MaxThumbEdge must be downscaled before being written to disk,
+// same as the manual-upload handlers.
+func TestImport_BkpDownscalesLargeAcceptedImage(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init("") })
+
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	imgBytes := buildLargeAcceptedTestPNG(t)
+	zipBytes := buildBkpZipWithImage(t, "images/flat-white-uuid.png", imgBytes)
+	body, ct := multipartFile(t, "backup.bkp", zipBytes, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	var itemID string
+	if err := dp.Db.QueryRow(`SELECT id FROM items WHERE sku = '30001'`).Scan(&itemID); err != nil {
+		t.Fatalf("query item: %v", err)
+	}
+	onDisk := paths.Data("public", "assets", "items", itemID, "thumb.png")
+	got, err := os.ReadFile(onDisk)
+	if err != nil {
+		t.Fatalf("read written thumbnail: %v", err)
+	}
+	decoded, _, err := image.Decode(bytes.NewReader(got))
+	if err != nil {
+		t.Fatalf("written thumbnail is not a valid image: %v", err)
+	}
+	b := decoded.Bounds()
+	if b.Dx() != imaging.MaxThumbEdge {
+		t.Fatalf("written thumbnail width = %d, want capped at imaging.MaxThumbEdge (%d)", b.Dx(), imaging.MaxThumbEdge)
+	}
+	if want := imaging.MaxThumbEdge * 2100 / 2800; b.Dy() != want {
+		t.Fatalf("written thumbnail height = %d, want %d (aspect ratio not preserved)", b.Dy(), want)
+	}
+}
+
 // TestImport_BkpDanglingImagePathWarnsAndFallsBackToPlaceholder: a row
 // whose ProductImagePath doesn't resolve still imports, with the
 // ut-docs#1189 placeholder icon (never a blank tile), and the commit

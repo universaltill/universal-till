@@ -5,6 +5,7 @@ package imaging
 
 import (
 	"bytes"
+	"errors"
 	"fmt"
 	"image"
 	_ "image/jpeg" // register the JPEG decoder
@@ -12,6 +13,15 @@ import (
 	"sort"
 	"strings"
 )
+
+// ErrTooManyPixels is wrapped into the error DecodeBoundedFormats (and so
+// Decode/DecodeBounded) returns when a declared image exceeds the decode's
+// pixel-count cap. A caller that needs to tell that specific case apart
+// from "not a valid/supported image at all" — to show the operator a
+// distinct "that photo is too large" message instead of a generic
+// corrupt-file one (ut-docs#1416) — checks for it with errors.Is rather
+// than matching the error string, which is not a stable API.
+var ErrTooManyPixels = errors.New("image pixel count exceeds limit")
 
 // defaultFormats is every format this package's Decode/DecodeBounded
 // callers actually mean to accept — PNG and JPEG uploads/imports.
@@ -114,7 +124,7 @@ func DecodeBoundedFormats(raw []byte, maxPixels int64, formats map[string]bool) 
 		return nil, "", fmt.Errorf("invalid image dimensions %dx%d", cfg.Width, cfg.Height)
 	}
 	if pixels := int64(cfg.Width) * int64(cfg.Height); pixels > maxPixels {
-		return nil, "", fmt.Errorf("image dimensions %dx%d (%d px) exceed the %d px limit", cfg.Width, cfg.Height, pixels, maxPixels)
+		return nil, "", fmt.Errorf("%w: %dx%d (%d px) exceed the %d px limit", ErrTooManyPixels, cfg.Width, cfg.Height, pixels, maxPixels)
 	}
 	img, decodedFormat, err := image.Decode(bytes.NewReader(raw))
 	if err != nil {

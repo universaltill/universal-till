@@ -1697,6 +1697,8 @@
   "catalog.error.server": "مشکلی پیش آمد. دوباره تلاش کنید.",
   "catalog.error.invalid_request": "درخواست نامعتبر — جزئیات را بررسی کرده و دوباره تلاش کنید.",
   "catalog.error.sku_exists": "این SKU قبلاً استفاده شده — یک SKU دیگر انتخاب کنید.",
+  "catalog.error.image_too_large": "این عکس خیلی بزرگ است — تصویر کوچک‌تری را امتحان کنید یا پیش از بارگذاری آن را برش دهید.",
+  "catalog.error.image_invalid": "این فایل یک تصویر معتبر PNG یا JPEG نیست.",
   "catalog.barcode_backfill.btn": "پر کردن بارکد از SKU",
   "catalog.barcode_backfill.heading": "پر کردن بارکد از SKU",
   "catalog.barcode_backfill.eligible_count": "برای %d کالا می‌توان بارکدی برگرفته از SKU اختصاص داد.",
