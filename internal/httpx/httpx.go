@@ -706,6 +706,11 @@ var renderFiles = []string{
 	// same markup standalone (RenderPartial) for its htmx swap; riding along
 	// here is what lets settings.html include it by file name.
 	"ui/partials/tse_provisioning_block.html",
+	// ut-docs#1613: same reasoning — POST /api/backup/restore's success
+	// response AND settings.html's own page render (when a restore is
+	// already staged from an earlier visit) both need this exact markup,
+	// so it's a partial riding along here rather than duplicated inline.
+	"ui/partials/backup_restore_staged.html",
 }
 
 // Render full page with layout + page + common partials

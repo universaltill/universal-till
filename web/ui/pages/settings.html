@@ -651,11 +651,16 @@
     </tbody>
   </table>
   <div id="backup-dl-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
-  <div id="restore-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
   <p class="muted">{{ T "settings.backup.restore_note" }}</p>
   {{ else }}
   <p class="muted">{{ T "settings.backup.none_yet" }}</p>
   {{ end }}
+  <!-- ut-docs#1613: deliberately OUTSIDE the `.backups` branch above — a
+       restore staged in an earlier visit is a persistent, on-disk fact
+       (db.PendingRestore) independent of whatever the snapshot list looks
+       like on THIS render, so its restart trigger must not be tied to
+       `.backups` happening to be non-empty this time. -->
+  <div id="restore-msg" class="muted" aria-live="polite" style="min-height:1.2rem">{{ if .restorePending }}{{ template "backup_restore_staged.html" . }}{{ end }}</div>
   {{ end }}
 </div>
 
