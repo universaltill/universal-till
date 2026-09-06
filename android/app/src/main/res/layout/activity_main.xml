@@ -11,6 +11,23 @@
         android:padding="8dp"
         android:textSize="12sp" />
 
+    <!-- ut-docs#1639: shown only while the self-order kiosk intends to be
+         screen-pin-locked but Android has not actually confirmed the pin
+         (MainActivity.showPinWarning/hidePinWarning), a status banner, not
+         a modal, per this repo's standing "status chips/banners, never
+         modal blockers" rule; the WebView underneath stays fully usable. -->
+    <TextView
+        android:id="@+id/pin_warning"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:background="#B71C1C"
+        android:gravity="center"
+        android:padding="8dp"
+        android:textColor="#FFFFFF"
+        android:textStyle="bold"
+        android:textSize="14sp"
+        android:visibility="gone" />
+
     <WebView
         android:id="@+id/webview"
         android:layout_width="match_parent"

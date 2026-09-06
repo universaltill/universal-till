@@ -9,6 +9,10 @@
          the debug-only on-screen bar (MainActivity, BuildConfig.DEBUG). -->
     <string name="notification_running">Universal Till is running</string>
     <string name="notification_channel_name">Universal Till service</string>
+    <!-- ut-docs#1639: shown on the self-order kiosk screen when Android's
+         screen-pinning confirmation was never granted (unanswered or
+         declined), so the till looks locked but isn't. -->
+    <string name="kiosk_pin_not_engaged">Kiosk lock is not active — this device is not secured</string>
     <!-- ut-docs#1647: the external-link hand-off (MainActivity.openInSystemBrowser)
          can fail on a device with no browser app; the operator has to be told,
          otherwise the tap looks exactly like the silent no-op this ticket fixed. -->

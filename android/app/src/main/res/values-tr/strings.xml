@@ -5,5 +5,6 @@
     <string name="status_failed">Başlatılamadı: %1$s</string>
     <string name="notification_running">Universal Till çalışıyor</string>
     <string name="notification_channel_name">Universal Till servisi</string>
+    <string name="kiosk_pin_not_engaged">Kiosk kilidi etkin değil — bu cihaz güvenli değil</string>
     <string name="external_link_failed">Bağlantı tarayıcıda açılamadı.</string>
 </resources>
