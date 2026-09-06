@@ -167,6 +167,24 @@ var adminTables = []adminTable{
 	// still doesn't upsert against it, relying on its own per-plugin
 	// delete-then-insert instead (see applyPluginSettings' own comment).
 	{name: "plugin_settings", pk: []string{"id"}},
+	// ut-docs#1670: plugin_storage is generic plugin-private KV storage in
+	// general (per-plugin local state), but FiscalRegisterDEPluginID's
+	// fiscal_register:-prefixed rows back the shop-wide German TSE
+	// till-register (ADR-0072/ut-docs#1106, FiscalRegisterDEStore) -- the
+	// exact #1546 shape (shop-wide state missing from sync). Only that
+	// plugin's fiscal_register:-prefixed rows travel: the dump filter below
+	// (DumpAdmin) scopes on BOTH plugin_id and key prefix, and
+	// applyFiscalRegisterStorage's scoped delete-then-insert (mirroring
+	// applyPluginSettings just above) never touches any other row --
+	// scoping by plugin_id too (not prefix alone) matches every other
+	// plugin_storage accessor in this codebase, all of which key on
+	// plugin_id (see FiscalRegisterDEPluginID's own doc comment in
+	// fiscal_repo.go) -- without it, an unrelated plugin choosing a key
+	// that happens to start with the same literal prefix would have its
+	// own private state deleted and broadcast by this entry (found in
+	// review, empirically confirmed with a throwaway third-party-plugin
+	// row: it was pruned on apply and appeared in the primary's dump).
+	{name: "plugin_storage", pk: []string{"plugin_id", "key"}},
 	// The shop's till roster (ut-docs#405) — so a replica's sync chip / the
 	// /tills page has something real to show instead of an always-empty
 	// local table (this table used to be primary-only: only InsertTill,
@@ -275,7 +293,6 @@ var nonAdminTables = map[string]string{
 	"plugin_hooks":          "plugin-contributed hooks — recreated on re-install, not synced",
 	"plugin_install_status": "install-progress bookkeeping — SyncPluginsRepo's own source table",
 	"plugin_permissions":    "granted permissions for one installed plugin instance — recreated on re-install",
-	"plugin_storage":        "plugin-private key/value storage in general, BUT its fiscal_register: prefix backs the shop-wide German TSE till-register (ADR-0072/ut-docs#1106, FiscalRegisterDEStore) with no requirePrimary gate on /fiscal-register — the #1546 shape, on the whole table not just that prefix; flagged, not decided, in ut-docs#1670",
 
 	// Sync's own internal bookkeeping — syncing the sync mechanism's state
 	// to itself would be circular.
@@ -387,6 +404,20 @@ func (r *SyncAdminRepo) DumpAdmin(ctx context.Context) (AdminBundle, error) {
 			}
 			recs = kept
 		}
+		if t.name == "plugin_storage" {
+			// ut-docs#1670: only FiscalRegisterDEPluginID's fiscal_register:
+			// namespace syncs — every other plugin's private KV state must
+			// never leave this till at all, and neither must a DIFFERENT
+			// plugin's row that happens to share the same key prefix.
+			kept := recs[:0]
+			for _, rec := range recs {
+				if fmt.Sprint(rec["plugin_id"]) == FiscalRegisterDEPluginID &&
+					strings.HasPrefix(fmt.Sprint(rec["key"]), FiscalRegisterDEKeyPrefix) {
+					kept = append(kept, rec)
+				}
+			}
+			recs = kept
+		}
 		for _, c := range t.skipCols {
 			for _, rec := range recs {
 				delete(rec, c)
@@ -471,7 +502,12 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 		// be wiped on every pull (version skew). plugin_settings does its own
 		// scoped replace in applyPluginSettings — the generic prune would
 		// wipe this till's register/user-scoped rows (absent from the bundle).
+		// plugin_storage does its own scoped replace in
+		// applyFiscalRegisterStorage (ut-docs#1670) for the same reason —
+		// the bundle only ever carries fiscal_register: rows, so the generic
+		// prune would wipe every OTHER plugin's private storage on this till.
 		if t.name == "settings" || t.name == "plugin_settings" ||
+			t.name == "plugin_storage" ||
 			t.name == "roles" || t.name == "permission_actions" {
 			continue
 		}
@@ -492,6 +528,12 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 		}
 		if t.name == "plugin_settings" {
 			if err := applyPluginSettings(ctx, tx, t, recs); err != nil {
+				return err
+			}
+			continue
+		}
+		if t.name == "plugin_storage" {
+			if err := applyFiscalRegisterStorage(ctx, tx, t, recs); err != nil {
 				return err
 			}
 			continue
@@ -578,6 +620,42 @@ func applyPluginSettings(ctx context.Context, tx *sql.Tx, t adminTable, recs []m
 		}
 		if err := upsertRow(ctx, tx, t, cols, rec); err != nil {
 			return fmt.Errorf("apply plugin_settings: %w", err)
+		}
+	}
+	return nil
+}
+
+// applyFiscalRegisterStorage replaces this till's fiscal_register:-prefixed
+// plugin_storage rows — for FiscalRegisterDEPluginID specifically — with the
+// primary's copy (ut-docs#1670). Delete-then-insert, scoped by BOTH
+// plugin_id and key prefix — never touches a row under any other plugin_id,
+// or any other key, for any plugin: the DELETE's WHERE clause is the only
+// thing standing between this and wiping another plugin's private storage
+// (or broadcasting it to every satellite via the dump side), so it must
+// never be loosened to match on prefix alone or anything table-wide.
+// FiscalRegisterDEKeyPrefix ("fiscal_register:") is a fixed compile-time
+// constant with no '%'/'_' characters, so the LIKE pattern below needs no
+// ESCAPE clause. Same shape as applyPluginSettings just above: a scoped
+// delete-then-insert stands in for deleteMissing/upsertRow because the
+// generic path can't safely reason about a bundle that is deliberately a
+// subset of the table.
+func applyFiscalRegisterStorage(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[string]any) error {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM plugin_storage WHERE plugin_id = ? AND key LIKE ?`,
+		FiscalRegisterDEPluginID, FiscalRegisterDEKeyPrefix+"%"); err != nil {
+		return fmt.Errorf("apply plugin_storage (fiscal register): %w", err)
+	}
+	cols, err := tableColumns(ctx, tx, t.name)
+	if err != nil {
+		return err
+	}
+	for _, rec := range recs {
+		if fmt.Sprint(rec["plugin_id"]) != FiscalRegisterDEPluginID ||
+			!strings.HasPrefix(fmt.Sprint(rec["key"]), FiscalRegisterDEKeyPrefix) {
+			continue // defense in depth: mirrors applyPluginSettings' own scope re-check
+		}
+		if err := upsertRow(ctx, tx, t, cols, rec); err != nil {
+			return fmt.Errorf("apply plugin_storage (fiscal register): %w", err)
 		}
 	}
 	return nil

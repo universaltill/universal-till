@@ -1385,6 +1385,7 @@
   "fiscalregister.error.invalid_date": "تاریخ‌ها باید به‌صورت YYYY-MM-DD باشند",
   "fiscalregister.error.create": "افزودن مورد ممکن نشد",
   "fiscalregister.error.decommission": "علامت‌گذاری خروج از سرویس ممکن نشد",
+  "fiscalregister.error.replica_use_primary": "این صندوق پیرو صندوق اصلی است — دفتر ثبت مالیاتی را روی صندوق اصلی مدیریت کنید.",
   "fiscalregister.address.street": "خیابان",
   "fiscalregister.address.postcode": "کد پستی",
   "fiscalregister.address.city": "شهر",
