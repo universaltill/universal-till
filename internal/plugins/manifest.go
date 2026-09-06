@@ -171,6 +171,23 @@ func ComputeSHA256(filePath string) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
+// reservedTenderSentinelKeys are the literal strings pos.deriveTenderType
+// can itself produce (zero payments -> "unknown"; 2+ distinct method IDs on
+// one sale -> "split"), after normalizing every method ID the same way
+// deriveTenderType does before it compares or returns one:
+// strings.ToLower(strings.TrimSpace(...)). Any display code that renders a
+// sale's derived tender type (e.g. a future locale-translation lookup for
+// these two literal values) has to treat them as meaning "no payment"/
+// "mixed payments", not as a real payment method — so a plugin payment key
+// matching either, in any case, would let that derived state collide with,
+// and potentially be mislabeled as, the plugin's own tender (ut-docs#1617).
+// Reserved unconditionally: nothing about a specific plugin makes the
+// collision safe.
+var reservedTenderSentinelKeys = map[string]bool{
+	"unknown": true,
+	"split":   true,
+}
+
 // PersistManifest saves the manifest to database tables
 // validatePaymentEntryKeys enforces ADR-0031's install-time half for every
 // path that writes plugin_entries type='payment' (PersistManifest AND
@@ -213,6 +230,9 @@ func validatePaymentEntryKeys(ctx context.Context, repo *data.PluginRepo, tx *sq
 		}
 		if strings.Contains(e.Key, ":") {
 			return fmt.Errorf("payment entry key %q must not contain ':'", e.Key)
+		}
+		if reservedTenderSentinelKeys[strings.ToLower(e.Key)] {
+			return fmt.Errorf("payment entry key %q is reserved for the till's own \"no payment\"/\"mixed payments\" tender-type label — pick a different key", e.Key)
 		}
 		if seenKeys[e.Key] {
 			return fmt.Errorf("payment entry key %q is used by more than one entry in this manifest — pick distinct keys", e.Key)
