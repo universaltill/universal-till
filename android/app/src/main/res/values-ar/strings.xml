@@ -10,4 +10,5 @@
          anchored inside an otherwise-RTL notification shade. -->
     <string name="notification_running">‏Universal Till قيد التشغيل</string>
     <string name="notification_channel_name">خدمة Universal Till</string>
+    <string name="external_link_failed">تعذّر فتح الرابط في المتصفح.</string>
 </resources>
