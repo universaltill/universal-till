@@ -618,6 +618,7 @@
   "reports.eod.by_article": "By article",
   "reports.eod.by_article_group": "By article group",
   "reports.eod.by_operator": "By operator",
+  "reports.eod.by_order_type": "By order type",
   "reports.eod.done": "Report generated and printed",
   "reports.eod.exists": "Today's report already exists (see the list below)",
   "reports.eod.failed": "Report failed",

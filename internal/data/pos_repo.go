@@ -1124,6 +1124,103 @@ ORDER BY gross DESC`, args...)
 	return out, rows.Err()
 }
 
+// OrderTypeSales is one consumption-mode bucket's revenue for a reporting
+// window — the EOD Z-report's "BY ORDER TYPE" section (ut-docs#1015).
+// OrderType is a LINE's normalized value ("" dine in, "takeaway" takeaway,
+// per ADR-0073 Decision 1) — this decomposes a mixed sale across both
+// buckets by its own lines rather than needing a third "mixed" bucket,
+// the same way BY ARTICLE decomposes a multi-item sale across its items.
+// Net/Gross mirror ArticleGroupSales/ArticleSales' sale_lines-derived DTO
+// convention (total_before_tax/total_after_tax, not sales.total), so this
+// reconciles with those two breakdowns for the same window.
+type OrderTypeSales struct {
+	OrderType string      `json:"order_type"`
+	Qty       float64     `json:"qty"`
+	Net       money.Money `json:"net"`
+	Gross     money.Money `json:"gross"`
+}
+
+// OrderTypeSalesForDay groups completed-sale revenue by sale_lines.order_type
+// for a single business day — ArticleGroupsForDay's consumption-mode
+// counterpart. day is matched on the shop's LOCAL calendar day, same
+// convention as ArticleGroupsForDay/ArticleSalesForDay. The CASE normalizes
+// any value other than "takeaway" to "" at the query itself (review finding
+// 2, ut-docs#1015): CompleteSale's NormalizeLineOrderType already clamps
+// every persisted line to one of these two values (ADR-0073 Decision 1), so
+// this is unreachable defence-in-depth today, not a live bug — but without
+// it, a stray third value would render as a SECOND "Dine in" row (both
+// eod_api.go's print section and the HTML partial fold anything != takeaway
+// to that label), which this collapses at the source instead. ORDER BY 1 ASC
+// is deliberate, not incidental: "" (dine in) sorts before "takeaway"
+// lexically, giving a stable dine-in-first display order regardless of
+// revenue — unlike ArticleGroupsForDay's ORDER BY gross DESC, ranking two
+// fixed buckets by revenue would reorder the section between reports for no
+// useful reason. Only a bucket with at least one line appears (no zero-fill)
+// — same "absent, not empty" convention as the article-group/article/
+// operator breakdowns beside it.
+func (r *POSRepo) OrderTypeSalesForDay(ctx context.Context, day string) ([]OrderTypeSales, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT CASE WHEN sl.order_type = 'takeaway' THEN 'takeaway' ELSE '' END AS order_type,
+       SUM(sl.quantity) AS qty,
+       COALESCE(SUM(sl.total_before_tax), 0) AS net,
+       COALESCE(SUM(sl.total_after_tax), 0) AS gross
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+GROUP BY 1
+ORDER BY 1 ASC`, day)
+	if err != nil {
+		return nil, fmt.Errorf("order type sales for day: %w", err)
+	}
+	defer rows.Close()
+	var out []OrderTypeSales
+	for rows.Next() {
+		var o OrderTypeSales
+		var netMinor, grossMinor int64
+		if err := rows.Scan(&o.OrderType, &o.Qty, &netMinor, &grossMinor); err != nil {
+			return nil, fmt.Errorf("scan order type sales day: %w", err)
+		}
+		o.Net = money.FromMinor(netMinor)
+		o.Gross = money.FromMinor(grossMinor)
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// OrderTypeSalesForInstantWindow is OrderTypeSalesForDay's close-to-close
+// sibling — see ArticleGroupsForInstantWindow's doc comment for why this
+// (not OrderTypeSalesForDay) is the one the live EOD endpoint actually
+// calls. Same normalizing CASE and deliberate ASC order as OrderTypeSalesForDay.
+func (r *POSRepo) OrderTypeSalesForInstantWindow(ctx context.Context, from, to time.Time) ([]OrderTypeSales, error) {
+	win, args := instantWindow("s.created_at", from, to)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT CASE WHEN sl.order_type = 'takeaway' THEN 'takeaway' ELSE '' END AS order_type,
+       SUM(sl.quantity) AS qty,
+       COALESCE(SUM(sl.total_before_tax), 0) AS net,
+       COALESCE(SUM(sl.total_after_tax), 0) AS gross
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND `+win+`
+GROUP BY 1
+ORDER BY 1 ASC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("order type sales for instant window: %w", err)
+	}
+	defer rows.Close()
+	var out []OrderTypeSales
+	for rows.Next() {
+		var o OrderTypeSales
+		var netMinor, grossMinor int64
+		if err := rows.Scan(&o.OrderType, &o.Qty, &netMinor, &grossMinor); err != nil {
+			return nil, fmt.Errorf("scan order type sales instant window: %w", err)
+		}
+		o.Net = money.FromMinor(netMinor)
+		o.Gross = money.FromMinor(grossMinor)
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
 // OperatorSales is one cashier's revenue for a reporting window (ut-docs#1010).
 // Attribution is sales.cashier_id alone — the operator who actually rang the
 // sale — NEVER the audit_log actor/blocked-actor pair a manager-override
@@ -2169,6 +2266,10 @@ type EODReport struct {
 	ArticleGroups []ArticleGroupSales `json:"article_groups,omitempty"`
 	Articles      []ArticleSales      `json:"articles,omitempty"`
 	Operators     []OperatorSales     `json:"operators,omitempty"`
+	// OrderTypes is the dine-in/takeaway revenue breakdown (ut-docs#1015),
+	// same single-day-only gate and same best-effort convention as
+	// ArticleGroups/Articles/Operators above.
+	OrderTypes []OrderTypeSales `json:"order_types,omitempty"`
 	// Voucher liability flows (ut-docs#1008): count + amount (minor units) of
 	// vouchers issued and redeemed in the window, from voucher_transactions.
 	// Reported DISTINCTLY from article revenue: an issue is a 0% liability
@@ -2580,6 +2681,9 @@ GROUP BY p.method_id ORDER BY p.method_id`, from, to)
 		if operators, err := r.OperatorSalesForDay(ctx, from); err == nil {
 			rep.Operators = operators
 		}
+		if orderTypes, err := r.OrderTypeSalesForDay(ctx, from); err == nil {
+			rep.OrderTypes = orderTypes
+		}
 		// Cash-drawer reconciliation (ut-docs#1006) — single-day only, like
 		// the breakdowns around it (summing counted-vs-calculated across a
 		// multi-day range would be misleading). Best-effort on the same
@@ -2796,6 +2900,9 @@ GROUP BY p.method_id ORDER BY p.method_id`, margs...)
 	}
 	if operators, err := r.OperatorSalesForInstantWindow(ctx, from, to); err == nil {
 		rep.Operators = operators
+	}
+	if orderTypes, err := r.OrderTypeSalesForInstantWindow(ctx, from, to); err == nil {
+		rep.OrderTypes = orderTypes
 	}
 	if rc, rcErr := r.CashReconciliationForInstantWindow(ctx, from, to); rcErr == nil && rc != nil {
 		// CashSales comes from the report's own payment-method breakdown

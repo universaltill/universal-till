@@ -42,7 +42,7 @@
         {{ if $canRunEOD }}<td>{{ .Sales }}</td><td>{{ money .Net }}</td>{{ end }}
         <td><button class="btn secondary" hx-post="/api/reports/eod/print/{{ .Period }}" hx-target="#eod-msg" hx-swap="innerHTML">🖨</button></td>
       </tr>
-      {{ if or .ArticleGroups .Articles .Operators }}
+      {{ if or .ArticleGroups .Articles .Operators .OrderTypes }}
       <!-- ut-docs#1010: per-article-group/per-article/per-operator
            breakdowns for THIS archived report, same single-day-only
            breakdowns as the printed Z-report's BY ARTICLE GROUP/BY
@@ -52,7 +52,10 @@
            report predating this change). Article-group/operator counts are
            small (few rows) so they render as plain tables; per-article can
            run to ~80 rows, so it's collapsed behind a closed-by-default
-           <details> to keep the report list itself usable. -->
+           <details> to keep the report list itself usable.
+           OrderTypes (ut-docs#1015) joins the same gate — only ever two
+           rows (dine in/takeaway), same plain-table treatment as
+           ArticleGroups/Operators. -->
       <tr>
         <td colspan="{{ if $canRunEOD }}4{{ else }}2{{ end }}" style="padding-inline-start:1.5rem">
           {{ if .ArticleGroups }}
@@ -89,6 +92,17 @@
               </tbody>
             </table>
           </details>
+          {{ end }}
+          {{ if .OrderTypes }}
+          <strong>{{ T "reports.eod.by_order_type" }}</strong>
+          <table class="table" style="margin:.3rem 0 .8rem">
+            <thead><tr><th><span class="visually-hidden">{{ T "reports.eod.by_order_type" }}</span></th><th style="text-align:end">{{ T "reports.eod.qty" }}</th><th style="text-align:end">{{ T "reports.eod.net" }}</th><th style="text-align:end">{{ T "reports.eod.gross" }}</th></tr></thead>
+            <tbody>
+              {{ range .OrderTypes }}
+              <tr><td>{{ if eq .OrderType "takeaway" }}{{ T "basket.order_type.takeaway" }}{{ else }}{{ T "basket.order_type.dine_in" }}{{ end }}</td><td style="text-align:end">{{ .Qty }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
+              {{ end }}
+            </tbody>
+          </table>
           {{ end }}
         </td>
       </tr>

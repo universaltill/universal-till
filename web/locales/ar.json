@@ -618,6 +618,7 @@
   "reports.eod.by_article": "حسب الصنف",
   "reports.eod.by_article_group": "حسب مجموعة الصنف",
   "reports.eod.by_operator": "حسب الكاشير",
+  "reports.eod.by_order_type": "حسب نوع الطلب",
   "reports.eod.done": "أُنشئ التقرير وطُبع",
   "reports.eod.exists": "تقرير اليوم موجود مسبقاً (انظر القائمة أدناه)",
   "reports.eod.failed": "فشل التقرير",
