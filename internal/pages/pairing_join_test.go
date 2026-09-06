@@ -126,8 +126,13 @@ func TestPairStart_SurfacesUnreachablePrimary(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 (error encoded in the body, not the status) when the primary is unreachable, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "cannot reach that primary") {
-		t.Fatalf("expected the rendered error state naming the failure, got: %s", rec.Body.String())
+	// ut-docs#1544: this used to assert raw English prose; the message is
+	// now translated via httpx.T with the network error's text substituted
+	// into the %s placeholder, so only the static (translated) prefix is
+	// checked here, not the OS-dependent connection-refused text after it.
+	wantPrefix := strings.SplitN(httpx.T("en", "tills.pairing.error.unreachable"), "%s", 2)[0]
+	if !strings.Contains(rec.Body.String(), wantPrefix) {
+		t.Fatalf("expected the rendered error state naming the failure (prefix %q), got: %s", wantPrefix, rec.Body.String())
 	}
 	// ut-docs#1540 review: a pair-start failure must NOT self-poll. This
 	// branch returns before rp.set(), so there is no active attempt for the
@@ -158,8 +163,14 @@ func TestPairStart_RejectsInvalidBaseURL(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("base_url=%q: expected 200 (error encoded in body), got %d", bad, rec.Code)
 		}
-		if !strings.Contains(rec.Body.String(), "not a valid primary address") {
-			t.Fatalf("base_url=%q: expected the rendered validation-error state, got: %s", bad, rec.Body.String())
+		// ut-docs#1544: was a raw English literal, now translated. Compare
+		// against the unescaped body — html/template renders the message's
+		// apostrophe as &#39; (same reasoning as the name_required case
+		// below), so the raw httpx.T() string never matches the escaped
+		// HTML output directly.
+		want := httpx.T("en", "tills.pairing.error.invalid_address")
+		if !strings.Contains(html.UnescapeString(rec.Body.String()), want) {
+			t.Fatalf("base_url=%q: expected the rendered validation-error state %q, got: %s", bad, want, rec.Body.String())
 		}
 	}
 }
@@ -252,10 +263,16 @@ func TestPairStatus_ErrorStateKeepsPollingAndKeepsItsMessage(t *testing.T) {
 		t.Fatalf("pair-start: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
+	// ut-docs#1544: this stub answers with a plain 500 (no body), which
+	// pairStatusHandler renders via the WITH-status-suffix key — was a raw
+	// English literal, now translated with resp.Status substituted in; only
+	// the static prefix is checked, not the exact "500 ..." status text.
+	wantPrefix := strings.SplitN(httpx.T("en", "tills.pairing.error.unexpected_response_status"), "%s", 2)[0]
+
 	rec := getPairStatus(t, rmux)
 	body := rec.Body.String()
-	if !strings.Contains(body, "unexpected response from the primary") {
-		t.Fatalf("expected the error state naming the failure, got: %s", body)
+	if !strings.Contains(body, wantPrefix) {
+		t.Fatalf("expected the error state naming the failure (prefix %q), got: %s", wantPrefix, body)
 	}
 	if !strings.Contains(body, `hx-trigger="every 15s"`) {
 		t.Fatalf("a pair-status error has active state behind it and must keep polling, got: %s", body)
@@ -263,7 +280,7 @@ func TestPairStatus_ErrorStateKeepsPollingAndKeepsItsMessage(t *testing.T) {
 
 	// The next tick must not degrade: same message, still polling.
 	again := getPairStatus(t, rmux).Body.String()
-	if !strings.Contains(again, "unexpected response from the primary") {
+	if !strings.Contains(again, wantPrefix) {
 		t.Fatalf("the re-poll must re-render the stored message, not lose it, got: %s", again)
 	}
 	if !strings.Contains(again, `hx-trigger="every 15s"`) {

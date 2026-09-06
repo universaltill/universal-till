@@ -6,9 +6,11 @@ import (
 	"encoding/json"
 	"errors"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // openMigratedDB gives each side of the sync a real, fully migrated schema.
@@ -27,6 +29,20 @@ func mustExec(t *testing.T, d *db.DB, q string, args ...any) {
 	if _, err := d.Exec(q, args...); err != nil {
 		t.Fatalf("exec %q: %v", q, err)
 	}
+}
+
+// warnfContaining reports whether logging.Recent() holds a WARN entry whose
+// message contains substr — used to assert deleteMissing's satellite-
+// divergence Warnf fired (or didn't), per ut-docs#1592. Callers must
+// logging.ResetRecent() before the action under test, since Recent() is a
+// process-global ring buffer shared by every test in this binary.
+func warnfContaining(substr string) bool {
+	for _, p := range logging.Recent() {
+		if p.Level == "WARN" && strings.Contains(p.Msg, substr) {
+			return true
+		}
+	}
+	return false
 }
 
 // wireTrip simulates the HTTP hop: numbers become float64, like on a replica.
@@ -1052,6 +1068,7 @@ func TestAdminApply_RegisterRetiredInPlaceWhenFKBlockedBySatelliteShiftHistory(t
 	if err != nil {
 		t.Fatalf("second dump: %v", err)
 	}
+	logging.ResetRecent()
 	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle2); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
@@ -1091,6 +1108,13 @@ func TestAdminApply_RegisterRetiredInPlaceWhenFKBlockedBySatelliteShiftHistory(t
 	if !found {
 		t.Errorf("ListRegistersForAdmin must still list the retired register; got %+v", admin)
 	}
+
+	// ut-docs#1592: retiring a pre-existing satellite-local register must
+	// warn, naming the table, row and action, so a shop owner can connect a
+	// "my till lost its register" report to this one-time reconciliation.
+	if !warnfContaining("pruned pre-existing satellite-local registers row") || !warnfContaining("retired in place") {
+		t.Errorf("expected a Warnf naming registers + retired-in-place for reg-1, got: %+v", logging.Recent())
+	}
 }
 
 // Same fallback, for stock_locations: inventory.location_id FK-blocks the
@@ -1119,6 +1143,7 @@ func TestAdminApply_StockLocationRetiredInPlaceWhenFKBlockedBySatelliteInventory
 	if err != nil {
 		t.Fatalf("second dump: %v", err)
 	}
+	logging.ResetRecent()
 	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle2); err != nil {
 		t.Fatalf("second apply: %v", err)
 	}
@@ -1174,5 +1199,104 @@ func TestAdminApply_StockLocationRetiredInPlaceWhenFKBlockedBySatelliteInventory
 	}
 	if !found {
 		t.Errorf("ListStockLocationsForAdmin must still list the retired location; got %+v", admin)
+	}
+
+	// ut-docs#1592: same warning requirement as the register case above.
+	if !warnfContaining("pruned pre-existing satellite-local stock_locations row") || !warnfContaining("retired in place") {
+		t.Errorf("expected a Warnf naming stock_locations + retired-in-place for loc-1, got: %+v", logging.Recent())
+	}
+}
+
+// ut-docs#1592: the hard-delete path (no FK history at all) must warn too,
+// not just the retire-in-place fallback above — a register/stock location
+// that's satellite-local AND has never had a shift/inventory row against it
+// is hard-deleted outright, and that's exactly the "predates ut-docs#1590"
+// case this card exists to surface.
+func TestAdminApply_RegisterHardDeletedPreExistingLogsWarning(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	// Empty bundle from the primary (it never knew about this register) is
+	// enough to trigger the prune — no primary-side insert/delete needed.
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	// Simulates a register created directly on a satellite before
+	// ut-docs#1590 gated /registers to primary-only, with no shift history
+	// against it yet.
+	mustExec(t, replica, `INSERT INTO registers (id, name, is_active) VALUES ('reg-orphan', 'Satellite Local', 1)`)
+
+	logging.ResetRecent()
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var n int
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM registers WHERE id='reg-orphan'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("expected reg-orphan to be hard-deleted (no history to FK-block it): n=%d err=%v", n, err)
+	}
+	if !warnfContaining("pruned pre-existing satellite-local registers row") || !warnfContaining("hard-deleted") {
+		t.Errorf("expected a Warnf naming registers + hard-deleted for reg-orphan, got: %+v", logging.Recent())
+	}
+}
+
+// Mirrors TestAdminApply_RegisterHardDeletedPreExistingLogsWarning for
+// stock_locations.
+func TestAdminApply_StockLocationHardDeletedPreExistingLogsWarning(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	mustExec(t, replica, `INSERT INTO stock_locations (id, name, is_active) VALUES ('loc-orphan', 'Satellite Local', 1)`)
+
+	logging.ResetRecent()
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var n int
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM stock_locations WHERE id='loc-orphan'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("expected loc-orphan to be hard-deleted (no history to FK-block it): n=%d err=%v", n, err)
+	}
+	if !warnfContaining("pruned pre-existing satellite-local stock_locations row") || !warnfContaining("hard-deleted") {
+		t.Errorf("expected a Warnf naming stock_locations + hard-deleted for loc-orphan, got: %+v", logging.Recent())
+	}
+}
+
+// ut-docs#1592: the new Warnf must be scoped to registers/stock_locations
+// ONLY — every other adminTable prunes routinely, and logging every one of
+// those would just be noise (and would defeat the purpose: a shop owner
+// could no longer tell "routine sync" apart from "pre-existing divergence
+// worth a look"). tax_codes is a plain hasIsActive table with no special
+// gating, so a satellite-local row hits the exact same retire-in-place code
+// path as the register/stock_location tests above — it must NOT warn.
+func TestAdminApply_OrdinaryTablePruneDoesNotLogSatelliteDivergenceWarning(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	mustExec(t, replica, `INSERT INTO tax_codes (id, name, rate_basis_points, is_active) VALUES ('tax-orphan', 'Local Rate', 0, 1)`)
+
+	logging.ResetRecent()
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var n int
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM tax_codes WHERE id='tax-orphan'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("expected tax-orphan to be hard-deleted: n=%d err=%v", n, err)
+	}
+	if warnfContaining("pruned pre-existing satellite-local") {
+		t.Errorf("tax_codes is not registers/stock_locations — must not fire the satellite-divergence Warnf, got: %+v", logging.Recent())
 	}
 }

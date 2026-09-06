@@ -541,6 +541,22 @@ func pkOf(t adminTable, rec map[string]any) string {
 	return strings.Join(parts, "\x1f")
 }
 
+// logSatelliteDivergencePrune warns when deleteMissing successfully prunes
+// (hard-deletes or retires in place) a registers or stock_locations row.
+// ut-docs#1590 made both tables safe to sync by gating their admin pages to
+// primary-only, but a shop that already had a satellite-created row from
+// before that fix will have it pruned on its very first post-upgrade pull —
+// see adminTables' own top comment for the full trace. Every OTHER
+// adminTable prunes routinely (that's what sync is for), so this is
+// deliberately scoped to just these two: a warning here signals pre-existing
+// divergence worth a shop owner's attention, not everyday sync noise.
+func logSatelliteDivergencePrune(t adminTable, args []any, action string) {
+	if t.name != "registers" && t.name != "stock_locations" {
+		return
+	}
+	logging.L().Warnf("sync pull: pruned pre-existing satellite-local %s row %v (%s) — see ut-docs#1590: a register/stock location created directly on a satellite before that fix is expected to disappear on the first sync after upgrading", t.name, args, action)
+}
+
 // deleteMissing prunes rows this table's PK set no longer includes in the
 // bundle. skipPrune, if non-nil, is consulted for each row that would
 // otherwise be pruned and additionally protects it when it returns true —
@@ -581,6 +597,7 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 		_, err := tx.ExecContext(ctx,
 			`DELETE FROM `+t.name+` WHERE `+strings.Join(where, " AND "), args...)
 		if err == nil {
+			logSatelliteDivergencePrune(t, args, "hard-deleted, no history")
 			continue
 		}
 		// FK-blocked (row referenced by local sales history): retire it in
@@ -605,6 +622,7 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 			if _, derr := tx.ExecContext(ctx,
 				`UPDATE `+t.name+` SET `+strings.Join(sets, ", ")+` WHERE `+strings.Join(where, " AND "),
 				args...); derr == nil {
+				logSatelliteDivergencePrune(t, args, "retired in place, has history")
 				continue
 			}
 		}
