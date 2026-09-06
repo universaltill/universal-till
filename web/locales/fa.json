@@ -1165,6 +1165,7 @@
   "tills.discovery.find_button": "یافتن صندوق اصلی در این شبکه",
   "tills.discovery.help": "این شبکه را برای یافتن صندوق اصلی که از قبل خود را اعلام می‌کند جستجو کنید — نیازی به وارد کردن دستی کد جفت‌سازی نیست.",
   "tills.discovery.none_found": "هیچ صندوق اصلی در این شبکه یافت نشد.",
+  "tills.discovery.result_address": "آدرس شبکه",
   "tills.discovery.result_name": "شناسه صندوق",
   "tills.discovery.searching": "در حال جستجو…",
   "tills.discovery.title": "شناسایی شبکه محلی",

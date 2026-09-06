@@ -284,7 +284,7 @@ func candidateFromEntry(e *mdns.ServiceEntry) (Candidate, bool) {
 		return Candidate{}, false
 	}
 	if name == "" {
-		name = "this shop" // same fallback as storeNameOrDefault, for a malformed/older advertiser
+		name = "this shop" // same bare fallback advertisedName uses, for a malformed/older advertiser
 	}
 	ip := entryAddr(e)
 	if ip == nil || e.Port == 0 {
