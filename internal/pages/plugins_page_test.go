@@ -10,20 +10,13 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
-// pluginsManagerTestDeps reuses pluginPageTestDeps' schema/deps and widens
-// the plugins table with the manager-page columns ListManagedPlugins reads
-// (trust_level, install_state) that the plugin-page tests don't need.
+// pluginsManagerTestDeps reuses pluginPageTestDeps' schema/deps. The real
+// plugins table (from openPagesTestDB's real migrations, ut-docs#1657/#1677)
+// already has the manager-page columns ListManagedPlugins reads
+// (trust_level, install_state) -- this used to ALTER TABLE them in by hand.
 func pluginsManagerTestDeps(t *testing.T) *common.Deps {
 	t.Helper()
 	d, _ := pluginPageTestDeps(t)
-	for _, s := range []string{
-		`ALTER TABLE plugins ADD COLUMN trust_level TEXT NOT NULL DEFAULT 'trusted';`,
-		`ALTER TABLE plugins ADD COLUMN install_state TEXT NOT NULL DEFAULT 'installed';`,
-	} {
-		if _, err := d.Db.Exec(s); err != nil {
-			t.Fatalf("schema: %v", err)
-		}
-	}
 	return d
 }
 

@@ -1854,12 +1854,11 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 	// item ({{ if gt .sampleCount 0 }}), a deferred restore prompt
 	// ({{ if .restorePromptDeferred }}), a pending base plugin
 	// ({{ range .pendingBasePlugins }}), and a register for the picker.
+	// payment_methods (already seeded with cash/card/gift) and items come
+	// from the real migrations openPagesTestDB now runs (ut-docs#1657/#1677)
+	// -- this used to hand-roll both tables from scratch.
 	for _, s := range []string{
-		`CREATE TABLE payment_methods (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT,
-		 is_active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, plugin_id TEXT)`,
-		`INSERT INTO payment_methods (id, name, type, is_active, sort_order) VALUES ('cash', 'Cash', 'cash', 1, 1)`,
-		`CREATE TABLE items (id TEXT PRIMARY KEY, name TEXT, is_sample_data INTEGER NOT NULL DEFAULT 0)`,
-		`INSERT INTO items (id, name, is_sample_data) VALUES ('demo-1', 'Demo Widget', 1)`,
+		`INSERT INTO items (id, name, base_price, is_sample_data) VALUES ('demo-1', 'Demo Widget', 100, 1)`,
 		`INSERT INTO registers(id,name,is_active) VALUES('regA','Front Till',1)`,
 	} {
 		if _, err := d.Db.Exec(s); err != nil {
@@ -1965,15 +1964,8 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 // write-path parsing in POST /api/settings/payments-fee.
 func TestSettingsPage_PaymentsFeeFixedMajIsCurrencyAware(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
-	for _, s := range []string{
-		`CREATE TABLE payment_methods (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT,
-		 is_active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, plugin_id TEXT)`,
-		`INSERT INTO payment_methods (id, name, type, is_active, sort_order) VALUES ('cash', 'Cash', 'cash', 1, 1)`,
-	} {
-		if _, err := d.Db.Exec(s); err != nil {
-			t.Fatal(err)
-		}
-	}
+	// payment_methods (already seeded with cash/card/gift) comes from the
+	// real migrations openPagesTestDB now runs (ut-docs#1657/#1677).
 	if err := d.Settings.Set(t.Context(), "payments.fee.cash", `{"bp":0,"fixed":500}`); err != nil {
 		t.Fatal(err)
 	}
@@ -2394,19 +2386,9 @@ func TestSettingsShowsFiscalSignerMissingBanner(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	ctx := context.Background()
 
-	// newFullAuthDeps' schema is deliberately minimal (no other settings test
-	// needs a plugin registry); add just enough of the real plugins/
-	// plugin_hooks shape — column-identical to seedForPages' (ui_smoke_test.go)
-	// — for data.PluginRepo.ActiveHookOwner's join to run. NOT column-identical
-	// to 001_init.sql, which has more columns/constraints on both tables.
-	for _, stmt := range []string{
-		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, author TEXT, is_active INTEGER DEFAULT 1, trust_level TEXT DEFAULT 'untrusted', install_state TEXT DEFAULT 'installed', runtime TEXT DEFAULT 'go', entrypoint TEXT DEFAULT '', updated_at TEXT NOT NULL DEFAULT (datetime('now')));`,
-		`CREATE TABLE plugin_hooks (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, event TEXT NOT NULL, action TEXT NOT NULL, priority INTEGER NOT NULL DEFAULT 100, is_active INTEGER NOT NULL DEFAULT 1, config_json TEXT, UNIQUE(plugin_id, event, action));`,
-	} {
-		if _, err := d.Db.Exec(stmt); err != nil {
-			t.Fatalf("seed plugins schema: %v", err)
-		}
-	}
+	// ut-docs#1657/#1677: newFullAuthDeps now runs the real migration set
+	// (openPagesTestDB), which already has plugins/plugin_hooks -- this used
+	// to hand-roll a laxer copy since that fixture was "deliberately minimal".
 
 	getSettings := func() string {
 		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
@@ -2450,6 +2432,10 @@ func TestSettingsShowsFiscalSignerMissingBanner(t *testing.T) {
 
 	// An active plugin holding fiscal.sign.ask: the banner disappears on its
 	// own, no dismiss involved.
+	// ut-docs#1677: plugins has a composite FK to plugin_catalog(id,version).
+	if _, err := d.Db.ExecContext(ctx, `INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at) VALUES ('signer1','1.0.0','Signer','desc','wasm','./plugin.wasm','url','sha','auth','site','[]','0.0.0','1',datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := d.Db.ExecContext(ctx, `INSERT INTO plugins (id, name, version, install_state, entrypoint, runtime, is_active, trust_level) VALUES ('signer1','Signer','1.0.0','installed','./plugin.wasm','wasm',1,'trusted')`); err != nil {
 		t.Fatal(err)
 	}
