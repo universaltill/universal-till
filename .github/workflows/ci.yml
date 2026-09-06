@@ -243,9 +243,17 @@ jobs:
     # passed every PR check and surfaced only when cutting a release. This
     # job closes that gap for Linux (the platform that actually ships to
     # shops); Windows/macOS have the same shape of gap, tracked separately.
-    # Build + vet only, no tests and no window — release.yml remains the
-    # source of truth for the actual release recipe; keep this in sync with
-    # its "Install GTK/WebKit dev headers" / "Build unitill-desktop" steps.
+    # Build + vet, no tests and no window — release.yml remains the source
+    # of truth for the actual release recipe; keep this in sync with its
+    # "Install GTK/WebKit dev headers" / "Build unitill-desktop" steps.
+    # ut-docs#1581 (split from ut-docs#1565) added the last three steps: a
+    # `desktop`-tagged golangci-lint pass, a whole-program deadcode baseline
+    # check, and that guard's own regression test — all three need this
+    # job's GTK/WebKit headers to type-check cmd/unitill-desktop's real cgo
+    # files at all. See .golangci-desktop.yml and
+    # scripts/ci/guard-deadcode-baseline.sh for why each is a separate
+    # config/script from the root `build` job's untagged equivalents rather
+    # than a shared one.
     runs-on: ubuntu-latest
     needs: build
     steps:
@@ -268,6 +276,27 @@ jobs:
           GOCACHE: ${{ runner.temp }}/gobuildcache
           CGO_ENABLED: 1
         run: go vet -tags desktop ./cmd/unitill-desktop
+      - name: Lint unitill-desktop (golangci-lint, unused, desktop build tag)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.5.0
+          args: --config=.golangci-desktop.yml --build-tags=desktop ./cmd/unitill-desktop/...
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+          CGO_ENABLED: 1
+      - name: Deadcode baseline (whole-program, desktop build tag)
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+          CGO_ENABLED: 1
+        run: bash scripts/ci/guard-deadcode-baseline.sh
+      - name: Deadcode baseline guard regression test
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+          CGO_ENABLED: 1
+        run: bash scripts/ci/guard-deadcode-baseline_test.sh
 
   e2e:
     runs-on: ubuntu-latest
