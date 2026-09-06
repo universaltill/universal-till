@@ -205,6 +205,10 @@ ORDER BY i.name, v.name, sl.name`)
 			&row.LocationID, &row.LocationName, &row.CurrentQty, &row.ReorderLevel); err != nil {
 			return nil, fmt.Errorf("scan variant stock for export: %w", err)
 		}
+		// ut-docs#1610 (review): unfiltered stock_locations join, same as
+		// ListStockLevels — a retired location's mangled name must not
+		// travel out in an export plugin's location_name field.
+		row.LocationName = stripRetireMangle(row.LocationID, row.LocationName)
 		row.SKU = sku.String
 		out = append(out, row)
 	}

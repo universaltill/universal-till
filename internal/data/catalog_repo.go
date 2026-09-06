@@ -877,6 +877,7 @@ FROM tax_codes WHERE id = ?`, id).Scan(&v.ID, &v.Name, &v.RateBP, &takeaway, &ac
 		v.TakeawayRateBP = &tv
 	}
 	v.IsActive = active == 1
+	v.Name = stripRetireMangle(v.ID, v.Name)
 	return v, nil
 }
 
@@ -913,6 +914,7 @@ ORDER BY rate_basis_points DESC, name`)
 			v.TakeawayRateBP = &tv
 		}
 		v.IsActive = active == 1
+		v.Name = stripRetireMangle(v.ID, v.Name)
 		out = append(out, v)
 	}
 	if err := rows.Err(); err != nil {
@@ -1037,10 +1039,28 @@ ORDER BY sort_order, name`)
 	return out, rows.Err()
 }
 
+// lookupUnfilteredByActive names the lookup tables ReadLookup returns in
+// full regardless of is_active, where the column's ONLY writer is admin-
+// sync's FK-blocked retire-in-place (sync_admin_repo.go deleteMissing) and
+// not any UI. brands (ut-docs#1610): migration 004 added the column so a
+// retired brand is flagged like the other five UNIQUE-display tables, but
+// /catalog feeds BOTH its item-edit brand <select> and its brandName row
+// resolver from this reader — so a retired-but-still-referenced brand must
+// keep appearing under its real name exactly as it did before the column
+// existed. Hiding it would blank the row's brand and let the next save of
+// that item silently clear its brand_id (the <select> can no longer offer
+// the value), the same failure ListAllTaxCodes exists to prevent for the
+// tax-code <select> — see taxCodeNameFunc in internal/pages/catalog.
+var lookupUnfilteredByActive = map[string]bool{"brands": true}
+
 func (r *CatalogRepo) ReadLookup(ctx context.Context, table string) ([]Lookup, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id, name FROM `+table+` WHERE (is_active IS NULL OR is_active = 1) ORDER BY name`)
-	if err != nil {
-		if strings.Contains(err.Error(), "no such column: is_active") {
+	var rows *sql.Rows
+	var err error
+	if lookupUnfilteredByActive[table] {
+		rows, err = r.db.QueryContext(ctx, `SELECT id, name FROM `+table+` ORDER BY name`)
+	} else {
+		rows, err = r.db.QueryContext(ctx, `SELECT id, name FROM `+table+` WHERE (is_active IS NULL OR is_active = 1) ORDER BY name`)
+		if err != nil && strings.Contains(err.Error(), "no such column: is_active") {
 			rows, err = r.db.QueryContext(ctx, `SELECT id, name FROM `+table+` ORDER BY name`)
 		}
 	}
@@ -1054,6 +1074,7 @@ func (r *CatalogRepo) ReadLookup(ctx context.Context, table string) ([]Lookup, e
 		if err := rows.Scan(&l.ID, &l.Name); err != nil {
 			return nil, err
 		}
+		l.Name = stripRetireMangle(l.ID, l.Name)
 		res = append(res, l)
 	}
 	return res, rows.Err()
@@ -1078,6 +1099,7 @@ func (r *CatalogRepo) GetLookup(ctx context.Context, table string, id string) (L
 	if err != nil {
 		return Lookup{}, err
 	}
+	l.Name = stripRetireMangle(l.ID, l.Name)
 	return l, nil
 }
 

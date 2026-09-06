@@ -140,6 +140,16 @@ LEFT JOIN stock_locations loc ON loc.id = reg.location_id
 			&row.LocationID, &row.LocationName, &row.LocationStreet, &row.LocationPostcode, &row.LocationCity); err != nil {
 			return nil, fmt.Errorf("scan register location: %w", err)
 		}
+		// ut-docs#1610 (review): this reader deliberately drops
+		// ListRegisters' is_active=1 filter (see the doc comment above) so
+		// a decommissioned till's history still shows its register name —
+		// which makes it exactly the "admin listing that shows retired
+		// rows" case the retire mangle corrupts. Both joined names come
+		// from tables admin-sync retire-mangles (registers.name,
+		// stock_locations.name), and this feeds the §146a AO register
+		// page, so neither may render as "Front Till~reg-1".
+		row.RegisterName = stripRetireMangle(row.RegisterID, row.RegisterName)
+		row.LocationName = stripRetireMangle(row.LocationID, row.LocationName)
 		out = append(out, row)
 	}
 	if err := rows.Err(); err != nil {
