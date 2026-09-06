@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -48,7 +49,7 @@ func TestBuildEODDoc(t *testing.T) {
 		Tips:         []data.EODTip{{Method: "card", Count: 4, Amount: 320}},
 		FirstReceipt: "000000001", LastReceipt: "000000013",
 	}
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	for _, want := range []string{
 		"END OF DAY 2026-07-14", "Sales (12)", "Refunds (1)", "NET",
 		"£145.00", "Cash", "£85.00", // 9000 in − 500 out
@@ -95,7 +96,7 @@ func TestBuildEODDoc_Cancellations(t *testing.T) {
 		CancelCount: 2, CancelTotal: 1000,
 		Net: 19500, TaxNet: 3000,
 	}
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	for _, want := range []string{"STORNOS", "Voided (2)", "£10.00"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("Z-report missing %q in:\n%s", want, out)
@@ -126,7 +127,7 @@ func TestBuildEODDoc_CloseToCloseMetaLine(t *testing.T) {
 	// full RFC3339-to-RFC3339 line legitimately clips (same print-width
 	// constraint TestBuildEODDoc_GeneratedByAndAnnotation's own comment
 	// notes) — check the un-clippable prefix instead.
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	if strings.Contains(out, "END OF DAY") {
 		t.Errorf("close-to-close report must not print the legacy END OF DAY header, got:\n%s", out)
 	}
@@ -136,7 +137,7 @@ func TestBuildEODDoc_CloseToCloseMetaLine(t *testing.T) {
 
 	// The till's first-ever close: From is empty (unbounded lower bound).
 	rep.From = ""
-	out = string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out = string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	if !strings.Contains(out, "Zeitraum bis 2026-08-24T19:19:00+02:00") {
 		t.Errorf("expected the open-ended Zeitraum bis line for the first-ever close, got:\n%s", out)
 	}
@@ -174,7 +175,7 @@ func TestBuildEODDoc_GeneratedByAndAnnotation(t *testing.T) {
 		SalesCount: 1, Gross: 500, Net: 500,
 		GeneratedBy: "Jane Manager",
 	}
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	if !strings.Contains(out, "Erstellt von: Jane Manager") {
 		t.Errorf("Z-report missing GeneratedBy footer line, got:\n%s", out)
 	}
@@ -188,7 +189,7 @@ func TestBuildEODDoc_GeneratedByAndAnnotation(t *testing.T) {
 	// that's a print-width constraint shared by the whole file, not
 	// something this test is about.
 	rep.Annotation = "till reconciled OK"
-	out = string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out = string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	if !strings.Contains(out, "Anmerkung: till reconciled OK") {
 		t.Errorf("Z-report missing Annotation footer line, got:\n%s", out)
 	}
@@ -204,7 +205,7 @@ func TestBuildEODDoc_VoucherSection(t *testing.T) {
 		VouchersIssuedCount: 1, VouchersIssued: 1500,
 		VouchersRedeemedCount: 2, VouchersRedeemed: 800,
 	}
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	for _, want := range []string{
 		"GUTSCHEINE",
 		"Issued (1)", "£15.00",
@@ -236,7 +237,7 @@ func TestBuildEODDoc_ArticleGroupArticleOperatorSections(t *testing.T) {
 			{CashierID: "cashier-a", DisplayName: "Cashier A", Count: 2, Net: money.FromMinor(15000), Gross: money.FromMinor(15000)},
 		},
 	}
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	for _, want := range []string{
 		"BY ARTICLE GROUP", "Phones", "£100.00", "Uncategorized", "£50.00",
 		"BY ARTICLE", "Phone Case",
@@ -258,10 +259,120 @@ func TestBuildEODDoc_ArticleGroupArticleOperatorSections_OmittedWhenEmpty(t *tes
 		From: "2026-07-01", To: "2026-07-14", GeneratedAt: "2026-07-14T21:30:00Z",
 		SalesCount: 2, Gross: 15000, Net: 15000, TaxNet: 2000,
 	}
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	for _, unwanted := range []string{"BY ARTICLE GROUP", "BY ARTICLE", "BY OPERATOR"} {
 		if strings.Contains(out, unwanted) {
 			t.Errorf("range report must omit %q entirely, got:\n%s", unwanted, out)
+		}
+	}
+}
+
+// articlesForCap builds n synthetic ArticleSales rows, GROSS-DESCENDING (the
+// same ORDER BY gross DESC ArticleSalesForDay/ArticleSalesForInstantWindow
+// return), each with a distinct amount so a truncation test can assert
+// exactly which ones survived a cap by name.
+func articlesForCap(n int) []data.ArticleSales {
+	out := make([]data.ArticleSales, n)
+	for i := 0; i < n; i++ {
+		out[i] = data.ArticleSales{
+			Name:  fmt.Sprintf("Article %02d", i+1),
+			Qty:   1,
+			Net:   money.FromMinor(int64(1000 * (n - i))),
+			Gross: money.FromMinor(int64(1000 * (n - i))),
+		}
+	}
+	return out
+}
+
+// TestBuildEODDoc_ArticlePrintMode_DefaultCappedLeavesLowSKUUnaffected is the
+// ut-docs#1650 acceptance criterion "a low-SKU shop's printed output is
+// unchanged in practice (fewer than 30 articles prints identically to
+// 'all')": buildEODDoc, called with the shipped default values themselves
+// (eodArticlePrintCapped/eodArticlePrintCapDefault — what
+// resolveEODArticlePrintSettings resolves an untouched store setting TO;
+// that resolution itself is pinned separately by
+// TestResolveEODArticlePrintSettings_DefaultsUnsetOrInvalid in
+// eod_api_test.go, not re-derived here), must print every one of 25
+// articles with no "+N more" line.
+func TestBuildEODDoc_ArticlePrintMode_DefaultCappedLeavesLowSKUUnaffected(t *testing.T) {
+	rep := data.EODReport{
+		Day: "2026-09-06", GeneratedAt: "2026-09-06T21:30:00Z",
+		SalesCount: 25, Gross: 15000, Net: 15000, TaxNet: 2000,
+		Articles: articlesForCap(25),
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintCapped, eodArticlePrintCapDefault)))
+	for i := 1; i <= 25; i++ {
+		want := fmt.Sprintf("Article %02d", i)
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in an under-cap report, got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "more (see on-screen report)") {
+		t.Errorf("a 25-article day must not be truncated by the default cap (30), got:\n%s", out)
+	}
+}
+
+// TestBuildEODDoc_ArticlePrintMode_CappedTruncatesTopNByRevenue is the
+// high-SKU half of the same acceptance criterion: a day with MORE articles
+// than the cap prints only the top-cap by revenue (rep.Articles already
+// arrives gross-DESC) plus a "+N more" line, and omits the rest.
+func TestBuildEODDoc_ArticlePrintMode_CappedTruncatesTopNByRevenue(t *testing.T) {
+	rep := data.EODReport{
+		Day: "2026-09-06", GeneratedAt: "2026-09-06T21:30:00Z",
+		SalesCount: 5, Gross: 15000, Net: 15000, TaxNet: 2000,
+		Articles: articlesForCap(5),
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintCapped, 3)))
+	for _, want := range []string{"Article 01", "Article 02", "Article 03", "+2 more (see on-screen report)"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in a capped report, got:\n%s", want, out)
+		}
+	}
+	for _, unwanted := range []string{"Article 04", "Article 05"} {
+		if strings.Contains(out, unwanted) {
+			t.Errorf("article beyond the cap must not print, got %q in:\n%s", unwanted, out)
+		}
+	}
+}
+
+// TestBuildEODDoc_ArticlePrintMode_AllNeverTruncates: explicit "all" mode
+// reproduces the pre-#1650 unconditional behavior even when the count would
+// exceed a configured cap.
+func TestBuildEODDoc_ArticlePrintMode_AllNeverTruncates(t *testing.T) {
+	rep := data.EODReport{
+		Day: "2026-09-06", GeneratedAt: "2026-09-06T21:30:00Z",
+		SalesCount: 5, Gross: 15000, Net: 15000, TaxNet: 2000,
+		Articles: articlesForCap(5),
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 3)))
+	for i := 1; i <= 5; i++ {
+		want := fmt.Sprintf("Article %02d", i)
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q under 'all' mode regardless of cap, got:\n%s", want, out)
+		}
+	}
+	if strings.Contains(out, "more (see on-screen report)") {
+		t.Errorf("'all' mode must never truncate, got:\n%s", out)
+	}
+}
+
+// TestBuildEODDoc_ArticlePrintMode_OffOmitsSectionEntirely: "off" omits the
+// whole "BY ARTICLE" section, same "no line at all" convention the empty
+// case already uses -- but here rep.Articles is non-empty, proving the
+// setting (not just an empty slice) is what suppressed it.
+func TestBuildEODDoc_ArticlePrintMode_OffOmitsSectionEntirely(t *testing.T) {
+	rep := data.EODReport{
+		Day: "2026-09-06", GeneratedAt: "2026-09-06T21:30:00Z",
+		SalesCount: 5, Gross: 15000, Net: 15000, TaxNet: 2000,
+		Articles: articlesForCap(5),
+	}
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintOff, eodArticlePrintCapDefault)))
+	if strings.Contains(out, "BY ARTICLE") {
+		t.Errorf("'off' mode must omit the BY ARTICLE section entirely, got:\n%s", out)
+	}
+	for i := 1; i <= 5; i++ {
+		if strings.Contains(out, fmt.Sprintf("Article %02d", i)) {
+			t.Errorf("'off' mode must print no article lines, got:\n%s", out)
 		}
 	}
 }
@@ -281,7 +392,7 @@ func TestBuildEODDoc_OrderTypeSection(t *testing.T) {
 			{OrderType: "takeaway", Qty: 1, Net: money.FromMinor(5000), Gross: money.FromMinor(5000)},
 		},
 	}
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	for _, want := range []string{"BY ORDER TYPE", "Dine in", "£100.00", "Takeaway", "£50.00"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("Z-report missing %q\n%s", want, out)
@@ -298,7 +409,7 @@ func TestBuildEODDoc_OrderTypeSection_OmittedWhenEmpty(t *testing.T) {
 		From: "2026-07-01", To: "2026-07-14", GeneratedAt: "2026-07-14T21:30:00Z",
 		SalesCount: 2, Gross: 15000, Net: 15000, TaxNet: 2000,
 	}
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	if strings.Contains(out, "BY ORDER TYPE") {
 		t.Errorf("range report must omit %q entirely, got:\n%s", "BY ORDER TYPE", out)
 	}
@@ -331,7 +442,7 @@ func TestBuildEODDoc_ArticleSection_LongNameDoesNotSwallowAmount(t *testing.T) {
 			{Name: longName, Qty: 1, Net: money.FromMinor(77777), Gross: money.FromMinor(77777)},
 		},
 	}
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	lines := strings.Split(out, "\n")
 	var articleLine string
 	for i, l := range lines {
@@ -362,7 +473,7 @@ func TestBuildEODDoc_VATRateBands(t *testing.T) {
 			{RateBP: 1900, Net: 15092, Tax: 2868, Gross: 17960},
 		},
 	}
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	if !strings.Contains(out, "BY VAT RATE") {
 		t.Fatalf("Z-report missing the VAT rate footer section:\n%s", out)
 	}
@@ -398,7 +509,7 @@ func TestBuildEODDoc_CashReconciliation(t *testing.T) {
 			ShiftsClosed: 1,
 		},
 	}
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	for _, want := range []string{
 		"CASH RECONCILIATION",
 		"Opening float", "£100.00",
@@ -426,7 +537,7 @@ func TestBuildEODDoc_CashReconciliation(t *testing.T) {
 	// A non-zero variance is flagged so it can't be missed on paper.
 	rep.CashReconciliation.Counted = 51000
 	rep.CashReconciliation.Variance = -110
-	out = string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out = string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	if !strings.Contains(out, "!!") {
 		t.Error("non-zero variance must be flagged with !!")
 	}
@@ -437,7 +548,7 @@ func TestBuildEODDoc_CashReconciliation(t *testing.T) {
 	// No reconciliation (no shift closed that day): the section is absent
 	// and the report still renders — day-close is never blocked on it.
 	rep.CashReconciliation = nil
-	out = string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out = string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	if strings.Contains(out, "CASH RECONCILIATION") {
 		t.Error("section must be omitted when no reconciliation exists")
 	}
@@ -473,7 +584,7 @@ func TestBuildEODDoc_CashReconciliation_TipsHeldOut(t *testing.T) {
 		Tips:               []data.EODTip{{Method: "cash", Count: 1, Amount: 2000}},
 		CashReconciliation: &rc,
 	}
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	if !strings.Contains(out, "Tips held out") || !strings.Contains(out, "£20.00") {
 		t.Errorf("expected a Tips held out £20.00 line, got:\n%s", out)
 	}
@@ -497,7 +608,7 @@ func TestBuildEODDoc_NoTips(t *testing.T) {
 		Methods:      []data.EODMethod{{Method: "cash", In: 500}},
 		FirstReceipt: "000000001", LastReceipt: "000000001",
 	}
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	if strings.Contains(out, "TIPS") {
 		t.Errorf("Z-report with zero tips must not print a TIPS section, got:\n%s", out)
 	}
