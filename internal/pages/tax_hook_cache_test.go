@@ -20,10 +20,19 @@ import (
 // seedTaxPlugin registers the rows WasmRuntime.Sync relies on for a real
 // tax plugin: the plugin itself, its events:receive grant, and its
 // tax.rate.ask hook (subscription is refused without an active hook row).
+// ut-docs#1677: plugins.entrypoint is NOT NULL and plugins has a composite
+// FOREIGN KEY (id, version) REFERENCES plugin_catalog (id, version) in the
+// real migrated schema -- a plugin_catalog row is needed too.
 func seedTaxPlugin(t *testing.T, db *sql.DB) {
 	t.Helper()
 	for _, q := range []string{
-		`INSERT INTO plugins (id, name, version, is_active) VALUES ('com.universaltill.tax-uk', 'UK VAT', '1.0.0', 1)`,
+		// description/author/website/tags_json are nullable in the real
+		// schema but PluginRepo.ListCatalog scans them into plain (non-Null)
+		// string fields -- NULL here fails any test path that lists the
+		// whole catalog, not just this plugin.
+		`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at)
+		   VALUES ('com.universaltill.tax-uk', '1.0.0', 'UK VAT', 'desc', 'go', 'entry', 'url', 'sha', 'auth', 'site', '[]', '0.0.0', '1', datetime('now'))`,
+		`INSERT INTO plugins (id, name, version, entrypoint, is_active) VALUES ('com.universaltill.tax-uk', 'UK VAT', '1.0.0', 'entry', 1)`,
 		`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
 		   VALUES ('perm-tax', 'com.universaltill.tax-uk', 'events:receive', 1)`,
 		`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)

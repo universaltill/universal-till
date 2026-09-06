@@ -97,17 +97,9 @@ func TestSettingsShowsTaxRateSwitcherMissingBanner(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	ctx := context.Background()
 
-	// newFullAuthDeps' schema is deliberately minimal (no plugin registry);
-	// add just enough of the real plugins/plugin_hooks shape — same fixture
-	// the sibling fiscal-signer render test uses — for PluginRepo's joins.
-	for _, stmt := range []string{
-		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, author TEXT, is_active INTEGER DEFAULT 1, trust_level TEXT DEFAULT 'untrusted', install_state TEXT DEFAULT 'installed', runtime TEXT DEFAULT 'go', entrypoint TEXT DEFAULT '', updated_at TEXT NOT NULL DEFAULT (datetime('now')));`,
-		`CREATE TABLE plugin_hooks (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, event TEXT NOT NULL, action TEXT NOT NULL, priority INTEGER NOT NULL DEFAULT 100, is_active INTEGER NOT NULL DEFAULT 1, config_json TEXT, UNIQUE(plugin_id, event, action));`,
-	} {
-		if _, err := d.Db.Exec(stmt); err != nil {
-			t.Fatalf("seed plugins schema: %v", err)
-		}
-	}
+	// ut-docs#1657/#1677: newFullAuthDeps now runs the real migration set
+	// (openPagesTestDB), which already has plugins/plugin_hooks -- this used
+	// to hand-roll them since that fixture was "deliberately minimal".
 
 	getSettings := func() string {
 		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
@@ -141,6 +133,10 @@ func TestSettingsShowsTaxRateSwitcherMissingBanner(t *testing.T) {
 	}
 
 	// An active plugin holding tax.rate.ask: the banner clears itself.
+	// ut-docs#1677: plugins has a composite FK to plugin_catalog(id,version).
+	if _, err := d.Db.ExecContext(ctx, `INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at) VALUES ('tax-de','1.0.0','Tax DE','desc','wasm','./plugin.wasm','url','sha','auth','site','[]','0.0.0','1',datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := d.Db.ExecContext(ctx, `INSERT INTO plugins (id, name, version, install_state, entrypoint, runtime, is_active, trust_level) VALUES ('tax-de','Tax DE','1.0.0','installed','./plugin.wasm','wasm',1,'trusted')`); err != nil {
 		t.Fatal(err)
 	}

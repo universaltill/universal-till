@@ -56,7 +56,7 @@ func pluginPageTestDeps(t *testing.T) (*common.Deps, string) {
 // both tables in the real migrated schema.
 func seedTestPlugin(t *testing.T, db *sql.DB, id, name, version string) {
 	t.Helper()
-	if _, err := db.Exec(`INSERT INTO plugin_catalog(id,version,name,runtime,entrypoint,package_url,sha256,min_pos_version,api_version,published_at) VALUES(?,?,?,'go','entry','url','sha','0.0.0','1',datetime('now'))`, id, version, name); err != nil {
+	if _, err := db.Exec(`INSERT INTO plugin_catalog(id,version,name,description,runtime,entrypoint,package_url,sha256,author,website,tags_json,min_pos_version,api_version,published_at) VALUES(?,?,?,'desc','go','entry','url','sha','auth','site','[]','0.0.0','1',datetime('now'))`, id, version, name); err != nil {
 		t.Fatalf("seed plugin_catalog %s: %v", id, err)
 	}
 	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,entrypoint) VALUES(?,?,?,'entry')`, id, name, version); err != nil {
