@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1298,5 +1299,130 @@ func TestAdminApply_OrdinaryTablePruneDoesNotLogSatelliteDivergenceWarning(t *te
 	}
 	if warnfContaining("pruned pre-existing satellite-local") {
 		t.Errorf("tax_codes is not registers/stock_locations — must not fire the satellite-divergence Warnf, got: %+v", logging.Recent())
+	}
+}
+
+// ut-docs#1670: plugin_storage is generic plugin-private KV storage, but
+// its fiscal_register: prefix backs the shop-wide German TSE till-register
+// (ADR-0072/ut-docs#1106) and must sync primary->satellite. The whole
+// TABLE must NOT sync -- it holds every other installed plugin's private
+// state too -- so this proves all three things at once: the scoped
+// (plugin_id AND prefix) row travels, an unrelated plugin's row under a
+// DIFFERENT key is never even inspected, and — the review finding this
+// test was extended to cover — a DIFFERENT plugin's row that happens to
+// share the exact same fiscal_register: prefix is ALSO never touched
+// (prefix alone is not the namespace boundary; plugin_id is).
+// The real fiscal_register: row is seeded via PluginRepo.StorageSet's
+// real []byte write path (not a SQL string literal) so plugin_storage.value
+// genuinely has SQLite storage class BLOB here, the same as production —
+// a literal string INSERT stores class TEXT instead and would let a
+// BLOB-vs-TEXT regression in scanGenericCols' []byte->string conversion
+// slip past this test undetected.
+func TestAdminDumpApplyRoundTrip_FiscalRegisterStorage(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	if err := NewPluginRepo(primary.DB).StorageSet(ctx, FiscalRegisterDEPluginID, FiscalRegisterDEKeyPrefix+"entry-1", []byte(`{"id":"entry-1","eas_serial":"eas-1"}`)); err != nil {
+		t.Fatalf("seed fiscal_register entry via real write path: %v", err)
+	}
+	// An unrelated plugin's own private state under a DIFFERENT key,
+	// present on BOTH sides before the apply -- if this table ever synced
+	// whole, the replica's own copy would be pruned as "missing from the
+	// primary's dump" (the primary only has a fiscal_register: row, not
+	// this key).
+	mustExec(t, primary, `INSERT INTO plugin_storage (plugin_id, key, value) VALUES ('com.example.other', 'other:setting', 'primary-value')`)
+	mustExec(t, replica, `INSERT INTO plugin_storage (plugin_id, key, value) VALUES ('com.example.other', 'other:setting', 'replica-local-value')`)
+	// A DIFFERENT plugin's row that happens to share the exact SAME
+	// fiscal_register: prefix -- the actual gap a prefix-only scope would
+	// have left open (found in review): its own genuinely private state
+	// must never be deleted, and must never be broadcast in the dump.
+	mustExec(t, primary, `INSERT INTO plugin_storage (plugin_id, key, value) VALUES ('com.example.other', 'fiscal_register:entry-1', 'not-the-real-tax-de-entry')`)
+	mustExec(t, replica, `INSERT INTO plugin_storage (plugin_id, key, value) VALUES ('com.example.other', 'fiscal_register:entry-1', 'replica-local-collision-value')`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	recs, ok := bundle.Tables["plugin_storage"]
+	if !ok {
+		t.Fatal("plugin_storage must appear in the admin dump now — ut-docs#1670")
+	}
+	for _, rec := range recs {
+		if fmt.Sprint(rec["plugin_id"]) != FiscalRegisterDEPluginID {
+			t.Fatalf("dump leaked a plugin_storage row belonging to a different plugin: %+v", rec)
+		}
+		if !strings.HasPrefix(fmt.Sprint(rec["key"]), FiscalRegisterDEKeyPrefix) {
+			t.Fatalf("dump leaked a non-fiscal_register plugin_storage row: %+v", rec)
+		}
+	}
+	if len(recs) != 1 {
+		t.Fatalf("dump should carry exactly the one real tax-de entry, got %d: %+v", len(recs), recs)
+	}
+
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var value string
+	if err := replica.QueryRow(`SELECT value FROM plugin_storage WHERE plugin_id = ? AND key = ?`, FiscalRegisterDEPluginID, FiscalRegisterDEKeyPrefix+"entry-1").Scan(&value); err != nil {
+		t.Fatalf("fiscal_register entry did not reach the satellite: %v", err)
+	}
+	if !strings.Contains(value, "eas-1") {
+		t.Fatalf("fiscal_register entry value mismatch: %q", value)
+	}
+
+	// The unrelated plugin's row (different key) must be completely
+	// untouched -- still its OWN replica-local value, not overwritten, not
+	// deleted.
+	var otherValue string
+	if err := replica.QueryRow(`SELECT value FROM plugin_storage WHERE plugin_id = 'com.example.other' AND key = 'other:setting'`).Scan(&otherValue); err != nil {
+		t.Fatalf("unrelated plugin_storage row was removed by a supposedly-scoped sync: %v", err)
+	}
+	if otherValue != "replica-local-value" {
+		t.Fatalf("unrelated plugin_storage row was overwritten by a supposedly-scoped sync: got %q", otherValue)
+	}
+
+	// The colliding-prefix row from a DIFFERENT plugin must ALSO be
+	// completely untouched -- this is the actual N1 review finding: prefix
+	// alone is not the namespace boundary.
+	var collisionValue string
+	if err := replica.QueryRow(`SELECT value FROM plugin_storage WHERE plugin_id = 'com.example.other' AND key = ?`, FiscalRegisterDEKeyPrefix+"entry-1").Scan(&collisionValue); err != nil {
+		t.Fatalf("a different plugin's same-prefix row was removed by the sync — plugin_id scoping regressed: %v", err)
+	}
+	if collisionValue != "replica-local-collision-value" {
+		t.Fatalf("a different plugin's same-prefix row was overwritten by the sync — plugin_id scoping regressed: got %q", collisionValue)
+	}
+
+	// A primary-side delete of the fiscal_register: row must propagate
+	// (delete-then-insert semantics, same as applyPluginSettings) -- a
+	// decommissioned-and-removed entry must not remain a ghost on a
+	// satellite forever.
+	mustExec(t, primary, `DELETE FROM plugin_storage WHERE plugin_id = ? AND key = ?`, FiscalRegisterDEPluginID, FiscalRegisterDEKeyPrefix+"entry-1")
+	bundle2, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("second dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	var n int
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM plugin_storage WHERE plugin_id = ? AND key = ?`, FiscalRegisterDEPluginID, FiscalRegisterDEKeyPrefix+"entry-1").Scan(&n); err != nil || n != 0 {
+		t.Errorf("a fiscal_register entry removed on the primary is still on the satellite (n=%d, err=%v)", n, err)
+	}
+	// The colliding-prefix row must survive the delete-then-insert too —
+	// an empty scoped recs set must still never touch a different plugin_id.
+	if err := replica.QueryRow(`SELECT value FROM plugin_storage WHERE plugin_id = 'com.example.other' AND key = ?`, FiscalRegisterDEKeyPrefix+"entry-1").Scan(&collisionValue); err != nil {
+		t.Fatalf("a different plugin's same-prefix row was removed by the second (empty-recs) scoped apply: %v", err)
+	}
+	if collisionValue != "replica-local-collision-value" {
+		t.Fatalf("a different plugin's same-prefix row was overwritten by the second scoped apply: got %q", collisionValue)
+	}
+	// The unrelated row must STILL be untouched after the second apply too.
+	if err := replica.QueryRow(`SELECT value FROM plugin_storage WHERE plugin_id = 'com.example.other' AND key = 'other:setting'`).Scan(&otherValue); err != nil {
+		t.Fatalf("unrelated plugin_storage row was removed by the second scoped apply: %v", err)
+	}
+	if otherValue != "replica-local-value" {
+		t.Fatalf("unrelated plugin_storage row was overwritten by the second scoped apply: got %q", otherValue)
 	}
 }
