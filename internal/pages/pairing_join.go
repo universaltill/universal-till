@@ -300,7 +300,17 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 			baseURL+"/api/sync/pair-request", strings.NewReader(string(body)))
 		if err != nil {
-			pairWaitView(w, r, statusURL, "error", "", "", err.Error())
+			// ut-docs#1611: same defect shape ut-docs#1544 fixed for this
+			// handler's other branches — a raw Go error string reaching the
+			// operator, invisible to guard-i18n.sh's template-only checks.
+			// Realistically very hard to reach: baseURL is already validated
+			// scheme+host by validPrimaryBaseURL above (empirically, every
+			// input that makes url.Parse fail on the concatenated request
+			// URL below already fails validPrimaryBaseURL's own url.Parse
+			// first), and method/reader are compile-time-safe — this is
+			// defense-in-depth, not a reachable path today, same as the
+			// missing-name branch above.
+			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, "tills.pairing.error.request_build_failed"))
 			return
 		}
 		req.Header.Set("Content-Type", "application/json")

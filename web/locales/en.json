@@ -1198,6 +1198,7 @@
   "tills.pairing.error.name_required": "This till's name is required before you can request pairing.",
   "tills.pairing.error.name_required_field": "This till's name is required",
   "tills.pairing.error.refused": "The primary refused the pair request.",
+  "tills.pairing.error.request_build_failed": "Couldn't prepare the pairing request. Please try again.",
   "tills.pairing.error.unexpected_response": "Unexpected response from the primary.",
   "tills.pairing.error.unexpected_response_status": "Unexpected response from the primary (%s).",
   "tills.pairing.error.unreachable": "Cannot reach that primary: %s",
