@@ -1,0 +1,28 @@
+# ut-docs#1581 (split from ut-docs#1565): a second, narrower golangci-lint
+# config for `cmd/unitill-desktop` ONLY, run under the `desktop` build tag
+# in the `desktop-shell` CI job (which installs the GTK/WebKit dev headers
+# that package needs to even type-check).
+#
+# This is deliberately separate from the repo-root `.golangci.yml`, not a
+# removal of that file's `cmd/unitill-desktop` path exclusion: the root
+# config's own `Lint (golangci-lint, unused)` step in the `build` job runs
+# WITHOUT the `desktop` tag, so cmd/unitill-desktop must stay excluded
+# there or its per-platform stub functions (attach_gate_other.go,
+# startup_gate_other.go, shell_poll.go — real code, only called from
+# their `desktop`-tagged sibling files) show up as false "unused"
+# positives again, same class of bug `.golangci.yml`'s own header comment
+# already describes. This config carries no such exclusion because it is
+# only ever invoked scoped to `./cmd/unitill-desktop/...` with
+# `--build-tags desktop`, where those sibling files ARE compiled and the
+# false positives verifiably don't occur (checked while writing this: 0
+# issues).
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - unused
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0
