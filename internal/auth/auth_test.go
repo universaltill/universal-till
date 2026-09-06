@@ -329,6 +329,10 @@ func TestMiddlewareExemptsFirstBootPairingRoutes(t *testing.T) {
 		"/api/setup/discover-primaries",
 		"/api/setup/pair-start",
 		"/api/setup/pair-status",
+		// ut-docs#1550: the "joined" screen's restart trigger (sibling of
+		// pair-status above, same first-boot window) — without it the
+		// wizard's auto-restart and its Restart-now button both 401.
+		"/api/setup/pairing-restart",
 		// ut-docs#1092: the wizard's install-a-catalog-language action —
 		// found missing from exempt() the same way as the routes above
 		// (every bare-mux test green, real app 401ing).
