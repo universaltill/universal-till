@@ -561,8 +561,24 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			return
 		}
 
+		// fiscal.sign.start (ADR-0077 Decision 1, ut-docs#1519): fires HERE,
+		// immediately after the gate above has allowed the return to
+		// proceed — mirroring completeTender's/refund_page.go's own
+		// ordering. This return has no payment-provider authorize/refund
+		// leg to fire ahead of (it always pays via the fixed "cash" method
+		// below), so this is also the point immediately before returnInput
+		// is built; its minted SaleID (if any) is threaded into returnInput
+		// so this dispatch and the fiscal.sign.ask dispatch below share an
+		// id.
+		fiscalStartCarrier := &pos.SaleInput{
+			SaleType: "return",
+			Offline:  req.Offline,
+		}
+		dispatchFiscalSignStart(ctx, dp, fiscalStartCarrier)
+
 		// Create return sale
 		returnInput := pos.SaleInput{
+			SaleID:                 fiscalStartCarrier.SaleID,
 			SaleType:               "return",
 			OriginalSaleID:         originalSaleID,
 			Lines:                  returnLines,

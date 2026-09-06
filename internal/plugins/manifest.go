@@ -458,6 +458,23 @@ func validateSettingKeys(settings []ManifestSetting) error {
 // constant; the contract is ut-docs/reference/contracts/fiscal-sign-ask.md.
 const FiscalSignAskEvent = "fiscal.sign.ask"
 
+// FiscalSignStartEvent is the new, additive, best-effort-correlated dispatch
+// ADR-0077 Decision 1 adds alongside FiscalSignAskEvent — fired once the
+// ADR-0048 hard gate has already allowed the sale/refund/return to proceed,
+// before the payment.<key>.authorize (or .refund) loop, so it runs in
+// parallel with that loop's own latency instead of adding to it. Deliberately
+// a SEPARATE event key rather than a new field/action on FiscalSignAskEvent
+// (ADR-0077 D1's load-bearing compatibility choice): a signer plugin that
+// only subscribes to fiscal.sign.ask is never asked this one — nothing
+// changes for a till running an older plugin build.
+//
+// NOT (yet) folded into validateExclusiveHookOwnership's exclusivity check
+// below — ADR-0077 explicitly sequences that extension (to cover this event
+// and fiscal.sign.reconcile.ask too) into the follow-up card that adds the
+// reconcile path (ut-docs#1520), landing after this one. Until #1520 lands,
+// this event does not inherit fiscal.sign.ask's single-owner enforcement.
+const FiscalSignStartEvent = "fiscal.sign.start"
+
 // validateExclusiveHookOwnership enforces ADR-0041 Decision B's `exclusive`
 // marker for fiscal.sign.ask at manifest-persist time (independent review
 // of ut-docs#675, finding B2). The enable-time check in
