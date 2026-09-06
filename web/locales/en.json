@@ -358,6 +358,8 @@
   "journal.replica_no_cross_till": "Cross-till sales are only available on this shop's primary till.",
   "journal.reprint": "Print receipt",
   "journal.reprinted": "Receipt sent to the printer",
+  "journal.tender.split": "Split",
+  "journal.tender.unknown": "Unknown",
   "journal.till_last_synced": "Last contact from %s: %s",
   "journal.till_unknown": "Unknown till",
   "journal.title": "Journal",

@@ -358,6 +358,8 @@
   "journal.replica_no_cross_till": "فروش سایر صندوق‌ها فقط در صندوق اصلی این فروشگاه در دسترس است.",
   "journal.reprint": "چاپ رسید",
   "journal.reprinted": "رسید به چاپگر ارسال شد",
+  "journal.tender.split": "تقسیم پرداخت",
+  "journal.tender.unknown": "ناشناس",
   "journal.till_last_synced": "آخرین ارتباط از %s: %s",
   "journal.till_unknown": "صندوق ناشناس",
   "journal.title": "دفتر فروش",

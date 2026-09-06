@@ -660,6 +660,28 @@ func FuncsFor(locale string) template.FuncMap {
 	// Locale-bound override of the baseFuncs fallback: the section "?" label
 	// translates with the page it sits on.
 	funcs["helpLink"] = func(id string) template.HTML { return helpLinkHTML(id, locale) }
+	// tenderLabel translates the sentinel values pos.deriveTenderType can
+	// itself produce ("unknown" — no payments at all, e.g. a zero-marginal-
+	// net partial refund, ut-docs#1579; "split" — more than one distinct
+	// payment method on the sale) through the locale table. Any other value
+	// is a payment plugin's own MethodID (cash, card, voucher, sumup, ...) —
+	// an open-ended set this till doesn't own the vocabulary for — and is
+	// rendered as-is, unchanged from before this function existed.
+	funcs["tenderLabel"] = func(tenderType string) string {
+		var key string
+		switch tenderType {
+		case "unknown":
+			key = "journal.tender.unknown"
+		case "split":
+			key = "journal.tender.split"
+		default:
+			return tenderType
+		}
+		if t := translator(); t != nil {
+			return t.T(locale, key)
+		}
+		return tenderType
+	}
 	return funcs
 }
 
