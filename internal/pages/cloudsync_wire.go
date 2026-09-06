@@ -448,7 +448,12 @@ func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID string, delta 
 	}
 	if _, err := pos.RecordStockMovement(ctx, d.Db, pos.StockMovementInput{
 		ItemID: itemID, LocationID: locationID, Type: "adjust",
-		Quantity: delta, Reason: reason, ActorID: "cloud",
+		// ut-docs#1676: audit_log.actor_id has a real FK to users(id) --
+		// "cloud" isn't a seeded user, so this violated it on every real
+		// call (masked until now by the test fixture's own audit_log copy
+		// carrying no such FK). "system" is the established id for this
+		// exact situation, per sync_orders.go's auditActorID.
+		Quantity: delta, Reason: reason, ActorID: "system",
 	}); err != nil {
 		return "", err
 	}

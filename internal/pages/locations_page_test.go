@@ -209,7 +209,11 @@ func TestLocationsPage_CannotDeactivateLastActiveLocation(t *testing.T) {
 	// Simulate a shop that's already down to this one active location
 	// (bypassing the handler — loc_main has seeded inventory so the
 	// in-use guard would otherwise refuse deactivating it first).
-	if _, err := d.Db.Exec(`UPDATE stock_locations SET is_active = 0 WHERE id = 'loc_main'`); err != nil {
+	// ut-docs#1676: 001_init.sql also seeds loc_back/loc_wh (both active)
+	// now that openPagesTestDB runs real migrations, so deactivating only
+	// loc_main used to leave two other active locations standing --
+	// deactivate all three seeded ones to genuinely reach "down to one".
+	if _, err := d.Db.Exec(`UPDATE stock_locations SET is_active = 0 WHERE id IN ('loc_main', 'loc_back', 'loc_wh')`); err != nil {
 		t.Fatalf("seed pre-state: %v", err)
 	}
 
