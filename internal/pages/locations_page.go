@@ -32,7 +32,7 @@ func registerLocations(mux *http.ServeMux, d *common.Deps) {
 	// changes.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		if !canPerform(d, r, "stock_location_management") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required") // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
 			return auth.User{}, false
 		}
 		u, _ := auth.FromContext(r.Context())

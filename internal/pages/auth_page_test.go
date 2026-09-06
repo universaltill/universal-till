@@ -222,6 +222,11 @@ func TestUsersPagePermissions(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier /users = %d, want 403", rec.Code)
 	}
+	// ut-docs#1458: GET /users must render the full layout on 403 too,
+	// not a bare rail-less body (same fix class as #1455).
+	if body := rec.Body.String(); !strings.Contains(body, `class="nav"`) {
+		t.Fatalf("cashier's 403 on GET /users has no nav rail:\n%s", body)
+	}
 	if rec := postForm(mux, "/api/users", url.Values{"username": {"x"}, "display_name": {"x"}, "role": {"cashier"}}, &cashier); rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "elevation-dialog") {
 		t.Fatalf("cashier create = %d, want 200 with the elevation prompt: %s", rec.Code, rec.Body.String())
 	}

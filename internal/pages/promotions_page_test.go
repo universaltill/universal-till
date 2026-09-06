@@ -68,6 +68,11 @@ func TestPromotionsPagePermissions(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier GET /promotions = %d, want 403", rec.Code)
 	}
+	// ut-docs#1458: GET /promotions must render the full layout on 403 too,
+	// not a bare rail-less body (same fix class as tables_page.go/#1455).
+	if body := rec.Body.String(); !strings.Contains(body, `class="nav"`) {
+		t.Fatalf("cashier's 403 on GET /promotions has no nav rail:\n%s", body)
+	}
 
 	if rec := postForm(mux, "/api/promotions", url.Values{"code": {"NEWCODE"}}, &cashier); rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier create = %d, want 403", rec.Code)

@@ -57,6 +57,11 @@ func TestTaxCodesPage_GET_RequiresPermission(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 without a session, got %d", rec.Code)
 	}
+	// ut-docs#1458: GET /catalog/tax-codes must render the full layout on
+	// 403 too, not a bare rail-less body (same fix class as #1455).
+	if body := rec.Body.String(); !strings.Contains(body, `class="nav"`) {
+		t.Fatalf("403 on GET /catalog/tax-codes has no nav rail:\n%s", body)
+	}
 }
 
 // Real-session role gating (ut-docs#259, same shape as ut-docs#706's
