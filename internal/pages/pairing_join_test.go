@@ -148,6 +148,46 @@ func TestPairStart_SurfacesUnreachablePrimary(t *testing.T) {
 	}
 }
 
+// TestPairStart_SurfacesUnreachablePrimary_MultiLocale is ut-docs#1612's
+// fix: TestPairStart_SurfacesUnreachablePrimary above only ever drove
+// pairStartHandler with the default "en" locale, so nothing proved the
+// httpx.ResolveLocale/httpx.T threading it actually has (confirmed by code
+// reading in the ut-docs#1544 review) renders translated for a non-English
+// operator — a regression that hardcoded the English string again in this
+// branch would slip past every existing test. Mirrors
+// TestFriendlyJoinError_TranslatesEachKind's locale loop, driven via
+// ?lang= the same way pairStartHandler's own httpx.ResolveLocale reads it.
+func TestPairStart_SurfacesUnreachablePrimary_MultiLocale(t *testing.T) {
+	for _, locale := range []string{"en", "ar", "fa", "tr"} {
+		t.Run(locale, func(t *testing.T) {
+			t.Setenv("UT_AUTH", "off")
+			replica, _ := newSyncDepsWithPath(t, "replica.db")
+			rmux := http.NewServeMux()
+			registerPairingJoinAPI(rmux, replica)
+
+			wantPrefix := strings.SplitN(httpx.T(locale, "tills.pairing.error.unreachable"), "%s", 2)[0]
+			if wantPrefix == "tills.pairing.error.unreachable" {
+				t.Fatalf("locale %q has no translation for tills.pairing.error.unreachable (httpx.T fell back to the key itself)", locale)
+			}
+
+			form := url.Values{"base_url": {"http://127.0.0.1:1"}, "till_id": {"some-till-id"}, "name": {"Bar Till"}}
+			req := httptest.NewRequest(http.MethodPost, "/api/sync/pair-start?lang="+locale, strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rec := httptest.NewRecorder()
+			rmux.ServeHTTP(rec, req)
+
+			// Same reasoning as TestPairStart_SurfacesUnreachablePrimary: always
+			// 200, the failure is encoded in the body, not the status.
+			if rec.Code != http.StatusOK {
+				t.Fatalf("locale=%q: expected 200 (error encoded in the body, not the status), got %d: %s", locale, rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), wantPrefix) {
+				t.Fatalf("locale=%q: expected the rendered error state naming the failure (prefix %q), got: %s", locale, wantPrefix, rec.Body.String())
+			}
+		})
+	}
+}
+
 // TestPairStart_RejectsInvalidBaseURL guards the base_url validation added
 // after independent review flagged it as unvalidated external input
 // (base_url originates from an untrusted LAN mDNS responder — CLAUDE.md:
