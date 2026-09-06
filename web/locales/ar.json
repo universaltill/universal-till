@@ -1385,6 +1385,7 @@
   "fiscalregister.error.invalid_date": "يجب أن تكون التواريخ بصيغة YYYY-MM-DD",
   "fiscalregister.error.create": "تعذر إضافة السجل",
   "fiscalregister.error.decommission": "تعذر وضع علامة إيقاف التشغيل",
+  "fiscalregister.error.replica_use_primary": "يتبع هذا الصندوق الصندوق الأساسي — أدر سجل الضرائب من الصندوق الأساسي.",
   "fiscalregister.address.street": "الشارع",
   "fiscalregister.address.postcode": "الرمز البريدي",
   "fiscalregister.address.city": "المدينة",
