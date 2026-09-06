@@ -175,10 +175,14 @@ jobs:
         # see ut-docs#662's own comment on why re-running things twice in
         # one job is exactly the kind of contention this package doesn't
         # need more of.
+        # -v (ut-docs#1626): plain `go test` prints no `--- SKIP` line, so a
+        # test skipping here (e.g. TestReload_SurvivesRealisticPublisherContention's
+        # publisher-floor precondition, ut-docs#1198) was invisible — CI just
+        # reported `ok` whether the test actually ran or silently skipped.
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
-        run: go test -timeout 20m ./internal/plugins
+        run: go test -timeout 20m -v ./internal/plugins
       - name: Test (with OS locale set — ut-docs#662)
         # This runner's own container has no LANG, which is exactly what let
         # ut-docs#662's OS-locale-detection redirect (ut-docs#590) hide 4
