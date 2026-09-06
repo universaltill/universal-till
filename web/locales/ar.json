@@ -1198,6 +1198,7 @@
   "tills.pairing.error.name_required": "أدخل اسم هذا الصندوق قبل إرسال طلب الإقران.",
   "tills.pairing.error.name_required_field": "اسم هذا الصندوق مطلوب",
   "tills.pairing.error.refused": "رفض الصندوق الرئيسي طلب الإقران.",
+  "tills.pairing.error.request_build_failed": "تعذّر تجهيز طلب الإقران. حاول مرة أخرى.",
   "tills.pairing.error.unexpected_response": "استجابة غير متوقعة من الصندوق الرئيسي.",
   "tills.pairing.error.unexpected_response_status": "استجابة غير متوقعة من الصندوق الرئيسي (%s).",
   "tills.pairing.error.unreachable": "تعذّر الوصول إلى ذلك الصندوق الرئيسي: %s",
