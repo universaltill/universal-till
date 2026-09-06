@@ -46,6 +46,13 @@ func newShiftsAPITestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		Settings: settings.NewStore(db),
 		AuthSvc:  auth.NewService(db),
 	}
+	// ut-docs#1682: every test in this file opens a shift for cashier_id
+	// "cashier1" -- shifts.cashier_id has a real FK to users(id) now that
+	// openPagesTestDB runs real migrations (ut-docs#1676), so it needs a
+	// real seeded row.
+	if _, err := db.Exec(`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('cashier1','cashier1','Cashier One','','cashier')`); err != nil {
+		t.Fatalf("seed cashier1: %v", err)
+	}
 	mux := http.NewServeMux()
 	registerShiftsAPI(mux, dp)
 	return mux, dp
@@ -610,7 +617,7 @@ func TestCloseShift_SkimWithManagerPINRecordsManagerAsActor(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := dp.Db.ExecContext(ctx,
-		`INSERT INTO users(id,username,display_name,pin_hash,role,created_at) VALUES('mgr1','mgr1','Manager One',?,'manager',datetime('now'))`, hash); err != nil {
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('mgr1','mgr1','Manager One',?,'manager')`, hash); err != nil {
 		t.Fatal(err)
 	}
 	openReq := httptest.NewRequest(http.MethodPost, "/api/shifts/open", strings.NewReader(`{"register_id":"reg1","cashier_id":"cashier1","opening_cash":10000}`))
@@ -932,7 +939,7 @@ func TestRecordCashAdjustment_WrongManagerPINForbiddenCorrectPINRecordsManagerAs
 		t.Fatal(err)
 	}
 	if _, err := dp.Db.ExecContext(ctx,
-		`INSERT INTO users(id,username,display_name,pin_hash,role,created_at) VALUES('mgr1','mgr1','Manager One',?,'manager',datetime('now'))`, hash); err != nil {
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('mgr1','mgr1','Manager One',?,'manager')`, hash); err != nil {
 		t.Fatal(err)
 	}
 
@@ -996,7 +1003,7 @@ func TestRecordCashAdjustment_BlankManagerPINRejectedWithoutBurningLockoutBudget
 		t.Fatal(err)
 	}
 	if _, err := dp.Db.ExecContext(ctx,
-		`INSERT INTO users(id,username,display_name,pin_hash,role,created_at) VALUES('mgr1','mgr1','Manager One',?,'manager',datetime('now'))`, hash); err != nil {
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('mgr1','mgr1','Manager One',?,'manager')`, hash); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1175,7 +1182,7 @@ func TestPfandRueckgabe_BlankManagerPINRejectedWithoutBurningLockoutBudget(t *te
 		t.Fatal(err)
 	}
 	if _, err := dp.Db.ExecContext(ctx,
-		`INSERT INTO users(id,username,display_name,pin_hash,role,created_at) VALUES('mgr1','mgr1','Manager One',?,'manager',datetime('now'))`, hash); err != nil {
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('mgr1','mgr1','Manager One',?,'manager')`, hash); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1218,7 +1225,7 @@ func TestPfandRueckgabe_WrongManagerPINForbiddenCorrectPINRecordsManagerAsActor(
 		t.Fatal(err)
 	}
 	if _, err := dp.Db.ExecContext(ctx,
-		`INSERT INTO users(id,username,display_name,pin_hash,role,created_at) VALUES('mgr1','mgr1','Manager One',?,'manager',datetime('now'))`, hash); err != nil {
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('mgr1','mgr1','Manager One',?,'manager')`, hash); err != nil {
 		t.Fatal(err)
 	}
 

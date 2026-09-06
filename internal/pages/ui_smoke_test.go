@@ -295,9 +295,17 @@ func TestPOSTender_PrinterFallbackAndLegalText(t *testing.T) {
 	defer db.Close()
 	seedForPages(t, db)
 
+	// ut-docs#1677: plugins has a composite FK to plugin_catalog(id,version)
+	// in the real migrated schema (ut-docs#1676).
 	if _, err := db.Exec(`
-INSERT INTO plugins (id, name, version, is_active)
-VALUES ('com.tax.plugin', 'Tax Plugin', '1.2.3', 1)
+INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at)
+VALUES ('com.tax.plugin', '1.2.3', 'Tax Plugin', 'desc', 'go', 'entry', 'url', 'sha', 'auth', 'site', '[]', '0.0.0', '1', datetime('now'))
+`); err != nil {
+		t.Fatalf("insert plugin_catalog: %v", err)
+	}
+	if _, err := db.Exec(`
+INSERT INTO plugins (id, name, version, entrypoint, is_active)
+VALUES ('com.tax.plugin', 'Tax Plugin', '1.2.3', 'entry', 1)
 `); err != nil {
 		t.Fatalf("insert plugin: %v", err)
 	}
@@ -621,7 +629,7 @@ func TestManagerOverrideForm(t *testing.T) {
 	}
 
 	// Test POST override with non-manager (should fail)
-	_, _ = db.Exec(`INSERT INTO users(id,username,pin_hash,role,created_at) VALUES('user2','cashier','','cashier',datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO users(id,username,pin_hash,role) VALUES('user2','cashier','','cashier')`)
 	formData := "item_id=itm1&location_id=loc_main&qty_before=5&reason=test override"
 	req = httptest.NewRequest(http.MethodPost, "/api/inventory/override", strings.NewReader(formData))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

@@ -351,10 +351,10 @@ func TestFiscalOverride_PINPaths(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,pin_hash,role,created_at) VALUES
-		('cash1','cash1','Cashier','', 'cashier', datetime('now')),
-		('adm2','adm2','Owner',?, 'admin', datetime('now')),
-		('mgr2','mgr2','Manager',?, 'manager', datetime('now'))`, adminHash, mgrHash); err != nil {
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,pin_hash,role) VALUES
+		('cash1','cash1','Cashier','', 'cashier'),
+		('adm2','adm2','Owner',?, 'admin'),
+		('mgr2','mgr2','Manager',?, 'manager')`, adminHash, mgrHash); err != nil {
 		t.Fatal(err)
 	}
 
@@ -403,7 +403,7 @@ func TestFiscalOverride_UnreachableWhenNeverConfigured(t *testing.T) {
 		t.Fatal(err)
 	}
 	if _, err := dp.Db.ExecContext(context.Background(),
-		`INSERT INTO users(id,username,display_name,pin_hash,role,created_at) VALUES ('adm2','adm2','Owner',?, 'admin', datetime('now'))`,
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES ('adm2','adm2','Owner',?, 'admin')`,
 		adminHash); err != nil {
 		t.Fatal(err)
 	}
@@ -521,7 +521,8 @@ func TestFiscalSettings_UpsertGuards(t *testing.T) {
 
 	t.Run("manager cannot flip fiscal toggles", func(t *testing.T) {
 		mux, dp := dp2mux(t)
-		if _, err := dp.Db.Exec(`INSERT INTO users(id,username,pin_hash,role,created_at) VALUES('mgr9','mgr9','','manager',datetime('now'))`); err != nil {
+		// display_name is NOT NULL on the real users table (001_init.sql).
+		if _, err := dp.Db.Exec(`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('mgr9','mgr9','Manager Nine','','manager')`); err != nil {
 			t.Fatal(err)
 		}
 		rec := post(mux, manager, fiscal.KeySystemOfRecord, "true")
