@@ -257,7 +257,11 @@ func TestPluginSettingsPage_GET_RendersTakeawayOverridesEditor(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPluginSettingsTestDeps(t)
 	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
-	seedTaxCode(t, dp, "tax_reduced", "Reduced VAT", 700, nil)
+	// ut-docs#1676: "Reduced VAT" alone collides with 001_init.sql's own
+	// tax_red seed row now that openPagesTestDB runs real migrations —
+	// tax_codes.name is UNIQUE. Appending the rate keeps the
+	// strings.Contains(body, "Reduced VAT") assertion below satisfied.
+	seedTaxCode(t, dp, "tax_reduced", "Reduced VAT (7%)", 700, nil)
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{"tax_19":700}`, "global")
 
 	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
@@ -563,7 +567,8 @@ func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_AbsentFieldPreservesEntry
 	mux, dp := newPluginSettingsTestDeps(t)
 	ctx := context.Background()
 	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
-	seedTaxCode(t, dp, "tax_7", "Reduced VAT", 700, nil)
+	// ut-docs#1676: same tax_codes.name UNIQUE collision as above.
+	seedTaxCode(t, dp, "tax_7", "Reduced VAT (7%)", 700, nil)
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{"tax_19":700,"tax_7":500}`, "global")
 
 	// The stale form carries a field for tax_19 only — tax_7's entry must

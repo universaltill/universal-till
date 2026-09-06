@@ -257,9 +257,10 @@ func TestRegistersPage_ChangeLocationAfterCreation(t *testing.T) {
 	if err := d.Db.QueryRow(`SELECT id FROM registers WHERE name = 'Front Till'`).Scan(&id); err != nil {
 		t.Fatalf("lookup: %v", err)
 	}
-	if _, err := d.Db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc_back','Back Room')`); err != nil {
-		t.Fatalf("seed second location: %v", err)
-	}
+	// ut-docs#1676: loc_back is already seeded by 001_init.sql now that
+	// openPagesTestDB runs real migrations (its stock_locations.id is a
+	// PRIMARY KEY, so re-inserting it here failed) -- reuse the migration's
+	// own row instead of creating a second one.
 
 	// Move it to a different location.
 	rec = postForm(mux, "/api/registers/"+id, url.Values{"name": {"Front Till"}, "location_id": {"loc_back"}}, &manager)
