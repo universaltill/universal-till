@@ -65,6 +65,27 @@ var (
 	goarch = runtime.GOARCH
 )
 
+// beforeRestart runs concurrently with Apply's flush-delay sleep — started
+// as soon as Apply schedules its re-exec, not after the delay — and is
+// always fully complete before the re-exec itself, giving the caller a
+// chance to cleanly stop anything an exec of THIS process alone won't reach
+// — specifically hardware-plugin child processes (internal/plugins.Supervisor),
+// which are not reparented, cancelled or signalled by an exec of their
+// parent (ut-docs#1616). No-op by default: a caller with nothing to clean up
+// (e.g. every test in this package) never needs to set it.
+var beforeRestart = func(context.Context) {}
+
+// SetBeforeRestart registers the hook above. Call once at startup — from
+// internal/app.Run, the only place that holds the plugin Supervisor —
+// before any HTTP handler can reach Apply(). A nil fn resets to the no-op
+// default.
+func SetBeforeRestart(fn func(context.Context)) {
+	if fn == nil {
+		fn = func(context.Context) {}
+	}
+	beforeRestart = fn
+}
+
 // ErrUnsupported means this install type updates via a native mechanism.
 var ErrUnsupported = errors.New("in-app update isn't available for this install; use the installer (Windows) or reinstall (this install's directory isn't self-update-writable)")
 
@@ -357,8 +378,25 @@ func Apply(ctx context.Context) error {
 
 	log.Infof("[selfupdate] updated to v%s — restarting", version)
 	// Re-exec the new binary shortly, so the HTTP response can flush first.
+	// beforeRestart runs CONCURRENTLY with this delay, not after it
+	// (ut-docs#1616 review finding, same fix as internal/procrestart):
+	// stopping hardware plugins can itself take real time, and running it
+	// sequentially after reexecDelay would push the re-exec later than
+	// callers assume (web/ui/layouts/base.html's update-status poll times
+	// off reexecDelay). Overlapping means a fast/no-op stop adds no extra
+	// delay; only a genuinely slow plugin pushes the re-exec out, and only
+	// by the time it actually needed. Apply() is unreachable on an
+	// unsupported platform (the !Supported() check above already
+	// returned), so — unlike procrestart.Restart(), which must stay
+	// callable everywhere — there is no Windows no-op case to preserve here.
 	go func() {
+		done := make(chan struct{})
+		go func() {
+			beforeRestart(context.Background())
+			close(done)
+		}()
 		time.Sleep(reexecDelay)
+		<-done
 		if err := reexecFn(exe); err != nil {
 			logging.L().Errorf("[selfupdate] re-exec failed (restart manually): %v", err)
 		}

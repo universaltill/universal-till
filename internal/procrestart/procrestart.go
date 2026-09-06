@@ -22,14 +22,16 @@
 // reexecFn/reexecDelay are unexported, and it is a battle-tested
 // production-critical path with no reason to be touched for this feature.
 //
-// What this does NOT cover (review finding, ut-docs#1550, tracked as
-// ut-docs#1616): a hardware-plugin child process (internal/plugins,
-// exec.CommandContext with no SysProcAttr/process-group/Pdeathsig) is not
-// reparented, cancelled or signalled by an exec of ITS parent — the PID is
-// unchanged and the plugin's own context is never cancelled, so it survives
-// across the restart and the new image can spawn a second one. Pre-existing
-// in selfupdate too; narrowing the claim above rather than letting it read
-// as broader than the lock/socket case it actually proves.
+// A hardware-plugin child process (internal/plugins, exec.CommandContext
+// with no SysProcAttr/process-group/Pdeathsig) is NOT reparented, cancelled
+// or signalled by an exec of ITS parent — the PID is unchanged and the
+// plugin's own context is never cancelled on its own, so left alone it would
+// survive across the restart and the new image could spawn a second one
+// (review finding, ut-docs#1550, tracked and fixed as ut-docs#1616).
+// SetBeforeRestart below is the fix: internal/app.Run wires it to
+// internal/plugins.Supervisor.Shutdown, run (bounded) before the re-exec
+// below, so every hardware-plugin process is stopped first. Pre-existing gap
+// in selfupdate too, fixed there the same way.
 //
 // Windows is unsupported (reexec_windows.go): there is no in-place exec
 // there, so callers fall back to telling the operator to close and reopen
@@ -39,6 +41,7 @@
 package procrestart
 
 import (
+	"context"
 	"os"
 	"time"
 
@@ -56,6 +59,27 @@ var (
 	// replaced — same value selfupdate.Apply uses for the same reason.
 	reexecDelay = 1500 * time.Millisecond
 )
+
+// beforeRestart runs concurrently with Restart's flush-delay sleep — started
+// as soon as Restart schedules its re-exec, not after the delay — and is
+// always fully complete before the re-exec itself, giving the caller a
+// chance to cleanly stop anything an exec of THIS process alone won't reach
+// — specifically hardware-plugin child processes (internal/plugins.Supervisor),
+// which are not reparented, cancelled or signalled by an exec of their
+// parent (ut-docs#1616). No-op by default: a caller with nothing to clean up
+// (e.g. every test in this package) never needs to set it.
+var beforeRestart = func(context.Context) {}
+
+// SetBeforeRestart registers the hook above. Call once at startup — from
+// internal/app.Run, the only place that holds the plugin Supervisor —
+// before any HTTP handler can reach Restart(). A nil fn resets to the
+// no-op default.
+func SetBeforeRestart(fn func(context.Context)) {
+	if fn == nil {
+		fn = func(context.Context) {}
+	}
+	beforeRestart = fn
+}
 
 // Supported reports whether Restart can replace the process image on this
 // platform. It is a pure build-tag decision (see reexec_unix.go /
@@ -79,7 +103,35 @@ func Restart() {
 	}
 	logging.L().Infof("[procrestart] restarting %s in %v", exe, reexecDelay)
 	go func() {
+		// Run beforeRestart CONCURRENTLY with the flush-delay sleep below,
+		// not sequentially after it (ut-docs#1616 review finding): stopping
+		// hardware plugins can itself take real time (bounded, but not
+		// free), and running it after reexecDelay would push the actual
+		// re-exec later than callers assume —
+		// web/ui/partials/pairing_wait.html times its first health probe
+		// off reexecDelay alone. Overlapping the two means the common case
+		// (no plugin running, or a fast stop) adds no extra delay at all;
+		// only a genuinely slow/stuck plugin pushes the re-exec past
+		// reexecDelay, and only by the time it actually needed.
+		//
+		// Skipped entirely when Supported() is false (Windows): Restart is
+		// documented (internal/pages/pairing_join.go) as a safe, logged
+		// no-op on a platform that can't in-place exec — nothing ever
+		// actually restarts there, so stopping hardware plugins here would
+		// just kill them permanently with no compensating restart.
+		var hookDone <-chan struct{}
+		if Supported() {
+			done := make(chan struct{})
+			hookDone = done
+			go func() {
+				beforeRestart(context.Background())
+				close(done)
+			}()
+		}
 		time.Sleep(reexecDelay)
+		if hookDone != nil {
+			<-hookDone
+		}
 		if err := reexecFn(exe); err != nil {
 			logging.L().Errorf("[procrestart] re-exec failed (restart manually): %v", err)
 		}
