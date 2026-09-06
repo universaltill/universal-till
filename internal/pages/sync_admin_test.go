@@ -319,6 +319,44 @@ func TestSyncChip_PrimaryModeWithMultipleTills(t *testing.T) {
 	}
 }
 
+// ut-docs#1551: a pending pairing request must render the chip (with a
+// badge) even before ANY till has enrolled — the shop's very first pairing
+// attempt is exactly the case a manager most needs to see, and the old
+// empty-roster early return (TestSyncChip_PrimaryModeNoTills) would
+// otherwise hide it completely, the same gap ut-docs#1133 already closed
+// for quarantined entries.
+func TestSyncChip_PrimaryModeWithPendingPairingAndNoEnrolledTills(t *testing.T) {
+	dp := newMigratedSyncDeps(t, "primary-pending.db")
+	initPagesI18n(t)
+	ctx := t.Context()
+	if err := dp.Settings.Set(ctx, "till.name", "Front Counter"); err != nil {
+		t.Fatalf("set till.name: %v", err)
+	}
+	pairing := data.NewPairingRepo(dp.Db)
+	if _, err := pairing.CreatePendingRequest(ctx, "Kitchen Till", "commitment-1", 10*time.Minute); err != nil {
+		t.Fatalf("create pending pairing: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	registerSyncAdmin(mux, dp)
+	req := httptest.NewRequest(http.MethodGet, "/ui/sync-chip", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if body == "" {
+		t.Fatalf("expected the chip to render for a pending pairing request even with zero enrolled tills, got empty body")
+	}
+	if !strings.Contains(body, `sync-chip warn`) {
+		t.Fatalf("expected class=warn while a pairing request is pending, got %q", body)
+	}
+	if !strings.Contains(body, `class="nav-badge"`) {
+		t.Fatalf("expected a badge dot on the icon for a pending pairing request, got %q", body)
+	}
+	if !strings.Contains(body, "1 pairing request<") {
+		t.Fatalf("expected the singular pairing-request count rendered, got %q", body)
+	}
+}
+
 // ut-docs#1133: a quarantined LAN-sync journal entry is otherwise invisible
 // to both the replica's own sync chip (which correctly shows fully-synced)
 // and the primary's sale counts — the primary-side nav chip is the one

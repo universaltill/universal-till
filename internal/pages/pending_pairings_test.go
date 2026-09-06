@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"strings"
 	"testing"
 
@@ -127,6 +128,158 @@ func TestPendingPairingsUI_RendersWrongPINFeedbackWiring(t *testing.T) {
 	}
 	if !strings.Contains(body, "hidden") {
 		t.Fatalf("expected a hidden-by-default error element the handler can reveal, got: %s", body)
+	}
+}
+
+// --- GET /ui/pairing-notice: the nav-level dismissible notice (ut-docs#1551),
+// mounted by base.html on every page so a manager sees a pending pairing
+// request without navigating to /tills and refreshing. ---
+
+func TestPairingNoticeUI_RequiresManager(t *testing.T) {
+	t.Setenv("UT_AUTH", "on")
+	mux, _, _ := newPairingAPITestDeps(t)
+	registerPendingPairingsUI(mux, nil)
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/pairing-notice", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	// Same "silent empty" convention as GET /ui/bugreport-chip and the
+	// other nav.html/base.html placeholder fragments — a caller without
+	// permission gets 200 + nothing, never a 403 splashed on every page.
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 without a manager session, got %d", rec.Code)
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("expected an empty body without a manager session, got: %s", rec.Body.String())
+	}
+}
+
+func TestPairingNoticeUI_EmptyWhenNothingPending(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+	registerPendingPairingsUI(mux, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/pairing-notice", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("expected an empty body when nothing is pending, got: %s", rec.Body.String())
+	}
+}
+
+func TestPairingNoticeUI_RendersCountAndFingerprintWhenPending(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+	registerPendingPairingsUI(mux, dp)
+
+	postPairRequest(t, mux, "Kitchen Till", commitOf("notice-secret-1"), "10.0.0.60:1234")
+	postPairRequest(t, mux, "Bar Till", commitOf("notice-secret-2"), "10.0.0.61:1234")
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/pairing-notice", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="pairing-notice"`) {
+		t.Fatalf("expected the notice element, got: %s", body)
+	}
+	if !strings.Contains(body, "2") {
+		t.Fatalf("expected the pending count (2) rendered, got: %s", body)
+	}
+	// The dismiss script keys off this attribute to decide whether the
+	// operator already dismissed THIS exact set of pending requests — it
+	// must actually be populated, not an empty string, or every render
+	// would compare equal and the notice would never re-show after a
+	// dismiss+new-request.
+	if !strings.Contains(body, `data-fingerprint="`) || strings.Contains(body, `data-fingerprint=""`) {
+		t.Fatalf("expected a non-empty data-fingerprint, got: %s", body)
+	}
+	if !strings.Contains(body, `href="/tills"`) {
+		t.Fatalf("expected a link to /tills, got: %s", body)
+	}
+}
+
+func TestPairingNoticeUI_EmptyOnReplicaEvenWithLocalPendingRows(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newPairingAPITestDeps(t)
+	registerPendingPairingsUI(mux, dp)
+
+	postPairRequest(t, mux, "Kitchen Till", commitOf("notice-secret-3"), "10.0.0.62:1234")
+
+	// Pairing approval only ever happens on the primary — a till that is
+	// itself a replica must never show this notice, regardless of what
+	// PairingRepo happens to hold locally.
+	if err := dp.Settings.Set(t.Context(), "sync.primary_url", "http://10.0.0.1:8080"); err != nil {
+		t.Fatalf("set sync.primary_url: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/pairing-notice", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Body.Len() != 0 {
+		t.Fatalf("expected an empty body on a replica till, got: %s", rec.Body.String())
+	}
+}
+
+// TestPairingNoticeMount_KeepsPollingAndUsesADistinctID locks in the fix
+// for a real bug an independent review caught, invisible to every handler-
+// level test above: base.html's placeholder for GET /ui/pairing-notice
+// originally carried hx-swap="outerHTML". htmx's outerHTML swap REPLACES
+// the element carrying the hx-trigger, so the very first poll that found
+// nothing pending (the empty-body branch, exactly like
+// TestPairingNoticeUI_EmptyWhenNothingPending above) destroyed the
+// placeholder along with its own polling trigger — verified in a real
+// browser to permanently stop polling after exactly one request, in both
+// directions: a request arriving after that first empty poll never showed
+// the notice at all, and a request already pending at load never cleared
+// once resolved (the literal "must clear itself... never a stale notice"
+// acceptance criterion, failing). This is a markup-only regression no
+// handler test can see, so it asserts on base.html's actual source rather
+// than on any rendered response.
+func TestPairingNoticeMount_KeepsPollingAndUsesADistinctID(t *testing.T) {
+	chdirRoot(t)
+	b, err := os.ReadFile("web/ui/layouts/base.html")
+	if err != nil {
+		t.Fatalf("read base.html: %v", err)
+	}
+	body := string(b)
+	i := strings.Index(body, `hx-get="/ui/pairing-notice"`)
+	if i < 0 {
+		t.Fatalf("expected the pairing-notice placeholder to still exist in base.html")
+	}
+	// The whole placeholder <div ...> tag, not the full file, so a
+	// coincidental hx-swap="outerHTML" written on some unrelated element
+	// elsewhere in the file can't false-pass or false-fail this.
+	start := strings.LastIndex(body[:i], "<div")
+	end := strings.Index(body[i:], ">")
+	if start < 0 || end < 0 {
+		t.Fatalf("could not isolate the placeholder <div> tag")
+	}
+	tag := body[start : i+end+1]
+	if strings.Contains(tag, `hx-swap="outerHTML"`) {
+		t.Fatalf("the pairing-notice placeholder must NOT use hx-swap=\"outerHTML\" — an empty poll response would destroy the element along with its own hx-trigger, permanently stopping all future polling. Got: %s", tag)
+	}
+	if !strings.Contains(tag, `hx-trigger="load, every 30s"`) {
+		t.Fatalf("expected the placeholder to keep polling every 30s, got: %s", tag)
+	}
+	// The rendered partial's own root also uses id="pairing-notice"
+	// (pairing_notice.html) -- with the default innerHTML swap the two
+	// coexist as nested elements, so they must NOT share an id: the
+	// partial's own dismiss script resolves getElementById("pairing-
+	// notice"), and a duplicate id would make that ambiguous, at best
+	// resolving to this placeholder instead of the real banner (which
+	// carries no data-fingerprint), breaking the dismiss/re-show logic
+	// entirely.
+	if strings.Contains(tag, `id="pairing-notice"`) {
+		t.Fatalf("the placeholder must use a DIFFERENT id from pairing_notice.html's own root element (\"pairing-notice\"), got: %s", tag)
 	}
 }
 

@@ -47,13 +47,17 @@
        list that explains it rather than the tills roster, which has
        nothing to say about it. The title must follow the same branch as
        the href (independent review, 2026-08-26 caught these drifting). */}}
+  {{/* ut-docs#1551: pending pairing requests append the same way
+       quarantined does — additional detail on the SAME control, never a
+       new href branch (a pending request is resolved on /tills either
+       way, quarantined or not). */}}
   <a href="{{ if .quarantined }}/sync-quarantine{{ else }}/tills{{ end }}" class="nav-toggle"
      title="{{ if .quarantined }}{{ T "sync.chip_quarantine_title" }}{{ else }}{{ T "sync.chip_tills_title" }}{{ end }}"
-     aria-label="{{ if .quarantined }}{{ T "sync.chip_quarantine_title" }}{{ else }}{{ T "sync.chip_tills_title" }}{{ end }} — {{ .label }}{{ if .count }} · {{ .count }} {{ if eq .count 1 }}{{ T "sync.chip_till_one" }}{{ else }}{{ T "sync.chip_till_other" }}{{ end }}{{ end }}{{ if .quarantined }} · {{ .quarantined }} {{ if eq .quarantined 1 }}{{ T "sync.chip_quarantined_one" }}{{ else }}{{ T "sync.chip_quarantined_other" }}{{ end }}{{ end }}">
-    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "sync" }}{{ if or .quarantined (eq .class "warn") }}<span class="nav-badge" aria-hidden="true"></span>{{ end }}</span>
+     aria-label="{{ if .quarantined }}{{ T "sync.chip_quarantine_title" }}{{ else }}{{ T "sync.chip_tills_title" }}{{ end }} — {{ .label }}{{ if .count }} · {{ .count }} {{ if eq .count 1 }}{{ T "sync.chip_till_one" }}{{ else }}{{ T "sync.chip_till_other" }}{{ end }}{{ end }}{{ if .quarantined }} · {{ .quarantined }} {{ if eq .quarantined 1 }}{{ T "sync.chip_quarantined_one" }}{{ else }}{{ T "sync.chip_quarantined_other" }}{{ end }}{{ end }}{{ if .pending }} · {{ .pending }} {{ if eq .pending 1 }}{{ T "sync.chip_pairing_pending_one" }}{{ else }}{{ T "sync.chip_pairing_pending_other" }}{{ end }}{{ end }}">
+    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "sync" }}{{ if or .quarantined .pending (eq .class "warn") }}<span class="nav-badge" aria-hidden="true"></span>{{ end }}</span>
     {{/* ut-docs#405: this till's own name leads, same source (tillNameOrDefault)
          Settings/​/tills already use; the count stays a secondary detail. */}}
-    <span class="nav-toggle-label" aria-hidden="true">{{ .label }}{{ if .count }} · {{ .count }} {{ if eq .count 1 }}{{ T "sync.chip_till_one" }}{{ else }}{{ T "sync.chip_till_other" }}{{ end }}{{ end }}{{ if .quarantined }} · {{ .quarantined }} {{ if eq .quarantined 1 }}{{ T "sync.chip_quarantined_one" }}{{ else }}{{ T "sync.chip_quarantined_other" }}{{ end }}{{ end }}</span>
+    <span class="nav-toggle-label" aria-hidden="true">{{ .label }}{{ if .count }} · {{ .count }} {{ if eq .count 1 }}{{ T "sync.chip_till_one" }}{{ else }}{{ T "sync.chip_till_other" }}{{ end }}{{ end }}{{ if .quarantined }} · {{ .quarantined }} {{ if eq .quarantined 1 }}{{ T "sync.chip_quarantined_one" }}{{ else }}{{ T "sync.chip_quarantined_other" }}{{ end }}{{ end }}{{ if .pending }} · {{ .pending }} {{ if eq .pending 1 }}{{ T "sync.chip_pairing_pending_one" }}{{ else }}{{ T "sync.chip_pairing_pending_other" }}{{ end }}{{ end }}</span>
   </a>
   {{- end }}
 </span>

@@ -2112,6 +2112,27 @@ body.login-screen {
   padding: .6rem .9rem; margin-block-end: .8rem; }
 .sync-banner a { color: inherit; font-weight: 700; text-decoration: underline; }
 
+/* ut-docs#1551: nav-level dismissible notice for a pending pairing
+   request -- mounted in base.html as a sibling of <nav>/<main> (not
+   inside any one page's content), so it renders identically on every
+   manager-facing page rather than only where a page opts in the way
+   .sync-banner above does. Deliberately its own class, not .pos-notice
+   reused: that one is explicitly scoped to the sale screen's in-flow
+   basket/#pos-alert surface (docs/sale-screen-notifications.md) and
+   auto-expires info/success notices after 2.5s -- this notice must
+   persist (dismissed only by the operator, or by the request resolving)
+   and must look identical on every page, not just inside a basket. The
+   info tint matches .pos-notice.info's own palette so the two notice
+   surfaces still read as one visual language. Reuses .notice-dismiss
+   (below) for the button. */
+.pairing-notice { display: flex; align-items: center; gap: .6rem;
+  padding: .55rem 1rem; font-weight: 600; font-size: .92rem;
+  background: rgba(37, 99, 235, .1); color: var(--accent);
+  border-block-end: 1px solid rgba(37, 99, 235, .3); }
+.pairing-notice[hidden] { display: none; }
+.pairing-notice-text { flex: 1; min-width: 0; overflow-wrap: anywhere; }
+.pairing-notice a { color: inherit; font-weight: 700; text-decoration: underline; }
+
 /* Operator chip + lock button in the nav. Column by default (the rail);
    the <=480px block right below restores the previous horizontal row for
    the top-bar fallback -- kept HERE, right after the rule it overrides,

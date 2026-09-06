@@ -168,7 +168,17 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 			logging.L().Errorf("count sync journal quarantine: %v", qErr)
 			quarantined = 0
 		}
-		if (err != nil || len(list) == 0) && quarantined == 0 {
+		// ut-docs#1551: same "read before the early return, let a nonzero
+		// count alone justify rendering" reasoning as quarantined above —
+		// a shop's very FIRST pairing attempt happens before any till is
+		// enrolled (list is empty), which is exactly the case a manager
+		// most needs to see. Best-effort: a read error leaves this at 0
+		// rather than failing the whole chip render, same as quarantined.
+		pending, pErr := data.NewPairingRepo(d.Db).ListPendingReadOnly(r.Context())
+		if pErr != nil {
+			logging.L().Errorf("list pending pairings: %v", pErr)
+		}
+		if (err != nil || len(list) == 0) && quarantined == 0 && len(pending) == 0 {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
@@ -179,7 +189,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 				break
 			}
 		}
-		if quarantined > 0 {
+		if quarantined > 0 || len(pending) > 0 {
 			class = "warn"
 		}
 		// ut-docs#405: this used to show only a bare replica COUNT — there
@@ -192,6 +202,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 			"class":       class,
 			"label":       label,
 			"count":       len(list),
+			"pending":     len(pending),
 			"quarantined": quarantined,
 		})(w, r)
 	})
