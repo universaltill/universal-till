@@ -751,11 +751,27 @@
           searching: "{{ T "tills.discovery.searching" }}",
           noneFound: "{{ T "tills.discovery.none_found" }}",
           resultName: "{{ T "tills.discovery.result_name" }}",
+          resultAddress: "{{ T "tills.discovery.result_address" }}",
           error: "{{ T "tills.discovery.error" }}",
           requestBtn: "{{ T "tills.pairing.request_btn" }}"
         };
         function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
         function escAttr(s) { return esc(s).replace(/"/g, '&quot;'); }
+        // ut-docs#1295: mirrors tills.html's own disambiguation fix — two
+        // different, unrelated shops can both still be on their unconfigured
+        // default name, so the raw till_id UUID is often the only thing
+        // distinguishing two entries here. base_url already carries this
+        // candidate's real LAN address; surface that too rather than making
+        // a human compare UUIDs by eye.
+        function hostOf(url) {
+          try { return new URL(url).hostname; } catch (e) {}
+          // Bracketed IPv6 vs. a bare hostname/IPv4 need separate capture
+          // groups — a single "stop at the first colon" class would
+          // truncate an IPv6 address at its first internal colon
+          // (independent review, ut-docs#1295).
+          var m = /^[a-z]+:\/\/(?:\[([^\]]+)\]|([^/:]+))/i.exec(url || '');
+          return m ? (m[1] || m[2]) : '';
+        }
         btn.addEventListener('click', function () {
           btn.disabled = true;
           msg.textContent = i18n.searching;
@@ -769,8 +785,10 @@
               msg.textContent = '';
               out.innerHTML = '<ul style="list-style:none; padding-inline-start:0; margin:.4rem 0">' + list.map(function (p) {
                 var vals = JSON.stringify({ base_url: p.base_url, till_id: p.till_id });
+                var addr = hostOf(p.base_url);
+                var addrPart = addr ? (' · ' + esc(i18n.resultAddress) + ': ' + esc(addr)) : '';
                 return '<li style="padding:.3rem 0">' + esc(p.name)
-                  + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + esc(p.till_id) + '</span> '
+                  + ' — <span class="muted">' + esc(i18n.resultName) + ': ' + esc(p.till_id) + addrPart + '</span> '
                   + '<button type="button" class="btn secondary" hx-post="/api/setup/pair-start" '
                   + 'hx-vals="' + escAttr(vals) + '" hx-include="#setup-pairing-till-name" '
                   // ut-docs#1540: this button lives outside any <form>, so

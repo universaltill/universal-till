@@ -143,7 +143,7 @@ func (a *Advertiser) startLocked(ctx context.Context) (mdnsServer, error) {
 	if err != nil {
 		return nil, err
 	}
-	name := storeNameOrDefault(ctx, a.settings)
+	name := advertisedName(ctx, a.settings, id)
 	port := a.port
 	if port == 0 {
 		port = 8080 // config.Init's own UT_LISTEN_ADDR default; NewMDNSService requires a non-zero port
