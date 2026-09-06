@@ -48,10 +48,8 @@ func TestStorePageShowsLifecycleStatusAndInstalledSplit(t *testing.T) {
 	})
 
 	statusStore := plugins.NewInstallStatusStore(db)
-	// Installed and active (plugin row seeded by seedForPages as com.demo.active).
-	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,is_active) VALUES('com.demo.active','Active Plugin','1.2.3',1)`); err != nil {
-		t.Fatalf("seed plugin: %v", err)
-	}
+	// Installed and active.
+	seedTestPlugin(t, db, "com.demo.active", "Active Plugin", "1.2.3")
 	if err := statusStore.Save(t.Context(), plugins.InstallStatusRecord{
 		ListingID: "listing-active", PluginID: "com.demo.active", CurrentVersion: "1.2.3",
 		State: plugins.InstallStateActive,

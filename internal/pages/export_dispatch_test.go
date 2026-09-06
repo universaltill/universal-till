@@ -39,7 +39,12 @@ func seedExportPluginWithPermissions(t *testing.T, db *sql.DB, pluginID, key, la
 			t.Fatalf("exec %s: %v", q, err)
 		}
 	}
-	mustExec(`INSERT INTO plugins (id, name, version, is_active) VALUES (?, ?, '1.0.0', 1)`, pluginID, pluginID)
+	// ut-docs#1677: plugins.entrypoint is NOT NULL and plugins has a
+	// composite FK to plugin_catalog(id,version) in the real migrated
+	// schema (ut-docs#1676) -- description/author/website/tags_json are
+	// nullable but PluginRepo.ListCatalog scans them non-Null.
+	mustExec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at) VALUES (?, '1.0.0', ?, 'desc', 'go', 'entry', 'url', 'sha', 'auth', 'site', '[]', '0.0.0', '1', datetime('now'))`, pluginID, pluginID)
+	mustExec(`INSERT INTO plugins (id, name, version, entrypoint, is_active) VALUES (?, ?, '1.0.0', 'entry', 1)`, pluginID, pluginID)
 	mustExec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, is_active, sort_order)
 	          VALUES (?, ?, ?, ?, 'export', 1, 0)`, pluginID+"-e", pluginID, key, label)
 	mustExec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES (?, ?, 'events:receive', 1)`, pluginID+"-p", pluginID)
@@ -73,7 +78,12 @@ func seedExportPluginWithEntities(t *testing.T, db *sql.DB, pluginID, key, label
 	if err != nil {
 		t.Fatalf("marshal entities: %v", err)
 	}
-	mustExec(`INSERT INTO plugins (id, name, version, is_active) VALUES (?, ?, '1.0.0', 1)`, pluginID, pluginID)
+	// ut-docs#1677: plugins.entrypoint is NOT NULL and plugins has a
+	// composite FK to plugin_catalog(id,version) in the real migrated
+	// schema (ut-docs#1676) -- description/author/website/tags_json are
+	// nullable but PluginRepo.ListCatalog scans them non-Null.
+	mustExec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at) VALUES (?, '1.0.0', ?, 'desc', 'go', 'entry', 'url', 'sha', 'auth', 'site', '[]', '0.0.0', '1', datetime('now'))`, pluginID, pluginID)
+	mustExec(`INSERT INTO plugins (id, name, version, entrypoint, is_active) VALUES (?, ?, '1.0.0', 'entry', 1)`, pluginID, pluginID)
 	mustExec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, is_active, sort_order, config_json)
 	          VALUES (?, ?, ?, ?, 'export', 1, 0, ?)`, pluginID+"-e", pluginID, key, label, string(entitiesJSON))
 	mustExec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES (?, ?, 'events:receive', 1)`, pluginID+"-p", pluginID)

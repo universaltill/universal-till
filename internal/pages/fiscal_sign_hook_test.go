@@ -117,6 +117,14 @@ func seedFiscalSignPluginRows(t *testing.T, dp *common.Deps, pluginID string, ac
 	if active {
 		activeInt = 1
 	}
+	// ut-docs#1677: plugins has a composite FK to plugin_catalog(id,version)
+	// in the real migrated schema (ut-docs#1676).
+	if _, err := dp.Db.ExecContext(ctx, `
+INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at)
+VALUES (?, '1.0.0', ?, 'desc', 'wasm', './plugin.wasm', 'url', 'sha', 'auth', 'site', '[]', '0.0.0', '1', datetime('now'))`,
+		pluginID, "Fiscal Sign "+pluginID); err != nil {
+		t.Fatalf("seed plugin_catalog: %v", err)
+	}
 	if _, err := dp.Db.ExecContext(ctx, `
 INSERT INTO plugins (id, name, version, install_state, entrypoint, runtime, is_active, trust_level)
 VALUES (?, ?, '1.0.0', 'installed', './plugin.wasm', 'wasm', ?, 'trusted')`,
@@ -1265,6 +1273,10 @@ func TestFiscalSignExclusivity_EnableSucceedsWithoutConflict(t *testing.T) {
 	// workaround needed here anymore.
 	seedFiscalSignPluginRows(t, dp, "com.test.signer-a", false)
 	seedFiscalSignPluginRows(t, dp, "com.test.signer-b", false)
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at)
+VALUES ('com.test.no-hook', '1.0.0', 'No Hook', 'desc', 'wasm', './plugin.wasm', 'url', 'sha', 'auth', 'site', '[]', '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, install_state, entrypoint, runtime, is_active, trust_level)
 VALUES ('com.test.no-hook', 'No Hook', '1.0.0', 'installed', './plugin.wasm', 'wasm', 0, 'trusted')`); err != nil {
 		t.Fatal(err)

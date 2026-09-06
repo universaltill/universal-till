@@ -13,20 +13,25 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
+// seedTaxDeCatalogRow inserts the plugin_catalog row seedActiveTaxDePlugin/
+// seedDisabledTaxDePlugin's own plugins row now needs: openPagesTestDB runs
+// the real migrated schema (ut-docs#1657/#1676), where plugins has a
+// composite FOREIGN KEY (id, version) REFERENCES plugin_catalog (id,
+// version) and entrypoint NOT NULL on both tables -- this file's own
+// fixture/schema gap note (below) predates that swap and no longer applies.
+func seedTaxDeCatalogRow(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at) VALUES ('com.universaltill.tax-de', '1.0.0', 'German Tax', 'desc', 'go', 'entry', 'url', 'sha', 'auth', 'site', '[]', '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatalf("seed tax-de plugin_catalog: %v", err)
+	}
+}
+
 // seedActiveTaxDePlugin inserts a minimal com.universaltill.tax-de row
-// into the plain `plugins` table this file's own seedForPages fixture
-// defines (used by menu_page_test.go's tile-gate tests, ut-docs#1084).
-// Deliberately NOT import_page_test.go's installTaxDePlugin: that targets
-// the real migrated schema (plugin_catalog has min_pos_version/
-// api_version/etc., FK'd from plugins) via appdb.Open, which this file's
-// openPagesTestDB + seedForPages fixture does not reproduce -- a
-// pre-existing fixture/schema gap (ut-docs#1084 found it, out of this
-// card's scope to fix generally). The fixture's `plugins` table has no FK
-// to plugin_catalog, so a direct insert is sufficient and accurate for
-// what PluginActive actually checks (`is_active = 1` on this one table).
+// into `plugins` (used by menu_page_test.go's tile-gate tests, ut-docs#1084).
 func seedActiveTaxDePlugin(t *testing.T, db *sql.DB) {
 	t.Helper()
-	if _, err := db.Exec(`INSERT INTO plugins (id, name, version, is_active) VALUES ('com.universaltill.tax-de', 'German Tax', '1.0.0', 1)`); err != nil {
+	seedTaxDeCatalogRow(t, db)
+	if _, err := db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, is_active) VALUES ('com.universaltill.tax-de', 'German Tax', '1.0.0', 'entry', 1)`); err != nil {
 		t.Fatalf("seed active tax-de plugin: %v", err)
 	}
 }
@@ -37,7 +42,8 @@ func seedActiveTaxDePlugin(t *testing.T, db *sql.DB) {
 // tile gate actually checks is_active, not merely row existence.
 func seedDisabledTaxDePlugin(t *testing.T, db *sql.DB) {
 	t.Helper()
-	if _, err := db.Exec(`INSERT INTO plugins (id, name, version, is_active) VALUES ('com.universaltill.tax-de', 'German Tax', '1.0.0', 0)`); err != nil {
+	seedTaxDeCatalogRow(t, db)
+	if _, err := db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, is_active) VALUES ('com.universaltill.tax-de', 'German Tax', '1.0.0', 'entry', 0)`); err != nil {
 		t.Fatalf("seed disabled tax-de plugin: %v", err)
 	}
 }
@@ -52,6 +58,13 @@ func newFiscalRegisterTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
+	// ut-docs#1682: every test in this file acts as manager "m1" via
+	// auth.WithUser; audit_log.actor_id has a real FK to users(id) now that
+	// openPagesTestDB runs real migrations (ut-docs#1676), so "m1" needs a
+	// real seeded row.
+	if _, err := db.Exec(`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('m1','m1','Manager','','manager')`); err != nil {
+		t.Fatalf("seed manager m1: %v", err)
+	}
 
 	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(db)}
 	mux := http.NewServeMux()
