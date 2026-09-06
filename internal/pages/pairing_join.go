@@ -208,6 +208,21 @@ func registerPairingJoinAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/setup/pairing-restart", pairingRestartHandler(d, rateLimited(setupPairingRestartLimiter, firstBootGate(d))))
 }
 
+// renderJoinSuccess renders the paste-a-code join's success fragment
+// (POST /api/sync/join, POST /api/setup/join in sync_api.go) — the same
+// real restart action pairing_wait.html's "joined" branch already gives the
+// discovery-list "Request to pair" flow (ut-docs#1550), for the one pair of
+// routes that flow never covers: they render their own one-shot fragment
+// directly rather than going through pairWaitView (ut-docs#1615).
+func renderJoinSuccess(w http.ResponseWriter, r *http.Request, shopName, restartURL string, autoRestart bool) {
+	httpx.RenderPartial("ui/partials/pairing_join_success.html", map[string]any{
+		"shopName":         shopName,
+		"restartSupported": pairingRestartSupported(),
+		"restartURL":       restartURL,
+		"autoRestart":      autoRestart,
+	})(w, r)
+}
+
 // pairingRestartHandler schedules an in-place restart of this till so a
 // join staged by completeJoin (a restore-pending.db that only
 // db.ApplyPendingRestore, run once before db.Open at startup, can apply)
