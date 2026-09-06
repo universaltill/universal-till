@@ -969,6 +969,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 						log.Printf("[import] decode image for item %q: %v", it.Name, derr)
 						warnings = append(warnings, T("import.status.image_undecodable"))
 					} else {
+						img = imaging.DownscaleMaxEdge(img, imaging.MaxThumbEdge)
 						dir := paths.Data("public", "assets", "items", itemID)
 						thumbPath := filepath.Join(dir, "thumb.png")
 						writeErr := func() error {

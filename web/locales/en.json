@@ -1697,6 +1697,8 @@
   "catalog.error.server": "Something went wrong. Please try again.",
   "catalog.error.invalid_request": "Invalid request — check the details and try again.",
   "catalog.error.sku_exists": "That SKU is already in use — choose a different one.",
+  "catalog.error.image_too_large": "That photo is too large — try a smaller image, or crop it before uploading.",
+  "catalog.error.image_invalid": "That file isn't a valid PNG or JPEG image.",
   "catalog.barcode_backfill.btn": "Backfill barcodes from SKU",
   "catalog.barcode_backfill.heading": "Backfill barcodes from SKU",
   "catalog.barcode_backfill.eligible_count": "%d item(s) can get a barcode derived from their SKU.",
