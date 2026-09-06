@@ -77,7 +77,20 @@
         <button type="button" class="btn secondary"
                 onclick="document.getElementById('hold-modal').close(); document.getElementById('hold-label-input').value='';">
           {{ T "common.cancel" }}</button>
-        <button type="submit" class="btn primary">{{ T "hold.action" }}</button>
+        <!-- ut-docs#1628 (found reviewing #1625): this submit button's
+             visible text is plain "Hold Sale", same as the trigger(s) that
+             open this dialog (both already given their own distinguishing
+             aria-label by #1625 where they'd otherwise collide — this one
+             predates that fix and was out of its scope). Once a trigger is
+             tapped and this dialog opens, its own submit button joins the
+             a11y tree as a THIRD "Hold Sale"-named control while the
+             trigger(s) are still present (this dialog opens non-modally,
+             same OSK-must-stay-usable reasoning as #payment-overlay — see
+             #1625 — so nothing outside it becomes inert). Gets its own
+             distinguishing aria-label, following the same
+             "<visible text> (<context>)" convention #1625 established. -->
+        <button type="submit" class="btn primary"
+                aria-label="{{ T "hold.modal.confirm_action" }}">{{ T "hold.action" }}</button>
       </div>
     </form>
   </dialog>
