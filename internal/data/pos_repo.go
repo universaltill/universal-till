@@ -6727,47 +6727,48 @@ func (r *POSRepo) enabledBarcodeSymbologies(ctx context.Context) []string {
 // code is a named non-match, mirroring AddBarcode — only reachable once the
 // shop disabled the default catch-alls) or when nothing in the catalog owns
 // the LookupKey.
+//
+// The four tiers below (variant/item, each at the LookupKey and — when it
+// differs from the raw scan — again at the raw code) used to be up to four
+// sequential round trips before a miss on all of them was even possible
+// (ut-docs#1360). resolveScanBarcodeTiers now asks the database for all of
+// them at once and returns whichever tier wins, so a direct item-barcode
+// match (the common case) costs one barcode-tier query here instead of two.
+// A full miss costs one instead of two when the raw scan equals the decoded
+// LookupKey (the common case, every plain symbology) — the four-tiers-to-
+// one saving is largest specifically in the ut-docs#934 raw-code-fallback
+// shape, where a miss used to mean probing all four tiers before falling
+// through. Price resolution
+// below is unchanged and stays a separate round trip — out of this card's
+// scope (ut-docs#1360's acceptance criteria are scoped to "the barcode
+// fallback tiers"); caching the enabled-symbologies settings read is a
+// different, already-tracked card (ut-docs#1361).
 func (r *POSRepo) ResolveScanLine(ctx context.Context, code string, enabledIDs []string) (ShortcutLine, barcode.Decoded, bool) {
 	dec, ok := barcode.Default().Match(enabledIDs, code)
 	if !ok {
 		return ShortcutLine{}, barcode.Decoded{}, false
 	}
-	// variant barcode
-	if row, ok := r.resolveVariant(ctx, dec.LookupKey); ok {
-		price := r.resolvePrice(ctx, "", row.VariantID, row.Price)
+	row, viaLookupKey, ok := r.resolveScanBarcodeTiers(ctx, dec.LookupKey, code)
+	if !ok {
+		return ShortcutLine{}, dec, false
+	}
+	var price int64
+	if row.VariantID != "" {
+		price = r.resolvePrice(ctx, "", row.VariantID, row.Price)
 		if row.Variant != "" {
 			row.ItemName = row.ItemName + " - " + row.Variant
 		}
+	} else {
+		price = r.resolvePrice(ctx, row.ItemID, "", row.Price)
+	}
+	// Raw-code fallback (ut-docs#934 review finding F2): a tier-3/4 match
+	// (found via the raw code, not the decoded LookupKey) reports a zero
+	// Decoded{} — same as before this batching, an embedded weight/price is
+	// only meaningful when the match came from the zeroed-template tiers.
+	if viaLookupKey {
 		return r.toShortcutLine(code, price, row), dec, true
 	}
-	// item barcode
-	if row, ok := r.resolveItem(ctx, dec.LookupKey); ok {
-		price := r.resolvePrice(ctx, row.ItemID, "", row.Price)
-		return r.toShortcutLine(code, price, row), dec, true
-	}
-	// Raw-code fallback (ut-docs#934 review finding F2): for an
-	// embedded-data match, dec.LookupKey (the zeroed template) differs
-	// from the raw scanned code. A shop that enables a scale symbology
-	// after already cataloguing plain, full-digit EAN-13 barcodes in that
-	// prefix range (2x/02) — never re-entered using the zeroed
-	// convention — must keep resolving those existing rows; the
-	// zeroed-key tier above still gets first refusal, so this fallback
-	// never shadows a genuine scale-label row (that already matched
-	// above and returned).
-	if dec.LookupKey != code {
-		if row, ok := r.resolveVariant(ctx, code); ok {
-			price := r.resolvePrice(ctx, "", row.VariantID, row.Price)
-			if row.Variant != "" {
-				row.ItemName = row.ItemName + " - " + row.Variant
-			}
-			return r.toShortcutLine(code, price, row), barcode.Decoded{}, true
-		}
-		if row, ok := r.resolveItem(ctx, code); ok {
-			price := r.resolvePrice(ctx, row.ItemID, "", row.Price)
-			return r.toShortcutLine(code, price, row), barcode.Decoded{}, true
-		}
-	}
-	return ShortcutLine{}, dec, false
+	return r.toShortcutLine(code, price, row), barcode.Decoded{}, true
 }
 
 // ResolveShortcutLineDecoded is ResolveShortcutLine plus the barcode decode
@@ -6899,9 +6900,18 @@ type shortcutPriceRow struct {
 	Label     sql.NullString
 }
 
-func (r *POSRepo) resolveVariant(ctx context.Context, code string) (shortcutPriceRow, bool) {
-	row := r.db.QueryRowContext(ctx, `
-SELECT i.id, i.name, v.id, v.name, v.price, i.is_weighed,
+// scanBarcodeVariantSelect and scanBarcodeItemSelect are ResolveScanLine's
+// four tiers (variant/item, each rerun at the raw code when it differs from
+// the decoded LookupKey — see resolveScanBarcodeTiers), each shaped with a
+// literal `%d AS tier` column so a UNION ALL of them can be ordered by
+// precedence and resolved with a single LIMIT 1 instead of the caller
+// probing tier by tier. Column shapes match across all four branches
+// (string/string/string/string/int64/NullInt64/NullString/int64/NullString)
+// so SELECT * FROM (... UNION ALL ...) scans cleanly regardless of which
+// tier wins.
+const (
+	scanBarcodeVariantSelect = `
+SELECT %d AS tier, i.id, i.name, v.id, v.name, v.price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0), i.tax_code_id
 FROM variant_barcodes vb
@@ -6909,33 +6919,46 @@ JOIN item_variants v ON v.id = vb.variant_id
 JOIN items i ON i.id = v.item_id
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 WHERE vb.barcode = ?
-  AND i.is_active = 1 AND v.is_active = 1
-LIMIT 1
-`, code)
-	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
-		return shortcutPriceRow{}, false
-	}
-	return res, true
-}
-
-func (r *POSRepo) resolveItem(ctx context.Context, code string) (shortcutPriceRow, bool) {
-	row := r.db.QueryRowContext(ctx, `
-SELECT i.id, i.name, i.base_price, i.is_weighed,
+  AND i.is_active = 1 AND v.is_active = 1`
+	scanBarcodeItemSelect = `
+SELECT %d AS tier, i.id, i.name, '', '', i.base_price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0), i.tax_code_id
 FROM item_barcodes ib
 JOIN items i ON i.id = ib.item_id
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 WHERE ib.barcode = ?
-  AND i.is_active = 1
-LIMIT 1
-`, code)
-	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
-		return shortcutPriceRow{}, false
+  AND i.is_active = 1`
+)
+
+// resolveScanBarcodeTiers is ResolveScanLine's batched replacement
+// (ut-docs#1360) for up to four sequential resolveVariant/resolveItem
+// calls: tier 1 (variant @ lookupKey), tier 2 (item @ lookupKey) and,
+// only when rawCode differs from lookupKey, tier 3 (variant @ rawCode)
+// and tier 4 (item @ rawCode) — mirroring ResolveScanLine's own
+// `dec.LookupKey != code` guard, so the raw-code tiers are omitted
+// entirely (not just short-circuited) when they'd just re-run tiers 1/2's
+// queries against an identical code. A single `ORDER BY tier LIMIT 1`
+// over the UNION ALL lets SQLite pick the winning tier in one round trip
+// instead of the caller making up to four to find out there's nothing at
+// tiers 1-3. viaLookupKey reports whether the winning tier was 1/2 (true)
+// or the raw-code fallback 3/4 (false) — ResolveScanLine uses this to
+// decide whether the embedded-weight/price Decoded is meaningful, exactly
+// as the old per-tier call sites did.
+func (r *POSRepo) resolveScanBarcodeTiers(ctx context.Context, lookupKey, rawCode string) (shortcutPriceRow, bool, bool) {
+	query := fmt.Sprintf(scanBarcodeVariantSelect, 1) + "\nUNION ALL" + fmt.Sprintf(scanBarcodeItemSelect, 2)
+	args := []any{lookupKey, lookupKey}
+	if rawCode != lookupKey {
+		query += "\nUNION ALL" + fmt.Sprintf(scanBarcodeVariantSelect, 3) + "\nUNION ALL" + fmt.Sprintf(scanBarcodeItemSelect, 4)
+		args = append(args, rawCode, rawCode)
 	}
-	return res, true
+	row := r.db.QueryRowContext(ctx, "SELECT * FROM ("+query+") ORDER BY tier LIMIT 1", args...)
+	var res shortcutPriceRow
+	var tier int
+	if err := row.Scan(&tier, &res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
+		return shortcutPriceRow{}, false, false
+	}
+	return res, tier <= 2, true
 }
 
 func (r *POSRepo) resolveShortcut(ctx context.Context, code string) (shortcutPriceRow, bool) {
