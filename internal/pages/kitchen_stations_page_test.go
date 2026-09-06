@@ -345,7 +345,7 @@ func TestDiscoverPrintersAPI_RejectsNonManager(t *testing.T) {
 	mux, _ := newKitchenStationsTestMux(t)
 	cashier := auth.User{ID: "c1", Role: "cashier", DisplayName: "Cash"}
 
-	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/kitchen-stations/discover-printers", nil), cashier)
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/kitchen-stations/discover-printers", nil), cashier)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
@@ -360,7 +360,7 @@ func TestDiscoverPrintersAPI_ReturnsCandidatesFound(t *testing.T) {
 		{Name: "Bar Printer", Address: "192.168.1.70:9100"},
 	}, nil)
 
-	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/kitchen-stations/discover-printers", nil), manager)
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/kitchen-stations/discover-printers", nil), manager)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -391,7 +391,7 @@ func TestDiscoverPrintersAPI_ReturnsEmptyArrayNotNullWhenNoneFound(t *testing.T)
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
 	stubBrowsePrinters(t, nil, nil)
 
-	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/kitchen-stations/discover-printers", nil), manager)
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/kitchen-stations/discover-printers", nil), manager)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -407,7 +407,7 @@ func TestDiscoverPrintersAPI_ScanFailureReturns500WithoutLeakingRawError(t *test
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
 	stubBrowsePrinters(t, nil, errors.New("write udp6 [::]:1234->[ff02::fb]:5353: sendto: no route to host"))
 
-	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/api/kitchen-stations/discover-printers", nil), manager)
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/kitchen-stations/discover-printers", nil), manager)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusInternalServerError {

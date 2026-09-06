@@ -2029,7 +2029,8 @@ func TestSettingsPage_PrinterCardHidesTestPrintAndDesignerLinkFromCashier(t *tes
 
 // ut-docs#1556: the settings page's Find-printers button reuses the exact
 // same manager-gated endpoint kitchen_stations.html already calls
-// (GET /api/kitchen-stations/discover-printers) — no new route is
+// (POST /api/kitchen-stations/discover-printers — GET until ut-docs#1582
+// made it POST) — no new route is
 // introduced. This locks in that the printer card's two address fields
 // (receipt + kitchen) both have their own input id for the page's JS to
 // target, so a future edit can't silently drop one field's "Use for X"
