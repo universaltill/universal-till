@@ -29,7 +29,23 @@ func registerTranslations(mux *http.ServeMux, d *common.Deps, i18n *config.I18n)
 	// change to gated (UT_AUTH on) behavior.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		if !canPerform(d, r, "settings") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required") // page-error:allow not yet migrated, tracked in ut-docs#1458
+			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
+			return auth.User{}, false
+		}
+		u, _ := auth.FromContext(r.Context())
+		return u, true
+	}
+
+	// requirePageManager is requireManager's gate, answered as a full
+	// RenderError page instead of a bare LocalizedError body — for the
+	// /translations page route itself (ut-docs#1458, same fix class as
+	// tables_page.go's requirePageManager/#1455). requireManager stays as-is
+	// for /ui/translations-table and /api/translations/{set,clear}, which
+	// are all htmx fragments (hx-get/hx-post, hx-swap="outerHTML") that
+	// need the short body their JS callers expect.
+	requirePageManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
+		if !canPerform(d, r, "settings") {
+			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
 			return auth.User{}, false
 		}
 		u, _ := auth.FromContext(r.Context())
@@ -67,7 +83,7 @@ func registerTranslations(mux *http.ServeMux, d *common.Deps, i18n *config.I18n)
 	}
 
 	mux.HandleFunc("GET /translations", func(w http.ResponseWriter, r *http.Request) {
-		if _, ok := requireManager(w, r); !ok {
+		if _, ok := requirePageManager(w, r); !ok {
 			return
 		}
 		editLocale := strings.TrimSpace(r.URL.Query().Get("edit_locale"))

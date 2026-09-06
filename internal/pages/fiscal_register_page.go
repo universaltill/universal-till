@@ -121,7 +121,7 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 	// "settings" for now, per the Architect's design.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		if !canPerform(d, r, "settings") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required") // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
 			return auth.User{}, false
 		}
 		u, _ := auth.FromContext(r.Context())

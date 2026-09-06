@@ -82,6 +82,11 @@ func TestFiscalRegisterPage_ManagerGate(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier GET /fiscal-register = %d, want 403", rec.Code)
 	}
+	// ut-docs#1458: GET /fiscal-register must render the full layout on
+	// 403 too, not a bare rail-less body (same fix class as #1455).
+	if body := rec.Body.String(); !strings.Contains(body, `class="nav"`) {
+		t.Fatalf("cashier's 403 on GET /fiscal-register has no nav rail:\n%s", body)
+	}
 
 	req = auth.WithUser(httptest.NewRequest(http.MethodGet, "/fiscal-register", nil), manager)
 	rec = httptest.NewRecorder()
