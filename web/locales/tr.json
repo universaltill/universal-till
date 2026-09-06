@@ -358,6 +358,8 @@
   "journal.replica_no_cross_till": "Kasalar arası satışlar yalnızca bu mağazanın ana kasasında kullanılabilir.",
   "journal.reprint": "Fiş yazdır",
   "journal.reprinted": "Fiş yazıcıya gönderildi",
+  "journal.tender.split": "Bölünmüş",
+  "journal.tender.unknown": "Bilinmeyen",
   "journal.till_last_synced": "%s kasasından son bağlantı: %s",
   "journal.till_unknown": "Bilinmeyen kasa",
   "journal.title": "İşlem geçmişi",

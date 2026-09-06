@@ -850,6 +850,76 @@ WHERE item_id = 'itm-1561' AND type = 'return'`).Scan(&stockReturned); err != ni
 	}
 }
 
+// TestPostRefund_ZeroMarginalNetReturnShowsTranslatedTenderType is
+// ut-docs#1579 (independent Opus review finding F1 on ut-docs#1561): a
+// zero-marginal-net partial refund persists sales.tender_type = 'unknown'
+// (deriveTenderType's len(payments)==0 branch, newly reachable since
+// ut-docs#1561), and the journal templates rendered TenderType raw -- so an
+// operator landing on /journal/<receipt> for one of these returns saw the
+// literal English word "unknown", untranslated in every locale including
+// RTL ones. Same repro shape as
+// TestPostRefund_ZeroMarginalNetPartialRefundSucceeds above (see its own
+// comment for the discount-clamp arithmetic): the SECOND 1-of-3 refund
+// request is the first to land its own marginal net at exactly 0. Confirms
+// the fix end-to-end: drive the real refund flow to get a genuine
+// zero-marginal-net return, then GET its journal detail page in a
+// non-English locale and check it shows a translated tender label, not the
+// raw DB value.
+func TestPostRefund_ZeroMarginalNetReturnShowsTranslatedTenderType(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	registerJournal(mux, dp)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-1579", "R-REFUND-1579"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 300, 0, 0, 1, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-1579', ?, 1, 'itm-1579', 'Widget', 'W1', 3, 100, 299, 0, 0, 1, 1)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-1579', ?, 'cash', 1, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Request 1's own marginal net is 1 (nonzero, gets a real payment row).
+	// Request 2's own marginal net is exactly 0 -- that's the zero-tender
+	// return this test is after; no need to drive a third request.
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("refund %d failed: %d %s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+
+	var returnReceipt string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT receipt_no FROM sales WHERE sale_type = 'return' AND tender_type = 'unknown' ORDER BY created_at DESC LIMIT 1`).Scan(&returnReceipt); err != nil {
+		t.Fatalf("find the zero-marginal-net return (tender_type='unknown'): %v", err)
+	}
+
+	// fa is RTL and has no vocabulary overlap with English "unknown", so a
+	// literal leak is unmissable.
+	req := httptest.NewRequest(http.MethodGet, "/journal/"+returnReceipt+"?lang=fa", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /journal/%s: %d %s", returnReceipt, rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, ">unknown<") {
+		t.Fatalf("journal detail rendered the raw English \"unknown\" tender type instead of a translated label: %s", body)
+	}
+	const faUnknown = "ناشناس"
+	if !strings.Contains(body, faUnknown) {
+		t.Fatalf("journal detail did not render the fa translation %q for the unknown tender type: %s", faUnknown, body)
+	}
+}
+
 // TestPostRefund_SiblingLinesWithDifferentDiscountsDoNotCrossAttribute is
 // ut-docs#1531's own independent-review finding F1: two ORIGINAL lines can
 // share a refund-line key (same item/variant/price/mode) while carrying

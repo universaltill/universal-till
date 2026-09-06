@@ -358,6 +358,8 @@
   "journal.replica_no_cross_till": "مبيعات الصناديق الأخرى متاحة فقط في الصندوق الرئيسي لهذا المتجر.",
   "journal.reprint": "طباعة الإيصال",
   "journal.reprinted": "أُرسل الإيصال إلى الطابعة",
+  "journal.tender.split": "تقسيم",
+  "journal.tender.unknown": "غير معروف",
   "journal.till_last_synced": "آخر اتصال من %s: %s",
   "journal.till_unknown": "صندوق غير معروف",
   "journal.title": "سجل المبيعات",
