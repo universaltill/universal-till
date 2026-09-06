@@ -200,6 +200,29 @@ What's implemented now, all in `MainActivity`:
   control the far end of can't navigate this WebView off-origin. This
   isn't only kiosk hygiene: the exit bridge below (`addJavascriptInterface`)
   is only safe to expose because of it.
+- **Off-origin `http(s)` links go to the system browser instead**
+  (`MainActivity.openInSystemBrowser`, ut-docs#1647) — as a separate task
+  (`FLAG_ACTIVITY_NEW_TASK`), leaving the WebView on the POS screen it was
+  already showing. Blocking alone was the whole behaviour until this
+  landed, and `shouldOverrideUrlLoading` returning `true` means "handled",
+  so every external link in the till UI (`/my-reports`'s "View on GitHub",
+  the catalog/inventory "open primary" banners) was **silently dead** on
+  Android — the product owner hit this on a real tablet. Only `http` and
+  `https` are forwarded: `Intent.ACTION_VIEW` resolves whatever app claims
+  a scheme, so passing an arbitrary one through would turn any link on any
+  page into an app-launch primitive. **Main-frame navigations only** — this
+  callback also fires for subframes, so without that test one off-origin
+  `<iframe>` anywhere in the till UI (or in a plugin-rendered page) would
+  spawn a browser on every page load, over the live sale screen. There is
+  deliberately **no kiosk release** here — Lock Task silently refuses a non-allowlisted activity,
+  so this is a no-op in a pinned self-order session, which is correct:
+  dropping the pin for an untrusted external URL would be a kiosk escape
+  reachable from page content. Nothing is lost in practice, because every
+  page carrying an external link is manager-gated and unreachable from the
+  self-order kiosk. Guarded by `scripts/ci/guard-android-external-links.sh`.
+  macOS has behaved this way since it shipped
+  (`cmd/unitill-desktop/webkit_darwin.go`); Linux/Windows are unverified —
+  ut-docs#1649.
 - **Exit from self-order = the server's own existing "exit to OS" escape
   hatch, no native-side auth.** `/api/settings/exit-to-os`
   (`internal/pages/settings_page.go`, ut-docs#1099) already does a live
@@ -361,10 +384,14 @@ Manual checklist for whoever does it:
    then relaunch) and confirm `onResume` re-asserts exactly the pin
    state that state was in — pinned on `/self-order` and on a `/login`
    reached from it, unpinned everywhere else — without crashing.
-10. From My Reports (`/my-reports`), tap the "open GitHub issue"
-    link — confirm the WebView does NOT navigate to github.com (the
-    navigation restriction refusing it, not the link being absent/disabled).
-    This is the concrete case that motivated `shouldOverrideUrlLoading`.
+10. From My Reports (`/my-reports`), tap the "View on GitHub" link —
+    confirm **both halves** (ut-docs#1647): the issue opens in the device's
+    browser app, as a separate task, AND the till's own WebView is still on
+    `/my-reports` behind it (it must never navigate to github.com itself —
+    that restriction is what keeps `window.AndroidKiosk` away from a page
+    this app didn't author). Checking only that the WebView stayed put is
+    what let the "tapping it does nothing" bug ship: both outcomes look
+    identical from the till's side of the screen.
 
 **ut-docs#1639 verification status:** items 1-10 above were run for real
 on the TECLAST P50T (ut-docs#1281) and confirmed the pin-detection gap

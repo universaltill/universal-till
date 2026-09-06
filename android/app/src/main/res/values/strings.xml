@@ -13,4 +13,8 @@
          screen-pinning confirmation was never granted (unanswered or
          declined), so the till looks locked but isn't. -->
     <string name="kiosk_pin_not_engaged">Kiosk lock is not active — this device is not secured</string>
+    <!-- ut-docs#1647: the external-link hand-off (MainActivity.openInSystemBrowser)
+         can fail on a device with no browser app; the operator has to be told,
+         otherwise the tap looks exactly like the silent no-op this ticket fixed. -->
+    <string name="external_link_failed">Couldn’t open the link in a browser.</string>
 </resources>

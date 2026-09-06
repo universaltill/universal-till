@@ -34,6 +34,7 @@ import android.webkit.WebResourceRequest
 import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.TextView
+import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.appcompat.app.AppCompatActivity
@@ -658,6 +659,64 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * ut-docs#1647: opens an off-origin URL in the device's own browser,
+     * as a SEPARATE task, leaving this Activity's WebView untouched. Called
+     * from [WebViewClient.shouldOverrideUrlLoading]'s block branch — the
+     * till UI does carry a handful of genuinely external links
+     * (my_reports.html's "View on GitHub", the catalog/inventory "open
+     * primary" banners, the release-download chip) and before this they all
+     * simply did nothing on Android.
+     *
+     * **Only http and https are ever forwarded.** This URL comes from a web
+     * page, and Intent.ACTION_VIEW resolves whatever app has registered the
+     * scheme — so passing an arbitrary one through would turn any link in
+     * the till UI into "launch that app with these extras", including
+     * Android's own `intent:` scheme, which can name a component directly.
+     * Everything else falls through and stays blocked, exactly as before.
+     *
+     * **No kiosk release here, deliberately.** Lock Task silently refuses to
+     * start a non-allowlisted activity — no dialog, no exception, just
+     * nothing (the same OS behavior [launchPackageInstaller] documents), so
+     * in a pinned self-order session this call is a no-op. That is the
+     * correct outcome: [launchPackageInstaller] may drop the pin because it
+     * is reached only through a manager-PIN-gated form, whereas this is
+     * reachable from any link on any page. Releasing the pin for an
+     * untrusted external URL would be a kiosk escape available to page
+     * content. In practice nothing is lost — every page carrying an
+     * external link (/my-reports and /settings among them) is manager-gated
+     * and unreachable from the self-order kiosk that pins in the first
+     * place.
+     *
+     * Never crashes the till, same posture as [engageKioskLock] and
+     * [startDownload]: a device with no browser installed throws
+     * ActivityNotFoundException, and a device with a hostile/limited
+     * resolver can throw others. A failed hand-off leaves the operator
+     * exactly where they were, which is no worse than the bug this fixes.
+     */
+    private fun openInSystemBrowser(target: Uri) {
+        val scheme = target.scheme?.lowercase()
+        if (scheme != "http" && scheme != "https") {
+            return
+        }
+        try {
+            startActivity(
+                Intent(Intent.ACTION_VIEW, target).apply {
+                    addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+                },
+            )
+        } catch (e: Exception) {
+            // Deliberately broad, same posture as engageKioskLock: the
+            // documented failure is ActivityNotFoundException (no browser
+            // installed), but a limited or OEM-patched resolver can raise
+            // others, and a tapped link must never take down a live till.
+            // It must not fail SILENTLY either — a swallowed exception here
+            // reproduces, exactly, the "I tapped it and nothing happened"
+            // symptom this ticket exists to remove.
+            Toast.makeText(this, R.string.external_link_failed, Toast.LENGTH_SHORT).show()
+        }
+    }
+
+    /**
      * Hides the status and navigation bars (immersive full-screen). Purely
      * cosmetic defense-in-depth on top of [engageKioskLock] — Lock Task is
      * what actually prevents leaving the app; this just keeps the OS chrome
@@ -908,6 +967,37 @@ class MainActivity : AppCompatActivity() {
                 ): Boolean {
                     val target = request?.url ?: return true
                     if (target.authority != allowedHost) {
+                        // ut-docs#1647: blocking is only HALF the answer, and
+                        // shipping only that half is what the product owner
+                        // hit on a real tablet — "View on GitHub" on
+                        // /my-reports did nothing at all. `return true` means
+                        // "the app handled this navigation", so a bare block
+                        // makes every off-origin link in the till UI silently
+                        // dead: no browser, no navigation, no error. Hand it
+                        // to the system browser instead, then still return
+                        // true so THIS WebView stays exactly where it was —
+                        // which is both what the operator wants (the POS
+                        // screen must not be replaced by a web page) and what
+                        // ut-docs#1254 requires (window.AndroidKiosk must
+                        // never be reachable from a page we didn't author).
+                        // macOS has behaved this way since it shipped
+                        // (cmd/unitill-desktop/webkit_darwin.go's
+                        // isExternalURL -> NSWorkspace openURL:); Android was
+                        // the outlier.
+                        //
+                        // MAIN FRAME ONLY. shouldOverrideUrlLoading also
+                        // fires for subframe navigations, so without this
+                        // test a single off-origin <iframe> anywhere in the
+                        // till UI — or in a plugin-rendered page — would
+                        // launch the browser on every page load, unprompted,
+                        // over the live sale screen. There is no such iframe
+                        // today; this keeps the day someone adds one from
+                        // being the day tills start spawning browsers.
+                        // Subframes stay blocked and silent, exactly as they
+                        // were before this fix, so nothing regresses either.
+                        if (request?.isForMainFrame == true) {
+                            openInSystemBrowser(target)
+                        }
                         return true // block: refuse to navigate off-origin
                     }
                     return false // same-origin: let the WebView load it normally

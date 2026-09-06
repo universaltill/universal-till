@@ -9,4 +9,5 @@
     <string name="notification_running">صندوق فروش در حال اجراست</string>
     <string name="notification_channel_name">سرویس صندوق فروش</string>
     <string name="kiosk_pin_not_engaged">قفل کیوسک فعال نیست — این دستگاه ایمن نشده است</string>
+    <string name="external_link_failed">باز کردن پیوند در مرورگر ممکن نشد.</string>
 </resources>
