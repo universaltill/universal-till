@@ -486,14 +486,19 @@
 
     <div class="tender-footer single">
       <!-- Hold Sale moved to the default view (ut-docs#1252 independent
-           review) -- only New Customer stays here. Closing the overlay
-           first isn't a correctness fix (the hx-post below works fine
-           against an inert-elsewhere document either way, since #basket
-           lives outside this dialog and htmx doesn't care about inert),
-           just tidiness: nothing left to pay for once the basket resets. -->
+           review) -- only New Customer stays here. ut-docs#1624: this used
+           to close the overlay unconditionally via onclick, BEFORE the
+           hx-post even completed -- unlike every New Sale button in this
+           file, which only closes after a successful response with no
+           inline .error toast. An operator tapping New Customer against an
+           errored /api/pos/reset lost the Tender panel immediately and
+           never saw the error, while the New Sale button two rows up would
+           have kept it open and shown it. Same gate as New Sale now,
+           response-handling shape only -- New Customer's own behavior
+           (POST /api/pos/reset) is unchanged. -->
       <button class="btn secondary"
-              onclick="document.getElementById('payment-overlay').close();"
-              hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">{{ T "tender.new_customer" }}</button>
+              hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T "tender.new_customer" }}</button>
     </div>
       </div>
     </dialog>
