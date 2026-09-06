@@ -590,18 +590,20 @@ func newSyncDepsWithPath(t *testing.T, name string) (*common.Deps, string) {
 	t.Helper()
 	chdirRoot(t)
 	path := filepath.Join(t.TempDir(), name)
-	db, err := sql.Open("sqlite", path)
+	// ut-docs#1676: this used to be its own raw sql.Open + hand-rolled
+	// schema (via seedForPages, which built the whole schema itself before
+	// that card). seedForPages now only inserts fixture rows on top of a
+	// REAL migrated schema, so this needs the same appdb.Open path
+	// openPagesTestDB uses — same physical on-disk file at path either way,
+	// so db.Snapshot's VACUUM INTO and the staged restore/identity files
+	// still work against it unchanged.
+	migrated, err := appdb.Open(path)
 	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
+		t.Fatalf("open+migrate sqlite: %v", err)
 	}
+	db := migrated.DB
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
-		t.Fatalf("busy_timeout: %v", err)
-	}
-	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
-		t.Fatalf("foreign_keys: %v", err)
-	}
 	// ut-docs#878: same disposable-scratch reasoning as openPagesTestDB —
 	// single-connection, t.TempDir()-scoped, nothing durable to lose. Skips
 	// the default rollback-journal fsync-on-commit that hung this package's
