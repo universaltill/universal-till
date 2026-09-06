@@ -2,6 +2,7 @@ package pages
 
 import (
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"net/http"
@@ -35,16 +36,11 @@ func pluginPageTestDeps(t *testing.T) (*common.Deps, string) {
 	t.Helper()
 	chdirRoot(t)
 
+	// plugins/plugin_entries come from the real migrations openPagesTestDB
+	// now runs (ut-docs#1657/#1677) -- this fixture used to hand-roll a
+	// laxer copy (no entrypoint NOT NULL, no plugin_catalog FK).
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
-	for _, s := range []string{
-		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, author TEXT, is_active INTEGER NOT NULL DEFAULT 1, runtime TEXT DEFAULT 'go', entrypoint TEXT DEFAULT '');`,
-		`CREATE TABLE plugin_entries (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, type TEXT, key TEXT, route TEXT, label TEXT, icon_path TEXT, menu_group TEXT, parent_page_key TEXT, target_action TEXT, trigger_event TEXT, config_json TEXT, sort_order INTEGER DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1);`,
-	} {
-		if _, err := db.Exec(s); err != nil {
-			t.Fatalf("schema: %v", err)
-		}
-	}
 
 	pluginBase := t.TempDir()
 	orig := pluginPagesDir
@@ -54,12 +50,24 @@ func pluginPageTestDeps(t *testing.T) (*common.Deps, string) {
 	return &common.Deps{Db: db, State: common.RuntimeState{Theme: "monarch"}}, pluginBase
 }
 
+// seedTestPlugin inserts a plugin_catalog row (the real schema's composite
+// FOREIGN KEY (id, version) REFERENCES plugin_catalog (id, version) target)
+// plus the matching plugins row -- ut-docs#1677: entrypoint is NOT NULL on
+// both tables in the real migrated schema.
+func seedTestPlugin(t *testing.T, db *sql.DB, id, name, version string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO plugin_catalog(id,version,name,runtime,entrypoint,package_url,sha256,min_pos_version,api_version,published_at) VALUES(?,?,?,'go','entry','url','sha','0.0.0','1',datetime('now'))`, id, version, name); err != nil {
+		t.Fatalf("seed plugin_catalog %s: %v", id, err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugins(id,name,version,entrypoint) VALUES(?,?,?,'entry')`, id, name, version); err != nil {
+		t.Fatalf("seed plugin %s: %v", id, err)
+	}
+}
+
 func TestPluginPage_RendersContentBundle(t *testing.T) {
 	d, base := pluginPageTestDeps(t)
 
-	if _, err := d.Db.Exec(`INSERT INTO plugins(id,name,version) VALUES('com.x.faq','FAQ Plugin','1.2.0')`); err != nil {
-		t.Fatal(err)
-	}
+	seedTestPlugin(t, d.Db, "com.x.faq", "FAQ Plugin", "1.2.0")
 	if _, err := d.Db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label) VALUES('e1','com.x.faq','page','faq-page','/plugin/faq','Help / FAQ')`); err != nil {
 		t.Fatal(err)
 	}
@@ -99,9 +107,7 @@ func TestPluginPage_RendersContentBundle(t *testing.T) {
 func TestPluginPage_KeywordsAreSearchable(t *testing.T) {
 	d, base := pluginPageTestDeps(t)
 
-	if _, err := d.Db.Exec(`INSERT INTO plugins(id,name,version) VALUES('com.x.faq','FAQ Plugin','1.2.0')`); err != nil {
-		t.Fatal(err)
-	}
+	seedTestPlugin(t, d.Db, "com.x.faq", "FAQ Plugin", "1.2.0")
 	if _, err := d.Db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label) VALUES('e1','com.x.faq','page','faq-page','/plugin/faq','Help / FAQ')`); err != nil {
 		t.Fatal(err)
 	}
@@ -144,9 +150,7 @@ func TestPluginPage_KeywordsAreSearchable(t *testing.T) {
 func TestPluginPage_RTLBundleSetsDirAttribute(t *testing.T) {
 	d, base := pluginPageTestDeps(t)
 
-	if _, err := d.Db.Exec(`INSERT INTO plugins(id,name,version) VALUES('com.x.faq','FAQ Plugin','1.2.0')`); err != nil {
-		t.Fatal(err)
-	}
+	seedTestPlugin(t, d.Db, "com.x.faq", "FAQ Plugin", "1.2.0")
 	if _, err := d.Db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label) VALUES('e1','com.x.faq','page','faq-page','/plugin/faq','Help / FAQ')`); err != nil {
 		t.Fatal(err)
 	}
@@ -179,9 +183,7 @@ func TestPluginPage_RTLBundleSetsDirAttribute(t *testing.T) {
 func TestPluginPage_ChecksumValidBundleRenders(t *testing.T) {
 	d, base := pluginPageTestDeps(t)
 
-	if _, err := d.Db.Exec(`INSERT INTO plugins(id,name,version) VALUES('com.x.faq','FAQ Plugin','1.2.0')`); err != nil {
-		t.Fatal(err)
-	}
+	seedTestPlugin(t, d.Db, "com.x.faq", "FAQ Plugin", "1.2.0")
 	if _, err := d.Db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label) VALUES('e1','com.x.faq','page','faq-page','/plugin/faq','Help / FAQ')`); err != nil {
 		t.Fatal(err)
 	}
@@ -210,9 +212,7 @@ func TestPluginPage_ChecksumValidBundleRenders(t *testing.T) {
 func TestPluginPage_ChecksumMismatchRefusesToRender(t *testing.T) {
 	d, base := pluginPageTestDeps(t)
 
-	if _, err := d.Db.Exec(`INSERT INTO plugins(id,name,version) VALUES('com.x.faq','FAQ Plugin','1.2.0')`); err != nil {
-		t.Fatal(err)
-	}
+	seedTestPlugin(t, d.Db, "com.x.faq", "FAQ Plugin", "1.2.0")
 	if _, err := d.Db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label) VALUES('e1','com.x.faq','page','faq-page','/plugin/faq','Help / FAQ')`); err != nil {
 		t.Fatal(err)
 	}
@@ -253,9 +253,7 @@ func TestPluginPage_UnavailableLocaleShowsFallbackNoticeAndMeta(t *testing.T) {
 	}
 	httpx.InitI18n(i18n, "en")
 
-	if _, err := d.Db.Exec(`INSERT INTO plugins(id,name,version) VALUES('com.x.faq','FAQ Plugin','1.2.0')`); err != nil {
-		t.Fatal(err)
-	}
+	seedTestPlugin(t, d.Db, "com.x.faq", "FAQ Plugin", "1.2.0")
 	if _, err := d.Db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label) VALUES('e1','com.x.faq','page','faq-page','/plugin/faq','Help / FAQ')`); err != nil {
 		t.Fatal(err)
 	}
@@ -296,9 +294,7 @@ func TestPluginPage_UnavailableLocaleShowsFallbackNoticeAndMeta(t *testing.T) {
 func TestPluginPage_MatchedLocaleHasNoFallbackNotice(t *testing.T) {
 	d, base := pluginPageTestDeps(t)
 
-	if _, err := d.Db.Exec(`INSERT INTO plugins(id,name,version) VALUES('com.x.faq','FAQ Plugin','1.2.0')`); err != nil {
-		t.Fatal(err)
-	}
+	seedTestPlugin(t, d.Db, "com.x.faq", "FAQ Plugin", "1.2.0")
 	if _, err := d.Db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label) VALUES('e1','com.x.faq','page','faq-page','/plugin/faq','Help / FAQ')`); err != nil {
 		t.Fatal(err)
 	}
@@ -335,9 +331,7 @@ func TestPluginPage_MatchedLocaleHasNoFallbackNotice(t *testing.T) {
 func TestPluginPage_SameBaseLanguageDifferentRegionHasNoFallbackNotice(t *testing.T) {
 	d, base := pluginPageTestDeps(t)
 
-	if _, err := d.Db.Exec(`INSERT INTO plugins(id,name,version) VALUES('com.x.faq','FAQ Plugin','1.2.0')`); err != nil {
-		t.Fatal(err)
-	}
+	seedTestPlugin(t, d.Db, "com.x.faq", "FAQ Plugin", "1.2.0")
 	if _, err := d.Db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label) VALUES('e1','com.x.faq','page','faq-page','/plugin/faq','Help / FAQ')`); err != nil {
 		t.Fatal(err)
 	}
@@ -388,9 +382,7 @@ func TestPluginPage_UnknownRouteIs404(t *testing.T) {
 func TestPluginPage_StaticHTMLFallback(t *testing.T) {
 	d, base := pluginPageTestDeps(t)
 
-	if _, err := d.Db.Exec(`INSERT INTO plugins(id,name,version) VALUES('com.x.static','Static','0.1.0')`); err != nil {
-		t.Fatal(err)
-	}
+	seedTestPlugin(t, d.Db, "com.x.static", "Static", "0.1.0")
 	if _, err := d.Db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,route,label) VALUES('e1','com.x.static','page','home','/plugin/static','Static Page')`); err != nil {
 		t.Fatal(err)
 	}
@@ -416,9 +408,7 @@ func TestPluginPage_StaticHTMLFallback(t *testing.T) {
 func TestPluginButtons_PartialAndAction(t *testing.T) {
 	d, _ := pluginPageTestDeps(t)
 
-	if _, err := d.Db.Exec(`INSERT INTO plugins(id,name,version) VALUES('com.x.drawer','Drawer','1.0.0')`); err != nil {
-		t.Fatal(err)
-	}
+	seedTestPlugin(t, d.Db, "com.x.drawer", "Drawer", "1.0.0")
 	if _, err := d.Db.Exec(`INSERT INTO plugin_entries(id,plugin_id,type,key,label,trigger_event) VALUES('b1','com.x.drawer','button','open-drawer','Open Drawer','drawer.open')`); err != nil {
 		t.Fatal(err)
 	}
