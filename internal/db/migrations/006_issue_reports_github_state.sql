@@ -1,0 +1,22 @@
+-- 006_issue_reports_github_state.sql — ut-docs#1652 (till half of #1648).
+--
+-- /my-reports' Status column has shown the report's DELIVERY lifecycle
+-- (pending → sent → received → transcribing → ready → filed), and "filed" is
+-- terminal. So from the moment a manager's report becomes a GitHub ticket —
+-- exactly when they start caring what happened to it — the status stops
+-- moving forever. This column carries the TICKET's own state, refreshed from
+-- the cloud on the normal sync tick alongside status/github_issue_url:
+-- "open" | "closed_completed" | "closed_not_planned", or empty.
+--
+-- Empty is a real, permanent, correct value, not a migration artifact: a
+-- report that was never filed has no ticket, and a cloud predating
+-- ut-docs#1651 sends no such field at all. /my-reports must read empty as
+-- "keep showing the delivery status" and never as "blank the cell".
+--
+-- Shipped as an ADDITIVE migration rather than an edit to 001_init.sql:
+-- editing 001_init.sql changes its checksum, and internal/db/db.go's
+-- verifyAppliedMigrations hard-fails an already-migrated database on any
+-- checksum drift (idempotentRerunVersions is empty; version 1 is not
+-- allowlisted) — bricking every device that already migrated, including the
+-- pilot install. 002 through 005 all document this same trap.
+ALTER TABLE issue_reports_sent ADD COLUMN github_issue_state TEXT NOT NULL DEFAULT '';

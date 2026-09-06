@@ -42,6 +42,14 @@ func seedIssueReportsSent(t *testing.T, db *sql.DB) {
 		image_count INTEGER NOT NULL DEFAULT 0,
 		status TEXT NOT NULL DEFAULT 'sent',
 		github_issue_url TEXT NOT NULL DEFAULT '',
+		-- ut-docs#1652. NOTE: this CREATE TABLE is a hand-maintained copy of
+		-- the real schema (001_init.sql + internal/db/migrations/006), not
+		-- the migrations themselves — openPagesTestDB builds its scratch DB
+		-- without running them. So a column added to the real schema and not
+		-- mirrored here fails these tests loudly, but a column added HERE and
+		-- not to the real schema would pass them while breaking on a device.
+		-- Tracked as ut-docs#1657.
+		github_issue_state TEXT NOT NULL DEFAULT '',
 		last_synced_at TEXT
 	)`); err != nil {
 		t.Fatalf("create issue_reports_sent: %v", err)
@@ -444,5 +452,105 @@ func TestMyReportsPage_NoMoreNotShownNoticeAtOrBelowLimit(t *testing.T) {
 	body := rec.Body.String()
 	if strings.Contains(body, "not shown") {
 		t.Fatalf("expected no more-not-shown notice at exactly rowLimit rows, got: %s", body)
+	}
+}
+
+// ut-docs#1652 — the point of the whole change. `status` stops at "filed",
+// so from the moment a manager's report becomes a GitHub ticket the Status
+// column stopped moving forever. When the cloud has told us the ticket's own
+// state, that is what the manager sees instead.
+func TestMyReportsPage_ShowsGithubTicketStateInsteadOfFiled(t *testing.T) {
+	for _, tc := range []struct {
+		state, want, notWant string
+	}{
+		{"open", "Open — being worked on", "Filed on GitHub"},
+		{"closed_completed", "Fixed", "Filed on GitHub"},
+		{"closed_not_planned", "Closed — not planned", "Filed on GitHub"},
+	} {
+		t.Run(tc.state, func(t *testing.T) {
+			t.Setenv("UT_AUTH", "off")
+			mux, db := newMyReportsTestMux(t)
+			if _, err := db.Exec(`INSERT INTO issue_reports_sent (id, note, captured_at, status, github_issue_url, github_issue_state) VALUES ('rep-1','n','2026-09-06T10:00:00Z','filed','https://github.com/universaltill/ut-docs/issues/9',?)`, tc.state); err != nil {
+				t.Fatal(err)
+			}
+			rec := getMyReports(t, mux)
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, tc.want) {
+				t.Fatalf("expected the translated ticket state %q, got: %s", tc.want, body)
+			}
+			if strings.Contains(body, tc.notWant) {
+				t.Fatalf("the ticket state must REPLACE the delivery status, but %q is still rendered: %s", tc.notWant, body)
+			}
+			if strings.Contains(body, "issuereport.") {
+				t.Fatalf("a status rendered as a raw dotted key: %s", body)
+			}
+			// The link is still there — knowing the state is not a reason to
+			// take away the way to go and read the ticket.
+			if !strings.Contains(body, `href="https://github.com/universaltill/ut-docs/issues/9"`) {
+				t.Fatalf("expected the GitHub issue link to survive: %s", body)
+			}
+		})
+	}
+}
+
+// A filed report with no known ticket state keeps showing "filed". Empty is
+// the ordinary case in three innocent situations — never filed, a cloud
+// predating ut-docs#1651, or the cloud's refresher hasn't reached this
+// ticket yet — and none of them may produce a blank cell.
+func TestMyReportsPage_UnknownTicketStateFallsBackToDeliveryStatus(t *testing.T) {
+	for _, state := range []string{"", "some-future-state"} {
+		t.Setenv("UT_AUTH", "off")
+		mux, db := newMyReportsTestMux(t)
+		if _, err := db.Exec(`INSERT INTO issue_reports_sent (id, note, captured_at, status, github_issue_url, github_issue_state) VALUES ('rep-1','n','2026-09-06T10:00:00Z','filed','https://github.com/universaltill/ut-docs/issues/9',?)`, state); err != nil {
+			t.Fatal(err)
+		}
+		rec := getMyReports(t, mux)
+		body := rec.Body.String()
+		if !strings.Contains(body, "Filed on GitHub") {
+			t.Fatalf("state %q: expected the delivery status as the fallback, got: %s", state, body)
+		}
+		if strings.Contains(body, "issuereport.") || strings.Contains(body, "some-future-state") {
+			t.Fatalf("state %q: leaked through untranslated: %s", state, body)
+		}
+	}
+}
+
+// A ticket state must not hijack a row that isn't filed. Nothing writes that
+// combination today, but the fallback is what keeps a future one honest —
+// and a pending/failing row's own status is load-bearing (ut-docs#637).
+func TestMyReportsPage_TicketStateNeverOverridesANonFiledRow(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, db := newMyReportsTestMux(t)
+	if _, err := db.Exec(`INSERT INTO issue_reports_sent (id, note, captured_at, status, github_issue_state) VALUES ('rep-1','n','2026-09-06T10:00:00Z','sent','')`); err != nil {
+		t.Fatal(err)
+	}
+	rec := getMyReports(t, mux)
+	if body := rec.Body.String(); !strings.Contains(body, "Sent, awaiting review") {
+		t.Fatalf("expected the delivery status for an unfiled row, got: %s", body)
+	}
+}
+
+// Direct unit coverage of the selector, so the fallback rules are pinned
+// independently of how the page happens to render them.
+func TestIssueReportDisplayStatusKey(t *testing.T) {
+	for _, tc := range []struct {
+		status, ticket, want string
+	}{
+		{"filed", "open", "issuereport.ticket.open"},
+		{"filed", "closed_completed", "issuereport.ticket.closed_completed"},
+		{"filed", "closed_not_planned", "issuereport.ticket.closed_not_planned"},
+		{"filed", "", "issuereport.status.filed"},
+		{"filed", "reopened", "issuereport.status.filed"},
+		{"sent", "", "issuereport.status.sent"},
+		// Both unknown: the delivery status's own guard still applies, so
+		// this is the translated "unknown", never a raw key.
+		{"some-future-status", "some-future-state", "issuereport.status.unknown"},
+	} {
+		if got := issueReportDisplayStatusKey(tc.status, tc.ticket); got != tc.want {
+			t.Errorf("(%q, %q) = %q, want %q", tc.status, tc.ticket, got, tc.want)
+		}
 	}
 }

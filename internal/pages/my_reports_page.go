@@ -33,6 +33,36 @@ func issueReportStatusKey(status string) string {
 	return "issuereport.status." + status
 }
 
+// knownGithubIssueStates is the set of FILED-TICKET states this till has
+// translations for (ut-docs#1652), mirroring ut-cloud's githubissues.State*
+// constants. Guarded for the same reason issueReportStatusKey is: the value
+// arrives from the cloud, and a newer cloud can name a state this build has
+// no string for.
+var knownGithubIssueStates = map[string]bool{
+	"open": true, "closed_completed": true, "closed_not_planned": true,
+}
+
+// issueReportDisplayStatusKey picks which status a row actually shows.
+//
+// `status` is the report's DELIVERY lifecycle and stops at "filed" — so from
+// the moment a manager's report becomes a GitHub ticket, which is exactly
+// when they start caring what happened to it, that column stopped moving
+// forever (ut-docs#1648, reported by the product owner on a real tablet).
+// When the cloud has told us the ticket's own state, that is the more useful
+// answer and wins.
+//
+// An unknown or empty ticket state falls back to the delivery status rather
+// than rendering something wrong or blank. Empty is the ordinary case in
+// three distinct situations, none of them a fault: the report was never
+// filed, the cloud predates ut-docs#1651 and sends no such field, or the
+// cloud's refresher hasn't reached this ticket yet.
+func issueReportDisplayStatusKey(status, ticketState string) string {
+	if knownGithubIssueStates[ticketState] {
+		return "issuereport.ticket." + ticketState
+	}
+	return issueReportStatusKey(status)
+}
+
 // myReportRow is one rendered row of /my-reports.
 type myReportRow struct {
 	ID             string
@@ -99,7 +129,7 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 				Note:           rec.Note,
 				CapturedAt:     rec.CapturedAt.UTC().Format("2006-01-02 15:04"),
 				capturedAtTime: rec.CapturedAt,
-				StatusKey:      issueReportStatusKey(rec.Status),
+				StatusKey:      issueReportDisplayStatusKey(rec.Status, rec.GithubIssueState),
 				GithubIssueURL: rec.GithubIssueURL,
 				HadAudio:       rec.HadAudio,
 				HadVideo:       rec.HadVideo,

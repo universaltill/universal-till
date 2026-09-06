@@ -24,7 +24,8 @@ Durumların anlamı:
 - **Gönderilemedi** — bu rapor bir süredir yüklenemiyor; altında kısa bir neden görünür (örneğin bu kasanın kaydının tamamlanması gerekiyor). Yine de kayıtlıdır ve kasa otomatik olarak yeniden denemeye devam eder — hiçbir şey kaybolmaz.
 - **Gönderildi, inceleme bekliyor** — bu kasadan yüklendi; bulut henüz bir gelişme bildirmedi.
 - **Alındı / Yazıya dökülüyor / İncelemeye hazır** — rapor işleniyor (sesli notlar otomatik olarak yazıya dökülür).
-- **GitHub'a kaydedildi** — takip edilen bir kayda dönüştü; ilerlemeyi görmek için bağlantıyı izleyin.
+- **GitHub'a kaydedildi** — takip edilen bir kayda dönüştü ve durumu henüz bilinmiyor. Görmek için bağlantıyı izleyin.
+- **Açık — üzerinde çalışılıyor** / **Düzeltildi** / **Kapatıldı — yapılmayacak** — takip edilen kaydın kendi durumu, otomatik olarak güncellenir. "Yapılmayacak", incelendiğini ve bilinçli olarak ele alınmadığını belirtir; nedeni kaydın kendisinde yazar.
 - **Kapatıldı** — incelendi ve kayıt açılmadan kapatıldı.
 
 ## Çevrimdışı
