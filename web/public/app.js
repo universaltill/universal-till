@@ -1,7 +1,14 @@
 // Currency metadata comes from <body data-currency-*> (set by base.html from
 // the configured currency). Decimals drive the major<->minor conversion:
 // GBP=2 (pence), IRR/IRT=0 (no subunit). Suffix currencies (rial/toman)
-// render the word after the number.
+// render the word after the number. data-number-thousands/-decimal (same
+// convention as server-side httpx.FormatMoney, ut-docs#1130) keep this
+// client-rendered money agreeing with server-rendered money on the same
+// screen (e.g. the payment overlay's pills next to the server-rendered
+// basket total) — a de-DE till shows "1.234,56" everywhere, not "1.234,56"
+// server-side and "1,234.56" here. Digit SHAPE (fa/ar numerals) is a
+// separate, still-unaddressed gap — out of scope here, same as it already
+// was before this file's separators became locale-aware.
 window.utCurrency = (function(){
   var d = document.body ? document.body.dataset : {};
   var decimals = parseInt(d.currencyDecimals || '2', 10);
@@ -9,11 +16,13 @@ window.utCurrency = (function(){
   var factor = Math.pow(10, decimals);
   var display = d.currencyDisplay || '£';
   var suffix = d.currencySuffix === '1';
+  var thousandsSep = d.numberThousands || ',';
+  var decimalSep = d.numberDecimal || '.';
   function formatMinor(units){
     var neg = units < 0; if (neg) units = -units;
     var major = Math.floor(units / factor);
-    var num = major.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    if (decimals > 0) num += '.' + String(units % factor).padStart(decimals, '0');
+    var num = major.toString().replace(/\B(?=(\d{3})+(?!\d))/g, thousandsSep);
+    if (decimals > 0) num += decimalSep + String(units % factor).padStart(decimals, '0');
     if (neg) num = '-' + num;
     return suffix ? num + ' ' + display : display + num;
   }

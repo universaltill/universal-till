@@ -16,7 +16,7 @@
     </div>
     <div style="text-align:end">
       <p><strong>{{ .Inv.DisplayNo }}</strong></p>
-      <p class="muted">{{ .Inv.IssuedAt }}</p>
+      <p class="muted">{{ date .Inv.IssuedAt }}</p>
       <p class="muted">{{ T "invoice.for_sale" }} {{ .Sale.ReceiptNo }}</p>
       {{ if .OrigDisplay }}<p class="muted">{{ T "invoice.credits" }} <a href="/invoice/{{ .OrigDisplay }}">{{ .OrigDisplay }}</a></p>{{ end }}
     </div>

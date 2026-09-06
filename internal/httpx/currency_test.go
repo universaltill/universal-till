@@ -232,3 +232,69 @@ func TestLocalizeDigits(t *testing.T) {
 		t.Errorf("latin passthrough = %q", got)
 	}
 }
+
+// ut-docs#1130: de-DE grouping (period thousands, comma decimal) vs.
+// GB/US (comma thousands, period decimal) — the gap this card closes.
+// Also covers every one of this product's unconditionally-preset country
+// defaults (ES/IT/NL/TR share DE's period-thousands/comma-decimal
+// convention, FR uses a space) — review finding: a table with only DE
+// listed left every other European default, and TR specifically (a
+// BUNDLED UI locale, not just a plugin-supplied one), still wrong. Also a
+// regression check that the pre-existing fa/ur/ps/ar digit substitution
+// (TestFormatMoney/TestLocalizeDigits above) is genuinely unaffected by
+// the new locale-driven grouping: none of those locales are in any
+// non-default numberSeparators family, so they still get the same
+// comma/period pair they always did, before LocalizeDigits does its own
+// glyph substitution on top.
+func TestFormatMoney_LocaleGrouping(t *testing.T) {
+	InitCurrency("EUR")
+	cases := []struct{ locale, want string }{
+		{"de-DE", "€1.234,56"},
+		{"de", "€1.234,56"}, // bare language tag, no region — same family
+		{"es-ES", "€1.234,56"},
+		{"it-IT", "€1.234,56"},
+		{"nl-NL", "€1.234,56"},
+		{"tr", "€1.234,56"}, // bundled UI locale — must NOT keep the default
+		{"fr-FR", "€1 234,56"},
+		{"en-GB", "€1,234.56"},
+		{"en-US", "€1,234.56"},
+		{"en", "€1,234.56"}, // unlisted locale keeps the international default
+	}
+	for _, c := range cases {
+		if got := FormatMoney(123456, c.locale); got != c.want {
+			t.Errorf("FormatMoney(123456, %s) = %q, want %q", c.locale, got, c.want)
+		}
+	}
+	InitCurrency("GBP")
+}
+
+// FormatMoneyLatin: same grouping convention as FormatMoney, but digit
+// shape is always Latin — the ESC/POS receipt path (buildReceiptDoc) needs
+// this because non-Latin numeral glyphs need bitmap mode to print (spec).
+func TestFormatMoneyLatin(t *testing.T) {
+	InitCurrency("EUR")
+	if got := FormatMoneyLatin(123456, "de-DE"); got != "€1.234,56" {
+		t.Errorf("FormatMoneyLatin de-DE = %q", got)
+	}
+	// fa would digit-substitute under FormatMoney; Latin variant must not.
+	InitCurrency("IRR")
+	if got := FormatMoneyLatin(12345, "fa"); got != "12,345 ریال" {
+		t.Errorf("FormatMoneyLatin fa = %q, want Latin digits", got)
+	}
+	InitCurrency("GBP")
+}
+
+func TestFormatQty(t *testing.T) {
+	if got := FormatQty(1234.5, "de-DE"); got != "1.234,5" {
+		t.Errorf("FormatQty de-DE = %q", got)
+	}
+	if got := FormatQty(1.5, "en-GB"); got != "1.5" {
+		t.Errorf("FormatQty en-GB = %q", got)
+	}
+	if got := FormatQty(1.5, "fa"); got != "۱٫۵" {
+		t.Errorf("FormatQty fa = %q", got)
+	}
+	if got := FormatQtyLatin(1.5, "fa"); got != "1.5" {
+		t.Errorf("FormatQtyLatin fa = %q, want Latin digits", got)
+	}
+}

@@ -5,6 +5,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"testing"
+	"time"
 
 	moneypkg "github.com/universaltill/universal-till/internal/money"
 )
@@ -132,5 +133,72 @@ func TestFuncsForExposesMoneyAndI18n(t *testing.T) {
 	faMoney := FuncsFor("fa")["money"].(func(any) string)
 	if got := faMoney(int64(12345)); got != "€۱۲۳٫۴۵" {
 		t.Fatalf("fa money helper returned %q", got)
+	}
+}
+
+// ut-docs#1130: date/dateUTC accept both a time.Time and an RFC3339
+// string, follow locale's date-order/separator convention via
+// FormatDate, and an unparseable string degrades to itself (not "").
+// dateUTC differs from date ONLY in skipping the Local() conversion —
+// verified here by temporarily moving the process's local zone away from
+// UTC, since in a UTC test runner (the common case) the two would be
+// indistinguishable by output alone.
+func TestFuncsForExposesDate(t *testing.T) {
+	InitI18n(realI18n(t), "en")
+	funcs := FuncsFor("de-DE")
+	dateFn, ok := funcs["date"].(func(any) string)
+	if !ok {
+		t.Fatalf("date helper not found")
+	}
+	dateUTCFn, ok := funcs["dateUTC"].(func(string) string)
+	if !ok {
+		t.Fatalf("dateUTC helper not found")
+	}
+
+	orig := time.Local
+	// UTC+3, no DST — a fixed offset keeps this deterministic regardless
+	// of when the test runs.
+	time.Local = time.FixedZone("UTC+3", 3*60*60)
+	t.Cleanup(func() { time.Local = orig })
+
+	// 23:30 UTC on the 5th is 02:30 local on the 6th — date (Local) must
+	// cross the day boundary; dateUTC must not.
+	const ts = "2026-09-05T23:30:00Z"
+	if got := dateFn(ts); got != "06.09.2026" {
+		t.Errorf("date(%s) = %q, want 06.09.2026 (local day)", ts, got)
+	}
+	if got := dateUTCFn(ts); got != "05.09.2026" {
+		t.Errorf("dateUTC(%s) = %q, want 05.09.2026 (UTC day)", ts, got)
+	}
+
+	// Unparseable input degrades to itself, not "" (ut-docs#1130 review
+	// finding — a "2006-01-02"-shaped or otherwise non-RFC3339 string must
+	// stay visible, not silently vanish).
+	if got := dateFn("2026-09-05"); got != "2026-09-05" {
+		t.Errorf("date(non-RFC3339) = %q, want the raw string back", got)
+	}
+	if got := dateUTCFn("2026-09-05"); got != "2026-09-05" {
+		t.Errorf("dateUTC(non-RFC3339) = %q, want the raw string back", got)
+	}
+}
+
+// ut-docs#1130: thousandssep/decimalsep expose the same grouping
+// convention FormatMoney uses server-side, for window.utCurrency's
+// client-side formatter (web/public/app.js) to match it.
+func TestFuncsForExposesNumberSeparators(t *testing.T) {
+	InitI18n(realI18n(t), "en")
+	de := FuncsFor("de-DE")
+	if got := de["thousandssep"].(func() string)(); got != "." {
+		t.Errorf("de-DE thousandssep = %q, want \".\"", got)
+	}
+	if got := de["decimalsep"].(func() string)(); got != "," {
+		t.Errorf("de-DE decimalsep = %q, want \",\"", got)
+	}
+	gb := FuncsFor("en-GB")
+	if got := gb["thousandssep"].(func() string)(); got != "," {
+		t.Errorf("en-GB thousandssep = %q, want \",\"", got)
+	}
+	if got := gb["decimalsep"].(func() string)(); got != "." {
+		t.Errorf("en-GB decimalsep = %q, want \".\"", got)
 	}
 }
