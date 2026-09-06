@@ -62,6 +62,16 @@ verse bile gelir her zaman satışı gerçekten gerçekleştiren kasiyere
 atfedilmeye devam eder, böylece kasiyer dökümü her zaman kasada
 gerçekte kimin çalıştığını yansıtır.
 
+Ekrandaki ürün listesi her zaman o gün satılan tüm ürünleri gösterir,
+sayıları ne olursa olsun. Ancak **basılı** gün sonu (Z) raporunun
+"ürüne göre" bölümü yapılandırılabilir (Gün sonu sekmesi, otomatik
+kapanış zamanlamasının yanında) — çünkü çok sayıda üründen oluşan bir
+mağaza her kapanışta yüzlerce fazladan satır yazdırabilir: **Gelire göre
+ilk N'i yazdır** (varsayılan — ilk 30 ürünü, ya da belirlediğiniz
+sayıyı, daha fazlası varsa bir "+N more" satırıyla birlikte yazdırır),
+**Her ürünü yazdır** (önceki davranış, sınırsız) ya da **Yazdırma** (bu
+bölümü yalnızca basılı rapordan kaldırır, ekrandaki rapordan değil).
+
 ## Gün sonu (Z) raporunda ödeme yöntemi ve KDV oranı bir arada
 
 Yazdırılan gün sonu raporunda **BY METHOD & VAT RATE** tablosu bulunur:
@@ -269,3 +279,4 @@ etmez veya taşımaz.
   olduğuna bakmaksızın bahşişli her ödemeyi sayar; "Alınan" ise yalnızca
   çalışana kaydedilen bahşişleri sayar (varsayılan) — bir bahşiş
   işletmeye kaydedildiğinde ikisinin farklı çıkması beklenir.
+

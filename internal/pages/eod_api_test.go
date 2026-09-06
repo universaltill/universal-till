@@ -166,7 +166,7 @@ func TestEodTimeRegex(t *testing.T) {
 
 func TestBuildEODDoc_NoReceiptsOmitsFooterLine(t *testing.T) {
 	rep := data.EODReport{Day: "2026-01-01", GeneratedAt: "now"}
-	doc := buildEODDoc(rep, "Task Runner", "utf8")
+	doc := buildEODDoc(rep, "Task Runner", "utf8", eodArticlePrintAll, 0)
 	for _, line := range doc.Footer {
 		if strings.Contains(line, "Receipts") {
 			t.Fatalf("expected no receipt-range footer line for a day with no sales, got %+v", doc.Footer)
@@ -905,6 +905,46 @@ func TestPostSettingsEOD_ElevatesOnValidApproverPIN(t *testing.T) {
 	}
 }
 
+// ut-docs#1650 review finding (should-fix): the elevation-prompt retry's
+// hidden-field replay (renderElevationPrompt's Hidden list) is exercised by
+// TestPostSettingsEOD_ElevatesOnValidApproverPIN above ONLY for
+// enabled/time/business_day_start — a mutation that deletes the
+// article_print_mode/article_print_cap entries added to that same Hidden
+// list (eod_api.go) passed the whole package with zero failures, because
+// every other test either supplies no PIN at all (never reaches
+// renderElevationPrompt) or supplies a valid one in the SAME request
+// (never round-trips through the rendered retry form). This test closes
+// that hole directly: post WITHOUT a PIN (forcing needsElevation) carrying
+// non-default article_print_mode/cap, and assert the rendered dialog's
+// hidden inputs actually carry them — the concrete failure this prevents
+// is a manager's retry silently resetting a store's chosen mode/cap back
+// to blank (and so back to the shipped default) because the dialog never
+// echoed them back for the retry to resubmit.
+func TestPostSettingsEOD_NeedsElevation_HiddenFieldsReplayArticlePrintSettings(t *testing.T) {
+	mux, _ := newEODAPITestMux(t)
+
+	form := strings.NewReader("enabled=on&time=21:45&article_print_mode=off&article_print_cap=45")
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/settings/eod", form), auth.User{ID: "some-cashier", Role: "cashier"})
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "elevation-dialog") {
+		t.Fatalf("expected the elevation prompt dialog, got: %s", body)
+	}
+	for _, want := range []string{
+		`<input type="hidden" name="article_print_mode" value="off">`,
+		`<input type="hidden" name="article_print_cap" value="45">`,
+	} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("expected the retry form to replay %q, got: %s", want, body)
+		}
+	}
+}
+
 func TestPostSettingsEOD_ValidatesTimeFormat(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newEODAPITestMux(t)
@@ -977,6 +1017,110 @@ func TestPostSettingsEOD_BusinessDayStart_ValidatesAndPersists(t *testing.T) {
 	val, _, err = dp.Settings.Get(t.Context(), keyReportsBusinessDayStart)
 	if err != nil || val != "" {
 		t.Fatalf("expected business_day_start cleared, got %q err=%v", val, err)
+	}
+}
+
+// ut-docs#1650: article_print_mode/article_print_cap are sibling fields on
+// this SAME settings panel/endpoint, same validate-then-persist shape as
+// business_day_start above.
+func TestPostSettingsEOD_ArticlePrintSettings_ValidatesAndPersists(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newEODAPITestMux(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/eod", strings.NewReader("article_print_mode=bogus"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an unrecognized article_print_mode, got %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/settings/eod", strings.NewReader("article_print_cap=0"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a non-positive article_print_cap, got %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/settings/eod", strings.NewReader("article_print_cap=not-a-number"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a non-numeric article_print_cap, got %d", rec.Code)
+	}
+
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/settings/eod", strings.NewReader("article_print_mode=off&article_print_cap=50"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for a valid mode+cap, got %d: %s", rec.Code, rec.Body.String())
+	}
+	mode, _, err := dp.Settings.Get(t.Context(), keyEODArticlePrintMode)
+	if err != nil || mode != "off" {
+		t.Fatalf("expected article_print_mode persisted, got %q err=%v", mode, err)
+	}
+	capVal, _, err := dp.Settings.Get(t.Context(), keyEODArticlePrintCap)
+	if err != nil || capVal != "50" {
+		t.Fatalf("expected article_print_cap persisted, got %q err=%v", capVal, err)
+	}
+
+	// Blank is allowed (never configured / cleared back to the shipped default).
+	rec = httptest.NewRecorder()
+	req = httptest.NewRequest(http.MethodPost, "/api/settings/eod", strings.NewReader("article_print_mode=&article_print_cap="))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("expected 204 for a blank mode+cap, got %d: %s", rec.Code, rec.Body.String())
+	}
+	mode, _, err = dp.Settings.Get(t.Context(), keyEODArticlePrintMode)
+	if err != nil || mode != "" {
+		t.Fatalf("expected article_print_mode cleared, got %q err=%v", mode, err)
+	}
+}
+
+// TestResolveEODArticlePrintSettings_DefaultsUnsetOrInvalid pins
+// resolveEODArticlePrintSettings' own contract directly (buildEODDoc's
+// callers rely on it to never hand back an out-of-range mode/cap): unset,
+// an unrecognized mode, and a non-positive/oversized/non-numeric cap all
+// fall back to the shipped default ("capped"/30) rather than propagating
+// malformed stored data into the print path.
+func TestResolveEODArticlePrintSettings_DefaultsUnsetOrInvalid(t *testing.T) {
+	_, dp := newEODAPITestMux(t)
+	ctx := t.Context()
+
+	mode, capN := resolveEODArticlePrintSettings(ctx, dp)
+	if mode != eodArticlePrintCapped || capN != eodArticlePrintCapDefault {
+		t.Fatalf("unset settings: got (%q, %d), want (%q, %d)", mode, capN, eodArticlePrintCapped, eodArticlePrintCapDefault)
+	}
+
+	if err := dp.Settings.Set(ctx, keyEODArticlePrintMode, "not-a-mode"); err != nil {
+		t.Fatal(err)
+	}
+	// ut-docs#1650 review finding (nit): this comment claims non-positive,
+	// oversized AND non-numeric cap values all fall back — exercise all
+	// three, not just the negative case, so the comment stays true.
+	for _, badCap := range []string{"-5", "0", "1000", "not-a-number", ""} {
+		if err := dp.Settings.Set(ctx, keyEODArticlePrintCap, badCap); err != nil {
+			t.Fatal(err)
+		}
+		mode, capN = resolveEODArticlePrintSettings(ctx, dp)
+		if mode != eodArticlePrintCapped || capN != eodArticlePrintCapDefault {
+			t.Fatalf("invalid stored cap %q: got (%q, %d), want the default (%q, %d)", badCap, mode, capN, eodArticlePrintCapped, eodArticlePrintCapDefault)
+		}
+	}
+
+	if err := dp.Settings.Set(ctx, keyEODArticlePrintMode, eodArticlePrintAll); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, keyEODArticlePrintCap, "12"); err != nil {
+		t.Fatal(err)
+	}
+	mode, capN = resolveEODArticlePrintSettings(ctx, dp)
+	if mode != eodArticlePrintAll || capN != 12 {
+		t.Fatalf("valid stored settings: got (%q, %d), want (%q, %d)", mode, capN, eodArticlePrintAll, 12)
 	}
 }
 
