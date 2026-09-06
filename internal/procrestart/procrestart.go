@@ -39,6 +39,7 @@
 package procrestart
 
 import (
+	"context"
 	"os"
 	"time"
 
@@ -56,6 +57,26 @@ var (
 	// replaced — same value selfupdate.Apply uses for the same reason.
 	reexecDelay = 1500 * time.Millisecond
 )
+
+// beforeRestart runs synchronously, immediately before Restart's delayed
+// goroutine re-execs, giving the caller a chance to cleanly stop anything
+// an exec of THIS process alone won't reach — specifically hardware-plugin
+// child processes (internal/plugins.Supervisor), which are not reparented,
+// cancelled or signalled by an exec of their parent (ut-docs#1616). No-op
+// by default: a caller with nothing to clean up (e.g. every test in this
+// package) never needs to set it.
+var beforeRestart = func(context.Context) {}
+
+// SetBeforeRestart registers the hook above. Call once at startup — from
+// internal/app.Run, the only place that holds the plugin Supervisor —
+// before any HTTP handler can reach Restart(). A nil fn resets to the
+// no-op default.
+func SetBeforeRestart(fn func(context.Context)) {
+	if fn == nil {
+		fn = func(context.Context) {}
+	}
+	beforeRestart = fn
+}
 
 // Supported reports whether Restart can replace the process image on this
 // platform. It is a pure build-tag decision (see reexec_unix.go /
@@ -80,6 +101,7 @@ func Restart() {
 	logging.L().Infof("[procrestart] restarting %s in %v", exe, reexecDelay)
 	go func() {
 		time.Sleep(reexecDelay)
+		beforeRestart(context.Background())
 		if err := reexecFn(exe); err != nil {
 			logging.L().Errorf("[procrestart] re-exec failed (restart manually): %v", err)
 		}

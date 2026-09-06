@@ -65,6 +65,26 @@ var (
 	goarch = runtime.GOARCH
 )
 
+// beforeRestart runs synchronously, immediately before Apply's delayed
+// goroutine re-execs, giving the caller a chance to cleanly stop anything
+// an exec of THIS process alone won't reach — specifically hardware-plugin
+// child processes (internal/plugins.Supervisor), which are not reparented,
+// cancelled or signalled by an exec of their parent (ut-docs#1616). No-op
+// by default: a caller with nothing to clean up (e.g. every test in this
+// package) never needs to set it.
+var beforeRestart = func(context.Context) {}
+
+// SetBeforeRestart registers the hook above. Call once at startup — from
+// internal/app.Run, the only place that holds the plugin Supervisor —
+// before any HTTP handler can reach Apply(). A nil fn resets to the no-op
+// default.
+func SetBeforeRestart(fn func(context.Context)) {
+	if fn == nil {
+		fn = func(context.Context) {}
+	}
+	beforeRestart = fn
+}
+
 // ErrUnsupported means this install type updates via a native mechanism.
 var ErrUnsupported = errors.New("in-app update isn't available for this install; use the installer (Windows) or reinstall (this install's directory isn't self-update-writable)")
 
@@ -359,6 +379,7 @@ func Apply(ctx context.Context) error {
 	// Re-exec the new binary shortly, so the HTTP response can flush first.
 	go func() {
 		time.Sleep(reexecDelay)
+		beforeRestart(context.Background())
 		if err := reexecFn(exe); err != nil {
 			logging.L().Errorf("[selfupdate] re-exec failed (restart manually): %v", err)
 		}

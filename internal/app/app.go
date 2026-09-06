@@ -36,7 +36,9 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/plugins/oauth"
+	"github.com/universaltill/universal-till/internal/procrestart"
 	"github.com/universaltill/universal-till/internal/recovery"
+	"github.com/universaltill/universal-till/internal/selfupdate"
 	"github.com/universaltill/universal-till/internal/server"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/updates"
@@ -289,6 +291,27 @@ func Run(ctx context.Context) error {
 	mux, deps := pagesInit(ctx, bgCtx, cfg, pluginManager, database.DB, catalogRepo, &wg)
 
 	supervisor := plugins.NewSupervisor(database.DB)
+	// A self-restart (procrestart, selfupdate) execs THIS process in place —
+	// same PID, fresh image — but does nothing to hardware-plugin child
+	// processes: they are not reparented, cancelled or signalled by an exec
+	// of their parent, so they'd keep running unmanaged and the freshly
+	// restarted image's AutoStartPlugins below could then spawn a second
+	// instance of the same plugin, contending for the same physical device
+	// (ut-docs#1616). Supervisor.Shutdown already does exactly the right
+	// thing (stop every process, cancel its context, wait bounded); wiring
+	// it as both packages' beforeRestart hook here — the only place that
+	// holds the Supervisor — closes that gap without either restart package
+	// needing to know the Supervisor exists.
+	stopPluginsBeforeRestart := func(ctx context.Context) {
+		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if err := supervisor.Shutdown(stopCtx); err != nil {
+			log.Warnf("stop hardware-plugin processes before restart: %v", err)
+		}
+	}
+	procrestart.SetBeforeRestart(stopPluginsBeforeRestart)
+	selfupdate.SetBeforeRestart(stopPluginsBeforeRestart)
+
 	if err := supervisor.AutoStartPlugins(ctx); err != nil {
 		log.Warnf("plugin auto-start failed: %v", err)
 	}
