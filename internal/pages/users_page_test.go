@@ -44,8 +44,11 @@ func newUsersTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *auth.Service
 // is exactly what the actor/target it needs, no more.
 func insertTestUser(t *testing.T, db *sql.DB, id, username, displayName, role string) {
 	t.Helper()
+	// ut-docs#1657/#1678: the real users table (001_init.sql) has no
+	// created_at column at all -- the old hand-rolled test schema added
+	// one for its own inserts that this helper carried along.
 	if _, err := db.Exec(
-		`INSERT INTO users(id,username,display_name,pin_hash,role,created_at) VALUES(?,?,?,'',?,datetime('now'))`,
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES(?,?,?,'',?)`,
 		id, username, displayName, role); err != nil {
 		t.Fatalf("insert test user %s: %v", username, err)
 	}
@@ -56,8 +59,9 @@ func insertTestUser(t *testing.T, db *sql.DB, id, username, displayName, role st
 // actually sign in (pin_hash set), so a guard test needs one.
 func insertTestUserWithPIN(t *testing.T, db *sql.DB, id, username, displayName, role, pinHash string) {
 	t.Helper()
+	// ut-docs#1657/#1678: same missing-column fix as insertTestUser above.
 	if _, err := db.Exec(
-		`INSERT INTO users(id,username,display_name,pin_hash,role,created_at) VALUES(?,?,?,?,?,datetime('now'))`,
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES(?,?,?,?,?)`,
 		id, username, displayName, pinHash, role); err != nil {
 		t.Fatalf("insert test user %s: %v", username, err)
 	}
@@ -103,6 +107,10 @@ func TestUsersPage_PromoteSuperAdmin_Success(t *testing.T) {
 	mux, dp, _ := newUsersTestDeps(t)
 	posRepo := data.NewPOSRepo(dp.Db)
 	insertTestUser(t, dp.Db, "target-1", "amir", "Amir", "admin")
+	// ut-docs#1682: the acting super_admin must be a real seeded user --
+	// audit_log.actor_id has a real FK to users(id) now that
+	// openPagesTestDB runs real migrations (ut-docs#1676).
+	insertTestUser(t, dp.Db, "sa-1", "sa-1", "SA One", "super_admin")
 
 	rec := postForm(mux, "/api/users/target-1/promote-super-admin", nil, &auth.User{ID: "sa-1", Role: "super_admin"})
 	if rec.Code != http.StatusSeeOther {
@@ -150,7 +158,11 @@ func TestUsersPage_PromoteSuperAdmin_AlreadySuperAdminIsNoop(t *testing.T) {
 // one, so it gets the same treatment as 'system'.
 func TestUsersPage_PromoteSuperAdmin_KioskServiceIdentityForbidden(t *testing.T) {
 	mux, dp, _ := newUsersTestDeps(t)
-	insertTestUser(t, dp.Db, "kiosk", "kiosk", "Self-order kiosk", "cashier")
+	// ut-docs#1676: 'kiosk' is already seeded by 001_init.sql (id/username
+	// 'kiosk', display_name 'Self-order kiosk', role 'cashier') now that
+	// openPagesTestDB runs real migrations -- no need to insert it again.
+	// ut-docs#1682: the acting super_admin must be a real seeded user too.
+	insertTestUser(t, dp.Db, "sa-1", "sa-1", "SA One", "super_admin")
 
 	rec := postForm(mux, "/api/users/kiosk/promote-super-admin", nil, &auth.User{ID: "sa-1", Role: "super_admin"})
 	if rec.Code != http.StatusForbidden {
@@ -395,6 +407,9 @@ func TestUsersPage_ChangeRole_ManagerCannotTouchAdmin(t *testing.T) {
 func TestUsersPage_ChangeRole_AdminPromotesCashierToManager(t *testing.T) {
 	mux, dp, _ := newUsersTestDeps(t)
 	insertTestUser(t, dp.Db, "cash-1", "cash-1", "Cash One", "cashier")
+	// ut-docs#1682: the acting admin must be a real seeded user -- see
+	// TestUsersPage_PromoteSuperAdmin_Success's comment above.
+	insertTestUser(t, dp.Db, "admin-1", "admin-1", "Admin One", "admin")
 
 	rec := postForm(mux, "/api/users/cash-1/role", url.Values{"role": {"manager"}}, &auth.User{ID: "admin-1", Role: "admin"})
 	if rec.Code != http.StatusOK {
@@ -437,7 +452,9 @@ func TestUsersPage_ChangeRole_InvalidRole(t *testing.T) {
 
 func TestUsersPage_ChangeRole_KioskServiceIdentityForbidden(t *testing.T) {
 	mux, dp, _ := newUsersTestDeps(t)
-	insertTestUser(t, dp.Db, "kiosk", "kiosk", "Self-order kiosk", "cashier")
+	// ut-docs#1676/#1682: same two fixes as
+	// TestUsersPage_PromoteSuperAdmin_KioskServiceIdentityForbidden above.
+	insertTestUser(t, dp.Db, "sa-1", "sa-1", "SA One", "super_admin")
 
 	rec := postForm(mux, "/api/users/kiosk/role", url.Values{"role": {"manager"}}, &auth.User{ID: "sa-1", Role: "super_admin"})
 	if rec.Code != http.StatusForbidden {
@@ -769,7 +786,12 @@ func TestUsersPage_ChangeRole_ElevationFlow(t *testing.T) {
 	insertTestUser(t, dp.Db, "target-role-3", "target-role-3", "Target Role 3", "cashier")
 
 	t.Run("canPerform_actor_passes_straight_through", func(t *testing.T) {
-		rec := postForm(mux, "/api/users/target-role-1/role", url.Values{"role": {"manager"}}, &auth.User{ID: "direct-admin-1", Role: "admin"})
+		// ut-docs#1682: use the real seeded adminID (from
+		// newUsersElevationPrincipals above), not a synthetic id --
+		// audit_log.actor_id has a real FK to users(id) now that
+		// openPagesTestDB runs real migrations (ut-docs#1676), and a
+		// direct auth.User{ID: "direct-admin-1"} was never a real row.
+		rec := postForm(mux, "/api/users/target-role-1/role", url.Values{"role": {"manager"}}, &auth.User{ID: adminID, Role: "admin"})
 		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "elevation-dialog") {
 			t.Fatalf("admin change role = %d, want 200 with no elevation prompt: %s", rec.Code, rec.Body.String())
 		}
