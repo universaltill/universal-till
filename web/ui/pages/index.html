@@ -268,7 +268,12 @@
               onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)"
               hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
         🛒 {{ T "kiosk.checkout_start" }}</button>
-      <button class="btn secondary" type="button"
+      <!-- ut-docs#1629: testid added so the payment-overlay focus guard's
+           own e2e spec (payment-overlay-focus-obscured-1629.spec.ts) can
+           address this original directly rather than matching on visible
+           text (locale-dependent) — same reasoning #1542/#1625's testids
+           on the sibling New Sale button already followed. -->
+      <button class="btn secondary" type="button" data-testid="tender-footer-hold"
               onclick="document.getElementById('hold-modal').show(); document.getElementById('hold-label-input').focus();">
         {{ T "hold.action" }}</button>
       <button type="button" class="btn primary payment-trigger" data-testid="payment-open"
