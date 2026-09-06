@@ -35,7 +35,6 @@ func TestClient_ListPlugins(t *testing.T) {
 					TrustTier:     "verified",
 					ArtifactURL:   "https://example.com/plugin.tar.gz",
 					ArtifactHash:  "abc123",
-					Locale:        "en-US",
 					DeviceArch:    "linux/amd64",
 					ApprovedAt:    "2024-01-01T00:00:00Z",
 				},
