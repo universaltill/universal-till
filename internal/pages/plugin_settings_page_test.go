@@ -309,9 +309,11 @@ func TestPluginSettingsPage_GET_RendersOrphanOverrideEntry(t *testing.T) {
 func TestPluginSettingsPage_GET_FallsBackToRawInputWhenNoTaxCodesOrOverrides(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPluginSettingsTestDeps(t)
-	// seedForPages always seeds an active 'tax_std' tax code -- deactivate it
-	// so this test genuinely reaches the "no active tax codes" state.
-	if _, err := dp.Db.ExecContext(context.Background(), `UPDATE tax_codes SET is_active = 0 WHERE id = 'tax_std'`); err != nil {
+	// 001_init.sql seeds three active tax codes (tax_std/tax_red/tax_zero)
+	// now that openPagesTestDB runs real migrations (ut-docs#1676) --
+	// deactivate all of them so this test genuinely reaches the "no active
+	// tax codes" state, not just "one of three deactivated".
+	if _, err := dp.Db.ExecContext(context.Background(), `UPDATE tax_codes SET is_active = 0`); err != nil {
 		t.Fatal(err)
 	}
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
