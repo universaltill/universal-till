@@ -1131,6 +1131,8 @@
   "tender.new_customer": "New Customer",
   "tender.no_pending": "No pending payments yet.",
   "tender.open_payment": "Payment",
+  "tender.overlay_hold_action": "Hold Sale (Tender panel)",
+  "tender.overlay_new_sale_action": "New Sale (Tender panel)",
   "tender.reference": "Reference",
   "tender.reference_placeholder": "Last 4, auth code",
   "tender.scan.add": "Add",

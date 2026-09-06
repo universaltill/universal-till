@@ -1131,6 +1131,8 @@
   "tender.new_customer": "عميل جديد",
   "tender.no_pending": "لا مدفوعات معلّقة بعد.",
   "tender.open_payment": "الدفع",
+  "tender.overlay_hold_action": "تعليق البيع (لوحة الدفع)",
+  "tender.overlay_new_sale_action": "بيع جديد (لوحة الدفع)",
   "tender.reference": "المرجع",
   "tender.reference_placeholder": "آخر ٤ أرقام، رمز التفويض",
   "tender.scan.add": "إضافة",

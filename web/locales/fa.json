@@ -1131,6 +1131,8 @@
   "tender.new_customer": "مشتری جدید",
   "tender.no_pending": "پرداخت در انتظاری نیست.",
   "tender.open_payment": "پرداخت",
+  "tender.overlay_hold_action": "نگه‌داشتن فروش (پنل پرداخت)",
+  "tender.overlay_new_sale_action": "فروش جدید (پنل پرداخت)",
   "tender.reference": "مرجع",
   "tender.reference_placeholder": "۴ رقم آخر، کد تأیید",
   "tender.scan.add": "افزودن",
