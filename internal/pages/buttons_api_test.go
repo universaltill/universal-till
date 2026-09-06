@@ -15,8 +15,9 @@ import (
 )
 
 // newButtonsMux wires registerButtonsAPI over a DB seeded with the pages
-// fixture plus the shortcut_buttons table (created by migrations in prod;
-// the shared fixture doesn't include it).
+// fixture (openPagesTestDB now runs the real migrations, ut-docs#1657/#1677
+// — shortcut_buttons and item_images come from there, including their real
+// FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE).
 func newButtonsMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
 	chdirRoot(t)
@@ -24,13 +25,6 @@ func newButtonsMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
-	if _, err := db.Exec(`CREATE TABLE shortcut_buttons (barcode TEXT PRIMARY KEY, label TEXT, item_id TEXT, image_path TEXT, sort_order INTEGER NOT NULL DEFAULT 0)`); err != nil {
-		t.Fatalf("create shortcut_buttons: %v", err)
-	}
-	// LoadButtons/SearchItemsForShortcuts join item_images for tile thumbnails.
-	if _, err := db.Exec(`CREATE TABLE item_images (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, path TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'thumbnail')`); err != nil {
-		t.Fatalf("create item_images: %v", err)
-	}
 	d := &common.Deps{Db: db, BtnStore: ui.NewButtonStore(db)}
 	mux := http.NewServeMux()
 	registerButtonsAPI(mux, d)
@@ -225,7 +219,10 @@ func TestButtonsSearchShortQueryHintAndResults(t *testing.T) {
 
 func TestButtonsReorderEdgeCases(t *testing.T) {
 	mux, d := newButtonsMux(t)
-	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label) VALUES ('b1','A'),('b2','B'),('b3','C')`); err != nil {
+	// item_id is NOT NULL with a real FK to items(id) now that openPagesTestDB
+	// runs real migrations (ut-docs#1676/#1677) -- itm1 is seedForPages' own
+	// fixture item; reordering doesn't care which item each button points at.
+	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('b1','A','itm1'),('b2','B','itm1'),('b3','C','itm1')`); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 

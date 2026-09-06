@@ -17,9 +17,12 @@ import (
 func TestReorderAcceptsMultipartFormData(t *testing.T) {
 	db := openPagesTestDB(t)
 	defer db.Close()
+	// shortcut_buttons comes from the real migrations openPagesTestDB now
+	// runs (ut-docs#1676/#1677); item_id is NOT NULL with a real FK to
+	// items(id), so a minimal item is needed for the buttons to reference.
 	for _, s := range []string{
-		`CREATE TABLE shortcut_buttons (barcode TEXT PRIMARY KEY, label TEXT, item_id TEXT, image_path TEXT, sort_order INTEGER NOT NULL DEFAULT 0)`,
-		`INSERT INTO shortcut_buttons(barcode,label) VALUES ('b1','Alpha'),('b2','Beta'),('b3','Gamma')`,
+		`INSERT INTO items(id,name,base_price,is_active) VALUES ('itm1','Item',100,1)`,
+		`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('b1','Alpha','itm1'),('b2','Beta','itm1'),('b3','Gamma','itm1')`,
 	} {
 		if _, err := db.Exec(s); err != nil {
 			t.Fatalf("setup: %v", err)
