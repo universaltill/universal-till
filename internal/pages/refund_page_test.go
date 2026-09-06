@@ -256,6 +256,16 @@ func newRefundTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *auth.Servic
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
+	// ut-docs#1677: sale_lines.item_id has a real FK to items(id) now that
+	// openPagesTestDB runs real migrations (ut-docs#1676) -- this file's own
+	// tests construct sales/sale_lines directly via raw SQL against a batch
+	// of ad hoc item ids that were never real items. Seed them all here
+	// once rather than per test.
+	for _, id := range []string{"itm-a", "itm-b", "itm-b1", "itm-b2", "itm-b3-comped", "itm-b3-full", "itm-f1", "itm-f4", "itm-1531", "itm-1560", "itm-1561", "itm-1579", "itm-1583", "itm-1583-dip", "itm-1583-split"} {
+		if _, err := db.Exec(`INSERT INTO items (id, name, base_price, is_active) VALUES (?, ?, 100, 1)`, id, id); err != nil {
+			t.Fatalf("seed item %s: %v", id, err)
+		}
+	}
 
 	cfg := &config.Config{
 		Theme:   "default",
@@ -1612,8 +1622,10 @@ func TestPostRefund_ProviderRefundDeclinedShowsLocalizedMessageNotRawError(t *te
 	mux, dp, _ := newRefundTestDeps(t)
 	_, receiptNo := seedCompletedSaleForRefund(t, dp)
 
-	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated)
-	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'demo', 'wasm', 'demo.wasm', 'https://example.test/demo.wasm', 'deadbeef', 'auth', 'site', '[]', 0)`); err != nil {
+	// min_pos_version/api_version/published_at are NOT NULL on the real
+	// plugin_catalog table (ut-docs#1677).
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'demo', 'wasm', 'demo.wasm', 'https://example.test/demo.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.payment-demo', 'Demo Pay', '1.0.0', 'demo.wasm', 'wasm', 1)`); err != nil {
