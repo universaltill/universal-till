@@ -236,6 +236,7 @@
   "hold.error.failed": "نگه‌داشتن فروش ممکن نشد",
   "hold.error.not_found": "فروش نگه‌داشته یافت نشد",
   "hold.modal.placeholder": "مثلاً: میز ۴، سارا",
+  "hold.modal.confirm_action": "نگه‌داشتن فروش (تأیید)",
   "hold.modal.title": "این سفارش را نام‌گذاری کنید (اختیاری)",
   "hold.strip.title": "در انتظار:",
   "hold.toast.held": "فروش نگه داشته شد — مشتری بعدی را بپذیرید",
