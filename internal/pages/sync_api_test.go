@@ -898,12 +898,20 @@ func TestFriendlyJoinError_TranslatesEachKind(t *testing.T) {
 }
 
 // TestFriendlyJoinError_FallsBackForUnclassifiedErrors covers the defensive
-// branch: a plain (non-*joinError) error is shown as its own Error() text
-// rather than panicking or silently returning an empty string.
+// branch: a plain (non-*joinError) error is shown translated, its own
+// Error() text substituted into the fallback locale string's %s placeholder
+// — not panicking, not an empty string, and (ut-docs#1544) not raw English
+// leaking straight through untranslated either, which is what this test
+// used to pin before the fix.
 func TestFriendlyJoinError_FallsBackForUnclassifiedErrors(t *testing.T) {
 	err := fmt.Errorf("some other failure")
-	if got := friendlyJoinError("fa", err); got != "some other failure" {
-		t.Errorf("expected the raw error text as a fallback, got %q", got)
+	for _, locale := range []string{"en", "ar", "fa", "tr"} {
+		t.Run(locale, func(t *testing.T) {
+			want := fmt.Sprintf(httpx.T(locale, "tills.join_error.unexpected"), "some other failure")
+			if got := friendlyJoinError(locale, err); got != want {
+				t.Errorf("friendlyJoinError(%q, %v) = %q, want %q", locale, err, got, want)
+			}
+		})
 	}
 }
 
