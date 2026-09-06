@@ -377,9 +377,25 @@ func Apply(ctx context.Context) error {
 
 	log.Infof("[selfupdate] updated to v%s — restarting", version)
 	// Re-exec the new binary shortly, so the HTTP response can flush first.
+	// beforeRestart runs CONCURRENTLY with this delay, not after it
+	// (ut-docs#1616 review finding, same fix as internal/procrestart):
+	// stopping hardware plugins can itself take real time, and running it
+	// sequentially after reexecDelay would push the re-exec later than
+	// callers assume (web/ui/layouts/base.html's update-status poll times
+	// off reexecDelay). Overlapping means a fast/no-op stop adds no extra
+	// delay; only a genuinely slow plugin pushes the re-exec out, and only
+	// by the time it actually needed. Apply() is unreachable on an
+	// unsupported platform (the !Supported() check above already
+	// returned), so — unlike procrestart.Restart(), which must stay
+	// callable everywhere — there is no Windows no-op case to preserve here.
 	go func() {
+		done := make(chan struct{})
+		go func() {
+			beforeRestart(context.Background())
+			close(done)
+		}()
 		time.Sleep(reexecDelay)
-		beforeRestart(context.Background())
+		<-done
 		if err := reexecFn(exe); err != nil {
 			logging.L().Errorf("[selfupdate] re-exec failed (restart manually): %v", err)
 		}
