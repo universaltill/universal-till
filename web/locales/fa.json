@@ -1199,6 +1199,7 @@
   "tills.pairing.error.name_required": "پیش از ارسال درخواست جفت‌سازی، نامی برای این صندوق وارد کنید.",
   "tills.pairing.error.name_required_field": "نام این صندوق الزامی است",
   "tills.pairing.error.refused": "صندوق اصلی درخواست جفت‌سازی را رد کرد.",
+  "tills.pairing.error.request_build_failed": "درخواست جفت‌سازی آماده نشد. دوباره امتحان کنید.",
   "tills.pairing.error.unexpected_response": "پاسخ غیرمنتظره از صندوق اصلی.",
   "tills.pairing.error.unexpected_response_status": "پاسخ غیرمنتظره از صندوق اصلی (%s).",
   "tills.pairing.error.unreachable": "دسترسی به آن صندوق اصلی ممکن نیست: %s",

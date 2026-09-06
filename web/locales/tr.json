@@ -1199,6 +1199,7 @@
   "tills.pairing.error.name_required": "Eşleştirme isteği göndermeden önce bu kasaya bir ad girin.",
   "tills.pairing.error.name_required_field": "Bu kasanın adı gereklidir",
   "tills.pairing.error.refused": "Ana kasa eşleştirme isteğini reddetti.",
+  "tills.pairing.error.request_build_failed": "Eşleştirme isteği hazırlanamadı. Lütfen tekrar deneyin.",
   "tills.pairing.error.unexpected_response": "Ana kasadan beklenmedik yanıt.",
   "tills.pairing.error.unexpected_response_status": "Ana kasadan beklenmedik yanıt (%s).",
   "tills.pairing.error.unreachable": "O ana kasaya ulaşılamıyor: %s",

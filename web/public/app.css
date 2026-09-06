@@ -1239,7 +1239,21 @@ a.btn, a.btn:hover { text-decoration: none; }
    fall back to there. Anchored near the top rather than vertically
    centered so it never sits under the OSK's fixed 15.5rem bottom panel
    while it's open. */
-#hold-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 500; }
+/* ut-docs#1542: #hold-modal can now open WHILE #payment-overlay is also
+   open (the overlay's own in-body Hold Sale duplicate, index.html, added
+   for that card so Hold Sale is reachable at all at narrow desktop
+   viewports). At the same z-index (500, shared with #pfand-modal/
+   #elevation-modal/#table-add-modal below) equal stacking falls back to
+   DOM order, and .payment-overlay is declared LATER in index.html than
+   this dialog -- so without this bump, #hold-modal painted BEHIND the
+   still-open overlay at any viewport narrow enough for their centered/
+   right-anchored boxes to overlap (confirmed live via screenshot at
+   1024x600: the modal's own Hold Sale submit button was entirely hidden
+   under the Tender panel). 550 is the minimum bump that clears
+   .payment-overlay's 500 while staying below #osk's 1000, so the on-screen
+   keyboard (#hold-label-input can open it) still renders on top of this,
+   same reasoning .payment-overlay's own z-index comment above gives. */
+#hold-modal { position: fixed; inset-block-start: 8vh; inset-inline: 0; margin-inline: auto; z-index: 550; }
 #hold-label-input { width: 100%; margin-block: .5rem .75rem; }
 /* Keep the payout dialog out of the native top layer: the custom on-screen
    keyboard is appended to <body> and must remain clickable while it is open. */

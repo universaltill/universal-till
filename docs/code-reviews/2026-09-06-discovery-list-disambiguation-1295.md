@@ -150,3 +150,41 @@ items (3, 4) are documented, not silently dropped.
   reasonable follow-up if `login.spec.ts`'s serial fresh-install flow
   gets extended for other reasons; not scoped as its own Backlog card
   given how low-risk a byte-identical-JS gap is.
+
+## Post-review addendum (stale-PR sweep, lane:cloud-54, 2026-09-06)
+
+This PR sat reviewed-but-unmerged for ~1h10m after the fixes above were
+amended into the original commit. Two things worth recording:
+
+- **The amended push never triggered CI.** The original commit
+  (`e8f569d`) ran `ci`/`UI E2E`/`commit-attribution`/`lang-pack-drift`
+  normally at PR-open time. The `git commit --amend` + force-push that
+  folded in findings 1/2 above produced a new SHA (`4ffc450`) with
+  **zero** `github-actions` check-suites — confirmed via the commits
+  `/check-suites` endpoint directly (only unrelated third-party app
+  suites, `cursor`/`claude`, showed up). This held for over an hour;
+  it was not a slow-starting run. Root cause not fully isolated, but the
+  reproducible split is: a push made through the GitHub API/App
+  installation token (`create_or_update_file`-style, or `git push` when
+  the local credential helper routes through the same installation
+  token) does not reliably fire `pull_request: synchronize` on this
+  repo, while a plain `git push` over HTTPS did (confirmed below).
+  Given `.github/workflows/ci.yml`/`e2e.yml` only declare
+  `pull_request:` with no `types:` override (default
+  `[opened, synchronize, reopened]`), this looks like a token/App
+  permission gap on the write side rather than a workflow config issue.
+  Worth a dedicated ut-docs card if it recurs — filed as a follow-up
+  note here rather than blocking this merge on root-causing it.
+- **Fix applied this cycle:** rebased the branch onto current `main`
+  (mechanical — only conflict was the generated `web/help/img/manifest.json`,
+  resolved by regenerating with `make docs-shots`, not by hand),
+  re-ran the full local gate (`gofmt`, `go build ./...`, every CI guard
+  script, `golangci-lint run ./...`, the two new/changed e2e specs, and
+  `go test ./...` — matching what `ci.yml` actually runs, not
+  `-race`: a `-race ./...` run was tried first and hit `internal/pages`'s
+  documented false-timeout shape, ut-docs#648, an environment/-race
+  overhead artifact rather than a regression), then pushed with a plain
+  `git push` (not the API-commit path) — which *did* register real
+  `github-actions` check-suites immediately. CI is expected to actually
+  report green/red on this head for the first time before merge, rather
+  than merging on the strength of the superseded `e8f569d` run.
