@@ -261,6 +261,11 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 		if !gate(w, r) {
 			return
 		}
+		// ut-docs#1544: resolved once and reused by every error branch below
+		// (was previously re-resolved only inside the missing-name branch) —
+		// every one of these branches renders a translated message now, not
+		// just that one.
+		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()
 		baseURL := strings.TrimSuffix(strings.TrimSpace(r.Form.Get("base_url")), "/")
 		primaryTillID := strings.TrimSpace(r.Form.Get("till_id"))
@@ -273,7 +278,6 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 			// never typed by a person, so a real gap here is always the
 			// till-name box (now client-validated above this handler too,
 			// so this branch is defense-in-depth, not the normal path).
-			locale := httpx.ResolveLocale(w, r)
 			msg := httpx.T(locale, "tills.pairing.error.missing_request")
 			if name == "" {
 				msg = httpx.T(locale, "tills.pairing.error.name_required")
@@ -282,7 +286,7 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 			return
 		}
 		if !validPrimaryBaseURL(baseURL) {
-			pairWaitView(w, r, statusURL, "error", "", "", "not a valid primary address")
+			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, "tills.pairing.error.invalid_address"))
 			return
 		}
 
@@ -302,12 +306,12 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := client.Do(req)
 		if err != nil {
-			pairWaitView(w, r, statusURL, "error", "", "", "cannot reach that primary: "+err.Error())
+			pairWaitView(w, r, statusURL, "error", "", "", fmt.Sprintf(httpx.T(locale, "tills.pairing.error.unreachable"), err.Error()))
 			return
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			pairWaitView(w, r, statusURL, "error", "", "", "the primary refused the pair request")
+			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, "tills.pairing.error.refused"))
 			return
 		}
 		var out struct {
@@ -316,7 +320,7 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 			} `json:"data"`
 		}
 		if json.NewDecoder(resp.Body).Decode(&out) != nil || out.Data.ID == "" {
-			pairWaitView(w, r, statusURL, "error", "", "", "unexpected response from the primary")
+			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, "tills.pairing.error.unexpected_response"))
 			return
 		}
 
@@ -344,6 +348,7 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 		if !gate(w, r) {
 			return
 		}
+		locale := httpx.ResolveLocale(w, r)
 		rp.mu.Lock()
 		defer rp.mu.Unlock()
 
@@ -396,7 +401,7 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 		}
 		if resp.StatusCode != http.StatusOK {
 			next := *state
-			next.status, next.errMsg = "error", fmt.Sprintf("unexpected response from the primary (%s)", resp.Status)
+			next.status, next.errMsg = "error", fmt.Sprintf(httpx.T(locale, "tills.pairing.error.unexpected_response_status"), resp.Status)
 			rp.active = &next
 			pairWaitViewPolling(w, r, statusURL, "error", "", "", next.errMsg, true)
 			return
@@ -408,7 +413,7 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 		}
 		if json.NewDecoder(resp.Body).Decode(&out) != nil || out.Data.Token == "" {
 			next := *state
-			next.status, next.errMsg = "error", "unexpected response from the primary"
+			next.status, next.errMsg = "error", httpx.T(locale, "tills.pairing.error.unexpected_response")
 			rp.active = &next
 			pairWaitViewPolling(w, r, statusURL, "error", "", "", next.errMsg, true)
 			return
@@ -420,7 +425,7 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 			// friendlyJoinError, not err.Error(): completeJoin's failures are
 			// now a *joinError (ut-docs#36) whose raw Error() is a locale
 			// key, not English prose — this must go through httpx.T.
-			next.status, next.errMsg = "error", friendlyJoinError(httpx.ResolveLocale(w, r), err)
+			next.status, next.errMsg = "error", friendlyJoinError(locale, err)
 			rp.active = &next
 			pairWaitViewPolling(w, r, statusURL, "error", "", "", next.errMsg, true)
 			return

@@ -1,0 +1,37 @@
+-- 004_brands_is_active.sql — ut-docs#1610 (admin-sync retire-in-place
+-- mangles the display name of a still-referenced row).
+--
+-- Adds is_active to brands, matching every other admin-synced lookup table
+-- that carries a UNIQUE display column (tax_codes, payment_methods, users,
+-- stock_locations, registers all already have one).
+--
+-- Why: internal/data/sync_admin_repo.go's deleteMissing prunes rows the
+-- primary no longer has. When the hard DELETE is FK-blocked (a satellite-
+-- local item still points at the brand), it retires the row in place —
+-- is_active = 0 where the table has such a column, and the UNIQUE columns
+-- mangled to "<name>~<id>" so the primary's replacement row can still land.
+-- brands was the ONLY one of those six tables with no is_active at all, so
+-- an FK-blocked brand prune ran just the mangle: the row was never flagged
+-- retired anywhere and its name was permanently corrupted to e.g.
+-- "Acme Foods~b1". With this column, deleteMissing's hasIsActive path
+-- applies to brands too (adminTables entry updated alongside this file),
+-- and the read side strips the suffix (stripRetireMangle) before any name
+-- reaches a display path.
+--
+-- Nothing in the app deactivates a brand through a UI: this flag exists so
+-- a sync-retired brand is distinguishable from a live one (same as the
+-- other five tables), not to introduce a brand-management feature. The
+-- catalog brand <select> and the brandName row resolver deliberately keep
+-- listing a retired-but-referenced brand under its real name — see
+-- CatalogRepo.ReadLookup — for the same reason the tax-code <select> lists
+-- inactive codes (a select that can't offer the item's own value silently
+-- clears it on the next save).
+--
+-- Shipped as an ADDITIVE migration rather than an edit to 001_init.sql:
+-- editing 001_init.sql changes its checksum, and internal/db/db.go's
+-- verifyAppliedMigrations hard-fails an already-migrated database on any
+-- checksum drift (idempotentRerunVersions is empty; version 1 is not
+-- allowlisted) — bricking every device that already migrated, including
+-- the pilot install. 002_refund_of_line_id.sql and
+-- 003_kitchen_station_display_flag.sql both document this same trap.
+ALTER TABLE brands ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1;

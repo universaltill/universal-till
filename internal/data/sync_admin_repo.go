@@ -82,7 +82,11 @@ type adminTable struct {
 // stay per-till. See applyPluginSettings for its special apply semantics.
 var adminTables = []adminTable{
 	{name: "tax_codes", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}},
-	{name: "brands", pk: []string{"id"}, unique: []string{"name"}},
+	// ut-docs#1610: brands gained is_active in migration 004 so an FK-blocked
+	// prune retires the row (is_active = 0) like every other table here whose
+	// UNIQUE column doubles as its display name, instead of only mangling
+	// name and leaving nothing that marks the row as retired.
+	{name: "brands", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}},
 	{name: "categories", pk: []string{"id"}},
 	{name: "customers", pk: []string{"id"}, unique: []string{"loyalty_no"}},
 	// plugin_id is till-local derived state (which plugin installed on THIS
@@ -625,6 +629,38 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 		logging.L().Warnf("sync pull: cannot prune %s %v (kept): %v", t.name, args, err)
 	}
 	return nil
+}
+
+// stripRetireMangle undoes deleteMissing's uniqueness-freeing "<name>~<id>"
+// suffix on an FK-blocked retire-in-place, so a mangled DB value never
+// reaches a display path (ut-docs#1610). Six admin tables use the SAME
+// column for identity-uniqueness and display (brands.name, tax_codes.name,
+// payment_methods.name, users.username, stock_locations.name,
+// registers.name); every repository reader that surfaces one of those to
+// staff — including the admin listings that deliberately show retired rows
+// — runs its scanned value through this before returning it.
+//
+// "Every reader" includes the ones that reach the column through a JOIN
+// rather than a direct SELECT, which is where the first pass at this fix
+// missed four (review of ut-docs#1610): ListStockLevels, GetLowStockItems,
+// variantStockForExport and ListRegisterLocations all join a name in
+// without an is_active filter. For stock_locations that is in fact the
+// MOST likely place the mangle surfaces — a location whose prune is
+// FK-blocked is blocked precisely because inventory rows reference it, and
+// those are the rows those queries return. When adding a reader, the test
+// is "does this value reach a person?", not "does this query name the
+// table in its FROM clause?".
+//
+// Only strips when name ends in exactly "~"+id: an active row (or a table
+// that's never mangled) is returned unchanged, even one whose real name
+// contains a literal '~' or ends in some OTHER row's id. Strips exactly
+// once — deleteMissing's CASE keeps the mangle idempotent across pulls, so
+// a doubled suffix never exists to begin with.
+func stripRetireMangle(id, name string) string {
+	if id == "" {
+		return name
+	}
+	return strings.TrimSuffix(name, "~"+id)
 }
 
 // upsertRow inserts or fully updates one row. Column names are validated

@@ -699,6 +699,12 @@ WHERE i.reorder_level > 0
 		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel); err != nil {
 			return nil, fmt.Errorf("scan low stock item: %w", err)
 		}
+		// ut-docs#1610 (review): the joined stock_locations row is NOT
+		// is_active-filtered here, and a location FK-blocked from an
+		// admin-sync prune is FK-blocked precisely BECAUSE inventory rows
+		// point at it — i.e. exactly the rows this query returns. Undo the
+		// retire mangle so the reorder list can't show "Back Room~loc-1".
+		item.LocationName = stripRetireMangle(item.LocationID, item.LocationName)
 		items = append(items, item)
 	}
 
@@ -3751,6 +3757,7 @@ func (r *POSRepo) ListRegistersForAdmin(ctx context.Context) ([]RegisterAdmin, e
 			reg.LocationID = &v
 		}
 		reg.IsActive = active == 1
+		reg.Name = stripRetireMangle(reg.ID, reg.Name)
 		out = append(out, reg)
 	}
 	if err := rows.Err(); err != nil {
@@ -3778,6 +3785,7 @@ func (r *POSRepo) ListStockLocations(ctx context.Context) ([]StockLocation, erro
 		if err := rows.Scan(&l.ID, &l.Name); err != nil {
 			return nil, fmt.Errorf("scan stock location: %w", err)
 		}
+		l.Name = stripRetireMangle(l.ID, l.Name)
 		out = append(out, l)
 	}
 	if err := rows.Err(); err != nil {
@@ -3806,6 +3814,10 @@ ORDER BY i.name, sl.name`)
 		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel, &item.LeadTimeDays); err != nil {
 			return nil, fmt.Errorf("scan stock level: %w", err)
 		}
+		// ut-docs#1610 (review): same unfiltered stock_locations join as
+		// GetLowStockItems — this backs the inventory page AND, through
+		// StockForExport, an export plugin's payload.
+		item.LocationName = stripRetireMangle(item.LocationID, item.LocationName)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -5621,6 +5633,7 @@ func (r *POSRepo) ListStockLocationsForAdmin(ctx context.Context) ([]StockLocati
 			return nil, fmt.Errorf("scan stock location admin: %w", err)
 		}
 		l.IsActive = active == 1
+		l.Name = stripRetireMangle(l.ID, l.Name)
 		out = append(out, l)
 	}
 	if err := rows.Err(); err != nil {
