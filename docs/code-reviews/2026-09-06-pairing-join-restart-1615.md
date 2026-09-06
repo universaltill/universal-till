@@ -1,7 +1,7 @@
 # Code review: paste-a-code join's restart dead-end
 
 - **Card:** universaltill/ut-docs#1615
-- **PR:** universaltill/universal-till#… (branch `fix/1615-paste-code-join-restart`)
+- **PR:** universaltill/universal-till#812 (branch `fix/1615-paste-code-join-restart`)
 - **Complexity:** easy — Dev inline (Sonnet), Review via a fresh-context
   Sonnet subagent (per `scrum-master`'s Model routing by complexity)
 - **Date:** 2026-09-06
@@ -99,3 +99,33 @@ table) in an isolated worktree (`isolation: "worktree"`), on commit
   introduced by this change).
 - ut-docs#1611 (a separate, unrelated, explicitly low-severity i18n nit in
   the same general area) — not part of this card's scope.
+
+## Addendum: post-review rebase (2026-09-06, stale-PR sweep, step 0c)
+
+This PR sat open for a couple of hours after the review above with **zero
+CI signal** (no `ci`/`UI E2E`/`commit-attribution` run ever started) and a
+merge conflict against `main`: PR #806/#1550's "give the joined screen a
+real restart" change merged after this branch was cut and independently
+added `internal/procrestart`. A stale-PR sweep pass first flagged this as
+needing real Dev-level rework and left it as-is; a follow-up pass then
+did the rebase and found it was actually mechanical — this branch already
+carried `internal/procrestart` via its own base (merged PR #809/#1613),
+byte-identical to what #1550/#806 later put on `main`, so
+`git rebase origin/main` auto-merged `procrestart.go`,
+`procrestart_test.go`, `pairing_restart_test.go` and `pairing_wait.html`
+with **zero conflicts**. The only conflict was the generated
+`web/help/img/manifest.json` hash, resolved by re-running `make
+docs-shots` (which also picked up the `multitill` topic's new hash from
+this PR's own help-text edit, plus a couple of bytes of pre-existing
+pinned/reused-Chromium screenshot drift in `ar/sell.png`, ut-docs#622 —
+unrelated to this change).
+
+No logic changed from what the review above already covered — the diff
+against current `main` post-rebase is the same `pairing_join.go` /
+`sync_api.go` / `sync_join_restart_test.go` / `pairing_join_success.html`
+/ `multitill.md` set, plus the regenerated manifest/screenshot. Re-ran the
+full gate on the rebased branch: `go build ./...`, `go vet ./...`,
+`gofmt -l .` (none), `golangci-lint run ./...` (0 issues), `go test ./...`
+(all packages green), and all 18 `scripts/ci/guard-*.sh` /
+`check-brand-assets.sh` checks green. Pushed and let CI run for real this
+time before merging, per PR-SWEEP.md's "re-check CI live, right now."
