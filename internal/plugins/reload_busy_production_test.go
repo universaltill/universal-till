@@ -46,7 +46,7 @@ import (
 // below, where the attempt to force it did not succeed. The cap is therefore
 // a defensive bound on a plausible tail, not a fix for a diagnosed one. The
 // cap of 100 per reload is ~10x the contention an idle -race run actually
-// generates (~9/reload, measured) and ~100x the floor asserted below, so it
+// generates (~9/reload, measured) and ~100x the floor checked below, so it
 // leaves the deliberately pessimistic contention level of the uncapped
 // version intact in the normal case while refusing to let a badly scheduled
 // runner spin the publisher arbitrarily far ahead of Reload.
@@ -61,9 +61,11 @@ import (
 // itself in this exercise — repeated attempts instead tripped the
 // publisher-floor check below (on BOTH the pre-#1151 and post-#1151 code, so
 // it is a pre-existing, separate flake mode under severe scheduling
-// starvation, not something this change introduces; filed as a follow-up
-// rather than fixed here, since it's a different failure signature than
-// what #979/#1151 actually saw in CI). So the "5s-ish busy_timeout
+// starvation, not something this change introduces — a different failure
+// signature than what #979/#1151 actually saw in CI; ut-docs#1198 changed
+// this floor's response to a trip from Fatal to Skip, below, since it
+// measures a test precondition rather than the property under test). So the
+// "5s-ish busy_timeout
 // exhaustion" mechanism below is NOT backed by a direct measured
 // reproduction of the real failure — it rests on #775's own independently
 // reviewed analysis (this path never hits the SHARED->RESERVED
@@ -257,19 +259,74 @@ func TestReload_SurvivesRealisticPublisherContention(t *testing.T) {
 	}
 	t.Logf("%d reloads done (slowest %s, %d busy-exhaustion retries); publishes ok=%d err=%d", reloadCount, slowestReload, busyRetries, atomic.LoadInt64(&publishOK), atomic.LoadInt64(&publishErr))
 
-	// The publisher's writes are what make this a contention test at all. If
-	// this floor ever trips, the test has decayed back into the no-op the
-	// 50ms-cadence draft was — fix the contention, don't lower the floor.
-	// One publish per reload is ~7x below the slowest rate observed under
-	// -race (153 publishes across 20 reloads), so it has ample headroom on a
-	// loaded CI box while still catching total collapse.
-	if got := atomic.LoadInt64(&publishOK); got < reloadCount {
-		t.Fatalf("publisher only completed %d publishes across %d reloads — too little concurrent write load for this to be a meaningful contention test (see the cadence note above)", got, reloadCount)
-	}
 	// The publisher side writes audit rows on the same contended DB, so it
 	// answers the same #775 question from the other direction: it must not
-	// be quietly eating SQLITE_BUSY either.
+	// be quietly eating SQLITE_BUSY either. THIS MUST RUN BEFORE the floor
+	// check below: a broken publish path drives publishOK toward zero (the
+	// counter only increments on success) and publishErr up, so a real
+	// regression here would ALSO trip the floor — if the floor's Skip ran
+	// first, t.Skipf's runtime.Goexit would make this hard-fail unreachable
+	// in exactly the scenario it exists to catch, silently downgrading a
+	// real defect to a green skip (caught in ut-docs#1198's review: an
+	// independent Opus pass reproduced this ordering bug by forcing every
+	// Publish call to fail and observing SKIP instead of FAIL).
 	if got := atomic.LoadInt64(&publishErr); got != 0 {
 		t.Fatalf("publisher hit %d errors while contending with Reload (want 0) — a publish-side SQLITE_BUSY is the same production risk #775 asks about, seen from the writer that lost the race (%v)", got, firstPublishErr.Load())
+	}
+	// The publisher's writes are what make this a contention test at all.
+	// One publish per reload is ~7x below the slowest rate observed under
+	// -race (153 publishes across 20 reloads), so it has ample headroom on a
+	// loaded CI box while still catching total collapse. Do NOT lower this
+	// floor: ut-docs#1198 found it tripping for real under severe CPU
+	// starvation (the test process pinned to one core alongside several CPU
+	// hogs), reproduced on both pre- and post-#1151 code, with zero publish
+	// errors — i.e. the publisher goroutine simply never got scheduled
+	// enough, not a product regression. A trip here (with publishErr already
+	// confirmed zero, above) measures a *precondition* (did enough
+	// contention happen to make this run meaningful?), not the property
+	// under test, so it Skips rather than Fails: the run is inconclusive,
+	// not evidence of a defect. publisherFloorMet is factored out so this
+	// classification is unit-testable without inducing real scheduler
+	// starvation (see TestPublisherFloorMet below).
+	if got := atomic.LoadInt64(&publishOK); !publisherFloorMet(got, reloadCount) {
+		t.Skipf("publisher only completed %d publishes across %d reloads (0 publish errors, checked above) — too little concurrent write load for this run to be a meaningful contention test (ut-docs#1198: scheduler starvation, not a product regression; see the cadence note above). Floor unchanged at %d.", got, reloadCount, reloadCount)
+	}
+}
+
+// publisherFloorMet reports whether the publisher completed enough publishes
+// across reloadCount reloads for the run to count as a meaningful contention
+// test — the precondition TestReload_SurvivesRealisticPublisherContention's
+// floor check above enforces (ut-docs#1198). Factored out purely so that
+// enforcement decision is unit-testable without inducing real scheduler
+// starvation to exercise it.
+func publisherFloorMet(publishOK, reloadCount int64) bool {
+	return publishOK >= reloadCount
+}
+
+// TestPublisherFloorMet is the ut-docs#1198 regression test for
+// publisherFloorMet: it pins down the exact boundary (at-floor passes,
+// one-under fails) so a future edit can't silently change which side of the
+// floor is "meaningful contention" without a test noticing — the real
+// integration test above can't exercise this boundary deterministically
+// since it depends on real goroutine scheduling.
+func TestPublisherFloorMet(t *testing.T) {
+	const reloadCount = 20
+	tests := []struct {
+		name      string
+		publishOK int64
+		want      bool
+	}{
+		{"zero publishes", 0, false},
+		{"one under the floor", reloadCount - 1, false},
+		{"exactly at the floor", reloadCount, true},
+		{"one over the floor", reloadCount + 1, true},
+		{"well over the floor (typical -race run, ~153/20)", 153, true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := publisherFloorMet(tt.publishOK, reloadCount); got != tt.want {
+				t.Errorf("publisherFloorMet(%d, %d) = %v, want %v", tt.publishOK, reloadCount, got, tt.want)
+			}
+		})
 	}
 }
