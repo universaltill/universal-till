@@ -433,17 +433,40 @@
          either copy unambiguously. This does NOT revert ut-docs#1252's
          decision to keep the PRIMARY Hold Sale button in the default view
          -- that button is untouched; these are additional, overlay-local
-         reachable copies for while the overlay is actually open. -->
+         reachable copies for while the overlay is actually open.
+
+         ut-docs#1625: unlike the phone-width duplicate above (breakpoint-
+         gated via display:none, so only one copy is ever in the a11y tree
+         at a time), these two copies are visible AND interactive
+         SIMULTANEOUSLY with the originals -- #payment-overlay opens
+         non-modally (.show(), ut-docs#1385: the on-screen keyboard must
+         stay usable while it's open), so nothing outside it becomes inert
+         or aria-hidden, and at wide desktop viewports the originals aren't
+         even visually covered (new-sale-closes-payment-overlay-1386.spec.ts
+         drives the ORIGINAL Hold Sale button directly at 1920x1080 while
+         this overlay is open) -- so `inert`-ing .tender-default-footer
+         while the overlay is open was rejected: it would silently break
+         that already-reachable wide-viewport path, not just the covered
+         narrow one. A screen-reader/keyboard user tabbing through with the
+         overlay open would otherwise land on two identically-named "Hold
+         Sale" controls and two identically-named "New Sale" controls with
+         no way to tell which is which. Fix: give these overlay-local
+         copies their own distinguishing accessible name via aria-label
+         (visible text is unchanged, so this is not a docs-shots pixel
+         change even though the guard still re-hashes the file) -- the
+         originals keep their plain, unqualified name. -->
     <div class="tender-footer">
       <!-- Same left-to-right order as .tender-default-footer (New Sale,
            Hold Sale) -- independent review caught the first draft
            inverting it, easy to misread as a meaningful difference. -->
       <button class="btn secondary" type="button" data-testid="payment-overlay-new-sale"
+              aria-label="{{ T "tender.overlay_new_sale_action" }}"
               hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
               onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)"
               hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
         🛒 {{ T "kiosk.checkout_start" }}</button>
       <button class="btn secondary" type="button" data-testid="payment-overlay-hold"
+              aria-label="{{ T "tender.overlay_hold_action" }}"
               onclick="document.getElementById('hold-modal').show(); document.getElementById('hold-label-input').focus();">
         {{ T "hold.action" }}</button>
     </div>

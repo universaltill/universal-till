@@ -1131,6 +1131,8 @@
   "tender.new_customer": "Yeni müşteri",
   "tender.no_pending": "Henüz bekleyen ödeme yok.",
   "tender.open_payment": "Ödeme",
+  "tender.overlay_hold_action": "Satışı beklet (Ödeme paneli)",
+  "tender.overlay_new_sale_action": "Yeni satış (Ödeme paneli)",
   "tender.reference": "Referans",
   "tender.reference_placeholder": "Son 4, onay kodu",
   "tender.scan.add": "Ekle",
