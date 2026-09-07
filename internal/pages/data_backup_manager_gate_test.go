@@ -99,6 +99,10 @@ func TestBackupEndpoints_RealSessionGatesByRole(t *testing.T) {
 		{"backup download", http.MethodGet, "/api/backup/download/some.db"},
 		{"backup save-copy", http.MethodPost, "/api/backup/save-copy/some.db"},
 		{"backup restore", http.MethodPost, "/api/backup/restore"},
+		// ut-docs#1613: no restore is staged in this fixture, so a caller
+		// past the gate gets 409 (nothing to restart), never a real
+		// restart — exactly what "past the auth gate" means for this row.
+		{"backup restart-now", http.MethodPost, "/api/backup/restart-now"},
 	}
 
 	for _, tc := range cases {

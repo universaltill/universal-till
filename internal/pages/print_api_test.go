@@ -55,14 +55,64 @@ func newPrintAPITestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	return mux, dp
 }
 
+// ut-docs#1728: with nothing stored, the charset is resolved from the
+// store's own currency/locale instead of the hardcoded "utf8" that made
+// ut-docs#1243's CP858 support opt-in. A EUR/de-DE till must default to the
+// code page that can actually print "€" — this is the assertion whose
+// absence let #1243 close green while real receipts still read "âÎ¬2.50".
+func TestPrinterConfig_UnsetCharsetResolvesFromStoreCurrency(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	ctx := context.Background()
+	if err := dp.Settings.Set(ctx, "store.currency", "EUR"); err != nil {
+		t.Fatalf("set store.currency: %v", err)
+	}
+	if err := dp.Settings.Set(ctx, "store.locale", "de-DE"); err != nil {
+		t.Fatalf("set store.locale: %v", err)
+	}
+	if got := printerConfig(ctx, dp).Charset; got != "cp858" {
+		t.Fatalf("unset charset for a EUR/de-DE store = %q, want cp858", got)
+	}
+
+	// An explicit choice still wins over the resolved default.
+	if err := dp.Settings.Set(ctx, "printer.charset", "utf8"); err != nil {
+		t.Fatalf("set printer.charset: %v", err)
+	}
+	if got := printerConfig(ctx, dp).Charset; got != "utf8" {
+		t.Fatalf("explicit charset = %q, want the operator's own utf8 to win", got)
+	}
+}
+
+// A Turkish store keeps the pass-through: CP858 has neither 'ı' nor 'ş'.
+func TestPrinterConfig_UnsetCharsetKeepsPassThroughForTurkishStore(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	ctx := context.Background()
+	if err := dp.Settings.Set(ctx, "store.currency", "TRY"); err != nil {
+		t.Fatalf("set store.currency: %v", err)
+	}
+	if err := dp.Settings.Set(ctx, "store.locale", "tr-TR"); err != nil {
+		t.Fatalf("set store.locale: %v", err)
+	}
+	if got := printerConfig(ctx, dp).Charset; got != "utf8" {
+		t.Fatalf("unset charset for a TRY/tr-TR store = %q, want utf8", got)
+	}
+}
+
 func TestPrinterConfig_Defaults(t *testing.T) {
 	_, dp := newPrintAPITestDeps(t)
 	cfg := printerConfig(context.Background(), dp)
 	if cfg.Mode != "off" {
 		t.Fatalf("expected default mode 'off', got %q", cfg.Mode)
 	}
+	// ut-docs#1728: "utf8" here is the resolver's ANSWER FOR THIS HARNESS,
+	// not a fixed default any more — newPrintAPITestDeps never calls
+	// SaveRuntimeConfig, so store.currency/store.locale are both empty and
+	// DefaultCharset("", "") correctly falls back to the pass-through. A
+	// real till resolves from its own configured shop; that is covered by
+	// TestPrinterConfig_UnsetCharsetResolvesFromStoreCurrency above, which
+	// is the assertion that would fail if the resolver regressed. Reading
+	// this line as "an unconfigured till still sends UTF-8" would be wrong.
 	if cfg.Charset != "utf8" {
-		t.Fatalf("expected default charset 'utf8', got %q", cfg.Charset)
+		t.Fatalf("expected charset to fall back to 'utf8' with no store currency/locale set, got %q", cfg.Charset)
 	}
 	if !cfg.AutoPrint {
 		t.Fatal("expected auto-print to default to true")
@@ -72,6 +122,25 @@ func TestPrinterConfig_Defaults(t *testing.T) {
 	}
 	if cfg.DrawerPin != 2 {
 		t.Fatalf("expected default drawer pin 2 (ut-docs#1136), got %d", cfg.DrawerPin)
+	}
+}
+
+// ut-docs#1153: printerConfig used to discard the error from the underlying
+// settings read entirely, so a genuine DB failure was indistinguishable
+// from "not configured". printerConfigChecked must surface it; printerConfig
+// itself (still used by 4 other call sites) must keep discarding it rather
+// than changing shape or panicking.
+func TestPrinterConfigChecked_SurfacesSettingsReadError(t *testing.T) {
+	_, dp := newPrintAPITestDeps(t)
+	if _, err := dp.Db.Exec(`DROP TABLE settings`); err != nil {
+		t.Fatalf("drop settings table: %v", err)
+	}
+	if _, err := printerConfigChecked(context.Background(), dp); err == nil {
+		t.Fatal("expected printerConfigChecked to surface the settings read error, got nil")
+	}
+	cfg := printerConfig(context.Background(), dp)
+	if cfg.Enabled() {
+		t.Fatal("printerConfig on a broken settings read should fall back to defaults (Enabled()=false), not panic or report enabled")
 	}
 }
 
@@ -540,6 +609,75 @@ func TestAsyncPrintFailureIsRecordedWhenPrintCtxExpired(t *testing.T) {
 	}
 	if !gotReceipt || !gotKitchen {
 		t.Errorf("both print failures must be audited (receipt=%v kitchen=%v)", gotReceipt, gotKitchen)
+	}
+}
+
+// ut-docs#1153: printerConfig/kitchenPrintingEnabled used to discard the
+// error from the underlying settings read, treating a genuine DB failure
+// identically to "printing off" — no attempt, no audit row, no /orders
+// warning. Forcing an actual read error (dropping the settings table
+// entirely, not just leaving it empty) reproduces the reported gap: this
+// must now be audited and flagged exactly like any other print failure.
+func TestAsyncPrintFailureIsRecordedWhenSettingsReadFails(t *testing.T) {
+	dp := newPrintFlagTestDeps(t)
+	seedReceiptSale(t, dp, "sale-sr", "R-SR1", "sale", "", 120, 0, 0)
+	ctx := context.Background()
+
+	if _, err := dp.Db.Exec(`DROP TABLE settings`); err != nil {
+		t.Fatalf("drop settings table: %v", err)
+	}
+
+	printReceiptAsync(dp, "R-SR1", "")
+	printKitchenAsync(dp, "R-SR1", "")
+	dp.WaitForAsyncWork()
+
+	entry := findRecentOrder(t, dp, "R-SR1")
+	if entry.ReceiptPrintFailedAt == "" {
+		t.Error("a settings-read failure must flag the sale's receipt print, not silently no-op, got empty")
+	}
+	if entry.KitchenPrintFailedAt == "" {
+		t.Error("a settings-read failure must flag the sale's kitchen print, not silently no-op, got empty")
+	}
+
+	audits, err := data.NewPOSRepo(dp.Db).ListAudit(ctx, data.AuditFilters{Limit: 50})
+	if err != nil {
+		t.Fatalf("ListAudit: %v", err)
+	}
+	var gotReceipt, gotKitchen bool
+	for _, a := range audits {
+		if a.EntityID != "R-SR1" {
+			continue
+		}
+		switch a.Action {
+		case "print_failed":
+			gotReceipt = true
+		case "kitchen_print_failed":
+			gotKitchen = true
+		}
+	}
+	if !gotReceipt || !gotKitchen {
+		t.Errorf("both settings-read failures must be audited (receipt=%v kitchen=%v)", gotReceipt, gotKitchen)
+	}
+}
+
+// Regression guard for the fix above: a printer that is genuinely
+// unconfigured (settings table present and readable, just no rows) must
+// still take the silent "no attempt" path — the fix must not turn every
+// disabled printer into a false failure flag.
+func TestAsyncPrintNoFailureFlagWhenPrinterGenuinelyOff(t *testing.T) {
+	dp := newPrintFlagTestDeps(t)
+	seedReceiptSale(t, dp, "sale-off", "R-OFF1", "sale", "", 120, 0, 0)
+
+	printReceiptAsync(dp, "R-OFF1", "")
+	printKitchenAsync(dp, "R-OFF1", "")
+	dp.WaitForAsyncWork()
+
+	entry := findRecentOrder(t, dp, "R-OFF1")
+	if entry.ReceiptPrintFailedAt != "" {
+		t.Errorf("a genuinely unconfigured printer must not set ReceiptPrintFailedAt, got %q", entry.ReceiptPrintFailedAt)
+	}
+	if entry.KitchenPrintFailedAt != "" {
+		t.Errorf("a genuinely unconfigured printer must not set KitchenPrintFailedAt, got %q", entry.KitchenPrintFailedAt)
 	}
 }
 

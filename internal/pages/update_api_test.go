@@ -74,8 +74,10 @@ func TestUpdateFallbackHTML(t *testing.T) {
 	if strings.Contains(android, "available for this install") {
 		t.Errorf("android must not fall into the kiosk dead-end branch, got %q", android)
 	}
-	if !strings.Contains(android, "#android-update") {
-		t.Errorf("android fallback should point at the PIN-gated install form, got %q", android)
+	// ut-docs#1534: absolute, not a bare fragment — this line also renders in
+	// the status bar on every other page, where "#android-update" goes nowhere.
+	if !strings.Contains(android, `href="/settings#android-update"`) {
+		t.Errorf("android fallback should point at the PIN-gated install form by absolute path, got %q", android)
 	}
 	// Installing drops the kiosk pin, which is what exit-to-os guards. This
 	// status line renders on pages a cashier can reach, so it must NOT call

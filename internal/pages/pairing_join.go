@@ -12,9 +12,36 @@ import (
 	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/procrestart"
 )
+
+// Seams over internal/procrestart so the handler/template tests can observe
+// "a restart was scheduled" and render both platform branches without a
+// real syscall.Exec replacing the test binary — same hermetic convention as
+// update_api.go's autoUpdateApply/autoUpdateSupported over selfupdate.
+var (
+	pairingRestartFn        = procrestart.Restart
+	pairingRestartSupported = procrestart.Supported
+	// pairingRestorePending is a seam over db.PendingRestore so a test can
+	// force either branch without staging (or not staging) a real
+	// restore-pending file on disk.
+	pairingRestorePending = db.PendingRestore
+)
+
+// pairingRestartURLFor maps a pair-status route to its sibling restart
+// route, keeping the manager-vs-first-boot split (ut-docs#289) intact:
+// /api/sync/pair-status → /api/sync/pairing-restart (manager-gated) and
+// /api/setup/pair-status → /api/setup/pairing-restart (middleware-exempt).
+// Derived from statusURL rather than threaded as one more parameter through
+// every pairWaitView call site, since the two are only ever meaningful as a
+// pair — a first-boot wizard rendered with the manager-gated restart route
+// would 401 on the very click this card exists to fix.
+func pairingRestartURLFor(statusURL string) string {
+	return strings.TrimSuffix(statusURL, "pair-status") + "pairing-restart"
+}
 
 // Approve-to-pair, replica side (ADR-0033 part 3/3, ut-docs#185): once a
 // primary is found via discovery.Browse (#183) and selected on the Tills
@@ -86,13 +113,49 @@ func (p *replicaPairing) set(s *pendingJoinState) {
 // setup route — a first-boot till polling /api/sync/pair-status would only
 // ever collect 401s and hang on "waiting" forever.
 func pairWaitView(w http.ResponseWriter, r *http.Request, statusURL, status, code, shopName, errMsg string) {
+	pairWaitViewPolling(w, r, statusURL, status, code, shopName, errMsg, status == "waiting")
+}
+
+// pairWaitViewPolling is pairWaitView with the self-poll decided by the
+// CALLER rather than inferred from status (ut-docs#1540 review).
+//
+// Whether an "error" render may keep polling depends entirely on whether
+// there is an active attempt behind it, which only the caller knows:
+//
+//   - pairStartHandler's error branches return BEFORE rp.set(), so there is
+//     no active attempt. A poll from there renders the "idle" view — it
+//     would silently replace the just-rendered, field-specific message
+//     ("This till's name is required…", "cannot reach that primary: …")
+//     with "No pairing attempt in progress." 15 seconds later, or, if an
+//     EARLIER attempt is still in flight, resurrect that older attempt's
+//     "waiting" screen and its stale verification code. Those renders stay
+//     terminal, and the retry re-renders this same div anyway: the
+//     "Request to pair" button posts with hx-target on the status host and
+//     hx-swap="innerHTML".
+//   - pairStatusHandler's error branches DO have active state, so the poll
+//     re-renders the same stored errMsg (nothing is lost) and can pick up a
+//     new "waiting"/"joined" state started from another tab or device
+//     against this till's single replicaPairing.
+func pairWaitViewPolling(w http.ResponseWriter, r *http.Request, statusURL, status, code, shopName, errMsg string, polling bool) {
 	httpx.RenderPartial("ui/partials/pairing_wait.html", map[string]any{
 		"statusURL": statusURL,
 		"status":    status,
 		"code":      code,
 		"shopName":  shopName,
 		"errMsg":    errMsg,
-		"polling":   status == "waiting",
+		"polling":   polling,
+		// ut-docs#1550: the "joined" branch either restarts the till itself
+		// (restartURL, where an in-place re-exec is possible) or tells the
+		// operator to close and reopen the app (Windows — ut-docs#1614).
+		"restartSupported": pairingRestartSupported(),
+		"restartURL":       pairingRestartURLFor(statusURL),
+		// autoRestart (review finding, ut-docs#1550): only the first-boot
+		// wizard fires the restart automatically on render — a Pi kiosk has
+		// no shell to press a button from. The manager-driven /tills flow
+		// restarts an already-configured, possibly-in-use till, so it stays
+		// an explicit click; statusURL is the one thing that already tells
+		// the two flavours apart (see pairingRestartURLFor).
+		"autoRestart": statusURL == "/api/setup/pair-status",
 	})(w, r)
 }
 
@@ -129,6 +192,71 @@ func registerPairingJoinAPI(mux *http.ServeMux, d *common.Deps) {
 	setupPairStartLimiter := newPairRateLimiter(time.Minute, 5)
 	mux.HandleFunc("POST /api/setup/pair-start", pairStartHandler(d, rp, client, rateLimited(setupPairStartLimiter, firstBootGate(d)), "/api/setup/pair-status"))
 	mux.HandleFunc("GET /api/setup/pair-status", pairStatusHandler(d, rp, client, firstBootGate(d), "/api/setup/pair-status"))
+	// ut-docs#1550: the "joined" screen's restart trigger, in the same two
+	// flavours. The setup flavour MUST be listed in internal/auth/
+	// middleware.go's exempt paths (next to /api/setup/pair-status) or the
+	// wizard's auto-restart only ever collects 401s — exactly the failure
+	// mode the pair-status comment above warns about. UNLIKE pair-status,
+	// this one DOES need the same rate limit as pair-start above (review
+	// finding, ut-docs#1550): pairingRestartHandler itself also refuses
+	// unless a restore is actually staged, but that alone doesn't stop an
+	// anonymous LAN caller from holding a first-boot till in a restart loop
+	// once a real join IS staged and in progress — the limiter bounds that
+	// window the same way it already bounds pair-start's SSRF-oracle risk.
+	setupPairingRestartLimiter := newPairRateLimiter(time.Minute, 5)
+	mux.HandleFunc("POST /api/sync/pairing-restart", pairingRestartHandler(d, managerGate(d)))
+	mux.HandleFunc("POST /api/setup/pairing-restart", pairingRestartHandler(d, rateLimited(setupPairingRestartLimiter, firstBootGate(d))))
+}
+
+// renderJoinSuccess renders the paste-a-code join's success fragment
+// (POST /api/sync/join, POST /api/setup/join in sync_api.go) — the same
+// real restart action pairing_wait.html's "joined" branch already gives the
+// discovery-list "Request to pair" flow (ut-docs#1550), for the one pair of
+// routes that flow never covers: they render their own one-shot fragment
+// directly rather than going through pairWaitView (ut-docs#1615).
+func renderJoinSuccess(w http.ResponseWriter, r *http.Request, shopName, restartURL string, autoRestart bool) {
+	httpx.RenderPartial("ui/partials/pairing_join_success.html", map[string]any{
+		"shopName":         shopName,
+		"restartSupported": pairingRestartSupported(),
+		"restartURL":       restartURL,
+		"autoRestart":      autoRestart,
+	})(w, r)
+}
+
+// pairingRestartHandler schedules an in-place restart of this till so a
+// join staged by completeJoin (a restore-pending.db that only
+// db.ApplyPendingRestore, run once before db.Open at startup, can apply)
+// actually takes effect — the previous "restart this till to finish" text
+// with no button was a real dead end on a kiosk with no shell
+// (ut-docs#1550). procrestart.Restart only schedules a goroutine (the
+// re-exec fires ~1.5s later), so this response flushes long before the
+// process image is replaced; the page then polls /healthz until the new
+// image is up. Answers the standard { "data": …, "error": null } envelope.
+//
+// Refuses with 409 unless a restore is actually staged (review finding:
+// the first-boot route is otherwise an unauthenticated, unconditional
+// process-kill any anonymous device on the shop LAN could fire in a loop,
+// with nothing to gain — completeJoin stages the restore, via
+// db.StageRestoreFromReader, strictly BEFORE the state flips to "joined",
+// so this is true on every legitimate call and false on every abusive
+// one). Deliberately NOT gated on pairingRestartSupported() beyond that:
+// the template never renders the trigger where it's false, and on such a
+// platform Restart itself is a logged no-op, never a crash.
+func pairingRestartHandler(d *common.Deps, gate apiGate) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if !gate(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if !pairingRestorePending(d.Cfg.DBPath) {
+			locale := httpx.ResolveLocale(w, r)
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": httpx.T(locale, "tills.pairing.nothing_to_restart")})
+			return
+		}
+		pairingRestartFn()
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]bool{"restarting": true}, "error": nil})
+	}
 }
 
 // pairStartHandler sends the pair request to the chosen primary and renders
@@ -148,16 +276,32 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 		if !gate(w, r) {
 			return
 		}
+		// ut-docs#1544: resolved once and reused by every error branch below
+		// (was previously re-resolved only inside the missing-name branch) —
+		// every one of these branches renders a translated message now, not
+		// just that one.
+		locale := httpx.ResolveLocale(w, r)
 		_ = r.ParseForm()
 		baseURL := strings.TrimSuffix(strings.TrimSpace(r.Form.Get("base_url")), "/")
 		primaryTillID := strings.TrimSpace(r.Form.Get("till_id"))
 		name := strings.TrimSpace(r.Form.Get("name"))
 		if baseURL == "" || primaryTillID == "" || name == "" {
-			pairWaitView(w, r, statusURL, "error", "", "", "base_url, till_id and name are all required")
+			// ut-docs#1540: name the field the operator actually sees on
+			// screen ("This till's name"), never the raw JSON keys this
+			// handler reads its form values into — base_url/till_id are
+			// supplied by this page's own JS (from the discovery result),
+			// never typed by a person, so a real gap here is always the
+			// till-name box (now client-validated above this handler too,
+			// so this branch is defense-in-depth, not the normal path).
+			msg := httpx.T(locale, "tills.pairing.error.missing_request")
+			if name == "" {
+				msg = httpx.T(locale, "tills.pairing.error.name_required")
+			}
+			pairWaitView(w, r, statusURL, "error", "", "", msg)
 			return
 		}
 		if !validPrimaryBaseURL(baseURL) {
-			pairWaitView(w, r, statusURL, "error", "", "", "not a valid primary address")
+			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, "tills.pairing.error.invalid_address"))
 			return
 		}
 
@@ -171,18 +315,28 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 		req, err := http.NewRequestWithContext(r.Context(), http.MethodPost,
 			baseURL+"/api/sync/pair-request", strings.NewReader(string(body)))
 		if err != nil {
-			pairWaitView(w, r, statusURL, "error", "", "", err.Error())
+			// ut-docs#1611: same defect shape ut-docs#1544 fixed for this
+			// handler's other branches — a raw Go error string reaching the
+			// operator, invisible to guard-i18n.sh's template-only checks.
+			// Realistically very hard to reach: baseURL is already validated
+			// scheme+host by validPrimaryBaseURL above (empirically, every
+			// input that makes url.Parse fail on the concatenated request
+			// URL below already fails validPrimaryBaseURL's own url.Parse
+			// first), and method/reader are compile-time-safe — this is
+			// defense-in-depth, not a reachable path today, same as the
+			// missing-name branch above.
+			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, "tills.pairing.error.request_build_failed"))
 			return
 		}
 		req.Header.Set("Content-Type", "application/json")
 		resp, err := client.Do(req)
 		if err != nil {
-			pairWaitView(w, r, statusURL, "error", "", "", "cannot reach that primary: "+err.Error())
+			pairWaitView(w, r, statusURL, "error", "", "", fmt.Sprintf(httpx.T(locale, "tills.pairing.error.unreachable"), err.Error()))
 			return
 		}
 		defer resp.Body.Close()
 		if resp.StatusCode != http.StatusOK {
-			pairWaitView(w, r, statusURL, "error", "", "", "the primary refused the pair request")
+			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, "tills.pairing.error.refused"))
 			return
 		}
 		var out struct {
@@ -191,7 +345,7 @@ func pairStartHandler(d *common.Deps, rp *replicaPairing, client *http.Client, g
 			} `json:"data"`
 		}
 		if json.NewDecoder(resp.Body).Decode(&out) != nil || out.Data.ID == "" {
-			pairWaitView(w, r, statusURL, "error", "", "", "unexpected response from the primary")
+			pairWaitView(w, r, statusURL, "error", "", "", httpx.T(locale, "tills.pairing.error.unexpected_response"))
 			return
 		}
 
@@ -219,6 +373,7 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 		if !gate(w, r) {
 			return
 		}
+		locale := httpx.ResolveLocale(w, r)
 		rp.mu.Lock()
 		defer rp.mu.Unlock()
 
@@ -229,8 +384,13 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 		}
 		if state.status != "waiting" {
 			// Terminal already — re-render idempotently (a stray extra poll
-			// racing the swap that stopped it, or a page reload).
-			pairWaitView(w, r, statusURL, state.status, "", state.shopName, state.errMsg)
+			// racing the swap that stopped it, or a page reload). An "error"
+			// here keeps polling (ut-docs#1540): the stored errMsg is
+			// re-rendered every tick, so nothing is lost, and this is the one
+			// path by which a fresh attempt started from another tab/device
+			// against this till's single replicaPairing reaches a screen still
+			// sitting on the old failure. "joined"/"expired" stay terminal.
+			pairWaitViewPolling(w, r, statusURL, state.status, "", state.shopName, state.errMsg, state.status == "error")
 			return
 		}
 		if pairingJoinNow().Sub(state.requestedAt) > pairingRequestTTL {
@@ -266,9 +426,9 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 		}
 		if resp.StatusCode != http.StatusOK {
 			next := *state
-			next.status, next.errMsg = "error", fmt.Sprintf("unexpected response from the primary (%s)", resp.Status)
+			next.status, next.errMsg = "error", fmt.Sprintf(httpx.T(locale, "tills.pairing.error.unexpected_response_status"), resp.Status)
 			rp.active = &next
-			pairWaitView(w, r, statusURL, "error", "", "", next.errMsg)
+			pairWaitViewPolling(w, r, statusURL, "error", "", "", next.errMsg, true)
 			return
 		}
 		var out struct {
@@ -278,9 +438,9 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 		}
 		if json.NewDecoder(resp.Body).Decode(&out) != nil || out.Data.Token == "" {
 			next := *state
-			next.status, next.errMsg = "error", "unexpected response from the primary"
+			next.status, next.errMsg = "error", httpx.T(locale, "tills.pairing.error.unexpected_response")
 			rp.active = &next
-			pairWaitView(w, r, statusURL, "error", "", "", next.errMsg)
+			pairWaitViewPolling(w, r, statusURL, "error", "", "", next.errMsg, true)
 			return
 		}
 
@@ -290,9 +450,9 @@ func pairStatusHandler(d *common.Deps, rp *replicaPairing, client *http.Client, 
 			// friendlyJoinError, not err.Error(): completeJoin's failures are
 			// now a *joinError (ut-docs#36) whose raw Error() is a locale
 			// key, not English prose — this must go through httpx.T.
-			next.status, next.errMsg = "error", friendlyJoinError(httpx.ResolveLocale(w, r), err)
+			next.status, next.errMsg = "error", friendlyJoinError(locale, err)
 			rp.active = &next
-			pairWaitView(w, r, statusURL, "error", "", "", next.errMsg)
+			pairWaitViewPolling(w, r, statusURL, "error", "", "", next.errMsg, true)
 			return
 		}
 		next := *state

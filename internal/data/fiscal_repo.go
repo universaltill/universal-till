@@ -70,6 +70,59 @@ WHERE sale_id = ?
 	return &sig, true, nil
 }
 
+// FiscalSignStart is the best-effort tx_id/tx_revision round trip captured
+// from a fiscal.sign.start dispatch (ADR-0077 D1, ut-docs#1519), stored
+// verbatim against the sale/refund/return it was minted for (migration 005).
+// A row exists ONLY when a subscribed signer's start handler answered
+// {"status":"acknowledged",...} before the background dispatch goroutine was
+// abandoned — the common case, since start has the whole authorize loop's
+// duration to answer, but never assumed. No row is the honest degraded case,
+// not an error.
+type FiscalSignStart struct {
+	SaleID     string
+	TxID       string
+	TxRevision int64
+	// CreatedAt is stamped by the DB on insert; zero on the way in.
+	CreatedAt string
+}
+
+// RecordFiscalSignStart stores one sale's captured start identifier.
+// Idempotent by design (INSERT ... ON CONFLICT DO NOTHING on the sale_id
+// primary key), same as RecordFiscalTSESignature: a duplicated best-effort
+// call for the same sale never errors, duplicates, or overwrites the first
+// captured identifier.
+func (r *POSRepo) RecordFiscalSignStart(ctx context.Context, saleID, txID string, txRevision int64) error {
+	_, err := r.db.ExecContext(ctx, `
+INSERT INTO fiscal_sign_starts (sale_id, tx_id, tx_revision)
+VALUES (?, ?, ?)
+ON CONFLICT(sale_id) DO NOTHING
+`, saleID, txID, txRevision)
+	if err != nil {
+		return fmt.Errorf("insert fiscal_sign_starts: %w", err)
+	}
+	return nil
+}
+
+// GetFiscalSignStart loads the start identifier captured for a sale, if any.
+// (nil, false, nil) when none was captured — not an error: the fiscal.sign.ask
+// ("finish") dispatch degrades to omitting started_tx_id/started_tx_revision
+// exactly as it does for a till with no fiscal.sign.start subscriber at all.
+func (r *POSRepo) GetFiscalSignStart(ctx context.Context, saleID string) (*FiscalSignStart, bool, error) {
+	var s FiscalSignStart
+	err := r.db.QueryRowContext(ctx, `
+SELECT sale_id, tx_id, tx_revision, created_at
+FROM fiscal_sign_starts
+WHERE sale_id = ?
+`, saleID).Scan(&s.SaleID, &s.TxID, &s.TxRevision, &s.CreatedAt)
+	if err == sql.ErrNoRows {
+		return nil, false, nil
+	}
+	if err != nil {
+		return nil, false, fmt.Errorf("select fiscal_sign_starts: %w", err)
+	}
+	return &s, true, nil
+}
+
 // FiscalRegisterDE is one till/TSE pairing recorded for Germany's §146a
 // Abs. 4 AO till-notification duty (ut-docs#665) — the data the shop's own
 // Mein ELSTER filing needs, joined with the register's and its stock
@@ -140,6 +193,16 @@ LEFT JOIN stock_locations loc ON loc.id = reg.location_id
 			&row.LocationID, &row.LocationName, &row.LocationStreet, &row.LocationPostcode, &row.LocationCity); err != nil {
 			return nil, fmt.Errorf("scan register location: %w", err)
 		}
+		// ut-docs#1610 (review): this reader deliberately drops
+		// ListRegisters' is_active=1 filter (see the doc comment above) so
+		// a decommissioned till's history still shows its register name —
+		// which makes it exactly the "admin listing that shows retired
+		// rows" case the retire mangle corrupts. Both joined names come
+		// from tables admin-sync retire-mangles (registers.name,
+		// stock_locations.name), and this feeds the §146a AO register
+		// page, so neither may render as "Front Till~reg-1".
+		row.RegisterName = stripRetireMangle(row.RegisterID, row.RegisterName)
+		row.LocationName = stripRetireMangle(row.LocationID, row.LocationName)
 		out = append(out, row)
 	}
 	if err := rows.Err(); err != nil {
@@ -153,6 +216,23 @@ LEFT JOIN stock_locations loc ON loc.id = reg.location_id
 // so internal/plugins can preserve this data on automatic uninstall paths
 // (ADR-0072 review finding B1) without duplicating the literal.
 const FiscalRegisterDEKeyPrefix = "fiscal_register:"
+
+// FiscalRegisterDEPluginID is the German tax plugin's id (ut-docs#1670).
+// Every OTHER plugin_storage accessor in this file scopes by plugin_id —
+// StorageGet/StorageSet/ListStorageByPrefix/DeleteStorageKey/DeleteStorage,
+// and DeleteStorageExceptPrefix most tellingly, added by the ADR-0072
+// review specifically to scope by *both* plugin_id and this same prefix
+// (plugin_repo.go). sync_admin_repo.go's scoped admin-bundle sync is the
+// one place that needs this id without a per-request caller to pass it in
+// (DumpAdmin/ApplyAdmin run generically, not per-plugin) — exported here,
+// next to the prefix it pairs with, rather than letting that package
+// reach for a literal copy of its own. internal/pages' taxDePluginID
+// aliases this constant so the id has exactly one source of truth; this
+// package still never hardcodes it into a query on its own account, and
+// NewFiscalRegisterDEStore's caller-passes-the-id convention (see that
+// type's own doc comment) is unaffected — this constant exists for the
+// sync layer, not as a second way to construct the store.
+const FiscalRegisterDEPluginID = "com.universaltill.tax-de"
 
 // fiscalRegisterDERecord is the JSON shape persisted in plugin_storage —
 // exactly the columns migration 059's table carried, nothing more (the

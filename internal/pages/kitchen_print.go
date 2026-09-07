@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"net/http"
 	"sort"
-	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -151,7 +150,10 @@ func kitchenItemsFor(detail data.SaleDetail, cfg print.Config, locale string, li
 	var items []print.KitchenItem
 	for _, l := range lines {
 		items = append(items, print.KitchenItem{
-			Qty:       strconv.FormatFloat(l.Qty, 'f', -1, 64),
+			// Latin digits regardless of locale, same ESC/POS text-mode
+			// constraint as the sale receipt (print_api.go) — grouping/
+			// decimal convention still follows locale (ut-docs#1130).
+			Qty:       httpx.FormatQtyLatin(l.Qty, locale),
 			Name:      l.Name,
 			Modifiers: l.Modifiers,
 			Mode:      kitchenLineModeLabel(locale, cfg.Charset, detail.OrderType, l.OrderType),
@@ -191,9 +193,12 @@ type kitchenSendFailure struct {
 //     to the pre-#516 single ticket.
 //
 // Station tickets come first (sorted by name, deterministic), the default
-// bucket last. Only 'printer' stations receive tickets this slice
-// ('display' is ut-docs#544); a line whose every resolved station is
-// non-printer joins the default bucket rather than silently vanishing.
+// bucket last. Only stations that print (destination 'printer' or 'both' —
+// data.KitchenStation.PrintsTickets) receive tickets; a 'display'-only
+// station (ut-docs#544) shows its orders on a kitchen screen instead, so a
+// line whose every resolved station is display-only joins the default
+// bucket rather than silently vanishing — exactly as it did before the
+// display type had a UI.
 func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo string) ([]kitchenTarget, error) {
 	repo := data.NewPOSRepo(d.Db)
 	detail, ok, err := repo.GetSaleDetail(ctx, receiptNo)
@@ -203,7 +208,16 @@ func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo string) 
 	if !ok {
 		return nil, fmt.Errorf("receipt %s not found", receiptNo)
 	}
-	cfg := printerConfig(ctx, d)
+	// Checked, not the plain printerConfig wrapper (ut-docs#1533, residual
+	// gap left by #1153): a genuine settings-read error here used to be
+	// discarded and silently fall back to defaults (wrong charset, missing
+	// legacy kitchen address) instead of being noticed — unlike the
+	// GetSaleDetail/ResolveKitchenStations errors right above, which
+	// already propagate normally.
+	cfg, err := printerConfigChecked(ctx, d)
+	if err != nil {
+		return nil, err
+	}
 	locale := httpx.DefaultLocale()
 
 	itemIDs := make([]string, 0, len(detail.Lines))
@@ -226,8 +240,8 @@ func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo string) 
 	for _, l := range detail.Lines {
 		routed := false
 		for _, s := range routes[l.ItemID] {
-			if s.DestinationType != "printer" {
-				continue // display stations are ut-docs#544
+			if !s.PrintsTickets() {
+				continue // display-only station: on-screen, never a ticket (ut-docs#544)
 			}
 			// A station with no configured address can't be sent to — fall
 			// back to the default bucket instead of silently dropping the
@@ -345,19 +359,32 @@ func sendKitchenTicket(ctx context.Context, target kitchenTarget) error {
 // station with a printer address. A shop that only configures stations —
 // and never fills the legacy setting — must still print (ut-docs#516).
 func kitchenPrintingEnabled(ctx context.Context, d *common.Deps) bool {
-	if printerConfig(ctx, d).KitchenEnabled() {
-		return true
+	enabled, _ := kitchenPrintingEnabledChecked(ctx, d)
+	return enabled
+}
+
+// kitchenPrintingEnabledChecked is kitchenPrintingEnabled plus the first
+// genuine read error hit (settings, or ListKitchenStations), if any — so a
+// caller that must not confuse "couldn't tell" with "off" (the async print
+// path, ut-docs#1153) can react to it instead of silently no-op'ing.
+func kitchenPrintingEnabledChecked(ctx context.Context, d *common.Deps) (bool, error) {
+	cfg, cfgErr := printerConfigChecked(ctx, d)
+	if cfgErr != nil {
+		return false, cfgErr
+	}
+	if cfg.KitchenEnabled() {
+		return true, nil
 	}
 	stations, err := data.NewPOSRepo(d.Db).ListKitchenStations(ctx)
 	if err != nil {
-		return false
+		return false, err
 	}
 	for _, s := range stations {
-		if s.Enabled && s.DestinationType == "printer" && strings.TrimSpace(s.PrinterAddress) != "" {
-			return true
+		if s.Enabled && s.PrintsTickets() && strings.TrimSpace(s.PrinterAddress) != "" {
+			return true, nil
 		}
 	}
-	return false
+	return false, nil
 }
 
 // printKitchenAsync sends kitchen tickets without ever blocking the caller:
@@ -375,12 +402,24 @@ func printKitchenAsync(d *common.Deps, receiptNo string, actorID string) {
 		defer d.AsyncWork.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), printAsyncTimeout)
 		defer cancel()
-		if !kitchenPrintingEnabled(ctx, d) {
+		posRepo := data.NewPOSRepo(d.Db)
+		enabled, enabledErr := kitchenPrintingEnabledChecked(ctx, d)
+		if enabledErr != nil {
+			// A genuine read failure (settings or station list), not
+			// "kitchen printing off everywhere" (ut-docs#1153) — must not
+			// take the silent no-op path below.
+			wctx, wcancel := recordPrintFailureCtx()
+			defer wcancel()
+			_ = posRepo.InsertAudit(wctx, nil, actorID, "sale", receiptNo, "kitchen_print_failed",
+				map[string]any{"error": "kitchen settings read failed: " + enabledErr.Error()}, time.Now().UTC().Format(time.RFC3339), "")
+			_ = posRepo.SetKitchenPrintFailed(wctx, receiptNo, time.Now().UTC().Format(time.RFC3339))
+			return
+		}
+		if !enabled {
 			// No attempt (kitchen printing off everywhere) — must neither
 			// overwrite a real prior failure nor falsely clear one.
 			return
 		}
-		posRepo := data.NewPOSRepo(d.Db)
 		total, failures, err := printKitchenFn(ctx, d, receiptNo, actorID)
 		if err != nil {
 			// Fresh context: a hung/out-of-paper printer burns the whole

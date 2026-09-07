@@ -1,0 +1,69 @@
+<!-- Success fragment for the paste-a-code join (POST /api/sync/join,
+     POST /api/setup/join) — RenderPartial'd directly by those two handlers
+     (ut-docs#1615). Gives the operator the same real restart action
+     pairing_wait.html's "joined" branch already gives the discovery-list
+     "Request to pair" flow (ut-docs#1550), instead of the old dead-end
+     "restart this till to finish" text with no way to act on it.
+
+     Deliberately its own small partial rather than sharing pairing_wait.html
+     directly: that partial's polling wrapper div/hx-get attributes belong to
+     the pair-status flow, and its restart button/message ids are prefixed
+     "join-" here (not reused) because both tills.html and setup.html mount a
+     discover tab and a code tab side by side in the same DOM, only ever
+     toggled with x-show — so a discovery-flow "joined" render and a
+     paste-a-code "joined" render can legitimately coexist on the page at
+     once, and a shared id would make document.getElementById ambiguous
+     between the two fragments' own restart scripts. -->
+<span>✓ {{ T "tills.joined" }}: {{ .shopName }}</span>
+{{ if .restartSupported }}
+<!-- Same staged-restore-only-applies-at-next-boot mechanism as
+     pairing_wait.html's joined branch (ut-docs#1550) — see that file's
+     comment for the full rationale (auto vs manual trigger, the /healthz
+     poll, why the button always stays visible as the fallback). -->
+<p id="join-restart-msg" class="muted" aria-live="polite" hidden>{{ T "tills.pairing.restarting" }}</p>
+<button type="button" id="join-restart-btn" class="btn primary"
+        hx-post="{{ .restartURL }}" hx-trigger="{{ if .autoRestart }}load, {{ end }}click" hx-swap="none">{{ T "tills.pairing.restart_now" }}</button>
+<script>
+  // Page-local, template-populated lookup — CLAUDE.md's i18n rule for
+  // inline <script> prose (same pattern as pairing_wait.html/bugreport_panel.html).
+  var T = {
+    restarting: "{{ T "tills.pairing.restarting" }}",
+    restarting_slow: "{{ T "tills.pairing.restarting_slow" }}"
+  };
+  (function () {
+    var btn = document.getElementById('join-restart-btn');
+    var msg = document.getElementById('join-restart-msg');
+    var polling = false;
+    function waitForTill() {
+      if (polling) { return; }
+      polling = true;
+      msg.hidden = false;
+      msg.textContent = T.restarting;
+      // Same 1.5s re-exec delay + unbounded 500ms poll as pairing_wait.html
+      // (ut-docs#1550 review) — a first-boot snapshot restore can genuinely
+      // take longer than any fixed guess on slow Pi storage.
+      var tries = 0;
+      setTimeout(function () {
+        var iv = setInterval(function () {
+          tries++;
+          if (tries === 56) { msg.textContent = T.restarting_slow; }
+          fetch('/healthz', { cache: 'no-store' }).then(function (r) {
+            clearInterval(iv);
+            polling = false;
+            location.href = r.ok ? '/login' : '/';
+          }).catch(function () {
+            // Old process gone, new one not listening yet — keep waiting.
+          });
+        }, 500);
+      }, 2500);
+    }
+    btn.addEventListener('htmx:afterRequest', function () { waitForTill(); });
+    btn.addEventListener('htmx:sendError', function () { waitForTill(); });
+    btn.addEventListener('htmx:responseError', function () { waitForTill(); });
+  })();
+</script>
+{{ else }}
+<!-- No in-place restart on this platform (Windows — ut-docs#1614): give the
+     one instruction the operator can actually perform. -->
+<p>{{ T "tills.pairing.close_and_reopen" }}</p>
+{{ end }}

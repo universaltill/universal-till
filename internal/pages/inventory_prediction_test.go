@@ -97,6 +97,14 @@ func TestInventoryPredictsDaysLeft(t *testing.T) {
 	if strings.Count(body, "days-warn") > 1 {
 		t.Fatal("only the fast seller should warn")
 	}
+	// ut-docs#1493: the return-form's hidden offline-flag input must
+	// actually render (a template edit that broke it would still return
+	// 200 for this test's assertions above, since none of them touch the
+	// return-form section) — this is what makes the offline signal reach
+	// CreateReturn's handler at all for a real form submit.
+	if !strings.Contains(body, `id="offline-flag" name="offline" value="0"`) {
+		t.Fatal("return-form is missing its hidden offline-flag input (ut-docs#1493)")
+	}
 }
 
 // A flat 7-day warning window is wrong once an item's real reorder lead

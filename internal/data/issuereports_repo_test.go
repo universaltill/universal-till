@@ -166,7 +166,7 @@ func TestIssueReportsUpdateStatusUpdatesRightRow(t *testing.T) {
 		}
 	}
 
-	if err := repo.UpdateStatus(ctx, "rep-1", "filed", "https://github.com/universaltill/ut-docs/issues/999"); err != nil {
+	if err := repo.UpdateStatus(ctx, "rep-1", "filed", "https://github.com/universaltill/ut-docs/issues/999", ""); err != nil {
 		t.Fatalf("UpdateStatus: %v", err)
 	}
 
@@ -201,7 +201,7 @@ func TestIssueReportsUpdateStatusRejectsNonGithubURL(t *testing.T) {
 		t.Fatalf("SaveSent: %v", err)
 	}
 
-	if err := repo.UpdateStatus(ctx, "rep-x", "filed", "https://evil.example/looks-legit"); err != nil {
+	if err := repo.UpdateStatus(ctx, "rep-x", "filed", "https://evil.example/looks-legit", ""); err != nil {
 		t.Fatalf("UpdateStatus: %v", err)
 	}
 
@@ -217,7 +217,7 @@ func TestIssueReportsUpdateStatusRejectsNonGithubURL(t *testing.T) {
 	}
 
 	// A real github.com URL is untouched.
-	if err := repo.UpdateStatus(ctx, "rep-x", "filed", "https://github.com/universaltill/ut-docs/issues/999"); err != nil {
+	if err := repo.UpdateStatus(ctx, "rep-x", "filed", "https://github.com/universaltill/ut-docs/issues/999", ""); err != nil {
 		t.Fatalf("UpdateStatus: %v", err)
 	}
 	got, err = repo.ListSent(ctx, 10)
@@ -234,7 +234,7 @@ func TestIssueReportsUpdateStatusRejectsNonGithubURL(t *testing.T) {
 func TestIssueReportsUpdateStatusUnknownIdIsNoop(t *testing.T) {
 	d := openIssueReportsTestDB(t)
 	repo := NewIssueReportsRepo(d.DB)
-	if err := repo.UpdateStatus(context.Background(), "never-seen", "filed", ""); err != nil {
+	if err := repo.UpdateStatus(context.Background(), "never-seen", "filed", "", ""); err != nil {
 		t.Fatalf("UpdateStatus on an unknown id must be a silent no-op, got: %v", err)
 	}
 }
@@ -284,5 +284,80 @@ func TestIssueReportsCountSentMatchesRowCount(t *testing.T) {
 	}
 	if len(listed) != got {
 		t.Fatalf("len(ListSent) = %d, CountSent = %d — must match when rowLimit >= N", len(listed), got)
+	}
+}
+
+// ut-docs#1652: the filed TICKET's own state rides alongside the delivery
+// status, on the same cloud sync tick, and comes back out of ListSent.
+func TestIssueReportsUpdateStatusStoresGithubIssueState(t *testing.T) {
+	ctx := context.Background()
+	repo := NewIssueReportsRepo(openIssueReportsTestDB(t).DB)
+	if err := repo.SaveSent(ctx, SentReport{ID: "rep-1", Note: "n", CapturedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateStatus(ctx, "rep-1", "filed",
+		"https://github.com/universaltill/ut-docs/issues/999", "closed_not_planned"); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := repo.ListSent(ctx, 10)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("ListSent: %v (%d rows)", err, len(rows))
+	}
+	if rows[0].GithubIssueState != "closed_not_planned" {
+		t.Fatalf("GithubIssueState = %q, want %q", rows[0].GithubIssueState, "closed_not_planned")
+	}
+	// The delivery status is a separate axis and must be untouched — pending
+	// and failing rows still key off it.
+	if rows[0].Status != "filed" {
+		t.Fatalf("Status = %q, want %q", rows[0].Status, "filed")
+	}
+}
+
+// A ticket state this build has no translation for must never be persisted:
+// it would be picked up as a translation key on the next render. Same
+// posture as the non-GitHub-URL rejection above — drop the bad value, keep
+// the rest of the update.
+func TestIssueReportsUpdateStatusDropsUnknownGithubIssueState(t *testing.T) {
+	ctx := context.Background()
+	repo := NewIssueReportsRepo(openIssueReportsTestDB(t).DB)
+	if err := repo.SaveSent(ctx, SentReport{ID: "rep-1", Note: "n", CapturedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateStatus(ctx, "rep-1", "filed",
+		"https://github.com/universaltill/ut-docs/issues/999", "some-future-state"); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := repo.ListSent(ctx, 10)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("ListSent: %v (%d rows)", err, len(rows))
+	}
+	if rows[0].GithubIssueState != "" {
+		t.Fatalf("GithubIssueState = %q, want it dropped to empty", rows[0].GithubIssueState)
+	}
+	// The rest of the update still lands — one unrecognised field must not
+	// cost the status refresh it arrived with.
+	if rows[0].Status != "filed" || rows[0].GithubIssueURL == "" {
+		t.Fatalf("the rest of the update was lost: %+v", rows[0])
+	}
+}
+
+// An older cloud sends no state at all. That must leave the row showing its
+// delivery status, not blank an already-known ticket state... and, more to
+// the point, not error.
+func TestIssueReportsUpdateStatusEmptyGithubIssueStateIsFine(t *testing.T) {
+	ctx := context.Background()
+	repo := NewIssueReportsRepo(openIssueReportsTestDB(t).DB)
+	if err := repo.SaveSent(ctx, SentReport{ID: "rep-1", Note: "n", CapturedAt: time.Now()}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateStatus(ctx, "rep-1", "filed", "", ""); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := repo.ListSent(ctx, 10)
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("ListSent: %v (%d rows)", err, len(rows))
+	}
+	if rows[0].GithubIssueState != "" {
+		t.Fatalf("GithubIssueState = %q, want empty", rows[0].GithubIssueState)
 	}
 }

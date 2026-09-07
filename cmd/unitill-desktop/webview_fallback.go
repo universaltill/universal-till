@@ -91,16 +91,7 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 	// #610 lands a real implementation.
 	if ctl != nil {
 		defer ctl.Close()
-		ctl.SetOps(&windowOps{
-			ExitToOS: func() error {
-				w.Dispatch(func() { applyWindowMode(w, "normal") })
-				return nil
-			},
-			ApplyMode: func(mode string) error {
-				w.Dispatch(func() { applyWindowMode(w, mode) })
-				return nil
-			},
-		})
+		ctl.SetOps(desktopWindowOps(w, ctl))
 	}
 
 	w.SetTitle(title)
@@ -177,6 +168,36 @@ func showWindow(url, title string, childPid int, ctl *controlServer) {
 
 	w.Navigate(url)
 	w.Run()
+}
+
+// desktopWindowOps builds the windowOps this file wires into ctl once a
+// real native window exists. Extracted from showWindow (ut-docs#1382) so
+// it's callable against a real webview under a test display, independent
+// of showWindow's own startup machinery (waitForSafeStartup,
+// fetchShellPrefs, reconcileAutostart, …) — no behaviour change.
+//
+// exit-to-os now records "normal" via SetAppliedMode after applying it,
+// same as the already-covered watchShellMode/initial-apply call sites
+// above (ut-docs#1331): this specific path — exit-to-os via the
+// disconnected/fallback HTTP channel — never went through
+// handleApplyMode, so GET /diagnostics' current_window_mode stayed stale
+// at whatever it was before the exit until this fix (ut-docs#1382). apply-
+// mode itself still needs no such call here — handleApplyMode
+// (control.go) already records the mode after ops.ApplyMode returns nil.
+func desktopWindowOps(w webview.WebView, ctl *controlServer) *windowOps {
+	return &windowOps{
+		ExitToOS: func() error {
+			w.Dispatch(func() {
+				applyWindowMode(w, "normal")
+				ctl.SetAppliedMode("normal")
+			})
+			return nil
+		},
+		ApplyMode: func(mode string) error {
+			w.Dispatch(func() { applyWindowMode(w, mode) })
+			return nil
+		},
+	}
 }
 
 // openBrowser opens the OS default browser on url, best-effort.

@@ -49,6 +49,10 @@ func scanUser(scan func(dest ...any) error) (UserRow, error) {
 		return UserRow{}, err
 	}
 	u.IsActive = active != 0
+	// ut-docs#1610: single scan choke point for ListUsers (the admin page
+	// shows retired accounts too), GetUser and ListActiveUsersWithPIN — undo
+	// admin-sync's "<username>~<id>" retire mangle before it can be displayed.
+	u.Username = stripRetireMangle(u.ID, u.Username)
 	return u, nil
 }
 

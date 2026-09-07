@@ -10,6 +10,9 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+
+	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/secrets"
 )
 
 type PluginRepo struct {
@@ -644,16 +647,68 @@ FROM plugin_settings WHERE plugin_id = ? AND scope IN ('global', 'register') ORD
 			return nil, pluginObs.wrap("scan_setting", err)
 		}
 		s.UpdatedAt, _ = time.Parse("2006-01-02 15:04:05", updated)
+		// ADR-0082: a sealed row is opened here so no caller ever sees
+		// ciphertext. An unopenable one is still LISTED (the operator needs
+		// the field on the page to re-enter it) but with an empty value —
+		// "not configured", the same as GetPluginSetting reports it.
+		s.ValueJSON, _ = openStoredSettingValue(ctx, s.PluginID, s.Key, s.ValueJSON)
 		out = append(out, s)
 	}
 	return out, rows.Err()
 }
 
-// GetPluginSetting returns one setting's raw value_json for a plugin,
-// preferring the most specific scope (register beats global) so a per-till
-// value shadows a shop-wide one. found is false when the key is not set.
-// Backs the settings_get WASM host function (configurable connector
-// plugins, ADR-0014).
+// openStoredSettingValue is the single read-side seam for ADR-0082
+// (ut-docs#1739): every path that hands a plugin_settings.value_json to a
+// caller goes through it, so no call site can see raw ciphertext or, worse,
+// re-seal an already-sealed value.
+//
+//   - no secrets.Prefix → legacy plaintext (written before ADR-0082) →
+//     returned unchanged, ok=true;
+//   - sealed and opens → plaintext, ok=true;
+//   - sealed and does NOT open (wrong key, corruption, replica that has not
+//     fetched its key yet) → "", ok=false: the setting is treated as NOT
+//     CONFIGURED — exactly what an absent row signals — and the failure is
+//     logged at error level so it is diagnosable. The ciphertext itself
+//     never leaves this function.
+func openStoredSettingValue(ctx context.Context, pluginID, key, stored string) (string, bool) {
+	if !secrets.IsSealed(stored) {
+		return stored, true
+	}
+	plaintext, err := secrets.OpenWithDefault(ctx, stored)
+	if err != nil {
+		logging.L().Errorf("plugin setting %s/%s: cannot open sealed value (%v) — treating as not configured (ADR-0082)", pluginID, key, err)
+		return "", false
+	}
+	return string(plaintext), true
+}
+
+// sealSettingValue is the single write-side seam for ADR-0082: a setting
+// declared `type: "secret"` by its manifest (declaredSecret, computed by the
+// caller who has the manifest — the repository stays free of manifest
+// lookups) OR whose key name matches secrets.IsSecretSettingKey (applied
+// HERE, unconditionally, so no caller can bypass it) is sealed before it
+// reaches SQL. Anything else is stored as the plain JSON it always was.
+//
+// Fails closed: with no key available (no store registered, or a replica
+// that has not reached its primary yet) the write errors out. It must never
+// fall back to storing the plaintext.
+func sealSettingValue(ctx context.Context, key, valueJSON string, declaredSecret bool) (string, error) {
+	if !declaredSecret && !secrets.IsSecretSettingKey(key) {
+		return valueJSON, nil
+	}
+	sealed, err := secrets.SealWithDefault(ctx, []byte(valueJSON))
+	if err != nil {
+		return "", fmt.Errorf("seal plugin setting %s: %w", key, err)
+	}
+	return sealed, nil
+}
+
+// GetPluginSetting returns one setting's value_json for a plugin — opened
+// if it was sealed at rest (ADR-0082; see openStoredSettingValue for the
+// not-configured-on-failure policy) — preferring the most specific scope
+// (register beats global) so a per-till value shadows a shop-wide one.
+// found is false when the key is not set. Backs the settings_get WASM host
+// function (configurable connector plugins, ADR-0014).
 func (r *PluginRepo) GetPluginSetting(ctx context.Context, pluginID, key string) (string, bool, error) {
 	var valueJSON string
 	err := r.executor(nil).QueryRowContext(ctx, `
@@ -666,12 +721,19 @@ ORDER BY CASE scope WHEN 'register' THEN 0 WHEN 'user' THEN 1 ELSE 2 END LIMIT 1
 	if err != nil {
 		return "", false, pluginObs.wrap("get_setting", err)
 	}
-	return valueJSON, true, nil
+	opened, ok := openStoredSettingValue(ctx, pluginID, key, valueJSON)
+	if !ok {
+		return "", false, nil
+	}
+	return opened, true, nil
 }
 
-// UpsertPluginSetting sets one global-scope plugin setting.
+// UpsertPluginSetting sets one global-scope plugin setting. It carries no
+// manifest declaration (declaredSecret=false) — the key-name heuristic still
+// seals a credential-named key; a caller that has the manifest in hand and
+// needs `type: "secret"` honoured uses UpsertPluginSettingScoped.
 func (r *PluginRepo) UpsertPluginSetting(ctx context.Context, pluginID, key, valueJSON string) error {
-	return r.UpsertPluginSettingScoped(ctx, pluginID, key, valueJSON, "global")
+	return r.UpsertPluginSettingScoped(ctx, pluginID, key, valueJSON, "global", false)
 }
 
 // UpsertPluginSettingScoped sets one plugin setting in the given scope
@@ -695,9 +757,20 @@ func (r *PluginRepo) UpsertPluginSetting(ctx context.Context, pluginID, key, val
 // same DB will block for busy_timeout(5000ms) and then fail with
 // SQLITE_BUSY rather than nest. No current caller does this (checked at
 // ut-docs#785 time).
-func (r *PluginRepo) UpsertPluginSettingScoped(ctx context.Context, pluginID, key, valueJSON, scope string) (err error) {
+//
+// declaredSecret is whether the plugin's manifest declares this key
+// `type: "secret"` (ADR-0082) — the caller computes it because it has the
+// manifest; the key-name heuristic is applied here regardless. Either makes
+// the stored value_json a sealed string instead of the plaintext JSON. The
+// seal happens BEFORE the transaction opens so a replica without its key
+// yet fails fast without ever taking the write lock.
+func (r *PluginRepo) UpsertPluginSettingScoped(ctx context.Context, pluginID, key, valueJSON, scope string, declaredSecret bool) (err error) {
 	done := pluginObs.trace("upsert_setting")
 	defer func() { done(err) }()
+
+	if valueJSON, err = sealSettingValue(ctx, key, valueJSON, declaredSecret); err != nil {
+		return err
+	}
 
 	tx, txErr := r.db.BeginTx(ctx, nil)
 	if txErr != nil {
@@ -777,6 +850,19 @@ func (r *PluginRepo) MergeAdditiveJSONMapSetting(ctx context.Context, pluginID, 
 SELECT value_json FROM plugin_settings WHERE plugin_id = ? AND key = ? AND scope = 'global'
 LIMIT 1`,
 		pluginID, key).Scan(&raw)
+	// ADR-0082: a map-typed setting is not normally a secret, but the read
+	// and write here go through the same seal/open seams as every other
+	// path so a sealed row can never be parsed as JSON (it isn't) or, on
+	// the way back, be overwritten in plaintext. An unopenable sealed row
+	// is refused, matching the "never silently clobber" rule below.
+	if scanErr == nil && secrets.IsSealed(raw) {
+		opened, ok := openStoredSettingValue(ctx, pluginID, key, raw)
+		if !ok {
+			err = fmt.Errorf("existing value for %s/%s is sealed and cannot be opened", pluginID, key)
+			return 0, err
+		}
+		raw = opened
+	}
 	switch {
 	case scanErr != nil && !errors.Is(scanErr, sql.ErrNoRows):
 		err = pluginObs.wrap("merge_additive_json_map_setting", scanErr)
@@ -835,6 +921,12 @@ LIMIT 1`,
 		err = fmt.Errorf("marshal merged value for %s/%s: %w", pluginID, key, marshalErr)
 		return 0, err
 	}
+	toStore, sealErr := sealSettingValue(ctx, key, string(merged), false)
+	if sealErr != nil {
+		err = sealErr
+		return 0, err
+	}
+	merged = []byte(toStore)
 
 	res, execErr := tx.ExecContext(ctx, `
 UPDATE plugin_settings SET value_json = ?, updated_at = datetime('now')

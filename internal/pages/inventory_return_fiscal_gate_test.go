@@ -119,9 +119,9 @@ func TestFiscalGate_CreateReturnShadowModeCompletesNormally(t *testing.T) {
 func TestFiscalGate_CreateReturnNonGermanShopUnaffected(t *testing.T) {
 	mux, dp := newInventoryFiscalTestDeps(t)
 	for k, v := range map[string]string{
-		fiscal.KeySystemOfRecord:  "true",
-		fiscal.KeyTSEConfigured:   "false",
-		fiscal.KeyTSEFailingSince: "2026-08-14T09:00:00Z",
+		fiscal.KeySystemOfRecord:            "true",
+		fiscal.KeySigningDeviceConfigured:   "false",
+		fiscal.KeySigningDeviceFailingSince: "2026-08-14T09:00:00Z",
 	} {
 		if err := dp.Settings.Set(t.Context(), k, v); err != nil {
 			t.Fatal(err)
@@ -174,7 +174,7 @@ func TestFiscalGate_CreateReturnOverrideUnblocksAndAudits(t *testing.T) {
 		t.Fatalf("expected the pre-override return to be refused, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/fiscal/tse-override", strings.NewReader(validOverrideBody("")))
+	req := httptest.NewRequest(http.MethodPost, "/api/fiscal/signing-override", strings.NewReader(validOverrideBody("")))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req = auth.WithUser(req, auth.User{ID: "user1", Role: "admin"})

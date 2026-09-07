@@ -110,7 +110,7 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 		// fiscal_tse_ready (ADR-0053, ut-docs#802): the cloud finished
 		// reseller-provisioning this shop's TSE — fetch the operational
 		// credential once (single-use endpoint) and store it at rest;
-		// fiscal.tse_configured flips true only on confirmed local receipt.
+		// fiscal.signing_device_configured flips true only on confirmed local receipt.
 		FiscalTSEReady: func(ctx context.Context) (string, error) {
 			return applyFiscalTSEReady(ctx, d)
 		},
@@ -448,7 +448,15 @@ func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID string, delta 
 	}
 	if _, err := pos.RecordStockMovement(ctx, d.Db, pos.StockMovementInput{
 		ItemID: itemID, LocationID: locationID, Type: "adjust",
-		Quantity: delta, Reason: reason, ActorID: "cloud",
+		// audit_log.actor_id has a real FK to users(id) -- "cloud" was
+		// never a seeded user, so every real call here violated it (the
+		// old hand-rolled test schema had no such FK, which is why this
+		// went uncaught -- ut-docs#1676). "system" is the established id
+		// for this exact situation (see sync_orders.go's auditActorID).
+		// The "cloud: " prefix keeps the adjustment's real origin visible
+		// in the audit payload's reason field now that the actor itself
+		// can no longer say so.
+		Quantity: delta, Reason: "cloud: " + reason, ActorID: "system",
 	}); err != nil {
 		return "", err
 	}

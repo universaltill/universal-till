@@ -6,12 +6,14 @@ import (
 	"errors"
 	"net/http"
 	"net/http/httptest"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -29,7 +31,7 @@ func TestRefundableLines_NoPriorReturns(t *testing.T) {
 	detail := data.SaleDetail{Lines: []data.SaleDetailLine{
 		{Name: "Apple", SKU: "A1", ItemID: "i1", UnitPrice: 100, Qty: 3},
 	}}
-	lines := refundableLines(detail, map[string]float64{})
+	lines := refundableLines(detail, map[string]float64{}, map[string]float64{})
 	if len(lines) != 1 || lines[0].Remaining != 3 || lines[0].Sold != 3 {
 		t.Fatalf("expected all 3 units still refundable, got %+v", lines)
 	}
@@ -40,7 +42,7 @@ func TestRefundableLines_SubtractsPriorPartialReturn(t *testing.T) {
 		{Name: "Apple", SKU: "A1", ItemID: "i1", UnitPrice: 100, Qty: 3},
 	}}
 	key := data.RefundLineKey("i1", "", 100, "")
-	lines := refundableLines(detail, map[string]float64{key: 1})
+	lines := refundableLines(detail, map[string]float64{key: 1}, map[string]float64{})
 	if len(lines) != 1 || lines[0].Remaining != 2 {
 		t.Fatalf("expected 2 units remaining after 1 already returned, got %+v", lines)
 	}
@@ -53,7 +55,7 @@ func TestRefundableLines_FullyReturnedNeverGoesNegative(t *testing.T) {
 	key := data.RefundLineKey("i1", "", 100, "")
 	// More already "returned" than was ever sold shouldn't happen in
 	// practice, but the view must clamp to zero, not go negative.
-	lines := refundableLines(detail, map[string]float64{key: 5})
+	lines := refundableLines(detail, map[string]float64{key: 5}, map[string]float64{})
 	if lines[0].Remaining != 0 {
 		t.Fatalf("expected remaining clamped to 0, got %v", lines[0].Remaining)
 	}
@@ -72,7 +74,7 @@ func TestRefundableLines_SplitLinesShareTheSamePool(t *testing.T) {
 	}}
 	key := data.RefundLineKey("i1", "", 100, "")
 	// One unit already returned against the combined pool of 4.
-	lines := refundableLines(detail, map[string]float64{key: 1})
+	lines := refundableLines(detail, map[string]float64{key: 1}, map[string]float64{})
 	if len(lines) != 2 {
 		t.Fatalf("expected 2 line views, got %+v", lines)
 	}
@@ -89,6 +91,42 @@ func TestRefundableLines_SplitLinesShareTheSamePool(t *testing.T) {
 	}
 	if total := lines[0].Remaining + lines[1].Remaining; total != 3 {
 		t.Fatalf("expected the pool (4 sold - 1 returned = 3) split across both lines, got total=%v (%+v)", total, lines)
+	}
+}
+
+// TestRefundableLines_EarlierLinePreRefundedStillOffersLaterLineInFull is
+// ut-docs#1583's second review finding: netting a line's own
+// already-returned quantity out of its Qty (so the display can never offer
+// more than the POST handler will accept) must not under-offer a SIBLING
+// line sharing the same key when the EARLIER line (by index) is the one
+// already refunded -- the greedy index-order pool drain in the original
+// test above happens to hide this when the LATER line is refunded first,
+// which is exactly why the disagreement this card exists to close slipped
+// past that fixture.
+//
+// Two split lines of qty 2 sharing a key (pool 4). Line 0 (index 0, ID
+// "line-0") already fully refunded (2 units, tracked per-line). Line 1
+// (index 1, ID "line-1") is untouched and must still be offered its full 2
+// units -- not 0, and not more than it actually sold.
+func TestRefundableLines_EarlierLinePreRefundedStillOffersLaterLineInFull(t *testing.T) {
+	detail := data.SaleDetail{Lines: []data.SaleDetailLine{
+		{ID: "line-0", Name: "Widget", SKU: "W1", ItemID: "i1", UnitPrice: 100, Qty: 2},
+		{ID: "line-1", Name: "Widget", SKU: "W1", ItemID: "i1", UnitPrice: 100, Qty: 2},
+	}}
+	key := data.RefundLineKey("i1", "", 100, "")
+	// Pool-level tally: 2 units already returned against the combined pool
+	// of 4, exactly matching what line-0's own 2-unit return would record.
+	returned := map[string]float64{key: 2}
+	returnedByLine := map[string]float64{"line-0": 2}
+	lines := refundableLines(detail, returned, returnedByLine)
+	if len(lines) != 2 {
+		t.Fatalf("expected 2 line views, got %+v", lines)
+	}
+	if lines[0].Remaining != 0 {
+		t.Fatalf("line 0 (already fully refunded, 2 of its own 2 units) must offer 0, got %v", lines[0].Remaining)
+	}
+	if lines[1].Remaining != 2 {
+		t.Fatalf("line 1 (untouched, sold 2) must still offer its full 2 units even though line 0 exhausted its own share first, got %v", lines[1].Remaining)
 	}
 }
 
@@ -219,6 +257,16 @@ func newRefundTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *auth.Servic
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
+	// ut-docs#1677: sale_lines.item_id has a real FK to items(id) now that
+	// openPagesTestDB runs real migrations (ut-docs#1676) -- this file's own
+	// tests construct sales/sale_lines directly via raw SQL against a batch
+	// of ad hoc item ids that were never real items. Seed them all here
+	// once rather than per test.
+	for _, id := range []string{"itm-a", "itm-b", "itm-b1", "itm-b2", "itm-b3-comped", "itm-b3-full", "itm-f1", "itm-f4", "itm-1531", "itm-1560", "itm-1561", "itm-1579", "itm-1583", "itm-1583-dip", "itm-1583-split"} {
+		if _, err := db.Exec(`INSERT INTO items (id, name, base_price, is_active) VALUES (?, ?, 100, 1)`, id, id); err != nil {
+			t.Fatalf("seed item %s: %v", id, err)
+		}
+	}
 
 	cfg := &config.Config{
 		Theme:   "default",
@@ -260,6 +308,26 @@ func TestRefundPage_UnknownReceiptRedirectsToJournal(t *testing.T) {
 	}
 	if loc := rec.Header().Get("Location"); loc != "/journal" {
 		t.Fatalf("expected redirect to /journal, got %q", loc)
+	}
+}
+
+// TestRefundPage_RendersOfflineFlag is ut-docs#1493's template-render
+// regression check: a broken template edit could still return 200 (this
+// test's siblings don't touch this part of the page), so this asserts the
+// hidden #offline-flag input the fix depends on actually renders — without
+// it, a real browser submit could never carry the offline signal to
+// POST /api/refund no matter what refund_page.go's handler does with it.
+func TestRefundPage_RendersOfflineFlag(t *testing.T) {
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/refund/"+receiptNo, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /refund/%s: %d", receiptNo, rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), `id="offline-flag" name="offline" value="0"`) {
+		t.Fatal("refund-form is missing its hidden offline-flag input (ut-docs#1493)")
 	}
 }
 
@@ -482,6 +550,937 @@ VALUES('line-refund-charge-uneven', ?, 1, 'itm1', 'Apple', 'ABC', 3, 100, 0, 0, 
 	}
 }
 
+// TestPostRefund_SplitRefundServiceChargeTaxSumsExactly is ut-docs#1215's
+// regression case, reproducing the independent reviewer's exact reported
+// scenario from ut-docs#243's review
+// (docs/code-reviews/2026-08-28-service-charge-refund-proration-243.md,
+// finding N2): an exclusive sale with two lines that mix a per-line
+// discount AND different tax rates, plus a service charge apportioned
+// across bands (not a flat basis), refunded in two SEPARATE partial
+// requests rather than one full refund.
+//
+//	Line A: 1 @ 200, tax rate 0%,  line discount 100 -> net 100
+//	Line B: 1 @ 100, tax rate 20%, no discount        -> net 100
+//	Service charge: 30 (basis 0 -> apportioned by net share, ADR-0061)
+//
+// Original apportionment (equal net shares, 100:100): band 0% = 15 (tax
+// 0), band 20% = 15 (tax 3) -- 3 total charge tax, 20 total line tax (all
+// on line B), 23 total tax, 253 total (200 subtotal + 23 tax + 30 charge).
+//
+// Refunding line B THEN line A, each as its own request, used to recover
+// only 2 of the 3 charge-tax units (a 1-unit discrepancy). Both before and
+// after the fix, each request's tax bands are (re)derived from THAT
+// request's own line subset (pos.ServiceChargeTax(serviceChargeRefund,
+// ChargeTaxLinesFromSale(lines), ...) is unchanged) -- what changed is the
+// CHARGE AMOUNT fed into that recomputation: pre-fix it was prorated by
+// gross share (refundGross/origGross), post-fix by net-after-discount
+// share (refundNetWeight/origNetWeight), matching the basis
+// ApportionServiceChargeTax itself weighs by (ADR-0061). In THIS
+// particular sale (each refund happens to touch exactly one whole rate
+// group), that basis switch is what recovers the missing unit. Since each
+// refunded line's own tax rate is fixed and unambiguous, the line-tax
+// component (20, all from line B) can't drift -- so asserting the total
+// tax summed across both partial refunds equals the original sale's exact
+// 23 isolates and proves the charge-tax component landed on the full 3,
+// not 2. This is NOT a general exactness guarantee for every split-refund
+// shape (see the code comment above the fix, and
+// TestPostRefund_LineDiscountedMultiPartialRefundNeverExceedsOriginalServiceCharge
+// below for the case where it still under-refunds by design, bounded by
+// an explicit clamp rather than by luck of the arithmetic).
+func TestPostRefund_SplitRefundServiceChargeTaxSumsExactly(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-charge-split-1215", "R-REFUND-CHARGE-SPLIT-1215"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 200, 0, 23, 253, 30, 0, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-split-a', ?, 1, 'itm-a', 'Widget A', 'A', 1, 200, 100, 0, 0, 100, 100)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-split-b', ?, 2, 'itm-b', 'Widget B', 'B', 1, 100, 0, 2000, 20, 100, 120)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-split-1215', ?, 'cash', 253, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Refund line B (index 1) alone, then line A (index 0) alone, as two
+	// separate requests -- the split-refund shape the bug needs.
+	for _, form := range []string{"qty_1=1", "qty_0=1"} {
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&"+form))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("refund (%s) failed: %d %s", form, rec.Code, rec.Body.String())
+		}
+	}
+
+	var totalCharge, totalTax, totalTotal int64
+	if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(service_charge_amount), 0), COALESCE(SUM(tax_total), 0), COALESCE(SUM(total), 0) FROM sales WHERE sale_type = 'return'`).Scan(&totalCharge, &totalTax, &totalTotal); err != nil {
+		t.Fatalf("sum return sales: %v", err)
+	}
+	if totalCharge != 30 {
+		t.Fatalf("two split refunds covering every unit must sum to the full 30 service charge, got %d", totalCharge)
+	}
+	if totalTax != 23 {
+		t.Fatalf("split refund tax must sum to the original sale's exact 23 (20 line tax + 3 charge tax) -- got %d (pre-fix this landed on 22, one charge-tax unit short)", totalTax)
+	}
+	if totalTotal != 253 {
+		t.Fatalf("split refund totals must sum to the original sale's exact 253, got %d", totalTotal)
+	}
+}
+
+// TestPostRefund_LineDiscountedMultiPartialRefundNeverExceedsOriginalServiceCharge
+// is ut-docs#1215's independent review finding B1: prorating the line
+// discount for a partial-quantity refund floors (`int64(float64(l.
+// LineDiscount) * share)`, ~30 lines up), so each request's own refunded
+// net is slightly LARGER than its true proportional share -- summed across
+// several sequential partial refunds of the SAME line, the cumulative net
+// can exceed the original line's net entirely. Feeding that inflated net
+// straight into the service-charge proration (uncapped) let the charge
+// itself be over-refunded: a real driven repro during review turned a 299
+// charge into 300 paid back (3 refunds of 1 unit each, single 0%-rate
+// line, a 10 line discount that doesn't divide evenly by 3). The fix is
+// the explicit clamp in the handler (against
+// data.RefundedServiceChargeTotal, i.e. what's ACTUALLY already been paid
+// back) -- this test pins that the cumulative charge refunded can never
+// exceed the original 299, no matter how the per-request math floors.
+func TestPostRefund_LineDiscountedMultiPartialRefundNeverExceedsOriginalServiceCharge(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-b1-1215", "R-REFUND-B1-1215"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 290, 0, 0, 589, 299, 0, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-b1', ?, 1, 'itm-b1', 'Widget', 'W1', 3, 100, 10, 0, 0, 290, 290)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-b1', ?, 'cash', 589, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("refund %d failed: %d %s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+
+	var totalCharge int64
+	if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(service_charge_amount), 0) FROM sales WHERE sale_type = 'return'`).Scan(&totalCharge); err != nil {
+		t.Fatalf("sum return service charges: %v", err)
+	}
+	if totalCharge > 299 {
+		t.Fatalf("three 1-of-3 refunds must never pay back more than the original 299 service charge, got %d (over-refund)", totalCharge)
+	}
+	// 298, not 299, now that ut-docs#1531's running per-key discount clamp
+	// has landed (100+100+98 -- the third request's now-EXACT line net
+	// (96, was 97) lowers its own net-weight share of the charge proration
+	// by one). This is the service-charge clamp's own pre-existing,
+	// explicitly documented characteristic (see the "drift by a minor unit
+	// in EITHER direction" comment ~15 lines up): it only ever guards
+	// against OVER-refund, never tops the last request up to the exact
+	// remainder, so the 1-unit drift this fixture happened to show as an
+	// overage before #1531 now shows as a shortfall instead -- not a new
+	// bug, just which direction this specific fixture's rounding lands in.
+	if totalCharge != 298 {
+		t.Fatalf("expected 100+100+98=298 in this fixture post-#1531 (never-exceeds is the real invariant above), got %d", totalCharge)
+	}
+	// ut-docs#1531 itself: the line SUBTOTAL (unlike the charge) now
+	// recovers EXACTLY the original line's net, no drift in either
+	// direction -- 97+97+96=290, the promise the old comment here deferred.
+	var totalSubtotal int64
+	if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(total), 0) FROM sales WHERE sale_type = 'return'`).Scan(&totalSubtotal); err != nil {
+		t.Fatalf("sum return totals: %v", err)
+	}
+	if want := int64(290 + 298); totalSubtotal != want {
+		t.Fatalf("expected the three returns' total (line net 290 + charge 298) to equal %d exactly, got %d", want, totalSubtotal)
+	}
+}
+
+// TestPostRefund_MultiPartialRefundNeverExceedsOriginalLineNet is
+// ut-docs#1531's own acceptance criterion, isolated from the service-charge
+// interaction the sibling B1 test above now also covers: a per-line-
+// discounted, multi-partial (3+) refund of the same line whose discount
+// does not divide evenly by the number of partial refunds must never let
+// the cumulative refunded subtotal exceed the original line's net, at any
+// intermediate step, and must land exactly on it once every unit is back.
+//
+// Same driven repro as the card: 3 @ 100, a line discount of 10 (10/3 does
+// not divide evenly), refunded 1 unit at a time across 3 separate requests.
+// Before the running per-key clamp in the handler, each request
+// independently floored its own share (`int64(float64(10) * (1.0/3))` = 3
+// every time), so the true 10 discount only ever came back as 3*3=9 --
+// summed net 97+97+97=291, one minor unit over the line's actual 290 net.
+func TestPostRefund_MultiPartialRefundNeverExceedsOriginalLineNet(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-1531", "R-REFUND-1531"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 290, 0, 0, 290, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-1531', ?, 1, 'itm-1531', 'Widget', 'W1', 3, 100, 10, 0, 0, 290, 290)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-1531', ?, 'cash', 290, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	const originalLineNet = 290
+	var cumulative int64
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("refund %d failed: %d %s", i+1, rec.Code, rec.Body.String())
+		}
+		var total int64
+		if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(total), 0) FROM sales WHERE sale_type = 'return'`).Scan(&total); err != nil {
+			t.Fatalf("sum return totals after refund %d: %v", i+1, err)
+		}
+		if total > originalLineNet {
+			t.Fatalf("refund %d: cumulative refunded subtotal %d exceeds the original line's net %d (over-refund)", i+1, total, originalLineNet)
+		}
+		cumulative = total
+	}
+	if cumulative != originalLineNet {
+		t.Fatalf("expected the three 1-of-3 refunds to sum to exactly the original line net %d, got %d", originalLineNet, cumulative)
+	}
+}
+
+// TestPostRefund_ZeroMarginalNetPartialRefundSucceeds is ut-docs#1561
+// (independent Opus review round-1 finding F2 on ut-docs#1531): 3 units @
+// 100, a 299 line discount (net 1 total), refunded one unit at a time, no
+// other sale components. The running per-key discount clamp ut-docs#1531
+// introduced targets the CUMULATIVE discount owed by the end of each
+// request — floor(299*1/3)=99, floor(299*2/3)=199, then the full 299 once
+// every unit is back — so requests 2 and 3 each give back exactly 100 of
+// discount against a 100 gross, landing THEIR OWN marginal net at exactly
+// 0. Before this card, refund_page.go always built a single payment row for
+// the whole refund total and pos.netPayments rejected any payment whose
+// amount was not > 0, so requests 2 and 3 were rejected with a generic
+// error even though the item and its stock should be returnable — only 1
+// of the 3 units could ever actually come back. Pins that all three
+// requests now succeed and the cumulative refunded net equals exactly the
+// original line's net (1), never more and never less.
+func TestPostRefund_ZeroMarginalNetPartialRefundSucceeds(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-1561", "R-REFUND-1561"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 300, 0, 0, 1, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-1561', ?, 1, 'itm-1561', 'Widget', 'W1', 3, 100, 299, 0, 0, 1, 1)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-1561', ?, 'cash', 1, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	const originalLineNet = 1
+	var cumulative int64
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("refund %d failed: %d %s", i+1, rec.Code, rec.Body.String())
+		}
+		var total int64
+		if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(total), 0) FROM sales WHERE sale_type = 'return'`).Scan(&total); err != nil {
+			t.Fatalf("sum return totals after refund %d: %v", i+1, err)
+		}
+		if total > originalLineNet {
+			t.Fatalf("refund %d: cumulative refunded subtotal %d exceeds the original line's net %d (over-refund)", i+1, total, originalLineNet)
+		}
+		cumulative = total
+	}
+	if cumulative != originalLineNet {
+		t.Fatalf("expected the three 1-of-3 refunds to sum to exactly the original line net %d, got %d", originalLineNet, cumulative)
+	}
+
+	// ut-docs#1580 (independent Opus review finding F3 on ut-docs#1561):
+	// the assertions above only check the money side (refunded subtotal).
+	// The actual harm the original card described was "only 1 of the 3
+	// units could ever actually come back" -- a regression where requests 2
+	// and 3 return 200 but silently persist no return line and no stock
+	// movement would still pass every check above. Assert the physical
+	// side too: all 3 return sale_lines exist, and all 3 units actually
+	// came back to both stock_movements and inventory.
+	var returnLines int
+	if err := dp.Db.QueryRow(`
+SELECT COUNT(*) FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.sale_type = 'return' AND sl.item_id = 'itm-1561'`).Scan(&returnLines); err != nil {
+		t.Fatalf("count return sale_lines: %v", err)
+	}
+	if returnLines != 3 {
+		t.Fatalf("expected 3 separate return sale_lines (one per 1-of-3 refund request), got %d -- a request could have returned 200 without actually persisting a return line", returnLines)
+	}
+
+	var stockReturned float64
+	if err := dp.Db.QueryRow(`
+SELECT COALESCE(SUM(quantity), 0) FROM stock_movements
+WHERE item_id = 'itm-1561' AND type = 'return'`).Scan(&stockReturned); err != nil {
+		t.Fatalf("sum stock_movements: %v", err)
+	}
+	if stockReturned != 3 {
+		t.Fatalf("expected all 3 units to be recorded as returned stock movements, got %v -- only some units may have actually come back", stockReturned)
+	}
+
+	var inventoryQty float64
+	if err := dp.Db.QueryRow(`SELECT quantity FROM inventory WHERE item_id = 'itm-1561'`).Scan(&inventoryQty); err != nil {
+		t.Fatalf("query inventory: %v", err)
+	}
+	if inventoryQty != 3 {
+		t.Fatalf("expected inventory to show all 3 units restored, got %v", inventoryQty)
+	}
+}
+
+// TestPostRefund_ZeroMarginalNetReturnShowsTranslatedTenderType is
+// ut-docs#1579 (independent Opus review finding F1 on ut-docs#1561): a
+// zero-marginal-net partial refund persists sales.tender_type = 'unknown'
+// (deriveTenderType's len(payments)==0 branch, newly reachable since
+// ut-docs#1561), and the journal templates rendered TenderType raw -- so an
+// operator landing on /journal/<receipt> for one of these returns saw the
+// literal English word "unknown", untranslated in every locale including
+// RTL ones. Same repro shape as
+// TestPostRefund_ZeroMarginalNetPartialRefundSucceeds above (see its own
+// comment for the discount-clamp arithmetic): the SECOND 1-of-3 refund
+// request is the first to land its own marginal net at exactly 0. Confirms
+// the fix end-to-end: drive the real refund flow to get a genuine
+// zero-marginal-net return, then GET its journal detail page in a
+// non-English locale and check it shows a translated tender label, not the
+// raw DB value.
+func TestPostRefund_ZeroMarginalNetReturnShowsTranslatedTenderType(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	registerJournal(mux, dp)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-1579", "R-REFUND-1579"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 300, 0, 0, 1, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-1579', ?, 1, 'itm-1579', 'Widget', 'W1', 3, 100, 299, 0, 0, 1, 1)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-1579', ?, 'cash', 1, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Request 1's own marginal net is 1 (nonzero, gets a real payment row).
+	// Request 2's own marginal net is exactly 0 -- that's the zero-tender
+	// return this test is after; no need to drive a third request.
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("refund %d failed: %d %s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+
+	var returnReceipt string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT receipt_no FROM sales WHERE sale_type = 'return' AND tender_type = 'unknown' ORDER BY created_at DESC LIMIT 1`).Scan(&returnReceipt); err != nil {
+		t.Fatalf("find the zero-marginal-net return (tender_type='unknown'): %v", err)
+	}
+
+	// fa is RTL and has no vocabulary overlap with English "unknown", so a
+	// literal leak is unmissable.
+	req := httptest.NewRequest(http.MethodGet, "/journal/"+returnReceipt+"?lang=fa", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /journal/%s: %d %s", returnReceipt, rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, ">unknown<") {
+		t.Fatalf("journal detail rendered the raw English \"unknown\" tender type instead of a translated label: %s", body)
+	}
+	const faUnknown = "ناشناس"
+	if !strings.Contains(body, faUnknown) {
+		t.Fatalf("journal detail did not render the fa translation %q for the unknown tender type: %s", faUnknown, body)
+	}
+}
+
+// TestPostRefund_SiblingLinesWithDifferentDiscountsDoNotCrossAttribute is
+// ut-docs#1531's own independent-review finding F1: two ORIGINAL lines can
+// share a refund-line key (same item/variant/price/mode) while carrying
+// DIFFERENT LineDiscount amounts -- e.g. the same product scanned twice as
+// separate lines, only one of which a cashier manually discounted.
+// Aggregating discount by key (this card's main fix) is only exact when
+// every line under a key shares one discount rate; naively pooling it here
+// would let one line's discount be given back against the OTHER line's own
+// refund. This pins the fallback: a non-uniform key's lines are each
+// refunded against their OWN discount, independently, exactly as before
+// this card (no cross-attribution) rather than a blended/wrong amount.
+func TestPostRefund_SiblingLinesWithDifferentDiscountsDoNotCrossAttribute(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-f1-1531", "R-REFUND-F1-1531"
+	// subtotal = 100 (line 0, undiscounted) + 50 (line 1, net after its own
+	// 50 discount) = 150.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 150, 0, 0, 150, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	// Both lines: same item/variant/price/mode -> SAME refund-line key.
+	// Line 0: no discount (net 100). Line 1: 50 discount (net 50).
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-f1-a', ?, 1, 'itm-f1', 'Widget', 'W1', 1, 100, 0, 0, 0, 100, 100)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-f1-b', ?, 2, 'itm-f1', 'Widget', 'W1', 1, 100, 50, 0, 0, 50, 50)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-f1', ?, 'cash', 150, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Refund line 1 (the discounted one) ALONE first.
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_1=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refunding the discounted line failed: %d %s", rec.Code, rec.Body.String())
+	}
+	var afterFirst int64
+	if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(total), 0) FROM sales WHERE sale_type = 'return'`).Scan(&afterFirst); err != nil {
+		t.Fatalf("sum return totals: %v", err)
+	}
+	// Bug shape (pooled-by-key, no fallback): floor(50*1/2)=25 net 75 --
+	// 25 over the discounted line's true 50 net. Must be exactly 50.
+	if afterFirst != 50 {
+		t.Fatalf("refunding line 1 (discount 50) alone: expected exactly its own net 50, got %d (cross-attributed from/to line 0)", afterFirst)
+	}
+
+	// Then refund line 0 (the undiscounted one) alone.
+	req2 := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("refunding the undiscounted line failed: %d %s", rec2.Code, rec2.Body.String())
+	}
+	var total int64
+	if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(total), 0) FROM sales WHERE sale_type = 'return'`).Scan(&total); err != nil {
+		t.Fatalf("sum return totals: %v", err)
+	}
+	// Bug shape: line 0 would have been shorted to 100-25=75 too high a
+	// discount taken previously would leave 100-25=75; must be exactly 100
+	// more (150 total), not blended.
+	if total != 150 {
+		t.Fatalf("expected both lines' true nets (50 + 100 = 150) with no cross-attribution, got %d", total)
+	}
+}
+
+// TestPostRefund_NonUniformKeySequentialPartialsNeverUnderRefundDiscount is
+// ut-docs#1560, the follow-up to #1531's own per-key clamp. #1531 fixed the
+// flooring-accumulation defect (refunding the SAME key across several
+// sequential partial requests under-discounts each one) for the UNIFORM
+// case, but deliberately left the non-uniform fallback as a one-shot floor
+// per request -- which reproduces the identical defect whenever the SAME
+// original line (not just the same key) is itself refunded across more
+// than one sequential partial request. A round-2 Opus review of #1531
+// found this via a 400-case fuzz sweep: ~17% of non-uniform-key cases still
+// under-refunded the discount by a minor unit.
+//
+// Setup: two sibling lines share a refund-line key (same item/variant/
+// price/mode) but carry DIFFERENT line_discount amounts, making the key
+// non-uniform. Line A (qty 3, discount 10 -- doesn't divide evenly by 3)
+// is refunded one unit at a time across three sequential requests, the
+// shape that exposes flooring accumulation. The old fallback
+// (floor(10*1/3)=3 every time) gives back 3+3+3=9, one minor unit short of
+// the line's true 10. The fix must give back exactly 10.
+func TestPostRefund_NonUniformKeySequentialPartialsNeverUnderRefundDiscount(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-1560-nonuniform", "R-REFUND-1560-NONUNIFORM"
+	// subtotal = (300-10=290, line A) + (100-0=100, line B) = 390.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 390, 0, 0, 390, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	// Both lines: same item/variant/price/mode -> SAME refund-line key.
+	// Line A (line 0): qty 3, discount 10 (net 290). Line B (line 1): qty
+	// 1, no discount (net 100) -- different discount RATE per unit, so the
+	// key is non-uniform and the per-key clamp falls back to this test's
+	// own per-line branch.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-1560-a', ?, 1, 'itm-1560', 'Widget', 'W1560', 3, 100, 10, 0, 0, 290, 290)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-1560-b', ?, 2, 'itm-1560', 'Widget', 'W1560', 1, 100, 0, 0, 0, 100, 100)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-1560', ?, 'cash', 390, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Refund line A (index 0) one unit at a time, three sequential requests.
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("refund %d of line A failed: %d %s", i+1, rec.Code, rec.Body.String())
+		}
+	}
+
+	var totalDiscountGivenBack int64
+	if err := dp.Db.QueryRow(`
+SELECT COALESCE(SUM(l.line_discount), 0)
+FROM sale_lines l
+JOIN sales s ON s.id = l.sale_id
+WHERE s.sale_type = 'return' AND l.refund_of_line_id = 'line-1560-a'`).Scan(&totalDiscountGivenBack); err != nil {
+		t.Fatalf("sum returned discount for line A: %v", err)
+	}
+	// Bug shape (one-shot floor per request): floor(10*1/3)=3 three times
+	// = 9, one minor unit short. Must be exactly 10 -- line A's true
+	// discount, given back in full once every unit is refunded.
+	if totalDiscountGivenBack != 10 {
+		t.Fatalf("line A's cumulative discount given back across 3 sequential partial refunds: got %d, want exactly 10 (its own true discount)", totalDiscountGivenBack)
+	}
+
+	var totalReturned int64
+	if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(total), 0) FROM sales WHERE sale_type = 'return'`).Scan(&totalReturned); err != nil {
+		t.Fatalf("sum return totals: %v", err)
+	}
+	// Line A's true net is 290 (300 gross - 10 discount); nothing from line
+	// B was touched.
+	if totalReturned != 290 {
+		t.Fatalf("expected line A's true net (290) refunded in total, got %d", totalReturned)
+	}
+}
+
+// TestPostRefund_LineQtyCappedAtItsOwnSoldQty is ut-docs#1583, found by
+// independent review of #1560: the POST handler validated a requested
+// qty_<i> against the shared per-key pool ONLY (`remaining := pool[key]`),
+// never against that specific original line's own sold `l.Qty` -- unlike
+// the page's own display (refundableLines), which already caps at
+// min(l.Qty, pool[key]). A hand-crafted POST bypassing the rendered page's
+// per-line max could request more than a single original line ever sold,
+// as long as it stayed within the shared key's fungible-pool total.
+//
+// Reuses the #1560 fixture: line A (qty 3, discount 10) and line B (qty 1,
+// discount 0) share a refund-line key, so the pool for that key is 4 --
+// but line B (index 1) only ever sold 1 unit. Requesting qty_1=4 against
+// line B alone must be rejected with the existing 409 "only N left"
+// response, capped at line B's own sold qty (1), not the shared pool (4).
+func TestPostRefund_LineQtyCappedAtItsOwnSoldQty(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-1583", "R-REFUND-1583"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 390, 0, 0, 390, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	// Line A (line 0): qty 3, discount 10. Line B (line 1): qty 1, no
+	// discount. Same item/variant/price/mode -> same refund-line key, pool
+	// = 3+1 = 4, but line B itself only ever sold 1 unit.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-1583-a', ?, 1, 'itm-1583', 'Widget', 'W1583', 3, 100, 10, 0, 0, 290, 290)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-1583-b', ?, 2, 'itm-1583', 'Widget', 'W1583', 1, 100, 0, 0, 0, 100, 100)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-1583', ?, 'cash', 390, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Requesting 4 against line B alone (only ever sold 1) must be
+	// rejected, even though the shared pool for the key has 4 available.
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_1=4"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("qty_1=4 against a line that only sold 1 unit: want 409, got %d %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "only 1 left") {
+		t.Fatalf("expected the 409 to name line B's own remaining (1), got: %s", rec.Body.String())
+	}
+
+	// Nothing must have been recorded against either line by the rejected
+	// request.
+	var returnCount int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales WHERE sale_type = 'return'`).Scan(&returnCount); err != nil {
+		t.Fatalf("count returns: %v", err)
+	}
+	if returnCount != 0 {
+		t.Fatalf("expected no return recorded for a rejected request, got %d", returnCount)
+	}
+
+	// A legitimate request for exactly what line B sold (1) is still
+	// accepted -- the fix must not under-cap a genuinely valid request.
+	req = httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_1=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("qty_1=1 against line B (its own true sold qty): want 200, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestPostRefund_SequentialDoubleDipAgainstSameOriginalLine is the follow-up
+// finding from the independent review of ut-docs#1583's own fix: capping a
+// requested qty_<i> at min(l.Qty, pool[key]) closes the SINGLE-request
+// over-request gap, but l.Qty alone is the line's ORIGINAL total sold
+// quantity, unadjusted for a return already recorded against that specific
+// line in an EARLIER request. A sibling line under the same key with
+// untouched pool room still lets the same specific line be refunded a
+// second time, once the exploit is split across two sequential requests
+// instead of one.
+//
+// Reuses the same #1560/#1583 fixture (line A qty 3 discount 10, line B qty
+// 1 discount 0, sharing a key -> pool 4): refund line B's one unit once
+// (legitimately accepted), then request qty_1=1 against line B a SECOND
+// time. Line B has nothing left of its own, even though line A's untouched
+// units leave the shared pool at 3 -- the second request must be rejected.
+func TestPostRefund_SequentialDoubleDipAgainstSameOriginalLine(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-1583-dip", "R-REFUND-1583-DIP"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 390, 0, 0, 390, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-1583-dip-a', ?, 1, 'itm-1583-dip', 'Widget', 'W1583D', 3, 100, 10, 0, 0, 290, 290)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-1583-dip-b', ?, 2, 'itm-1583-dip', 'Widget', 'W1583D', 1, 100, 0, 0, 0, 100, 100)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-1583-dip', ?, 'cash', 390, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	// First refund of line B's one unit: legitimate, must succeed.
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_1=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("first refund of line B's one unit: want 200, got %d %s", rec.Code, rec.Body.String())
+	}
+
+	// Second refund request against line B again: line B has nothing left
+	// of its own (already fully refunded above), even though line A's 3
+	// untouched units leave the shared pool at 3 -- must be rejected.
+	req = httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_1=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("second refund of line B (already fully refunded once): want 409, got %d %s", rec.Code, rec.Body.String())
+	}
+
+	var returnCount int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales WHERE sale_type = 'return'`).Scan(&returnCount); err != nil {
+		t.Fatalf("count returns: %v", err)
+	}
+	if returnCount != 1 {
+		t.Fatalf("expected exactly 1 return recorded (the legitimate first one), got %d", returnCount)
+	}
+
+	// Line A is untouched and its 3 units are still legitimately
+	// refundable in full, through the shared pool.
+	req = httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=3"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refund of line A's own 3 units (untouched by line B's history): want 200, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestRefundPage_EarlierLinePreRefundedStillOffersLaterLineViaPOST is the
+// driven, real-handler round trip for the second review finding on
+// ut-docs#1583: the GET page's displayed/pre-filled max and the POST
+// handler's own validation must agree, using the identical per-line-netted
+// basis, or a legitimate refund becomes impossible from the till (the page
+// offers a quantity the POST then refuses). Two split lines of qty 2
+// sharing a key (pool 4); line 0 refunded first (the case the earlier
+// pool-sharing test's greedy index-order drain happened not to exercise).
+func TestRefundPage_EarlierLinePreRefundedStillOffersLaterLineViaPOST(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-1583-split", "R-REFUND-1583-SPLIT"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 400, 0, 0, 400, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-1583-split-0', ?, 1, 'itm-1583-split', 'Widget', 'W1583S', 2, 100, 0, 0, 200, 200)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-1583-split-1', ?, 2, 'itm-1583-split', 'Widget', 'W1583S', 2, 100, 0, 0, 200, 200)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-1583-split', ?, 'cash', 400, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Refund line 0's own 2 units first.
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refund of line 0's own 2 units: want 200, got %d %s", rec.Code, rec.Body.String())
+	}
+
+	// The refund page must now offer line 1's full 2 units, not 0 -- it has
+	// not been touched, and line 0's own history must not bleed into it.
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/refund/"+receiptNo, nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET refund: %d", rec.Code)
+	}
+	// Anchored to line 1's OWN input specifically (independent Contains
+	// checks on the whole body don't discriminate: line 0's own max="2"
+	// would satisfy the max check even if line 1 were wrongly offered a
+	// different value, or no input at all -- review finding on this card).
+	if !regexp.MustCompile(`name="qty_1" value="2"\s+min="0" max="2"`).MatchString(rec.Body.String()) {
+		t.Fatalf("expected line 1's own input to offer its full 2 units (name=\"qty_1\" value=\"2\" ... max=\"2\"), got: %s", rec.Body.String())
+	}
+
+	// Submitting exactly what the page itself offered must succeed -- the
+	// display and the POST validation must never disagree.
+	req = httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_1=2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("posting the page's own offered qty_1=2: want 200, got %d %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestPostRefund_FractionalQuantityNeverExceedsOriginalLineNet is ut-docs#1531
+// review finding F4: cumulativeQty (keyQty[key]-pool[key]) is a float, and a
+// fractional original Qty need not land exactly on the key's total even
+// after every unit has genuinely been refunded. Flooring a target discount
+// against a cumulativeQty that's a hair short of the true total under-shoots
+// by a minor unit, reviving the exact over-refund this card exists to
+// eliminate. Pins the epsilon snap that treats "within 1e-9 of fully
+// refunded" as exactly fully refunded.
+//
+// Round-2 review finding B2: an earlier version of this test used 0.3 sliced
+// as three 0.1s -- textbook float64 (0.1+0.1+0.1 == 0.30000000000000004),
+// but on the SAFE side of the boundary (cumulativeQty ends up slightly ABOVE
+// the true total, not below), so it passed identically with the epsilon
+// snap disabled -- a false-pass that would have let a future refactor
+// delete the snap and ship green. 0.9 sliced as three 0.3s lands on the
+// dangerous side instead (cumulativeQty 0.89999999999999991118, a hair
+// BELOW the true 0.90000000000000002220) and was confirmed, driven against
+// the real handler, to fail without the snap (870 > true net 869) and pass
+// with it.
+func TestPostRefund_FractionalQuantityNeverExceedsOriginalLineNet(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-f4-1531", "R-REFUND-F4-1531"
+	// 0.9 units @ 1000, discount 31 -> net 869 (900 - 31).
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 869, 0, 0, 869, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-f4', ?, 1, 'itm-f4', 'Weighed Widget', 'WW1', 0.9, 1000, 31, 0, 0, 869, 869)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-f4', ?, 'cash', 869, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	const originalLineNet = 869
+	var cumulative int64
+	for i := 0; i < 3; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=0.3"))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("refund %d failed: %d %s", i+1, rec.Code, rec.Body.String())
+		}
+		var total int64
+		if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(total), 0) FROM sales WHERE sale_type = 'return'`).Scan(&total); err != nil {
+			t.Fatalf("sum return totals after refund %d: %v", i+1, err)
+		}
+		if total > originalLineNet {
+			t.Fatalf("refund %d: cumulative refunded subtotal %d exceeds the original line's net %d (over-refund, float-boundary miss)", i+1, total, originalLineNet)
+		}
+		cumulative = total
+	}
+	if cumulative != originalLineNet {
+		t.Fatalf("expected three 0.3-of-0.9 refunds to sum to exactly the original line net %d, got %d", originalLineNet, cumulative)
+	}
+}
+
+// TestPostRefund_FullRefundOfFullyDiscountedLineWithChargeStillSucceeds is
+// ut-docs#1215's independent review finding B2: switching the service-
+// charge proration guard from `origGross > 0` to `origNetWeight > 0`
+// (net-after-discount can be zero even when gross is positive -- e.g.
+// every line is 100% line-discounted) made a previously-refundable sale
+// fail outright: the charge refund computed to 0, so the required payment
+// was 0, and pos.CompleteSale rejects a non-positive payment amount. This
+// pins that such a sale -- a fully line-discounted line, still carrying a
+// legitimate service charge (ADR-0061's own zero-weight rule already
+// allows this on the SALE side, landing the whole charge+tax on the
+// highest band) -- can still be refunded in full, via the gross fallback.
+func TestPostRefund_FullRefundOfFullyDiscountedLineWithChargeStillSucceeds(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-b2-1215", "R-REFUND-B2-1215"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 0, 0, 6, 36, 30, 0, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-b2', ?, 1, 'itm-b2', 'Widget', 'W2', 1, 100, 100, 2000, 0, 0, 0)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-b2', ?, 'cash', 36, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refund failed: %d %s (pre-fix regression: this used to 400 with a fully line-discounted line)", rec.Code, rec.Body.String())
+	}
+
+	var returnCharge, returnTax, returnTotal int64
+	if err := dp.Db.QueryRow(`SELECT service_charge_amount, tax_total, total FROM sales WHERE sale_type = 'return'`).Scan(&returnCharge, &returnTax, &returnTotal); err != nil {
+		t.Fatalf("read return sale: %v", err)
+	}
+	if returnCharge != 30 || returnTax != 6 || returnTotal != 36 {
+		t.Fatalf("expected the full charge/tax/total (30/6/36) back via the gross fallback, got %d/%d/%d", returnCharge, returnTax, returnTotal)
+	}
+}
+
+// TestPostRefund_RefundingOnlyAFullyDiscountedLineStillSucceeds is
+// ut-docs#1215's independent review finding B3 (round 2): the B2 fallback
+// above keys on the WHOLE SALE's net weight (`origNetWeight == 0`), so it
+// doesn't engage when the sale overall has positive net weight but THIS
+// PARTICULAR request only refunds a comped/BOGO/staff-freebie line (net
+// 0, gross > 0) while a DIFFERENT, unrefunded line elsewhere in the sale
+// is what makes origNetWeight positive. Driven repro during review: a
+// sale with a comped line (3 @ 100, fully line-discounted, net 0) plus a
+// full-price line (1 @ 100, net 100) and a 50 service charge -- refunding
+// the comped line ALONE used to 400 ("Sale could not be completed") on
+// this branch even though the identical request succeeds on main. Fixed
+// by keying the fallback on THIS REQUEST's own refundNetWeight too, not
+// just the sale's origNetWeight.
+func TestPostRefund_RefundingOnlyAFullyDiscountedLineStillSucceeds(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	ctx := context.Background()
+
+	saleID, receiptNo := "sale-refund-b3-1215", "R-REFUND-B3-1215"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', 100, 0, 0, 150, 50, 0, datetime('now'), datetime('now'))`, saleID, receiptNo); err != nil {
+		t.Fatal(err)
+	}
+	// Line 0: the comped line -- 3 units @ 100, fully line-discounted
+	// (net 0), still positive gross (300).
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-b3-comped', ?, 1, 'itm-b3-comped', 'Comped Widget', 'C1', 3, 100, 300, 0, 0, 0, 0)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	// Line 1: full-price -- 1 unit @ 100, no discount (net 100). This is
+	// what makes origNetWeight positive for the sale overall.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('line-refund-b3-full', ?, 2, 'itm-b3-full', 'Full Widget', 'F1', 1, 100, 0, 0, 0, 100, 100)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, paid_at) VALUES('pay-refund-b3', ?, 'cash', 150, 'GBP', 0, datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+
+	// Refund the comped line (index 0) ALONE first -- the exact shape B3
+	// found broken (this request's own refundNetWeight is 0, even though
+	// the sale's origNetWeight is 100 from the untouched full-price line).
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=3"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refunding the comped line alone failed: %d %s (this must succeed -- it works on main today)", rec.Code, rec.Body.String())
+	}
+
+	// Then refund the full-price line (index 1) in a SEPARATE request --
+	// the clamp (B1) must still land the cumulative charge on the exact
+	// original 50, not over- or under-shoot it.
+	req2 := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_1=1"))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("refunding the remaining full-price line failed: %d %s", rec2.Code, rec2.Body.String())
+	}
+
+	var totalCharge int64
+	if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(service_charge_amount), 0) FROM sales WHERE sale_type = 'return'`).Scan(&totalCharge); err != nil {
+		t.Fatalf("sum return service charges: %v", err)
+	}
+	if totalCharge != 50 {
+		t.Fatalf("expected the two refunds to land on the exact original 50 service charge (37 gross-fallback + 13 clamped), got %d", totalCharge)
+	}
+}
+
 func TestRefundPage_ShowsRefundableLines(t *testing.T) {
 	mux, dp, _ := newRefundTestDeps(t)
 	_, receiptNo := seedCompletedSaleForRefund(t, dp)
@@ -558,8 +1557,19 @@ func TestPostRefund_EnsureStockLocationFailureShowsLocalizedMessageNotRawError(t
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, _ := newRefundTestDeps(t)
 	_, receiptNo := seedCompletedSaleForRefund(t, dp)
-	if _, err := dp.Db.Exec(`DROP TABLE stock_locations`); err != nil {
-		t.Fatalf("drop stock_locations: %v", err)
+	// ut-docs#1679: DROP TABLE stock_locations used to force EnsureStockLocation
+	// to fail, but stock_locations now has real incoming FKs that block the
+	// DROP under real migrations. Closing the whole *sql.DB isn't targeted
+	// enough here -- the handler looks up the sale by receipt BEFORE calling
+	// EnsureStockLocation, and that earlier lookup fails first, landing on
+	// this handler's "sale not found" branch instead. Renaming just the
+	// column EnsureStockLocation's own query selects on (name) forces the
+	// identical "no such column" failure for that one call without a whole
+	// unrelated table's queries breaking too. (Can't DROP COLUMN name here:
+	// stock_locations.name is UNIQUE and SQLite refuses to drop it; RENAME
+	// COLUMN carries the constraint along and breaks the same query.)
+	if _, err := dp.Db.Exec(`ALTER TABLE stock_locations RENAME COLUMN name TO name_disabled`); err != nil {
+		t.Fatalf("rename stock_locations.name column: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2"))
@@ -587,8 +1597,12 @@ func TestPostRefund_EnsurePaymentMethodFailureShowsLocalizedMessageNotRawError(t
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, _ := newRefundTestDeps(t)
 	_, receiptNo := seedCompletedSaleForRefund(t, dp)
-	if _, err := dp.Db.Exec(`DROP TABLE payment_methods`); err != nil {
-		t.Fatalf("drop payment_methods: %v", err)
+	// ut-docs#1679: same reasoning as EnsureStockLocation above -- the
+	// earlier sale lookup must keep succeeding. EnsurePaymentMethod's own
+	// query selects id/is_active (not name, which is UNIQUE), so dropping
+	// is_active forces the identical failure for that one call.
+	if _, err := dp.Db.Exec(`ALTER TABLE payment_methods DROP COLUMN is_active`); err != nil {
+		t.Fatalf("drop payment_methods.is_active column: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2"))
@@ -624,8 +1638,10 @@ func TestPostRefund_ProviderRefundDeclinedShowsLocalizedMessageNotRawError(t *te
 	mux, dp, _ := newRefundTestDeps(t)
 	_, receiptNo := seedCompletedSaleForRefund(t, dp)
 
-	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated)
-	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'demo', 'wasm', 'demo.wasm', 'https://example.test/demo.wasm', 'deadbeef', 'auth', 'site', '[]', 0)`); err != nil {
+	// min_pos_version/api_version/published_at are NOT NULL on the real
+	// plugin_catalog table (ut-docs#1677).
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'demo', 'wasm', 'demo.wasm', 'https://example.test/demo.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.payment-demo', 'Demo Pay', '1.0.0', 'demo.wasm', 'wasm', 1)`); err != nil {
@@ -732,6 +1748,21 @@ func TestPostRefund_RequiresManagerPINWhenAuthEnabled(t *testing.T) {
 	}
 }
 
+// TestPostRefund_NoQuantitiesSelected asserts the exact BODY, not just the
+// 400 status (ut-docs#1217 review finding B1): the ut-docs#1217 extraction
+// of this handler's inline computation into refundLinesFromForm briefly
+// dropped this early "nothing selected" rejection from the real POST path
+// entirely -- an empty submit then fell all the way through to
+// pos.CompleteSale, which happens to ALSO answer 400, for a different
+// reason ("sale requires at least one line or voucher issue" ->
+// classifyTenderError), after already calling EnsurePaymentMethod (a real
+// DB write for an otherwise-rejected request) and firing the
+// fiscal.sign.start dispatch (opening a TSE-side transaction for a refund
+// that was always going to be refused -- precisely the defect class
+// ut-docs#1519 fixed two comments above this dispatch in the real
+// handler). A status-only assertion could not tell the two worlds apart,
+// which is exactly how the regression passed unnoticed; asserting the
+// literal early-rejection message closes that gap.
 func TestPostRefund_NoQuantitiesSelected(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, _ := newRefundTestDeps(t)
@@ -743,6 +1774,20 @@ func TestPostRefund_NoQuantitiesSelected(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 when no line quantities are given, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != "select at least one item to refund" {
+		t.Fatalf("expected the early rejection body %q (before any DB write or fiscal dispatch), got %q -- a different 400 body here (e.g. the generic tender-failure message) means the request fell through all the way to pos.CompleteSale instead of being rejected up front, which is exactly the ut-docs#1217 review regression: a status-only assertion can't tell these two worlds apart", "select at least one item to refund", got)
+	}
+
+	// No return sale must have been created either -- the early rejection
+	// is a pure validation failure, never a completed (even if pointless)
+	// refund transaction.
+	var returnCount int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales WHERE sale_type = 'return'`).Scan(&returnCount); err != nil {
+		t.Fatalf("count return sales: %v", err)
+	}
+	if returnCount != 0 {
+		t.Fatalf("expected no return sale row created by a rejected empty submit, got %d", returnCount)
 	}
 }
 
@@ -826,6 +1871,43 @@ func TestPostRefund_InvalidQuantity(t *testing.T) {
 	}
 }
 
+// TestPostRefund_NaNAndInfiniteQuantityAreRejected is ut-docs#1711: Go's
+// strconv.ParseFloat happily parses "NaN"/"Inf" and every ordered comparison
+// against NaN is false, so the pre-existing `qty <= 0` / `qty >
+// remaining+1e-9` guards don't reliably reject a NaN or +Inf quantity
+// themselves. Before this fix: -Inf/-Infinity already came back 400 via the
+// plain `qty <= 0` check (NaN comparisons aside, -Inf <= 0 is a normal,
+// well-defined true), and +Inf/Infinity came back 409 (caught by the
+// exceeds-remaining check instead, the wrong error for a malformed
+// quantity) -- and NaN came back 400 too, but only by accident, via
+// pos.CompleteSale rejecting the implementation-defined int64 garbage a
+// NaN-tainted discount computation produces, with a generic "sale could
+// not be completed" body, not this layer's own refundInvalidQuantityError.
+// Asserting the exact body (not just the status code) is what makes this
+// test actually enforce the fix for the NaN/-Inf cases too, not just +Inf.
+func TestPostRefund_NaNAndInfiniteQuantityAreRejected(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+
+	for _, raw := range []string{"NaN", "Infinity", "-Infinity", "Inf", "-Inf"} {
+		t.Run(raw, func(t *testing.T) {
+			mux, dp, _ := newRefundTestDeps(t)
+			_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0="+raw))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400 for qty_0=%s, got %d: %s", raw, rec.Code, rec.Body.String())
+			}
+			const wantBody = "invalid quantity for line 1"
+			if !strings.Contains(rec.Body.String(), wantBody) {
+				t.Fatalf("qty_0=%s: expected refundInvalidQuantityError body containing %q, got: %s", raw, wantBody, rec.Body.String())
+			}
+		})
+	}
+}
+
 // ut-docs#1008 review, blocker F1 — the real-money case, end to end: an
 // INCLUSIVE-priced sale that also issued a voucher, refunded through the
 // real POST /api/refund handler. Before the fix, the voucher's face value
@@ -884,5 +1966,153 @@ func TestPostRefund_InclusiveSaleWithVoucherIssueRefundsInclusiveAmount(t *testi
 	}
 	if refundTotal != 1190 || refundPaid != 1190 {
 		t.Fatalf("refund total/paid = %d/%d, want 1190/1190 (an inflated figure means the sale was misread as tax-exclusive)", refundTotal, refundPaid)
+	}
+}
+
+// --- POST /api/refund/preview (ut-docs#1217) ---
+//
+// The preview endpoint must reuse the EXACT SAME computation the real
+// POST /api/refund uses (refundLinesFromForm + computeRefundTotal), not a
+// reimplementation, so it can never show the cashier a number the actual
+// refund then contradicts. These tests assert the preview's output against
+// the same fixtures/expected figures the real POST tests above already
+// pin, and additionally assert it's reachable pre-authentication (no
+// manager PIN) and never errors out (a broken live preview must not look
+// like a broken page).
+
+// TestRefundPreview_MatchesPostRefundForTheSamePartialQuantity pins the
+// preview to the exact same figure TestPostRefund_PartialRefundProratesServiceCharge
+// asserts for the real refund: 1 of 2 units on a sale with a 20 service
+// charge -> 100 goods + 10 prorated charge = 110. If the preview ever drifts
+// from the real computation this regresses loudly (a wrong number shown to
+// a cashier before they hand back cash), not silently.
+func TestRefundPreview_MatchesPostRefundForTheSamePartialQuantity(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleWithServiceChargeForRefund(t, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund/preview", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview failed: %d %s", rec.Code, rec.Body.String())
+	}
+	want := httpx.FormatMoney(110, "en")
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("preview body %q does not contain the expected total %q (100 goods + 10 prorated charge)", rec.Body.String(), want)
+	}
+}
+
+// TestRefundPreview_ReflectsPriorPartialReturnsInGuardState: after a first
+// real partial refund of 1 of 2 units, previewing a request for the
+// remaining unit must reflect the SAME double-refund-guard-clamped figure
+// the real second POST would charge (110, from
+// TestPostRefund_TwoSequentialPartialRefundsSumToTheFullServiceCharge's own
+// 110+110=220 pinned total) -- not the naive un-clamped half-charge.
+func TestRefundPreview_ReflectsPriorPartialReturnsInGuardState(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleWithServiceChargeForRefund(t, dp)
+
+	firstReq := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+	firstReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	firstRec := httptest.NewRecorder()
+	mux.ServeHTTP(firstRec, firstReq)
+	if firstRec.Code != http.StatusOK {
+		t.Fatalf("first partial refund failed: %d %s", firstRec.Code, firstRec.Body.String())
+	}
+
+	previewReq := httptest.NewRequest(http.MethodPost, "/api/refund/preview", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+	previewReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	previewRec := httptest.NewRecorder()
+	mux.ServeHTTP(previewRec, previewReq)
+	if previewRec.Code != http.StatusOK {
+		t.Fatalf("preview failed: %d %s", previewRec.Code, previewRec.Body.String())
+	}
+	want := httpx.FormatMoney(110, "en")
+	if !strings.Contains(previewRec.Body.String(), want) {
+		t.Fatalf("preview after a prior partial refund = %q, want to contain %q (the exact remainder a real second POST would charge)", previewRec.Body.String(), want)
+	}
+}
+
+// TestRefundPreview_NoQuantitiesSelectedReturnsZeroNotError: unlike the real
+// POST (which rejects an empty selection with 400 -- see
+// TestPostRefund_NoQuantitiesSelected), the preview is a read-only display
+// that must show a zero total for "nothing selected yet", not an error --
+// that's the normal state right after the page loads before/between edits.
+func TestRefundPreview_NoQuantitiesSelectedReturnsZeroNotError(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund/preview", strings.NewReader("receipt="+receiptNo))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 with a zero total for no quantities selected, got %d: %s", rec.Code, rec.Body.String())
+	}
+	want := httpx.FormatMoney(0, "en")
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("expected the zero-total placeholder %q, got %q", want, rec.Body.String())
+	}
+}
+
+// TestRefundPreview_UnknownReceiptDoesNotError: a hand-crafted or stale
+// request for a receipt that doesn't exist must not surface an error page
+// into the live-total swap target -- same "never look broken" reasoning as
+// the no-quantities case above.
+func TestRefundPreview_UnknownReceiptDoesNotError(t *testing.T) {
+	mux, _, _ := newRefundTestDeps(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/refund/preview", strings.NewReader("receipt=NO-SUCH-RECEIPT"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (never an error page for a live-preview swap target), got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestRefundPreview_UnknownReceiptShowsUnknownPlaceholderNotZero (ut-docs#1217
+// review N2): "I don't know" (an unrecognized receipt, a guard-state load
+// failure, a malformed/over-limit in-flight edit) must never render as a
+// confident £0.00 on a screen whose whole purpose is confirming a money
+// figure before committing to it -- that's indistinguishable from the
+// genuine, correct zero of "nothing selected yet"
+// (TestRefundPreview_NoQuantitiesSelectedReturnsZeroNotError). The two
+// must render visibly differently.
+func TestRefundPreview_UnknownReceiptShowsUnknownPlaceholderNotZero(t *testing.T) {
+	mux, _, _ := newRefundTestDeps(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/refund/preview", strings.NewReader("receipt=NO-SUCH-RECEIPT"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if body == httpx.FormatMoney(0, "en") {
+		t.Fatalf("an unknown receipt must not render as a real zero total (indistinguishable from a genuine empty selection), got %q", body)
+	}
+	if body != "—" {
+		t.Fatalf("expected the unknown-figure placeholder \"—\", got %q", body)
+	}
+}
+
+// TestRefundPreview_NoManagerPINRequiredEvenWhenAuthEnabled: the preview is
+// read-only (no persisted mutation, no audit row -- same class as
+// receipt-designer's own preview endpoint), reachable BEFORE the cashier
+// has entered a manager PIN (they're still adjusting quantities), so unlike
+// the real POST (TestPostRefund_RequiresManagerPINWhenAuthEnabled, which
+// requires the PIN once auth is enabled) it must never demand one.
+func TestRefundPreview_NoManagerPINRequiredEvenWhenAuthEnabled(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund/preview", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 with no manager PIN required for a read-only preview, got %d: %s", rec.Code, rec.Body.String())
 	}
 }

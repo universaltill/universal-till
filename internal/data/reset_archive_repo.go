@@ -141,16 +141,22 @@ var resetArchiveTables = []resetArchiveTable{
 	// child-before-parent ordering is not load-bearing: nothing here can
 	// trip a cascade or FK ordering trap regardless of where it sits.
 	// Listed first for that reason.
-	{"worker_allocations", "id, source_type, source_id, cashier_id, amount_minor, allocated_at, note"},
+	// local_date (worker_allocations/payments/sales) and voided_local_date
+	// (sales): column-identical to migration 007 (ut-docs#1342) — added to
+	// every one of these three cols strings so the archive round-trip keeps
+	// carrying them, same as every earlier ALTER's own fix here (055
+	// held_sales_archive.table_id, 056 tracking_token) — see reset_test.go's
+	// round-trip tests for the precedent this follows.
+	{"worker_allocations", "id, source_type, source_id, cashier_id, amount_minor, allocated_at, note, local_date"},
 	{"invoices", "id, series, invoice_no, display_no, kind, sale_id, original_invoice_id, customer_name, customer_address, customer_vat_no, seller_json, net_total, tax_total, gross_total, vat_breakdown_json, issued_at, issued_by"},
-	{"payments", "id, sale_id, method_id, amount, currency, reference, change_given, paid_at, tip_amount, tip_recipient, masked_pan, auth_code, terminal_id, trace_id, voucher_id"},
+	{"payments", "id, sale_id, method_id, amount, currency, reference, change_given, paid_at, tip_amount, tip_recipient, masked_pan, auth_code, terminal_id, trace_id, voucher_id, local_date"},
 	{"sale_links", "id, sale_id, original_sale_id, reason"},
 	{"sale_discounts", "id, sale_id, line_id, type, value, amount, reason"},
 	{"stock_movements", "id, item_id, variant_id, location_id, sale_line_id, type, quantity, cost_price, created_at"},
 	{"sale_line_modifiers", "id, sale_line_id, group_id, option_id, group_name_snapshot, option_name_snapshot, price_delta_minor"},
-	{"sale_lines", "id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, order_type"},
+	{"sale_lines", "id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, order_type, refund_of_line_id"},
 	{"sale_charges", "sale_id, seq, key, label, amount_minor, tax_basis_bp, base"},
-	{"sales", "id, receipt_no, status, sale_type, tender_type, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, rounding, note, created_at, completed_at, voided_at, till_id, service_charge_amount, order_type, order_status, order_status_updated_at, kitchen_print_failed_at, receipt_print_failed_at, table_id, tracking_token, service_charge_tax_basis_bp, voucher_issue_total"},
+	{"sales", "id, receipt_no, status, sale_type, tender_type, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, rounding, note, created_at, completed_at, voided_at, till_id, service_charge_amount, order_type, order_status, order_status_updated_at, kitchen_print_failed_at, receipt_print_failed_at, table_id, tracking_token, service_charge_tax_basis_bp, voucher_issue_total, local_date, voided_local_date"},
 	{"held_sales", "id, label, total_minor, line_count, payload, created_at, table_id"},
 	{"shifts", "id, register_id, cashier_id, opened_at, closed_at, opening_cash, closing_cash, expected_cash, note, new_float, count_protocol"},
 }
@@ -227,6 +233,24 @@ VALUES (?, ?, ?, ?)`, batchID, now, nullIfEmpty(actorID), count); err != nil {
 		if t.live == "invoices" {
 			if _, err := tx.ExecContext(ctx, `DELETE FROM invoices WHERE original_invoice_id IS NOT NULL`); err != nil {
 				return 0, "", fmt.Errorf("reset: clear credit notes: %w", err)
+			}
+		}
+		// held_sales's own table_claims row (ut-docs#1704, independent
+		// review 2026-09-07): since that card, holding an order KEEPS its
+		// table_claims claim alive rather than releasing it (that's what
+		// makes it visible cross-till) — so a held order still parked when
+		// this reset runs would otherwise leave its table stuck reading
+		// occupied afterward, with the held_sales row that explains why
+		// already archived and gone. table_claims itself is correctly
+		// NEVER archived here (sync_admin_repo.go's own adminTables doc
+		// comment: ephemeral, not transactional history) — this only clears
+		// the now-orphaned rows, same table this held_sales row is about to
+		// lose. Must run BEFORE the DELETE below, while the subquery can
+		// still see which tables were held.
+		if t.live == "held_sales" {
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM table_claims WHERE table_id IN (SELECT table_id FROM held_sales WHERE table_id IS NOT NULL)`); err != nil {
+				return 0, "", fmt.Errorf("reset: clear held orders' table claims: %w", err)
 			}
 		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM `+t.live); err != nil {
@@ -377,6 +401,28 @@ func (r *POSRepo) RestoreResetBatch(ctx context.Context, batchID, actorID string
 					return 0, fmt.Errorf("restore batch %q: credit notes: %w", batchID, ErrArchiveReferencesRemoved)
 				}
 				return 0, fmt.Errorf("restore: credit notes: %w", err)
+			}
+		} else if t.live == "sale_lines" {
+			// sale_lines self-FK (refund_of_line_id → sale_lines.id,
+			// ut-docs#1560): same trap and same fix as invoices above --
+			// re-insert original (non-return) lines before return lines so
+			// row-by-row FK enforcement can't trip on the SELECT's
+			// arbitrary row order.
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO sale_lines (`+t.cols+`) SELECT `+t.cols+` FROM sale_lines_archive WHERE reset_batch_id = ? AND refund_of_line_id IS NULL`,
+				batchID); err != nil {
+				if isForeignKeyViolation(err) {
+					return 0, fmt.Errorf("restore batch %q: sale_lines (original): %w", batchID, ErrArchiveReferencesRemoved)
+				}
+				return 0, fmt.Errorf("restore: sale_lines (original): %w", err)
+			}
+			if _, err := tx.ExecContext(ctx,
+				`INSERT INTO sale_lines (`+t.cols+`) SELECT `+t.cols+` FROM sale_lines_archive WHERE reset_batch_id = ? AND refund_of_line_id IS NOT NULL`,
+				batchID); err != nil {
+				if isForeignKeyViolation(err) {
+					return 0, fmt.Errorf("restore batch %q: sale_lines (return): %w", batchID, ErrArchiveReferencesRemoved)
+				}
+				return 0, fmt.Errorf("restore: sale_lines (return): %w", err)
 			}
 		} else {
 			res, err := tx.ExecContext(ctx, fmt.Sprintf(

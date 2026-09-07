@@ -1,0 +1,43 @@
+{{/* ut-docs#1551: a manager should see a pending pairing request from
+     anywhere in the app, not only by navigating to /tills and refreshing
+     (pending_pairings.html's own 30s poll only runs on that page). Mounted
+     directly in base.html (as a placeholder <div hx-get>, same "nav.html/
+     base.html has no per-request data" convention the sync/bugreport/
+     session/fiscal chips already use) so it rides along on every
+     manager-facing page. GET /ui/pairing-notice (pending_pairings.go)
+     renders nothing at all when there is nothing pending or this till is
+     a replica -- empty body is the poll's normal "nothing to show" state,
+     same convention as those chips.
+
+     Dismissible without ever hiding a genuinely NEW or since-resolved
+     request: the dismiss button records the CURRENT fingerprint (the
+     sorted-by-request-time set of pending IDs, data-fingerprint below) in
+     sessionStorage -- same try/catch pattern as bugreport_panel.html's
+     DISMISS_KEY. The next 30s poll swaps this element in unconditionally;
+     the inline script only re-hides it when the freshly-rendered
+     fingerprint still matches what was dismissed. Approving/denying/
+     expiring a request changes the server-side set (ListPending excludes
+     it), and a brand-new request also changes it -- either way the
+     fingerprint no longer matches and the notice reappears, satisfying
+     "must clear itself... never a stale notice" with no extra state kept
+     here. */}}
+<div id="pairing-notice" class="pairing-notice" role="status" data-fingerprint="{{ .Fingerprint }}">
+  <span class="pairing-notice-text">⇅ {{ .Count }} {{ if eq .Count 1 }}{{ T "tills.pairing.notice_device_one" }}{{ else }}{{ T "tills.pairing.notice_device_other" }}{{ end }} {{ T "tills.pairing.notice_waiting" }}</span>
+  <a href="/tills">{{ T "tills.pairing.notice_link" }}</a>
+  <button type="button" class="notice-dismiss" aria-label="{{ T "notice.dismiss" }}" onclick="utPairingNoticeDismiss()">✕</button>
+</div>
+<script>
+(function () {
+  var KEY = 'ut-pairing-notice-dismissed';
+  var el = document.getElementById('pairing-notice');
+  if (!el) return;
+  var fp = el.getAttribute('data-fingerprint');
+  var dismissed;
+  try { dismissed = sessionStorage.getItem(KEY); } catch (e) { dismissed = null; }
+  if (dismissed !== null && dismissed === fp) { el.hidden = true; }
+  window.utPairingNoticeDismiss = function () {
+    try { sessionStorage.setItem(KEY, fp); } catch (e) {}
+    el.hidden = true;
+  };
+})();
+</script>

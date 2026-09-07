@@ -15,6 +15,16 @@ Tüm dükkân verinizin (katalog, satışlar, ayarlar) anlık kopyaları; indiri
 1. Ayarlar → Yedekler: istediğiniz an yedek oluşturun.
 2. İndir, kopyayı İndirilenler klasörünüze kaydeder — bir kopyayı kasa dışında saklayın.
 
+## Bir yedeği geri yükleme
+
+Geri yükleme, tüm mevcut verinin seçilen yedekle değiştirilmesi demektir —
+onaylamak için `RESTORE` yazın, çünkü bu, ayarlar sayfasının kendisinden
+geri alınamaz (değiştirilen veri, ihtiyaç duyarsanız diye kendi yedeği
+olarak saklanır). Geri yükledikten sonra **Şimdi yeniden başlat**'a
+tıklayın; kasa kendini yeniden başlatır — klavyeye ya da fişi çekmeye
+gerek yok. Windows'ta kasa henüz kendini yeniden başlatamaz — bunun
+yerine pencereyi kapatıp Universal Till'i yeniden açın.
+
 ## Kasayı bir Linux makinesinden kaldırma
 
 Kasa `.deb` paketinden kurulduysa, kaldırmak için terminalde `sudo

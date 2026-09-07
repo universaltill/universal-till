@@ -173,6 +173,52 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// middleware first, so cross-till orders silently never work.
 		"/api/sync/orders",
 		"/api/sync/orders/R-0001/status",
+		// ADR-0079 (ut-docs#1571): the primary-side order-status SSE stream a
+		// replica's background bridge holds open. Bearer-authed in the
+		// handler (syncTill), same as /api/sync/orders — and NOT covered by
+		// the {id}/status exemption (rest="stream" has no /status suffix),
+		// so without its own entry the bridge authenticates perfectly and is
+		// still 401'd here: the /api/sync/stock failure class, again.
+		"/api/sync/orders/stream",
+		// ut-docs#1392: the primary-side READ-ONLY cross-till
+		// table-occupancy endpoint a replica's tablesWithStateForDisplay
+		// proxies to. Bearer-authed in the handler (syncTill), same as
+		// /api/sync/orders — missing here at first is the exact
+		// /api/sync/stock failure class again.
+		"/api/sync/tables",
+		// ut-docs#1703: the primary-side table-claim WRITE-THROUGH endpoints
+		// a replica's claimTableWriteThrough / releaseTableClaimWriteThrough
+		// (tables_claim_proxy.go) proxy to. Bearer-authed in the handler
+		// (syncTill), same as /api/sync/tables — without these entries the
+		// replica authenticates perfectly and is still 401'd here, so the
+		// proxy silently falls back to local-only and two tills can claim
+		// one table again: the /api/sync/stock failure class, again.
+		"/api/sync/tables/claim",
+		"/api/sync/tables/release",
+		// ut-docs#1712: the primary-side till-wide release-all a replica
+		// calls once at boot, before re-claiming its held orders. Bearer-
+		// authed in the handler (syncTill), same as the two entries above
+		// — missing here at first is the exact /api/sync/stock failure
+		// class again.
+		"/api/sync/tables/release-all",
+		// ut-docs#1668: the primary-side cross-till voucher lookup a
+		// replica's fetchVoucherFromPrimary (voucher_sync_proxy.go) proxies
+		// to. Bearer-authed in the handler (syncTill), same as
+		// /api/sync/tables — without this entry the replica authenticates
+		// perfectly and is still 401'd here, so the proxy silently falls
+		// back to local-only and a voucher issued at another till goes back
+		// to being unredeemable here: the /api/sync/stock failure class,
+		// again. Read-only (no redeem/debit endpoint — see
+		// sync_vouchers.go's own doc comment).
+		"/api/sync/vouchers/GS-0001",
+		// ADR-0082 (ut-docs#1739): the one-shot plugin-settings encryption
+		// key fetch a replica's KeyStore makes against its primary on first
+		// use. Bearer-authed in the handler (syncTill), same as
+		// /api/sync/plugins — without this entry the replica authenticates
+		// perfectly and is still 401'd here, so every synced Stripe/SumUp
+		// credential reads as "not configured" on the replica forever: the
+		// /api/sync/stock failure class, again.
+		"/api/sync/secrets-key",
 	} {
 		if !exempt(p) {
 			t.Errorf("%s is not exempt — this middleware will 401 it before the "+
@@ -215,6 +261,17 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		"/orders",
 		"/api/sync/orders/R-0001/void",
 		"/api/sync/orders/R-0001/status/extra",
+		// ut-docs#1668 review: same segment-boundary concern for the new
+		// /api/sync/vouchers/{id} exemption — a bare
+		// HasPrefix("/api/sync/vouchers/") would also exempt some future
+		// .../{id}/<action> route (there is no such handler today — this is
+		// a read-only lookup only — but the exemption logic itself must not
+		// accidentally cover one), and the bare list-with-no-id form must
+		// stay gated too.
+		"/vouchers",
+		"/api/sync/vouchers/",
+		"/api/sync/vouchers/GS-0001/redeem",
+		"/api/sync/vouchers/GS-0001/void",
 	} {
 		if exempt(p) {
 			t.Errorf("%s must NOT be exempt — it is an operator surface", p)

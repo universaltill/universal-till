@@ -71,11 +71,14 @@ type EODCloseExport struct {
 	Report  EODReport `json:"report"`
 }
 
-// EODClosesForExport returns every archived day-close ("eod" kind) whose
-// period falls in [from, to], oldest first, as export-payload closes —
-// ArchivedReportsInRange plus the EODClosesFromArchive conversion. Same
-// caller-bounds-the-range division of responsibility as
-// ArchivedReportsInRange itself.
+// EODClosesForExport returns every archived day-close ("eod" kind) that was
+// CLOSED in the local calendar days [from, to], oldest first, as
+// export-payload closes — ArchivedReportsInRange plus the
+// EODClosesFromArchive conversion. Same caller-bounds-the-range division of
+// responsibility as ArchivedReportsInRange itself. Bounded on the row's own
+// created_at, not its period string, since ADR-0066 (a "eod" period is the
+// close instant now, not a "YYYY-MM-DD" date) — see ArchivedReportsInRange's
+// own doc comment.
 func (r *POSRepo) EODClosesForExport(ctx context.Context, from, to string) ([]EODCloseExport, error) {
 	rows, err := r.ArchivedReportsInRange(ctx, from, to)
 	if err != nil {
@@ -202,6 +205,10 @@ ORDER BY i.name, v.name, sl.name`)
 			&row.LocationID, &row.LocationName, &row.CurrentQty, &row.ReorderLevel); err != nil {
 			return nil, fmt.Errorf("scan variant stock for export: %w", err)
 		}
+		// ut-docs#1610 (review): unfiltered stock_locations join, same as
+		// ListStockLevels — a retired location's mangled name must not
+		// travel out in an export plugin's location_name field.
+		row.LocationName = stripRetireMangle(row.LocationID, row.LocationName)
 		row.SKU = sku.String
 		out = append(out, row)
 	}

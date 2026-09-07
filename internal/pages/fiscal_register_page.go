@@ -121,11 +121,27 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 	// "settings" for now, per the Architect's design.
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		if !canPerform(d, r, "settings") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required") // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
 			return auth.User{}, false
 		}
 		u, _ := auth.FromContext(r.Context())
 		return u, true
+	}
+
+	// requirePrimary gates every mutation (create/decommission/address
+	// edit) on this till being the primary (ut-docs#1670). The
+	// fiscal_register: rows this page writes now sync shop-wide via
+	// plugin_storage's scoped adminTables entry (sync_admin_repo.go), and
+	// the address-edit handler mutates stock_locations, itself already a
+	// fully-synced admin table — a write accepted on a satellite would
+	// silently vanish (or be overwritten) on the very next admin pull.
+	// Same pattern as registers_page.go's own requirePrimary gate.
+	requirePrimary := func(w http.ResponseWriter, r *http.Request) bool {
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			http.Redirect(w, r, "/fiscal-register?err=fiscalregister.error.replica_use_primary", http.StatusSeeOther)
+			return false
+		}
+		return true
 	}
 
 	audit := func(r *http.Request, actorID, targetID, action string) {
@@ -217,6 +233,9 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 		if !ok {
 			return
 		}
+		if !requirePrimary(w, r) {
+			return
+		}
 		_ = r.ParseForm()
 		registerID := strings.TrimSpace(r.PostFormValue("register_id"))
 		easType := strings.TrimSpace(r.PostFormValue("eas_type"))
@@ -264,6 +283,9 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 		if !ok {
 			return
 		}
+		if !requirePrimary(w, r) {
+			return
+		}
 		id := r.PathValue("id")
 		// Server-stamped to today -- this is a "mark it now" action, not a
 		// backdated entry (per the Architect's design).
@@ -279,6 +301,9 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/fiscal-register/locations/{id}/address", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := requireManager(w, r)
 		if !ok {
+			return
+		}
+		if !requirePrimary(w, r) {
 			return
 		}
 		id := r.PathValue("id")

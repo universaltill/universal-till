@@ -43,6 +43,30 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 	lookupClient := newLookupClient()
 
+	// requirePrimary gates catalog mutation on this till being the primary
+	// (ut-docs#1667, extended by ut-docs#1689): item_modifier_groups/
+	// item_modifier_options/items/item_variants/item_barcodes/
+	// variant_barcodes are all synced shop-wide (sync_admin_repo.go's
+	// adminTables) via a one-way primary-wins pull, so a write accepted on a
+	// satellite would silently vanish (a new row deleted, an edit reverted)
+	// on the very next admin pull — refuse it up front instead, same pattern
+	// as registers_page.go's requirePrimary. Unlike that page's full-page
+	// redirect, these handlers return an HTMX fragment, so the refusal is a
+	// plain localized error response like this file's own validation
+	// branches (e.g. catalog.error.invalid_request) rather than a redirect.
+	// The message key is a parameter (not hardcoded) because
+	// "manage customization options" only reads correctly for the modifier
+	// group/option routes below — the item/variant/barcode routes ut-docs#1689
+	// added use their own, more general "manage the catalog" key instead of
+	// silently reusing wording that doesn't fit them.
+	requirePrimary := func(w http.ResponseWriter, r *http.Request, key string) bool {
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			common.LocalizedError(w, r, http.StatusConflict, key)
+			return false
+		}
+		return true
+	}
+
 	writeJSON := func(w http.ResponseWriter, status int, data any, errMsg string) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
@@ -157,6 +181,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// Cost price (what the shop pays) — feeds the margin report. Accepts a
 	// decimal in major units; stored as minor units (money boundary rule).
 	mux.HandleFunc("POST /api/catalog/item-cost", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
 		_ = r.ParseForm()
 		itemID := strings.TrimSpace(r.Form.Get("panelItem"))
 		raw := strings.TrimSpace(r.Form.Get("cost"))
@@ -193,6 +220,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// per-item warn/reorder-suggestion thresholds (universaltill/ut-docs#85).
 	// Plain integer, no currency conversion (unlike cost price above).
 	mux.HandleFunc("POST /api/catalog/item-lead-time", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
 		_ = r.ParseForm()
 		itemID := strings.TrimSpace(r.Form.Get("panelItem"))
 		raw := strings.TrimSpace(r.Form.Get("leadTimeDays"))
@@ -273,6 +303,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
 		_ = r.ParseForm()
 		itemInput, err := parseItemInput(r)
 		if err != nil {
@@ -333,6 +366,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
 		_ = r.ParseForm()
 		itemInput, err := parseItemInput(r)
 		if err != nil {
@@ -369,6 +405,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
 		_ = r.ParseForm()
 		itemID := strings.TrimSpace(r.Form.Get("id"))
 		if itemID == "" {
@@ -386,6 +425,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/catalog/variant", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
 		_ = r.ParseForm()
@@ -458,6 +500,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
+			return
+		}
 		_ = r.ParseForm()
 		itemID := strings.TrimSpace(r.Form.Get("itemId"))
 		name := strings.TrimSpace(r.Form.Get("name"))
@@ -499,6 +544,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/catalog/modifier-option", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
 			return
 		}
 		_ = r.ParseForm()
@@ -551,6 +599,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
 		_ = r.ParseForm()
 		variantID := strings.TrimSpace(r.Form.Get("id"))
 		if variantID == "" {
@@ -578,6 +629,13 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 
 	// Item image upload → web/public/assets/items/<id>/thumb.png (the same
 	// convention the product tiles and designer use).
+	//
+	// Deliberately NOT requirePrimary-gated (ut-docs#1689): item_images is
+	// explicitly excluded from sync_admin_repo.go's adminTables ("files
+	// don't travel — D2 limit"), so a photo uploaded on a replica is a
+	// replica-local fact, not a synced row that would silently revert on
+	// the next admin pull — unlike items/item_variants/item_barcodes/
+	// variant_barcodes below, which are.
 	mux.HandleFunc("POST /api/catalog/item/image", func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseMultipartForm(10 << 20); err != nil {
 			common.LocalizedError(w, r, http.StatusBadRequest, "common.error.invalid_upload")
@@ -600,14 +658,19 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		defer file.Close()
 		raw, readErr := io.ReadAll(io.LimitReader(file, 10<<20))
 		if readErr != nil {
-			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
+			common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_invalid")
 			return
 		}
 		img, err := imaging.Decode(raw)
 		if err != nil {
-			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
+			if errors.Is(err, imaging.ErrTooManyPixels) {
+				common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_too_large")
+				return
+			}
+			common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_invalid")
 			return
 		}
+		img = imaging.DownscaleMaxEdge(img, imaging.MaxThumbEdge)
 		dir := paths.Data("public", "assets", "items", itemID)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
@@ -640,6 +703,11 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// Variant image upload → assets/items/<itemID>/variants/<variantID>/thumb.png
 	// (docs: architecture/variant-images.md). Fallback chain: variant → item →
 	// placeholder, resolved by the template's imgv versioned URLs.
+	//
+	// Deliberately NOT requirePrimary-gated, same reasoning as item/image
+	// above: this writes only image files (item_images), never
+	// item_variants itself, so there is no synced row for a replica write
+	// to lose on the next admin pull.
 	mux.HandleFunc("POST /api/catalog/variant/image", func(w http.ResponseWriter, r *http.Request) {
 		if err := r.ParseMultipartForm(10 << 20); err != nil {
 			common.LocalizedError(w, r, http.StatusBadRequest, "common.error.invalid_upload")
@@ -669,14 +737,19 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		defer file.Close()
 		raw, readErr := io.ReadAll(io.LimitReader(file, 10<<20))
 		if readErr != nil {
-			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
+			common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_invalid")
 			return
 		}
 		img, err := imaging.Decode(raw)
 		if err != nil {
-			http.Error(w, "not a valid PNG/JPEG image", http.StatusBadRequest)
+			if errors.Is(err, imaging.ErrTooManyPixels) {
+				common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_too_large")
+				return
+			}
+			common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.image_invalid")
 			return
 		}
+		img = imaging.DownscaleMaxEdge(img, imaging.MaxThumbEdge)
 		dir := paths.Data("public", "assets", "items", itemID, "variants", variantID)
 		if err := os.MkdirAll(dir, 0o755); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
@@ -698,6 +771,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/catalog/barcode", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
 		_ = r.ParseForm()
@@ -765,6 +841,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 
 	// Detach a barcode (mis-scans and reassignments are routine corrections).
 	mux.HandleFunc("POST /api/catalog/barcode/delete", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
 		_ = r.ParseForm()
 		barcode := strings.TrimSpace(r.Form.Get("barcode"))
 		if barcode == "" {
@@ -819,6 +898,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("POST /api/catalog/barcode-backfill", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
 		locale := httpx.ResolveLocale(w, r)
 		funcs := httpx.FuncsFor(locale)
 		settingsRepo := data.NewSettingsRepo(d.Db)
@@ -1001,6 +1083,7 @@ func saveLookupImage(ctx context.Context, c *productlookup.Client, itemID, imgUR
 	if err != nil {
 		return err
 	}
+	img = imaging.DownscaleMaxEdge(img, imaging.MaxThumbEdge)
 	dir := paths.Data("public", "assets", "items", itemID)
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err

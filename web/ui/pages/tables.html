@@ -170,6 +170,21 @@
                 {{ if .Enabled }}{{ T "tables.deactivate" }}{{ else }}{{ T "tables.activate" }}{{ end }}
               </button>
             </form>
+            {{/* Manual "Free table" override (ut-docs#1393): only offered
+                 while the table actually reads occupied — releasing an
+                 already-free table is a harmless no-op server-side, but
+                 showing the button unconditionally would just be clutter
+                 with nothing to do. Confirmed like the other destructive
+                 actions on this page's Alpine-driven siblings
+                 (plugins.html), even though this page's own forms are
+                 plain HTML — a stuck-claim release is exactly the kind of
+                 action a manager should not fire by a stray tap. */}}
+            {{ if .Occupied }}
+            <form method="post" action="/api/tables/{{ .ID }}/release" class="users-inline"
+                  onsubmit="return confirm('{{ T "tables.confirm.release" }}')">
+              <button type="submit" class="btn secondary">{{ T "tables.release" }}</button>
+            </form>
+            {{ end }}
           </td>
         </tr>
         {{ end }}
@@ -201,7 +216,7 @@
   'use strict';
   // Page-local i18n lookup (guard-i18n: no hardcoded prose in inline JS),
   // same pattern as bugreport_panel.html.
-  var TT = { saveFailed: "{{ T "tables.error.save_position" }}" };
+  var TT = { saveFailed: "{{ T "tables.error.save_position" }}", replicaUsePrimary: "{{ T "tables.error.replica_use_primary" }}" };
 
   var section = document.getElementById('floorplan-section');
   var toggle = document.getElementById('tables-edit-toggle');
@@ -273,7 +288,7 @@
       body: new URLSearchParams({ pos_x: node.dataset.x, pos_y: node.dataset.y })
     }).then(function (res) {
       status.hidden = res.ok;
-      if (!res.ok) status.textContent = TT.saveFailed;
+      if (!res.ok) status.textContent = (res.status === 409) ? TT.replicaUsePrimary : TT.saveFailed;
     }).catch(function () {
       status.hidden = false;
       status.textContent = TT.saveFailed;

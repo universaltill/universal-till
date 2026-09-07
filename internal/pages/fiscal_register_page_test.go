@@ -11,22 +11,28 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/settings"
 )
 
+// seedTaxDeCatalogRow inserts the plugin_catalog row seedActiveTaxDePlugin/
+// seedDisabledTaxDePlugin's own plugins row now needs: openPagesTestDB runs
+// the real migrated schema (ut-docs#1657/#1676), where plugins has a
+// composite FOREIGN KEY (id, version) REFERENCES plugin_catalog (id,
+// version) and entrypoint NOT NULL on both tables -- this file's own
+// fixture/schema gap note (below) predates that swap and no longer applies.
+func seedTaxDeCatalogRow(t *testing.T, db *sql.DB) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at) VALUES ('com.universaltill.tax-de', '1.0.0', 'German Tax', 'desc', 'go', 'entry', 'url', 'sha', 'auth', 'site', '[]', '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatalf("seed tax-de plugin_catalog: %v", err)
+	}
+}
+
 // seedActiveTaxDePlugin inserts a minimal com.universaltill.tax-de row
-// into the plain `plugins` table this file's own seedForPages fixture
-// defines (used by menu_page_test.go's tile-gate tests, ut-docs#1084).
-// Deliberately NOT import_page_test.go's installTaxDePlugin: that targets
-// the real migrated schema (plugin_catalog has min_pos_version/
-// api_version/etc., FK'd from plugins) via appdb.Open, which this file's
-// openPagesTestDB + seedForPages fixture does not reproduce -- a
-// pre-existing fixture/schema gap (ut-docs#1084 found it, out of this
-// card's scope to fix generally). The fixture's `plugins` table has no FK
-// to plugin_catalog, so a direct insert is sufficient and accurate for
-// what PluginActive actually checks (`is_active = 1` on this one table).
+// into `plugins` (used by menu_page_test.go's tile-gate tests, ut-docs#1084).
 func seedActiveTaxDePlugin(t *testing.T, db *sql.DB) {
 	t.Helper()
-	if _, err := db.Exec(`INSERT INTO plugins (id, name, version, is_active) VALUES ('com.universaltill.tax-de', 'German Tax', '1.0.0', 1)`); err != nil {
+	seedTaxDeCatalogRow(t, db)
+	if _, err := db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, is_active) VALUES ('com.universaltill.tax-de', 'German Tax', '1.0.0', 'entry', 1)`); err != nil {
 		t.Fatalf("seed active tax-de plugin: %v", err)
 	}
 }
@@ -37,7 +43,8 @@ func seedActiveTaxDePlugin(t *testing.T, db *sql.DB) {
 // tile gate actually checks is_active, not merely row existence.
 func seedDisabledTaxDePlugin(t *testing.T, db *sql.DB) {
 	t.Helper()
-	if _, err := db.Exec(`INSERT INTO plugins (id, name, version, is_active) VALUES ('com.universaltill.tax-de', 'German Tax', '1.0.0', 0)`); err != nil {
+	seedTaxDeCatalogRow(t, db)
+	if _, err := db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, is_active) VALUES ('com.universaltill.tax-de', 'German Tax', '1.0.0', 'entry', 0)`); err != nil {
 		t.Fatalf("seed disabled tax-de plugin: %v", err)
 	}
 }
@@ -52,11 +59,131 @@ func newFiscalRegisterTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
+	// ut-docs#1682: every test in this file acts as manager "m1" via
+	// auth.WithUser; audit_log.actor_id has a real FK to users(id) now that
+	// openPagesTestDB runs real migrations (ut-docs#1676), so "m1" needs a
+	// real seeded row.
+	if _, err := db.Exec(`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('m1','m1','Manager','','manager')`); err != nil {
+		t.Fatalf("seed manager m1: %v", err)
+	}
 
-	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(db)}
+	// Settings backs the replica check (SyncPrimaryURL) -- left unset, this
+	// till is a primary/standalone, matching every pre-existing test in
+	// this file, same convention as registers_page_test.go.
+	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(db), Settings: settings.NewStore(db)}
 	mux := http.NewServeMux()
 	registerFiscalRegisterDE(mux, d)
 	return mux, d
+}
+
+// ut-docs#1670: fiscal_register: rows are §146a Abs. 4 AO shop-wide
+// compliance data that now syncs primary->satellite via plugin_storage's
+// scoped adminTables entry (sync_admin_repo.go). A write accepted on a
+// satellite would either be silently overwritten by the next admin pull, or
+// (before this fix, since plugin_storage wasn't synced at all) diverge
+// forever -- same #1546 shape as registers_page.go's own replica gate. All
+// three mutating routes must refuse on a replica.
+func TestFiscalRegisterPage_MutationsRefusedOnReplica(t *testing.T) {
+	mux, d := newFiscalRegisterTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	regID := createRegisterForFiscalTest(t, d, "Front Till")
+
+	// An entry that existed before this till became a replica (e.g. synced
+	// down from the primary) -- used below to check decommission/address,
+	// since create itself is refused and can't produce one.
+	createForm := url.Values{
+		"register_id":          {regID},
+		"eas_software":         {"AwesomePOS"},
+		"eas_serial":           {"eas-existing"},
+		"tse_serial":           {"tse-existing"},
+		"tse_certification_id": {"cert-existing"},
+		"tse_type":             {"cloud-tse"},
+		"acquired_on":          {"2026-01-01"},
+	}
+	if rec := postForm(mux, "/api/fiscal-register", createForm, &manager); rec.Code != http.StatusSeeOther {
+		t.Fatalf("seed entry: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	var entryID string
+	if err := d.Db.QueryRow(`SELECT json_extract(value, '$.id') FROM plugin_storage WHERE plugin_id = 'com.universaltill.tax-de' AND json_extract(value, '$.eas_serial') = 'eas-existing'`).Scan(&entryID); err != nil {
+		t.Fatalf("lookup seeded entry: %v", err)
+	}
+	var locID string
+	if err := d.Db.QueryRow(`SELECT id FROM stock_locations LIMIT 1`).Scan(&locID); err != nil {
+		t.Fatalf("lookup any location: %v", err)
+	}
+
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("set primary_url: %v", err)
+	}
+
+	// Create.
+	rec := postForm(mux, "/api/fiscal-register", createForm, &manager)
+	if rec.Header().Get("Location") != "/fiscal-register?err=fiscalregister.error.replica_use_primary" {
+		t.Fatalf("create on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var count int
+	if err := d.Db.QueryRow(`SELECT count(*) FROM plugin_storage WHERE plugin_id = 'com.universaltill.tax-de' AND json_extract(value, '$.eas_serial') = 'eas-existing'`).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("a second entry must not be created on a replica, found %d rows", count)
+	}
+
+	// Decommission.
+	rec = postForm(mux, "/api/fiscal-register/"+entryID+"/decommission", url.Values{}, &manager)
+	if rec.Header().Get("Location") != "/fiscal-register?err=fiscalregister.error.replica_use_primary" {
+		t.Fatalf("decommission on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var decommissionedOn *string
+	if err := d.Db.QueryRow(`SELECT json_extract(value, '$.decommissioned_on') FROM plugin_storage WHERE plugin_id = 'com.universaltill.tax-de' AND key = 'fiscal_register:' || ?`, entryID).Scan(&decommissionedOn); err != nil {
+		t.Fatalf("lookup entry after blocked decommission: %v", err)
+	}
+	if decommissionedOn != nil {
+		t.Fatalf("blocked replica decommission still took effect: decommissioned_on = %q", *decommissionedOn)
+	}
+
+	// Address update.
+	rec = postForm(mux, "/api/fiscal-register/locations/"+locID+"/address", url.Values{"street": {"Nope"}, "postcode": {"00000"}, "city": {"Nope"}}, &manager)
+	if rec.Header().Get("Location") != "/fiscal-register?err=fiscalregister.error.replica_use_primary" {
+		t.Fatalf("address update on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var city string
+	if err := d.Db.QueryRow(`SELECT COALESCE(address_city, '') FROM stock_locations WHERE id = ?`, locID).Scan(&city); err != nil {
+		t.Fatalf("lookup location after blocked address update: %v", err)
+	}
+	if city == "Nope" {
+		t.Fatalf("blocked replica address update still took effect")
+	}
+}
+
+// ut-docs#1670 review (N5): requireManager must run BEFORE requirePrimary,
+// same order as registers_page.go — a non-manager on a replica must still
+// get 403, never the primary-only redirect, or the redirect's presence
+// would leak "this till is a replica" to an unauthorized caller. Every
+// other test in this file uses a manager actor, so this is the one case
+// that actually pins the ordering (swapping the two checks wouldn't fail
+// any of them).
+func TestFiscalRegisterPage_NonManagerOnReplicaGetsManagerError(t *testing.T) {
+	mux, d := newFiscalRegisterTestMux(t)
+	cashier := auth.User{ID: "c1", Role: "cashier", DisplayName: "Cash"}
+	regID := createRegisterForFiscalTest(t, d, "Front Till")
+
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("set primary_url: %v", err)
+	}
+
+	rec := postForm(mux, "/api/fiscal-register", url.Values{
+		"register_id":          {regID},
+		"eas_software":         {"AwesomePOS"},
+		"eas_serial":           {"eas-cashier-replica"},
+		"tse_serial":           {"tse-cashier-replica"},
+		"tse_certification_id": {"cert-cashier-replica"},
+		"tse_type":             {"cloud-tse"},
+		"acquired_on":          {"2026-01-01"},
+	}, &cashier)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier create on replica: code=%d, want 403 (manager gate must win, not the replica redirect); loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
 }
 
 func TestFiscalRegisterPage_ReachableUnderAuthOff(t *testing.T) {
@@ -81,6 +208,11 @@ func TestFiscalRegisterPage_ManagerGate(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier GET /fiscal-register = %d, want 403", rec.Code)
+	}
+	// ut-docs#1458: GET /fiscal-register must render the full layout on
+	// 403 too, not a bare rail-less body (same fix class as #1455).
+	if body := rec.Body.String(); !strings.Contains(body, `class="nav"`) {
+		t.Fatalf("cashier's 403 on GET /fiscal-register has no nav rail:\n%s", body)
 	}
 
 	req = auth.WithUser(httptest.NewRequest(http.MethodGet, "/fiscal-register", nil), manager)

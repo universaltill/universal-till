@@ -41,7 +41,7 @@ type TSEOverrideResponse struct {
 // registerFiscalAPI registers the fiscal endpoints (ADR-0048) plus the
 // fiscalisation status chip (ut-docs#685).
 func registerFiscalAPI(mux *http.ServeMux, dp *common.Deps) {
-	mux.HandleFunc("POST /api/fiscal/tse-override", createTSEOverride(dp))
+	mux.HandleFunc("POST /api/fiscal/signing-override", createSigningOverride(dp))
 	mux.HandleFunc("GET /ui/fiscal-chip", fiscalChipHandler(dp))
 }
 
@@ -50,7 +50,7 @@ func registerFiscalAPI(mux *http.ServeMux, dp *common.Deps) {
 // fiscal.status.ask extension point (ADR-0044 registers only
 // fiscal.sign.ask, and nothing in this codebase queries a signer for
 // health), so the primary signal is the till's OWN audit trail:
-// fiscal.tse_configured plus the unsigned_fiscal_signing/
+// fiscal.signing_device_configured plus the unsigned_fiscal_signing/
 // unsigned_fiscal_cannot_sign gap markers declareUnsignedFiscalSale
 // (fiscal_sign_hook.go) already writes on every real tender.
 func fiscalChipHandler(dp *common.Deps) http.HandlerFunc {
@@ -60,7 +60,7 @@ func fiscalChipHandler(dp *common.Deps) http.HandlerFunc {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		configured, _, err := dp.Settings.Get(ctx, fiscal.KeyTSEConfigured)
+		configured, _, err := dp.Settings.Get(ctx, fiscal.KeySigningDeviceConfigured)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -109,17 +109,27 @@ func fiscalChipHandler(dp *common.Deps) http.HandlerFunc {
 			}
 		}
 
+		// ut-docs#1539 (independent review): /fiscal-register is gated on
+		// "settings" (requireManager above, fiscal_register_page.go) — a
+		// cashier following this chip's link would hit a hard 403. Every
+		// other permission-sensitive rail control already handles this by
+		// not rendering the link at all for a session that can't use it
+		// (session_chip.html's `{{ if .isManager }}` admin links,
+		// nav.html's own doc comment on /ui/bugreport-chip's manager
+		// gating) — canManage follows the same "settings" action
+		// settings_page.go's own isManager flag already uses.
 		httpx.RenderPartial("ui/partials/fiscal_chip.html", map[string]any{
-			"class": class,
-			"count": count,
+			"class":     class,
+			"count":     count,
+			"canManage": canPerform(dp, r, "settings"),
 		})(w, r)
 	}
 }
 
-// createTSEOverride handles POST /api/fiscal/tse-override — modeled on
+// createSigningOverride handles POST /api/fiscal/signing-override — modeled on
 // CreateNegativeInventoryOverride (inventory_api.go), adapted to owner
 // (admin/super_admin) only.
-func createTSEOverride(dp *common.Deps) http.HandlerFunc {
+func createSigningOverride(dp *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		repo := data.NewPOSRepo(dp.Db)
@@ -150,7 +160,7 @@ func createTSEOverride(dp *common.Deps) http.HandlerFunc {
 		// API call with a perfectly valid body and an admin PIN is refused
 		// here all the same (ADR-0048 Decision 3; same hard-block error the
 		// tender gate itself raises).
-		configured, _, err := fiscalSettingsReader(dp).Get(ctx, fiscal.KeyTSEConfigured)
+		configured, _, err := fiscalSettingsReader(dp).Get(ctx, fiscal.KeySigningDeviceConfigured)
 		if err != nil {
 			respondFiscalError(w, r, http.StatusInternalServerError, fmt.Sprintf("settings read failed: %v", err))
 			return

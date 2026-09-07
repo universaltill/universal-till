@@ -20,6 +20,11 @@ func newPromotionsTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
+	// audit_log.actor_id has a real FK to users(id); tests inject the
+	// manager session via auth.WithUser without a real login.
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, role) VALUES ('m1', 'm1', 'Manager', 'manager')`); err != nil {
+		t.Fatalf("seed test manager: %v", err)
+	}
 
 	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(db)}
 	mux := http.NewServeMux()
@@ -67,6 +72,11 @@ func TestPromotionsPagePermissions(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier GET /promotions = %d, want 403", rec.Code)
+	}
+	// ut-docs#1458: GET /promotions must render the full layout on 403 too,
+	// not a bare rail-less body (same fix class as tables_page.go/#1455).
+	if body := rec.Body.String(); !strings.Contains(body, `class="nav"`) {
+		t.Fatalf("cashier's 403 on GET /promotions has no nav rail:\n%s", body)
 	}
 
 	if rec := postForm(mux, "/api/promotions", url.Values{"code": {"NEWCODE"}}, &cashier); rec.Code != http.StatusForbidden {

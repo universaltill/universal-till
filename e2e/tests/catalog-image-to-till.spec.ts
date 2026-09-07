@@ -32,9 +32,21 @@ test('uploading a catalog item photo makes it appear on the till', async ({ page
   // fixture is a distinctive 2x2, so assert that exact dimension to
   // actually prove the new bytes made it through, not just that some
   // (possibly stale, possibly the old seed) image happens to load.
+  //
+  // ut-docs#1362: this `complete`/`naturalWidth` pair was once reported to
+  // fail deterministically (3/3) in a sandboxed pipeline runner via the
+  // default 5s per-assertion timeout — re-investigated 2026-09-06: 3
+  // isolated re-runs plus one full 329-spec suite run all passed clean in
+  // an equivalent sandbox, so the original failure wasn't a standing
+  // property of this environment. Given that, a longer timeout is cheap
+  // insurance against real (if rare) image-decode timing variance under
+  // load rather than a confirmed fix — it doesn't relax what's asserted,
+  // only how long a genuinely slow-but-working decode is given to finish;
+  // a real regression (broken path, stale cache-busting) still fails it.
+  const IMG_LOAD_TIMEOUT = 15_000;
   const catalogThumb = page.locator('.catalog-row', { hasText: 'Sparkling Water 500ml' }).locator('img.thumb');
-  await expect(catalogThumb).toHaveJSProperty('complete', true);
-  await expect(catalogThumb).toHaveJSProperty('naturalWidth', 2);
+  await expect(catalogThumb).toHaveJSProperty('complete', true, { timeout: IMG_LOAD_TIMEOUT });
+  await expect(catalogThumb).toHaveJSProperty('naturalWidth', 2, { timeout: IMG_LOAD_TIMEOUT });
 
   // Now scan it at the till and confirm the SAME uploaded image (not the
   // old seeded one) renders on the basket line — not just that the
@@ -46,8 +58,8 @@ test('uploading a catalog item photo makes it appear on the till', async ({ page
 
   const basketThumb = page.locator('#basket .line-thumb');
   await expect(basketThumb).toBeVisible();
-  await expect(basketThumb).toHaveJSProperty('complete', true);
-  await expect(basketThumb).toHaveJSProperty('naturalWidth', 2);
+  await expect(basketThumb).toHaveJSProperty('complete', true, { timeout: IMG_LOAD_TIMEOUT });
+  await expect(basketThumb).toHaveJSProperty('naturalWidth', 2, { timeout: IMG_LOAD_TIMEOUT });
 
   // Clear the basket line so this spec doesn't leave a dangling item for
   // whichever spec runs next (shared server-side basket).

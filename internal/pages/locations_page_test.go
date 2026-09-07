@@ -10,6 +10,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/settings"
 )
 
 func newLocationsTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
@@ -19,7 +20,11 @@ func newLocationsTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
 
-	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(db)}
+	// Settings backs the replica check (SyncPrimaryURL) — left unset, this
+	// till is a primary/standalone, matching every pre-existing test in
+	// this file. ut-docs#1590's replica tests set sync.primary_url on the
+	// same store (same convention as journal_page_test.go).
+	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(db), Settings: settings.NewStore(db)}
 	mux := http.NewServeMux()
 	registerLocations(mux, d)
 	return mux, d
@@ -34,6 +39,11 @@ func TestLocationsPagePermissions(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier GET /locations = %d, want 403", rec.Code)
+	}
+	// ut-docs#1458: GET /locations must render the full layout on 403
+	// too, not a bare rail-less body (same fix class as #1455).
+	if body := rec.Body.String(); !strings.Contains(body, `class="nav"`) {
+		t.Fatalf("cashier's 403 on GET /locations has no nav rail:\n%s", body)
 	}
 
 	if rec := postForm(mux, "/api/locations", url.Values{"name": {"Cellar"}}, &cashier); rec.Code != http.StatusForbidden {
@@ -141,6 +151,47 @@ func TestLocationsPageCreateRenameDeactivate(t *testing.T) {
 	}
 }
 
+// ut-docs#1590: a satellite-created stock location has no inventory/
+// movement/register history yet to FK-block ApplyAdmin's deleteMissing, so
+// a manager creating one directly on a replica would have it silently
+// wiped on the very next admin pull once registers/stock_locations sync
+// (see sync_admin_repo.go's adminTables). All three mutating actions
+// (create/rename/deactivate) must refuse on a replica with a clear,
+// localized error — never a silent accept. Mirrors
+// TestRegistersPage_MutationsRefusedOnReplica.
+func TestLocationsPage_MutationsRefusedOnReplica(t *testing.T) {
+	mux, d := newLocationsTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("set primary_url: %v", err)
+	}
+
+	rec := postForm(mux, "/api/locations", url.Values{"name": {"Satellite Pop-up"}}, &manager)
+	if rec.Header().Get("Location") != "/locations?err=locations.error.replica_use_primary" {
+		t.Fatalf("create on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var count int
+	if err := d.Db.QueryRow(`SELECT count(*) FROM stock_locations WHERE name = 'Satellite Pop-up'`).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("stock location must not be created on a replica, found %d rows", count)
+	}
+
+	// loc_main (seeded in newLocationsTestMux's underlying seedForPages)
+	// pre-dates this till becoming a replica — rename/deactivate on it must
+	// also refuse, same reasoning as the create case above.
+	rec = postForm(mux, "/api/locations/loc_main", url.Values{"name": {"Renamed"}}, &manager)
+	if rec.Header().Get("Location") != "/locations?err=locations.error.replica_use_primary" {
+		t.Fatalf("rename on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	rec = postForm(mux, "/api/locations/loc_main/active", url.Values{"active": {"0"}}, &manager)
+	if rec.Header().Get("Location") != "/locations?err=locations.error.replica_use_primary" {
+		t.Fatalf("deactivate on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+}
+
 // A shop must always have at least one active location to receive/adjust/
 // return stock into — mirrors the last-active-admin guard on users.
 func TestLocationsPage_CannotDeactivateLastActiveLocation(t *testing.T) {
@@ -158,7 +209,11 @@ func TestLocationsPage_CannotDeactivateLastActiveLocation(t *testing.T) {
 	// Simulate a shop that's already down to this one active location
 	// (bypassing the handler — loc_main has seeded inventory so the
 	// in-use guard would otherwise refuse deactivating it first).
-	if _, err := d.Db.Exec(`UPDATE stock_locations SET is_active = 0 WHERE id = 'loc_main'`); err != nil {
+	// ut-docs#1676: 001_init.sql also seeds loc_back/loc_wh (both active)
+	// now that openPagesTestDB runs real migrations, so deactivating only
+	// loc_main used to leave two other active locations standing --
+	// deactivate all three seeded ones to genuinely reach "down to one".
+	if _, err := d.Db.Exec(`UPDATE stock_locations SET is_active = 0 WHERE id IN ('loc_main', 'loc_back', 'loc_wh')`); err != nil {
 		t.Fatalf("seed pre-state: %v", err)
 	}
 

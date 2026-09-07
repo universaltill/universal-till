@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/imaging"
@@ -347,6 +348,152 @@ func TestItemImageUpload_RejectsOversizedImage(t *testing.T) {
 	}
 	if _, err := os.Stat(paths.Data("public", "assets", "items", "itm1", "thumb.png")); err == nil {
 		t.Fatal("a rejected oversized-image upload must not leave a thumbnail file behind")
+	}
+}
+
+// largeAcceptedPNG returns a real, decodable PNG bigger than
+// imaging.MaxThumbEdge but comfortably within imaging.MaxPixels — an
+// "accepted" photo, not a rejected pixel-bomb one, so it exercises the
+// downscale path rather than the pixel-count guard.
+func largeAcceptedPNG(t *testing.T, w, h int) []byte {
+	t.Helper()
+	if int64(w)*int64(h) > imaging.MaxPixels {
+		t.Fatalf("test fixture %dx%d must stay within imaging.MaxPixels (%d) to exercise the downscale path, not the reject path", w, h, imaging.MaxPixels)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode large accepted test png: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// decodedSize reads a PNG file back and returns its pixel dimensions.
+func decodedSize(t *testing.T, path string) (w, h int) {
+	t.Helper()
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatalf("read %s: %v", path, err)
+	}
+	img, err := imaging.Decode(raw)
+	if err != nil {
+		t.Fatalf("decode stored thumbnail %s: %v", path, err)
+	}
+	b := img.Bounds()
+	return b.Dx(), b.Dy()
+}
+
+// TestItemImageUpload_DownscalesLargeAcceptedImage is ut-docs#1416's core
+// gap: an accepted-but-large photo (2800x2100 — well within MaxPixels)
+// used to be written and served at native resolution. It must now be
+// downscaled to imaging.MaxThumbEdge before being written to disk.
+func TestItemImageUpload_DownscalesLargeAcceptedImage(t *testing.T) {
+	mux, db := imageUploadTestDeps(t)
+	testsupport.SeedTaxCode(t, db, "tax_std", "Standard", 2000)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Latte", BasePrice: 250, TaxCodeID: "tax_std", IsActive: true})
+
+	body, ct := multipartUpload(t, map[string]string{"item_id": "itm1"}, "big.png", largeAcceptedPNG(t, 2800, 2100))
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/item/image", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	w, h := decodedSize(t, paths.Data("public", "assets", "items", "itm1", "thumb.png"))
+	if w != imaging.MaxThumbEdge {
+		t.Fatalf("stored thumbnail width = %d, want capped at imaging.MaxThumbEdge (%d)", w, imaging.MaxThumbEdge)
+	}
+	if want := imaging.MaxThumbEdge * 2100 / 2800; h != want {
+		t.Fatalf("stored thumbnail height = %d, want %d (aspect ratio not preserved)", h, want)
+	}
+}
+
+// TestItemImageUpload_OversizedImageGetsDistinctError is ut-docs#1416's
+// second gap: a rejected-outright photo (over imaging.MaxPixels) must get
+// a distinct, clear "too large" message — not the same generic text as a
+// genuinely corrupt/unsupported file.
+func TestItemImageUpload_OversizedImageGetsDistinctError(t *testing.T) {
+	mux, db := imageUploadTestDeps(t)
+	testsupport.SeedTaxCode(t, db, "tax_std", "Standard", 2000)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Latte", BasePrice: 250, TaxCodeID: "tax_std", IsActive: true})
+
+	body, ct := multipartUpload(t, map[string]string{"item_id": "itm1"}, "bomb.png", oversizedPNG(t))
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/item/image", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "too large") {
+		t.Fatalf("expected the distinct too-large message, got: %s", rec.Body.String())
+	}
+}
+
+// TestItemImageUpload_NonImageFileGetsGenericError pins the OTHER branch of
+// the same errors.Is split above: a genuinely corrupt/unsupported file must
+// keep the existing generic message, not the too-large one.
+func TestItemImageUpload_NonImageFileGetsGenericError(t *testing.T) {
+	mux, db := imageUploadTestDeps(t)
+	testsupport.SeedTaxCode(t, db, "tax_std", "Standard", 2000)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Latte", BasePrice: 250, TaxCodeID: "tax_std", IsActive: true})
+
+	body, ct := multipartUpload(t, map[string]string{"item_id": "itm1"}, "notes.txt", []byte("this is not an image"))
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/item/image", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "too large") {
+		t.Fatalf("a corrupt/unsupported file must not get the too-large message, got: %s", rec.Body.String())
+	}
+}
+
+// TestVariantImageUpload_DownscalesLargeAcceptedImage mirrors the item-image
+// case above for the variant-image call site.
+func TestVariantImageUpload_DownscalesLargeAcceptedImage(t *testing.T) {
+	mux, db := imageUploadTestDeps(t)
+	testsupport.SeedTaxCode(t, db, "tax_std", "Standard", 2000)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Latte", BasePrice: 250, TaxCodeID: "tax_std", IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "itm1", SKU: "SKU1-L", Name: "Large", Price: 300, IsActive: true})
+
+	body, ct := multipartUpload(t, map[string]string{"variant_id": "v1", "panelItem": "itm1"}, "big.png", largeAcceptedPNG(t, 2800, 2100))
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/variant/image", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	w, _ := decodedSize(t, paths.Data("public", "assets", "items", "itm1", "variants", "v1", "thumb.png"))
+	if w != imaging.MaxThumbEdge {
+		t.Fatalf("stored variant thumbnail width = %d, want capped at imaging.MaxThumbEdge (%d)", w, imaging.MaxThumbEdge)
+	}
+}
+
+// TestVariantImageUpload_OversizedImageGetsDistinctError mirrors the
+// item-image case above for the variant-image call site.
+func TestVariantImageUpload_OversizedImageGetsDistinctError(t *testing.T) {
+	mux, db := imageUploadTestDeps(t)
+	testsupport.SeedTaxCode(t, db, "tax_std", "Standard", 2000)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Latte", BasePrice: 250, TaxCodeID: "tax_std", IsActive: true})
+	testsupport.SeedVariant(t, db, testsupport.VariantSeed{ID: "v1", ItemID: "itm1", SKU: "SKU1-L", Name: "Large", Price: 300, IsActive: true})
+
+	body, ct := multipartUpload(t, map[string]string{"variant_id": "v1", "panelItem": "itm1"}, "bomb.png", oversizedPNG(t))
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/variant/image", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "too large") {
+		t.Fatalf("expected the distinct too-large message, got: %s", rec.Body.String())
 	}
 }
 

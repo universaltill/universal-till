@@ -25,8 +25,20 @@
 // gomobile bind's cross-language boundary only supports a narrow set of
 // types (strings, ints, bools, []byte, error, and a few others — no generics,
 // no complex struct fields crossing directly) — this package's exported
-// surface is deliberately minimal for that reason: three functions, no
-// exported types.
+// surface is deliberately minimal for that reason: three lifecycle
+// functions plus one setter, SetBluetoothBridge, whose argument is the one
+// exported interface type declared IN this package, BluetoothBridge
+// (ADR-0080). It must be declared here rather than merely referenced from
+// internal/bluetooth: gobind only binds types from the package named on its
+// command line, so a type from an unbound package compiles and builds a
+// green .aar while silently dropping the function that referenced it (see
+// BluetoothBridge's own doc comment for how this was found). The interface
+// is itself built from bind-safe types only (string/int64/error), and the
+// Go-interface-implemented-in-Kotlin "callback" shape is gomobile's
+// standard mechanism for a Go handler that needs to reach native Android
+// state — it is the pattern any future till-needs-native-hardware
+// integration reuses (ADR-0080 §4), each declaring its own bind-local
+// interface the same way.
 //
 // This package mutates PROCESS-WIDE environment variables (os.Setenv) to
 // configure internal/app.Run, the same way the CLI's own pos.env/shell
@@ -53,6 +65,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/app"
+	"github.com/universaltill/universal-till/internal/bluetooth"
 )
 
 // instance is one running server lifecycle. Start/Stop/IsRunning agree on
@@ -276,6 +289,56 @@ func IsRunning() bool {
 	default:
 		return true
 	}
+}
+
+// BluetoothBridge is the gomobile-bind-visible mirror of
+// bluetooth.AndroidBridge, declared HERE rather than referenced from
+// internal/bluetooth (ADR-0080 amendment, review finding on ut-docs#1721:
+// an earlier draft declared only bluetooth.AndroidBridge and referenced it
+// from this package's SetBluetoothBridge signature — that compiled, bound,
+// and built a green .aar, but gobind only generates Java/Kotlin bindings
+// for types declared in the package named on its `gomobile bind` command
+// line (`./mobile`, per android/app/build.gradle.kts's generateAar task);
+// a parameter type from an unbound package is silently dropped — verified
+// empirically: gobind emits "skipped function SetBluetoothBridge with
+// unsupported parameter or return types" and still exits 0, so every gate
+// stayed green while the method Kotlin needed simply didn't exist).
+//
+// Kept structurally identical to bluetooth.AndroidBridge on purpose: Go
+// interface satisfaction is structural, so SetBluetoothBridge below passes
+// its argument straight to bluetooth.SetAndroidBridge with no adapter, and
+// the two types staying in lockstep is enforced by internal/bluetooth's own
+// androidBridgeClient tests (which use bluetooth.AndroidBridge directly) —
+// a mismatch between the two shapes is a compile error at that call site,
+// not a runtime surprise.
+type BluetoothBridge interface {
+	// ListDevices returns the devices currently bonded with this device's
+	// adapter, JSON-encoded as a []Device (see bluetooth.Device).
+	ListDevices() (devicesJSON string, err error)
+	// Scan runs one bounded discovery of at most timeoutMillis and returns
+	// the not-yet-bonded devices seen, JSON-encoded as a []Device.
+	Scan(timeoutMillis int64) (devicesJSON string, err error)
+	// Pair bonds (and connects) the device with this address.
+	Pair(address string) error
+	// Forget removes the bond for the device with this address.
+	Forget(address string) error
+}
+
+// SetBluetoothBridge registers Android's own Bluetooth stack with
+// internal/bluetooth (ADR-0080, ut-docs#1721). Kotlin calls it exactly once,
+// from TillService.kt, right after Mobile.start() succeeds, passing an
+// object implementing the gomobile-generated Java/Kotlin binding of
+// BluetoothBridge above (BluetoothAdapter/BluetoothLeScanner behind it).
+// From then on the Bluetooth devices page's bluetooth.NewDBusClient hands
+// out a Client that forwards to that bridge on Android, instead of the
+// ErrUnsupportedPlatform it returns while no bridge is registered
+// (ut-docs#1643). Passing nil un-registers, restoring that default.
+//
+// The Kotlin implementation, its BLUETOOTH_SCAN/BLUETOOTH_CONNECT
+// permission flow and on-device verification are the separate follow-up
+// ut-docs#1731 — nothing calls this with a real implementation yet.
+func SetBluetoothBridge(b BluetoothBridge) {
+	bluetooth.SetAndroidBridge(b)
 }
 
 // freePort asks the OS for an unused port, probed on ALL interfaces

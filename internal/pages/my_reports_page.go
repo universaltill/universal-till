@@ -33,6 +33,36 @@ func issueReportStatusKey(status string) string {
 	return "issuereport.status." + status
 }
 
+// knownGithubIssueStates is the set of FILED-TICKET states this till has
+// translations for (ut-docs#1652), mirroring ut-cloud's githubissues.State*
+// constants. Guarded for the same reason issueReportStatusKey is: the value
+// arrives from the cloud, and a newer cloud can name a state this build has
+// no string for.
+var knownGithubIssueStates = map[string]bool{
+	"open": true, "closed_completed": true, "closed_not_planned": true,
+}
+
+// issueReportDisplayStatusKey picks which status a row actually shows.
+//
+// `status` is the report's DELIVERY lifecycle and stops at "filed" — so from
+// the moment a manager's report becomes a GitHub ticket, which is exactly
+// when they start caring what happened to it, that column stopped moving
+// forever (ut-docs#1648, reported by the product owner on a real tablet).
+// When the cloud has told us the ticket's own state, that is the more useful
+// answer and wins.
+//
+// An unknown or empty ticket state falls back to the delivery status rather
+// than rendering something wrong or blank. Empty is the ordinary case in
+// three distinct situations, none of them a fault: the report was never
+// filed, the cloud predates ut-docs#1651 and sends no such field, or the
+// cloud's refresher hasn't reached this ticket yet.
+func issueReportDisplayStatusKey(status, ticketState string) string {
+	if knownGithubIssueStates[ticketState] {
+		return "issuereport.ticket." + ticketState
+	}
+	return issueReportStatusKey(status)
+}
+
 // myReportRow is one rendered row of /my-reports.
 type myReportRow struct {
 	ID             string
@@ -40,29 +70,35 @@ type myReportRow struct {
 	CapturedAt     string
 	capturedAtTime time.Time // sort key only; unexported so templates never see it
 	StatusKey      string
-	GithubIssueURL string
 	HadAudio       bool
 	HadVideo       bool
 	ImageCount     int
 	// Failing and FailReasonKey are set only for a still-pending bundle
 	// (ut-docs#637) that has crossed issuereport.UploadFailingThreshold, or
 	// failed for a reason that can't self-resolve by waiting (an
-	// unregistered till). GithubIssueURL is always empty for these rows —
-	// a bundle that never reached the cloud has no cloud-side status to
-	// carry one.
+	// unregistered till).
 	Failing       bool
 	FailReasonKey string
 }
 
 // registerMyReportsPage serves the manager-gated "My reports" list
 // (ut-docs#348): every bug report this till has captured — uploaded (from
-// the local issue_reports_sent table, with the last-known cloud status and
-// GitHub link) or still pending/failing (ut-docs#637, from the local
-// issuereport.Pending() bundle directory). Reads ONLY local state — never
-// the network — so it works fully offline (statuses are refreshed in the
-// background by cloudsync's tick; offline just means the last-known values
-// keep showing). Manager-gated like the capture panel that links here: rows
-// carry managers' free-text notes.
+// the local issue_reports_sent table, with the last-known cloud status) or
+// still pending/failing (ut-docs#637, from the local issuereport.Pending()
+// bundle directory). Reads ONLY local state — never the network — so it
+// works fully offline (statuses are refreshed in the background by
+// cloudsync's tick; offline just means the last-known values keep showing).
+// Manager-gated like the capture panel that links here: rows carry
+// managers' free-text notes.
+//
+// ut-docs#1690: the view model deliberately does NOT carry the record's
+// GithubIssueURL through to the template. universaltill/bug-reports (where
+// filed tickets live) is private by design, so any operator who follows
+// that link — signed out of GitHub, or signed in as themselves — gets a
+// bare 404 and, worse, learns which org/repo we file their reports into.
+// The status chip (StatusKey, via issueReportDisplayStatusKey) is the
+// operator's real answer; the raw ticket URL stays in internal/data and
+// cloudsync only, for a possible future sanitized status page (ut-docs#1418).
 func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /my-reports", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "reports") {
@@ -99,8 +135,7 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 				Note:           rec.Note,
 				CapturedAt:     rec.CapturedAt.UTC().Format("2006-01-02 15:04"),
 				capturedAtTime: rec.CapturedAt,
-				StatusKey:      issueReportStatusKey(rec.Status),
-				GithubIssueURL: rec.GithubIssueURL,
+				StatusKey:      issueReportDisplayStatusKey(rec.Status, rec.GithubIssueState),
 				HadAudio:       rec.HadAudio,
 				HadVideo:       rec.HadVideo,
 				ImageCount:     rec.ImageCount,

@@ -25,8 +25,11 @@ func NewSyncAdminRepo(db *sql.DB) *SyncAdminRepo { return &SyncAdminRepo{db: db}
 type adminTable struct {
 	name        string
 	pk          []string
-	hasIsActive bool     // fallback when a hard delete is FK-blocked (sales history)
-	unique      []string // non-PK UNIQUE columns, mangled on that fallback: a
+	hasIsActive bool   // fallback when a hard delete is FK-blocked (sales history)
+	activeCol   string // overrides the retire-in-place column name when the
+	// table's own soft-delete flag isn't literally named "is_active" (e.g.
+	// tables.enabled). Only meaningful together with hasIsActive.
+	unique []string // non-PK UNIQUE columns, mangled on that fallback: a
 	// kept-but-retired row must release values like sku/username, or the
 	// primary's row upserts into a UNIQUE violation and the whole apply
 	// rolls back — on every pull, forever.
@@ -47,7 +50,28 @@ type adminTable struct {
 
 // adminTables is the shop-wide state a replica mirrors. Deliberately NOT
 // here: inventory/stock (additive movements, D3), sales, sessions,
-// stock_locations (per-till), item_images (files don't travel — D2 limit),
+// item_images (files don't travel — D2 limit).
+//
+// registers and stock_locations were excluded here from ut-docs#1584 until
+// ut-docs#1590: both `name` fields read as shop-wide, but until #1590 the
+// admin pages that create them (`/registers`, `/locations`) had no
+// primary-only check, so a manager could create either directly on a
+// satellite — and a freshly-created row has no shift/sale/inventory
+// history yet to FK-block ApplyAdmin's deleteMissing from erasing it
+// outright on the very next admin pull. #1590 closed that gap
+// (POSRepo.CreateRegister/CreateStockLocation and their rename/activate
+// siblings now refuse on a replica via requirePrimary in
+// registers_page.go/locations_page.go, same pattern as
+// plugins_store_page.go's replica_use_primary gate), so both are now safe
+// to sync — see TestAdminApplyLeavesRegistersAndStockLocationsUntouched's
+// replacement, TestAdminDumpApplyRoundTrip_RegistersAndStockLocations, for
+// the regression guard covering the new behaviour. Registers' shop-wide
+// need was already met at enrollment time regardless:
+// CreateRegisterForEnrolment runs on the PRIMARY (POST /api/sync/enroll),
+// so a joining till's own register already exists shop-wide before the
+// till's first sale, via the initial full-DB-snapshot join rather than
+// ongoing sync.
+//
 // plugin install tables — rows without the Ed25519-verified plugin FILES
 // would leave a replica with phantom plugins, so the installed set travels
 // as its own registry bundle instead (GET /api/sync/plugins, ut-docs#460 /
@@ -58,7 +82,11 @@ type adminTable struct {
 // stay per-till. See applyPluginSettings for its special apply semantics.
 var adminTables = []adminTable{
 	{name: "tax_codes", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}},
-	{name: "brands", pk: []string{"id"}, unique: []string{"name"}},
+	// ut-docs#1610: brands gained is_active in migration 004 so an FK-blocked
+	// prune retires the row (is_active = 0) like every other table here whose
+	// UNIQUE column doubles as its display name, instead of only mangling
+	// name and leaving nothing that marks the row as retired.
+	{name: "brands", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}},
 	{name: "categories", pk: []string{"id"}},
 	{name: "customers", pk: []string{"id"}, unique: []string{"loyalty_no"}},
 	// plugin_id is till-local derived state (which plugin installed on THIS
@@ -66,15 +94,98 @@ var adminTables = []adminTable{
 	// from a not-yet-upgraded primary (ADR-0031).
 	{name: "payment_methods", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}, skipCols: []string{"plugin_id"}},
 	{name: "users", pk: []string{"id"}, hasIsActive: true, unique: []string{"username"}},
+	// ut-docs#1590: registers and stock_locations became safe to sync once
+	// /registers and /locations gated create/rename/activate to
+	// primary-only (see this var's own top comment for the full trace).
+	// stock_locations MUST precede registers here: registers.location_id
+	// FKs onto stock_locations(id), upserts run forward through this list
+	// (ApplyAdmin phase 2), and deletes run in reverse (phase 1) — so this
+	// order is also what lets a retired/deleted register clear before its
+	// stock location does.
+	{name: "stock_locations", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}},
+	{name: "registers", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}},
+	// ut-docs#1554: role_permissions is runtime-mutable (AuthRepo.
+	// SetRolePermission, from the permission matrix editor) and was missing
+	// from this list entirely — a manager revoking e.g. `refund` from
+	// cashiers on the primary left every satellite still granting it, with
+	// nothing to catch the drift. This is the security-relevant half of
+	// #1554; roles and permission_actions are included alongside it even
+	// though today they're migration-seeded only (no runtime INSERT
+	// anywhere) and so happen to already match across tills — but that
+	// match holds only "because every till seeds them identically," the
+	// exact fragility #1554 calls out (a future custom-roles feature, or
+	// two tills mid-rollout on different migration versions, would break
+	// it silently). roles/permission_actions have no FK dependencies of
+	// their own; role_permissions FKs onto both, so it must apply after —
+	// ordered accordingly here.
+	{name: "roles", pk: []string{"role"}},
+	{name: "permission_actions", pk: []string{"action"}},
+	{name: "role_permissions", pk: []string{"role", "action"}},
 	{name: "items", pk: []string{"id"}, hasIsActive: true, unique: []string{"sku"}},
 	{name: "item_barcodes", pk: []string{"barcode"}},
 	{name: "item_variants", pk: []string{"id"}, hasIsActive: true, unique: []string{"sku"}},
 	{name: "variant_barcodes", pk: []string{"barcode"}},
 	{name: "related_items", pk: []string{"item_id", "related_item_id"}},
+	// ut-docs#1667: same shape as #1546 (tables/kitchen_stations) — catalog
+	// structure that reads shop-wide but was missing from this list
+	// entirely, found while classifying every table for #1586's schema-drift
+	// guard. item_modifier_groups FKs onto items(id), so it must apply after
+	// items; item_modifier_options FKs onto item_modifier_groups(id), so it
+	// must apply after that. Both have a real is_active column (the app's
+	// own CreateGroup/UpdateGroup and CreateOption/UpdateOption never hard-
+	// delete), so hasIsActive mirrors items/item_variants above. Mutation is
+	// now gated primary-only in catalog/handlers.go's requirePrimary (same
+	// #1590 pattern as registers/locations), which is what makes this safe
+	// to sync: without that gate, a satellite-created modifier would just
+	// vanish on the next admin pull instead of failing loudly up front.
+	// ModifierRepo.DeleteGroup/DeleteOption DO hard-delete, but neither is
+	// wired to any handler today (grepped) — whoever wires one up must gate
+	// it too, the same as CreateGroup/UpdateGroup/CreateOption/UpdateOption.
+	{name: "item_modifier_groups", pk: []string{"id"}, hasIsActive: true},
+	{name: "item_modifier_options", pk: []string{"id"}, hasIsActive: true},
 	{name: "promotions", pk: []string{"code"}, hasIsActive: true},
 	{name: "shortcut_buttons", pk: []string{"barcode"}},
+	// ut-docs#1546: the floor plan and kitchen routing are shop-wide setup,
+	// not per-till state, and were missing from this list entirely. Reported
+	// from the pilot pair on 2026-09-04 — "I added a table in the main till
+	// but it didn't sync with the secondary" — and it is worse than one
+	// table: a satellite could not see the floor plan at all, so it could
+	// neither take nor settle a table order, and kitchen tickets routed on
+	// the primary went nowhere from the satellite. Ordered after items and
+	// categories because the two route tables carry FKs onto both.
+	// A hard delete is FK-blocked once a table has ever been referenced by a
+	// sale/held-sale — the app itself never hard-deletes a table (it always
+	// soft-disables via SetTableEnabled, tables.enabled), but the sync
+	// fallback needs to mirror that convention too, or a hard-deleted-but-
+	// used row would silently stay a permanent ghost on the satellite (found
+	// in review, ut-docs#1546): retire in place via the table's own
+	// `enabled` column, same shape as the is_active fallback above.
+	{name: "tables", pk: []string{"id"}, hasIsActive: true, activeCol: "enabled"},
+	// printer_address is till-LOCAL and must not travel (ut-docs#1546 review,
+	// caught independently by a second concurrent cycle sweeping this same
+	// PR). The field accepts a network address OR a device path (see
+	// help/*/kitchen-stations.md), and a device path is local by
+	// construction: a satellite inheriting the primary's "/dev/usb/lp0" would
+	// print the primary's kitchen tickets to whatever happens to be plugged
+	// into its own first USB port, or nowhere. With the column skipped, a
+	// routed line falls back to the satellite's own default kitchen printer
+	// (kitchen_print.go). Same shape as payment_methods' skipCols above.
+	{name: "kitchen_stations", pk: []string{"id"}, skipCols: []string{"printer_address"}},
+	{name: "item_station_routes", pk: []string{"item_id", "station_id"}},
+	{name: "category_station_routes", pk: []string{"category_id", "station_id"}},
 	{name: "translation_overrides", pk: []string{"locale", "key"}},
 	{name: "settings", pk: []string{"key"}},
+	// ut-docs#1669: admin-manageable per-jurisdiction defaults, plain PK-only
+	// like settings above — no is_active/soft-delete column, and none is
+	// needed: CountrySettingsRepo.Delete() already restores a BUILTIN
+	// country to its shipped defaults instead of removing the row (so a
+	// builtin row is never actually absent from a primary's dump), and a
+	// genuinely operator-created country being hard-deleted shop-wide on
+	// prune is the correct behavior, not a gap to guard against. The
+	// ADR-0040 archive_min_days floor is re-enforced separately in
+	// ApplyAdmin below, since this generic upsert path bypasses
+	// CountrySettingsRepo.Upsert()'s own validation.
+	{name: "country_settings", pk: []string{"code"}},
 	// pk is the surrogate uuid, not (plugin_id,key,scope,scope_id): that
 	// table-level UNIQUE constraint includes scope_id, which is NULL on
 	// global rows, and SQLite treats NULLs as distinct -- ON CONFLICT on
@@ -84,6 +195,24 @@ var adminTables = []adminTable{
 	// still doesn't upsert against it, relying on its own per-plugin
 	// delete-then-insert instead (see applyPluginSettings' own comment).
 	{name: "plugin_settings", pk: []string{"id"}},
+	// ut-docs#1670: plugin_storage is generic plugin-private KV storage in
+	// general (per-plugin local state), but FiscalRegisterDEPluginID's
+	// fiscal_register:-prefixed rows back the shop-wide German TSE
+	// till-register (ADR-0072/ut-docs#1106, FiscalRegisterDEStore) -- the
+	// exact #1546 shape (shop-wide state missing from sync). Only that
+	// plugin's fiscal_register:-prefixed rows travel: the dump filter below
+	// (DumpAdmin) scopes on BOTH plugin_id and key prefix, and
+	// applyFiscalRegisterStorage's scoped delete-then-insert (mirroring
+	// applyPluginSettings just above) never touches any other row --
+	// scoping by plugin_id too (not prefix alone) matches every other
+	// plugin_storage accessor in this codebase, all of which key on
+	// plugin_id (see FiscalRegisterDEPluginID's own doc comment in
+	// fiscal_repo.go) -- without it, an unrelated plugin choosing a key
+	// that happens to start with the same literal prefix would have its
+	// own private state deleted and broadcast by this entry (found in
+	// review, empirically confirmed with a throwaway third-party-plugin
+	// row: it was pruned on apply and appeared in the primary's dump).
+	{name: "plugin_storage", pk: []string{"plugin_id", "key"}},
 	// The shop's till roster (ut-docs#405) — so a replica's sync chip / the
 	// /tills page has something real to show instead of an always-empty
 	// local table (this table used to be primary-only: only InsertTill,
@@ -109,6 +238,135 @@ var adminTables = []adminTable{
 	//     ?have= unchanged-poll check for the ENTIRE bundle, not just this
 	//     table — pinned by TestAdminDumpFingerprint_StableAcrossTillAuthTouch.
 	{name: "tills", pk: []string{"id"}, redactCols: []string{"bearer_hash", "last_seen_at"}},
+}
+
+// nonAdminTables is every OTHER table in the schema, one reason each for why
+// it deliberately does NOT travel in the admin bundle. TestSchemaTablesAreClassified
+// (schema_drift_test.go) fails CI the moment a new migration adds a table
+// that ends up in neither this map nor adminTables above — the guard
+// ut-docs#1586 asked for after ut-docs#1546 showed a shop-wide table
+// (tables/kitchen_stations) can sit unsynced for a long time with nothing to
+// catch it.
+//
+// A wrong "safe to exclude" verdict here reproduces that exact bug, just
+// laundered through a passing CI check — so a table whose classification is
+// genuinely uncertain is flagged with an open question and its own follow-up
+// card below, NOT guessed into either list. Deciding those is explicitly
+// this card's non-goal (ut-docs#1586): a guard classifying "should probably
+// sync but doesn't yet" as settled would be exactly the rushed re-scoping
+// ut-docs#1554 split out to avoid.
+//
+// Grouped by why, not alphabetically — the reason is what matters to a
+// reviewer of a future migration, and several tables share one.
+var nonAdminTables = map[string]string{
+	// Already named in this var's own top comment above.
+	"sessions":    "till-local login sessions — meaningless off the issuing till",
+	"item_images": "item photos — files don't travel over this bundle (D2 limit)",
+
+	// Migration runner's own bookkeeping (created by internal/db's migrator,
+	// not a numbered migration file itself) — which migrations have applied
+	// to THIS till's database. Syncing it would be circular in the same way
+	// as sync_journal_quarantine/schema_lineage below.
+	"schema_migrations": "this till's own applied-migrations record — migration-runner-internal, not app data",
+
+	// Inventory/stock: D3's own additive-movement sync (ADR-0011), a
+	// separate mechanism from this bundle — already named above.
+	"inventory":               "current stock levels — D3's own additive-movement sync, not this bundle",
+	"stock_movements":         "additive stock ledger — D3's own sync stream",
+	"stock_movements_archive": "archived stock_movements rows — same D3 stream",
+
+	// Sales and everything hung off a sale_id/receipt: already named above
+	// ("sales"). A primary-wins bundle that prunes anything missing from the
+	// sender's dump (deleteMissing) is the wrong shape for an append-only
+	// ledger — a history row present locally but absent from the sender
+	// would be pruned as if deleted, erasing real transaction history
+	// instead of converging state. Each till keeps its own sales history;
+	// cross-till reporting is export_repo.go's job, not LAN admin sync's.
+	"sales":                       "per-till sale header — append-only ledger, wrong shape for this bundle",
+	"sales_archive":               "archived sales rows — same reasoning",
+	"held_sales":                  "a parked/suspended sale basket on this till — a primary-wins bundle with deleteMissing pruning would erase a satellite's own genuinely-parked orders on every pull, worse than not syncing; but this now means table occupancy doesn't cross tills even though the floor plan (tables) does — flagged in ut-docs#1672",
+	"held_sales_archive":          "archived held_sales rows — same reasoning",
+	"sale_lines":                  "sale line items, child of sales — same reasoning",
+	"sale_lines_archive":          "archived sale_lines — same reasoning",
+	"sale_line_modifiers":         "modifier selections on a sold line, child of sale_lines — same reasoning",
+	"sale_line_modifiers_archive": "archived sale_line_modifiers — same reasoning",
+	"sale_charges":                "per-sale service charges, child of sales — same reasoning",
+	"sale_charges_archive":        "archived sale_charges — same reasoning",
+	"sale_discounts":              "per-sale/line discounts, child of sales — same reasoning",
+	"sale_discounts_archive":      "archived sale_discounts — same reasoning",
+	"sale_links":                  "sale-to-original-sale links (refunds/reprints), child of sales — same reasoning",
+	"sale_links_archive":          "archived sale_links — same reasoning",
+	"payments":                    "tender records, FK'd to sales — same append-only-ledger reasoning",
+	"payments_archive":            "archived payments — same reasoning",
+	"invoices":                    "fiscal invoices/credit notes, FK'd to sales — same reasoning",
+	"invoices_archive":            "archived invoices — same reasoning",
+	"fiscal_sign_starts":          "in-flight German TSE signing state, keyed 1:1 on sale_id — per-sale, per-till",
+	"fiscal_tse_signatures":       "completed TSE signatures, keyed 1:1 on sale_id — per-sale, per-till",
+	"fiscal_device_receipts":      "what Turkey's ÖKC device printed for a sale, keyed 1:1 on sale_id — per-sale, per-till, same shape as fiscal_tse_signatures above",
+	"shifts":                      "cashier shift open/close, register-scoped — per-till operational history, same reasoning as sales",
+	"shifts_archive":              "archived shifts — same reasoning",
+	"worker_allocations":          "tip/service-charge pool allocations tied to a cashier + reset_batches — per-till operational history, same family as shifts/payments",
+	"worker_allocations_archive":  "archived worker_allocations — same reasoning",
+	"report_archive":              "this till's own X/Z report archive — per-till operational history, same reasoning as sales_archive",
+	"voucher_transactions":        "per-sale voucher issue/redemption ledger — same append-only reasoning as payments; stays per-till exactly like vouchers below (ut-docs#1668) — this till's own local ledger row, never dumped/applied",
+
+	// Plugin install machinery — already named above. The installed SET
+	// travels as its own separately-fingerprinted bundle (SyncPluginsRepo,
+	// GET /api/sync/plugins) and each replica re-verifies every listing
+	// itself; these underlying rows never travel because a row without the
+	// Ed25519-verified plugin FILES would leave a replica with a phantom
+	// plugin.
+	"plugins":               "installed-plugin rows — travel via SyncPluginsRepo's own bundle, not this one",
+	"plugin_catalog":        "cached marketplace listing metadata — re-fetched from the marketplace, never synced till-to-till",
+	"plugin_entries":        "plugin-contributed menu/hook entries — recreated on re-install, not synced",
+	"plugin_hooks":          "plugin-contributed hooks — recreated on re-install, not synced",
+	"plugin_install_status": "install-progress bookkeeping — SyncPluginsRepo's own source table",
+	"plugin_permissions":    "granted permissions for one installed plugin instance — recreated on re-install",
+
+	// Sync's own internal bookkeeping — syncing the sync mechanism's state
+	// to itself would be circular.
+	"sync_journal_quarantine": "this till's own quarantined-sale bookkeeping — sync-internal",
+	"schema_lineage":          "this till's own migration/reset marker — sync-internal schema bookkeeping",
+	"pending_pairings":        "in-flight LAN pairing requests — ephemeral, till-local",
+
+	// Live/ephemeral operational state: a periodic, primary-wins bundle is
+	// the wrong mechanism for a lock or an event stream — applying a stale
+	// snapshot of either would actively misbehave (a claim from a till
+	// that's since gone offline would look permanently locked; a replayed
+	// status event would re-fire a KDS notification).
+	"table_claims":        "live table-service lock — ephemeral, re-established on demand, never meant to survive a periodic snapshot",
+	"order_status_events": "live KDS status-change event stream — operational, not admin config",
+	"reset_batches":       "this till's own EOD/Z-report reset marker — sync-adjacent bookkeeping, same family as report_archive",
+
+	// Local bookkeeping with no shop-wide meaning.
+	"issue_reports_sent": "dedup record of bug reports already sent FROM this till",
+	"audit_log":          "this till's own local action log (including per-till-scoped settings changes — see PerTillSettingPrefixes); a shop-wide combined audit view is a separate concern, not LAN admin sync's job",
+
+	// Genuinely open classification questions — excluded (not synced) rather
+	// than guessed into adminTables, each split into its own follow-up card
+	// per this var's own top comment.
+	"price_history": "NOT a pure append-only audit trail (AppendPriceHistoryItem/Variant UPDATE the prior row's ends_at, and item deletion DELETEs rows) and NOT inert to checkout — ResolveCurrentPrice consults an open price_history row BEFORE items' synced price, so it can override it. Currently latent (nothing in production writes this table yet), but a satellite that ever does would diverge on price silently. Needs an Architect pass before either classification is safe; flagged in ut-docs#1671",
+
+	// Resolved classification (ut-docs#1668): correctly excluded, same
+	// concurrency reasoning ut-docs#1554 gave role_permissions — a periodic
+	// primary-wins dump/apply on a balance that can change between polls
+	// risks clobbering a redemption made on a satellite since the last
+	// pull, or reverting a spent voucher back to its old balance. Resolved
+	// by NOT syncing this table at all: a replica validates a redemption
+	// against the primary's CURRENT balance (registerSyncVouchers's
+	// read-only GET, sync_vouchers.go) right before completing the sale,
+	// but the actual debit still happens exactly once, LOCALLY, reaching
+	// the primary the ordinary way — the sales journal, completely
+	// unchanged. A round-2 review (2026-09-07) found this card's own first
+	// draft ALSO debited the primary synchronously in a write-through,
+	// double-applying every online redemption once the journal replayed
+	// the same debit again; the read-only design here doesn't have that
+	// failure mode, but consequently doesn't fully close the double-spend
+	// window either — a fully-simultaneous two-till redemption race
+	// remains, same residual risk this codebase already accepts for the
+	// single-till-offline case (AllowVoucherOverdraft, ut-docs#1053). A
+	// true atomic write-through is real follow-up work, not this card.
+	"vouchers": "shop-wide voucher balance, runtime-mutable across tills — kept per-till; cross-till redemption validates against a live primary read (ut-docs#1668), not a synced table",
 }
 
 // FiscalPendingSignRetriesSettingsKey is the settings.key the pre-1.4.0
@@ -192,6 +450,20 @@ func (r *SyncAdminRepo) DumpAdmin(ctx context.Context) (AdminBundle, error) {
 			}
 			recs = kept
 		}
+		if t.name == "plugin_storage" {
+			// ut-docs#1670: only FiscalRegisterDEPluginID's fiscal_register:
+			// namespace syncs — every other plugin's private KV state must
+			// never leave this till at all, and neither must a DIFFERENT
+			// plugin's row that happens to share the same key prefix.
+			kept := recs[:0]
+			for _, rec := range recs {
+				if fmt.Sprint(rec["plugin_id"]) == FiscalRegisterDEPluginID &&
+					strings.HasPrefix(fmt.Sprint(rec["key"]), FiscalRegisterDEKeyPrefix) {
+					kept = append(kept, rec)
+				}
+			}
+			recs = kept
+		}
 		for _, c := range t.skipCols {
 			for _, rec := range recs {
 				delete(rec, c)
@@ -218,6 +490,50 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 	}
 	defer tx.Rollback()
 
+	// ut-docs#1589 (found in #1554's own review): roles/permission_actions
+	// are migration-seeded catalog tables nothing in this codebase ever
+	// DELETEs (additive-only) — verified by grep, and true today because no
+	// custom-roles feature exists yet (the day one does, this assumption
+	// needs re-checking; see the "future custom-roles feature" note on
+	// adminTables above). A replica one release ahead of its primary has
+	// extra role/action rows the primary's dump doesn't mention at all, and
+	// unconditionally pruning them was silently destroying that skew state
+	// with no warning — so both are exempted from deleteMissing entirely,
+	// the same shape as settings' own exemption below.
+	//
+	// role_permissions needs a narrower rule, not the same blanket skip: it
+	// DOES have a real, frequent same-version write path — a manager
+	// revoking or granting a permission from the matrix editor
+	// (AuthRepo.SetRolePermission) — and #1554 depends on the prune phase to
+	// heal a *locally fabricated* grant (a row a satellite wrote for a
+	// role/action the primary already knows about, but has no matching row
+	// for): blanket-exempting role_permissions the way settings is exempted
+	// would let that fabricated grant survive forever, silently more
+	// permissive than the primary — the opposite of #1554's fail-closed
+	// intent, and a real regression a first draft of this fix introduced
+	// (caught in this fix's own review). A *revoked* grant is safe either
+	// way: SetRolePermission always upserts (INSERT ... ON CONFLICT DO
+	// UPDATE SET granted = excluded.granted), so a revoke sets granted=0 on
+	// an existing row rather than deleting it — that row stays in the
+	// primary's dump and phase 2 below overwrites it with the primary's
+	// value regardless of what phase 1 does. So the only rows that need
+	// protecting here are ones referencing a role or action the primary's
+	// CURRENT dump doesn't know about at all — real version skew, not
+	// drift — and those are safe to protect without weakening #1554,
+	// because the primary literally cannot have an opinion on a grant for a
+	// role/action it doesn't know exists yet.
+	knownRoles := map[string]bool{}
+	for _, rec := range bundle.Tables["roles"] {
+		knownRoles[fmt.Sprint(rec["role"])] = true
+	}
+	knownActions := map[string]bool{}
+	for _, rec := range bundle.Tables["permission_actions"] {
+		knownActions[fmt.Sprint(rec["action"])] = true
+	}
+	rolePermissionSkew := func(rec map[string]any) bool {
+		return !knownRoles[fmt.Sprint(rec["role"])] || !knownActions[fmt.Sprint(rec["action"])]
+	}
+
 	// Phase 1 — deletes, children first, so UNIQUE collisions (e.g. a
 	// replica-local item holding a SKU the primary now uses) clear before
 	// the upserts land.
@@ -232,10 +548,20 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 		// be wiped on every pull (version skew). plugin_settings does its own
 		// scoped replace in applyPluginSettings — the generic prune would
 		// wipe this till's register/user-scoped rows (absent from the bundle).
-		if t.name == "settings" || t.name == "plugin_settings" {
+		// plugin_storage does its own scoped replace in
+		// applyFiscalRegisterStorage (ut-docs#1670) for the same reason —
+		// the bundle only ever carries fiscal_register: rows, so the generic
+		// prune would wipe every OTHER plugin's private storage on this till.
+		if t.name == "settings" || t.name == "plugin_settings" ||
+			t.name == "plugin_storage" ||
+			t.name == "roles" || t.name == "permission_actions" {
 			continue
 		}
-		if err := deleteMissing(ctx, tx, t, recs); err != nil {
+		var skipPrune func(map[string]any) bool
+		if t.name == "role_permissions" {
+			skipPrune = rolePermissionSkew
+		}
+		if err := deleteMissing(ctx, tx, t, recs, skipPrune); err != nil {
 			return err
 		}
 	}
@@ -252,6 +578,12 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 			}
 			continue
 		}
+		if t.name == "plugin_storage" {
+			if err := applyFiscalRegisterStorage(ctx, tx, t, recs); err != nil {
+				return err
+			}
+			continue
+		}
 		cols, err := tableColumns(ctx, tx, t.name)
 		if err != nil {
 			return err
@@ -259,6 +591,20 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 		for _, rec := range recs {
 			if t.name == "settings" && perTillSetting(fmt.Sprint(rec["key"])) {
 				continue // defense in depth: never let a primary write per-till keys
+			}
+			if t.name == "country_settings" {
+				// ut-docs#1669: upsertRow below writes archive_min_days raw,
+				// bypassing CountrySettingsRepo.Upsert()'s own ADR-0040 floor
+				// check entirely — clamp it here so a rolled-back or buggy
+				// primary can never push a satellite below the retention
+				// floor via sync (defense in depth, same shape as the
+				// per-till-setting skip just above). Only touch it when the
+				// bundle actually carries the column — leave a genuinely
+				// absent column (an older primary's schema) alone, same as
+				// upsertRow's own "column the primary doesn't know" case.
+				if v, ok := rec["archive_min_days"]; ok && syncedDays(v) < GlobalArchiveMinDays {
+					rec["archive_min_days"] = GlobalArchiveMinDays
+				}
 			}
 			if err := upsertRow(ctx, tx, t, cols, rec); err != nil {
 				return fmt.Errorf("apply %s: %w", t.name, err)
@@ -339,6 +685,42 @@ func applyPluginSettings(ctx context.Context, tx *sql.Tx, t adminTable, recs []m
 	return nil
 }
 
+// applyFiscalRegisterStorage replaces this till's fiscal_register:-prefixed
+// plugin_storage rows — for FiscalRegisterDEPluginID specifically — with the
+// primary's copy (ut-docs#1670). Delete-then-insert, scoped by BOTH
+// plugin_id and key prefix — never touches a row under any other plugin_id,
+// or any other key, for any plugin: the DELETE's WHERE clause is the only
+// thing standing between this and wiping another plugin's private storage
+// (or broadcasting it to every satellite via the dump side), so it must
+// never be loosened to match on prefix alone or anything table-wide.
+// FiscalRegisterDEKeyPrefix ("fiscal_register:") is a fixed compile-time
+// constant with no '%'/'_' characters, so the LIKE pattern below needs no
+// ESCAPE clause. Same shape as applyPluginSettings just above: a scoped
+// delete-then-insert stands in for deleteMissing/upsertRow because the
+// generic path can't safely reason about a bundle that is deliberately a
+// subset of the table.
+func applyFiscalRegisterStorage(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[string]any) error {
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM plugin_storage WHERE plugin_id = ? AND key LIKE ?`,
+		FiscalRegisterDEPluginID, FiscalRegisterDEKeyPrefix+"%"); err != nil {
+		return fmt.Errorf("apply plugin_storage (fiscal register): %w", err)
+	}
+	cols, err := tableColumns(ctx, tx, t.name)
+	if err != nil {
+		return err
+	}
+	for _, rec := range recs {
+		if fmt.Sprint(rec["plugin_id"]) != FiscalRegisterDEPluginID ||
+			!strings.HasPrefix(fmt.Sprint(rec["key"]), FiscalRegisterDEKeyPrefix) {
+			continue // defense in depth: mirrors applyPluginSettings' own scope re-check
+		}
+		if err := upsertRow(ctx, tx, t, cols, rec); err != nil {
+			return fmt.Errorf("apply plugin_storage (fiscal register): %w", err)
+		}
+	}
+	return nil
+}
+
 // dedupeGlobalPluginSettings keeps one winning row per (plugin_id, key)
 // among scope='global' bundle rows, dropping the rest before they ever
 // reach an INSERT. Non-global rows pass through untouched — scope='global'
@@ -409,7 +791,43 @@ func pkOf(t adminTable, rec map[string]any) string {
 	return strings.Join(parts, "\x1f")
 }
 
-func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[string]any) error {
+// divergencePruneTables names every adminTable that made the same
+// transition: UNSYNCED (so a satellite could freely create its own local
+// row) to synced-and-gated-primary-only. A shop that already had a
+// satellite-created row from before its fix will have it pruned on its very
+// first post-upgrade pull — see adminTables' own top comment for the full
+// trace, and logSatelliteDivergencePrune below. Every OTHER adminTable
+// prunes routinely (that's what sync is for), so this map is deliberately
+// scoped to just the tables that made this exact transition: a warning here
+// signals pre-existing divergence worth a shop owner's attention, not
+// everyday sync noise.
+var divergencePruneTables = map[string]string{
+	"registers":             "ut-docs#1590",
+	"stock_locations":       "ut-docs#1590",
+	"item_modifier_groups":  "ut-docs#1667",
+	"item_modifier_options": "ut-docs#1667",
+}
+
+// logSatelliteDivergencePrune warns when deleteMissing successfully prunes
+// (hard-deletes or retires in place) a row from one of divergencePruneTables.
+func logSatelliteDivergencePrune(t adminTable, args []any, action string) {
+	card, ok := divergencePruneTables[t.name]
+	if !ok {
+		return
+	}
+	logging.L().Warnf("sync pull: pruned pre-existing satellite-local %s row %v (%s) — see %s: a row created directly on a satellite before that fix is expected to disappear on the first sync after upgrading", t.name, args, action, card)
+}
+
+// deleteMissing prunes rows this table's PK set no longer includes in the
+// bundle. skipPrune, if non-nil, is consulted for each row that would
+// otherwise be pruned and additionally protects it when it returns true —
+// role_permissions uses this (ut-docs#1589) to distinguish "the primary's
+// current dump doesn't know this row's role/action at all" (version skew;
+// must NOT prune) from "the primary knows both but has no matching grant
+// row" (real same-version drift; must still prune, or a satellite-local
+// grant survives forever — see ApplyAdmin's own comment for why this
+// distinction matters).
+func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[string]any, skipPrune func(rec map[string]any) bool) error {
 	keep := make(map[string]bool, len(recs))
 	for _, rec := range recs {
 		keep[pkOf(t, rec)] = true
@@ -428,6 +846,9 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 		if keep[pkOf(t, rec)] {
 			continue
 		}
+		if skipPrune != nil && skipPrune(rec) {
+			continue
+		}
 		where := make([]string, len(t.pk))
 		args := make([]any, len(t.pk))
 		for i, c := range t.pk {
@@ -437,6 +858,7 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 		_, err := tx.ExecContext(ctx,
 			`DELETE FROM `+t.name+` WHERE `+strings.Join(where, " AND "), args...)
 		if err == nil {
+			logSatelliteDivergencePrune(t, args, "hard-deleted, no history")
 			continue
 		}
 		// FK-blocked (row referenced by local sales history): retire it in
@@ -446,7 +868,11 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 		if t.hasIsActive || len(t.unique) > 0 {
 			var sets []string
 			if t.hasIsActive {
-				sets = append(sets, "is_active = 0")
+				col := t.activeCol
+				if col == "" {
+					col = "is_active"
+				}
+				sets = append(sets, col+" = 0")
 			}
 			pk := t.pk[0]
 			for _, c := range t.unique {
@@ -457,6 +883,7 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 			if _, derr := tx.ExecContext(ctx,
 				`UPDATE `+t.name+` SET `+strings.Join(sets, ", ")+` WHERE `+strings.Join(where, " AND "),
 				args...); derr == nil {
+				logSatelliteDivergencePrune(t, args, "retired in place, has history")
 				continue
 			}
 		}
@@ -465,8 +892,59 @@ func deleteMissing(ctx context.Context, tx *sql.Tx, t adminTable, recs []map[str
 	return nil
 }
 
+// stripRetireMangle undoes deleteMissing's uniqueness-freeing "<name>~<id>"
+// suffix on an FK-blocked retire-in-place, so a mangled DB value never
+// reaches a display path (ut-docs#1610). Six admin tables use the SAME
+// column for identity-uniqueness and display (brands.name, tax_codes.name,
+// payment_methods.name, users.username, stock_locations.name,
+// registers.name); every repository reader that surfaces one of those to
+// staff — including the admin listings that deliberately show retired rows
+// — runs its scanned value through this before returning it.
+//
+// "Every reader" includes the ones that reach the column through a JOIN
+// rather than a direct SELECT, which is where the first pass at this fix
+// missed four (review of ut-docs#1610): ListStockLevels, GetLowStockItems,
+// variantStockForExport and ListRegisterLocations all join a name in
+// without an is_active filter. For stock_locations that is in fact the
+// MOST likely place the mangle surfaces — a location whose prune is
+// FK-blocked is blocked precisely because inventory rows reference it, and
+// those are the rows those queries return. When adding a reader, the test
+// is "does this value reach a person?", not "does this query name the
+// table in its FROM clause?".
+//
+// Only strips when name ends in exactly "~"+id: an active row (or a table
+// that's never mangled) is returned unchanged, even one whose real name
+// contains a literal '~' or ends in some OTHER row's id. Strips exactly
+// once — deleteMissing's CASE keeps the mangle idempotent across pulls, so
+// a doubled suffix never exists to begin with.
+func stripRetireMangle(id, name string) string {
+	if id == "" {
+		return name
+	}
+	return strings.TrimSuffix(name, "~"+id)
+}
+
 // upsertRow inserts or fully updates one row. Column names are validated
 // against the live schema, never taken from the wire.
+// syncedDays converts a bundle value's dynamic type to int64: int64 when
+// ApplyAdmin is called directly in-process (scanGeneric's own type for an
+// INTEGER column), float64 after a real wire hop (wireTrip/JSON turns every
+// number into float64). Same defensive-conversion shape as bkpScanInt in
+// bkp_products_repo.go, for the same reason — never assume a single Go type
+// for a value that traveled through JSON.
+func syncedDays(v any) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case float64:
+		return int64(n)
+	case int:
+		return int64(n)
+	default:
+		return 0
+	}
+}
+
 func upsertRow(ctx context.Context, tx *sql.Tx, t adminTable, cols []string, rec map[string]any) error {
 	isPK := map[string]bool{}
 	for _, c := range t.pk {

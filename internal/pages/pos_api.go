@@ -56,7 +56,7 @@ func (e *fiscalNeverConfiguredError) Error() string {
 // the shop's configured fiscal-signing device (Germany's TSE, or the
 // equivalent for the next hard-gated market) is known-failing and no owner
 // override window is currently active. Unlike fiscalNeverConfiguredError, an
-// admin can lift this via POST /api/fiscal/tse-override (fiscal_api.go).
+// admin can lift this via POST /api/fiscal/signing-override (fiscal_api.go).
 type fiscalTSEFailingError struct{}
 
 func (e *fiscalTSEFailingError) Error() string {
@@ -121,22 +121,24 @@ func enforceFiscalGate(ctx context.Context, d *common.Deps) (fiscal.Gate, error)
 }
 
 // releaseTableClaim drops the live basket's claim on tableID (ut-docs#1390)
-// at every point the basket stops occupying it — cleared, moved off, parked
-// (the held_sales row takes over), tendered, reset, or switched to
-// Takeaway. A "" tableID (no table was assigned) is the common case and a
-// no-op; a DB failure is logged, never surfaced — the basket-side state
-// change it accompanies has already happened (or is about to, and must
-// not be blocked by bookkeeping), and a lingering claim is the lesser evil
-// versus a sale that can't complete. Shared by the cashier handlers here
-// and the hold/resume handlers in hold_api.go so the release rule lives in
-// exactly one place.
-func releaseTableClaim(ctx context.Context, repo *data.POSRepo, tableID string) {
-	if tableID == "" {
-		return
-	}
-	if err := repo.ReleaseTableClaim(ctx, tableID); err != nil {
-		log.Printf("table claim: release %s failed: %v", tableID, err)
-	}
+// at every point the basket stops occupying it — cleared, moved off,
+// tendered, reset, or switched to Takeaway. Parking the order is
+// deliberately NOT one of these since ut-docs#1704: hold_api.go's hold
+// handler now keeps the claim alive through the whole park (it's what makes
+// a parked order's occupancy visible cross-till), and its held/table move
+// handler is the one place that releases a held order's claim, when the
+// table itself changes. A "" tableID (no table was assigned) is the common
+// case and a no-op; a DB failure is logged, never surfaced — the basket-side
+// state change it accompanies has already happened (or is about to, and
+// must not be blocked by bookkeeping), and a lingering claim is the lesser
+// evil versus a sale that can't complete. Shared by the cashier handlers
+// here and the hold/resume/move handlers in hold_api.go so the release rule
+// lives in exactly one place. The bool it returns (primary-release success,
+// see releaseTableClaimWriteThrough) is ignorable — every call site here
+// does, on purpose, matching the fire-and-forget stance described above;
+// hold_api.go's held/table move handler is the one caller that checks it.
+func releaseTableClaim(ctx context.Context, d *common.Deps, repo *data.POSRepo, tableID string) bool {
+	return releaseTableClaimWriteThrough(ctx, d, repo, tableID)
 }
 
 // completeTender runs the money-critical authorize -> complete -> publish
@@ -161,6 +163,15 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	if err != nil {
 		return "", err
 	}
+
+	// fiscal.sign.start (ADR-0077 Decision 1, ut-docs#1519): fires HERE,
+	// immediately after the ADR-0048 gate has allowed the sale to proceed
+	// and before the payment.<key>.authorize loop below — so it runs in
+	// parallel with that loop's own latency rather than adding to it. Never
+	// blocks: the actual dispatch happens on a goroutine this call doesn't
+	// wait for. saleInput is mutated (SaleID minted if empty) so this
+	// dispatch and the fiscal.sign.ask dispatch further down share an id.
+	dispatchFiscalSignStart(ctx, d, &saleInput)
 
 	// Payment authorization (docs: wasm-runtime.md): a plugin method
 	// whose plugin hooks `payment.<key>.authorize` gets a BLOCKING call
@@ -239,6 +250,36 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// sale: any failure lands on the proceed-and-declare surface below.
 	signRes := dispatchFiscalSignAsk(ctx, d, &saleInput)
 
+	// Cross-till voucher redemption (ut-docs#1668): for every tracked
+	// voucher payment, validate against the PRIMARY's CURRENT balance
+	// BEFORE this till's own local DebitVoucherForRedemption ever runs
+	// (inside pos.CompleteSale below) — a voucher issued at another till
+	// has no local vouchers row here at all, so without this the local
+	// debit would fail closed with ErrVoucherNotFound even though the
+	// voucher is perfectly good shop-wide. On a replica with a reachable
+	// primary, its answer is authoritative: a definitive refusal (void /
+	// insufficient balance) aborts the tender right here, with NO sale row
+	// ever attempted — the same end result as today's local failure, just
+	// decided against a fresh shop-wide balance instead of a stale or
+	// nonexistent local copy. This is a VALIDATION check only — see
+	// voucher_sync_proxy.go's own doc comment for why nothing is ever
+	// debited on the primary here; the local debit below (forced via
+	// VoucherPreauthorized) is the only debit that ever actually happens,
+	// reaching the primary the normal way, once, via the sales journal.
+	// Not a replica, or the primary unreachable: this payment is left
+	// exactly as it always was, going through the normal local validation
+	// next (offline-first, unchanged).
+	for i := range saleInput.Payments {
+		if saleInput.Payments[i].VoucherID == "" {
+			continue
+		}
+		preauth, err := voucherRedeemWriteThrough(ctx, d, repo, saleInput.Payments[i].VoucherID, saleInput.Payments[i].Amount.Minor())
+		if err != nil {
+			return "", err
+		}
+		saleInput.Payments[i].VoucherPreauthorized = preauth
+	}
+
 	saleID, err := pos.CompleteSale(ctx, d.Db, saleInput)
 	if err != nil {
 		return "", err
@@ -249,6 +290,22 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// exists; the first receipt ever recorded also marks the device as
 	// confirmed (fiscal_device_hook.go). Best-effort, never unwinds.
 	recordFiscalDeviceEvidence(ctx, d, repo, saleID, actorID, deviceEvidence)
+
+	// A preauthorized cross-till redemption's LOCAL debit (ut-docs#1668) can
+	// still go negative: EnsureVoucherLocalRow only fills a genuinely
+	// missing local row — a till that already had ITS OWN, possibly-stale
+	// local copy keeps it untouched, and the local force=true debit runs
+	// against THAT number, not the fresher one the primary just confirmed.
+	// Same shape as applyJournal's own post-replay check (sync_sales.go),
+	// just a different, accurate reason — surfaced as a Problem rather than
+	// silently going negative with nobody told.
+	for _, p := range saleInput.Payments {
+		if p.VoucherPreauthorized {
+			warnIfVoucherOverdrawnReason(ctx, repo, saleInput, "cross-till redemption (sale "+saleID+")",
+				"this till's own local voucher balance was stale relative to the primary's (ut-docs#1668)")
+			break
+		}
+	}
 
 	// Every sale completed during an active TSE-override window gets its
 	// own audit marker (entity sale, action unsigned_override) — a per-sale
@@ -294,7 +351,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// kiosk engine (no table picker there), so a no-op on that path.
 	tableToRelease := engine.TableID()
 	engine.Reset()
-	releaseTableClaim(ctx, repo, tableToRelease)
+	releaseTableClaim(ctx, d, repo, tableToRelease)
 
 	// Plugin-provided tender methods: publish each entry's trigger_event so
 	// the owning plugin can react (charge a terminal, show a QR, …).
@@ -547,13 +604,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			prevTable := d.Engine.TableID()
 			d.Engine.RemoveLine(key)
 			if prevTable != "" && d.Engine.TableID() == "" {
-				releaseTableClaim(r.Context(), repo, prevTable)
+				releaseTableClaim(r.Context(), d, repo, prevTable)
 			}
 		} else {
 			prevTable := d.Engine.TableID()
 			d.Engine.Remove(code)
 			if prevTable != "" && d.Engine.TableID() == "" {
-				releaseTableClaim(r.Context(), repo, prevTable)
+				releaseTableClaim(r.Context(), d, repo, prevTable)
 			}
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
@@ -590,13 +647,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			prevTable := d.Engine.TableID()
 			d.Engine.UpdateLineByKey(key, qty, money.FromMinor(discount))
 			if prevTable != "" && d.Engine.TableID() == "" {
-				releaseTableClaim(r.Context(), repo, prevTable)
+				releaseTableClaim(r.Context(), d, repo, prevTable)
 			}
 		} else {
 			prevTable := d.Engine.TableID()
 			d.Engine.UpdateLine(code, qty, money.FromMinor(discount))
 			if prevTable != "" && d.Engine.TableID() == "" {
-				releaseTableClaim(r.Context(), repo, prevTable)
+				releaseTableClaim(r.Context(), d, repo, prevTable)
 			}
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
@@ -640,7 +697,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		prevTable := d.Engine.TableID()
 		b := d.Engine.SetOrderType(orderType)
 		if prevTable != "" && b.TableID == "" {
-			releaseTableClaim(r.Context(), repo, prevTable)
+			releaseTableClaim(r.Context(), d, repo, prevTable)
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
@@ -669,7 +726,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		prevTable := d.Engine.TableID()
 		b, _ := d.Engine.SetLineOrderType(key, orderType)
 		if prevTable != "" && b.TableID == "" {
-			releaseTableClaim(r.Context(), repo, prevTable)
+			releaseTableClaim(r.Context(), d, repo, prevTable)
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
@@ -712,14 +769,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			cur := d.Engine.Basket()
 			b = &cur
 		case tableID == "":
-			releaseTableClaim(ctx, repo, current)
+			releaseTableClaim(ctx, d, repo, current)
 			b = d.Engine.ClearTable()
 		default:
 			tbl, ok, err := repo.GetTable(ctx, tableID)
 			if err != nil || !ok {
 				// Unknown id degrades to "no table" (pre-#1390 behaviour,
 				// kept) -- and the basket stops occupying its old one.
-				releaseTableClaim(ctx, repo, current)
+				releaseTableClaim(ctx, d, repo, current)
 				b = d.Engine.ClearTable()
 				break
 			}
@@ -730,7 +787,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// is the cheap, held_sales-aware pre-check; losing here
 				// means a concurrent claim landed in between -- same
 				// "occupied" answer, no 500.
-				claimed, err = repo.ClaimTable(ctx, tableID)
+				claimed, err = claimTableWriteThrough(ctx, d, repo, tableID)
 			}
 			if err != nil {
 				log.Printf("table claim: %s: %v", tableID, err)
@@ -747,11 +804,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// SetTable refused (a Takeaway basket, ut-docs#1355): undo
 				// the claim we just took, or the table would read occupied
 				// with nothing on it.
-				releaseTableClaim(ctx, repo, tableID)
+				releaseTableClaim(ctx, d, repo, tableID)
 				break
 			}
 			// New claim confirmed -- only now let go of the old table.
-			releaseTableClaim(ctx, repo, current)
+			releaseTableClaim(ctx, d, repo, current)
 		}
 		funcs := httpx.FuncsFor(locale)
 		basketView, _ := ui.NewBasketView(funcs)
@@ -763,7 +820,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/pos/reset", func(w http.ResponseWriter, r *http.Request) {
 		tableToRelease := d.Engine.TableID()
 		d.Engine.Reset()
-		releaseTableClaim(r.Context(), repo, tableToRelease)
+		releaseTableClaim(r.Context(), d, repo, tableToRelease)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
 		b, _ := d.Engine.Scan("")

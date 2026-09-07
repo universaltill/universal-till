@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -18,6 +19,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/print"
 )
 
@@ -35,7 +37,56 @@ const (
 	// this setting existed. Same settings panel/endpoint as the EOD
 	// schedule below (POST /api/settings/eod), not a new settings page.
 	keyReportsBusinessDayStart = "reports.business_day_start"
+	// keyEODArticlePrintMode/keyEODArticlePrintCap (ut-docs#1650) control
+	// ONLY the printed Z-report's "BY ARTICLE" footer section — the
+	// on-screen archived-report list (reports_tab_eod.html) always shows
+	// every article behind its own closed-by-default <details>, unaffected
+	// by this setting, per the card's own acceptance criteria. A high-SKU
+	// shop (200-400 distinct articles/day) otherwise gets a correspondingly
+	// long, unconditional printed roll with no way to turn it off (found
+	// reviewing ut-docs#1010). Same settings panel/endpoint as the EOD
+	// schedule above, not a new settings page.
+	keyEODArticlePrintMode = "reports.eod_article_print_mode" // "all" | "capped" | "off"
+	keyEODArticlePrintCap  = "reports.eod_article_print_cap"  // positive int as string
 )
+
+// Article print-mode values (keyEODArticlePrintMode) and the shipped
+// default cap — chosen (ut-docs#1650 research: Square, Toast) so a
+// low-SKU shop's printed output is unchanged in practice (fewer than 30
+// articles prints identically to "all") while a high-SKU shop's roll
+// length is bounded.
+const (
+	eodArticlePrintAll        = "all"
+	eodArticlePrintCapped     = "capped"
+	eodArticlePrintOff        = "off"
+	eodArticlePrintCapDefault = 30
+	eodArticlePrintCapMax     = 999 // sane ceiling, same spirit as eodTimeRe bounding its own field
+)
+
+// resolveEODArticlePrintSettings reads keyEODArticlePrintMode/
+// keyEODArticlePrintCap and normalizes them to a value buildEODDoc can act
+// on directly — unset/invalid always resolves to a valid state (the
+// shipped default) rather than buildEODDoc having to guess at malformed
+// stored data. mode falls back to "capped" (the default) on anything other
+// than the three recognized values; cap falls back to
+// eodArticlePrintCapDefault on anything that isn't a positive integer.
+func resolveEODArticlePrintSettings(ctx context.Context, d *common.Deps) (mode string, articleCap int) {
+	get := func(key string) string {
+		v, _, _ := d.Settings.Get(ctx, key)
+		return strings.TrimSpace(v)
+	}
+	mode = get(keyEODArticlePrintMode)
+	if mode != eodArticlePrintAll && mode != eodArticlePrintOff && mode != eodArticlePrintCapped {
+		mode = eodArticlePrintCapped
+	}
+	articleCap = eodArticlePrintCapDefault
+	if raw := get(keyEODArticlePrintCap); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= eodArticlePrintCapMax {
+			articleCap = n
+		}
+	}
+	return mode, articleCap
+}
 
 // eodTimeRe validates any local "HH:MM" setting this file's settings panel
 // stores — the EOD schedule time AND (ut-docs#519) the business-day-start
@@ -157,14 +208,75 @@ func fmtRateBP(bp int) string {
 	return sign + strings.TrimRight(fmt.Sprintf("%d.%02d", bp/100, bp%100), "0") + "%"
 }
 
-// buildEODDoc renders the Z-report for the receipt printer.
-func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
-	money := func(minor int64) string { return httpx.FormatMoney(minor, "en") }
+// eodPeriodMeta renders the report's period header line: "END OF DAY <day>"
+// for a legacy calendar-day report (rep.Day set), or a close-to-close
+// "Zeitraum" line matching the reference document's own worked example
+// (ADR-0066 Decision 6, ut-docs#1141) when rep.Day is empty (the "eod"
+// kind's new path). Fixed vocabulary, not routed through T() — same
+// convention as "Erstellt von"/"Anmerkung" below (a jurisdiction/
+// fiscal-format label an auditor reads regardless of the till's
+// operator-UI locale). rep.From is empty only on the till's first-ever
+// close (ADR-0066 Decision 3, unbounded lower bound) — "bis" (German
+// "until") rather than a bare leading " - " for that open-ended case.
+func eodPeriodMeta(rep data.EODReport) string {
+	if rep.Day != "" {
+		return "END OF DAY " + rep.Day
+	}
+	if rep.From == "" {
+		return "Zeitraum bis " + rep.To
+	}
+	return "Zeitraum " + rep.From + " - " + rep.To
+}
+
+// footerRow right-aligns amount against label within print.Width columns,
+// clipping an overlong label instead of letting it overflow — the same
+// algorithm internal/print's own (unexported) kvRow uses for sale lines,
+// reimplemented here because eod_api.go builds doc.Footer as plain strings
+// and has no access to that unexported helper. Unlike a fixed "%-N s %s"
+// format (what BY DEPARTMENT/BY TILL and friends still use, since their
+// labels are short/controlled), this guarantees the amount is never pushed
+// past the printer's own line-clip by an overlong label (ut-docs#1010
+// review finding 1 — sale_lines.name_snapshot is free-text and can easily
+// exceed a fixed pad width). Rune-based throughout, matching kvRow/clip's
+// own reasoning: Width tracks visible columns, and a byte-based cut can
+// split a multi-byte character (£, ä/ö/ü/ß, ar/fa/tr text) mid-rune.
+func footerRow(label, amount string) string {
+	space := print.Width - utf8.RuneCountInString(label) - utf8.RuneCountInString(amount)
+	if space < 1 {
+		max := print.Width - utf8.RuneCountInString(amount) - 1
+		if max < 0 {
+			max = 0
+		}
+		if r := []rune(label); len(r) > max {
+			label = string(r[:max])
+		}
+		space = 1
+	}
+	return label + strings.Repeat(" ", space) + amount
+}
+
+// buildEODDoc renders the Z-report for the receipt printer. articleMode/
+// articleCap (ut-docs#1650) control only the "BY ARTICLE" footer section
+// below — already-resolved values (resolveEODArticlePrintSettings), never
+// raw/unvalidated settings strings, so this function never has to guess at
+// malformed stored data; pass eodArticlePrintAll/0 for the pre-#1650
+// unconditional-print-everything behavior.
+func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode string, articleCap int) print.Doc {
+	// printLocale: same grouping/decimal + date-order convention as the
+	// sale receipt's own printLocale (print_api.go), and the same reason
+	// for the *Latin variants below — ESC/POS text mode can't render
+	// non-Latin numeral glyphs, RTL needs bitmap mode (ut-docs#1130).
+	printLocale := httpx.DefaultLocale()
+	money := func(minor int64) string { return httpx.FormatMoneyLatin(minor, printLocale) }
+	generated := "Generated " + rep.GeneratedAt
+	if t, err := time.Parse(time.RFC3339, rep.GeneratedAt); err == nil {
+		generated = "Generated " + httpx.FormatDateLatin(t.Local(), printLocale) + " " + t.Local().Format("15:04")
+	}
 	doc := print.Doc{
 		StoreName: storeName,
 		Meta: []string{
-			"END OF DAY " + rep.Day,
-			"Generated " + rep.GeneratedAt,
+			eodPeriodMeta(rep),
+			generated,
 		},
 		Charset: charset,
 	}
@@ -263,6 +375,85 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 			doc.Footer = append(doc.Footer, fmt.Sprintf("%-20s %s", name, money(t.Revenue)))
 		}
 	}
+	// Article-group/article/operator breakdowns (ut-docs#1010) — same
+	// footer-section precedent as BY DEPARTMENT/BY TILL above: one heading
+	// line + one row per entry, printed with Gross (matching BY DEPARTMENT's
+	// own use of Revenue, its total_after_tax equivalent), and omitted
+	// entirely when the slice is empty (same "no line at all beats an empty
+	// section" convention every other optional section here follows).
+	// Single-day only — see EODReport.ArticleGroups/Articles/Operators' own
+	// doc comment; a range report simply has nothing here.
+	//
+	// Uses footerRow, NOT the "%-20s %s" sprintf every sibling section above
+	// uses (review finding 1): those names are short, controlled strings
+	// (a department/till name, "TOTAL", "Issued (n)"), so %-20s's fixed pad
+	// never overflows print.Width in practice. sale_lines.name_snapshot is
+	// free-text product name text where 34+ runes is completely ordinary —
+	// %-20s only pads, never truncates, so an overlong name silently pushes
+	// the amount past the printer's own line-clip with no error, deleting
+	// the actual revenue figure off a financial document. footerRow clips
+	// the label instead, guaranteeing the amount always survives.
+	if len(rep.ArticleGroups) > 0 {
+		doc.Footer = append(doc.Footer, "", "BY ARTICLE GROUP")
+		for _, g := range rep.ArticleGroups {
+			name := g.Group
+			if name == "" {
+				name = "Uncategorized"
+			}
+			doc.Footer = append(doc.Footer, footerRow(name, money(g.Gross.Minor())))
+		}
+	}
+	// Per-store print-mode setting (ut-docs#1650): "off" omits this section
+	// entirely (the on-screen report is unaffected regardless — see
+	// keyEODArticlePrintMode's doc comment); "capped" (default) prints only
+	// the top articleCap articles by revenue, followed by a fixed-vocabulary
+	// "+N more" line (same non-localized-printed-report convention as
+	// GUTSCHEINE/STORNOS below), since rep.Articles already arrives sorted
+	// `ORDER BY gross DESC` (ArticleSalesForDay/ArticleSalesForInstantWindow)
+	// — taking the first articleCap IS the top-N by revenue, no extra sort
+	// needed. "all" reproduces the pre-#1650 unconditional behavior.
+	if len(rep.Articles) > 0 && articleMode != eodArticlePrintOff {
+		doc.Footer = append(doc.Footer, "", "BY ARTICLE")
+		articles := rep.Articles
+		omitted := 0
+		if articleMode == eodArticlePrintCapped && articleCap > 0 && len(articles) > articleCap {
+			omitted = len(articles) - articleCap
+			articles = articles[:articleCap]
+		}
+		for _, a := range articles {
+			doc.Footer = append(doc.Footer, footerRow(a.Name, money(a.Gross.Minor())))
+		}
+		if omitted > 0 {
+			doc.Footer = append(doc.Footer, fmt.Sprintf("+%d more (see on-screen report)", omitted))
+		}
+	}
+	if len(rep.Operators) > 0 {
+		doc.Footer = append(doc.Footer, "", "BY OPERATOR")
+		for _, o := range rep.Operators {
+			name := o.DisplayName
+			if name == "" {
+				name = "Unattributed"
+			}
+			doc.Footer = append(doc.Footer, footerRow(name, money(o.Gross.Minor())))
+		}
+	}
+	// Order-type (dine-in/takeaway) breakdown (ut-docs#1015) — same
+	// footer-section precedent as BY ARTICLE GROUP/BY ARTICLE/BY OPERATOR
+	// above, decomposed by sale_lines.order_type so a mixed sale's revenue
+	// splits across both buckets rather than needing a third "mixed" one.
+	// Fixed English labels, same as "Uncategorized"/"Unattributed" above —
+	// this printed report is not localized (see GUTSCHEINE/STORNOS's own
+	// fixed-vocabulary precedent below).
+	if len(rep.OrderTypes) > 0 {
+		doc.Footer = append(doc.Footer, "", "BY ORDER TYPE")
+		for _, o := range rep.OrderTypes {
+			name := "Dine in"
+			if o.OrderType == pos.OrderTypeTakeaway {
+				name = "Takeaway"
+			}
+			doc.Footer = append(doc.Footer, footerRow(name, money(o.Gross.Minor())))
+		}
+	}
 	// Voucher liability flows (ut-docs#1008) — their own footer section,
 	// SEPARATE from and never summed into the article/department figures: an
 	// issue is a 0% liability (inside the day's overall total, outside
@@ -356,8 +547,19 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 	return doc
 }
 
-// generateEOD produces, archives and (best-effort) prints the day's report.
-// Idempotent per day: returns createdNew=false when already archived.
+// generateEOD produces, archives and (best-effort) prints the close-to-close
+// report (ADR-0066). Idempotent per local calendar day: returns
+// createdNew=false when a close already happened today (ArchiveReport's
+// atomic double-close guard, ut-docs#1140 — the real correctness boundary;
+// see eodDue's pre-check below for the cheap up-front version).
+//
+// The window is [previous close, now) — ADR-0066 Decision 2/3: `from` comes
+// from LatestArchivedAt (nil on the till's first-ever close → unbounded
+// lower bound), `to` is time.Now() captured ONCE here so the query window,
+// the archived period, and the NEXT close's `from` (read back via
+// LatestArchivedAt off this row's own created_at) all agree — a second,
+// independent clock read anywhere in this path would leave a sub-second gap
+// or overlap between consecutive closes (Decision 5's clock-skew fix).
 //
 // actor/blockedActorID (ut-docs#794) let the two very different callers
 // each get the audit attribution they need from the SAME function, rather
@@ -373,24 +575,53 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 // report itself (rep.Annotation) and printed on the Z-Bon — "" for the
 // unattended scheduler tick (same "no operator involved" convention as
 // actor="system" above), or whatever the manual run's form supplied.
-func generateEOD(ctx context.Context, d *common.Deps, day, actor, blockedActorID, annotation string) (data.EODReport, bool, error) {
+func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, annotation string) (data.EODReport, bool, error) {
 	repo := data.NewPOSRepo(d.Db)
-	rep, err := repo.EndOfDay(ctx, day)
+	latest, err := repo.LatestArchivedAt(ctx, "eod")
+	if err != nil {
+		return data.EODReport{}, false, err
+	}
+	var from time.Time
+	if latest != nil {
+		from = *latest
+	}
+	to := time.Now()
+	rep, err := repo.EndOfDayInstant(ctx, from, to)
 	if err != nil {
 		return rep, false, err
 	}
 	// Per-VAT-rate breakdown (ut-docs#1003) + method x VAT-rate cross-tab
-	// (ut-docs#1004), computed here, not inside EndOfDay, because the
-	// banding math needs internal/pos (see eod_tax_bands.go).
-	// attachEODBands reads the sales ONCE and fills both from that single
-	// snapshot (ut-docs#1004 review finding: two independent reads a
-	// moment apart could let a sale completing in between appear in one
-	// breakdown and not the other). Must succeed BEFORE the report is
-	// archived: the archive is write-once per day, so a report archived
-	// without these tables could never be repaired.
-	if err := attachEODBands(ctx, repo, &rep); err != nil {
+	// (ut-docs#1004): SalesForTaxBandsInstant DIRECTLY, never the existing
+	// attachEODBands/rep.Day=="" fallback into the calendar-date
+	// SalesForTaxBands (ADR-0066 Decision 6) — SQLite's date() parses an
+	// RFC3339 bound without error, so that fallback would silently degrade
+	// this report to calendar-day banding with no error and no test
+	// failure, breaking sum(band.Tax) == TaxNet in the one artifact an
+	// accountant reconciles against. One snapshot read (same ut-docs#1004
+	// review finding attachEODBands' own doc comment cites: two independent
+	// reads a moment apart could let a sale completing in between appear in
+	// one breakdown and not the other), computed here, not inside
+	// EndOfDayInstant, because the banding math needs internal/pos (see
+	// eod_tax_bands.go). Must succeed BEFORE the report is archived: the
+	// archive is write-once per period, so a report archived without these
+	// tables could never be repaired.
+	salesForBands, err := repo.SalesForTaxBandsInstant(ctx, from, to)
+	if err != nil {
 		return rep, false, err
 	}
+	rep.TaxBands = computeEODTaxBandsFromSales(salesForBands)
+	rep.MethodTaxBands = computeEODMethodTaxBandsFromSales(salesForBands)
+	// Display-only period (ADR-0066 Decision 6): the shop's LOCAL offset,
+	// never UTC — a UTC-stamped close on a till at a large positive offset
+	// would display a calendar date shifted from the shop's own, the exact
+	// confusion ADR-0057 removed. from stays "" (omitempty) on the till's
+	// first-ever close — there is no previous close instant to show.
+	// rep.Day is left empty (its zero value) — this is the "eod" kind's new
+	// path, not EndOfDay's calendar-day one.
+	if !from.IsZero() {
+		rep.From = from.Local().Format(time.RFC3339)
+	}
+	rep.To = to.Local().Format(time.RFC3339)
 	// Who generated it, plus the annotation (ut-docs#1012). GeneratedBy
 	// resolves actor (a user id) to its display name via the same
 	// users-table join precedent internal/data's audit/order-status
@@ -408,26 +639,39 @@ func generateEOD(ctx context.Context, d *common.Deps, day, actor, blockedActorID
 		}
 	}
 	rep.Annotation = strings.TrimSpace(annotation)
+	// period = the close instant itself, same local-offset RFC3339 form as
+	// rep.To (ADR-0066 Decisions 4 and 6 — period's text form matches what
+	// gets displayed, and stays sort-safe against old calendar-date periods
+	// since a same-day RFC3339 value is a strict text extension of its date
+	// prefix). This is now report_archive's own unique key for this row,
+	// replacing the old "day" string as the audit entry's entity_id too.
+	period := rep.To
 	raw, err := json.Marshal(rep)
 	if err != nil {
 		return rep, false, err
 	}
 	// rep.FirstReceipt/LastReceipt (MIN/MAX receipt_no, computed in
-	// EndOfDay) ride along as queryable columns (ut-docs#1080) so a future
-	// accounting export (ut-docs#1036) needn't parse content_json.
-	created, err := repo.ArchiveReport(ctx, "eod", day, raw, rep.FirstReceipt, rep.LastReceipt, time.Time{})
+	// EndOfDayInstant) ride along as queryable columns (ut-docs#1080) so a
+	// future accounting export (ut-docs#1036) needn't parse content_json.
+	// closedAt=to (ADR-0066 Decision 4/5): written INTO created_at instead
+	// of a second, independent datetime('now') read — this is both the
+	// clock-skew fix (the next close's `from`, read back via
+	// LatestArchivedAt, must be byte-identical to this `to`) and what arms
+	// the atomic double-close guard folded into this same insert.
+	created, err := repo.ArchiveReport(ctx, "eod", period, raw, rep.FirstReceipt, rep.LastReceipt, to)
 	if err != nil || !created {
 		return rep, created, err
 	}
 	payload := map[string]any{"net": rep.Net, "sales": rep.SalesCount}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if blockedActorID != "" {
-		_ = repo.InsertAuditElevated(ctx, nil, actor, blockedActorID, "report", day, "eod_generated", payload, now, "")
+		_ = repo.InsertAuditElevated(ctx, nil, actor, blockedActorID, "report", period, "eod_generated", payload, now, "")
 	} else {
-		_ = repo.InsertAudit(ctx, nil, actor, "report", day, "eod_generated", payload, now, "")
+		_ = repo.InsertAudit(ctx, nil, actor, "report", period, "eod_generated", payload, now, "")
 	}
 	if cfg := printerConfig(ctx, d); cfg.Enabled() {
-		doc := buildEODDoc(rep, storeNameOrDefault(ctx, d), cfg.Charset)
+		articleMode, articleCap := resolveEODArticlePrintSettings(ctx, d)
+		doc := buildEODDoc(rep, storeNameOrDefault(ctx, d), cfg.Charset, articleMode, articleCap)
 		pctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 		if perr := print.PrintDoc(pctx, cfg, doc); perr != nil {
@@ -459,8 +703,14 @@ func reportPruneDue(today, lastPruneDay string) bool {
 	return today != lastPruneDay
 }
 
-// reportRetentionCutoff is "now minus 10 calendar years" formatted to match
-// report_archive.period's "YYYY-MM-DD" text format (ADR-0040 §2, till mode).
+// reportRetentionCutoff is "now minus 10 calendar years" formatted
+// "YYYY-MM-DD" (ADR-0040 §2, till mode) — the bound PruneReportArchiveOlderThan
+// compares as plain text against report_archive.period. Since ADR-0066 a
+// "eod" row's period is no longer always this format (it's the close
+// instant, RFC3339, for a close generated under the new scheme), but this
+// bare-date cutoff still compares correctly against either form (see
+// PruneReportArchiveOlderThan's own doc comment) — no change needed here
+// beyond this note.
 // Deliberately calendar years (AddDate), not a fixed day count: 10 calendar
 // years always spans at least data.GlobalArchiveMinDays (3650) days — every
 // 10-year span contains 2 or 3 leap days, so this window is always a few
@@ -535,18 +785,29 @@ func eodSchedulerTick(ctx context.Context, d *common.Deps, repo *data.POSRepo) {
 	}
 	enabled := get(keyEODEnabled) == "true"
 	hhmm := get(keyEODTime)
-	day := time.Now().Format("2006-01-02")
-	done, err := repo.HasArchivedReport(ctx, "eod", day)
+	now := time.Now()
+	// alreadyDone (ADR-0066 Decision 5, ut-docs#1140/#1141): moved off
+	// HasArchivedReport(ctx, "eod", day) — there is no "day" concept for
+	// the "eod" kind anymore — to LatestArchivedAt's result falling on
+	// TODAY's LOCAL calendar day. This is the cheap up-front pre-check
+	// only, so a due-but-already-closed tick doesn't even attempt
+	// generation; the actual guard against a double-close is the atomic
+	// insert-time predicate ArchiveReport folds into its INSERT (Decision
+	// 4). latest is parsed UTC-naive (see LatestArchivedAt's own doc
+	// comment) — convert with .Local(), never time.ParseInLocation, so
+	// this doesn't reproduce ADR-0057's original off-UTC bug class.
+	latest, err := repo.LatestArchivedAt(ctx, "eod")
 	if err != nil {
 		return
 	}
-	if !eodDue(time.Now(), enabled, hhmm, done) {
+	done := latest != nil && latest.Local().Format("2006-01-02") == now.Format("2006-01-02")
+	if !eodDue(now, enabled, hhmm, done) {
 		return
 	}
-	if _, created, err := generateEOD(ctx, d, day, "system", "", ""); err != nil {
+	if _, created, err := generateEOD(ctx, d, "system", "", ""); err != nil {
 		logging.L().Errorf("eod scheduled run: %v", err)
 	} else if created {
-		logging.L().Infof("end-of-day report generated for %s", day)
+		logging.L().Infof("end-of-day report generated")
 	}
 }
 
@@ -621,7 +882,10 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 		// same choice InsertAuditElevated already makes for the audit
 		// entry's primary actor (blockedActorID rides along there, but
 		// the printed report only ever shows the one name).
-		day := time.Now().Format("2006-01-02")
+		// ADR-0066 Decision 5: a manual run IS a close now, exactly like the
+		// scheduler's — its window is [LatestArchivedAt(ctx,"eod"), now),
+		// computed inside generateEOD itself; no "day" request concept
+		// threaded through here anymore.
 		locale := httpx.ResolveLocale(w, r)
 		// annotation (ut-docs#1012): an optional free-text form value —
 		// no dedicated UI input yet (see the issue's close-out note), but
@@ -634,7 +898,7 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, err.Error(), http.StatusBadRequest)
 			return
 		}
-		rep, created, err := generateEOD(r.Context(), d, day, actorID, blockedActorID, annotation)
+		rep, created, err := generateEOD(r.Context(), d, actorID, blockedActorID, annotation)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
@@ -707,7 +971,20 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
 			return
 		}
-		doc := buildEODDoc(rep, storeNameOrDefault(r.Context(), d), cfg.Charset)
+		// Deliberately the CURRENT live setting, not whatever was in effect
+		// when this report was originally closed (ut-docs#1650 review finding
+		// 2) — same convention this handler already follows for
+		// storeNameOrDefault/cfg.Charset just above: a reprint reflects
+		// today's config. `rep.Articles` itself is unaffected (the archive's
+		// content_json always holds every article; only how many of them
+		// this handler prints changes), and the on-screen archived-report
+		// list is a separate code path that always shows every article
+		// regardless of this setting either way — so nothing is lost,
+		// though a manager who switched to "off" since the original close
+		// gets a reprint with no BY ARTICLE section and no "+N more"-style
+		// marker that anything is missing, unlike "capped".
+		articleMode, articleCap := resolveEODArticlePrintSettings(r.Context(), d)
+		doc := buildEODDoc(rep, storeNameOrDefault(r.Context(), d), cfg.Charset, articleMode, articleCap)
 		if perr := print.PrintDoc(r.Context(), cfg, doc); perr != nil {
 			w.WriteHeader(http.StatusBadGateway)
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
@@ -843,6 +1120,23 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "business_day_start must be HH:MM", http.StatusBadRequest)
 			return
 		}
+		// Printed "BY ARTICLE" section (ut-docs#1650) — a sibling field on
+		// this same panel/endpoint, same "blank means unconfigured/default"
+		// convention as business_day_start above (resolveEODArticlePrintSettings
+		// is what actually applies the shipped default at print time).
+		articlePrintMode := strings.TrimSpace(r.Form.Get("article_print_mode"))
+		if articlePrintMode != "" && articlePrintMode != eodArticlePrintAll &&
+			articlePrintMode != eodArticlePrintCapped && articlePrintMode != eodArticlePrintOff {
+			http.Error(w, "article_print_mode must be all, capped or off", http.StatusBadRequest)
+			return
+		}
+		articlePrintCapRaw := strings.TrimSpace(r.Form.Get("article_print_cap"))
+		if articlePrintCapRaw != "" {
+			if n, err := strconv.Atoi(articlePrintCapRaw); err != nil || n < 1 || n > eodArticlePrintCapMax {
+				http.Error(w, fmt.Sprintf("article_print_cap must be a whole number between 1 and %d", eodArticlePrintCapMax), http.StatusBadRequest)
+				return
+			}
+		}
 		// Mutating + audit-writing (ut-docs#794): validated above (sync_api.go's
 		// precedent — don't burn a PIN entry on a request that 400s either
 		// way), gated below. Hidden replays the other two fields so the
@@ -868,6 +1162,8 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 					{Name: "enabled", Value: enabledRaw},
 					{Name: "time", Value: hhmm},
 					{Name: "business_day_start", Value: bizDayStart},
+					{Name: "article_print_mode", Value: articlePrintMode},
+					{Name: "article_print_cap", Value: articlePrintCapRaw},
 				}, elev)
 			return
 		}
@@ -878,8 +1174,13 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = d.Settings.Set(r.Context(), keyEODEnabled, fmt.Sprintf("%t", enabled))
 		_ = d.Settings.Set(r.Context(), keyEODTime, hhmm)
 		_ = d.Settings.Set(r.Context(), keyReportsBusinessDayStart, bizDayStart)
+		_ = d.Settings.Set(r.Context(), keyEODArticlePrintMode, articlePrintMode)
+		_ = d.Settings.Set(r.Context(), keyEODArticlePrintCap, articlePrintCapRaw)
 		now := time.Now().UTC().Format(time.RFC3339)
-		payload := map[string]any{"enabled": enabled, "time": hhmm, "business_day_start": bizDayStart}
+		payload := map[string]any{
+			"enabled": enabled, "time": hhmm, "business_day_start": bizDayStart,
+			"article_print_mode": articlePrintMode, "article_print_cap": articlePrintCapRaw,
+		}
 		if elev.Outcome == elevated {
 			_ = repo.InsertAuditElevated(r.Context(), nil, actorID, elev.ActorID, "report", "-", "eod_settings_changed", payload, now, "")
 			// ut-docs#794 review finding (should-fix): a 204 never swaps at

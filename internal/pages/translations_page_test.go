@@ -105,6 +105,14 @@ func TestRegisterTranslations_GET_RequiresManager(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 without a manager session, got %d", rec.Code)
 	}
+	// ut-docs#1458: GET /translations must render the full layout on 403
+	// too, not a bare rail-less body (same fix class as #1455) — the
+	// page's own gate only, per requirePageManager; the fragment routes
+	// (/ui/translations-table, /api/translations/*) keep the short
+	// LocalizedError body their htmx callers expect.
+	if body := rec.Body.String(); !strings.Contains(body, `class="nav"`) {
+		t.Fatalf("403 on GET /translations has no nav rail:\n%s", body)
+	}
 }
 
 func TestRegisterTranslations_GET_RendersAvailableLocales(t *testing.T) {

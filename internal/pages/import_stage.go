@@ -210,6 +210,21 @@ var (
 // registry above.
 const importCommitLockTTL = 2 * time.Minute
 
+// importCommitReserveSync is a test-only synchronization seam (ut-docs#1725),
+// nil in every real build (no-op — the nil check at the one call site in
+// import_page.go is the only cost in production). The import commit handler
+// calls it, if set, right after a successful reserveImportCommit (i.e.
+// while still holding the reservation, before releaseImportCommit's defer
+// fires) so a test can pause a request there and deterministically prove a
+// second, concurrent same-content request is rejected while the first is in
+// flight — see TestImport_ConcurrentDirectCommitsOfSameFileRejectSecond for
+// why that can't be left to two goroutines racing an OS scheduler, and for
+// the full history. Unlike pluginTaxRateAsker's cacheMax (tax_hook.go), a
+// per-instance field that can never leak between tests, this is a package
+// global: safe today because nothing in this package calls t.Parallel(),
+// but the first test that does needs its own seam, not this one shared.
+var importCommitReserveSync func()
+
 // reserveImportCommit claims exclusive rights to commit the exact bytes
 // hashed as key. false means another commit with the same content is
 // already in flight — the caller must reject the request, not proceed.
@@ -255,19 +270,25 @@ func hashImportUpload(file io.ReadSeeker) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// forceableImportIssue is ut-docs#601's explicit allow-list: the only two
-// issue types an operator may force-include from the preview's problem
-// grid, each with the correction field that makes the row importable. An
-// ALLOW-list on purpose, never a deny-list: any other issue code — the
-// integrity-sensitive skips (duplicate/already-in-catalog), and any issue
-// type catimport grows in the future — defaults to skip-only, no matter
-// what the client submits.
-func forceableImportIssue(issue string) (field string, ok bool) {
+// forceableImportIssue is ut-docs#601's explicit allow-list: the issue types
+// an operator may force-include from the preview's problem grid, each with
+// the correction field(s) that make the row importable, in the order they
+// must be supplied. An ALLOW-list on purpose, never a deny-list: any other
+// issue code — the integrity-sensitive skips (duplicate/already-in-catalog),
+// and any issue type catimport grows in the future — defaults to skip-only,
+// no matter what the client submits.
+//
+// IssueMissingNameAndBadPrice (ut-docs#1713) needs BOTH corrections at
+// once — a row missing only its name never silently ships a price of 0 by
+// having just one of the two fields.
+func forceableImportIssue(issue string) (fields []string, ok bool) {
 	switch issue {
 	case catimport.IssueMissingName:
-		return "name", true
+		return []string{"name"}, true
 	case catimport.IssueBadPrice:
-		return "price", true
+		return []string{"price"}, true
+	case catimport.IssueMissingNameAndBadPrice:
+		return []string{"name", "price"}, true
 	}
-	return "", false
+	return nil, false
 }

@@ -480,11 +480,11 @@ func TestPrintKitchen_MultiStationRoutingAndDuplication(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	grill, err := repo.CreateKitchenStation(ctx, "Grill", grillPrn)
+	grill, err := repo.CreateKitchenStation(ctx, "Grill", data.KitchenDestinationPrinter, grillPrn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bar, err := repo.CreateKitchenStation(ctx, "Bar", barPrn)
+	bar, err := repo.CreateKitchenStation(ctx, "Bar", data.KitchenDestinationPrinter, barPrn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -557,11 +557,11 @@ func TestPrintKitchen_OneTargetFailureDoesNotBlockOthers(t *testing.T) {
 	repo := data.NewPOSRepo(dbase.DB)
 
 	barPrn := printerFile(t, "bar.prn")
-	grill, err := repo.CreateKitchenStation(ctx, "Grill", filepath.Join(t.TempDir(), "missing-dir", "grill.prn"))
+	grill, err := repo.CreateKitchenStation(ctx, "Grill", data.KitchenDestinationPrinter, filepath.Join(t.TempDir(), "missing-dir", "grill.prn"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	bar, err := repo.CreateKitchenStation(ctx, "Bar", barPrn)
+	bar, err := repo.CreateKitchenStation(ctx, "Bar", data.KitchenDestinationPrinter, barPrn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -612,11 +612,11 @@ func TestPrintKitchen_ItemOverrideBeatsCategory(t *testing.T) {
 
 	grillPrn := printerFile(t, "grill.prn")
 	barPrn := printerFile(t, "bar.prn")
-	grill, err := repo.CreateKitchenStation(ctx, "Grill", grillPrn)
+	grill, err := repo.CreateKitchenStation(ctx, "Grill", data.KitchenDestinationPrinter, grillPrn)
 	if err != nil {
 		t.Fatal(err)
 	}
-	bar, err := repo.CreateKitchenStation(ctx, "Bar", barPrn)
+	bar, err := repo.CreateKitchenStation(ctx, "Bar", data.KitchenDestinationPrinter, barPrn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -667,7 +667,7 @@ func TestPrintKitchen_BlankAddressStationFallsBackToDefault(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	blank, err := repo.CreateKitchenStation(ctx, "No Address", "")
+	blank, err := repo.CreateKitchenStation(ctx, "No Address", data.KitchenDestinationPrinter, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -723,7 +723,7 @@ func TestPrintKitchen_ShopStationNamedKitchenStaysUntranslated(t *testing.T) {
 	defer httpx.InitI18n(i18n, "en") // restore the default other tests assume
 
 	prn := printerFile(t, "shop-kitchen.prn")
-	stationID, err := repo.CreateKitchenStation(ctx, "KITCHEN", prn)
+	stationID, err := repo.CreateKitchenStation(ctx, "KITCHEN", data.KitchenDestinationPrinter, prn)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -744,5 +744,28 @@ func TestPrintKitchen_ShopStationNamedKitchenStaysUntranslated(t *testing.T) {
 	}
 	if targets[0].isDefault {
 		t.Error("a real routed shop station must never be flagged isDefault")
+	}
+}
+
+// ut-docs#1533 (residual gap left by #1153): buildKitchenTargets reads
+// printer settings via the unchecked printerConfig, discarding a genuine
+// settings-read error and silently falling back to defaults instead of
+// surfacing it — unlike its neighbouring GetSaleDetail/ResolveKitchenStations
+// errors just above it, which already propagate normally. Dropping the
+// settings table (not just leaving a key unset) forces a genuine read
+// error, the same technique #1153's own tests used; buildKitchenTargets
+// must now return it instead of quietly building a ticket off defaulted
+// config.
+func TestBuildKitchenTargets_SurfacesSettingsReadError(t *testing.T) {
+	dp, dbase := kitchenRoutingDeps(t)
+	ctx := context.Background()
+	seedKitchenSale(t, dbase, "R-1533", "itm-steak")
+
+	if _, err := dbase.DB.Exec(`DROP TABLE settings`); err != nil {
+		t.Fatalf("drop settings table: %v", err)
+	}
+
+	if _, err := buildKitchenTargets(ctx, dp, "R-1533"); err == nil {
+		t.Fatal("expected buildKitchenTargets to surface the settings read error, got nil")
 	}
 }

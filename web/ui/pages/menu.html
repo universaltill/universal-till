@@ -7,7 +7,7 @@
 <div class="menu-grid">
   {{ range .Tiles }}
   <a class="menu-tile" href="{{ .Href }}">
-    <span class="menu-ico">{{ .Icon }}</span>
+    <span class="menu-ico">{{ if .IconSVG }}{{ .IconSVG }}{{ else }}{{ .Icon }}{{ end }}</span>
     <span class="menu-label">{{ T .Label }}</span>
   </a>
   {{ end }}

@@ -259,6 +259,92 @@ func TestShiftsPage_LabelsAndPatternsAreCurrencyAware(t *testing.T) {
 	}
 }
 
+// ut-docs#1291: the count-protocol cash-count grid (#denom-grid) hardcoded
+// GBP physical note/coin denominations (£50..1p) regardless of shop
+// currency. Must render from httpx.CurrencyInfo.Denominations instead, with
+// no leftover GBP values/labels once a different currency is active.
+func TestShiftsPage_DenomGridIsCurrencyAware(t *testing.T) {
+	mux, dp := newShiftsPageTestDeps(t)
+	ctx := t.Context()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO shifts(id,register_id,cashier_id,opened_at,opening_cash) VALUES('shift1','reg1','user1','2026-01-01T09:00:00Z',5000)`); err != nil {
+		t.Fatal(err)
+	}
+
+	get := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/shifts", nil)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /shifts = %d: %s", rec.Code, rec.Body.String())
+		}
+		return rec.Body.String()
+	}
+
+	// Scope the label assertions to the #denom-grid block itself. Review of
+	// ut-docs#1291: this shift's opening cash is 5000 minor units, so the
+	// page renders "£50.00" in the summary above the form regardless of what
+	// the grid does — an unscoped strings.Contains(body, "£50.00") passes
+	// even against the old hardcoded "£50"/"1p" grid, which would have made
+	// the GBP half of this test decorative rather than load-bearing.
+	gridOf := func(body string) string {
+		t.Helper()
+		i := strings.Index(body, `id="denom-grid"`)
+		if i < 0 {
+			t.Fatalf("no #denom-grid rendered on /shifts:\n%s", body)
+		}
+		rest := body[i:]
+		// The grid holds only <label>/<input> children, so the first
+		// closing </div> is the grid's own.
+		j := strings.Index(rest, "</div>")
+		if j < 0 {
+			t.Fatalf("unterminated #denom-grid:\n%s", rest)
+		}
+		return rest[:j]
+	}
+
+	httpx.InitCurrency("GBP")
+	body := get()
+	grid := gridOf(body)
+	// Denomination labels use the same `money`-formatted convention as the
+	// rest of this page's currency-aware fields (£X.XX, ut-docs#1274) —
+	// not the old two-tier "£50"/"1p" note-vs-coin shorthand.
+	if !strings.Contains(grid, `data-denom="5000"`) || !strings.Contains(grid, "£50.00") {
+		t.Fatalf("expected the GBP £50.00 denomination in the count-protocol grid, got:\n%s", grid)
+	}
+	if !strings.Contains(grid, `data-denom="1"`) || !strings.Contains(grid, "£0.01") {
+		t.Fatalf("expected the GBP £0.01 denomination in the count-protocol grid, got:\n%s", grid)
+	}
+
+	// JPY: 0-decimal, prefix symbol, a different denomination set — must
+	// show ¥-labelled JPY denominations and NO leftover GBP symbol
+	// anywhere in the grid (the whole page, in fact, since GBP's £ never
+	// appears once the shop's currency is JPY).
+	httpx.InitCurrency("JPY")
+	t.Cleanup(func() { httpx.InitCurrency("GBP") }) // ut-docs#970 convention: process-global, reset for later tests in this package.
+	body = get()
+	grid = gridOf(body)
+	if !strings.Contains(grid, `data-denom="10000"`) || !strings.Contains(grid, "¥10,000") {
+		t.Fatalf("expected the JPY ¥10,000 denomination in the count-protocol grid, got:\n%s", grid)
+	}
+	if !strings.Contains(grid, `data-denom="1"`) || !strings.Contains(grid, "¥1") {
+		t.Fatalf("expected the JPY ¥1 denomination in the count-protocol grid, got:\n%s", grid)
+	}
+	// Deliberately page-wide, not grid-scoped: under a JPY shop the GBP
+	// symbol should not survive anywhere on /shifts.
+	if strings.Contains(body, "£") {
+		t.Fatalf("expected NO leftover GBP symbol once currency is JPY, got:\n%s", body)
+	}
+	// GBP's £2/200p and £20/2000p denominations have no JPY equivalent
+	// (JPY has no 2- or 20-based note/coin) — a leftover hardcoded GBP
+	// grid would still show these.
+	if strings.Contains(grid, `data-denom="2000"`) || strings.Contains(grid, `data-denom="200"`) {
+		t.Fatalf("expected NO leftover GBP-only denominations (2000/200) in the count-protocol grid once currency is JPY, got:\n%s", grid)
+	}
+}
+
 // ut-docs#1274: CarryForwardDisplay hardcoded `%d.%02d` against `/100`
 // (internal/pages/shifts_page.go) -- silently wrong on a 0-decimal currency,
 // where minor units ARE major units (500 IRT prefilled as "5.00" instead of

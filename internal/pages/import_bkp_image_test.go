@@ -218,6 +218,70 @@ WHERE i.sku = '30001'`).Scan(&itemID, &imgPath)
 	}
 }
 
+// buildLargeAcceptedTestPNG returns a real, decodable PNG bigger than
+// imaging.MaxThumbEdge but comfortably within imaging.MaxPixels — ut-docs#1416's
+// "accepted photo" case, distinct from buildOversizedTestPNG's rejected one.
+func buildLargeAcceptedTestPNG(t *testing.T) []byte {
+	t.Helper()
+	const w, h = 2800, 2100
+	if int64(w)*int64(h) > imaging.MaxPixels {
+		t.Fatalf("test fixture %dx%d must stay within imaging.MaxPixels (%d)", w, h, imaging.MaxPixels)
+	}
+	img := image.NewRGBA(image.Rect(0, 0, w, h))
+	var buf bytes.Buffer
+	if err := png.Encode(&buf, img); err != nil {
+		t.Fatalf("encode large accepted test png: %v", err)
+	}
+	return buf.Bytes()
+}
+
+// TestImport_BkpDownscalesLargeAcceptedImage is ut-docs#1416's gap #1
+// applied to the .bkp commit path: a real photo resolved from the archive
+// that's accepted (within imaging.MaxPixels) but bigger than
+// imaging.MaxThumbEdge must be downscaled before being written to disk,
+// same as the manual-upload handlers.
+func TestImport_BkpDownscalesLargeAcceptedImage(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init("") })
+
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	imgBytes := buildLargeAcceptedTestPNG(t)
+	zipBytes := buildBkpZipWithImage(t, "images/flat-white-uuid.png", imgBytes)
+	body, ct := multipartFile(t, "backup.bkp", zipBytes, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	var itemID string
+	if err := dp.Db.QueryRow(`SELECT id FROM items WHERE sku = '30001'`).Scan(&itemID); err != nil {
+		t.Fatalf("query item: %v", err)
+	}
+	onDisk := paths.Data("public", "assets", "items", itemID, "thumb.png")
+	got, err := os.ReadFile(onDisk)
+	if err != nil {
+		t.Fatalf("read written thumbnail: %v", err)
+	}
+	decoded, _, err := image.Decode(bytes.NewReader(got))
+	if err != nil {
+		t.Fatalf("written thumbnail is not a valid image: %v", err)
+	}
+	b := decoded.Bounds()
+	if b.Dx() != imaging.MaxThumbEdge {
+		t.Fatalf("written thumbnail width = %d, want capped at imaging.MaxThumbEdge (%d)", b.Dx(), imaging.MaxThumbEdge)
+	}
+	if want := imaging.MaxThumbEdge * 2100 / 2800; b.Dy() != want {
+		t.Fatalf("written thumbnail height = %d, want %d (aspect ratio not preserved)", b.Dy(), want)
+	}
+}
+
 // TestImport_BkpDanglingImagePathWarnsAndFallsBackToPlaceholder: a row
 // whose ProductImagePath doesn't resolve still imports, with the
 // ut-docs#1189 placeholder icon (never a blank tile), and the commit
@@ -269,6 +333,13 @@ WHERE i.sku = '30001'`).Scan(&itemID, &imgPath); err != nil {
 // upload proof), falling back to the placeholder icon with a surfaced
 // warning — the same best-effort, never-fail-the-row behavior as a
 // dangling or corrupt image reference, never a 500 or an unbounded decode.
+//
+// ut-docs#1623: the warning text itself must say the photo was too large,
+// not that it "could not be read" — the photo IS perfectly decodable, it's
+// just over imaging.MaxPixels, and telling a shop owner a valid phone photo
+// "could not be read" is a wrong diagnosis (see TestImport_BkpCorruptImage
+// WarnsAndFallsBackToPlaceholder below for the genuinely-undecodable case,
+// which keeps the old message).
 func TestImport_BkpOversizedImageWarnsAndFallsBackToPlaceholder(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	paths.Init(t.TempDir())
@@ -288,8 +359,11 @@ func TestImport_BkpOversizedImageWarnsAndFallsBackToPlaceholder(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "photo could not be read") {
-		t.Errorf("commit response must warn that the oversized photo could not be read, got: %s", rec.Body.String())
+	if strings.Contains(rec.Body.String(), "photo could not be read") {
+		t.Errorf("an over-pixel-cap but perfectly decodable photo must NOT be reported as unreadable, got: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "too large to import") {
+		t.Errorf("commit response must warn that the oversized photo was too large to import, got: %s", rec.Body.String())
 	}
 
 	var itemID, imgPath string
@@ -304,5 +378,55 @@ WHERE i.sku = '30001'`).Scan(&itemID, &imgPath); err != nil {
 	}
 	if _, err := os.Stat(paths.Data("public", "assets", "items", itemID, "thumb.png")); err == nil {
 		t.Error("a rejected oversized image must not leave a real thumbnail file behind")
+	}
+}
+
+// TestImport_BkpCorruptImageWarnsAndFallsBackToPlaceholder is the sibling
+// case ut-docs#1623 explicitly carves out as a non-goal for its own fix:
+// a genuinely corrupt/unsupported-format image (not merely oversized) must
+// still report "could not be read" and fall back to the placeholder icon,
+// exactly as before — this pins that behavior down now that the oversized
+// case above gets a distinct message, so the two failure modes can't drift
+// back onto the same text by accident.
+func TestImport_BkpCorruptImageWarnsAndFallsBackToPlaceholder(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init("") })
+
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	// Deliberately not a valid PNG/JPEG at all — imaging.Decode must reject
+	// this with a generic decode error, never imaging.ErrTooManyPixels.
+	garbage := []byte("this is not an image, just plain bytes")
+	zipBytes := buildBkpZipWithImage(t, "images/flat-white-uuid.png", garbage)
+	body, ct := multipartFile(t, "backup.bkp", zipBytes, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "photo could not be read") {
+		t.Errorf("commit response must warn that the corrupt photo could not be read, got: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "too large to import") {
+		t.Errorf("a genuinely corrupt image must not be reported as too large, got: %s", rec.Body.String())
+	}
+
+	var itemID, imgPath string
+	if err := dp.Db.QueryRow(`
+SELECT i.id, img.path FROM items i
+JOIN item_images img ON img.item_id = i.id AND img.role = 'thumbnail'
+WHERE i.sku = '30001'`).Scan(&itemID, &imgPath); err != nil {
+		t.Fatalf("query item_images: %v", err)
+	}
+	if imgPath == "/public/assets/items/"+itemID+"/thumb.png" {
+		t.Errorf("a corrupt image reference must fall back to the placeholder icon, not claim a real photo path")
+	}
+	if _, err := os.Stat(paths.Data("public", "assets", "items", itemID, "thumb.png")); err == nil {
+		t.Error("a rejected corrupt image must not leave a real thumbnail file behind")
 	}
 }

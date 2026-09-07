@@ -56,8 +56,13 @@
        of only a CRM customer name or a bare timestamp. Static (no server
        round-trip to open) since it needs no per-open data. -->
   <dialog id="hold-modal" class="modifier-modal" aria-labelledby="hold-modal-title">
+    <!-- ut-docs#1386: the actual basket-reset for Hold Sale happens here (on
+         this form's submit), not on the button in .tender-default-footer
+         that only opens this dialog — so the #payment-overlay-closing fix
+         belongs on this after-request handler, same reasoning as New Sale's
+         above. -->
     <form hx-post="/api/pos/hold" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-          hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('hold-modal'); m.close(); this.reset(); }">
+          hx-on::after-request="if (event.detail.successful) { var m = document.getElementById('hold-modal'); m.close(); this.reset(); var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
       <h3 id="hold-modal-title">{{ T "hold.modal.title" }}</h3>
       <input type="text" id="hold-label-input" name="label" maxlength="64"
              aria-labelledby="hold-modal-title" placeholder="{{ T "hold.modal.placeholder" }}" autofocus>
@@ -72,7 +77,20 @@
         <button type="button" class="btn secondary"
                 onclick="document.getElementById('hold-modal').close(); document.getElementById('hold-label-input').value='';">
           {{ T "common.cancel" }}</button>
-        <button type="submit" class="btn primary">{{ T "hold.action" }}</button>
+        <!-- ut-docs#1628 (found reviewing #1625): this submit button's
+             visible text is plain "Hold Sale", same as the trigger(s) that
+             open this dialog (both already given their own distinguishing
+             aria-label by #1625 where they'd otherwise collide — this one
+             predates that fix and was out of its scope). Once a trigger is
+             tapped and this dialog opens, its own submit button joins the
+             a11y tree as a THIRD "Hold Sale"-named control while the
+             trigger(s) are still present (this dialog opens non-modally,
+             same OSK-must-stay-usable reasoning as #payment-overlay — see
+             #1625 — so nothing outside it becomes inert). Gets its own
+             distinguishing aria-label, following the same
+             "<visible text> (<context>)" convention #1625 established. -->
+        <button type="submit" class="btn primary"
+                aria-label="{{ T "hold.modal.confirm_action" }}">{{ T "hold.action" }}</button>
       </div>
     </form>
   </dialog>
@@ -237,11 +255,25 @@
          action in this row; New Sale/Hold Sale are both "before you get
          there" utility actions. -->
     <div class="tender-default-footer">
+      <!-- ut-docs#1386: New Sale resets the live basket (hx-post below) but
+           sits outside #payment-overlay, so a tap here while the overlay is
+           open (real hit target since ut-docs#1385 made it non-modal) left
+           a stale Tender panel showing payment state for a basket that no
+           longer exists. Same after-request close-if-open pattern as the
+           pay-grid/quick-pay buttons above: only close on a genuine success
+           (not a 200 carrying an inline toast error), and only if it's
+           actually open — a no-op the rest of the time. -->
       <button class="btn secondary" type="button" data-testid="kiosk-checkout-start"
               hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-              onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)">
+              onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)"
+              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
         🛒 {{ T "kiosk.checkout_start" }}</button>
-      <button class="btn secondary" type="button"
+      <!-- ut-docs#1629: testid added so the payment-overlay focus guard's
+           own e2e spec (payment-overlay-focus-obscured-1629.spec.ts) can
+           address this original directly rather than matching on visible
+           text (locale-dependent) — same reasoning #1542/#1625's testids
+           on the sibling New Sale button already followed. -->
+      <button class="btn secondary" type="button" data-testid="tender-footer-hold"
               onclick="document.getElementById('hold-modal').show(); document.getElementById('hold-label-input').focus();">
         {{ T "hold.action" }}</button>
       <button type="button" class="btn primary payment-trigger" data-testid="payment-open"
@@ -404,16 +436,74 @@
       </div>
     </div>
 
+    <!-- ut-docs#1542: #payment-overlay is a fixed, right-anchored 26rem
+         panel that does not reflow .tender-default-footer -- so at every
+         desktop viewport up to ~1440px wide, the ORIGINAL Hold Sale/New
+         Sale buttons in that footer sit geometrically under the open
+         overlay and are not reachable by a real click (measured live via
+         getBoundingClientRect, see the card). Rather than resize/reposition
+         the overlay (a much bigger, riskier change touching every
+         breakpoint this file's own comments already treat as
+         hard-won), this adds reachable DUPLICATE copies inside the
+         overlay itself -- the exact same shape this file already uses for
+         the phone-width New Sale duplicate (kiosk-checkout-start-phone,
+         ut-docs#1345): identical wiring, new testids so e2e can address
+         either copy unambiguously. This does NOT revert ut-docs#1252's
+         decision to keep the PRIMARY Hold Sale button in the default view
+         -- that button is untouched; these are additional, overlay-local
+         reachable copies for while the overlay is actually open.
+
+         ut-docs#1625: unlike the phone-width duplicate above (breakpoint-
+         gated via display:none, so only one copy is ever in the a11y tree
+         at a time), these two copies are visible AND interactive
+         SIMULTANEOUSLY with the originals -- #payment-overlay opens
+         non-modally (.show(), ut-docs#1385: the on-screen keyboard must
+         stay usable while it's open), so nothing outside it becomes inert
+         or aria-hidden, and at wide desktop viewports the originals aren't
+         even visually covered (new-sale-closes-payment-overlay-1386.spec.ts
+         drives the ORIGINAL Hold Sale button directly at 1920x1080 while
+         this overlay is open) -- so `inert`-ing .tender-default-footer
+         while the overlay is open was rejected: it would silently break
+         that already-reachable wide-viewport path, not just the covered
+         narrow one. A screen-reader/keyboard user tabbing through with the
+         overlay open would otherwise land on two identically-named "Hold
+         Sale" controls and two identically-named "New Sale" controls with
+         no way to tell which is which. Fix: give these overlay-local
+         copies their own distinguishing accessible name via aria-label
+         (visible text is unchanged, so this is not a docs-shots pixel
+         change even though the guard still re-hashes the file) -- the
+         originals keep their plain, unqualified name. -->
+    <div class="tender-footer">
+      <!-- Same left-to-right order as .tender-default-footer (New Sale,
+           Hold Sale) -- independent review caught the first draft
+           inverting it, easy to misread as a meaningful difference. -->
+      <button class="btn secondary" type="button" data-testid="payment-overlay-new-sale"
+              aria-label="{{ T "tender.overlay_new_sale_action" }}"
+              hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)"
+              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
+        🛒 {{ T "kiosk.checkout_start" }}</button>
+      <button class="btn secondary" type="button" data-testid="payment-overlay-hold"
+              aria-label="{{ T "tender.overlay_hold_action" }}"
+              onclick="document.getElementById('hold-modal').show(); document.getElementById('hold-label-input').focus();">
+        {{ T "hold.action" }}</button>
+    </div>
+
     <div class="tender-footer single">
       <!-- Hold Sale moved to the default view (ut-docs#1252 independent
-           review) -- only New Customer stays here. Closing the overlay
-           first isn't a correctness fix (the hx-post below works fine
-           against an inert-elsewhere document either way, since #basket
-           lives outside this dialog and htmx doesn't care about inert),
-           just tidiness: nothing left to pay for once the basket resets. -->
+           review) -- only New Customer stays here. ut-docs#1624: this used
+           to close the overlay unconditionally via onclick, BEFORE the
+           hx-post even completed -- unlike every New Sale button in this
+           file, which only closes after a successful response with no
+           inline .error toast. An operator tapping New Customer against an
+           errored /api/pos/reset lost the Tender panel immediately and
+           never saw the error, while the New Sale button two rows up would
+           have kept it open and shown it. Same gate as New Sale now,
+           response-handling shape only -- New Customer's own behavior
+           (POST /api/pos/reset) is unchanged. -->
       <button class="btn secondary"
-              onclick="document.getElementById('payment-overlay').close();"
-              hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace">{{ T "tender.new_customer" }}</button>
+              hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T "tender.new_customer" }}</button>
     </div>
       </div>
     </dialog>
@@ -428,6 +518,9 @@
      the result feeds the same /api/pos/scan submit as any other scan. -->
 <div id="barcode-scan-overlay" class="ai-identify-overlay" hidden
      data-msg-camera-error="{{ T "scan.camera.camera_error" }}"
+     data-msg-camera-busy="{{ T "scan.camera.camera_busy" }}"
+     data-msg-camera-not-found="{{ T "scan.camera.camera_not_found" }}"
+     data-msg-camera-permission-denied="{{ T "scan.camera.camera_permission_denied" }}"
      data-msg-scanning="{{ T "scan.camera.scanning" }}">
   <div class="ai-identify-panel">
     <h3>{{ T "scan.camera.title" }}</h3>
@@ -447,7 +540,10 @@
      data-msg-no-match="{{ T "ai.identify.no_match" }}"
      data-msg-suggested="{{ T "ai.identify.suggested" }}"
      data-msg-error="{{ T "ai.identify.error" }}"
-     data-msg-camera-error="{{ T "ai.identify.camera_error" }}">
+     data-msg-camera-error="{{ T "ai.identify.camera_error" }}"
+     data-msg-camera-busy="{{ T "ai.identify.camera_busy" }}"
+     data-msg-camera-not-found="{{ T "ai.identify.camera_not_found" }}"
+     data-msg-camera-permission-denied="{{ T "ai.identify.camera_permission_denied" }}">
   <div class="ai-identify-panel">
     <h3>{{ T "ai.identify.title" }}</h3>
     <video id="ai-identify-video" class="camera-overlay-video" autoplay playsinline muted></video>

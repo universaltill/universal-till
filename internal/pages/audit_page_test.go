@@ -26,7 +26,8 @@ func TestAuditPage_ManagerOnlyAndRendersRealData(t *testing.T) {
 	defer db.Close()
 	seedForPages(t, db)
 
-	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role, created_at) VALUES ('mgr-1','manager1','Manager One','x','manager','2026-01-01T00:00:00Z')`); err != nil {
+	// ut-docs#1657/#1678: the real users table has no created_at column.
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role) VALUES ('mgr-1','manager1','Manager One','x','manager')`); err != nil {
 		t.Fatalf("seed manager user: %v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO audit_log(id, actor_id, entity_type, entity_id, action, data_json, created_at) VALUES ('a1','mgr-1','plugin','com.x.faq','plugin_install','{"version":"1.0.0"}','2026-01-02T10:00:00Z')`); err != nil {
@@ -61,6 +62,10 @@ func TestAuditPage_ManagerOnlyAndRendersRealData(t *testing.T) {
 	}
 	if rec := get(&auth.User{ID: "cashier-1", Role: "cashier"}); rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier = %d, want 403", rec.Code)
+	} else if body := rec.Body.String(); !strings.Contains(body, `class="nav"`) {
+		// ut-docs#1458: GET /audit must render the full layout on 403 too,
+		// not a bare rail-less body (same fix class as #1455).
+		t.Fatalf("cashier's 403 on GET /audit has no nav rail:\n%s", body)
 	}
 
 	rec := get(&auth.User{ID: "mgr-1", Role: "manager"})
@@ -96,7 +101,8 @@ func TestAuditPage_RepoErrorNeverLeaksRawErrorToBody(t *testing.T) {
 	mux := http.NewServeMux()
 	registerAuditPage(mux, dp)
 
-	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role, created_at) VALUES ('mgr-1','manager1','Manager One','x','manager','2026-01-01T00:00:00Z')`); err != nil {
+	// ut-docs#1657/#1678: the real users table has no created_at column.
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role) VALUES ('mgr-1','manager1','Manager One','x','manager')`); err != nil {
 		t.Fatalf("seed manager user: %v", err)
 	}
 	// Force ListAudit specifically to fail with a raw driver error, without
@@ -233,7 +239,8 @@ func TestAuditExport_CSVHeadersFiltersAndAuditEntry(t *testing.T) {
 	defer db.Close()
 	seedForPages(t, db)
 
-	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role, created_at) VALUES ('mgr-1','manager1','Manager One','x','manager','2026-01-01T00:00:00Z')`); err != nil {
+	// ut-docs#1657/#1678: the real users table has no created_at column.
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role) VALUES ('mgr-1','manager1','Manager One','x','manager')`); err != nil {
 		t.Fatalf("seed manager user: %v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO audit_log(id, actor_id, entity_type, entity_id, action, data_json, created_at) VALUES
@@ -298,7 +305,7 @@ func TestAuditExport_FormulaShapedFieldsAreCSVSafe(t *testing.T) {
 	seedForPages(t, db)
 
 	const malicious = `=cmd|'/c calc'!A1`
-	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role, created_at) VALUES ('mgr-2','manager2',?,'x','manager','2026-01-01T00:00:00Z')`, malicious); err != nil {
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role) VALUES ('mgr-2','manager2',?,'x','manager')`, malicious); err != nil {
 		t.Fatalf("seed manager user: %v", err)
 	}
 	if _, err := db.Exec(`INSERT INTO audit_log(id, actor_id, entity_type, entity_id, action, data_json, created_at) VALUES

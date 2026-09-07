@@ -1,5 +1,12 @@
 import { test, expect } from './fixtures';
+import type { Page } from '@playwright/test';
 import { watchConsole, setOskMode } from './helpers';
+
+async function typeViaOsk(page: Page, digits: string) {
+  for (const d of digits) {
+    await page.locator(`#osk button[data-k="${d}"]`).click();
+  }
+}
 
 // ut-docs#1022: osk.js used to suppress the native OS keyboard only
 // reactively, inside show() — which runs from a click, by which point the
@@ -228,6 +235,44 @@ test('a realistic-duration press (not an instant synthetic click) is not hijacke
     page.locator('.scan-row button[type=submit]').click({ delay: 120 }),
   ]);
   await expect(page.locator('#basket')).toContainText('Coca-Cola');
+
+  await page.request.post('/api/pos/reset');
+  assertClean();
+});
+
+// ut-docs#1306: focusin/focusout's own `hide()` deferral shares the exact
+// race the test above closes for the enable path, but wasn't fixed by it —
+// they schedule via a fixed-duration `setTimeout` too, from INSIDE the
+// mousedown that starts the press (focus moves as part of mousedown's
+// default action), so the timeout still fires long before mouseup/click for
+// any real, human-scale press. Mode 'on' isolates this from the
+// enable-fallback path entirely (no `pointerdown`/`click` listener is ever
+// registered when already enabled at parse time), so this exercises
+// focusin/focusout's own deferral specifically. `{ delay: 120 }` is the
+// load-bearing part, same reasoning as the test above: a plain `.click()`
+// would pass even against the pre-fix code.
+test('a realistic-duration press on a non-OSK button while the OSK is open is not dropped by focusin/focusout hiding mid-press (ut-docs#1306)', async ({ page }) => {
+  const assertClean = watchConsole(page);
+  await page.request.post('/api/pos/reset');
+  await setOskMode(page, 'on');
+
+  await page.goto('/');
+  const code = page.locator('form.scan-row input[name="code"]');
+  await code.click();
+  await expect(page.locator('#osk')).toBeVisible();
+  await typeViaOsk(page, '2000010000012'); // Coca-Cola 330ml (see ut-docs#1177's spec for provenance)
+  await expect(code).toHaveValue('2000010000012');
+
+  // Tapping "Add" moves focus off the scan field (a non-OSK-able target),
+  // triggering focusin/focusout's hide() — pre-fix, its reflow (removing
+  // body.osk-padded) lands mid-press and can shift Add out from under this
+  // still-in-flight tap, dropping it silently.
+  await Promise.all([
+    page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
+    page.locator('form.scan-row button[type="submit"]').click({ delay: 120 }),
+  ]);
+  await expect(page.locator('#basket')).toContainText('Coca-Cola 330ml');
+  await expect(page.locator('#basket').locator('.pos-notice.error')).toHaveCount(0);
 
   await page.request.post('/api/pos/reset');
   assertClean();

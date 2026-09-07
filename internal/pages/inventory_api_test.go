@@ -6,10 +6,12 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"strings"
+	"sync/atomic"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -203,7 +205,7 @@ func TestCreateNegativeInventoryOverride_CashierRequiresManagerPIN(t *testing.T)
 	ctx := context.Background()
 
 	if _, err := dp.Db.ExecContext(ctx,
-		`INSERT INTO users(id,username,display_name,pin_hash,role,created_at) VALUES('cashier1','cashier1','Cashier One','','cashier',datetime('now'))`); err != nil {
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('cashier1','cashier1','Cashier One','','cashier')`); err != nil {
 		t.Fatal(err)
 	}
 	hash, err := auth.HashPIN("482913")
@@ -211,7 +213,7 @@ func TestCreateNegativeInventoryOverride_CashierRequiresManagerPIN(t *testing.T)
 		t.Fatal(err)
 	}
 	if _, err := dp.Db.ExecContext(ctx,
-		`INSERT INTO users(id,username,display_name,pin_hash,role,created_at) VALUES('mgr1','mgr1','Manager One',?,'manager',datetime('now'))`, hash); err != nil {
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('mgr1','mgr1','Manager One',?,'manager')`, hash); err != nil {
 		t.Fatal(err)
 	}
 
@@ -491,6 +493,195 @@ func TestCreateReturn_ByReceiptNo(t *testing.T) {
 	}
 }
 
+// seedInclusiveEURSaleForReturn seeds a German-shop-shaped original sale —
+// EUR currency, VAT-inclusive pricing (unit_price is the gross, tax-included
+// price, and the sale header's own arithmetic makes
+// pos.InferTaxInclusive/saleIsTaxInclusive read it as inclusive) — for
+// ut-docs#1494's regression coverage: CreateReturn must derive the return's
+// Currency/TaxInclusive from THIS sale, not the English-market default.
+func seedInclusiveEURSaleForReturn(t *testing.T, dp *common.Deps) (saleID, lineID string) {
+	t.Helper()
+	ctx := context.Background()
+	saleID = "sale-return-eur-inclusive"
+	// subtotal(120) == subtotal - discount(0) + serviceCharge(0) +
+	// voucherIssueTotal(0) with taxTotal(20) != 0 -> InferTaxInclusive true.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, 'R-RETURN-EUR-1', 'completed', 'sale', 'EUR', 120, 0, 20, 120, datetime('now'), datetime('now'))`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	lineID = "line-return-eur-1"
+	// unit_price is the gross (tax-inclusive) selling price, as an
+	// inclusive-priced shop's catalog prices are.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES(?, ?, 1, 'itm1', 'Apple', 'ABC', 1, 120, 2000, 20, 100, 120)`, lineID, saleID); err != nil {
+		t.Fatal(err)
+	}
+	return saleID, lineID
+}
+
+// TestCreateReturn_UsesOriginalSaleCurrencyAndTaxMode is the regression test
+// for ut-docs#1494: CreateReturn used to hardcode Currency:"GBP" and leave
+// TaxInclusive at its false zero value regardless of the original sale, so a
+// German (EUR, inclusive-priced) shop's return was signed and persisted as
+// "currency":"GBP","tax_inclusive":false. It must instead derive both from
+// the original sale, same source refund_page.go's sibling flow reads.
+func TestCreateReturn_UsesOriginalSaleCurrencyAndTaxMode(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	saleID, lineID := seedInclusiveEURSaleForReturn(t, dp)
+
+	rec := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"faulty","lines":[{"line_id":"`+lineID+`","quantity":1}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	respData, hasData, errVal, hasError := envelopeOf(t, rec.Body.Bytes())
+	if !hasData || !hasError {
+		t.Fatalf("expected a {data,error} envelope, got %s", rec.Body.String())
+	}
+	if string(errVal) != "null" {
+		t.Fatalf("expected error:null on success, got %s: full body %s", errVal, rec.Body.String())
+	}
+	var parsed struct {
+		ReturnSaleID string `json:"return_sale_id"`
+	}
+	if err := json.Unmarshal(respData, &parsed); err != nil || parsed.ReturnSaleID == "" {
+		t.Fatalf("expected a return_sale_id in the response data, got %s (err: %v)", respData, err)
+	}
+
+	repo := data.NewPOSRepo(dp.Db)
+	returnDetail, found, err := repo.GetSaleDetailByID(context.Background(), parsed.ReturnSaleID)
+	if err != nil || !found {
+		t.Fatalf("expected to find the persisted return sale %q: found=%v err=%v", parsed.ReturnSaleID, found, err)
+	}
+	if returnDetail.Currency != "EUR" {
+		t.Fatalf("return was persisted as currency %q, want EUR (from the original sale) — the ut-docs#1494 hardcoded-GBP bug", returnDetail.Currency)
+	}
+	if !saleIsTaxInclusive(returnDetail) {
+		t.Fatalf("return sale %+v does not read back as tax-inclusive, want it to match the original EUR-inclusive sale's pricing mode", returnDetail)
+	}
+}
+
+// TestCreateReturn_FiscalSignAsk_ApprovedHasNoMarker establishes baseline
+// fiscal.sign.ask dispatch coverage for CreateReturn (ut-docs#1405 added
+// the dispatch here with no dedicated test — refund_page.go's sibling
+// flow already had this pair via refund_fiscal_sign_test.go) before the
+// ut-docs#1493 known-offline test below: a normal (online) return still
+// dispatches exactly once and completes with no unsigned marker.
+func TestCreateReturn_FiscalSignAsk_ApprovedHasNoMarker(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	t.Cleanup(func() { plugins.SharedBus(dp.Db).ResetSubscribers() })
+	var invocations atomic.Int32
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-return-ok", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		invocations.Add(1)
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+	saleID, _, lineID := seedCompletedSaleForReturn(t, dp)
+
+	rec := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"faulty","lines":[{"line_id":"`+lineID+`","quantity":1}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := invocations.Load(); n != 1 {
+		t.Fatalf("fiscal.sign.ask must be dispatched exactly once for the return, got %d invocations", n)
+	}
+	if n := countAuditRows(t, dp, "unsigned_fiscal_signing"); n != 0 {
+		t.Fatalf("approved return must carry no unsigned_fiscal_signing marker, got %d", n)
+	}
+}
+
+// TestCreateReturn_FiscalSignAsk_KnownOfflineShortCircuits is ut-docs#1493's
+// regression coverage for the inventory-return path: mirrors
+// TestRefundFiscalSignAsk_KnownOfflineShortCircuits (refund_fiscal_sign_test.go)
+// and TestFiscalSignAsk_KnownOfflineShortCircuits (the sale path) — the
+// return request's own "offline" field must thread into
+// dispatchFiscalSignAsk and skip the signer entirely (ADR-0044 D1) instead
+// of burning the fiscalSignAskBudget on a call already known to fail.
+func TestCreateReturn_FiscalSignAsk_KnownOfflineShortCircuits(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	t.Cleanup(func() { plugins.SharedBus(dp.Db).ResetSubscribers() })
+	var invocations atomic.Int32
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-return-offline", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		invocations.Add(1)
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+	saleID, _, lineID := seedCompletedSaleForReturn(t, dp)
+
+	rec := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"faulty","offline":true,"lines":[{"line_id":"`+lineID+`","quantity":1}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("known-offline return must still complete, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := invocations.Load(); n != 0 {
+		t.Fatalf("known-offline return must never dispatch to the signer, got %d invocations", n)
+	}
+	var returnSaleID string
+	if err := dp.Db.QueryRow(`SELECT id FROM sales WHERE sale_type = 'return'`).Scan(&returnSaleID); err != nil {
+		t.Fatalf("expected a return sale row: %v", err)
+	}
+	var markerPayload string
+	if err := dp.Db.QueryRow(`SELECT data_json FROM audit_log WHERE entity_type='sale' AND entity_id=? AND action='unsigned_fiscal_signing'`, returnSaleID).
+		Scan(&markerPayload); err != nil {
+		t.Fatalf("expected an unsigned_fiscal_signing marker for the offline return: %v", err)
+	}
+	if !strings.Contains(markerPayload, "known-offline") || !strings.Contains(markerPayload, `"known_offline":true`) {
+		t.Fatalf("marker payload should carry the honest known-offline reason (not a generic backend-timeout one), got %s", markerPayload)
+	}
+}
+
+// ADR-0077 D1/D2, ut-docs#1519, review finding: CreateReturn's own
+// fiscalStartCarrier → returnInput.SaleID threading is real, end to end
+// through the actual POST /api/inventory/return handler — not just proven
+// at the dispatchFiscalSignStart/dispatchFiscalSignAsk function level. The
+// persisted return sale's own id must equal the fiscal_sign_starts row's
+// sale_id; if the threading were ever dropped, CompleteSale would mint its
+// own id instead and this assertion would catch the silent decorrelation.
+func TestCreateReturn_FiscalSignStart_SharesSaleIDWithFinish(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	t.Cleanup(func() { plugins.SharedBus(dp.Db).ResetSubscribers() })
+	subscribeFiscalSignStartHandler(t, dp, "com.test.fiscal-start-return", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		return json.RawMessage(`{"status":"acknowledged","tx_id":"tx-return-1","tx_revision":1}`), nil
+	})
+	var captured fiscalSignAskPayload
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-ask-return", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		_ = json.Unmarshal(ev.Payload, &captured)
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+	saleID, _, lineID := seedCompletedSaleForReturn(t, dp)
+
+	rec := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"faulty","lines":[{"line_id":"`+lineID+`","quantity":1}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	dp.WaitForAsyncWork()
+
+	var returnSaleID string
+	if err := dp.Db.QueryRow(`SELECT id FROM sales WHERE sale_type = 'return'`).Scan(&returnSaleID); err != nil {
+		t.Fatalf("expected a return sale row: %v", err)
+	}
+	if captured.SaleID != returnSaleID {
+		t.Fatalf("fiscal.sign.ask saw sale_id %q but the persisted return sale is %q — the two dispatches disagree on which sale they cover", captured.SaleID, returnSaleID)
+	}
+	// NOT asserting captured.StartedTxID/StartedTxRevision here — see the
+	// same-named comment in fiscal_sign_hook_test.go's
+	// TestFiscalSignStart_SharesSaleIDWithFinishThroughTender: within one
+	// real HTTP request the two dispatches run back to back with nothing
+	// waiting on the goroutine in between, so an in-process test handler
+	// with no real latency can run either order. This test's own job is
+	// the SaleID-agreement check just above, plus the persisted-row check
+	// below (itself awaited via dp.WaitForAsyncWork).
+	var startSaleID, startTxID string
+	var startTxRevision int64
+	if err := dp.Db.QueryRow(`SELECT sale_id, tx_id, tx_revision FROM fiscal_sign_starts WHERE sale_id = ?`, returnSaleID).
+		Scan(&startSaleID, &startTxID, &startTxRevision); err != nil {
+		t.Fatalf("expected a fiscal_sign_starts row keyed on the return's own sale id %q: %v", returnSaleID, err)
+	}
+	if startSaleID != returnSaleID || startTxID != "tx-return-1" || startTxRevision != 1 {
+		t.Fatalf("unexpected fiscal_sign_starts row: sale_id=%q tx_id=%q tx_revision=%d", startSaleID, startTxID, startTxRevision)
+	}
+}
+
 func TestCreateReturn_ValidationErrors(t *testing.T) {
 	mux, dp := newInventoryAPITestDeps(t)
 	saleID, _, lineID := seedCompletedSaleForReturn(t, dp)
@@ -508,6 +699,11 @@ func TestCreateReturn_ValidationErrors(t *testing.T) {
 	}
 	if rec := postInvJSON(t, mux, "/api/inventory/return", `{"receipt_no":"NO-SUCH-RECEIPT","reason":"x","lines":[{"line_id":"x","quantity":1}]}`); rec.Code != http.StatusNotFound {
 		t.Fatalf("expected 404 for an unknown receipt_no, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// original_sale_id that parses but matches no row (ut-docs#1494's new
+	// GetSaleDetailByID lookup, ahead of ListSaleLineSnapshots).
+	if rec := postInvJSON(t, mux, "/api/inventory/return", `{"original_sale_id":"no-such-sale-id","reason":"x","lines":[{"line_id":"x","quantity":1}]}`); rec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for an unknown original_sale_id, got %d: %s", rec.Code, rec.Body.String())
 	}
 	if rec := postInvJSON(t, mux, "/api/inventory/return", `{"original_sale_id":"`+saleID+`","reason":"x","lines":[{"line_id":"does-not-exist","quantity":1}]}`); rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 for an unknown line_id, got %d: %s", rec.Code, rec.Body.String())

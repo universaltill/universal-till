@@ -164,6 +164,13 @@ type SaleLineInput struct {
 	// provenance that travels with it (receipt, kitchen, journal, sync,
 	// refund, sale.completed).
 	OrderType string
+	// RefundOfLineID (ut-docs#1560): for a RETURN line, the original
+	// sale_lines.id (data.SaleDetailLine.ID) it was refunded against; ""
+	// for a normal sale line. Lets the refund double-refund-discount guard
+	// track cumulative discount per ORIGINAL line instead of per fungible
+	// RefundLineKey pool, which is only exact when every line sharing a
+	// key applies the same discount rate.
+	RefundOfLineID string
 }
 
 // json tags (independent review, ut-docs#543): PaymentInput is never
@@ -221,6 +228,22 @@ type PaymentInput struct {
 	// Redemption changes NOTHING about how the goods being paid for are
 	// taxed — only the payment method differs.
 	VoucherID string `json:"voucher_id,omitempty"`
+
+	// VoucherPreauthorized (ut-docs#1668) marks a tracked voucher redemption
+	// that has ALREADY been validated and debited on the shop's PRIMARY, via
+	// the cross-till write-through (pages.voucherRedeemWriteThrough,
+	// voucher_sync_proxy.go) — set by completeTender right before calling
+	// CompleteSale, never by a client: deliberately no json tag, so a tender
+	// request body can never set this itself. It forces THIS payment's local
+	// debit past the balance/status check exactly like AllowVoucherOverdraft
+	// does for journal replay (same "the money already moved elsewhere, so
+	// rejecting here would be wrong" reasoning) — but scoped to this ONE
+	// payment, not the whole sale: a sale can carry several tracked voucher
+	// payments, and only the ones the primary actually pre-authorized may
+	// skip the local check. A voucher payment whose primary call was
+	// unreachable (offline, or this till IS primary) leaves this false and
+	// goes through the normal, unforced local validation exactly as before.
+	VoucherPreauthorized bool `json:"-"`
 }
 
 // maxMaskedPANDigits bounds how many ASCII digits a MaskedPAN value may
@@ -443,6 +466,18 @@ func summarizeLineInputs(lines []SaleLineInput) string {
 func netPayments(payments []PaymentInput, total money.Money) (money.Money, error) {
 	var sum money.Money
 	if len(payments) == 0 {
+		// ut-docs#1561: a marginal (per-request) net can legitimately compute
+		// to EXACTLY zero for an otherwise-valid partial refund of a heavily-
+		// discounted line — the running per-key discount clamp in
+		// refund_page.go (ut-docs#1531) can land a later partial request's
+		// own line net at exactly 0 even though earlier and later requests
+		// against the same original line are genuinely nonzero. A zero total
+		// needs no payment at all (a stock-only return/adjustment); every
+		// other (nonzero) total still requires at least one payment, same as
+		// before this card.
+		if total.IsZero() {
+			return 0, nil
+		}
 		return 0, errors.New("sale requires at least one payment")
 	}
 	for i, p := range payments {
@@ -821,6 +856,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					TotalBeforeTax: totalBeforeTax.Minor(),
 					TotalAfterTax:  totalAfterTax.Minor(),
 					OrderType:      l.OrderType,
+					RefundOfLineID: l.RefundOfLineID,
 				})
 
 				for _, m := range l.Modifiers {
@@ -929,7 +965,16 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				// (ut-docs#1053, journal replay only) forces the debit past
 				// the balance check — unknown/inactive still roll back.
 				if p.VoucherID != "" {
-					if err := repo.DebitVoucherForRedemption(ctx, tx, p.VoucherID, p.Amount.Minor(), in.AllowVoucherOverdraft); err != nil {
+					// force: AllowVoucherOverdraft (sale-wide, journal replay
+					// only) OR this ONE payment's own VoucherPreauthorized
+					// (ut-docs#1668, cross-till write-through — see its own
+					// doc comment on PaymentInput). Never widen
+					// VoucherPreauthorized to the whole sale: a different
+					// voucher payment in the same sale whose primary call
+					// never happened (or was refused) must still go through
+					// the normal, unforced check right here.
+					force := in.AllowVoucherOverdraft || p.VoucherPreauthorized
+					if err := repo.DebitVoucherForRedemption(ctx, tx, p.VoucherID, p.Amount.Minor(), force); err != nil {
 						return err
 					}
 					if err := repo.RecordVoucherTransaction(ctx, tx, data.VoucherTransaction{
@@ -1069,12 +1114,6 @@ func validateLine(l SaleLineInput) error {
 		return errors.New("location_id is required")
 	}
 	return nil
-}
-
-func generateReceiptNo() string {
-	// numeric-ish receipt no derived from timestamp for readability
-	n := time.Now().UnixNano() % 1000000000
-	return fmt.Sprintf("%09d", n)
 }
 
 func valueOrDefault(val, def string) string {

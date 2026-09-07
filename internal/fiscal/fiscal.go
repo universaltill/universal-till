@@ -1,9 +1,17 @@
-// Package fiscal implements the German TSE hard-gate policy engine
-// (ADR-0048, ut-docs#715): whether a shop that has declared itself the
-// system of record for a fiscalised market may complete a real sale right
-// now, based purely on shop-declared settings state — never on network
-// reachability (offline-first, ADR-0003; "TSE failing" is a narrower
-// condition than "TSE unreachable", see ADR-0048 Decision 1).
+// Package fiscal implements the multi-market fiscal-readiness hard-gate
+// policy engine (ADR-0048, ut-docs#715, ut-docs#1208): whether a shop that
+// has declared itself the system of record for a fiscalised market may
+// complete a real sale right now, based purely on shop-declared settings
+// state — never on network reachability (offline-first, ADR-0003; "TSE
+// failing" is a narrower condition than "TSE unreachable", see ADR-0048
+// Decision 1). Today's gated markets are Germany (ADR-0048) and Turkey
+// (ut-docs#1208); RequiresHardGate is the one-line extension point for
+// adding the next one from ADR-0047's list. The settings keys, API route
+// and on-disk path use market-neutral "signing device" vocabulary
+// (ADR-0081, ut-docs#1587) — the Germany-specific "TSE" names ADR-0048
+// originally assigned them are migrated in place on upgrade (migration 009
+// for settings rows; NewSigningDeviceCredentialStore for the on-disk
+// credential).
 //
 // This package owns the policy only. Enforcement lives behind one shared
 // helper, internal/pages.enforceFiscalGate, called by every money-moving
@@ -34,7 +42,7 @@
 // A skim recorded at shift close (pos.CloseShift) also moves cash out of
 // the drawer but is NOT gated today — see ut-docs#998's review record.
 // The owner override that can temporarily lift a configured-but-failing
-// block is granted via POST /api/fiscal/tse-override
+// block is granted via POST /api/fiscal/signing-override
 // (internal/pages/fiscal_api.go).
 package fiscal
 
@@ -45,37 +53,44 @@ import (
 	"time"
 )
 
-// Settings keys (ADR-0048 Decision 1/3) — stored in the existing settings
-// key/value store, same as store.country; deliberately not a new table.
+// Settings keys (ADR-0048 Decision 1/3; names per ADR-0081) — stored in the
+// existing settings key/value store, same as store.country; deliberately not
+// a new table. "Signing device" is the market-neutral term for whatever the
+// shop's market legally mandates to sign its records — a German TSE
+// (ADR-0048), a Turkish YN ÖKC (ut-docs#1208), the next market's device
+// from ADR-0047's list. Migration 009 renames the ADR-0048-era
+// fiscal.tse_* rows in place on upgrade, so an already-configured shop
+// keeps its posture.
 const (
 	// KeySystemOfRecord: this shop is taking real, legally-binding sales
 	// (vs shadow/trial/demo). Unset → false.
 	KeySystemOfRecord = "fiscal.system_of_record"
-	// KeyTSEConfigured: this shop has a TSE set up (any ownership model,
-	// ADR-0045). Unset → false.
-	KeyTSEConfigured = "fiscal.tse_configured"
-	// KeyTSEFailingSince: RFC3339 timestamp when a configured TSE became
-	// known-failing; absent/empty = healthy. Not operator-settable via any
-	// UI, and — deliberately — NO production writer exists yet: the
-	// fiscal.sign.ask point (ut-docs#675) does not drive this key, because
-	// none of the failures it can observe (timeout, transport error,
-	// plugin-declared "unreachable", unusable answer) distinguishes "the
-	// TSE itself is known bad" (expired cert, dongle pulled,
-	// provider-reported fault — what this key means, ADR-0048 Decision 1)
-	// from "we currently can't reach it". A future fiscal.sign.ask
-	// contract version adding a TSE-confirmed-broken response state would
-	// be the right first writer. Set directly in tests only. Never to be
-	// set from a mere network-offline condition (ADR-0048 Decision 1).
-	KeyTSEFailingSince = "fiscal.tse_failing_since"
+	// KeySigningDeviceConfigured: this shop has its market's mandated
+	// signing device set up (any ownership model, ADR-0045). Unset → false.
+	KeySigningDeviceConfigured = "fiscal.signing_device_configured"
+	// KeySigningDeviceFailingSince: RFC3339 timestamp when a configured
+	// signing device became known-failing; absent/empty = healthy. Not
+	// operator-settable via any UI, and — deliberately — NO production
+	// writer exists yet: the fiscal.sign.ask point (ut-docs#675) does not
+	// drive this key, because none of the failures it can observe (timeout,
+	// transport error, plugin-declared "unreachable", unusable answer)
+	// distinguishes "the device itself is known bad" (expired cert, a TSE
+	// dongle pulled, provider-reported fault — what this key means,
+	// ADR-0048 Decision 1) from "we currently can't reach it". A future
+	// fiscal.sign.ask contract version adding a device-confirmed-broken
+	// response state would be the right first writer. Set directly in
+	// tests only. Never to be set from a mere network-offline condition
+	// (ADR-0048 Decision 1).
+	KeySigningDeviceFailingSince = "fiscal.signing_device_failing_since"
 	// KeyOverrideUntil: RFC3339 end of the currently-granted owner override
 	// window. Absent/empty/expired = no active override.
-	KeyOverrideUntil = "fiscal.tse_override_until"
+	KeyOverrideUntil = "fiscal.signing_override_until"
 	// KeyOverrideReason: the free-text reason given when the active
 	// override was granted.
-	KeyOverrideReason = "fiscal.tse_override_reason"
+	KeyOverrideReason = "fiscal.signing_override_reason"
 	// KeyOverrideActor: user id of the admin who authorized the active
 	// override.
-	KeyOverrideActor = "fiscal.tse_override_actor"
+	KeyOverrideActor = "fiscal.signing_override_actor"
 )
 
 // OverrideAcknowledgement is the fixed confirmation phrase an override
@@ -129,8 +144,8 @@ type Gate struct {
 // enforcement point that notices a plugin's absence must be core's, not
 // the absent plugin's, the same reasoning that already gates DE while
 // ut-plugin-tax-de is itself an incomplete skeleton. A TR shop that
-// declares fiscal.system_of_record with no fiscal.tse_configured (for TR:
-// no device has yet proven it prints, fiscal_device_hook.go) hits
+// declares fiscal.system_of_record with no fiscal.signing_device_configured
+// (for TR: no device has yet proven it prints, fiscal_device_hook.go) hits
 // BlockedNeverConfigured instead of silently completing an unsigned sale.
 // The next fiscalised market (ADR-0047's list) is a further one-line
 // addition here.
@@ -166,7 +181,7 @@ func EvaluateGate(ctx context.Context, s SettingsReader, country string, now tim
 		return Gate{Decision: Allowed}, nil
 	}
 
-	configured, err := boolSetting(ctx, s, KeyTSEConfigured)
+	configured, err := boolSetting(ctx, s, KeySigningDeviceConfigured)
 	if err != nil {
 		return Gate{}, err
 	}
@@ -177,9 +192,9 @@ func EvaluateGate(ctx context.Context, s SettingsReader, country string, now tim
 		return Gate{Decision: BlockedNeverConfigured}, nil
 	}
 
-	failingSince, _, err := s.Get(ctx, KeyTSEFailingSince)
+	failingSince, _, err := s.Get(ctx, KeySigningDeviceFailingSince)
 	if err != nil {
-		return Gate{}, fmt.Errorf("fiscal gate: read %s: %w", KeyTSEFailingSince, err)
+		return Gate{}, fmt.Errorf("fiscal gate: read %s: %w", KeySigningDeviceFailingSince, err)
 	}
 	if strings.TrimSpace(failingSince) == "" {
 		// Configured and healthy.

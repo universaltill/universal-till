@@ -9,7 +9,6 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
-	"runtime"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -41,6 +40,24 @@ import (
 // value (e.g. via t.Cleanup) after overriding it.
 var CrossDeviceLinkActionable = selfupdate.DownloadLinkActionableNow
 
+// UpdateInstallBridge is the platform seam behind the updateinstallbridge
+// template func (ut-docs#1246): true only where the native shell can drive
+// the OS package installer, which today means Android. A var — not a direct
+// call — for the same reason as CrossDeviceLinkActionable above:
+// a test rendering settings.html can then exercise BOTH branches instead of
+// only the one its own GOOS gives, and the Android update UI is otherwise
+// untestable on every machine that builds it (ut-docs#1534). Restore the
+// original value (e.g. via t.Cleanup) after overriding it.
+var UpdateInstallBridge = selfupdate.InstallBridgeAvailableNow
+
+// UpdateAvailable is the seam behind the updateavailable template func
+// (ut-docs#1545). Same reason as UpdateInstallBridge above: the update UI is
+// now gated on BOTH platform and freshness, and without a seam a test cannot
+// render the "an update exists" branch at all — it would depend on whatever
+// the real GitHub API happened to say when the suite ran. Restore the original
+// value (e.g. via t.Cleanup) after overriding it.
+var UpdateAvailable = func() bool { return updates.Current().Available }
+
 var baseFuncs = template.FuncMap{
 	"div100":    func(cents int64) float64 { return float64(cents) / 100.0 },
 	"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
@@ -57,7 +74,7 @@ var baseFuncs = template.FuncMap{
 	"categoryName":    func(*string) string { return "" },
 	"brandName":       func(*string) string { return "" },
 	"appversion":      func() string { return buildinfo.Version },
-	"updateavailable": func() bool { return updates.Current().Available },
+	"updateavailable": func() bool { return UpdateAvailable() },
 	"latestversion":   func() string { return updates.Current().Latest },
 	"canselfupdate":   func() bool { return selfupdate.Supported() },
 	// updatedownloadlink: whether the status-bar chip's fallback (when
@@ -73,8 +90,9 @@ var baseFuncs = template.FuncMap{
 	// chip fell through to the unix-kiosk dead-end text and the operator was
 	// told to reinstall by hand for every build (ut-docs#1246). Keep in step
 	// with internal/pages/update_api.go's updateUnavailableHTML, which makes
-	// the same distinction for the Settings page.
-	"updateinstallbridge": func() bool { return runtime.GOOS == "android" },
+	// the same distinction for the Settings page. Indirected through the
+	// UpdateInstallBridge var above so a test can stub the platform seam.
+	"updateinstallbridge": func() bool { return UpdateInstallBridge() },
 	// crossdevicelinkactionable: whether a link to ANOTHER device (a replica
 	// linking to its primary till's own UI, ut-docs#390) is safe to make
 	// clickable — false on a unix kiosk (fullscreen, no chrome, no way back
@@ -566,6 +584,58 @@ func FuncsFor(locale string) template.FuncMap {
 		}
 		return FormatMoney(cents, locale)
 	}
+	// {{ date .IssuedAt }}: date-ordering convention follows the request
+	// locale (de-DE renders 06.09.2026, en-US renders 09/06/2026), digit
+	// shape follows locale too, same as money above (ut-docs#1130). Accepts
+	// either a time.Time or an RFC3339 string (the storage format for
+	// stamped-at-write timestamps like invoices.IssuedAt), both rendered in
+	// LOCAL time — right for a wall-clock event like "when this was issued
+	// at the till". An unparseable string is returned unchanged (not "") so
+	// a caller accidentally handed a non-RFC3339 string (e.g. an already
+	// "2006-01-02"-shaped date) degrades to its raw form, still visible,
+	// rather than a silently blank cell.
+	funcs["date"] = func(v any) string {
+		switch t := v.(type) {
+		case time.Time:
+			return FormatDate(t.Local(), locale)
+		case string:
+			parsed, err := time.Parse(time.RFC3339, t)
+			if err != nil {
+				return t
+			}
+			return FormatDate(parsed.Local(), locale)
+		default:
+			return ""
+		}
+	}
+	// {{ dateUTC .IssuedAt }}: FormatDate's date-ordering/digit-shape
+	// convention, WITHOUT the Local() conversion `date` above applies —
+	// for a value compared/filtered elsewhere in UTC (e.g. invoices.html's
+	// register list, whose from/to range is deliberately compared against
+	// the raw UTC IssuedAt string — see invoice_page.go's own comment on
+	// why `to` is left open). Using `date`'s Local conversion there would
+	// show a calendar date that can legitimately disagree with which
+	// from/to bucket the row is actually in.
+	funcs["dateUTC"] = func(v string) string {
+		parsed, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return v
+		}
+		return FormatDate(parsed, locale)
+	}
+	// {{ thousandssep }} / {{ decimalsep }}: the same grouping/decimal
+	// convention `money` above follows server-side, exposed for
+	// window.utCurrency's client-side money formatting (web/public/app.js)
+	// so a de-DE till doesn't show "€1.234,56" server-rendered next to
+	// "€1,234.56" client-rendered on the same screen (ut-docs#1130).
+	funcs["thousandssep"] = func() string {
+		t, _ := numberSeparators(locale)
+		return string(t)
+	}
+	funcs["decimalsep"] = func() string {
+		_, d := numberSeparators(locale)
+		return string(d)
+	}
 	funcs["currency"] = ActiveCurrency // {{ currency.Code }} etc.
 	funcs["currencies"] = Currencies   // the Settings picker options
 	// {{ moneypattern currency.Decimals false }} / {{ moneyplaceholder currency.Decimals 50 }}
@@ -642,6 +712,28 @@ func FuncsFor(locale string) template.FuncMap {
 	// Locale-bound override of the baseFuncs fallback: the section "?" label
 	// translates with the page it sits on.
 	funcs["helpLink"] = func(id string) template.HTML { return helpLinkHTML(id, locale) }
+	// tenderLabel translates the sentinel values pos.deriveTenderType can
+	// itself produce ("unknown" — no payments at all, e.g. a zero-marginal-
+	// net partial refund, ut-docs#1579; "split" — more than one distinct
+	// payment method on the sale) through the locale table. Any other value
+	// is a payment plugin's own MethodID (cash, card, voucher, sumup, ...) —
+	// an open-ended set this till doesn't own the vocabulary for — and is
+	// rendered as-is, unchanged from before this function existed.
+	funcs["tenderLabel"] = func(tenderType string) string {
+		var key string
+		switch tenderType {
+		case "unknown":
+			key = "journal.tender.unknown"
+		case "split":
+			key = "journal.tender.split"
+		default:
+			return tenderType
+		}
+		if t := translator(); t != nil {
+			return t.T(locale, key)
+		}
+		return tenderType
+	}
 	return funcs
 }
 
@@ -666,6 +758,11 @@ var renderFiles = []string{
 	// same markup standalone (RenderPartial) for its htmx swap; riding along
 	// here is what lets settings.html include it by file name.
 	"ui/partials/tse_provisioning_block.html",
+	// ut-docs#1613: same reasoning — POST /api/backup/restore's success
+	// response AND settings.html's own page render (when a restore is
+	// already staged from an earlier visit) both need this exact markup,
+	// so it's a partial riding along here rather than duplicated inline.
+	"ui/partials/backup_restore_staged.html",
 }
 
 // Render full page with layout + page + common partials

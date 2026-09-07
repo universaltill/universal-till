@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/barcode"
@@ -21,6 +22,15 @@ import (
 // which is exactly what "defaulting to the set above when absent" wants:
 // a shop that never opens the (ut-docs#935) settings checklist has no row
 // and behaves exactly as before ADR-0059.
+//
+// ut-docs#1361 review note: this key's value is cached in-process (see
+// barcodeSymbologyCache below) and the cache is invalidated only by
+// SetEnabledBarcodeSymbologies/SetBarcodeSymbologyEnabled. A future write
+// to this key through a generic path instead — SettingsRepo.Delete,
+// SetMany, or a raw Set(BarcodeEnabledSymbologiesKey, ...) — would bypass
+// that invalidation and leave a stale cached value in place; route any new
+// write through one of the two methods above, or call
+// invalidateBarcodeSymbologyCache explicitly.
 const BarcodeEnabledSymbologiesKey = "barcode_enabled_symbologies"
 
 // CatalogImportBarcodeFromSKUDefaultKey is the settings-table key holding
@@ -45,6 +55,57 @@ const CatalogImportBarcodeFromSKUDefaultKey = "catalog_import_barcode_from_sku_d
 // every box mid-shift). The caller must recover from this — reject the
 // change with a message, never let it through.
 var ErrEmptyBarcodeSymbologySet = errors.New("at least one barcode symbology must stay enabled")
+
+// barcodeSymbologyCache is EnabledBarcodeSymbologies' in-process cache
+// (ut-docs#1361, split from the 2026-08-30 perf audit finding 5): the
+// enabled-symbology set is manager-toggled and changes essentially never,
+// but was being re-fetched from SQLite and re-JSON-parsed on every single
+// scan. Keyed by *sql.DB rather than a single flat value, and rather than
+// a field on *SettingsRepo, for two reasons: (1) SettingsRepo is
+// constructed fresh on nearly every call site (data.NewSettingsRepo(db)),
+// so an instance field would never actually be hit twice; (2) tests open
+// many independent (usually in-memory) *sql.DB instances within one test
+// binary — keying by db pointer gives each its own cache slot for free,
+// the same isolation a fresh instance would give if instance-scoped
+// caching worked here, with no test-only reset hook required (contrast
+// internal/pages/setup_language_catalog.go's resetSetupLanguageCatalog,
+// needed there only because that cache is a single flat package value).
+// Neither map ever removes an entry for a *sql.DB that gets closed —
+// harmless in production (one long-lived *sql.DB per process) and cheap
+// even across a test binary's many short-lived DBs (small string slices
+// plus a uint64), so this is accepted rather than adding cleanup machinery
+// for a value nothing here actually leaks memory over.
+//
+// barcodeSymbologyGen guards against a TOCTOU race between an invalidating
+// writer and a reader that started fetching before the write landed (review
+// finding on ut-docs#1361): the read path's DB fetch runs UNLOCKED (see
+// below — only the final cache-store is), so a writer's commit +
+// invalidateBarcodeSymbologyCache can land while a reader is mid-fetch of
+// the now-stale pre-write value. Without this counter, that reader would
+// then store its stale result right after the invalidate ran, silently
+// undoing it — pinning the wrong value until the NEXT write, which for a
+// setting that "changes essentially never" could be months. Each
+// invalidate bumps db's generation; a reader snapshots the generation
+// before its unlocked fetch and only commits the fetched value to the
+// cache if the generation is still the one it started with — otherwise a
+// write raced it, and it leaves the cache alone (the next call retries and
+// observes the new value normally) rather than clobber the fresher state.
+var (
+	barcodeSymbologyCacheMu sync.RWMutex
+	barcodeSymbologyCache   = map[*sql.DB][]string{}
+	barcodeSymbologyGen     = map[*sql.DB]uint64{}
+)
+
+// invalidateBarcodeSymbologyCache drops db's cached entry, if any, and
+// bumps its generation (see barcodeSymbologyGen above). Called from both
+// write paths below after a successful write, so the very next read
+// observes the new value rather than a stale cached one.
+func invalidateBarcodeSymbologyCache(db *sql.DB) {
+	barcodeSymbologyCacheMu.Lock()
+	defer barcodeSymbologyCacheMu.Unlock()
+	delete(barcodeSymbologyCache, db)
+	barcodeSymbologyGen[db]++
+}
 
 // DefaultEnabledBarcodeSymbologyIDs returns ADR-0059 §2's default-enabled
 // set: every registry entry EXCEPT the two embedded-data ones
@@ -78,6 +139,14 @@ func DefaultEnabledBarcodeSymbologyIDs() []string {
 // scan-path lookup (POSRepo), the ut-docs#935 settings checklist, and the
 // ut-docs#936 catalog-import wiring — do not inline a private copy.
 func (r *SettingsRepo) EnabledBarcodeSymbologies(ctx context.Context) ([]string, error) {
+	barcodeSymbologyCacheMu.RLock()
+	cached, ok := barcodeSymbologyCache[r.db]
+	gen := barcodeSymbologyGen[r.db]
+	barcodeSymbologyCacheMu.RUnlock()
+	if ok {
+		return cached, nil
+	}
+
 	defaults := DefaultEnabledBarcodeSymbologyIDs()
 	val, found, err := r.Get(ctx, BarcodeEnabledSymbologiesKey)
 	if err != nil {
@@ -115,9 +184,27 @@ func (r *SettingsRepo) EnabledBarcodeSymbologies(ctx context.Context) ([]string,
 		// break every scan and every untyped AddBarcode call on the
 		// offline-first checkout hot path (ut-docs#955). Treat it exactly
 		// like the parse-error case: fall back to the default set.
-		return defaults, nil
+		return r.cacheEnabledSymbologies(gen, defaults), nil
 	}
-	return ids, nil
+	return r.cacheEnabledSymbologies(gen, ids), nil
+}
+
+// cacheEnabledSymbologies stores ids as db's cached EnabledBarcodeSymbologies
+// result and returns it unchanged — called only from the clean, no-error
+// return paths above; an error path deliberately returns the uncached
+// defaults directly so the next call retries rather than pinning a
+// read/parse failure in the cache. gen is the generation this call
+// observed before its (unlocked) DB fetch; if a write has bumped it since
+// (barcodeSymbologyGen above), ids is stale relative to that write, so it
+// is returned to THIS caller but deliberately not stored — storing it
+// would silently undo the write's own invalidation.
+func (r *SettingsRepo) cacheEnabledSymbologies(gen uint64, ids []string) []string {
+	barcodeSymbologyCacheMu.Lock()
+	if barcodeSymbologyGen[r.db] == gen {
+		barcodeSymbologyCache[r.db] = ids
+	}
+	barcodeSymbologyCacheMu.Unlock()
+	return ids
 }
 
 // SetEnabledBarcodeSymbologies persists the shop's enabled symbology ids
@@ -131,7 +218,11 @@ func (r *SettingsRepo) SetEnabledBarcodeSymbologies(ctx context.Context, ids []s
 	if err != nil {
 		return fmt.Errorf("marshal enabled symbologies: %w", err)
 	}
-	return r.Set(ctx, BarcodeEnabledSymbologiesKey, string(b))
+	if err := r.Set(ctx, BarcodeEnabledSymbologiesKey, string(b)); err != nil {
+		return err
+	}
+	invalidateBarcodeSymbologyCache(r.db)
+	return nil
 }
 
 // SetBarcodeSymbologyEnabled adds or removes id from the shop's enabled
@@ -210,6 +301,7 @@ ON CONFLICT(key) DO UPDATE SET
 		err = fmt.Errorf("set barcode symbology %s: %w", id, commitErr)
 		return nil, err
 	}
+	invalidateBarcodeSymbologyCache(r.db)
 	return newIDs, nil
 }
 

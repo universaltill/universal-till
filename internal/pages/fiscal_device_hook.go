@@ -23,14 +23,14 @@ import (
 
 // fiscalDeviceAuditConfirmed is the audit action written the first time a
 // fiscal device answers with a receipt on this till — the moment
-// fiscal.tse_configured flips true for a device market (the device has
+// fiscal.signing_device_configured flips true for a device market (the device has
 // proven it prints), mirroring Germany's flip on confirmed TSE credential
 // receipt (setup_tse.go). Also written by the /fiscal-device page's manual
 // confirm.
 const fiscalDeviceAuditConfirmed = "fiscal_device_confirmed"
 
 // fiscalDeviceAuditUnpaired is written when a manager unpairs the device on
-// /fiscal-device (fiscal.tse_configured back to false — the next TR sale as
+// /fiscal-device (fiscal.signing_device_configured back to false — the next TR sale as
 // system of record is refused again, ADR-0048 Decision 2.2).
 const fiscalDeviceAuditUnpaired = "fiscal_device_unpaired"
 
@@ -85,7 +85,7 @@ func pickDeviceEvidence(current *fiscal.DeviceEvidence, resp json.RawMessage) *f
 
 // recordFiscalDeviceEvidence persists what the device printed against the
 // completed sale (or refund) and, on the FIRST receipt this till ever
-// records, flips fiscal.tse_configured true with an audit marker: for a
+// records, flips fiscal.signing_device_configured true with an audit marker: for a
 // device market that flag means "the device is paired and has proven it
 // prints", and the proof is the receipt itself. Best-effort after the
 // fact, exactly like recordFiscalTSEEvidence: the sale is committed and
@@ -118,11 +118,11 @@ func recordFiscalDeviceEvidence(ctx context.Context, d *common.Deps, repo *data.
 	if d == nil || d.Settings == nil {
 		return
 	}
-	configured, _, err := d.Settings.Get(ctx, fiscal.KeyTSEConfigured)
+	configured, _, err := d.Settings.Get(ctx, fiscal.KeySigningDeviceConfigured)
 	if err != nil || settingIsTrue(configured) {
 		return
 	}
-	if err := d.Settings.Set(ctx, fiscal.KeyTSEConfigured, "true"); err != nil {
+	if err := d.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
 		logging.L().Errorf("fiscal device: mark device confirmed after first receipt: %v", err)
 		return
 	}

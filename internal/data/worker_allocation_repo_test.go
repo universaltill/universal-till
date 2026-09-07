@@ -13,9 +13,13 @@ INSERT INTO payment_methods(id, name, type) VALUES('cash', 'Cash', 'cash')
 ON CONFLICT(id) DO NOTHING`); err != nil {
 		t.Fatalf("seed payment method: %v", err)
 	}
+	// local_date is set via date(?, 'localtime') on the same paidAt literal,
+	// exactly as InsertPayment does in production (ut-docs#1342) — this
+	// helper bypasses that method, and WorkerAllocationsSummary's "tip"
+	// received-side query now filters on payments.local_date directly.
 	if _, err := dbx.d.DB.ExecContext(ctx, `
-INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, tip_amount, tip_recipient, paid_at)
-VALUES(?, ?, 'cash', 1000, 'GBP', 0, ?, ?, ?)`, id, saleID, tipAmount, tipRecipient, paidAt); err != nil {
+INSERT INTO payments(id, sale_id, method_id, amount, currency, change_given, tip_amount, tip_recipient, paid_at, local_date)
+VALUES(?, ?, 'cash', 1000, 'GBP', 0, ?, ?, ?, date(?, 'localtime'))`, id, saleID, tipAmount, tipRecipient, paidAt, paidAt); err != nil {
 		t.Fatalf("seed payment %s: %v", id, err)
 	}
 }

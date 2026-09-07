@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -84,6 +85,7 @@ func TestBackupAPI_AllEndpointsRequireManager(t *testing.T) {
 		{http.MethodGet, "/api/backup/download/whatever.db"},
 		{http.MethodPost, "/api/backup/save-copy/whatever.db"},
 		{http.MethodPost, "/api/backup/restore"},
+		{http.MethodPost, "/api/backup/restart-now"},
 	}
 	for _, c := range cases {
 		req := httptest.NewRequest(c.method, c.path, nil)
@@ -393,5 +395,179 @@ func TestRestoreBackup_MissingSnapshotIsLocalized(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "backup not found") {
 		t.Fatalf("restore error body leaked raw error text: %q", rec.Body.String())
+	}
+}
+
+// --- POST /api/backup/restart-now (ut-docs#1613): the restore-staged
+// screen's restart trigger, mirroring pairing_restart_test.go's coverage of
+// pairingRestartHandler (ut-docs#1550) exactly — same seams, same refuse-
+// unless-staged guard, same envelope. A real call would syscall.Exec the
+// test binary mid-run, so backupRestartFn is stubbed throughout. ---
+
+func stubBackupRestart(t *testing.T) *int {
+	t.Helper()
+	calls := 0
+	old := backupRestartFn
+	backupRestartFn = func() { calls++ }
+	t.Cleanup(func() { backupRestartFn = old })
+	return &calls
+}
+
+func stubBackupRestartSupported(t *testing.T, v bool) {
+	t.Helper()
+	old := backupRestartSupported
+	backupRestartSupported = func() bool { return v }
+	t.Cleanup(func() { backupRestartSupported = old })
+}
+
+func stubBackupRestorePending(t *testing.T, v bool) {
+	t.Helper()
+	old := backupRestorePending
+	backupRestorePending = func(string) bool { return v }
+	t.Cleanup(func() { backupRestorePending = old })
+}
+
+func TestBackupRestartNow_SchedulesRestartAndAnswersEnvelope(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	calls := stubBackupRestart(t)
+	stubBackupRestorePending(t, true)
+	mux, _, _ := newBackupTestDeps(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/backup/restart-now", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if *calls != 1 {
+		t.Fatalf("expected exactly one restart to be scheduled, got %d", *calls)
+	}
+	var out struct {
+		Data struct {
+			Restarting bool `json:"restarting"`
+		} `json:"data"`
+		Error any `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("response is not the JSON envelope: %v: %s", err, rec.Body.String())
+	}
+	if !out.Data.Restarting || out.Error != nil {
+		t.Fatalf("want {data:{restarting:true}, error:null}, got %s", rec.Body.String())
+	}
+}
+
+// Review finding on ut-docs#1550 applies identically here: without a staged
+// restore, this route would be an unconditional restart of a configured,
+// possibly-in-use till that anyone who can reach it could fire for no
+// reason. StageRestore runs strictly before this route can do anything
+// useful, so refusing when nothing is staged is always safe.
+func TestBackupRestartNow_RefusesWhenNothingIsStaged(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	calls := stubBackupRestart(t)
+	stubBackupRestorePending(t, false)
+	mux, _, _ := newBackupTestDeps(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/backup/restart-now", nil)
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("no staged restore: expected 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if *calls != 0 {
+		t.Fatalf("a refused request must never schedule a restart (got %d calls)", *calls)
+	}
+	var out struct {
+		Data  any    `json:"data"`
+		Error string `json:"error"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("response is not the JSON envelope: %v: %s", err, rec.Body.String())
+	}
+	if out.Data != nil || out.Error == "" {
+		t.Fatalf("want {data:null, error:\"…\"}, got %s", rec.Body.String())
+	}
+}
+
+// The manager gate applies to this route exactly like every other backup
+// route in this file (real session, not just the no-session 403 case
+// TestBackupAPI_AllEndpointsRequireManager already covers).
+func TestBackupRestartNow_RealSessionGatesByRole(t *testing.T) {
+	calls := stubBackupRestart(t)
+	stubBackupRestorePending(t, true)
+	mux, dp, _ := newBackupTestDeps(t)
+	dp.AuthSvc = auth.NewService(dp.Db)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/backup/restart-now", nil), auth.User{ID: "u1", Role: "cashier"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden || *calls != 0 {
+		t.Fatalf("cashier = %d (calls %d), want 403 and no restart", rec.Code, *calls)
+	}
+
+	req = auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/backup/restart-now", nil), auth.User{ID: "u1", Role: "manager"})
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK || *calls != 1 {
+		t.Fatalf("manager = %d (calls %d), want 200 and one restart", rec.Code, *calls)
+	}
+}
+
+// --- The restore-staged render itself (web/ui/partials/backup_restore_staged.html). ---
+
+// Where an in-place restart is possible (every non-Windows build), a
+// successful restore gives the operator a real "Restart now" button
+// instead of the old dead-end "restart the till to finish" text — same
+// class of fix as ut-docs#1550's pairing screen.
+func TestRestoreBackup_SuccessRendersRestartButtonWhenSupported(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	stubBackupRestartSupported(t, true)
+	mux, _, dbPath := newBackupTestDeps(t)
+	name := createRealSnapshot(t, dbPath)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/backup/restore", strings.NewReader("name="+name+"&confirm=RESTORE"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `hx-post="/api/backup/restart-now"`) {
+		t.Fatalf("want a restart trigger posting to /api/backup/restart-now, got: %s", body)
+	}
+	if !strings.Contains(body, httpx.T("en", "settings.backup.restart_now")) {
+		t.Fatalf("want the visible Restart now button, got: %s", body)
+	}
+	if !strings.Contains(body, "/healthz") || !strings.Contains(body, "/login") {
+		t.Fatalf("want the healthz poll that lands on /login once the till is back: %s", body)
+	}
+	if strings.Contains(body, httpx.T("en", "tills.pairing.close_and_reopen")) {
+		t.Fatalf("the Windows close-and-reopen instruction must not show where restart works: %s", body)
+	}
+}
+
+// Where it isn't (Windows, ut-docs#1614 tracks a native restart there), the
+// screen must not show a button that does nothing.
+func TestRestoreBackup_SuccessShowsCloseAndReopenWhenUnsupported(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	stubBackupRestartSupported(t, false)
+	mux, _, dbPath := newBackupTestDeps(t)
+	name := createRealSnapshot(t, dbPath)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/backup/restore", strings.NewReader("name="+name+"&confirm=RESTORE"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, httpx.T("en", "tills.pairing.close_and_reopen")) {
+		t.Fatalf("want the close-and-reopen instruction, got: %s", body)
+	}
+	for _, forbidden := range []string{"restart-now", "/healthz", httpx.T("en", "settings.backup.restart_now")} {
+		if strings.Contains(body, forbidden) {
+			t.Fatalf("unsupported platform must not render %q: %s", forbidden, body)
+		}
 	}
 }

@@ -13,28 +13,56 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/taxrate"
 )
 
-// isSecretSettingKey reports whether a plugin setting holds a credential that
-// should be masked (rendered as a password field, value never sent to the
-// page). Heuristic on the key name — covers api keys, tokens, secrets,
-// passwords, and the connector auth value.
-func isSecretSettingKey(key string) bool {
-	k := strings.ToLower(key)
-	for _, s := range []string{"secret", "token", "password", "passwd", "api_key", "apikey", "auth_value", "private_key"} {
-		if strings.Contains(k, s) {
-			return true
-		}
+// secretSettingCheck returns the "is this key a credential?" predicates for
+// one plugin's settings page (ADR-0082, ut-docs#1739): isSecret is masked
+// (password field, value never sent to the page) when either the key-name
+// heuristic (plugins.IsSecretSettingKey — the same rule internal/data seals
+// on) matches OR the plugin's manifest declares the key `type: "secret"`;
+// declaredSecret reads the manifest half directly (not derived from isSecret
+// by subtraction — a prior version of this function computed it as
+// `isSecret(key) && !plugins.IsSecretSettingKey(key)`, which only stayed
+// correct because isSecret was exactly heuristic-or-declared; a derived copy
+// of a rule this codebase's own conventions warn against, review finding).
+//
+// resolved is false only when the plugin's manifest could NOT be
+// authoritatively determined (a DB error, a path-traversal guard trip, or an
+// active plugin version whose manifest.json is missing/corrupt —
+// InstalledManifest's own doc comment draws this line) — as opposed to a
+// plugin that simply has no active version, which is a legitimate "declares
+// nothing" state (resolved=true, manifest=nil). GET (display/masking) may
+// safely degrade to the heuristic alone when resolved is false — that is
+// display-only, never an at-rest exposure. The POST handler MUST refuse to
+// write when resolved is false instead of degrading: an unresolved manifest
+// could be hiding a `type: "secret"` declaration on a key the heuristic
+// doesn't catch, and writing that key's value while unable to prove it
+// isn't declared secret would risk sealing nothing when it should have
+// sealed — this was ut-docs#1739's review blocker (a manifest read failure
+// silently stored a live credential in cleartext with a 200 OK).
+func secretSettingCheck(ctx context.Context, d *common.Deps, pluginID string) (isSecret func(key string) bool, declaredSecret func(key string) bool, resolved bool) {
+	manifest, _, err := plugins.InstalledManifest(ctx, d.Db, pluginID)
+	resolved = err == nil
+	if err != nil {
+		logging.L().Warnf("plugin settings: could not read manifest for %s (%v) — display falls back to the key-name heuristic; writes are refused until this resolves (ADR-0082)", pluginID, err)
+		manifest = nil
 	}
-	return strings.HasSuffix(k, "_key") || k == "key"
+	isSecret = func(key string) bool {
+		return plugins.IsSecretSettingKey(key) || manifest.SettingDeclaredSecret(key)
+	}
+	declaredSecret = func(key string) bool {
+		return manifest.SettingDeclaredSecret(key)
+	}
+	return isSecret, declaredSecret, resolved
 }
 
 // isTaxRateOverridesKey reports whether a plugin setting is a per-tax-code
 // takeaway rate override map (ut-docs#190) — a settings-surface convention
-// any tax plugin can adopt (same family as isSecretSettingKey): the
+// any tax plugin can adopt (same family as plugins.IsSecretSettingKey): the
 // generic text editor is replaced with a typed, one-row-per-tax-code
 // editor instead of raw JSON. ut-plugin-tax-de's takeaway_rate_overrides
 // setting is the first (and so far only) adopter.
@@ -199,7 +227,9 @@ func writeTaxOverrides(ctx context.Context, repo *data.PluginRepo, pluginID stri
 	if string(raw) == row.ValueJSON {
 		return 0, nil
 	}
-	if err := repo.UpsertPluginSettingScoped(ctx, pluginID, row.Key, string(raw), row.Scope); err != nil {
+	// A rate-override map is never a manifest-declared secret (declaredSecret
+	// false); the repository's key-name heuristic still applies regardless.
+	if err := repo.UpsertPluginSettingScoped(ctx, pluginID, row.Key, string(raw), row.Scope, false); err != nil {
 		return 0, err
 	}
 	return 1, nil
@@ -234,13 +264,16 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err) // page-error:allow not yet migrated, tracked in ut-docs#1458
 			return
 		}
+		// Display only — safe to degrade to the heuristic if the manifest
+		// can't be resolved right now, per secretSettingCheck's doc comment.
+		isSecret, _, _ := secretSettingCheck(r.Context(), d, pluginID)
 		var views []settingView
 		for _, row := range rows {
 			var v string
 			if json.Unmarshal([]byte(row.ValueJSON), &v) != nil {
 				v = row.ValueJSON // non-string JSON edits raw
 			}
-			sv := settingView{Key: row.Key, Value: v, Secret: isSecretSettingKey(row.Key), PerTill: row.Scope == "register"}
+			sv := settingView{Key: row.Key, Value: v, Secret: isSecret(row.Key), PerTill: row.Scope == "register"}
 			if sv.Secret {
 				sv.IsSet = v != ""
 				sv.Value = "" // never render a secret's value into the page
@@ -277,6 +310,17 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		rows, err := repo.ListPluginSettings(r.Context(), pluginID)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
+			return
+		}
+		isSecret, declaredSecret, resolved := secretSettingCheck(r.Context(), d, pluginID)
+		if !resolved {
+			// Fail closed (ADR-0082, ut-docs#1739 review blocker): an
+			// unresolved manifest could be hiding a `type: "secret"`
+			// declaration on a key the heuristic doesn't catch. Refuse the
+			// whole save rather than risk writing a credential in plaintext
+			// — secretSettingCheck already logged the underlying cause.
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings",
+				fmt.Errorf("plugin %s: manifest could not be resolved, refusing to save settings (ADR-0082)", pluginID))
 			return
 		}
 		changed := 0
@@ -334,7 +378,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			val := strings.TrimSpace(form[0])
 			// Secret fields aren't pre-filled, so a blank submission means
 			// "keep the current value" rather than "clear it".
-			if val == "" && isSecretSettingKey(row.Key) {
+			if val == "" && isSecret(row.Key) {
 				continue
 			}
 			raw, err := json.Marshal(val)
@@ -346,7 +390,9 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 			// Write back into the row's own scope: a register-scoped setting
 			// (per-till, e.g. a card reader id) must not become shop-wide.
-			if err := repo.UpsertPluginSettingScoped(r.Context(), pluginID, row.Key, string(raw), row.Scope); err != nil {
+			// A secret (declared or heuristic) is sealed at rest by the
+			// repository (ADR-0082).
+			if err := repo.UpsertPluginSettingScoped(r.Context(), pluginID, row.Key, string(raw), row.Scope, declaredSecret(row.Key)); err != nil {
 				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "plugins.error.server", "plugin_settings", err)
 				return
 			}

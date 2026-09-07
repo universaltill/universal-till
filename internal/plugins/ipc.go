@@ -429,7 +429,7 @@ func (eb *EventBus) publish(ctx context.Context, eventType string, payload inter
 	// (sync.RWMutex documented behavior). Hence the direct eb.db /
 	// eb.eventModes field reads below (we already hold the lock) and the
 	// ...WithDB audit variants instead of dbHandle()/GetEventMode()/
-	// auditEvent()/auditDispatch(), all of which self-RLock. Blocking
+	// auditDispatch(), all of which self-RLock. Blocking
 	// handlers (WasmRuntime.HandleEvent), CheckPermission, and the
 	// payments:reconciliation data.PluginRepo.CheckPermission call
 	// (ut-docs#791) are DB/wazero only and never touch EventBus.
@@ -667,14 +667,10 @@ func (eb *EventBus) Acknowledge(ctx context.Context, eventID, pluginID string, s
 	return data.NewPluginRepo(eb.dbHandle()).InsertAuditRaw(ctx, nil, "event_acknowledged", "plugin", pluginID, details, time.Now())
 }
 
-// auditEvent logs event publication to audit_log
-func (eb *EventBus) auditEvent(ctx context.Context, eventID, eventType string, subscriberCount int) error {
-	return eb.auditEventWithDB(ctx, eb.dbHandle(), eventID, eventType, subscriberCount)
-}
-
-// auditEventWithDB is auditEvent with the db handle passed in explicitly, for
-// callers that already hold eb.mu (publish, ut-docs#504) — calling dbHandle()
-// there would be a recursive RLock, which can deadlock once a writer waits.
+// auditEventWithDB logs event publication to audit_log, with the db handle
+// passed in explicitly for callers that already hold eb.mu (publish,
+// ut-docs#504) — calling dbHandle() there would be a recursive RLock, which
+// can deadlock once a writer waits.
 func (eb *EventBus) auditEventWithDB(ctx context.Context, db *sql.DB, eventID, eventType string, subscriberCount int) error {
 	details := fmt.Sprintf("event_type=%s, subscribers=%d", eventType, subscriberCount)
 	return data.NewPluginRepo(db).InsertAuditRaw(ctx, nil, "event_published", "event", eventID, details, time.Now())

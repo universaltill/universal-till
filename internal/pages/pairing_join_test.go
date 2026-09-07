@@ -5,6 +5,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/cookiejar"
 	"net/http/httptest"
@@ -19,6 +20,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/discovery"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -120,15 +122,69 @@ func TestPairStart_SurfacesUnreachablePrimary(t *testing.T) {
 	// Always 200 — htmx (vendored 1.9.12 here) does not swap non-2xx
 	// responses by default, so a non-200 render would be invisible to the
 	// manager. The failure is encoded in the body as the "error" state
-	// instead (no self-polling hx-trigger, so it doesn't loop forever).
+	// instead.
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200 (error encoded in the body, not the status) when the primary is unreachable, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "cannot reach that primary") {
-		t.Fatalf("expected the rendered error state naming the failure, got: %s", rec.Body.String())
+	// ut-docs#1544: this used to assert raw English prose; the message is
+	// now translated via httpx.T with the network error's text substituted
+	// into the %s placeholder, so only the static (translated) prefix is
+	// checked here, not the OS-dependent connection-refused text after it.
+	wantPrefix := strings.SplitN(httpx.T("en", "tills.pairing.error.unreachable"), "%s", 2)[0]
+	if !strings.Contains(rec.Body.String(), wantPrefix) {
+		t.Fatalf("expected the rendered error state naming the failure (prefix %q), got: %s", wantPrefix, rec.Body.String())
 	}
+	// ut-docs#1540 review: a pair-start failure must NOT self-poll. This
+	// branch returns before rp.set(), so there is no active attempt for the
+	// poll to read — it would render the "idle" view and silently replace
+	// this diagnosis with "No pairing attempt in progress." 15s later (or
+	// resurrect an EARLIER attempt's stale waiting screen and verification
+	// code). The retry re-renders this div directly anyway: the "Request to
+	// pair" button posts with hx-target on the status host. Only
+	// pairStatusHandler's errors, which do carry active state, keep polling
+	// (TestPairStatus_ErrorStateKeepsPollingAndKeepsItsMessage).
 	if strings.Contains(rec.Body.String(), "hx-trigger") {
-		t.Fatal("error state must not keep polling")
+		t.Fatal("a pair-start error must not poll: the poll would replace this message with the idle view")
+	}
+}
+
+// TestPairStart_SurfacesUnreachablePrimary_MultiLocale is ut-docs#1612's
+// fix: TestPairStart_SurfacesUnreachablePrimary above only ever drove
+// pairStartHandler with the default "en" locale, so nothing proved the
+// httpx.ResolveLocale/httpx.T threading it actually has (confirmed by code
+// reading in the ut-docs#1544 review) renders translated for a non-English
+// operator — a regression that hardcoded the English string again in this
+// branch would slip past every existing test. Mirrors
+// TestFriendlyJoinError_TranslatesEachKind's locale loop, driven via
+// ?lang= the same way pairStartHandler's own httpx.ResolveLocale reads it.
+func TestPairStart_SurfacesUnreachablePrimary_MultiLocale(t *testing.T) {
+	for _, locale := range []string{"en", "ar", "fa", "tr"} {
+		t.Run(locale, func(t *testing.T) {
+			t.Setenv("UT_AUTH", "off")
+			replica, _ := newSyncDepsWithPath(t, "replica.db")
+			rmux := http.NewServeMux()
+			registerPairingJoinAPI(rmux, replica)
+
+			wantPrefix := strings.SplitN(httpx.T(locale, "tills.pairing.error.unreachable"), "%s", 2)[0]
+			if wantPrefix == "tills.pairing.error.unreachable" {
+				t.Fatalf("locale %q has no translation for tills.pairing.error.unreachable (httpx.T fell back to the key itself)", locale)
+			}
+
+			form := url.Values{"base_url": {"http://127.0.0.1:1"}, "till_id": {"some-till-id"}, "name": {"Bar Till"}}
+			req := httptest.NewRequest(http.MethodPost, "/api/sync/pair-start?lang="+locale, strings.NewReader(form.Encode()))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rec := httptest.NewRecorder()
+			rmux.ServeHTTP(rec, req)
+
+			// Same reasoning as TestPairStart_SurfacesUnreachablePrimary: always
+			// 200, the failure is encoded in the body, not the status.
+			if rec.Code != http.StatusOK {
+				t.Fatalf("locale=%q: expected 200 (error encoded in the body, not the status), got %d: %s", locale, rec.Code, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), wantPrefix) {
+				t.Fatalf("locale=%q: expected the rendered error state naming the failure (prefix %q), got: %s", locale, wantPrefix, rec.Body.String())
+			}
+		})
 	}
 }
 
@@ -147,9 +203,55 @@ func TestPairStart_RejectsInvalidBaseURL(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("base_url=%q: expected 200 (error encoded in body), got %d", bad, rec.Code)
 		}
-		if !strings.Contains(rec.Body.String(), "not a valid primary address") {
-			t.Fatalf("base_url=%q: expected the rendered validation-error state, got: %s", bad, rec.Body.String())
+		// ut-docs#1544: was a raw English literal, now translated. Compare
+		// against the unescaped body — html/template renders the message's
+		// apostrophe as &#39; (same reasoning as the name_required case
+		// below), so the raw httpx.T() string never matches the escaped
+		// HTML output directly.
+		want := httpx.T("en", "tills.pairing.error.invalid_address")
+		if !strings.Contains(html.UnescapeString(rec.Body.String()), want) {
+			t.Fatalf("base_url=%q: expected the rendered validation-error state %q, got: %s", bad, want, rec.Body.String())
 		}
+	}
+}
+
+// TestPairStart_MissingNameRendersTranslatedFieldSpecificMessage guards
+// ut-docs#1540's server-side half of the required-name fix: a blank name
+// must render the field the operator actually sees on screen ("This
+// till's name"), translated — never the raw base_url/till_id/name JSON
+// keys this handler reads its form values into (the pre-fix message named
+// none of those on any visible field, which is what turned a one-field
+// typo into "pairing is broken"). The client-side `required` +
+// reportValidity() check added alongside this makes the path below hard
+// to reach from the real UI — this is the defense-in-depth path (JS
+// disabled, or a direct POST).
+func TestPairStart_MissingNameRendersTranslatedFieldSpecificMessage(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	replica, _ := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerPairingJoinAPI(rmux, replica)
+
+	rec := postPairStart(t, rmux, "http://primary.example", "some-till-id", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (error encoded in body), got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "base_url") || strings.Contains(body, "till_id") {
+		t.Fatalf("expected the message to name the visible field, not a JSON key, got: %s", body)
+	}
+	// html/template escapes the apostrophe in "till's" as &#39; on render,
+	// so compare against the unescaped rendered body rather than the raw
+	// httpx.T() string (which would never match the escaped HTML output).
+	want := httpx.T("en", "tills.pairing.error.name_required")
+	if !strings.Contains(html.UnescapeString(body), want) {
+		t.Fatalf("expected the translated name_required message %q, got: %s", want, body)
+	}
+	// Same as the unreachable-primary case above: no active attempt behind
+	// this render, so it must stay terminal — otherwise the poll swaps this
+	// exact message out for "No pairing attempt in progress." after 15s,
+	// which is the defect this card was opened to remove.
+	if strings.Contains(body, "hx-trigger") {
+		t.Fatal("missing-name error state must not poll: the poll would erase the message")
 	}
 }
 
@@ -168,6 +270,61 @@ func TestPairStatus_NoActiveAttemptRendersSafely(t *testing.T) {
 	// A no-active-attempt render must not carry the self-polling trigger.
 	if strings.Contains(rec.Body.String(), "hx-trigger") {
 		t.Fatal("no active attempt must not render a polling state")
+	}
+}
+
+// TestPairStatus_ErrorStateKeepsPollingAndKeepsItsMessage covers the half
+// of ut-docs#1540's defect #2 that survived review: an error raised by
+// pairStatusHandler DOES have an active attempt behind it, so its render
+// keeps the self-poll — every tick re-renders the SAME stored errMsg (the
+// message is never lost, unlike a pair-start error, which has no state to
+// re-read), and a fresh attempt started from another tab or device against
+// this till's single replicaPairing can still reach this screen.
+func TestPairStatus_ErrorStateKeepsPollingAndKeepsItsMessage(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+
+	// Stub primary: accepts the pair-request, then answers the status poll
+	// with a 500 the replica can only report as an error.
+	primary := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost && r.URL.Path == "/api/sync/pair-request" {
+			w.Header().Set("Content-Type", "application/json")
+			_, _ = w.Write([]byte(`{"data":{"id":"req-1"},"error":null}`))
+			return
+		}
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	t.Cleanup(primary.Close)
+
+	replica, _ := newSyncDepsWithPath(t, "replica.db")
+	rmux := http.NewServeMux()
+	registerPairingJoinAPI(rmux, replica)
+
+	if rec := postPairStart(t, rmux, primary.URL, "primary-till-1", "Bar Till"); rec.Code != http.StatusOK {
+		t.Fatalf("pair-start: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	// ut-docs#1544: this stub answers with a plain 500 (no body), which
+	// pairStatusHandler renders via the WITH-status-suffix key — was a raw
+	// English literal, now translated with resp.Status substituted in; only
+	// the static prefix is checked, not the exact "500 ..." status text.
+	wantPrefix := strings.SplitN(httpx.T("en", "tills.pairing.error.unexpected_response_status"), "%s", 2)[0]
+
+	rec := getPairStatus(t, rmux)
+	body := rec.Body.String()
+	if !strings.Contains(body, wantPrefix) {
+		t.Fatalf("expected the error state naming the failure (prefix %q), got: %s", wantPrefix, body)
+	}
+	if !strings.Contains(body, `hx-trigger="every 15s"`) {
+		t.Fatalf("a pair-status error has active state behind it and must keep polling, got: %s", body)
+	}
+
+	// The next tick must not degrade: same message, still polling.
+	again := getPairStatus(t, rmux).Body.String()
+	if !strings.Contains(again, wantPrefix) {
+		t.Fatalf("the re-poll must re-render the stored message, not lose it, got: %s", again)
+	}
+	if !strings.Contains(again, `hx-trigger="every 15s"`) {
+		t.Fatalf("the re-poll must stay polling, got: %s", again)
 	}
 }
 

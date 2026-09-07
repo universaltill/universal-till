@@ -199,7 +199,7 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("GET /catalog/tax-codes", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "tax_code_management") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required") // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
 			return
 		}
 		views, err := repo.ListAllTaxCodes(r.Context())

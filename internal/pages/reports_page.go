@@ -397,6 +397,29 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				// every period. Gated behind CanRunEOD with Net/Sales —
 				// it's derived from the same report history.
 				HasVariance bool
+				// From/To (ADR-0066 Decision 6, ut-docs#1141): set only
+				// for a close-to-close "eod" report (rep.Day == "", the
+				// new path) — the template renders "From – To" in place
+				// of the bare Period column for these rows, matching the
+				// reference document's own Zeitraum line. Empty for a
+				// legacy calendar-date row, which keeps showing its
+				// plain Period as before (no regression on the
+				// historical path).
+				From, To string
+				// ArticleGroups/Articles/Operators (ut-docs#1010) come from
+				// the same archived report's content_json the Net/Sales
+				// fields above already unmarshal from — gated behind
+				// CanRunEOD the same way, and left nil (no section
+				// rendered, see the template) for any report these weren't
+				// computed for (a range report, or one archived before
+				// this change).
+				ArticleGroups []data.ArticleGroupSales
+				Articles      []data.ArticleSales
+				Operators     []data.OperatorSales
+				// OrderTypes (ut-docs#1015) is the same archived-report,
+				// same-gate, same-nil-when-absent breakdown as the three
+				// above.
+				OrderTypes []data.OrderTypeSales
 			}
 			var eodRows []eodRow
 			// ut-docs#794 review finding (residual on the blocker-1 fix):
@@ -425,6 +448,13 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 							row.Net = rep.Net
 							row.Sales = rep.SalesCount
 							row.HasVariance = rep.CashReconciliation != nil && rep.CashReconciliation.Variance != 0
+							row.ArticleGroups = rep.ArticleGroups
+							row.Articles = rep.Articles
+							row.Operators = rep.Operators
+							row.OrderTypes = rep.OrderTypes
+							if rep.Day == "" {
+								row.From, row.To = rep.From, rep.To
+							}
 						}
 					}
 					eodRows = append(eodRows, row)
@@ -436,9 +466,16 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			// real state for an operator who may need a manager's approval
 			// to change it.
 			var eodEnabled, eodTime string
+			var articlePrintMode string
+			var articlePrintCap int
 			if canView {
 				eodEnabled, _, _ = d.Settings.Get(r.Context(), keyEODEnabled)
 				eodTime, _, _ = d.Settings.Get(r.Context(), keyEODTime)
+				// ut-docs#1650: reflects the RESOLVED (defaulted) state, same
+				// as EODEnabled/EODTime/BusinessDayStart above, so a store
+				// that never touched this setting sees the shipped default
+				// ("capped"/30) pre-selected rather than a blank/unset form.
+				articlePrintMode, articlePrintCap = resolveEODArticlePrintSettings(r.Context(), d)
 			}
 			httpx.RenderPartial("ui/partials/reports_tab_eod.html", map[string]any{
 				"IsManager":        canView,
@@ -447,6 +484,8 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				"EODEnabled":       eodEnabled == "true",
 				"EODTime":          eodTime,
 				"BusinessDayStart": bizDayStart,
+				"ArticlePrintMode": articlePrintMode,
+				"ArticlePrintCap":  articlePrintCap,
 			})(w, r)
 		case "tips":
 			renderTipsTab(repo, d, r, window)(w, r)

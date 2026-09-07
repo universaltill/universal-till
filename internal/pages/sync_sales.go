@@ -115,11 +115,12 @@ func buildJournal(ctx context.Context, repo *data.POSRepo, receiptNo string) (jo
 // Deliberately a small, explicit allowlist, not a catch-all: an error not
 // recognised here keeps the existing whole-batch-reject behaviour, since an
 // unrecognised failure might be real corruption or a bug that deserves the
-// loud, immediate 422 rather than being silently skipped. Both cases
-// currently known are voucher-shaped (ut-docs#1053 made them newly and
-// concretely reachable) but this is deliberately not a "voucher error"
-// special case -- a future fail-closed branch elsewhere in applyJournal adds
-// its own sentinel error here, not a parallel mechanism (ADR-0065).
+// loud, immediate 422 rather than being silently skipped. The two voucher
+// cases were the first reachable instance of this (ut-docs#1053) but this is
+// deliberately not a "voucher error" special case -- a future fail-closed
+// branch elsewhere in applyJournal adds its own sentinel error here, not a
+// parallel mechanism (ADR-0065). The raw-FK-violation branch below (added
+// ut-docs#1686) is exactly that: a generic branch, not a third special case.
 func permanentJournalFailureReason(err error) string {
 	switch {
 	case errors.Is(err, data.ErrVoucherNotFound):
@@ -137,8 +138,62 @@ func permanentJournalFailureReason(err error) string {
 		// tills issuing the same code offline collide on replay. The PK
 		// conflict recurs identically on every retry.
 		return "voucher id collision on issue replay"
+	case isForeignKeyViolation(err):
+		// ut-docs#1686: any other raw FK violation in pos.CompleteSale's
+		// insert path means this entry references a replica-local row (a
+		// user, item, ...) the primary has no matching row for yet (it
+		// hasn't synced here, or never will -- a replica-only test user,
+		// say). That recurs identically on every retry, exactly like the
+		// two voucher cases above, so it belongs on this allowlist too.
+		// applyJournal only reaches sales.cashier_id today (it never sets
+		// SaleInput.CustomerID/RegisterID/TableID) and sale_lines.item_id/
+		// variant_id -- the reason strings below name the wider column set
+		// each insert stage COULD hit (sales also FKs on customer_id/
+		// register_id/table_id) since a future field addition shouldn't
+		// need this classifier revisited, not because all of them are
+		// reachable from this handler yet.
+		//
+		// Deliberately generic, not per-column (the #1681 review's own
+		// recommendation, see its "Follow-up filed" section): SQLite's own
+		// error carries no column/table detail to key off, and unlike
+		// payments.method_id (EnsurePaymentMethod) there is no safe
+		// placeholder to upsert for a missing user or item -- a nameless
+		// placeholder item is a worse UX trap than a quarantine, and
+		// silently attributing a sale to a fallback "system" cashier would
+		// falsify the audit trail. Quarantining, not guessing, is correct
+		// here for the whole class, not just this instance of it.
+		return foreignKeyViolationReason(err)
 	default:
 		return ""
+	}
+}
+
+// isForeignKeyViolation reports whether err is a raw SQLite foreign-key
+// constraint violation. Byte-identical in approach to data's own
+// isForeignKeyViolation (internal/data/reset_archive_repo.go) -- string-
+// matching on SQLite's stable "FOREIGN KEY constraint failed" text, since
+// modernc.org/sqlite (this project's driver) exports no typed error the
+// way mattn/go-sqlite3 does. Duplicated rather than exported from data:
+// this is a pages-layer classification of an error already unwrapped past
+// the repository boundary, not a data-layer concern, and one predicate
+// doesn't earn a new exported cross-package dependency.
+func isForeignKeyViolation(err error) bool {
+	return err != nil && strings.Contains(err.Error(), "FOREIGN KEY constraint failed")
+}
+
+// foreignKeyViolationReason turns a raw FK-violation error into a
+// diagnosable (but not per-column) quarantine reason, distinguished by
+// which insert failed -- data.POSRepo's own wrapped-error prefix
+// ("insert sale: ...", "insert sale lines batch: ...") already names the
+// table without this needing to parse SQLite's own message for a column.
+func foreignKeyViolationReason(err error) string {
+	switch {
+	case strings.Contains(err.Error(), "insert sale lines batch:"):
+		return "unknown item/variant id on replica-local sale line"
+	case strings.Contains(err.Error(), "insert sale:"):
+		return "unknown cashier/customer/register/table id on replica-local sale"
+	default:
+		return "foreign key violation on replay (unresolved replica-local reference)"
 	}
 }
 
@@ -295,6 +350,28 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 		in.ServiceChargeTaxBasisBP = j.Sale.ServiceChargeTaxBasisBP
 	}
 	for _, p := range j.Sale.Payments {
+		// Same FK-upsert the live tender path (pos_api.go) and the refund
+		// path (refund_page.go) already do before inserting a payment --
+		// payments.method_id has a real FK to payment_methods(id), and a
+		// replica can complete a sale (e.g. voucher-tendered) using a
+		// method the primary's payment_methods table has no row for yet.
+		// Without this, that replica's journal entry fails the whole batch
+		// on a raw FK violation instead of replaying (ut-docs#1681).
+		//
+		// Guarded on non-empty, unlike CompleteSale's own downstream
+		// rejection of a missing method: EnsurePaymentMethod doesn't
+		// validate its id, so an unguarded call on a malformed/malicious
+		// peer's empty method would upsert a junk, nameless
+		// payment_methods row (which then sorts into the cashier's live
+		// tender list) before CompleteSale ever gets a chance to reject
+		// the entry the way it always has. Skipping the ensure here
+		// changes nothing about that rejection -- it still happens, just
+		// without the side effect.
+		if p.Method != "" {
+			if err := repo.EnsurePaymentMethod(ctx, p.Method); err != nil {
+				return false, "", err
+			}
+		}
 		in.Payments = append(in.Payments, pos.PaymentInput{
 			MethodID: p.Method, Amount: money.FromMinor(p.Amount),
 			ChangeGiven: money.FromMinor(p.ChangeGiven),
@@ -410,16 +487,28 @@ func warnIfStockNegative(ctx context.Context, repo *data.POSRepo, in pos.SaleInp
 // SaleExists idempotency guard), and each further forced overdraw of the
 // same voucher is a distinct double-spend the manager should see.
 func warnIfVoucherOverdrawn(ctx context.Context, repo *data.POSRepo, in pos.SaleInput, source string) {
+	warnIfVoucherOverdrawnReason(ctx, repo, in, source, "offline double-spend force-applied (ut-docs#1053)")
+}
+
+// warnIfVoucherOverdrawnReason is warnIfVoucherOverdrawn generalized with an
+// explicit reason suffix — ut-docs#1053's journal-replay callsite keeps its
+// own wording via the wrapper above; pos_api.go's completeTender (ut-docs#1668)
+// needs a DIFFERENT, accurate reason: a cross-till preauthorized redemption
+// can still force a LOCAL debit past a STALE local balance (EnsureVoucherLocalRow
+// only fills a genuinely missing row — it never overwrites this till's own
+// existing, possibly-out-of-date one), and reusing the #1053 wording here
+// would misattribute the cause.
+func warnIfVoucherOverdrawnReason(ctx context.Context, repo *data.POSRepo, in pos.SaleInput, source, reason string) {
 	for _, p := range in.Payments {
 		if p.VoucherID == "" {
 			continue
 		}
-		v, err := repo.GetVoucherBalance(ctx, p.VoucherID)
+		v, err := repo.GetVoucherBalance(ctx, nil, p.VoucherID)
 		if err != nil || v.BalanceMinor >= 0 {
 			continue
 		}
-		logging.L().Warnf("voucher overdrawn: %q balance went to %s after %s — offline double-spend force-applied (ut-docs#1053)",
-			p.VoucherID, money.FromMinor(v.BalanceMinor), source)
+		logging.L().Warnf("voucher overdrawn: %q balance went to %s after %s — %s",
+			p.VoucherID, money.FromMinor(v.BalanceMinor), source, reason)
 	}
 }
 

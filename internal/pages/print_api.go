@@ -27,6 +27,11 @@ const (
 	keyPrinterAuto      = "printer.auto_print"
 	keyPrinterKitchen   = "printer.kitchen_addr" // kitchen printer host[:port] or device path
 	keyPrinterDrawerPin = "printer.drawer_pin"   // "2" | "5" (ut-docs#1136)
+
+	// Read-only here: the store identity the printer charset default is
+	// resolved from (ut-docs#1728). Owned by settings.SaveRuntimeConfig.
+	keyStoreCurrency = "store.currency"
+	keyStoreLocale   = "store.locale"
 )
 
 // parseDrawerPin resolves the drawer_pin setting to 2 or 5. Anything else --
@@ -41,23 +46,66 @@ func parseDrawerPin(v string) int {
 	return 2
 }
 
-// printerConfig reads the printer.* settings into a print.Config.
+// printerConfig reads the printer.* settings into a print.Config. Callers
+// that don't need to distinguish "genuinely off" from "settings read
+// failed" (everything except the async print paths, ut-docs#1153) use this.
 func printerConfig(ctx context.Context, d *common.Deps) print.Config {
+	cfg, _ := printerConfigChecked(ctx, d)
+	return cfg
+}
+
+// printerConfigChecked is printerConfig plus the first error hit while
+// reading the underlying settings, if any. data.SettingsRepo.Get already
+// distinguishes "key not set" (ok=false, err=nil) from a genuine read
+// failure (err!=nil) — this surfaces that distinction instead of discarding
+// it, so the async print paths can tell "off" from "couldn't tell" and
+// avoid silently no-op'ing a real DB fault (ut-docs#1153).
+func printerConfigChecked(ctx context.Context, d *common.Deps) (print.Config, error) {
+	var firstErr error
 	get := func(key, def string) string {
-		if v, ok, _ := d.Settings.Get(ctx, key); ok && strings.TrimSpace(v) != "" {
+		if firstErr != nil {
+			// Already know the read is broken (review nit, ut-docs#1153):
+			// don't fire 6 more doomed queries once the first one fails —
+			// the caller only wants a definite error, not a fully-filled
+			// (and here, meaningless) cfg.
+			return def
+		}
+		v, ok, err := d.Settings.Get(ctx, key)
+		if err != nil {
+			firstErr = err
+			return def
+		}
+		if ok && strings.TrimSpace(v) != "" {
 			return strings.TrimSpace(v)
 		}
 		return def
 	}
-	return print.Config{
+	cfg := print.Config{
 		Mode:           get(keyPrinterMode, "off"),
 		Address:        get(keyPrinterAddress, ""),
 		Device:         get(keyPrinterDevice, ""),
-		Charset:        get(keyPrinterCharset, "utf8"),
+		Charset:        get(keyPrinterCharset, ""),
 		AutoPrint:      get(keyPrinterAuto, "true") == "true",
 		KitchenAddress: get(keyPrinterKitchen, ""),
 		DrawerPin:      parseDrawerPin(get(keyPrinterDrawerPin, "2")),
 	}
+	// ut-docs#1728: an unset charset resolves from the store's own
+	// currency/locale rather than the hardcoded "utf8" that used to sit in
+	// the get() default above. That hardcoded value is what made
+	// ut-docs#1243's CP858 support opt-in: the transcode worked, but no till
+	// used it unless a human found the Characters dropdown, so real receipts
+	// kept printing "âÎ¬2.50" for "€2.50".
+	//
+	// Resolved HERE rather than as get()'s default argument because Go
+	// evaluates arguments eagerly: passing it inline would fire the two
+	// store.* reads on every printerConfig call, including the overwhelming
+	// majority where the operator HAS chosen a charset and the result is
+	// discarded. An explicit choice still wins — this branch is only
+	// reached when nothing is stored.
+	if cfg.Charset == "" {
+		cfg.Charset = print.DefaultCharset(get(keyStoreCurrency, ""), get(keyStoreLocale, ""))
+	}
+	return cfg, firstErr
 }
 
 // receiptDesign mirrors the receipt.* settings (docs: receipt-designer.md).
@@ -104,6 +152,15 @@ func receiptLogoRaster(rd receiptDesign) []byte {
 }
 
 // receiptDesignFromSettings loads the saved design with friendly defaults.
+// Unlike printerConfig/kitchenPrintingEnabled (see printerConfigChecked), a
+// genuine settings-read error here is deliberately left unsurfaced —
+// reviewed, ut-docs#1533, residual gap left by #1153: this only feeds
+// cosmetic receipt formatting (header/footer lines, SKU/tax/barcode/logo
+// toggles), and buildReceiptDoc's callers unconditionally build and send
+// the receipt regardless of whether this read succeeded. A failure here
+// degrades the design silently; it never turns into a missed/failed
+// receipt the way a printer-config or kitchen-routing failure would, so
+// there is no failure-reporting obligation to satisfy.
 func receiptDesignFromSettings(ctx context.Context, d *common.Deps) receiptDesign {
 	get := func(key, def string) string {
 		if v, ok, _ := d.Settings.Get(ctx, key); ok {
@@ -137,8 +194,20 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	}
 	cfg := printerConfig(ctx, d)
 	rd := receiptDesignFromSettings(ctx, d)
-	locale := "en" // receipts print with latin digits; RTL needs bitmap mode (spec)
-	money := func(minor int64) string { return httpx.FormatMoney(minor, locale) }
+	// printLocale drives grouping/decimal-separator and date-order
+	// convention (ut-docs#1130) — the shop's own configured locale, not a
+	// per-request one, since a background/scheduled print has no request
+	// to resolve from (httpx.DefaultLocale's own doc). Digit SHAPE stays
+	// forced Latin regardless of printLocale: ESC/POS text mode can't
+	// render non-Latin numeral glyphs, RTL needs bitmap mode (spec) — so
+	// money/date below use the *Latin variants, not FormatMoney/FormatDate,
+	// even though those would also accept printLocale.
+	printLocale := httpx.DefaultLocale()
+	money := func(minor int64) string { return httpx.FormatMoneyLatin(minor, printLocale) }
+	receiptDate := detail.CreatedAt
+	if t, err := time.Parse(time.RFC3339, detail.CreatedAt); err == nil {
+		receiptDate = httpx.FormatDateLatin(t.Local(), printLocale) + " " + t.Local().Format("15:04")
+	}
 
 	doc := print.Doc{
 		StoreName: storeNameOrDefault(ctx, d),
@@ -146,7 +215,7 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 		Header:    rd.Header,
 		Meta: []string{
 			"Receipt " + detail.ReceiptNo,
-			detail.CreatedAt,
+			receiptDate,
 		},
 		Charset:   cfg.Charset,
 		DrawerPin: cfg.DrawerPin,
@@ -164,13 +233,14 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	}
 	// ADR-0073 Decision 7: a MIXED sale marks each line's mode; a uniform
 	// sale prints exactly as before. English literals match this renderer's
-	// existing convention (locale "en", latin digits — see above).
+	// existing convention (Latin digits forced regardless of printLocale
+	// — see above).
 	mixed := detail.OrderType == pos.OrderTypeMixed
 	if mixed {
 		doc.Meta = append(doc.Meta, "Mixed dine-in / takeaway")
 	}
 	for _, l := range detail.Lines {
-		qty := strconv.FormatFloat(l.Qty, 'f', -1, 64)
+		qty := httpx.FormatQtyLatin(l.Qty, printLocale)
 		name := l.Name
 		if rd.ShowSKU && l.SKU != "" {
 			name += " [" + l.SKU + "]"
@@ -246,9 +316,9 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	// general German-market rollout. Fields the signer didn't return are
 	// skipped — never placeholders — and a read error degrades to no
 	// lines, same conservative policy as the audit-derived notices.
-	// English literals match this renderer's existing convention (locale
-	// "en", latin digits — see the locale note at the top of this
-	// function).
+	// English literals match this renderer's existing convention (Latin
+	// digits forced regardless of printLocale — see the note at the top
+	// of this function).
 	// Fiscal DEVICE receipt (Turkey's YN ÖKC, fiscal_device_hook.go): the
 	// device printed the legal receipt; this thermal copy carries its
 	// receipt number, serial and Z counter so the two can be matched. Same
@@ -342,13 +412,25 @@ func printReceiptAsync(d *common.Deps, receiptNo string, actorID string) {
 		defer d.AsyncWork.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), printAsyncTimeout)
 		defer cancel()
-		cfg := printerConfig(ctx, d)
+		posRepo := data.NewPOSRepo(d.Db)
+		cfg, cfgErr := printerConfigChecked(ctx, d)
+		if cfgErr != nil {
+			// The settings read itself failed (SQLite busy, disk error, ...)
+			// — this is NOT "printing off" and must not be treated as one
+			// (ut-docs#1153): a paid order's receipt would silently vanish
+			// with no audit row and no /orders warning.
+			wctx, wcancel := recordPrintFailureCtx()
+			defer wcancel()
+			_ = posRepo.InsertAudit(wctx, nil, actorID, "sale", receiptNo, "print_failed",
+				map[string]any{"error": "printer settings read failed: " + cfgErr.Error()}, time.Now().UTC().Format(time.RFC3339), "")
+			_ = posRepo.SetReceiptPrintFailed(wctx, receiptNo, time.Now().UTC().Format(time.RFC3339))
+			return
+		}
 		if !cfg.Enabled() || !cfg.AutoPrint {
 			// No attempt (printing off/manual) — must neither overwrite a
 			// real prior failure nor falsely clear one.
 			return
 		}
-		posRepo := data.NewPOSRepo(d.Db)
 		if err := printReceiptFn(ctx, d, receiptNo); err != nil {
 			wctx, wcancel := recordPrintFailureCtx()
 			defer wcancel()
@@ -533,7 +615,10 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 			fail(http.StatusBadGateway, "settings.printer.test_failed")
 			return
 		}
-		one := print.RenderLabel(label.Name, httpx.FormatMoney(label.PriceMinor, "en"), label.Code, cfg.Charset)
+		// Same Latin-digit ESC/POS constraint as buildReceiptDoc/buildEODDoc
+		// above, but the store's own separator/decimal convention rather
+		// than a hardcoded "en" (ut-docs#1130 review finding).
+		one := print.RenderLabel(label.Name, httpx.FormatMoneyLatin(label.PriceMinor, httpx.DefaultLocale()), label.Code, cfg.Charset)
 		job := make([]byte, 0, len(one)*copies)
 		for range copies {
 			job = append(job, one...)

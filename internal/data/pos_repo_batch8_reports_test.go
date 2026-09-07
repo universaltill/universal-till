@@ -50,11 +50,17 @@ func b8ExpectedDay(t *testing.T, d *db.DB, tm time.Time, hh, mm int) string {
 	return day
 }
 
-// b8Sale inserts a sale row. subtotal mirrors total (discounts irrelevant here).
+// b8Sale inserts a sale row. subtotal mirrors total (discounts irrelevant
+// here). local_date is set via date(?, 'localtime') on the same createdAt
+// literal, exactly as InsertSale does in production (ut-docs#1342) — this
+// helper bypasses that method, so any caller whose query now filters on
+// local_date (dateRangeSummary/EndOfDay, via eod_zreport_local_day_869_test.go)
+// needs it populated; every other caller ignores the column, so setting it
+// unconditionally here is neutral for them.
 func b8Sale(t *testing.T, d *db.DB, id, createdAt, status, saleType string, taxTotal, total int64) {
 	t.Helper()
-	mustExec(t, d, `INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at)
-VALUES (?, ?, ?, ?, 'GBP', ?, 0, ?, ?, ?)`, id, "R-"+id, status, saleType, total, taxTotal, total, createdAt)
+	mustExec(t, d, `INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, local_date)
+VALUES (?, ?, ?, ?, 'GBP', ?, 0, ?, ?, ?, date(?, 'localtime'))`, id, "R-"+id, status, saleType, total, taxTotal, total, createdAt, createdAt)
 }
 
 // b8Line inserts a sale line. Exactly one of itemID/variantID must be

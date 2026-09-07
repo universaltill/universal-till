@@ -123,21 +123,36 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	httpx.InitUIScale(state.UIScale)
 	httpx.InitOSKMode(state.OSKMode)
 
-	// Boot sweep: drop every live-basket table claim (ut-docs#1390). The
-	// engine constructed just below always starts with an empty basket, so
-	// any table_claims row still present belongs to a process that ended
-	// without releasing it (crash, kill, power loss) — stale by
-	// construction, every time, with nothing per-row to decide. Without
-	// this a table claimed right before an unclean shutdown stays
-	// unbookable forever (independent review, ut-docs#1390): the picker
+	// Boot sweep: drop THIS till's own live-basket table claims
+	// (ut-docs#1390). The engine constructed just below always starts with an
+	// empty basket, so any of its own table_claims rows still present belong
+	// to a process that ended without releasing them (crash, kill, power
+	// loss) — stale by construction, every time, with nothing per-row to
+	// decide. Without this a table claimed right before an unclean shutdown
+	// stays unbookable forever (independent review, ut-docs#1390): the picker
 	// filters occupied tables out and both table-assignment handlers
 	// reject a pick on one, so nothing else ever revisits an orphaned row.
+	//
+	// Own rows ONLY, since ut-docs#1703 gave claims an owner: on a primary
+	// this table also holds the live claims of REPLICAS that are still
+	// running, and wiping those on a primary restart would re-open the very
+	// cross-till double-claim #1703 closes. Those are reconciled by TTL in
+	// POSRepo.ClaimTableForTill instead — see ClearLocalTableClaims.
+	//
 	// Non-fatal, same offline-first "a boot must never be blocked on a
 	// settings write" convention as SaveState above — a failed sweep just
 	// means recovery waits for the next restart, not a boot failure. Never
 	// touches held_sales: a parked order surviving a restart is durability
 	// working as intended, not a leftover to clear.
-	if err := data.NewPOSRepo(db).ClearAllTableClaims(ctx); err != nil {
+	//
+	// This sweep is unconditional by design and does NOT distinguish a
+	// genuinely abandoned live-basket pick from a held order's own claim
+	// (ut-docs#1704 kept those alive through the whole park, in the same
+	// table_claims rows this sweep clears) — it wipes both. The "boot
+	// re-claim" step below, once dp exists, re-establishes the held-order
+	// case; letting this sweep clear everything first and re-claiming after
+	// is simpler and safer than teaching it to special-case held_sales here.
+	if err := data.NewPOSRepo(db).ClearLocalTableClaims(ctx); err != nil {
 		log.Errorf("clear stale table claims: %v", err)
 	}
 
@@ -255,6 +270,88 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		Shell:       shellChannel,
 	}
 
+	// Boot-time release-all (ut-docs#1712), then boot re-claim (ut-docs#1704)
+	// — two steps sharing one list of this till's currently-held orders,
+	// fetched once here. Order matters: release-all must run BEFORE
+	// re-claim, not after (see release-all's own comment for why the
+	// reverse ordering was tried and rejected).
+	//
+	// Release-all tells the primary to drop every claim this till owns
+	// EXCEPT the tables in keepTableIDs (this till's own held orders,
+	// computed below), clearing whatever a crashed LIVE (not-yet-held)
+	// basket left behind on a table nobody — including this same till —
+	// ever revisits again. Without it, that claim sits orphaned on the
+	// primary forever: ClaimTableForTill's staleness check only ever runs
+	// when someone attempts a NEW claim on that SAME table, and this till
+	// looks "online" again the moment it talks to the primary about
+	// anything at all (tills.last_seen_at) — so the staleness disjunct
+	// never fires (independent review of ut-docs#1703/#1704, finding 7,
+	// the recommended follow-up left for this card).
+	//
+	// keepTableIDs is NOT optional here — a held order's table_claims row
+	// survives a restart BY DESIGN (ut-docs#1704: it's the only signal that
+	// makes a parked order's occupancy visible cross-till) and must never
+	// be wiped just because release-all can't otherwise tell it apart from
+	// a genuine live-basket orphan. An earlier version of this call omitted
+	// the keep list and relied on the re-claim loop below to restore a held
+	// order's claim from nothing afterward; independent review (2026-09-07)
+	// found that turns a durable, self-healing row into a delete-then-
+	// restore-over-the-network window with no rollback (see
+	// POSRepo.ReleaseAllTableClaimsForTill's doc comment for the full
+	// failure scenario this closes). Best-effort and non-fatal, same
+	// offline-first stance as every other step here:
+	// releaseAllTableClaimsOnPrimary already logs its own failure reason
+	// internally (not a replica, or any network/timeout/non-200/
+	// malformed-body failure) — there is nothing further to do locally on
+	// failure, since the local mirror was already cleared by
+	// ClearLocalTableClaims above regardless of whether the primary is
+	// reachable.
+	//
+	// Boot re-claim (ut-docs#1704, independent review 2026-09-07): with
+	// release-all now keep-list-scoped, a held order's PRIMARY-side claim
+	// never actually left in the first place — this loop's job is the
+	// refresh/self-heal it always was, not a from-nothing restore. The
+	// sweep further above (ClearLocalTableClaims) unconditionally wipes
+	// every till_id='' row, which is correct for an abandoned live-basket
+	// pick (that sweep's whole point) but wrong for a held order's: its
+	// held_sales row survives the restart on purpose (durability, not a
+	// leftover — see that sweep's own comment), yet nothing re-created its
+	// LOCAL table_claims mirror. Re-claiming restores this till's own local
+	// row and re-affirms the primary's (refreshing claimed_at, and
+	// self-healing the rare case where release-all's own primary round-trip
+	// raced something else). Best-effort and non-fatal — logged, never
+	// blocks boot, same offline-first stance as the sweep above; a failed
+	// re-claim here just means this table's cross-till visibility stays
+	// wrong until the next restart or a manual Free-table, not that the
+	// till fails to start.
+	// A held-sales list failure skips BOTH steps below, not just re-claim:
+	// without the list, release-all cannot build a keep list, and calling
+	// it with an empty one would wipe a held order's claim exactly like the
+	// unconditional version this diff replaced — failing closed here (skip
+	// release-all rather than guess an empty keep list) is what keeps that
+	// guarantee intact even on this rare error path.
+	if held, err := data.NewHeldSalesRepo(db).List(ctx); err != nil {
+		log.Errorf("boot release-all/re-claim: list held sales: %v", err)
+	} else {
+		keepTableIDs := make([]string, 0, len(held))
+		for _, h := range held {
+			if h.TableID != "" {
+				keepTableIDs = append(keepTableIDs, h.TableID)
+			}
+		}
+		_ = releaseAllTableClaimsOnPrimary(ctx, dp, tableClaimProxyClient, keepTableIDs)
+
+		posRepo := data.NewPOSRepo(db)
+		for _, h := range held {
+			if h.TableID == "" {
+				continue
+			}
+			if claimed, err := claimTableWriteThrough(ctx, dp, posRepo, h.TableID); err != nil || !claimed {
+				log.Errorf("boot re-claim held order %s's table %s: claimed=%v err=%v", h.ID, h.TableID, claimed, err)
+			}
+		}
+	}
+
 	// Register routes
 	registerStatic(mux)
 	registerIndex(mux, dp)
@@ -288,7 +385,10 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerPairingJoinAPI(mux, dp)                   // ADR-0033 part 3/3 (replica side)
 	registerPendingPairingsUI(mux, dp)                // ADR-0033 part 3/3 (primary side)
 	registerSyncSales(mux, dp)
-	registerSyncOrders(mux, dp) // cross-till orders board, primary side (ut-docs#1350)
+	registerSyncOrders(mux, dp)      // cross-till orders board, primary side (ut-docs#1350)
+	registerSyncTables(mux, dp)      // cross-till table occupancy, read-only, primary side (ut-docs#1392)
+	registerSyncTablesClaim(mux, dp) // cross-till table-claim write-through, primary side (ut-docs#1703)
+	registerSyncVouchers(mux, dp)    // cross-till voucher lookup + redemption write-through, primary side (ut-docs#1668)
 	registerSyncAdmin(mux, dp)
 	registerSyncAssets(mux, dp)
 	registerSyncQuarantinePage(mux, dp) // ut-docs#1133: quarantined LAN-sync journal entries, primary-only admin panel (ADR-0065 follow-up)
@@ -300,8 +400,20 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	StartAutoUpdateScheduler(bgCtx, dp, wg)         // background unattended update (ut-docs#79); joined by app.Run's drain
 	StartBasePluginRetry(bgCtx, dp, wg)             // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
 	StartTSEProvisionRetry(bgCtx, dp, wg)           // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain
-	dropStaleFiscalSignRetryQueue(bgCtx, dp)        // one-time drop of the pre-1.4.0 re-sign queue — retry-signing removed (ADR-0056, ut-docs#839)
-	registerInvoices(mux, dp)                       // VAT invoices + credit notes (G31)
+	StartOrderStatusStreamBridge(bgCtx, dp, wg)     // replica: hold the primary's order-status SSE stream open and republish locally (ADR-0079, ut-docs#1571); joined by app.Run's drain
+	// ADR-0079: release every open order-status SSE stream (browser
+	// EventSources, and on a primary the replicas' bridges) the instant
+	// shutdown begins — server.Start's own Shutdown fires on this same
+	// bgCtx.Done(), and would otherwise wait its full timeout on connections
+	// that never end on their own. Joined by app.Run's drain.
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		<-bgCtx.Done()
+		dp.OrderStatus.Close()
+	}()
+	dropStaleFiscalSignRetryQueue(bgCtx, dp) // one-time drop of the pre-1.4.0 re-sign queue — retry-signing removed (ADR-0056, ut-docs#839)
+	registerInvoices(mux, dp)                // VAT invoices + credit notes (G31)
 	registerHoldAPI(mux, dp)
 	registerSuggestions(mux, dp)
 	registerTablePicker(mux, dp) // basket table-assignment picker (ut-docs#820, ADR-0054)
@@ -342,6 +454,8 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerFiscalDeviceTR(mux, dp)   // Türkiye YN ÖKC fiscal-device status page (ut-docs#1280 core half)
 	registerPromotions(mux, dp)       // promo-code admin: create/edit/deactivate/list (ut-docs#634)
 	registerKitchenStations(mux, dp)  // kitchen station routing (ut-docs#516)
+	registerKitchenDisplay(mux, dp)   // per-station kitchen display screen, HDMI-local (ut-docs#544)
+	registerBluetoothDevices(mux, dp) // in-POS Bluetooth HID pairing panel (ut-docs#76, ADR-0078)
 	registerTables(mux, dp)           // table floor plan (ut-docs#814, ADR-0054)
 	registerCountrySettings(mux, dp)  // per-country defaults (ut-docs#659)
 	registerTranslations(mux, dp, i18n)

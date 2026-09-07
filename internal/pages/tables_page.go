@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -87,9 +88,35 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 		return u, true
 	}
 
-	audit := func(r *http.Request, actorID, targetID, action string) {
+	// requirePrimary gates every mutation (create/update/position/active)
+	// on this till being the primary (ut-docs#1585). tables syncs shop-wide
+	// as an admin table (adminTables, ut-docs#1546) via a one-way
+	// primary-wins pull, so a write accepted on a satellite would silently
+	// vanish (a new table deleted, an edit reverted) on the very next admin
+	// pull -- refuse it up front instead, with a clear localized message,
+	// same pattern as registers_page.go's requirePrimary (ut-docs#1590).
+	// The redirect-based routes below use this; the JS-driven position
+	// endpoint answers with a status code instead (see below).
+	requirePrimary := func(w http.ResponseWriter, r *http.Request) bool {
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			http.Redirect(w, r, "/tables?err=tables.error.replica_use_primary", http.StatusSeeOther)
+			return false
+		}
+		return true
+	}
+
+	audit := func(r *http.Request, actorID, targetID, action string, payload any) {
 		now := time.Now().UTC().Format(time.RFC3339)
-		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "table", targetID, action, nil, now, "")
+		// A table audit write should never be able to block or fail the
+		// mutation it records, so its error stays fire-and-forget (same
+		// convention as every other InsertAudit call site in this
+		// package) -- but a failure here was previously invisible even
+		// to an operator looking at the logs (ut-docs#1715). Log it, same
+		// shape as hold_api.go's own "silent, durable leak" log line for
+		// a comparable swallowed-error case.
+		if err := posRepo.InsertAudit(r.Context(), nil, actorID, "table", targetID, action, payload, now, ""); err != nil {
+			log.Printf("table audit write failed: actor=%s target=%s action=%s: %v", actorID, targetID, action, err)
+		}
 	}
 
 	// tiles is shared by both the full page below and its live-state HTMX
@@ -101,7 +128,10 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 	// Android kiosk replaced the whole screen with plain text and no way
 	// back).
 	tiles := func(r *http.Request) ([]tableTile, error) {
-		states, err := posRepo.ListTablesWithState(r.Context())
+		// ut-docs#1392: a replica shows the PRIMARY's live occupancy when
+		// reachable, falling back to its own local state otherwise — see
+		// tablesWithStateForDisplay's own doc comment.
+		states, err := tablesWithStateForDisplay(r.Context(), d, posRepo)
 		if err != nil {
 			return nil, err
 		}
@@ -191,6 +221,9 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 		if !ok {
 			return
 		}
+		if !requirePrimary(w, r) {
+			return
+		}
 		label, zone, shape, seats, errKey := parseTableForm(r)
 		if errKey != "" {
 			http.Redirect(w, r, "/tables?err="+errKey, http.StatusSeeOther)
@@ -214,13 +247,16 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 			http.Redirect(w, r, "/tables?err=tables.error.create", http.StatusSeeOther)
 			return
 		}
-		audit(r, actor.ID, id, "table_create")
+		audit(r, actor.ID, id, "table_create", nil)
 		http.Redirect(w, r, "/tables", http.StatusSeeOther)
 	})
 
 	mux.HandleFunc("POST /api/tables/{id}", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := requireManager(w, r)
 		if !ok {
+			return
+		}
+		if !requirePrimary(w, r) {
 			return
 		}
 		id := r.PathValue("id")
@@ -237,7 +273,7 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 			http.Redirect(w, r, "/tables?err="+key, http.StatusSeeOther)
 			return
 		}
-		audit(r, actor.ID, id, "table_update")
+		audit(r, actor.ID, id, "table_update", nil)
 		http.Redirect(w, r, "/tables", http.StatusSeeOther)
 	})
 
@@ -247,6 +283,15 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/tables/{id}/position", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := requireManager(w, r)
 		if !ok {
+			return
+		}
+		// A JS fetch caller, not a redirect target -- answers with a status
+		// code like every other failure on this route (ut-docs#1585). 409
+		// Conflict, same code plugins_store_page.go's replica gate uses, so
+		// the client can tell "you're on a replica" apart from a generic
+		// failure (persistPosition in tables.html's own <script>).
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			http.Error(w, "replica", http.StatusConflict)
 			return
 		}
 		id := r.PathValue("id")
@@ -265,13 +310,16 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "failed to save position", http.StatusInternalServerError)
 			return
 		}
-		audit(r, actor.ID, id, "table_move")
+		audit(r, actor.ID, id, "table_move", nil)
 		w.WriteHeader(http.StatusNoContent)
 	})
 
 	mux.HandleFunc("POST /api/tables/{id}/active", func(w http.ResponseWriter, r *http.Request) {
 		actor, ok := requireManager(w, r)
 		if !ok {
+			return
+		}
+		if !requirePrimary(w, r) {
 			return
 		}
 		id := r.PathValue("id")
@@ -289,7 +337,64 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 		if enable {
 			action = "table_activate"
 		}
-		audit(r, actor.ID, id, action)
+		audit(r, actor.ID, id, action, nil)
+		http.Redirect(w, r, "/tables", http.StatusSeeOther)
+	})
+
+	// Manual "Free table" override (ut-docs#1393): the escape hatch for a
+	// table stuck reading occupied with nothing real behind it — a till
+	// crash between claiming a table and completing/clearing the sale, or a
+	// replica claim nobody ever revisits (ClearLocalTableClaims and
+	// ClaimTableForTill's TTL reconciliation only ever clear a claim when
+	// its OWNING till acts again). Manager/primary-gated like every other
+	// mutation here. Idempotent — releasing an already-free table succeeds
+	// with the same plain redirect as a real release, same no-op convention
+	// as the rest of this file's release primitives. Never destroys a real
+	// held order: ForceReleaseTableClaim only ever touches table_claims, so
+	// a table with a genuine held_sales row still reads occupied
+	// immediately afterwards — reported back via an err key rather than
+	// pretending the table is now free.
+	mux.HandleFunc("POST /api/tables/{id}/release", func(w http.ResponseWriter, r *http.Request) {
+		actor, ok := requireManager(w, r)
+		if !ok {
+			return
+		}
+		if !requirePrimary(w, r) {
+			return
+		}
+		id := r.PathValue("id")
+		// GetTable's error and not-found cases are kept distinct (independent
+		// review finding, ut-docs#1393) — a real DB fault reported as "table
+		// not found" would hide the actual problem from whoever reads the
+		// redirect.
+		_, found, err := posRepo.GetTable(r.Context(), id)
+		if err != nil {
+			http.Redirect(w, r, "/tables?err=tables.error.load_failed", http.StatusSeeOther)
+			return
+		}
+		if !found {
+			http.Redirect(w, r, "/tables?err=tables.error.not_found", http.StatusSeeOther)
+			return
+		}
+		released, stillHeld, err := posRepo.ForceReleaseTableClaim(r.Context(), id)
+		if err != nil {
+			http.Redirect(w, r, "/tables?err=tables.error.release", http.StatusSeeOther)
+			return
+		}
+		audit(r, actor.ID, id, "table_release", map[string]any{"claim_released": released, "held_order_still_attached": stillHeld})
+		if stillHeld {
+			// Two distinct messages (independent review finding, ut-docs#1393):
+			// "claim cleared" is only true when a claim actually existed —
+			// pressing this on a table occupied ONLY by a genuine held order
+			// (no stuck claim at all, arguably the more common press) cleared
+			// nothing, and saying otherwise would misdescribe what happened.
+			key := "tables.error.held_order_attached"
+			if !released {
+				key = "tables.error.held_order_only"
+			}
+			http.Redirect(w, r, "/tables?err="+key, http.StatusSeeOther)
+			return
+		}
 		http.Redirect(w, r, "/tables", http.StatusSeeOther)
 	})
 }

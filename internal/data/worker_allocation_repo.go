@@ -38,9 +38,9 @@ type WorkerAllocation struct {
 // open.
 func (r *POSRepo) InsertWorkerAllocation(ctx context.Context, tx *sql.Tx, id, sourceType, sourceID, cashierID string, amountMinor int64, allocatedAt, note string) error {
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO worker_allocations (id, source_type, source_id, cashier_id, amount_minor, allocated_at, note)
-VALUES (?, ?, ?, ?, ?, ?, ?)
-`, id, sourceType, sourceID, cashierID, amountMinor, allocatedAt, note)
+INSERT INTO worker_allocations (id, source_type, source_id, cashier_id, amount_minor, allocated_at, note, local_date)
+VALUES (?, ?, ?, ?, ?, ?, ?, COALESCE(date(?, 'localtime'), ''))
+`, id, sourceType, sourceID, cashierID, amountMinor, allocatedAt, note, allocatedAt)
 	if err != nil {
 		return fmt.Errorf("insert worker allocation: %w", err)
 	}
@@ -76,10 +76,15 @@ type WorkerAllocationSummary struct {
 
 // WorkerAllocationsSummary computes one source_type's received-vs-allocated
 // totals for [from, to] (matched against the shop's LOCAL calendar day,
-// inclusive of both ends — the same date(..., 'localtime') convention
-// dateRangeSummary uses for reports, ut-docs#869: a bare UTC date() match
-// silently aggregates the wrong calendar day on any non-UTC host, and both
-// this table's markets — Turkey UTC+3, UK UTC+0/+1 — are non-UTC), and
+// inclusive of both ends, via the precomputed local_date column — ut-docs#869:
+// a bare UTC date() match silently aggregates the wrong calendar day on any
+// non-UTC host, and both this table's markets — Turkey UTC+3, UK UTC+0/+1 —
+// are non-UTC. local_date is populated at write time (InsertWorkerAllocation,
+// and payments' own INSERT in pos_repo.go) using this exact same
+// date(x, 'localtime') conversion — ut-docs#1342: a column expression using
+// 'localtime' cannot itself back an index (SQLite classifies it as
+// non-deterministic and refuses the write), so the conversion happens once
+// at insert time into a plain column instead of on every read), and
 // optionally scoped to one cashierID ("" = every worker). This is the
 // single shared query path ADR-0063 Decision 2 calls for: #964 and #965's
 // own step-2 consumers each call this with their own sourceType filter
@@ -138,7 +143,7 @@ func (r *POSRepo) WorkerAllocationsSummary(ctx context.Context, from, to, cashie
 	allocatedArgs := []any{sourceType, from, to}
 	allocatedQuery := `
 SELECT COALESCE(SUM(amount_minor), 0) FROM worker_allocations
-WHERE source_type = ? AND date(allocated_at, 'localtime') BETWEEN date(?) AND date(?)`
+WHERE source_type = ? AND local_date BETWEEN date(?) AND date(?)`
 	if cashierID != "" {
 		allocatedQuery += ` AND cashier_id = ?`
 		allocatedArgs = append(allocatedArgs, cashierID)
@@ -159,7 +164,7 @@ WHERE source_type = ? AND date(allocated_at, 'localtime') BETWEEN date(?) AND da
 		receivedQuery := `
 SELECT COALESCE(SUM(p.tip_amount), 0) FROM payments p
 JOIN sales s ON s.id = p.sale_id
-WHERE date(p.paid_at, 'localtime') BETWEEN date(?) AND date(?)
+WHERE p.local_date BETWEEN date(?) AND date(?)
   AND s.status = 'completed'
   AND COALESCE(p.tip_recipient, 'employee') = 'employee'`
 		receivedArgs := []any{from, to}
@@ -178,7 +183,7 @@ WHERE date(p.paid_at, 'localtime') BETWEEN date(?) AND date(?)
 		// pool's collection, not one worker's share).
 		receivedQuery := `
 SELECT COALESCE(SUM(amount_minor), 0) FROM worker_allocations
-WHERE source_type = 'yuzde_usulu_pool' AND date(allocated_at, 'localtime') BETWEEN date(?) AND date(?)`
+WHERE source_type = 'yuzde_usulu_pool' AND local_date BETWEEN date(?) AND date(?)`
 		if err := r.db.QueryRowContext(ctx, receivedQuery, from, to).Scan(&out.ReceivedMinor); err != nil {
 			return out, fmt.Errorf("worker allocations summary: received (yuzde_usulu_pool): %w", err)
 		}
@@ -195,10 +200,10 @@ WHERE source_type = 'yuzde_usulu_pool' AND date(allocated_at, 'localtime') BETWE
 
 // ListWorkerAllocations returns the row-level detail behind
 // WorkerAllocationsSummary's AllocatedMinor total for [from, to] (same
-// date(allocated_at, 'localtime') BETWEEN date(?) AND date(?) convention as
-// the summary query above — see its doc comment for why a bare UTC date()
-// match would silently aggregate the wrong calendar day on a non-UTC host,
-// ut-docs#869), optionally scoped to one cashierID ("" = every worker).
+// local_date convention as the summary query above — see its doc comment for
+// why a bare UTC date() match would silently aggregate the wrong calendar
+// day on a non-UTC host, ut-docs#869), optionally scoped to one cashierID
+// ("" = every worker).
 // sourceType is required (unlike cashierID) — same "" -> error and
 // unsupported-value -> error guards as WorkerAllocationsSummary, so a caller
 // can't silently list every source_type's rows through the wrong report
@@ -219,7 +224,7 @@ func (r *POSRepo) ListWorkerAllocations(ctx context.Context, from, to, cashierID
 	query := `
 SELECT id, source_type, source_id, cashier_id, amount_minor, allocated_at, note
 FROM worker_allocations
-WHERE source_type = ? AND date(allocated_at, 'localtime') BETWEEN date(?) AND date(?)`
+WHERE source_type = ? AND local_date BETWEEN date(?) AND date(?)`
 	args := []any{sourceType, from, to}
 	if cashierID != "" {
 		query += ` AND cashier_id = ?`

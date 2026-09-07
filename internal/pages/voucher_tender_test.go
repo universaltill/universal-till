@@ -210,8 +210,18 @@ func TestPOSTender_VoucherInputBounds(t *testing.T) {
 // is ever called, cap or no cap on the table underneath it.
 func TestPOSTender_VoucherIssueCountCapFailsFastAtAPIBoundary(t *testing.T) {
 	mux, dp := newVoucherTenderDeps(t)
-	if _, err := dp.Db.Exec(`DROP TABLE stock_locations`); err != nil {
-		t.Fatalf("drop stock_locations: %v", err)
+	// ut-docs#1679: DROP TABLE stock_locations used to force EnsureStockLocation
+	// to fail if the code wrongly reached it, but stock_locations now has
+	// real incoming FKs that block dropping the whole table under real
+	// migrations. Renaming the column EnsureStockLocation's own query
+	// selects on (name) forces the identical "no such column" failure for
+	// that one call -- name is UNIQUE, so a plain DROP COLUMN is refused
+	// ("cannot drop UNIQUE column"), but RENAME COLUMN carries the
+	// constraint along and breaks the query just the same. The later
+	// `SELECT COUNT(*) FROM vouchers` below stays unaffected, unlike
+	// closing the whole *sql.DB would leave it.
+	if _, err := dp.Db.Exec(`ALTER TABLE stock_locations RENAME COLUMN name TO name_disabled`); err != nil {
+		t.Fatalf("rename stock_locations.name column: %v", err)
 	}
 
 	var issues strings.Builder

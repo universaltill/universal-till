@@ -13,6 +13,22 @@
         {{ T "reports.business_day_start.label" }}
         <input type="time" name="business_day_start" value="{{ .BusinessDayStart }}">
       </label>
+      <!-- ut-docs#1650: controls ONLY the printed Z-report's "BY ARTICLE"
+           footer section -- the on-screen per-article table above (in the
+           <details> below) always lists every article regardless of this
+           setting. article_print_cap is only meaningful in "capped" mode;
+           left enabled unconditionally (rather than disabled when mode !=
+           capped) so its own value still round-trips on submit even if a
+           manager changes the number before changing the mode. -->
+      <label style="display:flex; gap:.3rem; align-items:center" title="{{ T "reports.eod.article_print.help" }}">
+        {{ T "reports.eod.article_print.label" }}
+        <select name="article_print_mode">
+          <option value="capped" {{ if eq .ArticlePrintMode "capped" }}selected{{ end }}>{{ T "reports.eod.article_print_mode.capped" }}</option>
+          <option value="all" {{ if eq .ArticlePrintMode "all" }}selected{{ end }}>{{ T "reports.eod.article_print_mode.all" }}</option>
+          <option value="off" {{ if eq .ArticlePrintMode "off" }}selected{{ end }}>{{ T "reports.eod.article_print_mode.off" }}</option>
+        </select>
+        <input type="number" name="article_print_cap" min="1" max="999" style="width:5rem" value="{{ .ArticlePrintCap }}" aria-label="{{ T "reports.eod.article_print_cap.label" }}">
+      </label>
       <button class="btn secondary" type="submit">{{ T "settings.printer.apply" }}</button>
       <!-- ut-docs#794: hx-swap="none" above means this form's OWN response
            is never swapped anywhere — but checkOrElevate's dialog retry
@@ -38,10 +54,75 @@
       {{ $canRunEOD := .CanRunEOD }}
       {{ range .EODRows }}
       <tr>
-        <td>{{ .Period }}{{ if .HasVariance }} <span class="tag stock-low" title="{{ T "reports.eod.variance_flag" }}">⚠ {{ T "reports.eod.variance_flag" }}</span>{{ end }}</td>
+        <td>{{ if .From }}{{ printf (T "reports.eod.period_range") .From .To }}{{ else }}{{ .Period }}{{ end }}{{ if .HasVariance }} <span class="tag stock-low" title="{{ T "reports.eod.variance_flag" }}">⚠ {{ T "reports.eod.variance_flag" }}</span>{{ end }}</td>
         {{ if $canRunEOD }}<td>{{ .Sales }}</td><td>{{ money .Net }}</td>{{ end }}
         <td><button class="btn secondary" hx-post="/api/reports/eod/print/{{ .Period }}" hx-target="#eod-msg" hx-swap="innerHTML">🖨</button></td>
       </tr>
+      {{ if or .ArticleGroups .Articles .Operators .OrderTypes }}
+      <!-- ut-docs#1010: per-article-group/per-article/per-operator
+           breakdowns for THIS archived report, same single-day-only
+           breakdowns as the printed Z-report's BY ARTICLE GROUP/BY
+           ARTICLE/BY OPERATOR sections (buildEODDoc) — see EODReport's own
+           doc comment for why a range report never has these (nil slices,
+           so this whole row is skipped for one, same as any archived
+           report predating this change). Article-group/operator counts are
+           small (few rows) so they render as plain tables; per-article can
+           run to ~80 rows, so it's collapsed behind a closed-by-default
+           <details> to keep the report list itself usable.
+           OrderTypes (ut-docs#1015) joins the same gate — only ever two
+           rows (dine in/takeaway), same plain-table treatment as
+           ArticleGroups/Operators. -->
+      <tr>
+        <td colspan="{{ if $canRunEOD }}4{{ else }}2{{ end }}" style="padding-inline-start:1.5rem">
+          {{ if .ArticleGroups }}
+          <strong>{{ T "reports.eod.by_article_group" }}</strong>
+          <table class="table" style="margin:.3rem 0 .8rem">
+            <thead><tr><th><span class="visually-hidden">{{ T "reports.eod.by_article_group" }}</span></th><th style="text-align:end">{{ T "reports.eod.qty" }}</th><th style="text-align:end">{{ T "reports.eod.net" }}</th><th style="text-align:end">{{ T "reports.eod.gross" }}</th></tr></thead>
+            <tbody>
+              {{ range .ArticleGroups }}
+              <tr><td>{{ if .Group }}{{ .Group }}{{ else }}{{ T "reports.uncategorized" }}{{ end }}</td><td style="text-align:end">{{ .Qty }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
+              {{ end }}
+            </tbody>
+          </table>
+          {{ end }}
+          {{ if .Operators }}
+          <strong>{{ T "reports.eod.by_operator" }}</strong>
+          <table class="table" style="margin:.3rem 0 .8rem">
+            <thead><tr><th>{{ T "reports.eod.operator" }}</th><th style="text-align:end">{{ T "reports.sales" }}</th><th style="text-align:end">{{ T "reports.eod.net" }}</th><th style="text-align:end">{{ T "reports.eod.gross" }}</th></tr></thead>
+            <tbody>
+              {{ range .Operators }}
+              <tr><td>{{ if .DisplayName }}{{ .DisplayName }}{{ else }}{{ T "reports.eod.unattributed" }}{{ end }}</td><td style="text-align:end">{{ .Count }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
+              {{ end }}
+            </tbody>
+          </table>
+          {{ end }}
+          {{ if .Articles }}
+          <details>
+            <summary style="cursor:pointer;padding-block:.4rem"><strong>{{ T "reports.eod.by_article" }}</strong> ({{ len .Articles }})</summary>
+            <table class="table" style="margin:.3rem 0 .8rem">
+              <thead><tr><th><span class="visually-hidden">{{ T "reports.eod.by_article" }}</span></th><th style="text-align:end">{{ T "reports.eod.qty" }}</th><th style="text-align:end">{{ T "reports.eod.net" }}</th><th style="text-align:end">{{ T "reports.eod.gross" }}</th></tr></thead>
+              <tbody>
+                {{ range .Articles }}
+                <tr><td>{{ .Name }}</td><td style="text-align:end">{{ .Qty }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
+                {{ end }}
+              </tbody>
+            </table>
+          </details>
+          {{ end }}
+          {{ if .OrderTypes }}
+          <strong>{{ T "reports.eod.by_order_type" }}</strong>
+          <table class="table" style="margin:.3rem 0 .8rem">
+            <thead><tr><th><span class="visually-hidden">{{ T "reports.eod.by_order_type" }}</span></th><th style="text-align:end">{{ T "reports.eod.qty" }}</th><th style="text-align:end">{{ T "reports.eod.net" }}</th><th style="text-align:end">{{ T "reports.eod.gross" }}</th></tr></thead>
+            <tbody>
+              {{ range .OrderTypes }}
+              <tr><td>{{ if eq .OrderType "takeaway" }}{{ T "basket.order_type.takeaway" }}{{ else }}{{ T "basket.order_type.dine_in" }}{{ end }}</td><td style="text-align:end">{{ .Qty }}</td><td style="text-align:end">{{ money .Net }}</td><td style="text-align:end">{{ money .Gross }}</td></tr>
+              {{ end }}
+            </tbody>
+          </table>
+          {{ end }}
+        </td>
+      </tr>
+      {{ end }}
       {{ end }}
     </tbody>
   </table>

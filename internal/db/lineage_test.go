@@ -122,8 +122,19 @@ func TestOpenPostResetDatabaseReopensClean(t *testing.T) {
 		t.Fatalf("reopen of a post-reset database must succeed: %v", err)
 	}
 	defer d.Close()
+	// want == the real embedded migration count, not a hardcoded 1 — that
+	// was only ever true right after the ADR-0074 squash, before any new
+	// migration legitimately landed on top of the baseline (ut-docs#1560's
+	// 002_refund_of_line_id.sql being the first). What this test actually
+	// pins is narrower and still holds: a reopen applies nothing new, so
+	// the row count doesn't grow past however many migrations really exist.
+	migs, err := loadMigrations()
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := len(migs)
 	var n int
-	if err := d.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil || n != 1 {
-		t.Fatalf("schema_migrations rows after reopen = %d err=%v, want exactly 1", n, err)
+	if err := d.QueryRow(`SELECT COUNT(*) FROM schema_migrations`).Scan(&n); err != nil || n != want {
+		t.Fatalf("schema_migrations rows after reopen = %d err=%v, want exactly %d", n, err, want)
 	}
 }

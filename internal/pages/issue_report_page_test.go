@@ -71,6 +71,10 @@ func TestReportIssuePage_ManagerOnly(t *testing.T) {
 	}
 	if rec := get(&auth.User{ID: "cashier-1", Role: "cashier"}); rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier = %d, want 403", rec.Code)
+	} else if body := rec.Body.String(); !strings.Contains(body, `class="nav"`) {
+		// ut-docs#1458: GET /report-issue must render the full layout on
+		// 403 too, not a bare rail-less body (same fix class as #1455).
+		t.Fatalf("cashier's 403 on GET /report-issue has no nav rail:\n%s", body)
 	}
 	rec := get(&auth.User{ID: "mgr-1", Role: "manager"})
 	if rec.Code != http.StatusOK {

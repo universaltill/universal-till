@@ -34,7 +34,9 @@ func seedImportPlugin(t *testing.T, db *sql.DB, pluginID, key, label string, ent
 	if len(entities) == 0 {
 		cfg = nil
 	}
-	mustExec(`INSERT INTO plugins (id, name, version, is_active) VALUES (?, ?, '1.0.0', 1)`, pluginID, pluginID)
+	// ut-docs#1677: same fix as seedExportPlugin (export_dispatch_test.go).
+	mustExec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at) VALUES (?, '1.0.0', ?, 'desc', 'go', 'entry', 'url', 'sha', 'auth', 'site', '[]', '0.0.0', '1', datetime('now'))`, pluginID, pluginID)
+	mustExec(`INSERT INTO plugins (id, name, version, entrypoint, is_active) VALUES (?, ?, '1.0.0', 'entry', 1)`, pluginID, pluginID)
 	mustExec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, is_active, sort_order, config_json)
 	          VALUES (?, ?, ?, ?, 'import', 1, 0, ?)`, pluginID+"-e", pluginID, key, label, string(cfg))
 	mustExec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted) VALUES (?, ?, 'events:receive', 1)`, pluginID+"-p", pluginID)

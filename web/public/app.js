@@ -1,7 +1,14 @@
 // Currency metadata comes from <body data-currency-*> (set by base.html from
 // the configured currency). Decimals drive the major<->minor conversion:
 // GBP=2 (pence), IRR/IRT=0 (no subunit). Suffix currencies (rial/toman)
-// render the word after the number.
+// render the word after the number. data-number-thousands/-decimal (same
+// convention as server-side httpx.FormatMoney, ut-docs#1130) keep this
+// client-rendered money agreeing with server-rendered money on the same
+// screen (e.g. the payment overlay's pills next to the server-rendered
+// basket total) — a de-DE till shows "1.234,56" everywhere, not "1.234,56"
+// server-side and "1,234.56" here. Digit SHAPE (fa/ar numerals) is a
+// separate, still-unaddressed gap — out of scope here, same as it already
+// was before this file's separators became locale-aware.
 window.utCurrency = (function(){
   var d = document.body ? document.body.dataset : {};
   var decimals = parseInt(d.currencyDecimals || '2', 10);
@@ -9,11 +16,13 @@ window.utCurrency = (function(){
   var factor = Math.pow(10, decimals);
   var display = d.currencyDisplay || '£';
   var suffix = d.currencySuffix === '1';
+  var thousandsSep = d.numberThousands || ',';
+  var decimalSep = d.numberDecimal || '.';
   function formatMinor(units){
     var neg = units < 0; if (neg) units = -units;
     var major = Math.floor(units / factor);
-    var num = major.toString().replace(/\B(?=(\d{3})+(?!\d))/g, ',');
-    if (decimals > 0) num += '.' + String(units % factor).padStart(decimals, '0');
+    var num = major.toString().replace(/\B(?=(\d{3})+(?!\d))/g, thousandsSep);
+    if (decimals > 0) num += decimalSep + String(units % factor).padStart(decimals, '0');
     if (neg) num = '-' + num;
     return suffix ? num + ' ' + display : display + num;
   }
@@ -430,6 +439,147 @@ window.utCurrency = (function(){
   document.addEventListener('htmx:load', initSplitTender);
 })();
 
+// ut-docs#1629 (found reviewing #1625): #1625 gave the ORIGINAL Hold Sale /
+// New Sale buttons in .tender-default-footer their own unambiguous
+// accessible NAME while #payment-overlay is open, but did not (and, per
+// its own review, correctly did not) address focus VISIBILITY — a
+// different defect class. At desktop viewports where the overlay's fixed,
+// right-anchored 26rem panel geometrically covers that footer (measured
+// live up to ~1440px, see payment-overlay-footer-reachable-1542.spec.ts),
+// the originals stay in the keyboard tab order with no visible focus
+// indicator anywhere on screen: WCAG 2.2 SC 2.4.11 (Focus Not Obscured).
+//
+// A blanket `inert` on .tender-default-footer while the overlay is open
+// was already considered and rejected by #1625's own review: the overlay
+// opens non-modally (`.show()`, ut-docs#1385 — the on-screen keyboard must
+// stay usable while it's open), so nothing outside it becomes inert today,
+// and at WIDE viewports the originals are never covered at all and are
+// driven directly by an existing spec
+// (new-sale-closes-payment-overlay-1386.spec.ts, 1920x1080) — `inert`-ing
+// the whole footer would silently break that already-legitimate path too,
+// not just the genuinely-covered narrow one.
+//
+// Fix, narrower than that: `tabindex="-1"` on just these two originals,
+// applied only while the overlay is open AND only while they are actually
+// covered. Rather than re-encode the "~1440px" figure as a second,
+// driftable magic breakpoint, this reuses the exact same center-point
+// hit-test payment-overlay-footer-reachable-1542.spec.ts's own e2e spec
+// already uses to prove coverage — so it tracks the real, current geometry
+// (this file's responsive grid, the overlay's own CSS, RTL) instead of a
+// number someone has to remember to update if any of those ever change.
+// ut-docs#1674 (found by #1629's own review, same coverage sweep): the
+// third footer button (Payment, the overlay's own trigger),
+// `.tender-quickpay`'s one-tap charge button, and the phone-width New Sale
+// duplicate (kiosk-checkout-start-phone) all measurably stayed focusable
+// while 100%-covered too — #1629 deliberately left them out as beyond
+// #1542/#1625's original two-button scope, not because they don't apply.
+// quick-pay is the most urgent of the three: unlike Payment (activating it
+// while already open is a no-op) it POSTs /api/pos/tender directly, so a
+// keyboard operator could complete a charge on a control they can't see.
+// All three share the exact same isCoveredByOverlay() hit-test and
+// tabindex save/restore below — no new mechanism, just three more targets.
+// quick-pay and the phone duplicate live outside .tender-default-footer
+// (`.tender-quickpay` and `.kiosk-header.phone-fallback-only` respectively)
+// so they're queried from `document`, not `footer`.
+//
+// ut-docs#1702 (found by #1674's own review, same coverage sweep, with
+// #1674's fix already applied): the hand-maintained targets array above
+// doesn't generalize — the reviewer measured 11 (1024x600) / 8 (1280x800)
+// / 4 (1920x1080) OTHER focusable controls on the sale screen (the scan
+// input, products-add-link, the active category tab, product tiles, the
+// scan-row Add button, .osk-toggle, …) still geometrically covered by the
+// open overlay and still reachable, none of them in the array. Rather than
+// a 6th/7th/... hardcoded entry, `candidates()` below queries every
+// normally-focusable element outside `#payment-overlay` FRESH on each
+// run (not a load-time snapshot like the old `targets` — the product grid
+// is dynamic) and feeds it through the identical isCoveredByOverlay() hit-
+// test. The old `targets` array and its `.filter(Boolean)` guard are gone;
+// candidates() subsumes it (the 5 elements it named all match the broad
+// selector below and are outside the overlay, so behavior for them is
+// unchanged) and its own tests keep passing unmodified.
+(function () {
+  var overlay = document.getElementById('payment-overlay');
+  if (!overlay) return;
+
+  var SAVED_ATTR = 'data-a11y-tabindex-saved';
+  // Deliberately broad — anything that can normally receive focus.
+  // Elements this misses (a bare div with a click handler and no role/
+  // tabindex, say) were never keyboard-reachable to begin with, so
+  // leaving them out is correct, not a gap.
+  var FOCUSABLE_SELECTOR = 'a[href], area[href], button, input, select, textarea, [tabindex]';
+
+  function isCoveredByOverlay(el) {
+    if (!overlay.open) return false;
+    var r = el.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) return false; // not rendered
+    var at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    return !!at && (at === overlay || overlay.contains(at));
+  }
+
+  // Queried fresh on every updateFocusability() call — the product grid,
+  // held-sales list, etc. can change between one overlay-open and the
+  // next, so a cached NodeList would silently stop covering new controls.
+  function candidates() {
+    return Array.prototype.filter.call(document.querySelectorAll(FOCUSABLE_SELECTOR), function (el) {
+      if (overlay.contains(el)) return false; // never touch the overlay's own controls
+      if (el.disabled) return false;
+      var tabindex = el.getAttribute('tabindex');
+      // tabindex="-1" with no SAVED_ATTR means something else (e.g. the
+      // roving-tabindex ARIA-tabs pattern on inactive category tabs)
+      // deliberately made this unfocusable on purpose — leave it alone,
+      // don't fold it into our own save/restore bookkeeping.
+      if (tabindex === '-1' && !el.hasAttribute(SAVED_ATTR)) return false;
+      return true;
+    });
+  }
+
+  function updateFocusability() {
+    candidates().forEach(function (el) {
+      if (isCoveredByOverlay(el)) {
+        if (!el.hasAttribute(SAVED_ATTR)) {
+          el.setAttribute(SAVED_ATTR, el.getAttribute('tabindex') || '');
+        }
+        el.setAttribute('tabindex', '-1');
+      } else if (el.hasAttribute(SAVED_ATTR)) {
+        var saved = el.getAttribute(SAVED_ATTR);
+        if (saved) {
+          el.setAttribute('tabindex', saved);
+        } else {
+          el.removeAttribute('tabindex');
+        }
+        el.removeAttribute(SAVED_ATTR);
+      }
+    });
+  }
+
+  // Every close path (.close() from the header ✕ button, every tender
+  // hx-on::after-request success handler) removes the `open` attribute the
+  // same native way — observing it, rather than hooking each call site
+  // individually, catches all of them uniformly including any future one.
+  // (Escape does NOT close this dialog — it's .show()n, not
+  // .showModal()'d, ut-docs#1385, so Escape-to-dismiss only applies to the
+  // top-layer/modal case and isn't a path here at all.) `.show()` sets the
+  // same attribute to open, so this also covers the single .payment-trigger
+  // open path with no separate hook.
+  new MutationObserver(updateFocusability).observe(overlay, { attributes: true, attributeFilter: ['open'] });
+  // The overlay never moves once open, but the covered/not-covered
+  // boundary is a real, live viewport width, not a one-time computation —
+  // a kiosk browser window can resize (or an operator can rotate/resize a
+  // desktop window) while it's open. ut-docs#1702: a full-DOM sweep is
+  // more work per call than the old 5-element array, and a drag-resize can
+  // fire many `resize` events per second — coalesce to at most one sweep
+  // per animation frame rather than one per event.
+  var resizeRafId = null;
+  window.addEventListener('resize', function () {
+    if (!overlay.open) return;
+    if (resizeRafId) return;
+    resizeRafId = requestAnimationFrame(function () {
+      resizeRafId = null;
+      updateFocusability();
+    });
+  });
+})();
+
 // Sale-screen notification surface (ut-docs#213,
 // docs/sale-screen-notifications.md): info/success notices
 // auto-expire; error notices persist until the operator dismisses them.
@@ -683,7 +833,27 @@ function initOfflineOverride(updateFn){
     }
     navigator.mediaDevices.getUserMedia({ video: { facingMode: 'environment' } })
       .then(function(s){ stream = s; video.srcObject = s; })
-      .catch(function(){ setStatus(msgs.msgCameraError); });
+      .catch(function(err){
+        if (err && err.name) {
+          switch (err.name) {
+            case 'NotFoundError':
+            case 'OverconstrainedError':
+              setStatus(msgs.msgCameraNotFound);
+              break;
+            case 'NotAllowedError':
+            case 'SecurityError':
+              setStatus(msgs.msgCameraPermissionDenied);
+              break;
+            case 'NotReadableError':
+              setStatus(msgs.msgCameraBusy);
+              break;
+            default:
+              setStatus(msgs.msgCameraError);
+          }
+        } else {
+          setStatus(msgs.msgCameraError);
+        }
+      });
   }
 
   function close(){
@@ -849,7 +1019,27 @@ function initOfflineOverride(updateFn){
         video.srcObject = s;
         rafID = requestAnimationFrame(scanFrame);
       })
-      .catch(function(){ setStatus(msgs.msgCameraError); });
+      .catch(function(err){
+        if (err && err.name) {
+          switch (err.name) {
+            case 'NotFoundError':
+            case 'OverconstrainedError':
+              setStatus(msgs.msgCameraNotFound);
+              break;
+            case 'NotAllowedError':
+            case 'SecurityError':
+              setStatus(msgs.msgCameraPermissionDenied);
+              break;
+            case 'NotReadableError':
+              setStatus(msgs.msgCameraBusy);
+              break;
+            default:
+              setStatus(msgs.msgCameraError);
+          }
+        } else {
+          setStatus(msgs.msgCameraError);
+        }
+      });
   }
 
   function close(){

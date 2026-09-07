@@ -1,0 +1,102 @@
+<!-- ut-docs#1613: renders wherever a staged restore's restart trigger needs
+     to show — POST /api/backup/restore's success response (fresh staging)
+     AND settings.html's own page render, when `.restorePending` is still
+     true from an EARLIER visit (db.PendingRestore is a persistent, on-disk
+     fact — a reload/relaunch must not lose this, or the dead end this card
+     removes just reappears one click later). Mirrors pairing_wait.html's
+     "joined" restart trigger (ut-docs#1550) closely, on the same
+     internal/procrestart mechanism (restartSupported ==
+     internal/procrestart.Supported()): a manager clicks Restart now, the
+     till re-execs itself in place, and this script polls /healthz until a
+     process answers again. Always an explicit click, never auto-fired —
+     unlike the first-boot pairing wizard, this is always a manager on an
+     already-configured, possibly-in-use till (see backupRestartSupported's
+     doc comment in backup_api.go). -->
+<span>✓ {{ T "settings.backup.staged" }}</span>
+{{ if .restartSupported }}
+<p id="backup-restart-msg" class="muted" style="min-height:1.2rem" hidden>{{ T "settings.backup.restarting" }}</p>
+<button type="button" id="backup-restart-btn" class="btn primary"
+        hx-post="/api/backup/restart-now" hx-swap="none" hx-disabled-elt="this">{{ T "settings.backup.restart_now" }}</button>
+<script>
+  (function () {
+    // Page-local, template-populated lookup — CLAUDE.md's i18n rule for
+    // inline <script> prose (same pattern as pairing_wait.html/
+    // bugreport_panel.html). Scoped inside this IIFE, unlike a page-level
+    // `var T` elsewhere in this app: this fragment can be swapped into any
+    // page (the settings page render AND the restore POST response), so it
+    // must never leak onto `window`.
+    var T = {
+      restarting: "{{ T "settings.backup.restarting" }}",
+      restarting_slow: "{{ T "settings.backup.restarting_slow" }}",
+      restart_failed: "{{ T "common.error.server" }}"
+    };
+    var btn = document.getElementById('backup-restart-btn');
+    var msg = document.getElementById('backup-restart-msg');
+    var polling = false;
+    // Same poll shape as pairing_wait.html's waitForTill: wait past
+    // procrestart's ~1.5s re-exec delay, then probe /healthz every 500ms,
+    // UNBOUNDED (a large restore can genuinely take longer than any fixed
+    // guess) — past ~30s the message just says so, the button stays live
+    // throughout. Any answer (200 or not) means a process is listening
+    // again: 200 is the new image (go to /login); anything else is most
+    // likely the boot-failure recovery screen (ADR-0075) serving the same
+    // port if the restored snapshot fails to open, so it goes to "/" and
+    // lets that page take over — never stuck on a dead "restarting…".
+    function waitForTill() {
+      if (polling) { return; }
+      polling = true;
+      msg.hidden = false;
+      msg.textContent = T.restarting;
+      var tries = 0;
+      setTimeout(function () {
+        var iv = setInterval(function () {
+          tries++;
+          if (tries === 56) { msg.textContent = T.restarting_slow; }
+          fetch('/healthz', { cache: 'no-store' }).then(function (r) {
+            clearInterval(iv);
+            polling = false;
+            location.href = r.ok ? '/login' : '/';
+          }).catch(function () {
+            // Old process gone, new one not listening yet — keep waiting.
+          });
+        }, 500);
+      }, 2500);
+    }
+    // Review finding (ut-docs#1613): htmx:afterRequest fires on EVERY
+    // completed response, success or not. A denied/expired session (403)
+    // or a replay after the restore was already applied (409) must show
+    // the server's own translated message and leave the button live —
+    // never claim a restart that never happened and then bounce the
+    // operator to /login while nothing actually restarted.
+    btn.addEventListener('htmx:afterRequest', function (ev) {
+      if (ev.detail.successful) { waitForTill(); return; }
+      var text = T.restart_failed;
+      try {
+        var body = JSON.parse(ev.detail.xhr.responseText);
+        if (body && body.error) { text = body.error; }
+      } catch (e) {
+        // Not JSON (e.g. the plain-text 403 from this file's deny() gate)
+        // — that response body IS already the translated message.
+        if (ev.detail.xhr.responseText) { text = ev.detail.xhr.responseText; }
+      }
+      // "✗" prefix matches this file's own convention for a failed backup
+      // action (backup_api.go's other handlers: "<span class=\"muted\">✗
+      // …</span>") — no dedicated error-text CSS class exists in this app
+      // (web/public/app.css has no `.error`), so the marker carries the
+      // signal, not a color.
+      msg.hidden = false;
+      msg.textContent = '✗ ' + text;
+    });
+    // A real network failure (no response reached at all) is the one case
+    // that legitimately means "the till already restarted out from under
+    // this request" — resume the poll instead of leaving a dead button.
+    btn.addEventListener('htmx:sendError', function () { waitForTill(); });
+  })();
+</script>
+{{ else }}
+<!-- No in-place restart on this platform (Windows — ut-docs#1614, same gap
+     pairing_wait.html has): give the one instruction the operator can
+     actually perform. Reuses the pairing key verbatim — the instruction
+     itself isn't pairing-specific. -->
+<p>{{ T "tills.pairing.close_and_reopen" }}</p>
+{{ end }}

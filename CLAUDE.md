@@ -96,8 +96,24 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
 - Installed plugins are Ed25519-verified before they run
   (`internal/plugins/manifest_verifier.go`). Never run an unverified plugin.
 
+## Agent worktree hygiene
+- `.claude/worktrees/` (real registered git worktrees created by
+  `Agent(isolation: "worktree")` / `EnterWorktree` with a `name`) is
+  gitignored, not repo content — nothing removes them automatically when a
+  run ends, so they accumulate (233 MB / 4 stale worktrees found
+  2026-09-04, poisoning repo-wide greps with duplicate hits at old
+  commits — ut-docs#1567). Run `make prune-worktrees`
+  (`scripts/prune-stale-worktrees.sh`) periodically or whenever a
+  repo-wide search feels off; it only ever removes a worktree that is
+  fully merged into `origin/main`, clean, and past the retention window
+  (default 3 days) — anything still holding unmerged or uncommitted work
+  is left alone and reported.
+
 ## Before committing
-- `gofmt -l .` (no output), `go build ./...`, `go test ./...`, and every
+- `gofmt -l .` (no output), `go build ./...`, `go test ./...`,
+  `golangci-lint run ./...` (0 issues — `.golangci.yml` enables `unused`;
+  `cmd/unitill-desktop` is excluded there until a `-tags=desktop` pass with
+  real GTK/WebKit headers lands, ut-docs#1581), and every
   CI-blocking guard in `.github/workflows/ci.yml`'s `build` job — currently:
   `guard-data-access.sh`, `guard-kiosk-engine.sh`, `guard-plugin-menu-read.sh`,
   `guard-page-http-error.sh`,
@@ -110,6 +126,31 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   `guard-makefile-version.sh` (all under `scripts/ci/`). This list drifts as
   guards are added — check the workflow file's `build` job for the
   authoritative, current one rather than trusting this snapshot.
+- **`android/**` or `mobile/**` changes also gate on
+  `.github/workflows/android-ci.yml`** (ut-docs#1658, filter widened to
+  include `mobile/**` by ut-docs#1721's review — `mobile` is the
+  gomobile-bind package itself, and a change there is exactly what this
+  workflow exists to verify, not just a Kotlin-side edit) — a separate
+  workflow (not a step in `ci.yml`'s `build` job): `./gradlew assembleDebug`
+  against `android/`, proving the Kotlin actually compiles against the
+  generated Go `.aar`. It always runs (a top-level `paths:` trigger filter,
+  GitHub's usual convention — see `lang-pack-drift.yml` — was measured
+  unreliable for this workflow: it silently skipped real
+  `android/**`-touching pushes on the same PR during this card's own
+  testing), but skips its SDK/NDK/gomobile setup cost internally via a real
+  `git diff` when the change doesn't touch `android/**` or `mobile/**`.
+  Before this, only `release.yml`'s `android-app` job compiled it, so a
+  Kotlin compile error under `android/` could merge to `main` clean and
+  only surface at release time or on a real device. The residual gap this
+  left (ut-docs#1721 review, filed as ut-docs#1735) — `gobind` reports a
+  type it silently can't bind as a comment in its generated output and
+  still exits 0, which a compile-only gate cannot see — is now closed by
+  `scripts/ci/guard-gobind-skip.sh`, which runs `gobind` itself and scans
+  its generated output for that skip comment; it runs as two steps in
+  `android-ci.yml`'s `compile` job (the guard, then its own regression
+  test), right after "Install gomobile/gobind" and before the Gradle
+  build, so a silent skip fails fast instead of shipping a phone build
+  silently missing a method.
 - Feature branch; code review recorded in `docs/code-reviews/<date>-<topic>.md`;
   then merge to `main`. No secrets in logs or committed files.
 

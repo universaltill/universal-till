@@ -20,6 +20,14 @@ func newPermissionSettingsTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) 
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db) // role_permissions + migration 047's permission_management row must exist
+	// audit_log.actor_id/blocked_actor_id both have real FKs to users(id).
+	// Several tests inject a session directly via auth.WithUser using these
+	// synthetic ids without a real login, so seed matching rows here.
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, role) VALUES
+		('sa-1', 'sa-1', 'Super Admin One', 'super_admin'),
+		('blocked-admin', 'blocked-admin', 'Blocked Admin', 'admin')`); err != nil {
+		t.Fatalf("seed test actors: %v", err)
+	}
 
 	dp := &common.Deps{
 		Cfg:     &config.Config{},

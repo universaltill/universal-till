@@ -86,6 +86,24 @@ func registerSyncOrders(mux *http.ServeMux, d *common.Deps) {
 		writeSyncOrdersJSON(w, http.StatusOK, rows, nil)
 	})
 
+	// Live order-status push ACROSS the primary↔replica boundary (ADR-0079,
+	// ut-docs#1571): a replica's background bridge
+	// (order_status_stream_bridge.go) holds this open with its sync bearer
+	// and republishes every frame onto its own local broadcaster. Same trust
+	// boundary as GET /api/sync/orders directly above — syncTill, same JSON
+	// 401 — then the SAME SSE writer loop the browser endpoint uses
+	// (streamOrderStatus, order_status.go), never a second framing. The auth
+	// middleware's exempt list must carry this exact path (it does —
+	// TestSyncPullPathsAreExempt), or the bridge is 401'd before syncTill
+	// ever runs.
+	mux.HandleFunc("GET /api/sync/orders/stream", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := syncTill(r, tills); !ok {
+			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
+			return
+		}
+		streamOrderStatus(w, r, d)
+	})
+
 	authRepo := data.NewAuthRepo(d.Db)
 
 	// The SAME guarded write as the human-facing one-tap endpoint —

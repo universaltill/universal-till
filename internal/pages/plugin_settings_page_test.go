@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -13,23 +15,28 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/secrets"
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
+// The page masks on plugins.IsSecretSettingKey — the very same rule
+// internal/data seals on (ADR-0082); this pins the page-side expectations
+// that predate the move out of this package.
 func TestIsSecretSettingKey(t *testing.T) {
 	secret := []string{
 		"api_key", "apikey", "API_KEY", "my_secret_value", "token",
 		"password", "passwd", "auth_value", "private_key", "webhook_key", "key",
 	}
 	for _, k := range secret {
-		if !isSecretSettingKey(k) {
+		if !plugins.IsSecretSettingKey(k) {
 			t.Errorf("expected %q to be classified as secret", k)
 		}
 	}
 	plain := []string{"endpoint_url", "model_name", "currency", "timeout_seconds", ""}
 	for _, k := range plain {
-		if isSecretSettingKey(k) {
+		if plugins.IsSecretSettingKey(k) {
 			t.Errorf("expected %q to NOT be classified as secret", k)
 		}
 	}
@@ -72,7 +79,7 @@ func seedPluginSetting(t *testing.T, db *common.Deps, pluginID, key, value, scop
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := data.NewPluginRepo(db.Db).UpsertPluginSettingScoped(context.Background(), pluginID, key, string(raw), scope); err != nil {
+	if err := data.NewPluginRepo(db.Db).UpsertPluginSettingScoped(context.Background(), pluginID, key, string(raw), scope, false); err != nil {
 		t.Fatalf("seed plugin setting %s: %v", key, err)
 	}
 }
@@ -257,7 +264,11 @@ func TestPluginSettingsPage_GET_RendersTakeawayOverridesEditor(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPluginSettingsTestDeps(t)
 	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
-	seedTaxCode(t, dp, "tax_reduced", "Reduced VAT", 700, nil)
+	// ut-docs#1676: "Reduced VAT" alone collides with 001_init.sql's own
+	// tax_red seed row now that openPagesTestDB runs real migrations —
+	// tax_codes.name is UNIQUE. Appending the rate keeps the
+	// strings.Contains(body, "Reduced VAT") assertion below satisfied.
+	seedTaxCode(t, dp, "tax_reduced", "Reduced VAT (7%)", 700, nil)
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{"tax_19":700}`, "global")
 
 	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
@@ -276,7 +287,11 @@ func TestPluginSettingsPage_GET_RendersTakeawayOverridesEditor(t *testing.T) {
 	if !strings.Contains(body, `value="7"`) {
 		t.Fatalf("expected the pre-filled override (7%%) in the page, got %s", body)
 	}
-	if !strings.Contains(body, "Standard VAT") || !strings.Contains(body, "Reduced VAT") {
+	// Exact names, not "Reduced VAT" alone -- 001_init.sql's own seeded
+	// tax_red row is also named exactly "Reduced VAT" (ut-docs#1676), so a
+	// bare substring match here would pass even if this test's own
+	// tax_reduced row never rendered.
+	if !strings.Contains(body, "Standard VAT") || !strings.Contains(body, "Reduced VAT (7%)") {
 		t.Fatalf("expected tax code names in the page, got %s", body)
 	}
 }
@@ -284,7 +299,9 @@ func TestPluginSettingsPage_GET_RendersTakeawayOverridesEditor(t *testing.T) {
 func TestPluginSettingsPage_GET_RendersOrphanOverrideEntry(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPluginSettingsTestDeps(t)
-	// No active tax codes at all, but an existing override for a deleted one.
+	// An override referencing "tax_gone", a tax code id that doesn't exist
+	// (the real migration seeds its own active tax codes now, ut-docs#1676,
+	// but none with this id) -- an orphaned override for a deleted one.
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{"tax_gone":500}`, "global")
 
 	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
@@ -305,9 +322,11 @@ func TestPluginSettingsPage_GET_RendersOrphanOverrideEntry(t *testing.T) {
 func TestPluginSettingsPage_GET_FallsBackToRawInputWhenNoTaxCodesOrOverrides(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPluginSettingsTestDeps(t)
-	// seedForPages always seeds an active 'tax_std' tax code -- deactivate it
-	// so this test genuinely reaches the "no active tax codes" state.
-	if _, err := dp.Db.ExecContext(context.Background(), `UPDATE tax_codes SET is_active = 0 WHERE id = 'tax_std'`); err != nil {
+	// 001_init.sql seeds three active tax codes (tax_std/tax_red/tax_zero)
+	// now that openPagesTestDB runs real migrations (ut-docs#1676) --
+	// deactivate all of them so this test genuinely reaches the "no active
+	// tax codes" state, not just "one of three deactivated".
+	if _, err := dp.Db.ExecContext(context.Background(), `UPDATE tax_codes SET is_active = 0`); err != nil {
 		t.Fatal(err)
 	}
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
@@ -563,7 +582,8 @@ func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_AbsentFieldPreservesEntry
 	mux, dp := newPluginSettingsTestDeps(t)
 	ctx := context.Background()
 	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
-	seedTaxCode(t, dp, "tax_7", "Reduced VAT", 700, nil)
+	// ut-docs#1676: same tax_codes.name UNIQUE collision as above.
+	seedTaxCode(t, dp, "tax_7", "Reduced VAT (7%)", 700, nil)
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{"tax_19":700,"tax_7":500}`, "global")
 
 	// The stale form carries a field for tax_19 only — tax_7's entry must
@@ -702,9 +722,10 @@ func TestPluginSettingsPage_GET_TaxCodesFailureIsLocalized(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPluginSettingsTestDeps(t)
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
-	if _, err := dp.Db.Exec(`DROP TABLE tax_codes`); err != nil {
-		t.Fatalf("drop tax_codes: %v", err)
-	}
+	// ut-docs#1679: DROP TABLE tax_codes used to force this, but tax_codes
+	// now has real incoming FKs that block the DROP under real migrations.
+	// A closed *sql.DB forces the same generic repo-error path instead.
+	dp.Db.Close()
 
 	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
 	rec := httptest.NewRecorder()
@@ -753,9 +774,8 @@ func TestPluginSettingsAPI_POST_TaxCodesFailureIsLocalized(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPluginSettingsTestDeps(t)
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
-	if _, err := dp.Db.Exec(`DROP TABLE tax_codes`); err != nil {
-		t.Fatalf("drop tax_codes: %v", err)
-	}
+	// ut-docs#1679: see TestPluginSettingsPage_GET_TaxCodesFailureIsLocalized.
+	dp.Db.Close()
 
 	form := "setting_takeaway_typed=1&takeaway_pct_tax_19=7"
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))
@@ -837,5 +857,137 @@ func TestPluginSettingsAPI_POST_PlainWriteFailureIsLocalized(t *testing.T) {
 	}
 	if strings.Contains(body, "readonly database") {
 		t.Fatalf("raw SQL error leaked into the response: %q", body)
+	}
+}
+
+// ADR-0082 (ut-docs#1739): a key the manifest declares `type: "secret"` but
+// whose NAME matches no credential heuristic ("merchant_code") must be
+// treated exactly like a heuristic secret by the page — masked on GET,
+// sealed at rest on POST. The manifest is read from the plugin's on-disk
+// install tree (paths.Plugins(id, version, "manifest.json")), which is the
+// only place the declaration exists (plugin_settings has no type column).
+func TestPluginSettingsPage_ManifestDeclaredSecretIsMaskedAndSealed(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	ctx := context.Background()
+
+	pluginsRoot := t.TempDir()
+	paths.Init(pluginsRoot)
+	t.Cleanup(func() { paths.Init("") })
+	version, ok, err := data.NewPluginRepo(dp.Db).GetActivePluginVersion(ctx, "p1")
+	if err != nil || !ok {
+		t.Fatalf("p1 active version: %q %v %v", version, ok, err)
+	}
+	manifestDir := paths.Plugins("p1", version)
+	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(manifestDir, "manifest.json"), []byte(`{"id":"p1","name":"Plugin","version":"`+version+`","runtime":"none",
+		"settings":[{"key":"merchant_code","type":"secret"},{"key":"endpoint_url"}]}`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if plugins.IsSecretSettingKey("merchant_code") {
+		t.Fatal("test premise: merchant_code must NOT match the key-name heuristic")
+	}
+	// Seeded the way a pre-ADR-0082 row would be: plain JSON at rest.
+	seedPluginSetting(t, dp, "p1", "merchant_code", "M-old", "global")
+	seedPluginSetting(t, dp, "p1", "endpoint_url", "https://plugin.example/api", "global")
+
+	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "M-old") {
+		t.Fatalf("a manifest-declared secret's value must never be sent to the page, got %q", body)
+	}
+	if !strings.Contains(body, `type="password" name="setting_merchant_code"`) {
+		t.Fatalf("merchant_code must render as a masked password field, got %q", body)
+	}
+	if !strings.Contains(body, "https://plugin.example/api") {
+		t.Fatalf("the undeclared sibling must still render plain, got %q", body)
+	}
+
+	form := strings.NewReader("setting_merchant_code=M-new&setting_endpoint_url=https://plugin.example/api")
+	req = httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST: code %d body %s", rec.Code, rec.Body.String())
+	}
+	var raw string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT value_json FROM plugin_settings WHERE plugin_id = 'p1' AND key = 'merchant_code'`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if !secrets.IsSealed(raw) || strings.Contains(raw, "M-new") {
+		t.Fatalf("manifest-declared secret at rest = %q, want sealed", raw)
+	}
+	if got, found, err := data.NewPluginRepo(dp.Db).GetPluginSetting(ctx, "p1", "merchant_code"); err != nil || !found || got != `"M-new"` {
+		t.Fatalf("GetPluginSetting = %q %v %v", got, found, err)
+	}
+	if err := dp.Db.QueryRowContext(ctx, `SELECT value_json FROM plugin_settings WHERE plugin_id = 'p1' AND key = 'endpoint_url'`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw != `"https://plugin.example/api"` {
+		t.Fatalf("undeclared sibling at rest = %q, want plain JSON", raw)
+	}
+}
+
+// TestPluginSettingsAPI_POST_RefusesWriteWhenManifestUnreadable is the
+// ut-docs#1739 review's blocker fix, reproduced and pinned as a regression
+// test: a plugin with an active version whose manifest.json EXISTS but
+// fails to parse (corrupt file, not merely absent — see
+// plugins.InstalledManifest's doc comment for why "absent" stays a
+// tolerated no-op) must refuse the write rather than silently store a
+// possibly-manifest-declared-secret value in plaintext. Before the fix,
+// this POST answered 200 and wrote merchant_code — a key the heuristic
+// does not catch — as plain JSON.
+func TestPluginSettingsAPI_POST_RefusesWriteWhenManifestUnreadable(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	ctx := context.Background()
+
+	pluginsRoot := t.TempDir()
+	paths.Init(pluginsRoot)
+	t.Cleanup(func() { paths.Init("") })
+	version, ok, err := data.NewPluginRepo(dp.Db).GetActivePluginVersion(ctx, "p1")
+	if err != nil || !ok {
+		t.Fatalf("p1 active version: %q %v %v", version, ok, err)
+	}
+	manifestDir := paths.Plugins("p1", version)
+	if err := os.MkdirAll(manifestDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately malformed JSON — manifest.json EXISTS (unlike the
+	// tolerated "absent" case) but cannot be parsed.
+	if err := os.WriteFile(filepath.Join(manifestDir, "manifest.json"), []byte(`{not valid json`), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if plugins.IsSecretSettingKey("merchant_code") {
+		t.Fatal("test premise: merchant_code must NOT match the key-name heuristic")
+	}
+	seedPluginSetting(t, dp, "p1", "merchant_code", "M-old", "global")
+
+	form := strings.NewReader("setting_merchant_code=M-new")
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", form)
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusInternalServerError {
+		t.Fatalf("POST with an unparseable manifest: code %d body %s, want 500 (refused)", rec.Code, rec.Body.String())
+	}
+
+	var raw string
+	if err := dp.Db.QueryRowContext(ctx, `SELECT value_json FROM plugin_settings WHERE plugin_id = 'p1' AND key = 'merchant_code'`).Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	if raw != `"M-old"` {
+		t.Fatalf("refused write must leave the existing row untouched, got %q", raw)
+	}
+	if strings.Contains(raw, "M-new") {
+		t.Fatalf("the new value must never reach the database when the manifest can't be resolved, got %q", raw)
 	}
 }

@@ -135,7 +135,7 @@ func setupUpdateCheckHandler(d *common.Deps, svc *auth.Service) http.HandlerFunc
 			fmt.Fprint(w, setupUpdateBannerHTML(locale, st.Latest))
 			return
 		}
-		fmt.Fprint(w, updateUnavailableHTML(locale, st.Latest, runtime.GOOS))
+		fmt.Fprint(w, setupUnavailableHTML(locale, st.Latest, runtime.GOOS))
 	}
 }
 
@@ -164,7 +164,7 @@ func setupUpdateApplyHandler(d *common.Deps, svc *auth.Service) http.HandlerFunc
 			return
 		}
 		if !setupUpdateSupported() {
-			fmt.Fprint(w, updateUnavailableHTML(locale, st.Latest, runtime.GOOS))
+			fmt.Fprint(w, setupUnavailableHTML(locale, st.Latest, runtime.GOOS))
 			return
 		}
 		if err := setupUpdateApply(r.Context()); err != nil {

@@ -72,25 +72,33 @@ func TestEndOfDay_CancellationsCountedSeparatelyFromRefunds(t *testing.T) {
 	beforeDay1 := dayStart.Add(-10 * time.Minute) // late on the PREVIOUS local day
 	lateDay1 := dayStart.Add(20 * time.Hour)      // still within day1, far from midnight
 
-	// A completed sale (counts toward Gross/SalesCount).
-	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at)
-	   VALUES ('s1','R1','completed','sale',1000,1000,?)`, eod1012At(day1))
+	// A completed sale (counts toward Gross/SalesCount). local_date/
+	// voided_local_date are set here via date(?, 'localtime') on the same
+	// literal, exactly as InsertSale/UpdateSaleStatus do in production
+	// (ut-docs#1342) — these fixtures hand-insert straight into the table
+	// rather than through those methods, so they must populate the columns
+	// the rewritten queries now filter on themselves.
+	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at, local_date)
+	   VALUES ('s1','R1','completed','sale',1000,1000,?,date(?, 'localtime'))`, eod1012At(day1), eod1012At(day1))
 	// A completed return / refund (counts toward RefundCount/RefundTotal).
-	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at)
-	   VALUES ('s2','R2','completed','return',300,300,?)`, eod1012At(day1))
+	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at, local_date)
+	   VALUES ('s2','R2','completed','return',300,300,?,date(?, 'localtime'))`, eod1012At(day1), eod1012At(day1))
 	// A VOIDED sale — cancelled before tender. created_at is on the
 	// PREVIOUS local day (parked overnight), voided_at is on day1: the
 	// cancellation belongs to the day it was actually cancelled, not the
 	// day the sale was opened.
-	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at, voided_at)
-	   VALUES ('s3','R3','voided','sale',750,750,?,?)`, eod1012At(beforeDay1), eod1012At(day1))
+	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at, voided_at, local_date, voided_local_date)
+	   VALUES ('s3','R3','voided','sale',750,750,?,?,date(?, 'localtime'),date(?, 'localtime'))`,
+		eod1012At(beforeDay1), eod1012At(day1), eod1012At(beforeDay1), eod1012At(day1))
 	// A second voided sale, same day, to prove it's a real SUM/COUNT, not
 	// just "at least one".
-	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at, voided_at)
-	   VALUES ('s4','R4','voided','sale',250,250,?,?)`, eod1012At(lateDay1), eod1012At(lateDay1))
+	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at, voided_at, local_date, voided_local_date)
+	   VALUES ('s4','R4','voided','sale',250,250,?,?,date(?, 'localtime'),date(?, 'localtime'))`,
+		eod1012At(lateDay1), eod1012At(lateDay1), eod1012At(lateDay1), eod1012At(lateDay1))
 	// A voided sale on day2 must not leak into day1's count.
-	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at, voided_at)
-	   VALUES ('s5','R5','voided','sale',999,999,?,?)`, eod1012At(day2), eod1012At(day2))
+	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at, voided_at, local_date, voided_local_date)
+	   VALUES ('s5','R5','voided','sale',999,999,?,?,date(?, 'localtime'),date(?, 'localtime'))`,
+		eod1012At(day2), eod1012At(day2), eod1012At(day2), eod1012At(day2))
 
 	repo := data.NewPOSRepo(d.DB)
 	rep, err := repo.EndOfDay(context.Background(), eod1012Day(t, d, day1))
@@ -123,8 +131,8 @@ func TestEndOfDay_CancellationsCountedSeparatelyFromRefunds(t *testing.T) {
 func TestEndOfDay_NoCancellationsReportsZero(t *testing.T) {
 	d, x := eod1012OpenDB(t)
 	tm := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
-	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at)
-	   VALUES ('s1','R1','completed','sale',1000,1000,?)`, eod1012At(tm))
+	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at, local_date)
+	   VALUES ('s1','R1','completed','sale',1000,1000,?,date(?, 'localtime'))`, eod1012At(tm), eod1012At(tm))
 
 	repo := data.NewPOSRepo(d.DB)
 	rep, err := repo.EndOfDay(context.Background(), eod1012Day(t, d, tm))
@@ -146,8 +154,10 @@ func TestEndOfDay_NoCancellationsReportsZero(t *testing.T) {
 func TestEndOfDay_VoidedSaleWithNullVoidedAtFallsBackToCreatedAt(t *testing.T) {
 	d, x := eod1012OpenDB(t)
 	tm := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
-	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at, voided_at)
-	   VALUES ('s1','R1','voided','sale',400,400,?,NULL)`, eod1012At(tm))
+	// voided_at and voided_local_date both stay NULL here — the point of
+	// this test is the fallback to local_date when neither was stamped.
+	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at, voided_at, local_date)
+	   VALUES ('s1','R1','voided','sale',400,400,?,NULL,date(?, 'localtime'))`, eod1012At(tm), eod1012At(tm))
 
 	repo := data.NewPOSRepo(d.DB)
 	rep, err := repo.EndOfDay(context.Background(), eod1012Day(t, d, tm))

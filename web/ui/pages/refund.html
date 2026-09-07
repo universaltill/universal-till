@@ -19,6 +19,12 @@
   <p class="muted">{{ T "refund.help" }}</p>
   <form id="refund-form" hx-post="/api/refund" hx-swap="none">
     <input type="hidden" name="receipt" value="{{ .Sale.ReceiptNo }}">
+    <!-- ut-docs#1493: kept current by web/public/app.js's updateOfflineFlag()
+         (navigator.onLine), same #offline-flag id the sale screen
+         (index.html) and self-order checkout use -- lets a known-offline
+         refund skip the fiscal.sign.ask cloud call instead of burning the
+         3s budget (ADR-0044 D1). -->
+    <input type="hidden" id="offline-flag" name="offline" value="0">
     <table class="table">
       <thead><tr><th>{{ T "journal.detail.item" }}</th><th>{{ T "refund.col.sold" }}</th><th>{{ T "refund.col.remaining" }}</th><th>{{ T "journal.detail.price" }}</th><th>{{ T "refund.col.refund_qty" }}</th></tr></thead>
       <tbody>
@@ -35,7 +41,10 @@
           <td>
             {{ if gt .Remaining 0.0 }}
             <input type="number" name="qty_{{ .Index }}" value="{{ .Remaining }}"
-                   min="0" max="{{ .Remaining }}" step="any" style="width:6rem">
+                   min="0" max="{{ .Remaining }}" step="any" style="width:6rem"
+                   hx-post="/api/refund/preview" hx-trigger="input delay:200ms, change"
+                   hx-include="[name='receipt'], [name^='qty_']"
+                   hx-target="#refund-total" hx-swap="innerHTML">
             {{ else }}
             <span class="muted">{{ T "refund.fully_refunded" }}</span>
             {{ end }}
@@ -58,15 +67,61 @@
       {{ end }}
     </div>
 
+    <div class="field-pair" style="margin-top:.6rem">
+      <span class="muted">{{ T "refund.total" }}</span>
+      <!-- ut-docs#1217 review N1: the live-update triggers live on each
+           qty_N input (below in the table), not here -- scoping them that
+           way means typing a manager PIN never fires a preview request,
+           where a broad "from:closest form" listener would also fire (and
+           include the in-progress PIN) on every PIN keystroke. This
+           element only self-triggers once on load, to show a real total
+           immediately (quantities default to the full refundable amount). -->
+      <strong id="refund-total"
+              hx-post="/api/refund/preview" hx-trigger="load"
+              hx-include="[name='receipt'], [name^='qty_']"
+              hx-target="this" hx-swap="innerHTML">{{ money 0 }}</strong>
+    </div>
+
     <button class="btn primary" type="submit" style="margin-top:.6rem">{{ T "refund.submit" }}</button>
     <div id="refund-msg" class="muted" aria-live="polite" style="min-height:1.3rem; margin-top:.4rem"></div>
   </form>
 </div>
 
 <script>
+// ut-docs#1217 review N3: several elements now issue their OWN background
+// requests to /api/refund/preview (each qty_N input, plus the total's own
+// load trigger) -- ev.detail.elt for those is the triggering element
+// itself (an <input>, or #refund-total), not something with one shared
+// id, so the reliable signal is the request path, checked against
+// requestConfig (present on both htmx:responseError and htmx:sendError).
+function isRefundPreviewRequest(ev) {
+  return !!(ev.detail.requestConfig && ev.detail.requestConfig.path === '/api/refund/preview');
+}
 document.body.addEventListener('htmx:responseError', function (ev) {
+  // The preview request never answers non-2xx (it always writes 200,
+  // even for an unknown/malformed in-flight edit -- see the preview
+  // handler), so this branch is currently unreachable for it. Guarded
+  // anyway, defensively, so a future preview-endpoint change can't
+  // silently start painting an alarming "refund failed" message under
+  // the Refund button for what is really just a stale live-total swap.
+  if (isRefundPreviewRequest(ev)) return;
   var msg = document.getElementById('refund-msg');
   if (msg) msg.textContent = '✗ ' + (ev.detail.xhr.responseText || 'error');
+});
+// ut-docs#1287: a network-level failure (e.g. dropping off the shop LAN
+// mid-tap) never reaches htmx:responseError — there's no response at all,
+// so htmx fires htmx:sendError instead. Without this the Refund button is
+// a dead tap: nothing here, nothing from the server, no visible sign the
+// refund didn't go through.
+document.body.addEventListener('htmx:sendError', function (ev) {
+  // The live-total preview is a background request on every quantity
+  // edit -- a dropped connection there is a stale total, not a failed
+  // refund, and must not paint the same "something went wrong" message
+  // the real submit's own network failure does. The cashier hasn't
+  // pressed Refund; nothing alarming happened.
+  if (isRefundPreviewRequest(ev)) return;
+  var msg = document.getElementById('refund-msg');
+  if (msg) msg.textContent = '✗ ' + "{{ T "designer.error.server" }}";
 });
 </script>
 {{ end }}

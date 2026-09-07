@@ -42,11 +42,6 @@
             {{ if .FailReasonKey }}
             <div class="muted" style="font-size:.82rem;margin-block-start:.25rem">{{ T .FailReasonKey }}</div>
             {{ end }}
-            {{ if .GithubIssueURL }}
-            <div style="margin-block-start:.25rem">
-              <a href="{{ .GithubIssueURL }}" target="_blank" rel="noopener">{{ T "issuereport.my_reports.view_on_github" }}</a>
-            </div>
-            {{ end }}
           </td>
         </tr>
         {{ end }}

@@ -120,7 +120,7 @@ func main() {
 	}
 
 	// sale totals: subtotal=1000, tax 200, total 1200
-	if _, err := tx2.Exec(`INSERT INTO sales (id,receipt_no,status,sale_type,register_id,cashier_id,subtotal,discount_total,tax_total,total,rounding,created_at,completed_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)`, saleID, receiptNo, "completed", "sale", registerID, userID, 1000, 0, 200, 1200, 0, now, now); err != nil {
+	if _, err := tx2.Exec(`INSERT INTO sales (id,receipt_no,status,sale_type,register_id,cashier_id,subtotal,discount_total,tax_total,total,rounding,created_at,completed_at,local_date) VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,date(?, 'localtime'))`, saleID, receiptNo, "completed", "sale", registerID, userID, 1000, 0, 200, 1200, 0, now, now, now); err != nil {
 		tx2.Rollback()
 		fatalf("insert sale: %v", err)
 	}
@@ -130,7 +130,7 @@ func main() {
 		fatalf("insert sale_line: %v", err)
 	}
 
-	if _, err := tx2.Exec(`INSERT INTO payments (id,sale_id,method_id,amount,currency,reference,change_given,paid_at) VALUES (?,?,?,?,?,?,?,?)`, paymentID, saleID, paymentMethodID, 1200, "GBP", "", 0, now); err != nil {
+	if _, err := tx2.Exec(`INSERT INTO payments (id,sale_id,method_id,amount,currency,reference,change_given,paid_at,local_date) VALUES (?,?,?,?,?,?,?,?,date(?, 'localtime'))`, paymentID, saleID, paymentMethodID, 1200, "GBP", "", 0, now, now); err != nil {
 		tx2.Rollback()
 		fatalf("insert payment: %v", err)
 	}

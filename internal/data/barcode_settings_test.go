@@ -183,6 +183,112 @@ func TestSetBarcodeSymbologyEnabled_NullRowFallsBackToDefaults(t *testing.T) {
 	}
 }
 
+// TestEnabledBarcodeSymbologies_CachesAcrossReads is the ut-docs#1361
+// regression: the setting is manager-toggled and changes essentially never,
+// so it must be served from an in-process cache rather than re-hit SQLite
+// and re-JSON-parsed on every call (the scan path calls this on every
+// single scan). Proven here by mutating the underlying row with a raw
+// UPDATE that bypasses both SettingsRepo write methods entirely — if the
+// accessor were still hitting the DB on every read, it would observe this
+// change immediately; a real cache must keep serving the value it read
+// before the mutation.
+func TestEnabledBarcodeSymbologies_CachesAcrossReads(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	seedSettingsTable(t, db)
+	defer db.Close()
+	repo := data.NewSettingsRepo(db)
+	ctx := context.Background()
+
+	if err := repo.SetEnabledBarcodeSymbologies(ctx, []string{"EAN13"}); err != nil {
+		t.Fatal(err)
+	}
+	first, err := repo.EnabledBarcodeSymbologies(ctx)
+	if err != nil || len(first) != 1 || first[0] != "EAN13" {
+		t.Fatalf("priming read = %v, err %v, want [EAN13]", first, err)
+	}
+
+	// Bypass SettingsRepo entirely — a raw UPDATE, not Set/SetEnabled...
+	// — so this only observes cache behaviour, never a write path's own
+	// invalidation (covered separately below).
+	if _, err := db.ExecContext(ctx, `UPDATE settings SET value = ? WHERE key = ?`,
+		`["CODE128"]`, data.BarcodeEnabledSymbologiesKey); err != nil {
+		t.Fatalf("raw row mutation: %v", err)
+	}
+
+	second, err := repo.EnabledBarcodeSymbologies(ctx)
+	if err != nil {
+		t.Fatalf("cached read: %v", err)
+	}
+	if len(second) != 1 || second[0] != "EAN13" {
+		t.Fatalf("cached read = %v, want the stale cached [EAN13] (a live DB re-read would see CODE128)", second)
+	}
+}
+
+// TestEnabledBarcodeSymbologies_InvalidatedBySetEnabledBarcodeSymbologies is
+// the ut-docs#1361 regression for the full-list-replace write path: once
+// the cache is primed, SetEnabledBarcodeSymbologies must invalidate it so
+// the very next read observes the new value instead of the stale one.
+func TestEnabledBarcodeSymbologies_InvalidatedBySetEnabledBarcodeSymbologies(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	seedSettingsTable(t, db)
+	defer db.Close()
+	repo := data.NewSettingsRepo(db)
+	ctx := context.Background()
+
+	if _, err := repo.EnabledBarcodeSymbologies(ctx); err != nil {
+		t.Fatalf("priming read: %v", err)
+	}
+	if err := repo.SetEnabledBarcodeSymbologies(ctx, []string{"CODE39"}); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.EnabledBarcodeSymbologies(ctx)
+	if err != nil {
+		t.Fatalf("post-write read: %v", err)
+	}
+	if len(got) != 1 || got[0] != "CODE39" {
+		t.Fatalf("post-write read = %v, want [CODE39] (cache must be invalidated by the write)", got)
+	}
+}
+
+// TestEnabledBarcodeSymbologies_InvalidatedBySetBarcodeSymbologyEnabled is
+// the ut-docs#1361 regression for the real production write path (the
+// settings-checklist toggle): once the cache is primed, a single toggle via
+// SetBarcodeSymbologyEnabled must invalidate it too.
+func TestEnabledBarcodeSymbologies_InvalidatedBySetBarcodeSymbologyEnabled(t *testing.T) {
+	db := testsupport.NewCatalogTestDB(t)
+	seedSettingsTable(t, db)
+	defer db.Close()
+	repo := data.NewSettingsRepo(db)
+	ctx := context.Background()
+
+	primed, err := repo.EnabledBarcodeSymbologies(ctx)
+	if err != nil {
+		t.Fatalf("priming read: %v", err)
+	}
+	for _, id := range primed {
+		if id == "EAN13_WEIGHT_PREFIX2X" {
+			t.Fatal("EAN13_WEIGHT_PREFIX2X must default off for this test to be a real change")
+		}
+	}
+
+	if _, err := repo.SetBarcodeSymbologyEnabled(ctx, "EAN13_WEIGHT_PREFIX2X", true); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.EnabledBarcodeSymbologies(ctx)
+	if err != nil {
+		t.Fatalf("post-toggle read: %v", err)
+	}
+	found := false
+	for _, id := range got {
+		if id == "EAN13_WEIGHT_PREFIX2X" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("post-toggle read = %v, want EAN13_WEIGHT_PREFIX2X included (cache must be invalidated by the toggle)", got)
+	}
+}
+
 // TestEnabledBarcodeSymbologies_CorruptRowFallsBackToDefaults: a corrupt
 // value must not brick scanning — the accessor reports the error but STILL
 // hands back the default set so scan-path callers can proceed.

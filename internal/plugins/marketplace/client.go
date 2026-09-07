@@ -307,9 +307,8 @@ type PluginSummary struct {
 	Rating        float64  `json:"rating,omitempty"`
 	ReviewCount   int      `json:"review_count,omitempty"`
 	DownloadCount int      `json:"download_count,omitempty"`
-	ArtifactURL   string   `json:"artifact_url"`     // For backward compatibility
-	ArtifactHash  string   `json:"artifact_hash"`    // For backward compatibility
-	Locale        string   `json:"locale,omitempty"` // legacy singular field; the real server sends available_locales
+	ArtifactURL   string   `json:"artifact_url"`  // For backward compatibility
+	ArtifactHash  string   `json:"artifact_hash"` // For backward compatibility
 	// AvailableLocales is the per-listing locale list (wire key
 	// availableLocales in the live protojson schema) — a listing can serve
 	// multiple locales, so this is an array, never a single value.
@@ -353,7 +352,6 @@ func (p *PluginSummary) UnmarshalJSON(data []byte) error {
 		DownloadCount         int      `json:"download_count"`
 		ArtifactURL           string   `json:"artifact_url"`
 		ArtifactHash          string   `json:"artifact_hash"`
-		Locale                string   `json:"locale"`
 		AvailableLocalesCamel []string `json:"availableLocales"`
 		AvailableLocales      []string `json:"available_locales"`
 		ApprovedAt            string   `json:"approved_at"`
@@ -384,7 +382,6 @@ func (p *PluginSummary) UnmarshalJSON(data []byte) error {
 	p.DownloadCount = w.DownloadCount
 	p.ArtifactURL = w.ArtifactURL
 	p.ArtifactHash = w.ArtifactHash
-	p.Locale = w.Locale
 	// Prefer the camelCase key — that's what the live protojson schema
 	// actually sends — with the snake_case one as the canonical fallback,
 	// mirroring IconURL/PaidListing above.

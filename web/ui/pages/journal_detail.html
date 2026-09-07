@@ -49,7 +49,7 @@
     <div style="display:flex; gap:.4rem; flex-wrap:wrap; margin-bottom:.7rem">
       <span class="tag">{{ .Sale.Status }}</span>
       <span class="tag">{{ .Sale.SaleType }}</span>
-      <span class="tag">{{ .Sale.TenderType }}</span>
+      <span class="tag">{{ tenderLabel .Sale.TenderType }}</span>
       {{/* ut-docs#1181 (ADR-0073): the derived order-type summary. */}}
       {{ if eq .Sale.OrderType "takeaway" }}<span class="tag">🥡 {{ T "basket.order_type.takeaway" }}</span>{{ else if eq .Sale.OrderType "mixed" }}<span class="tag" data-testid="journal-mixed">⚖️ {{ T "basket.order_type.mixed" }}</span>{{ end }}
       <span class="tag">{{ if .Sale.Offline }}{{ T "journal.detail.offline" }}{{ else }}{{ T "journal.detail.online" }}{{ end }}</span>

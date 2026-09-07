@@ -14,7 +14,7 @@ See the problem reports this till has captured — sent, or still waiting to sen
 
 ## What the page shows
 
-Each row is one report this till has captured — sent or not — with when it was captured, what it contained (your typed note, plus tags for a voice note, screen recording, or screenshots), and its current status. When a report has been turned into a GitHub issue, a **View on GitHub** link appears next to it.
+Each row is one report this till has captured — sent or not — with when it was captured, what it contained (your typed note, plus tags for a voice note, screen recording, or screenshots), and its current status.
 
 If this till has sent more than 100 reports, a line under the intro tells you how many aren't shown — they come back into view as older ones get filed or discarded.
 
@@ -24,7 +24,8 @@ The statuses mean:
 - **Couldn't send** — this report has been failing to upload for a while; a short reason appears underneath it (for example, finishing this till's enrolment). It's still saved and the till keeps retrying automatically — nothing is lost.
 - **Sent, awaiting review** — uploaded from this till; the cloud hasn't reported anything further yet.
 - **Received / Transcribing / Ready for review** — the report is being processed (voice notes are transcribed automatically).
-- **Filed on GitHub** — it became a tracked issue; follow the link to see progress.
+- **Filed on GitHub** — it became a tracked issue, and we don't yet know what has happened to it. This status updates automatically to one of the three below once we do.
+- **Open — being worked on** / **Fixed** / **Closed — not planned** — the tracked issue's own state, refreshed automatically. "Not planned" means it was looked at and deliberately not taken on; the issue itself says why.
 - **Discarded** — it was reviewed and closed without filing an issue.
 
 ## Offline

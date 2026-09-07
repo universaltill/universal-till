@@ -132,12 +132,18 @@ func setupLanguageCatalogEntries(ctx context.Context, d *common.Deps) (entries [
 	//     EnsureRegistered via resolveAndInstallBasePlugin — that IS the
 	//     ADR's trigger 1, and it is enough.
 	//  2. Offline-first: EnsureRegistered takes enroll's package-level
-	//     attemptMu, which the background enrolment retry loop holds across
-	//     its own 15s-timeout HTTP calls. sync.Mutex.Lock ignores fctx, so
-	//     the 3s bound below did not actually hold — measured 7.1s on a
-	//     first-boot render against an unreachable endpoint, worst case ~30s
-	//     (two 15s calls). Effective only takes a short RLock and never
-	//     touches the network, so the fetch timeout is the real bound again.
+	//     attempt slot, which the background enrolment retry loop holds
+	//     across its own 15s-timeout HTTP calls. Before ut-docs#1298 that
+	//     slot was a plain sync.Mutex that ignored fctx entirely, so the 3s
+	//     bound below did not actually hold — measured 7.1s on a first-boot
+	//     render against an unreachable endpoint, worst case ~30s (two 15s
+	//     calls). The slot is now context-aware (an attempt gives up once
+	//     its caller's context expires rather than blocking past it), so
+	//     that specific failure mode is gone — but reason 1 above is
+	//     sufficient on its own to keep this call as Effective, not
+	//     EnsureRegistered, regardless. Effective only takes a short RLock
+	//     and never touches the network, so the fetch timeout is the real
+	//     bound here either way.
 	effCfg := enroll.Effective(d.Cfg)
 	client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
 	// No Locale filter: browsing wants every language listing. Capability is

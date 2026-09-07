@@ -53,7 +53,7 @@ func seedOKCSettings(t *testing.T, d *data.PluginRepo, pluginID string, port int
 		"okc.connect_timeout_ms": `"1000"`,
 		"okc.read_timeout_ms":    `"1500"`,
 	} {
-		if err := d.UpsertPluginSettingScoped(ctx, pluginID, k, v, "global"); err != nil {
+		if err := d.UpsertPluginSettingScoped(ctx, pluginID, k, v, "global", false); err != nil {
 			t.Fatalf("seed %s: %v", k, err)
 		}
 	}
@@ -185,7 +185,7 @@ func TestOKCPlugin_RefusesTenderWhenDeviceCannotPrint(t *testing.T) {
 	t.Run("scaffold driver", func(t *testing.T) {
 		s := startOKCSim(t, sim.Options{})
 		seedOKCSettings(t, repo, pluginID, s.Port())
-		if err := repo.UpsertPluginSettingScoped(context.Background(), pluginID, "okc.driver", `"gmp3"`, "global"); err != nil {
+		if err := repo.UpsertPluginSettingScoped(context.Background(), pluginID, "okc.driver", `"gmp3"`, "global", false); err != nil {
 			t.Fatal(err)
 		}
 		if _, err := runOKCEvent(t, w, repo, db, pluginID, "payment.okc.authorize", authorizePayload(3000, 3000)); err == nil {

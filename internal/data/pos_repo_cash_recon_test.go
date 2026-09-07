@@ -447,8 +447,8 @@ func TestEndOfDay_PopulatesCashReconciliation(t *testing.T) {
 
 	// One cash sale of 411.10 on the day.
 	if _, err := dbx.d.DB.ExecContext(ctx, `
-INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, register_id, created_at, completed_at)
-VALUES('sale-cr', 'R-CR', 'completed', 'sale', 'GBP', 41110, 0, 0, 41110, 'reg1', ?, ?)`, closedAt, closedAt); err != nil {
+INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, register_id, created_at, completed_at, local_date)
+VALUES('sale-cr', 'R-CR', 'completed', 'sale', 'GBP', 41110, 0, 0, 41110, 'reg1', ?, ?, date(?, 'localtime'))`, closedAt, closedAt, closedAt); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dbx.d.DB.ExecContext(ctx, `
@@ -508,8 +508,8 @@ func TestEndOfDay_CashReconciliation_ExcludesCashTips(t *testing.T) {
 	// amount-already-includes-tip convention InsertPayment/EODTip's own
 	// doc comment establish for every payment method).
 	if _, err := dbx.d.DB.ExecContext(ctx, `
-INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, register_id, created_at, completed_at)
-VALUES('sale-cr-tip', 'R-CR-TIP', 'completed', 'sale', 'GBP', 40000, 0, 0, 40000, 'reg1', ?, ?)`, closedAt, closedAt); err != nil {
+INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, register_id, created_at, completed_at, local_date)
+VALUES('sale-cr-tip', 'R-CR-TIP', 'completed', 'sale', 'GBP', 40000, 0, 0, 40000, 'reg1', ?, ?, date(?, 'localtime'))`, closedAt, closedAt, closedAt); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dbx.d.DB.ExecContext(ctx, `
@@ -596,8 +596,8 @@ func TestEndOfDay_CashReconciliation_ZeroTipsHeldOutWhenNoCashTip(t *testing.T) 
 	closedAt := b8At(anchor)
 
 	if _, err := dbx.d.DB.ExecContext(ctx, `
-INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, register_id, created_at, completed_at)
-VALUES('sale-cr-notip', 'R-CR-NOTIP', 'completed', 'sale', 'GBP', 41110, 0, 0, 41110, 'reg1', ?, ?)`, closedAt, closedAt); err != nil {
+INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, register_id, created_at, completed_at, local_date)
+VALUES('sale-cr-notip', 'R-CR-NOTIP', 'completed', 'sale', 'GBP', 41110, 0, 0, 41110, 'reg1', ?, ?, date(?, 'localtime'))`, closedAt, closedAt, closedAt); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dbx.d.DB.ExecContext(ctx, `

@@ -164,19 +164,57 @@ func TestTillID_ConcurrentCallersOnFreshDBConverge(t *testing.T) {
 	}
 }
 
-func TestStoreNameOrDefault_FallsBackWhenUnset(t *testing.T) {
+// TestAdvertisedName_FallsBackToPerTillDisambiguatedName covers ut-docs#1295:
+// two freshly-unboxed, unconfigured shops scanning the same LAN segment used
+// to both advertise the exact same plain "this shop" fallback, with nothing
+// but the raw till-id UUID to tell them apart in the discovery list. This is
+// the fix — the advertising-only fallback (internal/pages's OWN, separate
+// storeNameOrDefault still serves receipts, reports, the AI assistant
+// unchanged) folds in a short
+// suffix from this till's own stable id, so two unconfigured tills on the
+// same LAN broadcast distinguishable names by construction.
+func TestAdvertisedName_FallsBackToPerTillDisambiguatedName(t *testing.T) {
 	settings := openTestSettings(t)
 	ctx := context.Background()
 
-	if got := storeNameOrDefault(ctx, settings); got != "this shop" {
-		t.Fatalf(`expected fallback "this shop", got %q`, got)
+	got := advertisedName(ctx, settings, "a1b2c3d4-e5f6-7890-abcd-ef1234567890")
+	if want := "this shop (7890)"; got != want {
+		t.Fatalf("expected the unset fallback to carry a per-till suffix, got %q want %q", got, want)
 	}
+
+	// Two different tills, both unset, must not collide.
+	other := advertisedName(ctx, settings, "11111111-2222-3333-4444-555555555555")
+	if other == got {
+		t.Fatalf("expected two different tills' fallback names to differ, both got %q", got)
+	}
+}
+
+// TestAdvertisedName_UsesConfiguredNameUnchanged covers the non-fallback
+// path: once an operator has actually named their shop, that exact name is
+// broadcast verbatim — no suffix appended, so a shop that legitimately
+// wants a plain name isn't saddled with an id fragment it never asked for.
+func TestAdvertisedName_UsesConfiguredNameUnchanged(t *testing.T) {
+	settings := openTestSettings(t)
+	ctx := context.Background()
 
 	if err := settings.Set(ctx, "store.name", "Task Runner"); err != nil {
 		t.Fatalf("Set: %v", err)
 	}
-	if got := storeNameOrDefault(ctx, settings); got != "Task Runner" {
-		t.Fatalf("expected the configured store name, got %q", got)
+	if got := advertisedName(ctx, settings, "a1b2c3d4-e5f6-7890-abcd-ef1234567890"); got != "Task Runner" {
+		t.Fatalf("expected the configured store name verbatim, got %q", got)
+	}
+}
+
+// TestAdvertisedName_ShortTillIDUsedInFull guards the suffix-slicing logic
+// against a shorter-than-4-char id (never happens with a real uuid.NewString
+// output, but a defensive slice bound is cheap and a panic here would take
+// down the whole advertising tick).
+func TestAdvertisedName_ShortTillIDUsedInFull(t *testing.T) {
+	settings := openTestSettings(t)
+	ctx := context.Background()
+
+	if got, want := advertisedName(ctx, settings, "ab"), "this shop (ab)"; got != want {
+		t.Fatalf("expected the short id used in full, got %q want %q", got, want)
 	}
 }
 

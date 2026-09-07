@@ -82,6 +82,11 @@ func TestCountrySettingsPagePermissions(t *testing.T) {
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier GET /country-settings = %d, want 403", rec.Code)
 	}
+	// ut-docs#1458: GET /country-settings must render the full layout on
+	// 403 too, not a bare rail-less body (same fix class as #1455).
+	if body := rec.Body.String(); !strings.Contains(body, `class="nav"`) {
+		t.Fatalf("cashier's 403 on GET /country-settings has no nav rail:\n%s", body)
+	}
 	if rec := postForm(mux, "/api/country-settings", url.Values{"code": {"GB"}}, &cashier); rec.Code != http.StatusForbidden {
 		t.Fatalf("cashier save = %d, want 403", rec.Code)
 	}

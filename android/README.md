@@ -200,6 +200,29 @@ What's implemented now, all in `MainActivity`:
   control the far end of can't navigate this WebView off-origin. This
   isn't only kiosk hygiene: the exit bridge below (`addJavascriptInterface`)
   is only safe to expose because of it.
+- **Off-origin `http(s)` links go to the system browser instead**
+  (`MainActivity.openInSystemBrowser`, ut-docs#1647) — as a separate task
+  (`FLAG_ACTIVITY_NEW_TASK`), leaving the WebView on the POS screen it was
+  already showing. Blocking alone was the whole behaviour until this
+  landed, and `shouldOverrideUrlLoading` returning `true` means "handled",
+  so every external link in the till UI (`/my-reports`'s "View on GitHub",
+  the catalog/inventory "open primary" banners) was **silently dead** on
+  Android — the product owner hit this on a real tablet. Only `http` and
+  `https` are forwarded: `Intent.ACTION_VIEW` resolves whatever app claims
+  a scheme, so passing an arbitrary one through would turn any link on any
+  page into an app-launch primitive. **Main-frame navigations only** — this
+  callback also fires for subframes, so without that test one off-origin
+  `<iframe>` anywhere in the till UI (or in a plugin-rendered page) would
+  spawn a browser on every page load, over the live sale screen. There is
+  deliberately **no kiosk release** here — Lock Task silently refuses a non-allowlisted activity,
+  so this is a no-op in a pinned self-order session, which is correct:
+  dropping the pin for an untrusted external URL would be a kiosk escape
+  reachable from page content. Nothing is lost in practice, because every
+  page carrying an external link is manager-gated and unreachable from the
+  self-order kiosk. Guarded by `scripts/ci/guard-android-external-links.sh`.
+  macOS has behaved this way since it shipped
+  (`cmd/unitill-desktop/webkit_darwin.go`); Linux/Windows are unverified —
+  ut-docs#1649.
 - **Exit from self-order = the server's own existing "exit to OS" escape
   hatch, no native-side auth.** `/api/settings/exit-to-os`
   (`internal/pages/settings_page.go`, ut-docs#1099) already does a live
@@ -238,6 +261,96 @@ current devices, including the TECLAST P50T test rig, actually ship with).
 This is a real, weaker mode — deliberately shipped anyway because it
 fixes the reported bug (previously the app was exitable like any normal
 app) with zero device provisioning required.
+
+**Worse than that, in fact (ut-docs#1281/#1639): on an unprovisioned
+device the pin can fail to engage AT ALL, and it looks exactly like a
+locked kiosk when it does.** `startLockTask()` only *requests* the pin —
+Android answers with a system confirmation dialog
+("App is pinned — touch & hold Back and Overview to unpin… No, thanks /
+Got it") that this app cannot see, dismiss, or pre-answer. Measured on the
+TECLAST P50T test rig: four consecutive cold launches into self-order
+mode all sat at `lockTaskModeState=NONE` for 12s+ with the dialog
+unanswered, and tapping "No, thanks" leaves it `NONE` forever. Immersive
+mode (the hidden status/nav bars) succeeds independently of the pin, so
+an unpinned kiosk is **visually indistinguishable** from a pinned one —
+from that state, one press of Home reaches the Android launcher (every
+app on the device: Chrome, Files, Settings, whatever else is installed)
+with the unanswered dialog still sitting on top of it.
+
+**What ut-docs#1639 adds on top of the above** (still all in
+`MainActivity`, still screen-pinning only — this does not change which
+mode engages, only whether the app tells the truth about it):
+- `verifyPinEngaged()`, first scheduled a few seconds after every
+  `engageKioskLock()` call, reads `ActivityManager.getLockTaskModeState()`
+  directly rather than trusting `startLockTask()` having returned. **It
+  then re-arms itself every 3s**, for as long as a pin is intended and only
+  between `onResume` and `onPause`, so both late answers and later losses of
+  the pin are noticed. The lifecycle bound is enforced by `schedulePinCheck`
+  refusing to arm at all outside that window — cancelling in `onPause` is
+  NOT sufficient on its own, because `onPageFinished` has no lifecycle
+  gating and this app never pauses the WebView's JS timers, so the
+  self-order idle reload goes on re-entering `engageKioskLock()` while the
+  Activity is stopped (independent review, ut-docs#1639).
+- `onWindowFocusChanged(hasFocus)` re-reads the same state as soon as the
+  app gets input focus back, as an opportunistic fast path on top of that
+  poll. It is deliberately asymmetric: regaining focus can clear a
+  warning, but only raises one for a pin that was previously **confirmed**
+  and has since gone (the documented unpin gesture) — focus can also come
+  back while the request is merely still unanswered, and that is the
+  repeating check's call to make, not this one's.
+  **No Activity-level lock-task callback exists** to use instead
+  (independent review, ut-docs#1639: an earlier draft of this fix
+  overrode a non-existent `Activity.onLockTaskModeChanged(int)` — the
+  platform's only lock-task callbacks are
+  `DeviceAdminReceiver.onLockTaskModeEntering/Exiting`, which need the
+  Device Owner provisioning below).
+
+  **Why the poll exists, and why focus alone was not enough.** The first
+  version of this fix made `onWindowFocusChanged` the mechanism that
+  cleared the banner, on the documented reasoning that Android's pinning
+  confirmation is a system window taking focus without pausing the
+  Activity — so dismissing it must hand focus back. On the P50T that does
+  not produce a usable read. Re-verifying this card on real hardware
+  (v0.12.7): tapping **Got it** pinned the app — Android's own "App
+  pinned" toast, `mLockTaskModeState=PINNED` — and the banner stayed up
+  across three runs, with neither of that callback's logging branches
+  reached. The build that was measured could not say whether no focus event
+  arrived at all or one arrived before the OS had committed the lock-task
+  state, because its "not answered yet" branch logged nothing. That branch
+  now logs at debug level, and **that settled it on the device: the
+  callback does not fire at all when the pinning dialog is dismissed.** The
+  same build emits that debug line reliably for a genuine focus return
+  (sleep/wake with the dialog still up) and emitted nothing at all when
+  "Got it" was tapped — an absent event, not an early read. Either way the
+  state was read once, at the wrong moment, and never again. Nothing else re-read it, so a correctly
+  pinned till went on displaying *"Kiosk lock is not active — this device
+  is not secured"*; measured still up 120s after the grant, with the
+  banner's only escape being an unrelated accident: `self_order.html`'s
+  idle-reset reload re-running `engageKioskLock()` through
+  `onPageFinished`. That reload is opt-**out** — `kiosk.idle_reset_seconds`
+  defaults to 60 and only `0` disables it — so relying on it would not even
+  have been a rare configuration. The 120s figure holds because the
+  reload's timer restarts on every `pointerdown`/`keydown`/`touchstart`,
+  and that run tapped the screen every 20s to keep it from firing; an idle
+  kiosk would have had the banner cleared for it at 60s, by a mechanism
+  with nothing to do with pinning that a shop can switch off.
+  A permanent false alarm is the same defect as a missing one — staff
+  who see "not secured" on a secured till stop reading the banner. Since
+  the platform offers no callback here without Device Owner, re-reading
+  on a timer is the only mechanism actually available.
+- Either path logs the outcome (`Log.w`/`Log.i`, tag `MainActivity`) —
+  before this fix, `logcat` showed nothing at all for a failed pin.
+- When the pin is intended (self-order) but not confirmed, a red banner
+  (`R.string.kiosk_pin_not_engaged`, translated en/fa/tr/ar) appears above
+  the WebView — a status banner, not a modal, so the kiosk stays fully
+  usable underneath. It clears within one poll interval of the OS
+  confirming the pin, and comes back within one poll interval of the pin
+  being lost again.
+- **Not fixed, because it cannot be from app code**: the confirmation
+  dialog itself, or getting it answered automatically. The banner and log
+  line are detection and disclosure, not a stronger lock — **Device Owner
+  provisioning (below) is still the only way to get a pin that cannot be
+  declined**.
 
 **Scaffolded but NOT active:** `TillDeviceAdminReceiver` +
 `res/xml/device_admin_receiver.xml` + the manifest `<receiver>` exist so
@@ -311,10 +424,57 @@ Manual checklist for whoever does it:
    then relaunch) and confirm `onResume` re-asserts exactly the pin
    state that state was in — pinned on `/self-order` and on a `/login`
    reached from it, unpinned everywhere else — without crashing.
-10. From My Reports (`/my-reports`), tap the "open GitHub issue"
-    link — confirm the WebView does NOT navigate to github.com (the
-    navigation restriction refusing it, not the link being absent/disabled).
-    This is the concrete case that motivated `shouldOverrideUrlLoading`.
+10. From My Reports (`/my-reports`), tap the "View on GitHub" link —
+    confirm **both halves** (ut-docs#1647): the issue opens in the device's
+    browser app, as a separate task, AND the till's own WebView is still on
+    `/my-reports` behind it (it must never navigate to github.com itself —
+    that restriction is what keeps `window.AndroidKiosk` away from a page
+    this app didn't author). Checking only that the WebView stayed put is
+    what let the "tapping it does nothing" bug ship: both outcomes look
+    identical from the till's side of the screen.
+
+**ut-docs#1639 verification status:** items 1-10 above were run for real
+on the TECLAST P50T (ut-docs#1281) and confirmed the pin-detection gap
+this section now describes. The detection/log/banner code added for
+ut-docs#1639 itself could **not** be compiled or run in the session that
+wrote it (same constraint as ut-docs#1508's own review — no Android
+SDK/NDK/emulator in that session; see
+`docs/code-reviews/2026-09-03-kiosk-pin-self-order-only-1508.md`'s
+"Verified beyond automated tests" for the accepted precedent) — verified
+instead by close reading against the actual AOSP
+`android/app/Activity.java` source and documented `ActivityManager`
+semantics, plus this file's own existing patterns. (That reading is not a
+formality: it is how the independent review found the first draft's
+`onLockTaskModeChanged` override, which would not have compiled and which
+**no PR check in this repo would have caught** — nothing in `ci.yml`
+builds the Gradle project; only `release.yml`'s `android-app` job does,
+i.e. the failure would have surfaced as a broken release.) **Required
+follow-up on real hardware**, whoever has the TECLAST P50T next:
+
+11. Repeat step 3 (enter self-order) and tap **"No, thanks"** on the
+    pinning confirmation the instant it appears — confirm the red
+    `kiosk_pin_not_engaged` banner appears above the WebView within
+    ~3 seconds, and `adb logcat -s MainActivity` shows the
+    `lockTaskModeState=NONE` warning line.
+12. Repeat step 3 and tap **"Got it"** (or just wait) so the pin actually
+    engages — confirm the banner never appears (or appears then clears
+    within ~3s) and logcat shows the "confirmed engaged" line instead.
+13. Repeat step 3 but leave the pinning confirmation sitting unanswered
+    for ~10 seconds (longer than the 3s delay), then tap **"Got it"** —
+    confirm the banner appears at ~3s and then **clears on its own** the
+    moment the dialog is dismissed, without needing to leave and re-enter
+    self-order. This is the `onWindowFocusChanged` re-check; it is the
+    one behaviour that has no automated coverage of any kind.
+14. From a genuinely pinned self-order screen (step 12), perform the
+    documented unpin gesture, then bring the app back to the foreground
+    (power off/on, or Recents) — confirm the banner is up, and that the
+    logcat line says `DROPPED`, not `NOT engaged`. Note in the ticket
+    whether the banner appeared *without* that foreground round-trip:
+    Android gives the app no callback for a pin dropping, so a device
+    that does not change window focus on unpin will not show it until
+    something else re-checks (a resume, or the next `/self-order`
+    navigation). That gap is expected, and is what a Device-Owner pin
+    (which cannot be unpinned at all) would remove.
 
 ## Camera, microphone and screenshots (ut-docs#1435)
 

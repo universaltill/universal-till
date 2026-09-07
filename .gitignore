@@ -82,3 +82,8 @@ unitill-pos-setup-*.exe
 /unitill-uninstall
 .claude/worktrees/
 dist-shells/
+
+# scripts/ci/guard-deadcode-baseline_test.sh's disposable fixture -- a
+# killed test run leaves this behind (harmless, never meant to be
+# committed).
+cmd/unitill-desktop/zzz_guard_test_fixture.go

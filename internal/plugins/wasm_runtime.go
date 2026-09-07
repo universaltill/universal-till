@@ -19,6 +19,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/secrets"
 )
 
 // sharedBus is the process-wide event bus. Publishers and the wasm runtime
@@ -525,8 +526,18 @@ func (w *WasmRuntime) HandleEvent(ctx context.Context, pluginID string, ev Event
 // (refund_page.go) for a refund's payment leg — a refund plugin's response
 // is just as likely to carry a gateway transaction token as an authorize
 // response, so it goes through the identical redaction path.
+// fiscal.sign.start (ADR-0077 D1, ut-docs#1519, review finding) is checked
+// by exact name, not by suffix: it is the first value-returning
+// EventBus.Ask hook whose event key deliberately does NOT end in
+// ".ask"/".authorize"/".refund" — that's the load-bearing compatibility
+// choice ADR-0077 D1 makes (see FiscalSignStartEvent's own doc comment) —
+// so the suffix check alone would silently let its answer (a
+// signer-controlled tx_id string, persisted and later echoed into every
+// fiscal.sign.ask request for the sale) bypass the redaction/size
+// discipline every other value-returning hook gets.
 func wasmResultLogLine(pluginID, eventType, out string) string {
-	if !strings.HasSuffix(eventType, ".ask") && !strings.HasSuffix(eventType, ".authorize") && !strings.HasSuffix(eventType, ".refund") {
+	if !strings.HasSuffix(eventType, ".ask") && !strings.HasSuffix(eventType, ".authorize") && !strings.HasSuffix(eventType, ".refund") &&
+		eventType != FiscalSignStartEvent {
 		return fmt.Sprintf("[wasm:%s] result: %s", pluginID, out)
 	}
 	return fmt.Sprintf("[wasm:%s] result (%s, %d bytes): %s", pluginID, eventType, len(out), safeAskResultForLog(out))
@@ -554,14 +565,33 @@ const maxAskLogBytes = 500
 // SMALL token is exactly as much of a credential as a long one, so both are
 // name-matched rather than relying on the size cap alone (ut-docs#202,
 // widened for ".authorize" responses by ut-docs#245).
+//
+// ADR-0082 (ut-docs#1739) widened the list with the plugin-settings
+// credential markers (password/passwd/api_key/apikey/auth_value/private_key
+// — the same substrings secrets.IsSecretSettingKey seals on) so a plugin
+// that echoes one of its own settings into an ask/authorize answer (e.g.
+// {"sumup_api_key": "..."}) is redacted by name. Deliberately NOT the
+// heuristic's bare "key"/"_key" suffix rule: `key` is an ordinary field
+// name in hook answers (payment.<key>, menu keys) and redacting it would
+// blind the log for no credential gain. A value that carries the
+// secrets.Prefix is redacted regardless of its field name — see redactField.
 func looksLikeSensitiveFieldName(key string) bool {
 	lower := strings.ToLower(key)
-	for _, marker := range [...]string{"b64", "token", "secret"} {
+	for _, marker := range [...]string{"b64", "token", "secret", "password", "passwd", "api_key", "apikey", "auth_value", "private_key"} {
 		if strings.Contains(lower, marker) {
 			return true
 		}
 	}
 	return false
+}
+
+// looksLikeSealedValue reports whether v is a JSON string carrying the
+// ADR-0082 sealed-value prefix — ciphertext that must never reach a log
+// line either (it is opaque, but logging it invites copy/paste of
+// ciphertext into bug reports, and its presence in a plugin's answer is
+// itself a bug worth NOT normalising).
+func looksLikeSealedValue(v json.RawMessage) bool {
+	return len(v) > 1 && v[0] == '"' && strings.HasPrefix(string(v[1:]), secrets.Prefix)
 }
 
 // maxAskNestingDepth caps how many levels deep redactField recurses into a
@@ -620,7 +650,7 @@ func safeAskResultForLog(out string) string {
 // covered by the size check and by recursing into their own fields.
 // Returns the (possibly unchanged) value and whether anything was redacted.
 func redactField(key string, v json.RawMessage, depth int) (json.RawMessage, bool) {
-	if len(v) > maxAskFieldBytes || looksLikeSensitiveFieldName(key) {
+	if len(v) > maxAskFieldBytes || looksLikeSensitiveFieldName(key) || looksLikeSealedValue(v) {
 		placeholder, _ := json.Marshal(fmt.Sprintf("<omitted: %d bytes>", len(v)))
 		return placeholder, true
 	}

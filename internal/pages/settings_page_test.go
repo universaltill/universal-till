@@ -876,6 +876,55 @@ func TestSettingsPage_QuarantineSectionOnlyWhenRelevant(t *testing.T) {
 	}
 }
 
+// ut-docs#1613 review finding (M1): a restore staged in an EARLIER visit
+// must still show its restart trigger on a plain page render — otherwise an
+// operator who reloads (or the till itself relaunches) between staging and
+// clicking Restart now lands right back on the "restart the till to finish"
+// dead end this card exists to remove, with the restore still silently
+// staged on disk (db.PendingRestore is a persistent, on-disk fact; only
+// the POST /api/backup/restore response used to show this). Stubs the
+// backupRestorePending/backupRestartSupported seams directly (same
+// convention as backup_api_test.go) rather than staging a real restore —
+// this page-render test only needs to observe what the page does once
+// PendingRestore reports true, not re-prove StageRestore itself.
+func TestSettingsPage_ShowsRestartButtonWhenRestorePending(t *testing.T) {
+	dp := newMigratedSyncDeps(t, "settings-restore-pending.db")
+	dp.AuthSvc = auth.NewService(dp.Db)
+	initPagesI18n(t)
+	mux := http.NewServeMux()
+	registerSettings(mux, dp)
+
+	get := func() string {
+		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+		req = auth.WithUser(req, mgrUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /settings = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	if body := get(); strings.Contains(body, `hx-post="/api/backup/restart-now"`) {
+		t.Fatalf("no restore staged: restart trigger should not appear, got:\n%s", body)
+	}
+
+	stubBackupRestorePending(t, true)
+	stubBackupRestartSupported(t, true)
+	body := get()
+	if !strings.Contains(body, `hx-post="/api/backup/restart-now"`) {
+		t.Fatalf("restore staged from an earlier visit: want the restart trigger on plain page load, got:\n%s", body)
+	}
+	if !strings.Contains(body, httpx.T("en", "settings.backup.restart_now")) {
+		t.Fatalf("want the visible Restart now button, got:\n%s", body)
+	}
+
+	stubBackupRestartSupported(t, false)
+	if body := get(); !strings.Contains(body, httpx.T("en", "tills.pairing.close_and_reopen")) {
+		t.Fatalf("restore staged but unsupported platform: want the close-and-reopen instruction, got:\n%s", body)
+	}
+}
+
 // The Settings page's till-register picker (ut-docs#268) persists this
 // till's own register identity under till.register_id — the register a
 // shift-scoped write (e.g. a Pfandrückgabe payout) resolves against.
@@ -1048,9 +1097,9 @@ func TestSettingsPage_PrinterAddressFieldsAreLTR(t *testing.T) {
 	body := rec.Body.String()
 
 	for _, want := range []string{
-		`name="address" value="" placeholder="192.168.1.50:9100" dir="ltr"`,
+		`name="address" id="printer-address-input" value="" placeholder="192.168.1.50:9100" dir="ltr"`,
 		`name="device" value="" placeholder="/dev/usb/lp0" dir="ltr"`,
-		`name="kitchenAddr" value="" placeholder="192.168.1.60:9100" dir="ltr"`,
+		`name="kitchenAddr" id="printer-kitchen-addr-input" value="" placeholder="192.168.1.60:9100" dir="ltr"`,
 	} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected printer field with dir=\"ltr\": %s\ngot:\n%s", want, body)
@@ -1805,12 +1854,11 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 	// item ({{ if gt .sampleCount 0 }}), a deferred restore prompt
 	// ({{ if .restorePromptDeferred }}), a pending base plugin
 	// ({{ range .pendingBasePlugins }}), and a register for the picker.
+	// payment_methods (already seeded with cash/card/gift) and items come
+	// from the real migrations openPagesTestDB now runs (ut-docs#1657/#1677)
+	// -- this used to hand-roll both tables from scratch.
 	for _, s := range []string{
-		`CREATE TABLE payment_methods (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT,
-		 is_active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, plugin_id TEXT)`,
-		`INSERT INTO payment_methods (id, name, type, is_active, sort_order) VALUES ('cash', 'Cash', 'cash', 1, 1)`,
-		`CREATE TABLE items (id TEXT PRIMARY KEY, name TEXT, is_sample_data INTEGER NOT NULL DEFAULT 0)`,
-		`INSERT INTO items (id, name, is_sample_data) VALUES ('demo-1', 'Demo Widget', 1)`,
+		`INSERT INTO items (id, name, base_price, is_sample_data) VALUES ('demo-1', 'Demo Widget', 100, 1)`,
 		`INSERT INTO registers(id,name,is_active) VALUES('regA','Front Till',1)`,
 	} {
 		if _, err := d.Db.Exec(s); err != nil {
@@ -1916,15 +1964,8 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 // write-path parsing in POST /api/settings/payments-fee.
 func TestSettingsPage_PaymentsFeeFixedMajIsCurrencyAware(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
-	for _, s := range []string{
-		`CREATE TABLE payment_methods (id TEXT PRIMARY KEY, name TEXT NOT NULL, type TEXT,
-		 is_active INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, plugin_id TEXT)`,
-		`INSERT INTO payment_methods (id, name, type, is_active, sort_order) VALUES ('cash', 'Cash', 'cash', 1, 1)`,
-	} {
-		if _, err := d.Db.Exec(s); err != nil {
-			t.Fatal(err)
-		}
-	}
+	// payment_methods (already seeded with cash/card/gift) comes from the
+	// real migrations openPagesTestDB now runs (ut-docs#1657/#1677).
 	if err := d.Settings.Set(t.Context(), "payments.fee.cash", `{"bp":0,"fixed":500}`); err != nil {
 		t.Fatal(err)
 	}
@@ -2010,6 +2051,9 @@ func TestSettingsPage_PrinterCardHidesTestPrintAndDesignerLinkFromCashier(t *tes
 	if strings.Contains(body, `href="/receipt-designer"`) {
 		t.Error("cashier render leaks the flat-denied receipt-designer link")
 	}
+	if strings.Contains(body, `id="printer-discover-btn"`) {
+		t.Error("cashier render leaks the manager-only Find-printers button (ut-docs#1556) — the underlying discover-printers endpoint is hard manager-gated, so an un-gated button here would be the same visible-but-silently-blocked bug")
+	}
 
 	mgrReq := httptest.NewRequest(http.MethodGet, "/settings", nil)
 	mgrReq = auth.WithUser(mgrReq, mgrUser)
@@ -2018,6 +2062,35 @@ func TestSettingsPage_PrinterCardHidesTestPrintAndDesignerLinkFromCashier(t *tes
 	mgrBody := mgrRec.Body.String()
 	if !strings.Contains(mgrBody, `hx-post="/api/print/test"`) || !strings.Contains(mgrBody, `href="/receipt-designer"`) {
 		t.Error("manager render is missing the Test print button or receipt-designer link")
+	}
+	if !strings.Contains(mgrBody, `id="printer-discover-btn"`) {
+		t.Error("manager render is missing the Find-printers button (ut-docs#1556)")
+	}
+}
+
+// ut-docs#1556: the settings page's Find-printers button reuses the exact
+// same manager-gated endpoint kitchen_stations.html already calls
+// (POST /api/kitchen-stations/discover-printers — GET until ut-docs#1582
+// made it POST) — no new route is
+// introduced. This locks in that the printer card's two address fields
+// (receipt + kitchen) both have their own input id for the page's JS to
+// target, so a future edit can't silently drop one field's "Use for X"
+// wiring without a visible test failure.
+func TestSettingsPage_PrinterCardHasDiscoverableAddressFieldIDs(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req = auth.WithUser(req, mgrUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	for _, id := range []string{"printer-address-input", "printer-kitchen-addr-input", "printer-discover-results", "printer-discover-msg"} {
+		if !strings.Contains(body, `id="`+id+`"`) {
+			t.Errorf("manager render is missing expected element id=%q", id)
+		}
 	}
 }
 
@@ -2313,19 +2386,9 @@ func TestSettingsShowsFiscalSignerMissingBanner(t *testing.T) {
 	mux, _, d := newFullAuthDeps(t)
 	ctx := context.Background()
 
-	// newFullAuthDeps' schema is deliberately minimal (no other settings test
-	// needs a plugin registry); add just enough of the real plugins/
-	// plugin_hooks shape — column-identical to seedForPages' (ui_smoke_test.go)
-	// — for data.PluginRepo.ActiveHookOwner's join to run. NOT column-identical
-	// to 001_init.sql, which has more columns/constraints on both tables.
-	for _, stmt := range []string{
-		`CREATE TABLE plugins (id TEXT PRIMARY KEY, name TEXT, version TEXT, author TEXT, is_active INTEGER DEFAULT 1, trust_level TEXT DEFAULT 'untrusted', install_state TEXT DEFAULT 'installed', runtime TEXT DEFAULT 'go', entrypoint TEXT DEFAULT '', updated_at TEXT NOT NULL DEFAULT (datetime('now')));`,
-		`CREATE TABLE plugin_hooks (id TEXT PRIMARY KEY, plugin_id TEXT NOT NULL, event TEXT NOT NULL, action TEXT NOT NULL, priority INTEGER NOT NULL DEFAULT 100, is_active INTEGER NOT NULL DEFAULT 1, config_json TEXT, UNIQUE(plugin_id, event, action));`,
-	} {
-		if _, err := d.Db.Exec(stmt); err != nil {
-			t.Fatalf("seed plugins schema: %v", err)
-		}
-	}
+	// ut-docs#1657/#1677: newFullAuthDeps now runs the real migration set
+	// (openPagesTestDB), which already has plugins/plugin_hooks -- this used
+	// to hand-roll a laxer copy since that fixture was "deliberately minimal".
 
 	getSettings := func() string {
 		req := httptest.NewRequest(http.MethodGet, "/settings", nil)
@@ -2369,6 +2432,10 @@ func TestSettingsShowsFiscalSignerMissingBanner(t *testing.T) {
 
 	// An active plugin holding fiscal.sign.ask: the banner disappears on its
 	// own, no dismiss involved.
+	// ut-docs#1677: plugins has a composite FK to plugin_catalog(id,version).
+	if _, err := d.Db.ExecContext(ctx, `INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at) VALUES ('signer1','1.0.0','Signer','desc','wasm','./plugin.wasm','url','sha','auth','site','[]','0.0.0','1',datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := d.Db.ExecContext(ctx, `INSERT INTO plugins (id, name, version, install_state, entrypoint, runtime, is_active, trust_level) VALUES ('signer1','Signer','1.0.0','installed','./plugin.wasm','wasm',1,'trusted')`); err != nil {
 		t.Fatal(err)
 	}

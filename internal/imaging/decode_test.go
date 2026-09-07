@@ -3,6 +3,7 @@ package imaging
 import (
 	"bytes"
 	"encoding/binary"
+	"errors"
 	"hash/crc32"
 	"image"
 	"image/color"
@@ -34,6 +35,16 @@ func encodeJPEG(t *testing.T, w, h int) []byte {
 	var buf bytes.Buffer
 	if err := jpeg.Encode(&buf, img, nil); err != nil {
 		t.Fatalf("encode JPEG: %v", err)
+	}
+	return buf.Bytes()
+}
+
+func encodeGIF(t *testing.T, w, h int) []byte {
+	t.Helper()
+	img := image.NewPaletted(image.Rect(0, 0, w, h), color.Palette{color.Black, color.White})
+	var buf bytes.Buffer
+	if err := gif.Encode(&buf, img, nil); err != nil {
+		t.Fatalf("encode GIF: %v", err)
 	}
 	return buf.Bytes()
 }
@@ -95,6 +106,30 @@ func TestDecodeBounded_RejectsOverLimit(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "exceed") {
 		t.Fatalf("expected a dimension-limit error, got: %v", err)
+	}
+}
+
+// TestDecodeBounded_OverLimitWrapsErrTooManyPixels is ut-docs#1416: a caller
+// must be able to tell "too large" apart from "corrupt/unsupported" via
+// errors.Is, not by matching the error string, so it can show the operator
+// a distinct "that photo is too large" message instead of a generic
+// invalid-file one.
+func TestDecodeBounded_OverLimitWrapsErrTooManyPixels(t *testing.T) {
+	raw := encodePNG(t, 100, 100) // 10,000 px
+	_, err := DecodeBounded(raw, 5_000)
+	if !errors.Is(err, ErrTooManyPixels) {
+		t.Fatalf("expected errors.Is(err, ErrTooManyPixels) to hold, got: %v", err)
+	}
+}
+
+// TestDecodeBounded_CorruptDataDoesNotMatchErrTooManyPixels guards the
+// other direction — a genuinely corrupt/unsupported file must NOT be
+// mistaken for the too-large case, or the operator gets told to shrink a
+// photo that was never decodable at all.
+func TestDecodeBounded_CorruptDataDoesNotMatchErrTooManyPixels(t *testing.T) {
+	_, err := DecodeBounded([]byte("not an image"), MaxPixels)
+	if errors.Is(err, ErrTooManyPixels) {
+		t.Fatalf("corrupt input must not match ErrTooManyPixels, got: %v", err)
 	}
 }
 
@@ -190,5 +225,61 @@ func TestDecode_CraftedSmallImageStillNeedsPixelData(t *testing.T) {
 	}
 	if strings.Contains(err.Error(), "exceed") {
 		t.Fatalf("a 10x10 image must not be rejected by the pixel-count guard, got: %v", err)
+	}
+}
+
+// TestDecodeBoundedFormats_PermitsCallerSuppliedFormat is the ut-docs#1417
+// regression: a caller with a genuine need for a format DefaultFormats
+// excludes (RasterLogo needs GIF for receipt logos) must be able to opt in
+// via its own formats set, without Decode/DecodeBounded's own png/jpeg-only
+// behavior changing for every other caller.
+func TestDecodeBoundedFormats_PermitsCallerSuppliedFormat(t *testing.T) {
+	raw := encodeGIF(t, 10, 10)
+	gifFormats := map[string]bool{"gif": true}
+
+	// Still rejected by the package's own default entry points.
+	if _, err := Decode(raw); err == nil {
+		t.Fatal("expected Decode (png/jpeg only) to reject a GIF, got nil error")
+	}
+
+	img, format, err := DecodeBoundedFormats(raw, MaxPixels, gifFormats)
+	if err != nil {
+		t.Fatalf("DecodeBoundedFormats with an explicit gif allowlist: %v", err)
+	}
+	if format != "gif" {
+		t.Fatalf("got format %q, want %q", format, "gif")
+	}
+	if b := img.Bounds(); b.Dx() != 10 || b.Dy() != 10 {
+		t.Fatalf("got %dx%d, want 10x10", b.Dx(), b.Dy())
+	}
+}
+
+// TestDecodeBoundedFormats_StillBoundsPixelCount confirms the caller-
+// supplied-formats path isn't a way to skip the pixel-bomb guard itself —
+// only the format allowlist is customizable, the dimension bound still
+// applies to whatever formats the caller opts into.
+func TestDecodeBoundedFormats_StillBoundsPixelCount(t *testing.T) {
+	raw := encodeGIF(t, 100, 100) // 10,000 px
+	_, _, err := DecodeBoundedFormats(raw, 5_000, map[string]bool{"gif": true})
+	if err == nil {
+		t.Fatal("expected an over-limit GIF to be rejected even under a custom formats set, got nil")
+	}
+	if !strings.Contains(err.Error(), "exceed") {
+		t.Fatalf("expected a dimension-limit error, got: %v", err)
+	}
+}
+
+// TestDecodeBoundedFormats_RejectsFormatNotInSet confirms an explicit
+// formats set still excludes everything not listed in it (not just
+// DefaultFormats' own png/jpeg) — a PNG must not sneak through a
+// gif-only allowlist.
+func TestDecodeBoundedFormats_RejectsFormatNotInSet(t *testing.T) {
+	raw := encodePNG(t, 10, 10)
+	_, _, err := DecodeBoundedFormats(raw, MaxPixels, map[string]bool{"gif": true})
+	if err == nil {
+		t.Fatal("expected a PNG to be rejected under a gif-only formats set, got nil")
+	}
+	if !strings.Contains(err.Error(), "unsupported image format") {
+		t.Fatalf("expected an unsupported-format error, got: %v", err)
 	}
 }

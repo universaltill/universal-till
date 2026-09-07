@@ -198,6 +198,37 @@ func TestPersistManifest_PaymentKeyFormatAndSelfUpgrade(t *testing.T) {
 	}
 }
 
+// ut-docs#1617: deriveTenderType (internal/pos/sales.go) can only ever
+// return "unknown" (zero payments) or "split" (2+ distinct method IDs) —
+// tenderLabel (ut-docs#1579) translates exactly those two literals through
+// the locale table on the assumption that no plugin owns either key.
+// Nothing enforced that assumption. deriveTenderType normalizes with
+// strings.ToLower(strings.TrimSpace(...)) before it ever compares/returns,
+// so a plugin key of any case ("Unknown", "SPLIT", ...) would still
+// collide once used as a sale's sole tender — the reservation must match
+// that same normalization, not just the two exact-case literals.
+func TestPersistManifest_RejectsReservedTenderSentinelKeys(t *testing.T) {
+	d := openRealDB(t)
+	ctx := context.Background()
+
+	for _, key := range []string{"unknown", "split", "Unknown", "SPLIT", "UnKnown"} {
+		err := PersistManifest(ctx, d.DB, paymentManifest("com.sentinel.pay", key), InstallOptions{})
+		if err == nil {
+			t.Fatalf("payment entry key %q must be rejected — it collides with deriveTenderType's own sentinel", key)
+		}
+		if !strings.Contains(err.Error(), key) {
+			t.Fatalf("reserved-key error should name the key %q, got: %v", key, err)
+		}
+		var n int
+		if err := d.DB.QueryRow(`SELECT COUNT(*) FROM plugins WHERE id = 'com.sentinel.pay'`).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 0 {
+			t.Fatalf("rejected plugin left %d plugins row(s), want 0 (transaction must roll back)", n)
+		}
+	}
+}
+
 // Same class of gap as key collisions, but on payment_methods.name (also
 // UNIQUE) — ut-docs#16 / ADR-0031's documented residual: two tenders
 // wanting the same LABEL previously hard-failed the sync at every startup

@@ -108,6 +108,10 @@ type ManifestSetting struct {
 	Key          string      `json:"key"`
 	DefaultValue interface{} `json:"default_value,omitempty"`
 	Scope        string      `json:"scope,omitempty"` // global|register|user
+	// Type is ""|SettingTypeSecret (ADR-0082): "secret" masks the value on
+	// the settings page and seals it at rest, regardless of the key name.
+	// Validated in ParseManifest; see secret_settings.go.
+	Type string `json:"type,omitempty"`
 }
 
 // ManifestHook represents an event subscription
@@ -151,6 +155,15 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 				e.Key, e.Type, strings.Join(CanonicalTypes, "|"))
 		}
 	}
+	// Setting types likewise (ADR-0082): "" or "secret" today — an unknown
+	// value is a typo that would otherwise silently leave a credential
+	// unsealed at rest, so it fails here, not at persist time.
+	for _, s := range m.Settings {
+		if !isValidSettingType(s.Type) {
+			return nil, fmt.Errorf("manifest setting %q has invalid type %q (allowed: %s)",
+				s.Key, s.Type, SettingTypeSecret)
+		}
+	}
 
 	return &m, nil
 }
@@ -169,6 +182,23 @@ func ComputeSHA256(filePath string) (string, error) {
 	}
 
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// reservedTenderSentinelKeys are the literal strings pos.deriveTenderType
+// can itself produce (zero payments -> "unknown"; 2+ distinct method IDs on
+// one sale -> "split"), after normalizing every method ID the same way
+// deriveTenderType does before it compares or returns one:
+// strings.ToLower(strings.TrimSpace(...)). Any display code that renders a
+// sale's derived tender type (e.g. a future locale-translation lookup for
+// these two literal values) has to treat them as meaning "no payment"/
+// "mixed payments", not as a real payment method — so a plugin payment key
+// matching either, in any case, would let that derived state collide with,
+// and potentially be mislabeled as, the plugin's own tender (ut-docs#1617).
+// Reserved unconditionally: nothing about a specific plugin makes the
+// collision safe.
+var reservedTenderSentinelKeys = map[string]bool{
+	"unknown": true,
+	"split":   true,
 }
 
 // PersistManifest saves the manifest to database tables
@@ -213,6 +243,9 @@ func validatePaymentEntryKeys(ctx context.Context, repo *data.PluginRepo, tx *sq
 		}
 		if strings.Contains(e.Key, ":") {
 			return fmt.Errorf("payment entry key %q must not contain ':'", e.Key)
+		}
+		if reservedTenderSentinelKeys[strings.ToLower(e.Key)] {
+			return fmt.Errorf("payment entry key %q is reserved for the till's own \"no payment\"/\"mixed payments\" tender-type label — pick a different key", e.Key)
 		}
 		if seenKeys[e.Key] {
 			return fmt.Errorf("payment entry key %q is used by more than one entry in this manifest — pick distinct keys", e.Key)
@@ -437,6 +470,23 @@ func validateSettingKeys(settings []ManifestSetting) error {
 // side lives in internal/pages (fiscal_sign_hook.go), which aliases this
 // constant; the contract is ut-docs/reference/contracts/fiscal-sign-ask.md.
 const FiscalSignAskEvent = "fiscal.sign.ask"
+
+// FiscalSignStartEvent is the new, additive, best-effort-correlated dispatch
+// ADR-0077 Decision 1 adds alongside FiscalSignAskEvent — fired once the
+// ADR-0048 hard gate has already allowed the sale/refund/return to proceed,
+// before the payment.<key>.authorize (or .refund) loop, so it runs in
+// parallel with that loop's own latency instead of adding to it. Deliberately
+// a SEPARATE event key rather than a new field/action on FiscalSignAskEvent
+// (ADR-0077 D1's load-bearing compatibility choice): a signer plugin that
+// only subscribes to fiscal.sign.ask is never asked this one — nothing
+// changes for a till running an older plugin build.
+//
+// NOT (yet) folded into validateExclusiveHookOwnership's exclusivity check
+// below — ADR-0077 explicitly sequences that extension (to cover this event
+// and fiscal.sign.reconcile.ask too) into the follow-up card that adds the
+// reconcile path (ut-docs#1520), landing after this one. Until #1520 lands,
+// this event does not inherit fiscal.sign.ask's single-owner enforcement.
+const FiscalSignStartEvent = "fiscal.sign.start"
 
 // validateExclusiveHookOwnership enforces ADR-0041 Decision B's `exclusive`
 // marker for fiscal.sign.ask at manifest-persist time (independent review

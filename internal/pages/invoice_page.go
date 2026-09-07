@@ -186,7 +186,16 @@ func buildInvoiceDoc(ctx context.Context, d *common.Deps, inv data.InvoiceRow, s
 		header = append(header, T("invoice.vat_no")+": "+inv.CustomerVATNo)
 	}
 
-	meta := []string{inv.DisplayNo, T("invoice.for_sale") + " " + sale.ReceiptNo, inv.IssuedAt}
+	// Same locale this function already uses for the money lines below —
+	// unlike the sale receipt/Z-report, this printed invoice already
+	// digit-substitutes money by locale rather than forcing Latin, so the
+	// date follows the same (pre-existing) convention rather than
+	// introducing a new, inconsistent one (ut-docs#1130 review finding).
+	issuedAt := inv.IssuedAt
+	if t, err := time.Parse(time.RFC3339, inv.IssuedAt); err == nil {
+		issuedAt = httpx.FormatDate(t.Local(), locale)
+	}
+	meta := []string{inv.DisplayNo, T("invoice.for_sale") + " " + sale.ReceiptNo, issuedAt}
 	if inv.Kind == "credit_note" && inv.OriginalInvoiceID != "" {
 		meta = append(meta, T("invoice.credits")+" "+inv.OriginalInvoiceID)
 	}

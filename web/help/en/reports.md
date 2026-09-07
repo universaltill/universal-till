@@ -16,7 +16,7 @@ Sales totals by day, department and payment type; best and slow sellers; dead st
 
 1. Open Reports: the row at the top always shows your key numbers for the chosen period (revenue, sales, tax, refunds, net, last year) and a low-stock warning.
 2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, Tips, or Day-end (EOD) — and that report loads when you open it.
-3. Run End of day (in the Day-end tab) when you close: it totals the day and can print for your records.
+3. Run End of day (in the Day-end tab) when you close: it totals everything **since your last close** — not the calendar day — and can print for your records. A café that closed at 19:19 yesterday and closes at 19:19 today gets every sale in between on today's report, including last night's after-19:19 sales that a calendar-day report would have left stranded; anything rung up after tonight's close belongs to the next one. Each close records the exact moment it runs from and to, so you can always see precisely what a report covers: the printed report carries a **Zeitraum** line, and the archive list shows the same two timestamps side by side (`2026-08-23T19:10:00+02:00 – 2026-08-24T19:19:00+02:00`), in your own local time. Your very first close has no earlier close to start from, so it covers everything up to the moment you closed and shows just that one end timestamp.
 
 ## Report periods
 
@@ -83,6 +83,40 @@ page. An optional note can currently be attached to a close by whatever
 sends the request an `annotation` value; there's no on-screen field for it
 yet, so this is mainly useful to an integration or a future till update —
 it prints as **Anmerkung** immediately under Erstellt von when present.
+
+## Article group, article and operator breakdowns
+
+Running End of day for a single day (not a date range) adds three more
+breakdowns, on the printed report and on screen in the archived-report list:
+**BY ARTICLE GROUP** (revenue by each article's own category — a subcategory
+like "Phones" shows on its own line here, rather than rolled up into its
+parent department the way the department breakdown does), **BY ARTICLE**
+(every article sold that day, not just the best/slowest sellers — shown
+collapsed on screen since a busy day can list dozens), and **BY OPERATOR**
+(revenue and sale count per cashier). Revenue stays attributed to whichever
+cashier actually rang the sale even when a manager approved an override on
+it, so the operator breakdown always reflects who was really on the till.
+
+The on-screen article list always shows every article, however many there
+are. The **printed** BY ARTICLE section is separately configurable (Day-end
+tab, next to the auto-close schedule) since a high-SKU shop can otherwise
+print hundreds of extra lines on every close: **Print top N by revenue**
+(the default — prints the top 30, or however many you set, followed by a
+"+N more" line, so a typical shop's roll is unaffected while a busy one is
+bounded), **Print every article** (the previous behavior, unbounded), or
+**Don't print** (omits the section from the printed report only).
+
+## Dine in / takeaway breakdown
+
+Running End of day for a single day also adds a **BY ORDER TYPE** breakdown,
+on the printed report and on screen in the archived-report list: revenue and
+quantity split between **Dine in** and **Takeaway**, matching the labels on
+the sale screen's own dine-in/takeaway switch. A sale that mixed both (some
+items dine in, some takeaway) splits correctly across the two rows by its
+own items, rather than needing a third "mixed" row. Like the article-group/
+article/operator breakdowns above it, a row only appears when that mode had
+at least one sale — an all-dine-in day shows just the Dine in row, not an
+empty Takeaway line.
 
 ## Payment method and VAT rate together on the day-end (Z) report
 

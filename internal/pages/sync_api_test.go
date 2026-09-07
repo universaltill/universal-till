@@ -460,12 +460,20 @@ func TestSyncPromote_ElevatesOnValidApproverPIN(t *testing.T) {
 	if err := authRepo.SetUserPIN(ctx, mgrID, hash); err != nil {
 		t.Fatalf("set pin: %v", err)
 	}
+	// audit_log.blocked_actor_id has a real FK to users(id); the session
+	// injected below via auth.WithUser needs a matching real row. CreateUser
+	// assigns its own id (a UUID) independent of the username passed in, so
+	// the injected session must use the id it returns, not the username.
+	blockedID, err := authRepo.CreateUser(ctx, "blocked-cashier", "Blocked Cashier", "cashier")
+	if err != nil {
+		t.Fatalf("create blocked cashier: %v", err)
+	}
 	if err := dp.Settings.Set(ctx, "sync.primary_url", "http://primary.example"); err != nil {
 		t.Fatalf("seed replica identity: %v", err)
 	}
 
 	req := auth.WithUser(httptest.NewRequest(http.MethodPost, "/api/sync/promote",
-		strings.NewReader("confirm=PROMOTE&override_pin=918273")), auth.User{ID: "blocked-cashier", Role: "cashier"})
+		strings.NewReader("confirm=PROMOTE&override_pin=918273")), auth.User{ID: blockedID, Role: "cashier"})
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -486,8 +494,8 @@ func TestSyncPromote_ElevatesOnValidApproverPIN(t *testing.T) {
 	if entries[0].ActorID != mgrID {
 		t.Fatalf("ActorID = %q, want the approver %q", entries[0].ActorID, mgrID)
 	}
-	if entries[0].BlockedActorID != "blocked-cashier" {
-		t.Fatalf("BlockedActorID = %q, want the originally-blocked session user", entries[0].BlockedActorID)
+	if entries[0].BlockedActorID != blockedID {
+		t.Fatalf("BlockedActorID = %q, want the originally-blocked session user %q", entries[0].BlockedActorID, blockedID)
 	}
 }
 
@@ -590,18 +598,20 @@ func newSyncDepsWithPath(t *testing.T, name string) (*common.Deps, string) {
 	t.Helper()
 	chdirRoot(t)
 	path := filepath.Join(t.TempDir(), name)
-	db, err := sql.Open("sqlite", path)
+	// ut-docs#1676: this used to be its own raw sql.Open + hand-rolled
+	// schema (via seedForPages, which built the whole schema itself before
+	// that card). seedForPages now only inserts fixture rows on top of a
+	// REAL migrated schema, so this needs the same appdb.Open path
+	// openPagesTestDB uses — same physical on-disk file at path either way,
+	// so db.Snapshot's VACUUM INTO and the staged restore/identity files
+	// still work against it unchanged.
+	migrated, err := appdb.Open(path)
 	if err != nil {
-		t.Fatalf("open sqlite: %v", err)
+		t.Fatalf("open+migrate sqlite: %v", err)
 	}
+	db := migrated.DB
 	db.SetMaxOpenConns(1)
 	db.SetMaxIdleConns(1)
-	if _, err := db.Exec(`PRAGMA busy_timeout = 5000`); err != nil {
-		t.Fatalf("busy_timeout: %v", err)
-	}
-	if _, err := db.Exec(`PRAGMA foreign_keys = ON`); err != nil {
-		t.Fatalf("foreign_keys: %v", err)
-	}
 	// ut-docs#878: same disposable-scratch reasoning as openPagesTestDB —
 	// single-connection, t.TempDir()-scoped, nothing durable to lose. Skips
 	// the default rollback-journal fsync-on-commit that hung this package's
@@ -898,12 +908,20 @@ func TestFriendlyJoinError_TranslatesEachKind(t *testing.T) {
 }
 
 // TestFriendlyJoinError_FallsBackForUnclassifiedErrors covers the defensive
-// branch: a plain (non-*joinError) error is shown as its own Error() text
-// rather than panicking or silently returning an empty string.
+// branch: a plain (non-*joinError) error is shown translated, its own
+// Error() text substituted into the fallback locale string's %s placeholder
+// — not panicking, not an empty string, and (ut-docs#1544) not raw English
+// leaking straight through untranslated either, which is what this test
+// used to pin before the fix.
 func TestFriendlyJoinError_FallsBackForUnclassifiedErrors(t *testing.T) {
 	err := fmt.Errorf("some other failure")
-	if got := friendlyJoinError("fa", err); got != "some other failure" {
-		t.Errorf("expected the raw error text as a fallback, got %q", got)
+	for _, locale := range []string{"en", "ar", "fa", "tr"} {
+		t.Run(locale, func(t *testing.T) {
+			want := fmt.Sprintf(httpx.T(locale, "tills.join_error.unexpected"), "some other failure")
+			if got := friendlyJoinError(locale, err); got != want {
+				t.Errorf("friendlyJoinError(%q, %v) = %q, want %q", locale, err, got, want)
+			}
+		})
 	}
 }
 

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"net/http"
 	"path/filepath"
 	"strings"
@@ -247,5 +248,53 @@ func TestRun_WaitsForAsyncWorkBeforeClosingDatabase(t *testing.T) {
 		}
 	case <-time.After(time.Second):
 		t.Fatal("AsyncWork goroutine never reported a result after Run returned — it may never have run")
+	}
+}
+
+// fakePluginShutdowner is a minimal pluginShutdowner double — proof that the
+// restart-hook seam Run wires (ut-docs#1616) is testable without a real
+// Supervisor, and specifically that it IS Shutdown being called, not just
+// that some hook fires (the gap a prior review round found: both
+// internal/procrestart's and internal/selfupdate's own tests only proved a
+// hook ran, never what it was wired to).
+type fakePluginShutdowner struct {
+	called  bool
+	ctxUsed context.Context
+	err     error
+}
+
+func (f *fakePluginShutdowner) Shutdown(ctx context.Context) error {
+	f.called = true
+	f.ctxUsed = ctx
+	return f.err
+}
+
+func TestStopPluginsBeforeRestart_CallsShutdownBounded(t *testing.T) {
+	fake := &fakePluginShutdowner{}
+	hook := stopPluginsBeforeRestart(fake, logging.L())
+
+	hook(context.Background())
+
+	if !fake.called {
+		t.Fatal("stopPluginsBeforeRestart's hook did not call Shutdown at all")
+	}
+	if deadline, ok := fake.ctxUsed.Deadline(); !ok {
+		t.Fatal("Shutdown was called with a context that has no deadline — a wedged plugin could hang a restart forever")
+	} else if remaining := time.Until(deadline); remaining <= 0 || remaining > 5*time.Second {
+		t.Fatalf("Shutdown's context deadline is %v from now, want a positive bound of at most 5s", remaining)
+	}
+}
+
+// A Shutdown error must not panic or block the hook — it's logged (there is
+// no caller left to return it to; the hook signature is func(context.Context)
+// with no error return) and the restart proceeds regardless.
+func TestStopPluginsBeforeRestart_SurvivesShutdownError(t *testing.T) {
+	fake := &fakePluginShutdowner{err: errors.New("plugin wedged")}
+	hook := stopPluginsBeforeRestart(fake, logging.L())
+
+	hook(context.Background()) // must not panic
+
+	if !fake.called {
+		t.Fatal("Shutdown was never called")
 	}
 }

@@ -51,8 +51,66 @@ func exempt(path string) bool {
 		// no-op the whole feature exactly like the /api/sync/stock incident
 		// this switch's own comment documents (independent review caught
 		// this before merge).
-		"/api/sync/orders", "/api/setup/join",
+		"/api/sync/orders",
+		// ADR-0079 (ut-docs#1571): the primary-side order-status SSE stream a
+		// replica's background bridge (order_status_stream_bridge.go) holds
+		// open with its sync bearer — syncTill-authed in the handler exactly
+		// like /api/sync/orders above. Deliberately an exact entry here and
+		// NOT a widening of the /api/sync/orders/{id}/status rule further
+		// down (whose one-segment + /status bound exists precisely so no
+		// unlisted /api/sync/orders/<x> route is ever exempted by accident).
+		// TestSyncPullPathsAreExempt pins this entry.
+		"/api/sync/orders/stream",
+		// ut-docs#1392: the primary-side READ-ONLY cross-till table-occupancy
+		// endpoint a replica's tablesWithStateForDisplay (tables_sync_proxy.go)
+		// proxies to — syncTill-authed in the handler exactly like
+		// /api/sync/orders above. Omitting it here would silently no-op the
+		// whole feature exactly like the /api/sync/stock incident this
+		// switch's own comment documents.
+		// TestSyncPullPathsAreExempt pins this entry.
+		"/api/sync/tables",
+		// ut-docs#1703: the primary-side table-claim WRITE-THROUGH endpoints
+		// a replica's claimTableWriteThrough / releaseTableClaimWriteThrough
+		// (internal/pages/tables_claim_proxy.go) proxy to — syncTill-authed
+		// in the handler exactly like /api/sync/tables above. Omitting them
+		// here would silently no-op the whole feature (the proxy falls back
+		// to local-only on a 401, and two tills can claim one table again)
+		// exactly like the /api/sync/stock incident this switch's own comment
+		// documents. TestSyncPullPathsAreExempt pins both entries.
+		"/api/sync/tables/claim", "/api/sync/tables/release",
+		// ut-docs#1712: the primary-side till-wide release-all a
+		// replica calls once at boot (internal/pages/init.go), before
+		// re-claiming its held orders, to clear whatever a crashed
+		// live basket left behind on a table it may never revisit
+		// again. syncTill-authed in the handler exactly like the two
+		// entries above it. Omitting it here would silently no-op the
+		// whole boot step — the proxy call falls back to "not
+		// reachable" and does nothing locally, since the orphan was
+		// never on this till in the first place — exactly like the
+		// /api/sync/stock incident this switch's own comment
+		// documents. TestSyncPullPathsAreExempt pins this entry.
+		"/api/sync/tables/release-all",
+		// ADR-0082 (ut-docs#1739): the primary-side one-shot fetch of the
+		// shop-scoped plugin-settings encryption key a replica's KeyStore
+		// makes on first use (internal/pages/sync_admin.go, SecretsKeyFetcher).
+		// syncTill-authed in the handler exactly like /api/sync/plugins.
+		// Omitting it here would silently leave every replica unable to open
+		// a synced Stripe/SumUp credential (the fetch is 401'd before the
+		// handler's bearer check runs, and the setting reads as "not
+		// configured" forever) — the /api/sync/stock failure class this
+		// switch's own comment documents. TestSyncPullPathsAreExempt pins
+		// this entry.
+		"/api/sync/secrets-key",
+		"/api/setup/join",
 		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status",
+		// ut-docs#1550: the wizard's "joined — restarting" trigger, the
+		// sibling of /api/setup/pair-status directly above and on the very
+		// same first-boot-only window (firstBootGate in the handler). A
+		// freshly-joined first-boot till has no operator to sign in as, so
+		// without this entry the auto-restart and its manual "Restart now"
+		// button both answer 401 before the handler ever runs.
+		// TestMiddlewareExemptsFirstBootPairingRoutes pins this entry.
+		"/api/setup/pairing-restart",
 		// ut-docs#1092: the wizard's install-a-catalog-language action —
 		// same first-boot-only window as /api/setup itself (its handler's
 		// NeedsFirstBoot gate refuses once an operator exists), and like
@@ -83,22 +141,6 @@ func exempt(path string) bool {
 		// operator to sign in as. TestSetupWizardEndpointsClearTheSessionWall
 		// pins this entry.
 		"/api/setup/tax-plugin-skip",
-		// ut-docs#1509: the wizard's restore/import step (setup.html's
-		// hx-post="/api/import"). Fourth route to ship behind this wall with
-		// a handler that already authorises itself: import_page.go's
-		// ut-docs#1168 first-boot exemption is preview-only, REFUSES any
-		// request carrying a session, requires NeedsFirstBoot, and fails
-		// closed on a nil AuthSvc — none of which ever ran, because the
-		// middleware answered 401 first and a first-boot till has no
-		// operator to sign in as. Same "the handler authenticates itself"
-		// tier as /api/sync/pair-request and /api/settings/exit-to-os below.
-		//
-		// This does NOT open import on a configured till: there,
-		// canPerform fails, no session is present, NeedsFirstBoot is false,
-		// and the handler answers 403 — and even inside the first-boot
-		// window it can only PREVIEW (commit=1 is refused; the wizard's
-		// real commit rides the final submit as the just-created admin).
-		"/api/import",
 		// ut-docs#1165: step 1's background update-check + its explicit
 		// apply action — same first-boot-only window as /api/setup/language
 		// above (NeedsFirstBoot refuses both once an operator exists).
@@ -180,11 +222,45 @@ func exempt(path string) bool {
 			return true
 		}
 	}
+	// ut-docs#1668: the primary-side cross-till voucher lookup a replica's
+	// fetchVoucherFromPrimary (voucher_sync_proxy.go) proxies to —
+	// syncTill-authed in the handler exactly like /api/sync/tables above.
+	// Read-only (no redeem/debit endpoint here — see sync_vouchers.go's own
+	// doc comment for why), so bounded to exactly one id segment, no
+	// suffix. Omitting this would silently no-op the whole feature exactly
+	// like the /api/sync/stock incident this switch's own comment
+	// documents — the proxy falls back to local-only on a 401, and a
+	// voucher issued elsewhere goes back to being unredeemable here.
+	// TestSyncPullPathsAreExempt pins this shape.
+	if rest, ok := strings.CutPrefix(path, "/api/sync/vouchers/"); ok && rest != "" && !strings.Contains(rest, "/") {
+		return true
+	}
 	return false
 }
 
 // Middleware gates every route behind a live session. Browsers are redirected
 // to /login; API calls get 401 JSON. The operator lands in the context.
+// optionalAuth paths are reachable WITHOUT a session but must still receive
+// one when the caller has it. This is a distinct tier from exempt(), and the
+// distinction is not cosmetic: exempt() returns before the cookie is ever
+// read, so a path listed there can never see who is calling.
+//
+// ut-docs#1516: /api/import was put in exempt() by ut-docs#1509 to unblock the
+// first-boot wizard restore, and that silently broke the ordinary case — a
+// signed-in manager pressing Import reached import_page.go with no user in
+// context, so canPerform failed, the handler's hasSession check saw nothing,
+// NeedsFirstBoot was false on a configured till, and the answer was 403
+// "manager or admin required". htmx does not swap non-2xx, so the operator saw
+// the spinner flash and nothing else. Import is the one route that genuinely
+// needs both halves: anonymous during first boot (preview only, gated by the
+// handler's NeedsFirstBoot branch) and session-aware afterwards.
+//
+// Anything added here MUST authorise itself in the handler — this tier only
+// promises "no 401 from the middleware", never "no authorisation required".
+func optionalAuth(path string) bool {
+	return path == "/api/import"
+}
+
 func Middleware(next http.Handler, svc *Service) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if exempt(r.URL.Path) {
@@ -196,6 +272,13 @@ func Middleware(next http.Handler, svc *Service) http.Handler {
 				next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), ctxKey{}, u)))
 				return
 			}
+		}
+		// Resolved above when a valid cookie was present; reaching here with
+		// an optional-auth path means there is no usable session, which is a
+		// legitimate state for it rather than a 401.
+		if optionalAuth(r.URL.Path) {
+			next.ServeHTTP(w, r)
+			return
 		}
 		if strings.HasPrefix(r.URL.Path, "/api/") {
 			w.Header().Set("Content-Type", "application/json")

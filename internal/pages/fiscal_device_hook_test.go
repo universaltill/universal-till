@@ -56,14 +56,21 @@ func TestPickDeviceEvidence_FirstWins(t *testing.T) {
 }
 
 // recordFiscalDeviceEvidence persists the receipt and, on the first one
-// ever, flips fiscal.tse_configured with an audit marker; a later receipt
+// ever, flips fiscal.signing_device_configured with an audit marker; a later receipt
 // leaves an already-true flag alone (no duplicate marker).
 func TestRecordFiscalDeviceEvidence_PersistsAndConfirmsOnce(t *testing.T) {
 	chdirRoot(t)
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
-	createFiscalDeviceReceiptsTable(t, db)
+	// audit_log.actor_id has a FOREIGN KEY to users(id) in the real migrated
+	// schema, and recordFiscalDeviceEvidence writes its confirmation marker
+	// under the actor that completed the sale — so the actor has to be a real
+	// user row here, or the marker is silently dropped and the flag flips
+	// without a trace of why. Same pattern as audit_page_test.go's fixtures.
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role) VALUES ('cashier','cashier1','Cashier One','x','cashier')`); err != nil {
+		t.Fatalf("seed actor: %v", err)
+	}
 	d := &common.Deps{Db: db, Settings: settings.NewStore(db)}
 	repo := data.NewPOSRepo(db)
 
@@ -78,7 +85,7 @@ func TestRecordFiscalDeviceEvidence_PersistsAndConfirmsOnce(t *testing.T) {
 	if err != nil || !ok || rec.ReceiptNo != "0000001" || rec.Serial != "SIM-1" || rec.ZNo != 2 {
 		t.Fatalf("persisted = %+v ok=%v err=%v", rec, ok, err)
 	}
-	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeyTSEConfigured); v != "true" {
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); v != "true" {
 		t.Fatalf("first receipt must confirm the device, tse_configured = %q", v)
 	}
 	if ok, _ := repo.HasAuditEntry(t.Context(), "fiscal_device", "sale-1", fiscalDeviceAuditConfirmed); !ok {

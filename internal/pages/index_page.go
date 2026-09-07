@@ -1,8 +1,6 @@
 package pages
 
 import (
-	"context"
-	"database/sql"
 	"encoding/json"
 	"html/template"
 	"net/http"
@@ -155,19 +153,4 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		}
 		httpx.Render("ui/pages/index.html", data)(w, r)
 	})
-}
-
-func collectPaymentMethods(ctx context.Context, db *sql.DB) []string {
-	defaults := []string{"cash", "card", "voucher", "account"}
-	if db == nil {
-		return defaults
-	}
-	methods, err := data.NewPOSRepo(db).ListPaymentMethodIDs(ctx)
-	if err != nil {
-		return defaults
-	}
-	if len(methods) == 0 {
-		return defaults
-	}
-	return methods
 }

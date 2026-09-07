@@ -20,7 +20,7 @@ const auditPageSize = 50
 func registerAuditPage(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/audit", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "audit") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required") // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
 			return
 		}
 

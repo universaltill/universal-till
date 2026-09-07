@@ -39,10 +39,28 @@ jobs:
             echo "Run: gofmt -w <file>"
             exit 1
           fi
+      - name: Lint (golangci-lint, unused)
+        # ut-docs#1565: there was no lint gate at all before this — see
+        # .golangci.yml's own header comment for scope (unused only for
+        # now; cmd/unitill-desktop excluded here, tracked as a follow-up
+        # that needs GTK/WebKit dev headers, same as the desktop-shell
+        # job below, to lint it under the `desktop` tag it actually ships
+        # with rather than produce false positives on per-platform stubs).
+        # v6 only supports golangci-lint v1; the v2.5.0 pinned below (and
+        # .golangci.yml's own `version: "2"` config schema) needs v8+
+        # (independent review, ut-docs#1565: v6 would have made this gate
+        # unable to run at all, caught before it ever reached real CI).
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.5.0
       - name: Data-access policy guard
         run: bash scripts/ci/guard-data-access.sh
       - name: Data-access policy guard regression test
         run: bash scripts/ci/guard-data-access_test.sh
+      - name: price_history sync-classification guard
+        run: bash scripts/ci/guard-price-history-sync.sh
+      - name: price_history sync-classification guard regression test
+        run: bash scripts/ci/guard-price-history-sync_test.sh
       - name: Migration-version-collision guard
         run: bash scripts/ci/guard-migration-version-collision.sh
       - name: Migration-version-collision guard regression test
@@ -92,6 +110,19 @@ jobs:
         run: bash scripts/ci/guard-android-status-address.sh
       - name: Android string resource i18n guard
         run: bash scripts/ci/guard-android-i18n.sh
+      - name: Android external-link hand-off guard
+        run: bash scripts/ci/guard-android-external-links.sh
+      - name: Android external-link hand-off guard regression test
+        run: bash scripts/ci/guard-android-external-links_test.sh
+      # guard-gobind-skip.sh's real-CI mode runs in android-ci.yml (it needs
+      # gobind on PATH, and only makes sense when android/**/mobile/**
+      # changed) — but its regression test is pure bash against throwaway
+      # fixtures, needs no toolchain, and must not be gated behind that path
+      # filter (ut-docs#1735 review): every other guard's own _test.sh runs
+      # unconditionally here, and a PR touching only the guard script itself
+      # would otherwise ship it completely unverified.
+      - name: gobind-skip guard regression test
+        run: bash scripts/ci/guard-gobind-skip_test.sh
       - name: Emoji font guard
         run: bash scripts/ci/guard-emoji-font.sh
       - name: htmx-loaded guard
@@ -110,6 +141,15 @@ jobs:
         run: bash scripts/ci/guard-e2e-fixtures-import_test.sh
       - name: Brand asset guard
         run: bash scripts/ci/check-brand-assets.sh
+      - name: Stale-worktree prune script regression test
+        # scripts/prune-stale-worktrees.sh itself is a manual maintenance
+        # tool (run via `make prune-worktrees`, not part of this build),
+        # but its test is fully hermetic (own mktemp -d scratch git repo,
+        # no network writes, no shared state) so nothing stops it running
+        # here — without this, a regression in its safety checks (e.g.
+        # ut-docs#1567's locked-worktree finding) would go undetected
+        # indefinitely.
+        run: bash scripts/prune-stale-worktrees_test.sh
       - name: Makefile version-stamp guard
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
@@ -124,7 +164,26 @@ jobs:
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
-        run: go test $(go list ./... | grep -v '/internal/plugins$')
+        # Excludes internal/plugins itself (own step below, ut-docs#643) and
+        # its oauth/marketplace subpackages (own step below, ut-docs#1630) —
+        # both run with -v there so a t.Skip is visible; this step stays
+        # plain, so don't run either a second time here.
+        run: go test $(go list ./... | grep -vE '/internal/plugins$|/internal/plugins/(oauth|marketplace)$')
+      - name: Test (internal/plugins/oauth and /marketplace — ut-docs#1630)
+        # Same gap #1626 fixed for internal/plugins itself: the main Test
+        # step above runs plain (no -v), so a t.Skip in these subpackages
+        # (both have a real one, gated on os.Hostname() being empty —
+        # internal/plugins/oauth/token_client_test.go and
+        # internal/plugins/marketplace/client_more_test.go) prints no
+        # `--- SKIP` line and CI just reports `ok` whether the test actually
+        # ran or silently skipped. Scoped to exactly these two packages (no
+        # trailing /...) so they don't also run inside the main Test step's
+        # `go test ./...` above — see that step's own exclude and ut-docs#662
+        # on why re-running things twice in one job is worth avoiding.
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: go test -v ./internal/plugins/oauth ./internal/plugins/marketplace
       - name: Test (internal/plugins — wider timeout, ut-docs#643/#753/#776)
         # internal/plugins hit the plain (this workflow never uses -race)
         # default 600s per-package `go test` timeout for real in CI (PR
@@ -147,15 +206,20 @@ jobs:
         # it for the whole suite, so a genuine hang anywhere else still
         # fails fast (within the default 10m) instead of taking up to 20m
         # to report. Scoped to the exact package (no trailing /...) so
-        # internal/plugins/marketplace and /oauth — already covered by the
-        # main Test step above — don't run a second time in this same job;
-        # see ut-docs#662's own comment on why re-running things twice in
-        # one job is exactly the kind of contention this package doesn't
-        # need more of.
+        # internal/plugins/marketplace and /oauth — covered by their own
+        # dedicated step above (ut-docs#1630), not the main Test step
+        # anymore — don't run a second time in this same job; see
+        # ut-docs#662's own comment on why re-running things twice in one
+        # job is exactly the kind of contention this package doesn't need
+        # more of.
+        # -v (ut-docs#1626): plain `go test` prints no `--- SKIP` line, so a
+        # test skipping here (e.g. TestReload_SurvivesRealisticPublisherContention's
+        # publisher-floor precondition, ut-docs#1198) was invisible — CI just
+        # reported `ok` whether the test actually ran or silently skipped.
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
-        run: go test -timeout 20m ./internal/plugins
+        run: go test -timeout 20m -v ./internal/plugins
       - name: Test (with OS locale set — ut-docs#662)
         # This runner's own container has no LANG, which is exactly what let
         # ut-docs#662's OS-locale-detection redirect (ut-docs#590) hide 4
@@ -216,9 +280,17 @@ jobs:
     # passed every PR check and surfaced only when cutting a release. This
     # job closes that gap for Linux (the platform that actually ships to
     # shops); Windows/macOS have the same shape of gap, tracked separately.
-    # Build + vet only, no tests and no window — release.yml remains the
-    # source of truth for the actual release recipe; keep this in sync with
-    # its "Install GTK/WebKit dev headers" / "Build unitill-desktop" steps.
+    # Build + vet, no tests and no window — release.yml remains the source
+    # of truth for the actual release recipe; keep this in sync with its
+    # "Install GTK/WebKit dev headers" / "Build unitill-desktop" steps.
+    # ut-docs#1581 (split from ut-docs#1565) added the last three steps: a
+    # `desktop`-tagged golangci-lint pass, a whole-program deadcode baseline
+    # check, and that guard's own regression test — all three need this
+    # job's GTK/WebKit headers to type-check cmd/unitill-desktop's real cgo
+    # files at all. See .golangci-desktop.yml and
+    # scripts/ci/guard-deadcode-baseline.sh for why each is a separate
+    # config/script from the root `build` job's untagged equivalents rather
+    # than a shared one.
     runs-on: ubuntu-latest
     needs: build
     steps:
@@ -241,6 +313,27 @@ jobs:
           GOCACHE: ${{ runner.temp }}/gobuildcache
           CGO_ENABLED: 1
         run: go vet -tags desktop ./cmd/unitill-desktop
+      - name: Lint unitill-desktop (golangci-lint, unused, desktop build tag)
+        uses: golangci/golangci-lint-action@v8
+        with:
+          version: v2.5.0
+          args: --config=.golangci-desktop.yml --build-tags=desktop ./cmd/unitill-desktop/...
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+          CGO_ENABLED: 1
+      - name: Deadcode baseline (whole-program, desktop build tag)
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+          CGO_ENABLED: 1
+        run: bash scripts/ci/guard-deadcode-baseline.sh
+      - name: Deadcode baseline guard regression test
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+          CGO_ENABLED: 1
+        run: bash scripts/ci/guard-deadcode-baseline_test.sh
 
   e2e:
     runs-on: ubuntu-latest

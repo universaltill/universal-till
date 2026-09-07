@@ -16,6 +16,7 @@ import (
 	"github.com/universaltill/universal-till/internal/barcode"
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/money"
 )
 
 // POSRepo centralizes DB access for POS handlers.
@@ -641,7 +642,7 @@ func (r *POSRepo) RecordNegativeInventoryOverride(ctx context.Context, override 
 		"snapshot": snapshot,
 	}
 	// Dual attribution (ut-docs#780), same convention as fiscal_api.go's
-	// createTSEOverride: only recorded when it actually differs from the
+	// createSigningOverride: only recorded when it actually differs from the
 	// audit actor, so a self-authorized override's payload stays as-is.
 	if override.RequestedBy != "" && override.RequestedBy != override.ActorID {
 		payload["requested_by"] = override.RequestedBy
@@ -699,6 +700,12 @@ WHERE i.reorder_level > 0
 		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel); err != nil {
 			return nil, fmt.Errorf("scan low stock item: %w", err)
 		}
+		// ut-docs#1610 (review): the joined stock_locations row is NOT
+		// is_active-filtered here, and a location FK-blocked from an
+		// admin-sync prune is FK-blocked precisely BECAUSE inventory rows
+		// point at it — i.e. exactly the rows this query returns. Undo the
+		// retire mangle so the reorder list can't show "Back Room~loc-1".
+		item.LocationName = stripRetireMangle(item.LocationID, item.LocationName)
 		items = append(items, item)
 	}
 
@@ -937,6 +944,389 @@ ORDER BY revenue DESC`, args...)
 			return nil, fmt.Errorf("scan dept instant window: %w", err)
 		}
 		out = append(out, d)
+	}
+	return out, rows.Err()
+}
+
+// ArticleGroupSales is one article group's revenue for a reporting window. An
+// article group is an item's IMMEDIATE category (item.category_id →
+// categories.name) — deliberately NOT rolled up to the root the way
+// DeptSales/dept_roots is (ut-docs#1010): "Phones" (a child of "Electronics")
+// reports as its own group here, where DepartmentsForDay would fold it into
+// "Electronics". Net/Gross mirror export_repo.go's Net/Tax DTO convention
+// (sale_lines.total_before_tax / total_after_tax), not sales.total, so this
+// reconciles with ArticleSales/OperatorSales' own totals for the same day.
+type ArticleGroupSales struct {
+	Group string      `json:"group"`
+	Qty   float64     `json:"qty"`
+	Net   money.Money `json:"net"`
+	Gross money.Money `json:"gross"`
+}
+
+// ArticleGroupsForDay groups completed-sale revenue by the sold items' own
+// IMMEDIATE category for a single business day (used by the EOD Z-report's
+// "BY ARTICLE GROUP" section, ut-docs#1010). day is "YYYY-MM-DD", matched on
+// the shop's LOCAL calendar day (ut-docs#869), same convention as
+// DepartmentsForDay. Items with no category (or since-deleted) roll up to ""
+// (rendered as Uncategorized by callers, same as DepartmentsForDay).
+func (r *POSRepo) ArticleGroupsForDay(ctx context.Context, day string) ([]ArticleGroupSales, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT COALESCE(c.name, '') AS article_group,
+       SUM(sl.quantity) AS qty,
+       COALESCE(SUM(sl.total_before_tax), 0) AS net,
+       COALESCE(SUM(sl.total_after_tax), 0) AS gross
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+LEFT JOIN item_variants iv ON iv.id = sl.variant_id
+LEFT JOIN items it ON it.id = COALESCE(sl.item_id, iv.item_id)
+LEFT JOIN categories c ON c.id = it.category_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+GROUP BY article_group
+ORDER BY gross DESC`, day)
+	if err != nil {
+		return nil, fmt.Errorf("article groups for day: %w", err)
+	}
+	defer rows.Close()
+	var out []ArticleGroupSales
+	for rows.Next() {
+		var g ArticleGroupSales
+		var netMinor, grossMinor int64
+		if err := rows.Scan(&g.Group, &g.Qty, &netMinor, &grossMinor); err != nil {
+			return nil, fmt.Errorf("scan article group day: %w", err)
+		}
+		g.Net = money.FromMinor(netMinor)
+		g.Gross = money.FromMinor(grossMinor)
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// ArticleGroupsForInstantWindow is ArticleGroupsForDay's close-to-close
+// sibling (ADR-0066, ut-docs#1010/#1141's own EODInstant path), matched on
+// the same half-open instantWindow(s.created_at) [from, to) range
+// dateRangeSummaryInstant/DepartmentsForInstantWindow use, rather than one
+// local calendar day. This is what the LIVE "Run end-of-day" endpoint
+// actually calls (internal/pages' generateEOD → EndOfDayInstant →
+// dateRangeSummaryInstant) — ArticleGroupsForDay alone is unreachable from
+// that path (EndOfDay/EndOfDayRange are the scheduler-tick/ad-hoc-range
+// callers only).
+func (r *POSRepo) ArticleGroupsForInstantWindow(ctx context.Context, from, to time.Time) ([]ArticleGroupSales, error) {
+	win, args := instantWindow("s.created_at", from, to)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT COALESCE(c.name, '') AS article_group,
+       SUM(sl.quantity) AS qty,
+       COALESCE(SUM(sl.total_before_tax), 0) AS net,
+       COALESCE(SUM(sl.total_after_tax), 0) AS gross
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+LEFT JOIN item_variants iv ON iv.id = sl.variant_id
+LEFT JOIN items it ON it.id = COALESCE(sl.item_id, iv.item_id)
+LEFT JOIN categories c ON c.id = it.category_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND `+win+`
+GROUP BY article_group
+ORDER BY gross DESC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("article groups for instant window: %w", err)
+	}
+	defer rows.Close()
+	var out []ArticleGroupSales
+	for rows.Next() {
+		var g ArticleGroupSales
+		var netMinor, grossMinor int64
+		if err := rows.Scan(&g.Group, &g.Qty, &netMinor, &grossMinor); err != nil {
+			return nil, fmt.Errorf("scan article group instant window: %w", err)
+		}
+		g.Net = money.FromMinor(netMinor)
+		g.Gross = money.FromMinor(grossMinor)
+		out = append(out, g)
+	}
+	return out, rows.Err()
+}
+
+// ArticleSales is one article's (sale_lines.name_snapshot) revenue for a
+// reporting window — ArticleGroupsForDay's per-article-not-per-category
+// counterpart (ut-docs#1010).
+type ArticleSales struct {
+	Name  string      `json:"name"`
+	Qty   float64     `json:"qty"`
+	Net   money.Money `json:"net"`
+	Gross money.Money `json:"gross"`
+}
+
+// ArticleSalesForDay returns EVERY sold article for a single business day —
+// no LIMIT, unlike TopItems/SlowItems (ut-docs#1010's EOD "BY ARTICLE"
+// section needs the complete list, not a top/bottom-N slice). Grouped by
+// sl.name_snapshot, the same key TopItems already groups by (kept identical
+// for consistency; TopItems itself is untouched). day is matched on the
+// shop's LOCAL calendar day, same convention as DepartmentsForDay/
+// ArticleGroupsForDay.
+func (r *POSRepo) ArticleSalesForDay(ctx context.Context, day string) ([]ArticleSales, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT sl.name_snapshot,
+       SUM(sl.quantity) AS qty,
+       COALESCE(SUM(sl.total_before_tax), 0) AS net,
+       COALESCE(SUM(sl.total_after_tax), 0) AS gross
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+GROUP BY sl.name_snapshot
+ORDER BY gross DESC`, day)
+	if err != nil {
+		return nil, fmt.Errorf("article sales for day: %w", err)
+	}
+	defer rows.Close()
+	var out []ArticleSales
+	for rows.Next() {
+		var a ArticleSales
+		var netMinor, grossMinor int64
+		if err := rows.Scan(&a.Name, &a.Qty, &netMinor, &grossMinor); err != nil {
+			return nil, fmt.Errorf("scan article sales day: %w", err)
+		}
+		a.Net = money.FromMinor(netMinor)
+		a.Gross = money.FromMinor(grossMinor)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// ArticleSalesForInstantWindow is ArticleSalesForDay's close-to-close
+// sibling — see ArticleGroupsForInstantWindow's doc comment for why this
+// (not ArticleSalesForDay) is the one the live EOD endpoint actually calls.
+// Still no LIMIT. Grouped by sl.name_snapshot, same as ArticleSalesForDay/
+// TopItems.
+func (r *POSRepo) ArticleSalesForInstantWindow(ctx context.Context, from, to time.Time) ([]ArticleSales, error) {
+	win, args := instantWindow("s.created_at", from, to)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT sl.name_snapshot,
+       SUM(sl.quantity) AS qty,
+       COALESCE(SUM(sl.total_before_tax), 0) AS net,
+       COALESCE(SUM(sl.total_after_tax), 0) AS gross
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND `+win+`
+GROUP BY sl.name_snapshot
+ORDER BY gross DESC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("article sales for instant window: %w", err)
+	}
+	defer rows.Close()
+	var out []ArticleSales
+	for rows.Next() {
+		var a ArticleSales
+		var netMinor, grossMinor int64
+		if err := rows.Scan(&a.Name, &a.Qty, &netMinor, &grossMinor); err != nil {
+			return nil, fmt.Errorf("scan article sales instant window: %w", err)
+		}
+		a.Net = money.FromMinor(netMinor)
+		a.Gross = money.FromMinor(grossMinor)
+		out = append(out, a)
+	}
+	return out, rows.Err()
+}
+
+// OrderTypeSales is one consumption-mode bucket's revenue for a reporting
+// window — the EOD Z-report's "BY ORDER TYPE" section (ut-docs#1015).
+// OrderType is a LINE's normalized value ("" dine in, "takeaway" takeaway,
+// per ADR-0073 Decision 1) — this decomposes a mixed sale across both
+// buckets by its own lines rather than needing a third "mixed" bucket,
+// the same way BY ARTICLE decomposes a multi-item sale across its items.
+// Net/Gross mirror ArticleGroupSales/ArticleSales' sale_lines-derived DTO
+// convention (total_before_tax/total_after_tax, not sales.total), so this
+// reconciles with those two breakdowns for the same window.
+type OrderTypeSales struct {
+	OrderType string      `json:"order_type"`
+	Qty       float64     `json:"qty"`
+	Net       money.Money `json:"net"`
+	Gross     money.Money `json:"gross"`
+}
+
+// OrderTypeSalesForDay groups completed-sale revenue by sale_lines.order_type
+// for a single business day — ArticleGroupsForDay's consumption-mode
+// counterpart. day is matched on the shop's LOCAL calendar day, same
+// convention as ArticleGroupsForDay/ArticleSalesForDay. The CASE normalizes
+// any value other than "takeaway" to "" at the query itself (review finding
+// 2, ut-docs#1015): CompleteSale's NormalizeLineOrderType already clamps
+// every persisted line to one of these two values (ADR-0073 Decision 1), so
+// this is unreachable defence-in-depth today, not a live bug — but without
+// it, a stray third value would render as a SECOND "Dine in" row (both
+// eod_api.go's print section and the HTML partial fold anything != takeaway
+// to that label), which this collapses at the source instead. ORDER BY 1 ASC
+// is deliberate, not incidental: "" (dine in) sorts before "takeaway"
+// lexically, giving a stable dine-in-first display order regardless of
+// revenue — unlike ArticleGroupsForDay's ORDER BY gross DESC, ranking two
+// fixed buckets by revenue would reorder the section between reports for no
+// useful reason. Only a bucket with at least one line appears (no zero-fill)
+// — same "absent, not empty" convention as the article-group/article/
+// operator breakdowns beside it.
+func (r *POSRepo) OrderTypeSalesForDay(ctx context.Context, day string) ([]OrderTypeSales, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT CASE WHEN sl.order_type = 'takeaway' THEN 'takeaway' ELSE '' END AS order_type,
+       SUM(sl.quantity) AS qty,
+       COALESCE(SUM(sl.total_before_tax), 0) AS net,
+       COALESCE(SUM(sl.total_after_tax), 0) AS gross
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+GROUP BY 1
+ORDER BY 1 ASC`, day)
+	if err != nil {
+		return nil, fmt.Errorf("order type sales for day: %w", err)
+	}
+	defer rows.Close()
+	var out []OrderTypeSales
+	for rows.Next() {
+		var o OrderTypeSales
+		var netMinor, grossMinor int64
+		if err := rows.Scan(&o.OrderType, &o.Qty, &netMinor, &grossMinor); err != nil {
+			return nil, fmt.Errorf("scan order type sales day: %w", err)
+		}
+		o.Net = money.FromMinor(netMinor)
+		o.Gross = money.FromMinor(grossMinor)
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// OrderTypeSalesForInstantWindow is OrderTypeSalesForDay's close-to-close
+// sibling — see ArticleGroupsForInstantWindow's doc comment for why this
+// (not OrderTypeSalesForDay) is the one the live EOD endpoint actually
+// calls. Same normalizing CASE and deliberate ASC order as OrderTypeSalesForDay.
+func (r *POSRepo) OrderTypeSalesForInstantWindow(ctx context.Context, from, to time.Time) ([]OrderTypeSales, error) {
+	win, args := instantWindow("s.created_at", from, to)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT CASE WHEN sl.order_type = 'takeaway' THEN 'takeaway' ELSE '' END AS order_type,
+       SUM(sl.quantity) AS qty,
+       COALESCE(SUM(sl.total_before_tax), 0) AS net,
+       COALESCE(SUM(sl.total_after_tax), 0) AS gross
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND `+win+`
+GROUP BY 1
+ORDER BY 1 ASC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("order type sales for instant window: %w", err)
+	}
+	defer rows.Close()
+	var out []OrderTypeSales
+	for rows.Next() {
+		var o OrderTypeSales
+		var netMinor, grossMinor int64
+		if err := rows.Scan(&o.OrderType, &o.Qty, &netMinor, &grossMinor); err != nil {
+			return nil, fmt.Errorf("scan order type sales instant window: %w", err)
+		}
+		o.Net = money.FromMinor(netMinor)
+		o.Gross = money.FromMinor(grossMinor)
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// OperatorSales is one cashier's revenue for a reporting window (ut-docs#1010).
+// Attribution is sales.cashier_id alone — the operator who actually rang the
+// sale — NEVER the audit_log actor/blocked-actor pair a manager-override
+// elevation on that sale might separately record (InsertAuditElevated); see
+// OperatorSalesForDay's own doc comment. Net/Gross are derived from
+// sale_lines, the same as ArticleGroupSales/ArticleSales, so all three
+// reconcile to the same day total — NOT sales.total (which can include
+// service charge/rounding these article-level figures deliberately exclude).
+type OperatorSales struct {
+	CashierID   string      `json:"cashier_id"`
+	DisplayName string      `json:"display_name"`
+	Count       int         `json:"count"`
+	Net         money.Money `json:"net"`
+	Gross       money.Money `json:"gross"`
+}
+
+// OperatorSalesForDay groups completed-sale revenue by sales.cashier_id for
+// a single business day (EOD Z-report's "BY OPERATOR" section, ut-docs#1010).
+// day is matched on the shop's LOCAL calendar day, same convention as
+// DepartmentsForDay/ArticleGroupsForDay/ArticleSalesForDay.
+//
+// DisplayName resolves the same fallback chain reports_page.go's
+// workerAllocationDisplayNames uses for worker_allocations.cashier_id
+// (display_name if non-empty, else username), done here as a LEFT JOIN to
+// users rather than a second Go-side lookup query — this method already
+// returns one row per cashier, so the join adds no extra query. A cashier_id
+// with no matching user row (deleted account) falls back to the raw id.
+//
+// Count is the number of completed SALES (COUNT(DISTINCT s.id)), not sale
+// lines — a multi-line sale must count once per operator, not once per item.
+//
+// Dual attribution (ut-docs#1010 acceptance criterion): a manager-override
+// elevation on this sale (InsertAuditElevated, internal/pages/elevation.go's
+// checkOrElevate) records the elevation in audit_log — actor_id (the
+// approving manager) and blocked_actor_id (the originally-blocked cashier)
+// — entirely separately from sales.cashier_id, which this query is the only
+// column it reads. The elevation flow never rewrites cashier_id, so the
+// sale's revenue stays attributed to whoever actually rang it regardless of
+// any elevation recorded against it — see
+// TestOperatorSalesForDay_AttributionSurvivesManagerElevation.
+func (r *POSRepo) OperatorSalesForDay(ctx context.Context, day string) ([]OperatorSales, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT COALESCE(s.cashier_id, '') AS cashier_id,
+       COALESCE(NULLIF(u.display_name, ''), u.username, s.cashier_id, '') AS display_name,
+       COUNT(DISTINCT s.id) AS cnt,
+       COALESCE(SUM(sl.total_before_tax), 0) AS net,
+       COALESCE(SUM(sl.total_after_tax), 0) AS gross
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+LEFT JOIN users u ON u.id = s.cashier_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+GROUP BY COALESCE(s.cashier_id, '')
+ORDER BY gross DESC`, day)
+	if err != nil {
+		return nil, fmt.Errorf("operator sales for day: %w", err)
+	}
+	defer rows.Close()
+	var out []OperatorSales
+	for rows.Next() {
+		var o OperatorSales
+		var netMinor, grossMinor int64
+		if err := rows.Scan(&o.CashierID, &o.DisplayName, &o.Count, &netMinor, &grossMinor); err != nil {
+			return nil, fmt.Errorf("scan operator sales day: %w", err)
+		}
+		o.Net = money.FromMinor(netMinor)
+		o.Gross = money.FromMinor(grossMinor)
+		out = append(out, o)
+	}
+	return out, rows.Err()
+}
+
+// OperatorSalesForInstantWindow is OperatorSalesForDay's close-to-close
+// sibling — see ArticleGroupsForInstantWindow's doc comment for why this
+// (not OperatorSalesForDay) is the one the live EOD endpoint actually
+// calls. Same attribution/display-name/count conventions, including the
+// dual-attribution guarantee (sales.cashier_id alone, never audit_log's
+// elevation actor/blocked-actor pair) — see OperatorSalesForDay's doc
+// comment.
+func (r *POSRepo) OperatorSalesForInstantWindow(ctx context.Context, from, to time.Time) ([]OperatorSales, error) {
+	win, args := instantWindow("s.created_at", from, to)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT COALESCE(s.cashier_id, '') AS cashier_id,
+       COALESCE(NULLIF(u.display_name, ''), u.username, s.cashier_id, '') AS display_name,
+       COUNT(DISTINCT s.id) AS cnt,
+       COALESCE(SUM(sl.total_before_tax), 0) AS net,
+       COALESCE(SUM(sl.total_after_tax), 0) AS gross
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+LEFT JOIN users u ON u.id = s.cashier_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND `+win+`
+GROUP BY COALESCE(s.cashier_id, '')
+ORDER BY gross DESC`, args...)
+	if err != nil {
+		return nil, fmt.Errorf("operator sales for instant window: %w", err)
+	}
+	defer rows.Close()
+	var out []OperatorSales
+	for rows.Next() {
+		var o OperatorSales
+		var netMinor, grossMinor int64
+		if err := rows.Scan(&o.CashierID, &o.DisplayName, &o.Count, &netMinor, &grossMinor); err != nil {
+			return nil, fmt.Errorf("scan operator sales instant window: %w", err)
+		}
+		o.Net = money.FromMinor(netMinor)
+		o.Gross = money.FromMinor(grossMinor)
+		out = append(out, o)
 	}
 	return out, rows.Err()
 }
@@ -1865,6 +2255,21 @@ type EODReport struct {
 	Tips           []EODTip        `json:"tips"`        // tips by payment method, held out of revenue (ut-docs#1007)
 	Departments    []DeptSales     `json:"departments"` // per-department sales (E1b)
 	Tills          []TillSales     `json:"tills"`       // per-register sales (multi-till)
+	// ArticleGroups/Articles/Operators (ut-docs#1010) are single-day-only,
+	// gated on the SAME from==to check as Departments/Tills above — see
+	// dateRangeSummary's own inline comment on that gate. ArticleGroups
+	// groups by an item's IMMEDIATE category (unlike Departments' root-
+	// category rollup); Articles is every sold article, no top/bottom-N
+	// limit; Operators is per-cashier, attributed by sales.cashier_id alone
+	// (survives a manager-override elevation recorded separately in
+	// audit_log — see OperatorSalesForDay's doc comment).
+	ArticleGroups []ArticleGroupSales `json:"article_groups,omitempty"`
+	Articles      []ArticleSales      `json:"articles,omitempty"`
+	Operators     []OperatorSales     `json:"operators,omitempty"`
+	// OrderTypes is the dine-in/takeaway revenue breakdown (ut-docs#1015),
+	// same single-day-only gate and same best-effort convention as
+	// ArticleGroups/Articles/Operators above.
+	OrderTypes []OrderTypeSales `json:"order_types,omitempty"`
 	// Voucher liability flows (ut-docs#1008): count + amount (minor units) of
 	// vouchers issued and redeemed in the window, from voucher_transactions.
 	// Reported DISTINCTLY from article revenue: an issue is a 0% liability
@@ -2081,15 +2486,36 @@ func (r *POSRepo) EndOfDayRange(ctx context.Context, from, to string) (EODReport
 	return rep, err
 }
 
+// EndOfDayInstant is EndOfDay's close-to-close sibling (ADR-0066, card 2 /
+// ut-docs#1141) — a thin exported wrapper around dateRangeSummaryInstant so
+// internal/pages' generateEOD can reach it (dateRangeSummaryInstant itself
+// is unexported, matching EndOfDay/EndOfDayRange's own division of labor
+// around dateRangeSummary). Used only by the "eod" kind's generation path,
+// never by EndOfDayRange or any calendar-day caller. Deliberately leaves
+// rep.From/rep.To unset — those are display-only (ADR-0066 Decision 6) and
+// the caller formats them in the shop's local offset, not UTC.
+func (r *POSRepo) EndOfDayInstant(ctx context.Context, from, to time.Time) (EODReport, error) {
+	return r.dateRangeSummaryInstant(ctx, from, to)
+}
+
 // dateRangeSummary is the shared aggregation body behind EndOfDay and
-// EndOfDayRange. date(created_at, 'localtime') BETWEEN date(?) AND date(?)
-// is equivalent to date(created_at, 'localtime') = date(?) when from == to,
-// so EndOfDay's behavior (and its existing tests) are unaffected by sharing
-// this with the range query. Every from/to comparison in this function
-// (and DepartmentsForDay's) wraps its RHS in date(...) too, even though
-// from/to always arrive as canonical "YYYY-MM-DD" text — one consistent
-// convention across all four fragments this file uses for a "day" argument,
-// rather than three bare and one wrapped.
+// EndOfDayRange. `local_date BETWEEN date(?) AND date(?)` is equivalent to
+// `local_date = date(?)` when from == to, so EndOfDay's behavior (and its
+// existing tests) are unaffected by sharing this with the range query.
+// Every from/to comparison in this function (and DepartmentsForDay's) wraps
+// its RHS in date(...) too, even though from/to always arrive as canonical
+// "YYYY-MM-DD" text — one consistent convention across every fragment this
+// file uses for a "day" argument, rather than some bare and some wrapped.
+//
+// ut-docs#1342: this function used to compare date(created_at, 'localtime')
+// directly, which SQLite refuses to let any index back (the 'localtime'
+// modifier is classified non-deterministic). It now compares against
+// sales.local_date/voided_local_date — plain columns populated at write
+// time (InsertSale, UpdateSaleStatus) using this exact same
+// date(x, 'localtime') conversion, so the result is identical; only where
+// the conversion happens changed, from every read to once per write. See
+// migration 007's header for the full rationale, including why this is a
+// write-time column rather than a generated/indexed expression.
 //
 // from/to are matched on the shop's LOCAL calendar day (ut-docs#869) — the
 // same convention DayTotal and ListSalesJournal's Day filter already use
@@ -2116,7 +2542,7 @@ SELECT
   COALESCE(SUM(CASE WHEN sale_type = 'sale' THEN tax_total ELSE -tax_total END), 0),
   COALESCE(MIN(receipt_no), ''), COALESCE(MAX(receipt_no), '')
 FROM sales
-WHERE status = 'completed' AND date(created_at, 'localtime') BETWEEN date(?) AND date(?)`,
+WHERE status = 'completed' AND local_date BETWEEN date(?) AND date(?)`,
 		from, to).Scan(&rep.SalesCount, &rep.Gross, &rep.RefundCount, &rep.RefundTotal,
 		&rep.TaxNet, &rep.FirstReceipt, &rep.LastReceipt)
 	if err != nil {
@@ -2133,20 +2559,34 @@ WHERE status = 'completed' AND date(created_at, 'localtime') BETWEEN date(?) AND
 	// count before a sale completes. Matched on voided_at's local
 	// calendar day (not created_at): a sale can complete one day and be
 	// voided the next, and the cancellation as an audit event belongs to
-	// the day it was actually cancelled. COALESCE(voided_at, created_at)
-	// makes a legacy/hand-inserted row with a NULL voided_at fail
-	// visible (it still lands on SOME day) rather than silently
-	// vanishing from every window's count — every row this repo itself
-	// writes always stamps voided_at (UpdateSaleStatus's own CASE WHEN),
-	// so this only guards a row this codebase didn't create. Never
-	// folded into Gross/Net/RefundTotal above — a voided sale carries no
-	// revenue and this is purely an informational count/total, same as
-	// the reference day-close's separate "Stornos" column.
+	// the day it was actually cancelled. Falling back to local_date when
+	// voided_local_date is NULL (a legacy/hand-inserted row with no
+	// voided_at) makes such a row fail visible — it still lands on SOME
+	// day — rather than silently vanishing from every window's count;
+	// every row this repo itself writes always stamps voided_at
+	// (UpdateSaleStatus's own CASE WHEN, which also stamps
+	// voided_local_date), so this only guards a row this codebase didn't
+	// create. Never folded into Gross/Net/RefundTotal above — a voided
+	// sale carries no revenue and this is purely an informational
+	// count/total, same as the reference day-close's separate "Stornos"
+	// column.
+	//
+	// ut-docs#1342: this used to be a single COALESCE(voided_at,
+	// created_at) wrapped in date(..., 'localtime'), which SQLite refuses
+	// to let any index back (classified non-deterministic). Split here
+	// into an OR of two plain range comparisons against the precomputed
+	// voided_local_date/local_date columns — same result as the original
+	// COALESCE, but each branch is sargable on its own column (a COALESCE
+	// across two columns cannot itself be satisfied by an index on
+	// either one).
 	err = r.db.QueryRowContext(ctx, `
 SELECT COUNT(*), COALESCE(SUM(total), 0)
 FROM sales
-WHERE status = 'voided' AND date(COALESCE(voided_at, created_at), 'localtime') BETWEEN date(?) AND date(?)`,
-		from, to).Scan(&rep.CancelCount, &rep.CancelTotal)
+WHERE status = 'voided' AND (
+  (voided_local_date IS NOT NULL AND voided_local_date BETWEEN date(?) AND date(?))
+  OR (voided_local_date IS NULL AND local_date BETWEEN date(?) AND date(?))
+)`,
+		from, to, from, to).Scan(&rep.CancelCount, &rep.CancelTotal)
 	if err != nil {
 		return rep, fmt.Errorf("eod cancellations: %w", err)
 	}
@@ -2168,7 +2608,7 @@ SELECT p.method_id,
   COALESCE(SUM(CASE WHEN s.sale_type = 'return' THEN p.amount - p.change_given END), 0)
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
-WHERE s.status = 'completed' AND date(s.created_at, 'localtime') BETWEEN date(?) AND date(?)
+WHERE s.status = 'completed' AND s.local_date BETWEEN date(?) AND date(?)
 GROUP BY p.method_id ORDER BY 2 DESC`, from, to)
 	if err != nil {
 		return rep, fmt.Errorf("eod methods: %w", err)
@@ -2208,7 +2648,7 @@ GROUP BY p.method_id ORDER BY 2 DESC`, from, to)
 SELECT p.method_id, COUNT(*), COALESCE(SUM(p.tip_amount), 0)
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
-WHERE p.tip_amount > 0 AND s.status = 'completed' AND date(s.created_at, 'localtime') BETWEEN date(?) AND date(?)
+WHERE p.tip_amount > 0 AND s.status = 'completed' AND s.local_date BETWEEN date(?) AND date(?)
 GROUP BY p.method_id ORDER BY p.method_id`, from, to)
 	if err != nil {
 		return rep, fmt.Errorf("eod tips: %w", err)
@@ -2248,6 +2688,24 @@ GROUP BY p.method_id ORDER BY p.method_id`, from, to)
 	if from == to {
 		if depts, err := r.DepartmentsForDay(ctx, from); err == nil {
 			rep.Departments = depts
+		}
+		// Article-group/article/operator breakdowns (ut-docs#1010) — same
+		// single-day gate and same best-effort/swallow-the-error convention
+		// as Departments above: a breakdown query failing must not sink the
+		// whole Z-report (day-close still completes; the section is simply
+		// absent). NOT generalized to a range, same explicit non-goal as
+		// Departments/Tills (see this block's own doc comment).
+		if groups, err := r.ArticleGroupsForDay(ctx, from); err == nil {
+			rep.ArticleGroups = groups
+		}
+		if articles, err := r.ArticleSalesForDay(ctx, from); err == nil {
+			rep.Articles = articles
+		}
+		if operators, err := r.OperatorSalesForDay(ctx, from); err == nil {
+			rep.Operators = operators
+		}
+		if orderTypes, err := r.OrderTypeSalesForDay(ctx, from); err == nil {
+			rep.OrderTypes = orderTypes
 		}
 		// Cash-drawer reconciliation (ut-docs#1006) — single-day only, like
 		// the breakdowns around it (summing counted-vs-calculated across a
@@ -2291,7 +2749,7 @@ GROUP BY p.method_id ORDER BY p.method_id`, from, to)
 SELECT s.till_id, COALESCE(t.name, ''), COUNT(*), COALESCE(SUM(s.total), 0)
 FROM sales s
 LEFT JOIN tills t ON t.id = s.till_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.local_date = date(?)
 GROUP BY s.till_id ORDER BY 4 DESC`, from)
 	} else {
 		return rep, nil
@@ -2451,6 +2909,23 @@ GROUP BY p.method_id ORDER BY p.method_id`, margs...)
 	// Z-report (day-close still completes; the section is simply absent).
 	if depts, err := r.DepartmentsForInstantWindow(ctx, from, to); err == nil {
 		rep.Departments = depts
+	}
+	// Article groups/articles/operators (ut-docs#1010) — same best-effort,
+	// swallow-the-error convention as Departments above. This is the path
+	// the LIVE "Run end-of-day" endpoint actually calls (generateEOD →
+	// EndOfDayInstant → here), so these three MUST be populated here, not
+	// only in dateRangeSummary's EndOfDay/EndOfDayRange path.
+	if groups, err := r.ArticleGroupsForInstantWindow(ctx, from, to); err == nil {
+		rep.ArticleGroups = groups
+	}
+	if articles, err := r.ArticleSalesForInstantWindow(ctx, from, to); err == nil {
+		rep.Articles = articles
+	}
+	if operators, err := r.OperatorSalesForInstantWindow(ctx, from, to); err == nil {
+		rep.Operators = operators
+	}
+	if orderTypes, err := r.OrderTypeSalesForInstantWindow(ctx, from, to); err == nil {
+		rep.OrderTypes = orderTypes
 	}
 	if rc, rcErr := r.CashReconciliationForInstantWindow(ctx, from, to); rcErr == nil && rc != nil {
 		// CashSales comes from the report's own payment-method breakdown
@@ -3024,11 +3499,15 @@ func (r *POSRepo) HasArchivedReport(ctx context.Context, kind, period string) (b
 
 // PruneReportArchiveOlderThan deletes report_archive rows whose period is
 // strictly before cutoff (ADR-0040 §2, till-mode age-based retention).
-// period is stored "YYYY-MM-DD" (see generateEOD), which sorts and
-// range-compares correctly as plain text, so cutoff is the same format and
-// no date parsing happens here. A single DELETE statement, never
-// read-then-delete, so a prune can't race an in-flight archive write.
-// Returns the number of rows removed.
+// period was always stored "YYYY-MM-DD" pre-ADR-0066; since ADR-0066 a
+// "eod" row's period is instead the close instant (RFC3339, local offset —
+// see ArchiveReport's doc comment), but it still sorts and range-compares
+// correctly against a bare cutoff date as plain text (a same-day RFC3339
+// value is a strict suffix extension of its date prefix, so
+// `'2026-08-24' < '2026-08-24T19:19:00+02:00'` holds), so cutoff stays the
+// same "YYYY-MM-DD" format and no date parsing happens here. A single
+// DELETE statement, never read-then-delete, so a prune can't race an
+// in-flight archive write. Returns the number of rows removed.
 func (r *POSRepo) PruneReportArchiveOlderThan(ctx context.Context, cutoff string) (int64, error) {
 	res, err := r.db.ExecContext(ctx, `DELETE FROM report_archive WHERE period < ?`, cutoff)
 	if err != nil {
@@ -3072,10 +3551,36 @@ func (r *POSRepo) ReportArchiveCoverage(ctx context.Context) (ReportArchiveCover
 // span limit is enforced here, same division of responsibility as
 // data_api.go's export handler).
 func (r *POSRepo) ArchivedReportsInRange(ctx context.Context, from, to string) ([]ArchivedReportRow, error) {
+	// ADR-0066 Decision 5 / ut-docs#1141: filters on the row's own
+	// created_at, not period. A raw `period BETWEEN from AND to` bound
+	// against "YYYY-MM-DD" text silently excludes a "eod" row whose period
+	// is now an RFC3339 close instant falling on the range's own last day
+	// ("2026-08-24T19:19:00+02:00" sorts after the bare date "2026-08-24").
+	// datetime(...) on both sides normalizes text form (report_archive's
+	// created_at is either the schema default's space-separated form or an
+	// explicit closedAt write — see ArchiveReport's doc comment) without
+	// bucketing to a calendar day, matching this file's other instant
+	// window queries. `to` is exclusive at the calendar day AFTER the
+	// requested end date, so the whole of that last day is included.
+	//
+	// 'localtime' is load-bearing, not decoration (2026-09-04 review of
+	// ut-docs#1141): created_at is stored UTC-naive on BOTH paths above,
+	// while from/to are LOCAL calendar dates the shop owner typed — the
+	// same dates a new-format row's own local-offset `period` displays, and
+	// the same dates the old `period BETWEEN` filter matched against. Drop
+	// 'localtime' and the requested range silently becomes a UTC day
+	// window, so a close made just after local midnight goes missing from
+	// an export for its own local day and turns up under the previous one
+	// (ADR-0057's bug class; ArchiveReport's own double-close guard already
+	// compares date(created_at, 'localtime') for exactly this reason). See
+	// TestArchivedReportsInRange_ComparesLocalDayNotUTCDay.
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, kind, period, content_json, created_at,
        z_number, prev_z_number, prev_closed_at, first_receipt, last_receipt
-FROM report_archive WHERE period BETWEEN ? AND ? ORDER BY period`, from, to)
+FROM report_archive
+WHERE datetime(created_at, 'localtime') >= datetime(?)
+  AND datetime(created_at, 'localtime') < datetime(?, '+1 day')
+ORDER BY period`, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("archived reports in range: %w", err)
 	}
@@ -3106,10 +3611,19 @@ func (r *POSRepo) SaleExists(ctx context.Context, saleID string) (bool, error) {
 }
 
 // SetSaleProvenance stamps a journaled-in sale with its source till and
-// original timestamp (CompleteSale wrote "now").
+// original timestamp (CompleteSale wrote "now"). local_date must be
+// recomputed from the ORIGIN's created_at here too (ut-docs#1342 review
+// finding) — InsertSale already stamped it from the receiving till's "now",
+// and leaving it there would silently book the sale to the ingest day
+// rather than the day it actually happened on the origin till, whenever
+// ingest crosses a local-calendar-day boundary (an offline replica
+// reconnecting the next morning being the obvious case). Same
+// COALESCE(...,”) guard as InsertSale's own write, for a malformed
+// createdAt arriving from a peer's journal.
 func (r *POSRepo) SetSaleProvenance(ctx context.Context, saleID, tillID, createdAt string) error {
 	_, err := r.db.ExecContext(ctx,
-		`UPDATE sales SET till_id = ?, created_at = ? WHERE id = ?`, tillID, createdAt, saleID)
+		`UPDATE sales SET till_id = ?, created_at = ?, local_date = COALESCE(date(?, 'localtime'), '') WHERE id = ?`,
+		tillID, createdAt, createdAt, saleID)
 	if err != nil {
 		return fmt.Errorf("set provenance: %w", err)
 	}
@@ -3182,6 +3696,27 @@ func RefundLineKey(itemID, variantID string, unitPrice int64, orderType string) 
 	return k
 }
 
+// RefundedServiceChargeTotal sums the service_charge_amount already paid
+// back by every completed return linked to originalSaleID — the double-
+// refund guard for the SERVICE CHARGE, same shape as ReturnedQuantities'
+// per-line-quantity guard (ut-docs#1215). The refund handler clamps its own
+// proposed service-charge refund against (original charge − this total) so
+// the cumulative amount paid back across any number of sequential partial
+// refunds can never exceed the original charge, regardless of which
+// proration basis (or floor-rounding path) produced the proposed figure.
+func (r *POSRepo) RefundedServiceChargeTotal(ctx context.Context, originalSaleID string) (int64, error) {
+	var total int64
+	err := r.db.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(s.service_charge_amount), 0)
+FROM sales s
+JOIN sale_links k ON k.sale_id = s.id
+WHERE k.original_sale_id = ? AND s.sale_type = 'return' AND s.status = 'completed'`, originalSaleID).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("refunded service charge total: %w", err)
+	}
+	return total, nil
+}
+
 // ReturnedQuantities sums, per line key, what previous returns linked to
 // the original sale already gave back — the double-refund guard's input.
 func (r *POSRepo) ReturnedQuantities(ctx context.Context, originalSaleID string) (map[string]float64, error) {
@@ -3205,6 +3740,121 @@ GROUP BY l.item_id, l.variant_id, l.unit_price, l.order_type`, originalSaleID)
 			return nil, fmt.Errorf("scan returned qty: %w", err)
 		}
 		out[RefundLineKey(itemID, variantID, unitPrice, orderType)] = qty
+	}
+	return out, rows.Err()
+}
+
+// ReturnedLineDiscounts sums, per line key, how much line_discount previous
+// completed returns linked to the original sale already gave back -- the
+// double-refund guard's input for the LINE SUBTOTAL, same shape as
+// ReturnedQuantities' per-line-quantity guard and RefundedServiceChargeTotal's
+// charge guard (ut-docs#1531). The refund handler clamps its own proposed
+// per-request line_discount against (this key's true share of the original
+// discount − what's already been paid back) so the cumulative discount given
+// back across any number of sequential partial refunds of the same KEY
+// (not necessarily one original line -- the handler's own keyUniform check
+// decides when that distinction matters) tracks toward the line's own
+// original net once every unit is back,
+// regardless of how the per-request floor-rounding lands along the way --
+// see the refund handler's own keyUniform/gross-cap guards (review
+// findings F1/F3 on this card) for the edge cases this table alone
+// doesn't cover.
+func (r *POSRepo) ReturnedLineDiscounts(ctx context.Context, originalSaleID string) (map[string]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT COALESCE(l.item_id, ''), COALESCE(l.variant_id, ''), l.unit_price, COALESCE(l.order_type, ''), SUM(l.line_discount)
+FROM sale_lines l
+JOIN sale_links k ON k.sale_id = l.sale_id
+JOIN sales s ON s.id = l.sale_id AND s.sale_type = 'return' AND s.status = 'completed'
+WHERE k.original_sale_id = ?
+GROUP BY l.item_id, l.variant_id, l.unit_price, l.order_type`, originalSaleID)
+	if err != nil {
+		return nil, fmt.Errorf("returned line discounts: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var itemID, variantID, orderType string
+		var unitPrice, discount int64
+		if err := rows.Scan(&itemID, &variantID, &unitPrice, &orderType, &discount); err != nil {
+			return nil, fmt.Errorf("scan returned line discount: %w", err)
+		}
+		out[RefundLineKey(itemID, variantID, unitPrice, orderType)] = discount
+	}
+	return out, rows.Err()
+}
+
+// ReturnedLineDiscountsByOriginalLine sums, per ORIGINAL sale_lines.id
+// (not per RefundLineKey), how much line_discount previous completed
+// returns already gave back against that specific original line
+// (ut-docs#1560, the follow-up to #1531's own per-key clamp).
+//
+// ReturnedLineDiscounts pools every original line sharing a key together,
+// which is only exact when they all apply the SAME discount rate
+// (#1531's keyUniform check). When sibling lines under one key carry
+// DIFFERENT line_discount amounts, that pooling is wrong -- refunding one
+// line's discount could be attributed against a sibling's remaining net.
+// This method is the non-uniform fallback's own equivalent of the per-key
+// table: it only sees discount recorded against refund_of_line_id, so it
+// requires every return line that wants exact per-line tracking to have
+// been written with that column set (ut-docs#1560's refund_page.go change
+// sets it unconditionally, uniform or not). A return row written before
+// this column existed has refund_of_line_id NULL and is invisible here --
+// not a regression, since the non-uniform case had no exact tracking at
+// all before this; it just means the clamp starts counting from zero for
+// discount already given back before this fix shipped, same as any other
+// additive-column migration.
+func (r *POSRepo) ReturnedLineDiscountsByOriginalLine(ctx context.Context, originalSaleID string) (map[string]int64, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT l.refund_of_line_id, SUM(l.line_discount)
+FROM sale_lines l
+JOIN sale_links k ON k.sale_id = l.sale_id
+JOIN sales s ON s.id = l.sale_id AND s.sale_type = 'return' AND s.status = 'completed'
+WHERE k.original_sale_id = ? AND l.refund_of_line_id IS NOT NULL
+GROUP BY l.refund_of_line_id`, originalSaleID)
+	if err != nil {
+		return nil, fmt.Errorf("returned line discounts by original line: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]int64{}
+	for rows.Next() {
+		var lineID string
+		var discount int64
+		if err := rows.Scan(&lineID, &discount); err != nil {
+			return nil, fmt.Errorf("scan returned line discount by original line: %w", err)
+		}
+		out[lineID] = discount
+	}
+	return out, rows.Err()
+}
+
+// ReturnedQuantitiesByOriginalLine sums, per ORIGINAL sale_lines.id, how
+// much quantity previous completed returns already gave back against that
+// specific original line — the per-line counterpart to
+// ReturnedLineDiscountsByOriginalLine, giving the non-uniform refund
+// clamp's own cumulative-quantity input (same role ReturnedQuantities plays
+// for the per-key double-refund guard, just scoped to one original line
+// instead of the whole fungible key pool). Same NULL/pre-fix caveat as
+// ReturnedLineDiscountsByOriginalLine above.
+func (r *POSRepo) ReturnedQuantitiesByOriginalLine(ctx context.Context, originalSaleID string) (map[string]float64, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT l.refund_of_line_id, SUM(l.quantity)
+FROM sale_lines l
+JOIN sale_links k ON k.sale_id = l.sale_id
+JOIN sales s ON s.id = l.sale_id AND s.sale_type = 'return' AND s.status = 'completed'
+WHERE k.original_sale_id = ? AND l.refund_of_line_id IS NOT NULL
+GROUP BY l.refund_of_line_id`, originalSaleID)
+	if err != nil {
+		return nil, fmt.Errorf("returned quantities by original line: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var lineID string
+		var qty float64
+		if err := rows.Scan(&lineID, &qty); err != nil {
+			return nil, fmt.Errorf("scan returned quantity by original line: %w", err)
+		}
+		out[lineID] = qty
 	}
 	return out, rows.Err()
 }
@@ -3573,6 +4223,7 @@ func (r *POSRepo) ListRegistersForAdmin(ctx context.Context) ([]RegisterAdmin, e
 			reg.LocationID = &v
 		}
 		reg.IsActive = active == 1
+		reg.Name = stripRetireMangle(reg.ID, reg.Name)
 		out = append(out, reg)
 	}
 	if err := rows.Err(); err != nil {
@@ -3600,6 +4251,7 @@ func (r *POSRepo) ListStockLocations(ctx context.Context) ([]StockLocation, erro
 		if err := rows.Scan(&l.ID, &l.Name); err != nil {
 			return nil, fmt.Errorf("scan stock location: %w", err)
 		}
+		l.Name = stripRetireMangle(l.ID, l.Name)
 		out = append(out, l)
 	}
 	if err := rows.Err(); err != nil {
@@ -3628,6 +4280,10 @@ ORDER BY i.name, sl.name`)
 		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel, &item.LeadTimeDays); err != nil {
 			return nil, fmt.Errorf("scan stock level: %w", err)
 		}
+		// ut-docs#1610 (review): same unfiltered stock_locations join as
+		// GetLowStockItems — this backs the inventory page AND, through
+		// StockForExport, an export plugin's payload.
+		item.LocationName = stripRetireMangle(item.LocationID, item.LocationName)
 		items = append(items, item)
 	}
 	if err := rows.Err(); err != nil {
@@ -3702,7 +4358,16 @@ FROM sales WHERE receipt_no LIKE ? || '%'`,
 }
 
 // CurrentQty returns quantity and whether a matching inventory row existed.
+//
+// ut-docs#1353: reject "both set" up front, same as AggregateInventory's
+// sibling check just above — the WHERE clause below is an OR of two
+// exclusive branches, so a caller passing both would silently get whichever
+// branch happens to match an existing row (e.g. an item-level row) instead
+// of the specific, actionable error this now returns.
 func (r *POSRepo) CurrentQty(ctx context.Context, tx *sql.Tx, locationID, itemID, variantID string) (float64, bool, error) {
+	if itemID != "" && variantID != "" {
+		return 0, false, errors.New("cannot specify both itemID and variantID")
+	}
 	exec := r.exec(tx)
 	var qty float64
 	err := exec.QueryRowContext(ctx, `
@@ -3761,6 +4426,20 @@ func (r *POSRepo) CurrentQtyBatch(ctx context.Context, tx *sql.Tx, keys []StockK
 	out := make(map[StockKey]float64, len(keys))
 	if len(keys) == 0 {
 		return out, nil
+	}
+	// ut-docs#1353: reject "both set" up front, same as CurrentQty/
+	// AggregateInventory above — StockKey's own doc comment already
+	// requires "exactly one of item/variant". Without this, an invalid key
+	// silently matches stockKeyPredicate's item-level OR-branch, but the
+	// row scanned back below re-keys the result by the DB row's own
+	// item_id/variant_id (variant_id NULL, i.e. ""), not by the caller's
+	// original (invalid) key — so the caller's lookup by its own key finds
+	// nothing and reads as "no stock", surfacing downstream as a
+	// misleading "insufficient stock" error instead of this specific one.
+	for i, k := range keys {
+		if k.ItemID != "" && k.VariantID != "" {
+			return nil, fmt.Errorf("stock key %d: cannot specify both itemID and variantID", i+1)
+		}
 	}
 	// Dedupe, preserving first-seen order.
 	seen := make(map[StockKey]bool, len(keys))
@@ -3835,6 +4514,9 @@ type SaleLineRow struct {
 	// OrderType (ut-docs#1181, ADR-0073): "" (dine-in) or "takeaway" — the
 	// line's own mode, already normalized by pos.CompleteSale.
 	OrderType string
+	// RefundOfLineID (ut-docs#1560): for a return line, the original
+	// sale_lines.id it was refunded against; "" for an original line.
+	RefundOfLineID string
 }
 
 // InsertSaleLinesBatch writes many sale_lines rows via chunked multi-row
@@ -3843,7 +4525,7 @@ func (r *POSRepo) InsertSaleLinesBatch(ctx context.Context, tx *sql.Tx, rows []S
 	if len(rows) == 0 {
 		return nil
 	}
-	const cols = 16
+	const cols = 17
 	exec := r.exec(tx)
 	chunk := batchChunkSize(cols)
 	for start := 0; start < len(rows); start += chunk {
@@ -3855,13 +4537,14 @@ func (r *POSRepo) InsertSaleLinesBatch(ctx context.Context, tx *sql.Tx, rows []S
 		placeholders := make([]string, 0, len(part))
 		args := make([]any, 0, len(part)*cols)
 		for _, row := range part {
-			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
+			placeholders = append(placeholders, "(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)")
 			args = append(args, row.ID, row.SaleID, row.LineNo, nullIfEmpty(row.ItemID), nullIfEmpty(row.VariantID),
 				row.Name, row.SKU, row.Barcode, row.Qty, row.UnitPrice, row.LineDiscount,
-				row.TaxRateBP, row.TaxAmount, row.TotalBeforeTax, row.TotalAfterTax, row.OrderType)
+				row.TaxRateBP, row.TaxAmount, row.TotalBeforeTax, row.TotalAfterTax, row.OrderType,
+				nullIfEmpty(row.RefundOfLineID))
 		}
 		if _, err := exec.ExecContext(ctx, `
-INSERT INTO sale_lines (id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, order_type)
+INSERT INTO sale_lines (id, sale_id, line_no, item_id, variant_id, name_snapshot, sku_snapshot, barcode_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax, order_type, refund_of_line_id)
 VALUES `+strings.Join(placeholders, ", "), args...); err != nil {
 			return fmt.Errorf("insert sale lines batch: %w", err)
 		}
@@ -4251,9 +4934,9 @@ func (r *POSRepo) InsertSale(ctx context.Context, tx *sql.Tx, p InsertSaleParams
 		offlineVal = 1
 	}
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, order_type, table_id, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total, rounding, note, created_at, completed_at)
-VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?)
-`, p.SaleID, p.ReceiptNo, p.SaleType, p.TenderType, p.OrderType, nullIfEmpty(p.TableID), offlineVal, p.SyncStatus, p.SyncAttempts, nullIfEmpty(p.SyncNextAttemptAt), nullIfEmpty(p.SyncLastError), nullIfEmpty(p.RegisterID), nullIfEmpty(p.CashierID), nullIfEmpty(p.CustomerID), p.Currency, p.Subtotal, p.DiscountTotal, p.TaxTotal, p.Total, p.ServiceCharge, p.ServiceChargeTaxBasisBP, p.VoucherIssueTotal, nullIfEmpty(p.Note), p.CreatedAt, p.CreatedAt)
+INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, order_type, table_id, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total, rounding, note, created_at, completed_at, local_date)
+VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, COALESCE(date(?, 'localtime'), ''))
+`, p.SaleID, p.ReceiptNo, p.SaleType, p.TenderType, p.OrderType, nullIfEmpty(p.TableID), offlineVal, p.SyncStatus, p.SyncAttempts, nullIfEmpty(p.SyncNextAttemptAt), nullIfEmpty(p.SyncLastError), nullIfEmpty(p.RegisterID), nullIfEmpty(p.CashierID), nullIfEmpty(p.CustomerID), p.Currency, p.Subtotal, p.DiscountTotal, p.TaxTotal, p.Total, p.ServiceCharge, p.ServiceChargeTaxBasisBP, p.VoucherIssueTotal, nullIfEmpty(p.Note), p.CreatedAt, p.CreatedAt, p.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("insert sale: %w", err)
 	}
@@ -4358,10 +5041,10 @@ type CardPresentFields struct {
 // soft reference with no FK (see migration 072's header).
 func (r *POSRepo) InsertPayment(ctx context.Context, tx *sql.Tx, paymentID, saleID, methodID string, amount int64, currency, reference string, changeGiven int64, tipAmount int64, tipRecipient string, voucherID string, paidAt string, cardPresent CardPresentFields) error {
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO payments (id, sale_id, method_id, amount, currency, reference, change_given, tip_amount, tip_recipient, voucher_id, masked_pan, auth_code, terminal_id, trace_id, paid_at)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+INSERT INTO payments (id, sale_id, method_id, amount, currency, reference, change_given, tip_amount, tip_recipient, voucher_id, masked_pan, auth_code, terminal_id, trace_id, paid_at, local_date)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, COALESCE(date(?, 'localtime'), ''))
 `, paymentID, saleID, methodID, amount, currency, nullIfEmpty(reference), changeGiven, tipAmount, tipRecipient, nullIfEmpty(voucherID),
-		nullIfEmpty(cardPresent.MaskedPAN), nullIfEmpty(cardPresent.AuthCode), nullIfEmpty(cardPresent.TerminalID), nullIfEmpty(cardPresent.TraceID), paidAt)
+		nullIfEmpty(cardPresent.MaskedPAN), nullIfEmpty(cardPresent.AuthCode), nullIfEmpty(cardPresent.TerminalID), nullIfEmpty(cardPresent.TraceID), paidAt, paidAt)
 	if err != nil {
 		return fmt.Errorf("insert payment: %w", err)
 	}
@@ -4920,9 +5603,11 @@ func (r *POSRepo) UpdateSaleStatus(ctx context.Context, tx *sql.Tx, saleID, stat
 	now := time.Now().UTC().Format(time.RFC3339)
 	res, err := r.exec(tx).ExecContext(ctx, `
 UPDATE sales
-SET status = ?, voided_at = CASE WHEN ? = 'voided' THEN ? ELSE voided_at END
+SET status = ?,
+    voided_at = CASE WHEN ? = 'voided' THEN ? ELSE voided_at END,
+    voided_local_date = CASE WHEN ? = 'voided' THEN date(?, 'localtime') ELSE voided_local_date END
 WHERE id = ?
-`, status, status, now, saleID)
+`, status, status, now, status, now, saleID)
 	if err != nil {
 		return fmt.Errorf("update sale status: %w", err)
 	}
@@ -5439,6 +6124,7 @@ func (r *POSRepo) ListStockLocationsForAdmin(ctx context.Context) ([]StockLocati
 			return nil, fmt.Errorf("scan stock location admin: %w", err)
 		}
 		l.IsActive = active == 1
+		l.Name = stripRetireMangle(l.ID, l.Name)
 		out = append(out, l)
 	}
 	if err := rows.Err(); err != nil {
@@ -5603,6 +6289,13 @@ type SaleDetailVoucherIssue struct {
 }
 
 type SaleDetailLine struct {
+	// ID is this original sale_lines row's own database id (ut-docs#1560),
+	// needed so the refund handler can record, per return line, which
+	// specific original line it was refunded against (refund_of_line_id) --
+	// not part of the wire contract (json:"-"): nothing outside this
+	// process needs it, and exposing it would be one more field every
+	// consumer of the sync/journal wire has to consider additive-safe.
+	ID           string   `json:"-"`
 	Name         string   `json:"name"`
 	SKU          string   `json:"sku"`
 	ItemID       string   `json:"item_id"`
@@ -5701,6 +6394,7 @@ FROM sale_lines WHERE sale_id = ? ORDER BY line_no`, d.ID)
 			lineRows.Close()
 			return SaleDetail{}, false, fmt.Errorf("scan sale line: %w", err)
 		}
+		l.ID = id
 		lineIDs = append(lineIDs, id)
 		d.Lines = append(d.Lines, l)
 	}
@@ -5992,33 +6686,6 @@ FROM payment_methods WHERE is_active = 1 AND type != 'cash' ORDER BY sort_order,
 	return out, rows.Err()
 }
 
-// ListPaymentMethodIDs returns active payment method ids ordered by id.
-func (r *POSRepo) ListPaymentMethodIDs(ctx context.Context) ([]string, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT id FROM payment_methods WHERE is_active = 1 ORDER BY id`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	seen := make(map[string]struct{})
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			continue
-		}
-		id = strings.TrimSpace(id)
-		if id == "" {
-			continue
-		}
-		if _, ok := seen[id]; ok {
-			continue
-		}
-		seen[id] = struct{}{}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
-}
-
 // SearchItemsForShortcuts finds active items and primary barcodes to add as shortcuts.
 func (r *POSRepo) SearchItemsForShortcuts(ctx context.Context, q string, offset, limit int) ([]ShortcutSearchResult, error) {
 	like := "%" + strings.TrimSpace(q) + "%"
@@ -6094,47 +6761,48 @@ func (r *POSRepo) enabledBarcodeSymbologies(ctx context.Context) []string {
 // code is a named non-match, mirroring AddBarcode — only reachable once the
 // shop disabled the default catch-alls) or when nothing in the catalog owns
 // the LookupKey.
+//
+// The four tiers below (variant/item, each at the LookupKey and — when it
+// differs from the raw scan — again at the raw code) used to be up to four
+// sequential round trips before a miss on all of them was even possible
+// (ut-docs#1360). resolveScanBarcodeTiers now asks the database for all of
+// them at once and returns whichever tier wins, so a direct item-barcode
+// match (the common case) costs one barcode-tier query here instead of two.
+// A full miss costs one instead of two when the raw scan equals the decoded
+// LookupKey (the common case, every plain symbology) — the four-tiers-to-
+// one saving is largest specifically in the ut-docs#934 raw-code-fallback
+// shape, where a miss used to mean probing all four tiers before falling
+// through. Price resolution
+// below is unchanged and stays a separate round trip — out of this card's
+// scope (ut-docs#1360's acceptance criteria are scoped to "the barcode
+// fallback tiers"); caching the enabled-symbologies settings read is a
+// different, already-tracked card (ut-docs#1361).
 func (r *POSRepo) ResolveScanLine(ctx context.Context, code string, enabledIDs []string) (ShortcutLine, barcode.Decoded, bool) {
 	dec, ok := barcode.Default().Match(enabledIDs, code)
 	if !ok {
 		return ShortcutLine{}, barcode.Decoded{}, false
 	}
-	// variant barcode
-	if row, ok := r.resolveVariant(ctx, dec.LookupKey); ok {
-		price := r.resolvePrice(ctx, "", row.VariantID, row.Price)
+	row, viaLookupKey, ok := r.resolveScanBarcodeTiers(ctx, dec.LookupKey, code)
+	if !ok {
+		return ShortcutLine{}, dec, false
+	}
+	var price int64
+	if row.VariantID != "" {
+		price = r.resolvePrice(ctx, "", row.VariantID, row.Price)
 		if row.Variant != "" {
 			row.ItemName = row.ItemName + " - " + row.Variant
 		}
+	} else {
+		price = r.resolvePrice(ctx, row.ItemID, "", row.Price)
+	}
+	// Raw-code fallback (ut-docs#934 review finding F2): a tier-3/4 match
+	// (found via the raw code, not the decoded LookupKey) reports a zero
+	// Decoded{} — same as before this batching, an embedded weight/price is
+	// only meaningful when the match came from the zeroed-template tiers.
+	if viaLookupKey {
 		return r.toShortcutLine(code, price, row), dec, true
 	}
-	// item barcode
-	if row, ok := r.resolveItem(ctx, dec.LookupKey); ok {
-		price := r.resolvePrice(ctx, row.ItemID, "", row.Price)
-		return r.toShortcutLine(code, price, row), dec, true
-	}
-	// Raw-code fallback (ut-docs#934 review finding F2): for an
-	// embedded-data match, dec.LookupKey (the zeroed template) differs
-	// from the raw scanned code. A shop that enables a scale symbology
-	// after already cataloguing plain, full-digit EAN-13 barcodes in that
-	// prefix range (2x/02) — never re-entered using the zeroed
-	// convention — must keep resolving those existing rows; the
-	// zeroed-key tier above still gets first refusal, so this fallback
-	// never shadows a genuine scale-label row (that already matched
-	// above and returned).
-	if dec.LookupKey != code {
-		if row, ok := r.resolveVariant(ctx, code); ok {
-			price := r.resolvePrice(ctx, "", row.VariantID, row.Price)
-			if row.Variant != "" {
-				row.ItemName = row.ItemName + " - " + row.Variant
-			}
-			return r.toShortcutLine(code, price, row), barcode.Decoded{}, true
-		}
-		if row, ok := r.resolveItem(ctx, code); ok {
-			price := r.resolvePrice(ctx, row.ItemID, "", row.Price)
-			return r.toShortcutLine(code, price, row), barcode.Decoded{}, true
-		}
-	}
-	return ShortcutLine{}, dec, false
+	return r.toShortcutLine(code, price, row), barcode.Decoded{}, true
 }
 
 // ResolveShortcutLineDecoded is ResolveShortcutLine plus the barcode decode
@@ -6266,9 +6934,18 @@ type shortcutPriceRow struct {
 	Label     sql.NullString
 }
 
-func (r *POSRepo) resolveVariant(ctx context.Context, code string) (shortcutPriceRow, bool) {
-	row := r.db.QueryRowContext(ctx, `
-SELECT i.id, i.name, v.id, v.name, v.price, i.is_weighed,
+// scanBarcodeVariantSelect and scanBarcodeItemSelect are ResolveScanLine's
+// four tiers (variant/item, each rerun at the raw code when it differs from
+// the decoded LookupKey — see resolveScanBarcodeTiers), each shaped with a
+// literal `%d AS tier` column so a UNION ALL of them can be ordered by
+// precedence and resolved with a single LIMIT 1 instead of the caller
+// probing tier by tier. Column shapes match across all four branches
+// (string/string/string/string/int64/NullInt64/NullString/int64/NullString)
+// so SELECT * FROM (... UNION ALL ...) scans cleanly regardless of which
+// tier wins.
+const (
+	scanBarcodeVariantSelect = `
+SELECT %d AS tier, i.id, i.name, v.id, v.name, v.price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0), i.tax_code_id
 FROM variant_barcodes vb
@@ -6276,33 +6953,46 @@ JOIN item_variants v ON v.id = vb.variant_id
 JOIN items i ON i.id = v.item_id
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 WHERE vb.barcode = ?
-  AND i.is_active = 1 AND v.is_active = 1
-LIMIT 1
-`, code)
-	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
-		return shortcutPriceRow{}, false
-	}
-	return res, true
-}
-
-func (r *POSRepo) resolveItem(ctx context.Context, code string) (shortcutPriceRow, bool) {
-	row := r.db.QueryRowContext(ctx, `
-SELECT i.id, i.name, i.base_price, i.is_weighed,
+  AND i.is_active = 1 AND v.is_active = 1`
+	scanBarcodeItemSelect = `
+SELECT %d AS tier, i.id, i.name, '', '', i.base_price, i.is_weighed,
        (SELECT path FROM item_images img WHERE img.item_id = i.id AND img.role = 'thumbnail' LIMIT 1),
        COALESCE(t.rate_basis_points, 0), i.tax_code_id
 FROM item_barcodes ib
 JOIN items i ON i.id = ib.item_id
 LEFT JOIN tax_codes t ON t.id = i.tax_code_id
 WHERE ib.barcode = ?
-  AND i.is_active = 1
-LIMIT 1
-`, code)
-	var res shortcutPriceRow
-	if err := row.Scan(&res.ItemID, &res.ItemName, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
-		return shortcutPriceRow{}, false
+  AND i.is_active = 1`
+)
+
+// resolveScanBarcodeTiers is ResolveScanLine's batched replacement
+// (ut-docs#1360) for up to four sequential resolveVariant/resolveItem
+// calls: tier 1 (variant @ lookupKey), tier 2 (item @ lookupKey) and,
+// only when rawCode differs from lookupKey, tier 3 (variant @ rawCode)
+// and tier 4 (item @ rawCode) — mirroring ResolveScanLine's own
+// `dec.LookupKey != code` guard, so the raw-code tiers are omitted
+// entirely (not just short-circuited) when they'd just re-run tiers 1/2's
+// queries against an identical code. A single `ORDER BY tier LIMIT 1`
+// over the UNION ALL lets SQLite pick the winning tier in one round trip
+// instead of the caller making up to four to find out there's nothing at
+// tiers 1-3. viaLookupKey reports whether the winning tier was 1/2 (true)
+// or the raw-code fallback 3/4 (false) — ResolveScanLine uses this to
+// decide whether the embedded-weight/price Decoded is meaningful, exactly
+// as the old per-tier call sites did.
+func (r *POSRepo) resolveScanBarcodeTiers(ctx context.Context, lookupKey, rawCode string) (shortcutPriceRow, bool, bool) {
+	query := fmt.Sprintf(scanBarcodeVariantSelect, 1) + "\nUNION ALL" + fmt.Sprintf(scanBarcodeItemSelect, 2)
+	args := []any{lookupKey, lookupKey}
+	if rawCode != lookupKey {
+		query += "\nUNION ALL" + fmt.Sprintf(scanBarcodeVariantSelect, 3) + "\nUNION ALL" + fmt.Sprintf(scanBarcodeItemSelect, 4)
+		args = append(args, rawCode, rawCode)
 	}
-	return res, true
+	row := r.db.QueryRowContext(ctx, "SELECT * FROM ("+query+") ORDER BY tier LIMIT 1", args...)
+	var res shortcutPriceRow
+	var tier int
+	if err := row.Scan(&tier, &res.ItemID, &res.ItemName, &res.VariantID, &res.Variant, &res.Price, &res.IsWeighed, &res.Image, &res.TaxRateBP, &res.TaxCodeID); err != nil {
+		return shortcutPriceRow{}, false, false
+	}
+	return res, tier <= 2, true
 }
 
 func (r *POSRepo) resolveShortcut(ctx context.Context, code string) (shortcutPriceRow, bool) {

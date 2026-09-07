@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -13,6 +14,19 @@ import (
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/procrestart"
+)
+
+// Seams over internal/procrestart/db so handler tests can observe "a
+// restart was scheduled" without a real syscall.Exec replacing the test
+// binary mid-run — same hermetic convention pairing_join.go's
+// pairingRestartFn/pairingRestartSupported/pairingRestorePending use over
+// the same underlying packages (ut-docs#1550). Named separately per call
+// site rather than shared, matching that file's own precedent.
+var (
+	backupRestartFn        = procrestart.Restart
+	backupRestartSupported = procrestart.Supported
+	backupRestorePending   = db.PendingRestore
 )
 
 // backupUIRow is one snapshot row on the settings page.
@@ -215,7 +229,42 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		audit(r, "restore_staged", map[string]any{"file": name})
-		w.Header().Set("Content-Type", "text/html; charset=utf-8")
-		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "settings.backup.staged"))
+		// ut-docs#1613: the old flat "restart the till to finish" text was a
+		// dead end identical to pairing_wait.html's pre-#1550 "joined"
+		// screen — this reuses the same internal/procrestart mechanism via
+		// the partial below, rather than leaving the operator with an
+		// instruction they can't act on.
+		httpx.RenderPartial("ui/partials/backup_restore_staged.html", map[string]any{
+			"restartSupported": backupRestartSupported(),
+		})(w, r)
+	})
+
+	// ut-docs#1613: the restore-staged screen's restart trigger, mirroring
+	// pairingRestartHandler (ut-docs#1550) exactly — same refuse-unless-
+	// staged guard (a denied/anonymous replay must never restart a
+	// configured, possibly-in-use till), same procrestart.Restart() call,
+	// same { "data": …, "error": null } envelope. Gated by this file's own
+	// deny() (data_management), not managerGate — every other backup route
+	// in this file already uses it and a restore is manager/admin-only to
+	// begin with, so a caller that could reach this route already staged
+	// the restore itself.
+	mux.HandleFunc("POST /api/backup/restart-now", func(w http.ResponseWriter, r *http.Request) {
+		if deny(w, r) {
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		if !backupRestorePending(dbPath) {
+			locale := httpx.ResolveLocale(w, r)
+			w.WriteHeader(http.StatusConflict)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": httpx.T(locale, "settings.backup.nothing_to_restart")})
+			return
+		}
+		// No audit() call here, unlike every other route in this file
+		// (review finding, ut-docs#1613): the audit_log row would live in
+		// the very database this restart is about to replace via
+		// ApplyPendingRestore — the same reason "restore_staged" above is
+		// this destructive action's last recorded audit entry, not this one.
+		backupRestartFn()
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": map[string]bool{"restarting": true}, "error": nil})
 	})
 }

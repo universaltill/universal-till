@@ -50,7 +50,10 @@ func registerTablePicker(mux *http.ServeMux, d *common.Deps) {
 		// line, or an empty basket whose default isn't takeaway), not the
 		// header — a mixed basket may take a table.
 		if d.Engine.HasDineInLine() {
-			states, err := repo.ListTablesWithState(r.Context())
+			// ut-docs#1392: a replica shows the PRIMARY's live occupancy when
+			// reachable (so the picker doesn't offer a table another till has
+			// already taken), falling back to local state otherwise.
+			states, err := tablesWithStateForDisplay(r.Context(), d, repo)
 			if err != nil {
 				states = nil
 			}

@@ -20,7 +20,21 @@
      merged concurrently with this change): every #basket-targeting
      trigger needs this so a newer request always aborts an older
      in-flight one instead of racing it -- see basket.html's own switch
-     for the fuller explanation. -->
+     for the fuller explanation.
+
+     ut-docs#1638: table-picker-clear/table-picker-option used to close
+     #table-modal via a plain onclick that fired BEFORE their hx-post even
+     completed -- the same antipattern ut-docs#1624 fixed for New
+     Customer/#payment-overlay. internal/pages/pos_api.go's table handler
+     can legitimately answer a lost claim race with an inline
+     #toast-message.error (basket.table.occupied) instead of assigning the
+     table; the old onclick closed the dialog regardless, so an operator
+     picking a table that just became occupied never saw the error. Both
+     buttons now use the exact hx-on::after-request gate New Sale/New
+     Customer already use elsewhere (index.html), swapped to this dialog's
+     id -- #table-modal only closes after a successful response with no
+     inline error toast. The dismiss ✕ above has no hx-post on it, so it
+     isn't an instance of this bug class and is left as a plain onclick. -->
 <span id="table-picker">
   {{ if .Configured }}
     <button type="button" class="btn secondary compact table-picker-trigger" data-testid="table-picker-open"
@@ -36,7 +50,7 @@
         <button type="button" class="btn secondary table-picker-clear" title="{{ T "basket.table.none" }}"
                 hx-post="/api/pos/table" hx-vals='{"table_id":""}'
                 hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-                onclick="document.getElementById('table-modal').close()">✕ {{ T "basket.table.none" }}</button>
+                hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('table-modal'); if (d && d.open) d.close(); } }">✕ {{ T "basket.table.none" }}</button>
       {{ end }}
       {{ if .Options }}
         <div class="table-picker-options">
@@ -44,7 +58,7 @@
             <button type="button" class="btn{{ if ne .ID $.Current }} secondary{{ end }} table-picker-option"
                     hx-post="/api/pos/table" hx-vals='{{ jsonVals "table_id" .ID }}'
                     hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-                    onclick="document.getElementById('table-modal').close()">{{ .Label }}</button>
+                    hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('table-modal'); if (d && d.open) d.close(); } }">{{ .Label }}</button>
           {{ end }}
         </div>
       {{ else }}

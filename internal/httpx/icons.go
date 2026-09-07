@@ -47,6 +47,34 @@ var railIcons = map[string]string{
 	"user": `<path d="M19 21v-2a4 4 0 0 0-4-4H9a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/>`,
 	// Lock (auth.lock)
 	"lock": `<rect width="18" height="11" x="3" y="11" rx="2" ry="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/>`,
+	// Sync chip / tills (sync.chip_tills_title, ut-docs#1539) — the one
+	// rail item ut-docs#1423 missed, still a bare "⇅" emoji + tinted pill
+	// until now. Two-way arrows, same visual idea as the emoji it replaces.
+	"sync": `<path d="m21 16-4 4-4-4"/><path d="M17 20V4"/><path d="m3 8 4-4 4 4"/><path d="M7 4v16"/>`,
+	// Fiscal chip (fiscal.chip_ok_title, ut-docs#1539) — was plain ✓/⚠ text
+	// with no icon and no link at all. A shield mirrors the "signed and
+	// verifiable" idea the ✓ glyph stood in for.
+	"fiscal": `<path d="M20 13c0 5-3.5 7.5-7.35 8.95a1 1 0 0 1-.6-.01C8.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.79 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>`,
+	// Bluetooth devices (bluetoothdevices.title, ut-docs#1720) — the Menu
+	// tile carried 📶 (ANTENNA BARS), the mobile-reception glyph, which
+	// reads as signal strength rather than Bluetooth. Unlike every other
+	// entry here this one could never have been an emoji: Unicode has no
+	// Bluetooth codepoint at all, and the runic approximation (U+16D2)
+	// depends on font coverage Android WebView does not reliably have — so
+	// the standard mark is only ever a drawn glyph. First icon used outside
+	// the nav rail (menu_page.go's tiles); see iconSVGFor there.
+	"bluetooth": `<path d="m7 7 10 10-5 5V2l5 5L7 17"/>`,
+	// Generic menu-tile fallback (ut-docs#1722) — replaces the "▪️" no-icon
+	// square for any menu tile (core or plugin-contributed) with no mapped
+	// icon. A plugin route can never get a specific icon here: core cannot
+	// enumerate routes a plugin brings with it, so the map in menu_page.go
+	// can only ever cover core routes. "▪️" read as a rendering failure
+	// (reported as exactly that, ut-docs#1371) rather than a deliberate
+	// generic icon; a puzzle piece reads as "extension/plugin", the actual
+	// reason no specific icon exists, and is a drawn glyph so it carries no
+	// per-platform emoji-metrics risk (ut-docs#1423). Lucide's "puzzle"
+	// path, unmodified.
+	"puzzle": `<path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.
@@ -65,6 +93,14 @@ func iconHTML(name string) template.HTML {
 	}
 	return template.HTML(fmt.Sprintf(iconSVGOpen, template.HTMLEscapeString(name)) + body + `</svg>`) //nolint:gosec // body is a compile-time constant from railIcons; name is escaped
 }
+
+// Icon is iconHTML for Go code that builds a view model directly instead of
+// naming its icon in a template (menu_page.go's tiles, ut-docs#1720). Same
+// contract, deliberately: an unknown — or empty — name renders nothing, so a
+// caller can look a name up in a sparse map and pass the miss straight
+// through. Because such a call site is invisible to icons_test.go's
+// template scanner, each one owns a test that its names resolve.
+func Icon(name string) template.HTML { return iconHTML(name) }
 
 // IconNames lists the available rail icons, sorted — for tests and tooling.
 func IconNames() []string {

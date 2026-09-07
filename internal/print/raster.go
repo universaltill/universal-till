@@ -2,11 +2,20 @@ package print
 
 import (
 	"bytes"
-	"image"
-	_ "image/gif"  // logo decode
-	_ "image/jpeg" // logo decode
-	_ "image/png"  // logo decode
+	_ "image/gif" // logo decode: registers the decoder DecodeBoundedFormats
+	// below dispatches to for a gif logo — internal/imaging itself only
+	// registers jpeg/png (ut-docs#1417).
+
+	"github.com/universaltill/universal-till/internal/imaging"
 )
+
+// rasterFormats is RasterLogo's own decode allowlist — wider than
+// imaging.DefaultFormats (png/jpeg only) because receipt logos are a
+// genuine, user-facing GIF upload path
+// (web/ui/pages/receipt_designer.html's file picker advertises
+// image/gif). ut-docs#1417: bounding RasterLogo's decode must not
+// silently break that.
+var rasterFormats = map[string]bool{"png": true, "jpeg": true, "gif": true}
 
 // Receipt logo (docs: receipt-designer.md follow-up): the owner's PNG is
 // rendered at the top of every thermal document via ESC/POS raster mode
@@ -25,7 +34,7 @@ const (
 // the printable width and thresholding to 1-bit. Returns nil when the
 // image can't be decoded — a receipt without a logo beats no receipt.
 func RasterLogo(imgBytes []byte) []byte {
-	img, _, err := image.Decode(bytes.NewReader(imgBytes))
+	img, _, err := imaging.DecodeBoundedFormats(imgBytes, imaging.MaxPixels, rasterFormats)
 	if err != nil {
 		return nil
 	}

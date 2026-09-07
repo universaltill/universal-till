@@ -59,9 +59,45 @@ func (r *PairingRepo) ListPending(ctx context.Context) ([]PendingPairingRow, err
 	}
 	rows, err := r.db.QueryContext(ctx, `
 SELECT id, device_name, commitment, token, requested_at, expires_at, status
-FROM pending_pairings WHERE status = 'pending' ORDER BY requested_at ASC`)
+FROM pending_pairings WHERE status = 'pending' ORDER BY requested_at ASC, id ASC`)
 	if err != nil {
 		return nil, fmt.Errorf("list pending pairings: %w", err)
+	}
+	defer rows.Close()
+	var out []PendingPairingRow
+	for rows.Next() {
+		var p PendingPairingRow
+		if err := rows.Scan(&p.ID, &p.DeviceName, &p.Commitment, &p.Token, &p.RequestedAt, &p.ExpiresAt, &p.Status); err != nil {
+			return nil, fmt.Errorf("scan pending pairing: %w", err)
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// ListPendingReadOnly is the same not-yet-expired pending set ListPending
+// returns (expired rows filtered in the WHERE clause instead), WITHOUT
+// ListPending's own opportunistic DELETE of expired rows -- for read-only
+// callers polled every 30s from every open page (the sync-chip badge and
+// the nav-level pairing notice, ut-docs#1551), where a write on every poll
+// per open page per manager is avoidable SQLite write-lock contention
+// against sale writes (offline-first, universal-till/CLAUDE.md). The
+// manager-facing approve/deny queue (GET /ui/tills/pending-pairings) still
+// calls ListPending on its own identical 30s cadence, so expired rows are
+// still swept regularly -- this just isn't the path that has to do it on
+// every other page too. Same `id ASC` tiebreak as ListPending: two
+// requests landing in the same second (RFC3339 second precision) must
+// still sort identically across repeated polls, or a caller fingerprinting
+// this list (the notice's dismiss-tracking) would see it change with
+// nothing having actually happened.
+func (r *PairingRepo) ListPendingReadOnly(ctx context.Context) ([]PendingPairingRow, error) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, device_name, commitment, token, requested_at, expires_at, status
+FROM pending_pairings WHERE status = 'pending' AND expires_at >= ?
+ORDER BY requested_at ASC, id ASC`, now)
+	if err != nil {
+		return nil, fmt.Errorf("list pending pairings (read-only): %w", err)
 	}
 	defer rows.Close()
 	var out []PendingPairingRow

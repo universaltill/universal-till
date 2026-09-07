@@ -49,9 +49,11 @@
 - Receipt printing (thermal and regular)
 - Order status tracking (new → preparing → ready → collected, one-tap for kitchen staff; on linked tills every till sees and updates the whole shop's orders, with silent local fallback when the main till is unreachable)
 - Customer order tracking via QR (self-order kiosk checkout shows a QR; the customer follows their order's status — and nothing else — live on their own phone over the shop's network)
-- Kitchen station routing (send each category — or a single item — to its own kitchen printer)
+- Kitchen station routing (send each category — or a single item — to its own kitchen printer, kitchen display screen, or both; discover network printers already on the LAN instead of typing an address by hand)
+- Kitchen display (a per-station live order screen for a second monitor on the till — same one-tap status buttons and live refresh as the Orders page; the LAN-paired standalone display device is a follow-up)
 - Table floor plan and assignment (draw your dining room, name each table, drag it into place; assign an order to a table from the basket or move a held order to a different free table, and the plan's free/open-order status lights up live)
 - Barcode scanning (USB/Bluetooth scanner, or a device camera — no dedicated hardware required)
+- In-POS Bluetooth pairing (a manager scans for, pairs, trusts and forgets a Bluetooth scanner or scale from a Settings-side panel on the Linux/Raspberry Pi kiosk — no OS settings or SSH; the .deb ships the scoped D-Bus grant the till service needs, ADR-0078)
 - Multi-currency support
 - Tax calculation (configurable by region)
 - Employee management
@@ -60,6 +62,7 @@
 
 ### Hardware Support
 - USB barcode scanners
+- Bluetooth HID barcode scanners and scales (paired from inside the POS on Linux/Raspberry Pi)
 - Thermal receipt printers (ESC/POS)
 - Cash drawers
 - Customer displays
@@ -483,7 +486,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 - [x] Self-hosted AI assistant plugin (camera item ID, "Ask your till")
 - [x] Webhook connector plugin (`ut-plugin-integration-webhook`) — reference/template for real ERP connectors, not itself a finished SAP/Dynamics integration (ADR-0014)
 - [x] Cloud sync service (optional, self-hostable)
-- [x] Multi-till LAN sync — one primary, replicas join by QR scan (ADR-0011); tills can also auto-discover primaries over mDNS and pair directly — no code to scan or type: select a discovered primary, the manager approves from a verification-code compare, done (ADR-0033). Available both on a configured till's Tills page and on a brand-new till's first-boot "Join an existing shop" screen (ut-docs#289)
+- [x] Multi-till LAN sync — one primary, replicas join by QR scan (ADR-0011); tills can also auto-discover primaries over mDNS and pair directly — no code to scan or type: select a discovered primary, the manager approves from a verification-code compare, done (ADR-0033). Available both on a configured till's Tills page and on a brand-new till's first-boot "Join an existing shop" screen (ut-docs#289). The same LAN auto-discovery finds network printers for kitchen station routing (ut-docs#140)
 - [x] Universal Till ID — self-hosted Zitadel (ADR-0012)
 - [x] Self-order kiosk + item modifiers (ADR-0020) — **in-store, network-attached device; not the same as remote online ordering or per-table ordering below**
 - [x] Android app, live-verified (ADR-0023)
@@ -494,6 +497,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 
 - [x] Gift vouchers as a liability (multi-purpose) — selling a voucher is recorded at 0% VAT as an outstanding liability (`vouchers` / `voucher_transactions`), excluded from article revenue and the per-rate VAT bands; VAT arises when the voucher is spent, at the redeemed goods' own rates. Redeeming debits a tracked per-voucher balance (overspend and over-tendering both refused), voiding the issuing sale voids a still-unused voucher with it (and is refused once any part of the voucher has been spent), the day-end Z-report shows issued/redeemed counts and amounts in their own GUTSCHEINE section (voided sales excluded), and the outstanding balance is queryable per voucher (`GET /api/vouchers/{id}`). Issuing is currently API-only via `/api/pos/tender`'s `issue_vouchers` field — no cashier dialog yet ([ut-docs#1008](https://github.com/universaltill/ut-docs/issues/1008); single-purpose vouchers and DATEV posting are separate follow-ups)
 - [x] Cancellations, close attribution and annotation on the day-end (Z) report ([ut-docs#1012](https://github.com/universaltill/ut-docs/issues/1012)) — a completed sale later voided/reversed (a "Storno") now reports its own STORNOS count/total on the Z-report, separate from Refunds (a formal return processed afterward — a "Retoure"); this is not a pre-tender abandoned-basket count — the till only ever writes a `sales` row once a sale completes, so there is nothing to count before that. The report also always prints who ran the close (`EODReport.GeneratedBy`, resolved to a display name — "System" for the automatic scheduled close) and, when supplied, a validated free-text `Annotation`. The annotation field has no on-screen input yet — only the API (`POST /api/reports/eod/run`'s `annotation` form value) accepts one today
+- [x] By-article-group, by-article and by-operator breakdowns on the day-end (Z) report ([ut-docs#1010](https://github.com/universaltill/ut-docs/issues/1010)) — three more single-day-only sections alongside the existing per-department/per-till ones: **BY ARTICLE GROUP** groups by an item's own *immediate* category (a subcategory reports on its own line, unlike the per-department breakdown's root-category rollup), **BY ARTICLE** is every article sold that day with no top/bottom-N limit (shown collapsed on screen since a busy day can list dozens), and **BY OPERATOR** is revenue and sale count per cashier. Operator attribution reads `sales.cashier_id` alone — a manager-override elevation recorded separately in `audit_log` never changes who a sale's revenue is attributed to. The printed `BY ARTICLE` section currently has no line cap, so a shop with hundreds of distinct daily articles gets a correspondingly long Z-report roll — a follow-up card tracks whether that should be capped or made a setting
 
 ### In progress / partially built
 - [ ] **ERP integration plugins** — the webhook connector (above) is a working *template*; real per-system connectors (`core-universaltill`/Universal Core, SAP, Dynamics/LS Central) aren't built yet (ADR-0014)
@@ -516,7 +520,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 
 ### Long-term
 - [ ] Employee scheduling, customer loyalty programs
-- [ ] Kitchen display system
+- [x] Kitchen display system — HDMI-local slice ([ut-docs#544](https://github.com/universaltill/ut-docs/issues/544)): a kitchen station can be a printer, a display, or both; a display-capable station gets a live per-station order screen at `/kitchen-display/{station_id}` (the `/orders` board scoped by the same item-over-category routing that decides tickets, same one-tap status endpoint, same 15s poll + SSE refresh) meant for a second monitor on the machine already running the till. Still to come: the LAN-paired standalone KDS device (its own pairing/auth/liveness), the cross-till proxy so a replica's screen reads the primary's board, and per-line status (today status is per order, so a split order shows on both screens and clears from both)
 - [ ] iOS app, further mobile platform work
 - [ ] Advanced analytics and BI
 - [ ] Hardware manufacturer partnerships, white-label licensing

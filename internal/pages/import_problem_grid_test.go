@@ -143,6 +143,16 @@ func TestImport_PreviewStagesFileAndRendersProblemControls(t *testing.T) {
 	if !strings.Contains(resp, `name="row_price_1"`) {
 		t.Fatalf("bad-price row has no corrected-price input: %s", resp)
 	}
+	// ut-docs#1713 review: the per-field input id (row-fix-name-%d /
+	// row-fix-price-%d, replacing the old shared row-fix-%d) and the include
+	// checkbox's data-fix-target must still pair up correctly for the two
+	// PRE-EXISTING single-field issue types, not just the new combined one.
+	if !strings.Contains(resp, `id="row-fix-name-0"`) || !strings.Contains(resp, `data-fix-target="row-fix-name-0"`) {
+		t.Fatalf("missing-name-only row's input id and checkbox target must both be row-fix-name-0: %s", resp)
+	}
+	if !strings.Contains(resp, `id="row-fix-price-1"`) || !strings.Contains(resp, `data-fix-target="row-fix-price-1"`) {
+		t.Fatalf("bad-price-only row's input id and checkbox target must both be row-fix-price-1: %s", resp)
+	}
 	// The clean row gets no controls at all.
 	if strings.Contains(resp, `name="row_include_2"`) {
 		t.Fatalf("clean row must not render an include checkbox: %s", resp)
@@ -246,6 +256,133 @@ func TestImport_CommitWithStagedIDAppliesAllowListedCorrections(t *testing.T) {
 	if got := stagedRegistrySize(); got != 0 {
 		t.Fatalf("staged registry not cleaned up, %d entries left", got)
 	}
+}
+
+// bothMissingCSV: one row missing BOTH name and price — ut-docs#1713.
+const bothMissingCSV = "Name,SKU,Barcode,Price,Category\n" +
+	",BN1,,not-a-price,Snacks\n"
+
+// TestImport_PreviewRendersBothFieldsForCombinedIssue is the preview-side
+// regression test for ut-docs#1713: a row failing BOTH checks must render
+// name AND price correction inputs under one checkbox, not just one.
+func TestImport_PreviewRendersBothFieldsForCombinedIssue(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	initAuthTestI18n(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	_, resp := previewAndExtractStagedID(t, mux, bothMissingCSV)
+
+	if !strings.Contains(resp, `name="row_include_0"`) {
+		t.Fatalf("combined-issue row has no include checkbox: %s", resp)
+	}
+	if !strings.Contains(resp, `id="row-fix-name-0"`) || !strings.Contains(resp, `name="row_name_0"`) {
+		t.Fatalf("combined-issue row has no corrected-name input: %s", resp)
+	}
+	if !strings.Contains(resp, `id="row-fix-price-0"`) || !strings.Contains(resp, `name="row_price_0"`) {
+		t.Fatalf("combined-issue row has no corrected-price input: %s", resp)
+	}
+	// One checkbox targets BOTH inputs (space-separated ids).
+	if !strings.Contains(resp, `data-fix-target="row-fix-name-0 row-fix-price-0"`) {
+		t.Fatalf("include checkbox must target both correction inputs: %s", resp)
+	}
+	if !strings.Contains(resp, "missing name and bad price") {
+		t.Fatalf("combined-issue row must show the combined status text: %s", resp)
+	}
+}
+
+// TestImport_CommitStagedBothNameAndPriceRequireBothCorrections is the
+// commit-side regression test for ut-docs#1713's core acceptance criterion:
+// a row needing BOTH corrections must never import off just one of them —
+// supplying only the name must never silently ship the row at PriceMinor 0.
+func TestImport_CommitStagedBothNameAndPriceRequireBothCorrections(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+
+	t.Run("name only leaves the row skipped, price still required", func(t *testing.T) {
+		resetStagedCatalog(t)
+		dp := newImportTestDeps(t)
+		initAuthTestI18n(t)
+		mux := http.NewServeMux()
+		registerImport(mux, dp)
+
+		id, _ := previewAndExtractStagedID(t, mux, bothMissingCSV)
+		body, ct := multipartFields(t, map[string]string{
+			"commit":        "1",
+			"staged_id":     id,
+			"row_include_0": "1",
+			"row_name_0":    "Named Now",
+			// row_price_0 deliberately omitted.
+		})
+		rec := postImport(t, mux, body, ct)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("staged commit: code %d body %s", rec.Code, rec.Body.String())
+		}
+		var n int
+		if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE sku = 'BN1'`).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("row must NOT import off a name-only correction (n=%d err=%v) — this is the exact silent-£0.00 regression", n, err)
+		}
+		if !strings.Contains(rec.Body.String(), "no corrected price was given") {
+			t.Fatalf("must surface that the price is still required, got: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("price only leaves the row skipped, name still required", func(t *testing.T) {
+		resetStagedCatalog(t)
+		dp := newImportTestDeps(t)
+		initAuthTestI18n(t)
+		mux := http.NewServeMux()
+		registerImport(mux, dp)
+
+		id, _ := previewAndExtractStagedID(t, mux, bothMissingCSV)
+		body, ct := multipartFields(t, map[string]string{
+			"commit":        "1",
+			"staged_id":     id,
+			"row_include_0": "1",
+			"row_price_0":   "3.20",
+			// row_name_0 deliberately omitted.
+		})
+		rec := postImport(t, mux, body, ct)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("staged commit: code %d body %s", rec.Code, rec.Body.String())
+		}
+		var n int
+		if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE sku = 'BN1'`).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("row must NOT import off a price-only correction (n=%d err=%v)", n, err)
+		}
+		if !strings.Contains(rec.Body.String(), "no corrected name was given") {
+			t.Fatalf("must surface that the name is still required, got: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("both corrections together import cleanly", func(t *testing.T) {
+		resetStagedCatalog(t)
+		dp := newImportTestDeps(t)
+		initAuthTestI18n(t)
+		mux := http.NewServeMux()
+		registerImport(mux, dp)
+
+		id, _ := previewAndExtractStagedID(t, mux, bothMissingCSV)
+		body, ct := multipartFields(t, map[string]string{
+			"commit":        "1",
+			"staged_id":     id,
+			"row_include_0": "1",
+			"row_name_0":    "Named Now",
+			"row_price_0":   "3.20",
+		})
+		rec := postImport(t, mux, body, ct)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("staged commit: code %d body %s", rec.Code, rec.Body.String())
+		}
+		var name string
+		var price int64
+		if err := dp.Db.QueryRow(`SELECT name, base_price FROM items WHERE sku = 'BN1'`).Scan(&name, &price); err != nil {
+			t.Fatalf("row with both corrections not imported: %v", err)
+		}
+		if name != "Named Now" || price != 320 {
+			t.Fatalf("corrected row = (%q, %d), want (Named Now, 320)", name, price)
+		}
+	})
 }
 
 // Defense in depth: "include" on any issue type outside the allow-list
@@ -580,7 +717,7 @@ func TestImport_StagedCommitSurvivesCurrencyConfirmDetour(t *testing.T) {
 // failed with a generic item_failed. This is the genuine integration-level
 // regression pin the review asked for (F2): it exercises the real .bkp
 // preview → staged-commit path, not just the pure allow-list unit test.
-func TestImport_BkpStagedCommitNeverForcesInFileDuplicatePLU(t *testing.T) {
+func TestImport_BkpStagedCommitDedupesAnchoredForcedRowsVetoesUnanchoredOnes(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	resetStagedCatalog(t)
 	dp := newImportTestDeps(t)
@@ -594,8 +731,12 @@ func TestImport_BkpStagedCommitNeverForcesInFileDuplicatePLU(t *testing.T) {
 	//         (clean row FIRST — the parser's seen-set catches this one);
 	//  idx 4: missing-name on 50001, idx 5: clean "Second B" on 50001
 	//         (clean row LAST — only the commit-time guard can catch this);
-	//  idx 6/7: two missing-name rows sharing 60001, both forced — only the
-	//         first may land.
+	//  idx 6/7: two missing-name rows sharing 60001, both forced, NEITHER
+	//         with a clean twin anywhere in the file — genuinely ambiguous
+	//         (ut-docs#1234 review): only the first may land.
+	//  idx 8/9/10: clean "Anchor C" on 70001 plus TWO missing-name rows also
+	//         on 70001, both forced — AC2 itself (more than one corrected
+	//         row sharing the same anchored PLU, not just one).
 	zipBytes := buildBkpZipForPagesTestWithTaxRows(t, []bkpTaxRow{
 		{ProductNumber: "40001", Name: "First A", Category: "Coffee", Price: 2.00},
 		{ProductNumber: "40001", Name: "", Category: "Coffee", Price: 3.00},
@@ -603,6 +744,9 @@ func TestImport_BkpStagedCommitNeverForcesInFileDuplicatePLU(t *testing.T) {
 		{ProductNumber: "50001", Name: "Second B", Category: "Coffee", Price: 5.00},
 		{ProductNumber: "60001", Name: "", Category: "Coffee", Price: 6.00},
 		{ProductNumber: "60001", Name: "", Category: "Coffee", Price: 7.00},
+		{ProductNumber: "70001", Name: "Anchor C", Category: "Coffee", Price: 8.00},
+		{ProductNumber: "70001", Name: "", Category: "Coffee", Price: 9.00},
+		{ProductNumber: "70001", Name: "", Category: "Coffee", Price: 10.00},
 	})
 	body, ct := multipartFile(t, "Backup 2026-08-09.bkp", zipBytes, nil) // preview
 	rec := postImport(t, mux, body, ct)
@@ -615,19 +759,23 @@ func TestImport_BkpStagedCommitNeverForcesInFileDuplicatePLU(t *testing.T) {
 	}
 	id := m[1]
 
-	// The operator (or a hostile client) ticks every missing-name row and
-	// supplies corrected names for all of them.
+	// The operator ticks every missing-name row and supplies corrected names
+	// for all of them.
 	body2, ct2 := multipartFields(t, map[string]string{
-		"commit":        "1",
-		"staged_id":     id,
-		"row_include_3": "1",
-		"row_name_3":    "Fixed Name",
-		"row_include_4": "1",
-		"row_name_4":    "Sneaky",
-		"row_include_6": "1",
-		"row_name_6":    "Twin One",
-		"row_include_7": "1",
-		"row_name_7":    "Twin Two",
+		"commit":         "1",
+		"staged_id":      id,
+		"row_include_3":  "1",
+		"row_name_3":     "Fixed Name",
+		"row_include_4":  "1",
+		"row_name_4":     "Sneaky",
+		"row_include_6":  "1",
+		"row_name_6":     "Twin One",
+		"row_include_7":  "1",
+		"row_name_7":     "Twin Two",
+		"row_include_9":  "1",
+		"row_name_9":     "Multi One",
+		"row_include_10": "1",
+		"row_name_10":    "Multi Two",
 	})
 	rec2 := postImport(t, mux, body2, ct2)
 	if rec2.Code != http.StatusOK {
@@ -635,34 +783,111 @@ func TestImport_BkpStagedCommitNeverForcesInFileDuplicatePLU(t *testing.T) {
 	}
 	resp := rec2.Body.String()
 
-	// Exactly ONE row per duplicated PLU ever lands — and it's the clean one
-	// where a clean one exists, regardless of file order.
 	assertOne := func(sku, wantName string) {
 		t.Helper()
 		var n int
 		if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE sku = ?`, sku).Scan(&n); err != nil || n != 1 {
-			t.Fatalf("PLU %s: %d items landed, want exactly 1 (err=%v)", sku, n, err)
+			t.Fatalf("SKU %s: %d items landed, want exactly 1 (err=%v)", sku, n, err)
 		}
 		var name string
 		if err := dp.Db.QueryRow(`SELECT name FROM items WHERE sku = ?`, sku).Scan(&name); err != nil || name != wantName {
-			t.Fatalf("PLU %s landed as %q (err=%v), want %q", sku, name, err, wantName)
+			t.Fatalf("SKU %s landed as %q (err=%v), want %q", sku, name, err, wantName)
 		}
 	}
+	// A clean row anchors each of 40001/50001 — the corrected row sharing
+	// that PLU is no longer an unconditional dead end (ut-docs#1234 AC1):
+	// it lands too, under its own synthesized suffix, same as bkp.go's own
+	// clean-row dedup convention, regardless of which side of the anchor it
+	// falls on in the file (AC2).
 	assertOne("40001", "First A")
+	assertOne("40001-2", "Fixed Name")
 	assertOne("50001", "Second B")
-	assertOne("60001", "Twin One") // no clean twin: the first forced row wins, the second stays out
+	assertOne("50001-2", "Sneaky")
+	// AC2 itself: TWO corrected rows sharing one anchored PLU both land,
+	// each under its own distinct synthesized suffix — not just the first.
+	assertOne("70001", "Anchor C")
+	assertOne("70001-2", "Multi One")
+	assertOne("70001-3", "Multi Two")
+	// No clean twin anywhere for 60001: still genuinely ambiguous (AC3,
+	// unchanged from before this card) — the first forced row wins, the
+	// second stays out.
+	assertOne("60001", "Twin One")
 	var n int
-	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE name IN ('Fixed Name','Sneaky','Twin Two')`).Scan(&n); err != nil || n != 0 {
-		t.Fatalf("a forced in-file duplicate landed in the DB (n=%d err=%v)", n, err)
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE name = 'Twin Two'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("a forced row with no clean anchor landed anyway (n=%d err=%v)", n, err)
 	}
 
-	// The rows that stayed out say WHY — the duplicate status, never a
+	// The one row that stayed out says WHY — the duplicate status, never a
 	// generic item_failed from the SKU UNIQUE constraint firing late.
 	if !strings.Contains(resp, "duplicate item number in this file") {
-		t.Fatalf("skipped duplicate rows must show the duplicate_sku_in_file status: %s", resp)
+		t.Fatalf("the skipped no-anchor duplicate must show the duplicate_sku_in_file status: %s", resp)
+	}
+	// A deduped row's operator-facing status says its number was reused and
+	// reassigned (ut-docs#1234 review) — not a silent "OK" that hides the
+	// fact its PLU quietly changed.
+	if !strings.Contains(resp, "reused in this file") {
+		t.Fatalf("a deduped forced-correction row must show the sku_reused_in_file status: %s", resp)
 	}
 	if strings.Contains(resp, "item could not be created") {
 		t.Fatalf("an in-file duplicate leaked into the write loop and failed on the DB constraint instead of being refused up front: %s", resp)
+	}
+}
+
+// TestImport_BkpNameOnlyCorrectionKeepsRealPrice is the end-to-end (commit)
+// counterpart to internal/catimport/bkp_test.go's
+// TestParseBkp_MissingNameOnlyStillCarriesValidPrice — ut-docs#1713's second,
+// latent bug: a .bkp row missing ONLY its name (real, valid price) used to
+// have its price silently discarded (never parsed at all, since the parse
+// used to live only in the switch's default case) — a name-only correction
+// then imported it at PriceMinor 0 despite the source cell being fine. This
+// is the shape a shop actually hits: a name-only fix must carry the file's
+// real price through, not just clear the Issue.
+func TestImport_BkpNameOnlyCorrectionKeepsRealPrice(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	resetStagedCatalog(t)
+	dp := newImportTestDeps(t)
+	initAuthTestI18n(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	// idx 2 (after the base fixture's Latte/deleted rows): missing name,
+	// otherwise-valid price.
+	zipBytes := buildBkpZipForPagesTestWithTaxRows(t, []bkpTaxRow{
+		{ProductNumber: "80001", Name: "", Category: "Coffee", Price: 6.75},
+	})
+	body, ct := multipartFile(t, "Backup 2026-09-07.bkp", zipBytes, nil)
+	rec := postImport(t, mux, body, ct)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bkp preview: code %d body %s", rec.Code, rec.Body.String())
+	}
+	m := stagedIDPattern.FindStringSubmatch(rec.Body.String())
+	if m == nil {
+		t.Fatalf("bkp preview carries no staged_id: %s", rec.Body.String())
+	}
+	// Only a corrected NAME is offered — the price cell parsed fine, so this
+	// row's Issue is plain missing_name, not the combined code, and only one
+	// field is forceable.
+	if strings.Contains(rec.Body.String(), `name="row_price_2"`) {
+		t.Fatalf("a row with a valid price must not also render a price correction field: %s", rec.Body.String())
+	}
+
+	body2, ct2 := multipartFields(t, map[string]string{
+		"commit":        "1",
+		"staged_id":     m[1],
+		"row_include_2": "1",
+		"row_name_2":    "Corrected Coffee",
+	})
+	rec2 := postImport(t, mux, body2, ct2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("bkp staged commit: code %d body %s", rec2.Code, rec2.Body.String())
+	}
+	var name string
+	var price int64
+	if err := dp.Db.QueryRow(`SELECT name, base_price FROM items WHERE sku = '80001'`).Scan(&name, &price); err != nil {
+		t.Fatalf("corrected row not imported: %v", err)
+	}
+	if name != "Corrected Coffee" || price != 675 {
+		t.Fatalf("corrected row = (%q, %d), want (Corrected Coffee, 675) — the source's real price must survive a name-only correction", name, price)
 	}
 }
 
@@ -753,11 +978,14 @@ func TestImport_StagedCommitSurvivesInvalidCurrencyCode(t *testing.T) {
 // bad_price are ever forceable; anything else — including a future new issue
 // code — defaults to skip-only.
 func TestForceableImportIssueAllowList(t *testing.T) {
-	if f, ok := forceableImportIssue(catimport.IssueMissingName); !ok || f != "name" {
-		t.Fatalf("missing_name = (%q,%v), want (name,true)", f, ok)
+	if f, ok := forceableImportIssue(catimport.IssueMissingName); !ok || len(f) != 1 || f[0] != "name" {
+		t.Fatalf("missing_name = (%v,%v), want ([name],true)", f, ok)
 	}
-	if f, ok := forceableImportIssue(catimport.IssueBadPrice); !ok || f != "price" {
-		t.Fatalf("bad_price = (%q,%v), want (price,true)", f, ok)
+	if f, ok := forceableImportIssue(catimport.IssueBadPrice); !ok || len(f) != 1 || f[0] != "price" {
+		t.Fatalf("bad_price = (%v,%v), want ([price],true)", f, ok)
+	}
+	if f, ok := forceableImportIssue(catimport.IssueMissingNameAndBadPrice); !ok || len(f) != 2 || f[0] != "name" || f[1] != "price" {
+		t.Fatalf("missing_name_and_bad_price = (%v,%v), want ([name price],true)", f, ok)
 	}
 	for _, issue := range []string{
 		"", catimport.IssueSourceDeleted, catimport.IssueNotSellable,

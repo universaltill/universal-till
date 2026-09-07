@@ -50,8 +50,16 @@ func newHoldTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	// re-claims it, so the claims table (migration 078) is part of every
 	// hold/resume round trip, table-assigned or not (release is a no-op
 	// DELETE either way) -- column-identical to the migration.
-	if _, err := db.Exec(`CREATE TABLE table_claims (table_id TEXT PRIMARY KEY REFERENCES tables(id), claimed_at TEXT NOT NULL);`); err != nil {
+	// till_id mirrors migration 008 (ut-docs#1703): resume's re-claim goes
+	// through claimTableWriteThrough, whose local branch reconciles stale
+	// claims against `tills` -- so this hand-rolled schema needs BOTH the
+	// column and the tills table, or that branch errors and silently degrades
+	// to the plain ClaimTable fallback, testing the wrong path.
+	if _, err := db.Exec(`CREATE TABLE table_claims (table_id TEXT PRIMARY KEY REFERENCES tables(id), claimed_at TEXT NOT NULL, till_id TEXT NOT NULL DEFAULT '');`); err != nil {
 		t.Fatalf("create table_claims: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE tills (id TEXT PRIMARY KEY, name TEXT NOT NULL, bearer_hash TEXT UNIQUE, enrolled_at TEXT NOT NULL DEFAULT (datetime('now')), last_seen_at TEXT);`); err != nil {
+		t.Fatalf("create tills: %v", err)
 	}
 
 	resolver := stubResolver{
@@ -564,6 +572,49 @@ func TestHeldTableHandler_MoveOntoOwnCurrentTableSucceeds(t *testing.T) {
 	}
 }
 
+// TestHeldTableHandler_MoveOntoOwnCurrentTableLeavesClaimUntouched
+// (ut-docs#1704, independent review 2026-09-07): the self-move short-circuit
+// is not just a convenience -- it is what stops a self-move from asking
+// IsTableFree/claimTableWriteThrough about a table this held sale's OWN
+// claim already occupies (which, per IsTableFree's own doc comment, they
+// must never be asked about: "a claim seen here is by construction someone
+// else's") and then releasing that same claim as the "old table" once the
+// no-op "move" reports success -- silently stripping the parked order's
+// cross-till occupancy. Pins the short-circuit actually skips the
+// claim/release path, not just that the table_id value happens to end up
+// unchanged either way (the review found this specific test's predecessor
+// passed even with the short-circuit condition forced to `true`,
+// unconditionally, because it seeded no table_claims row to detect the
+// difference).
+func TestHeldTableHandler_MoveOntoOwnCurrentTableLeavesClaimUntouched(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO tables (id, label, created_at, updated_at) VALUES ('tbl-1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed table: %v", err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES ('h1','Table 1',100,1,'{}','tbl-1')`); err != nil {
+		t.Fatalf("seed held sale: %v", err)
+	}
+	// The claim ut-docs#1704 now keeps alive through the whole park --
+	// seeded directly here the way the real hold handler leaves it.
+	if claimed, err := data.NewPOSRepo(dp.Db).ClaimTable(context.Background(), "tbl-1"); err != nil || !claimed {
+		t.Fatalf("seed held order's own claim: claimed=%v err=%v", claimed, err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/held/table", strings.NewReader("id=h1&table_id=tbl-1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("HX-Trigger") != "held-changed" {
+		t.Fatalf("expected HX-Trigger: held-changed even for a self-move no-op, got %q", rec.Header().Get("HX-Trigger"))
+	}
+	if !holdTestTableClaimed(t, dp, "tbl-1") {
+		t.Fatal("a self-move onto the held order's own current table must leave its claim untouched, not release it")
+	}
+}
+
 // TestHeldTableHandler_TakeawayOrderIgnoresTableMove (ut-docs#1381): a held
 // Takeaway order's table assignment can never be set via this endpoint --
 // mirrors Service.SetTable's own no-op-while-Takeaway rule, now enforceable
@@ -761,14 +812,22 @@ func holdTestTableOccupied(t *testing.T, dp *common.Deps, tableID string) bool {
 	return false
 }
 
-// TestHoldThenResume_MovesTableClaimBetweenLiveAndHeld (ut-docs#1390): a
-// table-assigned live basket carries a table_claims row (seeded here the
-// way POST /api/pos/table writes it -- this harness registers only the hold
-// API). Hold hands the occupancy to the held_sales row and drops the claim,
-// so a table never has both; resume re-claims it BEFORE the held row is
-// deleted, so the table never reads free in between. Occupancy as the floor
-// plan sees it (ListTablesWithState) stays true throughout.
-func TestHoldThenResume_MovesTableClaimBetweenLiveAndHeld(t *testing.T) {
+// TestHoldThenResume_KeepsTableClaimThroughHold (ut-docs#1390, behaviour
+// changed by ut-docs#1704): a table-assigned live basket carries a
+// table_claims row (seeded here the way POST /api/pos/table writes it --
+// this harness registers only the hold API). Hold used to hand the
+// occupancy to the held_sales row and drop the claim (one occupancy source
+// per lifecycle stage); it now KEEPS the claim alive through the whole
+// park instead, because that claim -- unlike held_sales -- is the one
+// thing a replica already write-throughs to the primary, so it is what
+// makes a parked order's table visible cross-till (ut-docs#1704; see
+// hold_api.go's own comment on why). Resume re-affirms the SAME row
+// (ClaimTableForTill's own-claim re-take, tables_repo.go) rather than
+// re-claiming from scratch, BEFORE the held row is deleted, so the table
+// never reads free in between. Occupancy as the floor plan sees it
+// (ListTablesWithState) stays true throughout -- and, unlike before, so
+// does the table_claims row itself, continuously.
+func TestHoldThenResume_KeepsTableClaimThroughHold(t *testing.T) {
 	mux, dp := newHoldTestDeps(t)
 	if _, err := dp.Db.Exec(`INSERT INTO tables (id, label, created_at, updated_at) VALUES ('tbl-1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
 		t.Fatalf("seed table: %v", err)
@@ -786,8 +845,8 @@ func TestHoldThenResume_MovesTableClaimBetweenLiveAndHeld(t *testing.T) {
 	if holdRec.Code != http.StatusOK {
 		t.Fatalf("hold: expected 200, got %d: %s", holdRec.Code, holdRec.Body.String())
 	}
-	if holdTestTableClaimed(t, dp, "tbl-1") {
-		t.Fatalf("hold must release the live claim (the held_sales row now carries the occupancy)")
+	if !holdTestTableClaimed(t, dp, "tbl-1") {
+		t.Fatalf("hold must KEEP the live claim (ut-docs#1704) -- it's what makes the parked order visible cross-till")
 	}
 	var heldTable string
 	if err := dp.Db.QueryRow(`SELECT table_id FROM held_sales`).Scan(&heldTable); err != nil || heldTable != "tbl-1" {
@@ -813,7 +872,7 @@ func TestHoldThenResume_MovesTableClaimBetweenLiveAndHeld(t *testing.T) {
 		t.Fatalf("resume must delete the held row, got %d rows (err %v)", heldRows, err)
 	}
 	if !holdTestTableClaimed(t, dp, "tbl-1") {
-		t.Fatalf("resume must re-claim the table for the live basket")
+		t.Fatalf("resume must keep the table claimed for the live basket")
 	}
 	if !holdTestTableOccupied(t, dp, "tbl-1") {
 		t.Fatalf("T1 must read occupied after resume, via the live claim")

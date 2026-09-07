@@ -4,10 +4,14 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
+	"fmt"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/logging"
 )
 
 // openMigratedDB gives each side of the sync a real, fully migrated schema.
@@ -26,6 +30,20 @@ func mustExec(t *testing.T, d *db.DB, q string, args ...any) {
 	if _, err := d.Exec(q, args...); err != nil {
 		t.Fatalf("exec %q: %v", q, err)
 	}
+}
+
+// warnfContaining reports whether logging.Recent() holds a WARN entry whose
+// message contains substr — used to assert deleteMissing's satellite-
+// divergence Warnf fired (or didn't), per ut-docs#1592. Callers must
+// logging.ResetRecent() before the action under test, since Recent() is a
+// process-global ring buffer shared by every test in this binary.
+func warnfContaining(substr string) bool {
+	for _, p := range logging.Recent() {
+		if p.Level == "WARN" && strings.Contains(p.Msg, substr) {
+			return true
+		}
+	}
+	return false
 }
 
 // wireTrip simulates the HTTP hop: numbers become float64, like on a replica.
@@ -154,9 +172,10 @@ func TestAdminDumpApplyRoundTrip_TillRegisterIDNeverSyncs(t *testing.T) {
 	primary := openMigratedDB(t, "primary.db")
 	replica := openMigratedDB(t, "replica.db")
 
-	// Same shop-wide registers table on both sides (as a real admin sync
-	// would produce), but each till has resolved a DIFFERENT one as its
-	// own.
+	// registers doesn't admin-sync (ut-docs#1584 — per-till), so this test
+	// seeds the same rows by hand on both sides to simulate the shop-wide
+	// roster a real till would have (e.g. from the initial full-DB-snapshot
+	// join) — but each till has resolved a DIFFERENT one as its own.
 	for _, d := range []*db.DB{primary, replica} {
 		mustExec(t, d, `INSERT INTO registers (id, name, is_active) VALUES ('regA', 'Front Till', 1)`)
 		mustExec(t, d, `INSERT INTO registers (id, name, is_active) VALUES ('regB', 'Back Till', 1)`)
@@ -649,5 +668,978 @@ func TestAdminApplyDeactivatesUndeletable(t *testing.T) {
 	}
 	if active != 0 {
 		t.Fatal("undeletable item not deactivated")
+	}
+}
+
+// ut-docs#1546, reported from the pilot pair on 2026-09-04: "I added a table
+// in the main till but it didn't sync with the secondary (pi)."
+//
+// The floor plan and kitchen routing are shop-wide setup, not per-till state,
+// and were simply absent from adminTables — so a satellite could not see the
+// tables at all, could therefore neither take nor settle a table order, and
+// sent kitchen tickets nowhere. This is a coverage test as much as a
+// regression test: the failure mode is a table being forgotten, so it asserts
+// the data actually lands rather than that some code path ran.
+func TestAdminDumpApplyRoundTrip_FloorPlanAndKitchenRouting(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO categories (id, name) VALUES ('cat-hot', 'Hot Drinks')`)
+	mustExec(t, primary, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm-esp', 'ESP', 'Espresso', 250)`)
+	mustExec(t, primary, `INSERT INTO tables (id, label, area_zone, seat_count, created_at, updated_at)
+		VALUES ('tbl-1', 'Table 1', 'Terrace', 4, '2026-09-04', '2026-09-04')`)
+	mustExec(t, primary, `INSERT INTO kitchen_stations (id, name, destination_type, created_at, updated_at)
+		VALUES ('stn-bar', 'Bar', 'printer', '2026-09-04', '2026-09-04')`)
+	mustExec(t, primary, `INSERT INTO item_station_routes (item_id, station_id) VALUES ('itm-esp', 'stn-bar')`)
+	mustExec(t, primary, `INSERT INTO category_station_routes (category_id, station_id) VALUES ('cat-hot', 'stn-bar')`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var label, zone string
+	var seats int
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT label, area_zone, seat_count FROM tables WHERE id = 'tbl-1'`).Scan(&label, &zone, &seats); err != nil {
+		t.Fatalf("the floor plan did not reach the satellite — it cannot take a table order at all: %v", err)
+	}
+	if label != "Table 1" || zone != "Terrace" || seats != 4 {
+		t.Errorf("table synced with wrong content: %q / %q / %d", label, zone, seats)
+	}
+
+	var station string
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT name FROM kitchen_stations WHERE id = 'stn-bar'`).Scan(&station); err != nil {
+		t.Fatalf("kitchen stations did not sync — tickets from the satellite go nowhere: %v", err)
+	}
+
+	for _, q := range []struct{ what, sql string }{
+		{"item→station route", `SELECT COUNT(*) FROM item_station_routes WHERE item_id='itm-esp' AND station_id='stn-bar'`},
+		{"category→station route", `SELECT COUNT(*) FROM category_station_routes WHERE category_id='cat-hot' AND station_id='stn-bar'`},
+	} {
+		var n int
+		if err := replica.DB.QueryRowContext(ctx, q.sql).Scan(&n); err != nil || n != 1 {
+			t.Errorf("%s did not sync (n=%d, err=%v) — the satellite would print to the wrong station or none", q.what, n, err)
+		}
+	}
+
+	// And a deletion on the primary must propagate, not leave a ghost table
+	// an operator can still seat customers at.
+	mustExec(t, primary, `DELETE FROM tables WHERE id = 'tbl-1'`)
+	bundle2, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("second dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle2); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	var n int
+	if err := replica.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM tables WHERE id='tbl-1'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("a table removed on the primary is still on the satellite (n=%d, err=%v)", n, err)
+	}
+}
+
+// ut-docs#1546 review: a kitchen station's name and routing are shop-wide, but
+// its printer_address is till-local — the field takes a network address OR a
+// device path, and a satellite inheriting the primary's "/dev/usb/lp0" prints
+// to whatever is plugged into its own first USB port, or nowhere.
+func TestAdminDumpApplyRoundTrip_KitchenStationPrinterAddressStaysLocal(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO kitchen_stations (id, name, destination_type, printer_address, created_at, updated_at)
+		VALUES ('stn-kitchen', 'Kitchen', 'printer', '/dev/usb/lp0', '2026-09-04', '2026-09-04')`)
+	mustExec(t, replica, `INSERT INTO kitchen_stations (id, name, destination_type, printer_address, created_at, updated_at)
+		VALUES ('stn-kitchen', 'Old name', 'printer', '192.168.1.50:9100', '2026-09-04', '2026-09-04')`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var name, addr string
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT name, printer_address FROM kitchen_stations WHERE id = 'stn-kitchen'`).Scan(&name, &addr); err != nil {
+		t.Fatalf("station missing after apply: %v", err)
+	}
+	if name != "Kitchen" {
+		t.Errorf("the station's shop-wide name should follow the primary, got %q", name)
+	}
+	if addr != "192.168.1.50:9100" {
+		t.Errorf("printer_address must stay the satellite's own — it inherited %q from the primary, so its kitchen tickets go to the wrong device or nowhere", addr)
+	}
+}
+
+// ut-docs#1554: role_permissions is the security-relevant half of that
+// card — a manager revoking a grant on the primary must actually reach
+// every satellite, not just a newly-granted permission. Both DBs already
+// carry the identical migration-seeded roles/permission_actions/
+// role_permissions rows (that's the fragility #1554 called out: they only
+// match "because every till seeds them identically"), so this test proves
+// the two properties that seeding alone can never cover: a NEW grant made
+// on the primary reaches the satellite, and a REVOKED grant does too.
+func TestAdminDumpApplyRoundTrip_RolePermissions(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	// 'cashier' isn't seeded with 'audit' by migration 001_init.sql — grant
+	// it on the primary, as the permission matrix editor's
+	// AuthRepo.SetRolePermission would.
+	mustExec(t, primary, `INSERT INTO role_permissions (role, action, granted) VALUES ('cashier', 'audit', 1)
+		ON CONFLICT (role, action) DO UPDATE SET granted = excluded.granted`)
+	// A seeded grant, revoked on the primary — this is the actual bug
+	// #1554 fixed: before this change, nothing propagated this to a
+	// satellite at all.
+	mustExec(t, primary, `UPDATE role_permissions SET granted = 0 WHERE role = 'admin' AND action = 'refund'`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	// wireTrip: role_permissions.granted is the one INTEGER column this test
+	// asserts on, so it must cross the same JSON hop a real replica sees
+	// (numbers becoming float64) — every other ApplyAdmin call in this file
+	// does the same (see wireTrip's own doc comment above).
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var granted int
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT granted FROM role_permissions WHERE role = 'cashier' AND action = 'audit'`).Scan(&granted); err != nil {
+		t.Fatalf("new grant did not sync to the satellite: %v", err)
+	}
+	if granted != 1 {
+		t.Errorf("cashier/audit should be granted on the satellite, got granted=%d", granted)
+	}
+
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT granted FROM role_permissions WHERE role = 'admin' AND action = 'refund'`).Scan(&granted); err != nil {
+		t.Fatalf("admin/refund row missing on satellite after apply: %v", err)
+	}
+	if granted != 0 {
+		t.Errorf("admin/refund was revoked on the primary but the satellite still grants it (granted=%d) — this is the exact security gap #1554 fixed", granted)
+	}
+}
+
+// ut-docs#1589 (found in #1554's own review): a replica one release ahead
+// of its primary has extra migration-seeded roles/permission_actions/
+// role_permissions rows the primary's dump doesn't mention at all — before
+// this fix, deleteMissing's generic prune phase silently deleted them on
+// every pull, with no warning. Simulates that skew directly: the replica
+// gets a role, an action and a grant the primary has never heard of, and
+// they must all survive an ApplyAdmin pull unpruned.
+func TestAdminDumpApplyRoundTrip_RolePermissions_SurvivesReplicaAheadOfPrimarySkew(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	// The replica is running a migration the primary hasn't reached yet: a
+	// new role, a new permission action, and a grant tying them together —
+	// none of which exist on the primary, so none appear in its dump.
+	mustExec(t, replica, `INSERT INTO roles (role) VALUES ('shift_lead')`)
+	mustExec(t, replica, `INSERT INTO permission_actions (action) VALUES ('inventory_count')`)
+	mustExec(t, replica, `INSERT INTO role_permissions (role, action, granted) VALUES ('shift_lead', 'refund', 1)`)
+	mustExec(t, replica, `INSERT INTO role_permissions (role, action, granted) VALUES ('cashier', 'inventory_count', 1)`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var count int
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM roles WHERE role = 'shift_lead'`).Scan(&count); err != nil {
+		t.Fatalf("query roles: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("replica's own newer-migration role 'shift_lead' was pruned by a sync pull from an older primary (count=%d) — version-skew data loss", count)
+	}
+
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM permission_actions WHERE action = 'inventory_count'`).Scan(&count); err != nil {
+		t.Fatalf("query permission_actions: %v", err)
+	}
+	if count != 1 {
+		t.Errorf("replica's own newer-migration action 'inventory_count' was pruned by a sync pull from an older primary (count=%d) — version-skew data loss", count)
+	}
+
+	var granted int
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT granted FROM role_permissions WHERE role = 'shift_lead' AND action = 'refund'`).Scan(&granted); err != nil {
+		t.Errorf("shift_lead/refund grant was pruned by a sync pull from an older primary that has never heard of 'shift_lead': %v", err)
+	} else if granted != 1 {
+		t.Errorf("shift_lead/refund should still be granted, got granted=%d", granted)
+	}
+
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT granted FROM role_permissions WHERE role = 'cashier' AND action = 'inventory_count'`).Scan(&granted); err != nil {
+		t.Errorf("cashier/inventory_count grant was pruned by a sync pull from an older primary that has never heard of 'inventory_count': %v", err)
+	} else if granted != 1 {
+		t.Errorf("cashier/inventory_count should still be granted, got granted=%d", granted)
+	}
+}
+
+// ut-docs#1589 review finding: the skew fix above must NOT blanket-exempt
+// role_permissions the way roles/permission_actions are exempted, or it
+// silently reopens #1554's own bug in the opposite (over-permissive)
+// direction — a grant a satellite fabricated locally, for a role and
+// action the primary already knows about perfectly well, would then
+// survive every sync pull forever instead of being healed back to the
+// primary's (absent) state. Both DBs here are on the IDENTICAL migration —
+// no skew at all — so 'cashier' and 'audit' are known to both sides; only
+// the grant row itself is satellite-local.
+func TestAdminDumpApplyRoundTrip_RolePermissions_PrunesSameVersionLocalDrift(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	// A satellite-local edit (or a bug) grants 'cashier'/'audit' on the
+	// replica only — the primary has no opinion on this pairing at all.
+	mustExec(t, replica, `INSERT INTO role_permissions (role, action, granted) VALUES ('cashier', 'audit', 1)`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var count int
+	if err := replica.DB.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM role_permissions WHERE role = 'cashier' AND action = 'audit'`).Scan(&count); err != nil {
+		t.Fatalf("query role_permissions: %v", err)
+	}
+	if count != 0 {
+		t.Errorf("a satellite-local grant for a role/action the primary already knows about must still be pruned (primary wins) — got count=%d, ut-docs#1589's skew fix must not survive this case", count)
+	}
+}
+
+// A table hard-removed on the primary while the SATELLITE still has a local
+// sale referencing it (found in review, ut-docs#1546) — the plain DELETE
+// above can never hit this path because tbl-1 has no referencing rows
+// anywhere. Here the satellite's own history makes the delete FK-blocked
+// locally, exactly the "sales history" case every other adminTable's
+// hasIsActive fallback already exists for; tables must retire in place
+// (enabled=0) the same way, not silently keep a full ghost row an operator
+// could still seat customers at.
+func TestAdminApply_TableRetiredInPlaceWhenFKBlockedBySatelliteSaleHistory(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO tables (id, label, area_zone, seat_count, created_at, updated_at)
+		VALUES ('tbl-1', 'Table 1', 'Terrace', 4, '2026-09-04', '2026-09-04')`)
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	// The satellite took an order at this table before the primary removed it.
+	mustExec(t, replica, `INSERT INTO sales (id, receipt_no, subtotal, total, table_id)
+		VALUES ('sale-1', 'R-0001', 500, 500, 'tbl-1')`)
+
+	mustExec(t, primary, `DELETE FROM tables WHERE id = 'tbl-1'`)
+	bundle2, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("second dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle2); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+
+	var enabled int
+	err = replica.DB.QueryRowContext(ctx, `SELECT enabled FROM tables WHERE id='tbl-1'`).Scan(&enabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("the table row is gone entirely — the satellite's own sale (sale-1) now references a nonexistent table")
+	}
+	if err != nil {
+		t.Fatalf("query retired table: %v", err)
+	}
+	if enabled != 0 {
+		t.Errorf("a table the primary removed, but the satellite has sale history against, must retire in place (enabled=0) — got enabled=%d, an operator could still seat customers at it", enabled)
+	}
+}
+
+// ut-docs#1590: registers and stock_locations flipped from excluded
+// (ut-docs#1584) to synced now that /registers and /locations gate
+// create/rename/activate to primary-only (registers_page.go/
+// locations_page.go's requirePrimary — see adminTables' own top comment
+// for the full trace). This is the direct replacement for the old
+// TestAdminApplyLeavesRegistersAndStockLocationsUntouched, which pinned
+// the OLD (excluded) behaviour this same card intentionally reverses.
+// Mirrors TestAdminDumpApplyRoundTrip_FloorPlanAndKitchenRouting's shape:
+// both tables now dump, both sync to a replica that never heard of them,
+// and a primary-side delete propagates (no FK-blocking history here).
+func TestAdminDumpApplyRoundTrip_RegistersAndStockLocations(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO stock_locations (id, name, is_active) VALUES ('loc-hq', 'HQ Store', 1)`)
+	mustExec(t, primary, `INSERT INTO registers (id, name, location_id, is_active) VALUES ('reg-front', 'Front Till', 'loc-hq', 1)`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if _, ok := bundle.Tables["stock_locations"]; !ok {
+		t.Fatal("stock_locations must appear in the admin dump now — ut-docs#1590 gated creation primary-only, making it safe to sync")
+	}
+	if _, ok := bundle.Tables["registers"]; !ok {
+		t.Fatal("registers must appear in the admin dump now — ut-docs#1590 gated creation primary-only, making it safe to sync")
+	}
+
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var locName string
+	if err := replica.QueryRow(`SELECT name FROM stock_locations WHERE id = 'loc-hq'`).Scan(&locName); err != nil || locName != "HQ Store" {
+		t.Fatalf("stock location did not reach the satellite: got %q (err=%v)", locName, err)
+	}
+	var regName, regLoc string
+	if err := replica.QueryRow(`SELECT name, location_id FROM registers WHERE id = 'reg-front'`).Scan(&regName, &regLoc); err != nil || regName != "Front Till" || regLoc != "loc-hq" {
+		t.Fatalf("register did not reach the satellite (or its FK to stock_locations broke — insert order matters): name=%q location_id=%q err=%v", regName, regLoc, err)
+	}
+
+	// A primary-side delete must propagate, not leave a ghost register/
+	// location an operator could still pick from the till's own settings.
+	mustExec(t, primary, `DELETE FROM registers WHERE id = 'reg-front'`)
+	mustExec(t, primary, `DELETE FROM stock_locations WHERE id = 'loc-hq'`)
+	bundle2, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("second dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	var n int
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM registers WHERE id='reg-front'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("a register removed on the primary is still on the satellite (n=%d, err=%v)", n, err)
+	}
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM stock_locations WHERE id='loc-hq'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("a stock location removed on the primary is still on the satellite (n=%d, err=%v)", n, err)
+	}
+}
+
+// ut-docs#1667: item_modifier_groups/item_modifier_options are catalog
+// structure, the same shape as ut-docs#1546's tables/kitchen_stations —
+// created/edited on the primary, they must reach every satellite. Covers
+// the full FK chain (item -> group -> option), an is_active edit
+// propagating, and a primary-side delete propagating (deleteMissing).
+func TestAdminDumpApplyRoundTrip_ItemModifiers(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO items (id, name, base_price) VALUES ('itm1', 'Flat White', 320)`)
+	mustExec(t, primary, `INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active) VALUES ('grp1', 'itm1', 'Extras', 0, 0, 2, 0, 1)`)
+	mustExec(t, primary, `INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order, is_active) VALUES ('opt1', 'grp1', 'Extra shot', 50, 0, 1)`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if _, ok := bundle.Tables["item_modifier_groups"]; !ok {
+		t.Fatal("item_modifier_groups must appear in the admin dump now — ut-docs#1667 gated mutation primary-only, making it safe to sync")
+	}
+	if _, ok := bundle.Tables["item_modifier_options"]; !ok {
+		t.Fatal("item_modifier_options must appear in the admin dump now — ut-docs#1667 gated mutation primary-only, making it safe to sync")
+	}
+
+	// The replica needs the item row too (item_modifier_groups FKs onto
+	// it) — items already syncs via adminTables, exercised elsewhere; seed
+	// it directly here since this test is scoped to the modifier tables.
+	mustExec(t, replica, `INSERT INTO items (id, name, base_price) VALUES ('itm1', 'Flat White', 320)`)
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var groupName string
+	if err := replica.QueryRow(`SELECT name FROM item_modifier_groups WHERE id = 'grp1'`).Scan(&groupName); err != nil || groupName != "Extras" {
+		t.Fatalf("modifier group did not reach the satellite: got %q (err=%v)", groupName, err)
+	}
+	var optName string
+	var optDelta int64
+	if err := replica.QueryRow(`SELECT name, price_delta_minor FROM item_modifier_options WHERE id = 'opt1'`).Scan(&optName, &optDelta); err != nil || optName != "Extra shot" || optDelta != 50 {
+		t.Fatalf("modifier option did not reach the satellite (or its FK to item_modifier_groups broke — insert order matters): name=%q delta=%d err=%v", optName, optDelta, err)
+	}
+
+	// An edit (deactivate the option) must also propagate.
+	mustExec(t, primary, `UPDATE item_modifier_options SET is_active = 0 WHERE id = 'opt1'`)
+	bundle2, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("second dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	var optActive int
+	if err := replica.QueryRow(`SELECT is_active FROM item_modifier_options WHERE id = 'opt1'`).Scan(&optActive); err != nil || optActive != 0 {
+		t.Fatalf("modifier option deactivation did not reach the satellite: is_active=%d err=%v", optActive, err)
+	}
+
+	// A primary-side delete (of both group and option, children first) must
+	// propagate — no ghost modifier left selectable on the satellite.
+	mustExec(t, primary, `DELETE FROM item_modifier_options WHERE id = 'opt1'`)
+	mustExec(t, primary, `DELETE FROM item_modifier_groups WHERE id = 'grp1'`)
+	bundle3, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("third dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle3)); err != nil {
+		t.Fatalf("third apply: %v", err)
+	}
+	var n int
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM item_modifier_options WHERE id='opt1'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("a modifier option removed on the primary is still on the satellite (n=%d, err=%v)", n, err)
+	}
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups WHERE id='grp1'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("a modifier group removed on the primary is still on the satellite (n=%d, err=%v)", n, err)
+	}
+}
+
+// Mirrors TestAdminApply_TableRetiredInPlaceWhenFKBlockedBySatelliteSaleHistory:
+// a register the primary removed, but that the satellite has already opened
+// a shift against, can't be hard-deleted (shifts.register_id FK) — it must
+// retire in place (is_active=0) instead, or the satellite's own shift now
+// references a nonexistent register.
+func TestAdminApply_RegisterRetiredInPlaceWhenFKBlockedBySatelliteShiftHistory(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO registers (id, name, is_active) VALUES ('reg-1', 'Front Till', 1)`)
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	// The satellite opened a shift on this register before the primary
+	// removed it.
+	mustExec(t, replica, `INSERT INTO users (id, username, display_name) VALUES ('u1', 'cashier1', 'Cashier One')`)
+	mustExec(t, replica, `INSERT INTO shifts (id, register_id, cashier_id) VALUES ('shift-1', 'reg-1', 'u1')`)
+
+	mustExec(t, primary, `DELETE FROM registers WHERE id = 'reg-1'`)
+	bundle2, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("second dump: %v", err)
+	}
+	logging.ResetRecent()
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle2); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+
+	var active int
+	err = replica.QueryRow(`SELECT is_active FROM registers WHERE id='reg-1'`).Scan(&active)
+	if errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("the register row is gone entirely — the satellite's own shift (shift-1) now references a nonexistent register")
+	}
+	if err != nil {
+		t.Fatalf("query retired register: %v", err)
+	}
+	if active != 0 {
+		t.Errorf("a register the primary removed, but the satellite has shift history against, must retire in place (is_active=0) — got is_active=%d", active)
+	}
+
+	// ut-docs#1610: the retire also mangles registers.name to "Front
+	// Till~reg-1" to free the UNIQUE constraint. The /registers management
+	// page (ListRegistersForAdmin lists inactive registers too) must show the
+	// real name, never the raw mangled value.
+	admin, err := NewPOSRepo(replica.DB).ListRegistersForAdmin(ctx)
+	if err != nil {
+		t.Fatalf("ListRegistersForAdmin: %v", err)
+	}
+	found := false
+	for _, reg := range admin {
+		if reg.ID == "reg-1" {
+			found = true
+			if reg.Name != "Front Till" {
+				t.Errorf("ListRegistersForAdmin name for retired register = %q, want %q", reg.Name, "Front Till")
+			}
+			if reg.IsActive {
+				t.Errorf("ListRegistersForAdmin IsActive for retired register = true, want false")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("ListRegistersForAdmin must still list the retired register; got %+v", admin)
+	}
+
+	// ut-docs#1592: retiring a pre-existing satellite-local register must
+	// warn, naming the table, row and action, so a shop owner can connect a
+	// "my till lost its register" report to this one-time reconciliation.
+	if !warnfContaining("pruned pre-existing satellite-local registers row") || !warnfContaining("retired in place") {
+		t.Errorf("expected a Warnf naming registers + retired-in-place for reg-1, got: %+v", logging.Recent())
+	}
+}
+
+// Same fallback, for stock_locations: inventory.location_id FK-blocks the
+// hard delete, same shape as the register/shift case above.
+func TestAdminApply_StockLocationRetiredInPlaceWhenFKBlockedBySatelliteInventoryHistory(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO stock_locations (id, name, is_active) VALUES ('loc-1', 'Back Room', 1)`)
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	// The satellite recorded inventory at this location before the primary
+	// removed it.
+	mustExec(t, replica, `INSERT INTO items (id, sku, name, base_price) VALUES ('itm-1', 'SKU-1', 'Widget', 100)`)
+	mustExec(t, replica, `INSERT INTO inventory (id, item_id, location_id, quantity) VALUES ('inv-1', 'itm-1', 'loc-1', 5)`)
+
+	mustExec(t, primary, `DELETE FROM stock_locations WHERE id = 'loc-1'`)
+	bundle2, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("second dump: %v", err)
+	}
+	logging.ResetRecent()
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle2); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+
+	var active int
+	err = replica.QueryRow(`SELECT is_active FROM stock_locations WHERE id='loc-1'`).Scan(&active)
+	if errors.Is(err, sql.ErrNoRows) {
+		t.Fatalf("the stock location row is gone entirely — the satellite's own inventory row (inv-1) now references a nonexistent location")
+	}
+	if err != nil {
+		t.Fatalf("query retired stock location: %v", err)
+	}
+	if active != 0 {
+		t.Errorf("a stock location the primary removed, but the satellite has inventory against, must retire in place (is_active=0) — got is_active=%d", active)
+	}
+
+	// ut-docs#1610: the retire also mangles stock_locations.name to "Back
+	// Room~loc-1". Both readers that surface a location's name to staff —
+	// the pickers (ListStockLocations, no active filter) and the /locations
+	// management page (ListStockLocationsForAdmin) — must show the real name.
+	pos := NewPOSRepo(replica.DB)
+	picker, err := pos.ListStockLocations(ctx)
+	if err != nil {
+		t.Fatalf("ListStockLocations: %v", err)
+	}
+	found := false
+	for _, l := range picker {
+		if l.ID == "loc-1" {
+			found = true
+			if l.Name != "Back Room" {
+				t.Errorf("ListStockLocations name for retired location = %q, want %q", l.Name, "Back Room")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("ListStockLocations must still list the retired location (it has no active filter); got %+v", picker)
+	}
+	admin, err := pos.ListStockLocationsForAdmin(ctx)
+	if err != nil {
+		t.Fatalf("ListStockLocationsForAdmin: %v", err)
+	}
+	found = false
+	for _, l := range admin {
+		if l.ID == "loc-1" {
+			found = true
+			if l.Name != "Back Room" {
+				t.Errorf("ListStockLocationsForAdmin name for retired location = %q, want %q", l.Name, "Back Room")
+			}
+			if l.IsActive {
+				t.Errorf("ListStockLocationsForAdmin IsActive for retired location = true, want false")
+			}
+		}
+	}
+	if !found {
+		t.Errorf("ListStockLocationsForAdmin must still list the retired location; got %+v", admin)
+	}
+
+	// ut-docs#1592: same warning requirement as the register case above.
+	if !warnfContaining("pruned pre-existing satellite-local stock_locations row") || !warnfContaining("retired in place") {
+		t.Errorf("expected a Warnf naming stock_locations + retired-in-place for loc-1, got: %+v", logging.Recent())
+	}
+}
+
+// ut-docs#1592: the hard-delete path (no FK history at all) must warn too,
+// not just the retire-in-place fallback above — a register/stock location
+// that's satellite-local AND has never had a shift/inventory row against it
+// is hard-deleted outright, and that's exactly the "predates ut-docs#1590"
+// case this card exists to surface.
+func TestAdminApply_RegisterHardDeletedPreExistingLogsWarning(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	// Empty bundle from the primary (it never knew about this register) is
+	// enough to trigger the prune — no primary-side insert/delete needed.
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	// Simulates a register created directly on a satellite before
+	// ut-docs#1590 gated /registers to primary-only, with no shift history
+	// against it yet.
+	mustExec(t, replica, `INSERT INTO registers (id, name, is_active) VALUES ('reg-orphan', 'Satellite Local', 1)`)
+
+	logging.ResetRecent()
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var n int
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM registers WHERE id='reg-orphan'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("expected reg-orphan to be hard-deleted (no history to FK-block it): n=%d err=%v", n, err)
+	}
+	if !warnfContaining("pruned pre-existing satellite-local registers row") || !warnfContaining("hard-deleted") {
+		t.Errorf("expected a Warnf naming registers + hard-deleted for reg-orphan, got: %+v", logging.Recent())
+	}
+}
+
+// Mirrors TestAdminApply_RegisterHardDeletedPreExistingLogsWarning for
+// stock_locations.
+func TestAdminApply_StockLocationHardDeletedPreExistingLogsWarning(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	mustExec(t, replica, `INSERT INTO stock_locations (id, name, is_active) VALUES ('loc-orphan', 'Satellite Local', 1)`)
+
+	logging.ResetRecent()
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var n int
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM stock_locations WHERE id='loc-orphan'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("expected loc-orphan to be hard-deleted (no history to FK-block it): n=%d err=%v", n, err)
+	}
+	if !warnfContaining("pruned pre-existing satellite-local stock_locations row") || !warnfContaining("hard-deleted") {
+		t.Errorf("expected a Warnf naming stock_locations + hard-deleted for loc-orphan, got: %+v", logging.Recent())
+	}
+}
+
+// ut-docs#1667's own review: a satellite-created modifier group genuinely
+// worked pre-fix (ListGroupsForItem reads locally, the picker renders it,
+// sale_line_modifiers snapshots it at checkout) — arguably a stronger case
+// than registers/stock_locations, since an unsynced tables/kitchen_stations
+// row was largely unusable anyway. Nothing FKs onto item_modifier_groups
+// with a real constraint (sale_line_modifiers.group_id is a bare TEXT, no
+// FK — see 001_init.sql), so the retire-in-place path never fires; only
+// the hard-delete case is reachable, mirrored from
+// TestAdminApply_RegisterHardDeletedPreExistingLogsWarning.
+func TestAdminApply_ItemModifierGroupHardDeletedPreExistingLogsWarning(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO items (id, name, base_price) VALUES ('itm1', 'Flat White', 320)`)
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	// Simulates a modifier group created directly on a satellite before
+	// ut-docs#1667 gated /api/catalog/modifier-group to primary-only.
+	mustExec(t, replica, `INSERT INTO items (id, name, base_price) VALUES ('itm1', 'Flat White', 320)`)
+	mustExec(t, replica, `INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active) VALUES ('grp-orphan', 'itm1', 'Satellite Local', 0, 0, 1, 0, 1)`)
+
+	logging.ResetRecent()
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var n int
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups WHERE id='grp-orphan'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("expected grp-orphan to be hard-deleted (no FK to block it): n=%d err=%v", n, err)
+	}
+	if !warnfContaining("pruned pre-existing satellite-local item_modifier_groups row") || !warnfContaining("hard-deleted") {
+		t.Errorf("expected a Warnf naming item_modifier_groups + hard-deleted for grp-orphan, got: %+v", logging.Recent())
+	}
+}
+
+// ut-docs#1592: the new Warnf must be scoped to divergencePruneTables ONLY
+// (registers/stock_locations, and since ut-docs#1667 also
+// item_modifier_groups/item_modifier_options) — every other adminTable
+// prunes routinely, and logging every one of those would just be noise (and
+// would defeat the purpose: a shop owner could no longer tell "routine
+// sync" apart from "pre-existing divergence worth a look"). tax_codes is a
+// plain hasIsActive table with no special gating, so a satellite-local row
+// hits the exact same retire-in-place code path as the tests above — it
+// must NOT warn.
+func TestAdminApply_OrdinaryTablePruneDoesNotLogSatelliteDivergenceWarning(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	mustExec(t, replica, `INSERT INTO tax_codes (id, name, rate_basis_points, is_active) VALUES ('tax-orphan', 'Local Rate', 0, 1)`)
+
+	logging.ResetRecent()
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var n int
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM tax_codes WHERE id='tax-orphan'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("expected tax-orphan to be hard-deleted: n=%d err=%v", n, err)
+	}
+	if warnfContaining("pruned pre-existing satellite-local") {
+		t.Errorf("tax_codes is not registers/stock_locations — must not fire the satellite-divergence Warnf, got: %+v", logging.Recent())
+	}
+}
+
+// ut-docs#1670: plugin_storage is generic plugin-private KV storage, but
+// its fiscal_register: prefix backs the shop-wide German TSE till-register
+// (ADR-0072/ut-docs#1106) and must sync primary->satellite. The whole
+// TABLE must NOT sync -- it holds every other installed plugin's private
+// state too -- so this proves all three things at once: the scoped
+// (plugin_id AND prefix) row travels, an unrelated plugin's row under a
+// DIFFERENT key is never even inspected, and — the review finding this
+// test was extended to cover — a DIFFERENT plugin's row that happens to
+// share the exact same fiscal_register: prefix is ALSO never touched
+// (prefix alone is not the namespace boundary; plugin_id is).
+// The real fiscal_register: row is seeded via PluginRepo.StorageSet's
+// real []byte write path (not a SQL string literal) so plugin_storage.value
+// genuinely has SQLite storage class BLOB here, the same as production —
+// a literal string INSERT stores class TEXT instead and would let a
+// BLOB-vs-TEXT regression in scanGenericCols' []byte->string conversion
+// slip past this test undetected.
+func TestAdminDumpApplyRoundTrip_FiscalRegisterStorage(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	if err := NewPluginRepo(primary.DB).StorageSet(ctx, FiscalRegisterDEPluginID, FiscalRegisterDEKeyPrefix+"entry-1", []byte(`{"id":"entry-1","eas_serial":"eas-1"}`)); err != nil {
+		t.Fatalf("seed fiscal_register entry via real write path: %v", err)
+	}
+	// An unrelated plugin's own private state under a DIFFERENT key,
+	// present on BOTH sides before the apply -- if this table ever synced
+	// whole, the replica's own copy would be pruned as "missing from the
+	// primary's dump" (the primary only has a fiscal_register: row, not
+	// this key).
+	mustExec(t, primary, `INSERT INTO plugin_storage (plugin_id, key, value) VALUES ('com.example.other', 'other:setting', 'primary-value')`)
+	mustExec(t, replica, `INSERT INTO plugin_storage (plugin_id, key, value) VALUES ('com.example.other', 'other:setting', 'replica-local-value')`)
+	// A DIFFERENT plugin's row that happens to share the exact SAME
+	// fiscal_register: prefix -- the actual gap a prefix-only scope would
+	// have left open (found in review): its own genuinely private state
+	// must never be deleted, and must never be broadcast in the dump.
+	mustExec(t, primary, `INSERT INTO plugin_storage (plugin_id, key, value) VALUES ('com.example.other', 'fiscal_register:entry-1', 'not-the-real-tax-de-entry')`)
+	mustExec(t, replica, `INSERT INTO plugin_storage (plugin_id, key, value) VALUES ('com.example.other', 'fiscal_register:entry-1', 'replica-local-collision-value')`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	recs, ok := bundle.Tables["plugin_storage"]
+	if !ok {
+		t.Fatal("plugin_storage must appear in the admin dump now — ut-docs#1670")
+	}
+	for _, rec := range recs {
+		if fmt.Sprint(rec["plugin_id"]) != FiscalRegisterDEPluginID {
+			t.Fatalf("dump leaked a plugin_storage row belonging to a different plugin: %+v", rec)
+		}
+		if !strings.HasPrefix(fmt.Sprint(rec["key"]), FiscalRegisterDEKeyPrefix) {
+			t.Fatalf("dump leaked a non-fiscal_register plugin_storage row: %+v", rec)
+		}
+	}
+	if len(recs) != 1 {
+		t.Fatalf("dump should carry exactly the one real tax-de entry, got %d: %+v", len(recs), recs)
+	}
+
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var value string
+	if err := replica.QueryRow(`SELECT value FROM plugin_storage WHERE plugin_id = ? AND key = ?`, FiscalRegisterDEPluginID, FiscalRegisterDEKeyPrefix+"entry-1").Scan(&value); err != nil {
+		t.Fatalf("fiscal_register entry did not reach the satellite: %v", err)
+	}
+	if !strings.Contains(value, "eas-1") {
+		t.Fatalf("fiscal_register entry value mismatch: %q", value)
+	}
+
+	// The unrelated plugin's row (different key) must be completely
+	// untouched -- still its OWN replica-local value, not overwritten, not
+	// deleted.
+	var otherValue string
+	if err := replica.QueryRow(`SELECT value FROM plugin_storage WHERE plugin_id = 'com.example.other' AND key = 'other:setting'`).Scan(&otherValue); err != nil {
+		t.Fatalf("unrelated plugin_storage row was removed by a supposedly-scoped sync: %v", err)
+	}
+	if otherValue != "replica-local-value" {
+		t.Fatalf("unrelated plugin_storage row was overwritten by a supposedly-scoped sync: got %q", otherValue)
+	}
+
+	// The colliding-prefix row from a DIFFERENT plugin must ALSO be
+	// completely untouched -- this is the actual N1 review finding: prefix
+	// alone is not the namespace boundary.
+	var collisionValue string
+	if err := replica.QueryRow(`SELECT value FROM plugin_storage WHERE plugin_id = 'com.example.other' AND key = ?`, FiscalRegisterDEKeyPrefix+"entry-1").Scan(&collisionValue); err != nil {
+		t.Fatalf("a different plugin's same-prefix row was removed by the sync — plugin_id scoping regressed: %v", err)
+	}
+	if collisionValue != "replica-local-collision-value" {
+		t.Fatalf("a different plugin's same-prefix row was overwritten by the sync — plugin_id scoping regressed: got %q", collisionValue)
+	}
+
+	// A primary-side delete of the fiscal_register: row must propagate
+	// (delete-then-insert semantics, same as applyPluginSettings) -- a
+	// decommissioned-and-removed entry must not remain a ghost on a
+	// satellite forever.
+	mustExec(t, primary, `DELETE FROM plugin_storage WHERE plugin_id = ? AND key = ?`, FiscalRegisterDEPluginID, FiscalRegisterDEKeyPrefix+"entry-1")
+	bundle2, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("second dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	var n int
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM plugin_storage WHERE plugin_id = ? AND key = ?`, FiscalRegisterDEPluginID, FiscalRegisterDEKeyPrefix+"entry-1").Scan(&n); err != nil || n != 0 {
+		t.Errorf("a fiscal_register entry removed on the primary is still on the satellite (n=%d, err=%v)", n, err)
+	}
+	// The colliding-prefix row must survive the delete-then-insert too —
+	// an empty scoped recs set must still never touch a different plugin_id.
+	if err := replica.QueryRow(`SELECT value FROM plugin_storage WHERE plugin_id = 'com.example.other' AND key = ?`, FiscalRegisterDEKeyPrefix+"entry-1").Scan(&collisionValue); err != nil {
+		t.Fatalf("a different plugin's same-prefix row was removed by the second (empty-recs) scoped apply: %v", err)
+	}
+	if collisionValue != "replica-local-collision-value" {
+		t.Fatalf("a different plugin's same-prefix row was overwritten by the second scoped apply: got %q", collisionValue)
+	}
+	// The unrelated row must STILL be untouched after the second apply too.
+	if err := replica.QueryRow(`SELECT value FROM plugin_storage WHERE plugin_id = 'com.example.other' AND key = 'other:setting'`).Scan(&otherValue); err != nil {
+		t.Fatalf("unrelated plugin_storage row was removed by the second scoped apply: %v", err)
+	}
+	if otherValue != "replica-local-value" {
+		t.Fatalf("unrelated plugin_storage row was overwritten by the second scoped apply: got %q", otherValue)
+	}
+}
+
+// TestAdminDumpApplyRoundTrip_CountrySettings is ut-docs#1669: country_settings
+// (per-jurisdiction tax/currency/retention defaults) is shop-wide config, same
+// shape as settings/tax_codes, and must sync like them now that #1586's
+// schema-drift guard flagged it as unclassified. Every migrated DB already
+// seeds the 14 builtin countries (001_init.sql), so this exercises real
+// UPDATE/prune paths against pre-existing rows rather than fresh INSERTs.
+func TestAdminDumpApplyRoundTrip_CountrySettings(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	// Primary and replica start with the same seeded GB row (tax_rate_bp
+	// 2000). Diverge both, then let a primary edit win on sync -- proves
+	// the row actually travels, not just that it was already equal.
+	mustExec(t, primary, `UPDATE country_settings SET tax_rate_bp = 2200 WHERE code = 'GB'`)
+	mustExec(t, replica, `UPDATE country_settings SET tax_rate_bp = 1750 WHERE code = 'GB'`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if _, ok := bundle.Tables["country_settings"]; !ok {
+		t.Fatal("country_settings must appear in the admin dump now — ut-docs#1669")
+	}
+
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var taxRateBP int64
+	if err := replica.QueryRow(`SELECT tax_rate_bp FROM country_settings WHERE code = 'GB'`).Scan(&taxRateBP); err != nil {
+		t.Fatalf("synced country_settings row missing: %v", err)
+	}
+	if taxRateBP != 2200 {
+		t.Fatalf("replica's local edit survived sync (primary should win): got tax_rate_bp=%d, want 2200", taxRateBP)
+	}
+
+	// An operator-created (non-builtin) country, present on both sides,
+	// then removed on the primary -- the delete must propagate shop-wide,
+	// same as any other adminTables row. (Unlike a BUILTIN country, whose
+	// own Delete() restores defaults rather than ever leaving it absent
+	// from the primary's dump -- this is deliberately a non-builtin code.)
+	mustExec(t, primary,
+		`INSERT INTO country_settings (code, name_key, currency, currency_symbol, tax_rate_bp, tax_inclusive, archive_min_days, is_builtin, updated_at, default_locale)
+		 VALUES ('ZZ', '', 'ZZZ', '', 500, 1, 3650, 0, '2026-09-07T00:00:00Z', '')`)
+	mustExec(t, replica,
+		`INSERT INTO country_settings (code, name_key, currency, currency_symbol, tax_rate_bp, tax_inclusive, archive_min_days, is_builtin, updated_at, default_locale)
+		 VALUES ('ZZ', '', 'ZZZ', '', 500, 1, 3650, 0, '2026-09-07T00:00:00Z', '')`)
+	mustExec(t, primary, `DELETE FROM country_settings WHERE code = 'ZZ'`)
+	final, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("final dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, final)); err != nil {
+		t.Fatalf("final apply: %v", err)
+	}
+	var n int
+	_ = replica.QueryRow(`SELECT COUNT(*) FROM country_settings WHERE code = 'ZZ'`).Scan(&n)
+	if n != 0 {
+		t.Fatal("operator-created country deleted on primary survived on the replica — prune did not propagate")
+	}
+}
+
+// TestAdminApplyCountrySettings_ClampsArchiveMinDaysToGlobalFloor is
+// ut-docs#1669: ApplyAdmin's generic upsertRow() writes raw column values
+// directly, bypassing CountrySettingsRepo.Upsert()'s own ADR-0040 floor
+// validation entirely — so a rolled-back or buggy primary must not be able
+// to push a satellite below the retention floor via sync. Build the bundle
+// by hand (not via CountrySettingsRepo.Upsert, which would refuse a
+// below-floor value at the source) to simulate exactly that, for a
+// non-builtin code with no pre-existing seeded row (so success can only
+// come from ApplyAdmin actually writing it).
+func TestAdminApplyCountrySettings_ClampsArchiveMinDaysToGlobalFloor(t *testing.T) {
+	ctx := context.Background()
+	replica := openMigratedDB(t, "replica.db")
+
+	bundle := AdminBundle{Tables: map[string][]map[string]any{
+		"country_settings": {
+			{
+				"code": "ZZ", "name_key": "", "currency": "ZZZ",
+				"currency_symbol": "", "tax_rate_bp": int64(500), "tax_inclusive": int64(1),
+				"archive_min_days": int64(30), // below GlobalArchiveMinDays (3650)
+				"is_builtin":       int64(0), "updated_at": "2026-09-07T00:00:00Z", "default_locale": "",
+			},
+		},
+	}}
+
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var days int64
+	if err := replica.QueryRow(`SELECT archive_min_days FROM country_settings WHERE code = 'ZZ'`).Scan(&days); err != nil {
+		t.Fatalf("synced country_settings row missing: %v", err)
+	}
+	if days != GlobalArchiveMinDays {
+		t.Fatalf("below-floor archive_min_days applied as-is instead of clamped: got %d, want %d (ADR-0040 floor)", days, GlobalArchiveMinDays)
 	}
 }

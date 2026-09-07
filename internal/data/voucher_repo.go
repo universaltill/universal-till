@@ -128,11 +128,16 @@ VALUES (?, ?, ?, ?, ?, ?)
 
 // GetVoucherBalance returns one voucher's row — the outstanding liability
 // (BalanceMinor) plus the stable identifier and holder label the acceptance
-// criteria require to be queryable. ErrVoucherNotFound for an unknown id.
-func (r *POSRepo) GetVoucherBalance(ctx context.Context, id string) (Voucher, error) {
+// criteria require to be queryable. ErrVoucherNotFound for an unknown id. tx
+// may be nil for a direct read (every pre-ut-docs#1668 caller) or the
+// caller's open transaction — needed by the cross-till redemption
+// write-through (sync_vouchers.go, ut-docs#1668), which must read the
+// PRE-debit snapshot under the SAME transaction DebitVoucherForRedemption
+// then validates and debits, so the two can never observe different values.
+func (r *POSRepo) GetVoucherBalance(ctx context.Context, tx *sql.Tx, id string) (Voucher, error) {
 	var v Voucher
 	var holder, issuedSale sql.NullString
-	err := r.db.QueryRowContext(ctx, `
+	err := r.exec(tx).QueryRowContext(ctx, `
 SELECT id, holder_label, original_amount, balance, currency, voucher_type, status, issued_sale_id, created_at
 FROM vouchers WHERE id = ?`, id).
 		Scan(&v.ID, &holder, &v.OriginalAmountMinor, &v.BalanceMinor, &v.Currency, &v.VoucherType, &v.Status, &issuedSale, &v.CreatedAt)
@@ -145,6 +150,40 @@ FROM vouchers WHERE id = ?`, id).
 	v.HolderLabel = holder.String
 	v.IssuedSaleID = issuedSale.String
 	return v, nil
+}
+
+// EnsureVoucherLocalRow inserts v as this till's local mirror of a voucher it
+// has never seen before — used when a replica is about to redeem a voucher
+// that was just validated and debited on the PRIMARY (the cross-till
+// write-through, ut-docs#1668) but has no local vouchers row at all yet (it
+// was issued at a different till). INSERT OR IGNORE: if a local row already
+// exists — this till issued the voucher itself, or has redeemed against it
+// before — it is left completely untouched. This must only ever fill a
+// genuine gap, never clobber this till's own more-recent local view, which
+// is exactly the hazard ut-docs#1668 ruled out for a periodic primary-wins
+// sync of this table. v.BalanceMinor/Status must be the PRE-redemption
+// snapshot (GetVoucherBalance's "before" read) — the caller's own local
+// DebitVoucherForRedemption call, right after this, performs the actual
+// local debit against whatever row now exists (the just-inserted mirror, or
+// this till's own untouched pre-existing row).
+func (r *POSRepo) EnsureVoucherLocalRow(ctx context.Context, tx *sql.Tx, v Voucher) error {
+	if v.ID == "" {
+		return fmt.Errorf("ensure voucher local row: id is required")
+	}
+	if v.VoucherType == "" {
+		v.VoucherType = "multi_purpose"
+	}
+	if v.Status == "" {
+		v.Status = "active"
+	}
+	_, err := r.exec(tx).ExecContext(ctx, `
+INSERT OR IGNORE INTO vouchers (id, holder_label, original_amount, balance, currency, voucher_type, status, issued_sale_id, created_at)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, v.ID, nullIfEmpty(v.HolderLabel), v.OriginalAmountMinor, v.BalanceMinor, v.Currency, v.VoucherType, v.Status, nullIfEmpty(v.IssuedSaleID), v.CreatedAt)
+	if err != nil {
+		return fmt.Errorf("ensure voucher local row %q: %w", v.ID, err)
+	}
+	return nil
 }
 
 // DebitVoucherForRedemption validates and debits one voucher's balance by

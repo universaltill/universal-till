@@ -1081,3 +1081,85 @@ func TestAttachFileMultipartFormWritesRealBytes(t *testing.T) {
 		t.Fatal("attached file content missing from multipart body")
 	}
 }
+
+// ut-docs#1652: the status pull carries the filed TICKET's own state
+// alongside the delivery status, and it must land on the local row so
+// /my-reports — which never touches the network — can render it offline.
+func TestPullIssueReportStatusesCarriesGithubIssueState(t *testing.T) {
+	d := openMigratedDB(t, "issue_reports_pull_state.db")
+	repo := data.NewIssueReportsRepo(d.DB)
+	ctx := context.Background()
+	if err := repo.SaveSent(ctx, data.SentReport{ID: "rep-1", CapturedAt: time.Now()}); err != nil {
+		t.Fatalf("SaveSent: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"store_id": "store-1",
+				"reports": []map[string]any{{
+					"id":                 "rep-1",
+					"status":             "filed",
+					"github_issue_url":   "https://github.com/universaltill/ut-docs/issues/9",
+					"github_issue_state": "closed_completed",
+					"captured_at":        "2026-09-06T00:00:00Z",
+				}},
+			},
+			"error": nil,
+		})
+	}))
+	defer srv.Close()
+
+	pullIssueReportStatuses(context.Background(), registeredCfg(srv.URL), d.DB)
+
+	sent, err := repo.ListSent(ctx, 10)
+	if err != nil || len(sent) != 1 {
+		t.Fatalf("ListSent: %v (%d rows)", err, len(sent))
+	}
+	if sent[0].GithubIssueState != "closed_completed" {
+		t.Fatalf("GithubIssueState = %q, want %q", sent[0].GithubIssueState, "closed_completed")
+	}
+}
+
+// A cloud predating ut-docs#1651 sends no github_issue_state at all. That
+// decodes to "" and must leave the row showing its delivery status — the
+// same correct-degradation contract the "total" field's own comment
+// describes, not a bug. Without this, upgrading a till ahead of the cloud
+// would blank the Status column on every filed report.
+func TestPullIssueReportStatusesOlderCloudSendsNoTicketState(t *testing.T) {
+	d := openMigratedDB(t, "issue_reports_pull_nostate.db")
+	repo := data.NewIssueReportsRepo(d.DB)
+	ctx := context.Background()
+	if err := repo.SaveSent(ctx, data.SentReport{ID: "rep-1", CapturedAt: time.Now()}); err != nil {
+		t.Fatalf("SaveSent: %v", err)
+	}
+
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"data": map[string]any{
+				"store_id": "store-1",
+				"reports": []map[string]any{{
+					"id":               "rep-1",
+					"status":           "filed",
+					"github_issue_url": "https://github.com/universaltill/ut-docs/issues/9",
+					"captured_at":      "2026-09-06T00:00:00Z",
+				}},
+			},
+			"error": nil,
+		})
+	}))
+	defer srv.Close()
+
+	pullIssueReportStatuses(context.Background(), registeredCfg(srv.URL), d.DB)
+
+	sent, err := repo.ListSent(ctx, 10)
+	if err != nil || len(sent) != 1 {
+		t.Fatalf("ListSent: %v (%d rows)", err, len(sent))
+	}
+	if sent[0].GithubIssueState != "" {
+		t.Fatalf("GithubIssueState = %q, want empty", sent[0].GithubIssueState)
+	}
+	if sent[0].Status != "filed" {
+		t.Fatalf("Status = %q, want the delivery status intact", sent[0].Status)
+	}
+}

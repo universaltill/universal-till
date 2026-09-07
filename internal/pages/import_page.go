@@ -63,11 +63,26 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		// (see commitStagedImportForSetup) lands the now-logged-in operator
 		// here instead of a bare /import, so the file they already browsed to
 		// and previewed is still one click away rather than a re-upload.
+		stagedID := strings.TrimSpace(r.URL.Query().Get("staged_id"))
+		// ut-docs#1515: distinguish WHY a staged preview landed here instead
+		// of committing itself — the overwhelmingly common reason is
+		// ut-docs#970's currencyTouched gate (see commitStagedImportForSetup),
+		// not a transient failure, and the operator deserves the real reason
+		// rather than a bare "press Import" with no explanation. Read the
+		// same flag POST /api/import itself gates on; a settings-read error
+		// fails safe here too (shows the explanatory message rather than
+		// silently claiming the currency is fine).
+		currencyUnconfirmed := false
+		if stagedID != "" {
+			confirmedVal, _, cerr := d.Settings.Get(r.Context(), common.KeyCurrencyConfirmed)
+			currencyUnconfirmed = cerr != nil || confirmedVal != "true"
+		}
 		httpx.Render("ui/pages/import.html", map[string]any{
-			"title":     "Import",
-			"theme":     d.CurrentState().Theme,
-			"menuItems": d.MenuSnapshot(),
-			"stagedID":  strings.TrimSpace(r.URL.Query().Get("staged_id")),
+			"title":               "Import",
+			"theme":               d.CurrentState().Theme,
+			"menuItems":           d.MenuSnapshot(),
+			"stagedID":            stagedID,
+			"currencyUnconfirmed": currencyUnconfirmed,
 		})(w, r)
 	})
 
@@ -204,6 +219,44 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
+		// Resolved up front (ut-docs#303, hoisted earlier still by
+		// ut-docs#1696 so the replica gate right below can render a real
+		// notice instead of a plain-text body): every row status below is
+		// a locale key, not English prose, so T needs to be live before
+		// the preview loop builds the first one, and before the Parse
+		// error below (the first thing an operator sees on a wrong-format
+		// file).
+		locale := httpx.ResolveLocale(w, r)
+		funcs := httpx.FuncsFor(locale)
+		T := funcs["T"].(func(string) string)
+		// ut-docs#1696: items/item_barcodes are synced shop-wide via
+		// sync_admin_repo.go's adminTables (same invariant ut-docs#1590/
+		// #1667/#1689 gate elsewhere), so a bulk import committed on a
+		// satellite till would have every row it created/attached silently
+		// reverted on the next admin pull — hundreds of rows at once,
+		// larger blast radius than any single-item edit. Refuse up front,
+		// before touching the multipart body/staged upload (usedFirst
+		// BootExemption above already guarantees a real commit here is
+		// never the pre-admin setup wizard, which never has a primary_url
+		// set yet anyway). Preview (commit=0) writes nothing and stays
+		// unblocked, same as every other page's requirePrimary gate only
+		// covering mutation routes, not reads.
+		//
+		// A plain common.LocalizedError (text/plain) would be swallowed
+		// here: app.js's htmx:beforeSwap force-swap (ut-docs#916) only
+		// force-swaps a text/html body, and this page has no #pos-alert
+		// equivalent for htmx:responseError/showAlert to fall back into
+		// (that element only exists on the sale screen) — the operator
+		// would press Import and see literally nothing happen. Render an
+		// HTML notice fragment instead, same shape POST /api/catalog/
+		// export-save already uses a few lines up, so app.js's own
+		// force-swap picks it up into #import-result.
+		if commit && d.SyncPrimaryURL(r.Context()) != "" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusConflict)
+			httpx.RenderNotice(w, locale, "error", "import.error.replica_use_primary")
+			return
+		}
 		// ut-docs#1168: suppress the interactive problem-grid/barcode-
 		// opt-in controls and the repeated bottom Import button (below) on
 		// a preview served to the wizard's own upload panel (setup.html
@@ -220,14 +273,6 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		// (staged_id) or by finishing setup and importing again for real.
 		wizardPreview := r.FormValue("wizard") == "1"
 		stagedID := strings.TrimSpace(r.FormValue("staged_id"))
-
-		// Resolved up front (ut-docs#303): every row status below is a
-		// locale key, not English prose, so T needs to be live before the
-		// preview loop builds the first one, and before the Parse error
-		// below (the first thing an operator sees on a wrong-format file).
-		locale := httpx.ResolveLocale(w, r)
-		funcs := httpx.FuncsFor(locale)
-		T := funcs["T"].(func(string) string)
 
 		// Which bytes does this request act on? (ut-docs#601)
 		//  - Commit carrying a staged_id: the byte-identical copy staged at
@@ -319,6 +364,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			defer releaseImportCommit(hash)
+			if importCommitReserveSync != nil {
+				importCommitReserveSync()
+			}
 		}
 
 		// Format auto-detection (ut-docs#511): sniff the ZIP local-file-
@@ -542,69 +590,173 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		overrideNotes := map[int]string{}
 		if commit && usingStaged {
 			decimals := httpx.ActiveCurrency().Decimals
-			// In-file duplicate veto (ut-docs#601 review F1): a forceable
-			// issue (missing_name/bad_price) can mask the fact that the row's
-			// SKU/PLU also collides with ANOTHER row in this same parse — the
-			// .bkp parser's own seen-set only flags a duplicate whose clean
-			// twin came EARLIER in the file, and a flagged row never registers
-			// its PLU (deliberately, see bkp.go). Without this check, a
-			// corrected-name override made such a row importable: it raced the
-			// legitimate row to the items.sku UNIQUE constraint, and whichever
-			// lost surfaced as a baffling generic item_failed. Same guarantee
-			// as the DB-level SKUExists/BarcodeExists checks below, which
-			// every un-skipped row (forced or not) still goes through: an
-			// in-file duplicate can never be forced through, no matter what
-			// the client submits. Seeded with every cleanly-importable row's
-			// SKU; each ACCEPTED override then claims its own SKU too, so of
-			// two forced rows sharing a SKU only the first can land.
+			// In-file duplicate handling (ut-docs#601 review F1, extended by
+			// ut-docs#1234): a forceable issue (missing_name/bad_price) can
+			// mask the fact that the row's SKU/PLU also collides with ANOTHER
+			// row in this same parse — the .bkp parser's own seen-set only
+			// flags a duplicate whose clean twin came EARLIER in the file,
+			// and a flagged row never registers its PLU (deliberately, see
+			// bkp.go). Same guarantee as the DB-level SKUExists/BarcodeExists
+			// checks below, which every un-skipped row (forced or not) still
+			// goes through: an in-file duplicate can never silently race the
+			// items.sku UNIQUE constraint, whatever the client submits.
+			//
+			// Two distinct cases, told apart by anchorSKU below:
+			//   - A genuinely clean row (Issue == "" at parse time) already
+			//     claims this PLU. That row is real proof the PLU names a
+			//     real, distinct product — so once this row's own issue is
+			//     corrected, it deserves the exact same suffix-dedup bkp.go
+			//     already gives a reused PLU between two clean rows, not an
+			//     unconditional veto (ut-docs#1234). Every row anchored this
+			//     way gets its own synthesized SKU, however many there are.
+			//   - No clean row anywhere in the file claims this PLU: the rows
+			//     sharing it are all corrections, so there is nothing to
+			//     anchor a "these are really the same reused number" reading
+			//     to and which of them is the "real" one stays genuinely
+			//     ambiguous. Unchanged from before this card: only the first
+			//     forced correction may land, every later one stays vetoed.
+			//
+			// inFileSKU is seeded with every cleanly-importable row's SKU,
+			// then each accepted override (anchored or not) claims its own
+			// (possibly synthesized) SKU too. anchorSKU is seeded once, from
+			// the same clean rows, and never gains an override's SKU — only
+			// a genuinely clean row counts as an anchor. allRawSKUs is a
+			// snapshot of every row's original SKU, taken before any override
+			// mutates one, so a synthesized suffix can never shadow a real,
+			// not-yet-processed PLU later in the file (mirrors bkp.go's own
+			// allPLUs guard, ut-docs#1222 review). dupSuffix is seeded from
+			// any "PLU-N" suffix bkp.go's own dedup already produced for a
+			// clean row on this PLU, so it resumes numbering where that left
+			// off rather than re-testing suffixes already claimed; two+
+			// anchored corrections sharing one PLU still each land under a
+			// distinct suffix either way, this just skips the wasted re-tests.
+			//
+			// dedupeReusedPLU restricts the anchored-dedup case to the format
+			// that actually has a reused-PLU concept at all (ut-docs#1234
+			// review finding 1): bkp.go's own suffix-dedup is explicitly a
+			// .bkp-only convention (see catimport.go's SKUIssueDuplicateInFile
+			// doc comment) — CSV's Parse has no in-file SKU-collision detection
+			// for clean rows whatsoever, so letting a CSV correction dedupe
+			// here would give a corrected row strictly better treatment than a
+			// clean row carrying the identical reused-SKU defect. CSV keeps
+			// this card's veto-only behavior unchanged; only anchorSKU's
+			// bookkeeping is shared.
+			dedupeReusedPLU := res.Format == "speedy-kasse"
 			inFileSKU := map[string]bool{}
+			anchorSKU := map[string]bool{}
+			allRawSKUs := map[string]bool{}
+			dupSuffix := map[string]int{}
 			for i := range res.Items {
+				if res.Items[i].SKU != "" {
+					allRawSKUs[res.Items[i].SKU] = true
+				}
 				if res.Items[i].Issue == "" && res.Items[i].SKU != "" {
 					inFileSKU[res.Items[i].SKU] = true
+					anchorSKU[res.Items[i].SKU] = true
+					if plu, n, ok := strings.Cut(res.Items[i].SKU, "-"); ok {
+						if num, perr := strconv.Atoi(n); perr == nil && num > dupSuffix[plu] {
+							dupSuffix[plu] = num - 1
+						}
+					}
 				}
 			}
 			for i := range res.Items {
 				if r.FormValue(fmt.Sprintf("row_include_%d", i)) != "1" {
 					continue
 				}
-				field, forceable := forceableImportIssue(res.Items[i].Issue)
+				fields, forceable := forceableImportIssue(res.Items[i].Issue)
 				if !forceable {
 					continue
 				}
-				if sku := res.Items[i].SKU; sku != "" && inFileSKU[sku] {
-					// Checked before the correction itself: no corrected
-					// name/price could ever make this row importable, so the
-					// status says the real, terminal reason.
+				if sku := res.Items[i].SKU; sku != "" && inFileSKU[sku] && !(dedupeReusedPLU && anchorSKU[sku]) {
+					// No clean anchor for this PLU (or this format has no
+					// reused-PLU dedup concept at all) — checked before the
+					// correction itself, since no corrected name/price could
+					// ever make this row importable under the
+					// still-genuinely-ambiguous case above.
 					overrideNotes[i] = T("import.status.duplicate_sku_in_file")
 					continue
 				}
-				switch field {
-				case "name":
-					name := strings.TrimSpace(r.FormValue(fmt.Sprintf("row_name_%d", i)))
-					if name == "" {
-						overrideNotes[i] = T("import.problem_grid.name_required")
-						continue
+				// ut-docs#1713: a row can now need BOTH corrections
+				// (IssueMissingNameAndBadPrice → fields = ["name","price"]).
+				// Every listed field must validate before ANY of them is
+				// applied — a name-only correction on a row that ALSO needs
+				// a price must never clear Issue and silently ship
+				// PriceMinor 0; it stays skipped, with the note naming
+				// whichever required field is still missing/invalid.
+				newName := res.Items[i].Name
+				newPriceMinor := res.Items[i].PriceMinor
+				rowFailed := false
+				for _, field := range fields {
+					switch field {
+					case "name":
+						name := strings.TrimSpace(r.FormValue(fmt.Sprintf("row_name_%d", i)))
+						if name == "" {
+							overrideNotes[i] = T("import.problem_grid.name_required")
+							rowFailed = true
+						} else {
+							newName = name
+						}
+					case "price":
+						rawPrice := strings.TrimSpace(r.FormValue(fmt.Sprintf("row_price_%d", i)))
+						if rawPrice == "" {
+							overrideNotes[i] = T("import.problem_grid.price_required")
+							rowFailed = true
+						} else if minor, perr := catimport.ParsePrice(rawPrice, decimals); perr != nil {
+							// Same parser the file's own price cells go
+							// through — one price grammar on this page, not two.
+							overrideNotes[i] = fmt.Sprintf(T("import.problem_grid.price_invalid"), rawPrice)
+							rowFailed = true
+						} else {
+							newPriceMinor = minor
+						}
+					default:
+						// Defensive-default, same convention translateImportIssue
+						// uses for an unrecognised Issue code: forceableImportIssue
+						// is the only source of field names reaching here, so this
+						// is unreachable today — but Issue is cleared by NAME below,
+						// after this loop, not inside each case. Fail CLOSED (row
+						// stays skipped) on any field this switch doesn't know how
+						// to apply, rather than silently treating an unhandled
+						// field as already-satisfied and importing the row with
+						// that correction never actually applied — independent
+						// review finding, ut-docs#1713.
+						log.Printf("[import] forceable field %q has no correction handler", field)
+						rowFailed = true
 					}
-					res.Items[i].Name = name
-					res.Items[i].Issue, res.Items[i].IssueDetail = "", ""
-				case "price":
-					rawPrice := strings.TrimSpace(r.FormValue(fmt.Sprintf("row_price_%d", i)))
-					if rawPrice == "" {
-						overrideNotes[i] = T("import.problem_grid.price_required")
-						continue
+					if rowFailed {
+						break
 					}
-					// Same parser the file's own price cells go through —
-					// one price grammar on this page, not two.
-					minor, perr := catimport.ParsePrice(rawPrice, decimals)
-					if perr != nil {
-						overrideNotes[i] = fmt.Sprintf(T("import.problem_grid.price_invalid"), rawPrice)
-						continue
-					}
-					res.Items[i].PriceMinor = minor
-					res.Items[i].Issue, res.Items[i].IssueDetail = "", ""
 				}
-				// Override accepted (Issue cleared): the row now claims its
-				// SKU, so a second forced row sharing it is vetoed above.
+				if rowFailed {
+					continue
+				}
+				res.Items[i].Name = newName
+				res.Items[i].PriceMinor = newPriceMinor
+				res.Items[i].Issue, res.Items[i].IssueDetail = "", ""
+				// Override accepted (Issue cleared). If a clean row anchors
+				// this PLU, this row now becomes just as real and distinct a
+				// product as that anchor (ut-docs#1234) — give it its own
+				// synthesized SKU the same way bkp.go dedupes two clean rows
+				// sharing one PLU, rather than let it collide with the
+				// anchor's SKU at commit. Only reachable here (post-switch)
+				// when dedupeReusedPLU && anchorSKU[sku] was true, since every
+				// other case was already vetoed above before the switch ran.
+				if sku := res.Items[i].SKU; res.Items[i].Issue == "" && sku != "" && dedupeReusedPLU && anchorSKU[sku] {
+					var candidate string
+					for {
+						dupSuffix[sku]++
+						candidate = fmt.Sprintf("%s-%d", sku, dupSuffix[sku]+1)
+						if !inFileSKU[candidate] && !allRawSKUs[candidate] {
+							break
+						}
+					}
+					res.Items[i].SKU = candidate
+					res.Items[i].SKUIssue, res.Items[i].SKUIssueRaw = catimport.SKUIssueDuplicateInFile, sku
+				}
+				// The row now claims its (possibly synthesized) SKU, so a
+				// later forced row sharing the same PLU is vetoed/deduped
+				// correctly above.
 				if res.Items[i].Issue == "" && res.Items[i].SKU != "" {
 					inFileSKU[res.Items[i].SKU] = true
 				}
@@ -614,19 +766,19 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		// Annotate duplicates (server truth) for both preview and commit.
 		type rowView struct {
 			catimport.ImportItem
-			Status   string // translated display text
-			Skipped  bool   // preview-time issue/duplicate — never entered the commit loop as importable
-			Warned   bool   // created, but with a warning
-			Failed   bool   // commit-time failure (category/department/item creation)
-			Idx      int    // stable 0-based row index for this parse (ut-docs#601) — field names row_include_<Idx> etc.
-			FixField string // "name"/"price" when the row's issue is forceable with an inline correction, else ""
+			Status    string   // translated display text
+			Skipped   bool     // preview-time issue/duplicate — never entered the commit loop as importable
+			Warned    bool     // created, but with a warning
+			Failed    bool     // commit-time failure (category/department/item creation)
+			Idx       int      // stable 0-based row index for this parse (ut-docs#601) — field names row_include_<Idx> etc.
+			FixFields []string // "name"/"price", in order, when the row's issue is forceable with inline correction field(s), else nil — ut-docs#1713: a row can need both at once
 		}
 		var rows []rowView
 		importable := 0
 		for i, it := range res.Items {
 			status := T("import.status.ok")
 			skipped := false
-			fixField := ""
+			var fixFields []string
 			switch {
 			case overrideNotes[i] != "":
 				// Ticked to import but the correction didn't validate —
@@ -634,7 +786,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				status, skipped = overrideNotes[i], true
 			case it.Issue != "":
 				status, skipped = translateImportIssue(T, it), true
-				fixField, _ = forceableImportIssue(it.Issue)
+				fixFields, _ = forceableImportIssue(it.Issue)
 			case it.Barcode != "":
 				if exists, _ := repo.BarcodeExists(r.Context(), it.Barcode); exists {
 					status, skipped = T("import.status.barcode_already_in_catalog"), true
@@ -648,7 +800,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			if !skipped {
 				importable++
 			}
-			rows = append(rows, rowView{ImportItem: it, Status: status, Skipped: skipped, Idx: i, FixField: fixField})
+			rows = append(rows, rowView{ImportItem: it, Status: status, Skipped: skipped, Idx: i, FixFields: fixFields})
 		}
 
 		// ut-docs#601: a preview stages the upload so the follow-up commit
@@ -952,8 +1104,19 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				if len(it.ImageData) > 0 {
 					if img, derr := imaging.Decode(it.ImageData); derr != nil {
 						log.Printf("[import] decode image for item %q: %v", it.Name, derr)
-						warnings = append(warnings, T("import.status.image_undecodable"))
+						// ut-docs#1623: a real, decodable photo over
+						// imaging.MaxPixels is a distinct case from a
+						// genuinely corrupt/unsupported file — same
+						// errors.Is branch the manual-upload handlers
+						// already use (internal/pages/catalog/handlers.go)
+						// to tell the two apart.
+						if errors.Is(derr, imaging.ErrTooManyPixels) {
+							warnings = append(warnings, T("import.status.image_too_many_pixels"))
+						} else {
+							warnings = append(warnings, T("import.status.image_undecodable"))
+						}
 					} else {
+						img = imaging.DownscaleMaxEdge(img, imaging.MaxThumbEdge)
 						dir := paths.Data("public", "assets", "items", itemID)
 						thumbPath := filepath.Join(dir, "thumb.png")
 						writeErr := func() error {
@@ -1266,31 +1429,41 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			case row.Skipped || row.Failed:
 				cls = ` class="muted"`
 			}
-			if interactive && row.Skipped && row.FixField != "" {
-				// Include/skip checkbox plus inline correction input — ONLY
-				// for the forceable issue types (missing_name/bad_price,
-				// forceableImportIssue). Any other skipped row keeps its
-				// passive status text with no controls at all: the server
-				// would ignore a ticked include on it anyway, and an inert
-				// checkbox with no feedback misleads the operator into
-				// thinking something can be done (ut-docs#601 review F3).
-				// Required-if-ticked is wired up by the page's own script via
-				// data-fix-target. All controls are form-associated
-				// (form="import-form") — they live outside the <form>, in the
-				// swapped #import-result div. Logical properties only
+			if interactive && row.Skipped && len(row.FixFields) > 0 {
+				// Include/skip checkbox plus inline correction input(s) —
+				// ONLY for the forceable issue types (missing_name/
+				// bad_price/missing_name_and_bad_price, forceableImportIssue).
+				// Any other skipped row keeps its passive status text with no
+				// controls at all: the server would ignore a ticked include
+				// on it anyway, and an inert checkbox with no feedback
+				// misleads the operator into thinking something can be done
+				// (ut-docs#601 review F3). Required-if-ticked is wired up by
+				// the page's own script via data-fix-target, one input id
+				// per listed field (space-separated — ut-docs#1713: a row
+				// needing both name and price now renders both inputs under
+				// one checkbox, so the target list is no longer always
+				// exactly one id). All controls are form-associated
+				// (form="import-form") — they live outside the <form>, in
+				// the swapped #import-result div. Logical properties only
 				// (margin-block-*): fa/ar render RTL.
+				targetIDs := make([]string, len(row.FixFields))
+				for fi, field := range row.FixFields {
+					targetIDs[fi] = fmt.Sprintf("row-fix-%s-%d", field, row.Idx)
+				}
 				statusHTML += fmt.Sprintf(
-					`<label class="import-fix-include" style="display:block;margin-block-start:.3rem"><input type="checkbox" name="row_include_%d" value="1" form="import-form" data-fix-target="row-fix-%d"> %s</label>`,
-					row.Idx, row.Idx, htmlEscape(T("import.problem_grid.include_label")))
-				switch row.FixField {
-				case "name":
-					statusHTML += fmt.Sprintf(
-						`<input type="text" id="row-fix-%d" name="row_name_%d" form="import-form" placeholder="%s" aria-label="%s" style="display:block;margin-block-start:.3rem;max-width:14rem">`,
-						row.Idx, row.Idx, htmlEscape(T("import.problem_grid.corrected_name")), htmlEscape(T("import.problem_grid.corrected_name")))
-				case "price":
-					statusHTML += fmt.Sprintf(
-						`<input type="text" id="row-fix-%d" name="row_price_%d" form="import-form" inputmode="decimal" placeholder="%s" aria-label="%s" style="display:block;margin-block-start:.3rem;max-width:8rem">`,
-						row.Idx, row.Idx, htmlEscape(T("import.problem_grid.corrected_price")), htmlEscape(T("import.problem_grid.corrected_price")))
+					`<label class="import-fix-include" style="display:block;margin-block-start:.3rem"><input type="checkbox" name="row_include_%d" value="1" form="import-form" data-fix-target="%s"> %s</label>`,
+					row.Idx, htmlEscape(strings.Join(targetIDs, " ")), htmlEscape(T("import.problem_grid.include_label")))
+				for _, field := range row.FixFields {
+					switch field {
+					case "name":
+						statusHTML += fmt.Sprintf(
+							`<input type="text" id="row-fix-name-%d" name="row_name_%d" form="import-form" placeholder="%s" aria-label="%s" style="display:block;margin-block-start:.3rem;max-width:14rem">`,
+							row.Idx, row.Idx, htmlEscape(T("import.problem_grid.corrected_name")), htmlEscape(T("import.problem_grid.corrected_name")))
+					case "price":
+						statusHTML += fmt.Sprintf(
+							`<input type="text" id="row-fix-price-%d" name="row_price_%d" form="import-form" inputmode="decimal" placeholder="%s" aria-label="%s" style="display:block;margin-block-start:.3rem;max-width:8rem">`,
+							row.Idx, row.Idx, htmlEscape(T("import.problem_grid.corrected_price")), htmlEscape(T("import.problem_grid.corrected_price")))
+					}
 				}
 			}
 			fmt.Fprintf(&b, `<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
@@ -1500,8 +1673,12 @@ func writeCatalogCSV(out io.Writer, rows []data.ExportRow, decimals int) {
 // taxDePluginID is the one plugin whose takeaway_rate_overrides setting the
 // import can populate — Germany's §12 UStG switch (ut-docs#512). Other
 // jurisdictions' plugins have their own setting shapes and are explicitly
-// out of this card's scope.
-const taxDePluginID = "com.universaltill.tax-de"
+// out of this card's scope. Aliases data.FiscalRegisterDEPluginID
+// (ut-docs#1670) rather than redeclaring the literal — sync_admin_repo.go's
+// scoped fiscal-register sync needs this same id and now shares one
+// source of truth with this package instead of two independently
+// maintained copies.
+const taxDePluginID = data.FiscalRegisterDEPluginID
 
 // mergeTakeawayOverrides folds the override pairs discovered by one import
 // commit into ut-plugin-tax-de's takeaway_rate_overrides setting (a JSON
@@ -1632,6 +1809,8 @@ func translateImportIssue(T func(string) string, it catimport.ImportItem) string
 		return T("import.status.missing_name")
 	case catimport.IssueBadPrice:
 		return fmt.Sprintf(T("import.status.bad_price"), it.IssueDetail)
+	case catimport.IssueMissingNameAndBadPrice:
+		return fmt.Sprintf(T("import.status.missing_name_and_bad_price"), it.IssueDetail)
 	case catimport.IssueSourceDeleted:
 		return T("import.status.source_deleted")
 	case catimport.IssueNotSellable:

@@ -536,8 +536,12 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, html.EscapeString(friendlyJoinError(locale, err)))
 			return
 		}
-		fmt.Fprintf(w, `<span>✓ %s: %s — %s</span>`, httpx.T(locale, "tills.joined"),
-			shopName, httpx.T(locale, "tills.restart_to_finish"))
+		// ut-docs#1615: give the operator the same real restart action
+		// pairing_wait.html's "joined" branch gives the discovery-list flow
+		// (ut-docs#1550) instead of the old dead-end text — manager-driven,
+		// so no auto-fire (a configured, possibly-in-use till restarts only
+		// on the explicit click).
+		renderJoinSuccess(w, r, shopName, "/api/sync/pairing-restart", false)
 	})
 
 	// First-boot wizard fork (middleware-exempt like /setup, and refuses
@@ -562,8 +566,10 @@ func registerSyncAPI(mux *http.ServeMux, d *common.Deps) *enrolTokens {
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, html.EscapeString(friendlyJoinError(locale, err)))
 			return
 		}
-		fmt.Fprintf(w, `<span>✓ %s: %s — %s</span>`, httpx.T(locale, "tills.joined"),
-			shopName, httpx.T(locale, "tills.restart_to_finish"))
+		// ut-docs#1615: same fix as /api/sync/join above, but auto-fires on
+		// render — a first-boot Pi kiosk has no shell to press a button
+		// from (same reasoning as pairing_wait.html's autoRestart).
+		renderJoinSuccess(w, r, shopName, "/api/setup/pairing-restart", true)
 	})
 
 	return tokens
@@ -624,14 +630,16 @@ func (e *joinError) Error() string {
 }
 
 // friendlyJoinError renders a join/enrolment failure for the operator,
-// translated via httpx.T. Falls back to the raw error text (English,
-// HTML-escaped by the caller) for anything that isn't a *joinError —
-// defensive only, since every joinPrimary/completeJoin return path
-// produces one.
+// translated via httpx.T. Falls back to a translated generic message (the
+// raw error's text substituted in, same %s-placeholder convention as every
+// other kind above) for anything that isn't a *joinError — defensive only,
+// since every joinPrimary/completeJoin return path produces one, but
+// ut-docs#1544 found even this fallback reaching the operator as raw
+// English when it did fire.
 func friendlyJoinError(locale string, err error) string {
 	var je *joinError
 	if !errors.As(err, &je) {
-		return err.Error()
+		return fmt.Sprintf(httpx.T(locale, "tills.join_error.unexpected"), err.Error())
 	}
 	msg := httpx.T(locale, joinErrLocaleKey[je.kind])
 	if je.detail == "" {

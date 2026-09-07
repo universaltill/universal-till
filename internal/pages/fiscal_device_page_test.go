@@ -26,27 +26,17 @@ func seedActiveTaxTrPlugin(t *testing.T, db *sql.DB, active bool) {
 	if active {
 		is = 1
 	}
-	if _, err := db.Exec(`INSERT INTO plugins (id, name, version, is_active) VALUES (?, 'Türkiye fiscal device', '0.1.0', ?)`, fiscal.PluginIDTaxTR, is); err != nil {
-		t.Fatalf("seed tax-tr plugin: %v", err)
+	// openPagesTestDB runs the real migrated schema (ut-docs#1657/#1676),
+	// where plugins.entrypoint is NOT NULL and plugins carries a composite
+	// FOREIGN KEY (id, version) REFERENCES plugin_catalog (id, version) — so
+	// the catalog row has to exist first. Exactly the shape the German
+	// equivalent already uses (seedTaxDeCatalogRow, fiscal_register_page_test.go).
+	if _, err := db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at)
+VALUES (?, '0.1.0', 'Türkiye fiscal device', 'desc', 'go', 'entry', 'url', 'sha', 'auth', 'site', '[]', '0.0.0', '1', datetime('now'))`, fiscal.PluginIDTaxTR); err != nil {
+		t.Fatalf("seed tax-tr plugin_catalog: %v", err)
 	}
-}
-
-// createFiscalDeviceReceiptsTable adds the one table this page reads that
-// seedForPages does not define, column-identical to 001_init.sql.
-func createFiscalDeviceReceiptsTable(t *testing.T, db *sql.DB) {
-	t.Helper()
-	if _, err := db.Exec(`CREATE TABLE fiscal_device_receipts (
-    sale_id      TEXT PRIMARY KEY,
-    device_kind  TEXT NOT NULL DEFAULT 'okc',
-    maker        TEXT NOT NULL DEFAULT '',
-    serial       TEXT NOT NULL DEFAULT '',
-    receipt_no   TEXT NOT NULL,
-    receipt_kind TEXT NOT NULL DEFAULT 'mali_fis',
-    z_no         INTEGER NOT NULL DEFAULT 0,
-    issued_at    TEXT NOT NULL DEFAULT '',
-    created_at   TEXT NOT NULL DEFAULT (datetime('now'))
-);`); err != nil {
-		t.Fatalf("create fiscal_device_receipts: %v", err)
+	if _, err := db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, is_active) VALUES (?, 'Türkiye fiscal device', '0.1.0', 'entry', ?)`, fiscal.PluginIDTaxTR, is); err != nil {
+		t.Fatalf("seed tax-tr plugin: %v", err)
 	}
 }
 
@@ -63,7 +53,6 @@ func newFiscalDeviceTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
-	createFiscalDeviceReceiptsTable(t, db)
 
 	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(db), Settings: settings.NewStore(db)}
 	mux := http.NewServeMux()
@@ -95,7 +84,7 @@ func TestFiscalDevicePage_ShowsPluginSettingsAndLastReceipt(t *testing.T) {
 	seedActiveTaxTrPlugin(t, d.Db, true)
 	prepo := data.NewPluginRepo(d.Db)
 	for k, v := range map[string]string{"okc.driver": `"bridge"`, "okc.host": `"192.168.1.50"`, "okc.port": `"4711"`, "okc.maker": `"beko"`} {
-		if err := prepo.UpsertPluginSettingScoped(t.Context(), fiscal.PluginIDTaxTR, k, v, "global"); err != nil {
+		if err := prepo.UpsertPluginSettingScoped(t.Context(), fiscal.PluginIDTaxTR, k, v, "global", false); err != nil {
 			t.Fatalf("seed setting %s: %v", k, err)
 		}
 	}
@@ -103,7 +92,7 @@ func TestFiscalDevicePage_ShowsPluginSettingsAndLastReceipt(t *testing.T) {
 	if err := repo.RecordFiscalDeviceReceipt(t.Context(), data.FiscalDeviceReceipt{SaleID: "s1", Maker: "beko", Serial: "AV777", ReceiptNo: "0000042", ZNo: 9, IssuedAt: "2026-09-03T10:00:00+03:00"}); err != nil {
 		t.Fatal(err)
 	}
-	_ = d.Settings.Set(t.Context(), fiscal.KeyTSEConfigured, "true")
+	_ = d.Settings.Set(t.Context(), fiscal.KeySigningDeviceConfigured, "true")
 	_ = d.Settings.Set(t.Context(), fiscal.KeySystemOfRecord, "true")
 
 	rec := httptest.NewRecorder()
@@ -132,7 +121,7 @@ func TestFiscalDevicePage_ConfirmAndUnpairFlipTheGateFlagWithAudit(t *testing.T)
 	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "fiscaldevice.msg.confirmed") {
 		t.Fatalf("confirm: %d %s", rec.Code, rec.Header().Get("Location"))
 	}
-	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeyTSEConfigured); v != "true" {
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); v != "true" {
 		t.Fatalf("tse_configured after confirm = %q, want true", v)
 	}
 	if ok, _ := repo.HasAuditEntry(t.Context(), "fiscal_device", "till", fiscalDeviceAuditConfirmed); !ok {
@@ -144,7 +133,7 @@ func TestFiscalDevicePage_ConfirmAndUnpairFlipTheGateFlagWithAudit(t *testing.T)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("unpair: %d", rec.Code)
 	}
-	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeyTSEConfigured); v != "false" {
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); v != "false" {
 		t.Fatalf("tse_configured after unpair = %q, want false", v)
 	}
 	if ok, _ := repo.HasAuditEntry(t.Context(), "fiscal_device", "till", fiscalDeviceAuditUnpaired); !ok {

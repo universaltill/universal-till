@@ -108,15 +108,33 @@ func GateOnFirstBoot(inner RoleCheck, firstBoot FirstBootChecker) RoleCheck {
 	}
 }
 
-// storeNameOrDefault duplicates internal/pages's storeNameOrDefault
-// (same setting key "store.name", same "this shop" fallback) rather than
-// importing internal/pages — internal/pages will need to import
-// internal/discovery (for the discover-primaries API handler), so the
-// reverse import would be a cycle. Confirmed empirically, not assumed: see
-// the code review record for this change.
-func storeNameOrDefault(ctx context.Context, settings *data.SettingsRepo) string {
+// advertisedName is the name Advertiser broadcasts over mDNS — deliberately
+// separate from internal/pages's OWN storeNameOrDefault (a different
+// function, used by receipts, reports and the AI assistant; this package
+// can't call it directly — internal/pages imports internal/discovery for
+// the discover-primaries API handler, so the reverse import would be a
+// cycle), because the discovery list is the one place several *different*
+// shops' names are shown side by side to a human choosing between them.
+// Before this, every unconfigured till fell back to the identical literal
+// "this shop", so two freshly-unboxed shops scanning the same LAN segment
+// showed up as visually indistinguishable candidates, with nothing but a
+// raw till-id UUID to tell them apart (ut-docs#1295). This package used to
+// carry its own duplicate storeNameOrDefault for the same reason (see
+// docs/code-reviews/2026-08-02-mdns-lan-discovery.md) — folded into this
+// function directly rather than kept as a second, now-unreferenced copy
+// (independent review, ut-docs#1295).
+//
+// Once an operator has actually named their shop, that name is broadcast
+// verbatim — the suffix below only ever applies to the still-unset
+// fallback, so a legitimately-named shop never carries an id fragment it
+// didn't ask for.
+func advertisedName(ctx context.Context, settings *data.SettingsRepo, tillID string) string {
 	if v, ok, _ := settings.Get(ctx, "store.name"); ok && strings.TrimSpace(v) != "" {
 		return v
 	}
-	return "this shop"
+	suffix := tillID
+	if len(suffix) > 4 {
+		suffix = suffix[len(suffix)-4:]
+	}
+	return "this shop (" + suffix + ")"
 }

@@ -107,3 +107,106 @@ func TestRefundFiscalSignAsk_UnreachableDeclaredProceedsAndDeclares(t *testing.T
 	}
 	assertNoFiscalSignRetryQueue(t, dp)
 }
+
+// (iii) Known-offline short-circuit (ut-docs#1493): the refund POST body's
+// own "offline" field (the #offline-flag hidden input, same convention
+// completeTender's sale path already uses) must thread into
+// dispatchFiscalSignAsk exactly like TestFiscalSignAsk_KnownOfflineShortCircuits
+// already proves for a sale — never dispatching to the signer at all (never
+// burning the fiscalSignAskBudget on a cloud call already known to fail),
+// and declaring the honest "known-offline" reason rather than a generic
+// backend-timeout one.
+func TestRefundFiscalSignAsk_KnownOfflineShortCircuits(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	t.Cleanup(func() { plugins.SharedBus(dp.Db).ResetSubscribers() })
+	var invocations atomic.Int32
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-offline-refund", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		invocations.Add(1)
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2&offline=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("known-offline refund must still complete, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if n := invocations.Load(); n != 0 {
+		t.Fatalf("known-offline refund must never dispatch to the signer, got %d invocations", n)
+	}
+	var refundSaleID string
+	if err := dp.Db.QueryRow(`SELECT id FROM sales WHERE sale_type = 'return'`).Scan(&refundSaleID); err != nil {
+		t.Fatalf("expected a return sale row: %v", err)
+	}
+	var markerPayload string
+	if err := dp.Db.QueryRow(`SELECT data_json FROM audit_log WHERE entity_type='sale' AND entity_id=? AND action='unsigned_fiscal_signing'`, refundSaleID).
+		Scan(&markerPayload); err != nil {
+		t.Fatalf("expected an unsigned_fiscal_signing marker for the offline refund: %v", err)
+	}
+	if !strings.Contains(markerPayload, "known-offline") || !strings.Contains(markerPayload, `"known_offline":true`) {
+		t.Fatalf("marker payload should carry the honest known-offline reason (not a generic backend-timeout one), got %s", markerPayload)
+	}
+	assertNoFiscalSignRetryQueue(t, dp)
+}
+
+// (iv) ADR-0077 D1/D2, ut-docs#1519, review finding: the refund call site's
+// fiscalStartCarrier → saleInput.SaleID threading (refund_page.go) is real,
+// end to end through the actual POST /api/refund handler — not just proven
+// at the dispatchFiscalSignStart/dispatchFiscalSignAsk function level
+// (fiscal_sign_hook_test.go already covers that in isolation). The
+// persisted return sale's own id must equal the fiscal_sign_starts row's
+// sale_id: if the threading were ever dropped, CompleteSale would mint its
+// OWN id (pos.SaleInput.SaleID empty → uuid minted inside CompleteSale) and
+// this assertion would catch the silent decorrelation.
+func TestRefundFiscalSignStart_SharesSaleIDWithFinish(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	t.Cleanup(func() { plugins.SharedBus(dp.Db).ResetSubscribers() })
+	subscribeFiscalSignStartHandler(t, dp, "com.test.fiscal-start-refund", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		return json.RawMessage(`{"status":"acknowledged","tx_id":"tx-refund-1","tx_revision":1}`), nil
+	})
+	var captured fiscalSignAskPayload
+	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-ask-refund", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		_ = json.Unmarshal(ev.Payload, &captured)
+		return json.RawMessage(`{"status":"approved"}`), nil
+	})
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	dp.WaitForAsyncWork()
+
+	var refundSaleID string
+	if err := dp.Db.QueryRow(`SELECT id FROM sales WHERE sale_type = 'return'`).Scan(&refundSaleID); err != nil {
+		t.Fatalf("expected a return sale row: %v", err)
+	}
+	if captured.SaleID != refundSaleID {
+		t.Fatalf("fiscal.sign.ask saw sale_id %q but the persisted return sale is %q — the two dispatches disagree on which sale they cover", captured.SaleID, refundSaleID)
+	}
+	// NOT asserting captured.StartedTxID/StartedTxRevision here — see the
+	// same-named comment in fiscal_sign_hook_test.go's
+	// TestFiscalSignStart_SharesSaleIDWithFinishThroughTender: within one
+	// real HTTP request the two dispatches run back to back with nothing
+	// waiting on the goroutine in between, so an in-process test handler
+	// with no real latency can run either order. This test's own job is
+	// the SaleID-agreement check just above, plus the persisted-row check
+	// below (itself awaited via dp.WaitForAsyncWork).
+	var startSaleID, startTxID string
+	var startTxRevision int64
+	if err := dp.Db.QueryRow(`SELECT sale_id, tx_id, tx_revision FROM fiscal_sign_starts WHERE sale_id = ?`, refundSaleID).
+		Scan(&startSaleID, &startTxID, &startTxRevision); err != nil {
+		t.Fatalf("expected a fiscal_sign_starts row keyed on the refund's own sale id %q: %v", refundSaleID, err)
+	}
+	if startSaleID != refundSaleID || startTxID != "tx-refund-1" || startTxRevision != 1 {
+		t.Fatalf("unexpected fiscal_sign_starts row: sale_id=%q tx_id=%q tx_revision=%d", startSaleID, startTxID, startTxRevision)
+	}
+}

@@ -75,29 +75,44 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 	// free-table check the "move to a different table" handler enforces.
 	posRepo := data.NewPOSRepo(d.Db)
 
-	// renderHeldStrip builds the held-sales strip fragment -- the shared
-	// body behind both GET /ui/held (first paint / hx-trigger="held-changed"
-	// re-fetch) and POST /api/pos/held/table (re-rendered in place after a
-	// move, same as every other mutating handler here re-renders its own
-	// fragment). Table labels are resolved via a single ListTables call
-	// rather than teaching HeldSalesRepo about `tables` — display-only
-	// joins like this stay at the pages layer, same choice kitchenTicketFor
-	// makes for order-type text.
-	renderHeldStrip := func(w http.ResponseWriter, r *http.Request) {
+	// renderHeldStripWithToast builds the held-sales strip fragment -- the
+	// shared body behind both GET /ui/held (first paint / hx-trigger=
+	// "held-changed" re-fetch) and POST /api/pos/held/table (re-rendered in
+	// place after a move, same as every other mutating handler here
+	// re-renders its own fragment). Table labels are resolved via a single
+	// ListTables call rather than teaching HeldSalesRepo about `tables` --
+	// display-only joins like this stay at the pages layer, same choice
+	// kitchenTicketFor makes for order-type text.
+	//
+	// toast/level (ut-docs#1704, independent review 2026-09-07): a rejected
+	// move used to just re-render the strip unchanged -- no toast, no
+	// HX-Trigger, nothing the cashier could see, the exact "silent success
+	// that's actually a no-op" basket.table.occupied's own toast exists to
+	// avoid on the live-basket picker (pos_api.go). Same `.pos-notice`
+	// markup basket.html renders, so the shared document-level dismiss
+	// handler (app.js) picks it up with no new wiring. renderHeldStrip
+	// below is the plain (no-toast) case every other call site uses.
+	renderHeldStripWithToast := func(w http.ResponseWriter, r *http.Request, toast, level string) {
 		ctx := r.Context()
 		locale := httpx.ResolveLocale(w, r)
 		items, err := repo.List(ctx)
 		if err != nil {
 			items = nil
 		}
-		// ListTablesWithState (not ListTables) so the per-order "Move table"
-		// control below can offer only tables that are actually free -- the
-		// same occupancy source the basket picker uses. A shop with no tables
-		// configured yields an empty map/list, so no table chrome renders at
-		// all (ADR-0054 soft-gate).
+		// tablesWithStateForDisplay (ut-docs#1392/#1704), not the bare
+		// posRepo.ListTablesWithState, so the per-order "Move table" control
+		// below can offer only tables that are actually free -- cross-till,
+		// not just locally. Before this fix (independent review,
+		// 2026-09-07) this was the one remaining display site still calling
+		// ListTablesWithState directly, so the strip would happily offer a
+		// table another till already held (live claim or its own parked
+		// order), and the move below refused it with a plain re-render --
+		// no toast, no HX-Trigger, nothing the cashier could see. A shop
+		// with no tables configured yields an empty map/list, so no table
+		// chrome renders at all (ADR-0054 soft-gate).
 		labelByTableID := map[string]string{}
 		var freeTables []data.TableWithState
-		if states, err := posRepo.ListTablesWithState(ctx); err == nil {
+		if states, err := tablesWithStateForDisplay(ctx, d, posRepo); err == nil {
 			for _, s := range states {
 				if !s.Enabled {
 					continue
@@ -111,6 +126,18 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		var b strings.Builder
 		b.WriteString(`<div id="held-sales" class="held-strip" hx-get="/ui/held" hx-trigger="held-changed from:body" hx-swap="outerHTML">`)
+		if toast != "" {
+			noticeClass := "info"
+			role := "status"
+			if level == "error" {
+				noticeClass = "error"
+				role = "alert"
+			} else if level == "success" {
+				noticeClass = "success"
+			}
+			fmt.Fprintf(&b, `<div class="pos-notice %s" id="toast-message" role="%s"><span class="notice-text">%s</span><button type="button" class="notice-dismiss" aria-label="%s">✕</button></div>`,
+				noticeClass, role, template.HTMLEscapeString(toast), template.HTMLEscapeString(httpx.T(locale, "notice.dismiss")))
+		}
 		if len(items) > 0 {
 			fmt.Fprintf(&b, `<span class="held-title">%s</span>`, template.HTMLEscapeString(httpx.T(locale, "hold.strip.title")))
 			funcs := httpx.FuncsFor(locale)
@@ -175,6 +202,9 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		b.WriteString(`</div>`)
 		_, _ = w.Write([]byte(b.String()))
 	}
+	renderHeldStrip := func(w http.ResponseWriter, r *http.Request) {
+		renderHeldStripWithToast(w, r, "", "")
+	}
 
 	renderBasket := func(w http.ResponseWriter, r *http.Request, toast, level string) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
@@ -219,11 +249,32 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 			renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
 			return
 		}
-		// The held_sales row now carries the table's occupancy, so the live
-		// claim the table pick wrote (ut-docs#1390) is released -- one
-		// occupancy source per lifecycle stage, never both at once. After
-		// Insert, deliberately: the table must never read free in between.
-		releaseTableClaim(ctx, posRepo, snap.TableID)
+		// ut-docs#1704: the live claim the table pick wrote (ut-docs#1390) is
+		// deliberately KEPT here, not released -- it's the only signal that
+		// makes a parked order's table occupancy visible cross-till, since
+		// held_sales itself still isn't synced or proxied to the primary at
+		// all. Locally this is harmless redundancy (ListTablesWithState
+		// already unions held_sales and table_claims, and the held_sales row
+		// alone was always enough for THIS till's own view). On a REPLICA
+		// it's the whole fix: the claim was already write-through'd to the
+		// primary the instant the table was picked (claimTableWriteThrough,
+		// pos_api.go), and the primary's own GET /api/sync/tables already
+		// serves it to every other till (ut-docs#1392) -- parking the order
+		// needs no NEW proxy call at all, it just must not throw away the
+		// one already made. Resume re-affirms the SAME row
+		// (claimTableWriteThrough's own-claim re-take, tables_repo.go)
+		// rather than re-claiming from scratch; the held/move handler below
+		// is the one place that must move the claim explicitly, since that
+		// changes WHICH table is occupied.
+		//
+		// Known, accepted limitation (same class as tables_claim_proxy.go's
+		// own note): if THIS till goes dark for the full tillClaimTTL window
+		// while an order sits parked, another till's claim attempt on the
+		// SAME table may reconcile this row as orphaned and take it over --
+		// bounded to that outage window, and the same tradeoff #1703 already
+		// accepted for a live basket's claim, not a new one. A healthy
+		// till's routine ~30s admin-sync poll keeps last_seen_at fresh
+		// throughout an ordinary hold, however long the table sits parked.
 		d.Engine.Reset()
 		w.Header().Set("HX-Trigger", "held-changed")
 		renderBasket(w, r, httpx.T(locale, "hold.toast.held"), "success")
@@ -287,12 +338,12 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		d.Engine.Restore(snap)
 		restoredTable := d.Engine.TableID()
 		if restoredTable != "" && restoredTable != prevTable {
-			if claimed, err := posRepo.ClaimTable(ctx, restoredTable); err != nil || !claimed {
+			if claimed, err := claimTableWriteThrough(ctx, d, posRepo, restoredTable); err != nil || !claimed {
 				log.Printf("resume %s: re-claim table %s failed (claimed=%v): %v", id, restoredTable, claimed, err)
 			}
 		}
 		if prevTable != restoredTable {
-			releaseTableClaim(ctx, posRepo, prevTable)
+			releaseTableClaim(ctx, d, posRepo, prevTable)
 		}
 		if err := repo.Delete(ctx, id); err != nil {
 			// The sale is restored either way; a stale row is the lesser evil.
@@ -309,8 +360,23 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 	// distinct from resuming it: the order stays parked, only its table_id
 	// changes. Rejects moving onto a table another held sale already
 	// occupies (IsTableFree), leaving the held sale untouched; a held sale
-	// may move back onto its own current table (IsTableFree's self-exclusion
-	// handles that as a no-op, not a rejection).
+	// may move back onto its own current table as a true no-op.
+	//
+	// ut-docs#1704: since the hold handler now KEEPS the table_claims row a
+	// held order's table was originally picked with (instead of releasing
+	// it), this handler is the one place that must move that claim
+	// explicitly when the table itself changes -- claim the NEW table
+	// BEFORE committing the move (same claim-first-then-commit order
+	// pos_api.go's own table-pick handler uses, for the identical reason:
+	// held_sales must never say a table it hasn't actually secured), then
+	// release the OLD one only once the move is confirmed. The self-move
+	// case (tableID == held.TableID, including both empty) skips all of
+	// this: the existing claim already correctly represents it, and
+	// IsTableFree/claimTableWriteThrough must NOT be asked about it --
+	// IsTableFree's own doc comment is explicit that any claim it sees is
+	// "by construction someone else's" (it excludes a held sale's own
+	// held_sales row, never a claim), so asking it about this held sale's
+	// OWN claim on its OWN table would wrongly refuse the no-op.
 	mux.HandleFunc("POST /api/pos/held/table", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		_ = r.ParseForm()
@@ -335,24 +401,72 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		// on its own error, and this gate is the actual enforcement point
 		// (not just the strip's UI soft-gate), so silently skipping it on an
 		// error would let a Takeaway order be assigned a table after all.
+		//
+		// !found (ut-docs#1704) is now also a hard stop, not a fall-through:
+		// once a claim can be taken here, letting a since-resumed/deleted
+		// held sale's id reach that far would claim a real table on behalf
+		// of nothing that will ever release it. SetTable's own no-op-on-
+		// missing-id tolerance is still fine for everything before this
+		// point; it just must never be reached.
 		held, found, err := repo.Get(ctx, id)
-		if err != nil {
+		if err != nil || !found {
 			renderHeldStrip(w, r)
 			return
 		}
-		if found && !heldSaleMayHaveTable(held.Payload) {
+		if !heldSaleMayHaveTable(held.Payload) {
 			tableID = ""
 		}
-		if tableID != "" {
-			free, err := posRepo.IsTableFree(ctx, tableID, id)
-			if err != nil || !free {
+		if tableID != held.TableID {
+			if tableID != "" {
+				free, err := posRepo.IsTableFree(ctx, tableID, id)
+				if err != nil || !free {
+					// ut-docs#1704, independent review 2026-09-07: this used
+					// to be a completely silent refusal -- 200, no
+					// HX-Trigger, unchanged HTML, nothing a cashier tapping
+					// an apparently-free table could see. Same
+					// basket.table.occupied toast pos_api.go's own
+					// live-basket table pick already renders for the
+					// identical outcome.
+					renderHeldStripWithToast(w, r, httpx.T(httpx.ResolveLocale(w, r), "basket.table.occupied"), "error")
+					return
+				}
+				claimed, err := claimTableWriteThrough(ctx, d, posRepo, tableID)
+				if err != nil {
+					log.Printf("held table move %s: claim %s failed: %v", id, tableID, err)
+				}
+				if err != nil || !claimed {
+					renderHeldStripWithToast(w, r, httpx.T(httpx.ResolveLocale(w, r), "basket.table.occupied"), "error")
+					return
+				}
+			}
+			if err := repo.SetTable(ctx, id, tableID); err != nil {
+				if tableID != "" {
+					// Commit failed after the claim was already taken -- undo
+					// it, mirroring pos_api.go's own "SetTable refused: undo
+					// the claim we just took" handling of the same situation.
+					releaseTableClaim(ctx, d, posRepo, tableID)
+				}
 				renderHeldStrip(w, r)
 				return
 			}
-		}
-		if err := repo.SetTable(ctx, id, tableID); err != nil {
-			renderHeldStrip(w, r)
-			return
+			// Move confirmed -- only now let go of the old table's claim.
+			// Logged loudly (Errorf, not the usual silent fire-and-forget)
+			// specifically when this IS a replica and the PRIMARY-side
+			// release still fails (independent review, ut-docs#1704):
+			// unlike a live basket's release sites, nothing else ever
+			// revisits this one table again until a manager notices and
+			// taps Free table -- a leaked claim here is silent and
+			// durable, not self-healing. Gated on isReplica so a
+			// standalone/primary till -- releaseTableClaim's ordinary,
+			// expected `false` there, every single move -- never logs a
+			// false alarm about a primary that was never involved.
+			_, _, isReplica := replicaSyncTarget(ctx, d)
+			if held.TableID != "" {
+				released := releaseTableClaim(ctx, d, posRepo, held.TableID)
+				if isReplica && !released {
+					log.Printf("held table move %s: table %s claim NOT released on the primary -- it will read occupied on other tills until a manager frees it", id, held.TableID)
+				}
+			}
 		}
 		w.Header().Set("HX-Trigger", "held-changed")
 		renderHeldStrip(w, r)

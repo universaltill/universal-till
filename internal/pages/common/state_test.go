@@ -389,6 +389,14 @@ func TestSaveState_ServiceChargeRateRoundTrips(t *testing.T) {
 	}
 }
 
+// NOTE (ut-docs#1555 review finding F5): this only exercises the
+// WindowMode/LaunchOnStartup round trip because the store is EMPTY at
+// save time — SaveState's out-of-band re-read (both *Changed fields are
+// false, the zero value) finds no existing row and so never overrides
+// `want`'s values. A future seed of KeyWindowMode/KeyLaunchOnStartup
+// before this SaveState call would make it fail confusingly on those two
+// fields specifically; see TestSaveState_HonorsExplicitWindowModeChange
+// and TestSaveState_DoesNotClobberOutOfBand* for the seeded-store cases.
 func TestSaveState_RoundTripsThroughLoadState(t *testing.T) {
 	ctx := context.Background()
 	store := newTestStore(t)
@@ -509,6 +517,96 @@ func TestSaveState_ClampsInvalidWindowMode(t *testing.T) {
 	}
 	if raw, _, _ := store.Get(ctx, KeyWindowMode); raw != DefaultWindowMode {
 		t.Fatalf("stored %s = %q, want clamped default %q", KeyWindowMode, raw, DefaultWindowMode)
+	}
+}
+
+// ut-docs#1555: a caller that never intends to touch WindowMode/
+// LaunchOnStartup (the overwhelming majority of SaveState callers,
+// including the first-boot setup wizard and every other Settings save)
+// must never silently revert whatever an out-of-band writer — the
+// provision-desktop-kiosk-defaults CLI, run as a SEPARATE process by
+// packaging/scripts/postinstall.sh — most recently persisted directly to
+// the DB. Reproduces the driven repro from the ticket: provision kiosk
+// mode directly (bypassing SaveState entirely, exactly like the CLI
+// does), then simulate a wizard save built from a RuntimeState that was
+// cached BEFORE that provisioning write (i.e. still carries the old
+// "normal" default) — window_mode must survive.
+func TestSaveState_DoesNotClobberOutOfBandWindowModeWhenNotChanged(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	// Simulate provision-desktop-kiosk-defaults: a separate process writes
+	// straight to the DB, bypassing SaveState/RuntimeState entirely.
+	if err := store.Set(ctx, KeyWindowMode, "kiosk"); err != nil {
+		t.Fatalf("seed KeyWindowMode: %v", err)
+	}
+
+	// Simulate the first-boot wizard: its RuntimeState came from
+	// d.CurrentState(), cached before the provisioning write above ever
+	// happened, so it still carries the stale default — and it only means
+	// to change Country/Currency/tax fields, never WindowMode.
+	wizardSt := RuntimeState{
+		Currency:     "EUR",
+		Country:      "DE",
+		TaxInclusive: true,
+		WindowMode:   DefaultWindowMode, // stale cached "normal"
+		// WindowModeChanged left false (zero value): this save was never
+		// asked to change it.
+	}
+	if err := SaveState(ctx, store, wizardSt); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	if raw, _, _ := store.Get(ctx, KeyWindowMode); raw != "kiosk" {
+		t.Fatalf("stored %s = %q after an unrelated wizard save, want the out-of-band-provisioned %q to survive", KeyWindowMode, raw, "kiosk")
+	}
+	if got := LoadState(ctx, store, baseCfg()); got.WindowMode != "kiosk" {
+		t.Fatalf("LoadState WindowMode = %q, want %q to have survived the wizard save", got.WindowMode, "kiosk")
+	}
+}
+
+// The deliberate setter (POST /api/settings/window-mode) sets
+// WindowModeChanged — confirm SaveState honors an explicit change even
+// when an out-of-band value is also present in the store.
+func TestSaveState_HonorsExplicitWindowModeChange(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	if err := store.Set(ctx, KeyWindowMode, "kiosk"); err != nil {
+		t.Fatalf("seed KeyWindowMode: %v", err)
+	}
+
+	if err := SaveState(ctx, store, RuntimeState{
+		WindowMode:        "maximized",
+		WindowModeChanged: true,
+	}); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	if raw, _, _ := store.Get(ctx, KeyWindowMode); raw != "maximized" {
+		t.Fatalf("stored %s = %q, want the deliberately-changed %q", KeyWindowMode, raw, "maximized")
+	}
+}
+
+// Same pattern as WindowMode, for LaunchOnStartup.
+func TestSaveState_DoesNotClobberOutOfBandLaunchOnStartupWhenNotChanged(t *testing.T) {
+	ctx := context.Background()
+	store := newTestStore(t)
+
+	if err := store.Set(ctx, KeyLaunchOnStartup, "true"); err != nil {
+		t.Fatalf("seed KeyLaunchOnStartup: %v", err)
+	}
+
+	if err := SaveState(ctx, store, RuntimeState{
+		Currency:        "EUR",
+		LaunchOnStartup: false, // stale cached default
+		// LaunchOnStartupChanged left false.
+	}); err != nil {
+		t.Fatalf("SaveState: %v", err)
+	}
+
+	if raw, _, _ := store.Get(ctx, KeyLaunchOnStartup); raw != "true" {
+		t.Fatalf("stored %s = %q after an unrelated save, want the out-of-band-provisioned %q to survive", KeyLaunchOnStartup, raw, "true")
 	}
 }
 

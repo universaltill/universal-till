@@ -64,7 +64,7 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 		ctx := r.Context()
 		configured, systemOfRecord := false, false
 		if d.Settings != nil {
-			if v, _, err := d.Settings.Get(ctx, fiscal.KeyTSEConfigured); err == nil {
+			if v, _, err := d.Settings.Get(ctx, fiscal.KeySigningDeviceConfigured); err == nil {
 				configured = settingIsTrue(v)
 			}
 			if v, _, err := d.Settings.Get(ctx, fiscal.KeySystemOfRecord); err == nil {
@@ -126,7 +126,7 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server") // page-error:allow mirrors fiscal_register_page.go, tracked in ut-docs#1458
 			return
 		}
-		if err := d.Settings.Set(r.Context(), fiscal.KeyTSEConfigured, "true"); err != nil {
+		if err := d.Settings.Set(r.Context(), fiscal.KeySigningDeviceConfigured, "true"); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server", "fiscal_device", err) // page-error:allow mirrors fiscal_register_page.go, tracked in ut-docs#1458
 			return
 		}
@@ -146,7 +146,7 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server") // page-error:allow mirrors fiscal_register_page.go, tracked in ut-docs#1458
 			return
 		}
-		if err := d.Settings.Set(r.Context(), fiscal.KeyTSEConfigured, "false"); err != nil {
+		if err := d.Settings.Set(r.Context(), fiscal.KeySigningDeviceConfigured, "false"); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server", "fiscal_device", err) // page-error:allow mirrors fiscal_register_page.go, tracked in ut-docs#1458
 			return
 		}

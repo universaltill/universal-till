@@ -20,7 +20,13 @@ type SentReport struct {
 	ImageCount     int
 	Status         string
 	GithubIssueURL string
-	LastSyncedAt   sql.NullTime
+	// GithubIssueState is the FILED TICKET's own state as the cloud last
+	// reported it (ut-docs#1652): "open", "closed_completed",
+	// "closed_not_planned", or empty. Empty is the normal case for anything
+	// not yet filed, and also what a cloud predating ut-docs#1651 produces —
+	// /my-reports falls back to Status for both.
+	GithubIssueState string
+	LastSyncedAt     sql.NullTime
 }
 
 // IssueReportsRepo owns all SQL for the issue_reports_sent table.
@@ -33,6 +39,16 @@ func NewIssueReportsRepo(db *sql.DB) *IssueReportsRepo {
 }
 
 var issueReportsObs = newRepoObservability("issue_reports")
+
+// knownGithubIssueStates is the set of ticket states this till understands
+// (ut-docs#1652 / ut-cloud's githubissues.State* constants). Empty — never
+// filed, or a cloud that predates the field — is deliberately absent: it is
+// the fallback, not a state.
+var knownGithubIssueStates = map[string]bool{
+	"open":               true,
+	"closed_completed":   true,
+	"closed_not_planned": true,
+}
 
 // SaveSent upserts the retained record for an uploaded report, keyed by the
 // till's own bundle id. Status defaults to "sent" — the local-only sentinel
@@ -72,7 +88,7 @@ func (r *IssueReportsRepo) ListSent(ctx context.Context, limit int) ([]SentRepor
 	done := issueReportsObs.trace("list_sent")
 	defer func() { done(err) }()
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, note, captured_at, had_audio, had_video, image_count, status, github_issue_url, last_synced_at
+SELECT id, note, captured_at, had_audio, had_video, image_count, status, github_issue_url, github_issue_state, last_synced_at
 FROM issue_reports_sent
 ORDER BY captured_at DESC
 LIMIT ?
@@ -87,7 +103,7 @@ LIMIT ?
 		var capturedAt string
 		var lastSynced sql.NullString
 		if err = rows.Scan(&rec.ID, &rec.Note, &capturedAt, &rec.HadAudio, &rec.HadVideo,
-			&rec.ImageCount, &rec.Status, &rec.GithubIssueURL, &lastSynced); err != nil {
+			&rec.ImageCount, &rec.Status, &rec.GithubIssueURL, &rec.GithubIssueState, &lastSynced); err != nil {
 			return nil, issueReportsObs.wrap("list_sent", err)
 		}
 		rec.CapturedAt = parseStoredTime(capturedAt)
@@ -124,7 +140,7 @@ func (r *IssueReportsRepo) CountSent(ctx context.Context) (int, error) {
 // is NOT an error: a status pull can legitimately reference a report id this
 // till never retained (captured before ut-docs#348 shipped, or purged some
 // other way) — silently skip it rather than logging a failure every tick.
-func (r *IssueReportsRepo) UpdateStatus(ctx context.Context, id, status, githubIssueURL string) error {
+func (r *IssueReportsRepo) UpdateStatus(ctx context.Context, id, status, githubIssueURL, githubIssueState string) error {
 	var err error
 	done := issueReportsObs.trace("update_status")
 	defer func() { done(err) }()
@@ -138,9 +154,18 @@ func (r *IssueReportsRepo) UpdateStatus(ctx context.Context, id, status, githubI
 	if githubIssueURL != "" && !strings.HasPrefix(githubIssueURL, "https://github.com/") {
 		githubIssueURL = ""
 	}
+	// Same "external input, don't trust it" posture as the URL check above,
+	// for the same reason: this value picks a translation key. Anything
+	// outside the known set is stored as empty, so /my-reports falls back to
+	// the delivery status rather than rendering a key the locale files don't
+	// have. (The page guards this again on the way out — a till can be
+	// upgraded past a value already sitting in its own database.)
+	if !knownGithubIssueStates[githubIssueState] {
+		githubIssueState = ""
+	}
 	_, err = r.db.ExecContext(ctx, `
-UPDATE issue_reports_sent SET status = ?, github_issue_url = ?, last_synced_at = ? WHERE id = ?
-`, status, githubIssueURL, time.Now().UTC().Format(time.RFC3339), id)
+UPDATE issue_reports_sent SET status = ?, github_issue_url = ?, github_issue_state = ?, last_synced_at = ? WHERE id = ?
+`, status, githubIssueURL, githubIssueState, time.Now().UTC().Format(time.RFC3339), id)
 	if err != nil {
 		return issueReportsObs.wrapf("update_status", "update sent report %s", err, id)
 	}

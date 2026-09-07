@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -36,7 +37,10 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/plugins/oauth"
+	"github.com/universaltill/universal-till/internal/procrestart"
 	"github.com/universaltill/universal-till/internal/recovery"
+	"github.com/universaltill/universal-till/internal/secrets"
+	"github.com/universaltill/universal-till/internal/selfupdate"
 	"github.com/universaltill/universal-till/internal/server"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/updates"
@@ -163,6 +167,31 @@ func Run(ctx context.Context) error {
 	settingsStore.LoadRuntimeConfig(ctx, cfg)
 	_ = settingsStore.SaveRuntimeConfig(ctx, cfg)
 
+	// ut-docs#1728: one-time move of a never-chosen "utf8" printer charset
+	// onto the code page this store's currency actually needs. Runs after
+	// the two calls above so store.currency/store.locale are settled for
+	// this boot. Best-effort — a settings fault must not stop the till
+	// booting, and the pass retries on the next boot if it did not mark
+	// itself done.
+	if from, to, changed, err := settingsStore.AdoptDefaultPrinterCharset(ctx); err != nil {
+		log.Errorf("adopt default printer charset: %v", err)
+	} else if changed {
+		log.Infof("printer charset %s -> %s: moved off the never-chosen utf8 default for this store's currency (ut-docs#1728)", from, to)
+		// Audited like any other change to this setting — the operator sees
+		// the Characters dropdown's value change, and the audit log has to
+		// be able to say what changed it. Same "system" actor convention as
+		// provision.go's own boot-time settings write. Best-effort: a
+		// failed audit write must not stop the till booting.
+		if err := data.NewPOSRepo(database.DB).InsertAudit(ctx, nil, "system", "settings", "printer.charset",
+			"printer_settings_changed", map[string]any{
+				"charset": to,
+				"from":    from,
+				"reason":  "default adopted for store currency/locale (ut-docs#1728)",
+			}, time.Now().UTC().Format(time.RFC3339), ""); err != nil {
+			log.Errorf("audit printer charset adoption: %v", err)
+		}
+	}
+
 	// wg tracks the background goroutines this boot sequence starts —
 	// directly (enroll/updates/alerts), via server.Start, or via pages.Init
 	// (cloudsync, and since ut-docs#153 also StartSyncPush/StartSyncPull/
@@ -241,6 +270,17 @@ func Run(ctx context.Context) error {
 
 	enroll.Init(bgCtx, cfg, settingsStore, &wg)
 
+	// Plugin-settings encryption key (ADR-0082, ut-docs#1739): register the
+	// process-wide store BEFORE plugins.Init and pagesInit — the repository
+	// seals/opens through secrets.Default() on every secret-setting write
+	// and read, so it must exist before any plugin host call or settings
+	// route can run. One closure for every role: it reads sync.primary_url /
+	// sync.bearer at call time (the same setting RoleCheckFromSettings keys
+	// on) and declines on a primary/standalone till, which then self-
+	// generates; a replica fetches the primary's key once and persists it.
+	// paths.Data("secrets", ...) — never cwd-relative (ADR-0003).
+	secrets.SetDefault(secrets.NewKeyStore(pages.SecretsKeyFetcher(settingsStore, &http.Client{Timeout: 15 * time.Second})))
+
 	pluginManager, err = plugins.Init(ctx, cfg, database.DB)
 	if err != nil {
 		return err
@@ -286,14 +326,61 @@ func Run(ctx context.Context) error {
 	discoveryAdvertiser := discovery.NewAdvertiser(discoverySettings, discoveryRoleCheck, listenPort(cfg.ListenAddr))
 	discoveryAdvertiser.Start(bgCtx, &wg)
 
+	supervisor := plugins.NewSupervisor(database.DB)
+	// Wire the restart-time plugin-stop hook BEFORE pagesInit, not after
+	// (ut-docs#1616 review finding): pagesInit starts
+	// pages.StartAutoUpdateScheduler, an unattended background goroutine
+	// that can call selfupdate.Apply() on its own timer, with no
+	// happens-before edge to a SetBeforeRestart call made later — a real
+	// (if narrow: 30s ticker vs. this startup window) data race on the
+	// package-level beforeRestart var otherwise. Hoisting the wiring above
+	// pagesInit means it's always set before anything that could call
+	// Restart()/Apply() even exists yet. supervisor only needs database.DB,
+	// already available here.
+	procrestart.SetBeforeRestart(stopPluginsBeforeRestart(supervisor, log))
+	selfupdate.SetBeforeRestart(stopPluginsBeforeRestart(supervisor, log))
+
 	mux, deps := pagesInit(ctx, bgCtx, cfg, pluginManager, database.DB, catalogRepo, &wg)
 
-	supervisor := plugins.NewSupervisor(database.DB)
 	if err := supervisor.AutoStartPlugins(ctx); err != nil {
 		log.Warnf("plugin auto-start failed: %v", err)
 	}
 
 	return server.Start(bgCtx, cfg, mux, catalogRepo, database.DB, supervisor, &wg)
+}
+
+// pluginShutdowner is the minimal internal/plugins.Supervisor surface
+// stopPluginsBeforeRestart needs — small enough that a test can fake it
+// without a real Supervisor (ut-docs#1616 review finding: nothing tested
+// that the wiring at the restart-hook seam was actually Supervisor.Shutdown,
+// only that *some* hook fired).
+type pluginShutdowner interface {
+	Shutdown(ctx context.Context) error
+}
+
+// stopPluginsBeforeRestart returns the beforeRestart hook wired into both
+// internal/procrestart and internal/selfupdate: a self-restart execs this
+// process in place (same PID, fresh image) but does nothing to
+// hardware-plugin child processes — they are not reparented, cancelled or
+// signalled by an exec of their parent, so left alone they'd keep running
+// unmanaged and the freshly restarted image's AutoStartPlugins could then
+// spawn a second instance of the same plugin, contending for the same
+// physical device (ut-docs#1616). ps.Shutdown already does exactly the
+// right thing (stop every process, cancel its context, wait bounded) and is
+// already well-tested; this just bounds how long a restart can be blocked
+// by a wedged plugin. Note this is a hard stop (SIGKILL via context
+// cancellation, same as Shutdown always does on ordinary app shutdown), not
+// a graceful SIGTERM-then-wait — consistent with existing behavior, not a
+// new failure mode, but a real one worth stating plainly rather than
+// leaving implicit.
+func stopPluginsBeforeRestart(ps pluginShutdowner, log *logging.Logger) func(context.Context) {
+	return func(ctx context.Context) {
+		stopCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+		defer cancel()
+		if err := ps.Shutdown(stopCtx); err != nil {
+			log.Warnf("stop hardware-plugin processes before restart: %v", err)
+		}
+	}
 }
 
 // backgroundDrainTimeout bounds how long Run waits for background goroutines

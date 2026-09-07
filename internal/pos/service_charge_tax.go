@@ -39,6 +39,27 @@ func ChargeTaxLinesFromSale(lines []SaleLineInput) []ChargeTaxLine {
 	return out
 }
 
+// TrueNetWeight converts a line's stored net value (tax-exclusive under
+// exclusive pricing; still containing its own tax under inclusive pricing)
+// into the true, tax-exclusive value ApportionServiceChargeTax weighs bands
+// by. Exported so any caller that needs the identical per-line weighting
+// basis — not just this function's own band split — can't compute it
+// differently and drift from the apportionment itself. First such caller:
+// a partial refund's net-after-discount proration of the service charge
+// (ut-docs#1215), which needs the same true-net basis this function uses
+// internally, at the whole-sale-vs-refunded-lines granularity rather than
+// per band.
+func TrueNetWeight(net money.Money, rateBP int, taxInclusive bool) money.Money {
+	if net.IsNegative() {
+		return 0
+	}
+	if !taxInclusive {
+		return net
+	}
+	tax, _ := ComputeTaxBasisPoints(net, rateBP, true)
+	return net.Sub(tax)
+}
+
 // ApportionServiceChargeTax is ADR-0061 Decision 2's single shared,
 // pure apportionment: it splits a service charge across the sale's existing
 // per-line tax rate bands BY NET LINE VALUE (not gross — deliberately
@@ -80,15 +101,7 @@ func ApportionServiceChargeTax(charge money.Money, lines []ChargeTaxLine, taxInc
 	rates := make([]int, 0, len(lines))
 	var totalWeight int64
 	for _, l := range lines {
-		net := l.Net
-		if net.IsNegative() {
-			net = 0
-		}
-		trueNet := net
-		if taxInclusive {
-			lineTax, _ := ComputeTaxBasisPoints(net, l.RateBP, true)
-			trueNet = net.Sub(lineTax)
-		}
+		trueNet := TrueNetWeight(l.Net, l.RateBP, taxInclusive)
 		if _, seen := weightByRate[l.RateBP]; !seen {
 			rates = append(rates, l.RateBP)
 		}

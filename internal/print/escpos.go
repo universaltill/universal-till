@@ -284,21 +284,31 @@ func encodeText(s, charset string) []byte {
 		//     matches the utf8 default, which passes them through too, so
 		//     cp858 is no worse than the mode nearly every till runs; it is
 		//     simply not an improvement on it.
-		//   - No NFD diacritic folding. CP858 covers Western European
-		//     letters natively (é→0x82, ü→0x81, ß→0xe1), but it has no
-		//     'ş' and — unlike CP850 — no 'ı', whose 0xD5 slot is exactly
-		//     what CP858 gives up to gain '€'. So Turkish degrades to '?'
-		//     here where ascii would transliterate ("Sipariş" → "Sipari?"
-		//     vs "Siparis"). Acceptable for an opt-in option labelled
-		//     "Western Europe"; a fold-then-encode fallback would be a
-		//     product decision of its own, not part of this fix.
+		//   - Turkish still degrades. CP858 covers Western European letters
+		//     natively (é→0x82, ü→0x81, ß→0xe1), but it has no 'ş' and —
+		//     unlike CP850 — no 'ı', whose 0xD5 slot is exactly what CP858
+		//     gives up to gain '€'. The fold below turns those into 's'/'i'
+		//     rather than '?', but a Turkish shop still wants a Turkish code
+		//     page, which is why DefaultCharset never selects cp858 for one.
+		//
+		// ut-docs#1728 added the fold. Until then this arm went straight to
+		// '?' for anything CP858 lacks, and its own comment justified that
+		// as "acceptable for an OPT-IN option labelled Western Europe".
+		// Making cp858 a default removes that premise: a German or UK shop
+		// that was printing fine over UTF-8 would suddenly lose everyday
+		// typography — 'œ' (Bœuf), the curly quotes and en-dashes Excel and
+		// Word put in imported catalogs, '…', '•' — all of which CP858
+		// genuinely cannot encode (verified against charmap.CodePage858).
+		// Trading a broken currency symbol for a receipt full of '?' is not
+		// a fix, so unmappable runes are now folded to their closest
+		// CP858-representable form first and '?' is the last resort only.
 		out := make([]byte, 0, len(s))
 		for _, r := range s {
 			if b, ok := charmap.CodePage858.EncodeRune(r); ok {
 				out = append(out, b)
-			} else {
-				out = append(out, '?')
+				continue
 			}
+			out = append(out, foldToCP858(r)...)
 		}
 		return out
 	default: // "utf8" and the zero value — raw pass-through, unchanged
@@ -413,4 +423,61 @@ func RenderLabel(name, price, code, charset string) []byte {
 	b.Write(cmdAlignLeft)
 	b.Write(cmdFeedCut)
 	return b.Bytes()
+}
+
+// cp858Punctuation maps typography CP858 has no slot for onto the plain
+// ASCII a receipt can actually print. These are the characters that reach a
+// receipt through ordinary content rather than through an exotic alphabet:
+// Word/Excel autocorrect puts curly quotes and en-dashes into imported
+// catalogs and footer text, so a till whose shop name or "thank you" line
+// came from a spreadsheet hits them on every single sale.
+var cp858Punctuation = map[rune]string{
+	'\u2010': "-", '\u2011': "-", '\u2012': "-", '\u2013': "-", // hyphen, non-breaking hyphen, figure dash, en dash
+	'\u2014': "-", '\u2015': "-", '\u2212': "-", // em dash, horizontal bar, minus sign
+	'\u2018': "'", '\u2019': "'", '\u201b': "'", '\u2032': "'", // curly single quotes, prime
+	'\u201a': ",",
+	'\u201c': "\"", '\u201d': "\"", '\u201e': "\"", '\u201f': "\"", '\u2033': "\"",
+	'\u2022': "*", '\u2023': "*", '\u2043': "-", // bullets
+	'\u2026': "...",
+	'\u2039': "<", '\u203a': ">",
+	'\u2044': "/", '\u2116': "No.",
+	// Letters with no Unicode decomposition of their own. 'œ'/'Œ' are French
+	// LETTERS, not typographic ligatures like 'ﬁ', so NFKD leaves them
+	// untouched and the fold below can't reach them — "Bœuf" printed "B?uf"
+	// until this row existed (independent review, ut-docs#1728 finding 6).
+	'\u0153': "oe", '\u0152': "OE", // œ Œ
+	'\u0133': "ij", '\u0132': "IJ", // ĳ Ĳ (Dutch)
+	'\u0140': "l", '\u013f': "L", // ŀ Ŀ (Catalan)
+	'\u00a0': " ", '\u2007': " ", '\u2009': " ", '\u200a': " ", // no-break, figure, thin, hair space
+	'\u202f': " ", '\u205f': " ",
+}
+
+// foldToCP858 renders one rune CP858 cannot encode as the closest thing it
+// can, in three escalating steps: an explicit punctuation substitution, then
+// a compatibility decomposition with combining marks stripped (which turns
+// 'œ'→"oe", 'ﬁ'→"fi", and any accented letter CP858 lacks into its base
+// letter), then '?' as the visible last resort — the same last resort this
+// arm has always had, just reached far less often (ut-docs#1728).
+func foldToCP858(r rune) []byte {
+	if sub, ok := cp858Punctuation[r]; ok {
+		return []byte(sub)
+	}
+	t := transform.Chain(norm.NFKD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
+	folded, _, err := transform.String(t, string(r))
+	if err == nil && folded != "" && folded != string(r) {
+		out := make([]byte, 0, len(folded))
+		ok := true
+		for _, fr := range folded {
+			b, enc := charmap.CodePage858.EncodeRune(fr)
+			if !enc {
+				ok = false
+				break
+			}
+			out = append(out, b)
+		}
+		if ok {
+			return out
+		}
+	}
+	return []byte{'?'}
 }

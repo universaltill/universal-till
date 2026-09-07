@@ -10,14 +10,22 @@ import { existsSync } from 'fs';
 const PREINSTALLED_CHROMIUM = '/opt/pw-browsers/chromium';
 const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREINSTALLED_CHROMIUM } : {};
 
-// Two tills under test:
+// Three tills under test:
 //  - the DEFAULT project: auth off, demo catalog seeded by the migrations
-//    — every spec except AUTH_ONLY_SPECS drives this one directly.
+//    — every spec except AUTH_ONLY_SPECS/AI_IDENTIFY_ONLY_SPECS drives this
+//    one directly.
 //  - the AUTH project: auth ON, a genuinely fresh install — only
 //    AUTH_ONLY_SPECS drives this one, since it needs the real first-boot
 //    wizard / PIN login flow the default project deliberately bypasses.
-// Both boot a REAL server; Chromium drives the layer our Go tests can't
-// see (htmx swaps, Alpine, the OSK, JS errors).
+//  - the AI-IDENTIFY project: `UT_AI_ENDPOINT` set so `.aiIdentify`
+//    resolves true server-side — only AI_IDENTIFY_ONLY_SPECS drives this
+//    one. Unlike barcode-scan, the ai.identify button/overlay markup
+//    doesn't exist in the DOM at all when the feature is off
+//    (`{{ if .aiIdentify }}` in web/ui/pages/index.html), so it can't join
+//    the shared default-project till the way barcode-scan's tests do
+//    (ut-docs#1559).
+// All three boot a REAL server; Chromium drives the layer our Go tests
+// can't see (htmx swaps, Alpine, the OSK, JS errors).
 
 // Specs that need a real manager session the default (auth-off) till can
 // never provide: login.spec.ts (the wizard/PIN flow itself). Prior to
@@ -46,6 +54,12 @@ const launchOptions = existsSync(PREINSTALLED_CHROMIUM) ? { executablePath: PREI
 // login.spec.ts's own "brand-new till" first assertion.
 const AUTH_ONLY_SPECS = /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-lock-1423)\.spec\.ts$/;
 
+// ut-docs#1559: the ai.identify overlay's own err.name branching coverage
+// needs the dedicated ai-identify project/server below — see the comment
+// on the webServer/projects entries for why it can't share the default
+// project's till.
+const AI_IDENTIFY_ONLY_SPECS = /camera-error-branching-ai-identify-1559\.spec\.ts$/;
+
 export default defineConfig({
   testDir: './tests',
   timeout: 30_000,
@@ -69,11 +83,17 @@ export default defineConfig({
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
     },
+    {
+      command: 'bash ./run-till-ai.sh',
+      url: 'http://127.0.0.1:8093/healthz',
+      timeout: 120_000,
+      reuseExistingServer: !process.env.CI,
+    },
   ],
   projects: [
     {
       name: 'default',
-      testIgnore: AUTH_ONLY_SPECS,
+      testIgnore: [AUTH_ONLY_SPECS, AI_IDENTIFY_ONLY_SPECS],
       use: {
         baseURL: 'http://127.0.0.1:8091',
         trace: 'retain-on-failure',
@@ -86,6 +106,16 @@ export default defineConfig({
       testMatch: AUTH_ONLY_SPECS,
       use: {
         baseURL: 'http://127.0.0.1:8092',
+        trace: 'retain-on-failure',
+        screenshot: 'only-on-failure',
+        launchOptions,
+      },
+    },
+    {
+      name: 'ai-identify',
+      testMatch: AI_IDENTIFY_ONLY_SPECS,
+      use: {
+        baseURL: 'http://127.0.0.1:8093',
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
         launchOptions,

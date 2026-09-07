@@ -11,12 +11,14 @@ import (
 
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
 )
 
 // newButtonsMux wires registerButtonsAPI over a DB seeded with the pages
-// fixture plus the shortcut_buttons table (created by migrations in prod;
-// the shared fixture doesn't include it).
+// fixture (openPagesTestDB now runs the real migrations, ut-docs#1657/#1677
+// — shortcut_buttons and item_images come from there, including their real
+// FOREIGN KEY (item_id) REFERENCES items(id) ON DELETE CASCADE).
 func newButtonsMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
 	chdirRoot(t)
@@ -24,14 +26,7 @@ func newButtonsMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
-	if _, err := db.Exec(`CREATE TABLE shortcut_buttons (barcode TEXT PRIMARY KEY, label TEXT, item_id TEXT, image_path TEXT, sort_order INTEGER NOT NULL DEFAULT 0)`); err != nil {
-		t.Fatalf("create shortcut_buttons: %v", err)
-	}
-	// LoadButtons/SearchItemsForShortcuts join item_images for tile thumbnails.
-	if _, err := db.Exec(`CREATE TABLE item_images (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, path TEXT NOT NULL, role TEXT NOT NULL DEFAULT 'thumbnail')`); err != nil {
-		t.Fatalf("create item_images: %v", err)
-	}
-	d := &common.Deps{Db: db, BtnStore: ui.NewButtonStore(db)}
+	d := &common.Deps{Db: db, BtnStore: ui.NewButtonStore(db), Settings: settings.NewStore(db)}
 	mux := http.NewServeMux()
 	registerButtonsAPI(mux, d)
 	return mux, d
@@ -225,7 +220,10 @@ func TestButtonsSearchShortQueryHintAndResults(t *testing.T) {
 
 func TestButtonsReorderEdgeCases(t *testing.T) {
 	mux, d := newButtonsMux(t)
-	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label) VALUES ('b1','A'),('b2','B'),('b3','C')`); err != nil {
+	// item_id is NOT NULL with a real FK to items(id) now that openPagesTestDB
+	// runs real migrations (ut-docs#1676/#1677) -- itm1 is seedForPages' own
+	// fixture item; reordering doesn't care which item each button points at.
+	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id) VALUES ('b1','A','itm1'),('b2','B','itm1'),('b3','C','itm1')`); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 
@@ -261,13 +259,11 @@ func TestButtonsReorderEdgeCases(t *testing.T) {
 // package comment near buttonsErrorKey's definition in buttons_api.go).
 func TestButtonsStoreErrorsSurfaceAs500(t *testing.T) {
 	mux, d := newButtonsMux(t)
-	// Break the storage underneath the handlers.
-	if _, err := d.Db.Exec(`DROP TABLE shortcut_buttons`); err != nil {
-		t.Fatalf("drop: %v", err)
-	}
-	if _, err := d.Db.Exec(`DROP TABLE items`); err != nil {
-		t.Fatalf("drop items: %v", err)
-	}
+	// ut-docs#1679: DROP TABLE shortcut_buttons/items used to break storage
+	// under both handlers below, but items now has real incoming FKs that
+	// block the DROP under real migrations. A closed *sql.DB forces the
+	// same generic repo-error path for both requests deterministically.
+	d.Db.Close()
 
 	rec := postForm(mux, "/api/buttons/reorder", url.Values{"codes": {"b1"}}, nil)
 	if rec.Code != http.StatusInternalServerError {
@@ -289,5 +285,60 @@ func TestButtonsStoreErrorsSurfaceAs500(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "Something went wrong") {
 		t.Fatalf("expected the localized designer.error.server copy, got: %s", rec.Body.String())
+	}
+}
+
+// ut-docs#1697: shortcut_buttons syncs shop-wide as an admin table
+// (adminTables, sync_admin_repo.go) via a one-way primary-wins pull, so a
+// write accepted on a satellite would silently vanish -- a reorder
+// reverted, an added/removed button undone -- on the very next admin pull.
+// All three mutating routes must refuse on a replica with a clear,
+// localized 409, same pattern as catalog/handlers.go's
+// TestCatalogItemMutations_RefusedOnReplica (same defect class as
+// ut-docs#1689/#1667/#1590/#1546).
+func TestButtonsAPI_MutationsRefusedOnReplica(t *testing.T) {
+	mux, d := newButtonsMux(t)
+	if _, err := d.Db.Exec(`INSERT INTO shortcut_buttons(barcode,label,item_id,sort_order) VALUES ('ABC','Existing','itm1',0),('ZZZ','Other','itm1',1)`); err != nil {
+		t.Fatalf("seed buttons: %v", err)
+	}
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("set primary_url: %v", err)
+	}
+
+	const wantMsg = "manage quick-sale buttons on the primary till"
+	assertRefused := func(t *testing.T, label string, rec *httptest.ResponseRecorder) {
+		t.Helper()
+		if rec.Code != http.StatusConflict {
+			t.Errorf("%s on replica: want 409, got %d: %s", label, rec.Code, rec.Body.String())
+			return
+		}
+		if !strings.Contains(rec.Body.String(), wantMsg) {
+			t.Errorf("%s on replica: body missing the localized replica_use_primary message, got %q", label, rec.Body.String())
+		}
+	}
+
+	// codes reversed relative to the seeded order: if the gate didn't
+	// refuse this, ABC's sort_order would move to 1 and ZZZ's to 0.
+	assertRefused(t, "reorder", postForm(mux, "/api/buttons/reorder", url.Values{"codes": {"ZZZ,ABC"}}, nil))
+	var abcOrder, zzzOrder int
+	if err := d.Db.QueryRow(`SELECT sort_order FROM shortcut_buttons WHERE barcode='ABC'`).Scan(&abcOrder); err != nil || abcOrder != 0 {
+		t.Errorf("ABC sort_order must not change on a replica: sort_order=%d err=%v", abcOrder, err)
+	}
+	if err := d.Db.QueryRow(`SELECT sort_order FROM shortcut_buttons WHERE barcode='ZZZ'`).Scan(&zzzOrder); err != nil || zzzOrder != 1 {
+		t.Errorf("ZZZ sort_order must not change on a replica: sort_order=%d err=%v", zzzOrder, err)
+	}
+
+	assertRefused(t, "add", postForm(mux, "/api/buttons/add", url.Values{
+		"label": {"New"}, "code": {"DEF"}, "itemId": {"itm1"},
+	}, nil))
+	var addCount int
+	if err := d.Db.QueryRow(`SELECT count(*) FROM shortcut_buttons WHERE barcode='DEF'`).Scan(&addCount); err != nil || addCount != 0 {
+		t.Errorf("button must not be added on a replica: count=%d err=%v", addCount, err)
+	}
+
+	assertRefused(t, "remove", postForm(mux, "/api/buttons/remove", url.Values{"code": {"ABC"}}, nil))
+	var removeCount int
+	if err := d.Db.QueryRow(`SELECT count(*) FROM shortcut_buttons WHERE barcode='ABC'`).Scan(&removeCount); err != nil || removeCount != 1 {
+		t.Errorf("button must not be removed on a replica: count=%d err=%v", removeCount, err)
 	}
 }

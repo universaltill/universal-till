@@ -96,9 +96,92 @@ func TestTablesPagePermissions(t *testing.T) {
 	}
 }
 
-func TestTablesPage_CreateEditPositionDeactivateAndRender(t *testing.T) {
+// ut-docs#1585: tables sync shop-wide as an admin table (adminTables,
+// ut-docs#1546) via a one-way primary-wins pull — a write accepted on a
+// satellite would silently vanish (a new table deleted, an edit reverted)
+// on the very next admin pull, with nothing explaining why. All four
+// mutating actions (create/update/position/active) must refuse on a
+// replica with a clear, localized signal, same pattern as
+// registers_page.go's requirePrimary (ut-docs#1590).
+func TestTablesPage_MutationsRefusedOnReplica(t *testing.T) {
 	mux, d := newTablesTestMux(t)
 	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	// A table that existed before this till became a replica (synced down
+	// from the primary) — used below to check update/position/deactivate,
+	// since create itself is refused and can't produce one.
+	const tableID = "table-existing"
+	if _, err := d.Db.Exec(`INSERT INTO tables (id, label, shape, seat_count, enabled, pos_x, pos_y, created_at, updated_at) VALUES (?, 'Existing', 'rect', 4, 1, 500, 500, datetime('now'), datetime('now'))`, tableID); err != nil {
+		t.Fatalf("seed table: %v", err)
+	}
+
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("set primary_url: %v", err)
+	}
+
+	rec := postForm(mux, "/api/tables", url.Values{"label": {"Satellite Table"}, "shape": {"rect"}}, &manager)
+	if rec.Header().Get("Location") != "/tables?err=tables.error.replica_use_primary" {
+		t.Fatalf("create on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var count int
+	if err := d.Db.QueryRow(`SELECT count(*) FROM tables WHERE label = 'Satellite Table'`).Scan(&count); err != nil {
+		t.Fatalf("count: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("table must not be created on a replica, found %d rows", count)
+	}
+
+	rec = postForm(mux, "/api/tables/"+tableID, url.Values{"label": {"Renamed"}, "shape": {"rect"}}, &manager)
+	if rec.Header().Get("Location") != "/tables?err=tables.error.replica_use_primary" {
+		t.Fatalf("update on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var label string
+	if err := d.Db.QueryRow(`SELECT label FROM tables WHERE id = ?`, tableID).Scan(&label); err != nil || label != "Existing" {
+		t.Fatalf("label must not change on a replica: label=%q err=%v", label, err)
+	}
+
+	rec = postForm(mux, "/api/tables/"+tableID+"/position", url.Values{"pos_x": {"1"}, "pos_y": {"1"}}, &manager)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("position on replica: code=%d, want 409", rec.Code)
+	}
+	var px, py int
+	if err := d.Db.QueryRow(`SELECT pos_x, pos_y FROM tables WHERE id = ?`, tableID).Scan(&px, &py); err != nil || px != 500 || py != 500 {
+		t.Fatalf("position must not change on a replica: %d,%d err=%v", px, py, err)
+	}
+
+	rec = postForm(mux, "/api/tables/"+tableID+"/active", url.Values{"active": {"0"}}, &manager)
+	if rec.Header().Get("Location") != "/tables?err=tables.error.replica_use_primary" {
+		t.Fatalf("deactivate on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var enabled int
+	if err := d.Db.QueryRow(`SELECT enabled FROM tables WHERE id = ?`, tableID).Scan(&enabled); err != nil || enabled != 1 {
+		t.Fatalf("table must not be deactivated on a replica: enabled=%d err=%v", enabled, err)
+	}
+
+	// GET /tables itself is unaffected — a replica still reports, it just
+	// never decides (ADR-0036's framing for the same primary/replica split).
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/tables", nil), manager)
+	getRec := httptest.NewRecorder()
+	mux.ServeHTTP(getRec, req)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("GET /tables on replica: code=%d", getRec.Code)
+	}
+}
+
+func TestTablesPage_CreateEditPositionDeactivateAndRender(t *testing.T) {
+	mux, d := newTablesTestMux(t)
+	// A real users row: audit_log.actor_id carries a REFERENCES users(id)
+	// foreign key, enforced (PRAGMA foreign_keys=ON) — an ad-hoc
+	// auth.User{ID: "m1"} with no matching row makes every InsertAudit
+	// below fail its FK check, and the audit(...) closure discards that
+	// error, so create/update/move/activate/deactivate were never actually
+	// proving an audit row lands (ut-docs#1715). Same fixture convention as
+	// TestTablesPage_Release.
+	mgrID, err := data.NewAuthRepo(d.Db).CreateUser(t.Context(), "table-manager-cru", "Manager", "manager")
+	if err != nil {
+		t.Fatalf("create manager: %v", err)
+	}
+	manager := auth.User{ID: mgrID, Role: "manager", DisplayName: "Manager"}
 
 	// Empty floor plan: the page still renders, with the empty-state prompt
 	// (soft gate — zero tables configured is a valid state, ADR-0054).
@@ -130,6 +213,10 @@ func TestTablesPage_CreateEditPositionDeactivateAndRender(t *testing.T) {
 	var id string
 	if err := d.Db.QueryRow(`SELECT id FROM tables WHERE label = 'T1'`).Scan(&id); err != nil {
 		t.Fatalf("lookup: %v", err)
+	}
+	var createAction string
+	if err := d.Db.QueryRow(`SELECT action FROM audit_log WHERE action = 'table_create' AND entity_id = ?`, id).Scan(&createAction); err != nil {
+		t.Fatalf("create must write an audit_log row: %v", err)
 	}
 
 	// The page renders the table on the plan.
@@ -196,6 +283,126 @@ func TestTablesPage_CreateEditPositionDeactivateAndRender(t *testing.T) {
 	}
 }
 
+// The manual "Free table" action (ut-docs#1393): manager-gated, primary-
+// gated (same as every other mutation on this page), clears a stuck live
+// claim regardless of which till holds it, is audited, is idempotent, and
+// — the safety property the whole design turns on — NEVER discards a real
+// held order to make the floor plan look free; it reports that case back
+// via an err key instead of silently deleting anything.
+func TestTablesPage_Release(t *testing.T) {
+	mux, d := newTablesTestMux(t)
+	// A real users row: audit_log.actor_id carries a REFERENCES users(id)
+	// foreign key, enforced (PRAGMA foreign_keys=ON) — an ad-hoc
+	// auth.User{ID: "m1"} with no matching row makes InsertAudit fail its
+	// FK check, and the audit(...) closure discards that error, so the
+	// gap is otherwise silent. Same fixture convention as
+	// backup_api_test.go's TestBackupNow_ElevatesOnValidApproverPIN.
+	mgrID, err := data.NewAuthRepo(d.Db).CreateUser(t.Context(), "table-manager", "Manager", "manager")
+	if err != nil {
+		t.Fatalf("create manager: %v", err)
+	}
+	manager := auth.User{ID: mgrID, Role: "manager", DisplayName: "Manager"}
+	cashier := auth.User{ID: "c1", Role: "cashier", DisplayName: "Cash"}
+	repo := data.NewPOSRepo(d.Db)
+
+	id, err := repo.CreateTable(t.Context(), "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	// Cashier is refused.
+	if rec := postForm(mux, "/api/tables/"+id+"/release", nil, &cashier); rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier release: code=%d, want 403", rec.Code)
+	}
+
+	// Unknown id -> not_found, same convention as update/position.
+	rec := postForm(mux, "/api/tables/nope/release", nil, &manager)
+	if rec.Header().Get("Location") != "/tables?err=tables.error.not_found" {
+		t.Fatalf("release on missing table: loc=%q", rec.Header().Get("Location"))
+	}
+
+	// A stuck claim from a DIFFERENT till (the crash-orphaned case this
+	// action exists for) is force-released and the request succeeds with a
+	// plain redirect (no err key) — same shape as activate/deactivate.
+	if _, err := d.Db.Exec(
+		`INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, datetime('now'), 'some-other-till')`, id); err != nil {
+		t.Fatalf("seed foreign claim: %v", err)
+	}
+	rec = postForm(mux, "/api/tables/"+id+"/release", nil, &manager)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/tables" {
+		t.Fatalf("release: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	if ok, err := repo.IsTableFree(t.Context(), id, ""); err != nil || !ok {
+		t.Fatalf("table must be free after release, got ok=%v err=%v", ok, err)
+	}
+	var action string
+	if err := d.Db.QueryRow(`SELECT action FROM audit_log WHERE action = 'table_release' AND entity_id = ?`, id).Scan(&action); err != nil {
+		t.Fatalf("release must write an audit_log row: %v", err)
+	}
+
+	// Idempotent: releasing an already-free table still succeeds.
+	rec = postForm(mux, "/api/tables/"+id+"/release", nil, &manager)
+	if rec.Code != http.StatusSeeOther || rec.Header().Get("Location") != "/tables" {
+		t.Fatalf("second release: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+
+	// A genuine held order attached to the table is NEVER discarded: the
+	// claim clears, but the response says so and the table stays occupied.
+	if claimed, err := repo.ClaimTable(t.Context(), id); err != nil || !claimed {
+		t.Fatalf("ClaimTable: claimed=%v err=%v", claimed, err)
+	}
+	if _, err := d.Db.Exec(
+		`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES ('h1','',0,0,'{}',?)`, id); err != nil {
+		t.Fatalf("seed held sale: %v", err)
+	}
+	rec = postForm(mux, "/api/tables/"+id+"/release", nil, &manager)
+	if rec.Header().Get("Location") != "/tables?err=tables.error.held_order_attached" {
+		t.Fatalf("release with a held order attached: loc=%q", rec.Header().Get("Location"))
+	}
+	if ok, err := repo.IsTableFree(t.Context(), id, ""); err != nil || ok {
+		t.Fatalf("a real held order must still occupy the table, got ok=%v err=%v", ok, err)
+	}
+	var heldSaleCount int
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM held_sales WHERE id = 'h1'`).Scan(&heldSaleCount); err != nil || heldSaleCount != 1 {
+		t.Fatalf("the held sale must not be deleted: count=%d err=%v", heldSaleCount, err)
+	}
+
+	// A table occupied ONLY by a genuine held order — no stuck claim at
+	// all, arguably the more common press of this button — must NOT say
+	// "claim cleared": nothing was cleared (independent review finding,
+	// ut-docs#1393). The prior block already released this table's claim,
+	// so at this point it holds no claim, only the held sale seeded above.
+	rec = postForm(mux, "/api/tables/"+id+"/release", nil, &manager)
+	if rec.Header().Get("Location") != "/tables?err=tables.error.held_order_only" {
+		t.Fatalf("release with a held order and no claim: loc=%q", rec.Header().Get("Location"))
+	}
+}
+
+// ut-docs#1585: release must also refuse on a replica, same as the other
+// three mutations.
+func TestTablesPage_ReleaseRefusedOnReplica(t *testing.T) {
+	mux, d := newTablesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	const tableID = "table-existing"
+	if _, err := d.Db.Exec(`INSERT INTO tables (id, label, shape, seat_count, enabled, pos_x, pos_y, created_at, updated_at) VALUES (?, 'Existing', 'rect', 4, 1, 500, 500, datetime('now'), datetime('now'))`, tableID); err != nil {
+		t.Fatalf("seed table: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO table_claims (table_id, claimed_at) VALUES (?, datetime('now'))`, tableID); err != nil {
+		t.Fatalf("seed claim: %v", err)
+	}
+	if err := d.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("set primary_url: %v", err)
+	}
+	rec := postForm(mux, "/api/tables/"+tableID+"/release", nil, &manager)
+	if rec.Header().Get("Location") != "/tables?err=tables.error.replica_use_primary" {
+		t.Fatalf("release on replica: code=%d loc=%q", rec.Code, rec.Header().Get("Location"))
+	}
+	var n int
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM table_claims WHERE table_id = ?`, tableID).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("claim must not be released on a replica: n=%d err=%v", n, err)
+	}
+}
+
 // Tap-to-place (ut-docs#1025): POST /api/tables optionally carries the
 // tapped canvas position as pos_x/pos_y. Present-and-valid → the table is
 // created there (repo-clamped to the canvas); absent, empty, or garbage →
@@ -203,7 +410,14 @@ func TestTablesPage_CreateEditPositionDeactivateAndRender(t *testing.T) {
 // bottom-of-page add form (which never sends these fields) relies on.
 func TestTablesPageCreate_TapToPlacePosition(t *testing.T) {
 	mux, d := newTablesTestMux(t)
-	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	// Real users row, same reason as TestTablesPage_Release: every create
+	// below exercises the table_create audit write, which otherwise fails
+	// its actor_id FK check silently (ut-docs#1715).
+	mgrID, err := data.NewAuthRepo(d.Db).CreateUser(t.Context(), "table-manager-tap", "Manager", "manager")
+	if err != nil {
+		t.Fatalf("create manager: %v", err)
+	}
+	manager := auth.User{ID: mgrID, Role: "manager", DisplayName: "Manager"}
 
 	posOf := func(label string) (x, y int) {
 		t.Helper()
@@ -253,7 +467,13 @@ func TestTablesPageCreate_TapToPlacePosition(t *testing.T) {
 // an elapsed-minutes label.
 func TestTablesStatePartial_FreeTodayOccupiedViaTableID(t *testing.T) {
 	mux, d := newTablesTestMux(t)
-	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	// Real users row, same reason as TestTablesPage_Release: the create
+	// below exercises the table_create audit write (ut-docs#1715).
+	mgrID, err := data.NewAuthRepo(d.Db).CreateUser(t.Context(), "table-manager-state", "Manager", "manager")
+	if err != nil {
+		t.Fatalf("create manager: %v", err)
+	}
+	manager := auth.User{ID: mgrID, Role: "manager", DisplayName: "Manager"}
 
 	rec := postForm(mux, "/api/tables", url.Values{
 		"label": {"T1"}, "seat_count": {"4"}, "shape": {"rect"},
