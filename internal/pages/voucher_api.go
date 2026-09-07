@@ -16,8 +16,16 @@ import (
 // amounts in integer minor units — data.Voucher's own tags). This is the
 // acceptance criteria's "outstanding voucher liability is queryable per
 // voucher"; issuing happens through /api/pos/tender's issue_vouchers field,
-// redemption through a tender payment's voucher_id. Local SQLite only —
-// never a network dependency (offline-first, ADR-0003).
+// redemption through a tender payment's voucher_id.
+//
+// Cross-till (ut-docs#1668): a voucher this till has never locally seen —
+// issued at a different till — falls through to fetchVoucherFromPrimary
+// (voucher_sync_proxy.go) on a REPLICA with a reachable primary, exactly
+// like every other cross-till read in this codebase. Read-only: this never
+// writes a local mirror row (only the redemption write-through does, right
+// before it needs one to debit). Any failure reaching the primary (not a
+// replica, network error, non-200, malformed body) falls back to the
+// existing local 404 — offline-first, unchanged.
 func registerVoucherAPI(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewPOSRepo(d.Db)
 
@@ -37,8 +45,12 @@ func registerVoucherAPI(mux *http.ServeMux, d *common.Deps) {
 			writeEnvelope(w, http.StatusBadRequest, nil, "invalid_voucher_id", "voucher id must be 1-64 characters")
 			return
 		}
-		v, err := repo.GetVoucherBalance(r.Context(), id)
+		v, err := repo.GetVoucherBalance(r.Context(), nil, id)
 		if errors.Is(err, data.ErrVoucherNotFound) {
+			if primaryV, ok := fetchVoucherFromPrimary(r.Context(), d, voucherProxyClient, id); ok {
+				writeEnvelope(w, http.StatusOK, primaryV, "", "")
+				return
+			}
 			writeEnvelope(w, http.StatusNotFound, nil, "voucher_not_found", "no voucher with this identifier")
 			return
 		}
