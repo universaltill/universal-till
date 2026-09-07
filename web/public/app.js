@@ -467,24 +467,46 @@ window.utCurrency = (function(){
 // already uses to prove coverage — so it tracks the real, current geometry
 // (this file's responsive grid, the overlay's own CSS, RTL) instead of a
 // number someone has to remember to update if any of those ever change.
-// Deliberately excludes the third button in the footer (Payment, the
-// overlay's own trigger) and the phone-width New Sale duplicate
-// (kiosk-checkout-start-phone) — neither was raised by #1625's review or
-// is in this card's scope; #1629 is about the two buttons #1542/#1625
-// already duplicated into the overlay, not a general "anything covered"
-// sweep.
+// ut-docs#1674 (found by #1629's own review, same coverage sweep): the
+// third footer button (Payment, the overlay's own trigger),
+// `.tender-quickpay`'s one-tap charge button, and the phone-width New Sale
+// duplicate (kiosk-checkout-start-phone) all measurably stayed focusable
+// while 100%-covered too — #1629 deliberately left them out as beyond
+// #1542/#1625's original two-button scope, not because they don't apply.
+// quick-pay is the most urgent of the three: unlike Payment (activating it
+// while already open is a no-op) it POSTs /api/pos/tender directly, so a
+// keyboard operator could complete a charge on a control they can't see.
+// All three share the exact same isCoveredByOverlay() hit-test and
+// tabindex save/restore below — no new mechanism, just three more targets.
+// quick-pay and the phone duplicate live outside .tender-default-footer
+// (`.tender-quickpay` and `.kiosk-header.phone-fallback-only` respectively)
+// so they're queried from `document`, not `footer`.
+//
+// ut-docs#1702 (found by #1674's own review, same coverage sweep, with
+// #1674's fix already applied): the hand-maintained targets array above
+// doesn't generalize — the reviewer measured 11 (1024x600) / 8 (1280x800)
+// / 4 (1920x1080) OTHER focusable controls on the sale screen (the scan
+// input, products-add-link, the active category tab, product tiles, the
+// scan-row Add button, .osk-toggle, …) still geometrically covered by the
+// open overlay and still reachable, none of them in the array. Rather than
+// a 6th/7th/... hardcoded entry, `candidates()` below queries every
+// normally-focusable element outside `#payment-overlay` FRESH on each
+// run (not a load-time snapshot like the old `targets` — the product grid
+// is dynamic) and feeds it through the identical isCoveredByOverlay() hit-
+// test. The old `targets` array and its `.filter(Boolean)` guard are gone;
+// candidates() subsumes it (the 5 elements it named all match the broad
+// selector below and are outside the overlay, so behavior for them is
+// unchanged) and its own tests keep passing unmodified.
 (function () {
   var overlay = document.getElementById('payment-overlay');
   if (!overlay) return;
-  var footer = document.querySelector('.tender-default-footer');
-  if (!footer) return;
-  var targets = [
-    footer.querySelector('[data-testid="kiosk-checkout-start"]'),
-    footer.querySelector('[data-testid="tender-footer-hold"]'),
-  ].filter(Boolean);
-  if (!targets.length) return;
 
   var SAVED_ATTR = 'data-a11y-tabindex-saved';
+  // Deliberately broad — anything that can normally receive focus.
+  // Elements this misses (a bare div with a click handler and no role/
+  // tabindex, say) were never keyboard-reachable to begin with, so
+  // leaving them out is correct, not a gap.
+  var FOCUSABLE_SELECTOR = 'a[href], area[href], button, input, select, textarea, [tabindex]';
 
   function isCoveredByOverlay(el) {
     if (!overlay.open) return false;
@@ -494,8 +516,25 @@ window.utCurrency = (function(){
     return !!at && (at === overlay || overlay.contains(at));
   }
 
+  // Queried fresh on every updateFocusability() call — the product grid,
+  // held-sales list, etc. can change between one overlay-open and the
+  // next, so a cached NodeList would silently stop covering new controls.
+  function candidates() {
+    return Array.prototype.filter.call(document.querySelectorAll(FOCUSABLE_SELECTOR), function (el) {
+      if (overlay.contains(el)) return false; // never touch the overlay's own controls
+      if (el.disabled) return false;
+      var tabindex = el.getAttribute('tabindex');
+      // tabindex="-1" with no SAVED_ATTR means something else (e.g. the
+      // roving-tabindex ARIA-tabs pattern on inactive category tabs)
+      // deliberately made this unfocusable on purpose — leave it alone,
+      // don't fold it into our own save/restore bookkeeping.
+      if (tabindex === '-1' && !el.hasAttribute(SAVED_ATTR)) return false;
+      return true;
+    });
+  }
+
   function updateFocusability() {
-    targets.forEach(function (el) {
+    candidates().forEach(function (el) {
       if (isCoveredByOverlay(el)) {
         if (!el.hasAttribute(SAVED_ATTR)) {
           el.setAttribute(SAVED_ATTR, el.getAttribute('tabindex') || '');
@@ -526,9 +565,18 @@ window.utCurrency = (function(){
   // The overlay never moves once open, but the covered/not-covered
   // boundary is a real, live viewport width, not a one-time computation —
   // a kiosk browser window can resize (or an operator can rotate/resize a
-  // desktop window) while it's open.
+  // desktop window) while it's open. ut-docs#1702: a full-DOM sweep is
+  // more work per call than the old 5-element array, and a drag-resize can
+  // fire many `resize` events per second — coalesce to at most one sweep
+  // per animation frame rather than one per event.
+  var resizeRafId = null;
   window.addEventListener('resize', function () {
-    if (overlay.open) updateFocusability();
+    if (!overlay.open) return;
+    if (resizeRafId) return;
+    resizeRafId = requestAnimationFrame(function () {
+      resizeRafId = null;
+      updateFocusability();
+    });
   });
 })();
 
