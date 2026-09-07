@@ -1561,7 +1561,3 @@ class MainActivity : AppCompatActivity() {
         private const val SCREENSHOT_TIMEOUT_SECONDS = 5L
     }
 }
-
-// ut-docs#1658 CI verification: trivial android/** touch to prove the
-// job-internal git-diff filter correctly runs the full compile (this
-// comment is removed in the next commit).
