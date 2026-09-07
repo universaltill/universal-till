@@ -50,8 +50,16 @@ func newHoldTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	// re-claims it, so the claims table (migration 078) is part of every
 	// hold/resume round trip, table-assigned or not (release is a no-op
 	// DELETE either way) -- column-identical to the migration.
-	if _, err := db.Exec(`CREATE TABLE table_claims (table_id TEXT PRIMARY KEY REFERENCES tables(id), claimed_at TEXT NOT NULL);`); err != nil {
+	// till_id mirrors migration 008 (ut-docs#1703): resume's re-claim goes
+	// through claimTableWriteThrough, whose local branch reconciles stale
+	// claims against `tills` -- so this hand-rolled schema needs BOTH the
+	// column and the tills table, or that branch errors and silently degrades
+	// to the plain ClaimTable fallback, testing the wrong path.
+	if _, err := db.Exec(`CREATE TABLE table_claims (table_id TEXT PRIMARY KEY REFERENCES tables(id), claimed_at TEXT NOT NULL, till_id TEXT NOT NULL DEFAULT '');`); err != nil {
 		t.Fatalf("create table_claims: %v", err)
+	}
+	if _, err := db.Exec(`CREATE TABLE tills (id TEXT PRIMARY KEY, name TEXT NOT NULL, bearer_hash TEXT UNIQUE, enrolled_at TEXT NOT NULL DEFAULT (datetime('now')), last_seen_at TEXT);`); err != nil {
+		t.Fatalf("create tills: %v", err)
 	}
 
 	resolver := stubResolver{
