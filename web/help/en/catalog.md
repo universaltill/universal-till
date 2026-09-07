@@ -34,4 +34,4 @@ Your products: names, prices, departments, item variants (size, flavour…) and 
 
 ## Good to know
 
-- An item's customization options (modifier groups like "Toppings" or "Size", and their options like "Extra cheese") are shop-wide and always managed from the **main till**: on a joined till, adding or editing one shows a message pointing you back to the main till, rather than accepting a change that would only apply locally.
+- An item's own details (name, price, cost, lead time), its variants, its barcodes, and its customization options (modifier groups like "Toppings" or "Size", and their options like "Extra cheese") are all shop-wide and always managed from the **main till**: on a joined till, creating or editing any of these shows a message pointing you back to the main till, rather than accepting a change that would only apply locally.

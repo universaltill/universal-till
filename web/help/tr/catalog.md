@@ -31,4 +31,4 @@ routes: [/catalog, /import]
 
 ## Bilmekte fayda var
 
-- Bir ürünün özelleştirme seçenekleri ("Ekstralar" veya "Boyut" gibi değiştirici grupları ve "Ekstra peynir" gibi seçenekleri) mağaza geneli bir öğedir ve her zaman **ana kasadan** yönetilir: katılmış bir kasada birini eklemek veya düzenlemek, uygulanmak yerine sizi ana kasaya yönlendiren bir mesaj gösterir.
+- Bir ürünün kendi bilgileri (ad, fiyat, maliyet fiyatı, tedarik süresi), varyantları, barkodları ve özelleştirme seçenekleri ("Ekstralar" veya "Boyut" gibi değiştirici grupları ve "Ekstra peynir" gibi seçenekleri) hepsi mağaza geneli öğelerdir ve her zaman **ana kasadan** yönetilir: katılmış bir kasada bunlardan birini oluşturmak veya düzenlemek, uygulanmak yerine sizi ana kasaya yönlendiren bir mesaj gösterir.

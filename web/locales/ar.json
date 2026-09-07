@@ -1733,6 +1733,7 @@
   "catalog.error.image_too_large": "هذه الصورة كبيرة جدًا — جرّب صورة أصغر، أو اقصصها قبل الرفع.",
   "catalog.error.image_invalid": "هذا الملف ليس صورة PNG أو JPEG صالحة.",
   "catalog.error.replica_use_primary": "يتبع هذا الصندوق الصندوق الأساسي — أدر خيارات التخصيص من الصندوق الأساسي.",
+  "catalog.error.item_replica_use_primary": "يتبع هذا الصندوق الصندوق الأساسي — أدر الكتالوج من الصندوق الأساسي.",
   "catalog.barcode_backfill.btn": "تعبئة الباركود من SKU",
   "catalog.barcode_backfill.heading": "تعبئة الباركود من SKU",
   "catalog.barcode_backfill.eligible_count": "يمكن اشتقاق باركود من SKU لعدد %d عنصر.",
