@@ -109,7 +109,7 @@ func TestMyReportsPage_EmptyState(t *testing.T) {
 	}
 }
 
-func TestMyReportsPage_RowsWithTranslatedStatusesAndGithubLink(t *testing.T) {
+func TestMyReportsPage_RowsWithTranslatedStatuses(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, db := newMyReportsTestMux(t)
 	seed := func(id, note, capturedAt, status, ghURL string, hadAudio, hadVideo, imageCount int) {
@@ -138,9 +138,11 @@ func TestMyReportsPage_RowsWithTranslatedStatusesAndGithubLink(t *testing.T) {
 	if strings.Contains(body, "issuereport.status.") {
 		t.Fatalf("a status rendered as a raw dotted key: %s", body)
 	}
-	// The GitHub link only for the row that has one.
-	if !strings.Contains(body, `href="https://github.com/universaltill/ut-docs/issues/999"`) {
-		t.Fatalf("expected the GitHub issue link, got: %s", body)
+	// ut-docs#1690: never render a link into the private bug-reports
+	// tracker, even for a row whose record does carry one — an operator
+	// following it gets a bare 404 and learns which org/repo we file into.
+	if strings.Contains(body, "github.com") {
+		t.Fatalf("must never render a link to the private bug-reports tracker: %s", body)
 	}
 	// Attachment summary: note text and translated labels.
 	if !strings.Contains(body, "printer jammed") {
@@ -487,10 +489,10 @@ func TestMyReportsPage_ShowsGithubTicketStateInsteadOfFiled(t *testing.T) {
 			if strings.Contains(body, "issuereport.") {
 				t.Fatalf("a status rendered as a raw dotted key: %s", body)
 			}
-			// The link is still there — knowing the state is not a reason to
-			// take away the way to go and read the ticket.
-			if !strings.Contains(body, `href="https://github.com/universaltill/ut-docs/issues/9"`) {
-				t.Fatalf("expected the GitHub issue link to survive: %s", body)
+			// ut-docs#1690: knowing the ticket state is not a reason to link
+			// an operator into the private tracker — that link 404s for them.
+			if strings.Contains(body, "github.com") {
+				t.Fatalf("must never render a link to the private bug-reports tracker: %s", body)
 			}
 		})
 	}
