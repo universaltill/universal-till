@@ -715,9 +715,10 @@ func TestPluginSettingsPage_GET_TaxCodesFailureIsLocalized(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPluginSettingsTestDeps(t)
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
-	if _, err := dp.Db.Exec(`DROP TABLE tax_codes`); err != nil {
-		t.Fatalf("drop tax_codes: %v", err)
-	}
+	// ut-docs#1679: DROP TABLE tax_codes used to force this, but tax_codes
+	// now has real incoming FKs that block the DROP under real migrations.
+	// A closed *sql.DB forces the same generic repo-error path instead.
+	dp.Db.Close()
 
 	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
 	rec := httptest.NewRecorder()
@@ -766,9 +767,8 @@ func TestPluginSettingsAPI_POST_TaxCodesFailureIsLocalized(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPluginSettingsTestDeps(t)
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
-	if _, err := dp.Db.Exec(`DROP TABLE tax_codes`); err != nil {
-		t.Fatalf("drop tax_codes: %v", err)
-	}
+	// ut-docs#1679: see TestPluginSettingsPage_GET_TaxCodesFailureIsLocalized.
+	dp.Db.Close()
 
 	form := "setting_takeaway_typed=1&takeaway_pct_tax_19=7"
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))

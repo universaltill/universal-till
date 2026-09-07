@@ -1556,8 +1556,19 @@ func TestPostRefund_EnsureStockLocationFailureShowsLocalizedMessageNotRawError(t
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, _ := newRefundTestDeps(t)
 	_, receiptNo := seedCompletedSaleForRefund(t, dp)
-	if _, err := dp.Db.Exec(`DROP TABLE stock_locations`); err != nil {
-		t.Fatalf("drop stock_locations: %v", err)
+	// ut-docs#1679: DROP TABLE stock_locations used to force EnsureStockLocation
+	// to fail, but stock_locations now has real incoming FKs that block the
+	// DROP under real migrations. Closing the whole *sql.DB isn't targeted
+	// enough here -- the handler looks up the sale by receipt BEFORE calling
+	// EnsureStockLocation, and that earlier lookup fails first, landing on
+	// this handler's "sale not found" branch instead. Renaming just the
+	// column EnsureStockLocation's own query selects on (name) forces the
+	// identical "no such column" failure for that one call without a whole
+	// unrelated table's queries breaking too. (Can't DROP COLUMN name here:
+	// stock_locations.name is UNIQUE and SQLite refuses to drop it; RENAME
+	// COLUMN carries the constraint along and breaks the same query.)
+	if _, err := dp.Db.Exec(`ALTER TABLE stock_locations RENAME COLUMN name TO name_disabled`); err != nil {
+		t.Fatalf("rename stock_locations.name column: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2"))
@@ -1585,8 +1596,12 @@ func TestPostRefund_EnsurePaymentMethodFailureShowsLocalizedMessageNotRawError(t
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, _ := newRefundTestDeps(t)
 	_, receiptNo := seedCompletedSaleForRefund(t, dp)
-	if _, err := dp.Db.Exec(`DROP TABLE payment_methods`); err != nil {
-		t.Fatalf("drop payment_methods: %v", err)
+	// ut-docs#1679: same reasoning as EnsureStockLocation above -- the
+	// earlier sale lookup must keep succeeding. EnsurePaymentMethod's own
+	// query selects id/is_active (not name, which is UNIQUE), so dropping
+	// is_active forces the identical failure for that one call.
+	if _, err := dp.Db.Exec(`ALTER TABLE payment_methods DROP COLUMN is_active`); err != nil {
+		t.Fatalf("drop payment_methods.is_active column: %v", err)
 	}
 
 	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2"))

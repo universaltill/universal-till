@@ -991,9 +991,11 @@ func TestTenderHandler_EnsureStockLocationFailureShowsLocalizedMessageNotRawErro
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
 		t.Fatalf("seed scan: %v", err)
 	}
-	if _, err := dp.Db.Exec(`DROP TABLE stock_locations`); err != nil {
-		t.Fatalf("drop stock_locations: %v", err)
-	}
+	// ut-docs#1679: DROP TABLE stock_locations used to force EnsureStockLocation
+	// to fail, but stock_locations now has real incoming FKs that block the
+	// DROP under real migrations. A closed *sql.DB forces the same generic
+	// repo-error path deterministically without touching schema.
+	dp.Db.Close()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
 		strings.NewReader(`{"payments":[{"method":"cash","amount":120}],"offline":true}`))

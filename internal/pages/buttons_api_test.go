@@ -258,13 +258,11 @@ func TestButtonsReorderEdgeCases(t *testing.T) {
 // package comment near buttonsErrorKey's definition in buttons_api.go).
 func TestButtonsStoreErrorsSurfaceAs500(t *testing.T) {
 	mux, d := newButtonsMux(t)
-	// Break the storage underneath the handlers.
-	if _, err := d.Db.Exec(`DROP TABLE shortcut_buttons`); err != nil {
-		t.Fatalf("drop: %v", err)
-	}
-	if _, err := d.Db.Exec(`DROP TABLE items`); err != nil {
-		t.Fatalf("drop items: %v", err)
-	}
+	// ut-docs#1679: DROP TABLE shortcut_buttons/items used to break storage
+	// under both handlers below, but items now has real incoming FKs that
+	// block the DROP under real migrations. A closed *sql.DB forces the
+	// same generic repo-error path for both requests deterministically.
+	d.Db.Close()
 
 	rec := postForm(mux, "/api/buttons/reorder", url.Values{"codes": {"b1"}}, nil)
 	if rec.Code != http.StatusInternalServerError {

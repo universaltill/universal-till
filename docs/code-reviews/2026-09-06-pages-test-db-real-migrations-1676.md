@@ -52,10 +52,19 @@ This branch:
    - **ut-docs#1679** (tests that `DROP TABLE tax_codes`/
      `stock_locations`/`payment_methods`/`items` to force a repo-error
      path, which now fails at the `DROP` itself since real FKs reference
-     those tables): **deliberately left red** — 10 tests across 6 files,
-     needs an Architect-level design decision on the replacement
-     error-injection shape before it's safe to touch. Left exactly as
-     this card's own acceptance criteria anticipated.
+     those tables): originally left deliberately red pending an
+     Architect-level design decision — **that decision was made and
+     implemented in this same PR** once it became a hard CI blocker
+     (`go test ./...` on `main`'s own `build` job fails on exactly these
+     tests, not just a tracked backlog item). Design: replace the
+     schema-mutating `DROP TABLE` with either closing the test's
+     `*sql.DB` (an idiom already established in `inventory_api_test.go`)
+     where nothing after the failing request touches the DB again, or a
+     narrower `ALTER TABLE ... RENAME/DROP COLUMN` targeting only the
+     specific column the repo call under test selects on, where an
+     earlier step in the same request (e.g. a sale lookup) needs the DB
+     to keep working. All 10 tests pass; `internal/pages` is fully green,
+     zero exceptions.
 4. Also carries an identical copy of PR #846's `cloudAdjustStock` actor-id
    fix (`ActorID: "cloud"` → `"system"`) — that fix is load-bearing for
    this branch's own tests once `openPagesTestDB` enforces the real
@@ -124,13 +133,13 @@ package made the same id/username mistake.
 **Safe to merge.** All independent-review blockers resolved (manifest
 regenerated, merge conflicts resolved, nits A-C fixed); nit D and the two
 non-blocking pre-existing findings are correctly left for follow-up work,
-not this PR's scope.
+not this PR's scope. `internal/pages` is fully green with zero exceptions
+— ut-docs#1679 (initially expected to stay deferred) got its Architect
+decision and fix in this same PR once CI made it a hard blocker rather
+than a backlog item; see above.
 
 ## Explicitly deferred
 
-- **ut-docs#1679** (10 tests, DROP-TABLE error injection under real FKs) —
-  needs `Skill(architect)` before implementing; left red exactly as this
-  card's acceptance criteria anticipated.
 - **ut-docs#1692** (new) — `applyJournal`'s cashier_id/item_id FK gap,
   third instance of the #1681/#1684 class, found by this review.
 - `sync_api.go`'s discarded audit-write errors (pre-existing, noted but
