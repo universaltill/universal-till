@@ -18,4 +18,6 @@ Arrange the quick-sale buttons and product grid shown on the sale screen.
 2. Tap the ▲/▼ arrows on a button to move it earlier or later in the grid — this works the same by touch, mouse or keyboard, so it's usable on the till itself, not only from a desktop.
 3. Tap ✕ on a button to remove it from the sale screen. Removing a button never removes the item itself from your Catalog.
 
+Quick-sale buttons are shop-wide and always managed from the **main till**: on a joined till, adding, removing or reordering a button shows a message pointing you back to the main till, rather than accepting a change that would only apply locally.
+
 This is not the same page as the **Receipt & screen designer** (Settings → Receipt design), which customises what prints on receipts.

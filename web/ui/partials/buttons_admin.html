@@ -74,9 +74,29 @@
       codes.forEach(function (c) { fd.append('codes', c); });
       return fetch('/api/buttons/reorder', { method: 'POST', body: fd }).then(function (res) {
         // If the save failed, reload so the grid shows the real order instead
-        // of a reorder that only happened in the DOM.
-        if (!res.ok) location.reload();
+        // of a reorder that only happened in the DOM. This is a plain
+        // fetch(), not an htmx request, so the page-level htmx:responseError
+        // listener below never sees it -- and location.reload() would throw
+        // away the response text before anything could show it. Stash it in
+        // sessionStorage (ut-docs#1697; same try/catch pattern as
+        // pairing_notice.html's dismiss fingerprint) so the freshly-loaded
+        // page can surface it in #buttons-add-error, same element the add
+        // flow's own errors use.
+        if (!res.ok) {
+          return res.text().then(function (text) {
+            try { sessionStorage.setItem('buttonsReorderError', text); } catch (e) {}
+            location.reload();
+          });
+        }
       });
+    }).catch(function () {
+      // A rejected fetch (till drops off the shop LAN mid-reorder) used to
+      // leave `pending` permanently rejected -- every subsequent move-up/
+      // move-down tap chains onto the same dead promise via `.then()` and
+      // silently never runs again for the rest of the page's life. Catch
+      // it here so the chain recovers and later moves keep working; the
+      // tile still visibly moved in the DOM, so reload isn't needed to
+      // tell the operator something happened, just to warn a save didn't.
     });
   }
 
@@ -169,6 +189,8 @@ document.body.addEventListener('htmx:afterRequest', function(evt) {
 // failed add (e.g. ut-docs#1220's since-fixed empty-code 400) needs its
 // own listener -- same "swap the server's localized fragment into a
 // dedicated error element" pattern as shifts.html's #shift-result.
+// Broadened (ut-docs#1697) to also cover the remove form (class "remove"),
+// so a requirePrimary refusal on either route is visible, not just add's.
 (function () {
   // A transport failure (the back-office tablet dropping off the shop LAN
   // mid-tap) never reaches htmx:responseError: htmx fires htmx:sendError
@@ -179,15 +201,40 @@ document.body.addEventListener('htmx:afterRequest', function(evt) {
   // server sends on a 4xx/5xx rather than adding a second one.
   var T = { serverError: "{{ T "designer.error.server" }}" };
 
+  // A reorder failure surfaces via sessionStorage instead (see
+  // persistOrder() above) since it's a plain fetch(), not htmx, and the
+  // page reloads before any handler here could run.
+  try {
+    var reorderErr = sessionStorage.getItem('buttonsReorderError');
+    if (reorderErr) {
+      sessionStorage.removeItem('buttonsReorderError');
+      var errEl = document.getElementById('buttons-add-error');
+      if (errEl) errEl.innerHTML = reorderErr;
+    }
+  } catch (e) {}
+
   function target(evt) {
     var elt = evt.detail && evt.detail.elt;
-    if (!elt || !elt.classList || !elt.classList.contains('result')) return null;
+    if (!elt || !elt.classList) return null;
+    if (!elt.classList.contains('result') && !elt.classList.contains('remove')) return null;
     return document.getElementById('buttons-add-error');
   }
 
   document.body.addEventListener('htmx:responseError', function(evt) {
     var err = target(evt);
     if (err) err.innerHTML = (evt.detail.xhr && evt.detail.xhr.responseText) || '';
+  });
+
+  // A successful remove (unlike add, which already clears via its own
+  // hx-on) should also clear a stale error left over from a previous
+  // refusal on this same panel -- otherwise a manager who fixes the
+  // problem (e.g. moves to the primary till) and removes a button
+  // successfully still sees the old refusal message sitting there.
+  document.body.addEventListener('htmx:afterRequest', function(evt) {
+    if (evt.detail.successful) {
+      var err = target(evt);
+      if (err) err.innerHTML = '';
+    }
   });
 
   document.body.addEventListener('htmx:sendError', function(evt) {

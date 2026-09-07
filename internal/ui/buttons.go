@@ -494,7 +494,21 @@ func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err := h.Store.Remove(r.Form.Get("code")); err != nil {
-		http.Error(w, err.Error(), http.StatusBadRequest)
+		// ut-docs#1697: this raw http.Error(w, err.Error(), 400) used to be
+		// harmless -- htmx discards a non-2xx body from hx-target by
+		// default, so it went nowhere -- but buttons_admin.html's
+		// htmx:responseError listener now also covers the remove form (to
+		// surface the requirePrimary refusal added by this same card), so
+		// a genuine store error here would paint a raw Go/SQL error string
+		// straight onto the operator's screen: exactly what
+		// common.LogAndLocalizedError's own doc comment (ut-docs#316)
+		// warns a raw error must never do. Same localized-fragment fix as
+		// Add above.
+		logging.L().Infof("[buttons] remove: %v", err)
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write([]byte(`<div class="error">` + html.EscapeString(httpx.T(locale, designerErrorServerKey)) + `</div>`))
 		return
 	}
 	btns, _ := h.Store.Load()
