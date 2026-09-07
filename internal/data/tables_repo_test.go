@@ -527,6 +527,54 @@ func TestClearLocalTableClaims_WipesExistingRowsAndIsSafeOnEmpty(t *testing.T) {
 	}
 }
 
+// ...and it must leave a claim alone when it backs a GENUINE surviving held
+// order (independent review, ut-docs#1704). Since #1704 a held order's own
+// claim deliberately persists through the whole time it sits parked -- the
+// only occupancy signal that reaches other tills -- so the boot sweep must
+// not treat it as an "unclean shutdown" leftover the way it correctly does
+// for a live-basket claim with nothing parked on it. Without this
+// exclusion, every restart would silently reproduce the #1704 bug: every
+// parked order's table reading free shop-wide again until next moved or
+// resumed.
+func TestClearLocalTableClaims_PreservesHeldOrderClaim(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+
+	held, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T1: %v", err)
+	}
+	orphan, err := repo.CreateTable(ctx, "T2", "", 4, "rect", 200, 200)
+	if err != nil {
+		t.Fatalf("CreateTable T2: %v", err)
+	}
+	if claimed, err := repo.ClaimTable(ctx, held); err != nil || !claimed {
+		t.Fatalf("ClaimTable T1 (held): claimed=%v err=%v", claimed, err)
+	}
+	if claimed, err := repo.ClaimTable(ctx, orphan); err != nil || !claimed {
+		t.Fatalf("ClaimTable T2 (orphan): claimed=%v err=%v", claimed, err)
+	}
+	// T1's claim backs a genuine parked order; T2's claim backs nothing --
+	// exactly the "live basket, unclean shutdown" case the sweep still exists
+	// to clean up.
+	if _, err := dbo.DB.Exec(
+		`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES ('h1','',0,0,'{}',?)`,
+		held); err != nil {
+		t.Fatalf("seed held_sales: %v", err)
+	}
+
+	if err := repo.ClearLocalTableClaims(ctx); err != nil {
+		t.Fatalf("ClearLocalTableClaims: %v", err)
+	}
+
+	if ok, err := repo.IsTableFree(ctx, held, ""); err != nil || ok {
+		t.Errorf("T1's claim must survive the sweep -- a real held order is still parked there, got free=%v err=%v", ok, err)
+	}
+	if ok, err := repo.IsTableFree(ctx, orphan, ""); err != nil || !ok {
+		t.Errorf("T2's claim (nothing parked on it) must still be swept, got free=%v err=%v", ok, err)
+	}
+}
+
 // ...and it must leave a REPLICA's claim alone (ut-docs#1703, independent
 // review 2026-09-07). On a primary, table_claims also holds the live claims
 // of tills that are still running; the old unscoped `DELETE FROM

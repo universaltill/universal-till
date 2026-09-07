@@ -46,10 +46,11 @@ func newHoldTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	if _, err := db.Exec(`CREATE TABLE tables (id TEXT PRIMARY KEY, label TEXT NOT NULL, area_zone TEXT NOT NULL DEFAULT '', seat_count INTEGER NOT NULL DEFAULT 0, shape TEXT NOT NULL DEFAULT 'rect', pos_x INTEGER NOT NULL DEFAULT 0, pos_y INTEGER NOT NULL DEFAULT 0, enabled INTEGER NOT NULL DEFAULT 1, created_at TEXT NOT NULL, updated_at TEXT NOT NULL);`); err != nil {
 		t.Fatalf("create tables: %v", err)
 	}
-	// ut-docs#1390: hold releases the live basket's table claim and resume
-	// re-claims it, so the claims table (migration 078) is part of every
-	// hold/resume round trip, table-assigned or not (release is a no-op
-	// DELETE either way) -- column-identical to the migration.
+	// ut-docs#1390/#1704: the live basket's table claim persists through hold
+	// and is re-asserted on resume, and a held-order move transfers it, so the
+	// claims table (migration 078) is part of every hold/resume/move round
+	// trip, table-assigned or not (release is a no-op DELETE either way) --
+	// column-identical to the migration.
 	// till_id mirrors migration 008 (ut-docs#1703): resume's re-claim goes
 	// through claimTableWriteThrough, whose local branch reconciles stale
 	// claims against `tills` -- so this hand-rolled schema needs BOTH the
@@ -743,8 +744,9 @@ func TestHeldStrip_EmptyWhenNothingHeld(t *testing.T) {
 }
 
 // holdTestTableClaimed reports whether the claims table (ut-docs#1390) holds
-// a row for tableID -- the live-basket half of table occupancy; the
-// held_sales.table_id column is the parked half.
+// a row for tableID -- since ut-docs#1704 the till's claim spans BOTH the
+// live-basket and the parked (held_sales.table_id) stages of an order, as
+// it is the only occupancy signal that reaches other tills.
 func holdTestTableClaimed(t *testing.T, dp *common.Deps, tableID string) bool {
 	t.Helper()
 	var n int
@@ -769,13 +771,56 @@ func holdTestTableOccupied(t *testing.T, dp *common.Deps, tableID string) bool {
 	return false
 }
 
-// TestHoldThenResume_MovesTableClaimBetweenLiveAndHeld (ut-docs#1390): a
-// table-assigned live basket carries a table_claims row (seeded here the
-// way POST /api/pos/table writes it -- this harness registers only the hold
-// API). Hold hands the occupancy to the held_sales row and drops the claim,
-// so a table never has both; resume re-claims it BEFORE the held row is
-// deleted, so the table never reads free in between. Occupancy as the floor
-// plan sees it (ListTablesWithState) stays true throughout.
+// holdTestClaimedAt returns the table_claims.claimed_at stamp for tableID --
+// a way to tell "the same row survived" from "a row was dropped and later
+// re-inserted", which holdTestTableClaimed alone cannot.
+func holdTestClaimedAt(t *testing.T, dp *common.Deps, tableID string) string {
+	t.Helper()
+	var at string
+	if err := dp.Db.QueryRow(`SELECT claimed_at FROM table_claims WHERE table_id = ?`, tableID).Scan(&at); err != nil {
+		t.Fatalf("claimed_at for %s: %v", tableID, err)
+	}
+	return at
+}
+
+// holdTestSeedClaimedTable puts the live basket on tableID the way the real
+// flow does: the engine's table pick plus the table_claims row POST
+// /api/pos/table writes (this harness registers only the hold API, so the
+// claim is seeded through the same repo primitive that handler uses).
+func holdTestSeedClaimedTable(t *testing.T, dp *common.Deps, tableID, label string) {
+	t.Helper()
+	dp.Engine.SetTable(tableID, label)
+	if claimed, err := data.NewPOSRepo(dp.Db).ClaimTable(context.Background(), tableID); err != nil || !claimed {
+		t.Fatalf("seed live claim on %s: claimed=%v err=%v", tableID, claimed, err)
+	}
+}
+
+// holdTestHoldAndGetID parks the live basket through the REAL POST
+// /api/pos/hold and returns the resulting held_sales id.
+func holdTestHoldAndGetID(t *testing.T, mux *http.ServeMux, dp *common.Deps) string {
+	t.Helper()
+	holdRec := httptest.NewRecorder()
+	mux.ServeHTTP(holdRec, httptest.NewRequest(http.MethodPost, "/api/pos/hold", nil))
+	if holdRec.Code != http.StatusOK {
+		t.Fatalf("hold: expected 200, got %d: %s", holdRec.Code, holdRec.Body.String())
+	}
+	var id string
+	if err := dp.Db.QueryRow(`SELECT id FROM held_sales`).Scan(&id); err != nil {
+		t.Fatalf("query held_sales id: %v", err)
+	}
+	return id
+}
+
+// TestHoldThenResume_MovesTableClaimBetweenLiveAndHeld (ut-docs#1390,
+// reworked for ut-docs#1704): a table-assigned live basket carries a
+// table_claims row (seeded here the way POST /api/pos/table writes it -- this
+// harness registers only the hold API). That claim is the ONLY occupancy
+// signal that syncs to other tills (held_sales does not), so hold must leave
+// it in place -- the held_sales row and the claim coexist for the whole time
+// the order is parked -- and resume finds its own row still there (the
+// re-claim is an idempotent no-op: same row, same claimed_at, never dropped
+// and re-inserted). Occupancy as the floor plan sees it (ListTablesWithState)
+// stays true throughout.
 func TestHoldThenResume_MovesTableClaimBetweenLiveAndHeld(t *testing.T) {
 	mux, dp := newHoldTestDeps(t)
 	if _, err := dp.Db.Exec(`INSERT INTO tables (id, label, created_at, updated_at) VALUES ('tbl-1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
@@ -784,18 +829,19 @@ func TestHoldThenResume_MovesTableClaimBetweenLiveAndHeld(t *testing.T) {
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
 		t.Fatalf("seed scan: %v", err)
 	}
-	dp.Engine.SetTable("tbl-1", "T1")
-	if claimed, err := data.NewPOSRepo(dp.Db).ClaimTable(context.Background(), "tbl-1"); err != nil || !claimed {
-		t.Fatalf("seed live claim: claimed=%v err=%v", claimed, err)
-	}
+	holdTestSeedClaimedTable(t, dp, "tbl-1", "T1")
+	claimedAt := holdTestClaimedAt(t, dp, "tbl-1")
 
 	holdRec := httptest.NewRecorder()
 	mux.ServeHTTP(holdRec, httptest.NewRequest(http.MethodPost, "/api/pos/hold", nil))
 	if holdRec.Code != http.StatusOK {
 		t.Fatalf("hold: expected 200, got %d: %s", holdRec.Code, holdRec.Body.String())
 	}
-	if holdTestTableClaimed(t, dp, "tbl-1") {
-		t.Fatalf("hold must release the live claim (the held_sales row now carries the occupancy)")
+	if !holdTestTableClaimed(t, dp, "tbl-1") {
+		t.Fatalf("hold must keep the live claim (it is the only occupancy signal other tills see, ut-docs#1704)")
+	}
+	if got := holdTestClaimedAt(t, dp, "tbl-1"); got != claimedAt {
+		t.Fatalf("hold must leave the claim row untouched, claimed_at %q -> %q", claimedAt, got)
 	}
 	var heldTable string
 	if err := dp.Db.QueryRow(`SELECT table_id FROM held_sales`).Scan(&heldTable); err != nil || heldTable != "tbl-1" {
@@ -821,13 +867,154 @@ func TestHoldThenResume_MovesTableClaimBetweenLiveAndHeld(t *testing.T) {
 		t.Fatalf("resume must delete the held row, got %d rows (err %v)", heldRows, err)
 	}
 	if !holdTestTableClaimed(t, dp, "tbl-1") {
-		t.Fatalf("resume must re-claim the table for the live basket")
+		t.Fatalf("the table must still be claimed for the live basket after resume")
+	}
+	if got := holdTestClaimedAt(t, dp, "tbl-1"); got != claimedAt {
+		t.Fatalf("resume must find its own claim rather than re-take it, claimed_at %q -> %q", claimedAt, got)
 	}
 	if !holdTestTableOccupied(t, dp, "tbl-1") {
 		t.Fatalf("T1 must read occupied after resume, via the live claim")
 	}
 	if got := dp.Engine.Basket().TableID; got != "tbl-1" {
 		t.Fatalf("resumed basket TableID = %q, want tbl-1", got)
+	}
+}
+
+// TestHeldTableHandler_MoveTransfersClaim (ut-docs#1704): moving a parked
+// order to another table moves its table_claims row with it -- the source
+// table's claim is released and the target's is taken -- so the move is
+// visible to other tills, not just in this till's held_sales.table_id. Goes
+// through the REAL hold so the source claim is the one hold left in place.
+func TestHeldTableHandler_MoveTransfersClaim(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO tables (id, label, created_at, updated_at) VALUES
+ ('tbl-1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z'),
+ ('tbl-2','T2','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed tables: %v", err)
+	}
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	holdTestSeedClaimedTable(t, dp, "tbl-1", "T1")
+	id := holdTestHoldAndGetID(t, mux, dp)
+	if !holdTestTableClaimed(t, dp, "tbl-1") {
+		t.Fatalf("precondition: the source table's claim must survive the hold")
+	}
+
+	moveReq := httptest.NewRequest(http.MethodPost, "/api/pos/held/table", strings.NewReader("id="+id+"&table_id=tbl-2"))
+	moveReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	moveRec := httptest.NewRecorder()
+	mux.ServeHTTP(moveRec, moveReq)
+	if moveRec.Code != http.StatusOK {
+		t.Fatalf("move: expected 200, got %d: %s", moveRec.Code, moveRec.Body.String())
+	}
+	if moveRec.Header().Get("HX-Trigger") != "held-changed" {
+		t.Fatalf("expected HX-Trigger: held-changed, got %q", moveRec.Header().Get("HX-Trigger"))
+	}
+	var tableID string
+	if err := dp.Db.QueryRow(`SELECT table_id FROM held_sales WHERE id = ?`, id).Scan(&tableID); err != nil || tableID != "tbl-2" {
+		t.Fatalf("held_sales.table_id after move = %q (err %v), want tbl-2", tableID, err)
+	}
+	if holdTestTableClaimed(t, dp, "tbl-1") {
+		t.Fatalf("the OLD table's claim must be released by the move")
+	}
+	if !holdTestTableClaimed(t, dp, "tbl-2") {
+		t.Fatalf("the NEW table must be claimed by the move")
+	}
+	if holdTestTableOccupied(t, dp, "tbl-1") {
+		t.Fatalf("T1 must read free after the order moved off it")
+	}
+	if !holdTestTableOccupied(t, dp, "tbl-2") {
+		t.Fatalf("T2 must read occupied after the order moved onto it")
+	}
+}
+
+// TestHeldTableHandler_ClearTableReleasesClaim (ut-docs#1704): clearing a
+// parked order's table (move to "") releases the claim hold left in place
+// and takes no new one -- the table reads free to every till afterwards.
+func TestHeldTableHandler_ClearTableReleasesClaim(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO tables (id, label, created_at, updated_at) VALUES ('tbl-1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed table: %v", err)
+	}
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	holdTestSeedClaimedTable(t, dp, "tbl-1", "T1")
+	id := holdTestHoldAndGetID(t, mux, dp)
+	if !holdTestTableClaimed(t, dp, "tbl-1") {
+		t.Fatalf("precondition: the table's claim must survive the hold")
+	}
+
+	clearReq := httptest.NewRequest(http.MethodPost, "/api/pos/held/table", strings.NewReader("id="+id+"&table_id="))
+	clearReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	clearRec := httptest.NewRecorder()
+	mux.ServeHTTP(clearRec, clearReq)
+	if clearRec.Code != http.StatusOK {
+		t.Fatalf("clear: expected 200, got %d: %s", clearRec.Code, clearRec.Body.String())
+	}
+	var tableID string
+	if err := dp.Db.QueryRow(`SELECT COALESCE(table_id, '') FROM held_sales WHERE id = ?`, id).Scan(&tableID); err != nil || tableID != "" {
+		t.Fatalf("held_sales.table_id after clear = %q (err %v), want \"\"", tableID, err)
+	}
+	if holdTestTableClaimed(t, dp, "tbl-1") {
+		t.Fatalf("clearing the table must release its claim")
+	}
+	var claims int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM table_claims`).Scan(&claims); err != nil || claims != 0 {
+		t.Fatalf("clearing the table must take no new claim, got %d claim rows (err %v)", claims, err)
+	}
+	if holdTestTableOccupied(t, dp, "tbl-1") {
+		t.Fatalf("T1 must read free after the parked order's table was cleared")
+	}
+}
+
+// TestHeldTableHandler_MoveOntoOwnCurrentTableSucceedsWithLiveClaim
+// (ut-docs#1704) is the regression case for the handler's same-table fast
+// path: unlike TestHeldTableHandler_MoveOntoOwnCurrentTableSucceeds above,
+// whose direct-DB seeding never had a claim to conflict with, a REAL hold
+// now leaves the order's own claim in table_claims -- and IsTableFree only
+// self-excludes the held_sales row, not the claim, so without the fast path
+// the order would read "occupied" against itself and the no-op would be
+// rejected. The claim must also be left exactly as it was (not released and
+// re-taken), so the table never blips free.
+func TestHeldTableHandler_MoveOntoOwnCurrentTableSucceedsWithLiveClaim(t *testing.T) {
+	mux, dp := newHoldTestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO tables (id, label, created_at, updated_at) VALUES ('tbl-1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed table: %v", err)
+	}
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	holdTestSeedClaimedTable(t, dp, "tbl-1", "T1")
+	id := holdTestHoldAndGetID(t, mux, dp)
+	if !holdTestTableClaimed(t, dp, "tbl-1") {
+		t.Fatalf("precondition: the table's claim must survive the hold")
+	}
+	claimedAt := holdTestClaimedAt(t, dp, "tbl-1")
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/held/table", strings.NewReader("id="+id+"&table_id=tbl-1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("HX-Trigger") != "held-changed" {
+		t.Fatalf("a self-move must still complete as a no-op success (HX-Trigger), got %q", rec.Header().Get("HX-Trigger"))
+	}
+	var tableID string
+	if err := dp.Db.QueryRow(`SELECT table_id FROM held_sales WHERE id = ?`, id).Scan(&tableID); err != nil || tableID != "tbl-1" {
+		t.Fatalf("held_sales.table_id = %q (err %v), want tbl-1", tableID, err)
+	}
+	if !holdTestTableClaimed(t, dp, "tbl-1") {
+		t.Fatalf("a self-move must leave the order's own claim in place")
+	}
+	if got := holdTestClaimedAt(t, dp, "tbl-1"); got != claimedAt {
+		t.Fatalf("a self-move must not release-and-re-take the claim, claimed_at %q -> %q", claimedAt, got)
+	}
+	if !holdTestTableOccupied(t, dp, "tbl-1") {
+		t.Fatalf("T1 must still read occupied after a self-move")
 	}
 }
 

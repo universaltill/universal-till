@@ -219,11 +219,14 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 			renderBasket(w, r, httpx.T(locale, "hold.error.failed"), "error")
 			return
 		}
-		// The held_sales row now carries the table's occupancy, so the live
-		// claim the table pick wrote (ut-docs#1390) is released -- one
-		// occupancy source per lifecycle stage, never both at once. After
-		// Insert, deliberately: the table must never read free in between.
-		releaseTableClaim(ctx, d, posRepo, snap.TableID)
+		// The live claim the table pick wrote (ut-docs#1390) is deliberately
+		// LEFT IN PLACE (ut-docs#1704): table_claims is the only occupancy
+		// signal that reaches other tills (the #1703 write-through), while
+		// held_sales never syncs -- releasing the claim here made a parked
+		// order's table read free shop-wide for as long as it sat parked. The
+		// claim now spans both the live-basket and the held stage of an order;
+		// it moves with the order in POST /api/pos/held/table and is only
+		// dropped when the order is tendered, reset, or its table cleared.
 		d.Engine.Reset()
 		w.Header().Set("HX-Trigger", "held-changed")
 		renderBasket(w, r, httpx.T(locale, "hold.toast.held"), "success")
@@ -306,11 +309,11 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("GET /ui/held", renderHeldStrip)
 
 	// Move a held (parked) order onto a different table (ut-docs#820) --
-	// distinct from resuming it: the order stays parked, only its table_id
-	// changes. Rejects moving onto a table another held sale already
-	// occupies (IsTableFree), leaving the held sale untouched; a held sale
-	// may move back onto its own current table (IsTableFree's self-exclusion
-	// handles that as a no-op, not a rejection).
+	// distinct from resuming it: the order stays parked; its table_id
+	// changes and its table claim moves with it (ut-docs#1704). Rejects
+	// moving onto a table another order already occupies (IsTableFree),
+	// leaving the held sale untouched; a held sale may move back onto its
+	// own current table (short-circuited below as a no-op, not a rejection).
 	mux.HandleFunc("POST /api/pos/held/table", func(w http.ResponseWriter, r *http.Request) {
 		ctx := r.Context()
 		_ = r.ParseForm()
@@ -343,6 +346,19 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		if found && !heldSaleMayHaveTable(held.Payload) {
 			tableID = ""
 		}
+		// Same-table (or both-empty) move is a no-op, decided HERE rather than
+		// left to IsTableFree's self-exclusion (ut-docs#1704): the parked
+		// order's own table_claims row now persists through the hold, and
+		// IsTableFree self-excludes the held_sales row ONLY, never a claim --
+		// so asking it would read the order's own claim as someone else's and
+		// wrongly refuse. Must sit AFTER the Takeaway gate above so a Takeaway
+		// held order (tableID forced "", held.TableID "") lands here too, same
+		// observable outcome as before. Nothing in table_claims changes.
+		if tableID == held.TableID {
+			w.Header().Set("HX-Trigger", "held-changed")
+			renderHeldStrip(w, r)
+			return
+		}
 		if tableID != "" {
 			free, err := posRepo.IsTableFree(ctx, tableID, id)
 			if err != nil || !free {
@@ -350,9 +366,39 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
+		// Claim the NEW table BEFORE committing the move (independent review,
+		// ut-docs#1704): IsTableFree above is a LOCAL-only check, so on a
+		// replica it cannot see a table another till holds through the #1703
+		// primary-side claim -- only the write-through claim call itself gets
+		// the authoritative cross-till answer. Claiming first, and refusing
+		// the move outright on failure (same "occupied" rejection shape as
+		// the free-check above), means a refused claim leaves BOTH the
+		// held_sales row and the OLD table's claim exactly as they were --
+		// never a state where the order is moved with no claim anywhere.
+		// Mirrors pos_api.go's own live-basket table pick, which never lets
+		// go of the current table over an unconfirmed new one.
+		if found && tableID != "" {
+			if claimed, err := claimTableWriteThrough(ctx, d, posRepo, tableID); err != nil || !claimed {
+				log.Printf("move held %s: claim table %s failed (claimed=%v): %v", id, tableID, claimed, err)
+				renderHeldStrip(w, r)
+				return
+			}
+		}
 		if err := repo.SetTable(ctx, id, tableID); err != nil {
 			renderHeldStrip(w, r)
 			return
+		}
+		// Release the OLD table's claim only once the move has actually
+		// committed (ut-docs#1704): the held_sales row now carries the new
+		// table, and this held sale's own claim on its FORMER table would
+		// otherwise linger, wrongly reading it occupied to every other till.
+		// Log-and-continue, never fails the request -- a stale claim on the
+		// old table is the lesser evil versus refusing floor work over
+		// bookkeeping (every other call site here takes the same stance).
+		// Only for a held sale that actually exists -- SetTable on an
+		// unknown id is a no-row UPDATE with nothing to release.
+		if found {
+			releaseTableClaim(ctx, d, posRepo, held.TableID)
 		}
 		w.Header().Set("HX-Trigger", "held-changed")
 		renderHeldStrip(w, r)

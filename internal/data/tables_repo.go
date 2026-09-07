@@ -211,10 +211,15 @@ FROM tables WHERE id = ?`, id).Scan(&t.ID, &t.Label, &t.AreaZone, &t.SeatCount, 
 // holds, could otherwise self-block a no-op move onto its own current
 // table), so its own row is excluded from the occupancy check. Pass ""
 // when there is no held sale to exclude (e.g. assigning a table to a live,
-// not-yet-held basket). It excludes a held_sales row ONLY — never a live
-// claim: there is one live basket per till, and its handler short-circuits
-// a re-pick of its own current table before ever asking, so a claim seen
-// here is by construction someone else's.
+// not-yet-held basket). It excludes a held_sales row ONLY — never a claim:
+// for a live, not-yet-held basket there is one per till, and its handler
+// short-circuits a re-pick of its own current table before ever asking, so
+// a claim seen there is by construction someone else's. Since ut-docs#1704
+// a held order carries its OWN claim too (the only occupancy signal that
+// reaches other tills), so its move handler applies the identical
+// short-circuit itself (hold_api.go's same-table fast path) rather than
+// relying on this exclusion, which cannot tell a held order's own claim
+// from anyone else's.
 func (r *POSRepo) IsTableFree(ctx context.Context, id string, excludeHeldSaleID string) (bool, error) {
 	var occupied int
 	err := r.db.QueryRowContext(ctx, `
@@ -253,11 +258,12 @@ INSERT OR IGNORE INTO table_claims (table_id, claimed_at) VALUES (?, ?)`, tableI
 }
 
 // ReleaseTableClaim drops THIS till's own local live-basket claim on tableID
-// (ut-docs#1390): the basket cleared its table, was parked (the held_sales
-// row now carries the occupancy), tendered, or was reset. A no-op — not an
-// error — when there is no claim to release, same convention as
-// HeldSalesRepo.Delete on a missing row, so every release site can call it
-// unconditionally.
+// (ut-docs#1390): the basket cleared its table, tendered, or was reset — or
+// (ut-docs#1704) a held order's table moved or was cleared. Parking the
+// basket (Hold) does NOT release it: since #1704 the claim spans both the
+// live-basket and the held stage of an order. A no-op — not an error —
+// when there is no claim to release, same convention as HeldSalesRepo.Delete
+// on a missing row, so every release site can call it unconditionally.
 //
 // Scoped to till_id = ” (independent review finding, ut-docs#1393) — its
 // one caller, releaseTableClaimWriteThrough, always means "release MY OWN
@@ -445,9 +451,22 @@ func (r *POSRepo) ReleaseTableClaimForTill(ctx context.Context, tableID, tillID 
 //
 // held_sales is NOT touched here — a parked order surviving a restart is
 // the intended offline-first durability held_sales exists for, not a
-// leftover to clear.
+// leftover to clear. Since ut-docs#1704, its table_id can be exactly the
+// table a ” claim row here is FOR: a held order's claim deliberately
+// persists through the whole time it sits parked (the only occupancy
+// signal that reaches other tills), so a claim backing a genuinely
+// surviving held order is excluded from the sweep — only a claim with
+// NOTHING held on its table is the "live basket, unclean shutdown" case
+// this function exists to clean up. Without the exclusion, every restart
+// (a nightly power-off, an update) would silently reproduce the exact bug
+// #1704 fixed: every parked order's table reading free again shop-wide
+// until that order is next moved or resumed. Independent review,
+// 2026-09-07.
 func (r *POSRepo) ClearLocalTableClaims(ctx context.Context) error {
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM table_claims WHERE till_id = ''`); err != nil {
+	if _, err := r.db.ExecContext(ctx, `
+DELETE FROM table_claims
+WHERE till_id = ''
+  AND table_id NOT IN (SELECT table_id FROM held_sales WHERE table_id IS NOT NULL)`); err != nil {
 		return fmt.Errorf("clear local table claims: %w", err)
 	}
 	return nil

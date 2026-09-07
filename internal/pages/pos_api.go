@@ -121,11 +121,14 @@ func enforceFiscalGate(ctx context.Context, d *common.Deps) (fiscal.Gate, error)
 }
 
 // releaseTableClaim drops the live basket's claim on tableID (ut-docs#1390)
-// at every point the basket stops occupying it — cleared, moved off, parked
-// (the held_sales row takes over), tendered, reset, or switched to
-// Takeaway. A "" tableID (no table was assigned) is the common case and a
-// no-op; a DB failure is logged, never surfaced — the basket-side state
-// change it accompanies has already happened (or is about to, and must
+// at every point the basket stops occupying it — cleared, moved off,
+// tendered, reset, or switched to Takeaway. Parking the basket (Hold) is
+// deliberately NOT one of these since ut-docs#1704: the claim now spans
+// both the live-basket and the held stage of an order, so hold leaves it in
+// place instead of releasing it here. A "" tableID (no table was assigned)
+// is the common case and a no-op; a DB failure is logged, never surfaced —
+// the basket-side state change it accompanies has already happened (or is
+// about to, and must
 // not be blocked by bookkeeping), and a lingering claim is the lesser evil
 // versus a sale that can't complete. Shared by the cashier handlers here
 // and the hold/resume handlers in hold_api.go so the release rule lives in

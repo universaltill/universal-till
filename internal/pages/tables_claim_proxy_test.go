@@ -415,3 +415,63 @@ func TestClaimTableWriteThrough_LocalBranchStillClaimsWhenReconcileFails(t *test
 		t.Fatal("the fallback must actually have written the local claim row")
 	}
 }
+
+// TestHeldTableHandler_MoveRejectedByPrimaryLeavesOrderOnOldTable
+// (independent review, ut-docs#1704): moving a parked order is a cross-till
+// operation just like the live basket's own table pick, so it must apply the
+// identical claim-before-commit discipline. IsTableFree is LOCAL only and
+// cannot see a table another till holds through the primary, so the
+// write-through claim call is the actual authority; a primary refusal must
+// leave held_sales.table_id, the order's OWN claim on its current table, and
+// T2 (the refused target) exactly as they were -- never a move that commits
+// with no claim anywhere.
+func TestHeldTableHandler_MoveRejectedByPrimaryLeavesOrderOnOldTable(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	registerHoldAPI(mux, dp)
+	t1 := createTestTable(t, dp, "T1")
+	t2 := createTestTable(t, dp, "T2")
+	primary := newClaimProxyPrimary(t, true)
+	setReplicaSettings(t, dp.Settings, primary.srv.URL, "b-123")
+
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	if rec := posPostForm(mux, "/api/pos/table", "table_id="+t1); rec.Code != http.StatusOK {
+		t.Fatalf("assign T1: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if rec := posPostForm(mux, "/api/pos/hold", ""); rec.Code != http.StatusOK {
+		t.Fatalf("hold: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var id string
+	if err := dp.Db.QueryRow(`SELECT id FROM held_sales`).Scan(&id); err != nil {
+		t.Fatalf("query held_sales id: %v", err)
+	}
+	if primary.claimCalls.Load() != 1 {
+		t.Fatalf("expected exactly 1 primary claim call after hold, got %d", primary.claimCalls.Load())
+	}
+
+	// Now the primary refuses every further claim -- as if another till took
+	// T2 first.
+	primary.claimed = false
+
+	rec := posPostForm(mux, "/api/pos/held/table", "id="+id+"&table_id="+t2)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("move: expected 200 (in-place rejection), got %d: %s", rec.Code, rec.Body.String())
+	}
+	var tableID string
+	if err := dp.Db.QueryRow(`SELECT table_id FROM held_sales WHERE id = ?`, id).Scan(&tableID); err != nil || tableID != t1 {
+		t.Fatalf("held_sales.table_id after a refused move = %q (err %v), want %q (unchanged)", tableID, err, t1)
+	}
+	if !tableOccupied(t, dp, t1) {
+		t.Fatal("the order's claim on its CURRENT table (T1) must survive a refused move")
+	}
+	if tableOccupied(t, dp, t2) {
+		t.Fatal("a primary-refused claim on T2 must not be written locally")
+	}
+	if primary.claimCalls.Load() != 2 {
+		t.Fatalf("expected exactly 2 primary claim calls total (assign + refused move), got %d", primary.claimCalls.Load())
+	}
+	if primary.releaseCalls.Load() != 0 {
+		t.Fatalf("a refused claim must never trigger a release of the OLD table, got %d release calls", primary.releaseCalls.Load())
+	}
+}

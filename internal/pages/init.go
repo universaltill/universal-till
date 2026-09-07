@@ -127,11 +127,12 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// (ut-docs#1390). The engine constructed just below always starts with an
 	// empty basket, so any of its own table_claims rows still present belong
 	// to a process that ended without releasing them (crash, kill, power
-	// loss) — stale by construction, every time, with nothing per-row to
-	// decide. Without this a table claimed right before an unclean shutdown
-	// stays unbookable forever (independent review, ut-docs#1390): the picker
-	// filters occupied tables out and both table-assignment handlers
-	// reject a pick on one, so nothing else ever revisits an orphaned row.
+	// loss) — a claim with nothing held on its table is stale by
+	// construction, with nothing per-row to decide. Without this a table
+	// claimed right before an unclean shutdown stays unbookable forever
+	// (independent review, ut-docs#1390): the picker filters occupied tables
+	// out and both table-assignment handlers reject a pick on one, so
+	// nothing else ever revisits an orphaned row.
 	//
 	// Own rows ONLY, since ut-docs#1703 gave claims an owner: on a primary
 	// this table also holds the live claims of REPLICAS that are still
@@ -141,9 +142,12 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	//
 	// Non-fatal, same offline-first "a boot must never be blocked on a
 	// settings write" convention as SaveState above — a failed sweep just
-	// means recovery waits for the next restart, not a boot failure. Never
-	// touches held_sales: a parked order surviving a restart is durability
-	// working as intended, not a leftover to clear.
+	// means recovery waits for the next restart, not a boot failure. Since
+	// ut-docs#1704, a held order's own claim deliberately persists through
+	// the whole time it sits parked (the only occupancy signal that reaches
+	// other tills) — ClearLocalTableClaims itself excludes any claim still
+	// backing a genuine held_sales row, so this sweep only ever drops a
+	// claim with nothing parked on it, never a real held order's table.
 	if err := data.NewPOSRepo(db).ClearLocalTableClaims(ctx); err != nil {
 		log.Errorf("clear stale table claims: %v", err)
 	}
