@@ -280,32 +280,72 @@ with the unanswered dialog still sitting on top of it.
 **What ut-docs#1639 adds on top of the above** (still all in
 `MainActivity`, still screen-pinning only — this does not change which
 mode engages, only whether the app tells the truth about it):
-- `verifyPinEngaged()`, scheduled a few seconds after every
+- `verifyPinEngaged()`, first scheduled a few seconds after every
   `engageKioskLock()` call, reads `ActivityManager.getLockTaskModeState()`
-  directly rather than trusting `startLockTask()` having returned.
+  directly rather than trusting `startLockTask()` having returned. **It
+  then re-arms itself every 3s**, for as long as a pin is intended and only
+  between `onResume` and `onPause`, so both late answers and later losses of
+  the pin are noticed. The lifecycle bound is enforced by `schedulePinCheck`
+  refusing to arm at all outside that window — cancelling in `onPause` is
+  NOT sufficient on its own, because `onPageFinished` has no lifecycle
+  gating and this app never pauses the WebView's JS timers, so the
+  self-order idle reload goes on re-entering `engageKioskLock()` while the
+  Activity is stopped (independent review, ut-docs#1639).
 - `onWindowFocusChanged(hasFocus)` re-reads the same state as soon as the
-  app gets input focus back — which is exactly when that confirmation
-  dialog has just been dismissed, since it's a system window that takes
-  focus **without** pausing the Activity. That is what clears the signal
-  in the normal case without waiting the delay out, and what clears a
-  banner already raised when the dialog is answered *late* (later than
-  the delay). It is deliberately asymmetric: regaining focus can clear a
+  app gets input focus back, as an opportunistic fast path on top of that
+  poll. It is deliberately asymmetric: regaining focus can clear a
   warning, but only raises one for a pin that was previously **confirmed**
   and has since gone (the documented unpin gesture) — focus can also come
   back while the request is merely still unanswered, and that is the
-  delayed check's call to make, not this one's.
+  repeating check's call to make, not this one's.
   **No Activity-level lock-task callback exists** to use instead
   (independent review, ut-docs#1639: an earlier draft of this fix
   overrode a non-existent `Activity.onLockTaskModeChanged(int)` — the
   platform's only lock-task callbacks are
   `DeviceAdminReceiver.onLockTaskModeEntering/Exiting`, which need the
   Device Owner provisioning below).
+
+  **Why the poll exists, and why focus alone was not enough.** The first
+  version of this fix made `onWindowFocusChanged` the mechanism that
+  cleared the banner, on the documented reasoning that Android's pinning
+  confirmation is a system window taking focus without pausing the
+  Activity — so dismissing it must hand focus back. On the P50T that does
+  not produce a usable read. Re-verifying this card on real hardware
+  (v0.12.7): tapping **Got it** pinned the app — Android's own "App
+  pinned" toast, `mLockTaskModeState=PINNED` — and the banner stayed up
+  across three runs, with neither of that callback's logging branches
+  reached. The build that was measured could not say whether no focus event
+  arrived at all or one arrived before the OS had committed the lock-task
+  state, because its "not answered yet" branch logged nothing. That branch
+  now logs at debug level, and **that settled it on the device: the
+  callback does not fire at all when the pinning dialog is dismissed.** The
+  same build emits that debug line reliably for a genuine focus return
+  (sleep/wake with the dialog still up) and emitted nothing at all when
+  "Got it" was tapped — an absent event, not an early read. Either way the
+  state was read once, at the wrong moment, and never again. Nothing else re-read it, so a correctly
+  pinned till went on displaying *"Kiosk lock is not active — this device
+  is not secured"*; measured still up 120s after the grant, with the
+  banner's only escape being an unrelated accident: `self_order.html`'s
+  idle-reset reload re-running `engageKioskLock()` through
+  `onPageFinished`. That reload is opt-**out** — `kiosk.idle_reset_seconds`
+  defaults to 60 and only `0` disables it — so relying on it would not even
+  have been a rare configuration. The 120s figure holds because the
+  reload's timer restarts on every `pointerdown`/`keydown`/`touchstart`,
+  and that run tapped the screen every 20s to keep it from firing; an idle
+  kiosk would have had the banner cleared for it at 60s, by a mechanism
+  with nothing to do with pinning that a shop can switch off.
+  A permanent false alarm is the same defect as a missing one — staff
+  who see "not secured" on a secured till stop reading the banner. Since
+  the platform offers no callback here without Device Owner, re-reading
+  on a timer is the only mechanism actually available.
 - Either path logs the outcome (`Log.w`/`Log.i`, tag `MainActivity`) —
   before this fix, `logcat` showed nothing at all for a failed pin.
 - When the pin is intended (self-order) but not confirmed, a red banner
   (`R.string.kiosk_pin_not_engaged`, translated en/fa/tr/ar) appears above
   the WebView — a status banner, not a modal, so the kiosk stays fully
-  usable underneath. It clears the moment the OS confirms the pin.
+  usable underneath. It clears within one poll interval of the OS
+  confirming the pin, and comes back within one poll interval of the pin
+  being lost again.
 - **Not fixed, because it cannot be from app code**: the confirmation
   dialog itself, or getting it answered automatically. The banner and log
   line are detection and disclosure, not a stronger lock — **Device Owner

@@ -78,6 +78,18 @@ class MainActivity : AppCompatActivity() {
     private val pinCheckHandler = Handler(Looper.getMainLooper())
     private var pinCheckRunnable: Runnable? = null
 
+    // ut-docs#1639 (independent review): whether this Activity is between
+    // onResume and onPause. [schedulePinCheck] refuses to arm outside that
+    // window, and cancelling in [onPause] alone is NOT enough to get that
+    // guarantee: `onPageFinished` is a WebViewClient callback with no
+    // lifecycle gating, and this app never pauses the WebView's JS timers,
+    // so `self_order.html`'s idle-reset reload keeps firing while the
+    // Activity is stopped and re-enters engageKioskLock() -> the poll would
+    // re-arm behind onPause's back and then never stop, since onPause does
+    // not run again until the next resume and TillService keeps the process
+    // alive so onDestroy may never come at all.
+    private var activityResumed = false
+
     // ut-docs#1639: true once the OS has actually REPORTED this app in
     // lock-task mode for the current pin intent. Separates two states that
     // both read as lockTaskModeState=NONE but mean opposite things:
@@ -762,6 +774,16 @@ class MainActivity : AppCompatActivity() {
      */
     private fun engageKioskLock() {
         kioskPinned = true
+        // ut-docs#1639 (independent review): [pinConfirmed] is scoped to ONE
+        // pin intent, as its own doc says, and this line starts a new one.
+        // Without the reset, a kiosk that was pinned, unpinned by the
+        // documented gesture, and then re-entered would carry the old `true`
+        // into a fresh, still-unanswered confirmation dialog — where
+        // [onWindowFocusChanged]'s pinConfirmed branch reads it as an
+        // unambiguous DROP and raises the banner immediately, contradicting
+        // that same function's rule that an unanswered request is
+        // [verifyPinEngaged]'s call to make, not focus's.
+        pinConfirmed = false
         cancelPendingPinCheck()
         try {
             val dpm = getSystemService(Context.DEVICE_POLICY_SERVICE) as? DevicePolicyManager
@@ -786,17 +808,18 @@ class MainActivity : AppCompatActivity() {
         // dismiss, and returns from startLockTask() normally regardless of
         // what happens to it. Reading getLockTaskModeState() synchronously
         // right here would always read NONE (the dialog hasn't been acted
-        // on yet), so verification is scheduled a few seconds out instead.
-        // [onWindowFocusChanged] below re-checks the moment that dialog is
-        // dismissed — normally well inside the delay — so an answered
-        // "Got it" clears the signal without waiting it out. The delayed
-        // check is the backstop for the case where it is never dismissed
-        // at all (measured on real hardware, ut-docs#1281: the dialog can
-        // sit unanswered for 12s+, and "No, thanks" leaves the state NONE
-        // forever).
-        val check = Runnable { verifyPinEngaged() }
-        pinCheckRunnable = check
-        pinCheckHandler.postDelayed(check, PIN_VERIFY_DELAY_MS)
+        // on yet), so the first verification is scheduled a few seconds out
+        // — long enough for a promptly-answered dialog, short enough to
+        // flag a genuinely stuck one (measured on real hardware,
+        // ut-docs#1281: the dialog can sit unanswered for 12s+, and
+        // "No, thanks" leaves the state NONE forever).
+        //
+        // That first check then keeps re-arming itself — see
+        // [verifyPinEngaged]. It is not a one-shot, because the answer can
+        // change long after it: the dialog may be answered at any later
+        // moment, and a confirmed pin can be dropped by the documented
+        // back+overview unpin gesture.
+        schedulePinCheck(PIN_VERIFY_DELAY_MS)
     }
 
     /** Releases Lock Task / screen-pinning. Same never-crash posture as [engageKioskLock]. */
@@ -818,6 +841,22 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
+     * Arms the next [verifyPinEngaged] read, replacing any already-pending
+     * one so overlapping callers (a page navigation and an onResume landing
+     * together, say) can never stack up two polls.
+     */
+    private fun schedulePinCheck(delayMs: Long) {
+        cancelPendingPinCheck()
+        // Nothing to watch for while the banner this drives is off screen —
+        // and arming here anyway is how the poll would outlive [onPause].
+        // [onResume] re-arms via engageKioskLock on the way back in.
+        if (!activityResumed) return
+        val check = Runnable { verifyPinEngaged() }
+        pinCheckRunnable = check
+        pinCheckHandler.postDelayed(check, delayMs)
+    }
+
+    /**
      * The OS's own answer to "is this app in lock-task mode *right now*" —
      * the question [engageKioskLock]'s `startLockTask()` return value
      * cannot answer. A null ActivityManager (not observed in practice; the
@@ -831,31 +870,119 @@ class MainActivity : AppCompatActivity() {
     }
 
     /**
-     * ut-docs#1639: called [PIN_VERIFY_DELAY_MS] after [engageKioskLock]
-     * asked Android to pin the app. Treats "requested" and "granted" as
-     * different things — see [engageKioskLock]'s own comment for why the
-     * request alone can't be trusted. [kioskPinned] may already be false by
-     * the time this fires (navigated away, or a manager PIN released it) —
-     * nothing to verify or warn about in that case.
+     * ut-docs#1639: the OS-state read that decides whether the kiosk really
+     * is pinned. First armed [PIN_VERIFY_DELAY_MS] after [engageKioskLock]
+     * asked Android to pin the app; **re-arms itself every
+     * [PIN_RECHECK_INTERVAL_MS] for as long as the pin intent stands.**
+     * [kioskPinned] may already be false by the time it fires (navigated
+     * away, or a manager PIN released it) — nothing to verify, warn about,
+     * or re-arm in that case.
+     *
+     * The repeat is the whole point, and it is a fix for a defect found by
+     * this card's own on-device re-verification (TECLAST P50T, v0.12.7).
+     * The original one-shot read relied on [onWindowFocusChanged] to clear
+     * the warning the moment the user answered the pinning dialog. **On
+     * real hardware it does not**: across three runs, tapping "Got it"
+     * pinned the app (Android's own "App pinned" toast,
+     * `mLockTaskModeState=PINNED`) and the warning stayed up, with neither
+     * of that callback's two logging branches ever reached. Whether it
+     * never fired, or fired in the window before the OS had committed the
+     * lock-task state, the build that was measured could not say — its
+     * third branch, "not answered yet", logged nothing. Adding a debug line
+     * there (see [onWindowFocusChanged]) settled it on the device: **the
+     * callback does not fire at all when that dialog is dismissed.** The
+     * same build logs that debug line reliably for a real focus return
+     * (screen sleep/wake with the dialog still up), and logged nothing
+     * whatsoever when "Got it" was tapped — so this is an absent event, not
+     * a read taken too early. Either way the outcome was the same: the
+     * state was read once, at the wrong moment, and never again. With
+     * nothing else re-reading it, a correctly pinned till kept showing
+     * "Kiosk lock is not active — this device is not secured" — measured
+     * still up 120s after the grant. It only ever cleared by accident,
+     * when `self_order.html`'s idle-reset reload happened to re-run
+     * [engageKioskLock] via `onPageFinished`. That reload is opt-OUT, not
+     * opt-in — `kiosk.idle_reset_seconds` defaults to 60 and only `0`
+     * disables it — so leaning on it would not even have been a rare
+     * configuration. The 120s measurement holds because that timer restarts
+     * on every `pointerdown`/`keydown`/`touchstart`, and the run tapped the
+     * screen every 20s specifically to stop it firing; an idle kiosk would
+     * have had its banner cleared at the 60s mark by a mechanism that has
+     * nothing to do with pinning and that a shop can switch off.
+     *
+     * A permanent false alarm is not a lesser bug than the missing alarm
+     * this card was opened for — it is the same bug. Staff who see "not
+     * secured" on a till that is secured stop reading the banner, and the
+     * genuinely unpinned kiosk becomes invisible again.
+     *
+     * Polling rather than a callback is not a shortcut: Android exposes no
+     * Activity-level lock-task callback at all (see
+     * [onWindowFocusChanged]'s note), so re-reading is the only mechanism
+     * available to an app that is deliberately not Device Owner. It is one
+     * binder call every [PIN_RECHECK_INTERVAL_MS], only while a pin is
+     * intended and only between onResume and onPause — enforced by
+     * [schedulePinCheck] refusing to arm outside that window, which is
+     * stricter than cancelling in [onPause] and has to be: see
+     * [activityResumed] for the path that re-arms behind onPause's back.
      */
     private fun verifyPinEngaged() {
+        pinCheckRunnable = null
         if (!kioskPinned) return
+        try {
+            readAndReportPinState()
+        } catch (e: Exception) {
+            // Same deliberately-broad posture as [engageKioskLock] and
+            // [releaseKioskLock], and it earns it more than they do: this is
+            // the one piece of kiosk bookkeeping that now runs unattended on
+            // a live till's main looper every few seconds, against the same
+            // OEM-variable lock-task surface. Rescheduling below is outside
+            // this catch on purpose — a single bad read must cost one
+            // interval, not the whole poll.
+            Log.w(TAG, "self-order kiosk pin check failed; retrying next interval", e)
+        }
+        schedulePinCheck(PIN_RECHECK_INTERVAL_MS)
+    }
+
+    private fun readAndReportPinState() {
         val state = lockTaskModeState()
+        // The banner's own visibility is the "what did we last say" state,
+        // so the log records transitions rather than repeating itself every
+        // interval. Reusing the View instead of a parallel boolean keeps
+        // the two from ever disagreeing.
+        val warningUp = pinWarning.visibility == View.VISIBLE
         if (state == ActivityManager.LOCK_TASK_MODE_NONE) {
-            Log.w(
-                TAG,
-                "self-order kiosk lock NOT engaged (lockTaskModeState=NONE) — " +
-                    "confirmation dialog unanswered or declined; kiosk is running unpinned",
-            )
+            if (!warningUp) {
+                Log.w(
+                    TAG,
+                    if (pinConfirmed) {
+                        "self-order kiosk lock DROPPED (lockTaskModeState=NONE) — " +
+                            "previously confirmed pin is gone; kiosk is running unpinned"
+                    } else {
+                        "self-order kiosk lock NOT engaged (lockTaskModeState=NONE) — " +
+                            "confirmation dialog unanswered or declined; kiosk is running unpinned"
+                    },
+                )
+            }
             showPinWarning()
         } else {
-            Log.i(TAG, "self-order kiosk lock confirmed engaged (lockTaskModeState=$state)")
+            if (!pinConfirmed || warningUp) {
+                Log.i(TAG, "self-order kiosk lock confirmed engaged (lockTaskModeState=$state)")
+            }
             pinConfirmed = true
             hidePinWarning()
         }
     }
 
+    /**
+     * Idempotent on purpose (ut-docs#1639, independent review). The repeating
+     * check calls this on every interval while the warning stands, and
+     * `TextView.setText` is not a free no-op the way `setVisibility` is: it
+     * rebuilds the layout, invalidates, and — with an accessibility service
+     * running — emits a text-changed event. Without this guard a customer-
+     * facing kiosk with TalkBack on would re-announce "this device is not
+     * secured" every [PIN_RECHECK_INTERVAL_MS], indefinitely.
+     */
     private fun showPinWarning() {
+        if (pinWarning.visibility == View.VISIBLE) return
         pinWarning.text = getString(R.string.kiosk_pin_not_engaged)
         pinWarning.visibility = View.VISIBLE
     }
@@ -872,12 +999,23 @@ class MainActivity : AppCompatActivity() {
      * `DeviceAdminReceiver.onLockTaskModeEntering/Exiting`, which require
      * Device Owner provisioning this app deliberately does not have (see
      * [TillDeviceAdminReceiver] and android/README.md). So the state has to
-     * be re-read at the moments it can plausibly have changed, and this is
-     * the earliest of them: Android's screen-pinning confirmation is a
-     * system window that takes input focus **without pausing this
-     * Activity** (exactly the case `Activity.onWindowFocusChanged`'s own
-     * platform docs call out), so regaining focus is the moment the user has just
-     * answered it — whether that took half a second or half a minute.
+     * be re-read at the moments it can plausibly have changed, and a
+     * regained window focus is one of them — a genuine one, measured: it is
+     * what re-read the state after a screen sleep/wake on the P50T.
+     *
+     * **It is NOT, however, a reliable read of the moment the pinning
+     * dialog is answered**, and this fix's first version assumed it was.
+     * Android's own docs describe that confirmation as a system window
+     * taking input focus without pausing the Activity, which would make
+     * dismissal a focus transition — but on the P50T answering it left the
+     * warning up across three runs, reaching neither logging branch below.
+     * No focus event, or one delivered before the OS committed the
+     * lock-task state, are indistinguishable from in here and equally
+     * fatal to a single-read design. So this is now a fast path on top of
+     * [verifyPinEngaged]'s own repeating read, not the mechanism the
+     * clear-the-warning path depends on. Deliberately left in place: where
+     * it does fire it costs one binder call and reacts sooner than the next
+     * poll would.
      *
      * Deliberately asymmetric: regaining focus can CLEAR a warning but
      * (unless the pin was previously confirmed) never raise one. Focus can
@@ -895,21 +1033,43 @@ class MainActivity : AppCompatActivity() {
         val state = lockTaskModeState()
         when {
             state != ActivityManager.LOCK_TASK_MODE_NONE -> {
-                Log.i(TAG, "self-order kiosk lock engaged (focus regained, lockTaskModeState=$state)")
+                if (!pinConfirmed || pinWarning.visibility == View.VISIBLE) {
+                    Log.i(TAG, "self-order kiosk lock engaged (focus regained, lockTaskModeState=$state)")
+                }
                 pinConfirmed = true
-                cancelPendingPinCheck()
+                // Deliberately does NOT cancel the pending check any more.
+                // The pin can still be lost later (the back+overview unpin
+                // gesture), and [verifyPinEngaged]'s repeating read is what
+                // notices; cancelling it here is precisely how the original
+                // fix ended up with no live reader of the state at all.
                 hidePinWarning()
             }
             pinConfirmed -> {
-                Log.w(
-                    TAG,
-                    "self-order kiosk lock DROPPED (focus regained, lockTaskModeState=NONE) — " +
-                        "previously confirmed pin is gone; kiosk is running unpinned",
-                )
+                if (pinWarning.visibility != View.VISIBLE) {
+                    Log.w(
+                        TAG,
+                        "self-order kiosk lock DROPPED (focus regained, lockTaskModeState=NONE) — " +
+                            "previously confirmed pin is gone; kiosk is running unpinned",
+                    )
+                }
                 showPinWarning()
             }
-            // Otherwise: the pin request simply hasn't been answered yet.
-            // The scheduled verifyPinEngaged() decides that one.
+            else -> {
+                // ut-docs#1639 (independent review): this branch used to be
+                // completely silent, which is why the first version of this
+                // fix could not be told apart from a callback that never
+                // fired at all — the two produce identical (empty) logs, and
+                // a permanent comment ended up asserting that difference was
+                // undecidable when really it was only unlogged. One debug
+                // line per focus event settles it on the next device run.
+                // The banner decision genuinely does stay with
+                // [verifyPinEngaged]; this only observes.
+                Log.d(
+                    TAG,
+                    "self-order kiosk pin request still unanswered at focus regain " +
+                        "(lockTaskModeState=NONE) — deferring to the scheduled check",
+                )
+            }
         }
     }
 
@@ -1257,8 +1417,25 @@ class MainActivity : AppCompatActivity() {
         // onResume's own comment on [kioskPinned]'s `false` default.)
     }
 
+    /**
+     * ut-docs#1639: the pin poll only needs to run while this Activity is
+     * actually on screen — the banner it drives cannot be read otherwise,
+     * and [onResume] below re-arms it (via [engageKioskLock]) on the way
+     * back in. Nothing else belongs here: the till itself keeps running in
+     * TillService regardless of whether this Activity is showing.
+     */
+    override fun onPause() {
+        super.onPause()
+        activityResumed = false
+        cancelPendingPinCheck()
+    }
+
     override fun onResume() {
         super.onResume()
+        // Before the engage/release calls at the end of this method — they
+        // are what re-arms the pin poll, and [schedulePinCheck] refuses
+        // while this is false.
+        activityResumed = true
         // ut-docs#1254/#1508: re-assert the OS-bar-hidden state on every
         // resume unconditionally — the FIRST call on a cold launch and
         // every later one, even if exitLockdown() granted an unlock
@@ -1326,6 +1503,18 @@ class MainActivity : AppCompatActivity() {
         // longer than a normal dialog paint, so this isn't a false alarm
         // on every single pin.
         private const val PIN_VERIFY_DELAY_MS = 3000L
+
+        // ut-docs#1639: how often to re-read the OS's lock-task state once
+        // the first check above has run. Both directions need it — a pin
+        // granted late (the confirmation dialog can sit unanswered
+        // indefinitely) and a pin lost late (the documented back+overview
+        // unpin gesture) — and Android offers no callback for either
+        // without Device Owner. Same 3s as the initial delay on purpose:
+        // one constant's worth of behaviour to reason about, fast enough
+        // that a staff member who has just answered the dialog sees the
+        // banner go within a few seconds rather than wondering whether the
+        // till believed them.
+        private const val PIN_RECHECK_INTERVAL_MS = 3000L
 
         // ut-docs#1246: the release APK's STABLE url — release.yml republishes
         // this same filename on every release, so the shell never resolves a
