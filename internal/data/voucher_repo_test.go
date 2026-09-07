@@ -30,7 +30,7 @@ func TestVoucherRepo_CreateAndGetBalance(t *testing.T) {
 
 	vSeedVoucher(t, ctx, repo, "GS-A", 1500)
 
-	v, err := repo.GetVoucherBalance(ctx, "GS-A")
+	v, err := repo.GetVoucherBalance(ctx, nil, "GS-A")
 	if err != nil {
 		t.Fatalf("GetVoucherBalance: %v", err)
 	}
@@ -39,7 +39,7 @@ func TestVoucherRepo_CreateAndGetBalance(t *testing.T) {
 		t.Fatalf("voucher = %+v", v)
 	}
 
-	if _, err := repo.GetVoucherBalance(ctx, "GS-MISSING"); !errors.Is(err, ErrVoucherNotFound) {
+	if _, err := repo.GetVoucherBalance(ctx, nil, "GS-MISSING"); !errors.Is(err, ErrVoucherNotFound) {
 		t.Fatalf("missing voucher: err = %v, want ErrVoucherNotFound", err)
 	}
 }
@@ -55,7 +55,7 @@ func TestVoucherRepo_DebitValidatesBalanceAndStatus(t *testing.T) {
 	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-B", 1500, false); !errors.Is(err, ErrVoucherInsufficientBalance) {
 		t.Fatalf("overspend: err = %v, want ErrVoucherInsufficientBalance", err)
 	}
-	v, err := repo.GetVoucherBalance(ctx, "GS-B")
+	v, err := repo.GetVoucherBalance(ctx, nil, "GS-B")
 	if err != nil || v.BalanceMinor != 1000 {
 		t.Fatalf("balance after refused debit = %d (err %v), want 1000", v.BalanceMinor, err)
 	}
@@ -64,13 +64,13 @@ func TestVoucherRepo_DebitValidatesBalanceAndStatus(t *testing.T) {
 	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-B", 400, false); err != nil {
 		t.Fatalf("partial debit: %v", err)
 	}
-	if v, _ = repo.GetVoucherBalance(ctx, "GS-B"); v.BalanceMinor != 600 || v.Status != "active" {
+	if v, _ = repo.GetVoucherBalance(ctx, nil, "GS-B"); v.BalanceMinor != 600 || v.Status != "active" {
 		t.Fatalf("after partial debit: balance=%d status=%q", v.BalanceMinor, v.Status)
 	}
 	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-B", 600, false); err != nil {
 		t.Fatalf("draining debit: %v", err)
 	}
-	if v, _ = repo.GetVoucherBalance(ctx, "GS-B"); v.BalanceMinor != 0 || v.Status != "redeemed" {
+	if v, _ = repo.GetVoucherBalance(ctx, nil, "GS-B"); v.BalanceMinor != 0 || v.Status != "redeemed" {
 		t.Fatalf("after draining: balance=%d status=%q", v.BalanceMinor, v.Status)
 	}
 
@@ -218,7 +218,7 @@ func TestVoucherRepo_ConcurrentDebitOnlyOneWins(t *testing.T) {
 		if okCount != 1 {
 			t.Fatalf("iteration %d: %d debits succeeded, want exactly 1", i, okCount)
 		}
-		v, err := repo.GetVoucherBalance(ctx, id)
+		v, err := repo.GetVoucherBalance(ctx, nil, id)
 		if err != nil {
 			t.Fatalf("iteration %d: read voucher: %v", i, err)
 		}
@@ -246,7 +246,7 @@ func TestVoucherRepo_DebitForceAllowsOverdraft(t *testing.T) {
 	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-FORCE", 800, false); !errors.Is(err, ErrVoucherInsufficientBalance) {
 		t.Fatalf("force=false overspend: err = %v, want ErrVoucherInsufficientBalance", err)
 	}
-	if v, _ := repo.GetVoucherBalance(ctx, "GS-FORCE"); v.BalanceMinor != 500 {
+	if v, _ := repo.GetVoucherBalance(ctx, nil, "GS-FORCE"); v.BalanceMinor != 500 {
 		t.Fatalf("balance after refused debit = %d, want 500", v.BalanceMinor)
 	}
 
@@ -254,7 +254,7 @@ func TestVoucherRepo_DebitForceAllowsOverdraft(t *testing.T) {
 	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-FORCE", 800, true); err != nil {
 		t.Fatalf("force=true overspend: %v, want success (the remote sale already happened)", err)
 	}
-	v, err := repo.GetVoucherBalance(ctx, "GS-FORCE")
+	v, err := repo.GetVoucherBalance(ctx, nil, "GS-FORCE")
 	if err != nil {
 		t.Fatalf("read voucher: %v", err)
 	}
@@ -280,13 +280,13 @@ func TestVoucherRepo_DebitForceAllowsOverdraft(t *testing.T) {
 	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-EXACTDRAIN", 400, false); err != nil {
 		t.Fatalf("drain GS-EXACTDRAIN to exactly zero: %v", err)
 	}
-	if v, _ := repo.GetVoucherBalance(ctx, "GS-EXACTDRAIN"); v.BalanceMinor != 0 || v.Status != "redeemed" {
+	if v, _ := repo.GetVoucherBalance(ctx, nil, "GS-EXACTDRAIN"); v.BalanceMinor != 0 || v.Status != "redeemed" {
 		t.Fatalf("after exact drain: balance=%d status=%q, want 0/'redeemed'", v.BalanceMinor, v.Status)
 	}
 	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-EXACTDRAIN", 100, true); err != nil {
 		t.Fatalf("force redemption of an already-'redeemed' (exact-drain) voucher: %v, want success", err)
 	}
-	if v, _ := repo.GetVoucherBalance(ctx, "GS-EXACTDRAIN"); v.BalanceMinor != -100 || v.Status != "redeemed" {
+	if v, _ := repo.GetVoucherBalance(ctx, nil, "GS-EXACTDRAIN"); v.BalanceMinor != -100 || v.Status != "redeemed" {
 		t.Fatalf("after second forced redemption: balance=%d status=%q, want -100/'redeemed'", v.BalanceMinor, v.Status)
 	}
 
@@ -329,8 +329,80 @@ func TestVoucherRepo_CreateDuplicateIDReturnsErrVoucherIDExists(t *testing.T) {
 	}
 
 	// The original voucher is untouched by the failed second insert.
-	v, gerr := repo.GetVoucherBalance(ctx, "GS-DUP")
+	v, gerr := repo.GetVoucherBalance(ctx, nil, "GS-DUP")
 	if gerr != nil || v.HolderLabel != "Sample Holder" || v.OriginalAmountMinor != 1000 {
 		t.Fatalf("original voucher after collision: %+v (err %v), want unchanged (Sample Holder/1000)", v, gerr)
+	}
+}
+
+// EnsureVoucherLocalRow (ut-docs#1668): the cross-till redemption
+// write-through's local-mirror step. INSERT OR IGNORE — fills a genuine gap
+// (this till has never seen the voucher) but must never clobber a row this
+// till already has, which is the exact hazard this card ruled out for a
+// periodic primary-wins sync of this table.
+func TestVoucherRepo_EnsureVoucherLocalRow_InsertsWhenMissing(t *testing.T) {
+	d := b8OpenDB(t, "voucher-ensure-missing.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	if _, err := repo.GetVoucherBalance(ctx, nil, "GS-REMOTE"); !errors.Is(err, ErrVoucherNotFound) {
+		t.Fatalf("precondition: GS-REMOTE must not exist locally yet, err = %v", err)
+	}
+
+	if err := repo.EnsureVoucherLocalRow(ctx, nil, Voucher{
+		ID: "GS-REMOTE", HolderLabel: "Remote Holder", OriginalAmountMinor: 2000,
+		BalanceMinor: 1200, Currency: "EUR", Status: "active",
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("EnsureVoucherLocalRow: %v", err)
+	}
+
+	v, err := repo.GetVoucherBalance(ctx, nil, "GS-REMOTE")
+	if err != nil {
+		t.Fatalf("GetVoucherBalance after ensure: %v", err)
+	}
+	if v.HolderLabel != "Remote Holder" || v.OriginalAmountMinor != 2000 || v.BalanceMinor != 1200 || v.Status != "active" {
+		t.Fatalf("mirrored voucher = %+v, want the pre-debit snapshot passed in", v)
+	}
+
+	// A subsequent local debit against the just-mirrored row must succeed
+	// exactly as it would for a voucher this till issued itself.
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-REMOTE", 500, false); err != nil {
+		t.Fatalf("debit against mirrored row: %v", err)
+	}
+	if v, _ := repo.GetVoucherBalance(ctx, nil, "GS-REMOTE"); v.BalanceMinor != 700 {
+		t.Fatalf("balance after debit = %d, want 700", v.BalanceMinor)
+	}
+}
+
+func TestVoucherRepo_EnsureVoucherLocalRow_NeverClobbersExistingRow(t *testing.T) {
+	d := b8OpenDB(t, "voucher-ensure-existing.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	// This till already knows about the voucher — e.g. it issued it, or
+	// redeemed against it earlier this shift — with its OWN, more recent
+	// local balance.
+	vSeedVoucher(t, ctx, repo, "GS-LOCAL", 1000)
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-LOCAL", 300, false); err != nil {
+		t.Fatalf("seed local debit: %v", err)
+	}
+
+	// A stale/different snapshot (as if fetched from a primary that hasn't
+	// seen this till's own redemption yet) must NOT overwrite it.
+	if err := repo.EnsureVoucherLocalRow(ctx, nil, Voucher{
+		ID: "GS-LOCAL", HolderLabel: "Someone Else", OriginalAmountMinor: 1000,
+		BalanceMinor: 1000, Currency: "EUR", Status: "active",
+		CreatedAt: time.Now().UTC().Format(time.RFC3339),
+	}); err != nil {
+		t.Fatalf("EnsureVoucherLocalRow: %v", err)
+	}
+
+	v, err := repo.GetVoucherBalance(ctx, nil, "GS-LOCAL")
+	if err != nil {
+		t.Fatalf("GetVoucherBalance: %v", err)
+	}
+	if v.HolderLabel != "Sample Holder" || v.BalanceMinor != 700 {
+		t.Fatalf("EnsureVoucherLocalRow must never clobber an existing local row, got %+v", v)
 	}
 }

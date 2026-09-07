@@ -119,7 +119,7 @@ func TestApplyJournal_QuarantinesCollidingVoucherIDOnIssueReplay(t *testing.T) {
 		t.Fatalf("quarantined entry must not create a sale row: exists=%v err=%v", exists, err)
 	}
 	// The FIRST voucher (Alice's, 1000) is untouched by the collision.
-	v, err := repo.GetVoucherBalance(ctx, "GS-COLLIDE")
+	v, err := repo.GetVoucherBalance(ctx, nil, "GS-COLLIDE")
 	if err != nil || v.HolderLabel != "Alice" || v.OriginalAmountMinor != 1000 {
 		t.Fatalf("original voucher after collision: %+v (err %v), want unchanged (Alice/1000)", v, err)
 	}

@@ -307,7 +307,7 @@ var nonAdminTables = map[string]string{
 	"worker_allocations":          "tip/service-charge pool allocations tied to a cashier + reset_batches — per-till operational history, same family as shifts/payments",
 	"worker_allocations_archive":  "archived worker_allocations — same reasoning",
 	"report_archive":              "this till's own X/Z report archive — per-till operational history, same reasoning as sales_archive",
-	"voucher_transactions":        "per-sale voucher issue/redemption ledger — same append-only reasoning as payments; ALSO gated on ut-docs#1668's open vouchers question below",
+	"voucher_transactions":        "per-sale voucher issue/redemption ledger — same append-only reasoning as payments; stays per-till exactly like vouchers below (ut-docs#1668) — this till's own local ledger row, never dumped/applied",
 
 	// Plugin install machinery — already named above. The installed SET
 	// travels as its own separately-fingerprinted bundle (SyncPluginsRepo,
@@ -344,8 +344,28 @@ var nonAdminTables = map[string]string{
 	// Genuinely open classification questions — excluded (not synced) rather
 	// than guessed into adminTables, each split into its own follow-up card
 	// per this var's own top comment.
-	"vouchers":      "shop-wide voucher balance, runtime-mutable across tills — needs a concurrency design before it can safely sync (parallel to ut-docs#1554's role_permissions); flagged in ut-docs#1668",
 	"price_history": "NOT a pure append-only audit trail (AppendPriceHistoryItem/Variant UPDATE the prior row's ends_at, and item deletion DELETEs rows) and NOT inert to checkout — ResolveCurrentPrice consults an open price_history row BEFORE items' synced price, so it can override it. Currently latent (nothing in production writes this table yet), but a satellite that ever does would diverge on price silently. Needs an Architect pass before either classification is safe; flagged in ut-docs#1671",
+
+	// Resolved classification (ut-docs#1668): correctly excluded, same
+	// concurrency reasoning ut-docs#1554 gave role_permissions — a periodic
+	// primary-wins dump/apply on a balance that can change between polls
+	// risks clobbering a redemption made on a satellite since the last
+	// pull, or reverting a spent voucher back to its old balance. Resolved
+	// by NOT syncing this table at all: a replica validates a redemption
+	// against the primary's CURRENT balance (registerSyncVouchers's
+	// read-only GET, sync_vouchers.go) right before completing the sale,
+	// but the actual debit still happens exactly once, LOCALLY, reaching
+	// the primary the ordinary way — the sales journal, completely
+	// unchanged. A round-2 review (2026-09-07) found this card's own first
+	// draft ALSO debited the primary synchronously in a write-through,
+	// double-applying every online redemption once the journal replayed
+	// the same debit again; the read-only design here doesn't have that
+	// failure mode, but consequently doesn't fully close the double-spend
+	// window either — a fully-simultaneous two-till redemption race
+	// remains, same residual risk this codebase already accepts for the
+	// single-till-offline case (AllowVoucherOverdraft, ut-docs#1053). A
+	// true atomic write-through is real follow-up work, not this card.
+	"vouchers": "shop-wide voucher balance, runtime-mutable across tills — kept per-till; cross-till redemption validates against a live primary read (ut-docs#1668), not a synced table",
 }
 
 // FiscalPendingSignRetriesSettingsKey is the settings.key the pre-1.4.0
