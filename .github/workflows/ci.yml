@@ -57,6 +57,10 @@ jobs:
         run: bash scripts/ci/guard-data-access.sh
       - name: Data-access policy guard regression test
         run: bash scripts/ci/guard-data-access_test.sh
+      - name: price_history sync-classification guard
+        run: bash scripts/ci/guard-price-history-sync.sh
+      - name: price_history sync-classification guard regression test
+        run: bash scripts/ci/guard-price-history-sync_test.sh
       - name: Migration-version-collision guard
         run: bash scripts/ci/guard-migration-version-collision.sh
       - name: Migration-version-collision guard regression test
