@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"path/filepath"
 	"strings"
 	"testing"
 	"unicode/utf8"
@@ -8,6 +9,7 @@ import (
 	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	appdb "github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -382,5 +384,43 @@ func TestCollectProblems_TruncationIsUTF8Safe(t *testing.T) {
 	}
 	if !utf8.ValidString(msg) {
 		t.Fatalf("truncated message is not valid UTF-8: %q", msg)
+	}
+}
+
+// TestCloudAdjustStock_AuditActorSatisfiesRealForeignKey is a REAL-schema
+// regression for the "cloud" actor id bug (ut-docs#1676): audit_log.actor_id
+// has a genuine FOREIGN KEY to users(id) in internal/db/migrations/001_init.sql,
+// and "cloud" was never a seeded user, so this call always violated it in a
+// real deployment. This test opens a real migrated database directly
+// (appdb.Open) rather than going through openPagesTestDB/seedForPages, so it
+// stays a true regression test regardless of that package's own test-fixture
+// schema (which historically carried no such FK at all, and is why this bug
+// went uncaught for as long as it did).
+func TestCloudAdjustStock_AuditActorSatisfiesRealForeignKey(t *testing.T) {
+	migrated, err := appdb.Open(filepath.Join(t.TempDir(), "cloudadjust.db"))
+	if err != nil {
+		t.Fatalf("open+migrate: %v", err)
+	}
+	t.Cleanup(func() { migrated.Close() })
+	db := migrated.DB
+
+	if _, err := db.Exec(`INSERT INTO items (id, name, base_price, is_active) VALUES ('itm1', 'Widget', 500, 1)`); err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+
+	dp := &common.Deps{Db: db}
+	if _, err := cloudAdjustStock(t.Context(), dp, "itm1", 5, "restock"); err != nil {
+		t.Fatalf("cloudAdjustStock against a real migrated schema: %v", err)
+	}
+
+	var actorID, dataJSON string
+	if err := db.QueryRow(`SELECT actor_id, data_json FROM audit_log WHERE entity_type = 'inventory' ORDER BY created_at DESC LIMIT 1`).Scan(&actorID, &dataJSON); err != nil {
+		t.Fatalf("query audit log: %v", err)
+	}
+	if actorID != "system" {
+		t.Fatalf("audit actor_id = %q, want a real seeded user id (\"system\")", actorID)
+	}
+	if !strings.Contains(dataJSON, "cloud:") {
+		t.Fatalf("expected the audit payload to keep the adjustment's cloud origin visible now the actor can't, got %q", dataJSON)
 	}
 }
