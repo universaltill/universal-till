@@ -87,3 +87,9 @@ dist-shells/
 # killed test run leaves this behind (harmless, never meant to be
 # committed).
 cmd/unitill-desktop/zzz_guard_test_fixture.go
+
+# Local run artifacts (ut-docs#1751 review): the single-instance lock the
+# running app writes, and Playwright's last-run marker. Both are per-machine
+# state, not repo content.
+data/.unitill.lock
+test-results/

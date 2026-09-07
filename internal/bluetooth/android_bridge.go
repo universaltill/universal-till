@@ -75,6 +75,12 @@ const (
 	bridgeErrUnavailable   = "UNAVAILABLE"
 	bridgeErrNotFound      = "NOT_FOUND"
 	bridgeErrPairingFailed = "PAIRING_FAILED"
+	// The three below have no D-Bus counterpart — see the sentinels they
+	// map to in client.go for why each is its own state rather than a
+	// flavour of UNAVAILABLE/ACCESS_DENIED (ut-docs#1751).
+	bridgeErrAdapterOff        = "ADAPTER_OFF"
+	bridgeErrPermissionReq     = "PERMISSION_REQUIRED"
+	bridgeErrForgetUnsupported = "FORGET_UNSUPPORTED"
 )
 
 // classifyBridgeErr maps a bridgeErr*-prefixed message onto this package's
@@ -91,6 +97,10 @@ func classifyBridgeErr(err error) error {
 		bridgeErrUnavailable:   ErrUnavailable,
 		bridgeErrNotFound:      ErrNotFound,
 		bridgeErrPairingFailed: ErrPairingFailed,
+
+		bridgeErrAdapterOff:        ErrAdapterOff,
+		bridgeErrPermissionReq:     ErrPermissionRequired,
+		bridgeErrForgetUnsupported: ErrForgetUnsupported,
 	} {
 		prefix := token + ": "
 		if msg := err.Error(); strings.HasPrefix(msg, prefix) {

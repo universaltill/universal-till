@@ -53,7 +53,7 @@
 - Kitchen display (a per-station live order screen for a second monitor on the till — same one-tap status buttons and live refresh as the Orders page; the LAN-paired standalone display device is a follow-up)
 - Table floor plan and assignment (draw your dining room, name each table, drag it into place; assign an order to a table from the basket or move a held order to a different free table, and the plan's free/open-order status lights up live)
 - Barcode scanning (USB/Bluetooth scanner, or a device camera — no dedicated hardware required)
-- In-POS Bluetooth pairing (a manager scans for, pairs, trusts and forgets a Bluetooth scanner or scale from a Settings-side panel on the Linux/Raspberry Pi kiosk — no OS settings or SSH; the .deb ships the scoped D-Bus grant the till service needs, ADR-0078)
+- In-POS Bluetooth pairing (a manager scans for, pairs, trusts and forgets a Bluetooth scanner or scale from a Settings-side panel — no OS settings or SSH). Two backends behind one page (ADR-0080): BlueZ over D-Bus on Linux/Raspberry Pi, where the .deb ships the scoped grant the till service needs (ADR-0078), and Android's own BluetoothAdapter on a tablet till. On Android the page also offers to switch the radio on and to grant the Bluetooth permission. Unpairing is the one operation Android gives apps no supported route to, so it succeeds on some versions and otherwise hands the operator to Android's own Bluetooth settings — never reporting a device as forgotten while it is still paired.
 - Multi-currency support
 - Tax calculation (configurable by region)
 - Employee management
@@ -62,7 +62,7 @@
 
 ### Hardware Support
 - USB barcode scanners
-- Bluetooth HID barcode scanners and scales (paired from inside the POS on Linux/Raspberry Pi)
+- Bluetooth HID barcode scanners and scales (paired from inside the POS on Linux/Raspberry Pi and on Android tablet tills)
 - Thermal receipt printers (ESC/POS)
 - Cash drawers
 - Customer displays

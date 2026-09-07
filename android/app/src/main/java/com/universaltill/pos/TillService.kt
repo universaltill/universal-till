@@ -101,6 +101,18 @@ class TillService : Service() {
         // pressure) safely re-attaches rather than double-starting.
         Thread {
             try {
+                // ut-docs#1751 (ADR-0080): register Android's Bluetooth
+                // stack BEFORE the server starts, so the very first request
+                // after boot already has a backend. Until this call existed
+                // the seam added by ut-docs#1721 had no implementation
+                // behind it and every Android till failed closed with
+                // "not supported on this platform" (ut-docs#1643).
+                // Application Context, not this Service: the bridge outlives
+                // any one component and needs no UI. Nothing here can throw
+                // into the start path — the constructor only stores a
+                // reference; the adapter is not touched until a request
+                // arrives.
+                Mobile.setBluetoothBridge(BluetoothBridgeImpl(applicationContext))
                 val addr = Mobile.start(filesDir.absolutePath)
                 address = addr
                 // ut-docs#412: the notification text never carries the raw

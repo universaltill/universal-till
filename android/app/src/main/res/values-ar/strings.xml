@@ -12,4 +12,5 @@
     <string name="notification_channel_name">خدمة Universal Till</string>
     <string name="kiosk_pin_not_engaged">قفل الكشك غير مُفعّل — هذا الجهاز غير مؤمَّن</string>
     <string name="external_link_failed">تعذّر فتح الرابط في المتصفح.</string>
+    <string name="bluetooth_settings_blocked_in_lockdown">أنهِ وضع القفل أولًا — لا يمكن فتح إعدادات البلوتوث في أندرويد والصندوق مقفل.</string>
 </resources>
