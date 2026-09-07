@@ -11,8 +11,11 @@ package data
 // for #820 — and, since ut-docs#1390, table_claims: the live (not-yet-held)
 // basket's own pick, persisted the moment it's made (migration 077) so the
 // next order on the same till can't take the same table. IsTableFree
-// consults both sources the same way; ClaimTable/ReleaseTableClaim are the
-// claim's only writers.
+// consults both sources the same way. The claim's writers are ClaimTable /
+// ReleaseTableClaim (this till's own basket, till_id = ”) and, since
+// ut-docs#1703, ClaimTableForTill / ReleaseTableClaimForTill — the primary
+// side of the cross-till write-through, where a claim is owned by the
+// tills.id that took it and is TTL-reconciled against tills.last_seen_at.
 
 import (
 	"context"
@@ -261,24 +264,120 @@ func (r *POSRepo) ReleaseTableClaim(ctx context.Context, tableID string) error {
 	return nil
 }
 
-// ClearAllTableClaims wipes every live-basket claim (ut-docs#1390) — called
-// once at process boot (internal/pages.Init), never from a request handler.
-// A table_claims row means "some live basket has this table picked right
-// now", and at boot there IS no live basket yet: pos.Service starts empty,
-// by construction, on every process start. So any row still present
-// belongs to a process that ended without releasing it (a crash, a kill,
-// a power loss) — every one is stale, unconditionally, with no per-row
+// ClaimTableForTill reserves tableID on behalf of an enrolled replica till
+// (ut-docs#1703) — the PRIMARY-side write behind POST /api/sync/tables/claim,
+// so the whole shop holds at most one live claim per table. Same race-free
+// INSERT OR IGNORE primitive as ClaimTable, with the owning tills.id recorded
+// in till_id (migration 008), and one thing more, in the same transaction
+// first: a claim already on the table is dropped when it is
+//
+//   - the CALLING till's own claim — re-claiming a table you already hold
+//     always succeeds, see below; or
+//   - a claim belonging to a till NOT seen by the primary since cutoff
+//     (tills.last_seen_at older than it, NULL, or the till no longer enrolled
+//     at all) — that till crashed or lost the network mid-claim and nothing
+//     else would ever clean its row up (a till's boot-time
+//     ClearLocalTableClaims only ever clears its OWN local rows).
+//
+// The caller derives cutoff from the same 2-minute online bound the sync
+// status chip uses (internal/pages tillClaimTTL).
+//
+// The own-claim case is NOT a nicety — without it a till permanently locks a
+// table against ITSELF (independent review, 2026-09-07). Its claim survives on
+// the primary whenever the release never lands: the till crashed mid-basket,
+// or the release write-through hit an unreachable primary (the local row is
+// dropped regardless, by design). At the next boot the till clears its LOCAL
+// rows and starts talking to the primary again — so it is "online", so the
+// staleness rule above can never expire its orphan, so re-picking that table
+// would be refused forever. Re-taking your own row (rather than merely
+// reporting claimed=true and leaving the old row) also refreshes claimed_at,
+// which is what the floor plan renders as "occupied since". Safe because
+// there is exactly one live basket per till: a claim recorded against a till
+// id IS that till's single current pick, and this call is that till replacing
+// it with itself.
+//
+// A till_id = ” row — THIS till's own local claim (ClaimTable, mirroring
+// sales.till_id's this-till convention) — is never expired here: the primary
+// is always online with itself and has no tills row to be judged against.
+// claimed=false means the table is (still) held by a DIFFERENT, live till: an
+// ordinary "occupied" outcome for the caller to render, not an error.
+func (r *POSRepo) ClaimTableForTill(ctx context.Context, tableID, tillID string, cutoff time.Time) (claimed bool, err error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, fmt.Errorf("claim table for till: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+	// till_id != '' guards the primary's own local claim against both
+	// disjuncts (a real till's id is a uuid, never '', so the first can
+	// never match it either — belt and braces).
+	if _, err := tx.ExecContext(ctx, `
+DELETE FROM table_claims
+WHERE table_id = ? AND till_id != ''
+  AND (till_id = ?
+       OR till_id NOT IN (SELECT id FROM tills WHERE last_seen_at IS NOT NULL AND last_seen_at >= ?))`,
+		tableID, tillID, cutoff.UTC().Format(time.RFC3339)); err != nil {
+		return false, fmt.Errorf("claim table for till: expire stale: %w", err)
+	}
+	now := time.Now().UTC().Format(time.RFC3339)
+	res, err := tx.ExecContext(ctx, `
+INSERT OR IGNORE INTO table_claims (table_id, claimed_at, till_id) VALUES (?, ?, ?)`, tableID, now, tillID)
+	if err != nil {
+		return false, fmt.Errorf("claim table for till: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("claim table for till: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, fmt.Errorf("claim table for till: commit: %w", err)
+	}
+	return n == 1, nil
+}
+
+// ReleaseTableClaimForTill drops tillID's own claim on tableID (ut-docs#1703)
+// — the PRIMARY-side write behind POST /api/sync/tables/release. Scoped to
+// the calling till: another till's claim, or this till's own ” local row,
+// is untouched. A no-op — not an error — when there is nothing to release,
+// same convention as ReleaseTableClaim.
+func (r *POSRepo) ReleaseTableClaimForTill(ctx context.Context, tableID, tillID string) error {
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM table_claims WHERE table_id = ? AND till_id = ?`, tableID, tillID); err != nil {
+		return fmt.Errorf("release table claim for till: %w", err)
+	}
+	return nil
+}
+
+// ClearLocalTableClaims wipes THIS till's own live-basket claims — every
+// till_id = ” row (ut-docs#1390) — called once at process boot
+// (internal/pages.Init), never from a request handler. A table_claims row
+// means "some live basket has this table picked right now", and at boot
+// there IS no live basket on THIS process yet: pos.Service starts empty, by
+// construction, on every process start. So any of its own rows still present
+// belong to a process that ended without releasing them (a crash, a kill, a
+// power loss) — every one is stale, unconditionally, with no per-row
 // judgement call needed. Without this, a table claimed right before an
 // unclean shutdown stays occupied forever: nothing else ever revisits an
 // orphaned row (the picker filters occupied tables out, /api/pos/table and
 // /api/pos/held/table both reject a pick on one), and until #1393 ships a
 // manual "free the table" action, there is no in-product recovery at all.
+//
+// Scoped to till_id = ” since ut-docs#1703 gave claims an owner (independent
+// review, 2026-09-07). The sweep used to be unconditional — every row, whoever
+// owned it — which on a PRIMARY also wiped the claims of every REPLICA: tills
+// that are still running, with those tables still live on their screens (a
+// replica is unaffected either way; every row it writes locally is a ” row).
+// A primary restart therefore
+// re-opened exactly the cross-till double-claim #1703 exists to close: the
+// replica keeps its table locally while the primary now reads it free and
+// hands it to the next till that asks. Replica-owned rows need no sweep here
+// anyway — ClaimTableForTill's TTL reconciliation is what expires them, and
+// only for a till that has genuinely gone quiet.
+//
 // held_sales is NOT touched here — a parked order surviving a restart is
 // the intended offline-first durability held_sales exists for, not a
 // leftover to clear.
-func (r *POSRepo) ClearAllTableClaims(ctx context.Context) error {
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM table_claims`); err != nil {
-		return fmt.Errorf("clear all table claims: %w", err)
+func (r *POSRepo) ClearLocalTableClaims(ctx context.Context) error {
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM table_claims WHERE till_id = ''`); err != nil {
+		return fmt.Errorf("clear local table claims: %w", err)
 	}
 	return nil
 }

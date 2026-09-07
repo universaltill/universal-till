@@ -186,6 +186,15 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// /api/sync/orders — missing here at first is the exact
 		// /api/sync/stock failure class again.
 		"/api/sync/tables",
+		// ut-docs#1703: the primary-side table-claim WRITE-THROUGH endpoints
+		// a replica's claimTableWriteThrough / releaseTableClaimWriteThrough
+		// (tables_claim_proxy.go) proxy to. Bearer-authed in the handler
+		// (syncTill), same as /api/sync/tables — without these entries the
+		// replica authenticates perfectly and is still 401'd here, so the
+		// proxy silently falls back to local-only and two tills can claim
+		// one table again: the /api/sync/stock failure class, again.
+		"/api/sync/tables/claim",
+		"/api/sync/tables/release",
 	} {
 		if !exempt(p) {
 			t.Errorf("%s is not exempt — this middleware will 401 it before the "+

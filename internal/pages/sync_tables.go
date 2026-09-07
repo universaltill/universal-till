@@ -27,7 +27,7 @@ import (
 // through to the primary, which in turn needs an owning-till-id + TTL
 // reconciliation scheme so a replica that crashes/loses network mid-claim
 // doesn't leave an orphaned claim on the primary forever (nothing today
-// would ever clean one up — POSRepo.ClearAllTableClaims only runs at a
+// would ever clean one up — POSRepo.ClearLocalTableClaims only runs at a
 // till's own boot and only clears that till's own local rows). That's
 // split out as ut-docs#1703, its own Architect pass; this endpoint only
 // ever reads.

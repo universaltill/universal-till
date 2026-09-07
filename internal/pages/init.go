@@ -123,21 +123,28 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	httpx.InitUIScale(state.UIScale)
 	httpx.InitOSKMode(state.OSKMode)
 
-	// Boot sweep: drop every live-basket table claim (ut-docs#1390). The
-	// engine constructed just below always starts with an empty basket, so
-	// any table_claims row still present belongs to a process that ended
-	// without releasing it (crash, kill, power loss) — stale by
-	// construction, every time, with nothing per-row to decide. Without
-	// this a table claimed right before an unclean shutdown stays
-	// unbookable forever (independent review, ut-docs#1390): the picker
+	// Boot sweep: drop THIS till's own live-basket table claims
+	// (ut-docs#1390). The engine constructed just below always starts with an
+	// empty basket, so any of its own table_claims rows still present belong
+	// to a process that ended without releasing them (crash, kill, power
+	// loss) — stale by construction, every time, with nothing per-row to
+	// decide. Without this a table claimed right before an unclean shutdown
+	// stays unbookable forever (independent review, ut-docs#1390): the picker
 	// filters occupied tables out and both table-assignment handlers
 	// reject a pick on one, so nothing else ever revisits an orphaned row.
+	//
+	// Own rows ONLY, since ut-docs#1703 gave claims an owner: on a primary
+	// this table also holds the live claims of REPLICAS that are still
+	// running, and wiping those on a primary restart would re-open the very
+	// cross-till double-claim #1703 closes. Those are reconciled by TTL in
+	// POSRepo.ClaimTableForTill instead — see ClearLocalTableClaims.
+	//
 	// Non-fatal, same offline-first "a boot must never be blocked on a
 	// settings write" convention as SaveState above — a failed sweep just
 	// means recovery waits for the next restart, not a boot failure. Never
 	// touches held_sales: a parked order surviving a restart is durability
 	// working as intended, not a leftover to clear.
-	if err := data.NewPOSRepo(db).ClearAllTableClaims(ctx); err != nil {
+	if err := data.NewPOSRepo(db).ClearLocalTableClaims(ctx); err != nil {
 		log.Errorf("clear stale table claims: %v", err)
 	}
 
@@ -288,8 +295,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerPairingJoinAPI(mux, dp)                   // ADR-0033 part 3/3 (replica side)
 	registerPendingPairingsUI(mux, dp)                // ADR-0033 part 3/3 (primary side)
 	registerSyncSales(mux, dp)
-	registerSyncOrders(mux, dp) // cross-till orders board, primary side (ut-docs#1350)
-	registerSyncTables(mux, dp) // cross-till table occupancy, read-only, primary side (ut-docs#1392)
+	registerSyncOrders(mux, dp)      // cross-till orders board, primary side (ut-docs#1350)
+	registerSyncTables(mux, dp)      // cross-till table occupancy, read-only, primary side (ut-docs#1392)
+	registerSyncTablesClaim(mux, dp) // cross-till table-claim write-through, primary side (ut-docs#1703)
 	registerSyncAdmin(mux, dp)
 	registerSyncAssets(mux, dp)
 	registerSyncQuarantinePage(mux, dp) // ut-docs#1133: quarantined LAN-sync journal entries, primary-only admin panel (ADR-0065 follow-up)

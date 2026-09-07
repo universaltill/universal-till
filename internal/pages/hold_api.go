@@ -223,7 +223,7 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		// claim the table pick wrote (ut-docs#1390) is released -- one
 		// occupancy source per lifecycle stage, never both at once. After
 		// Insert, deliberately: the table must never read free in between.
-		releaseTableClaim(ctx, posRepo, snap.TableID)
+		releaseTableClaim(ctx, d, posRepo, snap.TableID)
 		d.Engine.Reset()
 		w.Header().Set("HX-Trigger", "held-changed")
 		renderBasket(w, r, httpx.T(locale, "hold.toast.held"), "success")
@@ -287,12 +287,12 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		d.Engine.Restore(snap)
 		restoredTable := d.Engine.TableID()
 		if restoredTable != "" && restoredTable != prevTable {
-			if claimed, err := posRepo.ClaimTable(ctx, restoredTable); err != nil || !claimed {
+			if claimed, err := claimTableWriteThrough(ctx, d, posRepo, restoredTable); err != nil || !claimed {
 				log.Printf("resume %s: re-claim table %s failed (claimed=%v): %v", id, restoredTable, claimed, err)
 			}
 		}
 		if prevTable != restoredTable {
-			releaseTableClaim(ctx, posRepo, prevTable)
+			releaseTableClaim(ctx, d, posRepo, prevTable)
 		}
 		if err := repo.Delete(ctx, id); err != nil {
 			// The sale is restored either way; a stale row is the lesser evil.
