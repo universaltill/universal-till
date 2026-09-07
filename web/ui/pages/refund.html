@@ -74,5 +74,14 @@ document.body.addEventListener('htmx:responseError', function (ev) {
   var msg = document.getElementById('refund-msg');
   if (msg) msg.textContent = '✗ ' + (ev.detail.xhr.responseText || 'error');
 });
+// ut-docs#1287: a network-level failure (e.g. dropping off the shop LAN
+// mid-tap) never reaches htmx:responseError — there's no response at all,
+// so htmx fires htmx:sendError instead. Without this the Refund button is
+// a dead tap: nothing here, nothing from the server, no visible sign the
+// refund didn't go through.
+document.body.addEventListener('htmx:sendError', function () {
+  var msg = document.getElementById('refund-msg');
+  if (msg) msg.textContent = '✗ ' + "{{ T "designer.error.server" }}";
+});
 </script>
 {{ end }}
