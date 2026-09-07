@@ -36,8 +36,19 @@ func NewDBusClient() (Client, error) {
 // healthy) adapter is missing or the service isn't running is a
 // misdiagnosis, not just an unhelpful message; ErrUnsupportedPlatform says
 // what is actually true instead.
+//
+// ADR-0080 adds the second Android outcome: once the Kotlin side has
+// registered an AndroidBridge (SetAndroidBridge, called from
+// mobile.SetBluetoothBridge at boot), Android gets a Client that forwards
+// to Android's own Bluetooth stack instead. No bridge registered — every
+// Android build until ut-docs#1731 lands — keeps the ErrUnsupportedPlatform
+// path exactly as it was: this branch is additive, never a behaviour
+// change for a caller that hasn't wired the bridge.
 func newDBusClientFor(goos string) (Client, error) {
 	if goos == "android" {
+		if b := RegisteredAndroidBridge(); b != nil {
+			return newAndroidBridgeClient(b), nil
+		}
 		return nil, ErrUnsupportedPlatform
 	}
 	conn, err := dbus.ConnectSystemBus()

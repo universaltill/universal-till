@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/universaltill/universal-till/internal/bluetooth"
 )
 
 // mobileTestEnv points the till at an isolated temp data dir and disables
@@ -269,6 +271,55 @@ func nonLoopbackIPv4s(t *testing.T) []net.IP {
 		ips = append(ips, ipNet.IP)
 	}
 	return ips
+}
+
+// stubBluetoothBridge is the smallest possible BluetoothBridge — a
+// stand-in for the Kotlin implementation ut-docs#1731 will supply. It
+// implements BluetoothBridge (this package) structurally, which — since
+// BluetoothBridge and bluetooth.AndroidBridge are kept identical on purpose
+// (see BluetoothBridge's own doc comment) — also satisfies
+// bluetooth.AndroidBridge with no adapter, exactly what SetBluetoothBridge
+// relies on below. This test only needs to prove the setter reaches
+// internal/bluetooth's registration; the bridge's own forwarding/decoding
+// behaviour is covered in internal/bluetooth/android_bridge_test.go.
+type stubBluetoothBridge struct{ listCalls int }
+
+func (s *stubBluetoothBridge) ListDevices() (string, error) { s.listCalls++; return "[]", nil }
+func (s *stubBluetoothBridge) Scan(int64) (string, error)   { return "[]", nil }
+func (s *stubBluetoothBridge) Pair(string) error            { return nil }
+func (s *stubBluetoothBridge) Forget(string) error          { return nil }
+
+// ADR-0080 / ut-docs#1721: SetBluetoothBridge is the one Kotlin → Go entry
+// point that registers Android's Bluetooth stack with internal/bluetooth.
+// It must actually reach bluetooth.SetAndroidBridge — a stub setter that
+// gomobile binds but that drops the value on the floor would compile,
+// bind, and silently leave Android on ErrUnsupportedPlatform forever.
+func TestSetBluetoothBridge_RegistersWithBluetoothPackage(t *testing.T) {
+	if got := bluetooth.RegisteredAndroidBridge(); got != nil {
+		t.Fatalf("a bridge is already registered before this test ran: %#v", got)
+	}
+	stub := &stubBluetoothBridge{}
+	SetBluetoothBridge(stub)
+	t.Cleanup(func() { SetBluetoothBridge(nil) })
+
+	got := bluetooth.RegisteredAndroidBridge()
+	if got != bluetooth.AndroidBridge(stub) {
+		t.Fatalf("bluetooth.RegisteredAndroidBridge() = %#v, want the stub passed to SetBluetoothBridge", got)
+	}
+	// It's the same object, not a copy or a wrapper: a call through the
+	// registered bridge lands on the stub.
+	if _, err := got.ListDevices(); err != nil {
+		t.Fatalf("ListDevices via the registered bridge: %v", err)
+	}
+	if stub.listCalls != 1 {
+		t.Fatalf("stub ListDevices calls = %d, want 1", stub.listCalls)
+	}
+
+	// And clearing it restores the pre-ADR-0080 default (no bridge).
+	SetBluetoothBridge(nil)
+	if got := bluetooth.RegisteredAndroidBridge(); got != nil {
+		t.Fatalf("after SetBluetoothBridge(nil): RegisteredAndroidBridge() = %#v, want nil", got)
+	}
 }
 
 func TestStop_SafeWhenNotRunning(t *testing.T) {
