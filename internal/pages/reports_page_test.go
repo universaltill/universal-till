@@ -867,6 +867,34 @@ func TestReportsTabs_EOD_BusinessDayStartRoundTrips(t *testing.T) {
 	}
 }
 
+// ut-docs#1650: the printed-article settings round-trip into the EOD tab's
+// form the same way business_day_start does above — both the mode select's
+// "selected" option and the cap number input's value.
+func TestReportsTabs_EOD_ArticlePrintSettingsRoundTrip(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if err := dp.Settings.Set(ctx, keyEODArticlePrintMode, "off"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, keyEODArticlePrintCap, "45"); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsTab(t, mux, "eod", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `<option value="off" selected>`) {
+		t.Fatalf("expected the saved article_print_mode (off) selected in the rendered field, got: %s", body)
+	}
+	if !strings.Contains(body, `name="article_print_cap" min="1" max="999" style="width:5rem" value="45"`) {
+		t.Fatalf("expected the saved article_print_cap to round-trip into the rendered field, got: %s", body)
+	}
+}
+
 // ut-docs#964: the "tips" tab's received-vs-allocated summary — "received"
 // (payments.tip_amount on a completed sale, tip_recipient='employee') and
 // "allocated" (worker_allocations, this ADR-0063 ledger) are two

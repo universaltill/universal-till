@@ -9,6 +9,7 @@ import (
 	"mime"
 	"net/http"
 	"regexp"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -36,7 +37,56 @@ const (
 	// this setting existed. Same settings panel/endpoint as the EOD
 	// schedule below (POST /api/settings/eod), not a new settings page.
 	keyReportsBusinessDayStart = "reports.business_day_start"
+	// keyEODArticlePrintMode/keyEODArticlePrintCap (ut-docs#1650) control
+	// ONLY the printed Z-report's "BY ARTICLE" footer section — the
+	// on-screen archived-report list (reports_tab_eod.html) always shows
+	// every article behind its own closed-by-default <details>, unaffected
+	// by this setting, per the card's own acceptance criteria. A high-SKU
+	// shop (200-400 distinct articles/day) otherwise gets a correspondingly
+	// long, unconditional printed roll with no way to turn it off (found
+	// reviewing ut-docs#1010). Same settings panel/endpoint as the EOD
+	// schedule above, not a new settings page.
+	keyEODArticlePrintMode = "reports.eod_article_print_mode" // "all" | "capped" | "off"
+	keyEODArticlePrintCap  = "reports.eod_article_print_cap"  // positive int as string
 )
+
+// Article print-mode values (keyEODArticlePrintMode) and the shipped
+// default cap — chosen (ut-docs#1650 research: Square, Toast) so a
+// low-SKU shop's printed output is unchanged in practice (fewer than 30
+// articles prints identically to "all") while a high-SKU shop's roll
+// length is bounded.
+const (
+	eodArticlePrintAll        = "all"
+	eodArticlePrintCapped     = "capped"
+	eodArticlePrintOff        = "off"
+	eodArticlePrintCapDefault = 30
+	eodArticlePrintCapMax     = 999 // sane ceiling, same spirit as eodTimeRe bounding its own field
+)
+
+// resolveEODArticlePrintSettings reads keyEODArticlePrintMode/
+// keyEODArticlePrintCap and normalizes them to a value buildEODDoc can act
+// on directly — unset/invalid always resolves to a valid state (the
+// shipped default) rather than buildEODDoc having to guess at malformed
+// stored data. mode falls back to "capped" (the default) on anything other
+// than the three recognized values; cap falls back to
+// eodArticlePrintCapDefault on anything that isn't a positive integer.
+func resolveEODArticlePrintSettings(ctx context.Context, d *common.Deps) (mode string, articleCap int) {
+	get := func(key string) string {
+		v, _, _ := d.Settings.Get(ctx, key)
+		return strings.TrimSpace(v)
+	}
+	mode = get(keyEODArticlePrintMode)
+	if mode != eodArticlePrintAll && mode != eodArticlePrintOff && mode != eodArticlePrintCapped {
+		mode = eodArticlePrintCapped
+	}
+	articleCap = eodArticlePrintCapDefault
+	if raw := get(keyEODArticlePrintCap); raw != "" {
+		if n, err := strconv.Atoi(raw); err == nil && n > 0 && n <= eodArticlePrintCapMax {
+			articleCap = n
+		}
+	}
+	return mode, articleCap
+}
 
 // eodTimeRe validates any local "HH:MM" setting this file's settings panel
 // stores — the EOD schedule time AND (ut-docs#519) the business-day-start
@@ -205,8 +255,13 @@ func footerRow(label, amount string) string {
 	return label + strings.Repeat(" ", space) + amount
 }
 
-// buildEODDoc renders the Z-report for the receipt printer.
-func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
+// buildEODDoc renders the Z-report for the receipt printer. articleMode/
+// articleCap (ut-docs#1650) control only the "BY ARTICLE" footer section
+// below — already-resolved values (resolveEODArticlePrintSettings), never
+// raw/unvalidated settings strings, so this function never has to guess at
+// malformed stored data; pass eodArticlePrintAll/0 for the pre-#1650
+// unconditional-print-everything behavior.
+func buildEODDoc(rep data.EODReport, storeName, charset string, articleMode string, articleCap int) print.Doc {
 	// printLocale: same grouping/decimal + date-order convention as the
 	// sale receipt's own printLocale (print_api.go), and the same reason
 	// for the *Latin variants below — ESC/POS text mode can't render
@@ -348,10 +403,28 @@ func buildEODDoc(rep data.EODReport, storeName, charset string) print.Doc {
 			doc.Footer = append(doc.Footer, footerRow(name, money(g.Gross.Minor())))
 		}
 	}
-	if len(rep.Articles) > 0 {
+	// Per-store print-mode setting (ut-docs#1650): "off" omits this section
+	// entirely (the on-screen report is unaffected regardless — see
+	// keyEODArticlePrintMode's doc comment); "capped" (default) prints only
+	// the top articleCap articles by revenue, followed by a fixed-vocabulary
+	// "+N more" line (same non-localized-printed-report convention as
+	// GUTSCHEINE/STORNOS below), since rep.Articles already arrives sorted
+	// `ORDER BY gross DESC` (ArticleSalesForDay/ArticleSalesForInstantWindow)
+	// — taking the first articleCap IS the top-N by revenue, no extra sort
+	// needed. "all" reproduces the pre-#1650 unconditional behavior.
+	if len(rep.Articles) > 0 && articleMode != eodArticlePrintOff {
 		doc.Footer = append(doc.Footer, "", "BY ARTICLE")
-		for _, a := range rep.Articles {
+		articles := rep.Articles
+		omitted := 0
+		if articleMode == eodArticlePrintCapped && articleCap > 0 && len(articles) > articleCap {
+			omitted = len(articles) - articleCap
+			articles = articles[:articleCap]
+		}
+		for _, a := range articles {
 			doc.Footer = append(doc.Footer, footerRow(a.Name, money(a.Gross.Minor())))
+		}
+		if omitted > 0 {
+			doc.Footer = append(doc.Footer, fmt.Sprintf("+%d more (see on-screen report)", omitted))
 		}
 	}
 	if len(rep.Operators) > 0 {
@@ -597,7 +670,8 @@ func generateEOD(ctx context.Context, d *common.Deps, actor, blockedActorID, ann
 		_ = repo.InsertAudit(ctx, nil, actor, "report", period, "eod_generated", payload, now, "")
 	}
 	if cfg := printerConfig(ctx, d); cfg.Enabled() {
-		doc := buildEODDoc(rep, storeNameOrDefault(ctx, d), cfg.Charset)
+		articleMode, articleCap := resolveEODArticlePrintSettings(ctx, d)
+		doc := buildEODDoc(rep, storeNameOrDefault(ctx, d), cfg.Charset, articleMode, articleCap)
 		pctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 		if perr := print.PrintDoc(pctx, cfg, doc); perr != nil {
@@ -897,7 +971,20 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
 			return
 		}
-		doc := buildEODDoc(rep, storeNameOrDefault(r.Context(), d), cfg.Charset)
+		// Deliberately the CURRENT live setting, not whatever was in effect
+		// when this report was originally closed (ut-docs#1650 review finding
+		// 2) — same convention this handler already follows for
+		// storeNameOrDefault/cfg.Charset just above: a reprint reflects
+		// today's config. `rep.Articles` itself is unaffected (the archive's
+		// content_json always holds every article; only how many of them
+		// this handler prints changes), and the on-screen archived-report
+		// list is a separate code path that always shows every article
+		// regardless of this setting either way — so nothing is lost,
+		// though a manager who switched to "off" since the original close
+		// gets a reprint with no BY ARTICLE section and no "+N more"-style
+		// marker that anything is missing, unlike "capped".
+		articleMode, articleCap := resolveEODArticlePrintSettings(r.Context(), d)
+		doc := buildEODDoc(rep, storeNameOrDefault(r.Context(), d), cfg.Charset, articleMode, articleCap)
 		if perr := print.PrintDoc(r.Context(), cfg, doc); perr != nil {
 			w.WriteHeader(http.StatusBadGateway)
 			fmt.Fprintf(w, `<span class="muted">✗ %s</span>`, httpx.T(locale, "settings.printer.test_failed"))
@@ -1033,6 +1120,23 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "business_day_start must be HH:MM", http.StatusBadRequest)
 			return
 		}
+		// Printed "BY ARTICLE" section (ut-docs#1650) — a sibling field on
+		// this same panel/endpoint, same "blank means unconfigured/default"
+		// convention as business_day_start above (resolveEODArticlePrintSettings
+		// is what actually applies the shipped default at print time).
+		articlePrintMode := strings.TrimSpace(r.Form.Get("article_print_mode"))
+		if articlePrintMode != "" && articlePrintMode != eodArticlePrintAll &&
+			articlePrintMode != eodArticlePrintCapped && articlePrintMode != eodArticlePrintOff {
+			http.Error(w, "article_print_mode must be all, capped or off", http.StatusBadRequest)
+			return
+		}
+		articlePrintCapRaw := strings.TrimSpace(r.Form.Get("article_print_cap"))
+		if articlePrintCapRaw != "" {
+			if n, err := strconv.Atoi(articlePrintCapRaw); err != nil || n < 1 || n > eodArticlePrintCapMax {
+				http.Error(w, fmt.Sprintf("article_print_cap must be a whole number between 1 and %d", eodArticlePrintCapMax), http.StatusBadRequest)
+				return
+			}
+		}
 		// Mutating + audit-writing (ut-docs#794): validated above (sync_api.go's
 		// precedent — don't burn a PIN entry on a request that 400s either
 		// way), gated below. Hidden replays the other two fields so the
@@ -1058,6 +1162,8 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 					{Name: "enabled", Value: enabledRaw},
 					{Name: "time", Value: hhmm},
 					{Name: "business_day_start", Value: bizDayStart},
+					{Name: "article_print_mode", Value: articlePrintMode},
+					{Name: "article_print_cap", Value: articlePrintCapRaw},
 				}, elev)
 			return
 		}
@@ -1068,8 +1174,13 @@ func registerEODAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = d.Settings.Set(r.Context(), keyEODEnabled, fmt.Sprintf("%t", enabled))
 		_ = d.Settings.Set(r.Context(), keyEODTime, hhmm)
 		_ = d.Settings.Set(r.Context(), keyReportsBusinessDayStart, bizDayStart)
+		_ = d.Settings.Set(r.Context(), keyEODArticlePrintMode, articlePrintMode)
+		_ = d.Settings.Set(r.Context(), keyEODArticlePrintCap, articlePrintCapRaw)
 		now := time.Now().UTC().Format(time.RFC3339)
-		payload := map[string]any{"enabled": enabled, "time": hhmm, "business_day_start": bizDayStart}
+		payload := map[string]any{
+			"enabled": enabled, "time": hhmm, "business_day_start": bizDayStart,
+			"article_print_mode": articlePrintMode, "article_print_cap": articlePrintCapRaw,
+		}
 		if elev.Outcome == elevated {
 			_ = repo.InsertAuditElevated(r.Context(), nil, actorID, elev.ActorID, "report", "-", "eod_settings_changed", payload, now, "")
 			// ut-docs#794 review finding (should-fix): a 204 never swaps at
