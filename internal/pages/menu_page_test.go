@@ -297,3 +297,68 @@ func TestMenuPageLanguageRowShowsNativeNamesNotBareCodes(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#1720 (product owner, on the real tablet): the Bluetooth Devices
+// tile rendered 📶 (ANTENNA BARS) — the mobile-reception glyph every phone
+// puts in its status bar, which says "signal strength", not "Bluetooth".
+// ut-docs#76 chose it knowingly because Unicode has no Bluetooth codepoint;
+// the runic approximation (U+16D2) depends on font coverage Android WebView
+// does not reliably have, so the standard mark can only be a drawn glyph.
+// It comes from the same {{ icon }} set the nav rail already uses
+// (ut-docs#1423) rather than a second icon mechanism.
+func TestMenuPage_BluetoothTileUsesTheBluetoothSymbolNotSignalBars(t *testing.T) {
+	mux, _ := newMenuPageTestDeps(t, nil)
+	t.Setenv("UT_AUTH", "off") // the tile is manager-gated
+
+	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	start := strings.Index(body, `href="/bluetooth-devices"`)
+	if start < 0 {
+		t.Fatalf("expected the bluetooth-devices tile rendered, got: %s", body)
+	}
+	// Assertions about which glyph this tile got are scoped to this tile's
+	// own markup. Page-wide would be the easier spelling and the wrong one:
+	// a plugin-contributed route with no mapped icon legitimately renders
+	// the ▪️ fallback elsewhere on this same page (ut-docs#1722, live on the
+	// Help/FAQ tile), so a page-wide assertion would encode something untrue
+	// of the real product and fail for a reason that has nothing to do with
+	// Bluetooth.
+	tile := body[start:]
+	if end := strings.Index(tile, "</a>"); end >= 0 {
+		tile = tile[:end]
+	}
+	if !strings.Contains(tile, `data-icon="bluetooth"`) {
+		t.Errorf("expected the drawn Bluetooth glyph on the tile, got: %s", tile)
+	}
+	// The fallback must not have been taken either: a missing IconSVG plus
+	// the removed iconFor entry would silently render the ▪️ no-icon square,
+	// the exact regression ut-docs#1371 fixed for /orders.
+	if strings.Contains(tile, `▪️`) {
+		t.Errorf("expected no no-icon fallback square on the bluetooth tile, got: %s", tile)
+	}
+	// This one IS page-wide on purpose: 📶 was this tile's only use anywhere
+	// in the menu, so it should now be gone from the page entirely.
+	if strings.Contains(body, "📶") {
+		t.Errorf("the antenna-bars emoji must not appear anywhere on the menu any more, got: %s", body)
+	}
+}
+
+// Every drawn tile icon must name an icon that actually exists.
+// icons_test.go's TestRailIconsReferencedByTemplatesExist scans templates for
+// a literal {{ icon "name" }} and so cannot see these — the menu resolves its
+// icon name in Go, from a map. This is that guard for this call path.
+func TestMenuPage_EveryDrawnTileIconNameResolves(t *testing.T) {
+	if len(iconSVGFor) == 0 {
+		t.Fatal("iconSVGFor is empty — the Bluetooth tile (ut-docs#1720) should be in it")
+	}
+	for href, name := range iconSVGFor {
+		if httpx.Icon(name) == "" {
+			t.Errorf("%s maps to unknown icon %q (known: %v)", href, name, httpx.IconNames())
+		}
+	}
+}

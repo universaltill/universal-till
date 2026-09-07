@@ -362,6 +362,14 @@ body.menu-screen .session-admin-link { display: none; }
 }
 .menu-tile:hover, .menu-tile:active { border-color: var(--brand); transform: translateY(-2px); }
 .menu-ico { font-size: 2.9rem; line-height: 1; }
+/* ut-docs#1720: a tile whose icon is a drawn glyph rather than an emoji
+   (menu_page.go's iconSVGFor). Sized in absolute units to the emoji tiles'
+   rendered height rather than in em, for the same reason ut-docs#1423 moved
+   the rail off emoji at all: an emoji's drawn size inside its em-square
+   differs per platform font, so matching it via font-size would drift
+   between the tablet and desktop Chromium exactly as the old per-glyph
+   size tuning did. .menu-tile already centres its children. */
+.menu-ico svg { inline-size: 2.9rem; block-size: 2.9rem; display: block; }
 .menu-label { font-size: 1.2rem; font-weight: 600; }
 .btn-touch { min-height: 46px; display: inline-flex; align-items: center; }
 

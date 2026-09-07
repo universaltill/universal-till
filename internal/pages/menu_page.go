@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"html/template"
 	"net/http"
 
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -13,6 +14,32 @@ import (
 
 type menuTile struct {
 	Href, Icon, Label string
+	// IconSVG is a drawn glyph from the shared icon set
+	// (internal/httpx/icons.go), for the few routes where no emoji says the
+	// right thing. When set it replaces Icon; every other tile keeps the
+	// emoji it has always had. Empty for almost every tile — see iconSVGFor.
+	IconSVG template.HTML
+}
+
+// iconSVGFor maps a nav route to a drawn icon name, overriding iconFor.
+//
+// ut-docs#1720 (product owner, on the real tablet): the Bluetooth Devices
+// tile used 📶 (ANTENNA BARS) — the mobile-reception glyph, which says
+// "signal strength", not "Bluetooth". ut-docs#76 picked it knowingly,
+// because Unicode has no Bluetooth codepoint; what it could not do is make
+// an emoji mean something Unicode has never encoded. The runic
+// approximation (U+16D2) is not an answer either — it depends on font
+// coverage Android WebView does not reliably have, and an empty box on the
+// device our pilots run is worse than the wrong icon.
+//
+// So this reaches for the icon set the nav rail already moved to
+// (ut-docs#1423) rather than inventing a second mechanism for one tile.
+// Anything added here must also be a real entry in httpx's icon map —
+// TestMenuPage_EveryDrawnTileIconNameResolves is that guard, because
+// icons_test.go's template scanner only sees a literal {{ icon "name" }}
+// and these names are resolved in Go.
+var iconSVGFor = map[string]string{
+	"/bluetooth-devices": "bluetooth",
 }
 
 // iconFor maps a nav route to a touch-friendly emoji glyph.
@@ -31,15 +58,12 @@ var iconFor = map[string]string{
 	"/locations":        "📍",
 	"/registers":        "🧮",
 	"/kitchen-stations": "🍳",
-	// ut-docs#76: Unicode has no Bluetooth glyph; the antenna-bars sign is
-	// the nearest "wireless device" reading on a touch tile.
-	"/bluetooth-devices": "📶",
-	"/tables":            "🪑",
-	"/country-settings":  "🌍",
-	"/translations":      "🌐",
-	"/tills":             "🖥️",
-	"/report-issue":      "🐞",
-	"/fiscal-register":   "📋",
+	"/tables":           "🪑",
+	"/country-settings": "🌍",
+	"/translations":     "🌐",
+	"/tills":            "🖥️",
+	"/report-issue":     "🐞",
+	"/fiscal-register":  "📋",
 	// ut-docs#1371: /orders had no entry here, so every Orders tile fell
 	// through to the "▪️" no-icon fallback below — the exact "plain black
 	// square" the report described, not a font-coverage gap. 🛎️ (service
@@ -53,11 +77,16 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/menu", func(w http.ResponseWriter, r *http.Request) {
 		var tiles []menuTile
 		add := func(href, label string) {
+			// A drawn glyph wins where one is mapped; the emoji fallback
+			// chain below is untouched for every other tile, including the
+			// "▪️" no-icon square an unmapped plugin route still gets
+			// (ut-docs#1371).
+			svg := httpx.Icon(iconSVGFor[href])
 			icon := iconFor[href]
-			if icon == "" {
+			if icon == "" && svg == "" {
 				icon = "▪️"
 			}
-			tiles = append(tiles, menuTile{Href: href, Icon: icon, Label: label})
+			tiles = append(tiles, menuTile{Href: href, Icon: icon, Label: label, IconSVG: svg})
 		}
 		for _, m := range d.MenuSnapshot() {
 			add(m.Href, m.Label)

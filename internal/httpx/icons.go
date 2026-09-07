@@ -55,6 +55,15 @@ var railIcons = map[string]string{
 	// with no icon and no link at all. A shield mirrors the "signed and
 	// verifiable" idea the ✓ glyph stood in for.
 	"fiscal": `<path d="M20 13c0 5-3.5 7.5-7.35 8.95a1 1 0 0 1-.6-.01C8.5 20.5 4 18 4 13V6a1 1 0 0 1 1-1c2 0 4.5-1.2 6.24-2.72a1.17 1.17 0 0 1 1.52 0C14.51 3.79 17 5 19 5a1 1 0 0 1 1 1z"/><path d="m9 12 2 2 4-4"/>`,
+	// Bluetooth devices (bluetoothdevices.title, ut-docs#1720) — the Menu
+	// tile carried 📶 (ANTENNA BARS), the mobile-reception glyph, which
+	// reads as signal strength rather than Bluetooth. Unlike every other
+	// entry here this one could never have been an emoji: Unicode has no
+	// Bluetooth codepoint at all, and the runic approximation (U+16D2)
+	// depends on font coverage Android WebView does not reliably have — so
+	// the standard mark is only ever a drawn glyph. First icon used outside
+	// the nav rail (menu_page.go's tiles); see iconSVGFor there.
+	"bluetooth": `<path d="m7 7 10 10-5 5V2l5 5L7 17"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.
@@ -73,6 +82,14 @@ func iconHTML(name string) template.HTML {
 	}
 	return template.HTML(fmt.Sprintf(iconSVGOpen, template.HTMLEscapeString(name)) + body + `</svg>`) //nolint:gosec // body is a compile-time constant from railIcons; name is escaped
 }
+
+// Icon is iconHTML for Go code that builds a view model directly instead of
+// naming its icon in a template (menu_page.go's tiles, ut-docs#1720). Same
+// contract, deliberately: an unknown — or empty — name renders nothing, so a
+// caller can look a name up in a sparse map and pass the miss straight
+// through. Because such a call site is invisible to icons_test.go's
+// template scanner, each one owns a test that its names resolve.
+func Icon(name string) template.HTML { return iconHTML(name) }
 
 // IconNames lists the available rail icons, sorted — for tests and tooling.
 func IconNames() []string {
