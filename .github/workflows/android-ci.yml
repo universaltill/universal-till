@@ -1,0 +1,127 @@
+name: android-ci
+# ut-docs#1658: ci.yml's `build` job never compiles the Kotlin/Gradle
+# project under android/ — only release.yml's android-app job does, and
+# that only runs when a release is actually cut. So a Kotlin compile
+# error under android/ can merge to main clean and only surface at
+# release time, or on a real device (real precedent: a first draft of
+# universal-till#834 overrode a method that does not exist anywhere in
+# the Android/AndroidX API surface — a hard compile error, only caught
+# because an independent review happened to hand-verify it against AOSP
+# sources; whether a session catches this at all currently depends on
+# whether it has an Android SDK, which most cold cloud cycles don't —
+# ut-docs#1281/#1254).
+#
+# Own workflow, NOT a new step in ci.yml's `build` job, so a PR that
+# never touches android/** doesn't pay this job's SDK/NDK/gomobile setup
+# cost (a multi-minute tax ci.yml's own steps don't otherwise have).
+#
+# Deliberately NOT a top-level `on.pull_request.paths`/`on.push.paths`
+# filter (unlike lang-pack-drift.yml's convention) — verified empirically
+# while building this card, on this exact PR: GitHub's path-filtered
+# `pull_request` trigger silently skipped 2 of 4 real synchronize pushes
+# that genuinely touched android/** (confirmed via the Actions API: zero
+# workflow runs created for those SHAs, not a slow/queued run — the
+# other 2 pushes on the same PR did trigger correctly, so this isn't a
+# config mistake, it's the trigger itself being unreliable). A gate that
+# silently doesn't run some fraction of the time is worse than no gate —
+# it looks green because the check never posted, not because the build
+# passed. So instead: the workflow always runs (same trigger shape as
+# `ci.yml`/`e2e.yml`, which fired reliably on all 4 pushes during the
+# same testing), and the "doesn't pay the extra cost" requirement is met
+# by gating the expensive steps on a real `git diff` computed inside the
+# job (see the "Determine..." step below), not on GitHub's own trigger-
+# time path evaluation.
+#
+# Deliberately compile-only: no instrumented tests, no signed/
+# distributable artifact — `assembleDebug` (unsigned, no keystore
+# needed) is enough to prove the Kotlin actually compiles against the
+# generated Go .aar, which is the entire gap this closes.
+on:
+  push:
+    branches: [main]
+  pull_request:
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Fetch diff base
+        # Shallow-fetch just the one comparison commit (not full history)
+        # so this stays cheap even when the filter below finds no match.
+        # `|| true`: a brand-new branch's first push, or a force-push
+        # whose `before` SHA no longer exists, means there's nothing to
+        # fetch — handled as "can't prove it's unrelated" below, never as
+        # "assume unrelated."
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "pull_request" ]; then
+            BASE="${{ github.event.pull_request.base.sha }}"
+          else
+            BASE="${{ github.event.before }}"
+          fi
+          echo "BASE=$BASE" >> "$GITHUB_ENV"
+          git fetch --depth=1 origin "$BASE" || true
+      - name: Determine whether this change touches android/**
+        id: filter
+        run: |
+          set -euo pipefail
+          if git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+            changed="$(git diff --name-only "$BASE" "${{ github.sha }}")"
+          else
+            # Can't prove this push is unrelated to android/** (no base
+            # to diff against) -- never silently skip; run the real
+            # compile instead of trusting an unprovable "no match."
+            changed="android/unknown-cannot-diff"
+          fi
+          echo "$changed"
+          if printf '%s\n' "$changed" | grep -q '^android/'; then
+            echo "match=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "match=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/setup-go@v5
+        if: steps.filter.outputs.match == 'true'
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-java@v4
+        if: steps.filter.outputs.match == 'true'
+        with:
+          distribution: temurin
+          java-version: "17"
+      # Installs cmdline-tools and sets ANDROID_HOME/ANDROID_SDK_ROOT —
+      # same action release.yml's android-app job uses.
+      - uses: android-actions/setup-android@v3
+        if: steps.filter.outputs.match == 'true'
+      - name: Install NDK + platform + build-tools
+        if: steps.filter.outputs.match == 'true'
+        # Versions matched to release.yml's android-app job — gomobile
+        # bind (triggered below via Gradle's preBuild -> generateAar,
+        # android/app/build.gradle.kts) needs a concrete NDK, not
+        # "whatever's newest," and must match what the app is actually
+        # built/verified against (ut-docs/adr/0023-android-ios-till-strategy.md).
+        run: |
+          set -euo pipefail
+          sdkmanager --install "ndk;28.2.13676358" "platforms;android-36" "build-tools;36.1.0"
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - name: Install gomobile/gobind
+        if: steps.filter.outputs.match == 'true'
+        # android/app/build.gradle.kts's generateAar task shells out to
+        # `gomobile bind` (which itself shells out to `gobind`) to
+        # regenerate libs/unitill-mobile.aar from ../mobile on every
+        # build — both must be on PATH before Gradle runs, same as
+        # release.yml's android-app job.
+        run: |
+          set -euo pipefail
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Compile Android app (Gradle assembleDebug)
+        if: steps.filter.outputs.match == 'true'
+        # assembleDebug's preBuild dependency on generateAar means this
+        # single command exercises both halves of the app: the Go ->
+        # .aar bind, and the Kotlin compile against it. Unsigned debug
+        # build type — no keystore secrets needed for a compile check.
+        run: |
+          set -euo pipefail
+          cd android
+          ./gradlew assembleDebug --no-daemon
