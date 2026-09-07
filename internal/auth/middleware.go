@@ -78,6 +78,15 @@ func exempt(path string) bool {
 		// exactly like the /api/sync/stock incident this switch's own comment
 		// documents. TestSyncPullPathsAreExempt pins both entries.
 		"/api/sync/tables/claim", "/api/sync/tables/release",
+		// ut-docs#1712: the boot-time counterpart to /release above — a
+		// replica's StartTableClaimBootRelease (internal/pages/
+		// tables_claim_proxy.go) calls this once at startup to drop every
+		// claim it holds on the primary, not just one table at a time.
+		// Same syncTill auth as /claim and /release; omitting it here would
+		// silently 401 the boot call and leave the till's stale claims
+		// stuck for the full TTL window, exactly the bug this endpoint
+		// exists to close. TestSyncPullPathsAreExempt pins this entry.
+		"/api/sync/tables/release-all",
 		"/api/setup/join",
 		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status",
 		// ut-docs#1550: the wizard's "joined — restarting" trigger, the

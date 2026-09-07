@@ -195,6 +195,15 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// one table again: the /api/sync/stock failure class, again.
 		"/api/sync/tables/claim",
 		"/api/sync/tables/release",
+		// ut-docs#1712: the boot-time counterpart to /release above — a
+		// replica's StartTableClaimBootRelease (internal/pages/
+		// tables_claim_proxy.go) calls this once at startup to drop every
+		// claim it holds, not just one table. Bearer-authed in the handler
+		// (syncTill), same as /claim and /release — without this entry the
+		// boot call is silently 401'd and the till's stale claims stay
+		// stuck for the full TTL window: the /api/sync/stock failure class,
+		// again.
+		"/api/sync/tables/release-all",
 		// ut-docs#1668: the primary-side cross-till voucher lookup a
 		// replica's fetchVoucherFromPrimary (voucher_sync_proxy.go) proxies
 		// to. Bearer-authed in the handler (syncTill), same as

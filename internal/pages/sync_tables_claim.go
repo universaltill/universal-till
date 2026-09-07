@@ -2,6 +2,7 @@ package pages
 
 import (
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -102,6 +103,60 @@ func registerSyncTablesClaim(mux *http.ServeMux, d *common.Deps) {
 		}
 		if err := posRepo.ReleaseTableClaimForTill(r.Context(), tableID, till.ID); err != nil {
 			logging.L().Errorf("sync table release %s from %s: %v", tableID, till.Name, err)
+			writeSyncOrdersJSON(w, http.StatusInternalServerError, nil, "server error")
+			return
+		}
+		writeSyncOrdersJSON(w, http.StatusOK, syncTableReleaseResult{Released: true}, nil)
+	})
+
+	// Release every claim the calling till holds that was taken STRICTLY
+	// BEFORE this till's own boot, across however many tables (ut-docs#1712)
+	// — the boot-time counterpart to /release: a replica calls this once at
+	// startup (StartTableClaimBootRelease, tables_claim_proxy.go), never
+	// per-table, so a till that rebooted and simply never revisits a
+	// specific table doesn't leave it blocked for the full tillClaimTTL
+	// window.
+	//
+	// The cutoff is REQUIRED, not a nicety (self-review, 2026-09-07): this
+	// call can land minutes after the replica's own boot (initial delay +
+	// retries against an unreachable primary), and that till is already
+	// accepting live requests the whole time. Without a cutoff, a table the
+	// operator picks for real in that window would be silently released out
+	// from under the till's own live basket the moment this delayed call
+	// finally lands — reopening the exact cross-till double-claim
+	// ut-docs#1703 closed.
+	//
+	// The cutoff is computed HERE, on the PRIMARY's own clock, from an
+	// ELAPSED DURATION the replica reports (`elapsed_ms`: whole
+	// milliseconds since that till's own boot) — deliberately NOT from an
+	// absolute timestamp the replica would otherwise supply (independent
+	// review, 2026-09-07, corrected before merge). `table_claims.claimed_at`
+	// is also stamped on THIS machine's clock (ClaimTableForTill); comparing
+	// it against an absolute cross-machine timestamp would silently break
+	// the instant the two clocks disagree — on an offline-first product,
+	// unsynced clocks (no NTP reachable) are ordinary, not an edge case.
+	// Working entirely in the primary's own clock removes that dependency:
+	// cutoff and claimed_at are always readings of the SAME clock. A
+	// missing/negative/unparseable `elapsed_ms` is a 400, not a silent
+	// "release everything" fallback (a negative value would compute a
+	// FUTURE cutoff, i.e. release unconditionally) — see
+	// ReleaseAllTableClaimsForTill's own doc comment on why a zero cutoff
+	// is the safe default, never reachable here.
+	mux.HandleFunc("POST /api/sync/tables/release-all", func(w http.ResponseWriter, r *http.Request) {
+		till, ok := syncTill(r, tills)
+		if !ok {
+			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
+			return
+		}
+		_ = r.ParseForm()
+		elapsedMS, err := strconv.ParseInt(strings.TrimSpace(r.Form.Get("elapsed_ms")), 10, 64)
+		if err != nil || elapsedMS < 0 {
+			writeSyncOrdersJSON(w, http.StatusBadRequest, nil, "elapsed_ms required (non-negative integer milliseconds)")
+			return
+		}
+		cutoff := time.Now().Add(-time.Duration(elapsedMS) * time.Millisecond)
+		if err := posRepo.ReleaseAllTableClaimsForTill(r.Context(), till.ID, cutoff); err != nil {
+			logging.L().Errorf("sync table release-all from %s: %v", till.Name, err)
 			writeSyncOrdersJSON(w, http.StatusInternalServerError, nil, "server error")
 			return
 		}

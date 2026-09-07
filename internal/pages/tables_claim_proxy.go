@@ -6,7 +6,9 @@ import (
 	"log"
 	"net/http"
 	"net/url"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -164,4 +166,172 @@ func releaseTableClaimWriteThrough(ctx context.Context, d *common.Deps, repo *da
 	if err := repo.ReleaseTableClaim(ctx, tableID); err != nil {
 		log.Printf("table claim: release %s failed: %v", tableID, err)
 	}
+}
+
+// tableClaimBootReleaseInitialDelay/tableClaimBootReleaseInterval shape the
+// background boot-release retry (ut-docs#1712), same constants-shaped
+// convention as basePluginRetryInitialDelay/Interval and
+// tseRetryInitialDelay/Interval (setup_base_plugins.go / setup_tse.go) —
+// `var`, not `const`, purely so a test can shrink them; production code
+// never reassigns them. Long enough past boot that a still-starting primary
+// isn't mistaken for unreachable, short enough that a till whose primary
+// happened to be down at the exact moment it rebooted still clears its
+// stale claims within a few minutes of the network coming back, not at the
+// next reboot.
+var (
+	tableClaimBootReleaseInitialDelay = 30 * time.Second
+	tableClaimBootReleaseInterval     = 5 * time.Minute
+)
+
+// releaseAllTableClaimsOnPrimary tries POST /api/sync/tables/release-all on
+// the primary, sending how long ago (in whole milliseconds) THIS till
+// booted — not an absolute timestamp — so the primary can compute the
+// cutoff entirely on its OWN clock (see StartTableClaimBootRelease's doc
+// comment for why an absolute cross-machine timestamp was wrong).
+// bootAt must be a time.Now() value that has never had .UTC()/.Round()/
+// .Truncate() applied to it — those strip the monotonic reading Go
+// attaches to a fresh time.Now(), and time.Since below needs that reading
+// to stay immune to a wall-clock step (NTP correcting after boot) on this
+// same machine, not just to skew between the two machines. ok=false on ANY
+// failure — not a replica, network error, timeout, non-200, malformed body
+// — same contract as claimTableOnPrimary/releaseTableClaimOnPrimary.
+func releaseAllTableClaimsOnPrimary(ctx context.Context, d *common.Deps, client *http.Client, bootAt time.Time) (ok bool) {
+	base, bearer, isReplica := replicaSyncTarget(ctx, d)
+	if !isReplica {
+		return false
+	}
+	elapsedMS := strconv.FormatInt(time.Since(bootAt).Milliseconds(), 10)
+	form := url.Values{"elapsed_ms": {elapsedMS}}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/sync/tables/release-all", strings.NewReader(form.Encode()))
+	if err != nil {
+		return false
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	resp, err := client.Do(req)
+	if err != nil {
+		logging.L().Debugf("table claim boot release: primary unreachable (%v) — will retry", err)
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		logging.L().Debugf("table claim boot release: primary answered %s — will retry", resp.Status)
+		return false
+	}
+	var out struct {
+		Data *syncTableReleaseResult `json:"data"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		logging.L().Debugf("table claim boot release: malformed primary response (%v) — will retry", err)
+		return false
+	}
+	if out.Data == nil {
+		logging.L().Debugf("table claim boot release: primary response missing data — will retry")
+		return false
+	}
+	return true
+}
+
+// tableClaimBootReleaseTick is one pass of the background boot-release
+// retry (ut-docs#1712), reporting how long ago THIS till booted freshly on
+// EVERY attempt — deliberately re-derived from the SAME bootAt instant each
+// time (never recomputed as "now"), so the reported elapsed keeps growing
+// across retries exactly as much real time as has actually passed. Not a
+// replica at all (no primary configured) → nothing to release, ever —
+// reports done so the caller never ticks again for a standalone till. A
+// replica reports done only once the primary has actually confirmed the
+// release. Unlike basePluginRetryTick/tseProvisionRetryTick, which
+// re-derive a persistent pending-state row on every tick and so must keep
+// checking forever, this action carries no state of its own: either the
+// primary got told, or it didn't, and a successful call only ever needs
+// sending once per boot.
+func tableClaimBootReleaseTick(ctx context.Context, d *common.Deps, bootAt time.Time) (done bool) {
+	_, _, isReplica := replicaSyncTarget(ctx, d)
+	if !isReplica {
+		return true
+	}
+	return releaseAllTableClaimsOnPrimary(ctx, d, tableClaimProxyClient, bootAt)
+}
+
+// StartTableClaimBootRelease launches the background half of the boot-time
+// claim release (ut-docs#1712): tells the primary to drop every
+// table_claims row this till owns, so a till that rebooted and simply never
+// revisits a specific table doesn't leave that table blocked for the full
+// tillClaimTTL window — the gap ClaimTableForTill's TTL reconciliation
+// cannot close on its own, because a till that is syncing normally again is
+// "seen" immediately and the staleness disjunct never fires for it (see
+// ReleaseAllTableClaimsForTill's doc comment, internal/data/tables_repo.go).
+//
+// Shape mirrors StartBasePluginRetry/StartTSEProvisionRetry exactly: a
+// wg-joined goroutine, a short initial delay, then a ticker, returning on
+// ctx.Done() from EITHER select — including from inside the initial delay,
+// so a shutdown never waits on it. Unlike those two, which retry forever
+// against a persistent state row, this loop stops the moment one attempt
+// succeeds: releasing is a one-shot "clear my pre-boot state," not an
+// ongoing reconciliation, so nothing is gained by continuing to tick after
+// success — and a standalone till (no primary configured) returns after the
+// very first tick and never calls out again.
+//
+// Wired in internal/pages/init.go alongside the other Start*(bgCtx, dp, wg)
+// calls, where common.Deps (and the sync settings replicaSyncTarget reads)
+// already exist — deliberately NOT at ClearLocalTableClaims's early call
+// site (init.go, before dp is built), which is exactly why that local sweep
+// can only ever clear this till's own local rows and never reach the
+// primary's copy. Must never block Init's return or app boot (offline-
+// first, ADR-0003): fire-and-forget from the caller's perspective, exactly
+// like every sibling Start* call already is.
+//
+// bootAt (self-review, 2026-09-07) is captured HERE, synchronously, the
+// instant this function is called from Init — i.e. before Init returns and
+// before the HTTP server can accept its first request — and reused
+// unchanged across every retry, however long they take. That ordering is
+// what guarantees any table this till claims for real, from the moment it
+// starts serving, is claimed strictly after this instant.
+//
+// bootAt is sent to the primary as an ELAPSED DURATION (time.Since(bootAt)
+// at send time), never as an absolute timestamp — this is deliberate, not
+// a style choice (independent review, 2026-09-07, corrected before merge).
+// An earlier version sent an absolute `before := time.Now().UTC()` and
+// compared it directly against claimed_at, which is stamped by the
+// PRIMARY's own clock (ClaimTableForTill, internal/data/tables_repo.go).
+// That compares two DIFFERENT machines' wall clocks as if they were one: if
+// this till's clock ran even slightly ahead of the primary's, a table it
+// legitimately claimed in the first moments after boot would be stamped
+// EARLIER than the (relatively-later) absolute cutoff and get swept by this
+// very call — reopening the exact cross-till double-claim ut-docs#1703
+// closed, on an offline-first product where an unsynced clock (no NTP
+// reachable) is an ordinary, expected state, not an edge case. Sending an
+// elapsed duration instead removes the replica's clock from the comparison
+// entirely: the primary computes cutoff = time.Now().Add(-elapsed) using
+// ONLY its own clock, so cutoff and claimed_at are always readings of the
+// same clock. bootAt itself must be a bare time.Now() (never .UTC()'d) so
+// Go's monotonic reading survives into time.Since — immune to a wall-clock
+// step on THIS machine too (e.g. NTP correcting shortly after boot), not
+// just to skew between the two machines.
+func StartTableClaimBootRelease(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) {
+	bootAt := time.Now()
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		select {
+		case <-time.After(tableClaimBootReleaseInitialDelay):
+		case <-ctx.Done():
+			return
+		}
+		if tableClaimBootReleaseTick(ctx, d, bootAt) {
+			return
+		}
+		t := time.NewTicker(tableClaimBootReleaseInterval)
+		defer t.Stop()
+		for {
+			select {
+			case <-t.C:
+				if tableClaimBootReleaseTick(ctx, d, bootAt) {
+					return
+				}
+			case <-ctx.Done():
+				return
+			}
+		}
+	}()
 }

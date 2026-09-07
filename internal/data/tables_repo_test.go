@@ -889,3 +889,180 @@ func TestReleaseTableClaimForTill_OnlyDeletesOwnClaim(t *testing.T) {
 		t.Fatalf("a till-scoped release must never delete the local '' claim, got %q (ok=%v)", owner, ok)
 	}
 }
+
+// ReleaseAllTableClaimsForTill (ut-docs#1712) is the boot-time counterpart
+// to ClearLocalTableClaims: a freshly-booted process's live basket is always
+// empty, so every table_claims row a REPLICA owns on the PRIMARY is stale by
+// construction, the same fact ClearLocalTableClaims already relies on for
+// this till's own LOCAL (”) rows. This drops every row for one till across
+// however many tables it held, while leaving every other till's rows and
+// every local ” row completely untouched.
+func TestReleaseAllTableClaimsForTill_OnlyDeletesThatTillsRows(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Format(time.RFC3339)
+	seedTill(t, dbo, "till-a", now)
+	seedTill(t, dbo, "till-b", now)
+
+	t1, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T1: %v", err)
+	}
+	t2, err := repo.CreateTable(ctx, "T2", "", 4, "rect", 200, 200)
+	if err != nil {
+		t.Fatalf("CreateTable T2: %v", err)
+	}
+	t3, err := repo.CreateTable(ctx, "T3", "", 4, "rect", 300, 300)
+	if err != nil {
+		t.Fatalf("CreateTable T3: %v", err)
+	}
+	// till-a holds two tables (the "reboots and never revisits either"
+	// scenario), till-b holds a third; a fourth, separate table carries the
+	// primary's own local ('') claim — one row per table_id means it can't
+	// share T3 with till-b's claim, so it needs its own table.
+	t4, err := repo.CreateTable(ctx, "T4", "", 4, "rect", 400, 400)
+	if err != nil {
+		t.Fatalf("CreateTable T4: %v", err)
+	}
+	cutoff := time.Now().Add(-2 * time.Minute)
+	if claimed, err := repo.ClaimTableForTill(ctx, t1, "till-a", cutoff); err != nil || !claimed {
+		t.Fatalf("claim t1 for till-a: claimed=%v err=%v", claimed, err)
+	}
+	if claimed, err := repo.ClaimTableForTill(ctx, t2, "till-a", cutoff); err != nil || !claimed {
+		t.Fatalf("claim t2 for till-a: claimed=%v err=%v", claimed, err)
+	}
+	if claimed, err := repo.ClaimTableForTill(ctx, t3, "till-b", cutoff); err != nil || !claimed {
+		t.Fatalf("claim t3 for till-b: claimed=%v err=%v", claimed, err)
+	}
+	if claimed, err := repo.ClaimTable(ctx, t4); err != nil || !claimed {
+		t.Fatalf("local claim t4: claimed=%v err=%v", claimed, err)
+	}
+
+	// The cutoff is captured AFTER every claim above (mirroring
+	// StartTableClaimBootRelease capturing it once, before the server can
+	// accept its first request), so all of them count as "before boot."
+	releaseBefore := time.Now().Add(time.Second)
+	if err := repo.ReleaseAllTableClaimsForTill(ctx, "till-a", releaseBefore); err != nil {
+		t.Fatalf("ReleaseAllTableClaimsForTill: %v", err)
+	}
+
+	if _, ok := claimTillOf(t, dbo, t1); ok {
+		t.Fatal("till-a's claim on t1 must be gone")
+	}
+	if _, ok := claimTillOf(t, dbo, t2); ok {
+		t.Fatal("till-a's claim on t2 must be gone")
+	}
+	if owner, ok := claimTillOf(t, dbo, t3); !ok || owner != "till-b" {
+		t.Fatalf("till-b's claim on t3 must survive untouched, got %q (ok=%v)", owner, ok)
+	}
+	if owner, ok := claimTillOf(t, dbo, t4); !ok || owner != "" {
+		t.Fatalf("the primary's own local '' claim on t4 must survive untouched, got %q (ok=%v)", owner, ok)
+	}
+
+	// Idempotent: nothing left to release for till-a, not an error.
+	if err := repo.ReleaseAllTableClaimsForTill(ctx, "till-a", releaseBefore); err != nil {
+		t.Fatalf("second ReleaseAllTableClaimsForTill (nothing to release): %v", err)
+	}
+
+	// Immediate re-claim by a DIFFERENT till succeeds right away — no
+	// waiting out the TTL, which is the whole point of this card: till-a's
+	// last_seen_at is still FRESH (it never went quiet), so the TTL
+	// staleness disjunct in ClaimTableForTill would never have fired here.
+	if claimed, err := repo.ClaimTableForTill(ctx, t1, "till-b", cutoff); err != nil || !claimed {
+		t.Fatalf("till-b claiming t1 right after the release-all: claimed=%v err=%v", claimed, err)
+	}
+}
+
+// An empty tillID must never be accepted — that is the local-claim (”)
+// convention ClearLocalTableClaims/ReleaseTableClaim already own, and this
+// method must not be able to collide with it.
+func TestReleaseAllTableClaimsForTill_RefusesEmptyTillID(t *testing.T) {
+	_, repo := openTablesTestDB(t)
+	ctx := context.Background()
+
+	id, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	if claimed, err := repo.ClaimTable(ctx, id); err != nil || !claimed {
+		t.Fatalf("local ClaimTable: claimed=%v err=%v", claimed, err)
+	}
+	if err := repo.ReleaseAllTableClaimsForTill(ctx, "", time.Now()); err == nil {
+		t.Fatal("ReleaseAllTableClaimsForTill(\"\") must be refused, not silently wipe every local claim")
+	}
+}
+
+// The regression this cutoff exists to close, found in self-review
+// (2026-09-07): StartTableClaimBootRelease's call can land minutes after
+// boot (initial delay + retries against an unreachable primary), and the
+// server is already accepting live requests throughout. Without a cutoff,
+// a table this till claims for real AFTER boot — before the delayed
+// release-all call finally lands — would be silently wiped by it,
+// reopening the exact cross-till double-claim ut-docs#1703 closed. A claim
+// with claimed_at AT OR AFTER the cutoff must survive; only a claim
+// strictly BEFORE it (a genuine pre-boot orphan) is dropped.
+func TestReleaseAllTableClaimsForTill_NeverTouchesAClaimAtOrAfterCutoff(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	seedTill(t, dbo, "till-a", now.Format(time.RFC3339))
+
+	stale, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T1: %v", err)
+	}
+	fresh, err := repo.CreateTable(ctx, "T2", "", 4, "rect", 200, 200)
+	if err != nil {
+		t.Fatalf("CreateTable T2: %v", err)
+	}
+
+	// A pre-boot orphan: claimed_at well before the boot cutoff.
+	mustExec(t, dbo, `INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, ?, ?)`,
+		stale, now.Add(-1*time.Hour).Format(time.RFC3339), "till-a")
+
+	// The boot cutoff, captured once (mirroring StartTableClaimBootRelease
+	// capturing it before the server can accept its first request).
+	cutoff := now
+
+	// A genuinely FRESH claim, made by this same till AT the cutoff instant
+	// or later — the "operator picks a new table in the gap before the
+	// delayed release-all call lands" scenario. Seeded directly so the
+	// timestamp is exactly pinned, rather than racing wall-clock precision.
+	mustExec(t, dbo, `INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, ?, ?)`,
+		fresh, cutoff.Format(time.RFC3339), "till-a")
+
+	if err := repo.ReleaseAllTableClaimsForTill(ctx, "till-a", cutoff); err != nil {
+		t.Fatalf("ReleaseAllTableClaimsForTill: %v", err)
+	}
+
+	if _, ok := claimTillOf(t, dbo, stale); ok {
+		t.Fatal("the pre-cutoff orphaned claim must be released")
+	}
+	if owner, ok := claimTillOf(t, dbo, fresh); !ok || owner != "till-a" {
+		t.Fatalf("a claim made AT/AFTER the cutoff must survive a delayed release-all, got %q (ok=%v)", owner, ok)
+	}
+}
+
+// A zero cutoff (a caller that forgot to set one) must be a safe no-op —
+// release nothing — never the unsafe default of releasing everything.
+func TestReleaseAllTableClaimsForTill_ZeroCutoffReleasesNothing(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	seedTill(t, dbo, "till-a", now.Format(time.RFC3339))
+
+	id, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	if claimed, err := repo.ClaimTableForTill(ctx, id, "till-a", now.Add(-2*time.Minute)); err != nil || !claimed {
+		t.Fatalf("claim: claimed=%v err=%v", claimed, err)
+	}
+
+	if err := repo.ReleaseAllTableClaimsForTill(ctx, "till-a", time.Time{}); err != nil {
+		t.Fatalf("ReleaseAllTableClaimsForTill with zero cutoff: %v", err)
+	}
+	if owner, ok := claimTillOf(t, dbo, id); !ok || owner != "till-a" {
+		t.Fatalf("a zero cutoff must release nothing, got %q (ok=%v)", owner, ok)
+	}
+}

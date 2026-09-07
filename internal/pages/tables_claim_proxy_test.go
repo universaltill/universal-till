@@ -5,7 +5,9 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strconv"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -413,5 +415,218 @@ func TestClaimTableWriteThrough_LocalBranchStillClaimsWhenReconcileFails(t *test
 	}
 	if !tableOccupied(t, dp, t1) {
 		t.Fatal("the fallback must actually have written the local claim row")
+	}
+}
+
+// --- Boot-time release-all (ut-docs#1712) ---
+
+// releaseAllProxyPrimary is a fake primary that answers
+// POST /api/sync/tables/release-all, recording how many times it was
+// called, the auth/elapsed_ms it was sent, and whether it should succeed
+// (simulating an unreachable/erroring primary at boot vs. one that answers
+// once the network is back).
+type releaseAllProxyPrimary struct {
+	srv           *httptest.Server
+	calls         atomic.Int64
+	lastAuth      atomic.Value
+	lastElapsedMS atomic.Value
+	succeed       atomic.Bool
+}
+
+func newReleaseAllProxyPrimary(t *testing.T, succeed bool) *releaseAllProxyPrimary {
+	t.Helper()
+	p := &releaseAllProxyPrimary{}
+	p.succeed.Store(succeed)
+	p.srv = httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost || r.URL.Path != "/api/sync/tables/release-all" {
+			t.Errorf("unexpected primary call: %s %s", r.Method, r.URL.Path)
+			http.NotFound(w, r)
+			return
+		}
+		p.calls.Add(1)
+		p.lastAuth.Store(r.Header.Get("Authorization"))
+		_ = r.ParseForm()
+		p.lastElapsedMS.Store(r.Form.Get("elapsed_ms"))
+		if !p.succeed.Load() {
+			http.Error(w, "server error", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":{"released":true},"error":null}`)
+	}))
+	t.Cleanup(p.srv.Close)
+	return p
+}
+
+func TestTableClaimBootReleaseTick_NotAReplicaNeverCallsOutAndIsDone(t *testing.T) {
+	_, dp := newPOSTestDeps(t)
+	// sync.primary_url unset: not a replica.
+	primary := newReleaseAllProxyPrimary(t, true)
+	_ = primary // never called — asserted below via calls==0
+
+	if done := tableClaimBootReleaseTick(context.Background(), dp, time.Now()); !done {
+		t.Fatal("a non-replica till has nothing to release and must report done immediately")
+	}
+	if n := primary.calls.Load(); n != 0 {
+		t.Fatalf("a non-replica till must never call the primary, got %d calls", n)
+	}
+}
+
+func TestTableClaimBootReleaseTick_UnreachablePrimaryIsNotDone(t *testing.T) {
+	_, dp := newPOSTestDeps(t)
+	primary := newReleaseAllProxyPrimary(t, false) // 500s every call
+	setReplicaSettings(t, dp.Settings, primary.srv.URL, "boot-bearer")
+
+	if done := tableClaimBootReleaseTick(context.Background(), dp, time.Now()); done {
+		t.Fatal("a failing primary call must report NOT done, so the caller retries")
+	}
+	if n := primary.calls.Load(); n != 1 {
+		t.Fatalf("expected exactly one call, got %d", n)
+	}
+}
+
+func TestTableClaimBootReleaseTick_SuccessIsDoneAndSendsBearerAndElapsedMS(t *testing.T) {
+	_, dp := newPOSTestDeps(t)
+	primary := newReleaseAllProxyPrimary(t, true)
+	setReplicaSettings(t, dp.Settings, primary.srv.URL, "boot-bearer")
+	bootAt := time.Now()
+
+	if done := tableClaimBootReleaseTick(context.Background(), dp, bootAt); !done {
+		t.Fatal("a successful primary call must report done")
+	}
+	if got := primary.lastAuth.Load(); got != "Bearer boot-bearer" {
+		t.Fatalf("expected the sync bearer on the request, got %q", got)
+	}
+	got, _ := primary.lastElapsedMS.Load().(string)
+	ms, err := strconv.ParseInt(got, 10, 64)
+	if err != nil {
+		t.Fatalf("elapsed_ms must be a plain integer, got %q (%v)", got, err)
+	}
+	// Called immediately after capturing bootAt — a few ms of real work, not
+	// a fixed/absolute timestamp.
+	if ms < 0 || ms > 5000 {
+		t.Fatalf("elapsed_ms should be a small non-negative value for an immediate call, got %d", ms)
+	}
+}
+
+// The reported elapsed_ms must keep growing across retries from the SAME
+// bootAt instant, never reset/pinned — the actual failure mode independent
+// review found and empirically reproduced (2026-09-07): a version that
+// recomputed "now" fresh on every tick, instead of measuring elapsed time
+// since the ORIGINAL bootAt, passed every other test in this file, because
+// nothing asserted that elapsed keeps growing with real wall-clock time. A
+// tick that always reports ~0 elapsed would let the primary treat this
+// till's own later, legitimate claims as pre-boot too — see
+// StartTableClaimBootRelease's doc comment for the full reasoning.
+func TestTableClaimBootReleaseTick_ElapsedKeepsGrowingFromTheSameBootAt(t *testing.T) {
+	_, dp := newPOSTestDeps(t)
+	primary := newReleaseAllProxyPrimary(t, false) // 500s every call — never "done"
+	setReplicaSettings(t, dp.Settings, primary.srv.URL, "boot-bearer")
+	bootAt := time.Now()
+
+	tableClaimBootReleaseTick(context.Background(), dp, bootAt)
+	first, _ := primary.lastElapsedMS.Load().(string)
+	firstMS, err := strconv.ParseInt(first, 10, 64)
+	if err != nil {
+		t.Fatalf("parse first elapsed_ms %q: %v", first, err)
+	}
+
+	time.Sleep(60 * time.Millisecond)
+	tableClaimBootReleaseTick(context.Background(), dp, bootAt) // SAME bootAt, not a fresh one
+
+	if n := primary.calls.Load(); n != 2 {
+		t.Fatalf("expected 2 calls, got %d", n)
+	}
+	second, _ := primary.lastElapsedMS.Load().(string)
+	secondMS, err := strconv.ParseInt(second, 10, 64)
+	if err != nil {
+		t.Fatalf("parse second elapsed_ms %q: %v", second, err)
+	}
+	if secondMS-firstMS < 40 {
+		t.Fatalf("elapsed_ms must keep growing from the SAME bootAt across retries (first=%dms second=%dms) — a version that recomputes bootAt as \"now\" on each tick would report ~0 both times and pass this check incorrectly if it were weaker than a >=40ms margin", firstMS, secondMS)
+	}
+}
+
+// The background worker is registered against app.Run's drain WaitGroup
+// (internal/pages/init.go), so it must return on ctx.Done() rather than
+// leak its goroutine — including from inside
+// tableClaimBootReleaseInitialDelay, which is far longer than a shutdown is
+// willing to wait. Same shape/reasoning as
+// TestStartBasePluginRetryShutsDownOnCtxDone /
+// TestStartTSEProvisionRetryShutsDownOnCtxDone.
+func TestStartTableClaimBootReleaseShutsDownOnCtxDone(t *testing.T) {
+	_, dp := newPOSTestDeps(t)
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+
+	StartTableClaimBootRelease(ctx, dp, &wg)
+	cancel() // cancel while the worker is still in its initial delay
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("StartTableClaimBootRelease did not return on ctx.Done() — goroutine leak")
+	}
+}
+
+// StartTableClaimBootRelease itself must capture bootAt ONCE and reuse it
+// across every retry of its OWN goroutine loop — the invariant
+// TestTableClaimBootReleaseTick_ElapsedKeepsGrowingFromTheSameBootAt cannot
+// cover, because that test drives tableClaimBootReleaseTick directly with
+// an explicit bootAt it controls, never through StartTableClaimBootRelease's
+// own retry loop. Confirmed empirically (self-review, 2026-09-07): mutating
+// ONLY the loop's second call site (`tableClaimBootReleaseTick(ctx, d,
+// bootAt)` → `tableClaimBootReleaseTick(ctx, d, time.Now())`, i.e. a bug
+// only reachable via a real retry, not the first call) left every other
+// test in this file green, including the tick-level one above — proving
+// this is a genuinely distinct gap, not a duplicate of it.
+//
+// Shrinks the package-level retry timing (var, not const — see
+// tableClaimBootReleaseInitialDelay's doc comment) so the test observes
+// several real retries quickly, then checks the elapsed_ms reported on a
+// LATER retry reflects the real total time since the goroutine's own boot
+// — a version that recomputes bootAt fresh per tick would report ~0 on
+// every single call, retry after retry, however many fire.
+func TestStartTableClaimBootRelease_RetriesReportElapsedFromTheSameBoot(t *testing.T) {
+	_, dp := newPOSTestDeps(t)
+	primary := newReleaseAllProxyPrimary(t, false) // always fails — keeps retrying
+	setReplicaSettings(t, dp.Settings, primary.srv.URL, "boot-bearer")
+
+	origDelay, origInterval := tableClaimBootReleaseInitialDelay, tableClaimBootReleaseInterval
+	tableClaimBootReleaseInitialDelay = 10 * time.Millisecond
+	tableClaimBootReleaseInterval = 40 * time.Millisecond
+	t.Cleanup(func() {
+		tableClaimBootReleaseInitialDelay = origDelay
+		tableClaimBootReleaseInterval = origInterval
+	})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	StartTableClaimBootRelease(ctx, dp, &wg)
+
+	deadline := time.Now().Add(3 * time.Second)
+	for primary.calls.Load() < 3 {
+		if time.Now().After(deadline) {
+			cancel()
+			t.Fatal("timed out waiting for 3 retries")
+		}
+		time.Sleep(5 * time.Millisecond)
+	}
+	last, _ := primary.lastElapsedMS.Load().(string)
+	cancel()
+	wg.Wait()
+
+	lastMS, err := strconv.ParseInt(last, 10, 64)
+	if err != nil {
+		t.Fatalf("parse elapsed_ms %q: %v", last, err)
+	}
+	// By the 3rd call, real elapsed since the goroutine's own boot is at
+	// least initialDelay + 2*interval = 10 + 40 + 40 = 90ms. A comfortable
+	// margin below that (not the full 90ms, to absorb scheduler jitter)
+	// still decisively fails the "always reports ~0" mutation.
+	if lastMS < 60 {
+		t.Fatalf("3rd retry's elapsed_ms should reflect real time since this goroutine's own boot (expected roughly >=60ms), got %dms — a version that recomputes bootAt fresh per tick would report ~0 on every retry", lastMS)
 	}
 }

@@ -311,6 +311,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	StartBasePluginRetry(bgCtx, dp, wg)             // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
 	StartTSEProvisionRetry(bgCtx, dp, wg)           // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain
 	StartOrderStatusStreamBridge(bgCtx, dp, wg)     // replica: hold the primary's order-status SSE stream open and republish locally (ADR-0079, ut-docs#1571); joined by app.Run's drain
+	StartTableClaimBootRelease(bgCtx, dp, wg)       // replica: tell the primary to drop every table_claims row this till owns, so a claim it never revisits doesn't outlive a reboot for the full TTL (ut-docs#1712); joined by app.Run's drain
 	// ADR-0079: release every open order-status SSE stream (browser
 	// EventSources, and on a primary the replicas' bridges) the instant
 	// shutdown begins — server.Start's own Shutdown fires on this same

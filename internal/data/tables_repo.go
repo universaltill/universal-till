@@ -417,6 +417,62 @@ func (r *POSRepo) ReleaseTableClaimForTill(ctx context.Context, tableID, tillID 
 	return nil
 }
 
+// ReleaseAllTableClaimsForTill drops every table_claims row owned by tillID
+// that was claimed STRICTLY BEFORE the given cutoff, across however many
+// tables it holds (ut-docs#1712) — the PRIMARY-side write behind
+// POST /api/sync/tables/release-all, called once at a REPLICA's boot
+// (StartTableClaimBootRelease, internal/pages). It is the missing
+// counterpart to ClearLocalTableClaims: that sweep already clears this
+// till's own LOCAL (till_id=”) rows at boot because a freshly-started
+// process's live basket is always empty by construction — every claim it
+// held before is stale, full stop, no per-row judgement needed. Exactly the
+// same fact is true of whatever this till owns on the PRIMARY, but nothing
+// local can reach that copy; this is the write-through that does.
+//
+// This closes the gap ClaimTableForTill's TTL reconciliation cannot: the TTL
+// only expires a claim once its owning till goes QUIET (tills.last_seen_at
+// older than the cutoff), which never happens to a till that rebooted and
+// is syncing normally again — it is "seen" immediately, so a table it
+// simply never revisits stays blocked for the full TTL window with no
+// other mechanism to clear it (independent review, 2026-09-07, filed as
+// this card). This call is what makes that boot-and-move-on case behave
+// like the boot-and-crash case ClearLocalTableClaims already handles.
+//
+// The cutoff is NOT optional and is exactly what makes this call safe to
+// retry over a background loop rather than needing to land the instant the
+// process starts (self-review, 2026-09-07): StartTableClaimBootRelease's
+// first attempt is deliberately delayed past boot and may retry for
+// minutes against an unreachable primary, and the SERVER STARTS ACCEPTING
+// LIVE REQUESTS long before that call ever lands. Without a cutoff, an
+// operator who picks a brand-new table on THIS till in that window would
+// have that legitimate, just-made claim silently deleted by the delayed
+// boot sweep — reopening the exact cross-till double-claim ut-docs#1703
+// closed, since the primary would then read the table as free while this
+// till's own live basket still thinks it holds it. The caller captures
+// cutoff ONCE, before the server can accept its first request (i.e. before
+// starting the goroutine that eventually calls this), and reuses that same
+// value on every retry — never "now" recomputed per attempt — so a claim
+// made after boot always has claimed_at >= cutoff and survives, however
+// long the retry takes to land. A zero cutoff safely releases nothing (the
+// fail-safe default if a caller ever forgets to set it), never everything.
+//
+// tillID must be non-empty — REFUSED, not silently applied, on "": that is
+// the local-claim convention ClearLocalTableClaims/ReleaseTableClaim already
+// own, and an empty tillID here would otherwise wipe every till_id=” row,
+// i.e. every OTHER live basket's claim on this same process, which is not
+// what any caller of this method means.
+func (r *POSRepo) ReleaseAllTableClaimsForTill(ctx context.Context, tillID string, cutoff time.Time) error {
+	if tillID == "" {
+		return fmt.Errorf("release all table claims for till: tillID must not be empty")
+	}
+	if _, err := r.db.ExecContext(ctx, `
+DELETE FROM table_claims WHERE till_id = ? AND claimed_at < ?`,
+		tillID, cutoff.UTC().Format(time.RFC3339)); err != nil {
+		return fmt.Errorf("release all table claims for till: %w", err)
+	}
+	return nil
+}
+
 // ClearLocalTableClaims wipes THIS till's own live-basket claims — every
 // till_id = ” row (ut-docs#1390) — called once at process boot
 // (internal/pages.Init), never from a request handler. A table_claims row
