@@ -118,7 +118,10 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 	// Android kiosk replaced the whole screen with plain text and no way
 	// back).
 	tiles := func(r *http.Request) ([]tableTile, error) {
-		states, err := posRepo.ListTablesWithState(r.Context())
+		// ut-docs#1392: a replica shows the PRIMARY's live occupancy when
+		// reachable, falling back to its own local state otherwise — see
+		// tablesWithStateForDisplay's own doc comment.
+		states, err := tablesWithStateForDisplay(r.Context(), d, posRepo)
 		if err != nil {
 			return nil, err
 		}
