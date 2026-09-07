@@ -54,7 +54,7 @@ func TestUpsertPluginSettingScoped_ConcurrentCallersNeverDuplicateGlobalRow(t *t
 			go func(i int) {
 				defer wg.Done()
 				<-start // all callers fire together, maximizing the chance they all miss the row
-				errs[i] = repo.UpsertPluginSettingScoped(ctx, "com.example.tax", "rate", `{"v":1}`, "global")
+				errs[i] = repo.UpsertPluginSettingScoped(ctx, "com.example.tax", "rate", `{"v":1}`, "global", false)
 			}(i)
 		}
 		close(start)
@@ -90,7 +90,7 @@ func TestUpsertPluginSettingScoped_SequentialCallsUpdateInPlace(t *testing.T) {
 	}
 
 	for i, v := range []string{`{"v":1}`, `{"v":2}`, `{"v":3}`} {
-		if err := repo.UpsertPluginSettingScoped(ctx, "com.example.tax", "rate", v, "global"); err != nil {
+		if err := repo.UpsertPluginSettingScoped(ctx, "com.example.tax", "rate", v, "global", false); err != nil {
 			t.Fatalf("upsert %d: %v", i, err)
 		}
 	}

@@ -14,6 +14,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -38,6 +39,7 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins/oauth"
 	"github.com/universaltill/universal-till/internal/procrestart"
 	"github.com/universaltill/universal-till/internal/recovery"
+	"github.com/universaltill/universal-till/internal/secrets"
 	"github.com/universaltill/universal-till/internal/selfupdate"
 	"github.com/universaltill/universal-till/internal/server"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -267,6 +269,17 @@ func Run(ctx context.Context) error {
 	}()
 
 	enroll.Init(bgCtx, cfg, settingsStore, &wg)
+
+	// Plugin-settings encryption key (ADR-0082, ut-docs#1739): register the
+	// process-wide store BEFORE plugins.Init and pagesInit — the repository
+	// seals/opens through secrets.Default() on every secret-setting write
+	// and read, so it must exist before any plugin host call or settings
+	// route can run. One closure for every role: it reads sync.primary_url /
+	// sync.bearer at call time (the same setting RoleCheckFromSettings keys
+	// on) and declines on a primary/standalone till, which then self-
+	// generates; a replica fetches the primary's key once and persists it.
+	// paths.Data("secrets", ...) — never cwd-relative (ADR-0003).
+	secrets.SetDefault(secrets.NewKeyStore(pages.SecretsKeyFetcher(settingsStore, &http.Client{Timeout: 15 * time.Second})))
 
 	pluginManager, err = plugins.Init(ctx, cfg, database.DB)
 	if err != nil {

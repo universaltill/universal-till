@@ -3,9 +3,11 @@ package data
 import (
 	"context"
 	"database/sql"
+	"strings"
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/secrets"
 	_ "modernc.org/sqlite"
 )
 
@@ -464,8 +466,14 @@ func TestReconcilePluginSettingsUpgrade(t *testing.T) {
 	if err := d.QueryRow(`SELECT COUNT(*), value_json FROM plugin_settings WHERE plugin_id = 'com.t.p' AND key = 'secret_key'`).Scan(&n, &v); err != nil {
 		t.Fatalf("secret row: %v", err)
 	}
-	if n != 1 || v != `"sk_live"` {
-		t.Fatalf("secret after upgrade: n=%d v=%s, want the configured value, dupes collapsed", n, v)
+	// ADR-0082: the configured secret survives the upgrade AND is sealed at
+	// rest — the raw column must not carry the plaintext; the repository's
+	// read path is what yields it.
+	if n != 1 || !secrets.IsSealed(v) || strings.Contains(v, "sk_live") {
+		t.Fatalf("secret after upgrade: n=%d v=%s, want one sealed row (dupes collapsed, plaintext never at rest)", n, v)
+	}
+	if got, found, err := repo.GetPluginSetting(ctx, "com.t.p", "secret_key"); err != nil || !found || got != `"sk_live"` {
+		t.Fatalf("secret after upgrade via GetPluginSetting = %q found=%v err=%v, want the configured value", got, found, err)
 	}
 	_ = d.QueryRow(`SELECT COUNT(*) FROM plugin_settings WHERE plugin_id = 'com.t.p' AND key = 'old_flag'`).Scan(&n)
 	if n != 0 {
@@ -477,7 +485,7 @@ func TestReconcilePluginSettingsUpgrade(t *testing.T) {
 
 	// Scope-aware reads/writes: the register row shadows a global one, and a
 	// scoped write targets its own row.
-	if err := repo.UpsertPluginSettingScoped(ctx, "com.t.p", "reader_id", `"tmr_2"`, "register"); err != nil {
+	if err := repo.UpsertPluginSettingScoped(ctx, "com.t.p", "reader_id", `"tmr_2"`, "register", false); err != nil {
 		t.Fatalf("scoped upsert: %v", err)
 	}
 	mustExec(t, d, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope) VALUES ('glob', 'com.t.p', 'reader_id', '"tmr_shop"', 'global')`)

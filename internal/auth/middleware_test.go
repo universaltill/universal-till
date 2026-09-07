@@ -211,6 +211,14 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// again. Read-only (no redeem/debit endpoint — see
 		// sync_vouchers.go's own doc comment).
 		"/api/sync/vouchers/GS-0001",
+		// ADR-0082 (ut-docs#1739): the one-shot plugin-settings encryption
+		// key fetch a replica's KeyStore makes against its primary on first
+		// use. Bearer-authed in the handler (syncTill), same as
+		// /api/sync/plugins — without this entry the replica authenticates
+		// perfectly and is still 401'd here, so every synced Stripe/SumUp
+		// credential reads as "not configured" on the replica forever: the
+		// /api/sync/stock failure class, again.
+		"/api/sync/secrets-key",
 	} {
 		if !exempt(p) {
 			t.Errorf("%s is not exempt — this middleware will 401 it before the "+

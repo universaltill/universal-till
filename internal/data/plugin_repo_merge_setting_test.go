@@ -123,7 +123,7 @@ func TestMergeAdditiveJSONMapSetting_IgnoresRegisterScopedRow(t *testing.T) {
 	}
 
 	// A register-scoped override, plus a pre-existing global entry.
-	if err := repo.UpsertPluginSettingScoped(ctx, "com.example.tax", "takeaway_rate_overrides", `{"reg_only":111}`, "register"); err != nil {
+	if err := repo.UpsertPluginSettingScoped(ctx, "com.example.tax", "takeaway_rate_overrides", `{"reg_only":111}`, "register", false); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := repo.MergeAdditiveJSONMapSetting(ctx, "com.example.tax", "takeaway_rate_overrides", map[string]int{"a": 100}); err != nil {

@@ -2,7 +2,9 @@ package pages
 
 import (
 	"context"
+	"encoding/base64"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
 	"sync"
@@ -13,6 +15,7 @@ import (
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/secrets"
 )
 
 // LAN sync D2b + D4 (ADR-0011): the primary serves its admin state
@@ -41,6 +44,79 @@ type pluginsBundleResponse struct {
 	Version   string             `json:"version"`
 	Unchanged bool               `json:"unchanged"`
 	Bundle    data.PluginsBundle `json:"bundle"`
+}
+
+// secretsKeyResponse is the wire shape of GET /api/sync/secrets-key
+// (ADR-0082, ut-docs#1739): the primary's shop-scoped plugin-settings data
+// key, base64. No `?have=` fingerprint — a replica fetches this exactly once
+// (secrets.KeyStore persists it) rather than polling it every tick.
+type secretsKeyResponse struct {
+	Key string `json:"key"`
+}
+
+// SyncSettingsReader is the slice of settings access SecretsKeyFetcher
+// needs — satisfied by *settings.Store and *data.SettingsRepo alike, so the
+// startup wiring in internal/app can hand over whichever it already holds.
+type SyncSettingsReader interface {
+	Get(ctx context.Context, key string) (string, bool, error)
+}
+
+// SecretsKeyFetcher returns the replica-side fetch closure a
+// secrets.KeyStore calls on first use when no local key file exists: one
+// GET {sync.primary_url}/api/sync/secrets-key with the till's sync bearer —
+// the same request pattern syncPullPlugins uses against /api/sync/plugins.
+// sync.primary_url / sync.bearer are read at CALL time, not captured, so a
+// re-enrolment (or a first enrolment after boot) is honoured without
+// rebuilding the store.
+//
+// Not a replica right now (no primary URL / bearer configured) → returns
+// (nil, nil): the store's "decline" convention, which makes it
+// self-generate exactly as a standalone till would. Any transport or
+// protocol failure is returned as an error; the store's negative cache
+// keeps retries to one attempt per 30s floor, so a plugin hammering
+// settings_get on a replica with an unreachable primary never turns into
+// a request storm.
+func SecretsKeyFetcher(settingsReader SyncSettingsReader, client *http.Client) func(ctx context.Context) ([]byte, error) {
+	return func(ctx context.Context) ([]byte, error) {
+		get := func(k string) string {
+			v, _, _ := settingsReader.Get(ctx, k)
+			return strings.TrimSpace(v)
+		}
+		primary, bearer := get("sync.primary_url"), get("sync.bearer")
+		if primary == "" || bearer == "" {
+			return nil, nil
+		}
+		url := strings.TrimSuffix(primary, "/") + "/api/sync/secrets-key"
+		req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+		if err != nil {
+			return nil, err
+		}
+		req.Header.Set("Authorization", "Bearer "+bearer)
+		resp, err := client.Do(req)
+		if err != nil {
+			return nil, fmt.Errorf("primary unreachable: %w", err)
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			// 404 = a not-yet-upgraded primary; same wait-quietly stance as
+			// syncPullPlugins — the store's retry floor paces the next try.
+			return nil, fmt.Errorf("primary answered %s", resp.Status)
+		}
+		var out struct {
+			Data secretsKeyResponse `json:"data"`
+		}
+		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+			return nil, fmt.Errorf("bad response: %w", err)
+		}
+		key, err := base64.StdEncoding.DecodeString(out.Data.Key)
+		if err != nil {
+			return nil, fmt.Errorf("bad key encoding: %w", err)
+		}
+		if len(key) != secrets.KeySize {
+			return nil, fmt.Errorf("primary returned a %d-byte key, want %d", len(key), secrets.KeySize)
+		}
+		return key, nil
+	}
 }
 
 func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
@@ -121,6 +197,35 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 		}
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(map[string]any{"data": resp, "error": nil})
+	})
+
+	// Primary side: the shop-scoped plugin-settings encryption key (ADR-0082,
+	// ut-docs#1739). Same bearer auth as every other /api/sync route. The
+	// primary generates the key on first use if none exists yet
+	// (secrets.KeyStore.Load), so a replica enrolled before the primary ever
+	// stored a secret still receives the key the primary will use. Global
+	// plugin_settings rows travel to replicas sealed (sync_admin_repo.go's
+	// admin bundle ships value_json raw); this is what lets the replica open
+	// them. Raw key bytes, base64 — no fingerprint/`?have=`, this is
+	// fetch-once-then-persist, not a bundle.
+	mux.HandleFunc("GET /api/sync/secrets-key", func(w http.ResponseWriter, r *http.Request) {
+		if _, ok := syncTill(r, tills); !ok {
+			w.WriteHeader(http.StatusUnauthorized)
+			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
+			return
+		}
+		ks := secrets.Default()
+		if ks == nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_admin", secrets.ErrNoStore)
+			return
+		}
+		key, err := ks.Load(r.Context())
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_admin", err)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{"data": secretsKeyResponse{Key: base64.StdEncoding.EncodeToString(key)}, "error": nil})
 	})
 
 	// D4 status chip (nav, both sides). Renders empty unless this till is
