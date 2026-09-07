@@ -32,6 +32,15 @@ const syncQuarantinePageSize = 200
 var quarantineReasonKeys = map[string]string{
 	"unknown voucher on redemption replay": "sync.quarantine_reason.unknown_voucher_redemption",
 	"voucher id collision on issue replay": "sync.quarantine_reason.voucher_id_collision_issue",
+	// ut-docs#1686's generic FK-violation branch (sync_sales.go's
+	// foreignKeyViolationReason): three more reasons the same
+	// permanentJournalFailureReason allowlist can now return, so they need
+	// a key here too, same as the two voucher reasons above -- this map's
+	// own doc comment predicts exactly this gap for a case added without a
+	// matching entry.
+	"unknown cashier/customer/register/table id on replica-local sale":     "sync.quarantine_reason.unknown_sale_reference",
+	"unknown item/variant id on replica-local sale line":                   "sync.quarantine_reason.unknown_line_reference",
+	"foreign key violation on replay (unresolved replica-local reference)": "sync.quarantine_reason.unresolved_reference",
 }
 
 // registerSyncQuarantinePage serves the quarantined-LAN-sync-journal-entry
