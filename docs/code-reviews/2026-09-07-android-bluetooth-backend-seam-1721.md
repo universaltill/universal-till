@@ -414,3 +414,25 @@ failures (`internal/pages`'s known ut-docs#1725 flake did not trigger);
 above.
 
 **Final verdict: SAFE TO MERGE.**
+
+## Addendum: CI red after push, fixed before merge
+
+The PR (universal-till#880) pushed clean locally but CI's `desktop-shell` job
+failed: `guard-deadcode-baseline.sh`'s whole-program `deadcode` analysis
+(roots `.`, `./cmd/unitill-desktop`, `./cmd/unitill-uninstall` — never
+`./mobile`) flagged `SetAndroidBridge` as newly unreachable. Root-caused from
+the job log, not guessed: `SetAndroidBridge`'s only production caller is
+`mobile.SetBluetoothBridge`, and `./mobile` (the gomobile-bind entry point)
+is never one of this guard's three analysis roots — it's never linked into
+the CLI/desktop build graph at all. Confirmed via
+`grep -rn "SetAndroidBridge(" --include="*.go" | grep -v _test.go`: no other
+production caller exists. This is exactly the false-positive class the
+guard's own error message names ("called only from a [package] this pass
+doesn't [build]"). Fixed by baselining the one new entry in
+`scripts/ci/deadcode-baseline.txt` (commit `06bd522`), with the reasoning
+above in the commit message and as a PR comment. Re-verified clean after the
+push: `gofmt`, `go build ./...`, `go test -race -count=1
+./internal/bluetooth/... ./mobile/...`, `golangci-lint` (0 issues). All 4
+relevant checks (`ci`, `android-ci`, `UI E2E`, `commit-attribution`) passed on
+the resulting head (`06bd522`); PR merged (`merge`, not squash/rebase, per
+this skill's own note) as `fd56cb9`.
