@@ -77,3 +77,5 @@ internal/pos/tax.go: unreachable func: BasisPointsTaxEngine.Compute
 internal/pos/tax.go: unreachable func: PercentTaxEngine.Compute
 internal/print/escpos.go: unreachable func: Doc.Validate
 internal/print/kitchen.go: unreachable func: RenderKitchenTicketText
+internal/secrets/keystore.go: unreachable func: KeyStore.Exists
+internal/secrets/keystore.go: unreachable func: KeyStore.Path
