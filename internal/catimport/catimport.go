@@ -40,6 +40,17 @@ var ErrNoNameColumn = errors.New("no name column recognised — is this a catalo
 const (
 	IssueMissingName = "missing_name"
 	IssueBadPrice    = "bad_price"
+	// IssueMissingNameAndBadPrice: the row fails BOTH checks at once
+	// (ut-docs#1713) — the per-row switch in Parse/ParseBkp used to stop at
+	// whichever defect it tested first (name, always tested before price),
+	// so a row that was also missing its name only ever reported
+	// missing_name and never surfaced that the price cell was bad too. Once
+	// forceableImportIssue only offered a name field for that reason code,
+	// correcting the name alone cleared the row's Issue and it landed with
+	// a silent PriceMinor of 0 — the operator never saw a price field, and
+	// never a warning either. Forceable via BOTH corrections at once (see
+	// forceableImportIssue in internal/pages/import_stage.go).
+	IssueMissingNameAndBadPrice = "missing_name_and_bad_price"
 
 	// The three below are ParseBkp's own reason codes (ut-docs#511, see
 	// bkp.go) — kept here rather than duplicated there so
@@ -494,6 +505,13 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 			}
 		}
 		switch {
+		case item.Name == "" && perr != nil:
+			// ut-docs#1713: both defects present at once — price is already
+			// parsed unconditionally above, so this is free to detect; see
+			// IssueMissingNameAndBadPrice's doc comment for why a single
+			// missing_name here used to hide the bad price entirely.
+			item.Issue = IssueMissingNameAndBadPrice
+			item.IssueDetail = get(rec, "price")
 		case item.Name == "":
 			item.Issue = IssueMissingName
 		case perr != nil:

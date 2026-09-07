@@ -98,12 +98,16 @@
 // form validation then blocks the Import submit until the correction is
 // filled in. Delegated: the grid is swapped into #import-result by htmx.
 // The server re-validates regardless (import.problem_grid.* statuses), so
-// this is a convenience, not the enforcement.
+// this is a convenience, not the enforcement. data-fix-target is a single
+// id, or several space-separated ids (ut-docs#1713: a row needing both a
+// name and a price correction ticks one checkbox that targets both inputs).
 document.getElementById('import-result').addEventListener('change', function (e) {
   var cb = e.target.closest('input[type=checkbox][data-fix-target]');
   if (!cb) return;
-  var fix = document.getElementById(cb.getAttribute('data-fix-target'));
-  if (fix) fix.required = cb.checked;
+  cb.getAttribute('data-fix-target').split(/\s+/).filter(Boolean).forEach(function (id) {
+    var fix = document.getElementById(id);
+    if (fix) fix.required = cb.checked;
+  });
 });
 </script>
 

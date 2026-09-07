@@ -1756,6 +1756,7 @@
   "import.status.barcode_already_in_catalog": "barkod zaten katalogda mevcut",
   "import.status.sku_already_in_catalog": "SKU zaten katalogda mevcut",
   "import.status.missing_name": "isim eksik",
+  "import.status.missing_name_and_bad_price": "isim eksik ve geçersiz fiyat: %s",
   "import.status.bad_price": "geçersiz fiyat: %s",
   "import.status.barcode_no_symbology_match": "\"%s\" barkodu içe aktarılmadı: bu mağaza için etkinleştirilmiş herhangi bir barkod türüyle eşleşmiyor",
   "import.status.stock_negative_quantity": "stok aktarılmadı: kaynak dosyada negatif miktar %g",
