@@ -1723,6 +1723,7 @@
   "catalog.error.sku_exists": "Bu SKU zaten kullanımda — başka bir tane seçin.",
   "catalog.error.image_too_large": "Bu fotoğraf çok büyük — daha küçük bir görsel deneyin veya yüklemeden önce kırpın.",
   "catalog.error.image_invalid": "Bu dosya geçerli bir PNG veya JPEG görseli değil.",
+  "catalog.error.replica_use_primary": "Bu kasa bir ana kasayı takip ediyor — özelleştirme seçeneklerini ana kasada yönetin.",
   "catalog.barcode_backfill.btn": "SKU'dan barkod tamamla",
   "catalog.barcode_backfill.heading": "SKU'dan barkod tamamla",
   "catalog.barcode_backfill.eligible_count": "%d ürün için SKU'sundan barkod türetilebilir.",

@@ -1040,6 +1040,83 @@ func TestAdminDumpApplyRoundTrip_RegistersAndStockLocations(t *testing.T) {
 	}
 }
 
+// ut-docs#1667: item_modifier_groups/item_modifier_options are catalog
+// structure, the same shape as ut-docs#1546's tables/kitchen_stations —
+// created/edited on the primary, they must reach every satellite. Covers
+// the full FK chain (item -> group -> option), an is_active edit
+// propagating, and a primary-side delete propagating (deleteMissing).
+func TestAdminDumpApplyRoundTrip_ItemModifiers(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO items (id, name, base_price) VALUES ('itm1', 'Flat White', 320)`)
+	mustExec(t, primary, `INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active) VALUES ('grp1', 'itm1', 'Extras', 0, 0, 2, 0, 1)`)
+	mustExec(t, primary, `INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order, is_active) VALUES ('opt1', 'grp1', 'Extra shot', 50, 0, 1)`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if _, ok := bundle.Tables["item_modifier_groups"]; !ok {
+		t.Fatal("item_modifier_groups must appear in the admin dump now — ut-docs#1667 gated mutation primary-only, making it safe to sync")
+	}
+	if _, ok := bundle.Tables["item_modifier_options"]; !ok {
+		t.Fatal("item_modifier_options must appear in the admin dump now — ut-docs#1667 gated mutation primary-only, making it safe to sync")
+	}
+
+	// The replica needs the item row too (item_modifier_groups FKs onto
+	// it) — items already syncs via adminTables, exercised elsewhere; seed
+	// it directly here since this test is scoped to the modifier tables.
+	mustExec(t, replica, `INSERT INTO items (id, name, base_price) VALUES ('itm1', 'Flat White', 320)`)
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var groupName string
+	if err := replica.QueryRow(`SELECT name FROM item_modifier_groups WHERE id = 'grp1'`).Scan(&groupName); err != nil || groupName != "Extras" {
+		t.Fatalf("modifier group did not reach the satellite: got %q (err=%v)", groupName, err)
+	}
+	var optName string
+	var optDelta int64
+	if err := replica.QueryRow(`SELECT name, price_delta_minor FROM item_modifier_options WHERE id = 'opt1'`).Scan(&optName, &optDelta); err != nil || optName != "Extra shot" || optDelta != 50 {
+		t.Fatalf("modifier option did not reach the satellite (or its FK to item_modifier_groups broke — insert order matters): name=%q delta=%d err=%v", optName, optDelta, err)
+	}
+
+	// An edit (deactivate the option) must also propagate.
+	mustExec(t, primary, `UPDATE item_modifier_options SET is_active = 0 WHERE id = 'opt1'`)
+	bundle2, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("second dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle2)); err != nil {
+		t.Fatalf("second apply: %v", err)
+	}
+	var optActive int
+	if err := replica.QueryRow(`SELECT is_active FROM item_modifier_options WHERE id = 'opt1'`).Scan(&optActive); err != nil || optActive != 0 {
+		t.Fatalf("modifier option deactivation did not reach the satellite: is_active=%d err=%v", optActive, err)
+	}
+
+	// A primary-side delete (of both group and option, children first) must
+	// propagate — no ghost modifier left selectable on the satellite.
+	mustExec(t, primary, `DELETE FROM item_modifier_options WHERE id = 'opt1'`)
+	mustExec(t, primary, `DELETE FROM item_modifier_groups WHERE id = 'grp1'`)
+	bundle3, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("third dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle3)); err != nil {
+		t.Fatalf("third apply: %v", err)
+	}
+	var n int
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM item_modifier_options WHERE id='opt1'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("a modifier option removed on the primary is still on the satellite (n=%d, err=%v)", n, err)
+	}
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups WHERE id='grp1'`).Scan(&n); err != nil || n != 0 {
+		t.Errorf("a modifier group removed on the primary is still on the satellite (n=%d, err=%v)", n, err)
+	}
+}
+
 // Mirrors TestAdminApply_TableRetiredInPlaceWhenFKBlockedBySatelliteSaleHistory:
 // a register the primary removed, but that the satellite has already opened
 // a shift against, can't be hard-deleted (shifts.register_id FK) — it must
@@ -1270,13 +1347,53 @@ func TestAdminApply_StockLocationHardDeletedPreExistingLogsWarning(t *testing.T)
 	}
 }
 
-// ut-docs#1592: the new Warnf must be scoped to registers/stock_locations
-// ONLY — every other adminTable prunes routinely, and logging every one of
-// those would just be noise (and would defeat the purpose: a shop owner
-// could no longer tell "routine sync" apart from "pre-existing divergence
-// worth a look"). tax_codes is a plain hasIsActive table with no special
-// gating, so a satellite-local row hits the exact same retire-in-place code
-// path as the register/stock_location tests above — it must NOT warn.
+// ut-docs#1667's own review: a satellite-created modifier group genuinely
+// worked pre-fix (ListGroupsForItem reads locally, the picker renders it,
+// sale_line_modifiers snapshots it at checkout) — arguably a stronger case
+// than registers/stock_locations, since an unsynced tables/kitchen_stations
+// row was largely unusable anyway. Nothing FKs onto item_modifier_groups
+// with a real constraint (sale_line_modifiers.group_id is a bare TEXT, no
+// FK — see 001_init.sql), so the retire-in-place path never fires; only
+// the hard-delete case is reachable, mirrored from
+// TestAdminApply_RegisterHardDeletedPreExistingLogsWarning.
+func TestAdminApply_ItemModifierGroupHardDeletedPreExistingLogsWarning(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	mustExec(t, primary, `INSERT INTO items (id, name, base_price) VALUES ('itm1', 'Flat White', 320)`)
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	// Simulates a modifier group created directly on a satellite before
+	// ut-docs#1667 gated /api/catalog/modifier-group to primary-only.
+	mustExec(t, replica, `INSERT INTO items (id, name, base_price) VALUES ('itm1', 'Flat White', 320)`)
+	mustExec(t, replica, `INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active) VALUES ('grp-orphan', 'itm1', 'Satellite Local', 0, 0, 1, 0, 1)`)
+
+	logging.ResetRecent()
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, bundle); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var n int
+	if err := replica.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups WHERE id='grp-orphan'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("expected grp-orphan to be hard-deleted (no FK to block it): n=%d err=%v", n, err)
+	}
+	if !warnfContaining("pruned pre-existing satellite-local item_modifier_groups row") || !warnfContaining("hard-deleted") {
+		t.Errorf("expected a Warnf naming item_modifier_groups + hard-deleted for grp-orphan, got: %+v", logging.Recent())
+	}
+}
+
+// ut-docs#1592: the new Warnf must be scoped to divergencePruneTables ONLY
+// (registers/stock_locations, and since ut-docs#1667 also
+// item_modifier_groups/item_modifier_options) — every other adminTable
+// prunes routinely, and logging every one of those would just be noise (and
+// would defeat the purpose: a shop owner could no longer tell "routine
+// sync" apart from "pre-existing divergence worth a look"). tax_codes is a
+// plain hasIsActive table with no special gating, so a satellite-local row
+// hits the exact same retire-in-place code path as the tests above — it
+// must NOT warn.
 func TestAdminApply_OrdinaryTablePruneDoesNotLogSatelliteDivergenceWarning(t *testing.T) {
 	ctx := context.Background()
 	primary := openMigratedDB(t, "primary.db")

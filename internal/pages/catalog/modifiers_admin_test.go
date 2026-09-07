@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
@@ -236,6 +237,119 @@ func TestCatalogModifiersPanel_ShowsDeactivatedGroupsForReactivation(t *testing.
 	}
 	if !strings.Contains(rec.Body.String(), "Retired") {
 		t.Fatal("admin panel must show a deactivated group so it can be reactivated")
+	}
+}
+
+// ut-docs#1667: item_modifier_groups/item_modifier_options are now synced
+// shop-wide (sync_admin_repo.go's adminTables), so a write accepted on a
+// satellite would silently vanish on the next admin pull — both mutation
+// endpoints must refuse up front instead, same pattern as
+// TestRegistersPage_MutationsRefusedOnReplica.
+func TestCatalogModifiersPanel_MutationsRefusedOnReplica(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "COFFEE", Name: "Flat White", BasePrice: 320, IsActive: true})
+
+	// NewCatalogTestDB's schema deliberately omits tables this specific
+	// handler group doesn't otherwise need — settings included. Real schema
+	// mirrored from internal/db/migrations/001_init.sql, same convention as
+	// this package's own TestCatalogReplicaBannerNeverLinksAcrossDevices.
+	if _, err := db.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatalf("create settings table: %v", err)
+	}
+	st := settings.NewStore(db)
+	if err := st.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("set primary_url: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}, Settings: st})
+
+	wantMsg := "manage customization options on the primary till"
+
+	groupForm := "panelItem=itm1&itemId=itm1&name=Extras&isActive=1&minSelect=0&maxSelect=2"
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group", strings.NewReader(groupForm))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("create group on replica: want 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), wantMsg) {
+		t.Fatalf("create group on replica: body missing the localized replica_use_primary message, got %q", rec.Body.String())
+	}
+	var count int
+	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_groups WHERE item_id = 'itm1'`).Scan(&count); err != nil {
+		t.Fatalf("count groups: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("modifier group must not be created on a replica, found %d rows", count)
+	}
+
+	// A group and option that existed before this till became a replica
+	// (e.g. synced down from the primary) must also refuse an UPDATE
+	// against them, not just create — same shape as
+	// TestRegistersPage_MutationsRefusedOnReplica's rename/deactivate cases
+	// on a pre-existing register. This is the more likely real replica
+	// action (editing an already-synced modifier), and the exact gap a
+	// future "editing an existing row is fine" refactor could reopen
+	// silently if only create were covered.
+	if _, err := db.Exec(`INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active) VALUES ('grp-existing','itm1','Extras',0,0,2,0,1)`); err != nil {
+		t.Fatalf("seed existing group: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order, is_active) VALUES ('opt-existing','grp-existing','Extra shot',50,0,1)`); err != nil {
+		t.Fatalf("seed existing option: %v", err)
+	}
+
+	updateGroupForm := "panelItem=itm1&itemId=itm1&id=grp-existing&name=Renamed&isActive=1&minSelect=0&maxSelect=2"
+	req2 := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group", strings.NewReader(updateGroupForm))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusConflict {
+		t.Fatalf("update group on replica: want 409, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	if !strings.Contains(rec2.Body.String(), wantMsg) {
+		t.Fatalf("update group on replica: body missing the localized replica_use_primary message, got %q", rec2.Body.String())
+	}
+	var groupName string
+	if err := db.QueryRow(`SELECT name FROM item_modifier_groups WHERE id = 'grp-existing'`).Scan(&groupName); err != nil || groupName != "Extras" {
+		t.Fatalf("modifier group must not be renamed on a replica: name=%q err=%v", groupName, err)
+	}
+
+	createOptForm := "panelItem=itm1&itemId=itm1&groupId=grp-existing&name=Extra+shot&priceDeltaMajor=0.50&isActive=1"
+	req3 := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-option", strings.NewReader(createOptForm))
+	req3.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec3 := httptest.NewRecorder()
+	mux.ServeHTTP(rec3, req3)
+	if rec3.Code != http.StatusConflict {
+		t.Fatalf("create option on replica: want 409, got %d: %s", rec3.Code, rec3.Body.String())
+	}
+	if !strings.Contains(rec3.Body.String(), wantMsg) {
+		t.Fatalf("create option on replica: body missing the localized replica_use_primary message, got %q", rec3.Body.String())
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_options WHERE group_id = 'grp-existing'`).Scan(&count); err != nil {
+		t.Fatalf("count options: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("modifier option must not be created on a replica, found %d rows (want only the pre-existing one)", count)
+	}
+
+	updateOptForm := "panelItem=itm1&itemId=itm1&groupId=grp-existing&id=opt-existing&name=Renamed&priceDeltaMajor=0.50&isActive=1"
+	req4 := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-option", strings.NewReader(updateOptForm))
+	req4.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec4 := httptest.NewRecorder()
+	mux.ServeHTTP(rec4, req4)
+	if rec4.Code != http.StatusConflict {
+		t.Fatalf("update option on replica: want 409, got %d: %s", rec4.Code, rec4.Body.String())
+	}
+	if !strings.Contains(rec4.Body.String(), wantMsg) {
+		t.Fatalf("update option on replica: body missing the localized replica_use_primary message, got %q", rec4.Body.String())
+	}
+	var optName string
+	if err := db.QueryRow(`SELECT name FROM item_modifier_options WHERE id = 'opt-existing'`).Scan(&optName); err != nil || optName != "Extra shot" {
+		t.Fatalf("modifier option must not be renamed on a replica: name=%q err=%v", optName, err)
 	}
 }
 

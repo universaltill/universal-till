@@ -43,6 +43,24 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 	lookupClient := newLookupClient()
 
+	// requirePrimary gates modifier group/option mutation on this till being
+	// the primary (ut-docs#1667): item_modifier_groups/item_modifier_options
+	// are now synced shop-wide (sync_admin_repo.go's adminTables) via a
+	// one-way primary-wins pull, so a write accepted on a satellite would
+	// silently vanish (a new row deleted, an edit reverted) on the very next
+	// admin pull — refuse it up front instead, same pattern as
+	// registers_page.go's requirePrimary. Unlike that page's full-page
+	// redirect, these handlers return an HTMX fragment, so the refusal is a
+	// plain localized error response like this file's own validation
+	// branches (e.g. catalog.error.invalid_request) rather than a redirect.
+	requirePrimary := func(w http.ResponseWriter, r *http.Request) bool {
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			common.LocalizedError(w, r, http.StatusConflict, "catalog.error.replica_use_primary")
+			return false
+		}
+		return true
+	}
+
 	writeJSON := func(w http.ResponseWriter, status int, data any, errMsg string) {
 		w.Header().Set("Content-Type", "application/json")
 		w.WriteHeader(status)
@@ -458,6 +476,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
 			return
 		}
+		if !requirePrimary(w, r) {
+			return
+		}
 		_ = r.ParseForm()
 		itemID := strings.TrimSpace(r.Form.Get("itemId"))
 		name := strings.TrimSpace(r.Form.Get("name"))
@@ -499,6 +520,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/catalog/modifier-option", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requirePrimary(w, r) {
 			return
 		}
 		_ = r.ParseForm()

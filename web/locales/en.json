@@ -1723,6 +1723,7 @@
   "catalog.error.sku_exists": "That SKU is already in use — choose a different one.",
   "catalog.error.image_too_large": "That photo is too large — try a smaller image, or crop it before uploading.",
   "catalog.error.image_invalid": "That file isn't a valid PNG or JPEG image.",
+  "catalog.error.replica_use_primary": "This till follows a primary till — manage customization options on the primary till.",
   "catalog.barcode_backfill.btn": "Backfill barcodes from SKU",
   "catalog.barcode_backfill.heading": "Backfill barcodes from SKU",
   "catalog.barcode_backfill.eligible_count": "%d item(s) can get a barcode derived from their SKU.",

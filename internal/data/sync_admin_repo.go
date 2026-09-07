@@ -126,6 +126,23 @@ var adminTables = []adminTable{
 	{name: "item_variants", pk: []string{"id"}, hasIsActive: true, unique: []string{"sku"}},
 	{name: "variant_barcodes", pk: []string{"barcode"}},
 	{name: "related_items", pk: []string{"item_id", "related_item_id"}},
+	// ut-docs#1667: same shape as #1546 (tables/kitchen_stations) — catalog
+	// structure that reads shop-wide but was missing from this list
+	// entirely, found while classifying every table for #1586's schema-drift
+	// guard. item_modifier_groups FKs onto items(id), so it must apply after
+	// items; item_modifier_options FKs onto item_modifier_groups(id), so it
+	// must apply after that. Both have a real is_active column (the app's
+	// own CreateGroup/UpdateGroup and CreateOption/UpdateOption never hard-
+	// delete), so hasIsActive mirrors items/item_variants above. Mutation is
+	// now gated primary-only in catalog/handlers.go's requirePrimary (same
+	// #1590 pattern as registers/locations), which is what makes this safe
+	// to sync: without that gate, a satellite-created modifier would just
+	// vanish on the next admin pull instead of failing loudly up front.
+	// ModifierRepo.DeleteGroup/DeleteOption DO hard-delete, but neither is
+	// wired to any handler today (grepped) — whoever wires one up must gate
+	// it too, the same as CreateGroup/UpdateGroup/CreateOption/UpdateOption.
+	{name: "item_modifier_groups", pk: []string{"id"}, hasIsActive: true},
+	{name: "item_modifier_options", pk: []string{"id"}, hasIsActive: true},
 	{name: "promotions", pk: []string{"code"}, hasIsActive: true},
 	{name: "shortcut_buttons", pk: []string{"barcode"}},
 	// ut-docs#1546: the floor plan and kitchen routing are shop-wide setup,
@@ -316,11 +333,9 @@ var nonAdminTables = map[string]string{
 	// Genuinely open classification questions — excluded (not synced) rather
 	// than guessed into adminTables, each split into its own follow-up card
 	// per this var's own top comment.
-	"item_modifier_groups":  "catalog structure with no requirePrimary gate and not yet synced — looks like the ut-docs#1546 pattern; flagged, not decided, in ut-docs#1667",
-	"item_modifier_options": "catalog structure — same flag as item_modifier_groups, ut-docs#1667",
-	"vouchers":              "shop-wide voucher balance, runtime-mutable across tills — needs a concurrency design before it can safely sync (parallel to ut-docs#1554's role_permissions); flagged in ut-docs#1668",
-	"country_settings":      "admin-manageable per-jurisdiction defaults (tax/currency/retention) — reads shop-wide like settings, not yet confirmed safe to bundle; flagged in ut-docs#1669",
-	"price_history":         "NOT a pure append-only audit trail (AppendPriceHistoryItem/Variant UPDATE the prior row's ends_at, and item deletion DELETEs rows) and NOT inert to checkout — ResolveCurrentPrice consults an open price_history row BEFORE items' synced price, so it can override it. Currently latent (nothing in production writes this table yet), but a satellite that ever does would diverge on price silently. Needs an Architect pass before either classification is safe; flagged in ut-docs#1671",
+	"vouchers":         "shop-wide voucher balance, runtime-mutable across tills — needs a concurrency design before it can safely sync (parallel to ut-docs#1554's role_permissions); flagged in ut-docs#1668",
+	"country_settings": "admin-manageable per-jurisdiction defaults (tax/currency/retention) — reads shop-wide like settings, not yet confirmed safe to bundle; flagged in ut-docs#1669",
+	"price_history":    "NOT a pure append-only audit trail (AppendPriceHistoryItem/Variant UPDATE the prior row's ends_at, and item deletion DELETEs rows) and NOT inert to checkout — ResolveCurrentPrice consults an open price_history row BEFORE items' synced price, so it can override it. Currently latent (nothing in production writes this table yet), but a satellite that ever does would diverge on price silently. Needs an Architect pass before either classification is safe; flagged in ut-docs#1671",
 }
 
 // FiscalPendingSignRetriesSettingsKey is the settings.key the pre-1.4.0
@@ -731,20 +746,31 @@ func pkOf(t adminTable, rec map[string]any) string {
 	return strings.Join(parts, "\x1f")
 }
 
+// divergencePruneTables names every adminTable that made the same
+// transition: UNSYNCED (so a satellite could freely create its own local
+// row) to synced-and-gated-primary-only. A shop that already had a
+// satellite-created row from before its fix will have it pruned on its very
+// first post-upgrade pull — see adminTables' own top comment for the full
+// trace, and logSatelliteDivergencePrune below. Every OTHER adminTable
+// prunes routinely (that's what sync is for), so this map is deliberately
+// scoped to just the tables that made this exact transition: a warning here
+// signals pre-existing divergence worth a shop owner's attention, not
+// everyday sync noise.
+var divergencePruneTables = map[string]string{
+	"registers":             "ut-docs#1590",
+	"stock_locations":       "ut-docs#1590",
+	"item_modifier_groups":  "ut-docs#1667",
+	"item_modifier_options": "ut-docs#1667",
+}
+
 // logSatelliteDivergencePrune warns when deleteMissing successfully prunes
-// (hard-deletes or retires in place) a registers or stock_locations row.
-// ut-docs#1590 made both tables safe to sync by gating their admin pages to
-// primary-only, but a shop that already had a satellite-created row from
-// before that fix will have it pruned on its very first post-upgrade pull —
-// see adminTables' own top comment for the full trace. Every OTHER
-// adminTable prunes routinely (that's what sync is for), so this is
-// deliberately scoped to just these two: a warning here signals pre-existing
-// divergence worth a shop owner's attention, not everyday sync noise.
+// (hard-deletes or retires in place) a row from one of divergencePruneTables.
 func logSatelliteDivergencePrune(t adminTable, args []any, action string) {
-	if t.name != "registers" && t.name != "stock_locations" {
+	card, ok := divergencePruneTables[t.name]
+	if !ok {
 		return
 	}
-	logging.L().Warnf("sync pull: pruned pre-existing satellite-local %s row %v (%s) — see ut-docs#1590: a register/stock location created directly on a satellite before that fix is expected to disappear on the first sync after upgrading", t.name, args, action)
+	logging.L().Warnf("sync pull: pruned pre-existing satellite-local %s row %v (%s) — see %s: a row created directly on a satellite before that fix is expected to disappear on the first sync after upgrading", t.name, args, action, card)
 }
 
 // deleteMissing prunes rows this table's PK set no longer includes in the
