@@ -274,13 +274,50 @@ type BasketLine struct {
 	// with. Serialized so the basket partial can render the per-line
 	// control; SnapshotLine carries it through hold/resume.
 	OrderType string `json:"orderType,omitempty"`
+	// modSig/modSigSet (ut-docs#1359) memoize ModifierSignature() so
+	// mergeResolved's per-add scan over every existing line reads a cached
+	// string instead of re-sorting and re-joining that line's Modifiers from
+	// scratch on every single add — the audit's finding: a till with 40
+	// modifier-bearing lines already rung up redid 40 fresh signature
+	// computations on every subsequent tap. Unexported, so encoding/json
+	// already skips both (no tag needed) — never part of the wire format.
+	//
+	// INVARIANT (load-bearing — a stale value here silently merges a plain
+	// line into a customized one, losing the customization AND its price
+	// delta): the pair is valid only for the Modifiers slice it was
+	// computed from. BasketLine is a value type handed out by Basket() and
+	// Lines() with the cache already populated, so a caller that re-uses a
+	// handed-out line as the base of a new add would otherwise carry a
+	// signature belonging to the OLD modifier set. Therefore EVERY
+	// assignment to an existing line's Modifiers field must go through
+	// setModifiers below, which clears the memo — and nothing may mutate a
+	// SelectedModifier's OptionID in place through a shared backing array
+	// (mergeResolved's merge branch aliases the incoming line's slice), as
+	// that would change the signature without any assignment to observe.
+	// Freshly-built lines (composite literals, JSON, hold/resume Restore)
+	// are safe for free: modSigSet is false in the Go zero value, so the
+	// first read computes it from the Modifiers actually present.
+	modSig    string
+	modSigSet bool
+}
+
+// setModifiers is the ONLY sanctioned way to change an existing line's
+// Modifiers (ut-docs#1359). It invalidates the memoized signature, so the
+// cache can never outlive the selection it describes. Assigning
+// l.Modifiers directly on a line that may already be cached is a money bug
+// — see the invariant on modSig/modSigSet above.
+func (l *BasketLine) setModifiers(mods []data.SelectedModifier) {
+	l.Modifiers = mods
+	l.modSig = ""
+	l.modSigSet = false
 }
 
 // ModifierSignature is a stable key for two lines' modifier selections —
 // used to decide whether adding the same item again merges quantity into
 // an existing line or starts a new one. Two identical selections (same
 // options, any order) merge; anything else is a distinct line, since they
-// price and print differently.
+// price and print differently. Pure and uncached — use this for one-off
+// comparisons; mergeResolved's hot loop uses cachedModifierSignature below.
 func (l BasketLine) ModifierSignature() string {
 	if len(l.Modifiers) == 0 {
 		return ""
@@ -291,6 +328,21 @@ func (l BasketLine) ModifierSignature() string {
 	}
 	sort.Strings(ids)
 	return strings.Join(ids, ",")
+}
+
+// cachedModifierSignature is ModifierSignature with memoization: computed
+// once per line and reused on every later call (ut-docs#1359). Trustworthy
+// only because setModifiers invalidates the memo on every reassignment of
+// Modifiers — see the invariant on modSig/modSigSet above. Pointer
+// receiver (it writes the memo back), so it needs an addressable line;
+// ModifierSignature stays a value method for one-off comparisons on
+// non-addressable values.
+func (l *BasketLine) cachedModifierSignature() string {
+	if !l.modSigSet {
+		l.modSig = l.ModifierSignature()
+		l.modSigSet = true
+	}
+	return l.modSig
 }
 
 type Basket struct {
@@ -482,7 +534,14 @@ func (s *Service) AddLineWithModifiers(base BasketLine, qty float64, mods []data
 	}
 	// else: a code-embedded quantity (weight/price label, ADR-0059 §3) is
 	// the label's, not the picker's — line already carries base.Qty.
-	line.Modifiers = append([]data.SelectedModifier{}, mods...)
+	// setModifiers, not a bare assignment: base is caller-supplied and may
+	// be a line handed out by Basket()/Lines(), which carries a memoized
+	// signature for its OWN (different) modifier set. Copying that memo
+	// onto a line whose Modifiers we are about to replace would make
+	// mergeResolved below compare the wrong key — merging e.g. a plain
+	// coffee into the "extra shot" line, silently dropping the shot and
+	// its price delta (ut-docs#1359 review).
+	line.setModifiers(append([]data.SelectedModifier{}, mods...))
 	for _, m := range mods {
 		line.PriceCents = line.PriceCents.Add(money.FromMinor(m.PriceDeltaMinor))
 	}
@@ -541,7 +600,7 @@ func (s *Service) mergeResolved(line BasketLine) {
 		return
 	}
 	line.OrderType = NormalizeLineOrderType(line.OrderType)
-	sig := line.ModifierSignature()
+	sig := line.cachedModifierSignature()
 	for i := range s.lines {
 		if NormalizeLineOrderType(s.lines[i].OrderType) != line.OrderType {
 			// ADR-0073 Decision 3: the same product rung up once per
@@ -556,7 +615,7 @@ func (s *Service) mergeResolved(line BasketLine) {
 			// overwrite the label's absolute price with the per-unit rate.
 			continue
 		}
-		if s.lines[i].ModifierSignature() != sig {
+		if s.lines[i].cachedModifierSignature() != sig {
 			// Same item/SKU but a different customization (e.g. "extra
 			// shot" vs. plain) prices and prints differently — must stay a
 			// distinct line, not merge quantity into the wrong one.
@@ -575,7 +634,12 @@ func (s *Service) mergeResolved(line BasketLine) {
 			s.lines[i].ItemID = line.ItemID
 			s.lines[i].VariantID = line.VariantID
 			s.lines[i].IsWeighed = line.IsWeighed
-			s.lines[i].Modifiers = line.Modifiers
+			// The signatures were just proven equal, so the memo would in
+			// fact survive here — but go through setModifiers anyway so
+			// the invariant is "no bare Modifiers assignment, ever" rather
+			// than a case-by-case argument a later edit could invalidate.
+			// Costs at most one recompute of this one line on a later add.
+			s.lines[i].setModifiers(line.Modifiers)
 			// ut-docs#934 review finding F7: keep the surviving line's
 			// QtyFromCode in sync with the incoming scan — a second
 			// weight-embedded label merging into an existing line is still
