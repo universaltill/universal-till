@@ -28,7 +28,11 @@ func TestBlockingPaymentEventGate(t *testing.T) {
 			t.Fatalf("exec %s: %v", q, err)
 		}
 	}
-	mustExec(`INSERT INTO plugins (id, name, version, is_active) VALUES ('com.universaltill.payment-stripe', 'Stripe', '1.1.1', 1)`)
+	// ut-docs#1677: plugins.entrypoint is NOT NULL and plugins has a
+	// composite FK to plugin_catalog(id,version) in the real migrated
+	// schema (ut-docs#1676).
+	mustExec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at) VALUES ('com.universaltill.payment-stripe', '1.1.1', 'Stripe', 'desc', 'go', 'entry', 'url', 'sha', 'auth', 'site', '[]', '0.0.0', '1', datetime('now'))`)
+	mustExec(`INSERT INTO plugins (id, name, version, entrypoint, is_active) VALUES ('com.universaltill.payment-stripe', 'Stripe', '1.1.1', 'entry', 1)`)
 	mustExec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
 	          VALUES ('e1', 'com.universaltill.payment-stripe', 'stripe', 'Card (Stripe)', 'payment', 'payment.stripe.requested', 1)`)
 	mustExec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)

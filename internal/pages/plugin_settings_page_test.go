@@ -257,7 +257,11 @@ func TestPluginSettingsPage_GET_RendersTakeawayOverridesEditor(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPluginSettingsTestDeps(t)
 	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
-	seedTaxCode(t, dp, "tax_reduced", "Reduced VAT", 700, nil)
+	// ut-docs#1676: "Reduced VAT" alone collides with 001_init.sql's own
+	// tax_red seed row now that openPagesTestDB runs real migrations —
+	// tax_codes.name is UNIQUE. Appending the rate keeps the
+	// strings.Contains(body, "Reduced VAT") assertion below satisfied.
+	seedTaxCode(t, dp, "tax_reduced", "Reduced VAT (7%)", 700, nil)
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{"tax_19":700}`, "global")
 
 	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
@@ -276,7 +280,11 @@ func TestPluginSettingsPage_GET_RendersTakeawayOverridesEditor(t *testing.T) {
 	if !strings.Contains(body, `value="7"`) {
 		t.Fatalf("expected the pre-filled override (7%%) in the page, got %s", body)
 	}
-	if !strings.Contains(body, "Standard VAT") || !strings.Contains(body, "Reduced VAT") {
+	// Exact names, not "Reduced VAT" alone -- 001_init.sql's own seeded
+	// tax_red row is also named exactly "Reduced VAT" (ut-docs#1676), so a
+	// bare substring match here would pass even if this test's own
+	// tax_reduced row never rendered.
+	if !strings.Contains(body, "Standard VAT") || !strings.Contains(body, "Reduced VAT (7%)") {
 		t.Fatalf("expected tax code names in the page, got %s", body)
 	}
 }
@@ -284,7 +292,9 @@ func TestPluginSettingsPage_GET_RendersTakeawayOverridesEditor(t *testing.T) {
 func TestPluginSettingsPage_GET_RendersOrphanOverrideEntry(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPluginSettingsTestDeps(t)
-	// No active tax codes at all, but an existing override for a deleted one.
+	// An override referencing "tax_gone", a tax code id that doesn't exist
+	// (the real migration seeds its own active tax codes now, ut-docs#1676,
+	// but none with this id) -- an orphaned override for a deleted one.
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{"tax_gone":500}`, "global")
 
 	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
@@ -305,9 +315,11 @@ func TestPluginSettingsPage_GET_RendersOrphanOverrideEntry(t *testing.T) {
 func TestPluginSettingsPage_GET_FallsBackToRawInputWhenNoTaxCodesOrOverrides(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPluginSettingsTestDeps(t)
-	// seedForPages always seeds an active 'tax_std' tax code -- deactivate it
-	// so this test genuinely reaches the "no active tax codes" state.
-	if _, err := dp.Db.ExecContext(context.Background(), `UPDATE tax_codes SET is_active = 0 WHERE id = 'tax_std'`); err != nil {
+	// 001_init.sql seeds three active tax codes (tax_std/tax_red/tax_zero)
+	// now that openPagesTestDB runs real migrations (ut-docs#1676) --
+	// deactivate all of them so this test genuinely reaches the "no active
+	// tax codes" state, not just "one of three deactivated".
+	if _, err := dp.Db.ExecContext(context.Background(), `UPDATE tax_codes SET is_active = 0`); err != nil {
 		t.Fatal(err)
 	}
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
@@ -563,7 +575,8 @@ func TestPluginSettingsAPI_POST_TypedTakeawayOverrides_AbsentFieldPreservesEntry
 	mux, dp := newPluginSettingsTestDeps(t)
 	ctx := context.Background()
 	seedTaxCode(t, dp, "tax_19", "Standard VAT", 1900, nil)
-	seedTaxCode(t, dp, "tax_7", "Reduced VAT", 700, nil)
+	// ut-docs#1676: same tax_codes.name UNIQUE collision as above.
+	seedTaxCode(t, dp, "tax_7", "Reduced VAT (7%)", 700, nil)
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{"tax_19":700,"tax_7":500}`, "global")
 
 	// The stale form carries a field for tax_19 only — tax_7's entry must
@@ -702,9 +715,10 @@ func TestPluginSettingsPage_GET_TaxCodesFailureIsLocalized(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPluginSettingsTestDeps(t)
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
-	if _, err := dp.Db.Exec(`DROP TABLE tax_codes`); err != nil {
-		t.Fatalf("drop tax_codes: %v", err)
-	}
+	// ut-docs#1679: DROP TABLE tax_codes used to force this, but tax_codes
+	// now has real incoming FKs that block the DROP under real migrations.
+	// A closed *sql.DB forces the same generic repo-error path instead.
+	dp.Db.Close()
 
 	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
 	rec := httptest.NewRecorder()
@@ -753,9 +767,8 @@ func TestPluginSettingsAPI_POST_TaxCodesFailureIsLocalized(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPluginSettingsTestDeps(t)
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{}`, "global")
-	if _, err := dp.Db.Exec(`DROP TABLE tax_codes`); err != nil {
-		t.Fatalf("drop tax_codes: %v", err)
-	}
+	// ut-docs#1679: see TestPluginSettingsPage_GET_TaxCodesFailureIsLocalized.
+	dp.Db.Close()
 
 	form := "setting_takeaway_typed=1&takeaway_pct_tax_19=7"
 	req := httptest.NewRequest(http.MethodPost, "/api/plugins/p1/settings", strings.NewReader(form))

@@ -20,6 +20,11 @@ func newPromotionsTestMux(t *testing.T) (*http.ServeMux, *common.Deps) {
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
+	// audit_log.actor_id has a real FK to users(id); tests inject the
+	// manager session via auth.WithUser without a real login.
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, role) VALUES ('m1', 'm1', 'Manager', 'manager')`); err != nil {
+		t.Fatalf("seed test manager: %v", err)
+	}
 
 	d := &common.Deps{Db: db, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: auth.NewService(db)}
 	mux := http.NewServeMux()

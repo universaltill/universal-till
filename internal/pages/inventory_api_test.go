@@ -205,7 +205,7 @@ func TestCreateNegativeInventoryOverride_CashierRequiresManagerPIN(t *testing.T)
 	ctx := context.Background()
 
 	if _, err := dp.Db.ExecContext(ctx,
-		`INSERT INTO users(id,username,display_name,pin_hash,role,created_at) VALUES('cashier1','cashier1','Cashier One','','cashier',datetime('now'))`); err != nil {
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('cashier1','cashier1','Cashier One','','cashier')`); err != nil {
 		t.Fatal(err)
 	}
 	hash, err := auth.HashPIN("482913")
@@ -213,7 +213,7 @@ func TestCreateNegativeInventoryOverride_CashierRequiresManagerPIN(t *testing.T)
 		t.Fatal(err)
 	}
 	if _, err := dp.Db.ExecContext(ctx,
-		`INSERT INTO users(id,username,display_name,pin_hash,role,created_at) VALUES('mgr1','mgr1','Manager One',?,'manager',datetime('now'))`, hash); err != nil {
+		`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('mgr1','mgr1','Manager One',?,'manager')`, hash); err != nil {
 		t.Fatal(err)
 	}
 

@@ -23,57 +23,14 @@ func newAuthTestMux(t *testing.T) (*http.ServeMux, *auth.Service, *common.Deps) 
 	// wired — same requirement newUsersTestDeps (users_page_test.go) already
 	// has.
 	initPagesI18n(t)
+	// ut-docs#1657/#1677: openPagesTestDB now runs the real migration set,
+	// which already creates users/sessions/audit_log/registers/settings/
+	// roles/permission_actions/role_permissions/country_settings AND seeds
+	// manager/admin/super_admin with 'user_management' granted (001_init.sql)
+	// — this fixture used to hand-roll all of that (schema + seed rows +
+	// its own seedCountrySettingsTable call) from scratch.
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
-	for _, s := range []string{
-		`CREATE TABLE users (id TEXT PRIMARY KEY, username TEXT NOT NULL UNIQUE, display_name TEXT NOT NULL,
-		 role TEXT NOT NULL DEFAULT 'cashier', pin_hash TEXT, is_active INTEGER NOT NULL DEFAULT 1)`,
-		`CREATE TABLE sessions (id TEXT PRIMARY KEY, token_hash TEXT NOT NULL UNIQUE, user_id TEXT NOT NULL,
-		 created_at TEXT NOT NULL DEFAULT (datetime('now')), expires_at TEXT NOT NULL, revoked_at TEXT, last_seen_at TEXT)`,
-		`CREATE TABLE audit_log (id TEXT PRIMARY KEY, actor_id TEXT, entity_type TEXT NOT NULL,
-		 entity_id TEXT NOT NULL, action TEXT NOT NULL, data_json TEXT, created_at TEXT NOT NULL, blocked_actor_id TEXT)`,
-		`CREATE TABLE registers (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, location_id TEXT,
-		 is_active INTEGER NOT NULL DEFAULT 1)`,
-		// ut-docs#672: registerSetup's language-detection branch writes
-		// "setup.detected_lang_unavailable" via d.Settings.Set (setup_page.go)
-		// when the OS-detected language isn't shipped — a nil Settings here
-		// (this fixture's previous state) panics the whole test binary the
-		// moment any /setup-touching test reaches that branch, mocked or via
-		// a real unavailable CI locale. Same settings-table shape as
-		// newFullAuthDeps (setup_page_test.go).
-		`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT, updated_at TEXT)`,
-		// roles/permission_actions/role_permissions (039): registerUsers'
-		// requireManager gates on canPerform(d, r, "user_management")
-		// (ut-docs#556), not the old IsManager() bit, so this fixture needs
-		// the real permission schema even though this file predates #554.
-		`CREATE TABLE roles (role TEXT PRIMARY KEY)`,
-		`CREATE TABLE permission_actions (action TEXT PRIMARY KEY)`,
-		`CREATE TABLE role_permissions (role TEXT NOT NULL REFERENCES roles(role),
-		 action TEXT NOT NULL REFERENCES permission_actions(action), granted INTEGER NOT NULL DEFAULT 0,
-		 PRIMARY KEY (role, action))`,
-	} {
-		if _, err := db.Exec(s); err != nil {
-			t.Fatalf("setup: %v", err)
-		}
-	}
-	for _, role := range []string{"cashier", "manager", "admin", "super_admin"} {
-		if _, err := db.Exec(`INSERT INTO roles (role) VALUES (?)`, role); err != nil {
-			t.Fatalf("seed role %s: %v", role, err)
-		}
-	}
-	if _, err := db.Exec(`INSERT INTO permission_actions (action) VALUES ('user_management')`); err != nil {
-		t.Fatalf("seed permission_action user_management: %v", err)
-	}
-	for _, role := range []string{"manager", "admin", "super_admin"} {
-		if _, err := db.Exec(`INSERT INTO role_permissions (role, action, granted) VALUES (?, 'user_management', 1)`, role); err != nil {
-			t.Fatalf("seed role_permission %s/user_management: %v", role, err)
-		}
-	}
-	// country_settings (ut-docs#660): registerSetup below wires GET /setup,
-	// and wizardCountries now queries this table on every render — see
-	// seedCountrySettingsTable's own comment (setup_page_test.go) for why
-	// this reads the real migration file rather than hand-rolling the DDL.
-	seedCountrySettingsTable(t, db)
 	svc := auth.NewService(db)
 	store := settings.NewStore(db)
 	d := &common.Deps{Db: db, Settings: store, Menu: []common.MenuItem{{Href: "/", Label: "Home"}}, AuthSvc: svc}

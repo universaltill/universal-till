@@ -452,9 +452,11 @@ func TestTaxCodesAPI_Update_NotFound(t *testing.T) {
 func TestTaxCodesPage_GET_ListAllTaxCodesErrorIsLocalized(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newTaxCodesTestDeps(t)
-	if _, err := dp.Db.Exec(`DROP TABLE tax_codes`); err != nil {
-		t.Fatalf("drop tax_codes table: %v", err)
-	}
+	// ut-docs#1679: DROP TABLE tax_codes used to force this, but tax_codes
+	// now has real incoming FKs (items.tax_code_id) that block the DROP
+	// itself under real migrations. A closed *sql.DB forces the same
+	// generic repo-error path deterministically without touching schema.
+	dp.Db.Close()
 
 	req := httptest.NewRequest(http.MethodGet, "/catalog/tax-codes", nil)
 	rec := httptest.NewRecorder()
@@ -478,9 +480,8 @@ func TestTaxCodesPage_GET_ListAllTaxCodesErrorIsLocalized(t *testing.T) {
 func TestTaxCodesAPI_Create_RepoErrorIsLocalized(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newTaxCodesTestDeps(t)
-	if _, err := dp.Db.Exec(`DROP TABLE tax_codes`); err != nil {
-		t.Fatalf("drop tax_codes table: %v", err)
-	}
+	// ut-docs#1679: see TestTaxCodesPage_GET_ListAllTaxCodesErrorIsLocalized.
+	dp.Db.Close()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/catalog/tax-codes", strings.NewReader("name=Broken+Table+Code&rate=10"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
@@ -508,12 +509,11 @@ func TestTaxCodesAPI_Update_RepoErrorIsLocalized(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newTaxCodesTestDeps(t)
 	// seedForPages seeds tax_std, so the id below addresses a row that
-	// really existed before the table was dropped -- the UPDATE therefore
-	// fails on the missing table, not on a not-found id (which has its own
-	// localized branch and would prove nothing about this one).
-	if _, err := dp.Db.Exec(`DROP TABLE tax_codes`); err != nil {
-		t.Fatalf("drop tax_codes table: %v", err)
-	}
+	// really exists -- the UPDATE fails on the closed DB, not on a
+	// not-found id (which has its own localized branch and would prove
+	// nothing about this one). ut-docs#1679: a closed *sql.DB replaces the
+	// old DROP TABLE tax_codes, which real incoming FKs now block.
+	dp.Db.Close()
 
 	req := httptest.NewRequest(http.MethodPost, "/api/catalog/tax-codes/update", strings.NewReader("id=tax_std&name=Standard&rate=20&isActive=1"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")

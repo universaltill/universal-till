@@ -19,10 +19,16 @@ var _ pos.ChargePolicyAsker = (*pluginChargePolicyAsker)(nil)
 // country-tax plugin answering charge.policy.ask: the plugin itself, its
 // events:receive grant, and the hook row (subscription is refused without an
 // active hook row) — same shape as seedTaxPlugin.
+// ut-docs#1677: plugins.entrypoint is NOT NULL and plugins has a composite
+// FOREIGN KEY (id, version) REFERENCES plugin_catalog (id, version) in the
+// real migrated schema -- a plugin_catalog row is needed too (same fix as
+// seedTaxPlugin, tax_hook_cache_test.go).
 func seedChargePolicyPlugin(t *testing.T, db *sql.DB) {
 	t.Helper()
 	for _, q := range []string{
-		`INSERT INTO plugins (id, name, version, is_active) VALUES ('com.universaltill.tax-uk', 'UK VAT', '1.0.0', 1)`,
+		`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, min_pos_version, api_version, published_at)
+		   VALUES ('com.universaltill.tax-uk', '1.0.0', 'UK VAT', 'desc', 'go', 'entry', 'url', 'sha', 'auth', 'site', '[]', '0.0.0', '1', datetime('now'))`,
+		`INSERT INTO plugins (id, name, version, entrypoint, is_active) VALUES ('com.universaltill.tax-uk', 'UK VAT', '1.0.0', 'entry', 1)`,
 		`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
 		   VALUES ('perm-charge', 'com.universaltill.tax-uk', 'events:receive', 1)`,
 		`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)

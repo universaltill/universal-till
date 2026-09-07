@@ -27,35 +27,6 @@ func withTempIssueReportsPendingDir(t *testing.T) {
 	t.Cleanup(func() { issuereport.PendingDir = orig })
 }
 
-// seedIssueReportsSent creates the retained-reports table, column-identical
-// to internal/db/migrations/032_issue_reports_sent.sql — same fixture
-// convention as seedForPages' other tables (a drifted copy here would test a
-// schema production doesn't have).
-func seedIssueReportsSent(t *testing.T, db *sql.DB) {
-	t.Helper()
-	if _, err := db.Exec(`CREATE TABLE issue_reports_sent (
-		id TEXT PRIMARY KEY,
-		note TEXT NOT NULL DEFAULT '',
-		captured_at TEXT NOT NULL,
-		had_audio INTEGER NOT NULL DEFAULT 0,
-		had_video INTEGER NOT NULL DEFAULT 0,
-		image_count INTEGER NOT NULL DEFAULT 0,
-		status TEXT NOT NULL DEFAULT 'sent',
-		github_issue_url TEXT NOT NULL DEFAULT '',
-		-- ut-docs#1652. NOTE: this CREATE TABLE is a hand-maintained copy of
-		-- the real schema (001_init.sql + internal/db/migrations/006), not
-		-- the migrations themselves — openPagesTestDB builds its scratch DB
-		-- without running them. So a column added to the real schema and not
-		-- mirrored here fails these tests loudly, but a column added HERE and
-		-- not to the real schema would pass them while breaking on a device.
-		-- Tracked as ut-docs#1657.
-		github_issue_state TEXT NOT NULL DEFAULT '',
-		last_synced_at TEXT
-	)`); err != nil {
-		t.Fatalf("create issue_reports_sent: %v", err)
-	}
-}
-
 func newMyReportsTestMux(t *testing.T) (*http.ServeMux, *sql.DB) {
 	t.Helper()
 	chdirRoot(t)
@@ -65,10 +36,12 @@ func newMyReportsTestMux(t *testing.T) (*http.ServeMux, *sql.DB) {
 	// a checkout that has ever captured a real bug report locally would
 	// pick up ./data/issue-reports/pending's actual contents.
 	withTempIssueReportsPendingDir(t)
+	// issue_reports_sent (with github_issue_state, migration 006) comes from
+	// the real migration set openPagesTestDB now runs (ut-docs#1657/#1677) --
+	// this fixture used to hand-roll its own copy.
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
-	seedIssueReportsSent(t, db)
 
 	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)

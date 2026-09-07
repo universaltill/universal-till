@@ -32,6 +32,11 @@ func newReportsPageTestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
+	// audit_log.actor_id has a real FK to users(id); several tests inject
+	// the manager session via auth.WithUser without a real login.
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, role) VALUES ('mgr1', 'mgr1', 'Manager One', 'manager')`); err != nil {
+		t.Fatalf("seed test manager: %v", err)
+	}
 
 	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
 	pm, err := plugins.Init(t.Context(), cfg, db)
