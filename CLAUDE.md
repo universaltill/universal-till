@@ -141,11 +141,16 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   `git diff` when the change doesn't touch `android/**` or `mobile/**`.
   Before this, only `release.yml`'s `android-app` job compiled it, so a
   Kotlin compile error under `android/` could merge to `main` clean and
-  only surface at release time or on a real device. **Known residual
-  gap** (ut-docs#1721 review, filed as ut-docs#1735): even with this
-  filter, `gobind` reports a type it silently can't bind as a comment in
-  its generated output and still exits 0 — a compile-only gate cannot see
-  that class of failure. A real guard for it is future work.
+  only surface at release time or on a real device. The residual gap this
+  left (ut-docs#1721 review, filed as ut-docs#1735) — `gobind` reports a
+  type it silently can't bind as a comment in its generated output and
+  still exits 0, which a compile-only gate cannot see — is now closed by
+  `scripts/ci/guard-gobind-skip.sh`, which runs `gobind` itself and scans
+  its generated output for that skip comment; it runs as two steps in
+  `android-ci.yml`'s `compile` job (the guard, then its own regression
+  test), right after "Install gomobile/gobind" and before the Gradle
+  build, so a silent skip fails fast instead of shipping a phone build
+  silently missing a method.
 - Feature branch; code review recorded in `docs/code-reviews/<date>-<topic>.md`;
   then merge to `main`. No secrets in logs or committed files.
 
