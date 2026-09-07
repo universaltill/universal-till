@@ -228,6 +228,7 @@
   "designer.title": "Till Designer",
   "fiscaldevice.actions.confirm": "Confirm device",
   "fiscaldevice.actions.confirm_help": "Use this after you have watched the device print a test receipt. The first real receipt confirms it automatically.",
+  "fiscaldevice.actions.unavailable": "Pairing actions are available on a Türkiye till with the fiscal-device plugin installed and active.",
   "fiscaldevice.actions.unpair": "Unpair device",
   "fiscaldevice.actions.unpair_help": "Use this when the device is removed or replaced. Sales as system of record are refused again until a device proves itself.",
   "fiscaldevice.device.driver": "Driver",

@@ -6,6 +6,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -71,7 +72,15 @@ func TestRecordFiscalDeviceEvidence_PersistsAndConfirmsOnce(t *testing.T) {
 	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role) VALUES ('cashier','cashier1','Cashier One','x','cashier')`); err != nil {
 		t.Fatalf("seed actor: %v", err)
 	}
-	d := &common.Deps{Db: db, Settings: settings.NewStore(db)}
+	// ut-docs#1750: the confirmation half only runs for the market this flow
+	// is for, so the happy path needs a real Turkish shop with the plugin.
+	seedActiveTaxTrPlugin(t, db, true)
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "TRY", TaxRate: 20}}
+	st := settings.NewStore(db)
+	if err := st.Set(t.Context(), "store.country", "TR"); err != nil {
+		t.Fatalf("set country: %v", err)
+	}
+	d := &common.Deps{Cfg: cfg, Db: db, Settings: st, State: common.LoadState(t.Context(), st, cfg)}
 	repo := data.NewPOSRepo(db)
 
 	recordFiscalDeviceEvidence(t.Context(), d, repo, "sale-1", "cashier", nil) // no evidence: no-op
@@ -127,5 +136,42 @@ func TestRenderReceipt_DeviceReceiptBlock(t *testing.T) {
 	}
 	if strings.Contains(plain, "receipt.fiscal.device.title") {
 		t.Fatal("no device receipt: block must be absent, never placeholders")
+	}
+}
+
+// ut-docs#1750, independent review finding 3. recordFiscalDeviceEvidence
+// flipped fiscal.KeySigningDeviceConfigured with no country check and no
+// check that the answering plugin was the Turkish one — and since ADR-0081
+// that is the same key Germany's TSE gate reads. DeviceEvidence.Valid()
+// requires only a non-empty receipt number (no signature, no attestation),
+// and plugins/tax-tr's shipped defaults point at 127.0.0.1:4711, which is
+// byte-identical to scripts/okc-sim's. So one simulator receipt on a German
+// till satisfied Germany's TSE flag.
+func TestRecordFiscalDeviceEvidence_DoesNotConfirmOutsideTurkey(t *testing.T) {
+	chdirRoot(t)
+	db := openPagesTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	seedForPages(t, db)
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role) VALUES ('cashier','cashier1','Cashier One','x','cashier')`); err != nil {
+		t.Fatalf("seed actor: %v", err)
+	}
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "EUR", TaxRate: 19}}
+	st := settings.NewStore(db)
+	if err := st.Set(t.Context(), "store.country", "DE"); err != nil {
+		t.Fatalf("set country: %v", err)
+	}
+	d := &common.Deps{Cfg: cfg, Db: db, Settings: st, State: common.LoadState(t.Context(), st, cfg)}
+	repo := data.NewPOSRepo(db)
+
+	ev := &fiscal.DeviceEvidence{Kind: "okc", Maker: "sim", Serial: "SIM-1", ReceiptNo: "0000001", ReceiptKind: "mali_fis", ZNo: 1}
+	recordFiscalDeviceEvidence(t.Context(), d, repo, "sale-de-1", "cashier", ev)
+
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); v == "true" {
+		t.Fatal("a German till's TSE gate flag was satisfied by fiscal-device evidence — a simulator receipt must never stand in for a TSE")
+	}
+	// The receipt itself is still recorded: this narrows what the evidence
+	// is allowed to PROVE, it does not throw away the evidence.
+	if _, ok, err := repo.GetFiscalDeviceReceipt(t.Context(), "sale-de-1"); err != nil || !ok {
+		t.Fatalf("evidence must still be persisted: ok=%v err=%v", ok, err)
 	}
 }

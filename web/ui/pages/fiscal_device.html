@@ -32,6 +32,11 @@
     <h3>{{ T "fiscaldevice.state.title" }}</h3>
     <p>{{ if .configured }}✓ {{ T "fiscaldevice.state.confirmed" }}{{ else }}⚠ {{ T "fiscaldevice.state.not_confirmed" }}{{ end }}</p>
     <p class="muted">{{ if .systemOfRecord }}{{ T "fiscaldevice.state.system_of_record" }}{{ else }}{{ T "fiscaldevice.state.shadow" }}{{ end }}</p>
+    {{/* ut-docs#1750: these POST to endpoints gated on Türkiye + an active
+         tax-tr plugin, so showing them otherwise is a button that 404s to a
+         blank page — and the manual's own screenshot tells a shop to press
+         it. The page stays readable either way; only the actions are gated. */}}
+    {{ if .marketActive }}
     <div style="display:flex; gap:.5rem; flex-wrap:wrap">
       {{ if not .configured }}
       <form method="post" action="/api/fiscal-device/confirm">
@@ -44,6 +49,9 @@
       {{ end }}
     </div>
     <p class="muted">{{ if not .configured }}{{ T "fiscaldevice.actions.confirm_help" }}{{ else }}{{ T "fiscaldevice.actions.unpair_help" }}{{ end }}</p>
+    {{ else }}
+    <p class="muted">{{ T "fiscaldevice.actions.unavailable" }}</p>
+    {{ end }}
   </div>
 
   <div class="card">

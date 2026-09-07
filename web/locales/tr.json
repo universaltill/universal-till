@@ -228,6 +228,7 @@
   "designer.title": "Kasa Tasarımcısı",
   "fiscaldevice.actions.confirm": "Cihazı doğrula",
   "fiscaldevice.actions.confirm_help": "Cihazın test fişi bastığını gördükten sonra kullanın. İlk gerçek fiş cihazı otomatik olarak doğrular.",
+  "fiscaldevice.actions.unavailable": "Eşleştirme işlemleri, mali cihaz eklentisi kurulu ve etkin olan bir Türkiye kasasında kullanılabilir.",
   "fiscaldevice.actions.unpair": "Cihazı ayır",
   "fiscaldevice.actions.unpair_help": "Cihaz kaldırıldığında ya da değiştirildiğinde kullanın. Bir cihaz kendini kanıtlayana kadar sistem kaydı olarak satışlar yeniden reddedilir.",
   "fiscaldevice.device.driver": "Sürücü",

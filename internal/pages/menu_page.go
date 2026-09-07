@@ -3,6 +3,7 @@ package pages
 import (
 	"html/template"
 	"net/http"
+	"strings"
 
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -170,7 +171,11 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 			// fiscal-device plugin installed and active, so a TR shop with
 			// no plugin (shadow mode beside its existing register) never
 			// sees a tile for a device the till isn't driving.
-			if d.CurrentState().Country == "TR" && fiscalDevicePluginActive(r.Context(), d) {
+			// ut-docs#1750 (review F7): normalized like fiscalDeviceMarketActive,
+			// which gates the actions this tile leads to — otherwise a shop
+			// stored as "tr" gets no tile but fully working actions on the
+			// direct URL.
+			if strings.EqualFold(strings.TrimSpace(d.CurrentState().Country), "TR") && fiscalDevicePluginActive(r.Context(), d) {
 				add("/fiscal-device", "fiscaldevice.title")
 			}
 		}

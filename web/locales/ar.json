@@ -228,6 +228,7 @@
   "designer.title": "مصمّم الصندوق",
   "fiscaldevice.actions.confirm": "تأكيد الجهاز",
   "fiscaldevice.actions.confirm_help": "استخدمه بعد أن ترى الجهاز يطبع إيصال اختبار. أول إيصال فعلي يؤكده تلقائيًا.",
+  "fiscaldevice.actions.unavailable": "إجراءات الإقران متاحة على صندوق في تركيا يكون فيه ملحق الجهاز المالي مثبتاً ومفعّلاً.",
   "fiscaldevice.actions.unpair": "فصل الجهاز",
   "fiscaldevice.actions.unpair_help": "استخدمه عند إزالة الجهاز أو استبداله. تُرفض عمليات البيع كسجل رسمي مجددًا إلى أن يثبت جهاز نفسه.",
   "fiscaldevice.device.driver": "المشغّل",

@@ -1742,6 +1742,16 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		if v := strings.TrimSpace(r.Form.Get("country")); v != "" {
+			// ut-docs#1750: the second writer of store.country. A reviewer
+			// reproduced a manager-only bypass through THIS handler after
+			// the first fix guarded only /api/settings/upsert.
+			if !requireFiscalAuthorityForCountryChange(w, r, d, v) {
+				return
+			}
+			if err := clearFiscalStateForCountryChange(r.Context(), d, actorIDFor(r), v); err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings", err) // page-error:allow /api/ route
+				return
+			}
 			st.Country = v
 			auditPayload["country"] = v
 			// ut-docs#1027: re-derive locale from the new country when the
@@ -1934,6 +1944,20 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		case fiscal.KeySystemOfRecord, fiscal.KeySigningDeviceConfigured:
 			if !canPerform(d, r, "fiscal_tse_override") {
 				http.Error(w, "owner (admin) required", http.StatusForbidden)
+				return
+			}
+		}
+		// ut-docs#1750: store.country is load-bearing for the fiscal gate
+		// (ADR-0081 merged DE and TR onto one posture key), so a country
+		// edit goes through the shared invariant every writer uses — before
+		// the value is persisted, so a failure can never leave the country
+		// moved with the posture still set.
+		if key == common.KeyCountry {
+			if !requireFiscalAuthorityForCountryChange(w, r, d, value) {
+				return
+			}
+			if err := clearFiscalStateForCountryChange(r.Context(), d, actorIDFor(r), value); err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings", err) // page-error:allow /api/ route
 				return
 			}
 		}

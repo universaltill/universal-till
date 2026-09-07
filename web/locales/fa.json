@@ -228,6 +228,7 @@
   "designer.title": "طراح صندوق",
   "fiscaldevice.actions.confirm": "تأیید دستگاه",
   "fiscaldevice.actions.confirm_help": "بعد از اینکه چاپ رسید آزمایشی دستگاه را دیدید استفاده کنید. اولین رسید واقعی آن را خودکار تأیید می‌کند.",
+  "fiscaldevice.actions.unavailable": "عملیات جفت‌سازی روی صندوقی در ترکیه که افزونه دستگاه مالی روی آن نصب و فعال باشد در دسترس است.",
   "fiscaldevice.actions.unpair": "جداکردن دستگاه",
   "fiscaldevice.actions.unpair_help": "وقتی دستگاه برداشته یا عوض شد استفاده کنید. تا وقتی دستگاهی خودش را ثابت نکند، فروش به‌عنوان سامانهٔ ثبت دوباره رد می‌شود.",
   "fiscaldevice.device.driver": "درایور",

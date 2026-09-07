@@ -118,6 +118,22 @@ func recordFiscalDeviceEvidence(ctx context.Context, d *common.Deps, repo *data.
 	if d == nil || d.Settings == nil {
 		return
 	}
+	// ut-docs#1750 (independent review, finding 3): the receipt above is
+	// recorded for ANY shop whose payment plugin returned one — that is just
+	// evidence, and keeping it is right. Flipping the GATE FLAG on it is a
+	// different act, and must happen only for the market this flow is for.
+	//
+	// Since ADR-0081 this is the same key fiscal.EvaluateGate reads for
+	// GERMANY, and nothing here checked country or which plugin answered.
+	// fiscal.DeviceEvidence carries no signature, no certificate and no maker
+	// attestation — Valid() requires only a non-empty receipt number — while
+	// plugins/tax-tr's shipped defaults (bridge, 127.0.0.1:4711) are
+	// byte-identical to scripts/okc-sim's, which is `go run`-able with no
+	// flags. So one simulator receipt satisfied Germany's TSE flag, on a till
+	// that may have no TSE at all. Same gate the confirm/unpair endpoints use.
+	if !fiscalDeviceMarketActive(ctx, d) {
+		return
+	}
 	configured, _, err := d.Settings.Get(ctx, fiscal.KeySigningDeviceConfigured)
 	if err != nil || settingIsTrue(configured) {
 		return
