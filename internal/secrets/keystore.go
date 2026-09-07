@@ -84,6 +84,40 @@ func NewKeyStoreAt(path string, fetch func(ctx context.Context) ([]byte, error))
 // Path returns where the key lives on disk.
 func (ks *KeyStore) Path() string { return ks.path }
 
+// ClearLocalKeyFile removes the on-disk key at the canonical production
+// path (paths.Data(...)), if one exists. It is a no-op, not an error, when
+// no file is present.
+//
+// This is the replica-join hook: a till that already generated its own
+// standalone key (e.g. it had a secret plugin setting configured before
+// ever joining a shop) keeps that file untouched by a snapshot restore —
+// the key lives outside the SQLite DB by design (see the package doc), so
+// swapping in the primary's DB does not disturb it. internal/db's
+// ApplyReplicaIdentity calls this as part of applying a shop identity so
+// the next Load — via the fetch closure registered at startup — fetches
+// the shop's own key from the primary (GET /api/sync/secrets-key) instead
+// of continuing to seal/open everything under the wrong, till-local key.
+//
+// Free function rather than a KeyStore method: ApplyReplicaIdentity runs
+// early in startup, before secrets.SetDefault registers the process-wide
+// store (internal/app.Run), so there is no KeyStore instance to call this
+// on yet — only the well-known canonical path.
+func ClearLocalKeyFile() error {
+	path := paths.Data(keyRelPath...)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("secrets: clear local key file: %w", err)
+	}
+	// persist() writes path+".tmp" then renames it into place; a crash
+	// between those two steps can leave a plaintext-key .tmp file behind
+	// (independent-review finding, ut-docs#1745). Clearing the key is
+	// supposed to destroy it — leaving that sibling on disk would defeat
+	// the point, so it goes too, whether or not the "real" file existed.
+	if err := os.Remove(path + ".tmp"); err != nil && !os.IsNotExist(err) {
+		return fmt.Errorf("secrets: clear local key file: remove .tmp sibling: %w", err)
+	}
+	return nil
+}
+
 // Exists reports whether a key file is stored locally.
 func (ks *KeyStore) Exists() bool {
 	fi, err := os.Stat(ks.path)
@@ -161,6 +195,15 @@ func (ks *KeyStore) Load(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("%w: primary returned a %d-byte key, want %d", ErrNoKeyYet, len(fetched), KeySize)
 	}
 	if err := ks.persist(fetched); err != nil {
+		// ut-docs#1747: a persist failure after a SUCCESSFUL fetch (e.g. a
+		// wedged disk) must arm the same negative-cache floor as a failed
+		// fetch — otherwise every settings_get host call turns into a fresh
+		// HTTP round-trip to the primary instead of being rate-limited like
+		// a fetch failure already is. The key itself was never cached
+		// (ks.key stays nil), so the next Load still correctly reports no
+		// key; it just doesn't hammer the network to find that out again
+		// inside the floor.
+		ks.lastFail = ks.now()
 		return nil, err
 	}
 	ks.key = copyKey(fetched)

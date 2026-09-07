@@ -4,6 +4,7 @@ import (
 	"context"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
 	"github.com/universaltill/universal-till/internal/secrets"
@@ -229,5 +230,75 @@ func TestPluginSetting_SecretWriteWithoutKeyStoreFailsClosed(t *testing.T) {
 	}
 	if err := repo.UpsertPluginSetting(ctx, "com.example.pay", "endpoint", `"https://x"`); err != nil {
 		t.Fatalf("non-secret write must not need the key store: %v", err)
+	}
+}
+
+// ut-docs#1746: install-time default-value seeding (ReconcilePluginSettings)
+// is a write path too, and must go through the same seal seam as every
+// other one — a manifest default_value for a secret-typed or
+// heuristic-matching key must never land in plugin_settings.value_json in
+// cleartext just because it arrived via install rather than an operator
+// edit.
+func TestReconcilePluginSettings_DefaultValueSealedForSecretKeys(t *testing.T) {
+	d, repo := newSecretSettingsTestDB(t)
+	ctx := context.Background()
+
+	declared := []PluginSettingRow{
+		// Heuristic match on the key name alone (no manifest declaration).
+		{PluginID: "com.example.pay", Key: "stripe_secret_key", ValueJSON: `"sk_default_from_manifest"`, Scope: "global", UpdatedAt: time.Now()},
+		// Only the manifest's `type: "secret"` declaration makes this one
+		// secret — the key name matches no heuristic.
+		{PluginID: "com.example.pay", Key: "merchant_code", ValueJSON: `"M-DEFAULT"`, Scope: "global", UpdatedAt: time.Now(), DeclaredSecret: true},
+		// An ordinary setting must stay plain JSON at rest, unaffected.
+		{PluginID: "com.example.pay", Key: "endpoint", ValueJSON: `"https://api.example"`, Scope: "global", UpdatedAt: time.Now()},
+	}
+	if err := repo.ReconcilePluginSettings(ctx, nil, "com.example.pay", declared); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	for _, tc := range []struct{ key, plaintextNeedle string }{
+		{"stripe_secret_key", "sk_default_from_manifest"},
+		{"merchant_code", "M-DEFAULT"},
+	} {
+		raw := rawValueJSON(t, d, "com.example.pay", tc.key)
+		if !secrets.IsSealed(raw) {
+			t.Fatalf("%s default at rest = %q, want a %q-prefixed sealed value (was written in cleartext by default-value seeding)", tc.key, raw, secrets.Prefix)
+		}
+		if strings.Contains(raw, tc.plaintextNeedle) {
+			t.Fatalf("%s default at rest leaks the plaintext default: %q", tc.key, raw)
+		}
+	}
+	if got, found, err := repo.GetPluginSetting(ctx, "com.example.pay", "stripe_secret_key"); err != nil || !found || got != `"sk_default_from_manifest"` {
+		t.Fatalf("GetPluginSetting(stripe_secret_key) = %q found=%v err=%v", got, found, err)
+	}
+	if got, found, err := repo.GetPluginSetting(ctx, "com.example.pay", "merchant_code"); err != nil || !found || got != `"M-DEFAULT"` {
+		t.Fatalf("GetPluginSetting(merchant_code) = %q found=%v err=%v", got, found, err)
+	}
+	if raw := rawValueJSON(t, d, "com.example.pay", "endpoint"); raw != `"https://api.example"` {
+		t.Fatalf("non-secret default at rest = %q, want unchanged plain JSON", raw)
+	}
+}
+
+// Same fail-closed guarantee as every other write in this seam: a manifest
+// default for a secret key must not be persisted in cleartext just because
+// no key store is available to seal it — the whole reconcile must error out
+// rather than silently degrade.
+func TestReconcilePluginSettings_DefaultValueFailsClosedWithoutKeyStore(t *testing.T) {
+	d, repo := newSecretSettingsTestDB(t)
+	ctx := context.Background()
+	prev := secrets.Default()
+	secrets.SetDefault(nil)
+	t.Cleanup(func() { secrets.SetDefault(prev) })
+
+	declared := []PluginSettingRow{
+		{PluginID: "com.example.pay", Key: "stripe_secret_key", ValueJSON: `"sk_default"`, Scope: "global", UpdatedAt: time.Now()},
+	}
+	if err := repo.ReconcilePluginSettings(ctx, nil, "com.example.pay", declared); err == nil {
+		t.Fatal("reconcile seeding a secret default with no key store must fail")
+	}
+	var n int
+	_ = d.QueryRow(`SELECT COUNT(*) FROM plugin_settings WHERE plugin_id = 'com.example.pay' AND key = 'stripe_secret_key'`).Scan(&n)
+	if n != 0 {
+		t.Fatalf("failed default-value seal must not leave a cleartext row (found %d)", n)
 	}
 }

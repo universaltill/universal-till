@@ -763,6 +763,10 @@ var renderFiles = []string{
 	// already staged from an earlier visit) both need this exact markup,
 	// so it's a partial riding along here rather than duplicated inline.
 	"ui/partials/backup_restore_staged.html",
+	// ut-docs#1060: same reasoning again — GET /ui/settings/window-mode-status's
+	// own htmx poll response AND settings.html's page render both need this
+	// exact markup, so it's a partial riding along here too.
+	"ui/partials/window_mode_status.html",
 }
 
 // Render full page with layout + page + common partials
