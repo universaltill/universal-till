@@ -123,6 +123,25 @@ jobs:
           go install golang.org/x/mobile/cmd/gomobile@latest
           go install golang.org/x/mobile/cmd/gobind@latest
           echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      # ut-docs#1735 ("Known residual gap" in universal-till/CLAUDE.md's
+      # "Before committing" section): gobind can silently drop an exported
+      # function from the generated Java/Kotlin API when one of its
+      # parameter/return types isn't declared in the bound package (./mobile)
+      # itself — it emits a `// skipped function ... with unsupported
+      # parameter or return types` comment in its generated output and still
+      # exits 0. The Gradle compile step below can't see this: the Kotlin
+      # side never references a method that was never generated, so nothing
+      # fails. Runs BEFORE the Gradle build so a silent skip fails fast,
+      # before paying for the Gradle compile (NDK/build-tools were already
+      # installed above for the Kotlin/JNI side, so this step doesn't save
+      # that cost — only the Gradle build itself) — see
+      # scripts/ci/guard-gobind-skip.sh for the real ut-docs#1721 case this
+      # guards against. The guard's own regression test (pure bash, no
+      # toolchain needed) runs unconditionally in ci.yml's build job instead
+      # of here, matching every other guard+test pair's convention.
+      - name: "Guard: gobind must not silently skip a binding"
+        if: steps.filter.outputs.match == 'true'
+        run: bash scripts/ci/guard-gobind-skip.sh
       - name: Compile Android app (Gradle assembleDebug)
         if: steps.filter.outputs.match == 'true'
         # assembleDebug's preBuild dependency on generateAar means this

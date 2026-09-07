@@ -114,6 +114,15 @@ jobs:
         run: bash scripts/ci/guard-android-external-links.sh
       - name: Android external-link hand-off guard regression test
         run: bash scripts/ci/guard-android-external-links_test.sh
+      # guard-gobind-skip.sh's real-CI mode runs in android-ci.yml (it needs
+      # gobind on PATH, and only makes sense when android/**/mobile/**
+      # changed) — but its regression test is pure bash against throwaway
+      # fixtures, needs no toolchain, and must not be gated behind that path
+      # filter (ut-docs#1735 review): every other guard's own _test.sh runs
+      # unconditionally here, and a PR touching only the guard script itself
+      # would otherwise ship it completely unverified.
+      - name: gobind-skip guard regression test
+        run: bash scripts/ci/guard-gobind-skip_test.sh
       - name: Emoji font guard
         run: bash scripts/ci/guard-emoji-font.sh
       - name: htmx-loaded guard
