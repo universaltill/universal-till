@@ -289,6 +289,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerPendingPairingsUI(mux, dp)                // ADR-0033 part 3/3 (primary side)
 	registerSyncSales(mux, dp)
 	registerSyncOrders(mux, dp) // cross-till orders board, primary side (ut-docs#1350)
+	registerSyncTables(mux, dp) // cross-till table occupancy, read-only, primary side (ut-docs#1392)
 	registerSyncAdmin(mux, dp)
 	registerSyncAssets(mux, dp)
 	registerSyncQuarantinePage(mux, dp) // ut-docs#1133: quarantined LAN-sync journal entries, primary-only admin panel (ADR-0065 follow-up)
