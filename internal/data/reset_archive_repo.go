@@ -235,6 +235,24 @@ VALUES (?, ?, ?, ?)`, batchID, now, nullIfEmpty(actorID), count); err != nil {
 				return 0, "", fmt.Errorf("reset: clear credit notes: %w", err)
 			}
 		}
+		// held_sales's own table_claims row (ut-docs#1704, independent
+		// review 2026-09-07): since that card, holding an order KEEPS its
+		// table_claims claim alive rather than releasing it (that's what
+		// makes it visible cross-till) — so a held order still parked when
+		// this reset runs would otherwise leave its table stuck reading
+		// occupied afterward, with the held_sales row that explains why
+		// already archived and gone. table_claims itself is correctly
+		// NEVER archived here (sync_admin_repo.go's own adminTables doc
+		// comment: ephemeral, not transactional history) — this only clears
+		// the now-orphaned rows, same table this held_sales row is about to
+		// lose. Must run BEFORE the DELETE below, while the subquery can
+		// still see which tables were held.
+		if t.live == "held_sales" {
+			if _, err := tx.ExecContext(ctx,
+				`DELETE FROM table_claims WHERE table_id IN (SELECT table_id FROM held_sales WHERE table_id IS NOT NULL)`); err != nil {
+				return 0, "", fmt.Errorf("reset: clear held orders' table claims: %w", err)
+			}
+		}
 		if _, err := tx.ExecContext(ctx, `DELETE FROM `+t.live); err != nil {
 			return 0, "", fmt.Errorf("reset: clear %s: %w", t.live, err)
 		}

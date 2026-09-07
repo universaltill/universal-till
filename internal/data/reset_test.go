@@ -137,6 +137,41 @@ func TestResetTransactionHistoryClearsSalesKeepsCatalog(t *testing.T) {
 	}
 }
 
+// TestResetTransactionHistory_ClearsHeldOrdersTableClaim (ut-docs#1704,
+// independent review 2026-09-07): since that card, holding an order KEEPS
+// its table_claims row alive instead of releasing it (that's what makes it
+// visible cross-till) — so a genuinely-still-parked order at reset time now
+// leaves a table_claims row behind unless the reset clears it too.
+// table_claims is correctly never archived (it's ephemeral, not
+// transactional history — sync_admin_repo.go's own doc comment), but an
+// orphaned row here would otherwise strand the table reading occupied
+// forever with no held_sales row left to explain why, recoverable only via
+// a manager's Free table.
+func TestResetTransactionHistory_ClearsHeldOrdersTableClaim(t *testing.T) {
+	d, x, count := resetTestDB(t, "reset_held_claim.db")
+	x(`INSERT INTO tables (id, label, created_at, updated_at) VALUES ('tbl1','T1','2026-01-01T00:00:00Z','2026-01-01T00:00:00Z')`)
+	x(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES ('h1','Table 1',100,1,'{}','tbl1')`)
+	x(`INSERT INTO table_claims (table_id, claimed_at) VALUES ('tbl1', '2026-01-01T00:00:00Z')`)
+
+	if c := count("table_claims"); c != 1 {
+		t.Fatalf("test setup: want 1 table_claims row before reset, got %d", c)
+	}
+
+	if _, _, err := data.NewPOSRepo(d.DB).ResetTransactionHistory(context.Background(), ""); err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+
+	if c := count("held_sales"); c != 0 {
+		t.Fatalf("held_sales not cleared: %d", c)
+	}
+	if c := count("table_claims"); c != 0 {
+		t.Fatalf("a reset must clear a held order's now-orphaned table_claims row too, got %d — the table would otherwise read occupied forever with no held order left to explain why", c)
+	}
+	if free, err := data.NewPOSRepo(d.DB).IsTableFree(context.Background(), "tbl1", ""); err != nil || !free {
+		t.Fatalf("table must read free after reset, free=%v err=%v", free, err)
+	}
+}
+
 func TestResetThenRestoreRoundTrip(t *testing.T) {
 	d, x, count := resetTestDB(t, "restore.db")
 	seedFullSale(t, x)

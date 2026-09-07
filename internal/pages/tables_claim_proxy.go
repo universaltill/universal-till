@@ -123,10 +123,15 @@ func releaseTableClaimOnPrimary(ctx context.Context, d *common.Deps, client *htt
 // basket from that table indefinitely, since nothing on this path ever
 // revisits another till's row — the primary would be the one till in the shop
 // that the documented ~2-minute takeover did not apply to. The ” id can only
-// ever expire ANOTHER till's stale row: ClaimTableForTill's `till_id != ”`
-// guard keeps it off every local row, including this till's own. On a replica
-// (which only ever holds ” rows locally) and on a standalone till (no tills
-// rows at all) it reconciles nothing and is exactly the old ClaimTable.
+// ever expire ANOTHER till's stale row — ClaimTableForTill's staleness
+// disjunct still requires a non-empty till_id, so it can never touch a ”
+// row, this till's own included. It CAN, since ut-docs#1704, re-take its
+// OWN ” row (the plain own-claim disjunct, unguarded either way) — that's
+// the refresh a held order's resume relies on, not an expiry: no OTHER
+// till's re-claim attempt can ever touch it, only a call that is itself
+// passing tillID=”. On a replica (which only ever holds ” rows locally) and
+// on a standalone till (no tills rows at all) it reconciles nothing beyond
+// that self-refresh and is otherwise exactly the old ClaimTable.
 //
 // If that reconciling form fails for any reason it degrades to the plain
 // ClaimTable rather than failing the pick: reconciliation is a bonus on this
@@ -154,18 +159,36 @@ func claimTableWriteThrough(ctx context.Context, d *common.Deps, repo *data.POSR
 // releaseTableClaimWriteThrough is THE release call behind pos_api.go's
 // releaseTableClaim helper: a "" tableID is the common no-table case and a
 // no-op; otherwise the primary is told to release this till's claim there
-// (fire-and-forget — its answer is ignored, matching every existing release
-// site's "never block the basket's state change on bookkeeping" stance), and
-// the local row is ALWAYS released afterwards regardless, logged-not-surfaced
-// on failure exactly as before.
-func releaseTableClaimWriteThrough(ctx context.Context, d *common.Deps, repo *data.POSRepo, tableID string) {
+// (fire-and-forget for the caller's basket-state-change purposes — its
+// answer never blocks or fails what the caller is doing, matching every
+// existing release site's "never block the basket's state change on
+// bookkeeping" stance), and the local row is ALWAYS released afterwards
+// regardless, logged-not-surfaced on failure exactly as before.
+//
+// primaryReleased reports whether the primary-side release is known to have
+// succeeded (false covers "not a replica," every network/timeout/non-200/
+// malformed-response failure, AND "no primary configured" alike — the
+// caller cannot and must not try to distinguish those). Every EXISTING call
+// site still ignores it (a bare `releaseTableClaim(...)` statement, ok in
+// Go), preserving the fire-and-forget behaviour everywhere it was already
+// accepted. It exists for hold_api.go's held/table move handler
+// (ut-docs#1704, independent review 2026-09-07): unlike every other release
+// site here, a failed release there leaks the OLD table's claim on the
+// primary with no natural next touch to surface or self-heal it (a live
+// basket's release sites all sit on a basket that keeps moving and
+// re-claiming; a moved-away-from held table just sits there, silently
+// unbookable, until a manager notices and taps Free table) — so that one
+// call site logs loudly on a primary-release failure specifically, instead
+// of the usual silence.
+func releaseTableClaimWriteThrough(ctx context.Context, d *common.Deps, repo *data.POSRepo, tableID string) (primaryReleased bool) {
 	if tableID == "" {
-		return
+		return false
 	}
-	_ = releaseTableClaimOnPrimary(ctx, d, tableClaimProxyClient, tableID)
+	primaryReleased = releaseTableClaimOnPrimary(ctx, d, tableClaimProxyClient, tableID)
 	if err := repo.ReleaseTableClaim(ctx, tableID); err != nil {
 		log.Printf("table claim: release %s failed: %v", tableID, err)
 	}
+	return primaryReleased
 }
 
 // tableClaimBootReleaseInitialDelay/tableClaimBootReleaseInterval shape the

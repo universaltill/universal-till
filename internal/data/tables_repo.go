@@ -211,10 +211,16 @@ FROM tables WHERE id = ?`, id).Scan(&t.ID, &t.Label, &t.AreaZone, &t.SeatCount, 
 // holds, could otherwise self-block a no-op move onto its own current
 // table), so its own row is excluded from the occupancy check. Pass ""
 // when there is no held sale to exclude (e.g. assigning a table to a live,
-// not-yet-held basket). It excludes a held_sales row ONLY — never a live
-// claim: there is one live basket per till, and its handler short-circuits
-// a re-pick of its own current table before ever asking, so a claim seen
-// here is by construction someone else's.
+// not-yet-held basket). It excludes a held_sales row ONLY — never a claim.
+// The live basket's own table pick can rely on that unconditionally (its
+// handler short-circuits a re-pick of its own current table before ever
+// asking, so any claim it sees here is by construction someone else's) —
+// but since ut-docs#1704 a HELD order's own table_claims row also persists
+// through the whole park, so a caller checking a held sale's OWN current
+// table (not just its held_sales row) must short-circuit that case itself
+// first, the same way, or this will wrongly read it as occupied by "someone
+// else." hold_api.go's held/table move handler is the one other caller in
+// this position and does exactly that.
 func (r *POSRepo) IsTableFree(ctx context.Context, id string, excludeHeldSaleID string) (bool, error) {
 	var occupied int
 	err := r.db.QueryRowContext(ctx, `
@@ -253,11 +259,15 @@ INSERT OR IGNORE INTO table_claims (table_id, claimed_at) VALUES (?, ?)`, tableI
 }
 
 // ReleaseTableClaim drops THIS till's own local live-basket claim on tableID
-// (ut-docs#1390): the basket cleared its table, was parked (the held_sales
-// row now carries the occupancy), tendered, or was reset. A no-op — not an
-// error — when there is no claim to release, same convention as
-// HeldSalesRepo.Delete on a missing row, so every release site can call it
-// unconditionally.
+// (ut-docs#1390): the basket cleared its table, was tendered, or was reset.
+// Parking the order no longer releases it (ut-docs#1704 — the held_sales row
+// carries the occupancy TOO, but the still-live claim is what a replica has
+// already write-through'd to the primary, so keeping it is what makes the
+// parked order visible cross-till); hold_api.go's held/table move handler is
+// the one place that releases a held order's claim now, when the table
+// itself changes. A no-op — not an error — when there is no claim to
+// release, same convention as HeldSalesRepo.Delete on a missing row, so
+// every release site can call it unconditionally.
 //
 // Scoped to till_id = ” (independent review finding, ut-docs#1393) — its
 // one caller, releaseTableClaimWriteThrough, always means "release MY OWN
@@ -362,30 +372,59 @@ func (r *POSRepo) ForceReleaseTableClaim(ctx context.Context, tableID string) (r
 // staleness rule above can never expire its orphan, so re-picking that table
 // would be refused forever. Re-taking your own row (rather than merely
 // reporting claimed=true and leaving the old row) also refreshes claimed_at,
-// which is what the floor plan renders as "occupied since". Safe because
-// there is exactly one live basket per till: a claim recorded against a till
-// id IS that till's single current pick, and this call is that till replacing
-// it with itself.
+// which is what the floor plan renders as "occupied since". Safe regardless
+// of how many OTHER tables this same till owns claims on (since ut-docs#1704
+// that can be more than one — its live basket's pick plus one per parked
+// order): the delete-then-reinsert only ever touches THIS ONE table_id, and
+// a till can own at most one row per table_id (the PK), so replacing tillID's
+// existing row on tableID with a fresh one for the SAME (table, till) pair
+// can never disturb any of this till's other claims.
 //
 // A till_id = ” row — THIS till's own local claim (ClaimTable, mirroring
 // sales.till_id's this-till convention) — is never expired here: the primary
 // is always online with itself and has no tills row to be judged against.
 // claimed=false means the table is (still) held by a DIFFERENT, live till: an
 // ordinary "occupied" outcome for the caller to render, not an error.
+//
+// tillID=” is not only ever the PRIMARY calling on its own behalf, either
+// (ut-docs#1704): claimTableWriteThrough's LOCAL fallback branch
+// (tables_claim_proxy.go) has always called this with tillID=” too, on a
+// standalone till or a replica with no reachable primary. There the "own-
+// claim" case above applies exactly the same way: re-claiming a till_id=”
+// row this same local caller already holds succeeds and refreshes
+// claimed_at, rather than silently no-oping and reporting claimed=false for
+// a claim that in fact already stands — which matters now that a held
+// order's claim (ut-docs#1704) is kept alive through the whole park rather
+// than released and re-taken from scratch, so resume can hit an
+// already-self-held row here for the first time.
 func (r *POSRepo) ClaimTableForTill(ctx context.Context, tableID, tillID string, cutoff time.Time) (claimed bool, err error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, fmt.Errorf("claim table for till: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
-	// till_id != '' guards the primary's own local claim against both
-	// disjuncts (a real till's id is a uuid, never '', so the first can
-	// never match it either — belt and braces).
+	// The `till_id != ''` guard is scoped to the STALENESS disjunct only
+	// (ut-docs#1704 fix — independent review, 2026-09-07): it must never
+	// let a till_id='' row be judged against `tills.last_seen_at` (it has
+	// no tills row to be judged against, so it would always look "stale"
+	// and be wiped) — but it must NOT also block the plain own-claim
+	// disjunct from matching tillID='' itself. That second effect was
+	// unintentional: tillID='' is not only "the primary's own live
+	// basket" (the case this comment originally described, when a real
+	// till's id is always a uuid and this function's only caller was the
+	// primary-side HTTP handler) — claimTableWriteThrough's LOCAL fallback
+	// branch (tables_claim_proxy.go) has always called this with tillID=""
+	// too, and hold_api.go's resume handler (ut-docs#1704) is the first
+	// caller that can hit it while a till_id='' row it already owns is
+	// still there (a held order's table_claims row is now kept alive
+	// through the whole park, not re-claimed from scratch). Without this,
+	// INSERT OR IGNORE below silently no-ops on the pre-existing row and
+	// reports claimed=false for a claim that in fact already holds.
 	if _, err := tx.ExecContext(ctx, `
 DELETE FROM table_claims
-WHERE table_id = ? AND till_id != ''
+WHERE table_id = ?
   AND (till_id = ?
-       OR till_id NOT IN (SELECT id FROM tills WHERE last_seen_at IS NOT NULL AND last_seen_at >= ?))`,
+       OR (till_id != '' AND till_id NOT IN (SELECT id FROM tills WHERE last_seen_at IS NOT NULL AND last_seen_at >= ?)))`,
 		tableID, tillID, cutoff.UTC().Format(time.RFC3339)); err != nil {
 		return false, fmt.Errorf("claim table for till: expire stale: %w", err)
 	}

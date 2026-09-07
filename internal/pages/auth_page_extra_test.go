@@ -287,3 +287,135 @@ func TestFirstBootReactivatesDormantAdmin(t *testing.T) {
 	}
 	_ = d
 }
+
+// ut-docs#1718: /login must never become a dead end when the database is
+// unreachable.
+//
+// The product owner hit this twice in one day on a real tablet: a poisoned
+// SQLite connection made NeedsFirstBoot fail, renderLogin answered with a bare
+// http.Error, and the WebView's whole document was replaced by the plain,
+// untranslated text "auth unavailable" on a white screen — no rail, no Back,
+// and on a pinned kiosk no Android navigation bar either. The keypad is the
+// one screen that must never do this: it is the only way back into the till.
+//
+// The driver-level cause is fixed separately (internal/db's
+// TestCancelledQueryNeverInterruptsAnotherGoroutine). This is the second half:
+// however the read fails, the operator still gets a real page telling them
+// what to do.
+func TestLoginPageStillRendersWhenTheDatabaseIsUnreachable(t *testing.T) {
+	mux, _, d := newAuthTestMux(t)
+
+	// Kill the database under the handler. Any query now fails — which is
+	// what a poisoned connection looked like in production, without needing
+	// to reproduce the driver race here.
+	if err := d.Db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/login", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected the login page to still render (200), got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "auth unavailable") {
+		t.Errorf("the bare untranslated http.Error text must be gone, got: %s", body)
+	}
+	// A real page, not a fragment: the operator needs the keypad in front of
+	// them, with the explanation above it.
+	if !strings.Contains(body, "<!DOCTYPE html>") {
+		t.Errorf("expected a full login document, got: %s", body)
+	}
+	// The message is rendered through the template's existing .errKey slot,
+	// so it is translated like every other login error.
+	if !strings.Contains(body, "login-error") {
+		t.Errorf("expected the translated error to be rendered in the page, got: %s", body)
+	}
+	// It must NOT offer the one-time first-boot admin setup: we could not
+	// prove this is a fresh till, and inviting someone to create an admin on
+	// a configured one would be worse than the error itself.
+	if strings.Contains(body, `name="confirm_pin"`) {
+		t.Errorf("must not offer first-boot admin setup when the check itself failed, got: %s", body)
+	}
+}
+
+// ut-docs#1718, second pass (independent review finding): GET /login was not
+// the only dead end, and not the one an operator is most likely to meet.
+//
+// login.html submits the keypad as a PLAIN <form method="post"
+// action="/api/auth/login"> — no htmx, no fetch — so a bare http.Error on
+// that route replaces the entire WebView document exactly the way the GET
+// path did. This is the literal reported sequence: the operator taps their
+// PIN, submits, and the till goes white. guard-page-http-error.sh cannot see
+// it, because it excludes /api/ routes as htmx fragments — correct for every
+// other /api/ route here, wrong for this one.
+func TestLoginPostStillRendersTheKeypadWhenTheDatabaseIsUnreachable(t *testing.T) {
+	mux, _, d := newAuthTestMux(t)
+	if err := d.Db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	form := url.Values{"pin": {"1234"}}
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/login", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected the keypad rendered back (200), got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "login failed") {
+		t.Errorf("the bare untranslated http.Error text must be gone, got: %s", body)
+	}
+	if !strings.Contains(body, "<!DOCTYPE html>") || !strings.Contains(body, "login-error") {
+		t.Errorf("expected a full login document carrying the translated error, got: %s", body)
+	}
+}
+
+// The first-boot fallback form posts to /api/auth/setup from the same page.
+// Its own opening guard already redirects to /login when NeedsFirstBoot
+// errors, so a dead database never reaches a bare http.Error there — and now
+// that /login itself renders properly (the test above), that redirect lands
+// the operator somewhere useful rather than on a white page. Pinned here
+// because the guarantee is a two-step one: the redirect is only safe while
+// its destination is.
+//
+// The bare http.Error calls deeper in that handler (EnsureRegister,
+// ensureFirstBootAdmin, SetUserPIN, CreateSession) were replaced too. They
+// sit past this guard, so they need a genuinely fresh till whose database
+// fails mid-setup — rare, but it is a till failing on its very first run,
+// with nobody yet able to sign in and fix it.
+func TestSetupPostRedirectsToAWorkingLoginWhenTheDatabaseIsUnreachable(t *testing.T) {
+	mux, _, d := newAuthTestMux(t)
+	if err := d.Db.Close(); err != nil {
+		t.Fatalf("close db: %v", err)
+	}
+
+	form := url.Values{"pin": {"4321"}, "pin_confirm": {"4321"}}
+	req := httptest.NewRequest(http.MethodPost, "/api/auth/setup", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("expected a redirect away from the setup POST, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if loc := rec.Header().Get("Location"); loc != "/login" {
+		t.Fatalf("expected the redirect to land on /login, got %q", loc)
+	}
+	if strings.Contains(rec.Body.String(), "setup failed") {
+		t.Errorf("the bare untranslated http.Error text must never appear, got: %s", rec.Body.String())
+	}
+
+	// And that destination must itself be a real page, not the old dead end
+	// — otherwise this redirect just moves the white screen one hop.
+	follow := httptest.NewRequest(http.MethodGet, "/login", nil)
+	frec := httptest.NewRecorder()
+	mux.ServeHTTP(frec, follow)
+	if frec.Code != http.StatusOK || !strings.Contains(frec.Body.String(), "login-error") {
+		t.Fatalf("the redirect target must render the explained login page, got %d: %s", frec.Code, frec.Body.String())
+	}
+}

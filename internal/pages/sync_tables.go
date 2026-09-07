@@ -14,13 +14,21 @@ import (
 // sync (sync_admin_repo.go's adminTables, ut-docs#1546) — but table_claims
 // and held_sales, the two sources ListTablesWithState derives Occupied
 // from, are deliberately NOT (table_claims is called out there by name as
-// "ephemeral... never meant to survive a periodic snapshot"; held_sales
-// isn't synced cross-till at all, ut-docs#1704). So occupancy genuinely
-// doesn't travel any other way — same shape as registerSyncOrders, the
-// PRIMARY's own DB is a live source of truth for occupancy a replica reads
-// through while reachable, MERGED with (never replacing) its own local
-// occupancy — see tablesWithStateForDisplay's own doc comment for why a
-// replica can never simply defer to the primary's answer here.
+// "ephemeral... never meant to survive a periodic snapshot"). held_sales
+// itself STILL isn't synced or proxied cross-till at all — a replica's
+// parked order stays local-only, invisible even to the primary's own
+// held_sales table. What travels instead, since ut-docs#1704, is the
+// TABLE OCCUPANCY it implies: hold_api.go's hold handler now keeps (rather
+// than releases) the table_claims row the order's table was originally
+// picked with, reusing the exact write-through + TTL-reconciliation
+// mechanism ut-docs#1703 built for the live basket — so a held order needs
+// no new proxy call of its own, it only had to stop throwing away the one
+// its table pick already made. So occupancy genuinely doesn't travel any
+// other way — same shape as registerSyncOrders, the PRIMARY's own DB is a
+// live source of truth for occupancy a replica reads through while
+// reachable, MERGED with (never replacing) its own local occupancy — see
+// tablesWithStateForDisplay's own doc comment for why a replica can never
+// simply defer to the primary's answer here.
 //
 // Deliberately READ-ONLY — no write endpoint here. Actually PREVENTING a
 // cross-till double-claim needs ClaimTable/ReleaseTableClaim to write

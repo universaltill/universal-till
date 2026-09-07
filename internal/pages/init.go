@@ -144,6 +144,14 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// means recovery waits for the next restart, not a boot failure. Never
 	// touches held_sales: a parked order surviving a restart is durability
 	// working as intended, not a leftover to clear.
+	//
+	// This sweep is unconditional by design and does NOT distinguish a
+	// genuinely abandoned live-basket pick from a held order's own claim
+	// (ut-docs#1704 kept those alive through the whole park, in the same
+	// table_claims rows this sweep clears) — it wipes both. The "boot
+	// re-claim" step below, once dp exists, re-establishes the held-order
+	// case; letting this sweep clear everything first and re-claiming after
+	// is simpler and safer than teaching it to special-case held_sales here.
 	if err := data.NewPOSRepo(db).ClearLocalTableClaims(ctx); err != nil {
 		log.Errorf("clear stale table claims: %v", err)
 	}
@@ -260,6 +268,38 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		OrderStatus: pos.NewOrderStatusBroadcaster(),
 		WindowCtl:   windowCtl,
 		Shell:       shellChannel,
+	}
+
+	// Boot re-claim: re-affirm every currently-parked order's table claim
+	// (ut-docs#1704, independent review 2026-09-07) now that dp exists —
+	// claimTableWriteThrough needs it for the replica half. The sweep above
+	// (ClearLocalTableClaims) unconditionally wipes every till_id='' row,
+	// which is correct for an abandoned live-basket pick (that sweep's whole
+	// point) but wrong for a held order's: its held_sales row survives the
+	// restart on purpose (durability, not a leftover — see that sweep's own
+	// comment), yet nothing re-created its table_claims mirror. Re-claiming
+	// restores both this till's own local row AND, on a replica, re-affirms
+	// the PRIMARY's — the more important half: a restart is exactly the
+	// kind of >tillClaimTTL gap that can have let the primary's TTL
+	// reconciliation hand the table to another till while this one was
+	// dark, and only a genuine claim ATTEMPT (not a bare local re-insert)
+	// can surface that conflict rather than silently pretending it away.
+	// Best-effort and non-fatal — logged, never blocks boot, same
+	// offline-first stance as the sweep above; a failed re-claim here just
+	// means this table's cross-till visibility stays wrong until the next
+	// restart or a manual Free-table, not that the till fails to start.
+	if held, err := data.NewHeldSalesRepo(db).List(ctx); err != nil {
+		log.Errorf("boot re-claim: list held sales: %v", err)
+	} else {
+		posRepo := data.NewPOSRepo(db)
+		for _, h := range held {
+			if h.TableID == "" {
+				continue
+			}
+			if claimed, err := claimTableWriteThrough(ctx, dp, posRepo, h.TableID); err != nil || !claimed {
+				log.Errorf("boot re-claim held order %s's table %s: claimed=%v err=%v", h.ID, h.TableID, claimed, err)
+			}
+		}
 	}
 
 	// Register routes
