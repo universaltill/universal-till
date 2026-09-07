@@ -190,6 +190,7 @@
   "designer.buttons": "دکمه‌ها",
   "designer.code": "کد",
   "designer.empty": "هنوز محصولی نیست.",
+  "designer.error.replica_use_primary": "این صندوق پیرو صندوق اصلی است — دکمه‌های فروش سریع را روی صندوق اصلی مدیریت کنید.",
   "designer.error.server": "مشکلی پیش آمد. دوباره تلاش کنید.",
   "designer.label": "برچسب",
   "designer.no_matches": "موردی یافت نشد.",

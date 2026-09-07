@@ -190,6 +190,7 @@
   "designer.buttons": "Buttons",
   "designer.code": "Code",
   "designer.empty": "No products yet.",
+  "designer.error.replica_use_primary": "This till follows a primary till — manage quick-sale buttons on the primary till.",
   "designer.error.server": "Something went wrong. Please try again.",
   "designer.label": "Label",
   "designer.no_matches": "No matches.",

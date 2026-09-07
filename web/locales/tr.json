@@ -190,6 +190,7 @@
   "designer.buttons": "Düğmeler",
   "designer.code": "Kod",
   "designer.empty": "Henüz ürün yok.",
+  "designer.error.replica_use_primary": "Bu kasa bir ana kasayı takip ediyor — hızlı satış düğmelerini ana kasada yönetin.",
   "designer.error.server": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
   "designer.label": "Etiket",
   "designer.no_matches": "Eşleşme yok.",
