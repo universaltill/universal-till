@@ -1,0 +1,14 @@
+-- ut-docs#1703: cross-till table-claim write-through. A live-basket claim
+-- (table_claims, ut-docs#1390) becomes TILL-OWNED so the primary can hold one
+-- claim per table across the whole shop and expire a claim whose owning till
+-- has gone silent (crashed, lost network mid-claim) instead of leaving it
+-- orphaned forever — see POSRepo.ClaimTableForTill (internal/data/tables_repo.go).
+--
+-- till_id = '' is THIS till's own local claim (the unchanged ClaimTable path;
+-- the same this-till convention sales.till_id already uses) and is never
+-- auto-expired: a till is always "online" with itself and has no tills row of
+-- its own to be judged against. Any other value is the tills.id of the
+-- replica that claimed the table through POST /api/sync/tables/claim, and is
+-- reconciled against that row's last_seen_at. No FK to tills(id): a revoked
+-- till's claim must stay readable (and expirable) rather than block DeleteTill.
+ALTER TABLE table_claims ADD COLUMN till_id TEXT NOT NULL DEFAULT '';

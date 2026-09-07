@@ -130,13 +130,8 @@ func enforceFiscalGate(ctx context.Context, d *common.Deps) (fiscal.Gate, error)
 // versus a sale that can't complete. Shared by the cashier handlers here
 // and the hold/resume handlers in hold_api.go so the release rule lives in
 // exactly one place.
-func releaseTableClaim(ctx context.Context, repo *data.POSRepo, tableID string) {
-	if tableID == "" {
-		return
-	}
-	if err := repo.ReleaseTableClaim(ctx, tableID); err != nil {
-		log.Printf("table claim: release %s failed: %v", tableID, err)
-	}
+func releaseTableClaim(ctx context.Context, d *common.Deps, repo *data.POSRepo, tableID string) {
+	releaseTableClaimWriteThrough(ctx, d, repo, tableID)
 }
 
 // completeTender runs the money-critical authorize -> complete -> publish
@@ -283,7 +278,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// kiosk engine (no table picker there), so a no-op on that path.
 	tableToRelease := engine.TableID()
 	engine.Reset()
-	releaseTableClaim(ctx, repo, tableToRelease)
+	releaseTableClaim(ctx, d, repo, tableToRelease)
 
 	// Plugin-provided tender methods: publish each entry's trigger_event so
 	// the owning plugin can react (charge a terminal, show a QR, …).
@@ -536,13 +531,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			prevTable := d.Engine.TableID()
 			d.Engine.RemoveLine(key)
 			if prevTable != "" && d.Engine.TableID() == "" {
-				releaseTableClaim(r.Context(), repo, prevTable)
+				releaseTableClaim(r.Context(), d, repo, prevTable)
 			}
 		} else {
 			prevTable := d.Engine.TableID()
 			d.Engine.Remove(code)
 			if prevTable != "" && d.Engine.TableID() == "" {
-				releaseTableClaim(r.Context(), repo, prevTable)
+				releaseTableClaim(r.Context(), d, repo, prevTable)
 			}
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
@@ -579,13 +574,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			prevTable := d.Engine.TableID()
 			d.Engine.UpdateLineByKey(key, qty, money.FromMinor(discount))
 			if prevTable != "" && d.Engine.TableID() == "" {
-				releaseTableClaim(r.Context(), repo, prevTable)
+				releaseTableClaim(r.Context(), d, repo, prevTable)
 			}
 		} else {
 			prevTable := d.Engine.TableID()
 			d.Engine.UpdateLine(code, qty, money.FromMinor(discount))
 			if prevTable != "" && d.Engine.TableID() == "" {
-				releaseTableClaim(r.Context(), repo, prevTable)
+				releaseTableClaim(r.Context(), d, repo, prevTable)
 			}
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
@@ -629,7 +624,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		prevTable := d.Engine.TableID()
 		b := d.Engine.SetOrderType(orderType)
 		if prevTable != "" && b.TableID == "" {
-			releaseTableClaim(r.Context(), repo, prevTable)
+			releaseTableClaim(r.Context(), d, repo, prevTable)
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
@@ -658,7 +653,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		prevTable := d.Engine.TableID()
 		b, _ := d.Engine.SetLineOrderType(key, orderType)
 		if prevTable != "" && b.TableID == "" {
-			releaseTableClaim(r.Context(), repo, prevTable)
+			releaseTableClaim(r.Context(), d, repo, prevTable)
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
@@ -701,14 +696,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			cur := d.Engine.Basket()
 			b = &cur
 		case tableID == "":
-			releaseTableClaim(ctx, repo, current)
+			releaseTableClaim(ctx, d, repo, current)
 			b = d.Engine.ClearTable()
 		default:
 			tbl, ok, err := repo.GetTable(ctx, tableID)
 			if err != nil || !ok {
 				// Unknown id degrades to "no table" (pre-#1390 behaviour,
 				// kept) -- and the basket stops occupying its old one.
-				releaseTableClaim(ctx, repo, current)
+				releaseTableClaim(ctx, d, repo, current)
 				b = d.Engine.ClearTable()
 				break
 			}
@@ -719,7 +714,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// is the cheap, held_sales-aware pre-check; losing here
 				// means a concurrent claim landed in between -- same
 				// "occupied" answer, no 500.
-				claimed, err = repo.ClaimTable(ctx, tableID)
+				claimed, err = claimTableWriteThrough(ctx, d, repo, tableID)
 			}
 			if err != nil {
 				log.Printf("table claim: %s: %v", tableID, err)
@@ -736,11 +731,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// SetTable refused (a Takeaway basket, ut-docs#1355): undo
 				// the claim we just took, or the table would read occupied
 				// with nothing on it.
-				releaseTableClaim(ctx, repo, tableID)
+				releaseTableClaim(ctx, d, repo, tableID)
 				break
 			}
 			// New claim confirmed -- only now let go of the old table.
-			releaseTableClaim(ctx, repo, current)
+			releaseTableClaim(ctx, d, repo, current)
 		}
 		funcs := httpx.FuncsFor(locale)
 		basketView, _ := ui.NewBasketView(funcs)
@@ -752,7 +747,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/api/pos/reset", func(w http.ResponseWriter, r *http.Request) {
 		tableToRelease := d.Engine.TableID()
 		d.Engine.Reset()
-		releaseTableClaim(r.Context(), repo, tableToRelease)
+		releaseTableClaim(r.Context(), d, repo, tableToRelease)
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		basketView, _ := ui.NewBasketView(funcs)
 		b, _ := d.Engine.Scan("")

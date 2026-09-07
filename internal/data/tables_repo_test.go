@@ -15,8 +15,10 @@ package data
 
 import (
 	"context"
+	"database/sql"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/db"
 )
@@ -379,18 +381,18 @@ func TestIsTableFree_LiveClaimOccupiesTable(t *testing.T) {
 	}
 }
 
-// ClearAllTableClaims is the boot-time recovery for a claim orphaned by an
+// ClearLocalTableClaims is the boot-time recovery for a claim orphaned by an
 // unclean shutdown (independent review finding, ut-docs#1390): pos.Service
 // always starts empty, so any table_claims row still present at Init belongs
 // to a process that never released it. Without this sweep, that table would
 // stay unbookable forever — nothing else ever revisits an orphaned row.
-func TestClearAllTableClaims_WipesExistingRowsAndIsSafeOnEmpty(t *testing.T) {
+func TestClearLocalTableClaims_WipesExistingRowsAndIsSafeOnEmpty(t *testing.T) {
 	_, repo := openTablesTestDB(t)
 	ctx := context.Background()
 
 	// Safe no-op with nothing to clear (e.g. a clean-shutdown boot).
-	if err := repo.ClearAllTableClaims(ctx); err != nil {
-		t.Fatalf("ClearAllTableClaims on empty table: %v", err)
+	if err := repo.ClearLocalTableClaims(ctx); err != nil {
+		t.Fatalf("ClearLocalTableClaims on empty table: %v", err)
 	}
 
 	t1, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
@@ -408,15 +410,55 @@ func TestClearAllTableClaims_WipesExistingRowsAndIsSafeOnEmpty(t *testing.T) {
 		t.Fatalf("ClaimTable T2: claimed=%v err=%v", claimed, err)
 	}
 
-	if err := repo.ClearAllTableClaims(ctx); err != nil {
-		t.Fatalf("ClearAllTableClaims: %v", err)
+	if err := repo.ClearLocalTableClaims(ctx); err != nil {
+		t.Fatalf("ClearLocalTableClaims: %v", err)
 	}
 
 	if ok, err := repo.IsTableFree(ctx, t1, ""); err != nil || !ok {
-		t.Errorf("T1 must be free after ClearAllTableClaims, got ok=%v err=%v", ok, err)
+		t.Errorf("T1 must be free after ClearLocalTableClaims, got ok=%v err=%v", ok, err)
 	}
 	if ok, err := repo.IsTableFree(ctx, t2, ""); err != nil || !ok {
-		t.Errorf("T2 must be free after ClearAllTableClaims, got ok=%v err=%v", ok, err)
+		t.Errorf("T2 must be free after ClearLocalTableClaims, got ok=%v err=%v", ok, err)
+	}
+}
+
+// ...and it must leave a REPLICA's claim alone (ut-docs#1703, independent
+// review 2026-09-07). On a primary, table_claims also holds the live claims
+// of tills that are still running; the old unscoped `DELETE FROM
+// table_claims` wiped those on every primary restart, so the replica kept its
+// table on screen while the primary read it free and handed it to the next
+// till that asked — the exact cross-till double-claim #1703 closes, re-opened
+// by a reboot. Replica rows are TTL-reconciled in ClaimTableForTill instead.
+func TestClearLocalTableClaims_LeavesAnotherTillsClaimAlone(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	seedTill(t, dbo, "till-a", now.Format(time.RFC3339))
+
+	own, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T1: %v", err)
+	}
+	replica, err := repo.CreateTable(ctx, "T2", "", 4, "rect", 200, 200)
+	if err != nil {
+		t.Fatalf("CreateTable T2: %v", err)
+	}
+	if claimed, err := repo.ClaimTable(ctx, own); err != nil || !claimed {
+		t.Fatalf("local ClaimTable: claimed=%v err=%v", claimed, err)
+	}
+	if claimed, err := repo.ClaimTableForTill(ctx, replica, "till-a", now.Add(-2*time.Minute)); err != nil || !claimed {
+		t.Fatalf("ClaimTableForTill: claimed=%v err=%v", claimed, err)
+	}
+
+	if err := repo.ClearLocalTableClaims(ctx); err != nil {
+		t.Fatalf("ClearLocalTableClaims: %v", err)
+	}
+
+	if ok, err := repo.IsTableFree(ctx, own, ""); err != nil || !ok {
+		t.Errorf("the boot sweep must clear this till's OWN claim, got ok=%v err=%v", ok, err)
+	}
+	if owner, ok := claimTillOf(t, dbo, replica); !ok || owner != "till-a" {
+		t.Fatalf("a still-running replica's claim must survive a primary reboot, got %q (ok=%v)", owner, ok)
 	}
 }
 
@@ -475,5 +517,270 @@ VALUES ('h1','',0,0,'{}',?, '2026-08-18 10:05:00')`, bothID); err != nil {
 	}
 	if len(rows) != 3 {
 		t.Fatalf("a table with both a held row and a claim must still list exactly once; got %d rows", len(rows))
+	}
+}
+
+// --- ut-docs#1703: till-owned, TTL-reconciled claims ---
+
+// seedTill inserts an enrolled till row with the given last_seen_at (empty
+// = never seen, i.e. NULL) — the shape ClaimTableForTill's staleness
+// subquery reads. Raw SQL is fine in tests.
+func seedTill(t *testing.T, dbo *db.DB, id, lastSeenAt string) {
+	t.Helper()
+	if lastSeenAt == "" {
+		mustExec(t, dbo, `INSERT INTO tills (id, name, bearer_hash) VALUES (?, ?, ?)`, id, "Till "+id, "hash-"+id)
+		return
+	}
+	mustExec(t, dbo, `INSERT INTO tills (id, name, bearer_hash, last_seen_at) VALUES (?, ?, ?, ?)`, id, "Till "+id, "hash-"+id, lastSeenAt)
+}
+
+func claimTillOf(t *testing.T, dbo *db.DB, tableID string) (string, bool) {
+	t.Helper()
+	var tillID string
+	err := dbo.DB.QueryRow(`SELECT till_id FROM table_claims WHERE table_id = ?`, tableID).Scan(&tillID)
+	if err == sql.ErrNoRows {
+		return "", false
+	}
+	if err != nil {
+		t.Fatalf("read claim: %v", err)
+	}
+	return tillID, true
+}
+
+// A fresh claim on a free table succeeds and records the owning till; the
+// same table for a SECOND till, while the first is still fresh (last_seen_at
+// within the cutoff), is refused — the cross-till double-claim ut-docs#1703
+// exists to stop.
+func TestClaimTableForTill_FreshClaimSucceeds_SecondTillRefusedWhileOwnerFresh(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	seedTill(t, dbo, "till-a", now.Format(time.RFC3339))
+	seedTill(t, dbo, "till-b", now.Format(time.RFC3339))
+
+	id, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	cutoff := now.Add(-2 * time.Minute)
+	claimed, err := repo.ClaimTableForTill(ctx, id, "till-a", cutoff)
+	if err != nil || !claimed {
+		t.Fatalf("first ClaimTableForTill: claimed=%v err=%v", claimed, err)
+	}
+	if owner, ok := claimTillOf(t, dbo, id); !ok || owner != "till-a" {
+		t.Fatalf("claim must record the owning till, got %q (ok=%v)", owner, ok)
+	}
+	claimed, err = repo.ClaimTableForTill(ctx, id, "till-b", cutoff)
+	if err != nil {
+		t.Fatalf("second till's ClaimTableForTill must not error: %v", err)
+	}
+	if claimed {
+		t.Fatal("a second till must not take a table a fresh till already claims")
+	}
+	if owner, _ := claimTillOf(t, dbo, id); owner != "till-a" {
+		t.Fatalf("a refused claim must leave the owner untouched, got %q", owner)
+	}
+	// The owner re-claiming its own table SUCCEEDS (independent review
+	// 2026-09-07 — this used to return false, see
+	// TestClaimTableForTill_OwnOrphanedClaimIsRetakenAfterRestart for why
+	// that permanently bricked a table). The row stays its own either way.
+	claimed, err = repo.ClaimTableForTill(ctx, id, "till-a", cutoff)
+	if err != nil || !claimed {
+		t.Fatalf("owner re-claim: claimed=%v err=%v, want true/nil", claimed, err)
+	}
+	if owner, _ := claimTillOf(t, dbo, id); owner != "till-a" {
+		t.Fatalf("an owner re-claim must leave the row its own, got %q", owner)
+	}
+	var n int
+	if err := dbo.DB.QueryRow(`SELECT COUNT(*) FROM table_claims WHERE table_id = ?`, id).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("an owner re-claim must not duplicate the row, got %d (err %v)", n, err)
+	}
+}
+
+// A till must always be able to re-take a claim it already owns — the
+// blocking bug found in independent review, 2026-09-07.
+//
+// The TTL only expires a claim whose owning till has gone QUIET. A till that
+// crashes mid-basket and reboots is loud again within seconds (every sync
+// call touches tills.last_seen_at), and its boot sweep only clears its own
+// LOCAL rows — so its orphan on the primary was, before this fix, immortal:
+// never TTL-expired (the till is online), never released (the basket that
+// would have released it died with the process), and refused to the only
+// party that could ever clear it. The operator re-picks table 5 on the till
+// that just rebooted and gets "occupied" forever, with no in-product
+// recovery until #1393's manual free-the-table action. Same shape when a
+// release write-through simply fails: the local row goes regardless (by
+// design, offline-first), the primary's does not.
+//
+// That is a REGRESSION the write-through introduced — before ut-docs#1703 the
+// boot sweep alone fully recovered this — and it defeats the card's own
+// acceptance criterion that a till crashing mid-claim must not lock a table
+// past a bounded TTL.
+func TestClaimTableForTill_OwnOrphanedClaimIsRetakenAfterRestart(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	seedTill(t, dbo, "till-a", now.Format(time.RFC3339))
+	seedTill(t, dbo, "till-b", now.Format(time.RFC3339))
+
+	id, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	cutoff := now.Add(-2 * time.Minute)
+	if claimed, err := repo.ClaimTableForTill(ctx, id, "till-a", cutoff); err != nil || !claimed {
+		t.Fatalf("initial claim: claimed=%v err=%v", claimed, err)
+	}
+
+	// till-a crashes and reboots. It is ONLINE again (last_seen_at fresh, so
+	// the TTL can never expire its row), its LOCAL claim was wiped by the
+	// boot sweep, and the operator re-picks the same table.
+	if claimed, err := repo.ClaimTableForTill(ctx, id, "till-a", cutoff); err != nil || !claimed {
+		t.Fatalf("a till must be able to re-take its own orphaned claim, got claimed=%v err=%v", claimed, err)
+	}
+	if owner, ok := claimTillOf(t, dbo, id); !ok || owner != "till-a" {
+		t.Fatalf("after the re-take the owner must still be till-a, got %q (ok=%v)", owner, ok)
+	}
+
+	// The re-take must not have widened into "anyone may take it": till-b,
+	// with till-a live and holding the table, is still refused.
+	if claimed, err := repo.ClaimTableForTill(ctx, id, "till-b", cutoff); err != nil || claimed {
+		t.Fatalf("a DIFFERENT live till must still be refused, got claimed=%v err=%v", claimed, err)
+	}
+}
+
+// Stale takeover: once the owning till's last_seen_at is OLDER than the
+// cutoff (it stopped talking to the primary — crashed, lost network), its
+// claim is expired and the second till's claim succeeds. A till never seen
+// at all (last_seen_at NULL) counts as stale too.
+func TestClaimTableForTill_StaleOwnerIsExpiredAndTakenOver(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+	seedTill(t, dbo, "till-a", now.Add(-10*time.Minute).Format(time.RFC3339))
+	seedTill(t, dbo, "till-b", now.Format(time.RFC3339))
+	seedTill(t, dbo, "till-c", "") // never seen
+
+	id, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	// Seed till-a's claim directly: at claim time it was fresh.
+	mustExec(t, dbo, `INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, ?, ?)`, id, now.Add(-10*time.Minute).Format(time.RFC3339), "till-a")
+
+	cutoff := now.Add(-2 * time.Minute)
+	claimed, err := repo.ClaimTableForTill(ctx, id, "till-b", cutoff)
+	if err != nil || !claimed {
+		t.Fatalf("takeover of a stale till's claim: claimed=%v err=%v, want true/nil", claimed, err)
+	}
+	if owner, _ := claimTillOf(t, dbo, id); owner != "till-b" {
+		t.Fatalf("after takeover the owner must be till-b, got %q", owner)
+	}
+	var n int
+	if err := dbo.DB.QueryRow(`SELECT COUNT(*) FROM table_claims WHERE table_id = ?`, id).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("exactly one claim row must remain, got %d (err %v)", n, err)
+	}
+
+	// A never-seen till's claim (last_seen_at NULL) is equally stale.
+	id2, err := repo.CreateTable(ctx, "T2", "", 4, "rect", 200, 200)
+	if err != nil {
+		t.Fatalf("CreateTable T2: %v", err)
+	}
+	mustExec(t, dbo, `INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, ?, ?)`, id2, now.Format(time.RFC3339), "till-c")
+	claimed, err = repo.ClaimTableForTill(ctx, id2, "till-b", cutoff)
+	if err != nil || !claimed {
+		t.Fatalf("takeover of a never-seen till's claim: claimed=%v err=%v, want true/nil", claimed, err)
+	}
+	// And a claim by a till that no longer exists in `tills` at all (revoked
+	// enrolment) is stale by the same rule.
+	id3, err := repo.CreateTable(ctx, "T3", "", 4, "rect", 300, 300)
+	if err != nil {
+		t.Fatalf("CreateTable T3: %v", err)
+	}
+	mustExec(t, dbo, `INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, ?, ?)`, id3, now.Format(time.RFC3339), "till-gone")
+	claimed, err = repo.ClaimTableForTill(ctx, id3, "till-b", cutoff)
+	if err != nil || !claimed {
+		t.Fatalf("takeover of a revoked till's claim: claimed=%v err=%v, want true/nil", claimed, err)
+	}
+}
+
+// The PRIMARY's own live basket claims with till_id=” (ClaimTable, the
+// unchanged local path — same this-till convention as sales.till_id). That
+// row must NEVER be auto-expired by ClaimTableForTill: the primary is, by
+// construction, always "online" with itself, and it has no tills row of its
+// own to be judged fresh or stale against. Even a cutoff in the far future
+// (everything looks stale) must leave it alone.
+func TestClaimTableForTill_NeverExpiresThisTillLocalClaim(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+	seedTill(t, dbo, "till-b", time.Now().UTC().Format(time.RFC3339))
+
+	id, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	if claimed, err := repo.ClaimTable(ctx, id); err != nil || !claimed {
+		t.Fatalf("local ClaimTable: claimed=%v err=%v", claimed, err)
+	}
+	if owner, ok := claimTillOf(t, dbo, id); !ok || owner != "" {
+		t.Fatalf("local ClaimTable must record till_id='', got %q (ok=%v)", owner, ok)
+	}
+	farFuture := time.Now().UTC().Add(365 * 24 * time.Hour)
+	claimed, err := repo.ClaimTableForTill(ctx, id, "till-b", farFuture)
+	if err != nil {
+		t.Fatalf("ClaimTableForTill: %v", err)
+	}
+	if claimed {
+		t.Fatal("a till_id='' (this-till-local) claim must never be expired by a cross-till claim")
+	}
+	if owner, ok := claimTillOf(t, dbo, id); !ok || owner != "" {
+		t.Fatalf("the local claim row must survive untouched, got %q (ok=%v)", owner, ok)
+	}
+}
+
+// ReleaseTableClaimForTill deletes only the calling till's own claim: another
+// till's row (or the primary's own local ” row) is left alone, and releasing
+// with nothing to release is a no-op, not an error — same convention as
+// ReleaseTableClaim.
+func TestReleaseTableClaimForTill_OnlyDeletesOwnClaim(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Format(time.RFC3339)
+	seedTill(t, dbo, "till-a", now)
+	seedTill(t, dbo, "till-b", now)
+
+	id, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	if err := repo.ReleaseTableClaimForTill(ctx, id, "till-a"); err != nil {
+		t.Fatalf("release with nothing to release must be a no-op, got: %v", err)
+	}
+	if claimed, err := repo.ClaimTableForTill(ctx, id, "till-a", time.Now().Add(-2*time.Minute)); err != nil || !claimed {
+		t.Fatalf("ClaimTableForTill: claimed=%v err=%v", claimed, err)
+	}
+	// Another till releasing: not its claim, nothing happens.
+	if err := repo.ReleaseTableClaimForTill(ctx, id, "till-b"); err != nil {
+		t.Fatalf("ReleaseTableClaimForTill (other till): %v", err)
+	}
+	if owner, ok := claimTillOf(t, dbo, id); !ok || owner != "till-a" {
+		t.Fatalf("another till's release must not touch the claim, got %q (ok=%v)", owner, ok)
+	}
+	// The owner releasing: gone.
+	if err := repo.ReleaseTableClaimForTill(ctx, id, "till-a"); err != nil {
+		t.Fatalf("ReleaseTableClaimForTill (owner): %v", err)
+	}
+	if _, ok := claimTillOf(t, dbo, id); ok {
+		t.Fatal("the owner's release must delete the claim")
+	}
+	// The primary's own local claim ('' till) is not deletable via a till id.
+	if claimed, err := repo.ClaimTable(ctx, id); err != nil || !claimed {
+		t.Fatalf("local ClaimTable: claimed=%v err=%v", claimed, err)
+	}
+	if err := repo.ReleaseTableClaimForTill(ctx, id, "till-a"); err != nil {
+		t.Fatalf("ReleaseTableClaimForTill vs local claim: %v", err)
+	}
+	if owner, ok := claimTillOf(t, dbo, id); !ok || owner != "" {
+		t.Fatalf("a till-scoped release must never delete the local '' claim, got %q (ok=%v)", owner, ok)
 	}
 }

@@ -69,6 +69,15 @@ func exempt(path string) bool {
 		// switch's own comment documents.
 		// TestSyncPullPathsAreExempt pins this entry.
 		"/api/sync/tables",
+		// ut-docs#1703: the primary-side table-claim WRITE-THROUGH endpoints
+		// a replica's claimTableWriteThrough / releaseTableClaimWriteThrough
+		// (internal/pages/tables_claim_proxy.go) proxy to — syncTill-authed
+		// in the handler exactly like /api/sync/tables above. Omitting them
+		// here would silently no-op the whole feature (the proxy falls back
+		// to local-only on a 401, and two tills can claim one table again)
+		// exactly like the /api/sync/stock incident this switch's own comment
+		// documents. TestSyncPullPathsAreExempt pins both entries.
+		"/api/sync/tables/claim", "/api/sync/tables/release",
 		"/api/setup/join",
 		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status",
 		// ut-docs#1550: the wizard's "joined — restarting" trigger, the
