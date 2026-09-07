@@ -204,6 +204,23 @@ func TestButtonsHTTPRemove_StoreErrorIs400(t *testing.T) {
 	if rec.Code != 400 {
 		t.Fatalf("Remove with failing store = %d, want 400", rec.Code)
 	}
+	// ut-docs#1697: this used to be a raw http.Error(w, err.Error(), 400) --
+	// harmless while htmx discarded the body, but that same card's
+	// buttons_admin.html change wires the remove form's non-2xx response
+	// into #buttons-add-error, so a raw "sql: database is closed"-shaped
+	// string reaching the operator's screen is now a real leak, not a
+	// theoretical one. Same assertions as Add's own
+	// TestButtonsHTTPAdd_StoreValidationErrorRendersNonEmptyHTMLBody.
+	body := rec.Body.String()
+	if strings.Contains(body, "sql: database is closed") || strings.Contains(body, "database is closed") {
+		t.Fatalf("raw Go/SQL error text leaked into the operator-facing response: %s", body)
+	}
+	if want := httpx.T("en", designerErrorServerKey); !strings.Contains(body, want) {
+		t.Fatalf("remove error body = %q, want the localized %s copy %q", body, designerErrorServerKey, want)
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("Content-Type = %q, want text/html (so the client's innerHTML swap renders it as markup)", ct)
+	}
 }
 
 // newButtonsHTTPWithDB is newButtonsHTTP plus the underlying *sql.DB, for

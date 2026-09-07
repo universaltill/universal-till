@@ -23,6 +23,25 @@ import (
 const buttonsErrorKey = "designer.error.server"
 
 func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
+	// requirePrimary gates the reorder/add/remove routes below on this till
+	// being the primary (same defect class as ut-docs#1689/#1667/#1590/
+	// #1546): shortcut_buttons is synced shop-wide as an admin table
+	// (adminTables, sync_admin_repo.go) via a one-way primary-wins pull, so
+	// a write accepted on a satellite would silently vanish -- a reorder
+	// reverted, an added/removed button undone -- on the very next admin
+	// pull, with no indication to the manager who made the change. Refuse
+	// it up front instead, same pattern as catalog/handlers.go's
+	// requirePrimary: these routes return an HTMX fragment or a bare
+	// status, not a full page, so the refusal is a plain localized error
+	// response (409) rather than a redirect.
+	requirePrimary := func(w http.ResponseWriter, r *http.Request) bool {
+		if d.SyncPrimaryURL(r.Context()) != "" {
+			common.LocalizedError(w, r, http.StatusConflict, "designer.error.replica_use_primary")
+			return false
+		}
+		return true
+	}
+
 	// UI fragment
 	mux.HandleFunc("/ui/buttons", func(w http.ResponseWriter, r *http.Request) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
@@ -43,6 +62,9 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	// Reorder from the Designer (move-up/move-down buttons, ut-docs#1221 --
 	// formerly drag&drop): codes arrive in display order.
 	mux.HandleFunc("POST /api/buttons/reorder", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePrimary(w, r) {
+			return
+		}
 		// The Designer posts FormData (multipart) — ParseForm alone ignores
 		// multipart bodies, which silently dropped every reorder.
 		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
@@ -70,6 +92,9 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 
 	// Admin add/remove
 	mux.HandleFunc("/api/buttons/add", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePrimary(w, r) {
+			return
+		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		renderer, err := ui.NewRenderer(
 			filepath.Join("web", "ui", "layouts", "base.html"),
@@ -86,6 +111,9 @@ func registerButtonsAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	mux.HandleFunc("/api/buttons/remove", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePrimary(w, r) {
+			return
+		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		renderer, err := ui.NewRenderer(
 			filepath.Join("web", "ui", "layouts", "base.html"),

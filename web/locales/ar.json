@@ -190,6 +190,7 @@
   "designer.buttons": "الأزرار",
   "designer.code": "الرمز",
   "designer.empty": "لا توجد منتجات بعد.",
+  "designer.error.replica_use_primary": "يتبع هذا الصندوق الصندوق الأساسي — أدر أزرار البيع السريع من الصندوق الأساسي.",
   "designer.error.server": "حدث خطأ ما. يرجى المحاولة مجددًا.",
   "designer.label": "التسمية",
   "designer.no_matches": "لا توجد نتائج.",
