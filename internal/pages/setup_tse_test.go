@@ -187,9 +187,9 @@ func TestSetupWizardDE_TSEOfflineCompletesAndLeavesPendingKickoff(t *testing.T) 
 	if st.Country != "DE" || st.Identity.LegalName != "Ecke Laden GmbH" || st.Identity.TaxNumber != "12/345/67890" {
 		t.Fatalf("persisted identity wrong: %+v", st)
 	}
-	// fiscal.tse_configured must NOT be set at wizard-submit time — binding.
-	if v, ok, _ := d.Settings.Get(t.Context(), fiscal.KeyTSEConfigured); ok && strings.TrimSpace(v) != "" {
-		t.Fatalf("fiscal.tse_configured = %q set optimistically at wizard time", v)
+	// fiscal.signing_device_configured must NOT be set at wizard-submit time — binding.
+	if v, ok, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); ok && strings.TrimSpace(v) != "" {
+		t.Fatalf("fiscal.signing_device_configured = %q set optimistically at wizard time", v)
 	}
 }
 
@@ -230,8 +230,8 @@ func TestSetupWizardDE_TSEKickoffSuccess(t *testing.T) {
 		t.Fatalf("state after accepted kickoff = %+v err=%v, want awaiting_ready", st, err)
 	}
 	// Still not configured: the credential hasn't arrived yet.
-	if v, ok, _ := d.Settings.Get(t.Context(), fiscal.KeyTSEConfigured); ok && strings.TrimSpace(v) != "" {
-		t.Fatalf("fiscal.tse_configured = %q before the credential arrived", v)
+	if v, ok, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); ok && strings.TrimSpace(v) != "" {
+		t.Fatalf("fiscal.signing_device_configured = %q before the credential arrived", v)
 	}
 }
 
@@ -419,7 +419,7 @@ func TestStartTSEProvisionRetryShutsDownOnCtxDone(t *testing.T) {
 // --- fiscal_tse_ready directive handling ---
 
 // Success: credential fetched, stored 0600 on disk, and ONLY then
-// fiscal.tse_configured flips true (binding, ADR-0053/ut-docs#802 item 4).
+// fiscal.signing_device_configured flips true (binding, ADR-0053/ut-docs#802 item 4).
 func TestApplyFiscalTSEReady_StoresCredentialThenConfigures(t *testing.T) {
 	_, _, d := newFullAuthDeps(t)
 	initTestPaths(t)
@@ -443,7 +443,7 @@ func TestApplyFiscalTSEReady_StoresCredentialThenConfigures(t *testing.T) {
 		t.Fatalf("credential fetches = %d, want 1", cloud.credentialCount())
 	}
 
-	store := fiscal.NewTSECredentialStore()
+	store := fiscal.NewSigningDeviceCredentialStore()
 	cred, ok, err := store.Load()
 	if err != nil || !ok || cred["api_key"] != "op-key-1" {
 		t.Fatalf("credential not stored: ok=%v err=%v cred=%+v", ok, err, cred)
@@ -455,15 +455,15 @@ func TestApplyFiscalTSEReady_StoresCredentialThenConfigures(t *testing.T) {
 	if perm := fi.Mode().Perm(); perm != 0o600 {
 		t.Fatalf("credential perm = %o, want 0600", perm)
 	}
-	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeyTSEConfigured); v != "true" {
-		t.Fatalf("fiscal.tse_configured = %q, want true after confirmed store", v)
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); v != "true" {
+		t.Fatalf("fiscal.signing_device_configured = %q, want true after confirmed store", v)
 	}
 	if st, _ := loadTSEProvisioningState(t.Context(), d); st != nil {
 		t.Fatalf("provisioning state not cleared after success: %+v", st)
 	}
 }
 
-// Failure path (binding): a failed fetch leaves fiscal.tse_configured
+// Failure path (binding): a failed fetch leaves fiscal.signing_device_configured
 // unset/false and records a loud, distinct credential-failed state.
 func TestApplyFiscalTSEReady_FetchFailureLeavesUnconfigured(t *testing.T) {
 	_, _, d := newFullAuthDeps(t)
@@ -481,11 +481,11 @@ func TestApplyFiscalTSEReady_FetchFailureLeavesUnconfigured(t *testing.T) {
 	if _, err := applyFiscalTSEReady(t.Context(), d); err == nil {
 		t.Fatal("want an error so the directive stays pending on the cloud")
 	}
-	if fiscal.NewTSECredentialStore().Exists() {
+	if fiscal.NewSigningDeviceCredentialStore().Exists() {
 		t.Fatal("no credential may be stored on a failed fetch")
 	}
-	if v, ok, _ := d.Settings.Get(t.Context(), fiscal.KeyTSEConfigured); ok && strings.TrimSpace(v) != "" {
-		t.Fatalf("fiscal.tse_configured = %q after a FAILED fetch — must stay unset", v)
+	if v, ok, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); ok && strings.TrimSpace(v) != "" {
+		t.Fatalf("fiscal.signing_device_configured = %q after a FAILED fetch — must stay unset", v)
 	}
 	st, _ := loadTSEProvisioningState(t.Context(), d)
 	if st == nil || st.Status != tseStatusCredentialFailed {
@@ -505,8 +505,8 @@ func TestApplyFiscalTSEReady_EmptyCredentialRejected(t *testing.T) {
 	if _, err := applyFiscalTSEReady(t.Context(), d); err == nil {
 		t.Fatal("want an error for an empty operational_credential")
 	}
-	if v, ok, _ := d.Settings.Get(t.Context(), fiscal.KeyTSEConfigured); ok && strings.TrimSpace(v) != "" {
-		t.Fatalf("fiscal.tse_configured = %q after an empty credential", v)
+	if v, ok, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); ok && strings.TrimSpace(v) != "" {
+		t.Fatalf("fiscal.signing_device_configured = %q after an empty credential", v)
 	}
 }
 
@@ -536,8 +536,8 @@ func TestApplyFiscalTSEReady_GoneWithoutLocalRequeuesKickoff(t *testing.T) {
 	if st.Identity.TaxNumber != "DE123456789" {
 		t.Fatalf("identity lost on requeue: %+v", st)
 	}
-	if v, ok, _ := d.Settings.Get(t.Context(), fiscal.KeyTSEConfigured); ok && strings.TrimSpace(v) != "" {
-		t.Fatalf("fiscal.tse_configured = %q, must stay unset", v)
+	if v, ok, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); ok && strings.TrimSpace(v) != "" {
+		t.Fatalf("fiscal.signing_device_configured = %q, must stay unset", v)
 	}
 }
 
@@ -551,7 +551,7 @@ func TestApplyFiscalTSEReady_IdempotentWhenCredentialAlreadyLocal(t *testing.T) 
 	cloud.credentialStatus = http.StatusGone // a second real fetch would 410
 	configureTSECloud(d, cloud.server.URL)
 
-	if err := fiscal.NewTSECredentialStore().Save(map[string]any{"api_key": "op-key-1"}); err != nil {
+	if err := fiscal.NewSigningDeviceCredentialStore().Save(map[string]any{"api_key": "op-key-1"}); err != nil {
 		t.Fatal(err)
 	}
 
@@ -565,8 +565,8 @@ func TestApplyFiscalTSEReady_IdempotentWhenCredentialAlreadyLocal(t *testing.T) 
 	if cloud.credentialCount() != 0 {
 		t.Fatalf("credential fetched %d times despite a local copy", cloud.credentialCount())
 	}
-	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeyTSEConfigured); v != "true" {
-		t.Fatalf("fiscal.tse_configured = %q, want true", v)
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); v != "true" {
+		t.Fatalf("fiscal.signing_device_configured = %q, want true", v)
 	}
 }
 
@@ -575,7 +575,7 @@ func TestApplyFiscalTSEReady_IdempotentWhenCredentialAlreadyLocal(t *testing.T) 
 // before Save became write-tmp-then-rename) must NOT satisfy the
 // idempotency fast path. Before the fix, applyFiscalTSEReady used
 // store.Exists() (a stat-only check), so this exact file would have flipped
-// fiscal.tse_configured true over a credential nothing could ever read back.
+// fiscal.signing_device_configured true over a credential nothing could ever read back.
 // The directive must instead fall through to a real fetch.
 func TestApplyFiscalTSEReady_CorruptExistingFileIsNotTreatedAsStored(t *testing.T) {
 	_, _, d := newFullAuthDeps(t)
@@ -583,7 +583,7 @@ func TestApplyFiscalTSEReady_CorruptExistingFileIsNotTreatedAsStored(t *testing.
 	cloud := newFakeTSECloud(t)
 	configureTSECloud(d, cloud.server.URL)
 
-	store := fiscal.NewTSECredentialStore()
+	store := fiscal.NewSigningDeviceCredentialStore()
 	if err := os.MkdirAll(filepath.Dir(store.Path()), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -605,8 +605,8 @@ func TestApplyFiscalTSEReady_CorruptExistingFileIsNotTreatedAsStored(t *testing.
 	if err != nil || !ok || cred["api_key"] != "op-key-1" {
 		t.Fatalf("credential not stored correctly after overwrite: ok=%v err=%v cred=%+v", ok, err, cred)
 	}
-	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeyTSEConfigured); v != "true" {
-		t.Fatalf("fiscal.tse_configured = %q, want true only after the real fetch succeeded", v)
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); v != "true" {
+		t.Fatalf("fiscal.signing_device_configured = %q, want true only after the real fetch succeeded", v)
 	}
 }
 

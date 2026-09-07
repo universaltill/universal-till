@@ -15,7 +15,7 @@ import (
 // credential can be configured with zero plugins installed to actually sign
 // anything, leaving sales completing unsigned via proceed-and-declare with
 // nothing in the UI flagging it persistently) — read-only: it never touches
-// EvaluateGate, KeyTSEFailingSince, or override state (ADR-0048's gate/
+// EvaluateGate, KeySigningDeviceFailingSince, or override state (ADR-0048's gate/
 // override semantics are untouched by this card).
 //
 // country is passed in rather than read from settings here, so the banner

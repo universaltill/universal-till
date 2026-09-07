@@ -22,8 +22,8 @@ func withTestDataDir(t *testing.T) string {
 	return dir
 }
 
-func TestTSECredentialStoreSaveLoadRoundtrip(t *testing.T) {
-	store := NewTSECredentialStoreAt(filepath.Join(t.TempDir(), "fiscal", "tse_operational_credential.json"))
+func TestSigningDeviceCredentialStoreSaveLoadRoundtrip(t *testing.T) {
+	store := NewSigningDeviceCredentialStoreAt(filepath.Join(t.TempDir(), "fiscal", "signing_device_credential.json"))
 
 	if store.Exists() {
 		t.Fatal("fresh store must not report an existing credential")
@@ -60,9 +60,9 @@ func TestTSECredentialStoreSaveLoadRoundtrip(t *testing.T) {
 // The credential is a secret at rest: 0600 on the file, 0700 on its own
 // directory — token_client.go's convention, per ADR-0053's universal-till
 // card and ADR-0045 Decision 2.
-func TestTSECredentialStoreRestrictivePermissions(t *testing.T) {
-	path := filepath.Join(t.TempDir(), "fiscal", "tse_operational_credential.json")
-	store := NewTSECredentialStoreAt(path)
+func TestSigningDeviceCredentialStoreRestrictivePermissions(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "fiscal", "signing_device_credential.json")
+	store := NewSigningDeviceCredentialStoreAt(path)
 	if err := store.Save(map[string]any{"api_key": "k"}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -83,9 +83,9 @@ func TestTSECredentialStoreRestrictivePermissions(t *testing.T) {
 }
 
 // An empty credential map must be rejected — storing "nothing" as if it were
-// a credential would let fiscal.tse_configured flip true on a hollow success.
-func TestTSECredentialStoreRejectsEmptyCredential(t *testing.T) {
-	store := NewTSECredentialStoreAt(filepath.Join(t.TempDir(), "cred.json"))
+// a credential would let fiscal.signing_device_configured flip true on a hollow success.
+func TestSigningDeviceCredentialStoreRejectsEmptyCredential(t *testing.T) {
+	store := NewSigningDeviceCredentialStoreAt(filepath.Join(t.TempDir(), "cred.json"))
 	if err := store.Save(nil); err == nil {
 		t.Fatal("Save(nil) must error")
 	}
@@ -107,10 +107,10 @@ func TestTSECredentialStoreRejectsEmptyCredential(t *testing.T) {
 // the final path's .tmp sibling a directory — os.WriteFile(tmp, ...) then
 // fails with EISDIR regardless of the OS user's privileges (a permission-bit
 // failure wouldn't reproduce under a root-run test).
-func TestTSECredentialStoreSaveFailureLeavesNoPartialFile(t *testing.T) {
+func TestSigningDeviceCredentialStoreSaveFailureLeavesNoPartialFile(t *testing.T) {
 	dir := t.TempDir()
 	target := filepath.Join(dir, "fiscal", "cred.json")
-	store := NewTSECredentialStoreAt(target)
+	store := NewSigningDeviceCredentialStoreAt(target)
 	if err := os.MkdirAll(filepath.Join(dir, "fiscal", "cred.json.tmp"), 0o700); err != nil {
 		t.Fatal(err)
 	}
@@ -126,9 +126,9 @@ func TestTSECredentialStoreSaveFailureLeavesNoPartialFile(t *testing.T) {
 // The default store lives under paths.Data("fiscal", ...) — the till's
 // stable operational data root — and NOT under paths.Plugins (that tree is
 // plugin auth cache, a different data class), never a cwd-relative path.
-func TestTSECredentialStoreDefaultPathUnderDataDir(t *testing.T) {
+func TestSigningDeviceCredentialStoreDefaultPathUnderDataDir(t *testing.T) {
 	dir := withTestDataDir(t)
-	store := NewTSECredentialStore()
+	store := NewSigningDeviceCredentialStore()
 	if !strings.HasPrefix(store.Path(), filepath.Join(dir, "fiscal")+string(filepath.Separator)) {
 		t.Fatalf("default path %q not under <data>/fiscal/", store.Path())
 	}
@@ -138,7 +138,7 @@ func TestTSECredentialStoreDefaultPathUnderDataDir(t *testing.T) {
 	if err := store.Save(map[string]any{"api_key": "k"}); err != nil {
 		t.Fatalf("Save at default path: %v", err)
 	}
-	if _, err := os.Stat(filepath.Join(dir, "fiscal", "tse_operational_credential.json")); err != nil {
+	if _, err := os.Stat(filepath.Join(dir, "fiscal", "signing_device_credential.json")); err != nil {
 		t.Fatalf("credential not written under the data root: %v", err)
 	}
 }
@@ -151,7 +151,7 @@ func TestTSECredentialStoreDefaultPathUnderDataDir(t *testing.T) {
 // operator-captured media), and this test pins that the credential never
 // leaks into any file of a produced bundle, and that the bundle tree and the
 // credential file live in disjoint directories.
-func TestTSECredentialExcludedFromSupportBundle(t *testing.T) {
+func TestSigningDeviceCredentialExcludedFromSupportBundle(t *testing.T) {
 	dataDir := withTestDataDir(t)
 
 	// Point the pending-bundle queue where production points it (paths.Data)
@@ -161,7 +161,7 @@ func TestTSECredentialExcludedFromSupportBundle(t *testing.T) {
 	t.Cleanup(func() { issuereport.PendingDir = origPending })
 
 	const secret = "super-secret-tse-credential-value-XYZZY"
-	store := NewTSECredentialStore()
+	store := NewSigningDeviceCredentialStore()
 	if err := store.Save(map[string]any{"api_key": secret}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
@@ -209,7 +209,94 @@ func TestTSECredentialExcludedFromSupportBundle(t *testing.T) {
 	if err := json.Unmarshal(mb, &meta); err != nil {
 		t.Fatalf("decode meta: %v", err)
 	}
-	if strings.Contains(string(mb), "tse_operational_credential") {
+	if strings.Contains(string(mb), "signing_device_credential") {
 		t.Fatal("bundle meta references the credential file")
+	}
+}
+
+// ADR-0081 Decision 4: a till provisioned under ADR-0048's original naming
+// holds its credential at fiscal/tse_operational_credential.json. The
+// production constructor must find it there and move it (rename, not copy —
+// a secret must not be left duplicated on disk) to the signing-device path
+// before returning, so the credential is readable through the store's
+// ordinary Load() with no operator action and no re-provisioning.
+func TestSigningDeviceCredentialStoreMigratesLegacyTSEFilename(t *testing.T) {
+	dir := withTestDataDir(t)
+	legacy := filepath.Join(dir, "fiscal", "tse_operational_credential.json")
+	if err := os.MkdirAll(filepath.Dir(legacy), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(legacy, []byte(`{"api_key":"legacy-key-1"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	store := NewSigningDeviceCredentialStore()
+
+	want := filepath.Join(dir, "fiscal", "signing_device_credential.json")
+	if store.Path() != want {
+		t.Fatalf("store path = %q, want %q", store.Path(), want)
+	}
+	cred, ok, err := store.Load()
+	if err != nil || !ok {
+		t.Fatalf("Load after legacy migration: ok=%v err=%v", ok, err)
+	}
+	if cred["api_key"] != "legacy-key-1" {
+		t.Fatalf("migrated credential lost its content: %+v", cred)
+	}
+	if _, err := os.Stat(legacy); !os.IsNotExist(err) {
+		t.Fatalf("legacy file still present (stat err=%v) — must be moved, not copied", err)
+	}
+	fi, err := os.Stat(want)
+	if err != nil {
+		t.Fatalf("stat migrated file: %v", err)
+	}
+	if perm := fi.Mode().Perm(); perm != 0o600 {
+		t.Fatalf("migrated credential perm = %o, want 0600 preserved by the rename", perm)
+	}
+}
+
+// If both files exist, the signing-device path is authoritative and the
+// legacy file is left exactly where it was: the constructor must never
+// overwrite a credential a newer provisioning already wrote.
+func TestSigningDeviceCredentialStoreKeepsNewFileWhenLegacyAlsoPresent(t *testing.T) {
+	dir := withTestDataDir(t)
+	fiscalDir := filepath.Join(dir, "fiscal")
+	if err := os.MkdirAll(fiscalDir, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	legacy := filepath.Join(fiscalDir, "tse_operational_credential.json")
+	current := filepath.Join(fiscalDir, "signing_device_credential.json")
+	if err := os.WriteFile(legacy, []byte(`{"api_key":"stale"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(current, []byte(`{"api_key":"current"}`), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	cred, ok, err := NewSigningDeviceCredentialStore().Load()
+	if err != nil || !ok {
+		t.Fatalf("Load: ok=%v err=%v", ok, err)
+	}
+	if cred["api_key"] != "current" {
+		t.Fatalf("new-path credential was clobbered by the legacy one: %+v", cred)
+	}
+	if b, err := os.ReadFile(legacy); err != nil || string(b) != `{"api_key":"stale"}` {
+		t.Fatalf("legacy file must be left untouched when the new path already exists: %q, %v", b, err)
+	}
+}
+
+// A fresh install (no fiscal/ dir at all) must construct cleanly with
+// nothing stored — no directory created, no error, no stray file.
+func TestSigningDeviceCredentialStoreFreshInstallHasNothingToMigrate(t *testing.T) {
+	dir := withTestDataDir(t)
+	store := NewSigningDeviceCredentialStore()
+	if store.Exists() {
+		t.Fatal("fresh install must not report a credential")
+	}
+	if _, ok, err := store.Load(); ok || err != nil {
+		t.Fatalf("Load on fresh install: ok=%v err=%v, want ok=false err=nil", ok, err)
+	}
+	if _, err := os.Stat(filepath.Join(dir, "fiscal")); !os.IsNotExist(err) {
+		t.Fatalf("constructing the store must not create fiscal/ on a fresh install (stat err=%v)", err)
 	}
 }

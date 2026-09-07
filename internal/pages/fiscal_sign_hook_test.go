@@ -247,7 +247,7 @@ func TestFiscalSignAsk_ApprovedSaleHasNoMarker(t *testing.T) {
 		t.Fatalf("approved sale must not render the outage notice: %s", rec.Body.String())
 	}
 	assertNoFiscalSignRetryQueue(t, dp)
-	if v, _, _ := dp.Settings.Get(context.Background(), fiscal.KeyTSEFailingSince); v != "" {
+	if v, _, _ := dp.Settings.Get(context.Background(), fiscal.KeySigningDeviceFailingSince); v != "" {
 		t.Fatalf("approved sale must not mark the TSE failing, got %q", v)
 	}
 }
@@ -256,7 +256,7 @@ func TestFiscalSignAsk_ApprovedSaleHasNoMarker(t *testing.T) {
 // anyway, IS journaled unsigned, DOES get a receipt outage notice, DOES
 // raise a Problem — permanently, with nothing queued for any later
 // re-attempt (ADR-0056, ut-docs#839) — and does NOT touch
-// fiscal.tse_failing_since (B1, review of ut-docs#675: every failure this
+// fiscal.signing_device_failing_since (B1, review of ut-docs#675: every failure this
 // card can observe is a reachability outcome, and ADR-0048 Decision 1
 // reserves that key for a TSE known bad, a strictly narrower condition).
 func TestFiscalSignAsk_UnreachableDeclaredProceedsAndDeclares(t *testing.T) {
@@ -316,12 +316,12 @@ func TestFiscalSignAsk_UnreachableDeclaredProceedsAndDeclares(t *testing.T) {
 	// (ADR-0056, ut-docs#839).
 	assertNoFiscalSignRetryQueue(t, dp)
 
-	// B1: even a genuine online failure must NOT stamp tse_failing_since —
+	// B1: even a genuine online failure must NOT stamp signing_device_failing_since —
 	// "unreachable" means "we can't reach it", not "the TSE is known bad"
 	// (ADR-0048 Decision 1), and stamping it would hard-block the NEXT sale
 	// in a German system-of-record shop over a mere reachability blip.
-	if v, _, _ := dp.Settings.Get(context.Background(), fiscal.KeyTSEFailingSince); v != "" {
-		t.Fatalf("a fiscal.sign.ask failure must never stamp %s (ADR-0048 D1), got %q", fiscal.KeyTSEFailingSince, v)
+	if v, _, _ := dp.Settings.Get(context.Background(), fiscal.KeySigningDeviceFailingSince); v != "" {
+		t.Fatalf("a fiscal.sign.ask failure must never stamp %s (ADR-0048 D1), got %q", fiscal.KeySigningDeviceFailingSince, v)
 	}
 }
 
@@ -386,7 +386,7 @@ func TestFiscalSignAsk_CannotSignDeclaresWithDifferentWording(t *testing.T) {
 // a shop whose signing backend is merely unreachable keeps selling
 // (proceed-and-declare), it does not get hard-blocked on its next sale
 // pending an owner override. Pre-fix, the first failed sale stamped
-// fiscal.tse_failing_since and the second tender was refused outright.
+// fiscal.signing_device_failing_since and the second tender was refused outright.
 func TestFiscalSignAsk_RepeatedFailuresNeverTripADR0048Gate(t *testing.T) {
 	mux, dp := newFiscalSignDeps(t)
 	ctx := context.Background()
@@ -394,7 +394,7 @@ func TestFiscalSignAsk_RepeatedFailuresNeverTripADR0048Gate(t *testing.T) {
 	if err := dp.Settings.Set(ctx, fiscal.KeySystemOfRecord, "true"); err != nil {
 		t.Fatal(err)
 	}
-	if err := dp.Settings.Set(ctx, fiscal.KeyTSEConfigured, "true"); err != nil {
+	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
 		t.Fatal(err)
 	}
 	subscribeFiscalSignHandler(t, dp, "com.test.fiscal-sign-flaky", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
@@ -409,8 +409,8 @@ func TestFiscalSignAsk_RepeatedFailuresNeverTripADR0048Gate(t *testing.T) {
 		if rec.Code != http.StatusOK {
 			t.Fatalf("sale %d must complete despite the signing failure (never hard-block via ADR-0048), got %d: %s", i, rec.Code, rec.Body.String())
 		}
-		if v, _, _ := dp.Settings.Get(ctx, fiscal.KeyTSEFailingSince); v != "" {
-			t.Fatalf("sale %d stamped %s = %q — fiscal.sign.ask must never drive that key", i, fiscal.KeyTSEFailingSince, v)
+		if v, _, _ := dp.Settings.Get(ctx, fiscal.KeySigningDeviceFailingSince); v != "" {
+			t.Fatalf("sale %d stamped %s = %q — fiscal.sign.ask must never drive that key", i, fiscal.KeySigningDeviceFailingSince, v)
 		}
 	}
 	if got := countSales(t, dp); got != 2 {
@@ -449,8 +449,8 @@ func TestFiscalSignAsk_KnownOfflineShortCircuits(t *testing.T) {
 	// Permanently unsigned — nothing queued for a later re-attempt
 	// (ADR-0056, ut-docs#839).
 	assertNoFiscalSignRetryQueue(t, dp)
-	if v, _, _ := dp.Settings.Get(context.Background(), fiscal.KeyTSEFailingSince); v != "" {
-		t.Fatalf("known-offline must NEVER set tse_failing_since (ADR-0048 D1), got %q", v)
+	if v, _, _ := dp.Settings.Get(context.Background(), fiscal.KeySigningDeviceFailingSince); v != "" {
+		t.Fatalf("known-offline must NEVER set signing_device_failing_since (ADR-0048 D1), got %q", v)
 	}
 }
 
@@ -471,7 +471,7 @@ func TestFiscalSignAsk_NotThisTerminalIsNotAFailure(t *testing.T) {
 	if n := countAuditRows(t, dp, "unsigned_fiscal_signing"); n != 0 {
 		t.Fatalf("a clean not-this-terminal must not be declared as a failure, got %d markers", n)
 	}
-	if v, _, _ := dp.Settings.Get(context.Background(), fiscal.KeyTSEFailingSince); v != "" {
+	if v, _, _ := dp.Settings.Get(context.Background(), fiscal.KeySigningDeviceFailingSince); v != "" {
 		t.Fatalf("not-this-terminal must not mark the TSE failing, got %q", v)
 	}
 }

@@ -4,7 +4,7 @@
 // till must never hold. The till then waits for the cloud's payload-less
 // fiscal_tse_ready directive, fetches the merchant-scoped operational
 // credential once over a dedicated single-use endpoint, and stores it in
-// internal/fiscal's at-rest credential store. fiscal.tse_configured flips
+// internal/fiscal's at-rest credential store. fiscal.signing_device_configured flips
 // true ONLY after that credential is confirmed on local disk — never at
 // wizard-submit time.
 //
@@ -378,17 +378,17 @@ func StartTSEProvisionRetry(ctx context.Context, d *common.Deps, wg *sync.WaitGr
 // dedicated single-use endpoint and store it at rest. Returns an error to
 // leave the directive un-acked (the cloud re-serves it next tick) — success
 // is only ever reported after the credential is CONFIRMED stored on local
-// disk, and only then does fiscal.tse_configured flip true (binding,
+// disk, and only then does fiscal.signing_device_configured flip true (binding,
 // ut-docs#802 item 4).
 func applyFiscalTSEReady(ctx context.Context, d *common.Deps) (string, error) {
-	store := fiscal.NewTSECredentialStore()
+	store := fiscal.NewSigningDeviceCredentialStore()
 	// Idempotent re-serve: a directive whose ack never reached the cloud
 	// re-applies after the credential already landed — never a second fetch
 	// (the endpoint is single-use and would 410). Deliberately Load(), not
 	// Exists(): a Stat-only check would treat a zero-length file left behind
 	// by a prior failed write (review finding, ut-docs#802 — Save is now
 	// write-tmp-then-rename so this shouldn't recur, but this check must not
-	// depend on that alone) as "already stored" and flip tse_configured true
+	// depend on that alone) as "already stored" and flip signing_device_configured true
 	// over an unreadable credential. Load() is the same confirmed-readable
 	// bar the success path below holds itself to.
 	if cred, ok, err := store.Load(); err == nil && ok && len(cred) > 0 {
@@ -440,7 +440,7 @@ func applyFiscalTSEReady(ctx context.Context, d *common.Deps) (string, error) {
 		markTSECredentialFailed(ctx, d, "store_failed")
 		return "", fmt.Errorf("store credential: %w", err)
 	}
-	// Confirm the store by reading it back — fiscal.tse_configured must mean
+	// Confirm the store by reading it back — fiscal.signing_device_configured must mean
 	// "the credential is on this disk, readable", not "a write call returned".
 	if _, ok, err := store.Load(); err != nil || !ok {
 		markTSECredentialFailed(ctx, d, "store_failed")
@@ -449,17 +449,17 @@ func applyFiscalTSEReady(ctx context.Context, d *common.Deps) (string, error) {
 	return finishTSEProvisioning(ctx, d, "TSE operational credential stored")
 }
 
-// finishTSEProvisioning flips fiscal.tse_configured true (the credential is
+// finishTSEProvisioning flips fiscal.signing_device_configured true (the credential is
 // confirmed on disk by the caller) and clears the pending state.
 func finishTSEProvisioning(ctx context.Context, d *common.Deps, msg string) (string, error) {
-	if err := d.Settings.Set(ctx, fiscal.KeyTSEConfigured, "true"); err != nil {
+	if err := d.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
 		// Leave the directive un-acked: the re-serve is idempotent (the
 		// store.Load() fast path above) and will retry this write.
-		return "", fmt.Errorf("persist %s: %w", fiscal.KeyTSEConfigured, err)
+		return "", fmt.Errorf("persist %s: %w", fiscal.KeySigningDeviceConfigured, err)
 	}
 	// "configured" rather than a lifecycle constant: the lifecycle state is
 	// cleared below — this entry records the terminal success transition
-	// (credential confirmed on disk, fiscal.tse_configured now true).
+	// (credential confirmed on disk, fiscal.signing_device_configured now true).
 	// Audited right after the load-bearing write above succeeds, NOT
 	// conditioned on the state-clear below: a failure to clear the now-moot
 	// pending record must never suppress the record that TSE actually
@@ -539,7 +539,7 @@ func tseProvisioningRetryable(st *tseProvisioningState) bool {
 // all. Deliberately NOT scoped to specific "failure" statuses (kickoff_
 // rejected/credential_failed only, as first shipped) — every status this key
 // is ever set to means "not configured yet" (finishTSEProvisioning clears
-// the whole record to nil on success, the only way fiscal.tse_configured
+// the whole record to nil on success, the only way fiscal.signing_device_configured
 // flips true), so ANY stored state for a hard-gated country already means
 // every sale is refused by fiscal.EvaluateGate with no other explanation
 // anywhere in the UI. Independent review (2026-09-01) found the narrower,
