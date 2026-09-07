@@ -294,10 +294,21 @@ UPDATE plugin_settings SET scope = ?, scope_id = NULL, updated_at = ? WHERE id =
 		if d.ID == "" {
 			d.ID = uuid.NewString()
 		}
+		// ut-docs#1746 (ADR-0082): a manifest default_value for a
+		// declared-secret or heuristic-matching key must not land in
+		// plugin_settings.value_json in cleartext just because it arrived
+		// via install-time seeding rather than an operator write — the same
+		// sealSettingValue seam every other writer in this file goes
+		// through, so the seam's own doc comment ("no caller can bypass it")
+		// is actually true.
+		valueJSON, err := sealSettingValue(ctx, d.Key, d.ValueJSON, d.DeclaredSecret)
+		if err != nil {
+			return pluginObs.wrapf("reconcile_settings", "seal default for %s", err, d.Key)
+		}
 		if _, err := exec.ExecContext(ctx, `
 INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope, scope_id, updated_at)
 VALUES (?, ?, ?, ?, ?, ?, ?)`,
-			d.ID, pluginID, d.Key, d.ValueJSON, d.Scope, d.ScopeID,
+			d.ID, pluginID, d.Key, valueJSON, d.Scope, d.ScopeID,
 			d.UpdatedAt.UTC().Format(time.RFC3339)); err != nil {
 			return pluginObs.wrap("reconcile_settings", err)
 		}
@@ -1279,6 +1290,13 @@ type PluginSettingRow struct {
 	Scope     string
 	ScopeID   sql.NullString
 	UpdatedAt time.Time
+	// DeclaredSecret mirrors UpsertPluginSettingScoped's declaredSecret
+	// parameter: whether the plugin's manifest declares this key
+	// `type: "secret"` (ADR-0082). The caller (manifest.go) computes it from
+	// the manifest it already has in hand; ReconcilePluginSettings applies
+	// it, plus the unconditional key-name heuristic, via the same
+	// sealSettingValue seam every other writer uses — see ut-docs#1746.
+	DeclaredSecret bool
 }
 
 // PluginHookRow represents a plugin hook row.

@@ -664,13 +664,14 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 		}
 
 		settingRows = append(settingRows, data.PluginSettingRow{
-			ID:        uuid.NewString(),
-			PluginID:  m.ID,
-			Key:       s.Key,
-			ValueJSON: valueJSON,
-			Scope:     scope,
-			ScopeID:   sql.NullString{Valid: false},
-			UpdatedAt: now,
+			ID:             uuid.NewString(),
+			PluginID:       m.ID,
+			Key:            s.Key,
+			ValueJSON:      valueJSON,
+			Scope:          scope,
+			ScopeID:        sql.NullString{Valid: false},
+			UpdatedAt:      now,
+			DeclaredSecret: m.SettingDeclaredSecret(s.Key),
 		})
 	}
 	if err := repo.ReconcilePluginSettings(ctx, tx, m.ID, settingRows); err != nil {
