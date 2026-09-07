@@ -580,7 +580,7 @@ func TestImport_StagedCommitSurvivesCurrencyConfirmDetour(t *testing.T) {
 // failed with a generic item_failed. This is the genuine integration-level
 // regression pin the review asked for (F2): it exercises the real .bkp
 // preview → staged-commit path, not just the pure allow-list unit test.
-func TestImport_BkpStagedCommitNeverForcesInFileDuplicatePLU(t *testing.T) {
+func TestImport_BkpStagedCommitDedupesAnchoredForcedRowsVetoesUnanchoredOnes(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	resetStagedCatalog(t)
 	dp := newImportTestDeps(t)
@@ -594,8 +594,9 @@ func TestImport_BkpStagedCommitNeverForcesInFileDuplicatePLU(t *testing.T) {
 	//         (clean row FIRST — the parser's seen-set catches this one);
 	//  idx 4: missing-name on 50001, idx 5: clean "Second B" on 50001
 	//         (clean row LAST — only the commit-time guard can catch this);
-	//  idx 6/7: two missing-name rows sharing 60001, both forced — only the
-	//         first may land.
+	//  idx 6/7: two missing-name rows sharing 60001, both forced, NEITHER
+	//         with a clean twin anywhere in the file — genuinely ambiguous
+	//         (ut-docs#1234 review): only the first may land.
 	zipBytes := buildBkpZipForPagesTestWithTaxRows(t, []bkpTaxRow{
 		{ProductNumber: "40001", Name: "First A", Category: "Coffee", Price: 2.00},
 		{ProductNumber: "40001", Name: "", Category: "Coffee", Price: 3.00},
@@ -615,8 +616,8 @@ func TestImport_BkpStagedCommitNeverForcesInFileDuplicatePLU(t *testing.T) {
 	}
 	id := m[1]
 
-	// The operator (or a hostile client) ticks every missing-name row and
-	// supplies corrected names for all of them.
+	// The operator ticks every missing-name row and supplies corrected names
+	// for all of them.
 	body2, ct2 := multipartFields(t, map[string]string{
 		"commit":        "1",
 		"staged_id":     id,
@@ -635,31 +636,39 @@ func TestImport_BkpStagedCommitNeverForcesInFileDuplicatePLU(t *testing.T) {
 	}
 	resp := rec2.Body.String()
 
-	// Exactly ONE row per duplicated PLU ever lands — and it's the clean one
-	// where a clean one exists, regardless of file order.
 	assertOne := func(sku, wantName string) {
 		t.Helper()
 		var n int
 		if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE sku = ?`, sku).Scan(&n); err != nil || n != 1 {
-			t.Fatalf("PLU %s: %d items landed, want exactly 1 (err=%v)", sku, n, err)
+			t.Fatalf("SKU %s: %d items landed, want exactly 1 (err=%v)", sku, n, err)
 		}
 		var name string
 		if err := dp.Db.QueryRow(`SELECT name FROM items WHERE sku = ?`, sku).Scan(&name); err != nil || name != wantName {
-			t.Fatalf("PLU %s landed as %q (err=%v), want %q", sku, name, err, wantName)
+			t.Fatalf("SKU %s landed as %q (err=%v), want %q", sku, name, err, wantName)
 		}
 	}
+	// A clean row anchors each of 40001/50001 — the corrected row sharing
+	// that PLU is no longer an unconditional dead end (ut-docs#1234 AC1):
+	// it lands too, under its own synthesized suffix, same as bkp.go's own
+	// clean-row dedup convention, regardless of which side of the anchor it
+	// falls on in the file (AC2).
 	assertOne("40001", "First A")
+	assertOne("40001-2", "Fixed Name")
 	assertOne("50001", "Second B")
-	assertOne("60001", "Twin One") // no clean twin: the first forced row wins, the second stays out
+	assertOne("50001-2", "Sneaky")
+	// No clean twin anywhere for 60001: still genuinely ambiguous (AC3,
+	// unchanged from before this card) — the first forced row wins, the
+	// second stays out.
+	assertOne("60001", "Twin One")
 	var n int
-	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE name IN ('Fixed Name','Sneaky','Twin Two')`).Scan(&n); err != nil || n != 0 {
-		t.Fatalf("a forced in-file duplicate landed in the DB (n=%d err=%v)", n, err)
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE name = 'Twin Two'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("a forced row with no clean anchor landed anyway (n=%d err=%v)", n, err)
 	}
 
-	// The rows that stayed out say WHY — the duplicate status, never a
+	// The one row that stayed out says WHY — the duplicate status, never a
 	// generic item_failed from the SKU UNIQUE constraint firing late.
 	if !strings.Contains(resp, "duplicate item number in this file") {
-		t.Fatalf("skipped duplicate rows must show the duplicate_sku_in_file status: %s", resp)
+		t.Fatalf("the skipped no-anchor duplicate must show the duplicate_sku_in_file status: %s", resp)
 	}
 	if strings.Contains(resp, "item could not be created") {
 		t.Fatalf("an in-file duplicate leaked into the write loop and failed on the DB constraint instead of being refused up front: %s", resp)
