@@ -114,6 +114,15 @@ jobs:
         run: bash scripts/ci/guard-android-external-links.sh
       - name: Android external-link hand-off guard regression test
         run: bash scripts/ci/guard-android-external-links_test.sh
+      # guard-gobind-skip.sh's real-CI mode runs in android-ci.yml (it needs
+      # gobind on PATH, and only makes sense when android/**/mobile/**
+      # changed) — but its regression test is pure bash against throwaway
+      # fixtures, needs no toolchain, and must not be gated behind that path
+      # filter (ut-docs#1735 review): every other guard's own _test.sh runs
+      # unconditionally here, and a PR touching only the guard script itself
+      # would otherwise ship it completely unverified.
+      - name: gobind-skip guard regression test
+        run: bash scripts/ci/guard-gobind-skip_test.sh
       - name: Emoji font guard
         run: bash scripts/ci/guard-emoji-font.sh
       - name: htmx-loaded guard
@@ -155,7 +164,26 @@ jobs:
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
-        run: go test $(go list ./... | grep -v '/internal/plugins$')
+        # Excludes internal/plugins itself (own step below, ut-docs#643) and
+        # its oauth/marketplace subpackages (own step below, ut-docs#1630) —
+        # both run with -v there so a t.Skip is visible; this step stays
+        # plain, so don't run either a second time here.
+        run: go test $(go list ./... | grep -vE '/internal/plugins$|/internal/plugins/(oauth|marketplace)$')
+      - name: Test (internal/plugins/oauth and /marketplace — ut-docs#1630)
+        # Same gap #1626 fixed for internal/plugins itself: the main Test
+        # step above runs plain (no -v), so a t.Skip in these subpackages
+        # (both have a real one, gated on os.Hostname() being empty —
+        # internal/plugins/oauth/token_client_test.go and
+        # internal/plugins/marketplace/client_more_test.go) prints no
+        # `--- SKIP` line and CI just reports `ok` whether the test actually
+        # ran or silently skipped. Scoped to exactly these two packages (no
+        # trailing /...) so they don't also run inside the main Test step's
+        # `go test ./...` above — see that step's own exclude and ut-docs#662
+        # on why re-running things twice in one job is worth avoiding.
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: go test -v ./internal/plugins/oauth ./internal/plugins/marketplace
       - name: Test (internal/plugins — wider timeout, ut-docs#643/#753/#776)
         # internal/plugins hit the plain (this workflow never uses -race)
         # default 600s per-package `go test` timeout for real in CI (PR
@@ -178,11 +206,12 @@ jobs:
         # it for the whole suite, so a genuine hang anywhere else still
         # fails fast (within the default 10m) instead of taking up to 20m
         # to report. Scoped to the exact package (no trailing /...) so
-        # internal/plugins/marketplace and /oauth — already covered by the
-        # main Test step above — don't run a second time in this same job;
-        # see ut-docs#662's own comment on why re-running things twice in
-        # one job is exactly the kind of contention this package doesn't
-        # need more of.
+        # internal/plugins/marketplace and /oauth — covered by their own
+        # dedicated step above (ut-docs#1630), not the main Test step
+        # anymore — don't run a second time in this same job; see
+        # ut-docs#662's own comment on why re-running things twice in one
+        # job is exactly the kind of contention this package doesn't need
+        # more of.
         # -v (ut-docs#1626): plain `go test` prints no `--- SKIP` line, so a
         # test skipping here (e.g. TestReload_SurvivesRealisticPublisherContention's
         # publisher-floor precondition, ut-docs#1198) was invisible — CI just
