@@ -285,6 +285,27 @@ UPDATE plugin_settings SET scope = ?, scope_id = NULL, updated_at = ? WHERE id =
 				return pluginObs.wrap("reconcile_settings", err)
 			}
 		}
+		// ut-docs#1752 (follow-up from #1746): #1746 only stops a NEW default
+		// row from landing in cleartext — a row that already existed before
+		// that fix shipped, still sitting on its cleartext manifest default,
+		// was never rewritten here and stayed unsealed forever across every
+		// future reconcile. Give it a one-time reseal through the same seam,
+		// independent of the scope update above (scope_id is left alone here
+		// on purpose — resealing must never clobber a register-scoped row's
+		// scope_id when scope itself hasn't changed).
+		if !secrets.IsSealed(best.valueJSON) {
+			sealedValue, sealErr := sealSettingValue(ctx, key, best.valueJSON, d.DeclaredSecret)
+			if sealErr != nil {
+				return pluginObs.wrapf("reconcile_settings", "reseal existing value for %s", sealErr, key)
+			}
+			if sealedValue != best.valueJSON {
+				if _, err := exec.ExecContext(ctx, `
+UPDATE plugin_settings SET value_json = ?, updated_at = ? WHERE id = ?`,
+					sealedValue, time.Now().UTC().Format(time.RFC3339), best.id); err != nil {
+					return pluginObs.wrap("reconcile_settings", err)
+				}
+			}
+		}
 	}
 
 	for _, d := range declared {
