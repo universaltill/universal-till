@@ -354,6 +354,65 @@ func BenchmarkCompleteSaleLargeBasket(b *testing.B) {
 	}
 }
 
+// BenchmarkMergeResolvedManyModifierLines exercises the in-memory Service's
+// mergeResolved hot path (ut-docs#1359, perf audit finding A.3) at a
+// realistic modifier-bearing basket size: a till with dozens of distinct
+// customized lines already rung up, ringing up one more each tap. Before
+// caching the per-line modifier signature, every add re-sorted and
+// re-joined EVERY existing line's Modifiers OptionIDs from scratch — a
+// till with 40 modifier-bearing lines redid 40 fresh signature computations
+// on every subsequent add, growing quadratically with basket size. This
+// never shows up in BenchmarkCompleteSale* above, which exercise the
+// DB-backed CompleteSale path, not the basket-building
+// Service.AddLineWithModifiers/mergeResolved path directly.
+//
+// Line/modifier construction is precomputed OUTSIDE the timed loop so the
+// benchmark measures mergeResolved's own scan-and-compare cost, not
+// fmt.Sprintf/slice-allocation noise that's identical before and after the
+// fix and would otherwise dilute the signal.
+func BenchmarkMergeResolvedManyModifierLines(b *testing.B) {
+	const (
+		basketLines = 80
+		modsPerLine = 4
+	)
+	resolver := mapResolver{}
+
+	bases := make([]BasketLine, basketLines)
+	mods := make([][]data.SelectedModifier, basketLines)
+	for j := 0; j < basketLines; j++ {
+		bases[j] = BasketLine{
+			SKU:        fmt.Sprintf("SKU%03d", j),
+			ItemID:     fmt.Sprintf("item-%03d", j),
+			Name:       fmt.Sprintf("Item %d", j),
+			PriceCents: 320,
+		}
+		// Every line carries its own distinct set of modifiers, so none of
+		// the basketLines adds ever merge with each other — each add must
+		// scan every line already in the basket and compare signatures,
+		// the exact shape the audit finding describes.
+		line := make([]data.SelectedModifier, modsPerLine)
+		for k := 0; k < modsPerLine; k++ {
+			line[k] = data.SelectedModifier{
+				OptionID:   fmt.Sprintf("opt-%d-%d", j, k),
+				OptionName: fmt.Sprintf("Option %d", k),
+			}
+		}
+		mods[j] = line
+	}
+
+	b.ResetTimer()
+	for i := 0; i < b.N; i++ {
+		s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, resolver)
+		for j := 0; j < basketLines; j++ {
+			s.AddLineWithModifiers(bases[j], 1, mods[j])
+		}
+		if got := len(s.Basket().Lines); got != basketLines {
+			b.StopTimer()
+			b.Fatalf("setup: expected %d distinct lines, got %d", basketLines, got)
+		}
+	}
+}
+
 // TestBenchmarkThresholdConfiguration tests that threshold can be configured
 func TestBenchmarkThresholdConfiguration(t *testing.T) {
 	// Test default
