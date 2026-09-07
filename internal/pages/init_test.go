@@ -123,3 +123,78 @@ func TestInit_ClearsStaleTableClaimLeftByUncleanShutdown(t *testing.T) {
 		t.Errorf("after restart, T1 must be free again (stale claim swept), got ok=%v err=%v", ok, err)
 	}
 }
+
+// TestInit_ReclaimsHeldOrdersTableClaimOnBoot (ut-docs#1704, independent
+// review 2026-09-07): the sweep above (TestInit_ClearsStaleTableClaimLeftByUncleanShutdown)
+// wipes EVERY till_id=” table_claims row unconditionally, including one
+// that in fact still belongs to a genuinely parked order -- held_sales
+// itself survives a restart by design (offline-first durability), but
+// nothing previously re-created its table_claims mirror. Locally this was
+// invisible (ListTablesWithState already reads held_sales directly, so the
+// table still displayed occupied on THIS till) -- but the mirror is exactly
+// what a replica has already write-through'd to the primary, so losing it
+// meant a parked order's table read FREE cross-till after every single
+// restart, not just after a >tillClaimTTL outage. Init's boot re-claim step
+// must restore it.
+func TestInit_ReclaimsHeldOrdersTableClaimOnBoot(t *testing.T) {
+	chdirRoot(t)
+	paths.Init(t.TempDir())
+
+	d, err := db.Open(filepath.Join(t.TempDir(), "held_order_restart.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer d.Close()
+
+	posRepo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	tableID, err := posRepo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	if _, err := d.DB.ExecContext(ctx, `INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES ('h1','Table 1',100,1,'{}',?)`, tableID); err != nil {
+		t.Fatalf("seed held sale: %v", err)
+	}
+	// No table_claims row seeded here at all -- simulating exactly what a
+	// real restart leaves behind: held_sales survived, table_claims did not
+	// (this process never even ran the hold handler that would have kept
+	// one alive; a real restart wipes it via the sweep regardless).
+	var preClaimRows int
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM table_claims WHERE table_id = ?`, tableID).Scan(&preClaimRows); err != nil {
+		t.Fatalf("count table_claims: %v", err)
+	}
+	if preClaimRows != 0 {
+		t.Fatalf("test setup error: table must start with no live claim, only the held order, got %d claim rows", preClaimRows)
+	}
+
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	pctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	pm, err := plugins.Init(pctx, cfg, d.DB)
+	if err != nil {
+		t.Fatalf("plugins.Init: %v", err)
+	}
+	var wg sync.WaitGroup
+	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg) // the restart
+
+	states, err := posRepo.ListTablesWithState(ctx)
+	if err != nil {
+		t.Fatalf("ListTablesWithState: %v", err)
+	}
+	var t1 *data.TableWithState
+	for i := range states {
+		if states[i].ID == tableID {
+			t1 = &states[i]
+		}
+	}
+	if t1 == nil || !t1.Occupied {
+		t.Fatalf("after restart, T1 must still read occupied (the parked order never left) -- got %+v", t1)
+	}
+	var claimRows int
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM table_claims WHERE table_id = ?`, tableID).Scan(&claimRows); err != nil {
+		t.Fatalf("count table_claims: %v", err)
+	}
+	if claimRows != 1 {
+		t.Fatalf("boot must re-claim the held order's table -- want 1 table_claims row, got %d (this is what a replica write-throughs to the primary; without it the table reads FREE cross-till after every restart)", claimRows)
+	}
+}

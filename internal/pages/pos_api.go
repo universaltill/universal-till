@@ -121,17 +121,24 @@ func enforceFiscalGate(ctx context.Context, d *common.Deps) (fiscal.Gate, error)
 }
 
 // releaseTableClaim drops the live basket's claim on tableID (ut-docs#1390)
-// at every point the basket stops occupying it — cleared, moved off, parked
-// (the held_sales row takes over), tendered, reset, or switched to
-// Takeaway. A "" tableID (no table was assigned) is the common case and a
-// no-op; a DB failure is logged, never surfaced — the basket-side state
-// change it accompanies has already happened (or is about to, and must
-// not be blocked by bookkeeping), and a lingering claim is the lesser evil
-// versus a sale that can't complete. Shared by the cashier handlers here
-// and the hold/resume handlers in hold_api.go so the release rule lives in
-// exactly one place.
-func releaseTableClaim(ctx context.Context, d *common.Deps, repo *data.POSRepo, tableID string) {
-	releaseTableClaimWriteThrough(ctx, d, repo, tableID)
+// at every point the basket stops occupying it — cleared, moved off,
+// tendered, reset, or switched to Takeaway. Parking the order is
+// deliberately NOT one of these since ut-docs#1704: hold_api.go's hold
+// handler now keeps the claim alive through the whole park (it's what makes
+// a parked order's occupancy visible cross-till), and its held/table move
+// handler is the one place that releases a held order's claim, when the
+// table itself changes. A "" tableID (no table was assigned) is the common
+// case and a no-op; a DB failure is logged, never surfaced — the basket-side
+// state change it accompanies has already happened (or is about to, and
+// must not be blocked by bookkeeping), and a lingering claim is the lesser
+// evil versus a sale that can't complete. Shared by the cashier handlers
+// here and the hold/resume/move handlers in hold_api.go so the release rule
+// lives in exactly one place. The bool it returns (primary-release success,
+// see releaseTableClaimWriteThrough) is ignorable — every call site here
+// does, on purpose, matching the fire-and-forget stance described above;
+// hold_api.go's held/table move handler is the one caller that checks it.
+func releaseTableClaim(ctx context.Context, d *common.Deps, repo *data.POSRepo, tableID string) bool {
+	return releaseTableClaimWriteThrough(ctx, d, repo, tableID)
 }
 
 // completeTender runs the money-critical authorize -> complete -> publish
