@@ -38,9 +38,22 @@ type menuTile struct {
 // TestMenuPage_EveryDrawnTileIconNameResolves is that guard, because
 // icons_test.go's template scanner only sees a literal {{ icon "name" }}
 // and these names are resolved in Go.
+//
+// This map only ever covers CORE routes — core cannot enumerate the routes
+// a plugin brings with it, so a plugin-contributed tile can never get an
+// entry here. See genericFallbackIcon below for that case (ut-docs#1722).
 var iconSVGFor = map[string]string{
 	"/bluetooth-devices": "bluetooth",
 }
+
+// genericFallbackIcon is the deliberate generic glyph a menu tile falls
+// back to when its route has no entry in either map above — replacing the
+// old "▪️" fallback (ut-docs#1722), which read as a rendering failure (the
+// exact way it was reported, ut-docs#1371) rather than a deliberate icon.
+// This is the ONLY fallback mechanism: a plugin cannot supply its own icon
+// today (see the doc comment on the `add` closure below for why that's a
+// deliberate, separate decision, not an oversight).
+const genericFallbackIcon = "puzzle"
 
 // iconFor maps a nav route to a touch-friendly emoji glyph.
 var iconFor = map[string]string{
@@ -76,15 +89,32 @@ var iconFor = map[string]string{
 func registerMenu(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/menu", func(w http.ResponseWriter, r *http.Request) {
 		var tiles []menuTile
+		// add resolves a tile's icon in three steps: a drawn glyph from
+		// iconSVGFor (core routes only), else an emoji from iconFor, else
+		// the generic drawn fallback (ut-docs#1722) — never the bare "▪️"
+		// square ut-docs#1371 first reported.
+		//
+		// A plugin cannot declare its own icon here (Architect decision,
+		// ut-docs#1722): the manifest's existing ManifestEntry.IconPath
+		// field IS already read for rendering — but only for
+		// BUTTON entries (data.ButtonEntryRow.IconPath, plugin_buttons.html's
+		// <img src="/plugin-icons/{plugin}/{version}/{IconPath}">, served
+		// through registerPluginIcons' path-traversal-guarded route,
+		// plugin_icons.go). For MENU entries specifically it is unplumbed:
+		// ListMenuEntries' SQL never selects icon_path, so data.MenuEntryRow
+		// (what d.MenuSnapshot() surfaces, what this closure actually sees)
+		// has no IconPath field to read at all — that is why wiring IconPath
+		// into a menu tile is out of scope here, not because no safe serving
+		// mechanism exists for it. Reusing the button-icon mechanism for menu
+		// tiles is still real, separate scope (MenuEntryRow/ListMenuEntries
+		// schema + query change, template wiring) — filed as ut-docs#1734,
+		// which should cite the button path as prior art rather than starting
+		// from nothing.
 		add := func(href, label string) {
-			// A drawn glyph wins where one is mapped; the emoji fallback
-			// chain below is untouched for every other tile, including the
-			// "▪️" no-icon square an unmapped plugin route still gets
-			// (ut-docs#1371).
 			svg := httpx.Icon(iconSVGFor[href])
 			icon := iconFor[href]
 			if icon == "" && svg == "" {
-				icon = "▪️"
+				svg = httpx.Icon(genericFallbackIcon)
 			}
 			tiles = append(tiles, menuTile{Href: href, Icon: icon, Label: label, IconSVG: svg})
 		}

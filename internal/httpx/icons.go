@@ -64,6 +64,17 @@ var railIcons = map[string]string{
 	// the standard mark is only ever a drawn glyph. First icon used outside
 	// the nav rail (menu_page.go's tiles); see iconSVGFor there.
 	"bluetooth": `<path d="m7 7 10 10-5 5V2l5 5L7 17"/>`,
+	// Generic menu-tile fallback (ut-docs#1722) — replaces the "▪️" no-icon
+	// square for any menu tile (core or plugin-contributed) with no mapped
+	// icon. A plugin route can never get a specific icon here: core cannot
+	// enumerate routes a plugin brings with it, so the map in menu_page.go
+	// can only ever cover core routes. "▪️" read as a rendering failure
+	// (reported as exactly that, ut-docs#1371) rather than a deliberate
+	// generic icon; a puzzle piece reads as "extension/plugin", the actual
+	// reason no specific icon exists, and is a drawn glyph so it carries no
+	// per-platform emoji-metrics risk (ut-docs#1423). Lucide's "puzzle"
+	// path, unmodified.
+	"puzzle": `<path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.

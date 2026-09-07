@@ -98,6 +98,12 @@ func TestMenuPage_OrdersTileHasAMappedIcon(t *testing.T) {
 	}
 }
 
+// ut-docs#1722: a plugin-contributed tile (core cannot enumerate plugin
+// routes, so it can never appear in iconFor/iconSVGFor) used to fall through
+// to the bare "▪️" no-icon square — the exact "plain black square" symptom
+// ut-docs#1371 fixed for /orders, live in the shipped manual on the
+// Help/FAQ tile. Now falls back to a deliberate generic drawn glyph
+// instead.
 func TestMenuPage_UnmappedRouteGetsFallbackIcon(t *testing.T) {
 	mux, _ := newMenuPageTestDeps(t, []common.MenuItem{
 		{Href: "/some-plugin-page", Label: "Custom Plugin"},
@@ -112,8 +118,11 @@ func TestMenuPage_UnmappedRouteGetsFallbackIcon(t *testing.T) {
 	if !strings.Contains(body, `href="/some-plugin-page"`) {
 		t.Fatalf("expected the plugin tile rendered, got: %s", body)
 	}
-	if !strings.Contains(body, "▪️") {
-		t.Fatalf("expected the fallback icon for an unmapped route, got: %s", body)
+	if strings.Contains(body, "▪️") {
+		t.Fatalf("expected the old no-icon square gone entirely, got: %s", body)
+	}
+	if !strings.Contains(body, `data-icon="puzzle"`) {
+		t.Fatalf("expected the generic drawn fallback icon for an unmapped route, got: %s", body)
 	}
 }
 
@@ -322,12 +331,11 @@ func TestMenuPage_BluetoothTileUsesTheBluetoothSymbolNotSignalBars(t *testing.T)
 		t.Fatalf("expected the bluetooth-devices tile rendered, got: %s", body)
 	}
 	// Assertions about which glyph this tile got are scoped to this tile's
-	// own markup. Page-wide would be the easier spelling and the wrong one:
-	// a plugin-contributed route with no mapped icon legitimately renders
-	// the ▪️ fallback elsewhere on this same page (ut-docs#1722, live on the
-	// Help/FAQ tile), so a page-wide assertion would encode something untrue
-	// of the real product and fail for a reason that has nothing to do with
-	// Bluetooth.
+	// own markup, not page-wide: a page-wide "no puzzle icon anywhere" check
+	// would be wrong on the real product, since a plugin-contributed route
+	// with no mapped icon legitimately gets the generic fallback elsewhere
+	// on this same page (ut-docs#1722, live on the Help/FAQ tile) — that's
+	// a different tile's correct behaviour, not a regression on this one.
 	tile := body[start:]
 	if end := strings.Index(tile, "</a>"); end >= 0 {
 		tile = tile[:end]
@@ -336,10 +344,10 @@ func TestMenuPage_BluetoothTileUsesTheBluetoothSymbolNotSignalBars(t *testing.T)
 		t.Errorf("expected the drawn Bluetooth glyph on the tile, got: %s", tile)
 	}
 	// The fallback must not have been taken either: a missing IconSVG plus
-	// the removed iconFor entry would silently render the ▪️ no-icon square,
-	// the exact regression ut-docs#1371 fixed for /orders.
-	if strings.Contains(tile, `▪️`) {
-		t.Errorf("expected no no-icon fallback square on the bluetooth tile, got: %s", tile)
+	// the removed iconFor entry would silently render the generic fallback
+	// icon (ut-docs#1722) instead of the specific Bluetooth glyph.
+	if strings.Contains(tile, `data-icon="puzzle"`) {
+		t.Errorf("expected no generic fallback icon on the bluetooth tile, got: %s", tile)
 	}
 	// This one IS page-wide on purpose: 📶 was this tile's only use anywhere
 	// in the menu, so it should now be gone from the page entirely.
@@ -360,5 +368,8 @@ func TestMenuPage_EveryDrawnTileIconNameResolves(t *testing.T) {
 		if httpx.Icon(name) == "" {
 			t.Errorf("%s maps to unknown icon %q (known: %v)", href, name, httpx.IconNames())
 		}
+	}
+	if httpx.Icon(genericFallbackIcon) == "" {
+		t.Errorf("genericFallbackIcon %q is not a known icon (known: %v)", genericFallbackIcon, httpx.IconNames())
 	}
 }
