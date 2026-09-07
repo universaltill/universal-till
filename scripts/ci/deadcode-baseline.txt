@@ -34,6 +34,7 @@ internal/pages/eod_method_tax_bands.go: unreachable func: computeEODMethodTaxBan
 internal/pages/eod_tax_bands.go: unreachable func: attachEODTaxBands
 internal/pages/eod_tax_bands.go: unreachable func: computeEODTaxBands
 internal/pages/kitchen_print.go: unreachable func: buildKitchenTicket
+internal/pages/refund_page.go: unreachable func: blockingPaymentEvent
 internal/pages/setup_language_catalog.go: unreachable func: resetSetupLanguageCatalog
 internal/pages/setup_tax_catalog.go: unreachable func: resetSetupTaxCatalog
 internal/pihealth/pihealth.go: unreachable func: CheckNow
