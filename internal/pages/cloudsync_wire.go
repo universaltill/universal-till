@@ -448,12 +448,20 @@ func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID string, delta 
 	}
 	if _, err := pos.RecordStockMovement(ctx, d.Db, pos.StockMovementInput{
 		ItemID: itemID, LocationID: locationID, Type: "adjust",
-		// ut-docs#1676: audit_log.actor_id has a real FK to users(id) --
-		// "cloud" isn't a seeded user, so this violated it on every real
-		// call (masked until now by the test fixture's own audit_log copy
-		// carrying no such FK). "system" is the established id for this
-		// exact situation, per sync_orders.go's auditActorID.
-		Quantity: delta, Reason: reason, ActorID: "system",
+		// audit_log.actor_id has a real FK to users(id) -- "cloud" was
+		// never a seeded user, so every real call here violated it (the
+		// old hand-rolled test schema had no such FK, which is why this
+		// went uncaught -- ut-docs#1676). "system" is the established id
+		// for this exact situation (see sync_orders.go's auditActorID).
+		// The "cloud: " prefix keeps the adjustment's real origin visible
+		// in the audit payload's reason field now that the actor itself
+		// can no longer say so.
+		//
+		// This exact fix also shipped standalone as PR #846 (ut-docs#1684)
+		// since it's an independent production bug; kept here too so this
+		// branch's own tests (via openPagesTestDB's real migrations) stay
+		// green until #846 merges to main and this branch picks it up.
+		Quantity: delta, Reason: "cloud: " + reason, ActorID: "system",
 	}); err != nil {
 		return "", err
 	}
