@@ -1,4 +1,5 @@
 cmd/unitill-desktop/control.go: unreachable func: controlServer.LastInputAt
+internal/bluetooth/android_bridge.go: unreachable func: SetAndroidBridge
 internal/config/i18n.go: unreachable func: NewI18n
 internal/data/plugin_repo.go: unreachable func: PluginRepo.CatalogPage
 internal/data/plugin_repo.go: unreachable func: PluginRepo.DeleteStorage

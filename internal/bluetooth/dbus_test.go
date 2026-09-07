@@ -13,6 +13,12 @@ import (
 // the radio is present and healthy (confirmed via dumpsys on the reporting
 // device); the feature just isn't implemented for this platform yet.
 func TestNewDBusClientFor_AndroidIsUnsupportedPlatform(t *testing.T) {
+	// Order-independent regardless of what another test in this package
+	// registered and (correctly) cleaned up via t.Cleanup — reviewed and
+	// tightened, ut-docs#1721: nothing here relied on ordering before
+	// either, but making it explicit means this test stays correct even if
+	// a future test in the package starts using t.Parallel().
+	SetAndroidBridge(nil)
 	_, err := newDBusClientFor("android")
 	if !errors.Is(err, ErrUnsupportedPlatform) {
 		t.Fatalf("newDBusClientFor(\"android\") = %v, want ErrUnsupportedPlatform", err)

@@ -1759,6 +1759,7 @@
   "import.status.barcode_already_in_catalog": "barcode already in catalog",
   "import.status.sku_already_in_catalog": "SKU already in catalog",
   "import.status.missing_name": "missing name",
+  "import.status.missing_name_and_bad_price": "missing name and bad price: %s",
   "import.status.bad_price": "bad price: %s",
   "import.status.barcode_no_symbology_match": "barcode \"%s\" not imported: it doesn't match any barcode type currently enabled for this shop",
   "import.status.stock_negative_quantity": "stock not carried: negative quantity %g in source file",

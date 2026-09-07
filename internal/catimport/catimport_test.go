@@ -216,6 +216,33 @@ func TestParseGenericAndZeroDecimals(t *testing.T) {
 	}
 }
 
+// TestParseMissingNameAndBadPrice is the CSV-path regression test for
+// ut-docs#1713 (see bkp_test.go's TestParseBkp_MissingNameAndBadPrice for
+// the .bkp-path equivalent): a row missing both its name and a parseable
+// price must surface BOTH defects via the combined reason code, not just
+// missing_name — a name-only correction must never silently ship the row
+// at PriceMinor 0.
+func TestParseMissingNameAndBadPrice(t *testing.T) {
+	csv := "Name,SKU,Price,Category\n,NP1,not-a-price,Snacks\n"
+	res, err := Parse(strings.NewReader(csv), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("parse: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+	it := res.Items[0]
+	if it.Issue != IssueMissingNameAndBadPrice {
+		t.Errorf("Issue = %q, want %q", it.Issue, IssueMissingNameAndBadPrice)
+	}
+	if it.IssueDetail != "not-a-price" {
+		t.Errorf("IssueDetail = %q, want raw value %q", it.IssueDetail, "not-a-price")
+	}
+	if it.PriceMinor != 0 {
+		t.Errorf("PriceMinor = %d, want 0 (uncorrected, unparseable price)", it.PriceMinor)
+	}
+}
+
 func TestParseGenericERPStockAndDepartment(t *testing.T) {
 	res, err := Parse(strings.NewReader(erpCSV), 2, testEnabledIDs, false)
 	if err != nil {
