@@ -348,6 +348,111 @@ func TestReleaseTableClaim_FreesAndIsNoOpWhenUnclaimed(t *testing.T) {
 	}
 }
 
+// ReleaseTableClaim must be scoped to THIS till's own local row (till_id =
+// "") and never touch a claim owned by a different till (independent
+// review finding on ut-docs#1393). Its one caller,
+// releaseTableClaimWriteThrough, always means "release MY OWN local
+// claim" — before ForceReleaseTableClaim existed that was equivalent to
+// "delete whatever row this table_id has" because the PRIMARY KEY on
+// table_id made at most one row possible and you could only ever be
+// releasing your own. ForceReleaseTableClaim breaks that assumption on
+// purpose (a manager can now clear a claim regardless of ownership), so
+// without this scoping a real, reachable sequence reopens the exact
+// cross-till double-claim ut-docs#1703 closed: a manager frees a table
+// whose OWNING till's basket still thinks it holds it (the till is never
+// told), a different till then legitimately claims the same table, and
+// the first till's own eventual release (via ReleaseTableClaim, unscoped)
+// would delete the SECOND till's live claim instead of its own
+// already-gone row.
+func TestReleaseTableClaim_NeverTouchesAnotherTillsClaim(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+
+	id, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	if _, err := dbo.DB.Exec(
+		`INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, ?, 'other-till')`,
+		id, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatalf("seed foreign claim: %v", err)
+	}
+	if err := repo.ReleaseTableClaim(ctx, id); err != nil {
+		t.Fatalf("ReleaseTableClaim: %v", err)
+	}
+	if ok, err := repo.IsTableFree(ctx, id, ""); err != nil || ok {
+		t.Fatalf("a different till's claim must survive a local ReleaseTableClaim call, got ok=%v err=%v", ok, err)
+	}
+}
+
+// ForceReleaseTableClaim is the manager-initiated "Free table" action's
+// primitive (ut-docs#1393): unlike every existing caller of the plain
+// Release*/ClaimTableForTill family, this one is invoked completely out of
+// band from the automatic claim/release lifecycle, so it must clear a claim
+// regardless of which till (if any) holds it, and must never touch a
+// genuine held_sales row — a manager freeing a stuck claim must never look
+// like silently deleting a real parked order.
+func TestForceReleaseTableClaim(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+
+	id, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	// No claim, no held sale: idempotent no-op, nothing to report freed.
+	released, stillHeld, err := repo.ForceReleaseTableClaim(ctx, id)
+	if err != nil || released || stillHeld {
+		t.Fatalf("on a free table: released=%v stillHeld=%v err=%v, want false/false/nil", released, stillHeld, err)
+	}
+
+	// A claim owned by a DIFFERENT till (the crash-orphaned/never-revisited
+	// case this action exists for) is force-released regardless of
+	// ownership — ReleaseTableClaimForTill, by contrast, is scoped and
+	// would leave this exact row untouched.
+	if _, err := dbo.DB.Exec(
+		`INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, ?, 'some-other-till')`,
+		id, time.Now().UTC().Format(time.RFC3339)); err != nil {
+		t.Fatalf("seed foreign claim: %v", err)
+	}
+	if ok, err := repo.IsTableFree(ctx, id, ""); err != nil || ok {
+		t.Fatalf("expected T1 occupied by the seeded claim, got ok=%v err=%v", ok, err)
+	}
+	released, stillHeld, err = repo.ForceReleaseTableClaim(ctx, id)
+	if err != nil || !released || stillHeld {
+		t.Fatalf("releasing a foreign claim: released=%v stillHeld=%v err=%v, want true/false/nil", released, stillHeld, err)
+	}
+	if ok, err := repo.IsTableFree(ctx, id, ""); err != nil || !ok {
+		t.Fatalf("expected T1 free after force-release, got ok=%v err=%v", ok, err)
+	}
+
+	// Idempotent: calling it again on the now-free table is a safe no-op.
+	if released, _, err := repo.ForceReleaseTableClaim(ctx, id); err != nil || released {
+		t.Fatalf("second call: released=%v err=%v, want false/nil", released, err)
+	}
+
+	// A genuine held_sales row is NEVER touched: releasing the claim on a
+	// table that ALSO has a real held order must report stillHeld=true and
+	// must leave the held order (and hence the table's occupied state)
+	// completely alone.
+	if claimed, err := repo.ClaimTable(ctx, id); err != nil || !claimed {
+		t.Fatalf("ClaimTable: claimed=%v err=%v", claimed, err)
+	}
+	if _, err := dbo.DB.Exec(
+		`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES ('h1','',0,0,'{}',?)`,
+		id); err != nil {
+		t.Fatalf("seed held sale: %v", err)
+	}
+	released, stillHeld, err = repo.ForceReleaseTableClaim(ctx, id)
+	if err != nil || !released || !stillHeld {
+		t.Fatalf("with a held order attached: released=%v stillHeld=%v err=%v, want true/true/nil", released, stillHeld, err)
+	}
+	if ok, err := repo.IsTableFree(ctx, id, ""); err != nil || ok {
+		t.Fatalf("a real held order must still occupy the table after force-release, got ok=%v err=%v", ok, err)
+	}
+}
+
 // The regression for the reported bug (ut-docs#1390): a table with ONLY a
 // live claim (no held_sales row) must read as occupied — before this,
 // IsTableFree only looked at held_sales, so the live basket's pick reserved
