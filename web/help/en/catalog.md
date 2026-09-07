@@ -31,3 +31,7 @@ Your products: names, prices, departments, item variants (size, flavour…) and 
 5. The first time you import priced items on a till whose currency you've never explicitly set, Import stops before writing anything and asks you to confirm which currency the file's prices are in — a fresh till defaults to GBP, so importing a foreign catalogue without checking this could otherwise price everything under the wrong currency. Confirm the currency shown if it's right, or pick the correct one; either way Import proceeds automatically and won't ask again once your till's currency has been set.
 6. Which barcode types a scan or manual entry accepts is controlled per shop from Settings → Barcode types. Every common retail type (EAN-13, EAN-8, UPC-A, UPC-E, GTIN-14, Code 128, Code 39, internal/PLU codes) is on by default, so existing barcodes keep working exactly as before. The two scale-label types (weight-embedded and price-embedded EAN-13) are off by default — turn one on only once you're ready to use scale-printed labels, since it changes how a matching code is read.
 7. To arrange which items appear as quick-sale buttons on the sale screen, use **Till Designer**.
+
+## Good to know
+
+- An item's customization options (modifier groups like "Toppings" or "Size", and their options like "Extra cheese") are shop-wide and always managed from the **main till**: on a joined till, adding or editing one shows a message pointing you back to the main till, rather than accepting a change that would only apply locally.
