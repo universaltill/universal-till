@@ -415,7 +415,7 @@ func TestBuildEODDoc_VATRateBandWideAmountsNotClipped(t *testing.T) {
 			{RateBP: 1900, Net: 84033613, Tax: 15966387, Gross: 100000000},
 		},
 	}
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	for _, want := range []string{"£840,336.13", "£159,663.87", "£1,000,000.00"} {
 		if !strings.Contains(out, want) {
 			t.Errorf("wide VAT band figure %q clipped from the Z-report:\n%s", want, out)

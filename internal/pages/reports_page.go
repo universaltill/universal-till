@@ -466,9 +466,16 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			// real state for an operator who may need a manager's approval
 			// to change it.
 			var eodEnabled, eodTime string
+			var articlePrintMode string
+			var articlePrintCap int
 			if canView {
 				eodEnabled, _, _ = d.Settings.Get(r.Context(), keyEODEnabled)
 				eodTime, _, _ = d.Settings.Get(r.Context(), keyEODTime)
+				// ut-docs#1650: reflects the RESOLVED (defaulted) state, same
+				// as EODEnabled/EODTime/BusinessDayStart above, so a store
+				// that never touched this setting sees the shipped default
+				// ("capped"/30) pre-selected rather than a blank/unset form.
+				articlePrintMode, articlePrintCap = resolveEODArticlePrintSettings(r.Context(), d)
 			}
 			httpx.RenderPartial("ui/partials/reports_tab_eod.html", map[string]any{
 				"IsManager":        canView,
@@ -477,6 +484,8 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				"EODEnabled":       eodEnabled == "true",
 				"EODTime":          eodTime,
 				"BusinessDayStart": bizDayStart,
+				"ArticlePrintMode": articlePrintMode,
+				"ArticlePrintCap":  articlePrintCap,
 			})(w, r)
 		case "tips":
 			renderTipsTab(repo, d, r, window)(w, r)

@@ -97,6 +97,15 @@ collapsed on screen since a busy day can list dozens), and **BY OPERATOR**
 cashier actually rang the sale even when a manager approved an override on
 it, so the operator breakdown always reflects who was really on the till.
 
+The on-screen article list always shows every article, however many there
+are. The **printed** BY ARTICLE section is separately configurable (Day-end
+tab, next to the auto-close schedule) since a high-SKU shop can otherwise
+print hundreds of extra lines on every close: **Print top N by revenue**
+(the default — prints the top 30, or however many you set, followed by a
+"+N more" line, so a typical shop's roll is unaffected while a busy one is
+bounded), **Print every article** (the previous behavior, unbounded), or
+**Don't print** (omits the section from the printed report only).
+
 ## Dine in / takeaway breakdown
 
 Running End of day for a single day also adds a **BY ORDER TYPE** breakdown,

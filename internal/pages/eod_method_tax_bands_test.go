@@ -470,7 +470,7 @@ func TestBuildEODDoc_MethodTaxBandWideAmountsNotClipped(t *testing.T) {
 			{Method: "card", RateBP: 1900, Net: 84033613, Tax: 15966387, Gross: 100000000},
 		},
 	}
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	if !strings.Contains(out, "BY METHOD & VAT RATE") || !strings.Contains(out, "Card:") {
 		t.Fatalf("BY METHOD & VAT RATE section or Card heading missing:\n%s", out)
 	}
@@ -503,7 +503,7 @@ func TestBuildEODDoc_MethodTaxBandOrdinaryAmountNotClipped(t *testing.T) {
 			{Method: "voucher", RateBP: 1900, Net: 1000000, Tax: 190000, Gross: 1190000},
 		},
 	}
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	row := ""
 	for _, l := range strings.Split(out, "\n") {
 		if strings.Contains(l, "£10,000.00") {
@@ -530,7 +530,7 @@ func TestBuildEODDoc_MethodTaxBandMultipleMethodsGrouped(t *testing.T) {
 			{Method: "cash", RateBP: 0, Net: 1500, Tax: 0, Gross: 1500},
 		},
 	}
-	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8")))
+	out := string(print.Render(buildEODDoc(rep, "Test Shop", "utf8", eodArticlePrintAll, 0)))
 	cardIdx := strings.Index(out, "Card:")
 	cashIdx := strings.Index(out, "Cash:")
 	if cardIdx == -1 || cashIdx == -1 || cardIdx > cashIdx {
