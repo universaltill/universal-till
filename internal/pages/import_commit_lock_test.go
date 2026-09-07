@@ -6,7 +6,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"testing"
+	"time"
 )
 
 // TestImport_ConcurrentDirectCommitsOfSameFileRejectSecond (ut-docs#1510)
@@ -18,6 +20,28 @@ import (
 // UNIQUE constraint reaches a NULL sku) can catch a resulting duplicate —
 // the reservation in import_stage.go's reserveImportCommit is the only
 // thing that can.
+//
+// ut-docs#1725: this test used to start two goroutines via a closed channel
+// and trust the OS scheduler to run them concurrently enough to collide
+// inside reserveImportCommit. That trust was misplaced — nothing stopped
+// one goroutine's entire handler (parse, hash, reserve, insert, release)
+// from finishing before the other's ServeHTTP was even scheduled, in which
+// case the second request is an ordinary, unblocked sequential re-import and
+// both legitimately answer 200 (this row has no barcode/SKU, so nothing
+// dedupes a genuinely sequential repeat either — see
+// TestImport_CommitLockReleasedAfterRequestFinishes). That under-overlap
+// reproduced 17/20 runs under GOMAXPROCS=1 and 30/30 under -race, even
+// though reserveImportCommit's own mutex+map exclusivity, exercised
+// directly with 1000 real concurrent calls, never once let both callers in
+// — so the bug was in the test's concurrency, not the production lock. A
+// first fix attempt (a barrier only synchronizing the two goroutines'
+// *arrival* at reserveImportCommit) still reproduced under GOMAXPROCS=1:
+// once released from the barrier there is still no guarantee the runtime
+// interleaves them rather than running the "winner" to completion first.
+// Fixed here by removing the scheduler dependency entirely: the first
+// request is paused (via importCommitReserveSync) WHILE it holds the
+// reservation, the second is sent only once that's guaranteed, and only
+// then is the first allowed to finish — deterministic, no timing bet at all.
 func TestImport_ConcurrentDirectCommitsOfSameFileRejectSecond(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	dp := newImportTestDeps(t)
@@ -29,26 +53,65 @@ func TestImport_ConcurrentDirectCommitsOfSameFileRejectSecond(t *testing.T) {
 	csv := "Name,Price,Category,In stock\n" +
 		"Unkeyed Widget,4.50,Snacks,0\n"
 
+	// arrivals guards `close(reserved)`: only the FIRST caller to hold a
+	// reservation pauses there — if the lock were ever broken (e.g. a
+	// regression that let a second caller reserve concurrently), a second
+	// call must return immediately rather than double-close the channel
+	// (which would panic the whole test binary and hide the real failure)
+	// or deadlock on <-proceed (which would hang instead of failing).
+	reserved := make(chan struct{})
+	proceed := make(chan struct{})
+	var arrivals int32
+	importCommitReserveSync = func() {
+		if atomic.AddInt32(&arrivals, 1) == 1 {
+			close(reserved)
+			<-proceed
+		}
+	}
+	t.Cleanup(func() { importCommitReserveSync = nil })
+
 	var codes [2]int
 	var bodies [2]string
-	start := make(chan struct{})
+
+	// Request A: sent first, and guaranteed (via importCommitReserveSync)
+	// to be holding the reservation by the time request B is sent below.
+	bodyA, ctA := multipartCSV(t, csv, map[string]string{"commit": "1"})
+	reqA := httptest.NewRequest(http.MethodPost, "/api/import", bodyA)
+	reqA.Header.Set("Content-Type", ctA)
 	var wg sync.WaitGroup
-	for i := 0; i < 2; i++ {
-		wg.Add(1)
-		go func(i int) {
-			defer wg.Done()
-			body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
-			req := httptest.NewRequest(http.MethodPost, "/api/import", body)
-			req.Header.Set("Content-Type", ct)
-			rec := httptest.NewRecorder()
-			<-start
-			mux.ServeHTTP(rec, req)
-			codes[i] = rec.Code
-			bodies[i] = rec.Body.String()
-		}(i)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, reqA)
+		codes[0] = rec.Code
+		bodies[0] = rec.Body.String()
+	}()
+	select {
+	case <-reserved:
+	case <-time.After(10 * time.Second):
+		t.Fatal("request A never reached the reservation hook — did the handler change how/when it reserves?")
 	}
-	close(start)
+
+	// Request B: sent only now, so it can only ever observe A's reservation
+	// as already held — a deterministic collision, not a hoped-for one.
+	body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	codes[1] = rec.Code
+	bodies[1] = rec.Body.String()
+
+	// Let A's now-unblocked handler (and B's, if the lock was broken and it
+	// also arrived) finish before asserting anything, so a failure here
+	// never leaves a goroutine blocked forever on <-proceed.
+	close(proceed)
 	wg.Wait()
+
+	if got := atomic.LoadInt32(&arrivals); got != 1 {
+		t.Fatalf("expected exactly 1 caller to hold the reservation while B ran, got %d — the exclusivity lock let a second caller in", got)
+	}
 
 	var okCount, conflictCount int
 	for i := 0; i < 2; i++ {

@@ -364,6 +364,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			defer releaseImportCommit(hash)
+			if importCommitReserveSync != nil {
+				importCommitReserveSync()
+			}
 		}
 
 		// Format auto-detection (ut-docs#511): sniff the ZIP local-file-
