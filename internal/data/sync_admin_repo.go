@@ -302,6 +302,7 @@ var nonAdminTables = map[string]string{
 	"invoices_archive":            "archived invoices — same reasoning",
 	"fiscal_sign_starts":          "in-flight German TSE signing state, keyed 1:1 on sale_id — per-sale, per-till",
 	"fiscal_tse_signatures":       "completed TSE signatures, keyed 1:1 on sale_id — per-sale, per-till",
+	"fiscal_device_receipts":      "what Turkey's ÖKC device printed for a sale, keyed 1:1 on sale_id — per-sale, per-till, same shape as fiscal_tse_signatures above",
 	"shifts":                      "cashier shift open/close, register-scoped — per-till operational history, same reasoning as sales",
 	"shifts_archive":              "archived shifts — same reasoning",
 	"worker_allocations":          "tip/service-charge pool allocations tied to a cashier + reset_batches — per-till operational history, same family as shifts/payments",

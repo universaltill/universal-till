@@ -34,6 +34,17 @@ import (
 func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.Context), wg *sync.WaitGroup) {
 	hooks := cloudsync.Hooks{
 		SetSetting: func(ctx context.Context, key, value string) (string, error) {
+			// ut-docs#1750: the third writer of store.country, and the one
+			// with no HTTP caller to authorize — so it takes the
+			// fail-closed half of the invariant unconditionally: a shop
+			// moved to another market loses a fiscal posture that was only
+			// ever proven for the old one. Before the write, so a failure
+			// cannot leave the country moved with the posture still set.
+			if key == common.KeyCountry {
+				if err := clearFiscalStateForCountryChange(ctx, d, "", value); err != nil {
+					return "", err
+				}
+			}
 			if err := d.Settings.Set(ctx, key, value); err != nil {
 				return "", err
 			}
