@@ -228,6 +228,22 @@ type PaymentInput struct {
 	// Redemption changes NOTHING about how the goods being paid for are
 	// taxed — only the payment method differs.
 	VoucherID string `json:"voucher_id,omitempty"`
+
+	// VoucherPreauthorized (ut-docs#1668) marks a tracked voucher redemption
+	// that has ALREADY been validated and debited on the shop's PRIMARY, via
+	// the cross-till write-through (pages.voucherRedeemWriteThrough,
+	// voucher_sync_proxy.go) — set by completeTender right before calling
+	// CompleteSale, never by a client: deliberately no json tag, so a tender
+	// request body can never set this itself. It forces THIS payment's local
+	// debit past the balance/status check exactly like AllowVoucherOverdraft
+	// does for journal replay (same "the money already moved elsewhere, so
+	// rejecting here would be wrong" reasoning) — but scoped to this ONE
+	// payment, not the whole sale: a sale can carry several tracked voucher
+	// payments, and only the ones the primary actually pre-authorized may
+	// skip the local check. A voucher payment whose primary call was
+	// unreachable (offline, or this till IS primary) leaves this false and
+	// goes through the normal, unforced local validation exactly as before.
+	VoucherPreauthorized bool `json:"-"`
 }
 
 // maxMaskedPANDigits bounds how many ASCII digits a MaskedPAN value may
@@ -949,7 +965,16 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				// (ut-docs#1053, journal replay only) forces the debit past
 				// the balance check — unknown/inactive still roll back.
 				if p.VoucherID != "" {
-					if err := repo.DebitVoucherForRedemption(ctx, tx, p.VoucherID, p.Amount.Minor(), in.AllowVoucherOverdraft); err != nil {
+					// force: AllowVoucherOverdraft (sale-wide, journal replay
+					// only) OR this ONE payment's own VoucherPreauthorized
+					// (ut-docs#1668, cross-till write-through — see its own
+					// doc comment on PaymentInput). Never widen
+					// VoucherPreauthorized to the whole sale: a different
+					// voucher payment in the same sale whose primary call
+					// never happened (or was refused) must still go through
+					// the normal, unforced check right here.
+					force := in.AllowVoucherOverdraft || p.VoucherPreauthorized
+					if err := repo.DebitVoucherForRedemption(ctx, tx, p.VoucherID, p.Amount.Minor(), force); err != nil {
 						return err
 					}
 					if err := repo.RecordVoucherTransaction(ctx, tx, data.VoucherTransaction{

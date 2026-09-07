@@ -199,6 +199,19 @@ func exempt(path string) bool {
 			return true
 		}
 	}
+	// ut-docs#1668: the primary-side cross-till voucher lookup a replica's
+	// fetchVoucherFromPrimary (voucher_sync_proxy.go) proxies to —
+	// syncTill-authed in the handler exactly like /api/sync/tables above.
+	// Read-only (no redeem/debit endpoint here — see sync_vouchers.go's own
+	// doc comment for why), so bounded to exactly one id segment, no
+	// suffix. Omitting this would silently no-op the whole feature exactly
+	// like the /api/sync/stock incident this switch's own comment
+	// documents — the proxy falls back to local-only on a 401, and a
+	// voucher issued elsewhere goes back to being unredeemable here.
+	// TestSyncPullPathsAreExempt pins this shape.
+	if rest, ok := strings.CutPrefix(path, "/api/sync/vouchers/"); ok && rest != "" && !strings.Contains(rest, "/") {
+		return true
+	}
 	return false
 }
 

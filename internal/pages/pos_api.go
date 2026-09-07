@@ -236,9 +236,55 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// sale: any failure lands on the proceed-and-declare surface below.
 	signRes := dispatchFiscalSignAsk(ctx, d, &saleInput)
 
+	// Cross-till voucher redemption (ut-docs#1668): for every tracked
+	// voucher payment, validate against the PRIMARY's CURRENT balance
+	// BEFORE this till's own local DebitVoucherForRedemption ever runs
+	// (inside pos.CompleteSale below) — a voucher issued at another till
+	// has no local vouchers row here at all, so without this the local
+	// debit would fail closed with ErrVoucherNotFound even though the
+	// voucher is perfectly good shop-wide. On a replica with a reachable
+	// primary, its answer is authoritative: a definitive refusal (void /
+	// insufficient balance) aborts the tender right here, with NO sale row
+	// ever attempted — the same end result as today's local failure, just
+	// decided against a fresh shop-wide balance instead of a stale or
+	// nonexistent local copy. This is a VALIDATION check only — see
+	// voucher_sync_proxy.go's own doc comment for why nothing is ever
+	// debited on the primary here; the local debit below (forced via
+	// VoucherPreauthorized) is the only debit that ever actually happens,
+	// reaching the primary the normal way, once, via the sales journal.
+	// Not a replica, or the primary unreachable: this payment is left
+	// exactly as it always was, going through the normal local validation
+	// next (offline-first, unchanged).
+	for i := range saleInput.Payments {
+		if saleInput.Payments[i].VoucherID == "" {
+			continue
+		}
+		preauth, err := voucherRedeemWriteThrough(ctx, d, repo, saleInput.Payments[i].VoucherID, saleInput.Payments[i].Amount.Minor())
+		if err != nil {
+			return "", err
+		}
+		saleInput.Payments[i].VoucherPreauthorized = preauth
+	}
+
 	saleID, err := pos.CompleteSale(ctx, d.Db, saleInput)
 	if err != nil {
 		return "", err
+	}
+
+	// A preauthorized cross-till redemption's LOCAL debit (ut-docs#1668) can
+	// still go negative: EnsureVoucherLocalRow only fills a genuinely
+	// missing local row — a till that already had ITS OWN, possibly-stale
+	// local copy keeps it untouched, and the local force=true debit runs
+	// against THAT number, not the fresher one the primary just confirmed.
+	// Same shape as applyJournal's own post-replay check (sync_sales.go),
+	// just a different, accurate reason — surfaced as a Problem rather than
+	// silently going negative with nobody told.
+	for _, p := range saleInput.Payments {
+		if p.VoucherPreauthorized {
+			warnIfVoucherOverdrawnReason(ctx, repo, saleInput, "cross-till redemption (sale "+saleID+")",
+				"this till's own local voucher balance was stale relative to the primary's (ut-docs#1668)")
+			break
+		}
 	}
 
 	// Every sale completed during an active TSE-override window gets its

@@ -487,16 +487,28 @@ func warnIfStockNegative(ctx context.Context, repo *data.POSRepo, in pos.SaleInp
 // SaleExists idempotency guard), and each further forced overdraw of the
 // same voucher is a distinct double-spend the manager should see.
 func warnIfVoucherOverdrawn(ctx context.Context, repo *data.POSRepo, in pos.SaleInput, source string) {
+	warnIfVoucherOverdrawnReason(ctx, repo, in, source, "offline double-spend force-applied (ut-docs#1053)")
+}
+
+// warnIfVoucherOverdrawnReason is warnIfVoucherOverdrawn generalized with an
+// explicit reason suffix — ut-docs#1053's journal-replay callsite keeps its
+// own wording via the wrapper above; pos_api.go's completeTender (ut-docs#1668)
+// needs a DIFFERENT, accurate reason: a cross-till preauthorized redemption
+// can still force a LOCAL debit past a STALE local balance (EnsureVoucherLocalRow
+// only fills a genuinely missing row — it never overwrites this till's own
+// existing, possibly-out-of-date one), and reusing the #1053 wording here
+// would misattribute the cause.
+func warnIfVoucherOverdrawnReason(ctx context.Context, repo *data.POSRepo, in pos.SaleInput, source, reason string) {
 	for _, p := range in.Payments {
 		if p.VoucherID == "" {
 			continue
 		}
-		v, err := repo.GetVoucherBalance(ctx, p.VoucherID)
+		v, err := repo.GetVoucherBalance(ctx, nil, p.VoucherID)
 		if err != nil || v.BalanceMinor >= 0 {
 			continue
 		}
-		logging.L().Warnf("voucher overdrawn: %q balance went to %s after %s — offline double-spend force-applied (ut-docs#1053)",
-			p.VoucherID, money.FromMinor(v.BalanceMinor), source)
+		logging.L().Warnf("voucher overdrawn: %q balance went to %s after %s — %s",
+			p.VoucherID, money.FromMinor(v.BalanceMinor), source, reason)
 	}
 }
 
