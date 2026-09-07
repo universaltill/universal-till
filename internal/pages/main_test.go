@@ -8,6 +8,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/secrets"
 )
 
 // TestMain wires real i18n once for this package's whole test binary, and
@@ -33,5 +34,17 @@ func TestMain(m *testing.M) {
 		panic("TestMain: load locales: " + err.Error())
 	}
 	httpx.InitI18n(i18n, "en")
-	os.Exit(m.Run())
+	// ADR-0082 (ut-docs#1739): the plugin-settings repository seals a
+	// credential-named setting on every write and refuses the write when no
+	// key store is registered — so the settings-page tests (which seed
+	// api_key etc.) need one, exactly like internal/data's own TestMain. A
+	// throwaway self-generating store, never the production path.
+	secretsDir, err := os.MkdirTemp("", "ut-pages-secrets-")
+	if err != nil {
+		panic("TestMain: secrets temp dir: " + err.Error())
+	}
+	secrets.SetDefault(secrets.NewKeyStoreAt(filepath.Join(secretsDir, "plugin_settings_key.bin"), nil))
+	code := m.Run()
+	_ = os.RemoveAll(secretsDir)
+	os.Exit(code)
 }

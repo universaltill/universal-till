@@ -108,6 +108,10 @@ type ManifestSetting struct {
 	Key          string      `json:"key"`
 	DefaultValue interface{} `json:"default_value,omitempty"`
 	Scope        string      `json:"scope,omitempty"` // global|register|user
+	// Type is ""|SettingTypeSecret (ADR-0082): "secret" masks the value on
+	// the settings page and seals it at rest, regardless of the key name.
+	// Validated in ParseManifest; see secret_settings.go.
+	Type string `json:"type,omitempty"`
 }
 
 // ManifestHook represents an event subscription
@@ -149,6 +153,15 @@ func ParseManifest(r io.Reader) (*Manifest, error) {
 		if !isValidCanonicalType(e.Type) {
 			return nil, fmt.Errorf("manifest entry %q has invalid type %q (allowed: %s)",
 				e.Key, e.Type, strings.Join(CanonicalTypes, "|"))
+		}
+	}
+	// Setting types likewise (ADR-0082): "" or "secret" today — an unknown
+	// value is a typo that would otherwise silently leave a credential
+	// unsealed at rest, so it fails here, not at persist time.
+	for _, s := range m.Settings {
+		if !isValidSettingType(s.Type) {
+			return nil, fmt.Errorf("manifest setting %q has invalid type %q (allowed: %s)",
+				s.Key, s.Type, SettingTypeSecret)
 		}
 	}
 

@@ -90,6 +90,17 @@ func exempt(path string) bool {
 		// /api/sync/stock incident this switch's own comment
 		// documents. TestSyncPullPathsAreExempt pins this entry.
 		"/api/sync/tables/release-all",
+		// ADR-0082 (ut-docs#1739): the primary-side one-shot fetch of the
+		// shop-scoped plugin-settings encryption key a replica's KeyStore
+		// makes on first use (internal/pages/sync_admin.go, SecretsKeyFetcher).
+		// syncTill-authed in the handler exactly like /api/sync/plugins.
+		// Omitting it here would silently leave every replica unable to open
+		// a synced Stripe/SumUp credential (the fetch is 401'd before the
+		// handler's bearer check runs, and the setting reads as "not
+		// configured" forever) — the /api/sync/stock failure class this
+		// switch's own comment documents. TestSyncPullPathsAreExempt pins
+		// this entry.
+		"/api/sync/secrets-key",
 		"/api/setup/join",
 		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status",
 		// ut-docs#1550: the wizard's "joined — restarting" trigger, the

@@ -153,7 +153,17 @@ func newTakeawayRealChainFixture(t *testing.T, saveOverrideViaEditor bool) *take
 		req := httptest.NewRequest(http.MethodPost, "/api/plugins/"+pluginID+"/settings",
 			strings.NewReader("setting_takeaway_typed=1&takeaway_pct_"+taxID+"=7"))
 		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-		settingsMux.ServeHTTP(rec, req)
+		// Same paths scope primary.install used (ADR-0082, ut-docs#1739):
+		// the settings handler now resolves the plugin's on-disk manifest
+		// (internal/plugins.InstalledManifest) to decide whether a key is
+		// manifest-declared secret, and refuses the write if it can't be
+		// resolved. install() ran under primary.dataDir, so the plugin's
+		// files live there, not under whatever global test root
+		// initTestPaths(t) set — without this wrap, the DB shows an active
+		// version but paths.Plugins() can't find its manifest.json, which
+		// is now correctly treated as "manifest unresolved," not "no
+		// manifest" (see InstalledManifest's doc comment).
+		withPaths(primary.dataDir, func() { settingsMux.ServeHTTP(rec, req) })
 		if rec.Code != http.StatusOK {
 			t.Fatalf("save takeaway override: %d (%s)", rec.Code, rec.Body.String())
 		}
