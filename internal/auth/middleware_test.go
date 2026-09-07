@@ -180,6 +180,12 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// so without its own entry the bridge authenticates perfectly and is
 		// still 401'd here: the /api/sync/stock failure class, again.
 		"/api/sync/orders/stream",
+		// ut-docs#1392: the primary-side READ-ONLY cross-till
+		// table-occupancy endpoint a replica's tablesWithStateForDisplay
+		// proxies to. Bearer-authed in the handler (syncTill), same as
+		// /api/sync/orders — missing here at first is the exact
+		// /api/sync/stock failure class again.
+		"/api/sync/tables",
 	} {
 		if !exempt(p) {
 			t.Errorf("%s is not exempt — this middleware will 401 it before the "+

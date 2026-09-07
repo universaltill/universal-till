@@ -60,7 +60,16 @@ func exempt(path string) bool {
 		// down (whose one-segment + /status bound exists precisely so no
 		// unlisted /api/sync/orders/<x> route is ever exempted by accident).
 		// TestSyncPullPathsAreExempt pins this entry.
-		"/api/sync/orders/stream", "/api/setup/join",
+		"/api/sync/orders/stream",
+		// ut-docs#1392: the primary-side READ-ONLY cross-till table-occupancy
+		// endpoint a replica's tablesWithStateForDisplay (tables_sync_proxy.go)
+		// proxies to — syncTill-authed in the handler exactly like
+		// /api/sync/orders above. Omitting it here would silently no-op the
+		// whole feature exactly like the /api/sync/stock incident this
+		// switch's own comment documents.
+		// TestSyncPullPathsAreExempt pins this entry.
+		"/api/sync/tables",
+		"/api/setup/join",
 		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status",
 		// ut-docs#1550: the wizard's "joined — restarting" trigger, the
 		// sibling of /api/setup/pair-status directly above and on the very
