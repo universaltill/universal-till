@@ -1,0 +1,73 @@
+name: android-ci
+# ut-docs#1658: ci.yml's `build` job never compiles the Kotlin/Gradle
+# project under android/ — only release.yml's android-app job does, and
+# that only runs when a release is actually cut. So a Kotlin compile
+# error under android/ can merge to main clean and only surface at
+# release time, or on a real device (real precedent: a first draft of
+# universal-till#834 overrode a method that does not exist anywhere in
+# the Android/AndroidX API surface — a hard compile error, only caught
+# because an independent review happened to hand-verify it against AOSP
+# sources; whether a session catches this at all currently depends on
+# whether it has an Android SDK, which most cold cloud cycles don't —
+# ut-docs#1281/#1254).
+#
+# Own workflow, path-filtered, same convention as lang-pack-drift.yml —
+# NOT a new step in ci.yml's `build` job — so a PR that never touches
+# android/** doesn't pay this job's SDK/NDK/gomobile setup cost (a
+# multi-minute tax ci.yml's own steps don't otherwise have).
+#
+# Deliberately compile-only: no instrumented tests, no signed/
+# distributable artifact — `assembleDebug` (unsigned, no keystore
+# needed) is enough to prove the Kotlin actually compiles against the
+# generated Go .aar, which is the entire gap this closes.
+on:
+  push:
+    branches: [main]
+    paths: [android/**]
+  pull_request:
+    paths: [android/**]
+jobs:
+  compile:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+      # Installs cmdline-tools and sets ANDROID_HOME/ANDROID_SDK_ROOT —
+      # same action release.yml's android-app job uses.
+      - uses: android-actions/setup-android@v3
+      - name: Install NDK + platform + build-tools
+        # Versions matched to release.yml's android-app job — gomobile
+        # bind (triggered below via Gradle's preBuild -> generateAar,
+        # android/app/build.gradle.kts) needs a concrete NDK, not
+        # "whatever's newest," and must match what the app is actually
+        # built/verified against (ut-docs/adr/0023-android-ios-till-strategy.md).
+        run: |
+          set -euo pipefail
+          sdkmanager --install "ndk;28.2.13676358" "platforms;android-36" "build-tools;36.1.0"
+          echo "ANDROID_NDK_HOME=${ANDROID_HOME}/ndk/28.2.13676358" >> "$GITHUB_ENV"
+      - name: Install gomobile/gobind
+        # android/app/build.gradle.kts's generateAar task shells out to
+        # `gomobile bind` (which itself shells out to `gobind`) to
+        # regenerate libs/unitill-mobile.aar from ../mobile on every
+        # build — both must be on PATH before Gradle runs, same as
+        # release.yml's android-app job.
+        run: |
+          set -euo pipefail
+          go install golang.org/x/mobile/cmd/gomobile@latest
+          go install golang.org/x/mobile/cmd/gobind@latest
+          echo "$(go env GOPATH)/bin" >> "$GITHUB_PATH"
+      - name: Compile Android app (Gradle assembleDebug)
+        # assembleDebug's preBuild dependency on generateAar means this
+        # single command exercises both halves of the app: the Go ->
+        # .aar bind, and the Kotlin compile against it. Unsigned debug
+        # build type — no keystore secrets needed for a compile check.
+        run: |
+          set -euo pipefail
+          cd android
+          ./gradlew assembleDebug --no-daemon

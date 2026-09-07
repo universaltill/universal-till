@@ -1561,3 +1561,14 @@ class MainActivity : AppCompatActivity() {
         private const val SCREENSHOT_TIMEOUT_SECONDS = 5L
     }
 }
+
+// ut-docs#1658 CI verification: deliberate, temporary compile break (this
+// whole function is reverted in the very next commit on this branch) to
+// prove android-ci.yml actually FAILS a PR that introduces a Kotlin
+// compile error, not just that the job runs. onLockTaskModeChanged(Int)
+// does not exist anywhere in the Android/AndroidX API surface — same
+// class of real, previously-shipped bug this card's own workflow file
+// cites (universal-till#834's first draft).
+private fun ciGateVerificationBreak(activity: Activity) {
+    activity.onLockTaskModeChanged(0)
+}
