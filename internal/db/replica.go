@@ -13,6 +13,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/universaltill/universal-till/internal/secrets"
 )
 
 const replicaIdentityName = "replica-identity.json"
@@ -100,6 +102,25 @@ ON CONFLICT (key) DO UPDATE SET value = excluded.value`, key, val)
 			return false, fmt.Errorf("apply identity %s: %w", k, err)
 		}
 	}
+	// This till may already have minted its own plugin-settings secrets key
+	// (internal/secrets.KeyStore) from a standalone life before joining —
+	// that file lives outside the DB, so the snapshot restore above didn't
+	// touch it. Clear it now so the next Load fetches the shop's own key
+	// from the primary instead of continuing to use the stale standalone
+	// one (ut-docs#1745).
+	if err := secrets.ClearLocalKeyFile(); err != nil {
+		return false, fmt.Errorf("apply identity: %w", err)
+	}
+	// Deleting the file is not enough on its own: a long-lived process that
+	// can reach ApplyReplicaIdentity a second time without a real restart
+	// (Android's in-process app.Run reuse, mobile/mobile.go) may already
+	// have a secrets.KeyStore registered from the earlier run, still
+	// serving the stale key from its in-memory cache — KeyStore.Load never
+	// re-stats the file once cached. Invalidate whatever is registered so
+	// nothing can read a cached stale key before the fresh KeyStore for
+	// THIS run is registered later in startup (internal/app.Run) —
+	// independent-review finding, ut-docs#1745.
+	secrets.SetDefault(nil)
 	// Give this replica its own marketplace device id (the snapshot carried the
 	// primary's), so it registers as a distinct device under the shared store.
 	// Clear the "already registered" marker so enrolment re-registers it.
