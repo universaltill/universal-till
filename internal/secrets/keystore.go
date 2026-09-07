@@ -161,6 +161,15 @@ func (ks *KeyStore) Load(ctx context.Context) ([]byte, error) {
 		return nil, fmt.Errorf("%w: primary returned a %d-byte key, want %d", ErrNoKeyYet, len(fetched), KeySize)
 	}
 	if err := ks.persist(fetched); err != nil {
+		// ut-docs#1747: a persist failure after a SUCCESSFUL fetch (e.g. a
+		// wedged disk) must arm the same negative-cache floor as a failed
+		// fetch — otherwise every settings_get host call turns into a fresh
+		// HTTP round-trip to the primary instead of being rate-limited like
+		// a fetch failure already is. The key itself was never cached
+		// (ks.key stays nil), so the next Load still correctly reports no
+		// key; it just doesn't hammer the network to find that out again
+		// inside the floor.
+		ks.lastFail = ks.now()
 		return nil, err
 	}
 	ks.key = copyKey(fetched)
