@@ -597,6 +597,9 @@ func TestImport_BkpStagedCommitDedupesAnchoredForcedRowsVetoesUnanchoredOnes(t *
 	//  idx 6/7: two missing-name rows sharing 60001, both forced, NEITHER
 	//         with a clean twin anywhere in the file — genuinely ambiguous
 	//         (ut-docs#1234 review): only the first may land.
+	//  idx 8/9/10: clean "Anchor C" on 70001 plus TWO missing-name rows also
+	//         on 70001, both forced — AC2 itself (more than one corrected
+	//         row sharing the same anchored PLU, not just one).
 	zipBytes := buildBkpZipForPagesTestWithTaxRows(t, []bkpTaxRow{
 		{ProductNumber: "40001", Name: "First A", Category: "Coffee", Price: 2.00},
 		{ProductNumber: "40001", Name: "", Category: "Coffee", Price: 3.00},
@@ -604,6 +607,9 @@ func TestImport_BkpStagedCommitDedupesAnchoredForcedRowsVetoesUnanchoredOnes(t *
 		{ProductNumber: "50001", Name: "Second B", Category: "Coffee", Price: 5.00},
 		{ProductNumber: "60001", Name: "", Category: "Coffee", Price: 6.00},
 		{ProductNumber: "60001", Name: "", Category: "Coffee", Price: 7.00},
+		{ProductNumber: "70001", Name: "Anchor C", Category: "Coffee", Price: 8.00},
+		{ProductNumber: "70001", Name: "", Category: "Coffee", Price: 9.00},
+		{ProductNumber: "70001", Name: "", Category: "Coffee", Price: 10.00},
 	})
 	body, ct := multipartFile(t, "Backup 2026-08-09.bkp", zipBytes, nil) // preview
 	rec := postImport(t, mux, body, ct)
@@ -619,16 +625,20 @@ func TestImport_BkpStagedCommitDedupesAnchoredForcedRowsVetoesUnanchoredOnes(t *
 	// The operator ticks every missing-name row and supplies corrected names
 	// for all of them.
 	body2, ct2 := multipartFields(t, map[string]string{
-		"commit":        "1",
-		"staged_id":     id,
-		"row_include_3": "1",
-		"row_name_3":    "Fixed Name",
-		"row_include_4": "1",
-		"row_name_4":    "Sneaky",
-		"row_include_6": "1",
-		"row_name_6":    "Twin One",
-		"row_include_7": "1",
-		"row_name_7":    "Twin Two",
+		"commit":         "1",
+		"staged_id":      id,
+		"row_include_3":  "1",
+		"row_name_3":     "Fixed Name",
+		"row_include_4":  "1",
+		"row_name_4":     "Sneaky",
+		"row_include_6":  "1",
+		"row_name_6":     "Twin One",
+		"row_include_7":  "1",
+		"row_name_7":     "Twin Two",
+		"row_include_9":  "1",
+		"row_name_9":     "Multi One",
+		"row_include_10": "1",
+		"row_name_10":    "Multi Two",
 	})
 	rec2 := postImport(t, mux, body2, ct2)
 	if rec2.Code != http.StatusOK {
@@ -656,6 +666,11 @@ func TestImport_BkpStagedCommitDedupesAnchoredForcedRowsVetoesUnanchoredOnes(t *
 	assertOne("40001-2", "Fixed Name")
 	assertOne("50001", "Second B")
 	assertOne("50001-2", "Sneaky")
+	// AC2 itself: TWO corrected rows sharing one anchored PLU both land,
+	// each under its own distinct synthesized suffix — not just the first.
+	assertOne("70001", "Anchor C")
+	assertOne("70001-2", "Multi One")
+	assertOne("70001-3", "Multi Two")
 	// No clean twin anywhere for 60001: still genuinely ambiguous (AC3,
 	// unchanged from before this card) — the first forced row wins, the
 	// second stays out.
@@ -669,6 +684,12 @@ func TestImport_BkpStagedCommitDedupesAnchoredForcedRowsVetoesUnanchoredOnes(t *
 	// generic item_failed from the SKU UNIQUE constraint firing late.
 	if !strings.Contains(resp, "duplicate item number in this file") {
 		t.Fatalf("the skipped no-anchor duplicate must show the duplicate_sku_in_file status: %s", resp)
+	}
+	// A deduped row's operator-facing status says its number was reused and
+	// reassigned (ut-docs#1234 review) — not a silent "OK" that hides the
+	// fact its PLU quietly changed.
+	if !strings.Contains(resp, "reused in this file") {
+		t.Fatalf("a deduped forced-correction row must show the sku_reused_in_file status: %s", resp)
 	}
 	if strings.Contains(resp, "item could not be created") {
 		t.Fatalf("an in-file duplicate leaked into the write loop and failed on the DB constraint instead of being refused up front: %s", resp)

@@ -621,10 +621,24 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			// snapshot of every row's original SKU, taken before any override
 			// mutates one, so a synthesized suffix can never shadow a real,
 			// not-yet-processed PLU later in the file (mirrors bkp.go's own
-			// allPLUs guard, ut-docs#1222 review). dupSuffix picks up where
-			// bkp.go's own per-PLU numbering left off for that PLU, so two+
-			// anchored corrections sharing one PLU each land under a
-			// distinct suffix rather than racing for the same one.
+			// allPLUs guard, ut-docs#1222 review). dupSuffix is seeded from
+			// any "PLU-N" suffix bkp.go's own dedup already produced for a
+			// clean row on this PLU, so it resumes numbering where that left
+			// off rather than re-testing suffixes already claimed; two+
+			// anchored corrections sharing one PLU still each land under a
+			// distinct suffix either way, this just skips the wasted re-tests.
+			//
+			// dedupeReusedPLU restricts the anchored-dedup case to the format
+			// that actually has a reused-PLU concept at all (ut-docs#1234
+			// review finding 1): bkp.go's own suffix-dedup is explicitly a
+			// .bkp-only convention (see catimport.go's SKUIssueDuplicateInFile
+			// doc comment) — CSV's Parse has no in-file SKU-collision detection
+			// for clean rows whatsoever, so letting a CSV correction dedupe
+			// here would give a corrected row strictly better treatment than a
+			// clean row carrying the identical reused-SKU defect. CSV keeps
+			// this card's veto-only behavior unchanged; only anchorSKU's
+			// bookkeeping is shared.
+			dedupeReusedPLU := res.Format == "speedy-kasse"
 			inFileSKU := map[string]bool{}
 			anchorSKU := map[string]bool{}
 			allRawSKUs := map[string]bool{}
@@ -636,6 +650,11 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				if res.Items[i].Issue == "" && res.Items[i].SKU != "" {
 					inFileSKU[res.Items[i].SKU] = true
 					anchorSKU[res.Items[i].SKU] = true
+					if plu, n, ok := strings.Cut(res.Items[i].SKU, "-"); ok {
+						if num, perr := strconv.Atoi(n); perr == nil && num > dupSuffix[plu] {
+							dupSuffix[plu] = num - 1
+						}
+					}
 				}
 			}
 			for i := range res.Items {
@@ -646,8 +665,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				if !forceable {
 					continue
 				}
-				if sku := res.Items[i].SKU; sku != "" && inFileSKU[sku] && !anchorSKU[sku] {
-					// No clean anchor for this PLU — checked before the
+				if sku := res.Items[i].SKU; sku != "" && inFileSKU[sku] && !(dedupeReusedPLU && anchorSKU[sku]) {
+					// No clean anchor for this PLU (or this format has no
+					// reused-PLU dedup concept at all) — checked before the
 					// correction itself, since no corrected name/price could
 					// ever make this row importable under the
 					// still-genuinely-ambiguous case above.
@@ -685,9 +705,9 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				// synthesized SKU the same way bkp.go dedupes two clean rows
 				// sharing one PLU, rather than let it collide with the
 				// anchor's SKU at commit. Only reachable here (post-switch)
-				// when anchorSKU[sku] was true, since the no-anchor case was
-				// already vetoed above before the switch ran.
-				if sku := res.Items[i].SKU; res.Items[i].Issue == "" && sku != "" && anchorSKU[sku] {
+				// when dedupeReusedPLU && anchorSKU[sku] was true, since every
+				// other case was already vetoed above before the switch ran.
+				if sku := res.Items[i].SKU; res.Items[i].Issue == "" && sku != "" && dedupeReusedPLU && anchorSKU[sku] {
 					var candidate string
 					for {
 						dupSuffix[sku]++
