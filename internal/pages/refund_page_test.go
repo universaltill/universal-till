@@ -13,6 +13,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -1747,6 +1748,21 @@ func TestPostRefund_RequiresManagerPINWhenAuthEnabled(t *testing.T) {
 	}
 }
 
+// TestPostRefund_NoQuantitiesSelected asserts the exact BODY, not just the
+// 400 status (ut-docs#1217 review finding B1): the ut-docs#1217 extraction
+// of this handler's inline computation into refundLinesFromForm briefly
+// dropped this early "nothing selected" rejection from the real POST path
+// entirely -- an empty submit then fell all the way through to
+// pos.CompleteSale, which happens to ALSO answer 400, for a different
+// reason ("sale requires at least one line or voucher issue" ->
+// classifyTenderError), after already calling EnsurePaymentMethod (a real
+// DB write for an otherwise-rejected request) and firing the
+// fiscal.sign.start dispatch (opening a TSE-side transaction for a refund
+// that was always going to be refused -- precisely the defect class
+// ut-docs#1519 fixed two comments above this dispatch in the real
+// handler). A status-only assertion could not tell the two worlds apart,
+// which is exactly how the regression passed unnoticed; asserting the
+// literal early-rejection message closes that gap.
 func TestPostRefund_NoQuantitiesSelected(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, _ := newRefundTestDeps(t)
@@ -1758,6 +1774,20 @@ func TestPostRefund_NoQuantitiesSelected(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 when no line quantities are given, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := strings.TrimSpace(rec.Body.String()); got != "select at least one item to refund" {
+		t.Fatalf("expected the early rejection body %q (before any DB write or fiscal dispatch), got %q -- a different 400 body here (e.g. the generic tender-failure message) means the request fell through all the way to pos.CompleteSale instead of being rejected up front, which is exactly the ut-docs#1217 review regression: a status-only assertion can't tell these two worlds apart", "select at least one item to refund", got)
+	}
+
+	// No return sale must have been created either -- the early rejection
+	// is a pure validation failure, never a completed (even if pointless)
+	// refund transaction.
+	var returnCount int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales WHERE sale_type = 'return'`).Scan(&returnCount); err != nil {
+		t.Fatalf("count return sales: %v", err)
+	}
+	if returnCount != 0 {
+		t.Fatalf("expected no return sale row created by a rejected empty submit, got %d", returnCount)
 	}
 }
 
@@ -1899,5 +1929,153 @@ func TestPostRefund_InclusiveSaleWithVoucherIssueRefundsInclusiveAmount(t *testi
 	}
 	if refundTotal != 1190 || refundPaid != 1190 {
 		t.Fatalf("refund total/paid = %d/%d, want 1190/1190 (an inflated figure means the sale was misread as tax-exclusive)", refundTotal, refundPaid)
+	}
+}
+
+// --- POST /api/refund/preview (ut-docs#1217) ---
+//
+// The preview endpoint must reuse the EXACT SAME computation the real
+// POST /api/refund uses (refundLinesFromForm + computeRefundTotal), not a
+// reimplementation, so it can never show the cashier a number the actual
+// refund then contradicts. These tests assert the preview's output against
+// the same fixtures/expected figures the real POST tests above already
+// pin, and additionally assert it's reachable pre-authentication (no
+// manager PIN) and never errors out (a broken live preview must not look
+// like a broken page).
+
+// TestRefundPreview_MatchesPostRefundForTheSamePartialQuantity pins the
+// preview to the exact same figure TestPostRefund_PartialRefundProratesServiceCharge
+// asserts for the real refund: 1 of 2 units on a sale with a 20 service
+// charge -> 100 goods + 10 prorated charge = 110. If the preview ever drifts
+// from the real computation this regresses loudly (a wrong number shown to
+// a cashier before they hand back cash), not silently.
+func TestRefundPreview_MatchesPostRefundForTheSamePartialQuantity(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleWithServiceChargeForRefund(t, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund/preview", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview failed: %d %s", rec.Code, rec.Body.String())
+	}
+	want := httpx.FormatMoney(110, "en")
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("preview body %q does not contain the expected total %q (100 goods + 10 prorated charge)", rec.Body.String(), want)
+	}
+}
+
+// TestRefundPreview_ReflectsPriorPartialReturnsInGuardState: after a first
+// real partial refund of 1 of 2 units, previewing a request for the
+// remaining unit must reflect the SAME double-refund-guard-clamped figure
+// the real second POST would charge (110, from
+// TestPostRefund_TwoSequentialPartialRefundsSumToTheFullServiceCharge's own
+// 110+110=220 pinned total) -- not the naive un-clamped half-charge.
+func TestRefundPreview_ReflectsPriorPartialReturnsInGuardState(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleWithServiceChargeForRefund(t, dp)
+
+	firstReq := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+	firstReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	firstRec := httptest.NewRecorder()
+	mux.ServeHTTP(firstRec, firstReq)
+	if firstRec.Code != http.StatusOK {
+		t.Fatalf("first partial refund failed: %d %s", firstRec.Code, firstRec.Body.String())
+	}
+
+	previewReq := httptest.NewRequest(http.MethodPost, "/api/refund/preview", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+	previewReq.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	previewRec := httptest.NewRecorder()
+	mux.ServeHTTP(previewRec, previewReq)
+	if previewRec.Code != http.StatusOK {
+		t.Fatalf("preview failed: %d %s", previewRec.Code, previewRec.Body.String())
+	}
+	want := httpx.FormatMoney(110, "en")
+	if !strings.Contains(previewRec.Body.String(), want) {
+		t.Fatalf("preview after a prior partial refund = %q, want to contain %q (the exact remainder a real second POST would charge)", previewRec.Body.String(), want)
+	}
+}
+
+// TestRefundPreview_NoQuantitiesSelectedReturnsZeroNotError: unlike the real
+// POST (which rejects an empty selection with 400 -- see
+// TestPostRefund_NoQuantitiesSelected), the preview is a read-only display
+// that must show a zero total for "nothing selected yet", not an error --
+// that's the normal state right after the page loads before/between edits.
+func TestRefundPreview_NoQuantitiesSelectedReturnsZeroNotError(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund/preview", strings.NewReader("receipt="+receiptNo))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 with a zero total for no quantities selected, got %d: %s", rec.Code, rec.Body.String())
+	}
+	want := httpx.FormatMoney(0, "en")
+	if !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("expected the zero-total placeholder %q, got %q", want, rec.Body.String())
+	}
+}
+
+// TestRefundPreview_UnknownReceiptDoesNotError: a hand-crafted or stale
+// request for a receipt that doesn't exist must not surface an error page
+// into the live-total swap target -- same "never look broken" reasoning as
+// the no-quantities case above.
+func TestRefundPreview_UnknownReceiptDoesNotError(t *testing.T) {
+	mux, _, _ := newRefundTestDeps(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/refund/preview", strings.NewReader("receipt=NO-SUCH-RECEIPT"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (never an error page for a live-preview swap target), got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestRefundPreview_UnknownReceiptShowsUnknownPlaceholderNotZero (ut-docs#1217
+// review N2): "I don't know" (an unrecognized receipt, a guard-state load
+// failure, a malformed/over-limit in-flight edit) must never render as a
+// confident £0.00 on a screen whose whole purpose is confirming a money
+// figure before committing to it -- that's indistinguishable from the
+// genuine, correct zero of "nothing selected yet"
+// (TestRefundPreview_NoQuantitiesSelectedReturnsZeroNotError). The two
+// must render visibly differently.
+func TestRefundPreview_UnknownReceiptShowsUnknownPlaceholderNotZero(t *testing.T) {
+	mux, _, _ := newRefundTestDeps(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/refund/preview", strings.NewReader("receipt=NO-SUCH-RECEIPT"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	if body == httpx.FormatMoney(0, "en") {
+		t.Fatalf("an unknown receipt must not render as a real zero total (indistinguishable from a genuine empty selection), got %q", body)
+	}
+	if body != "—" {
+		t.Fatalf("expected the unknown-figure placeholder \"—\", got %q", body)
+	}
+}
+
+// TestRefundPreview_NoManagerPINRequiredEvenWhenAuthEnabled: the preview is
+// read-only (no persisted mutation, no audit row -- same class as
+// receipt-designer's own preview endpoint), reachable BEFORE the cashier
+// has entered a manager PIN (they're still adjusting quantities), so unlike
+// the real POST (TestPostRefund_RequiresManagerPINWhenAuthEnabled, which
+// requires the PIN once auth is enabled) it must never demand one.
+func TestRefundPreview_NoManagerPINRequiredEvenWhenAuthEnabled(t *testing.T) {
+	t.Setenv("UT_AUTH", "")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund/preview", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 with no manager PIN required for a read-only preview, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
