@@ -467,12 +467,20 @@ window.utCurrency = (function(){
 // already uses to prove coverage — so it tracks the real, current geometry
 // (this file's responsive grid, the overlay's own CSS, RTL) instead of a
 // number someone has to remember to update if any of those ever change.
-// Deliberately excludes the third button in the footer (Payment, the
-// overlay's own trigger) and the phone-width New Sale duplicate
-// (kiosk-checkout-start-phone) — neither was raised by #1625's review or
-// is in this card's scope; #1629 is about the two buttons #1542/#1625
-// already duplicated into the overlay, not a general "anything covered"
-// sweep.
+// ut-docs#1674 (found by #1629's own review, same coverage sweep): the
+// third footer button (Payment, the overlay's own trigger),
+// `.tender-quickpay`'s one-tap charge button, and the phone-width New Sale
+// duplicate (kiosk-checkout-start-phone) all measurably stayed focusable
+// while 100%-covered too — #1629 deliberately left them out as beyond
+// #1542/#1625's original two-button scope, not because they don't apply.
+// quick-pay is the most urgent of the three: unlike Payment (activating it
+// while already open is a no-op) it POSTs /api/pos/tender directly, so a
+// keyboard operator could complete a charge on a control they can't see.
+// All three share the exact same isCoveredByOverlay() hit-test and
+// tabindex save/restore below — no new mechanism, just three more targets.
+// quick-pay and the phone duplicate live outside .tender-default-footer
+// (`.tender-quickpay` and `.kiosk-header.phone-fallback-only` respectively)
+// so they're queried from `document`, not `footer`.
 (function () {
   var overlay = document.getElementById('payment-overlay');
   if (!overlay) return;
@@ -481,6 +489,9 @@ window.utCurrency = (function(){
   var targets = [
     footer.querySelector('[data-testid="kiosk-checkout-start"]'),
     footer.querySelector('[data-testid="tender-footer-hold"]'),
+    footer.querySelector('[data-testid="payment-open"]'),
+    document.querySelector('[data-testid="quick-pay"]'),
+    document.querySelector('[data-testid="kiosk-checkout-start-phone"]'),
   ].filter(Boolean);
   if (!targets.length) return;
 
