@@ -1226,7 +1226,7 @@ func TestTickNeverSendsTSECredential(t *testing.T) {
 	paths.Init(dir)
 	t.Cleanup(func() { paths.Init("") })
 	const secret = "super-secret-operational-credential-PLOVER"
-	if err := fiscal.NewTSECredentialStore().Save(map[string]any{"api_key": secret}); err != nil {
+	if err := fiscal.NewSigningDeviceCredentialStore().Save(map[string]any{"api_key": secret}); err != nil {
 		t.Fatalf("Save: %v", err)
 	}
 

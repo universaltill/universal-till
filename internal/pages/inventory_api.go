@@ -252,7 +252,7 @@ func CreateNegativeInventoryOverride(dp *common.Deps) http.HandlerFunc {
 		// requestedBy is kept separate from actorID so a PIN-approved
 		// override still records who was actually blocked and asked for
 		// approval (ut-docs#780) — mirrors fiscal_api.go's
-		// createTSEOverride, which captures the same distinction as
+		// createSigningOverride, which captures the same distinction as
 		// requestedBy/actorID.
 		requestedBy := getSessionUserID(r)
 		if requestedBy == "" {

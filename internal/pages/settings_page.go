@@ -1508,7 +1508,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// service after a subscription_inactive rejection. Clears the whole
 	// lifecycle state (a later re-run of provisioning re-creates it); same
 	// hx-swap "outerHTML"/empty-200-body convention as the two dismisses
-	// above. Deliberately does NOT touch fiscal.tse_configured or any stored
+	// above. Deliberately does NOT touch fiscal.signing_device_configured or any stored
 	// credential — this dismisses a status chip, not a configured TSE.
 	//
 	// ut-docs#1174: no longer unconditional — a hard-gated market's
@@ -1850,10 +1850,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// (empty value) is allowed past this point; its actual
 			// authorization (owner-only) is the canPerform check below.
 			if value != "" {
-				http.Error(w, "fiscal override state is managed via POST /api/fiscal/tse-override", http.StatusBadRequest)
+				http.Error(w, "fiscal override state is managed via POST /api/fiscal/signing-override", http.StatusBadRequest)
 				return
 			}
-		case fiscal.KeyTSEFailingSince:
+		case fiscal.KeySigningDeviceFailingSince:
 			// ADR-0048 Decision 1: "Not operator-settable in this card" —
 			// no UI control ships for this key at all, set or clear, by
 			// design (a fake "mark as failing"/"mark as fixed" toggle would
@@ -1862,7 +1862,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// by a future real fiscal.sign.ask failure callback (#675) —
 			// never through this generic editor, for anyone. Always 400,
 			// for anyone — no role can ever make this key settable here.
-			http.Error(w, "fiscal.tse_failing_since is not settable via this endpoint", http.StatusBadRequest)
+			http.Error(w, "fiscal.signing_device_failing_since is not settable via this endpoint", http.StatusBadRequest)
 			return
 		}
 		// Mutating + audit-writing (ut-docs#796): this replaces ONLY the
@@ -1883,7 +1883,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		// ADR-0048: this generic editor must not be a side door around the
 		// fiscal gate. The override window/metadata is written only by
-		// POST /api/fiscal/tse-override (typed acknowledgement, duration
+		// POST /api/fiscal/signing-override (typed acknowledgement, duration
 		// cap, audit) — fabricating one here is refused for everyone
 		// (validated above); clearing (empty value = revoking an override
 		// early) stays possible for an owner, checked here. The fiscal.*
@@ -1897,7 +1897,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, "owner (admin) required", http.StatusForbidden)
 				return
 			}
-		case fiscal.KeySystemOfRecord, fiscal.KeyTSEConfigured:
+		case fiscal.KeySystemOfRecord, fiscal.KeySigningDeviceConfigured:
 			if !canPerform(d, r, "fiscal_tse_override") {
 				http.Error(w, "owner (admin) required", http.StatusForbidden)
 				return
@@ -1909,7 +1909,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		switch key {
 		case fiscal.KeySystemOfRecord:
 			fiscalToggleAction = "system_of_record_changed"
-		case fiscal.KeyTSEConfigured:
+		case fiscal.KeySigningDeviceConfigured:
 			fiscalToggleAction = "tse_configured_changed"
 		}
 		prevFiscalValue := ""

@@ -145,9 +145,9 @@ func TestFiscalGate_CashAdjustmentNonGermanShopUnaffected(t *testing.T) {
 	mux, dp := newShiftsFiscalTestDeps(t)
 	shiftID := openShiftForFiscalGateTest(t, mux, dp)
 	for k, v := range map[string]string{
-		fiscal.KeySystemOfRecord:  "true",
-		fiscal.KeyTSEConfigured:   "false",
-		fiscal.KeyTSEFailingSince: "2026-08-14T09:00:00Z",
+		fiscal.KeySystemOfRecord:            "true",
+		fiscal.KeySigningDeviceConfigured:   "false",
+		fiscal.KeySigningDeviceFailingSince: "2026-08-14T09:00:00Z",
 	} {
 		if err := dp.Settings.Set(t.Context(), k, v); err != nil {
 			t.Fatal(err)
@@ -174,7 +174,7 @@ func TestFiscalGate_CashAdjustmentPayoutOverrideUnblocksAndAudits(t *testing.T) 
 		t.Fatalf("expected the pre-override payout to be refused, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/fiscal/tse-override", strings.NewReader(validOverrideBody("")))
+	req := httptest.NewRequest(http.MethodPost, "/api/fiscal/signing-override", strings.NewReader(validOverrideBody("")))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req = auth.WithUser(req, auth.User{ID: "user1", Role: "admin"})
@@ -240,7 +240,7 @@ func TestFiscalGate_PfandRueckgabeOverrideUnblocksAndAudits(t *testing.T) {
 		t.Fatalf("expected the pre-override payout to be refused, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/fiscal/tse-override", strings.NewReader(validOverrideBody("")))
+	req := httptest.NewRequest(http.MethodPost, "/api/fiscal/signing-override", strings.NewReader(validOverrideBody("")))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req = auth.WithUser(req, auth.User{ID: "user1", Role: "admin"})

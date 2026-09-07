@@ -97,7 +97,7 @@ const (
 	// through pending_kickoff → awaiting_ready by the kickoff call/retry,
 	// and cleared on confirmed local receipt of the operational credential.
 	// Empty/unset means nothing in flight. Distinct from
-	// fiscal.KeyTSEConfigured, which only ever flips true on that confirmed
+	// fiscal.KeySigningDeviceConfigured, which only ever flips true on that confirmed
 	// receipt — never optimistically.
 	KeyTSEProvisioningState = "fiscal.tse_provisioning_state"
 	// KeyPendingFiscalSignRetries used to hold the JSON list of sales

@@ -693,7 +693,7 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// state is persisted BEFORE the one time-boxed network attempt, so
 		// the wizard finishes with no network and the background retry
 		// (StartTSEProvisionRetry) picks it up. A no-op for a non-DE country
-		// or a skipped identity step. fiscal.tse_configured is NOT touched
+		// or a skipped identity step. fiscal.signing_device_configured is NOT touched
 		// here — it only ever flips true on confirmed local receipt of the
 		// operational credential (applyFiscalTSEReady).
 		startTSEProvisioningForSetup(r.Context(), d, st.Country, tseIdentity)
