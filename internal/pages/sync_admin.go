@@ -182,12 +182,21 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
+		// ut-docs#1729: count the stale tills rather than just breaking on
+		// the first. The count is what the chip now SAYS ("· 1 offline"),
+		// which is the whole reason it stopped being a badge dot: an
+		// offline satellite is a status a manager reads, not a request
+		// they approve, and the dot it used to light could never be
+		// cleared by any action.
 		class := "ok"
+		stale := 0
 		for _, t := range list {
 			if !withinLast(t.LastSeenAt, 2*time.Minute) {
-				class = "warn"
-				break
+				stale++
 			}
+		}
+		if stale > 0 {
+			class = "warn"
 		}
 		if quarantined > 0 || len(pending) > 0 {
 			class = "warn"
@@ -202,6 +211,7 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 			"class":       class,
 			"label":       label,
 			"count":       len(list),
+			"stale":       stale,
 			"pending":     len(pending),
 			"quarantined": quarantined,
 		})(w, r)

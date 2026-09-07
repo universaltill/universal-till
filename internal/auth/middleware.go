@@ -78,6 +78,18 @@ func exempt(path string) bool {
 		// exactly like the /api/sync/stock incident this switch's own comment
 		// documents. TestSyncPullPathsAreExempt pins both entries.
 		"/api/sync/tables/claim", "/api/sync/tables/release",
+		// ut-docs#1712: the primary-side till-wide release-all a
+		// replica calls once at boot (internal/pages/init.go), before
+		// re-claiming its held orders, to clear whatever a crashed
+		// live basket left behind on a table it may never revisit
+		// again. syncTill-authed in the handler exactly like the two
+		// entries above it. Omitting it here would silently no-op the
+		// whole boot step — the proxy call falls back to "not
+		// reachable" and does nothing locally, since the orphan was
+		// never on this till in the first place — exactly like the
+		// /api/sync/stock incident this switch's own comment
+		// documents. TestSyncPullPathsAreExempt pins this entry.
+		"/api/sync/tables/release-all",
 		"/api/setup/join",
 		"/api/setup/discover-primaries", "/api/setup/pair-start", "/api/setup/pair-status",
 		// ut-docs#1550: the wizard's "joined — restarting" trigger, the

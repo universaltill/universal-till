@@ -107,4 +107,43 @@ func registerSyncTablesClaim(mux *http.ServeMux, d *common.Deps) {
 		}
 		writeSyncOrdersJSON(w, http.StatusOK, syncTableReleaseResult{Released: true}, nil)
 	})
+
+	// Release EVERY claim the calling till owns, across every table it does
+	// NOT name in keep_table_id (ut-docs#1712) — a replica calls this once
+	// at boot, before re-claiming its held orders' tables (Init's existing
+	// boot re-claim step), to clear whatever a crashed live basket left
+	// behind on a table it may never revisit again. /release above only
+	// ever reaches a table the till's own basket lifecycle still touches;
+	// ClaimTableForTill's per-table staleness check only fires when
+	// someone attempts a NEW claim on that SAME table, so without this a
+	// till that reboots, is "seen" again by any sync call, and never
+	// re-picks that exact table keeps the orphan forever.
+	//
+	// keep_table_id (repeatable form field, zero or more) is the caller's
+	// own currently-held-order table ids — see
+	// POSRepo.ReleaseAllTableClaimsForTill's doc comment for why this
+	// matters: a held order's claim survives a restart BY DESIGN
+	// (ut-docs#1704) and must never be dropped just because this endpoint
+	// can't tell it apart from a genuinely orphaned live-basket claim on
+	// its own. Idempotent, same as /release.
+	mux.HandleFunc("POST /api/sync/tables/release-all", func(w http.ResponseWriter, r *http.Request) {
+		till, ok := syncTill(r, tills)
+		if !ok {
+			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
+			return
+		}
+		_ = r.ParseForm()
+		var keep []string
+		for _, id := range r.Form["keep_table_id"] {
+			if id = strings.TrimSpace(id); id != "" {
+				keep = append(keep, id)
+			}
+		}
+		if err := posRepo.ReleaseAllTableClaimsForTill(r.Context(), till.ID, keep); err != nil {
+			logging.L().Errorf("sync table release-all from %s: %v", till.Name, err)
+			writeSyncOrdersJSON(w, http.StatusInternalServerError, nil, "server error")
+			return
+		}
+		writeSyncOrdersJSON(w, http.StatusOK, syncTableReleaseResult{Released: true}, nil)
+	})
 }
