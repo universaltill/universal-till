@@ -308,37 +308,15 @@
         </select>
         <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
       </label>
-      <!-- ADR-0064 / ut-docs#1039 (finding 8 of its review): the note
-           states what is actually holding the window on THIS till — one of
-           three mutually-exclusive truths, never a note for a topology the
-           till is not in. Full-width <p>, wraps freely — German runs ~30%
-           longer than English. -->
-      {{ if .piKioskAppliance }}
-      <!-- Pi kiosk appliance: kiosk is real and systemd-driven; no desktop
-           app will ever run here, and the way out of kiosk is this very
-           selector — the note must say that, not demand a desktop app. -->
-      <p class="muted">{{ T "settings.display.window_mode_kiosk_appliance" }}</p>
-      {{ else if .shellAttached }}
-      <!-- A desktop shell is holding a live control poll: chrome-hiding
-           modes are served for real and exit-to-os really works. ut-docs#1040
-           review finding 2: this is also the ONLY topology where "full
-           screen/kiosk overlays this computer's own desktop" is actually
-           true — an earlier draft added a fourth, always-visible paragraph
-           gated only on NOT being a Pi kiosk appliance, which said so
-           unconditionally, including on macOS/Windows where the very next
-           paragraph (window_mode_pending_note) says the opposite (window
-           stays normal, no shell support yet) and on "no shell attached"
-           where chrome-hiding stays off. Folded into this branch's own
-           string instead of a separate always-on block, so the three
-           mutually-exclusive truths stay three, not four. -->
-      <p class="muted">{{ T "settings.display.window_mode_shell_attached" }}</p>
-      {{ else }}
-      <!-- No shell attached: the server serves "normal" to every client
-           (the fail-closed downgrade) and a chrome-hiding choice stays
-           saved-but-off. Say so, honestly, instead of letting the operator
-           think the till is about to lock down. -->
-      <p class="muted">{{ T "settings.display.window_mode_no_shell" }}</p>
-      {{ end }}
+      <!-- ut-docs#1060: was a render-time-only conditional block here
+           (still the exact same three mutually-exclusive notes, same
+           strings, same comments) — moved into its own partial, same
+           pattern as tse_provisioning_block.html/backup_restore_staged.html
+           above, so it can keep itself fresh with a live poll instead of
+           going stale the moment a desktop shell attaches or detaches
+           while this page stays open. See
+           web/ui/partials/window_mode_status.html. -->
+      {{ template "window_mode_status.html" . }}
       <p class="muted">{{ T "settings.display.window_mode_pending_note" }}</p>
       <div id="window-mode-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
     </form>
