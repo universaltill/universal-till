@@ -127,11 +127,15 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   guards are added — check the workflow file's `build` job for the
   authoritative, current one rather than trusting this snapshot.
 - **`android/**` changes also gate on `.github/workflows/android-ci.yml`**
-  (ut-docs#1658) — a separate, path-filtered workflow (not a step in
-  `ci.yml`'s `build` job, so a PR that never touches `android/**` doesn't
-  pay its SDK/NDK/gomobile setup cost): `./gradlew assembleDebug` against
-  `android/`, proving the Kotlin actually compiles against the generated
-  Go `.aar`. Before this, only `release.yml`'s `android-app` job compiled
+  (ut-docs#1658) — a separate workflow (not a step in `ci.yml`'s `build`
+  job): `./gradlew assembleDebug` against `android/`, proving the Kotlin
+  actually compiles against the generated Go `.aar`. It always runs (a
+  top-level `paths:` trigger filter, GitHub's usual convention — see
+  `lang-pack-drift.yml` — was measured unreliable for this workflow:
+  it silently skipped real `android/**`-touching pushes on the same PR
+  during this card's own testing), but skips its SDK/NDK/gomobile setup
+  cost internally via a real `git diff` when the change doesn't touch
+  `android/**`. Before this, only `release.yml`'s `android-app` job compiled
   it, so a Kotlin compile error under `android/` could merge to `main`
   clean and only surface at release time or on a real device.
 - Feature branch; code review recorded in `docs/code-reviews/<date>-<topic>.md`;
