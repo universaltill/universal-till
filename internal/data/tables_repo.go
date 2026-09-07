@@ -252,16 +252,87 @@ INSERT OR IGNORE INTO table_claims (table_id, claimed_at) VALUES (?, ?)`, tableI
 	return n == 1, nil
 }
 
-// ReleaseTableClaim drops the live-basket claim on tableID (ut-docs#1390):
-// the basket cleared its table, was parked (the held_sales row now carries
-// the occupancy), tendered, or was reset. A no-op — not an error — when
-// there is no claim to release, same convention as HeldSalesRepo.Delete on
-// a missing row, so every release site can call it unconditionally.
+// ReleaseTableClaim drops THIS till's own local live-basket claim on tableID
+// (ut-docs#1390): the basket cleared its table, was parked (the held_sales
+// row now carries the occupancy), tendered, or was reset. A no-op — not an
+// error — when there is no claim to release, same convention as
+// HeldSalesRepo.Delete on a missing row, so every release site can call it
+// unconditionally.
+//
+// Scoped to till_id = ” (independent review finding, ut-docs#1393) — its
+// one caller, releaseTableClaimWriteThrough, always means "release MY OWN
+// local claim," and till_id=” is that local row's convention (ClaimTable).
+// Before ForceReleaseTableClaim existed, an unscoped delete-by-table_id was
+// equivalent: the PRIMARY KEY on table_id allows at most one row per table,
+// so whoever was releasing could only ever be deleting their own row.
+// ForceReleaseTableClaim breaks that assumption on purpose (a manager can
+// clear a claim regardless of ownership), which reopens it: without this
+// scoping, a manager freeing a table whose owning till's basket still
+// thinks it holds it (the till is never told), followed by a DIFFERENT
+// till legitimately claiming the same table, followed by the first till's
+// own eventual release call landing here — would delete the second till's
+// live claim instead of the (already gone) first till's row, silently
+// reproducing the cross-till double-claim ut-docs#1703 closed. See
+// TestReleaseTableClaim_NeverTouchesAnotherTillsClaim.
 func (r *POSRepo) ReleaseTableClaim(ctx context.Context, tableID string) error {
-	if _, err := r.db.ExecContext(ctx, `DELETE FROM table_claims WHERE table_id = ?`, tableID); err != nil {
+	if _, err := r.db.ExecContext(ctx, `DELETE FROM table_claims WHERE table_id = ? AND till_id = ''`, tableID); err != nil {
 		return fmt.Errorf("release table claim: %w", err)
 	}
 	return nil
+}
+
+// ForceReleaseTableClaim is the manager-initiated "Free table" action's
+// primitive (ut-docs#1393): an unconditional drop of tableID's live-basket
+// claim, regardless of which till (if any) owns it. Every other release in
+// this file is triggered by the OWNING basket's own lifecycle (clear, hold,
+// tender, reset) or, for ClearLocalTableClaims/ClaimTableForTill, only by
+// that same till acting again — nothing clears a claim a till simply never
+// revisits (a crash between claiming a table and completing/clearing the
+// sale, or a replica that goes quiet and is never re-claimed). Until this
+// action shipped there was no in-product recovery for that case at all —
+// see tables_repo_test.go's TestForceReleaseTableClaim and the design note
+// on ClearLocalTableClaims above.
+//
+// released reports whether a claim actually existed to drop (false is a
+// safe, ordinary outcome for an already-free table — same no-op convention
+// as ReleaseTableClaim). stillHeld reports whether a held_sales row is
+// STILL attached to the table afterwards: a genuine held order is never
+// touched here, so a table with a real parked order correctly reads
+// occupied again immediately — the caller uses stillHeld to tell the
+// manager that clearing the claim did not fully free the table, rather than
+// silently discarding a real order to make the floor plan look free.
+// A transaction, not two independent statements (independent review
+// finding, ut-docs#1393): with two separate calls, a failure on the
+// held_sales read after the DELETE had already committed would report an
+// error — "could not free the table" — for a claim that WAS actually
+// dropped, and the caller's audit write (gated on err == nil) would never
+// record that real state change. Wrapping both in one transaction makes
+// the two outcomes exactly consistent: either the claim was dropped AND
+// stillHeld reflects reality, or nothing changed and the reported error is
+// accurate.
+func (r *POSRepo) ForceReleaseTableClaim(ctx context.Context, tableID string) (released bool, stillHeld bool, err error) {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return false, false, fmt.Errorf("force release table claim: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	res, err := tx.ExecContext(ctx, `DELETE FROM table_claims WHERE table_id = ?`, tableID)
+	if err != nil {
+		return false, false, fmt.Errorf("force release table claim: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, false, fmt.Errorf("force release table claim: %w", err)
+	}
+	var heldCount int
+	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM held_sales WHERE table_id = ?`, tableID).Scan(&heldCount); err != nil {
+		return false, false, fmt.Errorf("force release table claim: check held sales: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return false, false, fmt.Errorf("force release table claim: commit: %w", err)
+	}
+	return n > 0, heldCount > 0, nil
 }
 
 // ClaimTableForTill reserves tableID on behalf of an enrolled replica till
@@ -357,8 +428,8 @@ func (r *POSRepo) ReleaseTableClaimForTill(ctx context.Context, tableID, tillID 
 // judgement call needed. Without this, a table claimed right before an
 // unclean shutdown stays occupied forever: nothing else ever revisits an
 // orphaned row (the picker filters occupied tables out, /api/pos/table and
-// /api/pos/held/table both reject a pick on one), and until #1393 ships a
-// manual "free the table" action, there is no in-product recovery at all.
+// /api/pos/held/table both reject a pick on one) except the manager-
+// initiated manual override, ForceReleaseTableClaim (ut-docs#1393).
 //
 // Scoped to till_id = ” since ut-docs#1703 gave claims an owner (independent
 // review, 2026-09-07). The sweep used to be unconditional — every row, whoever
