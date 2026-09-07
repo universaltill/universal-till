@@ -170,7 +170,18 @@ func TestTablesPage_MutationsRefusedOnReplica(t *testing.T) {
 
 func TestTablesPage_CreateEditPositionDeactivateAndRender(t *testing.T) {
 	mux, d := newTablesTestMux(t)
-	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	// A real users row: audit_log.actor_id carries a REFERENCES users(id)
+	// foreign key, enforced (PRAGMA foreign_keys=ON) — an ad-hoc
+	// auth.User{ID: "m1"} with no matching row makes every InsertAudit
+	// below fail its FK check, and the audit(...) closure discards that
+	// error, so create/update/move/activate/deactivate were never actually
+	// proving an audit row lands (ut-docs#1715). Same fixture convention as
+	// TestTablesPage_Release.
+	mgrID, err := data.NewAuthRepo(d.Db).CreateUser(t.Context(), "table-manager-cru", "Manager", "manager")
+	if err != nil {
+		t.Fatalf("create manager: %v", err)
+	}
+	manager := auth.User{ID: mgrID, Role: "manager", DisplayName: "Manager"}
 
 	// Empty floor plan: the page still renders, with the empty-state prompt
 	// (soft gate — zero tables configured is a valid state, ADR-0054).
@@ -202,6 +213,10 @@ func TestTablesPage_CreateEditPositionDeactivateAndRender(t *testing.T) {
 	var id string
 	if err := d.Db.QueryRow(`SELECT id FROM tables WHERE label = 'T1'`).Scan(&id); err != nil {
 		t.Fatalf("lookup: %v", err)
+	}
+	var createAction string
+	if err := d.Db.QueryRow(`SELECT action FROM audit_log WHERE action = 'table_create' AND entity_id = ?`, id).Scan(&createAction); err != nil {
+		t.Fatalf("create must write an audit_log row: %v", err)
 	}
 
 	// The page renders the table on the plan.
@@ -395,7 +410,14 @@ func TestTablesPage_ReleaseRefusedOnReplica(t *testing.T) {
 // bottom-of-page add form (which never sends these fields) relies on.
 func TestTablesPageCreate_TapToPlacePosition(t *testing.T) {
 	mux, d := newTablesTestMux(t)
-	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	// Real users row, same reason as TestTablesPage_Release: every create
+	// below exercises the table_create audit write, which otherwise fails
+	// its actor_id FK check silently (ut-docs#1715).
+	mgrID, err := data.NewAuthRepo(d.Db).CreateUser(t.Context(), "table-manager-tap", "Manager", "manager")
+	if err != nil {
+		t.Fatalf("create manager: %v", err)
+	}
+	manager := auth.User{ID: mgrID, Role: "manager", DisplayName: "Manager"}
 
 	posOf := func(label string) (x, y int) {
 		t.Helper()
@@ -445,7 +467,13 @@ func TestTablesPageCreate_TapToPlacePosition(t *testing.T) {
 // an elapsed-minutes label.
 func TestTablesStatePartial_FreeTodayOccupiedViaTableID(t *testing.T) {
 	mux, d := newTablesTestMux(t)
-	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	// Real users row, same reason as TestTablesPage_Release: the create
+	// below exercises the table_create audit write (ut-docs#1715).
+	mgrID, err := data.NewAuthRepo(d.Db).CreateUser(t.Context(), "table-manager-state", "Manager", "manager")
+	if err != nil {
+		t.Fatalf("create manager: %v", err)
+	}
+	manager := auth.User{ID: mgrID, Role: "manager", DisplayName: "Manager"}
 
 	rec := postForm(mux, "/api/tables", url.Values{
 		"label": {"T1"}, "seat_count": {"4"}, "shape": {"rect"},
