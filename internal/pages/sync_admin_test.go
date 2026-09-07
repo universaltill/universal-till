@@ -239,13 +239,20 @@ func TestSyncChip_PrimaryModeWithTills(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `sync-chip warn`) {
 		t.Fatalf("expected an unseen enrolled till to render class=warn, got %q", rec.Body.String())
 	}
-	// ut-docs#1539 (independent review): the stale-roster warn path reaches
-	// the badge through `{{ if or .quarantined (eq .class "warn") }}` — a
-	// different branch than the quarantine-driven warn case
-	// TestSyncChip_PrimaryModeWarnsAndLinksToQuarantineWhenEntriesExist
-	// already covers, so it needs its own assertion.
-	if !strings.Contains(rec.Body.String(), `class="nav-badge"`) {
-		t.Fatalf("expected a badge dot on the icon for a stale (never-seen) enrolled till, got %q", rec.Body.String())
+	// ut-docs#1729 (was ut-docs#1539): the stale-roster warn path used to
+	// reach the badge through `{{ if or .quarantined (eq .class "warn") }}`,
+	// and this assertion required it to. That coupling IS the bug — an
+	// offline satellite is not a request to approve, and the dot it lit
+	// could never be cleared. The badge is now driven by actionable state
+	// only (pending pairing / quarantine), and the stale state is stated as
+	// TEXT instead — asserted right below, because the independent review
+	// established that without it the case has no signal at all (the warn
+	// class is an unstyled hook and the old title never mentioned offline).
+	if strings.Contains(rec.Body.String(), `class="nav-badge"`) {
+		t.Fatalf("expected NO badge dot for a stale (never-seen) enrolled till with nothing to action, got %q", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "1 offline") {
+		t.Fatalf("expected the stale till stated as text on the chip, got %q", rec.Body.String())
 	}
 
 	// TillByBearerHash bumps last_seen_at as a side effect of authenticating
@@ -288,6 +295,56 @@ func TestSyncChip_PrimaryModeWithTills(t *testing.T) {
 	}
 	if strings.Contains(rec.Body.String(), "1 tills") {
 		t.Fatalf("expected NOT the plural form for a count of 1, got %q", rec.Body.String())
+	}
+}
+
+// ut-docs#1729: the badge dot means "something needs a human to action it",
+// not "the fleet is not fully healthy". A satellite that is merely stale or
+// switched off is status — it is already carried by class=warn, the title and
+// the aria-label — and nothing an operator does on /tills can clear it, so a
+// dot for that state is a notification that can never be dismissed. The
+// product owner reported exactly that: a permanent orange dot with no pending
+// request behind it.
+//
+// This is the DEFAULT shape of a real shop whose satellite is off overnight,
+// so it needs its own test rather than riding on the fresh-till assertions in
+// TestSyncChip_PrimaryModeWithTills: stale roster, zero pending, zero
+// quarantined => class=warn, but NO badge.
+func TestSyncChip_PrimaryModeStaleTillAloneShowsNoBadge(t *testing.T) {
+	dp := newMigratedSyncDeps(t, "primary-stale-no-badge.db")
+	initPagesI18n(t)
+	ctx := t.Context()
+	tills := data.NewTillsRepo(dp.Db)
+	// Never authenticated -> last_seen_at NULL -> stale, the same state a
+	// satellite powered down overnight reaches.
+	if _, err := tills.InsertTill(ctx, "Replica 1", hashBearer("token-stale")); err != nil {
+		t.Fatalf("enrol till: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	registerSyncAdmin(mux, dp)
+	req := httptest.NewRequest(http.MethodGet, "/ui/sync-chip", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	body := rec.Body.String()
+	// The state itself is unchanged and still surfaced -- this card narrows
+	// the BADGE only, it does not make the chip forget the till is offline.
+	if !strings.Contains(body, `sync-chip warn`) {
+		t.Fatalf("expected a stale enrolled till to still render class=warn, got %q", body)
+	}
+	if strings.Contains(body, `class="nav-badge"`) {
+		t.Fatalf("expected NO badge dot for a stale till with no pending pairing and no quarantine, got %q", body)
+	}
+	// ...but the state must not become invisible either. Removing the dot
+	// without this would have left an offline satellite with no signal
+	// anywhere in the rail: .sync-chip's warn class carries no styling of
+	// its own, and sync.chip_tills_title never mentioned offline.
+	if !strings.Contains(body, "1 offline") {
+		t.Fatalf("expected the offline count stated as text on the chip, got %q", body)
+	}
+	if !strings.Contains(body, "one or more are offline") {
+		t.Fatalf("expected the accessible name/title to name the offline state, got %q", body)
 	}
 }
 
