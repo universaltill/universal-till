@@ -1561,9 +1561,3 @@ class MainActivity : AppCompatActivity() {
         private const val SCREENSHOT_TIMEOUT_SECONDS = 5L
     }
 }
-
-// ut-docs#1658 CI verification: trivial third push to confirm android-ci.yml
-// actually fires on a *second* synchronize event, not just a PR's first
-// commit (the revert commit above did NOT trigger a run -- checked via the
-// GitHub API, zero android-ci runs for that SHA -- so this checks whether
-// that was a one-off anomaly or a real gap in the path-filtered trigger).
