@@ -1,0 +1,53 @@
+<!-- Window-control status note for Settings › Display (ut-docs#1060) —
+     originally rendered inline in settings.html and computed only at page
+     render time, so it went stale the moment a desktop shell attached or
+     detached while Settings stayed open (a fresh install with the Pi kiosk
+     topology can never go stale this way — that one is decided once at
+     pages.Init and cannot change post-boot, see
+     internal/pages/window_state_api.go's own doc comment).
+
+     Extracted into its own partial by the same pattern as
+     tse_provisioning_block.html/backup_restore_staged.html above in
+     settings.html: one source of truth, included by filename in the full
+     page render AND re-rendered standalone by
+     GET /ui/settings/window-mode-status for its own htmx poll — one
+     source of truth, no Go-side duplicate of this fragment. The root
+     re-arms the poll on every swap (the outerHTML swap replaces the
+     element carrying the trigger, so the trigger must travel with the
+     fragment), same 15s cadence as order_tracking_status.html/
+     pairing_wait.html. The Pi-kiosk-appliance case renders WITHOUT the
+     trigger, so polling stops there — nothing to poll for. -->
+<div id="window-mode-status"
+     {{ if not .piKioskAppliance }}hx-get="/ui/settings/window-mode-status" hx-trigger="every 15s" hx-target="this" hx-swap="outerHTML"{{ end }}>
+  <!-- ADR-0064 / ut-docs#1039 (finding 8 of its review): the note states
+       what is actually holding the window on THIS till — one of three
+       mutually-exclusive truths, never a note for a topology the till is
+       not in. Full-width <p>, wraps freely — German runs ~30% longer than
+       English. -->
+  {{ if .piKioskAppliance }}
+  <!-- Pi kiosk appliance: kiosk is real and systemd-driven; no desktop
+       app will ever run here, and the way out of kiosk is this very
+       selector — the note must say that, not demand a desktop app. -->
+  <p class="muted">{{ T "settings.display.window_mode_kiosk_appliance" }}</p>
+  {{ else if .shellAttached }}
+  <!-- A desktop shell is holding a live control poll: chrome-hiding
+       modes are served for real and exit-to-os really works. ut-docs#1040
+       review finding 2: this is also the ONLY topology where "full
+       screen/kiosk overlays this computer's own desktop" is actually
+       true — an earlier draft added a fourth, always-visible paragraph
+       gated only on NOT being a Pi kiosk appliance, which said so
+       unconditionally, including on macOS/Windows where the very next
+       paragraph (window_mode_pending_note) says the opposite (window
+       stays normal, no shell support yet) and on "no shell attached"
+       where chrome-hiding stays off. Folded into this branch's own
+       string instead of a separate always-on block, so the three
+       mutually-exclusive truths stay three, not four. -->
+  <p class="muted">{{ T "settings.display.window_mode_shell_attached" }}</p>
+  {{ else }}
+  <!-- No shell attached: the server serves "normal" to every client
+       (the fail-closed downgrade) and a chrome-hiding choice stays
+       saved-but-off. Say so, honestly, instead of letting the operator
+       think the till is about to lock down. -->
+  <p class="muted">{{ T "settings.display.window_mode_no_shell" }}</p>
+  {{ end }}
+</div>

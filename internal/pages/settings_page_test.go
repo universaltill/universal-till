@@ -2375,6 +2375,82 @@ func TestSettingsDisplayWindowControlNoteTellsTheTruthInAllThreeCases(t *testing
 	}
 }
 
+// TestWindowModeStatusFragment_LivePollReflectsCurrentTopology covers
+// GET /ui/settings/window-mode-status (ut-docs#1060) — the fragment the
+// Display card's status note now polls every 15s so it stops going stale
+// once the page has already rendered (the desktop shell attaching/detaching
+// while Settings is open, previously invisible without a reload). Same
+// three-way topology and marker strings as
+// TestSettingsDisplayWindowControlNoteTellsTheTruthInAllThreeCases above —
+// this just confirms the standalone fragment endpoint agrees with what the
+// full page renders, plus the self-arming poll trigger on the non-appliance
+// cases and its absence on the appliance case.
+func TestWindowModeStatusFragment_LivePollReflectsCurrentTopology(t *testing.T) {
+	const (
+		noShellMarker   = "until the Universal Till desktop app is running"
+		attachedMarker  = "running and holding this till"
+		applianceMarker = "driven by the till itself"
+		pollTrigger     = `hx-get="/ui/settings/window-mode-status"`
+	)
+	fetch := func(t *testing.T, mux *http.ServeMux) string {
+		t.Helper()
+		req := httptest.NewRequest(http.MethodGet, "/ui/settings/window-mode-status", nil)
+		req = auth.WithUser(req, mgrUser)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /ui/settings/window-mode-status = %d", rec.Code)
+		}
+		return rec.Body.String()
+	}
+
+	// Case 1: no shell attached (and not a Pi appliance) — the fragment
+	// still polls (this topology can change live) and shows only the
+	// no-shell note.
+	mux, _, _ := newFullAuthDeps(t)
+	body := fetch(t, mux)
+	if !strings.Contains(body, noShellMarker) {
+		t.Fatalf("no-shell fragment missing the %q note", noShellMarker)
+	}
+	if strings.Contains(body, applianceMarker) || strings.Contains(body, attachedMarker) {
+		t.Fatal("no-shell fragment shows a note for a topology this till is not in")
+	}
+	if !strings.Contains(body, pollTrigger) {
+		t.Fatal("no-shell fragment must keep polling — a shell can attach at any moment")
+	}
+
+	// Case 2: a desktop shell is holding a live control poll — still polls.
+	mux2, _, d2 := newFullAuthDeps(t)
+	d2.WindowCtl = common.NewShellPollWindowController(d2.Shell, nil)
+	d2.Shell.NoteSeen("normal")
+	body = fetch(t, mux2)
+	if !strings.Contains(body, attachedMarker) {
+		t.Fatalf("attached fragment missing the %q note", attachedMarker)
+	}
+	if strings.Contains(body, noShellMarker) || strings.Contains(body, applianceMarker) {
+		t.Fatal("attached fragment still shows a note for a topology this till is not in")
+	}
+	if !strings.Contains(body, pollTrigger) {
+		t.Fatal("attached fragment must keep polling — the shell can detach at any moment")
+	}
+
+	// Case 3: the Pi kiosk appliance — topology is fixed for the till's
+	// lifetime (decided once at pages.Init, per window_state_api.go's own
+	// doc comment), so the fragment renders once with NO poll trigger.
+	mux3, _, d3 := newFullAuthDeps(t)
+	d3.WindowCtl = common.NewKioskSystemdWindowController()
+	body = fetch(t, mux3)
+	if !strings.Contains(body, applianceMarker) {
+		t.Fatalf("Pi-appliance fragment missing the %q note", applianceMarker)
+	}
+	if strings.Contains(body, noShellMarker) || strings.Contains(body, attachedMarker) {
+		t.Fatal("Pi-appliance fragment claims a desktop-app dependency it does not have")
+	}
+	if strings.Contains(body, pollTrigger) {
+		t.Fatal("Pi-appliance fragment must NOT keep polling — its topology cannot change at runtime")
+	}
+}
+
 // TestSettingsShowsFiscalSignerMissingBanner covers the Settings-page
 // visibility-only banner for a DE shop declared system-of-record with no
 // active fiscal.sign.ask signer: shown for that condition, absent for a

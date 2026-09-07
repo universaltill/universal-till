@@ -38,6 +38,19 @@ func isPiKioskAppliance(wc common.WindowController) bool {
 	return ok
 }
 
+// windowControlTopology reports which of the three mutually-exclusive
+// window-control topologies (ADR-0064, ut-docs#1039 finding 8) this till is
+// actually in — shellAttached: a desktop shell is holding a live control
+// poll; piKioskAppliance: kiosk is real and systemd-driven, read off the
+// controller pages.Init actually wired. ut-docs#1060: extracted from the
+// main /settings render so GET /ui/settings/window-mode-status's own
+// standalone poll response computes the exact same two facts the same way
+// — one copy of this logic, not two independently-maintained ones. Nil-safe
+// for bare-Deps tests.
+func windowControlTopology(d *common.Deps) (shellAttached, piKioskAppliance bool) {
+	return d.Shell != nil && d.Shell.Attached(common.ShellAttachedWindow), isPiKioskAppliance(d.WindowCtl)
+}
+
 // shortDeviceID trims a long "till-<uuid>" id to a readable prefix for display.
 func shortDeviceID(id string) string {
 	if len(id) > 16 {
@@ -416,6 +429,9 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			sym, _ := barcodeReg.Lookup(id)
 			barcodeSymbologies = append(barcodeSymbologies, symbologyRow{ID: sym.ID, NameKey: sym.NameKey, Enabled: enabledSymbologySet[id]})
 		}
+		// ut-docs#1060: shared with GET /ui/settings/window-mode-status
+		// below via windowControlTopology, so both computations agree.
+		shellAttached, piKioskAppliance := windowControlTopology(d)
 		data := map[string]any{
 			"title":       "Settings",
 			"theme":       st.Theme,
@@ -483,11 +499,29 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// read off the controller pages.Init actually wired — the one
 			// fact that decides where exit-to-os and apply really go.
 			// Nil-safe for bare-Deps tests.
-			"shellAttached":      d.Shell != nil && d.Shell.Attached(common.ShellAttachedWindow),
-			"piKioskAppliance":   isPiKioskAppliance(d.WindowCtl),
+			"shellAttached":      shellAttached,
+			"piKioskAppliance":   piKioskAppliance,
 			"barcodeSymbologies": barcodeSymbologies,
 		}
 		httpx.Render("ui/pages/settings.html", data)(w, r)
+	})
+
+	// GET /ui/settings/window-mode-status (ut-docs#1060): the fragment
+	// window_mode_status.html's own root now self-polls, so the Display
+	// card's status note stays true after a desktop shell attaches or
+	// detaches while Settings is already open, instead of only being
+	// correct at the moment of page load. Same auth tier as the rest of
+	// /settings (normal signed-in session -- this is nested INSIDE an
+	// already-authenticated page, unlike GET /api/window-mode, the shell's
+	// own pre-login control channel this deliberately does not touch). No
+	// PIN/manager gate: this is the exact same read-only topology fact the
+	// full page already shows any signed-in user.
+	mux.HandleFunc("GET /ui/settings/window-mode-status", func(w http.ResponseWriter, r *http.Request) {
+		shellAttached, piKioskAppliance := windowControlTopology(d)
+		httpx.RenderPartial("ui/partials/window_mode_status.html", map[string]any{
+			"shellAttached":    shellAttached,
+			"piKioskAppliance": piKioskAppliance,
+		})(w, r)
 	})
 
 	// Preferred payment method: leads the tender UI (ADR-0016 manual mode —
