@@ -33,7 +33,7 @@ func TestFiscalChip_NotConfigured_RendersNothing(t *testing.T) {
 func TestFiscalChip_ConfiguredNoSales_RendersOK(t *testing.T) {
 	mux, dp := newFiscalTestDeps(t)
 	initPagesI18n(t)
-	if err := dp.Settings.Set(context.Background(), fiscal.KeyTSEConfigured, "true"); err != nil {
+	if err := dp.Settings.Set(context.Background(), fiscal.KeySigningDeviceConfigured, "true"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -80,7 +80,7 @@ func TestFiscalChip_ConfiguredNoSales_RendersOK(t *testing.T) {
 func TestFiscalChip_CashierSessionGetsNoLink(t *testing.T) {
 	mux, dp := newFiscalTestDeps(t)
 	initPagesI18n(t)
-	if err := dp.Settings.Set(context.Background(), fiscal.KeyTSEConfigured, "true"); err != nil {
+	if err := dp.Settings.Set(context.Background(), fiscal.KeySigningDeviceConfigured, "true"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -112,7 +112,7 @@ func TestFiscalChip_ConfiguredLastSaleGapped_RendersWarnWithCount(t *testing.T) 
 	mux, dp := newFiscalTestDeps(t)
 	initPagesI18n(t)
 	ctx := context.Background()
-	if err := dp.Settings.Set(ctx, fiscal.KeyTSEConfigured, "true"); err != nil {
+	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
@@ -167,7 +167,7 @@ func TestFiscalChip_ForeignJournaledSaleDoesNotClearWarn(t *testing.T) {
 	mux, dp := newFiscalTestDeps(t)
 	initPagesI18n(t)
 	ctx := context.Background()
-	if err := dp.Settings.Set(ctx, fiscal.KeyTSEConfigured, "true"); err != nil {
+	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dp.Engine.Scan("ABC"); err != nil {

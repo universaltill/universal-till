@@ -133,9 +133,9 @@ func TestFiscalGate_RefundNonGermanShopUnaffected(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newRefundFiscalTestDeps(t)
 	for k, v := range map[string]string{
-		fiscal.KeySystemOfRecord:  "true",
-		fiscal.KeyTSEConfigured:   "false",
-		fiscal.KeyTSEFailingSince: "2026-08-14T09:00:00Z",
+		fiscal.KeySystemOfRecord:            "true",
+		fiscal.KeySigningDeviceConfigured:   "false",
+		fiscal.KeySigningDeviceFailingSince: "2026-08-14T09:00:00Z",
 	} {
 		if err := dp.Settings.Set(t.Context(), k, v); err != nil {
 			t.Fatal(err)
@@ -202,7 +202,7 @@ func TestFiscalGate_RefundScreenBannerDuringOverride(t *testing.T) {
 	}
 
 	// Active override: banner present.
-	req := httptest.NewRequest(http.MethodPost, "/api/fiscal/tse-override", strings.NewReader(validOverrideBody("")))
+	req := httptest.NewRequest(http.MethodPost, "/api/fiscal/signing-override", strings.NewReader(validOverrideBody("")))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req = auth.WithUser(req, auth.User{ID: "user1", Role: "admin"})
@@ -230,7 +230,7 @@ func TestFiscalGate_RefundOverrideUnblocksAndAudits(t *testing.T) {
 		t.Fatalf("expected the pre-override refund to be refused, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/fiscal/tse-override", strings.NewReader(validOverrideBody("")))
+	req := httptest.NewRequest(http.MethodPost, "/api/fiscal/signing-override", strings.NewReader(validOverrideBody("")))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req = auth.WithUser(req, auth.User{ID: "user1", Role: "admin"})

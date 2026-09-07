@@ -104,14 +104,14 @@ func TestEvaluateGate_TurkeySystemOfRecordWithoutSignerIsHardBlocked(t *testing.
 
 // The never-configured branch must not be escapable via a (fabricated)
 // override window — there is literally no code path that reads the override
-// keys before the tse_configured check.
+// keys before the signing_device_configured check.
 func TestEvaluateGate_NeverConfiguredIgnoresOverrideKeys(t *testing.T) {
 	g, err := EvaluateGate(context.Background(), fakeSettings{vals: map[string]string{
-		KeySystemOfRecord: "true",
-		KeyTSEConfigured:  "false",
-		KeyOverrideUntil:  time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
-		KeyOverrideReason: "fabricated",
-		KeyOverrideActor:  "user1",
+		KeySystemOfRecord:          "true",
+		KeySigningDeviceConfigured: "false",
+		KeyOverrideUntil:           time.Now().Add(time.Hour).UTC().Format(time.RFC3339),
+		KeyOverrideReason:          "fabricated",
+		KeyOverrideActor:           "user1",
 	}}, "DE", time.Now())
 	if err != nil {
 		t.Fatalf("EvaluateGate: %v", err)
@@ -123,8 +123,8 @@ func TestEvaluateGate_NeverConfiguredIgnoresOverrideKeys(t *testing.T) {
 
 func TestEvaluateGate_ConfiguredHealthyIsAllowed(t *testing.T) {
 	g, err := EvaluateGate(context.Background(), fakeSettings{vals: map[string]string{
-		KeySystemOfRecord: "true",
-		KeyTSEConfigured:  "true",
+		KeySystemOfRecord:          "true",
+		KeySigningDeviceConfigured: "true",
 	}}, "DE", time.Now())
 	if err != nil || g.Decision != Allowed {
 		t.Fatalf("healthy TSE: got (%v, %v), want (Allowed, nil)", g.Decision, err)
@@ -133,9 +133,9 @@ func TestEvaluateGate_ConfiguredHealthyIsAllowed(t *testing.T) {
 
 func TestEvaluateGate_FailingTSEWithoutOverrideIsBlocked(t *testing.T) {
 	g, err := EvaluateGate(context.Background(), fakeSettings{vals: map[string]string{
-		KeySystemOfRecord:  "true",
-		KeyTSEConfigured:   "true",
-		KeyTSEFailingSince: "2026-08-14T09:00:00Z",
+		KeySystemOfRecord:            "true",
+		KeySigningDeviceConfigured:   "true",
+		KeySigningDeviceFailingSince: "2026-08-14T09:00:00Z",
 	}}, "DE", time.Now())
 	if err != nil {
 		t.Fatalf("EvaluateGate: %v", err)
@@ -149,12 +149,12 @@ func TestEvaluateGate_ActiveOverrideAllowsAndCarriesAudit(t *testing.T) {
 	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	until := now.Add(30 * time.Minute)
 	g, err := EvaluateGate(context.Background(), fakeSettings{vals: map[string]string{
-		KeySystemOfRecord:  "true",
-		KeyTSEConfigured:   "true",
-		KeyTSEFailingSince: "2026-08-14T09:00:00Z",
-		KeyOverrideUntil:   until.Format(time.RFC3339),
-		KeyOverrideReason:  "provider outage, tickets queueing",
-		KeyOverrideActor:   "admin1",
+		KeySystemOfRecord:            "true",
+		KeySigningDeviceConfigured:   "true",
+		KeySigningDeviceFailingSince: "2026-08-14T09:00:00Z",
+		KeyOverrideUntil:             until.Format(time.RFC3339),
+		KeyOverrideReason:            "provider outage, tickets queueing",
+		KeyOverrideActor:             "admin1",
 	}}, "DE", now)
 	if err != nil {
 		t.Fatalf("EvaluateGate: %v", err)
@@ -175,10 +175,10 @@ func TestEvaluateGate_ActiveOverrideAllowsAndCarriesAudit(t *testing.T) {
 func TestEvaluateGate_ExpiredOverrideBlocksAgain(t *testing.T) {
 	until := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
 	vals := map[string]string{
-		KeySystemOfRecord:  "true",
-		KeyTSEConfigured:   "true",
-		KeyTSEFailingSince: "2026-08-14T09:00:00Z",
-		KeyOverrideUntil:   until.Format(time.RFC3339),
+		KeySystemOfRecord:            "true",
+		KeySigningDeviceConfigured:   "true",
+		KeySigningDeviceFailingSince: "2026-08-14T09:00:00Z",
+		KeyOverrideUntil:             until.Format(time.RFC3339),
 	}
 
 	// One second before expiry: still allowed.
@@ -197,10 +197,10 @@ func TestEvaluateGate_ExpiredOverrideBlocksAgain(t *testing.T) {
 // A malformed override timestamp fails closed (blocked), never open.
 func TestEvaluateGate_MalformedOverrideUntilFailsClosed(t *testing.T) {
 	g, err := EvaluateGate(context.Background(), fakeSettings{vals: map[string]string{
-		KeySystemOfRecord:  "true",
-		KeyTSEConfigured:   "true",
-		KeyTSEFailingSince: "2026-08-14T09:00:00Z",
-		KeyOverrideUntil:   "not-a-timestamp",
+		KeySystemOfRecord:            "true",
+		KeySigningDeviceConfigured:   "true",
+		KeySigningDeviceFailingSince: "2026-08-14T09:00:00Z",
+		KeyOverrideUntil:             "not-a-timestamp",
 	}}, "DE", time.Now())
 	if err != nil {
 		t.Fatalf("EvaluateGate: %v", err)

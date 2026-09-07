@@ -70,7 +70,7 @@ type elevationCheck struct {
 // that, same content-type branching every existing handler already does;
 // checkOrElevate itself never touches the request body).
 //
-// Modeled directly on fiscal_api.go's createTSEOverride and
+// Modeled directly on fiscal_api.go's createSigningOverride and
 // inventory_api.go's CreateNegativeInventoryOverride (their bespoke,
 // pre-#557 manager-PIN-elevation precedents — both explicitly out of scope
 // to modify, ADR-0052), generalized to any canPerform() action rather than

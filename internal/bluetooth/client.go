@@ -378,6 +378,17 @@ func devices(objs managedObjects) []Device {
 			Connected: boolProp(props, "Connected"),
 		})
 	}
+	sortDevicesByName(out)
+	return out
+}
+
+// sortDevicesByName is the ordering Client.ListDevices/Scan document
+// ("sorted by name"): named devices before nameless ones, then
+// case-insensitive alphabetical, then by address as the final tiebreaker —
+// shared by every Client implementation (this D-Bus path above, and the
+// Android bridge path in android_bridge.go) so the page layer sees one
+// consistent order regardless of backend.
+func sortDevicesByName(out []Device) {
 	sort.Slice(out, func(i, j int) bool {
 		if out[i].Name != out[j].Name {
 			// Named devices before nameless ones, then alphabetical.
@@ -388,7 +399,6 @@ func devices(objs managedObjects) []Device {
 		}
 		return out[i].Address < out[j].Address
 	})
-	return out
 }
 
 // findDevice locates the Device1 object with this address (any case).

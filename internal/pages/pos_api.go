@@ -56,7 +56,7 @@ func (e *fiscalNeverConfiguredError) Error() string {
 // the shop's configured fiscal-signing device (Germany's TSE, or the
 // equivalent for the next hard-gated market) is known-failing and no owner
 // override window is currently active. Unlike fiscalNeverConfiguredError, an
-// admin can lift this via POST /api/fiscal/tse-override (fiscal_api.go).
+// admin can lift this via POST /api/fiscal/signing-override (fiscal_api.go).
 type fiscalTSEFailingError struct{}
 
 func (e *fiscalTSEFailingError) Error() string {

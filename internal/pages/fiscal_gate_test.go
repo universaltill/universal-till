@@ -145,9 +145,9 @@ func TestFiscalGate_NonGermanShopUnaffected(t *testing.T) {
 	// Country stays the GB default. Set every fiscal key to the most
 	// blocking combination — none of it may matter outside a gated market.
 	for k, v := range map[string]string{
-		fiscal.KeySystemOfRecord:  "true",
-		fiscal.KeyTSEConfigured:   "false",
-		fiscal.KeyTSEFailingSince: "2026-08-14T09:00:00Z",
+		fiscal.KeySystemOfRecord:            "true",
+		fiscal.KeySigningDeviceConfigured:   "false",
+		fiscal.KeySigningDeviceFailingSince: "2026-08-14T09:00:00Z",
 	} {
 		if err := dp.Settings.Set(ctx, k, v); err != nil {
 			t.Fatal(err)
@@ -170,10 +170,10 @@ func TestFiscalGate_FailingTSEBlockedWithoutOverride(t *testing.T) {
 	mux, dp := newFiscalTestDeps(t)
 	makeGermanSystemOfRecord(t, dp)
 	ctx := context.Background()
-	if err := dp.Settings.Set(ctx, fiscal.KeyTSEConfigured, "true"); err != nil {
+	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
 		t.Fatal(err)
 	}
-	if err := dp.Settings.Set(ctx, fiscal.KeyTSEFailingSince, "2026-08-14T09:00:00Z"); err != nil {
+	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceFailingSince, "2026-08-14T09:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
@@ -226,7 +226,7 @@ func TestFiscalGate_RefusalIsTranslated(t *testing.T) {
 // grantOverride posts a fully-valid override request as the given user.
 func grantOverride(t *testing.T, mux *http.ServeMux, u auth.User, body string) *httptest.ResponseRecorder {
 	t.Helper()
-	req := httptest.NewRequest(http.MethodPost, "/api/fiscal/tse-override", strings.NewReader(body))
+	req := httptest.NewRequest(http.MethodPost, "/api/fiscal/signing-override", strings.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	if u.ID != "" {
@@ -248,10 +248,10 @@ func seedFailingConfiguredTSE(t *testing.T, dp *common.Deps) {
 	t.Helper()
 	ctx := context.Background()
 	makeGermanSystemOfRecord(t, dp)
-	if err := dp.Settings.Set(ctx, fiscal.KeyTSEConfigured, "true"); err != nil {
+	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
 		t.Fatal(err)
 	}
-	if err := dp.Settings.Set(ctx, fiscal.KeyTSEFailingSince, "2026-08-14T09:00:00Z"); err != nil {
+	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceFailingSince, "2026-08-14T09:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -397,7 +397,7 @@ func TestFiscalOverride_PINPaths(t *testing.T) {
 func TestFiscalOverride_UnreachableWhenNeverConfigured(t *testing.T) {
 	mux, dp := newFiscalTestDeps(t)
 	makeGermanSystemOfRecord(t, dp)
-	// fiscal.tse_configured deliberately absent/false.
+	// fiscal.signing_device_configured deliberately absent/false.
 	adminHash, err := auth.HashPIN("135790")
 	if err != nil {
 		t.Fatal(err)
@@ -550,32 +550,32 @@ func TestFiscalSettings_UpsertGuards(t *testing.T) {
 		}
 	})
 
-	t.Run("tse_failing_since is not settable via this endpoint, even by admin", func(t *testing.T) {
+	t.Run("signing_device_failing_since is not settable via this endpoint, even by admin", func(t *testing.T) {
 		// ADR-0048 Decision 1: this key is "not operator-settable in this
 		// card" — no UI control at all, set or clear. Written only by
 		// tests directly, or a future fiscal.sign.ask failure callback
 		// (#675). An admin trying to set OR clear it through the generic
 		// editor must be refused, not silently accepted.
 		mux, dp := dp2mux(t)
-		rec := post(mux, admin, fiscal.KeyTSEFailingSince, "2026-08-14T09:00:00Z")
+		rec := post(mux, admin, fiscal.KeySigningDeviceFailingSince, "2026-08-14T09:00:00Z")
 		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400 setting tse_failing_since via upsert, got %d: %s", rec.Code, rec.Body.String())
+			t.Fatalf("expected 400 setting signing_device_failing_since via upsert, got %d: %s", rec.Code, rec.Body.String())
 		}
-		if v, ok, _ := dp.Settings.Get(context.Background(), fiscal.KeyTSEFailingSince); ok && v != "" {
-			t.Fatalf("tse_failing_since must not be stored via upsert, got %q", v)
+		if v, ok, _ := dp.Settings.Get(context.Background(), fiscal.KeySigningDeviceFailingSince); ok && v != "" {
+			t.Fatalf("signing_device_failing_since must not be stored via upsert, got %q", v)
 		}
 
 		// Also refused when the key already has a (test-seeded) value and
 		// the request tries to clear it.
-		if err := dp.Settings.Set(context.Background(), fiscal.KeyTSEFailingSince, "2026-08-14T09:00:00Z"); err != nil {
+		if err := dp.Settings.Set(context.Background(), fiscal.KeySigningDeviceFailingSince, "2026-08-14T09:00:00Z"); err != nil {
 			t.Fatal(err)
 		}
-		rec = post(mux, admin, fiscal.KeyTSEFailingSince, "")
+		rec = post(mux, admin, fiscal.KeySigningDeviceFailingSince, "")
 		if rec.Code != http.StatusBadRequest {
-			t.Fatalf("expected 400 clearing tse_failing_since via upsert, got %d: %s", rec.Code, rec.Body.String())
+			t.Fatalf("expected 400 clearing signing_device_failing_since via upsert, got %d: %s", rec.Code, rec.Body.String())
 		}
-		if v, _, _ := dp.Settings.Get(context.Background(), fiscal.KeyTSEFailingSince); v != "2026-08-14T09:00:00Z" {
-			t.Fatalf("tse_failing_since must be untouched by the refused clear, got %q", v)
+		if v, _, _ := dp.Settings.Get(context.Background(), fiscal.KeySigningDeviceFailingSince); v != "2026-08-14T09:00:00Z" {
+			t.Fatalf("signing_device_failing_since must be untouched by the refused clear, got %q", v)
 		}
 	})
 }

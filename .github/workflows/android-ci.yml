@@ -61,20 +61,28 @@ jobs:
           fi
           echo "BASE=$BASE" >> "$GITHUB_ENV"
           git fetch --depth=1 origin "$BASE" || true
-      - name: Determine whether this change touches android/**
+      - name: Determine whether this change touches android/** or mobile/**
         id: filter
+        # ut-docs#1721 review finding: mobile/** was missing from this
+        # filter, so a change to the gomobile-bind package itself (the
+        # exact thing this workflow exists to verify — the Go<->Kotlin
+        # bind, not just the Kotlin compile) skipped the whole job. That
+        # let a real bug through clean: mobile.SetBluetoothBridge referenced
+        # a type gobind couldn't see and was silently dropped from the
+        # generated binding, and this workflow never ran to catch it
+        # because the diff never touched android/**.
         run: |
           set -euo pipefail
           if git cat-file -e "${BASE}^{commit}" 2>/dev/null; then
             changed="$(git diff --name-only "$BASE" "${{ github.sha }}")"
           else
-            # Can't prove this push is unrelated to android/** (no base
-            # to diff against) -- never silently skip; run the real
-            # compile instead of trusting an unprovable "no match."
+            # Can't prove this push is unrelated to android/**/mobile/**
+            # (no base to diff against) -- never silently skip; run the
+            # real compile instead of trusting an unprovable "no match."
             changed="android/unknown-cannot-diff"
           fi
           echo "$changed"
-          if printf '%s\n' "$changed" | grep -q '^android/'; then
+          if printf '%s\n' "$changed" | grep -qE '^(android|mobile)/'; then
             echo "match=true" >> "$GITHUB_OUTPUT"
           else
             echo "match=false" >> "$GITHUB_OUTPUT"
