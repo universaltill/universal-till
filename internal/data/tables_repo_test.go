@@ -946,3 +946,141 @@ func TestReleaseTableClaimForTill_OnlyDeletesOwnClaim(t *testing.T) {
 		t.Fatalf("a till-scoped release must never delete the local '' claim, got %q (ok=%v)", owner, ok)
 	}
 }
+
+// TestReleaseAllTableClaimsForTill_DropsOnlyThatTillsClaims (ut-docs#1712):
+// the boot-time "release everything of mine" primitive behind POST
+// /api/sync/tables/release-all. Unlike ReleaseTableClaimForTill (one table,
+// called by the owning basket's own release/hold/move lifecycle), this must
+// drop EVERY table the calling till holds in one call — the residual
+// ut-docs#1703's own review left open (finding 7): a till that reboots and
+// never revisits a specific table again keeps its orphan on the primary
+// forever, because ClaimTableForTill's staleness check only ever runs when
+// someone attempts a NEW claim on that SAME table, and the till looks
+// "online" again the moment it talks to the primary about anything at all.
+func TestReleaseAllTableClaimsForTill_DropsOnlyThatTillsClaims(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Format(time.RFC3339)
+	seedTill(t, dbo, "till-a", now)
+	seedTill(t, dbo, "till-b", now)
+
+	a1, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T1: %v", err)
+	}
+	a2, err := repo.CreateTable(ctx, "T2", "", 4, "rect", 200, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T2: %v", err)
+	}
+	b1, err := repo.CreateTable(ctx, "T3", "", 4, "rect", 300, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T3: %v", err)
+	}
+	local, err := repo.CreateTable(ctx, "T4", "", 4, "rect", 400, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T4: %v", err)
+	}
+	if claimed, err := repo.ClaimTableForTill(ctx, a1, "till-a", time.Now().Add(-2*time.Minute)); err != nil || !claimed {
+		t.Fatalf("claim a1 for till-a: claimed=%v err=%v", claimed, err)
+	}
+	if claimed, err := repo.ClaimTableForTill(ctx, a2, "till-a", time.Now().Add(-2*time.Minute)); err != nil || !claimed {
+		t.Fatalf("claim a2 for till-a: claimed=%v err=%v", claimed, err)
+	}
+	if claimed, err := repo.ClaimTableForTill(ctx, b1, "till-b", time.Now().Add(-2*time.Minute)); err != nil || !claimed {
+		t.Fatalf("claim b1 for till-b: claimed=%v err=%v", claimed, err)
+	}
+	// The primary's own local claim ('' till) must never be touched by a
+	// till-scoped release-all, same invariant ReleaseTableClaimForTill pins.
+	if claimed, err := repo.ClaimTable(ctx, local); err != nil || !claimed {
+		t.Fatalf("local ClaimTable: claimed=%v err=%v", claimed, err)
+	}
+
+	if err := repo.ReleaseAllTableClaimsForTill(ctx, "till-a", nil); err != nil {
+		t.Fatalf("ReleaseAllTableClaimsForTill: %v", err)
+	}
+
+	if _, ok := claimTillOf(t, dbo, a1); ok {
+		t.Error("till-a's claim on T1 must be gone")
+	}
+	if _, ok := claimTillOf(t, dbo, a2); ok {
+		t.Error("till-a's claim on T2 must be gone")
+	}
+	if owner, ok := claimTillOf(t, dbo, b1); !ok || owner != "till-b" {
+		t.Fatalf("till-b's claim on T3 must survive till-a's release-all, got %q (ok=%v)", owner, ok)
+	}
+	if owner, ok := claimTillOf(t, dbo, local); !ok || owner != "" {
+		t.Fatalf("the primary's own local claim on T4 must survive, got %q (ok=%v)", owner, ok)
+	}
+
+	// Idempotent — nothing left to release, still no error.
+	if err := repo.ReleaseAllTableClaimsForTill(ctx, "till-a", nil); err != nil {
+		t.Fatalf("repeat ReleaseAllTableClaimsForTill: %v", err)
+	}
+}
+
+// TestReleaseAllTableClaimsForTill_KeepListSurvivesHeldOrders (ut-docs#1712,
+// independent review 2026-09-07, blocker 1): a held order's table_claims row
+// is deliberately kept alive through the whole park (ut-docs#1704) and DOES
+// survive a restart (held_sales is durable) — unlike a live basket's, which
+// never does. An unconditional release-all would delete that row too and
+// rely on a best-effort network re-claim to restore it, with a real window
+// where the table sits genuinely unclaimed on the primary. keepTableIDs is
+// the fix: a table in the list is untouched even though it belongs to the
+// same till being released.
+func TestReleaseAllTableClaimsForTill_KeepListSurvivesHeldOrders(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC().Format(time.RFC3339)
+	seedTill(t, dbo, "till-a", now)
+
+	held, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T1: %v", err)
+	}
+	orphan, err := repo.CreateTable(ctx, "T2", "", 4, "rect", 200, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T2: %v", err)
+	}
+	if claimed, err := repo.ClaimTableForTill(ctx, held, "till-a", time.Now().Add(-2*time.Minute)); err != nil || !claimed {
+		t.Fatalf("claim held table for till-a: claimed=%v err=%v", claimed, err)
+	}
+	if claimed, err := repo.ClaimTableForTill(ctx, orphan, "till-a", time.Now().Add(-2*time.Minute)); err != nil || !claimed {
+		t.Fatalf("claim orphan table for till-a: claimed=%v err=%v", claimed, err)
+	}
+
+	if err := repo.ReleaseAllTableClaimsForTill(ctx, "till-a", []string{held}); err != nil {
+		t.Fatalf("ReleaseAllTableClaimsForTill: %v", err)
+	}
+
+	if owner, ok := claimTillOf(t, dbo, held); !ok || owner != "till-a" {
+		t.Fatalf("a table in the keep list must survive, got %q (ok=%v)", owner, ok)
+	}
+	if _, ok := claimTillOf(t, dbo, orphan); ok {
+		t.Error("a table NOT in the keep list must still be released")
+	}
+}
+
+// TestReleaseAllTableClaimsForTill_EmptyTillIDIsNoOp: the "" till id is the
+// PRIMARY's own local-claim convention everywhere else in this file
+// (ClaimTable/ReleaseTableClaim) — this method's only caller (the sync
+// handler) always supplies a real till's bearer-resolved id, but a bare
+// unscoped DELETE would otherwise let an empty id silently wipe every till's
+// local claim in the shop. Guarded explicitly rather than relying on the
+// caller never getting it wrong.
+func TestReleaseAllTableClaimsForTill_EmptyTillIDIsNoOp(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+	id, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	if claimed, err := repo.ClaimTable(ctx, id); err != nil || !claimed {
+		t.Fatalf("local ClaimTable: claimed=%v err=%v", claimed, err)
+	}
+	if err := repo.ReleaseAllTableClaimsForTill(ctx, "", nil); err != nil {
+		t.Fatalf("ReleaseAllTableClaimsForTill(\"\"): %v", err)
+	}
+	if owner, ok := claimTillOf(t, dbo, id); !ok || owner != "" {
+		t.Fatalf("an empty till id must never release the local '' claim, got %q (ok=%v)", owner, ok)
+	}
+}

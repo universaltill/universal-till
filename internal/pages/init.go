@@ -270,27 +270,77 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		Shell:       shellChannel,
 	}
 
-	// Boot re-claim: re-affirm every currently-parked order's table claim
-	// (ut-docs#1704, independent review 2026-09-07) now that dp exists —
-	// claimTableWriteThrough needs it for the replica half. The sweep above
-	// (ClearLocalTableClaims) unconditionally wipes every till_id='' row,
-	// which is correct for an abandoned live-basket pick (that sweep's whole
-	// point) but wrong for a held order's: its held_sales row survives the
-	// restart on purpose (durability, not a leftover — see that sweep's own
-	// comment), yet nothing re-created its table_claims mirror. Re-claiming
-	// restores both this till's own local row AND, on a replica, re-affirms
-	// the PRIMARY's — the more important half: a restart is exactly the
-	// kind of >tillClaimTTL gap that can have let the primary's TTL
-	// reconciliation hand the table to another till while this one was
-	// dark, and only a genuine claim ATTEMPT (not a bare local re-insert)
-	// can surface that conflict rather than silently pretending it away.
-	// Best-effort and non-fatal — logged, never blocks boot, same
-	// offline-first stance as the sweep above; a failed re-claim here just
-	// means this table's cross-till visibility stays wrong until the next
-	// restart or a manual Free-table, not that the till fails to start.
+	// Boot-time release-all (ut-docs#1712), then boot re-claim (ut-docs#1704)
+	// — two steps sharing one list of this till's currently-held orders,
+	// fetched once here. Order matters: release-all must run BEFORE
+	// re-claim, not after (see release-all's own comment for why the
+	// reverse ordering was tried and rejected).
+	//
+	// Release-all tells the primary to drop every claim this till owns
+	// EXCEPT the tables in keepTableIDs (this till's own held orders,
+	// computed below), clearing whatever a crashed LIVE (not-yet-held)
+	// basket left behind on a table nobody — including this same till —
+	// ever revisits again. Without it, that claim sits orphaned on the
+	// primary forever: ClaimTableForTill's staleness check only ever runs
+	// when someone attempts a NEW claim on that SAME table, and this till
+	// looks "online" again the moment it talks to the primary about
+	// anything at all (tills.last_seen_at) — so the staleness disjunct
+	// never fires (independent review of ut-docs#1703/#1704, finding 7,
+	// the recommended follow-up left for this card).
+	//
+	// keepTableIDs is NOT optional here — a held order's table_claims row
+	// survives a restart BY DESIGN (ut-docs#1704: it's the only signal that
+	// makes a parked order's occupancy visible cross-till) and must never
+	// be wiped just because release-all can't otherwise tell it apart from
+	// a genuine live-basket orphan. An earlier version of this call omitted
+	// the keep list and relied on the re-claim loop below to restore a held
+	// order's claim from nothing afterward; independent review (2026-09-07)
+	// found that turns a durable, self-healing row into a delete-then-
+	// restore-over-the-network window with no rollback (see
+	// POSRepo.ReleaseAllTableClaimsForTill's doc comment for the full
+	// failure scenario this closes). Best-effort and non-fatal, same
+	// offline-first stance as every other step here:
+	// releaseAllTableClaimsOnPrimary already logs its own failure reason
+	// internally (not a replica, or any network/timeout/non-200/
+	// malformed-body failure) — there is nothing further to do locally on
+	// failure, since the local mirror was already cleared by
+	// ClearLocalTableClaims above regardless of whether the primary is
+	// reachable.
+	//
+	// Boot re-claim (ut-docs#1704, independent review 2026-09-07): with
+	// release-all now keep-list-scoped, a held order's PRIMARY-side claim
+	// never actually left in the first place — this loop's job is the
+	// refresh/self-heal it always was, not a from-nothing restore. The
+	// sweep further above (ClearLocalTableClaims) unconditionally wipes
+	// every till_id='' row, which is correct for an abandoned live-basket
+	// pick (that sweep's whole point) but wrong for a held order's: its
+	// held_sales row survives the restart on purpose (durability, not a
+	// leftover — see that sweep's own comment), yet nothing re-created its
+	// LOCAL table_claims mirror. Re-claiming restores this till's own local
+	// row and re-affirms the primary's (refreshing claimed_at, and
+	// self-healing the rare case where release-all's own primary round-trip
+	// raced something else). Best-effort and non-fatal — logged, never
+	// blocks boot, same offline-first stance as the sweep above; a failed
+	// re-claim here just means this table's cross-till visibility stays
+	// wrong until the next restart or a manual Free-table, not that the
+	// till fails to start.
+	// A held-sales list failure skips BOTH steps below, not just re-claim:
+	// without the list, release-all cannot build a keep list, and calling
+	// it with an empty one would wipe a held order's claim exactly like the
+	// unconditional version this diff replaced — failing closed here (skip
+	// release-all rather than guess an empty keep list) is what keeps that
+	// guarantee intact even on this rare error path.
 	if held, err := data.NewHeldSalesRepo(db).List(ctx); err != nil {
-		log.Errorf("boot re-claim: list held sales: %v", err)
+		log.Errorf("boot release-all/re-claim: list held sales: %v", err)
 	} else {
+		keepTableIDs := make([]string, 0, len(held))
+		for _, h := range held {
+			if h.TableID != "" {
+				keepTableIDs = append(keepTableIDs, h.TableID)
+			}
+		}
+		_ = releaseAllTableClaimsOnPrimary(ctx, dp, tableClaimProxyClient, keepTableIDs)
+
 		posRepo := data.NewPOSRepo(db)
 		for _, h := range held {
 			if h.TableID == "" {

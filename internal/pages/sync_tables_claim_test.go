@@ -38,6 +38,24 @@ func newSyncTablesClaimTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *db
 	return mux, dp, dbase
 }
 
+// postSyncReleaseAll posts to /api/sync/tables/release-all with zero or more
+// repeated keep_table_id form values — the caller's own currently-held-order
+// table ids that must survive the release (ut-docs#1712).
+func postSyncReleaseAll(mux *http.ServeMux, bearer string, keepTableIDs ...string) *httptest.ResponseRecorder {
+	form := url.Values{}
+	for _, id := range keepTableIDs {
+		form.Add("keep_table_id", id)
+	}
+	req := httptest.NewRequest(http.MethodPost, "/api/sync/tables/release-all", strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	if bearer != "" {
+		req.Header.Set("Authorization", "Bearer "+bearer)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
 func postSyncTableClaim(mux *http.ServeMux, action, tableID, bearer string) *httptest.ResponseRecorder {
 	form := url.Values{"table_id": {tableID}}
 	req := httptest.NewRequest(http.MethodPost, "/api/sync/tables/"+action, strings.NewReader(form.Encode()))
@@ -210,6 +228,124 @@ func TestSyncTablesClaim_StaleTillClaimIsTakenOver(t *testing.T) {
 	}
 	if owner != till3 {
 		t.Fatalf("after takeover the claim must belong to till 3 (%q), got %q", till3, owner)
+	}
+}
+
+// TestSyncTablesClaim_ReleaseAllRequiresBearer mirrors
+// TestSyncTablesClaim_RequiresBearer for the release-all endpoint, which
+// takes no table_id form field at all.
+func TestSyncTablesClaim_ReleaseAllRequiresBearer(t *testing.T) {
+	mux, dp, _ := newSyncTablesClaimTestDeps(t)
+	seedSyncOrdersTill(t, dp, "Till 2", "bearer-t2")
+
+	if rec := postSyncReleaseAll(mux, ""); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("no bearer: status = %d, want 401", rec.Code)
+	}
+	if rec := postSyncReleaseAll(mux, "wrong"); rec.Code != http.StatusUnauthorized {
+		t.Fatalf("bad bearer: status = %d, want 401", rec.Code)
+	}
+}
+
+// TestSyncTablesClaim_ReleaseAllDropsEveryTableTheCallingTillHolds
+// (ut-docs#1712): a replica calls this once at boot, before re-claiming its
+// held orders, to clear whatever a crashed live basket left behind on a
+// table it may never revisit again — the residual left by ut-docs#1703's
+// own review (finding 7). Unlike /release (one table_id), this takes none:
+// every table the calling till holds must go in one call, and it must never
+// touch another till's claims or the primary's own local (”) claim.
+func TestSyncTablesClaim_ReleaseAllDropsEveryTableTheCallingTillHolds(t *testing.T) {
+	mux, dp, dbase := newSyncTablesClaimTestDeps(t)
+	seedSyncOrdersTill(t, dp, "Till 2", "bearer-t2")
+	seedSyncOrdersTill(t, dp, "Till 3", "bearer-t3")
+
+	repo := data.NewPOSRepo(dbase.DB)
+	t1, err := repo.CreateTable(context.Background(), "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T1: %v", err)
+	}
+	t2, err := repo.CreateTable(context.Background(), "T2", "", 4, "rect", 200, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T2: %v", err)
+	}
+	t3, err := repo.CreateTable(context.Background(), "T3", "", 4, "rect", 300, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T3: %v", err)
+	}
+
+	if resp := decodeSyncTableClaim(t, postSyncTableClaim(mux, "claim", t1, "bearer-t2")); !resp.Data.Claimed {
+		t.Fatalf("till 2 claim T1: %+v", resp)
+	}
+	if resp := decodeSyncTableClaim(t, postSyncTableClaim(mux, "claim", t2, "bearer-t2")); !resp.Data.Claimed {
+		t.Fatalf("till 2 claim T2: %+v", resp)
+	}
+	if resp := decodeSyncTableClaim(t, postSyncTableClaim(mux, "claim", t3, "bearer-t3")); !resp.Data.Claimed {
+		t.Fatalf("till 3 claim T3: %+v", resp)
+	}
+
+	// Till 2 "reboots": still enrolled and about to become "online" again
+	// (this very call refreshes its last_seen_at), but it never revisits T1
+	// or T2 to re-claim them — the exact gap ClaimTableForTill's per-table
+	// staleness check cannot close on its own.
+	rec := postSyncReleaseAll(mux, "bearer-t2")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("release-all: status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	if resp := decodeSyncTableClaim(t, rec); !resp.Data.Released || resp.Error != nil {
+		t.Fatalf("release-all: want released=true error=null, got %+v", resp)
+	}
+
+	if free, err := repo.IsTableFree(context.Background(), t1, ""); err != nil || !free {
+		t.Fatalf("till 2's claim on T1 must be gone after its release-all, free=%v err=%v", free, err)
+	}
+	if free, err := repo.IsTableFree(context.Background(), t2, ""); err != nil || !free {
+		t.Fatalf("till 2's claim on T2 must be gone after its release-all, free=%v err=%v", free, err)
+	}
+	if free, err := repo.IsTableFree(context.Background(), t3, ""); err != nil || free {
+		t.Fatalf("till 3's claim on T3 must survive till 2's release-all, free=%v err=%v", free, err)
+	}
+
+	// Idempotent — nothing left to release, still 200/released.
+	if rec := postSyncReleaseAll(mux, "bearer-t2"); rec.Code != http.StatusOK {
+		t.Fatalf("repeat release-all: status = %d, want 200", rec.Code)
+	}
+}
+
+// TestSyncTablesClaim_ReleaseAllKeepsHeldOrdersTable (ut-docs#1712,
+// independent review 2026-09-07, blocker 1): a held order's table_claims row
+// survives a restart BY DESIGN (ut-docs#1704) and must never be dropped by
+// this endpoint just because it can't otherwise tell a legitimate held-order
+// claim apart from a genuinely orphaned live-basket one. keep_table_id is
+// the caller's declaration of which of its own tables are NOT orphans.
+func TestSyncTablesClaim_ReleaseAllKeepsHeldOrdersTable(t *testing.T) {
+	mux, dp, dbase := newSyncTablesClaimTestDeps(t)
+	seedSyncOrdersTill(t, dp, "Till 2", "bearer-t2")
+
+	repo := data.NewPOSRepo(dbase.DB)
+	held, err := repo.CreateTable(context.Background(), "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T1: %v", err)
+	}
+	orphan, err := repo.CreateTable(context.Background(), "T2", "", 4, "rect", 200, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T2: %v", err)
+	}
+	if resp := decodeSyncTableClaim(t, postSyncTableClaim(mux, "claim", held, "bearer-t2")); !resp.Data.Claimed {
+		t.Fatalf("claim held table: %+v", resp)
+	}
+	if resp := decodeSyncTableClaim(t, postSyncTableClaim(mux, "claim", orphan, "bearer-t2")); !resp.Data.Claimed {
+		t.Fatalf("claim orphan table: %+v", resp)
+	}
+
+	rec := postSyncReleaseAll(mux, "bearer-t2", held)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("release-all: status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+
+	if free, err := repo.IsTableFree(context.Background(), held, ""); err != nil || free {
+		t.Fatalf("the held order's table must survive release-all, free=%v err=%v", free, err)
+	}
+	if free, err := repo.IsTableFree(context.Background(), orphan, ""); err != nil || !free {
+		t.Fatalf("a table NOT in the keep list must still be released, free=%v err=%v", free, err)
 	}
 }
 

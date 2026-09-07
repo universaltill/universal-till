@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -31,12 +32,14 @@ import (
 // claimProxyPrimary is a fake primary that answers the claim/release
 // endpoints, recording what it was asked.
 type claimProxyPrimary struct {
-	srv          *httptest.Server
-	claimCalls   atomic.Int64
-	releaseCalls atomic.Int64
-	lastTableID  atomic.Value
-	lastAuth     atomic.Value
-	claimed      bool
+	srv              *httptest.Server
+	claimCalls       atomic.Int64
+	releaseCalls     atomic.Int64
+	releaseAllCalls  atomic.Int64
+	lastTableID      atomic.Value
+	lastKeepTableIDs atomic.Value
+	lastAuth         atomic.Value
+	claimed          bool
 }
 
 func newClaimProxyPrimary(t *testing.T, claimed bool) *claimProxyPrimary {
@@ -53,6 +56,10 @@ func newClaimProxyPrimary(t *testing.T, claimed bool) *claimProxyPrimary {
 			fmt.Fprintf(w, `{"data":{"claimed":%v},"error":null}`, p.claimed)
 		case r.Method == http.MethodPost && r.URL.Path == "/api/sync/tables/release":
 			p.releaseCalls.Add(1)
+			fmt.Fprint(w, `{"data":{"released":true},"error":null}`)
+		case r.Method == http.MethodPost && r.URL.Path == "/api/sync/tables/release-all":
+			p.releaseAllCalls.Add(1)
+			p.lastKeepTableIDs.Store(append([]string{}, r.Form["keep_table_id"]...))
 			fmt.Fprint(w, `{"data":{"released":true},"error":null}`)
 		default:
 			t.Errorf("unexpected primary call: %s %s", r.Method, r.URL.Path)
@@ -289,6 +296,42 @@ func TestClaimTableOnPrimary_Contract(t *testing.T) {
 	defer bad.Close()
 	setReplicaSettings(t, dp.Settings, bad.URL, "b-123")
 	if ok, _ := claimTableOnPrimary(ctx, dp, tableClaimProxyClient, "x"); ok {
+		t.Fatal("a 200 with a null data object must report ok=false")
+	}
+}
+
+// TestReleaseAllTableClaimsOnPrimary_Contract (ut-docs#1712): the boot-time
+// helper's ok contract, mirroring TestClaimTableOnPrimary_Contract above.
+func TestReleaseAllTableClaimsOnPrimary_Contract(t *testing.T) {
+	_, dp := newPOSTestDeps(t)
+	ctx := context.Background()
+
+	// Not a replica: never calls out, reports ok=false.
+	if ok := releaseAllTableClaimsOnPrimary(ctx, dp, tableClaimProxyClient, []string{"T1"}); ok {
+		t.Fatal("not a replica must report ok=false")
+	}
+
+	primary := newClaimProxyPrimary(t, true)
+	setReplicaSettings(t, dp.Settings, primary.srv.URL, "b-123")
+	if ok := releaseAllTableClaimsOnPrimary(ctx, dp, tableClaimProxyClient, []string{"T1", "T2"}); !ok {
+		t.Fatal("a reachable primary must report ok=true")
+	}
+	if primary.releaseAllCalls.Load() != 1 {
+		t.Fatalf("the primary must be called exactly once, got %d", primary.releaseAllCalls.Load())
+	}
+	if got := primary.lastKeepTableIDs.Load(); !reflect.DeepEqual(got, []string{"T1", "T2"}) {
+		t.Fatalf("the keep list must be forwarded to the primary as-is, got %#v", got)
+	}
+
+	// Any failure (non-200, unreachable, malformed body) is ok=false, same
+	// contract as every other proxy helper.
+	bad := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"data":null,"error":null}`)
+	}))
+	defer bad.Close()
+	setReplicaSettings(t, dp.Settings, bad.URL, "b-123")
+	if ok := releaseAllTableClaimsOnPrimary(ctx, dp, tableClaimProxyClient, nil); ok {
 		t.Fatal("a 200 with a null data object must report ok=false")
 	}
 }

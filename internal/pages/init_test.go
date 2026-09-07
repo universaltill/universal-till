@@ -2,9 +2,14 @@ package pages
 
 import (
 	"context"
+	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
@@ -196,5 +201,177 @@ func TestInit_ReclaimsHeldOrdersTableClaimOnBoot(t *testing.T) {
 	}
 	if claimRows != 1 {
 		t.Fatalf("boot must re-claim the held order's table -- want 1 table_claims row, got %d (this is what a replica write-throughs to the primary; without it the table reads FREE cross-till after every restart)", claimRows)
+	}
+}
+
+// TestInit_ReleasesOrphanedLiveClaimOnPrimaryAtBootEvenWhenTillStaysOnline
+// (ut-docs#1712, the residual left by ut-docs#1703's own review, finding 7):
+// a replica's LIVE (not-yet-held) basket claimed a table on the primary,
+// then crashed before releasing it. The till reboots and is "seen" by the
+// primary again immediately (any sync call refreshes tills.last_seen_at),
+// so it is NOT stale by ClaimTableForTill's own staleness rule — and the
+// operator never re-picks that exact table again, so nothing else would
+// ever revisit that row. Before this card, that claim sat on the primary
+// forever, blocking the table from every other till in the shop, precisely
+// because the till looked online. Init's new boot-time release-all step
+// must clear it anyway, unconditionally, on every restart.
+func TestInit_ReleasesOrphanedLiveClaimOnPrimaryAtBootEvenWhenTillStaysOnline(t *testing.T) {
+	chdirRoot(t)
+	paths.Init(t.TempDir())
+
+	primary, primaryRepo := newHoldCrossTillPrimary(t, "b-123")
+	ctx := context.Background()
+	tableID, err := primaryRepo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable on primary: %v", err)
+	}
+
+	d, err := db.Open(filepath.Join(t.TempDir(), "orphan_claim_restart.db"))
+	if err != nil {
+		t.Fatalf("open replica db: %v", err)
+	}
+	defer d.Close()
+
+	// Point this till at the primary BEFORE Init ever runs -- exactly like a
+	// real replica, already enrolled from a previous boot.
+	store := settings.NewStore(d.DB)
+	setReplicaSettings(t, store, primary.URL, "b-123")
+
+	// Simulate the pre-crash state: a live basket's table pick, already
+	// write-through'd to the primary under this till's bearer -- the real
+	// claimTableWriteThrough call this stands in for happens over HTTP in
+	// production, so this drives the same primary-side endpoint directly
+	// rather than re-deriving a whole pos.Service pick.
+	claimResp := postSyncClaimDirect(t, primary.URL, "b-123", tableID, "claim")
+	if !claimResp.Data.Claimed {
+		t.Fatalf("seed the pre-crash claim: %+v", claimResp)
+	}
+	if free, err := primaryRepo.IsTableFree(ctx, tableID, ""); err != nil || free {
+		t.Fatalf("precondition: T1 must read occupied before the restart, got free=%v err=%v", free, err)
+	}
+
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	pctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	pm, err := plugins.Init(pctx, cfg, d.DB)
+	if err != nil {
+		t.Fatalf("plugins.Init: %v", err)
+	}
+	var wg sync.WaitGroup
+	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg) // the restart -- till_id is now "seen" again
+
+	if free, err := primaryRepo.IsTableFree(ctx, tableID, ""); err != nil || !free {
+		t.Fatalf("after restart, T1 must be free on the primary even though this till is online again and never re-picked it, got free=%v err=%v", free, err)
+	}
+}
+
+// postSyncClaimDirect posts directly to the primary's bearer-authed
+// /api/sync/tables/{claim,release} endpoints, bypassing claimTableWriteThrough
+// entirely -- used to seed a "claim already write-through'd before the crash"
+// precondition without standing up a whole replica pos.Service.
+func postSyncClaimDirect(t *testing.T, primaryURL, bearer, tableID, action string) syncTableClaimResp {
+	t.Helper()
+	req, err := http.NewRequest(http.MethodPost, primaryURL+"/api/sync/tables/"+action,
+		strings.NewReader("table_id="+tableID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Authorization", "Bearer "+bearer)
+	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	if err != nil {
+		t.Fatalf("POST /api/sync/tables/%s: %v", action, err)
+	}
+	defer resp.Body.Close()
+	var out syncTableClaimResp
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		t.Fatalf("decode: %v", err)
+	}
+	return out
+}
+
+// TestInit_HeldOrderClaimSurvivesReleaseAllEvenWhenBootReclaimFails
+// (ut-docs#1712, independent review 2026-09-07, blocker 1): the exact
+// failure scenario the review's own probe demonstrated pre-fix -- a shop
+// power cut, primary and replica both reboot, primary is still warming up
+// (or just briefly unreachable) when the replica's boot re-claim tries to
+// re-affirm a held order's table. Before the fix, release-all deleted the
+// primary's claim UNCONDITIONALLY, so a failed re-claim right after left the
+// table genuinely unclaimed on the primary until the next restart -- another
+// till could seat a party there in the meantime. With keepTableIDs scoping
+// release-all, the primary's claim for a held order is never deleted in the
+// first place, so a failed re-claim afterward is a harmless no-op (the boot
+// re-claim step is a refresh, not a restore-from-nothing) and the table
+// stays correctly occupied on the primary throughout.
+func TestInit_HeldOrderClaimSurvivesReleaseAllEvenWhenBootReclaimFails(t *testing.T) {
+	chdirRoot(t)
+	paths.Init(t.TempDir())
+
+	dbase, err := db.Open(filepath.Join(t.TempDir(), "primary.db"))
+	if err != nil {
+		t.Fatalf("open primary db: %v", err)
+	}
+	defer dbase.Close()
+	primaryDp := &common.Deps{Db: dbase.DB}
+	realMux := http.NewServeMux()
+	registerSyncTables(realMux, primaryDp)
+	registerSyncTablesClaim(realMux, primaryDp)
+	// Everything real EXCEPT /claim, which simulates the primary being
+	// unreachable/erroring for just the boot re-claim's own call -- release
+	// -all and every other path still hit the real handlers.
+	wrapped := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/sync/tables/claim" {
+			http.Error(w, "simulated primary outage", http.StatusServiceUnavailable)
+			return
+		}
+		realMux.ServeHTTP(w, r)
+	})
+	primary := httptest.NewServer(wrapped)
+	defer primary.Close()
+
+	primaryRepo := data.NewPOSRepo(dbase.DB)
+	ctx := context.Background()
+	tableID, err := primaryRepo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	tillID, err := data.NewTillsRepo(dbase.DB).InsertTill(ctx, "Replica", hashBearer("b-123"))
+	if err != nil {
+		t.Fatalf("seed till: %v", err)
+	}
+	// Seed the pre-crash state directly: the primary already holds this
+	// replica's claim on T1, write-through'd before the crash -- exactly
+	// what ut-docs#1704 keeps alive through a held order's whole park.
+	if claimed, err := primaryRepo.ClaimTableForTill(ctx, tableID, tillID, time.Now().Add(-2*time.Minute)); err != nil || !claimed {
+		t.Fatalf("seed pre-crash primary claim: claimed=%v err=%v", claimed, err)
+	}
+
+	d, err := db.Open(filepath.Join(t.TempDir(), "replica.db"))
+	if err != nil {
+		t.Fatalf("open replica db: %v", err)
+	}
+	defer d.Close()
+	store := settings.NewStore(d.DB)
+	setReplicaSettings(t, store, primary.URL, "b-123")
+	if _, err := d.DB.Exec(`INSERT INTO tables (id, label, area_zone, seat_count, shape, pos_x, pos_y, enabled, created_at, updated_at) VALUES (?,?,?,?,?,?,?,1,datetime('now'),datetime('now'))`,
+		tableID, "T1", "", 4, "rect", 100, 100); err != nil {
+		t.Fatalf("mirror table onto replica: %v", err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES ('h1','Table 1',100,1,'{}',?)`, tableID); err != nil {
+		t.Fatalf("seed held sale: %v", err)
+	}
+
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	pctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	pm, err := plugins.Init(pctx, cfg, d.DB)
+	if err != nil {
+		t.Fatalf("plugins.Init: %v", err)
+	}
+	var wg sync.WaitGroup
+	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg) // the restart -- re-claim's /claim call fails throughout
+
+	if free, err := primaryRepo.IsTableFree(ctx, tableID, ""); err != nil || free {
+		t.Fatalf("the held order's claim must survive on the primary even though the boot re-claim failed, free=%v err=%v", free, err)
 	}
 }

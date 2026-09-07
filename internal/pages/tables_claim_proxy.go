@@ -46,14 +46,16 @@ import (
 var tableClaimProxyClient = &http.Client{Timeout: 800 * time.Millisecond}
 
 // postTableClaimOnPrimary is the shared bearer-authed form POST behind the
-// two proxies below. ok=false on ANY failure; a 200 with a decodable
+// three proxies below. ok=false on ANY failure; a 200 with a decodable
 // `{"data":{...}}` object is handed back for the caller to read its field.
-func postTableClaimOnPrimary(ctx context.Context, d *common.Deps, client *http.Client, action, tableID string, out any) bool {
+// form is the caller's own body — a single table_id for claim/release, zero
+// or more repeated keep_table_id values for release-all — so this stays one
+// shared poster rather than each action re-deriving the request plumbing.
+func postTableClaimOnPrimary(ctx context.Context, d *common.Deps, client *http.Client, action string, form url.Values, out any) bool {
 	base, bearer, isReplica := replicaSyncTarget(ctx, d)
 	if !isReplica {
 		return false
 	}
-	form := url.Values{"table_id": {tableID}}
 	req, err := http.NewRequestWithContext(ctx, http.MethodPost, base+"/api/sync/tables/"+action, strings.NewReader(form.Encode()))
 	if err != nil {
 		return false
@@ -86,7 +88,7 @@ func claimTableOnPrimary(ctx context.Context, d *common.Deps, client *http.Clien
 	var out struct {
 		Data *syncTableClaimResult `json:"data"`
 	}
-	if !postTableClaimOnPrimary(ctx, d, client, "claim", tableID, &out) || out.Data == nil {
+	if !postTableClaimOnPrimary(ctx, d, client, "claim", url.Values{"table_id": {tableID}}, &out) || out.Data == nil {
 		return false, false
 	}
 	return true, out.Data.Claimed
@@ -99,7 +101,33 @@ func releaseTableClaimOnPrimary(ctx context.Context, d *common.Deps, client *htt
 	var out struct {
 		Data *syncTableReleaseResult `json:"data"`
 	}
-	if !postTableClaimOnPrimary(ctx, d, client, "release", tableID, &out) || out.Data == nil {
+	if !postTableClaimOnPrimary(ctx, d, client, "release", url.Values{"table_id": {tableID}}, &out) || out.Data == nil {
+		return false
+	}
+	return true
+}
+
+// releaseAllTableClaimsOnPrimary tries POST /api/sync/tables/release-all on
+// the primary — Init's boot-time call, before the boot re-claim step below
+// re-establishes this till's held orders. keepTableIDs is this till's own
+// currently-held-order table ids, sent as repeated keep_table_id form
+// values: see POSRepo.ReleaseAllTableClaimsForTill's doc comment for why a
+// held order's claim must never be dropped here even though it belongs to
+// this same till (independent review, 2026-09-07, blocker 1). ok=false on
+// ANY failure, same contract as releaseTableClaimOnPrimary; the caller
+// treats it as best-effort and non-fatal, same as every other boot-time
+// step in Init — there is nothing to fall back to locally on failure, since
+// the local mirror this is cleaning up on the PRIMARY was already cleared
+// by ClearLocalTableClaims earlier in Init regardless.
+func releaseAllTableClaimsOnPrimary(ctx context.Context, d *common.Deps, client *http.Client, keepTableIDs []string) (ok bool) {
+	var out struct {
+		Data *syncTableReleaseResult `json:"data"`
+	}
+	form := url.Values{}
+	for _, id := range keepTableIDs {
+		form.Add("keep_table_id", id)
+	}
+	if !postTableClaimOnPrimary(ctx, d, client, "release-all", form, &out) || out.Data == nil {
 		return false
 	}
 	return true
