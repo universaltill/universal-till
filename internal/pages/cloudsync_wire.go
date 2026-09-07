@@ -456,11 +456,6 @@ func cloudAdjustStock(ctx context.Context, d *common.Deps, itemID string, delta 
 		// The "cloud: " prefix keeps the adjustment's real origin visible
 		// in the audit payload's reason field now that the actor itself
 		// can no longer say so.
-		//
-		// This exact fix also shipped standalone as PR #846 (ut-docs#1684)
-		// since it's an independent production bug; kept here too so this
-		// branch's own tests (via openPagesTestDB's real migrations) stay
-		// green until #846 merges to main and this branch picks it up.
 		Quantity: delta, Reason: "cloud: " + reason, ActorID: "system",
 	}); err != nil {
 		return "", err

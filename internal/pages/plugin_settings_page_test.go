@@ -280,7 +280,11 @@ func TestPluginSettingsPage_GET_RendersTakeawayOverridesEditor(t *testing.T) {
 	if !strings.Contains(body, `value="7"`) {
 		t.Fatalf("expected the pre-filled override (7%%) in the page, got %s", body)
 	}
-	if !strings.Contains(body, "Standard VAT") || !strings.Contains(body, "Reduced VAT") {
+	// Exact names, not "Reduced VAT" alone -- 001_init.sql's own seeded
+	// tax_red row is also named exactly "Reduced VAT" (ut-docs#1676), so a
+	// bare substring match here would pass even if this test's own
+	// tax_reduced row never rendered.
+	if !strings.Contains(body, "Standard VAT") || !strings.Contains(body, "Reduced VAT (7%)") {
 		t.Fatalf("expected tax code names in the page, got %s", body)
 	}
 }
@@ -288,7 +292,9 @@ func TestPluginSettingsPage_GET_RendersTakeawayOverridesEditor(t *testing.T) {
 func TestPluginSettingsPage_GET_RendersOrphanOverrideEntry(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPluginSettingsTestDeps(t)
-	// No active tax codes at all, but an existing override for a deleted one.
+	// An override referencing "tax_gone", a tax code id that doesn't exist
+	// (the real migration seeds its own active tax codes now, ut-docs#1676,
+	// but none with this id) -- an orphaned override for a deleted one.
 	seedPluginSetting(t, dp, "p1", "takeaway_rate_overrides", `{"tax_gone":500}`, "global")
 
 	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
