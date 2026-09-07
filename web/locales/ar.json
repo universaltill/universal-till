@@ -1779,6 +1779,7 @@
   "import.error.invalid_currency": "عملة غير معروفة.",
   "import.error.stage_expired": "انتهت صلاحية هذه المعاينة — اضغط «معاينة» مرة أخرى ثم «استيراد».",
   "import.error.already_in_progress": "عملية الاستيراد هذه قيد التنفيذ بالفعل — انتظر حتى تنتهي قبل الضغط على «استيراد» مرة أخرى.",
+  "import.error.replica_use_primary": "يتبع هذا الصندوق الصندوق الأساسي — استورد الكتالوجات من الصندوق الأساسي.",
   "import.problem_grid.include_label": "استيراد على أي حال",
   "import.problem_grid.corrected_name": "الاسم المصحّح",
   "import.problem_grid.corrected_price": "السعر المصحّح",

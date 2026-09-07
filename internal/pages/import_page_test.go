@@ -316,6 +316,62 @@ func TestImport_CommitCreatesCatalog(t *testing.T) {
 	}
 }
 
+// TestImport_CommitRefusedOnReplica covers ut-docs#1696: items/item_barcodes
+// sync shop-wide via sync_admin_repo.go's adminTables, the same invariant
+// ut-docs#1590/#1667/#1689 already gate elsewhere — a bulk commit accepted
+// on a satellite till would have every row it wrote silently reverted on
+// the next admin pull, hundreds at once rather than one. Preview (commit=0)
+// writes nothing and must stay unaffected.
+func TestImport_CommitRefusedOnReplica(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	if err := dp.Settings.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("set primary_url: %v", err)
+	}
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	body, ct := multipartCSV(t, importCSV, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("commit on replica: code %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	// ut-docs#1696 review: a plain text/plain body is swallowed on this
+	// page — app.js's htmx:beforeSwap force-swap only picks up a real
+	// text/html fragment, and /import has no #pos-alert equivalent for
+	// htmx:responseError to fall back into. Assert both the header and the
+	// rendered .pos-notice shape, not just the status code.
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Fatalf("commit on replica Content-Type = %q, want text/html", ct)
+	}
+	if !strings.Contains(rec.Body.String(), `class="pos-notice error"`) {
+		t.Fatalf("commit on replica body = %q, want a rendered .pos-notice error fragment", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "primary") {
+		t.Fatalf("commit on replica body = %q, want the replica_use_primary message", rec.Body.String())
+	}
+	var n int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE sku IN ('W1','G2')`).Scan(&n); err != nil {
+		t.Fatalf("count items: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("import must not write on a replica, found %d items", n)
+	}
+
+	// Preview must still work on a replica — it writes nothing regardless.
+	body2, ct2 := multipartCSV(t, importCSV, nil)
+	req2 := httptest.NewRequest(http.MethodPost, "/api/import", body2)
+	req2.Header.Set("Content-Type", ct2)
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("preview on replica: code %d, want 200: %s", rec2.Code, rec2.Body.String())
+	}
+}
+
 // TestImport_CommitShowsDistinctSuccessSummaryWithCatalogLink covers
 // ut-docs#1171: the product owner, importing a real 217-item .bkp on the Pi
 // till, couldn't tell the commit had actually happened — the result read

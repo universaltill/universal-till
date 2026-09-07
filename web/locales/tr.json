@@ -1779,6 +1779,7 @@
   "import.error.invalid_currency": "Tanınmayan para birimi.",
   "import.error.stage_expired": "Bu önizlemenin süresi doldu — önce yeniden Önizleme'ye, ardından İçe aktar'a basın.",
   "import.error.already_in_progress": "Bu içe aktarma zaten sürüyor — tekrar İçe aktar'a basmadan önce bitmesini bekleyin.",
+  "import.error.replica_use_primary": "Bu kasa bir ana kasayı takip ediyor — katalogları ana kasada içe aktarın.",
   "import.problem_grid.include_label": "Yine de içe aktar",
   "import.problem_grid.corrected_name": "Düzeltilmiş ad",
   "import.problem_grid.corrected_price": "Düzeltilmiş fiyat",
