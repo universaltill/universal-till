@@ -219,6 +219,44 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
+		// Resolved up front (ut-docs#303, hoisted earlier still by
+		// ut-docs#1696 so the replica gate right below can render a real
+		// notice instead of a plain-text body): every row status below is
+		// a locale key, not English prose, so T needs to be live before
+		// the preview loop builds the first one, and before the Parse
+		// error below (the first thing an operator sees on a wrong-format
+		// file).
+		locale := httpx.ResolveLocale(w, r)
+		funcs := httpx.FuncsFor(locale)
+		T := funcs["T"].(func(string) string)
+		// ut-docs#1696: items/item_barcodes are synced shop-wide via
+		// sync_admin_repo.go's adminTables (same invariant ut-docs#1590/
+		// #1667/#1689 gate elsewhere), so a bulk import committed on a
+		// satellite till would have every row it created/attached silently
+		// reverted on the next admin pull — hundreds of rows at once,
+		// larger blast radius than any single-item edit. Refuse up front,
+		// before touching the multipart body/staged upload (usedFirst
+		// BootExemption above already guarantees a real commit here is
+		// never the pre-admin setup wizard, which never has a primary_url
+		// set yet anyway). Preview (commit=0) writes nothing and stays
+		// unblocked, same as every other page's requirePrimary gate only
+		// covering mutation routes, not reads.
+		//
+		// A plain common.LocalizedError (text/plain) would be swallowed
+		// here: app.js's htmx:beforeSwap force-swap (ut-docs#916) only
+		// force-swaps a text/html body, and this page has no #pos-alert
+		// equivalent for htmx:responseError/showAlert to fall back into
+		// (that element only exists on the sale screen) — the operator
+		// would press Import and see literally nothing happen. Render an
+		// HTML notice fragment instead, same shape POST /api/catalog/
+		// export-save already uses a few lines up, so app.js's own
+		// force-swap picks it up into #import-result.
+		if commit && d.SyncPrimaryURL(r.Context()) != "" {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(http.StatusConflict)
+			httpx.RenderNotice(w, locale, "error", "import.error.replica_use_primary")
+			return
+		}
 		// ut-docs#1168: suppress the interactive problem-grid/barcode-
 		// opt-in controls and the repeated bottom Import button (below) on
 		// a preview served to the wizard's own upload panel (setup.html
@@ -235,14 +273,6 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		// (staged_id) or by finishing setup and importing again for real.
 		wizardPreview := r.FormValue("wizard") == "1"
 		stagedID := strings.TrimSpace(r.FormValue("staged_id"))
-
-		// Resolved up front (ut-docs#303): every row status below is a
-		// locale key, not English prose, so T needs to be live before the
-		// preview loop builds the first one, and before the Parse error
-		// below (the first thing an operator sees on a wrong-format file).
-		locale := httpx.ResolveLocale(w, r)
-		funcs := httpx.FuncsFor(locale)
-		T := funcs["T"].(func(string) string)
 
 		// Which bytes does this request act on? (ut-docs#601)
 		//  - Commit carrying a staged_id: the byte-identical copy staged at

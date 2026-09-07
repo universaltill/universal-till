@@ -1777,6 +1777,7 @@
   "import.error.invalid_currency": "Unrecognised currency.",
   "import.error.stage_expired": "This preview has expired — press Preview again, then Import.",
   "import.error.already_in_progress": "This import is already running — wait for it to finish before pressing Import again.",
+  "import.error.replica_use_primary": "This till follows a primary till — import catalogs on the primary till.",
   "import.problem_grid.include_label": "Import anyway",
   "import.problem_grid.corrected_name": "Corrected name",
   "import.problem_grid.corrected_price": "Corrected price",

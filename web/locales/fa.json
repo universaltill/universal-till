@@ -1777,6 +1777,7 @@
   "import.error.invalid_currency": "ارز ناشناخته.",
   "import.error.stage_expired": "این پیش‌نمایش منقضی شده است — دوباره «پیش‌نمایش» و سپس «درون‌ریزی» را بزنید.",
   "import.error.already_in_progress": "این درون‌ریزی همین حالا در حال اجراست — پیش از فشردن دوباره «درون‌ریزی» صبر کنید تا تمام شود.",
+  "import.error.replica_use_primary": "این صندوق پیرو صندوق اصلی است — کاتالوگ‌ها را روی صندوق اصلی درون‌ریزی کنید.",
   "import.problem_grid.include_label": "به‌هرحال درون‌ریزی شود",
   "import.problem_grid.corrected_name": "نام اصلاح‌شده",
   "import.problem_grid.corrected_price": "قیمت اصلاح‌شده",
