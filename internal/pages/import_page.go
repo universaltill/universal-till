@@ -587,25 +587,74 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		overrideNotes := map[int]string{}
 		if commit && usingStaged {
 			decimals := httpx.ActiveCurrency().Decimals
-			// In-file duplicate veto (ut-docs#601 review F1): a forceable
-			// issue (missing_name/bad_price) can mask the fact that the row's
-			// SKU/PLU also collides with ANOTHER row in this same parse — the
-			// .bkp parser's own seen-set only flags a duplicate whose clean
-			// twin came EARLIER in the file, and a flagged row never registers
-			// its PLU (deliberately, see bkp.go). Without this check, a
-			// corrected-name override made such a row importable: it raced the
-			// legitimate row to the items.sku UNIQUE constraint, and whichever
-			// lost surfaced as a baffling generic item_failed. Same guarantee
-			// as the DB-level SKUExists/BarcodeExists checks below, which
-			// every un-skipped row (forced or not) still goes through: an
-			// in-file duplicate can never be forced through, no matter what
-			// the client submits. Seeded with every cleanly-importable row's
-			// SKU; each ACCEPTED override then claims its own SKU too, so of
-			// two forced rows sharing a SKU only the first can land.
+			// In-file duplicate handling (ut-docs#601 review F1, extended by
+			// ut-docs#1234): a forceable issue (missing_name/bad_price) can
+			// mask the fact that the row's SKU/PLU also collides with ANOTHER
+			// row in this same parse — the .bkp parser's own seen-set only
+			// flags a duplicate whose clean twin came EARLIER in the file,
+			// and a flagged row never registers its PLU (deliberately, see
+			// bkp.go). Same guarantee as the DB-level SKUExists/BarcodeExists
+			// checks below, which every un-skipped row (forced or not) still
+			// goes through: an in-file duplicate can never silently race the
+			// items.sku UNIQUE constraint, whatever the client submits.
+			//
+			// Two distinct cases, told apart by anchorSKU below:
+			//   - A genuinely clean row (Issue == "" at parse time) already
+			//     claims this PLU. That row is real proof the PLU names a
+			//     real, distinct product — so once this row's own issue is
+			//     corrected, it deserves the exact same suffix-dedup bkp.go
+			//     already gives a reused PLU between two clean rows, not an
+			//     unconditional veto (ut-docs#1234). Every row anchored this
+			//     way gets its own synthesized SKU, however many there are.
+			//   - No clean row anywhere in the file claims this PLU: the rows
+			//     sharing it are all corrections, so there is nothing to
+			//     anchor a "these are really the same reused number" reading
+			//     to and which of them is the "real" one stays genuinely
+			//     ambiguous. Unchanged from before this card: only the first
+			//     forced correction may land, every later one stays vetoed.
+			//
+			// inFileSKU is seeded with every cleanly-importable row's SKU,
+			// then each accepted override (anchored or not) claims its own
+			// (possibly synthesized) SKU too. anchorSKU is seeded once, from
+			// the same clean rows, and never gains an override's SKU — only
+			// a genuinely clean row counts as an anchor. allRawSKUs is a
+			// snapshot of every row's original SKU, taken before any override
+			// mutates one, so a synthesized suffix can never shadow a real,
+			// not-yet-processed PLU later in the file (mirrors bkp.go's own
+			// allPLUs guard, ut-docs#1222 review). dupSuffix is seeded from
+			// any "PLU-N" suffix bkp.go's own dedup already produced for a
+			// clean row on this PLU, so it resumes numbering where that left
+			// off rather than re-testing suffixes already claimed; two+
+			// anchored corrections sharing one PLU still each land under a
+			// distinct suffix either way, this just skips the wasted re-tests.
+			//
+			// dedupeReusedPLU restricts the anchored-dedup case to the format
+			// that actually has a reused-PLU concept at all (ut-docs#1234
+			// review finding 1): bkp.go's own suffix-dedup is explicitly a
+			// .bkp-only convention (see catimport.go's SKUIssueDuplicateInFile
+			// doc comment) — CSV's Parse has no in-file SKU-collision detection
+			// for clean rows whatsoever, so letting a CSV correction dedupe
+			// here would give a corrected row strictly better treatment than a
+			// clean row carrying the identical reused-SKU defect. CSV keeps
+			// this card's veto-only behavior unchanged; only anchorSKU's
+			// bookkeeping is shared.
+			dedupeReusedPLU := res.Format == "speedy-kasse"
 			inFileSKU := map[string]bool{}
+			anchorSKU := map[string]bool{}
+			allRawSKUs := map[string]bool{}
+			dupSuffix := map[string]int{}
 			for i := range res.Items {
+				if res.Items[i].SKU != "" {
+					allRawSKUs[res.Items[i].SKU] = true
+				}
 				if res.Items[i].Issue == "" && res.Items[i].SKU != "" {
 					inFileSKU[res.Items[i].SKU] = true
+					anchorSKU[res.Items[i].SKU] = true
+					if plu, n, ok := strings.Cut(res.Items[i].SKU, "-"); ok {
+						if num, perr := strconv.Atoi(n); perr == nil && num > dupSuffix[plu] {
+							dupSuffix[plu] = num - 1
+						}
+					}
 				}
 			}
 			for i := range res.Items {
@@ -616,10 +665,12 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				if !forceable {
 					continue
 				}
-				if sku := res.Items[i].SKU; sku != "" && inFileSKU[sku] {
-					// Checked before the correction itself: no corrected
-					// name/price could ever make this row importable, so the
-					// status says the real, terminal reason.
+				if sku := res.Items[i].SKU; sku != "" && inFileSKU[sku] && !(dedupeReusedPLU && anchorSKU[sku]) {
+					// No clean anchor for this PLU (or this format has no
+					// reused-PLU dedup concept at all) — checked before the
+					// correction itself, since no corrected name/price could
+					// ever make this row importable under the
+					// still-genuinely-ambiguous case above.
 					overrideNotes[i] = T("import.status.duplicate_sku_in_file")
 					continue
 				}
@@ -648,8 +699,29 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					res.Items[i].PriceMinor = minor
 					res.Items[i].Issue, res.Items[i].IssueDetail = "", ""
 				}
-				// Override accepted (Issue cleared): the row now claims its
-				// SKU, so a second forced row sharing it is vetoed above.
+				// Override accepted (Issue cleared). If a clean row anchors
+				// this PLU, this row now becomes just as real and distinct a
+				// product as that anchor (ut-docs#1234) — give it its own
+				// synthesized SKU the same way bkp.go dedupes two clean rows
+				// sharing one PLU, rather than let it collide with the
+				// anchor's SKU at commit. Only reachable here (post-switch)
+				// when dedupeReusedPLU && anchorSKU[sku] was true, since every
+				// other case was already vetoed above before the switch ran.
+				if sku := res.Items[i].SKU; res.Items[i].Issue == "" && sku != "" && dedupeReusedPLU && anchorSKU[sku] {
+					var candidate string
+					for {
+						dupSuffix[sku]++
+						candidate = fmt.Sprintf("%s-%d", sku, dupSuffix[sku]+1)
+						if !inFileSKU[candidate] && !allRawSKUs[candidate] {
+							break
+						}
+					}
+					res.Items[i].SKU = candidate
+					res.Items[i].SKUIssue, res.Items[i].SKUIssueRaw = catimport.SKUIssueDuplicateInFile, sku
+				}
+				// The row now claims its (possibly synthesized) SKU, so a
+				// later forced row sharing the same PLU is vetoed/deduped
+				// correctly above.
 				if res.Items[i].Issue == "" && res.Items[i].SKU != "" {
 					inFileSKU[res.Items[i].SKU] = true
 				}
