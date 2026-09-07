@@ -843,6 +843,63 @@ func TestClaimTableForTill_NeverExpiresThisTillLocalClaim(t *testing.T) {
 	}
 }
 
+// TestClaimTableForTill_LocalOwnClaimIsRetakenAndRefreshed (ut-docs#1704,
+// independent review 2026-09-07): tillID="" re-claiming a till_id=” row it
+// already holds must succeed (claimed=true) and refresh claimed_at, the same
+// "own-claim" re-take ClaimTableForTill already gave a REAL till id — before
+// this fix, the `till_id != ”` guard blocked the own-claim disjunct from
+// EVER matching tillID=” itself, so INSERT OR IGNORE silently no-op'd on
+// the pre-existing row and reported claimed=false for a claim that in fact
+// already stood. tillID=” is not only ever the primary's own live basket —
+// claimTableWriteThrough's local fallback branch has always called this with
+// tillID=” too, and a held order's claim (ut-docs#1704) is now kept alive
+// through the whole park rather than re-claimed from scratch on resume, so
+// this path is newly reachable against an already-self-held row.
+func TestClaimTableForTill_LocalOwnClaimIsRetakenAndRefreshed(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+
+	id, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	cutoff := time.Now().UTC().Add(-2 * time.Minute)
+	claimed, err := repo.ClaimTableForTill(ctx, id, "", cutoff)
+	if err != nil || !claimed {
+		t.Fatalf("initial local claim: claimed=%v err=%v", claimed, err)
+	}
+	var firstClaimedAt string
+	if err := dbo.QueryRow(`SELECT claimed_at FROM table_claims WHERE table_id = ?`, id).Scan(&firstClaimedAt); err != nil {
+		t.Fatalf("read claimed_at: %v", err)
+	}
+	time.Sleep(1100 * time.Millisecond) // RFC3339 has second resolution
+
+	claimed, err = repo.ClaimTableForTill(ctx, id, "", cutoff)
+	if err != nil {
+		t.Fatalf("re-claim: %v", err)
+	}
+	if !claimed {
+		t.Fatal("re-claiming a till_id='' row this same local caller already holds must report claimed=true, not silently no-op")
+	}
+	owner, ok := claimTillOf(t, dbo, id)
+	if !ok || owner != "" {
+		t.Fatalf("row must still be the local till_id='' row, got %q (ok=%v)", owner, ok)
+	}
+	var secondClaimedAt string
+	if err := dbo.QueryRow(`SELECT claimed_at FROM table_claims WHERE table_id = ?`, id).Scan(&secondClaimedAt); err != nil {
+		t.Fatalf("read claimed_at: %v", err)
+	}
+	if secondClaimedAt == firstClaimedAt {
+		t.Fatalf("re-taking the row must refresh claimed_at, got the same value %q both times", firstClaimedAt)
+	}
+
+	// And it must not have widened into "any tillID may take it": a
+	// DIFFERENT till is still refused while this local claim is fresh.
+	if claimed, err := repo.ClaimTableForTill(ctx, id, "till-other", cutoff); err != nil || claimed {
+		t.Fatalf("a different till must still be refused, claimed=%v err=%v", claimed, err)
+	}
+}
+
 // ReleaseTableClaimForTill deletes only the calling till's own claim: another
 // till's row (or the primary's own local ” row) is left alone, and releasing
 // with nothing to release is a no-op, not an error — same convention as
