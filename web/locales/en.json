@@ -595,6 +595,7 @@
   "refund.returns_ref": "Refunds issued",
   "refund.submit": "Refund",
   "refund.title": "Refund",
+  "refund.total": "Refund total",
   "reports.ask.button": "Ask",
   "reports.ask.error": "The assistant could not answer right now — check that the AI server is running and try again.",
   "reports.ask.hint": "Ask about sales, stock or till activity in plain words — answered by the shop's own AI, nothing leaves your hardware.",

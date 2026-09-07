@@ -595,6 +595,7 @@
   "refund.returns_ref": "Yapılan iadeler",
   "refund.submit": "İade et",
   "refund.title": "İade",
+  "refund.total": "İade tutarı",
   "reports.ask.button": "Sor",
   "reports.ask.error": "Asistan şu anda yanıt veremedi — YZ sunucusunun çalıştığını kontrol edip tekrar deneyin.",
   "reports.ask.hint": "Satışlar, stok veya kasa etkinliği hakkında sade bir dille sorun — mağazanın kendi YZ'si yanıtlar, hiçbir şey donanımınızdan çıkmaz.",
