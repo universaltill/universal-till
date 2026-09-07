@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"math"
 	"net/http"
 	"net/url"
 	"os"
@@ -281,7 +282,14 @@ func refundLinesFromForm(detail data.SaleDetail, guard refundGuardState, locatio
 			continue
 		}
 		qty, perr := strconv.ParseFloat(raw, 64)
-		if perr != nil || qty <= 0 {
+		// ut-docs#1711: strconv.ParseFloat successfully parses "NaN"/"Inf"
+		// variants, and every ordered comparison against NaN is false --
+		// so `qty <= 0` alone lets a NaN quantity sail through, and a +Inf
+		// quantity sails past this check (Inf > 0) only to be caught by
+		// the exceeds-remaining check further down with the wrong error
+		// (409, not this function's own 400). Reject both explicitly,
+		// here, the same way a negative or non-numeric qty already is.
+		if perr != nil || qty <= 0 || math.IsNaN(qty) || math.IsInf(qty, 0) {
 			return nil, 0, 0, &refundInvalidQuantityError{lineIndex: i}
 		}
 		key := data.RefundLineKey(l.ItemID, l.VariantID, l.UnitPrice, l.OrderType)

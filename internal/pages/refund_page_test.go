@@ -1871,6 +1871,43 @@ func TestPostRefund_InvalidQuantity(t *testing.T) {
 	}
 }
 
+// TestPostRefund_NaNAndInfiniteQuantityAreRejected is ut-docs#1711: Go's
+// strconv.ParseFloat happily parses "NaN"/"Inf" and every ordered comparison
+// against NaN is false, so the pre-existing `qty <= 0` / `qty >
+// remaining+1e-9` guards don't reliably reject a NaN or +Inf quantity
+// themselves. Before this fix: -Inf/-Infinity already came back 400 via the
+// plain `qty <= 0` check (NaN comparisons aside, -Inf <= 0 is a normal,
+// well-defined true), and +Inf/Infinity came back 409 (caught by the
+// exceeds-remaining check instead, the wrong error for a malformed
+// quantity) -- and NaN came back 400 too, but only by accident, via
+// pos.CompleteSale rejecting the implementation-defined int64 garbage a
+// NaN-tainted discount computation produces, with a generic "sale could
+// not be completed" body, not this layer's own refundInvalidQuantityError.
+// Asserting the exact body (not just the status code) is what makes this
+// test actually enforce the fix for the NaN/-Inf cases too, not just +Inf.
+func TestPostRefund_NaNAndInfiniteQuantityAreRejected(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+
+	for _, raw := range []string{"NaN", "Infinity", "-Infinity", "Inf", "-Inf"} {
+		t.Run(raw, func(t *testing.T) {
+			mux, dp, _ := newRefundTestDeps(t)
+			_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0="+raw))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400 for qty_0=%s, got %d: %s", raw, rec.Code, rec.Body.String())
+			}
+			const wantBody = "invalid quantity for line 1"
+			if !strings.Contains(rec.Body.String(), wantBody) {
+				t.Fatalf("qty_0=%s: expected refundInvalidQuantityError body containing %q, got: %s", raw, wantBody, rec.Body.String())
+			}
+		})
+	}
+}
+
 // ut-docs#1008 review, blocker F1 — the real-money case, end to end: an
 // INCLUSIVE-priced sale that also issued a voucher, refunded through the
 // real POST /api/refund handler. Before the fix, the voucher's face value
