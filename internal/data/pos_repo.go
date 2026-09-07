@@ -642,7 +642,7 @@ func (r *POSRepo) RecordNegativeInventoryOverride(ctx context.Context, override 
 		"snapshot": snapshot,
 	}
 	// Dual attribution (ut-docs#780), same convention as fiscal_api.go's
-	// createTSEOverride: only recorded when it actually differs from the
+	// createSigningOverride: only recorded when it actually differs from the
 	// audit actor, so a self-authorized override's payload stays as-is.
 	if override.RequestedBy != "" && override.RequestedBy != override.ActorID {
 		payload["requested_by"] = override.RequestedBy
