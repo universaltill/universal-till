@@ -137,12 +137,20 @@ test.describe('nav rail Lock button stays reachable with an enrolled-till sync c
     await page.goto('/settings');
 
     // The just-enrolled till has never authenticated (`last_seen_at` is
-    // NULL) -> stale -> class=warn -> the badge-carrying, WORST-case box
-    // for this measurement, not the quiet ok state.
+    // NULL) -> stale -> class=warn -> still the WORST-case box for this
+    // measurement, not the quiet ok state.
     const syncLink = page.locator('.sync-chip.warn a.nav-toggle');
     await expect(syncLink).toBeVisible();
     await expect(syncLink.locator('svg[data-icon="sync"]')).toBeVisible();
-    await expect(syncLink.locator('.nav-badge')).toBeVisible();
+    // ut-docs#1729: a stale satellite no longer carries the badge dot — that
+    // is reserved for states a human can action (pending pairing request,
+    // quarantined entry), because a dot for "a till is switched off" could
+    // never be cleared by anything the operator did. The stale state is now
+    // stated as text instead, which makes the LABEL longer and so keeps this
+    // the worst case the measurement below wants (the badge was absolutely
+    // positioned inside the icon and never contributed to the box anyway).
+    await expect(syncLink.locator('.nav-badge')).toHaveCount(0);
+    await expect(syncLink).toContainText('offline');
 
     // Same crowded-rail sanity check as the test above, now WITH the sync
     // chip also present.
