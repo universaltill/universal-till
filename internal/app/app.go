@@ -165,6 +165,31 @@ func Run(ctx context.Context) error {
 	settingsStore.LoadRuntimeConfig(ctx, cfg)
 	_ = settingsStore.SaveRuntimeConfig(ctx, cfg)
 
+	// ut-docs#1728: one-time move of a never-chosen "utf8" printer charset
+	// onto the code page this store's currency actually needs. Runs after
+	// the two calls above so store.currency/store.locale are settled for
+	// this boot. Best-effort — a settings fault must not stop the till
+	// booting, and the pass retries on the next boot if it did not mark
+	// itself done.
+	if from, to, changed, err := settingsStore.AdoptDefaultPrinterCharset(ctx); err != nil {
+		log.Errorf("adopt default printer charset: %v", err)
+	} else if changed {
+		log.Infof("printer charset %s -> %s: moved off the never-chosen utf8 default for this store's currency (ut-docs#1728)", from, to)
+		// Audited like any other change to this setting — the operator sees
+		// the Characters dropdown's value change, and the audit log has to
+		// be able to say what changed it. Same "system" actor convention as
+		// provision.go's own boot-time settings write. Best-effort: a
+		// failed audit write must not stop the till booting.
+		if err := data.NewPOSRepo(database.DB).InsertAudit(ctx, nil, "system", "settings", "printer.charset",
+			"printer_settings_changed", map[string]any{
+				"charset": to,
+				"from":    from,
+				"reason":  "default adopted for store currency/locale (ut-docs#1728)",
+			}, time.Now().UTC().Format(time.RFC3339), ""); err != nil {
+			log.Errorf("audit printer charset adoption: %v", err)
+		}
+	}
+
 	// wg tracks the background goroutines this boot sequence starts —
 	// directly (enroll/updates/alerts), via server.Start, or via pages.Init
 	// (cloudsync, and since ut-docs#153 also StartSyncPush/StartSyncPull/
