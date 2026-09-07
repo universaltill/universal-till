@@ -343,21 +343,33 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 				item.TakeawayTaxIssue, item.TakeawayTaxIssueRaw = TaxIssueUnparseable, raw
 			}
 		}
+		// Price is parsed unconditionally, up front — mirroring catimport.go's
+		// CSV Parse, which already does this (its own price cell is read
+		// before its switch runs). ut-docs#1713: this used to live inside the
+		// switch's default case only, so a row that failed the name==""
+		// check below never had its price checked at all — a row missing
+		// BOTH its name and a parseable price only ever reported
+		// missing_name, and PriceMinor silently stayed 0 even after the name
+		// was corrected, because the operator was never offered a price
+		// field. It also means a row missing ONLY its name, with an
+		// otherwise-valid price, now keeps that price instead of discarding
+		// it — same latent bug, same fix.
+		price, perr := parseBkpSalesPrice(p.SalesPriceRaw, currencyDecimals)
+		item.PriceMinor = price // 0 on a parse failure; Issue below governs whether the row can commit at all
 		switch {
 		case p.Status == bkpStatusDeleted:
 			item.Issue = IssueSourceDeleted
 		case p.ProductType == bkpProductTypeOrderMode:
 			item.Issue = IssueNotSellable
+		case name == "" && perr != nil:
+			// See IssueMissingNameAndBadPrice's doc comment (catimport.go).
+			item.Issue = IssueMissingNameAndBadPrice
+			item.IssueDetail = p.SalesPriceRaw
 		case name == "":
 			item.Issue = IssueMissingName
-		default:
-			price, perr := parseBkpSalesPrice(p.SalesPriceRaw, currencyDecimals)
-			if perr != nil {
-				item.Issue = IssueBadPrice
-				item.IssueDetail = p.SalesPriceRaw
-			} else {
-				item.PriceMinor = price
-			}
+		case perr != nil:
+			item.Issue = IssueBadPrice
+			item.IssueDetail = p.SalesPriceRaw
 		}
 		// Product photo (ut-docs#1223): only worth resolving for a row
 		// that's actually going to import — a blocked row (deleted,
