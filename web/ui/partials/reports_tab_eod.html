@@ -13,6 +13,22 @@
         {{ T "reports.business_day_start.label" }}
         <input type="time" name="business_day_start" value="{{ .BusinessDayStart }}">
       </label>
+      <!-- ut-docs#1650: controls ONLY the printed Z-report's "BY ARTICLE"
+           footer section -- the on-screen per-article table above (in the
+           <details> below) always lists every article regardless of this
+           setting. article_print_cap is only meaningful in "capped" mode;
+           left enabled unconditionally (rather than disabled when mode !=
+           capped) so its own value still round-trips on submit even if a
+           manager changes the number before changing the mode. -->
+      <label style="display:flex; gap:.3rem; align-items:center" title="{{ T "reports.eod.article_print.help" }}">
+        {{ T "reports.eod.article_print.label" }}
+        <select name="article_print_mode">
+          <option value="capped" {{ if eq .ArticlePrintMode "capped" }}selected{{ end }}>{{ T "reports.eod.article_print_mode.capped" }}</option>
+          <option value="all" {{ if eq .ArticlePrintMode "all" }}selected{{ end }}>{{ T "reports.eod.article_print_mode.all" }}</option>
+          <option value="off" {{ if eq .ArticlePrintMode "off" }}selected{{ end }}>{{ T "reports.eod.article_print_mode.off" }}</option>
+        </select>
+        <input type="number" name="article_print_cap" min="1" max="999" style="width:5rem" value="{{ .ArticlePrintCap }}" aria-label="{{ T "reports.eod.article_print_cap.label" }}">
+      </label>
       <button class="btn secondary" type="submit">{{ T "settings.printer.apply" }}</button>
       <!-- ut-docs#794: hx-swap="none" above means this form's OWN response
            is never swapped anywhere — but checkOrElevate's dialog retry
