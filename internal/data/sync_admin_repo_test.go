@@ -1543,3 +1543,103 @@ func TestAdminDumpApplyRoundTrip_FiscalRegisterStorage(t *testing.T) {
 		t.Fatalf("unrelated plugin_storage row was overwritten by the second scoped apply: got %q", otherValue)
 	}
 }
+
+// TestAdminDumpApplyRoundTrip_CountrySettings is ut-docs#1669: country_settings
+// (per-jurisdiction tax/currency/retention defaults) is shop-wide config, same
+// shape as settings/tax_codes, and must sync like them now that #1586's
+// schema-drift guard flagged it as unclassified. Every migrated DB already
+// seeds the 14 builtin countries (001_init.sql), so this exercises real
+// UPDATE/prune paths against pre-existing rows rather than fresh INSERTs.
+func TestAdminDumpApplyRoundTrip_CountrySettings(t *testing.T) {
+	ctx := context.Background()
+	primary := openMigratedDB(t, "primary.db")
+	replica := openMigratedDB(t, "replica.db")
+
+	// Primary and replica start with the same seeded GB row (tax_rate_bp
+	// 2000). Diverge both, then let a primary edit win on sync -- proves
+	// the row actually travels, not just that it was already equal.
+	mustExec(t, primary, `UPDATE country_settings SET tax_rate_bp = 2200 WHERE code = 'GB'`)
+	mustExec(t, replica, `UPDATE country_settings SET tax_rate_bp = 1750 WHERE code = 'GB'`)
+
+	bundle, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if _, ok := bundle.Tables["country_settings"]; !ok {
+		t.Fatal("country_settings must appear in the admin dump now — ut-docs#1669")
+	}
+
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var taxRateBP int64
+	if err := replica.QueryRow(`SELECT tax_rate_bp FROM country_settings WHERE code = 'GB'`).Scan(&taxRateBP); err != nil {
+		t.Fatalf("synced country_settings row missing: %v", err)
+	}
+	if taxRateBP != 2200 {
+		t.Fatalf("replica's local edit survived sync (primary should win): got tax_rate_bp=%d, want 2200", taxRateBP)
+	}
+
+	// An operator-created (non-builtin) country, present on both sides,
+	// then removed on the primary -- the delete must propagate shop-wide,
+	// same as any other adminTables row. (Unlike a BUILTIN country, whose
+	// own Delete() restores defaults rather than ever leaving it absent
+	// from the primary's dump -- this is deliberately a non-builtin code.)
+	mustExec(t, primary,
+		`INSERT INTO country_settings (code, name_key, currency, currency_symbol, tax_rate_bp, tax_inclusive, archive_min_days, is_builtin, updated_at, default_locale)
+		 VALUES ('ZZ', '', 'ZZZ', '', 500, 1, 3650, 0, '2026-09-07T00:00:00Z', '')`)
+	mustExec(t, replica,
+		`INSERT INTO country_settings (code, name_key, currency, currency_symbol, tax_rate_bp, tax_inclusive, archive_min_days, is_builtin, updated_at, default_locale)
+		 VALUES ('ZZ', '', 'ZZZ', '', 500, 1, 3650, 0, '2026-09-07T00:00:00Z', '')`)
+	mustExec(t, primary, `DELETE FROM country_settings WHERE code = 'ZZ'`)
+	final, err := NewSyncAdminRepo(primary.DB).DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("final dump: %v", err)
+	}
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, final)); err != nil {
+		t.Fatalf("final apply: %v", err)
+	}
+	var n int
+	_ = replica.QueryRow(`SELECT COUNT(*) FROM country_settings WHERE code = 'ZZ'`).Scan(&n)
+	if n != 0 {
+		t.Fatal("operator-created country deleted on primary survived on the replica — prune did not propagate")
+	}
+}
+
+// TestAdminApplyCountrySettings_ClampsArchiveMinDaysToGlobalFloor is
+// ut-docs#1669: ApplyAdmin's generic upsertRow() writes raw column values
+// directly, bypassing CountrySettingsRepo.Upsert()'s own ADR-0040 floor
+// validation entirely — so a rolled-back or buggy primary must not be able
+// to push a satellite below the retention floor via sync. Build the bundle
+// by hand (not via CountrySettingsRepo.Upsert, which would refuse a
+// below-floor value at the source) to simulate exactly that, for a
+// non-builtin code with no pre-existing seeded row (so success can only
+// come from ApplyAdmin actually writing it).
+func TestAdminApplyCountrySettings_ClampsArchiveMinDaysToGlobalFloor(t *testing.T) {
+	ctx := context.Background()
+	replica := openMigratedDB(t, "replica.db")
+
+	bundle := AdminBundle{Tables: map[string][]map[string]any{
+		"country_settings": {
+			{
+				"code": "ZZ", "name_key": "", "currency": "ZZZ",
+				"currency_symbol": "", "tax_rate_bp": int64(500), "tax_inclusive": int64(1),
+				"archive_min_days": int64(30), // below GlobalArchiveMinDays (3650)
+				"is_builtin":       int64(0), "updated_at": "2026-09-07T00:00:00Z", "default_locale": "",
+			},
+		},
+	}}
+
+	if err := NewSyncAdminRepo(replica.DB).ApplyAdmin(ctx, wireTrip(t, bundle)); err != nil {
+		t.Fatalf("apply: %v", err)
+	}
+
+	var days int64
+	if err := replica.QueryRow(`SELECT archive_min_days FROM country_settings WHERE code = 'ZZ'`).Scan(&days); err != nil {
+		t.Fatalf("synced country_settings row missing: %v", err)
+	}
+	if days != GlobalArchiveMinDays {
+		t.Fatalf("below-floor archive_min_days applied as-is instead of clamped: got %d, want %d (ADR-0040 floor)", days, GlobalArchiveMinDays)
+	}
+}

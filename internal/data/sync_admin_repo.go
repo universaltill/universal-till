@@ -175,6 +175,17 @@ var adminTables = []adminTable{
 	{name: "category_station_routes", pk: []string{"category_id", "station_id"}},
 	{name: "translation_overrides", pk: []string{"locale", "key"}},
 	{name: "settings", pk: []string{"key"}},
+	// ut-docs#1669: admin-manageable per-jurisdiction defaults, plain PK-only
+	// like settings above — no is_active/soft-delete column, and none is
+	// needed: CountrySettingsRepo.Delete() already restores a BUILTIN
+	// country to its shipped defaults instead of removing the row (so a
+	// builtin row is never actually absent from a primary's dump), and a
+	// genuinely operator-created country being hard-deleted shop-wide on
+	// prune is the correct behavior, not a gap to guard against. The
+	// ADR-0040 archive_min_days floor is re-enforced separately in
+	// ApplyAdmin below, since this generic upsert path bypasses
+	// CountrySettingsRepo.Upsert()'s own validation.
+	{name: "country_settings", pk: []string{"code"}},
 	// pk is the surrogate uuid, not (plugin_id,key,scope,scope_id): that
 	// table-level UNIQUE constraint includes scope_id, which is NULL on
 	// global rows, and SQLite treats NULLs as distinct -- ON CONFLICT on
@@ -333,9 +344,8 @@ var nonAdminTables = map[string]string{
 	// Genuinely open classification questions — excluded (not synced) rather
 	// than guessed into adminTables, each split into its own follow-up card
 	// per this var's own top comment.
-	"vouchers":         "shop-wide voucher balance, runtime-mutable across tills — needs a concurrency design before it can safely sync (parallel to ut-docs#1554's role_permissions); flagged in ut-docs#1668",
-	"country_settings": "admin-manageable per-jurisdiction defaults (tax/currency/retention) — reads shop-wide like settings, not yet confirmed safe to bundle; flagged in ut-docs#1669",
-	"price_history":    "NOT a pure append-only audit trail (AppendPriceHistoryItem/Variant UPDATE the prior row's ends_at, and item deletion DELETEs rows) and NOT inert to checkout — ResolveCurrentPrice consults an open price_history row BEFORE items' synced price, so it can override it. Currently latent (nothing in production writes this table yet), but a satellite that ever does would diverge on price silently. Needs an Architect pass before either classification is safe; flagged in ut-docs#1671",
+	"vouchers":      "shop-wide voucher balance, runtime-mutable across tills — needs a concurrency design before it can safely sync (parallel to ut-docs#1554's role_permissions); flagged in ut-docs#1668",
+	"price_history": "NOT a pure append-only audit trail (AppendPriceHistoryItem/Variant UPDATE the prior row's ends_at, and item deletion DELETEs rows) and NOT inert to checkout — ResolveCurrentPrice consults an open price_history row BEFORE items' synced price, so it can override it. Currently latent (nothing in production writes this table yet), but a satellite that ever does would diverge on price silently. Needs an Architect pass before either classification is safe; flagged in ut-docs#1671",
 }
 
 // FiscalPendingSignRetriesSettingsKey is the settings.key the pre-1.4.0
@@ -560,6 +570,20 @@ func (r *SyncAdminRepo) ApplyAdmin(ctx context.Context, bundle AdminBundle) erro
 		for _, rec := range recs {
 			if t.name == "settings" && perTillSetting(fmt.Sprint(rec["key"])) {
 				continue // defense in depth: never let a primary write per-till keys
+			}
+			if t.name == "country_settings" {
+				// ut-docs#1669: upsertRow below writes archive_min_days raw,
+				// bypassing CountrySettingsRepo.Upsert()'s own ADR-0040 floor
+				// check entirely — clamp it here so a rolled-back or buggy
+				// primary can never push a satellite below the retention
+				// floor via sync (defense in depth, same shape as the
+				// per-till-setting skip just above). Only touch it when the
+				// bundle actually carries the column — leave a genuinely
+				// absent column (an older primary's schema) alone, same as
+				// upsertRow's own "column the primary doesn't know" case.
+				if v, ok := rec["archive_min_days"]; ok && syncedDays(v) < GlobalArchiveMinDays {
+					rec["archive_min_days"] = GlobalArchiveMinDays
+				}
 			}
 			if err := upsertRow(ctx, tx, t, cols, rec); err != nil {
 				return fmt.Errorf("apply %s: %w", t.name, err)
@@ -881,6 +905,25 @@ func stripRetireMangle(id, name string) string {
 
 // upsertRow inserts or fully updates one row. Column names are validated
 // against the live schema, never taken from the wire.
+// syncedDays converts a bundle value's dynamic type to int64: int64 when
+// ApplyAdmin is called directly in-process (scanGeneric's own type for an
+// INTEGER column), float64 after a real wire hop (wireTrip/JSON turns every
+// number into float64). Same defensive-conversion shape as bkpScanInt in
+// bkp_products_repo.go, for the same reason — never assume a single Go type
+// for a value that traveled through JSON.
+func syncedDays(v any) int64 {
+	switch n := v.(type) {
+	case int64:
+		return n
+	case float64:
+		return int64(n)
+	case int:
+		return int64(n)
+	default:
+		return 0
+	}
+}
+
 func upsertRow(ctx context.Context, tx *sql.Tx, t adminTable, cols []string, rec map[string]any) error {
 	isPK := map[string]bool{}
 	for _, c := range t.pk {
