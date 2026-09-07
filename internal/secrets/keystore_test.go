@@ -300,6 +300,99 @@ func TestKeyStoreSingleFlightFetch(t *testing.T) {
 	}
 }
 
+// ClearLocalKeyFile is the replica-join hook (internal/db.ApplyReplicaIdentity):
+// removing the file at the canonical production path is what makes the next
+// Load (via the registered fetch closure) fetch the shop's key from the
+// primary instead of continuing to use a stale standalone-generated one.
+func TestClearLocalKeyFileRemovesExistingKey(t *testing.T) {
+	dir := withTestDataDir(t)
+	path := filepath.Join(dir, "secrets", "plugin_settings_key.bin")
+
+	ks := NewKeyStore(nil)
+	if ks.Path() != path {
+		t.Fatalf("test setup: KeyStore path = %q, want %q", ks.Path(), path)
+	}
+	if _, err := ks.Load(context.Background()); err != nil {
+		t.Fatalf("seed a local key: %v", err)
+	}
+	if !ks.Exists() {
+		t.Fatal("test setup: key file must exist before clearing")
+	}
+
+	if err := ClearLocalKeyFile(); err != nil {
+		t.Fatalf("ClearLocalKeyFile: %v", err)
+	}
+	if ks.Exists() {
+		t.Fatal("key file must be gone after ClearLocalKeyFile")
+	}
+}
+
+// Independent-review finding (ut-docs#1745): persist writes path+".tmp"
+// then renames it into place — a crash between those two steps leaves a
+// plaintext-key .tmp file behind. Clearing the key is supposed to destroy
+// it; leaving that sibling on disk forever defeats the whole point.
+func TestClearLocalKeyFileRemovesTmpSibling(t *testing.T) {
+	dir := withTestDataDir(t)
+	path := filepath.Join(dir, "secrets", "plugin_settings_key.bin")
+	tmp := path + ".tmp"
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, testKey(t), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tmp, testKey(t), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ClearLocalKeyFile(); err != nil {
+		t.Fatalf("ClearLocalKeyFile: %v", err)
+	}
+	if _, err := os.Stat(path); !os.IsNotExist(err) {
+		t.Fatalf("stat key file: %v, want not-exist", err)
+	}
+	if _, err := os.Stat(tmp); !os.IsNotExist(err) {
+		t.Fatalf("stat .tmp sibling: %v, want not-exist — a crash-leftover plaintext key must not survive a clear", err)
+	}
+}
+
+// The .tmp sibling can exist with no finished key file at all (a crash
+// during the very first persist) — clearing must still remove it and must
+// not error just because the "real" file was never there.
+func TestClearLocalKeyFileRemovesOrphanTmpWithNoRealFile(t *testing.T) {
+	dir := withTestDataDir(t)
+	path := filepath.Join(dir, "secrets", "plugin_settings_key.bin")
+	tmp := path + ".tmp"
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(tmp, testKey(t), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := ClearLocalKeyFile(); err != nil {
+		t.Fatalf("ClearLocalKeyFile: %v", err)
+	}
+	if _, err := os.Stat(tmp); !os.IsNotExist(err) {
+		t.Fatalf("stat orphan .tmp: %v, want not-exist", err)
+	}
+}
+
+// A till joining for the first time has no local key at all — clearing it
+// must be a harmless no-op, not an error, so ApplyReplicaIdentity doesn't
+// have to special-case "never had a key".
+func TestClearLocalKeyFileNoopWhenAbsent(t *testing.T) {
+	withTestDataDir(t)
+	if NewKeyStore(nil).Exists() {
+		t.Fatal("test setup: no key should exist yet")
+	}
+	if err := ClearLocalKeyFile(); err != nil {
+		t.Fatalf("ClearLocalKeyFile on an absent file must not error: %v", err)
+	}
+}
+
 func TestDefaultSingleton(t *testing.T) {
 	prev := Default()
 	t.Cleanup(func() { SetDefault(prev) })
