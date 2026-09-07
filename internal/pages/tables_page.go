@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
@@ -106,7 +107,16 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 
 	audit := func(r *http.Request, actorID, targetID, action string, payload any) {
 		now := time.Now().UTC().Format(time.RFC3339)
-		_ = posRepo.InsertAudit(r.Context(), nil, actorID, "table", targetID, action, payload, now, "")
+		// A table audit write should never be able to block or fail the
+		// mutation it records, so its error stays fire-and-forget (same
+		// convention as every other InsertAudit call site in this
+		// package) -- but a failure here was previously invisible even
+		// to an operator looking at the logs (ut-docs#1715). Log it, same
+		// shape as hold_api.go's own "silent, durable leak" log line for
+		// a comparable swallowed-error case.
+		if err := posRepo.InsertAudit(r.Context(), nil, actorID, "table", targetID, action, payload, now, ""); err != nil {
+			log.Printf("table audit write failed: actor=%s target=%s action=%s: %v", actorID, targetID, action, err)
+		}
 	}
 
 	// tiles is shared by both the full page below and its live-state HTMX
