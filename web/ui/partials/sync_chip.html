@@ -10,12 +10,30 @@
      Per the product owner's own rule ("if it is a menu button it should be
      correct"): this is a permanent navigation control once a shop has
      satellites, so status stops recolouring the whole button. Offline /
-     queued / quarantined / a stale roster now show as a small dot badge on
-     the icon instead (title carries the detail text) — "at most a badge",
-     per the card. A full notification-tray surface for these transient
-     states is a separate, larger UI concept this codebase doesn't have yet
-     anywhere — tracked as a follow-up (ut-docs#1546) rather than invented
-     unreviewed here.
+     queued / quarantined states show as a small dot badge on the icon
+     instead (title carries the detail text) — "at most a badge", per the
+     card. A full notification-tray surface for these transient states is a
+     separate, larger UI concept this codebase doesn't have yet anywhere —
+     tracked as a follow-up (ut-docs#1546) rather than invented unreviewed
+     here.
+     ut-docs#1729: on the PRIMARY branch the badge is driven by actionable
+     state ONLY — a pending pairing request or a quarantined entry, both of
+     which a manager resolves on /tills or /sync-quarantine. A stale roster
+     (`class == "warn"`) used to light it too, which meant a shop whose
+     satellite is switched off overnight carried a permanent dot that no
+     action could ever clear, so the badge stopped meaning anything.
+     Dropping it from the badge could NOT just be left there, though: the
+     independent review found the dot was the ONLY signal that case had.
+     `.sync-chip`'s warn class is a bare hook with no styling of its own
+     (app.css), and the title said just "Enrolled tills — open the Tills
+     page" with no mention of offline — so removing the dot alone would
+     have made an offline satellite invisible in the rail entirely. So the
+     stale COUNT is now stated as text instead ("· 1 offline"), in the
+     label, the title and the accessible name — passive status a manager
+     reads, rather than a notification affordance they cannot dismiss.
+     The REPLICA branch keeps `or .offline .queued`: an offline replica
+     holding unsent sales is real backlog on that device, and it clears
+     itself once sync drains, so it is genuinely actionable.
      Independent review (2026-09-04): the badge is aria-hidden (decorative,
      same as every other .nav-toggle-ico glyph) and .nav-toggle-label is
      visually-hidden in the rail — between them, the alert state used to be
@@ -52,12 +70,12 @@
        new href branch (a pending request is resolved on /tills either
        way, quarantined or not). */}}
   <a href="{{ if .quarantined }}/sync-quarantine{{ else }}/tills{{ end }}" class="nav-toggle"
-     title="{{ if .quarantined }}{{ T "sync.chip_quarantine_title" }}{{ else }}{{ T "sync.chip_tills_title" }}{{ end }}"
-     aria-label="{{ if .quarantined }}{{ T "sync.chip_quarantine_title" }}{{ else }}{{ T "sync.chip_tills_title" }}{{ end }} — {{ .label }}{{ if .count }} · {{ .count }} {{ if eq .count 1 }}{{ T "sync.chip_till_one" }}{{ else }}{{ T "sync.chip_till_other" }}{{ end }}{{ end }}{{ if .quarantined }} · {{ .quarantined }} {{ if eq .quarantined 1 }}{{ T "sync.chip_quarantined_one" }}{{ else }}{{ T "sync.chip_quarantined_other" }}{{ end }}{{ end }}{{ if .pending }} · {{ .pending }} {{ if eq .pending 1 }}{{ T "sync.chip_pairing_pending_one" }}{{ else }}{{ T "sync.chip_pairing_pending_other" }}{{ end }}{{ end }}">
-    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "sync" }}{{ if or .quarantined .pending (eq .class "warn") }}<span class="nav-badge" aria-hidden="true"></span>{{ end }}</span>
+     title="{{ if .quarantined }}{{ T "sync.chip_quarantine_title" }}{{ else if .stale }}{{ T "sync.chip_tills_stale_title" }}{{ else }}{{ T "sync.chip_tills_title" }}{{ end }}"
+     aria-label="{{ if .quarantined }}{{ T "sync.chip_quarantine_title" }}{{ else if .stale }}{{ T "sync.chip_tills_stale_title" }}{{ else }}{{ T "sync.chip_tills_title" }}{{ end }} — {{ .label }}{{ if .count }} · {{ .count }} {{ if eq .count 1 }}{{ T "sync.chip_till_one" }}{{ else }}{{ T "sync.chip_till_other" }}{{ end }}{{ end }}{{ if .stale }} · {{ .stale }} {{ if eq .stale 1 }}{{ T "sync.chip_till_offline_one" }}{{ else }}{{ T "sync.chip_till_offline_other" }}{{ end }}{{ end }}{{ if .quarantined }} · {{ .quarantined }} {{ if eq .quarantined 1 }}{{ T "sync.chip_quarantined_one" }}{{ else }}{{ T "sync.chip_quarantined_other" }}{{ end }}{{ end }}{{ if .pending }} · {{ .pending }} {{ if eq .pending 1 }}{{ T "sync.chip_pairing_pending_one" }}{{ else }}{{ T "sync.chip_pairing_pending_other" }}{{ end }}{{ end }}">
+    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "sync" }}{{ if or .quarantined .pending }}<span class="nav-badge" aria-hidden="true"></span>{{ end }}</span>
     {{/* ut-docs#405: this till's own name leads, same source (tillNameOrDefault)
          Settings/​/tills already use; the count stays a secondary detail. */}}
-    <span class="nav-toggle-label" aria-hidden="true">{{ .label }}{{ if .count }} · {{ .count }} {{ if eq .count 1 }}{{ T "sync.chip_till_one" }}{{ else }}{{ T "sync.chip_till_other" }}{{ end }}{{ end }}{{ if .quarantined }} · {{ .quarantined }} {{ if eq .quarantined 1 }}{{ T "sync.chip_quarantined_one" }}{{ else }}{{ T "sync.chip_quarantined_other" }}{{ end }}{{ end }}{{ if .pending }} · {{ .pending }} {{ if eq .pending 1 }}{{ T "sync.chip_pairing_pending_one" }}{{ else }}{{ T "sync.chip_pairing_pending_other" }}{{ end }}{{ end }}</span>
+    <span class="nav-toggle-label" aria-hidden="true">{{ .label }}{{ if .count }} · {{ .count }} {{ if eq .count 1 }}{{ T "sync.chip_till_one" }}{{ else }}{{ T "sync.chip_till_other" }}{{ end }}{{ end }}{{ if .stale }} · {{ .stale }} {{ if eq .stale 1 }}{{ T "sync.chip_till_offline_one" }}{{ else }}{{ T "sync.chip_till_offline_other" }}{{ end }}{{ end }}{{ if .quarantined }} · {{ .quarantined }} {{ if eq .quarantined 1 }}{{ T "sync.chip_quarantined_one" }}{{ else }}{{ T "sync.chip_quarantined_other" }}{{ end }}{{ end }}{{ if .pending }} · {{ .pending }} {{ if eq .pending 1 }}{{ T "sync.chip_pairing_pending_one" }}{{ else }}{{ T "sync.chip_pairing_pending_other" }}{{ end }}{{ end }}</span>
   </a>
   {{- end }}
 </span>

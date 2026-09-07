@@ -27,6 +27,11 @@ const (
 	keyPrinterAuto      = "printer.auto_print"
 	keyPrinterKitchen   = "printer.kitchen_addr" // kitchen printer host[:port] or device path
 	keyPrinterDrawerPin = "printer.drawer_pin"   // "2" | "5" (ut-docs#1136)
+
+	// Read-only here: the store identity the printer charset default is
+	// resolved from (ut-docs#1728). Owned by settings.SaveRuntimeConfig.
+	keyStoreCurrency = "store.currency"
+	keyStoreLocale   = "store.locale"
 )
 
 // parseDrawerPin resolves the drawer_pin setting to 2 or 5. Anything else --
@@ -79,10 +84,26 @@ func printerConfigChecked(ctx context.Context, d *common.Deps) (print.Config, er
 		Mode:           get(keyPrinterMode, "off"),
 		Address:        get(keyPrinterAddress, ""),
 		Device:         get(keyPrinterDevice, ""),
-		Charset:        get(keyPrinterCharset, "utf8"),
+		Charset:        get(keyPrinterCharset, ""),
 		AutoPrint:      get(keyPrinterAuto, "true") == "true",
 		KitchenAddress: get(keyPrinterKitchen, ""),
 		DrawerPin:      parseDrawerPin(get(keyPrinterDrawerPin, "2")),
+	}
+	// ut-docs#1728: an unset charset resolves from the store's own
+	// currency/locale rather than the hardcoded "utf8" that used to sit in
+	// the get() default above. That hardcoded value is what made
+	// ut-docs#1243's CP858 support opt-in: the transcode worked, but no till
+	// used it unless a human found the Characters dropdown, so real receipts
+	// kept printing "âÎ¬2.50" for "€2.50".
+	//
+	// Resolved HERE rather than as get()'s default argument because Go
+	// evaluates arguments eagerly: passing it inline would fire the two
+	// store.* reads on every printerConfig call, including the overwhelming
+	// majority where the operator HAS chosen a charset and the result is
+	// discarded. An explicit choice still wins — this branch is only
+	// reached when nothing is stored.
+	if cfg.Charset == "" {
+		cfg.Charset = print.DefaultCharset(get(keyStoreCurrency, ""), get(keyStoreLocale, ""))
 	}
 	return cfg, firstErr
 }

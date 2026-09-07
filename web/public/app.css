@@ -253,9 +253,12 @@ body.login-screen, body.tracking-screen { padding-inline-start: 0; }
   display: inline-flex; align-items: center; justify-content: center;
   inline-size: 1.6rem; block-size: 1.6rem;
   font-size: 1.25rem; line-height: 1;
-  /* ut-docs#1539: anchors .nav-badge below (an alert dot for offline/
-     quarantined/degraded states). No other .nav-toggle-ico has a
-     positioned descendant, so this costs them nothing. */
+  /* ut-docs#1539: anchors .nav-badge below (an alert dot). ut-docs#1729
+     narrowed what lights it on the primary's sync chip: a pending pairing
+     request or a quarantined entry — states a human resolves — and no
+     longer a merely stale/offline satellite, which nothing can clear.
+     No other .nav-toggle-ico has a positioned descendant, so this costs
+     them nothing. */
   position: relative;
 }
 .nav-toggle-ico svg { inline-size: 1.5rem; block-size: 1.5rem; display: block; }
