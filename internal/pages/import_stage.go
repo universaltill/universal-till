@@ -270,19 +270,25 @@ func hashImportUpload(file io.ReadSeeker) (string, error) {
 	return hex.EncodeToString(h.Sum(nil)), nil
 }
 
-// forceableImportIssue is ut-docs#601's explicit allow-list: the only two
-// issue types an operator may force-include from the preview's problem
-// grid, each with the correction field that makes the row importable. An
-// ALLOW-list on purpose, never a deny-list: any other issue code — the
-// integrity-sensitive skips (duplicate/already-in-catalog), and any issue
-// type catimport grows in the future — defaults to skip-only, no matter
-// what the client submits.
-func forceableImportIssue(issue string) (field string, ok bool) {
+// forceableImportIssue is ut-docs#601's explicit allow-list: the issue types
+// an operator may force-include from the preview's problem grid, each with
+// the correction field(s) that make the row importable, in the order they
+// must be supplied. An ALLOW-list on purpose, never a deny-list: any other
+// issue code — the integrity-sensitive skips (duplicate/already-in-catalog),
+// and any issue type catimport grows in the future — defaults to skip-only,
+// no matter what the client submits.
+//
+// IssueMissingNameAndBadPrice (ut-docs#1713) needs BOTH corrections at
+// once — a row missing only its name never silently ships a price of 0 by
+// having just one of the two fields.
+func forceableImportIssue(issue string) (fields []string, ok bool) {
 	switch issue {
 	case catimport.IssueMissingName:
-		return "name", true
+		return []string{"name"}, true
 	case catimport.IssueBadPrice:
-		return "price", true
+		return []string{"price"}, true
+	case catimport.IssueMissingNameAndBadPrice:
+		return []string{"name", "price"}, true
 	}
-	return "", false
+	return nil, false
 }

@@ -664,7 +664,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				if r.FormValue(fmt.Sprintf("row_include_%d", i)) != "1" {
 					continue
 				}
-				field, forceable := forceableImportIssue(res.Items[i].Issue)
+				fields, forceable := forceableImportIssue(res.Items[i].Issue)
 				if !forceable {
 					continue
 				}
@@ -677,31 +677,63 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					overrideNotes[i] = T("import.status.duplicate_sku_in_file")
 					continue
 				}
-				switch field {
-				case "name":
-					name := strings.TrimSpace(r.FormValue(fmt.Sprintf("row_name_%d", i)))
-					if name == "" {
-						overrideNotes[i] = T("import.problem_grid.name_required")
-						continue
+				// ut-docs#1713: a row can now need BOTH corrections
+				// (IssueMissingNameAndBadPrice → fields = ["name","price"]).
+				// Every listed field must validate before ANY of them is
+				// applied — a name-only correction on a row that ALSO needs
+				// a price must never clear Issue and silently ship
+				// PriceMinor 0; it stays skipped, with the note naming
+				// whichever required field is still missing/invalid.
+				newName := res.Items[i].Name
+				newPriceMinor := res.Items[i].PriceMinor
+				rowFailed := false
+				for _, field := range fields {
+					switch field {
+					case "name":
+						name := strings.TrimSpace(r.FormValue(fmt.Sprintf("row_name_%d", i)))
+						if name == "" {
+							overrideNotes[i] = T("import.problem_grid.name_required")
+							rowFailed = true
+						} else {
+							newName = name
+						}
+					case "price":
+						rawPrice := strings.TrimSpace(r.FormValue(fmt.Sprintf("row_price_%d", i)))
+						if rawPrice == "" {
+							overrideNotes[i] = T("import.problem_grid.price_required")
+							rowFailed = true
+						} else if minor, perr := catimport.ParsePrice(rawPrice, decimals); perr != nil {
+							// Same parser the file's own price cells go
+							// through — one price grammar on this page, not two.
+							overrideNotes[i] = fmt.Sprintf(T("import.problem_grid.price_invalid"), rawPrice)
+							rowFailed = true
+						} else {
+							newPriceMinor = minor
+						}
+					default:
+						// Defensive-default, same convention translateImportIssue
+						// uses for an unrecognised Issue code: forceableImportIssue
+						// is the only source of field names reaching here, so this
+						// is unreachable today — but Issue is cleared by NAME below,
+						// after this loop, not inside each case. Fail CLOSED (row
+						// stays skipped) on any field this switch doesn't know how
+						// to apply, rather than silently treating an unhandled
+						// field as already-satisfied and importing the row with
+						// that correction never actually applied — independent
+						// review finding, ut-docs#1713.
+						log.Printf("[import] forceable field %q has no correction handler", field)
+						rowFailed = true
 					}
-					res.Items[i].Name = name
-					res.Items[i].Issue, res.Items[i].IssueDetail = "", ""
-				case "price":
-					rawPrice := strings.TrimSpace(r.FormValue(fmt.Sprintf("row_price_%d", i)))
-					if rawPrice == "" {
-						overrideNotes[i] = T("import.problem_grid.price_required")
-						continue
+					if rowFailed {
+						break
 					}
-					// Same parser the file's own price cells go through —
-					// one price grammar on this page, not two.
-					minor, perr := catimport.ParsePrice(rawPrice, decimals)
-					if perr != nil {
-						overrideNotes[i] = fmt.Sprintf(T("import.problem_grid.price_invalid"), rawPrice)
-						continue
-					}
-					res.Items[i].PriceMinor = minor
-					res.Items[i].Issue, res.Items[i].IssueDetail = "", ""
 				}
+				if rowFailed {
+					continue
+				}
+				res.Items[i].Name = newName
+				res.Items[i].PriceMinor = newPriceMinor
+				res.Items[i].Issue, res.Items[i].IssueDetail = "", ""
 				// Override accepted (Issue cleared). If a clean row anchors
 				// this PLU, this row now becomes just as real and distinct a
 				// product as that anchor (ut-docs#1234) — give it its own
@@ -734,19 +766,19 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		// Annotate duplicates (server truth) for both preview and commit.
 		type rowView struct {
 			catimport.ImportItem
-			Status   string // translated display text
-			Skipped  bool   // preview-time issue/duplicate — never entered the commit loop as importable
-			Warned   bool   // created, but with a warning
-			Failed   bool   // commit-time failure (category/department/item creation)
-			Idx      int    // stable 0-based row index for this parse (ut-docs#601) — field names row_include_<Idx> etc.
-			FixField string // "name"/"price" when the row's issue is forceable with an inline correction, else ""
+			Status    string   // translated display text
+			Skipped   bool     // preview-time issue/duplicate — never entered the commit loop as importable
+			Warned    bool     // created, but with a warning
+			Failed    bool     // commit-time failure (category/department/item creation)
+			Idx       int      // stable 0-based row index for this parse (ut-docs#601) — field names row_include_<Idx> etc.
+			FixFields []string // "name"/"price", in order, when the row's issue is forceable with inline correction field(s), else nil — ut-docs#1713: a row can need both at once
 		}
 		var rows []rowView
 		importable := 0
 		for i, it := range res.Items {
 			status := T("import.status.ok")
 			skipped := false
-			fixField := ""
+			var fixFields []string
 			switch {
 			case overrideNotes[i] != "":
 				// Ticked to import but the correction didn't validate —
@@ -754,7 +786,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				status, skipped = overrideNotes[i], true
 			case it.Issue != "":
 				status, skipped = translateImportIssue(T, it), true
-				fixField, _ = forceableImportIssue(it.Issue)
+				fixFields, _ = forceableImportIssue(it.Issue)
 			case it.Barcode != "":
 				if exists, _ := repo.BarcodeExists(r.Context(), it.Barcode); exists {
 					status, skipped = T("import.status.barcode_already_in_catalog"), true
@@ -768,7 +800,7 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			if !skipped {
 				importable++
 			}
-			rows = append(rows, rowView{ImportItem: it, Status: status, Skipped: skipped, Idx: i, FixField: fixField})
+			rows = append(rows, rowView{ImportItem: it, Status: status, Skipped: skipped, Idx: i, FixFields: fixFields})
 		}
 
 		// ut-docs#601: a preview stages the upload so the follow-up commit
@@ -1397,31 +1429,41 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			case row.Skipped || row.Failed:
 				cls = ` class="muted"`
 			}
-			if interactive && row.Skipped && row.FixField != "" {
-				// Include/skip checkbox plus inline correction input — ONLY
-				// for the forceable issue types (missing_name/bad_price,
-				// forceableImportIssue). Any other skipped row keeps its
-				// passive status text with no controls at all: the server
-				// would ignore a ticked include on it anyway, and an inert
-				// checkbox with no feedback misleads the operator into
-				// thinking something can be done (ut-docs#601 review F3).
-				// Required-if-ticked is wired up by the page's own script via
-				// data-fix-target. All controls are form-associated
-				// (form="import-form") — they live outside the <form>, in the
-				// swapped #import-result div. Logical properties only
+			if interactive && row.Skipped && len(row.FixFields) > 0 {
+				// Include/skip checkbox plus inline correction input(s) —
+				// ONLY for the forceable issue types (missing_name/
+				// bad_price/missing_name_and_bad_price, forceableImportIssue).
+				// Any other skipped row keeps its passive status text with no
+				// controls at all: the server would ignore a ticked include
+				// on it anyway, and an inert checkbox with no feedback
+				// misleads the operator into thinking something can be done
+				// (ut-docs#601 review F3). Required-if-ticked is wired up by
+				// the page's own script via data-fix-target, one input id
+				// per listed field (space-separated — ut-docs#1713: a row
+				// needing both name and price now renders both inputs under
+				// one checkbox, so the target list is no longer always
+				// exactly one id). All controls are form-associated
+				// (form="import-form") — they live outside the <form>, in
+				// the swapped #import-result div. Logical properties only
 				// (margin-block-*): fa/ar render RTL.
+				targetIDs := make([]string, len(row.FixFields))
+				for fi, field := range row.FixFields {
+					targetIDs[fi] = fmt.Sprintf("row-fix-%s-%d", field, row.Idx)
+				}
 				statusHTML += fmt.Sprintf(
-					`<label class="import-fix-include" style="display:block;margin-block-start:.3rem"><input type="checkbox" name="row_include_%d" value="1" form="import-form" data-fix-target="row-fix-%d"> %s</label>`,
-					row.Idx, row.Idx, htmlEscape(T("import.problem_grid.include_label")))
-				switch row.FixField {
-				case "name":
-					statusHTML += fmt.Sprintf(
-						`<input type="text" id="row-fix-%d" name="row_name_%d" form="import-form" placeholder="%s" aria-label="%s" style="display:block;margin-block-start:.3rem;max-width:14rem">`,
-						row.Idx, row.Idx, htmlEscape(T("import.problem_grid.corrected_name")), htmlEscape(T("import.problem_grid.corrected_name")))
-				case "price":
-					statusHTML += fmt.Sprintf(
-						`<input type="text" id="row-fix-%d" name="row_price_%d" form="import-form" inputmode="decimal" placeholder="%s" aria-label="%s" style="display:block;margin-block-start:.3rem;max-width:8rem">`,
-						row.Idx, row.Idx, htmlEscape(T("import.problem_grid.corrected_price")), htmlEscape(T("import.problem_grid.corrected_price")))
+					`<label class="import-fix-include" style="display:block;margin-block-start:.3rem"><input type="checkbox" name="row_include_%d" value="1" form="import-form" data-fix-target="%s"> %s</label>`,
+					row.Idx, htmlEscape(strings.Join(targetIDs, " ")), htmlEscape(T("import.problem_grid.include_label")))
+				for _, field := range row.FixFields {
+					switch field {
+					case "name":
+						statusHTML += fmt.Sprintf(
+							`<input type="text" id="row-fix-name-%d" name="row_name_%d" form="import-form" placeholder="%s" aria-label="%s" style="display:block;margin-block-start:.3rem;max-width:14rem">`,
+							row.Idx, row.Idx, htmlEscape(T("import.problem_grid.corrected_name")), htmlEscape(T("import.problem_grid.corrected_name")))
+					case "price":
+						statusHTML += fmt.Sprintf(
+							`<input type="text" id="row-fix-price-%d" name="row_price_%d" form="import-form" inputmode="decimal" placeholder="%s" aria-label="%s" style="display:block;margin-block-start:.3rem;max-width:8rem">`,
+							row.Idx, row.Idx, htmlEscape(T("import.problem_grid.corrected_price")), htmlEscape(T("import.problem_grid.corrected_price")))
+					}
 				}
 			}
 			fmt.Fprintf(&b, `<tr%s><td>%s</td><td>%s</td><td>%s</td><td>%s</td><td>%s</td></tr>`,
@@ -1767,6 +1809,8 @@ func translateImportIssue(T func(string) string, it catimport.ImportItem) string
 		return T("import.status.missing_name")
 	case catimport.IssueBadPrice:
 		return fmt.Sprintf(T("import.status.bad_price"), it.IssueDetail)
+	case catimport.IssueMissingNameAndBadPrice:
+		return fmt.Sprintf(T("import.status.missing_name_and_bad_price"), it.IssueDetail)
 	case catimport.IssueSourceDeleted:
 		return T("import.status.source_deleted")
 	case catimport.IssueNotSellable:

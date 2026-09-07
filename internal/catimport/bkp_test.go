@@ -422,6 +422,65 @@ func TestParseBkp_BadPrice(t *testing.T) {
 	}
 }
 
+// TestParseBkp_MissingNameAndBadPrice is the regression test for ut-docs#1713:
+// a row that is BOTH nameless AND carries an unparseable price used to only
+// ever report missing_name — the switch's price branch was inside a
+// default case the name=="" case pre-empted, so a name-only correction
+// silently shipped the row at PriceMinor 0 with no warning at all. Both
+// defects must now surface together, via the dedicated combined reason code.
+func TestParseBkp_MissingNameAndBadPrice(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "NP1", ProductTextShort: "   ", SalesPrice: "not-a-price", ProductGroupText: "Snacks", Status: 1, ProductType: 1},
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+	it := res.Items[0]
+	if it.Issue != IssueMissingNameAndBadPrice {
+		t.Errorf("Issue = %q, want %q", it.Issue, IssueMissingNameAndBadPrice)
+	}
+	if it.IssueDetail != "not-a-price" {
+		t.Errorf("IssueDetail = %q, want raw value %q", it.IssueDetail, "not-a-price")
+	}
+	if it.PriceMinor != 0 {
+		t.Errorf("PriceMinor = %d, want 0 (uncorrected, unparseable price)", it.PriceMinor)
+	}
+}
+
+// TestParseBkp_MissingNameOnlyStillCarriesValidPrice is a regression test
+// for the latent half of ut-docs#1713's root cause: because the old switch's
+// price parse only ran in its default case, a row missing ONLY its name
+// (with an otherwise-valid price) never had its price parsed at all, so
+// PriceMinor stayed 0 even though the source cell was fine. Price is now
+// parsed unconditionally, so this case keeps its real price.
+func TestParseBkp_MissingNameOnlyStillCarriesValidPrice(t *testing.T) {
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "NP2", ProductTextShort: "  ", SalesPrice: 4.50, ProductGroupText: "Snacks", Status: 1, ProductType: 1},
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{"backup.db": dbBytes, "meta.inf": []byte(validMetaInfNoChecksums)})
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseBkp: %v", err)
+	}
+	if len(res.Items) != 1 {
+		t.Fatalf("items = %d, want 1", len(res.Items))
+	}
+	it := res.Items[0]
+	if it.Issue != IssueMissingName {
+		t.Errorf("Issue = %q, want %q", it.Issue, IssueMissingName)
+	}
+	if it.PriceMinor != 450 {
+		t.Errorf("PriceMinor = %d, want 450 (the source's real price, not discarded)", it.PriceMinor)
+	}
+}
+
 // TestParseBkp_GermanDecimalCommaPrice is a regression test for a review
 // finding (ut-docs#511, 2026-08-09): SQLite's dynamic typing means a REAL
 // SalesPrice column can still hold a German-formatted comma-decimal string

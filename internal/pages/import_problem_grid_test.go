@@ -143,6 +143,16 @@ func TestImport_PreviewStagesFileAndRendersProblemControls(t *testing.T) {
 	if !strings.Contains(resp, `name="row_price_1"`) {
 		t.Fatalf("bad-price row has no corrected-price input: %s", resp)
 	}
+	// ut-docs#1713 review: the per-field input id (row-fix-name-%d /
+	// row-fix-price-%d, replacing the old shared row-fix-%d) and the include
+	// checkbox's data-fix-target must still pair up correctly for the two
+	// PRE-EXISTING single-field issue types, not just the new combined one.
+	if !strings.Contains(resp, `id="row-fix-name-0"`) || !strings.Contains(resp, `data-fix-target="row-fix-name-0"`) {
+		t.Fatalf("missing-name-only row's input id and checkbox target must both be row-fix-name-0: %s", resp)
+	}
+	if !strings.Contains(resp, `id="row-fix-price-1"`) || !strings.Contains(resp, `data-fix-target="row-fix-price-1"`) {
+		t.Fatalf("bad-price-only row's input id and checkbox target must both be row-fix-price-1: %s", resp)
+	}
 	// The clean row gets no controls at all.
 	if strings.Contains(resp, `name="row_include_2"`) {
 		t.Fatalf("clean row must not render an include checkbox: %s", resp)
@@ -246,6 +256,133 @@ func TestImport_CommitWithStagedIDAppliesAllowListedCorrections(t *testing.T) {
 	if got := stagedRegistrySize(); got != 0 {
 		t.Fatalf("staged registry not cleaned up, %d entries left", got)
 	}
+}
+
+// bothMissingCSV: one row missing BOTH name and price — ut-docs#1713.
+const bothMissingCSV = "Name,SKU,Barcode,Price,Category\n" +
+	",BN1,,not-a-price,Snacks\n"
+
+// TestImport_PreviewRendersBothFieldsForCombinedIssue is the preview-side
+// regression test for ut-docs#1713: a row failing BOTH checks must render
+// name AND price correction inputs under one checkbox, not just one.
+func TestImport_PreviewRendersBothFieldsForCombinedIssue(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	initAuthTestI18n(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	_, resp := previewAndExtractStagedID(t, mux, bothMissingCSV)
+
+	if !strings.Contains(resp, `name="row_include_0"`) {
+		t.Fatalf("combined-issue row has no include checkbox: %s", resp)
+	}
+	if !strings.Contains(resp, `id="row-fix-name-0"`) || !strings.Contains(resp, `name="row_name_0"`) {
+		t.Fatalf("combined-issue row has no corrected-name input: %s", resp)
+	}
+	if !strings.Contains(resp, `id="row-fix-price-0"`) || !strings.Contains(resp, `name="row_price_0"`) {
+		t.Fatalf("combined-issue row has no corrected-price input: %s", resp)
+	}
+	// One checkbox targets BOTH inputs (space-separated ids).
+	if !strings.Contains(resp, `data-fix-target="row-fix-name-0 row-fix-price-0"`) {
+		t.Fatalf("include checkbox must target both correction inputs: %s", resp)
+	}
+	if !strings.Contains(resp, "missing name and bad price") {
+		t.Fatalf("combined-issue row must show the combined status text: %s", resp)
+	}
+}
+
+// TestImport_CommitStagedBothNameAndPriceRequireBothCorrections is the
+// commit-side regression test for ut-docs#1713's core acceptance criterion:
+// a row needing BOTH corrections must never import off just one of them —
+// supplying only the name must never silently ship the row at PriceMinor 0.
+func TestImport_CommitStagedBothNameAndPriceRequireBothCorrections(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+
+	t.Run("name only leaves the row skipped, price still required", func(t *testing.T) {
+		resetStagedCatalog(t)
+		dp := newImportTestDeps(t)
+		initAuthTestI18n(t)
+		mux := http.NewServeMux()
+		registerImport(mux, dp)
+
+		id, _ := previewAndExtractStagedID(t, mux, bothMissingCSV)
+		body, ct := multipartFields(t, map[string]string{
+			"commit":        "1",
+			"staged_id":     id,
+			"row_include_0": "1",
+			"row_name_0":    "Named Now",
+			// row_price_0 deliberately omitted.
+		})
+		rec := postImport(t, mux, body, ct)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("staged commit: code %d body %s", rec.Code, rec.Body.String())
+		}
+		var n int
+		if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE sku = 'BN1'`).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("row must NOT import off a name-only correction (n=%d err=%v) — this is the exact silent-£0.00 regression", n, err)
+		}
+		if !strings.Contains(rec.Body.String(), "no corrected price was given") {
+			t.Fatalf("must surface that the price is still required, got: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("price only leaves the row skipped, name still required", func(t *testing.T) {
+		resetStagedCatalog(t)
+		dp := newImportTestDeps(t)
+		initAuthTestI18n(t)
+		mux := http.NewServeMux()
+		registerImport(mux, dp)
+
+		id, _ := previewAndExtractStagedID(t, mux, bothMissingCSV)
+		body, ct := multipartFields(t, map[string]string{
+			"commit":        "1",
+			"staged_id":     id,
+			"row_include_0": "1",
+			"row_price_0":   "3.20",
+			// row_name_0 deliberately omitted.
+		})
+		rec := postImport(t, mux, body, ct)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("staged commit: code %d body %s", rec.Code, rec.Body.String())
+		}
+		var n int
+		if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE sku = 'BN1'`).Scan(&n); err != nil || n != 0 {
+			t.Fatalf("row must NOT import off a price-only correction (n=%d err=%v)", n, err)
+		}
+		if !strings.Contains(rec.Body.String(), "no corrected name was given") {
+			t.Fatalf("must surface that the name is still required, got: %s", rec.Body.String())
+		}
+	})
+
+	t.Run("both corrections together import cleanly", func(t *testing.T) {
+		resetStagedCatalog(t)
+		dp := newImportTestDeps(t)
+		initAuthTestI18n(t)
+		mux := http.NewServeMux()
+		registerImport(mux, dp)
+
+		id, _ := previewAndExtractStagedID(t, mux, bothMissingCSV)
+		body, ct := multipartFields(t, map[string]string{
+			"commit":        "1",
+			"staged_id":     id,
+			"row_include_0": "1",
+			"row_name_0":    "Named Now",
+			"row_price_0":   "3.20",
+		})
+		rec := postImport(t, mux, body, ct)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("staged commit: code %d body %s", rec.Code, rec.Body.String())
+		}
+		var name string
+		var price int64
+		if err := dp.Db.QueryRow(`SELECT name, base_price FROM items WHERE sku = 'BN1'`).Scan(&name, &price); err != nil {
+			t.Fatalf("row with both corrections not imported: %v", err)
+		}
+		if name != "Named Now" || price != 320 {
+			t.Fatalf("corrected row = (%q, %d), want (Named Now, 320)", name, price)
+		}
+	})
 }
 
 // Defense in depth: "include" on any issue type outside the allow-list
@@ -696,6 +833,64 @@ func TestImport_BkpStagedCommitDedupesAnchoredForcedRowsVetoesUnanchoredOnes(t *
 	}
 }
 
+// TestImport_BkpNameOnlyCorrectionKeepsRealPrice is the end-to-end (commit)
+// counterpart to internal/catimport/bkp_test.go's
+// TestParseBkp_MissingNameOnlyStillCarriesValidPrice — ut-docs#1713's second,
+// latent bug: a .bkp row missing ONLY its name (real, valid price) used to
+// have its price silently discarded (never parsed at all, since the parse
+// used to live only in the switch's default case) — a name-only correction
+// then imported it at PriceMinor 0 despite the source cell being fine. This
+// is the shape a shop actually hits: a name-only fix must carry the file's
+// real price through, not just clear the Issue.
+func TestImport_BkpNameOnlyCorrectionKeepsRealPrice(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	resetStagedCatalog(t)
+	dp := newImportTestDeps(t)
+	initAuthTestI18n(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	// idx 2 (after the base fixture's Latte/deleted rows): missing name,
+	// otherwise-valid price.
+	zipBytes := buildBkpZipForPagesTestWithTaxRows(t, []bkpTaxRow{
+		{ProductNumber: "80001", Name: "", Category: "Coffee", Price: 6.75},
+	})
+	body, ct := multipartFile(t, "Backup 2026-09-07.bkp", zipBytes, nil)
+	rec := postImport(t, mux, body, ct)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("bkp preview: code %d body %s", rec.Code, rec.Body.String())
+	}
+	m := stagedIDPattern.FindStringSubmatch(rec.Body.String())
+	if m == nil {
+		t.Fatalf("bkp preview carries no staged_id: %s", rec.Body.String())
+	}
+	// Only a corrected NAME is offered — the price cell parsed fine, so this
+	// row's Issue is plain missing_name, not the combined code, and only one
+	// field is forceable.
+	if strings.Contains(rec.Body.String(), `name="row_price_2"`) {
+		t.Fatalf("a row with a valid price must not also render a price correction field: %s", rec.Body.String())
+	}
+
+	body2, ct2 := multipartFields(t, map[string]string{
+		"commit":        "1",
+		"staged_id":     m[1],
+		"row_include_2": "1",
+		"row_name_2":    "Corrected Coffee",
+	})
+	rec2 := postImport(t, mux, body2, ct2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("bkp staged commit: code %d body %s", rec2.Code, rec2.Body.String())
+	}
+	var name string
+	var price int64
+	if err := dp.Db.QueryRow(`SELECT name, base_price FROM items WHERE sku = '80001'`).Scan(&name, &price); err != nil {
+		t.Fatalf("corrected row not imported: %v", err)
+	}
+	if name != "Corrected Coffee" || price != 675 {
+		t.Fatalf("corrected row = (%q, %d), want (Corrected Coffee, 675) — the source's real price must survive a name-only correction", name, price)
+	}
+}
+
 // ut-docs#601 review F5: the currency-confirm block's FIRST early return (no
 // confirm_currency yet) preserves the staged copy — but its other early
 // returns (invalid currency code, settings-write failure, re-parse failure)
@@ -783,11 +978,14 @@ func TestImport_StagedCommitSurvivesInvalidCurrencyCode(t *testing.T) {
 // bad_price are ever forceable; anything else — including a future new issue
 // code — defaults to skip-only.
 func TestForceableImportIssueAllowList(t *testing.T) {
-	if f, ok := forceableImportIssue(catimport.IssueMissingName); !ok || f != "name" {
-		t.Fatalf("missing_name = (%q,%v), want (name,true)", f, ok)
+	if f, ok := forceableImportIssue(catimport.IssueMissingName); !ok || len(f) != 1 || f[0] != "name" {
+		t.Fatalf("missing_name = (%v,%v), want ([name],true)", f, ok)
 	}
-	if f, ok := forceableImportIssue(catimport.IssueBadPrice); !ok || f != "price" {
-		t.Fatalf("bad_price = (%q,%v), want (price,true)", f, ok)
+	if f, ok := forceableImportIssue(catimport.IssueBadPrice); !ok || len(f) != 1 || f[0] != "price" {
+		t.Fatalf("bad_price = (%v,%v), want ([price],true)", f, ok)
+	}
+	if f, ok := forceableImportIssue(catimport.IssueMissingNameAndBadPrice); !ok || len(f) != 2 || f[0] != "name" || f[1] != "price" {
+		t.Fatalf("missing_name_and_bad_price = (%v,%v), want ([name price],true)", f, ok)
 	}
 	for _, issue := range []string{
 		"", catimport.IssueSourceDeleted, catimport.IssueNotSellable,
