@@ -144,6 +144,15 @@
   form.addEventListener('htmx:responseError', function (ev) {
     msg.textContent = '✗ ' + (ev.detail.xhr.responseText || '');
   });
+  // ut-docs#1287: a network-level failure (e.g. this back-office tablet
+  // dropping off the shop LAN mid-tap) never reaches htmx:responseError —
+  // there's no response at all, so htmx fires htmx:sendError instead.
+  // Without this the Record button is a dead tap: nothing here, nothing
+  // from the server, no visible sign the save didn't happen.
+  var T = { serverError: "{{ T "designer.error.server" }}" };
+  form.addEventListener('htmx:sendError', function () {
+    msg.textContent = '✗ ' + T.serverError;
+  });
 })();
 </script>
 
