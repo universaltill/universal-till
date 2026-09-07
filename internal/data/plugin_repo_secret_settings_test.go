@@ -279,6 +279,77 @@ func TestReconcilePluginSettings_DefaultValueSealedForSecretKeys(t *testing.T) {
 	}
 }
 
+// ut-docs#1752 (follow-up from #1746): #1746 only stops a NEW default row
+// from landing in cleartext — it never rewrites value_json for a row that
+// already exists. A plugin installed before #1746 shipped, whose
+// secret-typed/heuristic-matching setting was never touched by an operator,
+// stayed on its cleartext manifest default forever, healing only if someone
+// happened to overwrite that exact key by hand. Reconcile must give it a
+// one-time reseal instead.
+func TestReconcilePluginSettings_PreExistingUnsealedRowIsResealedOnReconcile(t *testing.T) {
+	d, repo := newSecretSettingsTestDB(t)
+	ctx := context.Background()
+
+	// Seed the rows directly, bypassing every seal seam — exactly what the
+	// pre-#1746 bug did: a heuristic-matching key and a declared-secret key,
+	// both still sitting on their cleartext manifest default, plus an
+	// ordinary sibling that must stay untouched.
+	mustExec(t, d, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope, updated_at) VALUES ('legacy-heuristic', 'com.example.pay', 'stripe_secret_key', '"sk_default_from_manifest"', 'global', '2026-01-01T00:00:00Z')`)
+	mustExec(t, d, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope, scope_id, updated_at) VALUES ('legacy-declared', 'com.example.pay', 'merchant_code', '"M-DEFAULT"', 'register', 'till-1', '2026-01-01T00:00:00Z')`)
+	mustExec(t, d, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope, updated_at) VALUES ('legacy-plain', 'com.example.pay', 'endpoint', '"https://api.example"', 'global', '2026-01-01T00:00:00Z')`)
+
+	declared := []PluginSettingRow{
+		{PluginID: "com.example.pay", Key: "stripe_secret_key", ValueJSON: `"sk_default_from_manifest"`, Scope: "global", UpdatedAt: time.Now()},
+		{PluginID: "com.example.pay", Key: "merchant_code", ValueJSON: `"M-DEFAULT"`, Scope: "register", UpdatedAt: time.Now(), DeclaredSecret: true},
+		{PluginID: "com.example.pay", Key: "endpoint", ValueJSON: `"https://api.example"`, Scope: "global", UpdatedAt: time.Now()},
+	}
+	if err := repo.ReconcilePluginSettings(ctx, nil, "com.example.pay", declared); err != nil {
+		t.Fatalf("reconcile: %v", err)
+	}
+
+	for _, tc := range []struct{ key, plaintextNeedle string }{
+		{"stripe_secret_key", "sk_default_from_manifest"},
+		{"merchant_code", "M-DEFAULT"},
+	} {
+		raw := rawValueJSON(t, d, "com.example.pay", tc.key)
+		if !secrets.IsSealed(raw) {
+			t.Fatalf("%s pre-existing default at rest = %q, want sealed after a reconcile", tc.key, raw)
+		}
+		if strings.Contains(raw, tc.plaintextNeedle) {
+			t.Fatalf("%s resealed row still leaks the plaintext: %q", tc.key, raw)
+		}
+		// Reseal in place, not a duplicate row.
+		var n int
+		if err := d.QueryRow(`SELECT COUNT(*) FROM plugin_settings WHERE plugin_id = 'com.example.pay' AND key = ?`, tc.key).Scan(&n); err != nil {
+			t.Fatal(err)
+		}
+		if n != 1 {
+			t.Fatalf("%s reseal must update the row in place, got %d rows", tc.key, n)
+		}
+	}
+	// Opens back to the exact same plaintext — resealing must not change the value.
+	if got, found, err := repo.GetPluginSetting(ctx, "com.example.pay", "stripe_secret_key"); err != nil || !found || got != `"sk_default_from_manifest"` {
+		t.Fatalf("GetPluginSetting(stripe_secret_key) after reseal = %q found=%v err=%v", got, found, err)
+	}
+	if got, found, err := repo.GetPluginSetting(ctx, "com.example.pay", "merchant_code"); err != nil || !found || got != `"M-DEFAULT"` {
+		t.Fatalf("GetPluginSetting(merchant_code) after reseal = %q found=%v err=%v", got, found, err)
+	}
+	// The register-scoped row's scope_id must survive the reseal — reseal
+	// touches value_json only, never scope_id (that's the scope-move branch's
+	// job, and scope didn't change here).
+	var scopeID string
+	if err := d.QueryRow(`SELECT scope_id FROM plugin_settings WHERE plugin_id = 'com.example.pay' AND key = 'merchant_code'`).Scan(&scopeID); err != nil {
+		t.Fatal(err)
+	}
+	if scopeID != "till-1" {
+		t.Fatalf("merchant_code scope_id = %q after reseal, want unchanged \"till-1\"", scopeID)
+	}
+	// The ordinary sibling is untouched — no needless rewrite.
+	if raw := rawValueJSON(t, d, "com.example.pay", "endpoint"); raw != `"https://api.example"` {
+		t.Fatalf("non-secret pre-existing row at rest = %q, want unchanged plain JSON", raw)
+	}
+}
+
 // Same fail-closed guarantee as every other write in this seam: a manifest
 // default for a secret key must not be persisted in cleartext just because
 // no key store is available to seal it — the whole reconcile must error out
@@ -300,5 +371,30 @@ func TestReconcilePluginSettings_DefaultValueFailsClosedWithoutKeyStore(t *testi
 	_ = d.QueryRow(`SELECT COUNT(*) FROM plugin_settings WHERE plugin_id = 'com.example.pay' AND key = 'stripe_secret_key'`).Scan(&n)
 	if n != 0 {
 		t.Fatalf("failed default-value seal must not leave a cleartext row (found %d)", n)
+	}
+}
+
+// Same fail-closed guarantee, for the reseal-existing-row path this PR adds
+// (ut-docs#1752): a pre-existing cleartext row that can't be sealed right
+// now (no key store available) must abort the whole reconcile, not silently
+// leave the row in cleartext or partially succeed.
+func TestReconcilePluginSettings_ResealExistingRowFailsClosedWithoutKeyStore(t *testing.T) {
+	d, repo := newSecretSettingsTestDB(t)
+	ctx := context.Background()
+	mustExec(t, d, `INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope, updated_at) VALUES ('legacy', 'com.example.pay', 'stripe_secret_key', '"sk_default_from_manifest"', 'global', '2026-01-01T00:00:00Z')`)
+
+	prev := secrets.Default()
+	secrets.SetDefault(nil)
+	t.Cleanup(func() { secrets.SetDefault(prev) })
+
+	declared := []PluginSettingRow{
+		{PluginID: "com.example.pay", Key: "stripe_secret_key", ValueJSON: `"sk_default_from_manifest"`, Scope: "global", UpdatedAt: time.Now()},
+	}
+	if err := repo.ReconcilePluginSettings(ctx, nil, "com.example.pay", declared); err == nil {
+		t.Fatal("reconcile reseal with no key store must fail")
+	}
+	raw := rawValueJSON(t, d, "com.example.pay", "stripe_secret_key")
+	if raw != `"sk_default_from_manifest"` {
+		t.Fatalf("failed reseal must leave the row exactly as it was, got %q", raw)
 	}
 }
