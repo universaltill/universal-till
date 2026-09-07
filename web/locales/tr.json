@@ -44,6 +44,7 @@
   "auth.error.locked": "Çok fazla deneme — 30 saniye bekleyin",
   "auth.error.pin_format": "PIN 4–8 rakam olmalıdır",
   "auth.error.pin_mismatch": "PIN'ler eşleşmiyor",
+  "auth.error.unavailable": "Üzgünüz — kasa şu anda kendi verilerine erişemiyor, bu yüzden oturumunuzu açamıyor. Uygulamayı tamamen kapatıp yeniden açın. Sorun sürerse, inceleyebilmemiz için bildirin.",
   "auth.exit_to_os.btn": "İşletim Sistemine Çık",
   "auth.exit_to_os.error": "PIN hatalı veya yetki yok.",
   "auth.exit_to_os.help": "Bu ekrandan çıkıp işletim sistemi masaüstüne dönmek için bir yönetici PIN'i girin.",

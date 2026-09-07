@@ -8,6 +8,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -55,8 +56,34 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	renderLogin := func(w http.ResponseWriter, r *http.Request, errKey, next string) {
 		firstBoot, err := svc.NeedsFirstBoot(r.Context())
 		if err != nil {
-			http.Error(w, "auth unavailable", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
-			return
+			// ut-docs#1718: this used to answer with a bare
+			// http.Error(w, "auth unavailable", 500), which replaces the
+			// WebView's entire document with untranslated plain text and no
+			// way back. On a pinned kiosk that is a locked-up till — and it
+			// is precisely what the product owner saw twice in one day, a
+			// white screen reading "auth unavailable", when a poisoned
+			// SQLite connection made this very query fail. The keypad is the
+			// LAST screen that should become a dead end: it is the only way
+			// back into the till.
+			//
+			// httpx.RenderError is not the tool here — login.html is a
+			// standalone <!DOCTYPE html> document, exactly the case that
+			// function's own doc comment excludes, because it assumes the
+			// operator base layout. The template already renders .errKey, so
+			// the honest fix is to reuse it and still draw the page.
+			//
+			// firstBoot defaults to false deliberately: we could not prove
+			// this is a fresh till, and offering the one-time admin-setup
+			// form to someone on a configured one would be worse than
+			// showing the normal keypad with an explanation above it.
+			// Status is the 200 we actually send, not the 500 this used
+			// to be: the operator gets a real, usable page. The error
+			// itself is never silently swallowed — it is logged here in
+			// httpx.RenderError's exact "[page-error] METHOD PATH STATUS"
+			// shape so the whole class stays greppable.
+			logging.L().Errorf("[page-error] %s %s %d: first-boot check failed: %v",
+				r.Method, r.URL.Path, http.StatusOK, err)
+			errKey, firstBoot = "auth.error.unavailable", false
 		}
 		data := map[string]any{
 			"firstBoot": firstBoot,
@@ -106,6 +133,27 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		renderLogin(w, r, "", next)
 	})
 
+	// ut-docs#1718, found by independent review: the GET path above was not
+	// the only dead end, and not even the likeliest one. login.html posts
+	// both routes below as a PLAIN <form method="post"> — no htmx, no fetch —
+	// so a bare http.Error here replaces the entire WebView document exactly
+	// as it did on GET. That is what happens when the operator actually taps
+	// their PIN and submits, which is precisely what the product owner did
+	// before reporting a white screen.
+	//
+	// guard-page-http-error.sh does not catch these because it excludes
+	// /api/ routes as htmx fragments. That exemption is right for every
+	// other /api/ route in this codebase and wrong for exactly these two,
+	// which answer a full-page navigation.
+	//
+	// Rendering the keypad back with an explanation is the same treatment
+	// the invalid-PIN and locked-out branches already get, so this follows
+	// the surrounding code rather than inventing a path.
+	loginUnavailable := func(w http.ResponseWriter, r *http.Request, next string, err error) {
+		logging.L().Errorf("[page-error] %s %s %d: %v", r.Method, r.URL.Path, http.StatusOK, err)
+		renderLogin(w, r, "auth.error.unavailable", next)
+	}
+
 	mux.HandleFunc("POST /api/auth/login", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		pin := r.PostFormValue("pin")
@@ -122,7 +170,7 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			renderLogin(w, r, "auth.error.invalid", next)
 			return
 		case err != nil:
-			http.Error(w, "login failed", http.StatusInternalServerError)
+			loginUnavailable(w, r, next, err)
 			return
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, user.ID, "user", user.ID, "login", nil, now, "")
@@ -157,7 +205,7 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// fallback completes first boot too — same gap and fix as the
 		// guided wizard (ut-docs#429).
 		if _, err := posRepo.EnsureRegister(r.Context()); err != nil {
-			http.Error(w, "setup failed", http.StatusInternalServerError)
+			loginUnavailable(w, r, "", err)
 			return
 		}
 
@@ -165,16 +213,16 @@ func registerAuth(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// creates (or reuses) a real admin operator.
 		adminID, err := ensureFirstBootAdmin(r, svc)
 		if err != nil {
-			http.Error(w, "setup failed", http.StatusInternalServerError)
+			loginUnavailable(w, r, "", err)
 			return
 		}
 		if err := svc.Repo().SetUserPIN(r.Context(), adminID, hash); err != nil {
-			http.Error(w, "setup failed", http.StatusInternalServerError)
+			loginUnavailable(w, r, "", err)
 			return
 		}
 		token, err := svc.CreateSession(r.Context(), adminID)
 		if err != nil {
-			http.Error(w, "setup failed", http.StatusInternalServerError)
+			loginUnavailable(w, r, "", err)
 			return
 		}
 		now := time.Now().UTC().Format(time.RFC3339)
