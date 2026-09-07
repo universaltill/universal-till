@@ -261,6 +261,78 @@ func TestKeyStoreNegativeCacheFloorAfterFailedFetch(t *testing.T) {
 	}
 }
 
+// ut-docs#1747: a persist failure after a SUCCESSFUL fetch (a wedged disk,
+// not primary unreachability) must arm the same retry floor a failed fetch
+// already does — otherwise a wedged disk turns every Load into a fresh
+// network fetch instead of being rate-limited. Driven by an injected clock,
+// same as TestKeyStoreNegativeCacheFloorAfterFailedFetch.
+func TestKeyStoreFetchSucceedsButPersistFailureArmsNegativeCache(t *testing.T) {
+	dir := t.TempDir()
+	secretsDir := filepath.Join(dir, "secrets")
+	// Occupy the persist step's ".tmp" target with a NON-EMPTY directory, so
+	// os.WriteFile(tmp, ...) inside persist() fails deterministically
+	// (EISDIR) regardless of the test process's user — including root,
+	// where a chmod-based permission failure wouldn't fire. Non-empty
+	// matters: persist's own failure path does `os.Remove(tmp)`, which
+	// silently succeeds (and clears the obstruction after one use) on an
+	// EMPTY directory but fails on a non-empty one — this obstruction must
+	// survive a second persist attempt for the "still fails inside the
+	// floor" assertion below to mean anything. This leaves path itself
+	// absent, so readFile's initial "not found" check (which must succeed
+	// for Load to reach the fetch path at all) is unaffected.
+	path := filepath.Join(secretsDir, "plugin_settings_key.bin")
+	tmpObstruction := path + ".tmp"
+	if err := os.MkdirAll(tmpObstruction, 0o700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(tmpObstruction, "occupied"), []byte("x"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	now := time.Date(2026, 9, 7, 12, 0, 0, 0, time.UTC)
+	calls := 0
+	want := testKey(t)
+	fetch := func(context.Context) ([]byte, error) { calls++; return want, nil }
+	ks := NewKeyStoreAt(path, fetch)
+	ks.now = func() time.Time { return now }
+
+	// First Load: fetch succeeds, persist fails.
+	if _, err := ks.Load(context.Background()); err == nil {
+		t.Fatal("Load must fail when persisting a successfully-fetched key fails")
+	}
+	if calls != 1 {
+		t.Fatalf("fetch calls = %d, want 1", calls)
+	}
+	if ks.Exists() {
+		t.Fatal("a key that failed to persist must not be reported as present")
+	}
+
+	// Inside the retry floor: must fail fast WITHOUT calling fetch again.
+	// Before the #1747 fix, a persist failure left lastFail unset, so this
+	// second Load re-fetched immediately instead of being rate-limited.
+	now = now.Add(fetchRetryFloor - time.Second)
+	if _, err := ks.Load(context.Background()); err == nil {
+		t.Fatal("Load must still fail inside the retry floor")
+	}
+	if calls != 1 {
+		t.Fatalf("fetch must not be retried inside the retry floor after a persist failure (calls=%d)", calls)
+	}
+
+	// Floor elapsed: retried. Clear the obstruction first so this second
+	// attempt can actually succeed, proving the floor lifts normally too.
+	now = now.Add(2 * time.Second)
+	if err := os.RemoveAll(path + ".tmp"); err != nil {
+		t.Fatal(err)
+	}
+	k, err := ks.Load(context.Background())
+	if err != nil || !bytes.Equal(k, want) {
+		t.Fatalf("after floor elapsed and obstruction cleared: %x %v", k, err)
+	}
+	if calls != 2 {
+		t.Fatalf("fetch calls = %d after the floor elapsed, want 2", calls)
+	}
+}
+
 // Concurrent callers during an in-flight fetch must not each start their
 // own fetch (this backs a WASM host call a plugin can hammer): exactly one
 // fetch runs; the rest fail fast with ErrNoKeyYet or observe the result.
