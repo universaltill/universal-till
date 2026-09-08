@@ -271,7 +271,16 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("POST /api/self-order/checkout", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
-		method := strings.TrimSpace(r.Form.Get("method"))
+		// ut-docs#1795: same canonicalization as the cashier tender/refund
+		// paths (pos_api.go, refund_page.go) -- this handler shares the
+		// same completeTender -> blockingPaymentEventWithResponseAndID /
+		// fiscal.MethodKeyOKC sink. Today the exact-match whitelist check
+		// just below (`m.ID == method`) happens to fail closed on a
+		// differently-cased method rather than routing it anywhere, but
+		// this surface is anonymous/auth-exempt (ADR-0020) -- it shouldn't
+		// rely on that as its only defense against the same case-mismatch
+		// class this card fixes elsewhere.
+		method := strings.ToLower(strings.TrimSpace(r.Form.Get("method")))
 
 		lines := d.KioskEngine.Lines()
 		if len(lines) == 0 {
