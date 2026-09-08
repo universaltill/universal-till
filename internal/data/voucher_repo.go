@@ -5,7 +5,10 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Voucher liability (ut-docs#1008): a multi-purpose voucher's issue is a 0%
@@ -131,7 +134,171 @@ INSERT INTO voucher_transactions (id, voucher_id, sale_id, type, amount, created
 VALUES (?, ?, ?, ?, ?, ?)
 `, t.ID, t.VoucherID, nullIfEmpty(t.SaleID), t.Type, t.AmountMinor, t.CreatedAt)
 	if err != nil {
+		// The partial unique index names its own columns in SQLite's
+		// message ("UNIQUE constraint failed: voucher_transactions.voucher_id,
+		// voucher_transactions.sale_id"), which is how this is told apart
+		// from a collision on the row's own PRIMARY KEY id.
+		if isUniqueViolation(err) && strings.Contains(err.Error(), "voucher_transactions.voucher_id") {
+			return fmt.Errorf("record voucher transaction %q/%q: %w", t.VoucherID, t.SaleID, ErrVoucherRedemptionAlreadyRecorded)
+		}
 		return fmt.Errorf("record voucher transaction: %w", err)
+	}
+	return nil
+}
+
+// voucherRedemptionRow finds the single 'redemption' voucher_transactions row
+// for (voucherID, saleID) — at most one can exist (ux_voucher_tx_redemption_once).
+// found=false with a nil error when there is none. Shared by
+// VoucherRedemptionRecorded, ReserveVoucherRedemption's idempotent-retry
+// branch and ReleaseVoucherRedemption, so all three agree on exactly what
+// "already recorded" means.
+func (r *POSRepo) voucherRedemptionRow(ctx context.Context, tx *sql.Tx, voucherID, saleID string) (id string, amountMinor int64, found bool, err error) {
+	if voucherID == "" || saleID == "" {
+		return "", 0, false, nil
+	}
+	err = r.exec(tx).QueryRowContext(ctx, `
+SELECT id, amount FROM voucher_transactions
+WHERE voucher_id = ? AND sale_id = ? AND type = 'redemption'
+LIMIT 1`, voucherID, saleID).Scan(&id, &amountMinor)
+	if err == sql.ErrNoRows {
+		return "", 0, false, nil
+	}
+	if err != nil {
+		return "", 0, false, fmt.Errorf("voucher redemption row: %w", err)
+	}
+	return id, amountMinor, true, nil
+}
+
+// VoucherRedemptionRecorded reports whether a 'redemption' transaction
+// already exists for this exact (voucherID, saleID) pair — the idempotency
+// check both ReserveVoucherRedemption and pos.CompleteSale's own redemption
+// step use to recognize a debit already applied elsewhere (ut-docs#1716,
+// ADR-0084 Decision 2). The pair is the key: the same voucher redeemed in a
+// DIFFERENT sale is a different redemption and reports false. tx may be nil
+// for a direct read, or the caller's open transaction — pos.CompleteSale
+// passes its sale transaction so the check and the debit it guards can never
+// observe different states.
+func (r *POSRepo) VoucherRedemptionRecorded(ctx context.Context, tx *sql.Tx, voucherID, saleID string) (bool, error) {
+	_, _, found, err := r.voucherRedemptionRow(ctx, tx, voucherID, saleID)
+	return found, err
+}
+
+// ReserveVoucherRedemption is the atomic, idempotent primary-side debit
+// behind POST /api/sync/vouchers/{id}/redeem (ADR-0084 Decision 1/2). Inside
+// the caller's ONE transaction (tx must be non-nil — sync_vouchers.go owns
+// begin/commit, so the pre-check and the debit below are serialized against
+// every other writer by this database's BEGIN IMMEDIATE):
+//
+//   - A 'redemption' row already exists for (voucherID, saleID): this is a
+//     retry of an already-applied reservation (the replica's first response
+//     was lost) — debit NOTHING and return the same pre-debit snapshot the
+//     first call returned (current balance + the recorded amount, status
+//     'active'), so the caller cannot tell the retry from the original.
+//   - Otherwise: DebitVoucherForRedemption(force=false) — the same
+//     predicate-guarded UPDATE that makes a single till's local redemption
+//     race-safe, now run on the primary's database for every online
+//     cross-till redemption, which is the entire mechanism that closes the
+//     two-till race (whichever of two concurrent reservations commits second
+//     sees the reduced balance and loses `balance >= ?` cleanly) — then
+//     RecordVoucherTransaction(type='redemption', SaleID=saleID). The
+//     fail-closed sentinels (ErrVoucherNotFound / ErrVoucherNotActive /
+//     ErrVoucherInsufficientBalance) propagate as-is.
+//
+// The returned Voucher is the PRE-debit snapshot (read under this same
+// transaction, immediately before the debit), never the post-debit row: the
+// replica hands it to EnsureVoucherLocalRow to seed its own local mirror,
+// and its own imminent forced local debit (pos.CompleteSale with
+// VoucherPreauthorized) then reduces that mirror by the same amount — handing
+// it the already-debited number would double-count the reduction locally
+// (brief addendum, correction 5). saleID is the idempotency key and must be
+// non-empty.
+func (r *POSRepo) ReserveVoucherRedemption(ctx context.Context, tx *sql.Tx, voucherID, saleID string, amountMinor int64, now string) (Voucher, error) {
+	if tx == nil {
+		return Voucher{}, fmt.Errorf("reserve voucher redemption: a transaction is required")
+	}
+	if voucherID == "" || saleID == "" {
+		return Voucher{}, fmt.Errorf("reserve voucher redemption: voucher id and sale id are required")
+	}
+	if amountMinor <= 0 {
+		return Voucher{}, fmt.Errorf("reserve voucher redemption: amount must be > 0")
+	}
+	_, recordedAmount, recorded, err := r.voucherRedemptionRow(ctx, tx, voucherID, saleID)
+	if err != nil {
+		return Voucher{}, fmt.Errorf("reserve voucher redemption: %w", err)
+	}
+	if recorded {
+		v, err := r.GetVoucherBalance(ctx, tx, voucherID)
+		if err != nil {
+			return Voucher{}, err
+		}
+		// Reconstruct the pre-debit snapshot: this reservation only ever
+		// succeeds against an 'active' voucher, and the recorded amount is
+		// exactly what the first application took off the balance.
+		v.BalanceMinor += recordedAmount
+		v.Status = "active"
+		return v, nil
+	}
+	before, err := r.GetVoucherBalance(ctx, tx, voucherID)
+	if err != nil {
+		return Voucher{}, err
+	}
+	if err := r.DebitVoucherForRedemption(ctx, tx, voucherID, amountMinor, false); err != nil {
+		return Voucher{}, err
+	}
+	if err := r.RecordVoucherTransaction(ctx, tx, VoucherTransaction{
+		ID:          uuid.NewString(),
+		VoucherID:   voucherID,
+		SaleID:      saleID,
+		Type:        "redemption",
+		AmountMinor: amountMinor,
+		CreatedAt:   now,
+	}); err != nil {
+		return Voucher{}, err
+	}
+	return before, nil
+}
+
+// ReleaseVoucherRedemption is ReserveVoucherRedemption's inverse, behind
+// POST /api/sync/vouchers/{id}/release (ADR-0084 Decision 3): the replica
+// unwinds a reservation when a LATER payment in the same tender is refused
+// or its own local pos.CompleteSale fails — synchronously, in the same
+// request, before any local sale row exists, so there is never a journal
+// entry for a released attempt that could race this. Inside the caller's ONE
+// transaction (tx must be non-nil): no 'redemption' row for (voucherID,
+// saleID) means nothing to release (already released, or never reserved —
+// the refused-reservation case) and is a no-op success, never an error,
+// which is what makes it safe to fire for every voucher a tender touched.
+// Found: delete that row, credit the balance back by its amount, and flip a
+// fully-drained 'redeemed' voucher back to 'active'. A 'void' voucher is
+// never resurrected: only its bookkeeping row is dropped, balance and status
+// stay exactly as the void set them (a void is a different, worse problem
+// than a reservation being unwound, same reasoning as DebitVoucherForRedemption's
+// force path). In practice a reserved voucher cannot be voided mid-flight —
+// VoidVouchersIssuedInSale refuses once balance != original_amount — so this
+// is defence in depth, not a reachable path.
+func (r *POSRepo) ReleaseVoucherRedemption(ctx context.Context, tx *sql.Tx, voucherID, saleID string) error {
+	if tx == nil {
+		return fmt.Errorf("release voucher redemption: a transaction is required")
+	}
+	rowID, amountMinor, found, err := r.voucherRedemptionRow(ctx, tx, voucherID, saleID)
+	if err != nil {
+		return fmt.Errorf("release voucher redemption: %w", err)
+	}
+	if !found {
+		return nil
+	}
+	if _, err := r.exec(tx).ExecContext(ctx, `DELETE FROM voucher_transactions WHERE id = ?`, rowID); err != nil {
+		return fmt.Errorf("release voucher redemption %q/%q: delete: %w", voucherID, saleID, err)
+	}
+	// Guarded on status the same way the debit is: 'void' is excluded from
+	// the credit entirely (see the doc comment). n == 0 here can only mean
+	// void, since the row just found references a vouchers row by FK.
+	if _, err := r.exec(tx).ExecContext(ctx, `
+UPDATE vouchers
+SET balance = balance + ?,
+    status = CASE WHEN status = 'redeemed' THEN 'active' ELSE status END
+WHERE id = ? AND status IN ('active', 'redeemed')`, amountMinor, voucherID); err != nil {
+		return fmt.Errorf("release voucher redemption %q/%q: credit: %w", voucherID, saleID, err)
 	}
 	return nil
 }

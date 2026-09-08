@@ -14,17 +14,17 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
-// Cross-till voucher lookup, primary side (ut-docs#1668): GET
-// /api/sync/vouchers/{id} is the bearer-authed, READ-ONLY endpoint a
-// replica's fetchVoucherFromPrimary (voucher_sync_proxy.go) proxies to — for
-// both a plain balance lookup AND the pre-debit validation check
-// voucherRedeemWriteThrough runs before a local redemption. See
-// sync_vouchers.go's own file-level comment for why there is deliberately no
-// mutating redeem/debit endpoint here (round-2 review, 2026-09-07: the first
-// draft's write-through debit double-applied every online cross-till
-// redemption once the replica's own completed sale journaled the SAME debit
-// up again). Same shape as sync_tables_test.go: syncTill auth, JSON
-// envelope, snake_case.
+// Cross-till voucher endpoints, primary side. GET /api/sync/vouchers/{id}
+// (ut-docs#1668) is the bearer-authed, read-only lookup a replica's
+// fetchVoucherFromPrimary (voucher_sync_proxy.go) proxies to for a plain
+// balance query. POST .../{id}/redeem and .../{id}/release (ADR-0084,
+// ut-docs#1716) are the idempotent RESERVATION pair voucherRedeemWriteThrough
+// now calls at tender time — the first draft's mutating endpoint was
+// reverted (round-2 review, 2026-09-07) because nothing let the journal
+// replay recognize a debit the write-through already applied; the
+// (voucher_id, sale_id) idempotency key is what makes it safe now (see
+// sync_vouchers.go's file-level comment). Same shape as sync_tables_test.go:
+// syncTill auth, JSON envelope, snake_case.
 
 func newSyncVouchersTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, *db.DB) {
 	t.Helper()
