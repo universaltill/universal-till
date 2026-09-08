@@ -3,6 +3,7 @@ package alerts
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -497,11 +498,40 @@ func TestUnusualSales_ThinBaselineIsNotUnusual(t *testing.T) {
 // run pushDigest/unusualSales and tick again — proven here via the
 // package's own test-overridable firstDelay/tickInterval, driven fast enough
 // to observe at least one real digest push land on a fake marketplace.
+//
+// Run as a table over anchor hours spanning a UTC day boundary (ut-docs#1769):
+// this test used to seed its unusual-sales baseline against a UTC-truncated
+// "noon" instant while Start's loop independently read the real, live
+// time.Now() a couple of milliseconds later. POSRepo.DayTotal buckets by
+// LOCAL calendar day, so those two reads only ever agreed on "today" by
+// coincidence — whenever the live read and the UTC-anchored seed data fell
+// on different local calendar dates (which happens for roughly half of
+// every 24h in a non-UTC timezone, and even in UTC right around midnight),
+// the baseline/yesterday comparison silently misaligned and the digest
+// never fired. Pinning nowOverride to the exact instant used to seed the
+// data removes the dependency on the real wall clock entirely; the hour table
+// below demonstrates that holds at any anchor hour, not just whatever hour
+// happened to be convenient in CI.
 func TestStart_RunsDigestLoopBody(t *testing.T) {
+	for _, hour := range []int{0, 6, 12, 18, 23} {
+		t.Run(fmt.Sprintf("anchor_hour=%02d", hour), func(t *testing.T) {
+			testStartRunsDigestLoopBody(t, hour)
+		})
+	}
+}
+
+func testStartRunsDigestLoopBody(t *testing.T, anchorHour int) {
 	origFirst, origTick := firstDelayNS.Load(), tickIntervalNS.Load()
 	t.Cleanup(func() { firstDelayNS.Store(origFirst); tickIntervalNS.Store(origTick) })
 	firstDelayNS.Store(int64(2 * time.Millisecond))
 	tickIntervalNS.Store(int64(2 * time.Millisecond))
+
+	// Fixed, arbitrary calendar date — this test asserts nothing about the
+	// real current date, only that seed data and Start's own "now" agree.
+	// anchorHour sweeps the boundary this bug actually turned on.
+	anchor := time.Date(2026, time.March, 15, anchorHour, 0, 0, 0, time.UTC)
+	t.Cleanup(func() { nowOverride.Store(nil) })
+	nowOverride.Store(&anchor)
 
 	f := filepath.Join(t.TempDir(), "loop.db")
 	database, err := db.Open(f)
@@ -519,6 +549,11 @@ func TestStart_RunsDigestLoopBody(t *testing.T) {
 	mustExec(`INSERT INTO items (id, name, sku, base_price, is_active) VALUES ('it-l','Cola','L',100,1)`)
 	mustExec(`INSERT INTO stock_locations (id, name) VALUES ('loc-l','Floor')`)
 	mustExec(`INSERT INTO inventory (id, item_id, location_id, quantity) VALUES ('inv-l','it-l','loc-l',6)`)
+	// This row feeds runningOutCount's low-stock check, which windows off the
+	// REAL wall clock (time.Now(), deliberately not routed through
+	// nowOverride — it's a rolling 28-day window, not a calendar-day
+	// bucket, so it was never the flaky half of this test). It must stay
+	// anchored to the actual current time, not the synthetic anchor below.
 	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
 	          VALUES ('sl','RL','completed','sale',5600,0,5600, datetime('now','-1 days'))`)
 	mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
@@ -528,9 +563,10 @@ func TestStart_RunsDigestLoopBody(t *testing.T) {
 	// blowout "yesterday" so Start's loop exercises BOTH of its pushes in
 	// one iteration — a modest low-stock digest is not enough on its own
 	// to prove the unusual-sales half of the loop body actually runs.
-	noon := time.Now().UTC().Truncate(24 * time.Hour).Add(12 * time.Hour)
+	// Anchored to the SAME instant nowFunc is pinned to, above — not a
+	// fresh, independent read of the wall clock.
 	sale := func(id string, daysAgo, total int) {
-		createdAt := noon.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
+		createdAt := anchor.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
 		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
 		          VALUES (?, ?, 'completed', 'sale', ?, 0, ?, ?)`,
 			id, "R-"+id, total, total, createdAt)
