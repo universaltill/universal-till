@@ -378,6 +378,187 @@ func TestTablesPage_Release(t *testing.T) {
 	}
 }
 
+// ut-docs#1714 (follow-up from the #1393 review): the occupied row must show
+// which till holds a live claim, and whether it looks online, BEFORE a
+// manager presses "Free table" — not just after, via the existing
+// released_other_till_recent message. The confirm dialog itself also widens
+// for a foreign till's claim.
+func TestTablesPage_RenderShowsClaimTillIdentity(t *testing.T) {
+	mux, d := newTablesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	repo := data.NewPOSRepo(d.Db)
+
+	heldOnlyID, err := repo.CreateTable(t.Context(), "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T1: %v", err)
+	}
+	if _, err := d.Db.Exec(
+		`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES ('h1','',0,0,'{}',?)`, heldOnlyID); err != nil {
+		t.Fatalf("seed held sale: %v", err)
+	}
+
+	ownClaimID, err := repo.CreateTable(t.Context(), "T2", "", 4, "rect", 300, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T2: %v", err)
+	}
+	if claimed, err := repo.ClaimTable(t.Context(), ownClaimID); err != nil || !claimed {
+		t.Fatalf("ClaimTable T2: claimed=%v err=%v", claimed, err)
+	}
+
+	onlineID, err := repo.CreateTable(t.Context(), "T3", "", 4, "rect", 500, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T3: %v", err)
+	}
+	onlineTillID, err := data.NewTillsRepo(d.Db).InsertTill(t.Context(), "Terrace till", "hash-online")
+	if err != nil {
+		t.Fatalf("InsertTill online: %v", err)
+	}
+	if _, err := d.Db.Exec(`UPDATE tills SET last_seen_at = ? WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339), onlineTillID); err != nil {
+		t.Fatalf("seed online last_seen_at: %v", err)
+	}
+	if _, err := d.Db.Exec(
+		`INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, datetime('now'), ?)`, onlineID, onlineTillID); err != nil {
+		t.Fatalf("seed online-till claim: %v", err)
+	}
+
+	staleID, err := repo.CreateTable(t.Context(), "T4", "", 4, "rect", 700, 100)
+	if err != nil {
+		t.Fatalf("CreateTable T4: %v", err)
+	}
+	staleTillID, err := data.NewTillsRepo(d.Db).InsertTill(t.Context(), "Kitchen till", "hash-stale")
+	if err != nil {
+		t.Fatalf("InsertTill stale: %v", err)
+	}
+	if _, err := d.Db.Exec(`UPDATE tills SET last_seen_at = ? WHERE id = ?`,
+		time.Now().UTC().Add(-10*time.Minute).Format(time.RFC3339), staleTillID); err != nil {
+		t.Fatalf("seed stale last_seen_at: %v", err)
+	}
+	if _, err := d.Db.Exec(
+		`INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, datetime('now'), ?)`, staleID, staleTillID); err != nil {
+		t.Fatalf("seed stale-till claim: %v", err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/tables", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page render: code=%d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	// Assertions are scoped to each table's OWN <tr> (independent review,
+	// ut-docs#1714), not to the whole page: the failure this feature has to
+	// rule out is a claim being attributed to the WRONG table, and a
+	// page-wide strings.Contains cannot tell "T3 shows Terrace till" from
+	// "some row shows Terrace till". Splitting on <tr> is enough here —
+	// the label cell is rendered as a bare <td>{{ .Label }}</td>.
+	rowFor := func(label string) string {
+		t.Helper()
+		for _, row := range strings.Split(body, "<tr>") {
+			if strings.Contains(row, "<td>"+label+"</td>") {
+				return row
+			}
+		}
+		t.Fatalf("no table row for %q: body=%s", label, body)
+		return ""
+	}
+
+	// A raw key anywhere means T() failed to resolve; every assertion below
+	// would then be checking English that isn't actually coming from the
+	// locale file.
+	for _, key := range []string{"tables.claim.this_till", "tables.confirm.release_foreign_till", "status.online", "status.offline"} {
+		if strings.Contains(body, key) {
+			t.Fatalf("unresolved locale key %q rendered into the page: body=%s", key, body)
+		}
+	}
+
+	// T1: held order, no claim at all — no till identity on its row, and the
+	// SHORT confirm text, since there is no foreign till to warn about.
+	t1 := rowFor("T1")
+	for _, unwanted := range []string{"This till", "Terrace till", "Kitchen till", "Online", "Offline"} {
+		if strings.Contains(t1, unwanted) {
+			t.Fatalf("held-order-only row must carry no claim identity, found %q: row=%s", unwanted, t1)
+		}
+	}
+	if !strings.Contains(t1, "Free this table? This clears any occupancy claim") {
+		t.Fatalf("held-order-only row must keep the short confirm text: row=%s", t1)
+	}
+
+	// T2: this till's own local claim.
+	t2 := rowFor("T2")
+	if !strings.Contains(t2, "This till") {
+		t.Fatalf("own local claim must render \"This till\": row=%s", t2)
+	}
+	if !strings.Contains(t2, "Free this table? This clears any occupancy claim") {
+		t.Fatalf("own local claim must keep the short confirm text: row=%s", t2)
+	}
+
+	// T3: a foreign till seen inside the online bound.
+	t3 := rowFor("T3")
+	if !strings.Contains(t3, "Terrace till") || !strings.Contains(t3, "Online") {
+		t.Fatalf("recently-seen foreign till's claim must render its name and Online: row=%s", t3)
+	}
+	if strings.Contains(t3, "Offline") || strings.Contains(t3, "Kitchen till") {
+		t.Fatalf("T3 must not pick up the OTHER till's identity or state: row=%s", t3)
+	}
+	if !strings.Contains(t3, "Its claim currently belongs to Terrace till") {
+		t.Fatalf("foreign-till row's confirm text must name the till: row=%s", t3)
+	}
+
+	// T4: a foreign till last seen outside the online bound.
+	t4 := rowFor("T4")
+	if !strings.Contains(t4, "Kitchen till") || !strings.Contains(t4, "Offline") {
+		t.Fatalf("stale foreign till's claim must render its name and Offline: row=%s", t4)
+	}
+	if strings.Contains(t4, "Terrace till") {
+		t.Fatalf("T4 must not pick up the OTHER till's identity: row=%s", t4)
+	}
+	if !strings.Contains(t4, "Its claim currently belongs to Kitchen till") {
+		t.Fatalf("foreign-till row's confirm text must name the till: row=%s", t4)
+	}
+}
+
+// A claim whose owning till row is gone (independent review, ut-docs#1714):
+// migration 008 deliberately gives table_claims NO foreign key to tills so a
+// revoked till's claim stays readable and releasable. That claim then has a
+// till_id but no name, and the pre-review build rendered the row as a bare
+// " — Offline" and the confirm dialog as "Its claim currently belongs to
+//
+//	— clearing it may desync…" — broken prose in exactly the case a manager
+//
+// is most likely to be force-releasing.
+func TestTablesPage_RenderNamesClaimOfUnenrolledTill(t *testing.T) {
+	mux, d := newTablesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	repo := data.NewPOSRepo(d.Db)
+
+	id, err := repo.CreateTable(t.Context(), "T7", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	// No matching tills row — the till was revoked while holding the claim.
+	if _, err := d.Db.Exec(
+		`INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, datetime('now'), 'till-revoked')`, id); err != nil {
+		t.Fatalf("seed claim: %v", err)
+	}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/tables", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("page render: code=%d", rec.Code)
+	}
+	body := rec.Body.String()
+
+	if !strings.Contains(body, "a till that is no longer enrolled — Offline") {
+		t.Fatalf("a revoked till's claim must still name something before the dash: body=%s", body)
+	}
+	if !strings.Contains(body, "Its claim currently belongs to a till that is no longer enrolled") {
+		t.Fatalf("the confirm dialog must not leave the placeholder empty: body=%s", body)
+	}
+}
+
 // ut-docs#1723: a claim owned by a DIFFERENT till this primary has heard
 // from within tillClaimTTL gets a distinct, more cautious redirect than the
 // plain "/tables" success — the manager can't see held_sales cross-till, so

@@ -2,6 +2,7 @@ package pages
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -53,7 +54,7 @@ func registerTablePicker(mux *http.ServeMux, d *common.Deps) {
 			// ut-docs#1392: a replica shows the PRIMARY's live occupancy when
 			// reachable (so the picker doesn't offer a table another till has
 			// already taken), falling back to local state otherwise.
-			states, err := tablesWithStateForDisplay(r.Context(), d, repo)
+			states, err := tablesWithStateForDisplay(r.Context(), d, repo, time.Now().Add(-tillClaimTTL))
 			if err != nil {
 				states = nil
 			}

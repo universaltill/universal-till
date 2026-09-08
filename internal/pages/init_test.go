@@ -182,7 +182,7 @@ func TestInit_ReclaimsHeldOrdersTableClaimOnBoot(t *testing.T) {
 	var wg sync.WaitGroup
 	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg) // the restart
 
-	states, err := posRepo.ListTablesWithState(ctx)
+	states, err := posRepo.ListTablesWithState(ctx, time.Now().Add(-tillClaimTTL))
 	if err != nil {
 		t.Fatalf("ListTablesWithState: %v", err)
 	}

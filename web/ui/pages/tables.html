@@ -151,7 +151,31 @@
                signal (2026-08-19 code review, ut-docs#814): the plan itself
                is role="img" with one static aria-label, so a screen-reader
                operator has no other way to learn a table's live state. */}}
-          <td>{{ if .Occupied }}{{ printf (T "tables.status.open_minutes") .OpenMinutes }}{{ else }}{{ T "tables.legend.free" }}{{ end }}</td>
+          <td>
+            {{ if .Occupied }}
+            {{ printf (T "tables.status.open_minutes") .OpenMinutes }}
+            {{/* Which till (if any) holds the live claim, and whether it
+                 looks online (ut-docs#1714, follow-up from the #1393
+                 review): lets a manager tell a stuck claim from a live one
+                 before pressing "Free table" below. Stays empty for a
+                 held-order-only row (no claim at all) — same as today.
+                 ClaimTillName can legitimately be empty even with a foreign
+                 till_id: migration 008 deliberately gives table_claims NO FK
+                 to tills ("a revoked till's claim must stay readable"), so a
+                 claim outlives the till row it names. Falling back to a
+                 named placeholder keeps that row from rendering a bare
+                 " — Offline" with nothing in front of the dash — and that
+                 revoked-till case is exactly the stuck claim a manager is
+                 most likely to be freeing. */}}
+            {{ if .HasLiveClaim }}
+            <br /><span class="muted">
+              {{ if eq .ClaimTillID "" }}{{ T "tables.claim.this_till" }}
+              {{ else }}{{ or .ClaimTillName (T "tables.claim.unenrolled_till") }} — {{ if .ClaimTillOnline }}{{ T "status.online" }}{{ else }}{{ T "status.offline" }}{{ end }}
+              {{ end }}
+            </span>
+            {{ end }}
+            {{ else }}{{ T "tables.legend.free" }}{{ end }}
+          </td>
           <td>{{ if .Enabled }}{{ T "tables.active" }}{{ else }}<span class="muted">{{ T "tables.inactive" }}</span>{{ end }}</td>
           <td class="users-actions">
             <form method="post" action="/api/tables/{{ .ID }}" class="users-inline">
@@ -180,8 +204,13 @@
                  plain HTML — a stuck-claim release is exactly the kind of
                  action a manager should not fire by a stray tap. */}}
             {{ if .Occupied }}
+            {{/* Widened confirm text when the claim belongs to a DIFFERENT
+                 till (ut-docs#1714): this is exactly the case that can
+                 desync that till's own basket (see the #1393 review's
+                 blocking finding) — the this-till/no-claim cases keep the
+                 original, shorter wording. */}}
             <form method="post" action="/api/tables/{{ .ID }}/release" class="users-inline"
-                  onsubmit="return confirm('{{ T "tables.confirm.release" }}')">
+                  onsubmit="return confirm('{{ if and .HasLiveClaim (ne .ClaimTillID "") }}{{ printf (T "tables.confirm.release_foreign_till") (or .ClaimTillName (T "tables.claim.unenrolled_till")) }}{{ else }}{{ T "tables.confirm.release" }}{{ end }}')">
               <button type="submit" class="btn secondary">{{ T "tables.release" }}</button>
             </form>
             {{ end }}

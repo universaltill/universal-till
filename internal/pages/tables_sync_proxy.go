@@ -74,8 +74,24 @@ type syncTableRow struct {
 // OccupiedSince are ever enriched from the primary. Any failure reaching
 // the primary (not a replica, network error, non-200, malformed body)
 // leaves the local view untouched — offline-first, unchanged.
-func tablesWithStateForDisplay(ctx context.Context, d *common.Deps, repo *data.POSRepo) ([]data.TableWithState, error) {
-	local, err := repo.ListTablesWithState(ctx)
+//
+// HasLiveClaim/ClaimTillID/ClaimTillName/ClaimTillOnline (ut-docs#1714) are
+// DELIBERATELY never enriched from the primary here, unlike Occupied/
+// OccupiedSince — they stay whatever the local row already had. Two
+// reasons: (1) the "Free table" action itself is primary-only
+// (requirePrimary, tables_page.go), so a replica's own view of this is
+// informational at best; (2) the data needed to judge it — a foreign
+// till's live table_claims row plus a fresh tills.last_seen_at — only
+// exists on the primary, and tills.last_seen_at is deliberately REDACTED
+// in the ordinary adminTables sync snapshot a replica's local `tills`
+// table gets (sync_admin_repo.go), so a replica has no fresh copy to judge
+// "online" from even if the wire format carried it. Extending GET
+// /api/sync/tables to carry claim/till fields was considered and rejected
+// for this reason — it would be stale by construction. A replica's own
+// local claim (till_id="" for itself) still surfaces normally; only a
+// FOREIGN till's claim never does here.
+func tablesWithStateForDisplay(ctx context.Context, d *common.Deps, repo *data.POSRepo, recentCutoff time.Time) ([]data.TableWithState, error) {
+	local, err := repo.ListTablesWithState(ctx, recentCutoff)
 	if err != nil {
 		return nil, err
 	}
