@@ -139,8 +139,10 @@ func kitchenTicketFor(detail data.SaleDetail, cfg print.Config, locale, station 
 		header = kitchenTicketText(locale, cfg.Charset, "kitchen.ticket.station_default")
 	}
 	return print.KitchenTicket{
-		Station:    header,
-		OrderNo:    detail.ReceiptNo,
+		Station: header,
+		// ut-docs#1817: DisplayNo is the short customer-facing order
+		// number, already resolved to ReceiptNo when the sale has none.
+		OrderNo:    detail.DisplayNo,
 		OrderLabel: kitchenTicketText(locale, cfg.Charset, "kitchen.ticket.order_label"),
 		OrderType:  kitchenOrderTypeLabel(locale, cfg.Charset, detail.OrderType),
 		// Table (ut-docs#820, ADR-0054): detail.TableLabel is already

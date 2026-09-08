@@ -43,7 +43,10 @@ func setupSaleDB(t *testing.T) *sql.DB {
 		// local_date/voided_local_date: column-identical to
 		// internal/db/migrations/007_report_query_local_date_columns.sql
 		// (ut-docs#1342) -- InsertSale/UpdateSaleStatus always write them now.
-		`CREATE TABLE sales (id TEXT PRIMARY KEY, receipt_no TEXT NOT NULL UNIQUE, status TEXT NOT NULL, sale_type TEXT NOT NULL, tender_type TEXT NOT NULL DEFAULT 'unknown', order_type TEXT NOT NULL DEFAULT '', table_id TEXT, offline INTEGER NOT NULL DEFAULT 0, sync_status TEXT NOT NULL DEFAULT 'queued', sync_attempts INTEGER NOT NULL DEFAULT 0, sync_next_attempt_at TEXT, sync_last_error TEXT, register_id TEXT, cashier_id TEXT, customer_id TEXT, currency TEXT NOT NULL, subtotal INTEGER NOT NULL, discount_total INTEGER NOT NULL, tax_total INTEGER NOT NULL, total INTEGER NOT NULL, service_charge_amount INTEGER NOT NULL DEFAULT 0, service_charge_tax_basis_bp INTEGER NOT NULL DEFAULT 0, voucher_issue_total INTEGER NOT NULL DEFAULT 0, rounding INTEGER NOT NULL DEFAULT 0, note TEXT, created_at TEXT NOT NULL, completed_at TEXT, voided_at TEXT, local_date TEXT NOT NULL DEFAULT '', voided_local_date TEXT);`,
+		// display_no: column-identical to internal/db/migrations/
+		// 013_sale_display_no.sql (ut-docs#1817) -- InsertSale always writes
+		// it now (NextDisplayNo/CompleteSale allocate one every sale).
+		`CREATE TABLE sales (id TEXT PRIMARY KEY, receipt_no TEXT NOT NULL UNIQUE, status TEXT NOT NULL, sale_type TEXT NOT NULL, tender_type TEXT NOT NULL DEFAULT 'unknown', order_type TEXT NOT NULL DEFAULT '', table_id TEXT, offline INTEGER NOT NULL DEFAULT 0, sync_status TEXT NOT NULL DEFAULT 'queued', sync_attempts INTEGER NOT NULL DEFAULT 0, sync_next_attempt_at TEXT, sync_last_error TEXT, register_id TEXT, cashier_id TEXT, customer_id TEXT, currency TEXT NOT NULL, subtotal INTEGER NOT NULL, discount_total INTEGER NOT NULL, tax_total INTEGER NOT NULL, total INTEGER NOT NULL, service_charge_amount INTEGER NOT NULL DEFAULT 0, service_charge_tax_basis_bp INTEGER NOT NULL DEFAULT 0, voucher_issue_total INTEGER NOT NULL DEFAULT 0, rounding INTEGER NOT NULL DEFAULT 0, note TEXT, created_at TEXT NOT NULL, completed_at TEXT, voided_at TEXT, local_date TEXT NOT NULL DEFAULT '', voided_local_date TEXT, display_no TEXT);`,
 		`CREATE TABLE sale_lines (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_no INTEGER NOT NULL, item_id TEXT, variant_id TEXT, name_snapshot TEXT NOT NULL, sku_snapshot TEXT, barcode_snapshot TEXT, quantity REAL NOT NULL, unit_price INTEGER NOT NULL, line_discount INTEGER NOT NULL DEFAULT 0, tax_rate_bp INTEGER NOT NULL, tax_amount INTEGER NOT NULL, total_before_tax INTEGER NOT NULL, total_after_tax INTEGER NOT NULL, order_type TEXT NOT NULL DEFAULT '', refund_of_line_id TEXT, FOREIGN KEY (sale_id) REFERENCES sales(id));`,
 		`CREATE TABLE sale_line_modifiers (id TEXT PRIMARY KEY, sale_line_id TEXT NOT NULL, group_id TEXT, option_id TEXT, group_name_snapshot TEXT NOT NULL, option_name_snapshot TEXT NOT NULL, price_delta_minor INTEGER NOT NULL, FOREIGN KEY (sale_line_id) REFERENCES sale_lines(id));`,
 		`CREATE TABLE sale_discounts (id TEXT PRIMARY KEY, sale_id TEXT NOT NULL, line_id TEXT, type TEXT NOT NULL, value INTEGER NOT NULL, amount INTEGER NOT NULL, reason TEXT);`,
@@ -138,6 +141,95 @@ func TestCompleteSale_SucceedsAndWritesRows(t *testing.T) {
 	_ = db.QueryRow(`SELECT quantity FROM inventory WHERE item_id='itm1' AND location_id='loc1'`).Scan(&qty)
 	if qty != 3 {
 		t.Fatalf("expected inventory 3, got %v", qty)
+	}
+}
+
+// ut-docs#1817: a live checkout (no pre-given DisplayNo, the normal path)
+// gets a short display number allocated in the SAME transaction as the
+// receipt itself, mirroring receipt_no's own allocate-when-empty behaviour.
+func TestCompleteSale_AllocatesDisplayNo(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Apple', 500, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',5,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+
+	in := SaleInput{
+		SaleType:   "sale",
+		RegisterID: "reg1",
+		CashierID:  "user1",
+		Currency:   "GBP",
+		Lines: []SaleLineInput{
+			{ItemID: "itm1", SKU: "SKU1", Name: "Apple", Qty: 1, UnitPrice: 500, TaxRateBasisPoints: 0, LocationID: "loc1"},
+		},
+		Payments: []PaymentInput{{MethodID: "cash", Amount: 500, Currency: "GBP"}},
+	}
+	saleID, err := CompleteSale(ctx, db, in)
+	if err != nil {
+		t.Fatalf("CompleteSale error: %v", err)
+	}
+	var receiptNo, displayNo string
+	if err := db.QueryRow(`SELECT receipt_no, COALESCE(display_no,'') FROM sales WHERE id = ?`, saleID).Scan(&receiptNo, &displayNo); err != nil {
+		t.Fatalf("read back sale: %v", err)
+	}
+	if displayNo == "" {
+		t.Fatalf("expected a display_no to be allocated, got empty (receipt_no=%q)", receiptNo)
+	}
+	if displayNo != "1" {
+		t.Fatalf("first sale in an empty till: displayNo = %q, want %q", displayNo, "1")
+	}
+
+	// A second sale advances the count — same monotonic-within-period
+	// behaviour NextDisplayNo's own repo-level test already pins.
+	saleID2, err := CompleteSale(ctx, db, SaleInput{
+		SaleType: "sale", RegisterID: "reg1", CashierID: "user1", Currency: "GBP",
+		Lines:    []SaleLineInput{{ItemID: "itm1", SKU: "SKU1", Name: "Apple", Qty: 1, UnitPrice: 500, TaxRateBasisPoints: 0, LocationID: "loc1"}},
+		Payments: []PaymentInput{{MethodID: "cash", Amount: 500, Currency: "GBP"}},
+	})
+	if err != nil {
+		t.Fatalf("CompleteSale (second) error: %v", err)
+	}
+	var displayNo2 string
+	if err := db.QueryRow(`SELECT COALESCE(display_no,'') FROM sales WHERE id = ?`, saleID2).Scan(&displayNo2); err != nil {
+		t.Fatalf("read back second sale: %v", err)
+	}
+	if displayNo2 != "2" {
+		t.Fatalf("second sale: displayNo = %q, want %q", displayNo2, "2")
+	}
+}
+
+// ut-docs#1817: a synced/replayed journal (internal/pages/sync_sales.go)
+// passes DisplayNo pre-set, exactly like ReceiptNo -- CompleteSale must use
+// it AS GIVEN, never re-derive its own, so a replica shows the customer the
+// SAME number their receipt/kitchen ticket already carried.
+func TestCompleteSale_UsesGivenDisplayNo_NeverReallocates(t *testing.T) {
+	ctx := context.Background()
+	db := setupSaleDB(t)
+	defer db.Close()
+
+	_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+	_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm1','SKU1','Apple', 500, 1)`)
+	_, _ = db.Exec(`INSERT INTO inventory(id, item_id, variant_id, location_id, quantity, updated_at) VALUES('inv1','itm1',NULL,'loc1',5,datetime('now'))`)
+	_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+
+	saleID, err := CompleteSale(ctx, db, SaleInput{
+		SaleType: "sale", RegisterID: "reg1", CashierID: "user1", Currency: "GBP",
+		ReceiptNo: "R-REPLAYED", DisplayNo: "42", // pre-allocated on the ORIGIN till
+		Lines:    []SaleLineInput{{ItemID: "itm1", SKU: "SKU1", Name: "Apple", Qty: 1, UnitPrice: 500, TaxRateBasisPoints: 0, LocationID: "loc1"}},
+		Payments: []PaymentInput{{MethodID: "cash", Amount: 500, Currency: "GBP"}},
+	})
+	if err != nil {
+		t.Fatalf("CompleteSale error: %v", err)
+	}
+	var displayNo string
+	if err := db.QueryRow(`SELECT COALESCE(display_no,'') FROM sales WHERE id = ?`, saleID).Scan(&displayNo); err != nil {
+		t.Fatalf("read back sale: %v", err)
+	}
+	if displayNo != "42" {
+		t.Fatalf("replayed sale must keep its given DisplayNo: got %q, want %q", displayNo, "42")
 	}
 }
 

@@ -353,7 +353,8 @@ func setupOfflineDB(t *testing.T) *sql.DB {
 			completed_at TEXT,
 			voided_at TEXT,
 			local_date TEXT NOT NULL DEFAULT '',
-			voided_local_date TEXT
+			voided_local_date TEXT,
+			display_no TEXT
 		)`,
 		`CREATE TABLE sale_lines (
 			id TEXT PRIMARY KEY, 
