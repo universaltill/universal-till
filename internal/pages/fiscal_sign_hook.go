@@ -703,7 +703,8 @@ func recordFiscalTSEEvidence(ctx context.Context, repo *data.POSRepo, saleID, ac
 // of a completed transaction, so nothing re-attempts signing later and
 // nothing ever upgrades an unsigned sale to signed after the fact.
 //
-// Deliberately NOT here: fiscal.KeySigningDeviceFailingSince. ADR-0048 Decision 1
+// Deliberately NOT here: the per-country failing-since row
+// (fiscal.SigningDeviceFailingSinceKey, ADR-0083). ADR-0048 Decision 1
 // reserves that key for "the TSE itself is known bad" (expired cert, dongle
 // pulled, provider-reported fault) — a strictly narrower condition than "we
 // currently can't reach it" — and EVERY failure this card can observe is a

@@ -26,8 +26,9 @@ complete without it. That is exactly the blocking
 a non-zero exit refuses the tender and **no sale row is created** — fail
 closed by construction, no override path. Core's `fiscal.RequiresHardGate("TR")`
 still refuses any TR sale as system of record until the device is confirmed
-(`fiscal.signing_device_configured`), which the till flips the first time the device
-answers (see `/fiscal-device`).
+(`fiscal.signing_device_configured.tr` — Turkey's own row, per-country since
+ADR-0083), which the till flips the first time the device answers (see
+`/fiscal-device`).
 
 ## Contract (v0, additive to the payment-provider contract)
 
