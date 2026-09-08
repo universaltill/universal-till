@@ -216,13 +216,12 @@ func TestAIResolve_ClaudeWithoutKeyIsDisabledNotOllama(t *testing.T) {
 
 // The fail-safe ADR-0085 gap 3 requires, and the test that must fail against
 // a naive "anything that isn't self_hosted is hosted" implementation: only
-// the exact value "claude" may select a paid vendor. A typo, a different
-// case, a provider this build doesn't implement (openai — a separate card),
-// or any other string resolves to the self-hosted path — Ollama when an
-// endpoint exists, disabled when not — even when a key is sitting right
-// there in api_key.
+// the exact values "claude" or "openai" may select a paid vendor (ut-docs#1791
+// added the second). A typo, a different case, or any other string resolves
+// to the self-hosted path — Ollama when an endpoint exists, disabled when
+// not — even when a key is sitting right there in api_key.
 func TestAIResolve_UnrecognizedProviderNeverSelectsHosted(t *testing.T) {
-	for _, provider := range []string{"openai", "Claude", "CLAUDE", "claud", "anthropic", "hosted", "claude-haiku-4-5"} {
+	for _, provider := range []string{"Claude", "CLAUDE", "claud", "anthropic", "hosted", "claude-haiku-4-5", "Openai", "OPENAI", "open_ai", "gpt"} {
 		t.Run(provider, func(t *testing.T) {
 			dp := newAIResolveDeps(t, true)
 			setAISetting(t, dp, "provider", provider, false)
@@ -243,6 +242,65 @@ func TestAIResolve_UnrecognizedProviderNeverSelectsHosted(t *testing.T) {
 			}
 			if aiService(t.Context(), dp).Enabled() {
 				t.Fatalf("provider=%q with no endpoint must be a disabled service, never a hosted one", provider)
+			}
+		})
+	}
+}
+
+// ut-docs#1791: provider=openai with a key resolves to the new openai
+// backend — key already opened from its sealed row, vision_model AND
+// ask_model both default to ai.DefaultOpenAIModel (one model covers both
+// capabilities for OpenAI, unlike Ollama's split), and either default is
+// independently overridable. OpenAI wins over a sibling Ollama endpoint the
+// shop may still have configured from before the switch.
+func TestAIResolve_OpenAIWithKeySelectsOpenAI(t *testing.T) {
+	dp := newAIResolveDeps(t, true)
+	setAISetting(t, dp, "provider", "openai", false)
+	setAISetting(t, dp, "api_key", "sk-openai-shop-own-key", true)
+	setAISetting(t, dp, "endpoint", "http://ollama.local:11434", false)
+
+	cfg := resolveAIConfig(t.Context(), dp)
+	want := ai.Config{Provider: "openai", APIKey: "sk-openai-shop-own-key", Model: ai.DefaultOpenAIModel, AskModel: ai.DefaultOpenAIModel}
+	if cfg != want {
+		t.Fatalf("got %+v, want %+v", cfg, want)
+	}
+	svc := aiService(t.Context(), dp)
+	if !svc.Enabled() {
+		t.Fatal("openai with a key must be enabled")
+	}
+	// Unlike claude, openai's ask loop is real (ut-docs#1791) — Ask-your-till
+	// must NOT hide itself for this provider.
+	if !svc.CanAsk() {
+		t.Fatal("openai has a real ask loop — CanAsk must be true")
+	}
+
+	setAISetting(t, dp, "vision_model", "gpt-4o", false)
+	if cfg := resolveAIConfig(t.Context(), dp); cfg.Model != "gpt-4o" || cfg.AskModel != ai.DefaultOpenAIModel || cfg.Provider != "openai" {
+		t.Fatalf("vision_model must override independently of ask_model, got %+v", cfg)
+	}
+
+	setAISetting(t, dp, "ask_model", "gpt-4o-mini-2024-07-18", false)
+	if cfg := resolveAIConfig(t.Context(), dp); cfg.AskModel != "gpt-4o-mini-2024-07-18" || cfg.Model != "gpt-4o" {
+		t.Fatalf("ask_model must override independently of vision_model, got %+v", cfg)
+	}
+}
+
+// provider=openai with no key is "not configured", not "use Ollama instead" —
+// same fail-safe posture as the claude branch.
+func TestAIResolve_OpenAIWithoutKeyIsDisabledNotOllama(t *testing.T) {
+	for name, seedKey := range map[string]bool{"no_row": false, "empty_row": true} {
+		t.Run(name, func(t *testing.T) {
+			dp := newAIResolveDeps(t, true)
+			setAISetting(t, dp, "provider", "openai", false)
+			setAISetting(t, dp, "endpoint", "http://ollama.local:11434", false)
+			if seedKey {
+				setAISetting(t, dp, "api_key", "", true)
+			}
+			if cfg := resolveAIConfig(t.Context(), dp); cfg.Provider != "" {
+				t.Fatalf("openai without a key resolved to %+v, want disabled (never the sibling ollama endpoint)", cfg)
+			}
+			if aiService(t.Context(), dp).Enabled() {
+				t.Fatal("openai without a key must be a disabled service")
 			}
 		})
 	}

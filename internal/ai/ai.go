@@ -4,8 +4,9 @@
 // The primary backend is SELF-HOSTED (an Ollama server running an open
 // vision model on the shop's own hardware/homelab) — Farshid's direction is
 // no paid AI: local models now, a custom model trained on the shop's own
-// data later. The Claude API exists only as an optional provider for shops
-// that choose it. Offline-first is binding (ADR-0003): nothing here sits on
+// data later. The Claude and OpenAI APIs exist only as optional providers
+// for shops that choose one, with their own key (ADR-0085, ut-docs#1791).
+// Offline-first is binding (ADR-0003): nothing here sits on
 // the checkout path, every feature degrades to the non-AI experience, and
 // callers treat errors as "feature unavailable", never as a sale blocker.
 package ai
@@ -22,11 +23,11 @@ import (
 // Config comes from the environment. With neither an endpoint nor a key the
 // whole feature set is invisible; nothing else in the till changes.
 type Config struct {
-	Provider string // "ollama" (self-hosted, default) or "claude" (optional)
+	Provider string // "ollama" (self-hosted, default), "claude", or "openai" (both optional)
 	Endpoint string // Ollama base URL, e.g. http://localhost:11434
 	Model    string
-	AskModel string // tool-capable text model for "Ask your till" (ollama)
-	APIKey   string // claude provider only
+	AskModel string // tool-capable model for "Ask your till" (ollama, openai)
+	APIKey   string // claude/openai provider only
 }
 
 // DefaultClaudeModel is the model the claude provider runs when none is
@@ -34,6 +35,16 @@ type Config struct {
 // (internal/pages/ai_resolve.go, ADR-0085) defaults to the same model as the
 // UT_AI_* env path below — one constant, so the two can't drift apart.
 const DefaultClaudeModel = "claude-haiku-4-5"
+
+// DefaultOpenAIModel is the model the openai provider runs for BOTH vision
+// (camera identify) and ask (tool-calling) when the corresponding setting is
+// left empty — one current, well-documented OpenAI model that supports both
+// capabilities, unlike Ollama's split vision/text models. Exported so the AI
+// plugin's settings path (internal/pages/ai_resolve.go, ut-docs#1791)
+// defaults to the same model as the UT_AI_* env path below; a shop may still
+// override vision_model and ask_model independently, same as every other
+// provider.
+const DefaultOpenAIModel = "gpt-4o-mini"
 
 // FromEnv reads UT_AI_PROVIDER / UT_AI_ENDPOINT / UT_AI_MODEL / UT_AI_API_KEY.
 // Provider is inferred when unset: an endpoint means ollama, a key means
@@ -60,12 +71,20 @@ func FromEnv() Config {
 			cfg.Model = "llama3.2-vision"
 		case "claude":
 			cfg.Model = DefaultClaudeModel
+		case "openai":
+			cfg.Model = DefaultOpenAIModel
 		}
 	}
 	// The vision model does camera identify; the ask loop needs a
-	// tool-capable TEXT model (vision models don't do function calling).
-	if cfg.AskModel == "" && cfg.Provider == "ollama" {
-		cfg.AskModel = "llama3.2"
+	// tool-capable TEXT model (Ollama's vision models don't do function
+	// calling). OpenAI's model covers both, so it gets the same default.
+	if cfg.AskModel == "" {
+		switch cfg.Provider {
+		case "ollama":
+			cfg.AskModel = "llama3.2"
+		case "openai":
+			cfg.AskModel = DefaultOpenAIModel
+		}
 	}
 	return cfg
 }
@@ -126,6 +145,19 @@ func New(cfg Config) *Service {
 			return &Service{}
 		}
 		return &Service{p: newClaudeProvider(cfg.APIKey, cfg.Model), enabled: true}
+	case "openai":
+		if cfg.APIKey == "" {
+			return &Service{}
+		}
+		visionModel := cfg.Model
+		if visionModel == "" {
+			visionModel = DefaultOpenAIModel
+		}
+		askModel := cfg.AskModel
+		if askModel == "" {
+			askModel = DefaultOpenAIModel
+		}
+		return &Service{p: newOpenAIProvider(cfg.APIKey, visionModel, askModel), enabled: true}
 	default:
 		return &Service{}
 	}
