@@ -397,6 +397,14 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 				// every period. Gated behind CanRunEOD with Net/Sales —
 				// it's derived from the same report history.
 				HasVariance bool
+				// Tips (ut-docs#1529) is the same total already broken out
+				// on the PRINTED Z-report's "TIPS (held out of revenue)"
+				// footer and the JSON export (rep.Tips, ut-docs#1007) — a
+				// manager glancing at this tab without printing/downloading
+				// previously had no visibility into it at all. Gated behind
+				// CanRunEOD with Net/Sales, same reasoning: it's a real
+				// money figure from the same report history.
+				Tips int64
 				// From/To (ADR-0066 Decision 6, ut-docs#1141): set only
 				// for a close-to-close "eod" report (rep.Day == "", the
 				// new path) — the template renders "From – To" in place
@@ -448,6 +456,9 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 							row.Net = rep.Net
 							row.Sales = rep.SalesCount
 							row.HasVariance = rep.CashReconciliation != nil && rep.CashReconciliation.Variance != 0
+							for _, tp := range rep.Tips {
+								row.Tips += tp.Amount
+							}
 							row.ArticleGroups = rep.ArticleGroups
 							row.Articles = rep.Articles
 							row.Operators = rep.Operators

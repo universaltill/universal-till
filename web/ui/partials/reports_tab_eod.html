@@ -49,13 +49,13 @@
        CanRunEOD specifically, same gate the Go side already applies to
        whether they're even populated. -->
   <table class="table" style="margin-top:.6rem">
-    <thead><tr><th>{{ T "reports.day" }}</th>{{ if .CanRunEOD }}<th>{{ T "reports.sales" }}</th><th>{{ T "reports.eod.net" }}</th>{{ end }}<th></th></tr></thead>
+    <thead><tr><th>{{ T "reports.day" }}</th>{{ if .CanRunEOD }}<th>{{ T "reports.sales" }}</th><th>{{ T "reports.eod.net" }}</th><th>{{ T "reports.eod.tips" }}</th>{{ end }}<th></th></tr></thead>
     <tbody>
       {{ $canRunEOD := .CanRunEOD }}
       {{ range .EODRows }}
       <tr>
         <td>{{ if .From }}{{ printf (T "reports.eod.period_range") .From .To }}{{ else }}{{ .Period }}{{ end }}{{ if .HasVariance }} <span class="tag stock-low" title="{{ T "reports.eod.variance_flag" }}">⚠ {{ T "reports.eod.variance_flag" }}</span>{{ end }}</td>
-        {{ if $canRunEOD }}<td>{{ .Sales }}</td><td>{{ money .Net }}</td>{{ end }}
+        {{ if $canRunEOD }}<td>{{ .Sales }}</td><td>{{ money .Net }}</td><td>{{ money .Tips }}</td>{{ end }}
         <td><button class="btn secondary" hx-post="/api/reports/eod/print/{{ .Period }}" hx-target="#eod-msg" hx-swap="innerHTML">🖨</button></td>
       </tr>
       {{ if or .ArticleGroups .Articles .Operators .OrderTypes }}
@@ -73,7 +73,7 @@
            rows (dine in/takeaway), same plain-table treatment as
            ArticleGroups/Operators. -->
       <tr>
-        <td colspan="{{ if $canRunEOD }}4{{ else }}2{{ end }}" style="padding-inline-start:1.5rem">
+        <td colspan="{{ if $canRunEOD }}5{{ else }}2{{ end }}" style="padding-inline-start:1.5rem">
           {{ if .ArticleGroups }}
           <strong>{{ T "reports.eod.by_article_group" }}</strong>
           <table class="table" style="margin:.3rem 0 .8rem">

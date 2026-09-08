@@ -318,7 +318,10 @@ its own.
   tips-by-payment-method line (e.g. "4x Card £3.20") for any day with at
   least one payment that recorded a tip — most often a card payment
   where the terminal's own tip prompt was used. This is held separately
-  from the day's sales totals, not counted as revenue. It can read
+  from the day's sales totals, not counted as revenue. The same total
+  also shows in a **Tips** column on the Day-end tab's on-screen list, next
+  to Sales and Net, so a manager can see it without printing or
+  downloading a report. It can read
   differently from "Received" above: the Z-report line counts every
   tipped payment regardless of who the tip belongs to, while "Received"
   only counts tips recorded for the employee (the default) — the two are
