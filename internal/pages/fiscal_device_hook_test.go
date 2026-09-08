@@ -42,6 +42,20 @@ func TestDeviceAuthorizePayloadExtras(t *testing.T) {
 	}
 }
 
+// ut-docs#1764: a cash tender with change gives the device a "total" larger
+// than the actual sale — the customer handed over more than the sale cost
+// and got change back, but "total" was computed from the gross amount
+// tendered, never netting out ChangeGiven.
+func TestDeviceAuthorizePayloadExtras_NetsOutChangeGiven(t *testing.T) {
+	in := pos.SaleInput{Currency: "TRY", TaxInclusive: true}
+	// Sale total is 3000; customer tendered 5000 cash and got 2000 change.
+	payments := []pos.PaymentInput{{MethodID: "okc", Amount: money.FromMinor(5000), ChangeGiven: money.FromMinor(2000)}}
+	extras := deviceAuthorizePayloadExtras(in, payments)
+	if extras["total"] != int64(3000) {
+		t.Fatalf("total = %v, want 3000 (net of change), not the 5000 gross tender", extras["total"])
+	}
+}
+
 func TestPickDeviceEvidence_FirstWins(t *testing.T) {
 	first := pickDeviceEvidence(nil, json.RawMessage(`{"status":"approved","fiscal_device":{"receipt_no":"1"}}`))
 	if first == nil || first.ReceiptNo != "1" {

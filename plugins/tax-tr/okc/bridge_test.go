@@ -155,6 +155,18 @@ func TestBridgeSale_RefusedWhenReceiptNoWhitespace(t *testing.T) {
 	}
 }
 
+// A zero-width space (U+200B, Unicode category Cf) is just as unusable as
+// ASCII whitespace, but unicode.IsSpace/strings.TrimSpace do not strip it —
+// so this must be rejected by a check that also strips Cf (ut-docs#1781).
+func TestBridgeSale_RefusedWhenReceiptNoZeroWidthSpace(t *testing.T) {
+	zeroWidth := "\u200b\u200b"
+	s := startSim(t, sim.Options{ReceiptNoOverride: &zeroWidth})
+	d := okc.NewBridgeDriver(netTransport{}, okc.Config{Host: "127.0.0.1", Port: s.Port()})
+	if _, err := d.Sale(sale(1)); !errors.Is(err, okc.ErrNoReceipt) {
+		t.Fatalf("err = %v, want ErrNoReceipt", err)
+	}
+}
+
 // Same invariant on the refund leg.
 func TestBridgeRefund_RefusedWhenReceiptNoEmpty(t *testing.T) {
 	empty := ""
