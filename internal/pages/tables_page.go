@@ -376,23 +376,38 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 			http.Redirect(w, r, "/tables?err=tables.error.not_found", http.StatusSeeOther)
 			return
 		}
-		released, stillHeld, err := posRepo.ForceReleaseTableClaim(r.Context(), id)
+		result, err := posRepo.ForceReleaseTableClaim(r.Context(), id, time.Now().Add(-tillClaimTTL))
 		if err != nil {
 			http.Redirect(w, r, "/tables?err=tables.error.release", http.StatusSeeOther)
 			return
 		}
-		audit(r, actor.ID, id, "table_release", map[string]any{"claim_released": released, "held_order_still_attached": stillHeld})
-		if stillHeld {
+		audit(r, actor.ID, id, "table_release", map[string]any{
+			"claim_released":            result.Released,
+			"held_order_still_attached": result.StillHeld,
+			"other_till_recently_seen":  result.OtherTillRecentlySeen,
+			"other_till_id":             result.OtherTillID,
+		})
+		if result.StillHeld {
 			// Two distinct messages (independent review finding, ut-docs#1393):
 			// "claim cleared" is only true when a claim actually existed —
 			// pressing this on a table occupied ONLY by a genuine held order
 			// (no stuck claim at all, arguably the more common press) cleared
 			// nothing, and saying otherwise would misdescribe what happened.
 			key := "tables.error.held_order_attached"
-			if !released {
+			if !result.Released {
 				key = "tables.error.held_order_only"
 			}
 			http.Redirect(w, r, "/tables?err="+key, http.StatusSeeOther)
+			return
+		}
+		if result.OtherTillRecentlySeen {
+			// ut-docs#1723: held_sales isn't cross-till visible (StillHeld
+			// above only ever sees THIS till's own held orders), so this is
+			// the strongest honest signal available — the claim belonged to
+			// a different till this primary heard from within the last
+			// tillClaimTTL, not proof a held order is sitting there. See
+			// TableReleaseResult's doc comment in internal/data.
+			http.Redirect(w, r, "/tables?err=tables.error.released_other_till_recent", http.StatusSeeOther)
 			return
 		}
 		http.Redirect(w, r, "/tables", http.StatusSeeOther)

@@ -13,13 +13,17 @@ import (
 )
 
 // The five settings keys migration 009 renames (ADR-0081 Decision 1/2):
-// old name → the fiscal package's constant for the new name. The old names
-// are spelled out as literals on purpose — nothing in the codebase names
-// them anymore after the rename, and this table is the test's own record of
-// what an upgraded till's settings table may still contain.
+// old name → the name 009 writes. The old names are spelled out as literals
+// on purpose — nothing in the codebase names them anymore after the rename,
+// and this table is the test's own record of what an upgraded till's
+// settings table may still contain. The two posture targets are 009's
+// FLAT names (flatSigningDevice*Key, fiscal_signing_keys_split_test.go):
+// since ADR-0083 those are no longer Go constants either — migration 011
+// moves them onto per-country rows on any till that declares a
+// store.country, and postSplitKey says where each lands.
 var fiscalSigningKeyRenames = map[string]string{
-	"fiscal.tse_configured":      fiscal.KeySigningDeviceConfigured,
-	"fiscal.tse_failing_since":   fiscal.KeySigningDeviceFailingSince,
+	"fiscal.tse_configured":      flatSigningDeviceConfiguredKey,
+	"fiscal.tse_failing_since":   flatSigningDeviceFailingSinceKey,
 	"fiscal.tse_override_until":  fiscal.KeyOverrideUntil,
 	"fiscal.tse_override_reason": fiscal.KeyOverrideReason,
 	"fiscal.tse_override_actor":  fiscal.KeyOverrideActor,
@@ -28,39 +32,49 @@ var fiscalSigningKeyRenames = map[string]string{
 // fiscalSigningRenameMigrationVersion is the ledger version 009 lands under.
 const fiscalSigningRenameMigrationVersion = 9
 
-// openAtPreRenameSchema opens a fresh DB (every migration applied), then
-// rewinds the ledger to just before migration 009 so the next Open on the
-// same file runs 009 through the REAL migration runner — the same path an
-// upgraded till takes — rather than a hand-executed copy of its SQL. The
-// schema itself is unchanged by 009 (it only rewrites settings rows), so
-// dropping the ledger row is an exact stand-in for a pre-009 database.
+// openAtPreMigrationSchema opens a fresh DB (every migration applied), then
+// rewinds the ledger to just before migration version so the next Open on
+// the same file runs it through the REAL migration runner — the same path
+// an upgraded till takes — rather than a hand-executed copy of its SQL. It
+// is only a faithful stand-in for a settings-row migration (009, 011): the
+// schema itself is unchanged by those, so dropping the ledger row is an
+// exact stand-in for a pre-migration database.
 //
-// It rewinds EVERY version at or above 009, not just 009 itself. Deleting
-// only 009's row leaves any later migration recorded, so the runner sees a
-// missing 009 sitting below a higher applied watermark and correctly refuses
-// to boot ("a migration file was renumbered under an already-applied
-// version") — which made this test fail the moment a 010 existed, for a
-// reason that had nothing to do with the rename it covers. Re-running the
-// later migrations is safe: this helper's contract is that they are
-// re-appliable, which is why they use IF NOT EXISTS.
-func openAtPreRenameSchema(t *testing.T) (*DB, string) {
+// It rewinds EVERY version at or above version, not just version itself.
+// Deleting only that row leaves any later migration recorded, so the runner
+// sees a missing version sitting below a higher applied watermark and
+// correctly refuses to boot ("a migration file was renumbered under an
+// already-applied version") — which made 009's test fail the moment a 010
+// existed, for a reason that had nothing to do with the rename it covers.
+// Re-running the later migrations is safe: this helper's contract is that
+// they are re-appliable, which is why they use IF NOT EXISTS or, for the
+// settings-row rewrites, guarded idempotent statements.
+func openAtPreMigrationSchema(t *testing.T, version int, file string) (*DB, string) {
 	t.Helper()
-	path := filepath.Join(t.TempDir(), "fiscal-signing-rename.db")
+	path := filepath.Join(t.TempDir(), file)
 	d, err := Open(path)
 	if err != nil {
 		t.Fatalf("Open (fresh): %v", err)
 	}
 	var applied int
-	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, fiscalSigningRenameMigrationVersion).Scan(&applied); err != nil {
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE version = ?`, version).Scan(&applied); err != nil {
 		t.Fatalf("read ledger: %v", err)
 	}
 	if applied != 1 {
-		t.Fatalf("migration %d not recorded as applied on a fresh DB — has it been renumbered?", fiscalSigningRenameMigrationVersion)
+		t.Fatalf("migration %d not recorded as applied on a fresh DB — has it been renumbered?", version)
 	}
-	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= ?`, fiscalSigningRenameMigrationVersion); err != nil {
+	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= ?`, version); err != nil {
 		t.Fatalf("rewind ledger: %v", err)
 	}
 	return d, path
+}
+
+// openAtPreRenameSchema is openAtPreMigrationSchema at 009. Note that the
+// re-Open then also runs 011, so a seeded store.country row decides whether
+// the renamed posture rows end up flat (no country) or per-country.
+func openAtPreRenameSchema(t *testing.T) (*DB, string) {
+	t.Helper()
+	return openAtPreMigrationSchema(t, fiscalSigningRenameMigrationVersion, "fiscal-signing-rename.db")
 }
 
 func seedSettings(t *testing.T, d *DB, rows map[string]string) {
@@ -88,7 +102,9 @@ func settingValue(t *testing.T, d *DB, key string) (string, bool) {
 // TestFiscalSigningKeysRename_PreservesValuesUnderNewNames (ADR-0081
 // Decision 2): a till that stored fiscal state under ADR-0048's TSE-named
 // keys reads the identical values under the signing-device names after the
-// upgrade, and no row survives under an old name.
+// upgrade, and no row survives under an old name. No store.country is
+// seeded, so 011 (which also runs on this upgrade) leaves the renamed
+// posture rows flat — the with-country path is 011's own test.
 func TestFiscalSigningKeysRename_PreservesValuesUnderNewNames(t *testing.T) {
 	d, path := openAtPreRenameSchema(t)
 	seeded := map[string]string{
@@ -183,7 +199,12 @@ func TestFiscalSigningKeysRename_GateDecisionSurvivesUpgrade(t *testing.T) {
 			t.Run(c.name+"/"+country, func(t *testing.T) {
 				ctx := context.Background()
 				d, path := openAtPreRenameSchema(t)
-				rows := map[string]string{fiscal.KeySystemOfRecord: "true"}
+				// A configured shop always has a declared country (the gate
+				// needs one before either posture key can be set), and the
+				// same Open also runs 011, which needs it to land the
+				// renamed posture rows on the country's own row — the row
+				// the gate reads since ADR-0083.
+				rows := map[string]string{fiscal.KeySystemOfRecord: "true", "store.country": country}
 				for k, v := range c.oldRows {
 					rows[k] = v
 				}
@@ -253,8 +274,8 @@ func TestFiscalSigningKeysRename_FreshInstallAndRerunAreNoOps(t *testing.T) {
 	// Re-running 009's statements against a DB already on the new names
 	// (the idempotency the migration header promises) changes nothing.
 	seedSettings(t, d, map[string]string{
-		fiscal.KeySigningDeviceConfigured: "true",
-		fiscal.KeyOverrideReason:          "already migrated",
+		flatSigningDeviceConfiguredKey: "true",
+		fiscal.KeyOverrideReason:       "already migrated",
 	})
 	migs, err := loadMigrations()
 	if err != nil {
@@ -279,8 +300,8 @@ func TestFiscalSigningKeysRename_FreshInstallAndRerunAreNoOps(t *testing.T) {
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
-	if v, ok := settingValue(t, d, fiscal.KeySigningDeviceConfigured); !ok || v != "true" {
-		t.Fatalf("%s = (%q, %v) after re-run, want (\"true\", true)", fiscal.KeySigningDeviceConfigured, v, ok)
+	if v, ok := settingValue(t, d, flatSigningDeviceConfiguredKey); !ok || v != "true" {
+		t.Fatalf("%s = (%q, %v) after re-run, want (\"true\", true)", flatSigningDeviceConfiguredKey, v, ok)
 	}
 	if v, ok := settingValue(t, d, fiscal.KeyOverrideReason); !ok || v != "already migrated" {
 		t.Fatalf("%s = (%q, %v) after re-run, want (\"already migrated\", true)", fiscal.KeyOverrideReason, v, ok)
@@ -305,7 +326,10 @@ func TestFiscalSigningKeysRename_FreshInstallAndRerunAreNoOps(t *testing.T) {
 func TestFiscalSigningKeysRename_MultiTillSkewDoesNotBlockBoot(t *testing.T) {
 	ctx := context.Background()
 	d, path := openAtPreRenameSchema(t)
-	rows := map[string]string{fiscal.KeySystemOfRecord: "true"}
+	// A German shop: the same Open runs 011 too, which carries the renamed
+	// posture rows on to fiscal.signing_device_*.de — where postSplitKey
+	// says to look for them afterwards.
+	rows := map[string]string{fiscal.KeySystemOfRecord: "true", "store.country": "DE"}
 	for oldKey, newKey := range fiscalSigningKeyRenames {
 		// The till's own pre-upgrade row...
 		rows[oldKey] = "this-till-stale"
@@ -314,9 +338,9 @@ func TestFiscalSigningKeysRename_MultiTillSkewDoesNotBlockBoot(t *testing.T) {
 	}
 	// Values the gate can actually read back, so the post-upgrade decision
 	// below is meaningful rather than a parse failure.
-	rows[fiscal.KeySigningDeviceConfigured] = "true"
+	rows[flatSigningDeviceConfiguredKey] = "true"
 	rows["fiscal.tse_configured"] = "true"
-	rows[fiscal.KeySigningDeviceFailingSince] = ""
+	rows[flatSigningDeviceFailingSinceKey] = ""
 	rows["fiscal.tse_failing_since"] = "2026-08-14T09:00:00Z"
 	seedSettings(t, d, rows)
 	if err := d.Close(); err != nil {
@@ -333,13 +357,14 @@ func TestFiscalSigningKeysRename_MultiTillSkewDoesNotBlockBoot(t *testing.T) {
 		if v, still := settingValue(t, d, oldKey); still {
 			t.Errorf("%s still present after migration (value %q) — the stale old-named row must be dropped", oldKey, v)
 		}
-		v, ok := settingValue(t, d, newKey)
+		finalKey := postSplitKey(newKey, "DE")
+		v, ok := settingValue(t, d, finalKey)
 		if !ok {
-			t.Errorf("%s: no row under the new key after migration", newKey)
+			t.Errorf("%s: no row under the new key after migration", finalKey)
 			continue
 		}
 		if v == "this-till-stale" {
-			t.Errorf("%s = %q — the value synced from the primary must win the tie, not this till's pre-upgrade copy", newKey, v)
+			t.Errorf("%s = %q — the value synced from the primary must win the tie, not this till's pre-upgrade copy", finalKey, v)
 		}
 	}
 

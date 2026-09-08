@@ -144,12 +144,14 @@ does exactly this: the ÖKC plugin implements the existing blocking
 `payment.<key>.authorize` seam (payment-provider contract) as a "pay on
 device" tender, answers with a `fiscal_device` evidence block core
 persists (`internal/fiscal/device.go`, `fiscal_device_receipts`), and the
-first receipt flips `fiscal.signing_device_configured`. No new extension point was
+first receipt flips Turkey's own posture row, `fiscal.signing_device_configured.tr`
+(per-country since ADR-0083 — Germany's TSE reads `.de`, so the two can never
+satisfy each other's gate). No new extension point was
 added — it reuses one ADR-0041 already migrated — but the additive
 authorize payload (`currency, total, tax_inclusive, lines[]`) and the
 evidence block are contract changes that need recording in ut-docs
 (`reference/payment-provider-contract.md`) and an ADR registering the
-"device market" reading of `fiscal.signing_device_configured`.
+"device market" reading of that row.
 
 ### E2 — Build an ÖKC simulator — *done*
 `scripts/okc-sim` (library in `plugins/tax-tr/okc/sim`): a stateful

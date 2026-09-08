@@ -60,7 +60,10 @@ func fiscalChipHandler(dp *common.Deps) http.HandlerFunc {
 			w.WriteHeader(http.StatusOK)
 			return
 		}
-		configured, _, err := dp.Settings.Get(ctx, fiscal.KeySigningDeviceConfigured)
+		// The current country's own posture row (ADR-0083): the chip reports
+		// on the device THIS shop's market mandates, so it reads the same
+		// row the tender gate reads for that market.
+		configured, _, err := dp.Settings.Get(ctx, fiscal.SigningDeviceConfiguredKey(dp.CurrentState().Country))
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
 			return
@@ -160,7 +163,11 @@ func createSigningOverride(dp *common.Deps) http.HandlerFunc {
 		// API call with a perfectly valid body and an admin PIN is refused
 		// here all the same (ADR-0048 Decision 3; same hard-block error the
 		// tender gate itself raises).
-		configured, _, err := fiscalSettingsReader(dp).Get(ctx, fiscal.KeySigningDeviceConfigured)
+		// Against the current country's own row (ADR-0083) — the same row
+		// EvaluateGate consulted to block the sale this override exists to
+		// lift, so "never configured" here means never configured for THIS
+		// market, not for some other market the shop once declared.
+		configured, _, err := fiscalSettingsReader(dp).Get(ctx, fiscal.SigningDeviceConfiguredKey(dp.CurrentState().Country))
 		if err != nil {
 			respondFiscalError(w, r, http.StatusInternalServerError, fmt.Sprintf("settings read failed: %v", err))
 			return

@@ -378,6 +378,69 @@ func TestTablesPage_Release(t *testing.T) {
 	}
 }
 
+// ut-docs#1723: a claim owned by a DIFFERENT till this primary has heard
+// from within tillClaimTTL gets a distinct, more cautious redirect than the
+// plain "/tables" success — the manager can't see held_sales cross-till, so
+// this is the strongest honest signal the primary can give.
+func TestTablesPage_ReleaseWarnsOnRecentlySeenOtherTill(t *testing.T) {
+	mux, d := newTablesTestMux(t)
+	mgrID, err := data.NewAuthRepo(d.Db).CreateUser(t.Context(), "table-manager", "Manager", "manager")
+	if err != nil {
+		t.Fatalf("create manager: %v", err)
+	}
+	manager := auth.User{ID: mgrID, Role: "manager", DisplayName: "Manager"}
+	repo := data.NewPOSRepo(d.Db)
+
+	id, err := repo.CreateTable(t.Context(), "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	tillID, err := data.NewTillsRepo(d.Db).InsertTill(t.Context(), "Kitchen-2", "hash1")
+	if err != nil {
+		t.Fatalf("InsertTill: %v", err)
+	}
+	if _, err := d.Db.Exec(`UPDATE tills SET last_seen_at = ? WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339), tillID); err != nil {
+		t.Fatalf("seed last_seen_at: %v", err)
+	}
+	if _, err := d.Db.Exec(
+		`INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, datetime('now'), ?)`, id, tillID); err != nil {
+		t.Fatalf("seed recently-seen-till claim: %v", err)
+	}
+
+	rec := postForm(mux, "/api/tables/"+id+"/release", nil, &manager)
+	if rec.Header().Get("Location") != "/tables?err=tables.error.released_other_till_recent" {
+		t.Fatalf("release of a recently-seen other till's claim: loc=%q", rec.Header().Get("Location"))
+	}
+	if ok, err := repo.IsTableFree(t.Context(), id, ""); err != nil || !ok {
+		t.Fatalf("the claim itself is still dropped, table must read free: ok=%v err=%v", ok, err)
+	}
+	var otherSeen int
+	if err := d.Db.QueryRow(`SELECT json_extract(data_json, '$.other_till_recently_seen') FROM audit_log WHERE action = 'table_release' AND entity_id = ?`, id).Scan(&otherSeen); err != nil {
+		t.Fatalf("audit_log lookup: %v", err)
+	}
+	if otherSeen != 1 {
+		t.Fatalf("audit_log other_till_recently_seen=%d, want 1", otherSeen)
+	}
+
+	// A genuine held order takes precedence in the message over the
+	// recently-seen-till signal when both are true — StillHeld is definite
+	// local evidence, OtherTillRecentlySeen is only ever a hint.
+	if _, err := d.Db.Exec(
+		`INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, datetime('now'), ?)`, id, tillID); err != nil {
+		t.Fatalf("re-seed recently-seen-till claim: %v", err)
+	}
+	if _, err := d.Db.Exec(
+		`INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) VALUES ('h1','',0,0,'{}',?)`, id); err != nil {
+		t.Fatalf("seed held sale: %v", err)
+	}
+	rec = postForm(mux, "/api/tables/"+id+"/release", nil, &manager)
+	if rec.Header().Get("Location") != "/tables?err=tables.error.held_order_attached" {
+		t.Fatalf("release with both signals present: loc=%q, want held_order_attached to win", rec.Header().Get("Location"))
+	}
+}
+
 // ut-docs#1585: release must also refuse on a replica, same as the other
 // three mutations.
 func TestTablesPage_ReleaseRefusedOnReplica(t *testing.T) {

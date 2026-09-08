@@ -12,7 +12,8 @@ import (
 // including the gate's own truthy parsing of system_of_record ("1"/"on"/
 // mixed-case/padded, not just the literal "true") and a broken-but-active
 // signer plugin (Settings-page banner detection only — never touches
-// EvaluateGate, KeySigningDeviceFailingSince, or override state, ADR-0048 untouched).
+// EvaluateGate, the per-country failing-since row, or override state, ADR-0048
+// untouched).
 func TestMissingFiscalSigner(t *testing.T) {
 	cases := []struct {
 		name           string
