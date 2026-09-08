@@ -441,7 +441,7 @@ window.utCurrency = (function(){
         return false;
       }
       var issue = { amount: amountMinor };
-      var code = String(data.get('code') || '').trim();
+      var code = String(data.get('voucher_code') || '').trim();
       if (code) issue.code = code;
       var holder = String(data.get('holder_label') || '').trim();
       if (holder) issue.holder_label = holder;

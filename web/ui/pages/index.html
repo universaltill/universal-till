@@ -486,8 +486,17 @@
             <label>{{ T "tender.issue_voucher.amount" }}
               <input type="text" inputmode="decimal" name="amount" {{ moneypattern currency.Decimals false }} {{ moneyplaceholder currency.Decimals 0 }} required>
             </label>
+            <!-- ut-docs#1832 review: name="voucher_code", NOT "code" -- the
+                 sale screen's barcode-scan input (line ~186) is already
+                 name="code" and several e2e specs (index-keyboard-1023,
+                 settings-osk, touch-select-pan-1021) select it page-wide via
+                 input[name=code], assuming it is the only one. A same-named
+                 field here broke that assumption (Playwright strict-mode
+                 violation, 8 tests red) even though app.js's own read is
+                 already scoped to #split-tender-issue-form and never
+                 collided functionally -- only the page-wide DOM shape did. -->
             <label>{{ T "tender.issue_voucher.code" }}
-              <input type="text" name="code" placeholder="{{ T "tender.issue_voucher.code_placeholder" }}" maxlength="64" autocapitalize="characters" spellcheck="false">
+              <input type="text" name="voucher_code" placeholder="{{ T "tender.issue_voucher.code_placeholder" }}" maxlength="64" autocapitalize="characters" spellcheck="false">
             </label>
             <label>{{ T "tender.issue_voucher.holder_label" }}
               <input type="text" name="holder_label" maxlength="200">
