@@ -41,3 +41,26 @@ func TestParseDeviceEvidence(t *testing.T) {
 		t.Fatalf("normalisation: %+v", ev)
 	}
 }
+
+// TestParseDeviceEvidenceStripsSandwichedInvisibleChars covers ut-docs#1790:
+// unlike ut-docs#1781's all-invisible case (correctly rejected as blank by
+// isBlankReceiptNo), a receipt_no with real digits SANDWICHED between
+// zero-width/format characters at its edges is valid evidence — but must
+// still have those edge characters stripped before persisting, or the
+// stored value won't exact-match a freshly typed/scanned "123" on a
+// reprint-by-receipt-number or lookup path. \u200b is ZERO WIDTH SPACE
+// and \ufeff is the BOM/ZWNBSP, the same Cf characters ut-docs#1781
+// already covers for the all-invisible case above.
+func TestParseDeviceEvidenceStripsSandwichedInvisibleChars(t *testing.T) {
+	// Leading ordinary space + ZWSP, trailing BOM + space + ZWSP, real
+	// digits sandwiched in between — the edges must be stripped, the
+	// interior digits must survive untouched.
+	in := `{"fiscal_device":{"receipt_no":" \u200b123\ufeff \u200b"}}`
+	ev, ok := ParseDeviceEvidence(json.RawMessage(in))
+	if !ok {
+		t.Fatalf("ok = false, want true (evidence with real digits must be valid)")
+	}
+	if ev.ReceiptNo != "123" {
+		t.Fatalf("ReceiptNo = %q, want %q (invisible/whitespace edges must be stripped)", ev.ReceiptNo, "123")
+	}
+}
