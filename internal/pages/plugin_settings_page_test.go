@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"html"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -990,5 +991,61 @@ func TestPluginSettingsAPI_POST_RefusesWriteWhenManifestUnreadable(t *testing.T)
 	}
 	if strings.Contains(raw, "M-new") {
 		t.Fatalf("the new value must never reach the database when the manifest can't be resolved, got %q", raw)
+	}
+}
+
+// ADR-0085 (ut-docs#1708): the AI plugin's api_key field carries a
+// data-protection notice ABOVE its input — the operator reads what a hosted
+// provider receives before they can type a key. It is specific to that one
+// plugin's one key: every other plugin's api_key (p1's here) and the AI
+// plugin's own non-secret settings render exactly as before.
+func TestPluginSettingsPage_GET_AIPluginAPIKeyShowsHostedProviderNotice(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	seedAIPluginRows(t, dp.Db, true)
+	seedPluginSetting(t, dp, AIPluginID, "provider", "self_hosted", "global")
+	seedPluginSetting(t, dp, AIPluginID, "endpoint", "http://localhost:11434", "global")
+	seedPluginSetting(t, dp, AIPluginID, "api_key", "", "global")
+	seedPluginSetting(t, dp, "p1", "api_key", "other-plugins-secret", "global")
+
+	notice := httpx.T("en", "plugins.settings.ai.hosted_provider_notice")
+	if notice == "" || notice == "plugins.settings.ai.hosted_provider_notice" {
+		t.Fatalf("notice key must resolve to real copy in en.json, got %q", notice)
+	}
+	// html/template escapes the copy's apostrophes (&#39;) on the way out —
+	// compare what the browser actually receives.
+	notice = html.EscapeString(notice)
+
+	req := httptest.NewRequest(http.MethodGet, "/plugins/"+AIPluginID+"/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET AI plugin settings: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if n := strings.Count(body, notice); n != 1 {
+		t.Fatalf("expected the hosted-provider notice exactly once (api_key only, not endpoint/provider), got %d in:\n%s", n, body)
+	}
+	noticeAt := strings.Index(body, notice)
+	inputAt := strings.Index(body, `name="setting_api_key"`)
+	if inputAt < 0 {
+		t.Fatalf("expected the masked api_key input, got:\n%s", body)
+	}
+	if noticeAt > inputAt {
+		t.Fatalf("the notice must render ABOVE the api_key input (notice at %d, input at %d)", noticeAt, inputAt)
+	}
+	if !strings.Contains(body, `type="password" name="setting_api_key"`) {
+		t.Fatalf("api_key must still render masked, got:\n%s", body)
+	}
+
+	// Another plugin's api_key is a plain secret field: no notice.
+	req = httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET p1 settings: code %d", rec.Code)
+	}
+	if strings.Contains(rec.Body.String(), notice) {
+		t.Fatal("the hosted-provider notice must only render for the AI plugin's api_key, not every plugin's secret field")
 	}
 }
