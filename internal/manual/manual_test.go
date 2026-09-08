@@ -366,8 +366,18 @@ title: فروش
 
 روی دکمه بزنید.
 `)},
-	// en has screenshots for both topics; fa has none yet, and fa/catalog.md
-	// doesn't exist at all (falls back to en).
+	"help/en/quickstart.md": &fstest.MapFile{Data: []byte(`---
+id: quickstart
+title: Quickstart
+---
+
+Get going.
+`)},
+	// en has screenshots for sell/catalog but not quickstart; fa/sell is a
+	// real translation with no fa screenshot of its own (falls back to the
+	// English one); fa/catalog.md doesn't exist at all (the whole TOPIC
+	// falls back to en, screenshot included); quickstart has no screenshot
+	// in ANY locale, so it must still render with no image at all.
 	"help/img/en/sell.png":    tinyPNG,
 	"help/img/en/catalog.png": tinyPNG,
 }
@@ -394,19 +404,40 @@ func TestTopicHTMLLeadsWithScreenshotWhenPresent(t *testing.T) {
 	}
 }
 
-func TestTopicWithoutScreenshotRendersAsBefore(t *testing.T) {
+// fa/sell is a REAL translation (Load returns tp.Locale == "fa", not an
+// English-fallback topic) that simply has no fa/sell.png of its own yet —
+// the normal state for a locale before anyone has run `make docs-shots`
+// against a build in that language. It should carry the English screenshot
+// rather than show nothing: the picture is accurate regardless of which
+// language the surrounding prose is in.
+func TestTopicWithoutOwnScreenshotFallsBackToEnglishScreenshot(t *testing.T) {
 	lib, err := Load(shotFS, "help")
 	if err != nil {
 		t.Fatalf("Load: %v", err)
 	}
-	// fa/sell is translated but has no fa screenshot yet — no image, no
-	// placeholder, no broken link.
 	tp, ok := lib.Topic("fa", "sell")
 	if !ok || tp.Locale != "fa" {
-		t.Fatalf("fa/sell should be native fa, got %+v", tp)
+		t.Fatalf("fa/sell should be native fa (a real translation), got %+v", tp)
+	}
+	if !strings.Contains(string(tp.HTML), `<img src="/help/img/en/sell.png"`) {
+		t.Errorf("fa/sell (no fa screenshot of its own) should fall back to the English one: %s", tp.HTML)
+	}
+}
+
+// A topic with NO screenshot in any locale — not even English — must still
+// render exactly as before: no placeholder, no broken image, nothing to
+// fall back TO.
+func TestTopicWithNoScreenshotAnywhereRendersAsBefore(t *testing.T) {
+	lib, err := Load(shotFS, "help")
+	if err != nil {
+		t.Fatalf("Load: %v", err)
+	}
+	tp, ok := lib.Topic("en", "quickstart")
+	if !ok {
+		t.Fatal("en/quickstart not loaded")
 	}
 	if strings.Contains(string(tp.HTML), "/help/img/") {
-		t.Errorf("untranslated-screenshot topic grew an img: %s", tp.HTML)
+		t.Errorf("topic with no screenshot anywhere grew an img: %s", tp.HTML)
 	}
 }
 
