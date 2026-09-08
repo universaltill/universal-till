@@ -1605,6 +1605,7 @@
   "tables.error.release": "Could not free the table",
   "tables.error.held_order_attached": "Claim cleared, but this table still has a held order attached — resume or complete it to fully free the table.",
   "tables.error.held_order_only": "This table has a held order — resume or complete it to free the table.",
+  "tables.error.released_other_till_recent": "Freed the table, but its claim belonged to another till seen recently — confirm with them that no order is still parked there before reseating.",
   "tables.error.replica_use_primary": "This till follows a primary till — manage tables on the primary till.",
   "tables.error.save_position": "Could not save the table's position — try again",
   "tables.error.too_long": "Table name or area is too long (max 64 characters)",
