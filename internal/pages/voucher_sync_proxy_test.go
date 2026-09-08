@@ -558,16 +558,19 @@ func TestPOSTender_CrossTillVoucherRedemption_OwnIssuedVoucherUnknownOnPrimaryRe
 	}
 }
 
-// reserveVoucherOnPrimary's fallback shapes, directly: every non-definitive
-// answer collapses into reserved=false, err=nil (proceed locally,
-// offline-first unchanged); only a 409 with a KNOWN reason is a refusal.
+// reserveVoucherOnPrimary's fallback shapes, directly: every DEFINITIVE
+// non-reservation answer collapses into reserved=false, maybeReserved=false,
+// err=nil (proceed locally, offline-first unchanged); only a 409 with a
+// KNOWN reason is a refusal (err set); and a genuinely AMBIGUOUS answer (the
+// primary may have committed and only the response was lost) is
+// maybeReserved=true so the caller releases it on any later failure.
 func TestReserveVoucherOnPrimary_FallbackAndRefusalShapes(t *testing.T) {
 	_, dp := newVoucherTenderDeps(t)
 	ctx := context.Background()
 
-	// Not a replica at all: no settings → no call, no error.
-	if v, reserved, err := reserveVoucherOnPrimary(ctx, dp, voucherProxyClient, "GS-X", "sale-1", 100); reserved || err != nil || v.ID != "" {
-		t.Fatalf("not a replica: got reserved=%v err=%v v=%+v, want false/nil/empty", reserved, err, v)
+	// Not a replica at all: no settings → no call, no error, nothing to release.
+	if v, reserved, maybeReserved, err := reserveVoucherOnPrimary(ctx, dp, voucherProxyClient, "GS-X", "sale-1", 100); reserved || maybeReserved || err != nil || v.ID != "" {
+		t.Fatalf("not a replica: got reserved=%v maybeReserved=%v err=%v v=%+v, want all false/nil/empty", reserved, maybeReserved, err, v)
 	}
 
 	answer := func(status int, body string) *httptest.Server {
@@ -579,26 +582,46 @@ func TestReserveVoucherOnPrimary_FallbackAndRefusalShapes(t *testing.T) {
 		t.Cleanup(srv.Close)
 		return srv
 	}
-	fallbacks := map[string]*httptest.Server{
+	// Definitive "nothing committed" answers — sync_vouchers.go's handler
+	// returns before tx.Commit() on every one of these paths, so
+	// maybeReserved must be false: nothing for the caller to release.
+	definitiveFallbacks := map[string]*httptest.Server{
 		"404 (own-issued voucher, correction 4)": answer(http.StatusNotFound, `{"data":null,"error":"not found"}`),
 		"500":                                    answer(http.StatusInternalServerError, `{"data":null,"error":"server error"}`),
 		"401 (exempt-list regression)":           answer(http.StatusUnauthorized, `{"data":null,"error":"unauthorized"}`),
 		"409 unrecognised reason":                answer(http.StatusConflict, `{"data":null,"error":"something_new"}`),
-		"200 malformed body":                     answer(http.StatusOK, `{"data":`),
-		"200 empty data":                         answer(http.StatusOK, `{"data":null,"error":null}`),
 	}
-	for name, srv := range fallbacks {
+	for name, srv := range definitiveFallbacks {
 		setReplicaSettings(t, dp.Settings, srv.URL, "b-replica")
-		if _, reserved, err := reserveVoucherOnPrimary(ctx, dp, voucherProxyClient, "GS-X", "sale-1", 100); reserved || err != nil {
-			t.Fatalf("%s: got reserved=%v err=%v, want false/nil (fall back to local)", name, reserved, err)
+		if _, reserved, maybeReserved, err := reserveVoucherOnPrimary(ctx, dp, voucherProxyClient, "GS-X", "sale-1", 100); reserved || maybeReserved || err != nil {
+			t.Fatalf("%s: got reserved=%v maybeReserved=%v err=%v, want all false/nil (fall back to local, nothing to release)", name, reserved, maybeReserved, err)
 		}
 	}
+	// AMBIGUOUS answers — the primary's tx.Commit() may well have already
+	// succeeded before the response was lost (200 with a body the client
+	// can't use), so maybeReserved must be true: the caller must release it
+	// on any later failure, finding #1 of this card's independent review.
+	ambiguous := map[string]*httptest.Server{
+		"200 malformed body": answer(http.StatusOK, `{"data":`),
+		"200 empty data":     answer(http.StatusOK, `{"data":null,"error":null}`),
+	}
+	for name, srv := range ambiguous {
+		setReplicaSettings(t, dp.Settings, srv.URL, "b-replica")
+		if _, reserved, maybeReserved, err := reserveVoucherOnPrimary(ctx, dp, voucherProxyClient, "GS-X", "sale-1", 100); reserved || !maybeReserved || err != nil {
+			t.Fatalf("%s: got reserved=%v maybeReserved=%v err=%v, want reserved=false/maybeReserved=true/err=nil", name, reserved, maybeReserved, err)
+		}
+	}
+
 	dead := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {}))
 	deadURL := dead.URL
 	dead.Close()
 	setReplicaSettings(t, dp.Settings, deadURL, "b-replica")
-	if _, reserved, err := reserveVoucherOnPrimary(ctx, dp, voucherProxyClient, "GS-X", "sale-1", 100); reserved || err != nil {
-		t.Fatalf("unreachable: got reserved=%v err=%v, want false/nil", reserved, err)
+	// A transport-level failure (connection refused here) is ALSO ambiguous
+	// in general — the request may or may not have reached the primary —
+	// so this is the same maybeReserved=true contract as the 200 cases
+	// above, even though THIS particular server never received anything.
+	if _, reserved, maybeReserved, err := reserveVoucherOnPrimary(ctx, dp, voucherProxyClient, "GS-X", "sale-1", 100); reserved || !maybeReserved || err != nil {
+		t.Fatalf("unreachable: got reserved=%v maybeReserved=%v err=%v, want reserved=false/maybeReserved=true/err=nil", reserved, maybeReserved, err)
 	}
 
 	refusals := map[string]error{
@@ -608,18 +631,18 @@ func TestReserveVoucherOnPrimary_FallbackAndRefusalShapes(t *testing.T) {
 	for reason, want := range refusals {
 		srv := answer(http.StatusConflict, `{"data":null,"error":"`+reason+`"}`)
 		setReplicaSettings(t, dp.Settings, srv.URL, "b-replica")
-		_, reserved, err := reserveVoucherOnPrimary(ctx, dp, voucherProxyClient, "GS-X", "sale-1", 100)
-		if reserved || !errors.Is(err, want) {
-			t.Fatalf("409 %s: got reserved=%v err=%v, want the %v sentinel", reason, reserved, err, want)
+		_, reserved, maybeReserved, err := reserveVoucherOnPrimary(ctx, dp, voucherProxyClient, "GS-X", "sale-1", 100)
+		if reserved || maybeReserved || !errors.Is(err, want) {
+			t.Fatalf("409 %s: got reserved=%v maybeReserved=%v err=%v, want the %v sentinel", reason, reserved, maybeReserved, err, want)
 		}
 	}
 
 	// Success carries the primary's snapshot through verbatim.
 	ok := answer(http.StatusOK, `{"data":{"id":"GS-X","holder_label":"H","original_amount":500,"balance":500,"currency":"GBP","voucher_type":"multi_purpose","status":"active","issued_sale_id":"","created_at":"2026-09-08T00:00:00Z"},"error":null}`)
 	setReplicaSettings(t, dp.Settings, ok.URL, "b-replica")
-	v, reserved, err := reserveVoucherOnPrimary(ctx, dp, voucherProxyClient, "GS-X", "sale-1", 100)
-	if !reserved || err != nil || v.ID != "GS-X" || v.BalanceMinor != 500 || v.HolderLabel != "H" {
-		t.Fatalf("200: got reserved=%v err=%v v=%+v", reserved, err, v)
+	v, reserved, maybeReserved, err := reserveVoucherOnPrimary(ctx, dp, voucherProxyClient, "GS-X", "sale-1", 100)
+	if !reserved || maybeReserved || err != nil || v.ID != "GS-X" || v.BalanceMinor != 500 || v.HolderLabel != "H" {
+		t.Fatalf("200: got reserved=%v maybeReserved=%v err=%v v=%+v", reserved, maybeReserved, err, v)
 	}
 }
 
@@ -633,9 +656,12 @@ func TestVoucherRedeemWriteThrough_PrimaryUnreachableFallsBack(t *testing.T) {
 	dead.Close()
 	setReplicaSettings(t, dp.Settings, deadURL, "b-replica")
 
-	preauth, err := voucherRedeemWriteThrough(context.Background(), dp, data.NewPOSRepo(dp.Db), "GS-NOWHERE", 300, "sale-1")
+	preauth, maybeReserved, err := voucherRedeemWriteThrough(context.Background(), dp, data.NewPOSRepo(dp.Db), "GS-NOWHERE", 300, "sale-1")
 	if preauth || err != nil {
 		t.Fatalf("got preauthorized=%v err=%v, want false/nil", preauth, err)
+	}
+	if !maybeReserved {
+		t.Fatalf("an unreachable primary is an ambiguous transport failure — got maybeReserved=false, want true (finding #1: the caller must still release it on any later failure)")
 	}
 	var n int
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM vouchers WHERE id = 'GS-NOWHERE'`).Scan(&n); err != nil {
@@ -740,7 +766,7 @@ func TestCrossTillVoucherRace_OnlyOneReservationWinsAndReplayDoesNotDoubleDebit(
 		go func(i int) {
 			defer wg.Done()
 			<-start
-			p, err := voucherRedeemWriteThrough(ctx, replicas[i].dp, replicas[i].repo, "GS-RACE", 60, replicas[i].saleID)
+			p, _, err := voucherRedeemWriteThrough(ctx, replicas[i].dp, replicas[i].repo, "GS-RACE", 60, replicas[i].saleID)
 			outcomes[i] = outcome{preauth: p, err: err}
 		}(i)
 	}

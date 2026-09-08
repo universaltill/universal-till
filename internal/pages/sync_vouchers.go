@@ -114,6 +114,7 @@ type voucherReleaseRequest struct {
 const (
 	syncVoucherErrNotActive           = "voucher_not_active"
 	syncVoucherErrInsufficientBalance = "voucher_insufficient_balance"
+	syncVoucherErrAmountMismatch      = "voucher_redemption_amount_mismatch"
 )
 
 // registerSyncVouchers mounts the primary-side voucher endpoints on the
@@ -194,6 +195,10 @@ func registerSyncVouchers(mux *http.ServeMux, d *common.Deps) {
 		case errors.Is(err, data.ErrVoucherInsufficientBalance):
 			writeSyncOrdersJSON(w, http.StatusConflict, nil, syncVoucherErrInsufficientBalance)
 			return
+		case errors.Is(err, data.ErrVoucherRedemptionAmountMismatch):
+			logging.L().Errorf("sync voucher redeem %s for sale %s: %v", id, in.SaleID, err)
+			writeSyncOrdersJSON(w, http.StatusConflict, nil, syncVoucherErrAmountMismatch)
+			return
 		case err != nil:
 			logging.L().Errorf("sync voucher redeem %s for sale %s: %v", id, in.SaleID, err)
 			writeSyncOrdersJSON(w, http.StatusInternalServerError, nil, "server error")
@@ -213,6 +218,14 @@ func registerSyncVouchers(mux *http.ServeMux, d *common.Deps) {
 	// 200 no-op, never an error, so the replica can fire it for every
 	// voucher a failed tender touched without first working out which ones
 	// actually reserved. Only a real DB fault is a 500.
+	//
+	// Deliberately does NOT check that the calling till is the one that made
+	// the reservation (independent review finding) — any enrolled till with
+	// a valid sync bearer can release any (voucher_id, sale_id)'s
+	// reservation given the sale id. Consistent with the trust model
+	// syncTill already establishes for every other /api/sync/* endpoint (a
+	// bearer-authed till can already journal an arbitrary sale via
+	// /api/sync/sales), not a new gap this endpoint introduces.
 	mux.HandleFunc("POST /api/sync/vouchers/{id}/release", func(w http.ResponseWriter, r *http.Request) {
 		if _, ok := syncTill(r, tills); !ok {
 			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")

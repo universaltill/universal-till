@@ -304,6 +304,32 @@ func TestSyncVouchers_RedeemIsIdempotentPerSale(t *testing.T) {
 	}
 }
 
+// A retry naming a DIFFERENT amount than the one already recorded for this
+// (voucher_id, sale_id) is a definitive 409 refusal, not an idempotent
+// no-op — independent review finding (external input validation).
+func TestSyncVouchers_RedeemRetryAtDifferentAmountIs409(t *testing.T) {
+	mux, dp, dbase := newSyncVouchersTestDeps(t)
+	seedSyncOrdersTill(t, dp, "Till 2", "bearer-t2")
+	repo := data.NewPOSRepo(dbase.DB)
+	seedSyncVoucher(t, repo, "GS-1", 1000)
+
+	if rec := postSyncVoucher(mux, "GS-1", "redeem", `{"sale_id":"sale-A","amount_minor":400}`, "bearer-t2"); rec.Code != http.StatusOK {
+		t.Fatalf("first redeem: status = %d", rec.Code)
+	}
+	rec := postSyncVoucher(mux, "GS-1", "redeem", `{"sale_id":"sale-A","amount_minor":500}`, "bearer-t2")
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("mismatched retry: status = %d, want 409", rec.Code)
+	}
+	if !strings.Contains(rec.Body.String(), syncVoucherErrAmountMismatch) {
+		t.Fatalf("mismatched retry body = %q, want it to carry %q", rec.Body.String(), syncVoucherErrAmountMismatch)
+	}
+	// Nothing debited beyond the first, successful reservation.
+	v, _ := repo.GetVoucherBalance(context.Background(), nil, "GS-1")
+	if v.BalanceMinor != 600 {
+		t.Fatalf("balance after a rejected mismatched retry = %d, want 600 (only the first reservation applied)", v.BalanceMinor)
+	}
+}
+
 func TestSyncVouchers_ReleaseCreditsBackAndNoOpsWhenNothingReserved(t *testing.T) {
 	mux, dp, dbase := newSyncVouchersTestDeps(t)
 	seedSyncOrdersTill(t, dp, "Till 2", "bearer-t2")

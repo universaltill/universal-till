@@ -159,24 +159,53 @@ func postVoucherActionOnPrimary(ctx context.Context, d *common.Deps, client *htt
 //     DEFINITIVE refusal, returned as the matching data sentinel
 //     (ErrVoucherNotActive / ErrVoucherInsufficientBalance); the caller must
 //     abort the tender with it, never fall back to a local attempt against a
-//     voucher this till may not even have a row for. Nothing was debited.
-//   - EVERYTHING else — not a replica, unreachable, timeout, 404, any other
-//     status, an unrecognised 409 reason, malformed body — reserved=false,
-//     err=nil: the same total fallback shape as fetchVoucherFromPrimary, and
-//     the caller proceeds exactly as it did before #1668 (local-only
-//     validation; offline-first unchanged). 404 in particular is NOT a
-//     refusal (brief addendum, correction 4): a voucher issued at THIS till
-//     and not yet journaled to the primary 404s on /redeem, and hard-failing
-//     that would make a till unable to redeem its own freshly-issued voucher
-//     the moment it comes online — the local row is the correct answer.
-func reserveVoucherOnPrimary(ctx context.Context, d *common.Deps, client *http.Client, voucherID, saleID string, amountMinor int64) (v data.Voucher, reserved bool, err error) {
+//     voucher this till may not even have a row for. Nothing was debited —
+//     the handler returns before its own tx.Commit() on every one of these
+//     paths (sync_vouchers.go), so a clean, decoded non-200/non-conflict
+//     response is proof nothing committed.
+//   - EVERYTHING else client-side-clean (not a replica, 404, any other
+//     status, an unrecognised 409 reason) — reserved=false, maybeReserved=
+//     false, err=nil: the same total fallback shape as
+//     fetchVoucherFromPrimary, and the caller proceeds exactly as it did
+//     before #1668 (local-only validation; offline-first unchanged). An
+//     unrecognised 409 reason falls back rather than failing closed
+//     deliberately: this till's own local validation is still fail-closed
+//     underneath it, so a future primary version adding a third refusal
+//     reason degrades to "as if this were a plain unreachable primary" for
+//     an old replica, never to "redeem it regardless" — failing closed here
+//     instead would let any new primary-side refusal reason brick voucher
+//     tenders on every not-yet-upgraded replica, including for perfectly
+//     valid vouchers, which the primary-upgrades-first skew rule (see the
+//     LAN-sync journal contract) is not meant to require. 404 in particular
+//     is NOT a refusal (brief addendum, correction 4): a voucher issued at
+//     THIS till and not yet journaled to the primary 404s on /redeem, and
+//     hard-failing that would make a till unable to redeem its own
+//     freshly-issued voucher the moment it comes online — the local row is
+//     the correct answer.
+//   - Transport failure (maybeReserved=true, reserved=false, err=nil): a
+//     `client.Do` error, or a 200 whose body failed to decode. Both are
+//     genuinely ambiguous — the request may never have reached the primary,
+//     or it may have committed and only the RESPONSE was lost (this
+//     client's budget is 2s; the primary's own BEGIN IMMEDIATE can
+//     legitimately wait up to its 5s busy_timeout under write contention
+//     from other tills, so a client-side timeout after a server-side commit
+//     is reachable, not theoretical). The caller must treat this the same
+//     as a confirmed reservation for release purposes — release is
+//     idempotent-safe on a voucher that was never actually reserved (a
+//     200 no-op), so over-releasing costs nothing, while under-releasing
+//     leaves exactly the orphaned-debit-with-no-sale-behind-it class
+//     ADR-0084 exists to close. It must NOT be treated as a confirmed
+//     reservation for local-debit purposes (v is the zero value here) —
+//     the caller still falls back to local-only validation for THIS
+//     payment, same as any other unreachable-primary case.
+func reserveVoucherOnPrimary(ctx context.Context, d *common.Deps, client *http.Client, voucherID, saleID string, amountMinor int64) (v data.Voucher, reserved, maybeReserved bool, err error) {
 	resp, isReplica, err := postVoucherActionOnPrimary(ctx, d, client, voucherID, "redeem", voucherRedeemRequest{SaleID: saleID, AmountMinor: amountMinor})
 	if !isReplica {
-		return data.Voucher{}, false, nil
+		return data.Voucher{}, false, false, nil
 	}
 	if err != nil {
-		logging.L().Debugf("voucher proxy: primary unreachable on reserve %s for sale %s (%v) — using local", voucherID, saleID, err)
-		return data.Voucher{}, false, nil
+		logging.L().Debugf("voucher proxy: primary unreachable on reserve %s for sale %s (%v) — treating as a possible reservation (will be released on any later failure)", voucherID, saleID, err)
+		return data.Voucher{}, false, true, nil
 	}
 	defer resp.Body.Close()
 	switch resp.StatusCode {
@@ -185,15 +214,15 @@ func reserveVoucherOnPrimary(ctx context.Context, d *common.Deps, client *http.C
 			Data *syncVoucherRow `json:"data"`
 		}
 		if err := json.NewDecoder(resp.Body).Decode(&out); err != nil || out.Data == nil {
-			// The primary may well have committed the reservation and only
-			// the body was lost; a retry would be idempotent on the same
-			// sale id, but this path has no retry — it falls back to local
-			// and the reservation, if any, is released with the rest on
-			// any later failure. Logged at Debug like every other fallback.
-			logging.L().Debugf("voucher proxy: malformed primary response on reserve %s for sale %s — using local", voucherID, saleID)
-			return data.Voucher{}, false, nil
+			// 200 means the primary's tx.Commit() already succeeded before
+			// it wrote this response (sync_vouchers.go returns before
+			// commit on every other path) — this is a CONFIRMED reservation
+			// whose response body was merely lost in transit, not a maybe.
+			// The caller must release it on any later failure.
+			logging.L().Debugf("voucher proxy: primary committed reserve %s for sale %s but the response body was malformed — using local, will release on any later failure", voucherID, saleID)
+			return data.Voucher{}, false, true, nil
 		}
-		return voucherFromSyncRow(*out.Data), true, nil
+		return voucherFromSyncRow(*out.Data), true, false, nil
 	case http.StatusConflict:
 		var out struct {
 			Error string `json:"error"`
@@ -201,15 +230,22 @@ func reserveVoucherOnPrimary(ctx context.Context, d *common.Deps, client *http.C
 		_ = json.NewDecoder(resp.Body).Decode(&out)
 		switch out.Error {
 		case syncVoucherErrNotActive:
-			return data.Voucher{}, false, fmt.Errorf("voucher %q refused by primary: %w", voucherID, data.ErrVoucherNotActive)
+			return data.Voucher{}, false, false, fmt.Errorf("voucher %q refused by primary: %w", voucherID, data.ErrVoucherNotActive)
 		case syncVoucherErrInsufficientBalance:
-			return data.Voucher{}, false, fmt.Errorf("voucher %q refused by primary: %w", voucherID, data.ErrVoucherInsufficientBalance)
+			return data.Voucher{}, false, false, fmt.Errorf("voucher %q refused by primary: %w", voucherID, data.ErrVoucherInsufficientBalance)
+		case syncVoucherErrAmountMismatch:
+			// Not reachable from this repo's own client (a given sale id
+			// always carries the same amount across retries) — a definitive
+			// refusal, not a fallback, precisely because it can only mean a
+			// caller is claiming something inconsistent with what the
+			// primary already committed (independent review finding).
+			return data.Voucher{}, false, false, fmt.Errorf("voucher %q retried at a different amount than the primary already recorded: %w", voucherID, data.ErrVoucherRedemptionAmountMismatch)
 		}
 		logging.L().Debugf("voucher proxy: primary refused reserve %s for sale %s with unrecognised reason %q — using local", voucherID, saleID, out.Error)
-		return data.Voucher{}, false, nil
+		return data.Voucher{}, false, false, nil
 	default:
 		logging.L().Debugf("voucher proxy: primary answered %s on reserve %s for sale %s — using local", resp.Status, voucherID, saleID)
-		return data.Voucher{}, false, nil
+		return data.Voucher{}, false, false, nil
 	}
 }
 
@@ -278,13 +314,20 @@ func releaseReservedVouchers(ctx context.Context, d *common.Deps, voucherIDs []s
 //     or any failure reaching it: preauthorized=false, err=nil — the caller
 //     proceeds exactly as it did before #1668 (today's local-only
 //     validation, offline-first unchanged).
-func voucherRedeemWriteThrough(ctx context.Context, d *common.Deps, repo *data.POSRepo, voucherID string, amountMinor int64, saleID string) (preauthorized bool, err error) {
-	primaryV, reserved, err := reserveVoucherOnPrimary(ctx, d, voucherProxyClient, voucherID, saleID, amountMinor)
+//   - maybeReserved=true (transport failure after the request went out, or
+//     a 200 whose body was lost — see reserveVoucherOnPrimary): also
+//     preauthorized=false, err=nil, so THIS payment still falls back to
+//     local-only exactly as above — but the caller must still treat the
+//     voucher as possibly-reserved for release purposes. Propagated as-is
+//     rather than resolved here, since only completeTender's loop knows
+//     the full set of vouchers a failed tender needs to unwind.
+func voucherRedeemWriteThrough(ctx context.Context, d *common.Deps, repo *data.POSRepo, voucherID string, amountMinor int64, saleID string) (preauthorized, maybeReserved bool, err error) {
+	primaryV, reserved, maybeReserved, err := reserveVoucherOnPrimary(ctx, d, voucherProxyClient, voucherID, saleID, amountMinor)
 	if err != nil {
-		return false, err
+		return false, false, err
 	}
 	if !reserved {
-		return false, nil
+		return false, maybeReserved, nil
 	}
 	if mirrorErr := repo.EnsureVoucherLocalRow(ctx, nil, primaryV); mirrorErr != nil {
 		// Best-effort: if the local mirror insert somehow fails, the
@@ -298,5 +341,5 @@ func voucherRedeemWriteThrough(ctx context.Context, d *common.Deps, repo *data.P
 		// succeeded.
 		logging.L().Debugf("voucher proxy: local mirror of primary-reserved %s failed: %v", voucherID, mirrorErr)
 	}
-	return true, nil
+	return true, false, nil
 }

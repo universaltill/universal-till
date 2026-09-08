@@ -125,6 +125,34 @@ func TestVoucherRepo_ReserveIsIdempotentOnRetry(t *testing.T) {
 	}
 }
 
+// A "retry" for an already-recorded (voucher_id, sale_id) that names a
+// DIFFERENT amount than the one first recorded is refused, not treated as
+// an idempotent no-op (independent review finding — /redeem is an
+// externally-reachable endpoint, so external input must be validated even
+// though this repo's own client never legitimately triggers this).
+func TestVoucherRepo_ReserveRejectsRetryAtADifferentAmount(t *testing.T) {
+	d := b8OpenDB(t, "voucher-reserve-mismatch.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+	vSeedVoucher(t, ctx, repo, "GS-MISMATCH", 1000)
+
+	if _, err := rsReserve(ctx, d.DB, repo, "GS-MISMATCH", "sale-1", 300); err != nil {
+		t.Fatalf("first reserve: %v", err)
+	}
+	if _, err := rsReserve(ctx, d.DB, repo, "GS-MISMATCH", "sale-1", 400); !errors.Is(err, ErrVoucherRedemptionAmountMismatch) {
+		t.Fatalf("retry at a different amount: err = %v, want ErrVoucherRedemptionAmountMismatch", err)
+	}
+	// The mismatched retry must debit nothing further — balance still
+	// reflects only the FIRST, successful reservation.
+	after, _ := repo.GetVoucherBalance(ctx, nil, "GS-MISMATCH")
+	if after.BalanceMinor != 700 {
+		t.Fatalf("balance after a rejected mismatched retry = %d, want 700 (only the first reservation applied)", after.BalanceMinor)
+	}
+	if n := rsRedemptionRows(t, d.DB, "GS-MISMATCH", "sale-1"); n != 1 {
+		t.Fatalf("redemption rows after a rejected mismatched retry = %d, want exactly 1", n)
+	}
+}
+
 func TestVoucherRepo_ReservePropagatesDebitRefusalsAndDebitsNothing(t *testing.T) {
 	d := b8OpenDB(t, "voucher-reserve-refuse.db")
 	ctx := context.Background()
@@ -202,9 +230,17 @@ func TestVoucherRepo_RecordVoucherTransactionRejectsDuplicateRedemption(t *testi
 // addendum, correction 9): internal/db.Open uses _txlock=immediate with a 5s
 // busy_timeout and no SetMaxOpenConns override, so two goroutines each
 // opening BeginTx on the same *sql.DB genuinely serialize at BEGIN IMMEDIATE
-// — the second waits for the first to commit, then runs its own guarded
-// UPDATE against the reduced balance and loses the `balance >= ?` predicate.
-// Iterated so the interleave actually occurs across fresh vouchers.
+// — the second waits for the first to commit, then runs against the
+// now-reduced balance. Two guards independently catch it there and this test
+// does NOT distinguish which one fires (independent review finding —
+// verified by reverting each in isolation: both alone are still sufficient):
+// DebitVoucherForRedemption's own UPDATE repeats `balance >= ?` in its WHERE
+// clause, AND ReserveVoucherRedemption pre-reads the balance under the same
+// transaction before calling it. The redundancy is deliberate defence in
+// depth (see also TestUxVoucherTxRedemptionOnceRejectsDuplicateRow for the
+// third, DB-level layer against a duplicate SAME sale id) — this test only
+// proves the race is closed, not which layer closes it. Iterated so the
+// interleave actually occurs across fresh vouchers.
 func TestVoucherRepo_ConcurrentReserveOnlyOneWins(t *testing.T) {
 	d := b8OpenDB(t, "voucher-reserve-race.db")
 	ctx := context.Background()

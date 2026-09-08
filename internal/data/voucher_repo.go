@@ -55,6 +55,17 @@ var ErrVoucherInsufficientBalance = errors.New("voucher balance does not cover t
 // permanent (non-retryable) failure, same as ErrVoucherIDExists.
 var ErrVoucherRedemptionAlreadyRecorded = errors.New("voucher redemption already recorded for this sale")
 
+// ErrVoucherRedemptionAmountMismatch is returned by ReserveVoucherRedemption
+// when a retried reservation for an already-recorded (voucher_id, sale_id)
+// names a DIFFERENT amount than the one first recorded (independent review
+// finding, ADR-0084: /redeem is an externally-reachable endpoint, and
+// CLAUDE.md requires validating all external input — not reachable from
+// this repo's own client, which always sends the same amount for a given
+// sale id across retries, but a caller claiming otherwise must not be
+// treated as a safe idempotent no-op). Fail-closed: the caller must abort,
+// same as the other definitive refusal sentinels.
+var ErrVoucherRedemptionAmountMismatch = errors.New("voucher redemption already recorded for this sale at a different amount")
+
 // ErrVoucherRedeemedCannotVoid is returned when voiding a sale whose issued
 // voucher has already been partly or fully redeemed elsewhere (ut-docs#1008
 // review, blocker F2): the void is refused outright — fail-closed — because
@@ -227,6 +238,10 @@ func (r *POSRepo) ReserveVoucherRedemption(ctx context.Context, tx *sql.Tx, vouc
 		return Voucher{}, fmt.Errorf("reserve voucher redemption: %w", err)
 	}
 	if recorded {
+		if recordedAmount != amountMinor {
+			return Voucher{}, fmt.Errorf("reserve voucher redemption %q for sale %s (recorded %d, retried at %d): %w",
+				voucherID, saleID, recordedAmount, amountMinor, ErrVoucherRedemptionAmountMismatch)
+		}
 		v, err := r.GetVoucherBalance(ctx, tx, voucherID)
 		if err != nil {
 			return Voucher{}, err

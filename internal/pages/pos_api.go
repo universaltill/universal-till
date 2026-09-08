@@ -330,7 +330,11 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	//     released attempt. This closes the orphaned-debit bug the first
 	//     draft had. (A crash in the window between a successful
 	//     reservation and the local commit is the accepted residual risk,
-	//     ADR-0084 Decision 4.)
+	//     ADR-0084 Decision 4.) "Reservation made" includes a MERELY
+	//     POSSIBLE one — voucherRedeemWriteThrough's maybeReserved, a
+	//     transport failure after the request went out, or a 200 whose body
+	//     was lost — tracked exactly like a confirmed one, since release is
+	//     a safe no-op on a voucher that was never actually reserved.
 	//   - Two legs against the SAME voucher in one sale are refused up
 	//     front (pos.DuplicateVoucherPaymentError — the idempotency key is
 	//     one redemption per voucher per sale), BEFORE anything is
@@ -349,13 +353,21 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		if saleInput.Payments[i].VoucherID == "" {
 			continue
 		}
-		preauth, err := voucherRedeemWriteThrough(ctx, d, repo, saleInput.Payments[i].VoucherID, saleInput.Payments[i].Amount.Minor(), saleInput.SaleID)
+		preauth, maybeReserved, err := voucherRedeemWriteThrough(ctx, d, repo, saleInput.Payments[i].VoucherID, saleInput.Payments[i].Amount.Minor(), saleInput.SaleID)
 		if err != nil {
 			releaseReservedVouchers(ctx, d, reservedVoucherIDs, saleInput.SaleID)
 			return "", err
 		}
 		saleInput.Payments[i].VoucherPreauthorized = preauth
-		if preauth {
+		// A confirmed reservation (preauth) and a merely POSSIBLE one
+		// (maybeReserved — the primary may have committed before its
+		// response was lost, reserveVoucherOnPrimary's own doc comment)
+		// are tracked the same way here: release is idempotent-safe on a
+		// voucher that was never actually reserved, so over-releasing on a
+		// later failure costs nothing, while skipping a possible
+		// reservation would leave exactly the orphaned-debit-with-no-sale
+		// class ADR-0084 exists to close.
+		if preauth || maybeReserved {
 			reservedVoucherIDs = append(reservedVoucherIDs, saleInput.Payments[i].VoucherID)
 		}
 	}
@@ -535,6 +547,14 @@ func classifyTenderError(err error) string {
 		return "pos.toast.voucher_invalid"
 	case errors.Is(err, pos.ErrVoucherOvertender):
 		return "pos.toast.voucher_overtender"
+	// ADR-0084/ut-docs#1716: both reuse the existing generic "this voucher
+	// can't be redeemed as given" key rather than adding a new one —
+	// neither is reachable through any shipped voucher-tender UI today (no
+	// template constructs two payment legs against the same voucher, and
+	// the amount-mismatch sentinel is unreachable from this repo's own
+	// client), so a dedicated message would have no real audience yet.
+	case errors.Is(err, pos.ErrDuplicateVoucherPayment), errors.Is(err, data.ErrVoucherRedemptionAmountMismatch):
+		return "pos.toast.voucher_invalid"
 	default:
 		return "pos.toast.tender_failed"
 	}
