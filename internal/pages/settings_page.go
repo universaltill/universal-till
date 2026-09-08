@@ -206,6 +206,51 @@ func settingsRespondSaved(w http.ResponseWriter, r *http.Request, elev elevation
 	w.WriteHeader(http.StatusNoContent)
 }
 
+// writeKeptDemoItemsHTML renders the "kept" list ut-docs#1840 AC2/AC3 asks
+// for — WHICH sample items were kept and the ACTUAL reason per row (never
+// again a single count with one blanket "already in use" that's simply
+// false for an edited-but-otherwise-untouched item), plus, for exactly the
+// reason a merchant can act on, inline resolution buttons (AC3). Nothing is
+// written when items is empty (the common case — most removals keep
+// nothing).
+func writeKeptDemoItemsHTML(b *strings.Builder, locale string, items []data.KeptDemoItem) {
+	if len(items) == 0 {
+		return
+	}
+	fmt.Fprintf(b, `<p class="muted">%s</p><ul class="demo-kept-list">`, html.EscapeString(httpx.T(locale, "settings.data.demo_kept_list_intro")))
+	for _, it := range items {
+		id := html.EscapeString(it.ID)
+		fmt.Fprintf(b, `<li class="demo-kept-item" data-testid="demo-kept-item" data-item-id="%s">`, id)
+		fmt.Fprintf(b, `<strong>%s</strong> <span class="muted">(%s)</span> — `,
+			html.EscapeString(it.Name), html.EscapeString(it.SKU))
+		switch it.Reason {
+		case data.KeptReasonEdited:
+			fmt.Fprintf(b, `<span>%s</span> `, html.EscapeString(httpx.T(locale, "settings.data.demo_kept_reason_edited")))
+			fmt.Fprintf(b, `<button class="btn secondary" data-testid="demo-item-remove-anyway" `+
+				`hx-post="/api/settings/demo-item/%s/remove" hx-confirm="%s" `+
+				`hx-target="#demo-item-msg-%s" hx-swap="innerHTML" hx-disabled-elt="this">%s</button> `,
+				id, html.EscapeString(httpx.T(locale, "settings.data.demo_item_remove_anyway_confirm")),
+				id, html.EscapeString(httpx.T(locale, "settings.data.demo_item_remove_anyway_btn")))
+			fmt.Fprintf(b, `<button class="btn secondary" data-testid="demo-item-keep-own" `+
+				`hx-post="/api/settings/demo-item/%s/keep" `+
+				`hx-target="#demo-item-msg-%s" hx-swap="innerHTML" hx-disabled-elt="this">%s</button>`,
+				id, id, html.EscapeString(httpx.T(locale, "settings.data.demo_item_keep_own_btn")))
+		case data.KeptReasonHeld:
+			fmt.Fprintf(b, `<span>%s</span>`, html.EscapeString(httpx.T(locale, "settings.data.demo_kept_reason_held")))
+		default: // data.KeptReasonHistory
+			// ut-docs#1840 AC4: name the real mechanism (deactivate, then
+			// Catalog cleanup) instead of leaving the merchant to find it on
+			// their own — the reason text itself already sets the honest
+			// expectation that trading history is never removed, only hidden.
+			fmt.Fprintf(b, `<span>%s</span> <a class="btn secondary" href="/catalog">%s</a>`,
+				html.EscapeString(httpx.T(locale, "settings.data.demo_kept_reason_history")),
+				html.EscapeString(httpx.T(locale, "settings.data.demo_go_to_catalog_btn")))
+		}
+		fmt.Fprintf(b, ` <span id="demo-item-msg-%s" class="muted" aria-live="polite"></span></li>`, id)
+	}
+	b.WriteString(`</ul>`)
+}
+
 func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 	mux.HandleFunc("/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -1414,24 +1459,105 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		removed := removedItems + removedCustPromo
-		kept := keptItems + keptCustPromo
 		// The single highest-value audit site in ut-docs#796 slice 1 — an
 		// irreversible bulk deletion — so the payload records both the
 		// per-category and the combined removed/kept counts the response
-		// itself reports.
+		// itself reports. ut-docs#1840: kept ITEMS are now individually
+		// named+reasoned (keptItems), so the audit payload logs their ids
+		// and reasons too, not just a count.
+		keptItemPayload := make([]map[string]any, len(keptItems))
+		for i, it := range keptItems {
+			keptItemPayload[i] = map[string]any{"id": it.ID, "reason": it.Reason}
+		}
 		settingsAudit(r, posRepo, elev, "demo_data", "-", "demo_data_removed", map[string]any{
 			"removed":                  removed,
-			"kept":                     kept,
+			"kept":                     len(keptItems) + keptCustPromo,
 			"removed_items":            removedItems,
-			"kept_items":               keptItems,
+			"kept_items":               keptItemPayload,
 			"removed_customers_promos": removedCustPromo,
 			"kept_customers_promos":    keptCustPromo,
 		})
-		msg := fmt.Sprintf(httpx.T(locale, "settings.data.demo_removed"), removed)
-		if kept > 0 {
-			msg += " " + fmt.Sprintf(httpx.T(locale, "settings.data.demo_kept"), kept)
+		var b strings.Builder
+		fmt.Fprintf(&b, `<span>✓ %s</span>`, html.EscapeString(fmt.Sprintf(httpx.T(locale, "settings.data.demo_removed"), removed)))
+		writeKeptDemoItemsHTML(&b, locale, keptItems)
+		if keptCustPromo > 0 {
+			fmt.Fprintf(&b, `<p class="muted">%s</p>`, html.EscapeString(fmt.Sprintf(httpx.T(locale, "settings.data.demo_kept"), keptCustPromo)))
 		}
-		fmt.Fprintf(w, `<span>✓ %s</span>`, html.EscapeString(msg))
+		w.Write([]byte(b.String()))
+	})
+
+	// ut-docs#1840 AC3: per-item resolution for a demo item kept only
+	// because it was edited (data.KeptReasonEdited) — "remove anyway". Safe
+	// by construction (that reason means every trading-history/held-basket
+	// check already passed), but RemoveDemoItem re-checks server-side rather
+	// than trusting the client's last-rendered reason, since the item could
+	// have been sold or parked in a basket since. Same elevation/audit
+	// pattern as remove-demo-catalogue above, scoped to one item — the
+	// dedicated #demo-item-msg-<id> span is BOTH the button's own hx-target
+	// AND the elevation prompt's hxTarget (unlike dismiss-pending-base-
+	// plugin's #chip-row/#chip-row-msg split above), so a first-time
+	// elevation hint can never wipe out the row's own retry target the way
+	// ut-docs#865 finding F1 hit #restore-resume-block.
+	mux.HandleFunc("POST /api/settings/demo-item/{id}/remove", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		id := r.PathValue("id")
+		_ = r.ParseForm()
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/demo-item/"+id+"/remove",
+				"#demo-item-msg-"+id,
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.remove_demo_item"), id), nil, elev)
+			return
+		}
+		if err := data.NewDemoSeedRepo(d.Db).RemoveDemoItem(r.Context(), id); err != nil {
+			switch {
+			case errors.Is(err, data.ErrDemoItemNotFound):
+				fmt.Fprintf(w, `<span class="error">✗ %s</span>`, httpx.T(locale, "settings.data.demo_item_not_found"))
+			case errors.Is(err, data.ErrDemoItemHasHistory):
+				fmt.Fprintf(w, `<span class="error">✗ %s</span>`, httpx.T(locale, "settings.data.demo_item_has_history"))
+			default:
+				fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			}
+			return
+		}
+		settingsAudit(r, posRepo, elev, "demo_data", id, "demo_item_removed", nil)
+		if elev.Outcome == elevated {
+			w.Header().Set("X-UT-Response", "ok")
+		}
+		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "settings.data.demo_item_removed"))
+	})
+
+	// ut-docs#1840 AC3's other resolution: "keep as my own item" — clears
+	// is_sample_data so this item becomes a permanent catalog item, never
+	// offered for removal again. No trading-history re-check needed (this
+	// action doesn't delete anything), but still elevation/audit-gated like
+	// every other mutating Settings→Data action on this page.
+	mux.HandleFunc("POST /api/settings/demo-item/{id}/keep", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		id := r.PathValue("id")
+		_ = r.ParseForm()
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/demo-item/"+id+"/keep",
+				"#demo-item-msg-"+id,
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.keep_demo_item"), id), nil, elev)
+			return
+		}
+		if err := data.NewDemoSeedRepo(d.Db).KeepDemoItemAsOwn(r.Context(), id); err != nil {
+			if errors.Is(err, data.ErrDemoItemNotFound) {
+				fmt.Fprintf(w, `<span class="error">✗ %s</span>`, httpx.T(locale, "settings.data.demo_item_not_found"))
+				return
+			}
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			return
+		}
+		settingsAudit(r, posRepo, elev, "demo_data", id, "demo_item_kept_as_own", nil)
+		if elev.Outcome == elevated {
+			w.Header().Set("X-UT-Response", "ok")
+		}
+		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "settings.data.demo_item_kept"))
 	})
 
 	// Dismiss the "restore from another POS?" resume prompt (ut-docs#617)

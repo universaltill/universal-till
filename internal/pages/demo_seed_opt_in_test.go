@@ -239,10 +239,17 @@ func TestSettingsRemoveDemoCatalogueEndpoint(t *testing.T) {
 	// is trivially satisfied by the "1" inside "49" and asserts nothing.
 	// "sample record" not "sample item" since ut-docs#567: the copy covers
 	// customers/promo codes too now, not just catalogue items — this test's
-	// DB only seeded the catalogue, so the combined removed/kept totals are
-	// still exactly the catalogue's own 49/1.
-	if !strings.Contains(body, "Removed 49 sample record") || !strings.Contains(body, "1 could not be removed") {
-		t.Errorf("removal response %q does not report removed=49 kept=1", body)
+	// DB only seeded the catalogue, so the removed total is still exactly
+	// the catalogue's own 49. ut-docs#1840: the single "N could not be
+	// removed" line is now a per-item list, named-and-reasoned — itm001 was
+	// genuinely sold, so it's kept with the "history" reason, not the old
+	// blanket "already in use" text.
+	if !strings.Contains(body, "Removed 49 sample record") {
+		t.Errorf("removal response %q does not report removed=49", body)
+	}
+	if !strings.Contains(body, "could not be removed automatically") || !strings.Contains(body, "Coca-Cola Can 330ml") ||
+		!strings.Contains(body, "real trading history") {
+		t.Errorf("removal response %q does not name+reason the kept item", body)
 	}
 	if n, _ := repo.SampleItemCount(t.Context()); n != 1 {
 		t.Fatalf("sample items after removal = %d, want 1 (the sold one)", n)
@@ -278,8 +285,15 @@ func TestSettingsRemoveDemoCatalogueEndpointCoversCustomersPromos(t *testing.T) 
 	body := rec.Body.String()
 	// Catalogue (0 seeded here, so 0/0) + customers/promos (5 removed, 1
 	// kept: cust-001 survives, cust-002/cust-003/PROMO50/PROMO500/DISC10 go).
-	if !strings.Contains(body, "Removed 5 sample record") || !strings.Contains(body, "1 could not be removed") {
-		t.Errorf("removal response %q does not report removed=5 kept=1", body)
+	// ut-docs#1840: the customer/promo tail message is unchanged in shape
+	// (still a bare count — that side of the card is out of scope), just
+	// reworded to say "customer/promo record(s)" now that catalogue items
+	// get their own named-and-reasoned list instead of sharing this line.
+	if !strings.Contains(body, "Removed 5 sample record") {
+		t.Errorf("removal response %q does not report removed=5", body)
+	}
+	if !strings.Contains(body, "1 sample customer/promo record(s) could not be removed") {
+		t.Errorf("removal response %q does not report kept=1 customer/promo record", body)
 	}
 	if n, _ := repo.SampleCustomerPromoCount(t.Context()); n != 1 {
 		t.Fatalf("sample customers/promos after removal = %d, want 1 (the sold-to customer)", n)
@@ -466,5 +480,117 @@ func TestSettingsDismissRestorePromptEndpoint(t *testing.T) {
 	}
 	if v, ok, _ := d.Settings.Get(t.Context(), common.KeyRestorePromptStatus); ok && v != "" {
 		t.Fatalf("restore prompt status after dismiss = %q ok=%v, want cleared", v, ok)
+	}
+}
+
+// ut-docs#1840 AC3: "remove anyway" for a demo item kept only because it
+// was edited. Needs real trading history elsewhere in the till (via a real,
+// non-sample item) so the bulk removal itself doesn't already remove the
+// edited item, leaving nothing for this per-item endpoint to demonstrate.
+func TestSettingsRemoveDemoItemEndpoint(t *testing.T) {
+	mux, d := newRealDBDeps(t)
+	repo := data.NewDemoSeedRepo(d.Db)
+	if err := repo.SeedDemoCatalogue(t.Context()); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO items (id, name, base_price) VALUES ('own-1', 'My Own Item', 250)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO sales (id, receipt_no, subtotal, total) VALUES ('s-1', 'R-1', 250, 250)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO sale_lines
+		(id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+		VALUES ('sl-1', 's-1', 1, 'own-1', 'My Own Item', 1, 250, 0, 0, 250, 250)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.Exec(`UPDATE items SET name = 'Flat White' WHERE id = 'itm001'`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Cashier: forbidden, item still there.
+	postForm(mux, "/api/settings/demo-item/itm001/remove", url.Values{}, &cashUser)
+	var n int
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm001'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("cashier's request removed itm001")
+	}
+
+	// Manager: removed, and the response confirms it.
+	rec := postForm(mux, "/api/settings/demo-item/itm001/remove", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Removed") {
+		t.Fatalf("manager remove-anyway: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm001'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatal("itm001 survived the manager's remove-anyway request")
+	}
+}
+
+// The server-side re-check refuses an item that actually has trading
+// history, regardless of what the client believed when it rendered the
+// button — same non-negotiable as the bulk endpoint's own basket check.
+func TestSettingsRemoveDemoItemEndpoint_RefusesItemWithHistory(t *testing.T) {
+	mux, d := newRealDBDeps(t)
+	repo := data.NewDemoSeedRepo(d.Db)
+	if err := repo.SeedDemoCatalogue(t.Context()); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO sales (id, receipt_no, subtotal, total) VALUES ('s-1', 'R-1', 120, 120)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO sale_lines
+		(id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+		VALUES ('sl-1', 's-1', 1, 'itm001', 'Coca-Cola Can 330ml', 1, 120, 2000, 20, 100, 120)`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postForm(mux, "/api/settings/demo-item/itm001/remove", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "error") {
+		t.Fatalf("remove-anyway on a sold item: code=%d body=%s, want a refusal", rec.Code, rec.Body.String())
+	}
+	var n int
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm001'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("itm001 was removed despite having real sale history")
+	}
+}
+
+// ut-docs#1840 AC3's other resolution: "keep as my own item".
+func TestSettingsKeepDemoItemEndpoint(t *testing.T) {
+	mux, d := newRealDBDeps(t)
+	repo := data.NewDemoSeedRepo(d.Db)
+	if err := repo.SeedDemoCatalogue(t.Context()); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.Db.Exec(`UPDATE items SET name = 'Flat White' WHERE id = 'itm001'`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Cashier: forbidden, still flagged sample.
+	postForm(mux, "/api/settings/demo-item/itm001/keep", url.Values{}, &cashUser)
+	var flagged int
+	if err := d.Db.QueryRow(`SELECT is_sample_data FROM items WHERE id = 'itm001'`).Scan(&flagged); err != nil {
+		t.Fatal(err)
+	}
+	if flagged != 1 {
+		t.Fatal("cashier's request cleared is_sample_data")
+	}
+
+	rec := postForm(mux, "/api/settings/demo-item/itm001/keep", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Kept") {
+		t.Fatalf("manager keep-as-own: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := d.Db.QueryRow(`SELECT is_sample_data FROM items WHERE id = 'itm001'`).Scan(&flagged); err != nil {
+		t.Fatal(err)
+	}
+	if flagged != 0 {
+		t.Fatal("itm001 still flagged is_sample_data after keep-as-own")
 	}
 }
