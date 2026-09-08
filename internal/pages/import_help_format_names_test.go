@@ -19,6 +19,15 @@ import (
 // i18n-baseline/*.untranslated.txt files already use. "generic"/
 // "generic-erp" are catimport.DetectFormat's fallback buckets, not named
 // systems a merchant would recognise, so they're deliberately excluded.
+//
+// Disclosed limitation (independent review, ut-docs#1836): this only
+// catches a name already in this list going missing from the copy -- it
+// does NOT mechanically catch the opposite drift, a brand new
+// DetectFormat branch added with no matching entry here and no copy
+// update. That direction still relies on the same reviewer/dev diligence
+// this card exists to backstop, just relocated one file over. Adding a
+// new named format to DetectFormat should always mean a matching edit to
+// this list AND the copy in the same change.
 var namedAutoDetectedFormats = []string{"Loyverse", "Square", "SumUp"}
 
 // TestImportHelpCopy_NamesEveryAutoDetectedFormat is ut-docs#1836's guard:
