@@ -197,6 +197,23 @@ func RequiresHardGate(country string) bool {
 	}
 }
 
+// RequiresPerSaleDeviceReceipt reports whether country's hard-gated market
+// requires evidence THIS SALE was issued through its signing device, not
+// merely that the device has proven itself at some point in the past
+// (ut-docs#1768). Turkey's YN ÖKC is the device itself printing the mali
+// fiş at the point of sale — a shop whose device is confirmed and healthy
+// must still route every sale through it (Law No. 3100,
+// reference/turkey-compliance.md §1), so RequiresHardGate("TR")==true is
+// not sufficient on its own to prove a given sale is compliant. Germany's
+// TSE instead signs (or honestly declares unsigned) after the fact via
+// fiscal.sign.ask/declareUnsignedFiscalSale (ADR-0044) — already per-sale
+// by construction — so DE is deliberately excluded here even though
+// RequiresHardGate("DE") is also true. The one-line extension point for
+// the next per-sale-receipt market from ADR-0047's list.
+func RequiresPerSaleDeviceReceipt(country string) bool {
+	return country == "TR"
+}
+
 // EvaluateGate applies ADR-0048 Decision 2, in order. It reads only the
 // local settings store — never the network — and re-checks the override
 // window against now on every call, so expiry needs no background job:
