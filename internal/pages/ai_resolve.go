@@ -72,12 +72,16 @@ func aiPluginConfig(ctx context.Context, repo *data.PluginRepo) (ai.Config, bool
 			}
 		}
 	}
-	// ADR-0085 Decision 2, fail-safe direction: ONLY the exact value "claude"
-	// selects the hosted vendor. Unset, "self_hosted", a typo, a different
-	// case, or a provider this build doesn't implement ("openai" — a separate
-	// card) all take the self-hosted branch below, so a misconfiguration can
-	// only ever fall back to the shop's own hardware, never forward to a paid
-	// API with whatever key happens to be stored.
+	// ADR-0085 Decision 2, fail-safe direction (extended by ut-docs#1791):
+	// ONLY the exact values "claude" or "openai" select a hosted vendor.
+	// Unset, "self_hosted", a typo, a different case, or any other value
+	// this build doesn't recognize all take the self-hosted branch below, so
+	// a misconfiguration can only ever fall back to the shop's own hardware,
+	// never forward to a paid API with whatever key happens to be stored.
+	// Three outcomes now share that posture: self_hosted (default) stays
+	// Ollama; claude gets identify only (no ask loop yet, ut-docs#1792);
+	// openai gets both identify and ask (ut-docs#1791) — everything else
+	// falls through to self-hosted exactly like the unset case.
 	if provider == "claude" {
 		if apiKey == "" {
 			// The shop chose a hosted vendor but hasn't entered its key:
@@ -93,6 +97,25 @@ func aiPluginConfig(ctx context.Context, repo *data.PluginRepo) (ai.Config, bool
 		// provider has no ask loop yet, so Ask-your-till hides itself
 		// (Service.CanAsk) — the existing degrade path, reached a new way.
 		return ai.Config{Provider: "claude", APIKey: apiKey, Model: visionModel}, true
+	}
+	if provider == "openai" {
+		if apiKey == "" {
+			// Same fail-safe posture as claude: "not configured", never
+			// "use the leftover Ollama endpoint instead".
+			return ai.Config{}, false
+		}
+		if visionModel == "" {
+			visionModel = ai.DefaultOpenAIModel
+		}
+		if askModel == "" {
+			askModel = ai.DefaultOpenAIModel
+		}
+		// vision_model/ask_model are reused exactly as they are for ollama —
+		// same meaning ("which model this capability uses"), new value
+		// space — rather than adding a fourth/fifth setting. Unlike claude,
+		// openai's tool-calling ask loop is real (ut-docs#1791), so
+		// Ask-your-till stays available on this provider.
+		return ai.Config{Provider: "openai", APIKey: apiKey, Model: visionModel, AskModel: askModel}, true
 	}
 	cfg := ai.Config{Provider: "ollama", Endpoint: endpoint, Model: visionModel, AskModel: askModel}
 	if cfg.Model == "" {

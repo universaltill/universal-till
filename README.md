@@ -315,8 +315,8 @@ UT_SAMPLES_DIR=/path/to/images        # Sample product images
 UT_AI_ENDPOINT=http://localhost:11434  # Ollama server URL (self-hosted)
 UT_AI_MODEL=llama3.2-vision            # Open vision model (camera identify)
 UT_AI_ASK_MODEL=llama3.2               # Tool-capable text model (Ask your till)
-UT_AI_PROVIDER=                        # Optional: "claude" for the hosted paid API
-UT_AI_API_KEY=                         # Only for the claude provider (no ask loop yet)
+UT_AI_PROVIDER=                        # Optional: "claude" or "openai" for a hosted paid API
+UT_AI_API_KEY=                         # Only for the claude/openai providers (claude has no ask loop yet; openai has both)
 # Shops don't use these env vars: the AI Assistant plugin's settings page
 # (provider / endpoint / vision_model / ask_model / api_key) is the
 # shop-facing configuration and takes priority; a hosted provider is that
@@ -489,7 +489,7 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 - [x] Payment plugins: Stripe, QR Pay, demo card terminal, SumUp (reader-driven)
 - [x] Language plugins: German, Spanish (core ships en/ar/fa/tr)
 - [x] Theme plugins, FAQ / help plugin
-- [x] AI assistant plugin (camera item ID, "Ask your till") — self-hosted by default, hosted Claude as a shop's own-key opt-in (ADR-0085)
+- [x] AI assistant plugin (camera item ID, "Ask your till") — self-hosted by default, hosted Claude or OpenAI as a shop's own-key opt-in (ADR-0085, ut-docs#1791)
 - [x] Webhook connector plugin (`ut-plugin-integration-webhook`) — reference/template for real ERP connectors, not itself a finished SAP/Dynamics integration (ADR-0014)
 - [x] Cloud sync service (optional, self-hostable)
 - [x] Multi-till LAN sync — one primary, replicas join by QR scan (ADR-0011); tills can also auto-discover primaries over mDNS and pair directly — no code to scan or type: select a discovered primary, the manager approves from a verification-code compare, done (ADR-0033). Available both on a configured till's Tills page and on a brand-new till's first-boot "Join an existing shop" screen (ut-docs#289). The same LAN auto-discovery finds network printers for kitchen station routing (ut-docs#140)
