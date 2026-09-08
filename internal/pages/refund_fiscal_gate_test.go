@@ -133,9 +133,11 @@ func TestFiscalGate_RefundNonGermanShopUnaffected(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newRefundFiscalTestDeps(t)
 	for k, v := range map[string]string{
-		fiscal.KeySystemOfRecord:            "true",
-		fiscal.KeySigningDeviceConfigured:   "false",
-		fiscal.KeySigningDeviceFailingSince: "2026-08-14T09:00:00Z",
+		fiscal.KeySystemOfRecord:                  "true",
+		fiscal.SigningDeviceConfiguredKey("GB"):   "false",
+		fiscal.SigningDeviceFailingSinceKey("GB"): "2026-08-14T09:00:00Z",
+		fiscal.SigningDeviceConfiguredKey("DE"):   "false",
+		fiscal.SigningDeviceFailingSinceKey("DE"): "2026-08-14T09:00:00Z",
 	} {
 		if err := dp.Settings.Set(t.Context(), k, v); err != nil {
 			t.Fatal(err)

@@ -26,6 +26,33 @@ import (
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
+// rejectRemoteFiscalPostureWrite refuses key when it names either of the
+// two signing-device posture settings — the flat wire name or an explicit
+// per-country row — for the cloud SetSetting directive specifically
+// (ADR-0083, ut-docs#1767, independent review finding).
+//
+// Both keys are owner-only everywhere else: settings_page.go's upsert/save
+// handlers both gate them behind canPerform("fiscal_tse_override"),
+// because ADR-0048 treats them as a compliance-critical flag, not ordinary
+// shop config. This directive has no HTTP session to check a role
+// against, so — same as the country-change guard in SetSetting below,
+// which also takes its fail-closed half unconditionally because nobody
+// here can authorize the other half — it refuses these two names outright
+// rather than silently writing them (or, worse, silently NOT writing: the
+// per-country split would otherwise have turned a remote "set false"
+// revocation into a no-op that still reported success, because the flat
+// wire name resolves to a real per-country row everywhere else but this
+// handler used to write it verbatim as a dead, un-suffixed key — fail-open
+// in exactly the direction that matters, since the till keeps selling on
+// the stale "true" row).
+func rejectRemoteFiscalPostureWrite(d *common.Deps, key string) error {
+	logicalKey, _ := resolveFiscalPostureKey(d, key)
+	if logicalKey == wireKeySigningDeviceConfigured || logicalKey == wireKeySigningDeviceFailingSince {
+		return fmt.Errorf("fiscal posture (%s) is owner-only and cannot be set via a remote directive", logicalKey)
+	}
+	return nil
+}
+
 // StartCloudSync wires the ADR-0018 directive hooks to the till's real
 // action paths and starts the cloud sync loop. Every hook is the same move
 // an operator makes locally — remote installs still go through the
@@ -34,6 +61,9 @@ import (
 func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.Context), wg *sync.WaitGroup) {
 	hooks := cloudsync.Hooks{
 		SetSetting: func(ctx context.Context, key, value string) (string, error) {
+			if err := rejectRemoteFiscalPostureWrite(d, key); err != nil {
+				return "", err
+			}
 			// ut-docs#1750: the third writer of store.country, and the one
 			// with no HTTP caller to authorize — so it takes the
 			// fail-closed half of the invariant unconditionally: a shop

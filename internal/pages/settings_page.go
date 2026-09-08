@@ -1877,6 +1877,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
+		// ADR-0083 (ut-docs#1767): the two signing-device posture keys are
+		// stored per country, but the form field / cloud directive still
+		// sends their flat logical names. Resolve once, up front: every
+		// fiscal gate below switches on logicalKey, and every read/write
+		// goes to storageKey. For any other key both are simply key.
+		logicalKey, storageKey := resolveFiscalPostureKey(d, key)
 		// ADR-0048 rejecting VALIDATION (not authorization) — applies
 		// regardless of who's asking, so hoisted above the elevation gate
 		// below (ut-docs#796 review finding #2): without this, a manager
@@ -1887,7 +1893,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// "fiscal_tse_override") stay below, after the elevation gate,
 		// unchanged — they depend on the SESSION user, not on whether
 		// "settings" got elevated (see the comment there).
-		switch key {
+		switch logicalKey {
 		case fiscal.KeyOverrideUntil, fiscal.KeyOverrideReason, fiscal.KeyOverrideActor:
 			// Fabricating a non-empty override here is refused for
 			// everyone — real validation, not a role check. Clearing
@@ -1897,7 +1903,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, "fiscal override state is managed via POST /api/fiscal/signing-override", http.StatusBadRequest)
 				return
 			}
-		case fiscal.KeySigningDeviceFailingSince:
+		case wireKeySigningDeviceFailingSince:
 			// ADR-0048 Decision 1: "Not operator-settable in this card" —
 			// no UI control ships for this key at all, set or clear, by
 			// design (a fake "mark as failing"/"mark as fixed" toggle would
@@ -1935,23 +1941,25 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// the rest of this page — this authorization check reads the
 		// SESSION user (canPerform, not the elevation's approver), so an
 		// elevated "settings" approval alone can never satisfy it.
-		switch key {
+		switch logicalKey {
 		case fiscal.KeyOverrideUntil, fiscal.KeyOverrideReason, fiscal.KeyOverrideActor:
 			if !canPerform(d, r, "fiscal_tse_override") {
 				http.Error(w, "owner (admin) required", http.StatusForbidden)
 				return
 			}
-		case fiscal.KeySystemOfRecord, fiscal.KeySigningDeviceConfigured:
+		case fiscal.KeySystemOfRecord, wireKeySigningDeviceConfigured:
 			if !canPerform(d, r, "fiscal_tse_override") {
 				http.Error(w, "owner (admin) required", http.StatusForbidden)
 				return
 			}
 		}
-		// ut-docs#1750: store.country is load-bearing for the fiscal gate
-		// (ADR-0081 merged DE and TR onto one posture key), so a country
-		// edit goes through the shared invariant every writer uses — before
-		// the value is persisted, so a failure can never leave the country
-		// moved with the posture still set.
+		// ut-docs#1750: a country edit goes through the shared invariant
+		// every writer of store.country uses (fiscal_country_change.go) —
+		// before the value is persisted, so a failure can never leave the
+		// country moved with the old country's posture still set. Since
+		// ADR-0083 the posture rows are per country, so this is
+		// shop-configuration hygiene plus an owner check on changing a
+		// live shop's tax jurisdiction, no longer a shared-key guard.
 		if key == common.KeyCountry {
 			if !requireFiscalAuthorityForCountryChange(w, r, d, value) {
 				return
@@ -1964,17 +1972,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// Read the prior value first so the fiscal-toggle audit below can
 		// record the actual transition, not just the new value.
 		fiscalToggleAction := ""
-		switch key {
+		switch logicalKey {
 		case fiscal.KeySystemOfRecord:
 			fiscalToggleAction = "system_of_record_changed"
-		case fiscal.KeySigningDeviceConfigured:
+		case wireKeySigningDeviceConfigured:
 			fiscalToggleAction = "tse_configured_changed"
 		}
 		prevFiscalValue := ""
 		if fiscalToggleAction != "" {
-			prevFiscalValue, _, _ = d.Settings.Get(r.Context(), key)
+			prevFiscalValue, _, _ = d.Settings.Get(r.Context(), storageKey)
 		}
-		if err := d.Settings.Set(r.Context(), key, value); err != nil {
+		if err := d.Settings.Set(r.Context(), storageKey, value); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "settings.error.save_failed", "settings_fiscal", err)
 			return
 		}
@@ -1986,11 +1994,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// be silently swallowed either, since a lost audit entry here is
 		// exactly the gap ADR-0048 added this logging to close.
 		if fiscalToggleAction != "" && prevFiscalValue != value {
+			// Recorded against the row actually written (the per-country
+			// storage key, ADR-0083), so the trail names the market whose
+			// posture changed rather than the flat logical name.
 			if auditErr := data.NewPOSRepo(d.Db).InsertAudit(r.Context(), nil, getSessionUserID(r),
-				"fiscal_settings", key, fiscalToggleAction,
+				"fiscal_settings", storageKey, fiscalToggleAction,
 				map[string]any{"actor": getSessionUserID(r), "from": prevFiscalValue, "to": value},
 				time.Now().UTC().Format(time.RFC3339), ""); auditErr != nil {
-				logging.L().Errorf("fiscal settings: audit log for %s (%s -> %s) failed: %v", key, prevFiscalValue, value, auditErr)
+				logging.L().Errorf("fiscal settings: audit log for %s (%s -> %s) failed: %v", storageKey, prevFiscalValue, value, auditErr)
 			}
 		}
 		// General upsert audit (ut-docs#796), mutually exclusive BY KEY with
@@ -2113,4 +2124,53 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		}
 		settingsRespondSaved(w, r, elev)
 	})
+}
+
+// Wire-level names of the two per-country signing-device posture keys
+// (ADR-0083, ut-docs#1767). These are the LOGICAL identifiers the settings
+// form and the cloud set_setting directive still send — deliberately
+// unchanged, so no template, i18n string or directive contract moved with
+// the split — and NOT storage keys: the row actually read and written is
+// fiscal.SigningDeviceConfiguredKey(country) /
+// fiscal.SigningDeviceFailingSinceKey(country) for the shop's current
+// country, resolved by resolveFiscalPostureKey. Nothing outside the upsert
+// handler should name these; every other reader/writer goes through the
+// fiscal package's key functions directly.
+const (
+	wireKeySigningDeviceConfigured   = "fiscal.signing_device_configured"
+	wireKeySigningDeviceFailingSince = "fiscal.signing_device_failing_since"
+)
+
+// resolveFiscalPostureKey maps an incoming /api/settings/upsert key onto
+// (logical, storage): logical is the wire-level name every fiscal-posture
+// gate in the upsert handler switches on, storage is the row that is
+// actually read and written. Three shapes reach here:
+//
+//   - the flat logical name ("fiscal.signing_device_configured"): resolved
+//     to the CURRENT country's row, so the UI/directive contract is
+//     unchanged by the split (ADR-0083 point 4);
+//   - an explicit per-country row ("fiscal.signing_device_configured.de"),
+//     which the All-settings card's free-text key input can post: stored
+//     under the normalised per-country name, but classified as the SAME
+//     logical key so it gets the same owner-only permission check, the same
+//     fiscal-toggle audit and — for failing_since — the same unconditional
+//     400. Without this the split would have opened a manager-level side
+//     door onto the very rows the flat name is guarded for;
+//   - anything else: passed through untouched, both values equal to key.
+func resolveFiscalPostureKey(d *common.Deps, key string) (logical, storage string) {
+	for _, w := range []struct {
+		wire    string
+		resolve func(string) string
+	}{
+		{wireKeySigningDeviceConfigured, fiscal.SigningDeviceConfiguredKey},
+		{wireKeySigningDeviceFailingSince, fiscal.SigningDeviceFailingSinceKey},
+	} {
+		if key == w.wire {
+			return w.wire, w.resolve(d.CurrentState().Country)
+		}
+		if strings.HasPrefix(key, w.wire+".") {
+			return w.wire, w.resolve(strings.TrimPrefix(key, w.wire+"."))
+		}
+	}
+	return key, key
 }

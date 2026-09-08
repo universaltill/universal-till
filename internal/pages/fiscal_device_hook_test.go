@@ -94,8 +94,12 @@ func TestRecordFiscalDeviceEvidence_PersistsAndConfirmsOnce(t *testing.T) {
 	if err != nil || !ok || rec.ReceiptNo != "0000001" || rec.Serial != "SIM-1" || rec.ZNo != 2 {
 		t.Fatalf("persisted = %+v ok=%v err=%v", rec, ok, err)
 	}
-	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); v != "true" {
-		t.Fatalf("first receipt must confirm the device, tse_configured = %q", v)
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.SigningDeviceConfiguredKey("TR")); v != "true" {
+		t.Fatalf("first receipt must confirm the device on Turkey's own row, got %q", v)
+	}
+	// ADR-0083: Turkey's confirmation is Turkey's alone.
+	if v, ok, _ := d.Settings.Get(t.Context(), fiscal.SigningDeviceConfiguredKey("DE")); ok && v != "" {
+		t.Fatalf("an ÖKC receipt must never touch Germany's row, got %q", v)
 	}
 	if ok, _ := repo.HasAuditEntry(t.Context(), "fiscal_device", "sale-1", fiscalDeviceAuditConfirmed); !ok {
 		t.Fatal("expected the fiscal_device_confirmed audit marker on the first receipt")
@@ -140,9 +144,9 @@ func TestRenderReceipt_DeviceReceiptBlock(t *testing.T) {
 }
 
 // ut-docs#1750, independent review finding 3. recordFiscalDeviceEvidence
-// flipped fiscal.KeySigningDeviceConfigured with no country check and no
-// check that the answering plugin was the Turkish one — and since ADR-0081
-// that is the same key Germany's TSE gate reads. DeviceEvidence.Valid()
+// flipped the signing-device-configured flag with no country check and no
+// check that the answering plugin was the Turkish one — and between ADR-0081
+// and ADR-0083 that was the same key Germany's TSE gate read. DeviceEvidence.Valid()
 // requires only a non-empty receipt number (no signature, no attestation),
 // and plugins/tax-tr's shipped defaults point at 127.0.0.1:4711, which is
 // byte-identical to scripts/okc-sim's. So one simulator receipt on a German
@@ -166,8 +170,10 @@ func TestRecordFiscalDeviceEvidence_DoesNotConfirmOutsideTurkey(t *testing.T) {
 	ev := &fiscal.DeviceEvidence{Kind: "okc", Maker: "sim", Serial: "SIM-1", ReceiptNo: "0000001", ReceiptKind: "mali_fis", ZNo: 1}
 	recordFiscalDeviceEvidence(t.Context(), d, repo, "sale-de-1", "cashier", ev)
 
-	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); v == "true" {
-		t.Fatal("a German till's TSE gate flag was satisfied by fiscal-device evidence — a simulator receipt must never stand in for a TSE")
+	for _, cc := range []string{"DE", "TR"} {
+		if v, _, _ := d.Settings.Get(t.Context(), fiscal.SigningDeviceConfiguredKey(cc)); v == "true" {
+			t.Fatalf("a German till's %s posture row was satisfied by fiscal-device evidence — a simulator receipt must never stand in for a TSE", cc)
+		}
 	}
 	// The receipt itself is still recorded: this narrows what the evidence
 	// is allowed to PROVE, it does not throw away the evidence.

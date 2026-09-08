@@ -134,11 +134,16 @@ func recordFiscalDeviceEvidence(ctx context.Context, d *common.Deps, repo *data.
 	if !fiscalDeviceMarketActive(ctx, d) {
 		return
 	}
-	configured, _, err := d.Settings.Get(ctx, fiscal.KeySigningDeviceConfigured)
+	// ADR-0083 (ut-docs#1767): the posture row is per country, resolved
+	// against the shop's current store.country — which the guard above has
+	// just proven is TR, so this is Turkey's own row and can never be read
+	// back through Germany's gate.
+	configuredKey := fiscal.SigningDeviceConfiguredKey(d.CurrentState().Country)
+	configured, _, err := d.Settings.Get(ctx, configuredKey)
 	if err != nil || settingIsTrue(configured) {
 		return
 	}
-	if err := d.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
+	if err := d.Settings.Set(ctx, configuredKey, "true"); err != nil {
 		logging.L().Errorf("fiscal device: mark device confirmed after first receipt: %v", err)
 		return
 	}

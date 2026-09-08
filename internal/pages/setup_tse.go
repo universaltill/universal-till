@@ -449,13 +449,37 @@ func applyFiscalTSEReady(ctx context.Context, d *common.Deps) (string, error) {
 	return finishTSEProvisioning(ctx, d, "TSE operational credential stored")
 }
 
-// finishTSEProvisioning flips fiscal.signing_device_configured true (the credential is
-// confirmed on disk by the caller) and clears the pending state.
+// finishTSEProvisioning flips the signing-device-configured row true (the
+// credential is confirmed on disk by the caller) and clears the pending
+// state.
+//
+// The row is the PROVISIONED market's (ADR-0083, ut-docs#1767) — the
+// country carried by the provisioning record itself, the same source
+// tseProvisioningDismissBlocked reads and for the same reason ("never a
+// second hardcoded DE"), falling back to tseProvisionCountry when the
+// record is already gone (the idempotent re-serve path above clears it on
+// first success). Deliberately NOT d.CurrentState().Country: the kickoff is
+// DE-gated at wizard time but completion is asynchronous — the cloud's
+// fiscal_tse_ready directive or the StartTSEProvisionRetry tick — and
+// store.country is manager-writable in between, with no owner check while
+// awaiting_ready (requireFiscalAuthorityForCountryChange only demands owner
+// authority once a device IS confirmed, which is exactly what has not
+// happened yet). Resolving against the live country there let a German TSE
+// credential stamp fiscal.signing_device_configured.tr on a shop relabelled
+// mid-provisioning — a Turkish till reading fiscal.Allowed with no ÖKC, the
+// very ut-docs#1750 end state the per-country split exists to make
+// structurally impossible. A per-country row only closes that class if each
+// writer names the market it actually proved something about.
 func finishTSEProvisioning(ctx context.Context, d *common.Deps, msg string) (string, error) {
-	if err := d.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
+	provisionedCountry := tseProvisionCountry
+	if st, err := loadTSEProvisioningState(ctx, d); err == nil && st != nil && strings.TrimSpace(st.Country) != "" {
+		provisionedCountry = st.Country
+	}
+	configuredKey := fiscal.SigningDeviceConfiguredKey(provisionedCountry)
+	if err := d.Settings.Set(ctx, configuredKey, "true"); err != nil {
 		// Leave the directive un-acked: the re-serve is idempotent (the
 		// store.Load() fast path above) and will retry this write.
-		return "", fmt.Errorf("persist %s: %w", fiscal.KeySigningDeviceConfigured, err)
+		return "", fmt.Errorf("persist %s: %w", configuredKey, err)
 	}
 	// "configured" rather than a lifecycle constant: the lifecycle state is
 	// cleared below — this entry records the terminal success transition
