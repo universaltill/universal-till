@@ -308,7 +308,7 @@ var nonAdminTables = map[string]string{
 	"worker_allocations":          "tip/service-charge pool allocations tied to a cashier + reset_batches — per-till operational history, same family as shifts/payments",
 	"worker_allocations_archive":  "archived worker_allocations — same reasoning",
 	"report_archive":              "this till's own X/Z report archive — per-till operational history, same reasoning as sales_archive",
-	"voucher_transactions":        "per-sale voucher issue/redemption ledger — same append-only reasoning as payments; stays per-till exactly like vouchers below (ut-docs#1668) — this till's own local ledger row, never dumped/applied",
+	"voucher_transactions":        "per-sale voucher issue/redemption ledger — same append-only reasoning as payments; stays per-till exactly like vouchers below (ut-docs#1668) — this till's own local ledger row, never dumped/applied. Its 'redemption' rows double as the cross-till idempotency key, (voucher_id, sale_id), ADR-0084 — see the vouchers entry below",
 
 	// Plugin install machinery — already named above. The installed SET
 	// travels as its own separately-fingerprinted bundle (SyncPluginsRepo,
@@ -352,21 +352,34 @@ var nonAdminTables = map[string]string{
 	// primary-wins dump/apply on a balance that can change between polls
 	// risks clobbering a redemption made on a satellite since the last
 	// pull, or reverting a spent voucher back to its old balance. Resolved
-	// by NOT syncing this table at all: a replica validates a redemption
-	// against the primary's CURRENT balance (registerSyncVouchers's
-	// read-only GET, sync_vouchers.go) right before completing the sale,
-	// but the actual debit still happens exactly once, LOCALLY, reaching
-	// the primary the ordinary way — the sales journal, completely
-	// unchanged. A round-2 review (2026-09-07) found this card's own first
-	// draft ALSO debited the primary synchronously in a write-through,
-	// double-applying every online redemption once the journal replayed
-	// the same debit again; the read-only design here doesn't have that
-	// failure mode, but consequently doesn't fully close the double-spend
-	// window either — a fully-simultaneous two-till redemption race
-	// remains, same residual risk this codebase already accepts for the
-	// single-till-offline case (AllowVoucherOverdraft, ut-docs#1053). A
-	// true atomic write-through is real follow-up work, not this card.
-	"vouchers": "shop-wide voucher balance, runtime-mutable across tills — kept per-till; cross-till redemption validates against a live primary read (ut-docs#1668), not a synced table",
+	// by NOT syncing this table at all. Instead, two mechanisms coexist
+	// deliberately, not by accident (ADR-0084, ut-docs#1716):
+	//
+	//   1. At tender time, a replica RESERVES a redemption on the primary
+	//      (POST /api/sync/vouchers/{id}/redeem, sync_vouchers.go) — a real
+	//      debit of the primary's balance, run through
+	//      DebitVoucherForRedemption's guarded UPDATE on the primary's own
+	//      database so two tills racing for one balance serialize there.
+	//   2. Later, the same sale reaches the primary the ordinary way — the
+	//      sales journal (applyJournal → pos.CompleteSale) — carrying the
+	//      SAME sale id the reservation was made under.
+	//
+	// What keeps (1) and (2) from debiting twice is the idempotency key:
+	// one 'redemption' voucher_transactions row per (voucher_id, sale_id),
+	// enforced by ux_voucher_tx_redemption_once (migration 012).
+	// ReserveVoucherRedemption writes that row; pos.CompleteSale checks it
+	// (VoucherRedemptionRecorded) before its own debit and skips a
+	// redemption the reservation already applied. A reservation whose
+	// tender then fails is released by the same till in the same request
+	// (POST .../release) before any local sale row exists, so no journal
+	// entry for it can ever follow. ut-docs#1668's own first draft had the
+	// write-through WITHOUT this key and was reverted for double-debiting
+	// every online redemption (round-2 review, 2026-09-07); #1668 then
+	// shipped read-only, and ADR-0084 supplied the key. The offline
+	// fallback is untouched: a replica that cannot reach the primary
+	// validates locally and the replay force-applies as before
+	// (AllowVoucherOverdraft, ut-docs#1053).
+	"vouchers": "shop-wide voucher balance, runtime-mutable across tills — kept per-till; cross-till redemption is reserved live on the primary and keyed (voucher_id, sale_id) for the journal replay (ADR-0084), not a synced table",
 }
 
 // FiscalPendingSignRetriesSettingsKey is the settings.key the pre-1.4.0

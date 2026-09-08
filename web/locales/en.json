@@ -1162,6 +1162,7 @@
   "sync.quarantine_intro": "A sale a joined till pushed that this till couldn't apply to the shop ledger is kept here instead of being lost silently — it never became a sale, so this list is the only durable record of it.",
   "sync.quarantine_none": "No quarantined entries — every sale from every till has applied cleanly.",
   "sync.quarantine_open": "View quarantined entries",
+  "sync.quarantine_reason.duplicate_voucher_redemption": "Same voucher redeemed twice in one sale on replay",
   "sync.quarantine_reason.unknown_line_reference": "Unknown product or variant on a sale line on replay",
   "sync.quarantine_reason.unknown_sale_reference": "Unknown cashier, customer, register or table on replay",
   "sync.quarantine_reason.unknown_voucher_redemption": "Unknown voucher on redemption replay",

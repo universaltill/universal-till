@@ -1162,6 +1162,7 @@
   "sync.quarantine_intro": "Katılan bir kasanın gönderdiği ve bu kasanın dükkân defterine uygulayamadığı bir satış, sessizce kaybolmak yerine burada tutulur — hiçbir zaman satışa dönüşmedi, bu yüzden bu liste onun tek kalıcı kaydıdır.",
   "sync.quarantine_none": "Karantinada öğe yok — her kasadan her satış sorunsuz uygulandı.",
   "sync.quarantine_open": "Karantinadaki öğeleri görüntüle",
+  "sync.quarantine_reason.duplicate_voucher_redemption": "Tekrarda aynı kupon bir satışta iki kez kullanıldı",
   "sync.quarantine_reason.unknown_line_reference": "Tekrar oynatmada satış satırında bilinmeyen ürün veya varyant",
   "sync.quarantine_reason.unknown_sale_reference": "Tekrar oynatmada bilinmeyen kasiyer, müşteri, kasa veya masa",
   "sync.quarantine_reason.unknown_voucher_redemption": "İade tekrarında bilinmeyen kupon",
