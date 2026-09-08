@@ -700,6 +700,45 @@ func pluginReportedTipAmount(resp json.RawMessage) (amount int64, ok bool) {
 	return *parsed.TipAmount, true
 }
 
+// resolveReceiptScanDestination is the ut-docs#1818 scan-routing decision:
+// given a code the caller has already confirmed is a real receipt number,
+// it returns EITHER a redirect path (the scan should land there) OR a
+// locale toast key (the scan should stay on the sale screen and say so),
+// never both.
+//
+// There is deliberately no "already refunded" branch: a refund never sets
+// sales.status to "refunded" -- it inserts a separate sale_type='return'
+// row (refund_page.go) -- so that state is unreachable from real data; an
+// earlier draft of this function carried one anyway (review finding,
+// ut-docs#1818).
+func resolveReceiptScanDestination(ctx context.Context, d *common.Deps, repo *data.POSRepo, code string) (redirectPath, toastKey string) {
+	detail, found, err := repo.GetSaleDetail(ctx, code)
+	if err != nil || !found {
+		// ReceiptExists just said yes; a read failure or a miss right after
+		// is a genuine DB hiccup, not a business fact about this sale -- say
+		// so honestly rather than claim "not completed" for a sale whose
+		// status was never actually read. Still never a hard error response
+		// (ADR-0003: a scan must never block on this).
+		return "", "pos.toast.receipt_read_error"
+	}
+	if detail.SaleType != "sale" || detail.Status != "completed" {
+		return "", "pos.toast.receipt_not_completed"
+	}
+	status, tracked := latestOrderStatusForReceipt(ctx, d, repo, code)
+	if !tracked {
+		// No kitchen-status tracking on this sale -- today's behaviour.
+		return "/refund/" + url.PathEscape(code), ""
+	}
+	switch status {
+	case pos.OrderStatusCancelled:
+		return "", "pos.toast.receipt_order_cancelled"
+	case pos.OrderStatusCollected:
+		return "/refund/" + url.PathEscape(code), ""
+	default: // new, preparing, ready
+		return "/orders/" + url.PathEscape(code), ""
+	}
+}
+
 func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewPOSRepo(d.Db)
 	mux.HandleFunc("/api/pos/scan", func(w http.ResponseWriter, r *http.Request) {
@@ -793,11 +832,35 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
-		// Scan-to-refund (docs: refunds.md): a printed receipt carries its
-		// number as a barcode — scanning it opens the refund screen.
+		// Scan-to-refund / scan-to-collect (ut-docs#1818): a printed receipt
+		// carries its number as a barcode. Where the scan now lands depends
+		// on the order's own lifecycle status (internal/pos.OrderStatus*):
+		// an uncollected tracked order goes to its own order view with a
+		// one-tap Collect action; a collected or never-tracked completed
+		// sale goes straight to refund exactly as before; anything else (a
+		// cancelled order or a sale that never completed) says so plainly
+		// instead of silently bouncing through /journal the way landing on
+		// /refund for one of those would. See latestOrderStatusForReceipt
+		// (order_status.go) for why this DOES need a primary-proxy call on
+		// a replica, unlike voucher lookup's own local-only read.
 		if exists, _ := repo.ReceiptExists(r.Context(), code); exists {
-			w.Header().Set("HX-Redirect", "/refund/"+url.PathEscape(code))
-			w.WriteHeader(http.StatusOK)
+			if redirectPath, toastKey := resolveReceiptScanDestination(r.Context(), d, repo, code); redirectPath != "" {
+				w.Header().Set("HX-Redirect", redirectPath)
+				w.WriteHeader(http.StatusOK)
+			} else {
+				b := d.Engine.Basket()
+				b.ToastMessage = httpx.T(locale, toastKey)
+				// receipt_read_error is a genuine DB-read failure, same
+				// severity as this handler's other miss-path toasts below;
+				// the other two are plain status facts about a real,
+				// successfully-read sale, not failures.
+				if toastKey == "pos.toast.receipt_read_error" {
+					b.ToastLevel = "error"
+				} else {
+					b.ToastLevel = "info"
+				}
+				render(&b)
+			}
 			return
 		}
 
