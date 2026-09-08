@@ -2358,6 +2358,33 @@ func TestLooksLikeCustomerCode(t *testing.T) {
 	}
 }
 
+// TestLooksLikeVoucherCode (ut-docs#1833): a case-insensitive "GS-" prefix
+// match, same style as looksLikeCustomerCode above -- never true for a bare
+// numeric GS1 barcode, and never true for any of looksLikeCustomerCode's
+// own CUST/LOY-/LOY<digit> prefixes, so the two can never collide.
+func TestLooksLikeVoucherCode(t *testing.T) {
+	cases := []struct {
+		code string
+		want bool
+	}{
+		{"", false},
+		{"GS-1234", true},
+		{"gs-1234", true},
+		{"Gs-Abc99", true},
+		{"  GS-1234  ", true}, // surrounding whitespace trimmed
+		{"GS1234", false},     // no hyphen -- not the voucher convention
+		{"CUST123", false},
+		{"LOY-99", false},
+		{"5449000000995", false}, // plain EAN13, purely numeric
+		{"ABC123", false},
+	}
+	for _, c := range cases {
+		if got := looksLikeVoucherCode(c.code); got != c.want {
+			t.Errorf("looksLikeVoucherCode(%q) = %v, want %v", c.code, got, c.want)
+		}
+	}
+}
+
 func TestNormalizeLegalLines(t *testing.T) {
 	got := normalizeLegalLines("  Line A  \n\nLine B\n", []string{"Pre1", "  ", "Pre2"})
 	want := []string{"Pre1", "Pre2", "Line A", "Line B"}
