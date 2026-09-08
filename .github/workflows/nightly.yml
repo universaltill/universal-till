@@ -1,0 +1,279 @@
+# Nightly rolling pre-release (ut-docs#1432, "Release channels after the
+# versioning reset" — this workflow covers requirement 1 only).
+#
+# Why this exists: release.yml's tag-triggered "Release" workflow is the
+# ONLY way today to get a build of `main` onto a test device, so every
+# change under test has been shipped as a real, public, non-prerelease
+# GitHub release that every till's auto-updater (internal/updates,
+# internal/selfupdate) will pick up. This workflow gives testers a build of
+# `main` without that side effect.
+#
+# Deliberately NOT using goreleaser (.goreleaser.yaml): goreleaser derives
+# its `{{.Version}}` template value by parsing the triggering git tag as
+# semver, and this workflow needs ONE rolling tag/release literally named
+# "nightly" (re-pointed to a new commit each run) so testers have a single
+# stable URL — "nightly" is not itself a semver string. Instead this
+# mirrors the pattern release.yml's own windows-installer/macos-app/
+# android-app jobs already use: build the artifact directly, then
+# `gh release upload --clobber` it onto an existing release.
+#
+# Scope of this first cut (see ut-docs#1432's BA/Architect notes for the
+# split): the core `unitill-pos` server binary + web assets, for
+# linux(amd64/arm64)/windows(amd64)/darwin(arm64) — the same file set as
+# goreleaser's base `linux`/`windows`/`darwin` archives, including the
+# kiosk setup/launch scripts on Linux. NOT included, as explicit
+# fast-follow scope (see ut-docs#1432's tracking comment): the
+# desktop-shell (WebView) builds, the Windows NSIS installer, the notarized
+# macOS .app/.dmg, the .deb, checksums.txt, and Android (ut-docs#1809 — the
+# Android job's version-code formula breaks on a pre-release version
+# string and needs fixing first). A nightly tester runs the portable
+# binary directly, same as any platform's tar.gz/zip today.
+#
+# Ordering, deliberately build-then-publish, not publish-then-build:
+# the tag is moved and the release's assets are only touched AFTER every
+# platform in the build matrix has succeeded (mirrors release.yml's own
+# publish-release job, which undrafts only once every platform job
+# succeeded, for the identical reason — v0.8.3 shipped a "Latest" release
+# with a missing Android asset because an earlier draft of this repo's
+# release process let a slow/failing job lag behind an already-public
+# release). A partial build failure here leaves last night's still-fully-
+# assembled nightly release untouched rather than silently emptying it.
+name: Nightly
+
+on:
+  schedule:
+    # 03:00 UTC daily. Cheap to run even when main hasn't moved — the
+    # `check` job below exits early in that case without building
+    # anything.
+    - cron: "0 3 * * *"
+  workflow_dispatch: {}
+
+permissions:
+  contents: write
+
+# Two runs (a schedule firing while someone also workflow_dispatches, or
+# two manual dispatches) must never interleave: both would move the same
+# "nightly" tag and edit the same release. `cancel-in-progress: false`
+# (not true) — queue behind an in-flight run rather than cancel it
+# mid-upload, which would leave the release in whatever half-updated state
+# the cancelled run reached.
+concurrency:
+  group: nightly
+  cancel-in-progress: false
+
+jobs:
+  # Decides whether there's anything new to build and computes this run's
+  # version string. Does NOT touch the `nightly` tag or release — that
+  # only happens in `publish`, once every build has actually succeeded.
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.v.outputs.changed }}
+      version: ${{ steps.v.outputs.version }}
+      sha: ${{ steps.v.outputs.sha }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - id: v
+        run: |
+          set -euo pipefail
+
+          NEW_SHA="$(git rev-parse origin/main)"
+
+          # Manual dispatch always builds (that's the point of a manual
+          # trigger); the scheduled run skips when main hasn't moved since
+          # the last nightly, so an idle repo doesn't get a "new" nightly
+          # every single day for no reason.
+          if [ "${{ github.event_name }}" = "schedule" ] \
+             && git rev-parse -q --verify refs/tags/nightly >/dev/null \
+             && [ "$(git rev-parse refs/tags/nightly)" = "$NEW_SHA" ]; then
+            echo "main unchanged since the last nightly (${NEW_SHA}) — skipping"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          # Base the nightly on the CURRENT latest stable, not a guessed
+          # next-patch: internal/updates.Newer compares dotted numeric
+          # components positionally, so "0.12.15-nightly.<date>" (a guess
+          # at the *next* patch) compares EQUAL, not older, to the real
+          # v0.12.15 once it ships — a nightly tester would never be told
+          # a same-numbered stable release is available, only the one
+          # after it. Using the current stable as the base keeps every
+          # component through the patch number identical to a real older
+          # release, so Newer() correctly ranks it below any stable
+          # (including the one it's based on) and above the previous one.
+          # Excludes any -beta./-nightly. suffix so a future beta tag
+          # (ut-docs#1807) can't be mistaken for the latest stable here —
+          # "nightly" itself already doesn't match 'v*' at all. `|| true`
+          # on the grep: with zero matching tags (a fresh repo, or every
+          # v* tag being a pre-release) grep exits 1 on no matches, which
+          # would otherwise kill this step under `set -e` before the
+          # `:-0.0.0` fallback below ever gets a chance to apply.
+          LATEST="$(git tag -l 'v*' | { grep -vE -- '-(beta|nightly)\.' || true; } | sed 's/^v//' | sort -V | tail -1)"
+          LATEST="${LATEST:-0.0.0}"
+          if ! [[ "$LATEST" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::latest stable tag resolved to '${LATEST}', not a plain MAJOR.MINOR.PATCH — refusing to build a nightly from an unparseable version (check for a stray non-semver 'v*' tag)"
+            exit 1
+          fi
+          DATE="$(date -u +%Y%m%d)"
+          SHORT_SHA="$(git rev-parse --short=12 "$NEW_SHA")"
+          # The date alone isn't enough to tell two same-day nightlies
+          # apart (e.g. a manual dispatch shortly after the scheduled
+          # one, once main has moved again) — the commit makes every
+          # nightly's version string unique to the commit it was built
+          # from, not just the day.
+          VERSION="${LATEST}-nightly.${DATE}.${SHORT_SHA}"
+
+          echo "building nightly ${VERSION} from ${NEW_SHA}"
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "sha=${NEW_SHA}" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: check
+    if: needs.check.outputs.changed == 'true'
+    strategy:
+      # One platform failing must not cancel the others mid-build/upload —
+      # `publish` below gates on every leg succeeding anyway, so there's no
+      # benefit to fail-fast and it would only waste the other legs' work.
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+            ext: tar.gz
+          - goos: linux
+            goarch: arm64
+            ext: tar.gz
+          - goos: windows
+            goarch: amd64
+            ext: zip
+          - goos: darwin
+            goarch: arm64
+            ext: tar.gz
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.check.outputs.sha }}
+      - uses: actions/setup-go@v5
+        with:
+          go-version-file: go.mod
+      - name: Build binary
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          mkdir -p stage
+          BIN="stage/unitill-pos"
+          [ "$GOOS" = "windows" ] && BIN="stage/unitill-pos.exe"
+          CGO_ENABLED=0 go build -trimpath \
+            -ldflags "-s -w -X github.com/universaltill/universal-till/internal/buildinfo.Version=${VERSION}" \
+            -o "$BIN" .
+      - name: Stage archive contents
+        # Same file set as .goreleaser.yaml's linux/windows/macos archives,
+        # minus the prebuilt desktop shell (dist-shells/*, not part of this
+        # workflow — see the file header).
+        run: |
+          set -euo pipefail
+          cp -r web stage/web
+          cp packaging/pos.env.example stage/pos.env.example
+          cp packaging/pos.env.example stage/pos.env
+          cp README.md LICENSE stage/
+      - name: Stage platform launcher/uninstaller scripts
+        run: |
+          set -euo pipefail
+          case "${{ matrix.goos }}" in
+            linux)
+              cp packaging/linux/run-unitill.sh packaging/linux/uninstall-unitill.sh \
+                packaging/linux/unitill-kiosk-setup.sh packaging/linux/unitill-kiosk-launch.sh \
+                stage/
+              chmod 0755 stage/run-unitill.sh stage/uninstall-unitill.sh \
+                stage/unitill-kiosk-setup.sh stage/unitill-kiosk-launch.sh
+              ;;
+            darwin)
+              cp packaging/macos/run-unitill.command packaging/macos/uninstall-unitill.command stage/
+              chmod 0755 stage/run-unitill.command stage/uninstall-unitill.command
+              ;;
+            windows)
+              cp packaging/windows/run-unitill.bat packaging/windows/uninstall-unitill.bat stage/
+              ;;
+          esac
+      - name: Package archive
+        env:
+          VERSION: ${{ needs.check.outputs.version }}
+          EXT: ${{ matrix.ext }}
+        run: |
+          set -euo pipefail
+          NAME="unitill-pos_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}"
+          if [ "$EXT" = "zip" ]; then
+            (cd stage && zip -rq "../${NAME}.zip" .)
+          else
+            tar czf "${NAME}.${EXT}" -C stage .
+          fi
+          echo "ASSET_NAME=${NAME}.${EXT}" >> "$GITHUB_ENV"
+      # Handed to `publish` as a build artifact, NOT uploaded to the
+      # release directly from here — the release isn't touched until every
+      # matrix leg has reached this point successfully.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: nightly-asset-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: ${{ env.ASSET_NAME }}
+          if-no-files-found: error
+
+  # Runs only once every build leg above has succeeded (the default
+  # `needs` gate — no `if: always()` here, deliberately). Moves the
+  # rolling tag, creates/updates the release, and replaces its assets —
+  # all in one sequential job, so nothing else can race it while it does.
+  publish:
+    needs: [check, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: nightly-asset-*
+          path: dist
+          merge-multiple: true
+      - name: Move the nightly tag and create/update the release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SHA: ${{ needs.check.outputs.sha }}
+          VERSION: ${{ needs.check.outputs.version }}
+        run: |
+          set -euo pipefail
+
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag -f nightly "$SHA"
+          git push origin refs/tags/nightly --force
+
+          DATE="$(date -u +%Y%m%d)"
+          NOTES="Rolling nightly build from \`main\` @ ${SHA:0:12} — version \`${VERSION}\`.
+          Not for production shops — pick a stable release instead unless you're specifically testing \`main\`.
+          Desktop-shell/.deb/.dmg/Android are not part of this build; see universaltill/ut-docs#1432."
+
+          if gh release view nightly >/dev/null 2>&1; then
+            gh release edit nightly --prerelease --title "Nightly (${DATE})" --notes "$NOTES"
+          else
+            gh release create nightly --prerelease --title "Nightly (${DATE})" --notes "$NOTES"
+          fi
+
+          echo "uploading: $(ls dist)"
+          gh release upload nightly dist/* --clobber
+
+          # Old assets replaced, not accumulated: today's filenames embed
+          # today's version/date/commit, so a previous run's differently-
+          # named assets wouldn't be overwritten by --clobber above — prune
+          # anything on the release that isn't one of today's uploads.
+          mapfile -t KEEP < <(ls dist)
+          for name in $(gh release view nightly --json assets --jq '.assets[].name'); do
+            keep=0
+            for k in "${KEEP[@]}"; do [ "$name" = "$k" ] && keep=1 && break; done
+            [ "$keep" = 0 ] && gh release delete-asset nightly "$name" --yes
+          done
