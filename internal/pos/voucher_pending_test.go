@@ -6,42 +6,23 @@ import (
 	"github.com/universaltill/universal-till/internal/money"
 )
 
-// TestPendingVoucher_SetGetClear (ut-docs#1833): SetPendingVoucher stashes a
-// scanned Gutschein's id/balance on both the engine and the published
-// Basket; ClearPendingVoucher removes it again.
-func TestPendingVoucher_SetGetClear(t *testing.T) {
+// TestPendingVoucher_SetAndClearViaBasket (ut-docs#1833): SetPendingVoucher
+// stashes a scanned Gutschein's id/balance on the published Basket; a
+// completed/reset sale clears it again (there is no standalone "cancel a
+// pending voucher" production path yet -- see TestPendingVoucher_ClearedOnReset
+// for the only way it's cleared today).
+func TestPendingVoucher_SetAndClearViaBasket(t *testing.T) {
 	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, mapResolver{})
 
-	if got := s.PendingVoucherID(); got != "" {
-		t.Fatalf("PendingVoucherID before any scan = %q, want empty", got)
-	}
-	if got := s.PendingVoucherBalance(); got != 0 {
-		t.Fatalf("PendingVoucherBalance before any scan = %v, want 0", got)
+	if b := s.Basket(); b.VoucherID != "" || b.VoucherBalance != 0 {
+		t.Fatalf("basket voucher fields before any scan = %+v, want empty/zero", b)
 	}
 
 	s.SetPendingVoucher("GS-1234", money.FromMinor(2500))
 
-	if got := s.PendingVoucherID(); got != "GS-1234" {
-		t.Fatalf("PendingVoucherID = %q, want GS-1234", got)
-	}
-	if got := s.PendingVoucherBalance(); got != money.FromMinor(2500) {
-		t.Fatalf("PendingVoucherBalance = %v, want 2500", got)
-	}
 	b := s.Basket()
 	if b.VoucherID != "GS-1234" || b.VoucherBalance != money.FromMinor(2500) {
 		t.Fatalf("basket voucher fields = %+v", b)
-	}
-
-	s.ClearPendingVoucher()
-	if got := s.PendingVoucherID(); got != "" {
-		t.Fatalf("PendingVoucherID after clear = %q, want empty", got)
-	}
-	if got := s.PendingVoucherBalance(); got != 0 {
-		t.Fatalf("PendingVoucherBalance after clear = %v, want 0", got)
-	}
-	b = s.Basket()
-	if b.VoucherID != "" || b.VoucherBalance != 0 {
-		t.Fatalf("basket voucher fields after clear = %+v", b)
 	}
 }
 
@@ -54,12 +35,6 @@ func TestPendingVoucher_ClearedOnReset(t *testing.T) {
 
 	s.Reset()
 
-	if got := s.PendingVoucherID(); got != "" {
-		t.Fatalf("PendingVoucherID after Reset = %q, want empty", got)
-	}
-	if got := s.PendingVoucherBalance(); got != 0 {
-		t.Fatalf("PendingVoucherBalance after Reset = %v, want 0", got)
-	}
 	b := s.Basket()
 	if b.VoucherID != "" || b.VoucherBalance != 0 {
 		t.Fatalf("basket voucher fields after Reset = %+v", b)

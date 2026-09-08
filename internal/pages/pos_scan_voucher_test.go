@@ -37,10 +37,10 @@ func TestScanAPI_VoucherFoundActive_SetsPendingVoucherAndSuccessToast(t *testing
 		t.Fatalf("scan: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	if got := dp.Engine.PendingVoucherID(); got != "GS-1234" {
+	if got := dp.Engine.Basket().VoucherID; got != "GS-1234" {
 		t.Fatalf("PendingVoucherID = %q, want GS-1234", got)
 	}
-	if got := dp.Engine.PendingVoucherBalance(); got != money.FromMinor(1500) {
+	if got := dp.Engine.Basket().VoucherBalance; got != money.FromMinor(1500) {
 		t.Fatalf("PendingVoucherBalance = %v, want 1500", got)
 	}
 
@@ -69,7 +69,7 @@ func TestScanAPI_VoucherZeroBalance_NotUsableToastAndNoPendingVoucher(t *testing
 		t.Fatalf("scan: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	if got := dp.Engine.PendingVoucherID(); got != "" {
+	if got := dp.Engine.Basket().VoucherID; got != "" {
 		t.Fatalf("PendingVoucherID = %q, want empty (voucher not usable)", got)
 	}
 
@@ -97,7 +97,7 @@ func TestScanAPI_VoucherInactiveStatus_NotUsableToast(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("scan: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if got := dp.Engine.PendingVoucherID(); got != "" {
+	if got := dp.Engine.Basket().VoucherID; got != "" {
 		t.Fatalf("PendingVoucherID = %q, want empty (void voucher)", got)
 	}
 	wantMsg := html.EscapeString(fmt.Sprintf(httpx.T("en", "pos.toast.voucher_scan_unusable"), "GS-VOID"))
@@ -113,7 +113,7 @@ func TestScanAPI_VoucherNotFound_NotFoundToastAndNoFallthrough(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("scan: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if got := dp.Engine.PendingVoucherID(); got != "" {
+	if got := dp.Engine.Basket().VoucherID; got != "" {
 		t.Fatalf("PendingVoucherID = %q, want empty", got)
 	}
 
@@ -159,10 +159,10 @@ func TestScanAPI_VoucherCrossTillFallback_ResolvesFromPrimary(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("scan: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if got := dp.Engine.PendingVoucherID(); got != "GS-REMOTE" {
+	if got := dp.Engine.Basket().VoucherID; got != "GS-REMOTE" {
 		t.Fatalf("PendingVoucherID = %q, want GS-REMOTE (resolved from primary)", got)
 	}
-	if got := dp.Engine.PendingVoucherBalance(); got != money.FromMinor(3000) {
+	if got := dp.Engine.Basket().VoucherBalance; got != money.FromMinor(3000) {
 		t.Fatalf("PendingVoucherBalance = %v, want 3000", got)
 	}
 	wantMsg := fmt.Sprintf(httpx.T("en", "pos.toast.voucher_scan_found"), "GS-REMOTE", money.FromMinor(3000).String())
