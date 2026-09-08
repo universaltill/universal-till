@@ -813,6 +813,29 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			common.LogAndLocalizedError(w, r, http.StatusPaymentRequired, "refund.error.provider_declined", "refund", blocked)
 			return
 		}
+		// ut-docs#1788: independent, core-side backstop for Turkey's
+		// fiscal-device (ÖKC) refund path — mirrors pos_api.go's
+		// completeTender fail-closed check (ut-docs#1779). fiscal.MethodKeyOKC's
+		// own doc comment claims "fail-closed by construction, no override
+		// path", but that only holds as long as the OKC plugin polices
+		// itself: a plugin that exits 0 (approved) above with no
+		// `fiscal_device` object -- or an invalid one -- would otherwise let
+		// the return complete with zero device evidence (the *iade fişi*).
+		// Gates on refundResp's OWN parsed evidence, never on the
+		// pickDeviceEvidence accumulator used below to persist it: that
+		// accumulator's first-wins rule exists to survive a SECOND payment
+		// leg blank-filling, not to certify THIS leg produced anything (the
+		// same distinction ut-docs#1779's independent review required on the
+		// sale/tender path). A refund only ever has one payment leg (`method`
+		// above), so there is no split-refund accumulator-laundering case to
+		// reproduce here, but gating on the leg's own response rather than
+		// the accumulator keeps this check's reasoning identical to its
+		// sale-side sibling rather than accidentally-correct by omission.
+		if _, valid := fiscal.ParseDeviceEvidence(refundResp); method == fiscal.MethodKeyOKC && !valid {
+			log.Printf("refund rejected: fiscal device %q approved refund with no receipt evidence (ut-docs#1788 fail-closed)", method)
+			common.LogAndLocalizedError(w, r, http.StatusPaymentRequired, "refund.error.fiscal_device_no_receipt", "refund", errors.New("fiscal device approved refund with no receipt evidence"))
+			return
+		}
 		saleInput := pos.SaleInput{
 			// SaleID carries forward whatever fiscalStartCarrier minted
 			// above (empty if fiscal.sign.start has no subscriber) — ADR-0077
