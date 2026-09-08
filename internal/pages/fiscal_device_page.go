@@ -85,7 +85,7 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 
 	requireManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		if !canPerform(d, r, "settings") {
-			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required") // page-error:allow mirrors fiscal_register_page.go, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
 			return auth.User{}, false
 		}
 		u, _ := auth.FromContext(r.Context())
@@ -113,7 +113,7 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 		}
 		latest, _, err := posRepo.LatestFiscalDeviceReceipt(ctx)
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server", "fiscal_device", err) // page-error:allow mirrors fiscal_register_page.go, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server", err)
 			return
 		}
 		// Today's count, on the same business-day boundary reports/EOD use
@@ -192,11 +192,11 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if d.Settings == nil {
-			common.LocalizedError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server") // page-error:allow mirrors fiscal_register_page.go, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server", nil)
 			return
 		}
 		if err := d.Settings.Set(r.Context(), fiscal.SigningDeviceConfiguredKey(d.CurrentState().Country), "true"); err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server", "fiscal_device", err) // page-error:allow mirrors fiscal_register_page.go, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server", err)
 			return
 		}
 		audit(r, actor.ID, fiscalDeviceAuditConfirmed, map[string]any{"source": "manual"})
@@ -232,11 +232,11 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if d.Settings == nil {
-			common.LocalizedError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server") // page-error:allow mirrors fiscal_register_page.go, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server", nil)
 			return
 		}
 		if err := d.Settings.Set(r.Context(), fiscal.SigningDeviceConfiguredKey(d.CurrentState().Country), "false"); err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server", "fiscal_device", err) // page-error:allow mirrors fiscal_register_page.go, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server", err)
 			return
 		}
 		audit(r, actor.ID, fiscalDeviceAuditUnpaired, nil)
