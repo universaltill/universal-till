@@ -336,6 +336,53 @@ func TestReportsPage_EODRowsOnlyIncludeEODKind(t *testing.T) {
 	}
 }
 
+// ut-docs#1529: EODReport.Tips (ut-docs#1007) is already broken out on the
+// PRINTED Z-report and the JSON export, but the on-screen Reports tab's
+// day-row table only ever showed Sales/Net — a manager glancing at the tab
+// without printing or downloading had no visibility into tips at all. Pins
+// a Tips total column alongside Sales/Net, gated the same way (CanRunEOD).
+func TestReportsPage_EODRowShowsTipsTotal(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO report_archive(id,kind,period,content_json) VALUES('r1','eod','2026-01-01','{"day":"2026-01-01","sales_count":3,"net":500,"tips":[{"method":"card","count":2,"amount":150},{"method":"cash","count":1,"amount":50}]}')`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsTab(t, mux, "eod", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "£2.00") {
+		t.Fatalf("expected the eod row's tip total (150+50 minor units) rendered, got: %s", body)
+	}
+}
+
+// Complements the positive case above: a report with no tipped payments for
+// the period (an empty/absent Tips slice — e.g. tipping disabled) must not
+// render a stray tip total, same "nothing to show" convention the printed
+// Z-report's own TIPS footer already follows (buildEODDoc).
+func TestReportsPage_EODRowTipsTotalZeroWhenNoTips(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO report_archive(id,kind,period,content_json) VALUES('r1','eod','2026-01-01','{"day":"2026-01-01","sales_count":3,"net":500}')`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsTab(t, mux, "eod", "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "£0.00") {
+		t.Fatalf("expected a zero tip total rendered for a report with no tips, got: %s", body)
+	}
+}
+
 func TestReportsPage_ManagerOnlySectionsGatedByRole(t *testing.T) {
 	// Set explicitly (not just left ambient/unset) so this test can't
 	// silently pass or fail depending on the developer's shell environment.

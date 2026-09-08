@@ -683,6 +683,7 @@
   "reports.eod.range_title": "Z-report (date range)",
   "reports.eod.range_to": "To",
   "reports.eod.run": "Run end-of-day report",
+  "reports.eod.tips": "Tips",
   "reports.eod.title": "End of day",
   "reports.eod.unattributed": "Unattributed",
   "reports.eod.variance_flag": "Cash count variance",

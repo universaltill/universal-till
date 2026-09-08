@@ -683,6 +683,7 @@
   "reports.eod.range_title": "تقرير Z (نطاق تاريخ)",
   "reports.eod.range_to": "إلى",
   "reports.eod.run": "تشغيل تقرير نهاية اليوم",
+  "reports.eod.tips": "الإكراميات",
   "reports.eod.title": "نهاية اليوم",
   "reports.eod.unattributed": "غير معروف",
   "reports.eod.variance_flag": "Cash count variance",
