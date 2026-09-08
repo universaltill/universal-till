@@ -284,7 +284,7 @@
   "import.export_save_failed": "CSV kaydedilemedi.",
   "import.export_title": "Dışa aktar",
   "import.file": "Dışa aktarım dosyası (CSV veya .bkp)",
-  "import.help": "Ürünlerinizi başka bir kasadan getirin: oradaki kataloğu dışa aktarın (Loyverse ve Square dışa aktarımları otomatik tanınır; ad ve fiyat sütunu olan her CSV çalışır — speedy kasse / pepperm cashbox .bkp yedeği de doğrudan kabul edilir) ve dosyayı buraya yükleyin. Önce önizleyin — İçe aktar'a basana kadar hiçbir şey kaydedilmez. Barkodu veya SKU'su zaten var olan ürünler atlanır, bu yüzden iki kez içe aktarmak güvenlidir.",
+  "import.help": "Ürünlerinizi başka bir kasadan getirin: oradaki kataloğu dışa aktarın (Loyverse, Square ve SumUp dışa aktarımları otomatik tanınır; ad ve fiyat sütunu olan her CSV çalışır — speedy kasse / pepperm cashbox .bkp yedeği de doğrudan kabul edilir) ve dosyayı buraya yükleyin. Önce önizleyin — İçe aktar'a basana kadar hiçbir şey kaydedilmez. Barkodu veya SKU'su zaten var olan ürünler atlanır, bu yüzden iki kez içe aktarmak güvenlidir.",
   "import.import": "İçe aktar",
   "import.busy": "İçe aktarılıyor — büyük bir dosya için bu biraz zaman alabilir. Lütfen bekleyin…",
   "import.preview": "Önizleme",
