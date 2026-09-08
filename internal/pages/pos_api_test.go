@@ -985,6 +985,82 @@ func TestTenderHandler_NonOKCPluginForgedEvidence_NotPersistedOrConfirmed(t *tes
 	}
 }
 
+// TestTenderHandler_TRShadowMode_NonOKCPluginForgedEvidence_DoesNotPairDevice
+// is ut-docs#1794's worst-case regression, and the one that actually
+// exercises the "must not flip signing_device_configured" half of the
+// card's acceptance criteria. The sibling test above runs on the default
+// (GB) shop, where recordFiscalDeviceEvidence's fiscalDeviceMarketActive
+// guard (ut-docs#1750) already refuses to touch the flag whatever the
+// evidence says — so its flag assertion is true even without #1794's fix,
+// and only its fiscal_device_receipts assertion is load-bearing there.
+//
+// The posture where the flag genuinely was reachable is a TR shop in
+// SHADOW mode with the tax-tr plugin installed and active: shadow mode
+// means fiscal.KeySystemOfRecord is unset, so ut-docs#1768's hasOKCLeg
+// gate does not apply and a demopay-only sale completes; but
+// fiscalDeviceMarketActive IS true (TR + tax-tr active), so before #1794 a
+// forged `fiscal_device` object from the demopay leg was persisted AND
+// flipped TR's fiscal.signing_device_configured — the exact ADR-0048
+// posture flag that lifts BlockedNeverConfigured — with no ÖKC ever
+// involved. Pairing a shop's fiscal device must take a real device
+// receipt, never any plugin's say-so.
+func TestTenderHandler_TRShadowMode_NonOKCPluginForgedEvidence_DoesNotPairDevice(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	ctx := context.Background()
+	if err := dp.Settings.Set(ctx, common.KeyCountry, "TR"); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately NOT setting fiscal.KeySystemOfRecord: shadow mode, so
+	// ut-docs#1768's per-sale OKC-leg requirement does not apply and this
+	// sale is not refused before pickDeviceEvidence is ever reached.
+	dp.State = common.LoadState(ctx, dp.Settings, dp.Cfg)
+	installTaxTRPlugin(t, dp) // makes fiscalDeviceMarketActive true for this shop
+	installDemoPayPlugin(t, dp)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.demopay.authorize", plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(ctx, "com.universaltill.payment-demo",
+		[]string{"payment.demopay.authorize"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			return json.RawMessage(`{"provider":"demopay","outcome":"approved","fiscal_device":{"receipt_no":"NOT-A-REAL-OKC-RECEIPT","maker":"forged","serial":"forged"}}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"demopay","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 -- a shadow-mode TR shop is not gated on an OKC leg, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if v, _, _ := dp.Settings.Get(ctx, fiscal.SigningDeviceConfiguredKey("TR")); settingIsTrue(v) {
+		t.Fatalf("a non-OKC plugin's forged fiscal_device object must never pair the shop's device (TR signing_device_configured = %q)", v)
+	}
+	var confirmed int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE action = ?`, fiscalDeviceAuditConfirmed).Scan(&confirmed); err != nil {
+		t.Fatalf("query audit_log: %v", err)
+	}
+	if confirmed != 0 {
+		t.Fatalf("forged evidence must not write a %s audit marker, got %d", fiscalDeviceAuditConfirmed, confirmed)
+	}
+	var receipts int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM fiscal_device_receipts`).Scan(&receipts); err != nil {
+		t.Fatalf("query fiscal_device_receipts: %v", err)
+	}
+	if receipts != 0 {
+		t.Fatalf("forged evidence must not be persisted as a device receipt, got %d row(s)", receipts)
+	}
+}
+
 // TestTenderHandler_TRSystemOfRecordCardOnly_RefusedBeforeAuthorize is the
 // independent-review BLOCKER-2 regression: a shop lacking any
 // fiscal.MethodKeyOKC leg is provably knowable from the DECLARED payment
