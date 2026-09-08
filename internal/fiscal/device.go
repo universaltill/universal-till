@@ -29,6 +29,16 @@ import (
 // status page and its nav tile on this plugin being installed and active.
 const PluginIDTaxTR = "com.universaltill.tax-tr"
 
+// MethodKeyOKC is the tax-tr plugin's manifest payment-entry key
+// (plugins/tax-tr/plugin.json entries[0].key). It's the only payment
+// method whose payment.<key>.authorize payload should carry basket/line
+// detail (see deviceAuthorizePayloadExtras in
+// internal/pages/fiscal_device_hook.go) — the certified device prints the
+// legal receipt itself and needs the lines/VAT to do it; every other
+// payment plugin (card terminal, QR, demo) only ever asked for an amount
+// and a currency (ut-docs#1766).
+const MethodKeyOKC = "okc"
+
 // DeviceEvidence is the `fiscal_device` object a fiscal-device payment
 // plugin returns alongside an approved tender: what the device printed.
 // Every field is optional on the wire; the object counts as PRESENT only

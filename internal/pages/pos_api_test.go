@@ -539,6 +539,144 @@ func TestTenderHandler_AppliesPluginReportedTipFromAuthorizeResponse(t *testing.
 	}
 }
 
+// TestTenderHandler_NonOKCPluginDoesNotReceiveBasketDetail is the
+// regression test for ut-docs#1766: completeTender used to merge
+// deviceAuthorizePayloadExtras (basket lines, discounts, tax rates) into
+// EVERY payment plugin's authorize payload, not just the tax-tr (ÖKC)
+// plugin's. A plugin that only ever asked for method/amount/reference
+// must not see the sale's line detail.
+func TestTenderHandler_NonOKCPluginDoesNotReceiveBasketDetail(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'demo', 'wasm', 'demo.wasm', 'https://example.test/demo.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.payment-demo', 'Demo Pay', '1.0.0', 'demo.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e1', 'com.universaltill.payment-demo', 'demopay', 'Demo Pay', 'payment', 'payment.demopay.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h1', 'com.universaltill.payment-demo', 'payment.demopay.authorize', 'handle_authorize', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p1', 'com.universaltill.payment-demo', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.demopay.authorize", plugins.Blocking)
+	var received map[string]any
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
+		[]string{"payment.demopay.authorize"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			if err := json.Unmarshal(ev.Payload, &received); err != nil {
+				t.Fatalf("unmarshal authorize payload: %v", err)
+			}
+			return json.RawMessage(`{"provider":"demopay","outcome":"approved"}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"demopay","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if received == nil {
+		t.Fatal("plugin never received an authorize call")
+	}
+	for _, leaked := range []string{"lines", "sale_discount", "service_charge", "tax_inclusive", "currency", "total"} {
+		if _, ok := received[leaked]; ok {
+			t.Fatalf("demopay is not the fiscal-device plugin — its authorize payload must not carry %q, got %+v", leaked, received)
+		}
+	}
+	for _, want := range []string{"method", "amount", "reference"} {
+		if _, ok := received[want]; !ok {
+			t.Fatalf("authorize payload dropped the base contract field %q, got %+v", want, received)
+		}
+	}
+}
+
+// TestTenderHandler_OKCPluginReceivesBasketDetail is the other half of the
+// ut-docs#1766 regression test: the ONE payment method that legitimately
+// needs basket/line detail (tax-tr's "okc" entry key, fiscal.MethodKeyOKC)
+// must keep receiving it — this is not a permission grant/manifest change,
+// so an existing TR install must not regress.
+func TestTenderHandler_OKCPluginReceivesBasketDetail(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.tax-tr', '1.0.0', 'Turkiye fiscal device', 'okc', 'wasm', 'plugin.wasm', 'https://example.test/tax-tr.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.tax-tr', 'Turkiye fiscal device', '1.0.0', 'plugin.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e1', 'com.universaltill.tax-tr', 'okc', 'Yazarkasa (OKC)', 'payment', 'payment.okc.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h1', 'com.universaltill.tax-tr', 'payment.okc.authorize', 'handle_authorize', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p1', 'com.universaltill.tax-tr', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.okc.authorize", plugins.Blocking)
+	var received map[string]any
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-tr",
+		[]string{"payment.okc.authorize"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			if err := json.Unmarshal(ev.Payload, &received); err != nil {
+				t.Fatalf("unmarshal authorize payload: %v", err)
+			}
+			return json.RawMessage(`{"provider":"okc","outcome":"approved","fiscal_device":{"receipt_no":"12345"}}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"okc","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if received == nil {
+		t.Fatal("plugin never received an authorize call")
+	}
+	if _, ok := received["lines"]; !ok {
+		t.Fatalf("the fiscal-device (okc) plugin must still receive basket line detail, got %+v", received)
+	}
+}
+
 func TestTenderHandler_InvalidJSONBodyRejected(t *testing.T) {
 	mux, dp := newPOSTestDeps(t)
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
