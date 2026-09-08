@@ -369,15 +369,46 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
-		// Format auto-detection (ut-docs#511): sniff the ZIP local-file-
-		// header magic before choosing a parser — a speedy kasse / pepperm
-		// cashbox .bkp is a plain ZIP, everything else on this page is a
-		// CSV. No separate page/route; the operator just uploads either.
-		isBkp, sniffErr := sniffZipUpload(file)
+		// Format auto-detection (ut-docs#511, extended ut-docs#1837 for
+		// .xlsx): sniff the ZIP local-file-header magic first — a speedy
+		// kasse / pepperm cashbox .bkp AND an .xlsx workbook are BOTH
+		// plain ZIP containers with the identical magic bytes, so a
+		// second, content-based check (LooksLikeXLSXZip — does it open as
+		// a workbook with at least one sheet) decides between them;
+		// anything ZIP-shaped that is neither falls through to ParseBkp
+		// below exactly as before this card, which already reports
+		// ErrBkpMissingFiles → "bkp_unrecognised" for an unrecognised
+		// ZIP. A legacy binary .xls is a different, OLE2-signed container
+		// entirely (not a ZIP at all) — sniffed separately so it gets its
+		// own specific "save as .xlsx or CSV" message (AC6) instead of
+		// silently falling through to the generic invalid_file one. No
+		// separate page/route; the operator just uploads any of the four.
+		isZip, sniffErr := sniffZipUpload(file)
 		if sniffErr != nil {
 			log.Printf("[import] sniff upload: %v", sniffErr)
 			http.Error(w, T("import.error.invalid_file"), http.StatusBadRequest)
 			return
+		}
+		isBkp, isXLSX := false, false
+		if isZip {
+			// LooksLikeXLSXZip reads via io.ReaderAt only (excelize needs
+			// random access to the ZIP central directory), so it never
+			// moves file's own Seek position — still at 0 here from
+			// sniffZipUpload's own reset above, exactly what ParseBkp/
+			// ParseXLSX below expect to start reading from.
+			isXLSX = catimport.LooksLikeXLSXZip(file, fileSize)
+			isBkp = !isXLSX
+		} else {
+			isLegacyXLS, lerr := sniffLegacyXLSUpload(file)
+			if lerr != nil {
+				log.Printf("[import] sniff upload: %v", lerr)
+				http.Error(w, T("import.error.invalid_file"), http.StatusBadRequest)
+				return
+			}
+			if isLegacyXLS {
+				http.Error(w, T("import.error.xlsx_legacy_unsupported"), http.StatusBadRequest)
+				return
+			}
 		}
 
 		// Same shared registry matcher AddBarcode/the scan path use (ADR-0059
@@ -428,15 +459,21 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		var res catimport.Result
-		if isBkp {
+		switch {
+		case isBkp:
 			res, err = catimport.ParseBkp(file, fileSize, httpx.ActiveCurrency().Decimals, enabledIDs, useItemNumbersAsBarcodes)
-		} else {
+		case isXLSX:
+			res, err = catimport.ParseXLSX(file, fileSize, httpx.ActiveCurrency().Decimals, enabledIDs, useItemNumbersAsBarcodes)
+		default:
 			res, err = catimport.Parse(file, httpx.ActiveCurrency().Decimals, enabledIDs, useItemNumbersAsBarcodes)
 		}
 		if err != nil {
 			switch {
 			case errors.Is(err, catimport.ErrNoNameColumn):
 				http.Error(w, T("import.error.no_name_column"), http.StatusBadRequest)
+				return
+			case errors.Is(err, catimport.ErrXLSXMergedCells):
+				http.Error(w, T("import.error.xlsx_merged_cells"), http.StatusBadRequest)
 				return
 			case errors.Is(err, catimport.ErrBkpMissingFiles), errors.Is(err, catimport.ErrBkpInvalidMeta), errors.Is(err, catimport.ErrBkpTooLarge):
 				// The upload looked like a ZIP but isn't a recognisable
@@ -531,9 +568,12 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					http.Error(w, T("import.error.invalid_file"), http.StatusInternalServerError)
 					return
 				}
-				if isBkp {
+				switch {
+				case isBkp:
 					res, err = catimport.ParseBkp(file, fileSize, chosen.Decimals, enabledIDs, useItemNumbersAsBarcodes)
-				} else {
+				case isXLSX:
+					res, err = catimport.ParseXLSX(file, fileSize, chosen.Decimals, enabledIDs, useItemNumbersAsBarcodes)
+				default:
 					res, err = catimport.Parse(file, chosen.Decimals, enabledIDs, useItemNumbersAsBarcodes)
 				}
 				if err != nil {
@@ -1304,6 +1344,13 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(&b, `<p class="notice-block-warn"><span class="row-warn-icon" aria-hidden="true">⚠</span>%s</p>`,
 				fmt.Sprintf(htmlEscape(T("import.warning.currency_unconfirmed")), htmlEscape(httpx.ActiveCurrency().Code)))
 		}
+		if res.SheetName != "" {
+			// ut-docs#1837 AC2: only the FIRST worksheet is ever read — this
+			// tells the operator which one that was, on both preview and
+			// commit, so a multi-sheet workbook never silently reads a
+			// sheet other than the one they expected.
+			fmt.Fprintf(&b, `<p>%s</p>`, fmt.Sprintf(htmlEscape(T("import.xlsx_sheet_used")), htmlEscape(res.SheetName)))
+		}
 		if commit {
 			// ut-docs#1171: the product owner, importing a real 217-item .bkp
 			// on the Pi till, couldn't tell the commit had actually happened
@@ -1797,6 +1844,26 @@ func sniffZipUpload(file multipart.File) (bool, error) {
 		return false, nil
 	}
 	return bytes.Equal(buf[:], zipMagic) || bytes.Equal(buf[:], zipEmptyMagic), nil
+}
+
+// sniffLegacyXLSUpload mirrors sniffZipUpload's shape (read the header
+// bytes, reset, never leave the upload's Seek position disturbed) but for
+// the OLE2/CFBF signature a legacy binary .xls carries (ut-docs#1837 AC6)
+// — only called once sniffZipUpload has already said "not a ZIP", so this
+// never runs on an actual .xlsx/.bkp upload.
+func sniffLegacyXLSUpload(file multipart.File) (bool, error) {
+	var buf [8]byte
+	n, err := io.ReadFull(file, buf[:])
+	if err != nil && !errors.Is(err, io.ErrUnexpectedEOF) && !errors.Is(err, io.EOF) {
+		return false, fmt.Errorf("read upload header: %w", err)
+	}
+	if _, serr := file.Seek(0, io.SeekStart); serr != nil {
+		return false, fmt.Errorf("reset upload after sniff: %w", serr)
+	}
+	if n < 8 {
+		return false, nil
+	}
+	return catimport.LooksLikeLegacyXLS(buf[:]), nil
 }
 
 // translateImportIssue turns a catimport row-level Issue reason code into
