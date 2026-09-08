@@ -208,6 +208,12 @@ type ImportItem struct {
 type Result struct {
 	Format string // loyverse | square | sumup | generic | generic-erp
 	Items  []ImportItem
+	// SheetName is which worksheet ParseXLSX actually read (ut-docs#1837
+	// AC2) — empty for a CSV/.bkp Result. The pages layer shows it next to
+	// the detected-format line so a multi-sheet workbook never silently
+	// reads a sheet other than the first without the operator being told
+	// which one it was.
+	SheetName string
 }
 
 // column synonym sets, matched case-insensitively against trimmed headers.
