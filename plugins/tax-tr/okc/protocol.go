@@ -141,4 +141,8 @@ var (
 	ErrDriverNotImplemented = errors.New("okc: this device driver is not implemented yet")
 	// ErrUnknownDriver: okc.driver names no driver this build knows.
 	ErrUnknownDriver = errors.New("okc: unknown driver")
+	// ErrNoReceipt: the device answered {"ok":true} but gave no usable
+	// receipt number — not a real print (ut-docs#1763). The till must
+	// treat this exactly like a decline: no receipt, no sale.
+	ErrNoReceipt = errors.New("okc: device answered ok with no receipt number")
 )
