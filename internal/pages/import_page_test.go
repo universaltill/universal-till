@@ -524,7 +524,10 @@ func TestImport_BarcodeAttachFailureStillImportsStock(t *testing.T) {
 // application/zip, and Android's system file picker filters strictly on the
 // file input's accept list — so the widened attribute must actually reach
 // the rendered page, and must not have dropped the existing hints (which
-// would regress desktop/Pi pickers using MIME matching).
+// would regress desktop/Pi pickers using MIME matching). Updated for
+// ut-docs#1837's .xlsx widening (same picker-visibility bug, this time for
+// Excel workbooks) — the literal string grew, but the guarantee this test
+// protects (existing hints never regress) is unchanged.
 func TestImport_FilePickerAcceptsCloudStorageOctetStream(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	dp := newImportTestDeps(t)
@@ -539,9 +542,10 @@ func TestImport_FilePickerAcceptsCloudStorageOctetStream(t *testing.T) {
 		t.Fatalf("GET /import: code %d body %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `accept=".csv,text/csv,.bkp,application/zip,application/octet-stream"`) {
+	if !strings.Contains(body, `accept=".csv,text/csv,.bkp,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/zip,application/octet-stream"`) {
 		t.Fatalf("file input accept must widen to include application/octet-stream "+
-			"(cloud-storage-reported MIME for an unrecognised binary like .bkp) "+
+			"(cloud-storage-reported MIME for an unrecognised binary like .bkp) and "+
+			".xlsx/its real MIME type (ut-docs#1837) "+
 			"without dropping the existing .csv/.bkp/text/csv/application/zip hints, got: %s", body)
 	}
 }
