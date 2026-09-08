@@ -68,6 +68,27 @@ git tag v0.2.1 && git push origin v0.2.1
    "Update now" (verifies the SHA256 against `checksums.txt`, swaps the binary,
    restarts). `.deb` installs update via `apt` instead.
 
+## Nightly builds (testing `main`, not a release)
+
+`.github/workflows/nightly.yml` runs daily (03:00 UTC) plus on manual
+`workflow_dispatch`, and publishes a rolling GitHub **pre-release** tagged
+`nightly` (re-pointed to the latest `main` commit each run, old assets
+replaced) — this is how to get a build of `main` onto a test device
+without cutting a real release. It is a **prerelease**, so `releases/latest`
+(what the auto-updater and the download page read) never resolves to it —
+no existing till can be silently moved onto it.
+
+Scope of this first cut: the core `unitill-pos` server binary + web assets
+for Linux (`amd64`/`arm64`), Windows (`amd64`) and macOS (`arm64`) as plain
+`.tar.gz`/`.zip` archives — no desktop-shell (WebView) build, no Windows
+installer, no notarized macOS `.app`/`.dmg`, no `.deb`, no Android. Version
+string is `<current-stable>-nightly.<date>.<short-sha>` (e.g.
+`0.12.14-nightly.20260908.a1b2c3d4e5f6`), based on the *current* stable
+version rather than a guessed next one so `internal/updates.Newer` keeps
+ranking it correctly once that next stable actually ships. See
+`universaltill/ut-docs#1432` for the beta channel, the till's channel
+setting, and full platform parity — all tracked as separate follow-ups.
+
 ## Notes / gaps
 
 - **macOS is Apple-Silicon only and unsigned** — Gatekeeper warns on first run.
