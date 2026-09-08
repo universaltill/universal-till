@@ -1834,6 +1834,7 @@
   "import.status.created": "created",
   "import.status.barcode_already_in_catalog": "barcode already in catalog",
   "import.status.sku_already_in_catalog": "SKU already in catalog",
+  "import.status.name_already_in_catalog": "name already in catalog",
   "import.status.missing_name": "missing name",
   "import.status.missing_name_and_bad_price": "missing name and bad price: %s",
   "import.status.bad_price": "bad price: %s",

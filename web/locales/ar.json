@@ -1834,6 +1834,7 @@
   "import.status.created": "تم الإنشاء",
   "import.status.barcode_already_in_catalog": "الباركود موجود بالفعل في الكتالوج",
   "import.status.sku_already_in_catalog": "رمز SKU موجود بالفعل في الكتالوج",
+  "import.status.name_already_in_catalog": "الاسم موجود بالفعل في الكتالوج",
   "import.status.missing_name": "الاسم مفقود",
   "import.status.missing_name_and_bad_price": "الاسم مفقود وسعر غير صالح: %s",
   "import.status.bad_price": "سعر غير صالح: %s",
