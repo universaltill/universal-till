@@ -27,5 +27,6 @@ Bu sayfa bu düzeni kasanın tarafından gösterir. Cihazla kendisi konuşmaz ve
 - Cihaz satış başına tek mali fiş basar; bu yüzden ÖKC ödemesi satışın tamamını kapsamalıdır. Cihaz ile başka bir yöntem arasında bölünmüş ödeme reddedilir.
 - Cihaz reddederse, zaman aşımına uğrarsa ya da ulaşılamazsa ödeme reddedilir ve sepet korunur — cihazı ya da ağı düzeltip yeniden deneyin. Reddedilen bir ödeme için iki tarafta da hiçbir şey kaydedilmez.
 - Cihaz başarılı der ama fiş numarası vermezse, kasa da satışı reddeder — bastığına dair kanıt olmadan hiçbir şeyi kaydetmez, "onaylandı" yanıtına asla güvenmez. Yeniden ödeme almadan önce cihazı kontrol edin: kasada kaydı olmasa da para zaten alınmış olabilir; başka bir yöntemle yeniden denemek müşteriden iki kez tahsilat riski taşır.
+- Satışta hiç mali cihaz ödemesi kullanılmadığında da — yalnızca nakit, kart ya da başka bir yöntemle — aynı ret uygulanır. Cihazı bir kez doğrulamak sonraki her satışı kapsamaz; her satış yine kendi **Yazarkasa (ÖKC)** ödemesini gerektirir.
 - **Bugünkü fişler**, raporların kullandığı aynı sınırla, iş günü başlangıcından bu yana cihaz fişlerini sayar.
 - Bu sayfa veri kaydeder ve durumu gösterir. Dükkanınızın cihazının, mükellefiyet sınıfının ve evrakının yükümlülüklerinizi karşılayıp karşılamadığı sizinle mali müşaviriniz arasındadır; sayfa bunu tasdik etmez.

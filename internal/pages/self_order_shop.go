@@ -373,6 +373,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		if err != nil {
 			var declined *paymentDeclinedError
 			var noReceipt *fiscalDeviceNoReceiptError
+			var deviceRequired *fiscalDeviceRequiredError
 			var fiscalNC *fiscalNeverConfiguredError
 			var fiscalTF *fiscalTSEFailingError
 			status := http.StatusBadRequest
@@ -381,13 +382,14 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			case errors.As(err, &declined):
 				status = http.StatusPaymentRequired
 				msgKey = "selforder.checkout.declined"
-			case errors.As(err, &noReceipt):
-				// ut-docs#1779: the device may already have taken the
-				// customer's money before answering with no receipt — an
-				// anonymous kiosk customer can't check the device
-				// themselves, so (like the fiscal hard gate below) this
-				// points them to the counter rather than inviting a
-				// self-service retry that risks a double charge.
+			case errors.As(err, &noReceipt), errors.As(err, &deviceRequired):
+				// ut-docs#1779/#1768: the device may already have taken the
+				// customer's money before answering with no receipt (or, for
+				// #1768, no leg ever used the device at all) — an anonymous
+				// kiosk customer can't check the device themselves, so (like
+				// the fiscal hard gate below) this points them to the
+				// counter rather than inviting a self-service retry that
+				// risks a double charge.
 				status = http.StatusConflict
 				msgKey = "selforder.checkout.fiscal_device_no_receipt"
 			case errors.As(err, &fiscalNC), errors.As(err, &fiscalTF):
