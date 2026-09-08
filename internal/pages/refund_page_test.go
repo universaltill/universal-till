@@ -1757,6 +1757,82 @@ func TestPostRefund_OKCPluginApprovesWithNoEvidence_RefundRefused(t *testing.T) 
 	}
 }
 
+// TestPostRefund_UppercaseOKCMethod_StillRoutesToPluginAndFailsClosed is
+// ut-docs#1795: a refund whose `method` form field is cased differently
+// from the installed plugin entry's key ("OKC" vs the tax-tr manifest's
+// "okc") must behave IDENTICALLY to the exact-case request above -- routed
+// to the real OKC plugin, and refused when that plugin approves with no
+// receipt evidence. Before this card's fix, refund_page.go only
+// strings.TrimSpace'd the form value (no case-fold), so the case mismatch
+// made blockingPaymentEventWithResponseAndID's exact-string EntryKey
+// lookup miss entirely: the plugin was never invoked (confirmed via the
+// counter below), and the case-sensitive `method == fiscal.MethodKeyOKC`
+// fail-closed check also never matched -- the refund silently completed as
+// an ordinary non-plugin refund instead of being routed to (or refused by)
+// the fiscal-device path, exactly the scenario this card's issue body
+// describes.
+func TestPostRefund_UppercaseOKCMethod_StillRoutesToPluginAndFailsClosed(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.tax-tr', '1.0.0', 'Turkiye fiscal device', 'okc', 'wasm', 'plugin.wasm', 'https://example.test/tax-tr.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.tax-tr', 'Turkiye fiscal device', '1.0.0', 'plugin.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e1', 'com.universaltill.tax-tr', 'okc', 'Yazarkasa (OKC)', 'payment', 'payment.okc.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h1', 'com.universaltill.tax-tr', 'payment.okc.refund', 'handle_refund', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p1', 'com.universaltill.tax-tr', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.okc.refund", plugins.Blocking)
+	invoked := false
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-tr",
+		[]string{"payment.okc.refund"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			invoked = true
+			// Approved (nil error = not a decline), but no `fiscal_device`
+			// object at all -- same shape as the exact-case test above.
+			return json.RawMessage(`{"provider":"okc","outcome":"approved"}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2&method=OKC"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if !invoked {
+		t.Fatal("expected the OKC plugin's payment.okc.refund handler to be invoked for method \"OKC\" (case-insensitive routing) — it was never called")
+	}
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("expected 402 (refused -- no fiscal-device evidence), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales WHERE sale_type = 'return'`).Scan(&count); err != nil {
+		t.Fatalf("query sales: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no return to be recorded when the OKC plugin approved the refund with no receipt evidence, got %d", count)
+	}
+}
+
 // TestPostRefund_OKCPluginApprovesWithEvidence_RefundCompletes is the
 // positive-path sibling of TestPostRefund_OKCPluginApprovesWithNoEvidence_RefundRefused
 // (independent review, ut-docs#1788): with nothing else changed, an OKC

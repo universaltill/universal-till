@@ -751,7 +751,16 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			http.Error(w, "select at least one item to refund", http.StatusBadRequest)
 			return
 		}
-		method := strings.TrimSpace(r.Form.Get("method"))
+		// ut-docs#1795: canonicalize case here, once, at the boundary --
+		// every downstream use (EnsurePaymentMethod, the persisted
+		// PaymentInput.MethodID, the plugin-entry lookup in
+		// blockingPaymentEventWithResponseAndID, and the fiscal.MethodKeyOKC
+		// fail-closed check below) then agrees on one form. Lowercasing
+		// here rather than making each comparison site case-insensitive
+		// avoids a differently-cased request minting a second, orphaned
+		// payment_methods row via EnsurePaymentMethod (e.g. "OKC" alongside
+		// the real "okc") while the routing/gate checks still matched.
+		method := strings.ToLower(strings.TrimSpace(r.Form.Get("method")))
 		if method == "" {
 			method = "cash"
 		}
