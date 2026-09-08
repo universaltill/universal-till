@@ -3,6 +3,7 @@ package fiscal
 import (
 	"encoding/json"
 	"strings"
+	"unicode"
 )
 
 // Fiscal *device* markets — Turkey's YN ÖKC (Law No. 3100) today.
@@ -57,7 +58,23 @@ type DeviceEvidence struct {
 // Valid reports whether the evidence carries the one field that makes it
 // evidence: a device receipt number.
 func (e *DeviceEvidence) Valid() bool {
-	return e != nil && strings.TrimSpace(e.ReceiptNo) != ""
+	return e != nil && !isBlankReceiptNo(e.ReceiptNo)
+}
+
+// isBlankReceiptNo reports whether s has no usable content once both
+// Unicode whitespace AND invisible "format" characters (category Cf —
+// zero-width space U+200B, the BOM/ZWNBSP U+FEFF, joiners, …) are
+// stripped. strings.TrimSpace/unicode.IsSpace alone do not cover Cf, so a
+// receipt_no consisting only of e.g. a zero-width space passed a plain
+// TrimSpace-based emptiness check and was persisted as a "valid" receipt
+// that rendered blank everywhere (ut-docs#1781).
+func isBlankReceiptNo(s string) bool {
+	for _, r := range s {
+		if !unicode.IsSpace(r) && !unicode.In(r, unicode.Cf) {
+			return false
+		}
+	}
+	return true
 }
 
 // ParseDeviceEvidence extracts the optional `fiscal_device` object from a
