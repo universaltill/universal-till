@@ -382,6 +382,18 @@ type Basket struct {
 	// empty when the sale has none.
 	TableID    string `json:"tableId,omitempty"`
 	TableLabel string `json:"tableLabel,omitempty"`
+	// VoucherID/VoucherBalance (ut-docs#1833) are the Gutschein a scan just
+	// resolved and is now offered as tender -- both empty/zero when no
+	// voucher is pending. VoucherBalance is the balance AT SCAN TIME (never
+	// re-read live), money.Money per this repo's money rule, never a float.
+	// Set by Service.SetPendingVoucher, cleared by resetLocked directly on
+	// sale completion (same point CustomerID/CustomerName
+	// are cleared) so a redeemed or abandoned voucher never leaks into the
+	// next sale. Neither field is totals-relevant -- commitTotalsLocked
+	// never touches them, so, like ToastMessage, they survive every
+	// recompute untouched until explicitly changed.
+	VoucherID      string      `json:"voucherId,omitempty"`
+	VoucherBalance money.Money `json:"voucherBalance,omitempty"`
 }
 
 // HasDineInLine reports whether any line is consumed on the premises --
@@ -1350,6 +1362,12 @@ func (s *Service) resetLocked() {
 	s.tableID = ""
 	s.tableLabel = ""
 	s.tenderAttemptID = ""
+	// ut-docs#1833: s.basket = Basket{} above already zeroes
+	// VoucherID/VoucherBalance, same as it does for CustomerID/CustomerName
+	// -- a completed/abandoned sale's pending voucher must never leak into
+	// the next one. Unlike customerID/tableID, voucher state has no
+	// separate private mirror field to also clear here (nothing reads it
+	// outside the Basket itself).
 }
 
 func (s *Service) clearCacheForCode(code string) {
@@ -1478,6 +1496,21 @@ func (s *Service) setCustomerLocked(id, name string) {
 	s.customerName = name
 	s.basket.CustomerID = id
 	s.basket.CustomerName = name
+}
+
+// SetPendingVoucher stashes the voucher a scan just resolved (ut-docs#1833)
+// on the Basket so the sale screen can offer its balance as a tender
+// option. Not totals-relevant, so unlike SetCustomerID this never bumps
+// recomputeGen -- no in-flight optimistic recompute (ut-docs#1317) can
+// overwrite it, because commitTotalsLocked never writes
+// VoucherID/VoucherBalance at all (same reasoning as ToastMessage, see its
+// own doc comment). No separate private mirror field, unlike
+// customerID/tableID -- nothing outside the Basket needs a direct getter.
+func (s *Service) SetPendingVoucher(id string, balance money.Money) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.basket.VoucherID = id
+	s.basket.VoucherBalance = balance
 }
 
 // // simple in-memory resolver

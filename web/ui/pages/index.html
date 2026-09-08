@@ -341,6 +341,28 @@
             <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"card"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T "tender.card" }}</button>
             {{ end }}
+            <!-- Pay with the scanned Gutschein (ut-docs#1833): this button is
+                 static markup (present on every page load, like the pay
+                 methods above) but starts `hidden` -- the basket fragment
+                 that /ui/basket / every #basket swap renders isn't this
+                 overlay, so a fixed-at-load pay-grid can't itself react to
+                 a scan the way #basket does. Instead this mirrors the
+                 fee-hint mechanism directly below (same htmx:afterSwap
+                 hook, same read-a-data-attribute-off-#basket shape): the
+                 script shows/hides/relabels it and rewrites its own
+                 hx-vals from the swapped basket's data-voucher-* attributes
+                 (basket.html) every time #basket changes. amount is
+                 min(voucher balance, amount still due) computed there in
+                 plain integer minor units -- never a float -- so a voucher
+                 covering less than the sale still pays the covered part in
+                 one tap while leaving the rest for another payment; a
+                 voucher covering more leaves its own remaining balance
+                 untouched (partial redemption). data-testid is static so
+                 e2e can address it regardless of the current label. -->
+            <button class="btn pay-btn" type="button" id="pay-voucher-btn" hidden data-testid="pay-voucher"
+                    hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"voucher","voucher_id":""}' hx-include="#offline-flag"
+                    hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
+                    hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }"></button>
           </div>
           <label class="offline-toggle">
             <input type="checkbox" id="offline-override"> {{ T "kiosk.offline" }}
@@ -364,6 +386,33 @@
             var fee = Math.round(total * (f.bp || 0) / 10000) + (f.fixed || 0);
             s.textContent = ' ≈ −' + (window.utCurrency ? window.utCurrency.format(fee) : fee);
           });
+        }
+        document.body.addEventListener('htmx:afterSwap', refresh);
+        document.addEventListener('DOMContentLoaded', refresh);
+      })();
+      // Pay-with-voucher button (ut-docs#1833): shown/relabeled off the
+      // #basket fragment's own data-voucher-* attributes (basket.html) --
+      // same refresh-on-swap shape as the fee-hint IIFE just above, since
+      // this static pay-grid button can't otherwise react to a scan.
+      (function () {
+        var T = { payVoucher: "{{ T "tender.pay_voucher" }}" };
+        function fmt(template, a, b) {
+          return String(template || '').replace('%s', a).replace('%s', b);
+        }
+        function refresh() {
+          var btn = document.getElementById('pay-voucher-btn');
+          if (!btn) return;
+          var basket = document.getElementById('basket');
+          var id = basket ? basket.getAttribute('data-voucher-id') : '';
+          if (!basket || !id) { btn.hidden = true; return; }
+          var balance = parseInt(basket.getAttribute('data-voucher-balance-minor') || '0', 10);
+          var totalEl = basket.querySelector('.total');
+          var due = totalEl ? parseInt(totalEl.getAttribute('data-minor') || '0', 10) : 0;
+          var amount = Math.max(0, Math.min(balance, due));
+          var balanceLabel = window.utCurrency ? window.utCurrency.format(balance) : balance;
+          btn.textContent = fmt(T.payVoucher, id, balanceLabel);
+          btn.setAttribute('hx-vals', JSON.stringify({ amount: amount, method: 'voucher', voucher_id: id }));
+          btn.hidden = false;
         }
         document.body.addEventListener('htmx:afterSwap', refresh);
         document.addEventListener('DOMContentLoaded', refresh);
