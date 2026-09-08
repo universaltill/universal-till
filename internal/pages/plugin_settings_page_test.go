@@ -1005,7 +1005,12 @@ func TestPluginSettingsPage_GET_AIPluginAPIKeyShowsHostedProviderNotice(t *testi
 	seedAIPluginRows(t, dp.Db, true)
 	seedPluginSetting(t, dp, AIPluginID, "provider", "self_hosted", "global")
 	seedPluginSetting(t, dp, AIPluginID, "endpoint", "http://localhost:11434", "global")
-	seedPluginSetting(t, dp, AIPluginID, "api_key", "", "global")
+	// A real value, not empty (review finding, ut-docs#1708): the empty seed
+	// this test used before couldn't distinguish "masked" from "nothing to
+	// leak in the first place". TestPluginSettingsPage_GET_RendersPlainValueAndMasksSecret
+	// already proves the underlying isSecret/masking path generically; this
+	// asserts the same property specifically for the AI plugin's own key.
+	seedPluginSetting(t, dp, AIPluginID, "api_key", "sk-ant-should-never-render", "global")
 	seedPluginSetting(t, dp, "p1", "api_key", "other-plugins-secret", "global")
 
 	notice := httpx.T("en", "plugins.settings.ai.hosted_provider_notice")
@@ -1036,6 +1041,9 @@ func TestPluginSettingsPage_GET_AIPluginAPIKeyShowsHostedProviderNotice(t *testi
 	}
 	if !strings.Contains(body, `type="password" name="setting_api_key"`) {
 		t.Fatalf("api_key must still render masked, got:\n%s", body)
+	}
+	if strings.Contains(body, "sk-ant-should-never-render") {
+		t.Fatal("the AI plugin's own api_key value must never render into the page")
 	}
 
 	// Another plugin's api_key is a plain secret field: no notice.

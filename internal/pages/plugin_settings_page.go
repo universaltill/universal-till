@@ -76,7 +76,11 @@ func isTaxRateOverridesKey(key string) bool {
 // ut-docs#1708): an operator must read what a hosted vendor receives before
 // they can type a key, so the notice is scoped to that plugin's that key —
 // not to every plugin's every secret field (same per-plugin-key
-// special-case family as isTaxRateOverridesKey).
+// special-case family as isTaxRateOverridesKey). The template only renders
+// this inside the `.Secret` branch (review finding, ut-docs#1708) — every
+// key this returns non-"" for today also matches the secret heuristic, so
+// that's never been observed, but a future adopter on a plain-text setting
+// would get a silently-dropped notice; wire a non-secret render path first.
 func settingNoticeKey(pluginID, key string) string {
 	if pluginID == AIPluginID && key == "api_key" {
 		return "plugins.settings.ai.hosted_provider_notice"

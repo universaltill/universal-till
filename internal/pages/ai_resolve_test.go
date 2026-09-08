@@ -171,6 +171,25 @@ func TestAIResolve_ClaudeWithKeySelectsClaude(t *testing.T) {
 	}
 }
 
+// Whitespace around an otherwise-exact "claude" is a stray space, not a
+// different provider — aiPluginConfig trims every setting value the same
+// way endpoint/vision_model/ask_model already were before this card, so
+// " claude " DOES select the hosted vendor (review finding, ut-docs#1708:
+// pin this deliberately rather than leaving it as an untested side effect
+// of the shared trim, since it's the one input that resolves forward to a
+// paid API without being byte-identical to the literal ADR-0085 wording).
+func TestAIResolve_WhitespacePaddedClaudeStillSelectsHosted(t *testing.T) {
+	dp := newAIResolveDeps(t, true)
+	setAISetting(t, dp, "provider", "  claude  ", false)
+	setAISetting(t, dp, "api_key", "sk-ant-shop-own-key", true)
+
+	cfg := resolveAIConfig(t.Context(), dp)
+	want := ai.Config{Provider: "claude", APIKey: "sk-ant-shop-own-key", Model: ai.DefaultClaudeModel}
+	if cfg != want {
+		t.Fatalf("got %+v, want %+v", cfg, want)
+	}
+}
+
 // provider=claude with no key is "not configured", not "use Ollama instead":
 // the shop chose a hosted vendor, so silently running its catalog against a
 // leftover Ollama endpoint would do something it didn't ask for. It falls
