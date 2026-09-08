@@ -101,7 +101,7 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 	renderPage := func(w http.ResponseWriter, r *http.Request, errKey string) {
 		countries, err := countryRepo.List(r.Context())
 		if err != nil {
-			http.Error(w, "failed to load country settings", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
 

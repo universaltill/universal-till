@@ -62,7 +62,7 @@ func registerLocations(mux *http.ServeMux, d *common.Deps) {
 	renderLocations := func(w http.ResponseWriter, r *http.Request, errKey string) {
 		locs, err := posRepo.ListStockLocationsForAdmin(r.Context())
 		if err != nil {
-			http.Error(w, "failed to load locations", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
 		httpx.Render("ui/pages/locations.html", map[string]any{

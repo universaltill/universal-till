@@ -42,7 +42,7 @@ func registerAuditPage(mux *http.ServeMux, d *common.Deps) {
 
 		entries, err := repo.ListAudit(r.Context(), filters)
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "audit.error.server", "audit", err) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "audit.error.server", err)
 			return
 		}
 		entityTypes, _ := repo.DistinctAuditEntityTypes(r.Context())

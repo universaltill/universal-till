@@ -82,7 +82,7 @@ func TestAuditPage_ManagerOnlyAndRendersRealData(t *testing.T) {
 
 // A repo failure on GET /audit must never leak the raw Go/SQL error to the
 // operator (ut-docs#893, the wider sweep #316 deferred) — it goes through
-// common.LogAndLocalizedError like catalog/handlers.go's sites already do.
+// httpx.RenderError (ut-docs#1663), same as catalog/handlers.go's sites.
 func TestAuditPage_RepoErrorNeverLeaksRawErrorToBody(t *testing.T) {
 	chdirRoot(t)
 	db := openPagesTestDB(t)
@@ -124,8 +124,12 @@ func TestAuditPage_RepoErrorNeverLeaksRawErrorToBody(t *testing.T) {
 	if strings.Contains(body, "no such table") || strings.Contains(body, "audit_log") {
 		t.Fatalf("response leaked the raw driver error: %q", body)
 	}
-	if want := httpx.T("en", "audit.error.server"); strings.TrimSpace(body) != want {
-		t.Fatalf("expected the translated message %q, got %q", want, body)
+	// ut-docs#1663: this site now renders through httpx.RenderError (the
+	// full base-layout error page, with rail/back-to-sale), not a bare
+	// LogAndLocalizedError fragment — so the translated message is
+	// somewhere in the page, not the entire trimmed body.
+	if want := httpx.T("en", "audit.error.server"); !strings.Contains(body, want) {
+		t.Fatalf("expected the translated message %q in the response, got %q", want, body)
 	}
 }
 
