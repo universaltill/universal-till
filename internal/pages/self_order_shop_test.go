@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -517,6 +518,108 @@ func TestSelfOrderShop_CheckoutHappyPath(t *testing.T) {
 	}
 	if cashierID != "kiosk" {
 		t.Fatalf("kiosk sale must be attributed to the seeded 'kiosk' operator, got %q", cashierID)
+	}
+}
+
+// TestSelfOrderShop_CheckoutViaFiscalDevice_RecordsAuditMarkerUnderKioskActor
+// is ut-docs#1765, split from the ut-docs#1750 independent review's finding
+// 4: "the kiosk actor breaks the audit marker" — audit_log.actor_id FKs to
+// users(id) and self-order passes the literal "kiosk", so the review
+// expected fiscal_device_hook.go's recordFiscalDeviceEvidence to silently
+// drop the fiscal_device_confirmed marker for a kiosk-originated sale.
+// That does not reproduce: 001_init.sql seeds "kiosk" as a real users row
+// (the same row TestSelfOrderShop_CheckoutHappyPath's cashier_id assertion
+// already relies on), so actor_id="kiosk" satisfies the FK, and
+// completeTender already threads its actorID parameter through to
+// recordFiscalDeviceEvidence unchanged. What was missing was a test that
+// drives a real kiosk checkout through the OKC fiscal-device plugin path
+// (every existing fiscal-device audit test uses a manually-seeded cashier
+// actor instead) and checks the marker's actor_id directly, per this
+// card's acceptance criterion 2. This is a regression guard, not a fix.
+func TestSelfOrderShop_CheckoutViaFiscalDevice_RecordsAuditMarkerUnderKioskActor(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+	// fiscalDeviceMarketActive reads CurrentState().Country, which is a
+	// plain field copy (common.Deps.CurrentState), not re-derived from the
+	// settings store — so it must be set directly, the same as production's
+	// own RederiveState after a country change (fiscal_country_change.go).
+	dp.State.Country = "TR"
+
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.tax-tr', '1.0.0', 'Turkiye fiscal device', 'okc', 'wasm', 'plugin.wasm', 'https://example.test/tax-tr.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.tax-tr', 'Turkiye fiscal device', '1.0.0', 'plugin.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e1', 'com.universaltill.tax-tr', 'okc', 'Yazarkasa (OKC)', 'payment', 'payment.okc.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h1', 'com.universaltill.tax-tr', 'payment.okc.authorize', 'handle_authorize', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p1', 'com.universaltill.tax-tr', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO payment_methods (id, name, type, is_active, sort_order, plugin_id) VALUES ('okc', 'Yazarkasa (OKC)', 'card', 1, 10, 'com.universaltill.tax-tr')`); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.okc.authorize", plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-tr",
+		[]string{"payment.okc.authorize"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			return json.RawMessage(`{"provider":"okc","outcome":"approved","fiscal_device":{"receipt_no":"0000001"}}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+	post("/api/self-order/scan", "code=5000001")
+
+	rec := post("/api/self-order/checkout", "method=okc")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("POST checkout: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var saleID, cashierID string
+	if err := d.DB.QueryRow(`SELECT id, cashier_id FROM sales WHERE status = 'completed'`).Scan(&saleID, &cashierID); err != nil {
+		t.Fatalf("expected a completed sale row: %v", err)
+	}
+	if cashierID != "kiosk" {
+		t.Fatalf("kiosk sale must be attributed to the seeded 'kiosk' operator, got %q", cashierID)
+	}
+
+	repo := data.NewPOSRepo(dp.Db)
+	if ok, err := repo.HasAuditEntry(context.Background(), "fiscal_device", saleID, fiscalDeviceAuditConfirmed); err != nil {
+		t.Fatalf("HasAuditEntry: %v", err)
+	} else if !ok {
+		t.Fatal("expected a fiscal_device_confirmed audit marker for the kiosk sale's first device receipt, got none — the marker was silently dropped")
+	}
+
+	var markerActor sql.NullString
+	if err := dp.Db.QueryRow(`SELECT actor_id FROM audit_log WHERE entity_type = 'fiscal_device' AND entity_id = ? AND action = ?`,
+		saleID, fiscalDeviceAuditConfirmed).Scan(&markerActor); err != nil {
+		t.Fatalf("read fiscal_device_confirmed marker: %v", err)
+	}
+	if !markerActor.Valid || markerActor.String != "kiosk" {
+		t.Fatalf("fiscal_device_confirmed marker's actor_id = %+v, want the truthful, distinguishable %q actor — never blank or a borrowed user", markerActor, "kiosk")
 	}
 }
 
