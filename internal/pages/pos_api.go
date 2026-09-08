@@ -667,12 +667,19 @@ func classifyTenderError(err error) string {
 		return "pos.toast.voucher_invalid"
 	case errors.Is(err, pos.ErrVoucherOvertender):
 		return "pos.toast.voucher_overtender"
+	// ut-docs#1832: with the "Sell a voucher" UI an operator types a
+	// preprinted card's code by hand, so a code already in use (a typo, or
+	// a card sold twice) is a real, everyday path now — it gets its own
+	// wording instead of the generic "could not be completed".
+	case errors.Is(err, data.ErrVoucherIDExists):
+		return "pos.toast.voucher_code_exists"
 	// ADR-0084/ut-docs#1716: both reuse the existing generic "this voucher
-	// can't be redeemed as given" key rather than adding a new one —
-	// neither is reachable through any shipped voucher-tender UI today (no
-	// template constructs two payment legs against the same voucher, and
-	// the amount-mismatch sentinel is unreachable from this repo's own
-	// client), so a dedicated message would have no real audience yet.
+	// can't be redeemed as given" key rather than adding a new one. The
+	// duplicate-leg case IS reachable from the Split tab since ut-docs#1832
+	// (an operator can add two voucher payments with the same code); the
+	// generic wording still fits — the voucher can't be redeemed as given
+	// — and the amount-mismatch sentinel stays unreachable from this
+	// repo's own client.
 	case errors.Is(err, pos.ErrDuplicateVoucherPayment), errors.Is(err, data.ErrVoucherRedemptionAmountMismatch):
 		return "pos.toast.voucher_invalid"
 	default:
@@ -1075,8 +1082,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// VAT bands, included in the amount the customer owes. Code is
 			// the optional preprinted voucher identifier (generated when
 			// empty); HolderLabel an optional free-text holder name.
-			// Currently API-only — no cashier dialog builds this yet (the
-			// card's accepted minimal entry point; UI pass is a follow-up).
+			// Built by the Split tab's "Sell a voucher" section
+			// (web/public/app.js initSplitTender, ut-docs#1832) on the
+			// same POST as the payments — sent as an empty list when
+			// nothing is pending.
 			IssueVouchers []struct {
 				Amount      int64  `json:"amount"`
 				Code        string `json:"code,omitempty"`
@@ -1658,8 +1667,17 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if devErr != nil {
 			deviceReceipt = nil
 		}
+		// ut-docs#1832: the codes of every voucher this sale issued. No new
+		// return value is needed: SaleInput.VoucherIssues is a slice, and
+		// CompleteSale's normalization (assigning a uuid where the code was
+		// blank) writes into the SAME backing array voucherIssues points at,
+		// so by now it already holds the final codes.
+		var issuedVouchers []receiptVoucherIssue
+		for _, v := range voucherIssues {
+			issuedVouchers = append(issuedVouchers, receiptVoucherIssue{Code: v.VoucherID, Amount: v.Amount.Minor()})
+		}
 		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable, unsignedOverride, unsignedFiscalSigning, unsignedCannotSign, tseSignature, deviceReceipt,
-			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d), tableLabelForReceipt)
+			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d), tableLabelForReceipt, issuedVouchers)
 		if renderErr != nil {
 			printerUnavailable = true
 			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" onclick="window.print()">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`
@@ -1739,12 +1757,25 @@ type receiptPayment struct {
 	Change    int64
 	Tip       int64
 	Reference string
+	// VoucherID (ut-docs#1832): the code of the tracked voucher this
+	// payment debited — the customer's proof of which voucher was used.
+	VoucherID string
 	// MaskedPAN/AuthCode are the standard EC-receipt line (ut-docs#543) --
 	// shown instead of Reference when a card-present payment supplied
 	// them. Already-masked by the time it reaches here (pos.CompleteSale
 	// validates this at persistence); never the full PAN.
 	MaskedPAN string
 	AuthCode  string
+}
+
+// receiptVoucherIssue is the receipt's view of one voucher this sale
+// issued (ut-docs#1832): the FINAL code — the operator's preprinted one, or
+// the uuid pos.CompleteSale generated for a blank code — and its face
+// value. The receipt is the only place a generated code is ever shown, so
+// this block is what lets the customer actually spend it later.
+type receiptVoucherIssue struct {
+	Code   string
+	Amount int64
 }
 
 type receiptLegalBlock struct {
@@ -1893,7 +1924,7 @@ func normalizeLegalLines(text string, lines []string) []string {
 	return out
 }
 
-func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, deviceReceipt *data.FiscalDeviceReceipt, storeName string, design receiptDesign, tableLabel string) (string, error) {
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, deviceReceipt *data.FiscalDeviceReceipt, storeName string, design receiptDesign, tableLabel string, issuedVouchers []receiptVoucherIssue) (string, error) {
 	// Fixed file set, parsed once and cloned per call thereafter
 	// (ut-docs#1320) — this runs on every completed sale.
 	t, err := httpx.ClonedTemplate("pages.renderReceipt", "receipt.html", funcs,
@@ -1947,6 +1978,7 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 			Change:    p.ChangeGiven.Minor(),
 			Tip:       p.TipAmount.Minor(),
 			Reference: p.Reference,
+			VoucherID: p.VoucherID,
 			MaskedPAN: p.MaskedPAN,
 			AuthCode:  p.AuthCode,
 		})
@@ -1977,6 +2009,7 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		// per-line marker; uniform sales render exactly as before.
 		"MixedOrder":         mixed,
 		"Payments":           paymentViews,
+		"IssuedVouchers":     issuedVouchers,
 		"Subtotal":           subtotal,
 		"TaxTotal":           taxTotal,
 		"SaleDiscount":       saleDiscount,

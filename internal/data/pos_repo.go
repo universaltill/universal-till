@@ -6638,8 +6638,13 @@ ORDER BY id
 
 // PaymentMethod is an active tender method offered on the Pay tab.
 type PaymentMethod struct {
-	ID       string
-	Name     string
+	ID   string
+	Name string
+	// Type is the payment_methods.type column ('cash', 'card', 'voucher',
+	// …). ut-docs#1832: the sale screen keeps a 'voucher' type out of the
+	// one-tap Pay grid (a tracked redemption needs a voucher id, which that
+	// grid has no field for) and offers it in the Split select instead.
+	Type     string
 	PluginID string // empty for built-ins
 }
 
@@ -6647,7 +6652,7 @@ type PaymentMethod struct {
 // built-ins first (sort_order), then plugin-provided ones.
 func (r *POSRepo) ListActivePaymentMethods(ctx context.Context) ([]PaymentMethod, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, COALESCE(plugin_id, '')
+SELECT id, name, type, COALESCE(plugin_id, '')
 FROM payment_methods WHERE is_active = 1 ORDER BY sort_order, id`)
 	if err != nil {
 		return nil, fmt.Errorf("list payment methods: %w", err)
@@ -6656,7 +6661,7 @@ FROM payment_methods WHERE is_active = 1 ORDER BY sort_order, id`)
 	var out []PaymentMethod
 	for rows.Next() {
 		var m PaymentMethod
-		if err := rows.Scan(&m.ID, &m.Name, &m.PluginID); err != nil {
+		if err := rows.Scan(&m.ID, &m.Name, &m.Type, &m.PluginID); err != nil {
 			return nil, fmt.Errorf("scan payment method: %w", err)
 		}
 		out = append(out, m)
@@ -6669,7 +6674,7 @@ FROM payment_methods WHERE is_active = 1 ORDER BY sort_order, id`)
 // v1: card/contactless only).
 func (r *POSRepo) ListActiveNonCashPaymentMethods(ctx context.Context) ([]PaymentMethod, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, COALESCE(plugin_id, '')
+SELECT id, name, type, COALESCE(plugin_id, '')
 FROM payment_methods WHERE is_active = 1 AND type != 'cash' ORDER BY sort_order, id`)
 	if err != nil {
 		return nil, fmt.Errorf("list non-cash payment methods: %w", err)
@@ -6678,7 +6683,7 @@ FROM payment_methods WHERE is_active = 1 AND type != 'cash' ORDER BY sort_order,
 	var out []PaymentMethod
 	for rows.Next() {
 		var m PaymentMethod
-		if err := rows.Scan(&m.ID, &m.Name, &m.PluginID); err != nil {
+		if err := rows.Scan(&m.ID, &m.Name, &m.Type, &m.PluginID); err != nil {
 			return nil, fmt.Errorf("scan payment method: %w", err)
 		}
 		out = append(out, m)

@@ -69,9 +69,26 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 				}
 			}
 		}
+		// The Split <select> gets the FULL list — ut-docs#1832: that's the
+		// one place a voucher-type method (the built-in 'voucher' row that
+		// pos.CompleteSale keys tracked redemptions on, and the legacy
+		// 'gift' row) belongs, next to the voucher-id field app.js reveals
+		// for it.
 		methods := make([]string, 0, len(payMethods))
 		for _, m := range payMethods {
 			methods = append(methods, m.ID)
+		}
+		// The Pay grid and the ⚡ quick-pay button get the list WITHOUT
+		// voucher-type methods: those buttons tender "everything owed" in
+		// one tap with no further input, and a voucher redemption needs a
+		// voucher id (and refuses change), which the grid has no field for
+		// — CompleteSale would reject the payment, or worse, record an
+		// untracked 'gift' tender that debits no voucher at all.
+		gridMethods := make([]data.PaymentMethod, 0, len(payMethods))
+		for _, m := range payMethods {
+			if m.Type != "voucher" {
+				gridMethods = append(gridMethods, m)
+			}
 		}
 		// Per-provider fee rules (B4 cost-rules): manager-entered percent
 		// (basis points) + fixed (minor units); the tender UI shows a live
@@ -99,13 +116,18 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		}
 		defaultMethod := methods[0]
 		// ut-docs#1336: one-tap quick pay in the default view's footer.
-		// payMethods is already preferred-method-first (the reorder above),
-		// so its head IS the shop's default; nil when no method rows exist,
-		// which the template mirrors with the same hardcoded-cash fallback
-		// the overlay's own pay-grid `{{ else }}` branch uses.
+		// gridMethods is already preferred-method-first (the reorder above
+		// ran on payMethods before the voucher filter), so its head IS the
+		// shop's default; nil when no one-tap method row exists, which the
+		// template mirrors with the same hardcoded-cash fallback the
+		// overlay's own pay-grid `{{ else }}` branch uses. The Split
+		// select's preselected method follows the same head (ut-docs#1832):
+		// a voucher-type default there would open the tab on a method whose
+		// voucher-id field the operator hasn't asked for yet.
 		var defaultPayMethod *data.PaymentMethod
-		if len(payMethods) > 0 {
-			defaultPayMethod = &payMethods[0]
+		if len(gridMethods) > 0 {
+			defaultPayMethod = &gridMethods[0]
+			defaultMethod = gridMethods[0].ID
 		}
 		// German TSE hard gate (ADR-0048): while an owner override window is
 		// active, the sale screen shows a persistent banner — sales are
@@ -144,7 +166,7 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			"paymentMethods":       methods,
 			"paymentFeesJSON":      template.JS(feesJSON),
 			"paymentMethodDefault": defaultMethod,
-			"payMethods":           payMethods,
+			"payMethods":           gridMethods,
 			"defaultPayMethod":     defaultPayMethod,
 			"aiIdentify":           aiService(r.Context(), d).Enabled(),
 			"fiscalOverrideActive": fiscalOverrideActive,

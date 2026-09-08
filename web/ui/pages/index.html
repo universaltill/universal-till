@@ -390,7 +390,15 @@
          data-msg-sale-completed="{{ T "tender.status.sale_completed" }}"
          data-msg-network-error="{{ T "tender.status.network_error" }}"
          data-msg-cleared="{{ T "tender.status.cleared" }}"
-         data-msg-removed="{{ T "tender.status.removed" }}">
+         data-msg-removed="{{ T "tender.status.removed" }}"
+         data-msg-voucher-id-required="{{ T "tender.status.voucher_id_required" }}"
+         data-msg-voucher-balance="{{ T "tender.status.voucher_balance" }}"
+         data-msg-voucher-invalid="{{ T "pos.toast.voucher_invalid" }}"
+         data-msg-voucher-check-unavailable="{{ T "tender.status.voucher_check_unavailable" }}"
+         data-msg-voucher-added="{{ T "tender.status.voucher_added" }}"
+         data-msg-voucher-removed="{{ T "tender.status.voucher_removed" }}"
+         data-msg-voucher-auto-code="{{ T "tender.issue_voucher.auto_code" }}"
+         data-msg-no-pending-vouchers="{{ T "tender.issue_voucher.no_pending" }}">
       <form class="split-tender-form" id="split-tender-form" autocomplete="off">
         {{ $default := .paymentMethodDefault }}
         <div class="split-grid">
@@ -414,9 +422,32 @@
                  rejects a non-positive amount. -->
             <input type="text" inputmode="decimal" name="amount" {{ moneypattern currency.Decimals false }} {{ moneyplaceholder currency.Decimals 0 }} required>
           </label>
-          <label>{{ T "tender.change" }}
-            <input type="text" inputmode="decimal" name="change" {{ moneypattern currency.Decimals false }} value="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}">
-          </label>
+          <!-- ut-docs#1832: tracked voucher REDEMPTION. Shown by app.js only
+               while the selected method is the built-in "voucher" one (the
+               only id pos.CompleteSale honours voucher_id on — the legacy
+               'gift' method stays a generic, untracked tender and never
+               reveals this). Check balance is best-effort: it reads the
+               existing GET /api/vouchers/{id} so the operator sees the
+               balance before committing, and its failure never blocks Add
+               Payment — the real validation happens offline-safe on the
+               tender POST, whose rejection toast app.js already surfaces
+               (pos.toast.voucher_*). Wrapped in a div, not the label,
+               because .split-tender-form label carries display:flex, which
+               would out-rank the hidden attribute. -->
+          <div id="split-tender-voucher-field" class="split-voucher-field" hidden>
+            <label>{{ T "tender.voucher_id" }} {{ helpLink "vouchers" }}
+              <input type="text" name="voucher_id" placeholder="{{ T "tender.voucher_id_placeholder" }}" maxlength="64" autocapitalize="characters" spellcheck="false">
+            </label>
+            <button class="btn secondary" type="button" id="split-tender-voucher-check">{{ T "tender.voucher_check" }}</button>
+          </div>
+          <!-- Same wrapper reasoning: a voucher redemption can't give change
+               (sales.go rejects it), so app.js hides this field and forces
+               0 while the voucher method is selected. -->
+          <div id="split-tender-change-field">
+            <label>{{ T "tender.change" }}
+              <input type="text" inputmode="decimal" name="change" {{ moneypattern currency.Decimals false }} value="{{ if eq currency.Decimals 0 }}0{{ else }}0.00{{ end }}">
+            </label>
+          </div>
           <label>{{ T "tender.reference" }}
             <input type="text" name="reference" placeholder="{{ T "tender.reference_placeholder" }}">
           </label>
@@ -429,6 +460,38 @@
       <div id="split-tender-payments" class="split-tender-payments empty">
         <p>{{ T "tender.no_pending" }}</p>
       </div>
+      <!-- ut-docs#1832: voucher ISSUE ("Sell a voucher"). Collapsed by
+           default so the everyday split flow above keeps its height budget
+           on the till; opens into its own small form whose pending list
+           (#split-tender-vouchers) mirrors #split-tender-payments — app.js
+           folds every pending voucher's value into the amount still due and
+           sends the list as issue_vouchers on the same /api/pos/tender POST
+           (offline-safe, no new endpoint). A blank code means the till
+           generates one at checkout; the pilot merchant types the code
+           printed on a physical card instead. -->
+      <details class="split-issue-voucher" id="split-tender-issue">
+        <summary>{{ T "tender.issue_voucher.title" }}</summary>
+        <p class="split-issue-voucher-hint">{{ T "tender.issue_voucher.hint" }} {{ helpLink "vouchers" }}</p>
+        <form class="split-tender-form" id="split-tender-issue-form" autocomplete="off">
+          <div class="split-grid">
+            <label>{{ T "tender.issue_voucher.amount" }}
+              <input type="text" inputmode="decimal" name="amount" {{ moneypattern currency.Decimals false }} {{ moneyplaceholder currency.Decimals 0 }} required>
+            </label>
+            <label>{{ T "tender.issue_voucher.code" }}
+              <input type="text" name="code" placeholder="{{ T "tender.issue_voucher.code_placeholder" }}" maxlength="64" autocapitalize="characters" spellcheck="false">
+            </label>
+            <label>{{ T "tender.issue_voucher.holder_label" }}
+              <input type="text" name="holder_label" maxlength="200">
+            </label>
+          </div>
+          <div class="split-controls">
+            <button class="btn" type="button" id="split-tender-issue-add">{{ T "tender.issue_voucher.add" }}</button>
+          </div>
+        </form>
+        <div id="split-tender-vouchers" class="split-tender-payments empty">
+          <p>{{ T "tender.issue_voucher.no_pending" }}</p>
+        </div>
+      </details>
       <div id="split-tender-status" class="split-tender-status" aria-live="polite"></div>
       <div class="split-controls">
         <button class="btn primary" type="button" id="split-tender-submit">{{ T "tender.complete_sale" }}</button>

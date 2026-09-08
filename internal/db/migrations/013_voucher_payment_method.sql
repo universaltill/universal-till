@@ -1,0 +1,38 @@
+-- 013_voucher_payment_method.sql — ut-docs#1832 (vouchers have no user
+-- interface).
+--
+-- Seeds the built-in 'voucher' payment method that the tracked-voucher
+-- tender path has required since ut-docs#1008 but which no migration ever
+-- created. pos.CompleteSale (internal/pos/sales.go, computeSaleTotals) only
+-- honours a payment's voucher_id — validating the balance, debiting it and
+-- writing the 'redemption' voucher_transactions row — when that payment's
+-- MethodID is literally "voucher" (case-insensitive); sales.go's own
+-- PaymentInput.VoucherID comment already names "voucher" as the intended
+-- method id. The 001_init.sql 'gift' row (type='voucher', but id='gift')
+-- never satisfied that check, so until now a tracked redemption was only
+-- reachable by an API client hand-writing method:"voucher" — the sale
+-- screen's tender select had nothing to offer.
+--
+-- The legacy 'gift' row is deliberately left exactly as shipped: it stays a
+-- generic, UNTRACKED voucher-type tender (historical 'gift' payments are
+-- not reinterpreted — same stance ut-docs#1008 took), and renaming or
+-- removing it is explicitly out of this card's scope. Both rows carry
+-- type='voucher', which is what the sale screen keys on to keep them out of
+-- the one-tap Pay grid (a tracked redemption needs a voucher id, which that
+-- grid has no field for) and to offer them in the Split select instead.
+--
+-- sort_order 4 places it after the three 001_init rows so the existing
+-- Pay-grid head-of-list (cash, then card) is untouched. INSERT OR IGNORE
+-- keeps this idempotent against a database that already carries a
+-- 'voucher' row (e.g. one an admin-sync from a primary created first —
+-- payment_methods is admin-synced), and safe on a re-run.
+--
+-- Shipped as an ADDITIVE migration rather than an edit to 001_init.sql's
+-- payment_methods seed: editing 001_init.sql changes its checksum, and
+-- internal/db/db.go's verifyAppliedMigrations hard-fails an already-
+-- migrated database on any checksum drift (idempotentRerunVersions is
+-- empty; version 1 is not allowlisted) — bricking every device that already
+-- migrated, including the pilot install. 002/003/004 all document this same
+-- trap.
+INSERT OR IGNORE INTO payment_methods (id, name, type, is_active, sort_order, plugin_id)
+VALUES ('voucher', 'Voucher', 'voucher', 1, 4, NULL);

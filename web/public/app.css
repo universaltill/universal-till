@@ -1930,6 +1930,18 @@ body.osk-padded .payment-overlay {
   border-color: var(--focus-border);
 }
 .split-controls { display: grid; grid-template-columns: 1fr 1fr; gap: .4rem; }
+/* ut-docs#1832: voucher-id field + Check balance button share one full-width
+   row of the split grid; the explicit [hidden] rule is needed because the
+   display:flex here would otherwise out-rank the UA's hidden styling. */
+.split-voucher-field { grid-column: 1 / -1; display: flex; gap: .4rem; align-items: flex-end; }
+.split-voucher-field[hidden] { display: none; }
+.split-voucher-field label { flex: 1; min-width: 0; }
+.split-voucher-field .btn { flex: 0 0 auto; }
+.split-issue-voucher { border-top: 1px dashed var(--border); padding-top: .4rem; }
+.split-issue-voucher summary { cursor: pointer; font-weight: 600; font-size: .85rem; }
+.split-issue-voucher-hint { font-size: .8rem; color: var(--muted); margin: .25rem 0 .4rem; }
+.split-issue-voucher .split-tender-form { margin-bottom: .4rem; }
+.pill-code { font-family: monospace; overflow-wrap: anywhere; }
 .split-tender-payments { margin: .25rem 0; display: flex; flex-direction: column; gap: .4rem; }
 .split-tender-payments.empty { color: var(--muted); font-size: .9rem; }
 .payment-pill { display: flex; justify-content: space-between; align-items: center;

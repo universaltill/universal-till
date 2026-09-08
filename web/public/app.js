@@ -180,6 +180,17 @@ window.utCurrency = (function(){
     var fillBtn = card.querySelector('#split-tender-fill');
     var paymentsList = card.querySelector('#split-tender-payments');
     var statusEl = card.querySelector('#split-tender-status');
+    // ut-docs#1832: voucher redemption (a voucher_id on a "voucher"-method
+    // payment) and voucher issue ("Sell a voucher": issue_vouchers on the
+    // same tender POST). All optional — the panel keeps working without them.
+    var methodSelect = form ? form.querySelector('[name="method"]') : null;
+    var voucherField = card.querySelector('#split-tender-voucher-field');
+    var voucherCheckBtn = card.querySelector('#split-tender-voucher-check');
+    var changeField = card.querySelector('#split-tender-change-field');
+    var issueDetails = card.querySelector('#split-tender-issue');
+    var issueForm = card.querySelector('#split-tender-issue-form');
+    var issueAddBtn = card.querySelector('#split-tender-issue-add');
+    var vouchersList = card.querySelector('#split-tender-vouchers');
 
     if (!form || !addBtn || !submitBtn || !clearBtn || !paymentsList) {
       return;
@@ -206,8 +217,29 @@ window.utCurrency = (function(){
     }
 
     var payments = [];
+    var pendingVoucherIssues = [];
     function formatMoney(units){
       return window.utCurrency.format(units);
+    }
+
+    // Only the built-in "voucher" method carries a tracked redemption —
+    // pos.CompleteSale honours voucher_id on that MethodID alone; the legacy
+    // 'gift' method stays a generic, untracked tender and gets no id field.
+    function isVoucherMethod(){
+      return !!methodSelect && String(methodSelect.value || '').trim().toLowerCase() === 'voucher';
+    }
+
+    // Reveal the voucher-id field for the voucher method and hide Change
+    // (a voucher redemption can't give change — sales.go rejects it — so
+    // it's forced to 0 rather than left for the operator to trip over).
+    function syncVoucherField(){
+      var voucher = isVoucherMethod();
+      if (voucherField) voucherField.hidden = !voucher;
+      if (changeField) changeField.hidden = voucher;
+      if (voucher) {
+        var changeInput = form.querySelector('input[name="change"]');
+        if (changeInput) changeInput.value = window.utCurrency.toMajor(0);
+      }
     }
 
     function setStatus(message, level){
@@ -233,6 +265,7 @@ window.utCurrency = (function(){
       if (changeInput) {
         changeInput.value = window.utCurrency.toMajor(0);
       }
+      syncVoucherField();
     }
 
     function renderPayments(){
@@ -248,6 +281,9 @@ window.utCurrency = (function(){
         if (payment.change) {
           details += ' ' + escapeHtml(fmt(msg.msgChangeNote, formatMoney(payment.change)));
         }
+        if (payment.voucher_id) {
+          details += '<br><small class="pill-code">' + escapeHtml(payment.voucher_id) + '</small>';
+        }
         if (payment.reference) {
           details += '<br><small>' + escapeHtml(payment.reference) + '</small>';
         }
@@ -256,10 +292,44 @@ window.utCurrency = (function(){
       paymentsList.innerHTML = html;
     }
 
+    // Pending voucher issues render like the payment pills: code (or the
+    // "generated at checkout" stand-in for a blank one), face value, holder.
+    function renderVoucherIssues(){
+      if (!vouchersList) return;
+      if (!pendingVoucherIssues.length) {
+        vouchersList.classList.add('empty');
+        vouchersList.innerHTML = '<p>' + escapeHtml(msg.msgNoPendingVouchers) + '</p>';
+        return;
+      }
+      vouchersList.classList.remove('empty');
+      vouchersList.innerHTML = pendingVoucherIssues.map(function(issue, idx){
+        var code = issue.code ? '<span class="pill-code">' + escapeHtml(issue.code) + '</span>' : escapeHtml(msg.msgVoucherAutoCode);
+        var details = formatMoney(issue.amount);
+        if (issue.holder_label) {
+          details += '<br><small>' + escapeHtml(issue.holder_label) + '</small>';
+        }
+        return '<div class="payment-pill"><div><strong>' + code + '</strong><div class="pill-meta">' + details + '</div></div><button type="button" class="pill-remove" data-remove-voucher="' + idx + '">&times;</button></div>';
+      }).join('');
+    }
+
     function netPayments(){
       return payments.reduce(function(sum, payment){
         return sum + (payment.amount - (payment.change || 0));
       }, 0);
+    }
+
+    function voucherIssueTotal(){
+      return pendingVoucherIssues.reduce(function(sum, issue){
+        return sum + issue.amount;
+      }, 0);
+    }
+
+    // What the customer owes right now: the server-rendered basket total
+    // plus every voucher pending issue — a voucher-only sale (no basket
+    // lines) is legitimately all voucher, and the server charges the same
+    // sum (pos_api.go adds voucherIssueTotal to the basket total).
+    function amountDue(){
+      return basketTotal() + voucherIssueTotal();
     }
 
     function basketTotal(){
@@ -289,7 +359,15 @@ window.utCurrency = (function(){
         setStatus(msg.msgAmountPositive, 'error');
         return false;
       }
-      var changeMinor = toMinor(data.get('change'));
+      var voucherID = '';
+      if (isVoucherMethod()) {
+        voucherID = String(data.get('voucher_id') || '').trim();
+        if (!voucherID) {
+          setStatus(msg.msgVoucherIdRequired, 'error');
+          return false;
+        }
+      }
+      var changeMinor = voucherID ? 0 : toMinor(data.get('change'));
       if (changeMinor < 0) changeMinor = 0;
       if (changeMinor > amountMinor) {
         setStatus(msg.msgChangeExceeds, 'error');
@@ -298,6 +376,9 @@ window.utCurrency = (function(){
       var payment = { method: method, amount: amountMinor };
       if (changeMinor > 0) {
         payment.change = changeMinor;
+      }
+      if (voucherID) {
+        payment.voucher_id = voucherID;
       }
       var reference = (data.get('reference') || '').trim();
       if (reference) {
@@ -310,8 +391,69 @@ window.utCurrency = (function(){
       return true;
     }
 
+    // Best-effort balance preview (ut-docs#1832) via the existing
+    // GET /api/vouchers/{id}. Never gates Add Payment: offline, a 404 or a
+    // malformed body just reports and leaves the real verdict to the tender
+    // POST. When the amount box is still empty, it's pre-filled with the
+    // lesser of the balance and what's still due, the natural redemption.
+    async function checkVoucherBalance(){
+      var input = form.querySelector('input[name="voucher_id"]');
+      var id = input ? String(input.value || '').trim() : '';
+      if (!id) {
+        setStatus(msg.msgVoucherIdRequired, 'error');
+        return;
+      }
+      try {
+        var response = await fetch('/api/vouchers/' + encodeURIComponent(id), { headers: { 'Accept': 'application/json' } });
+        if (response.status === 404) {
+          setStatus(msg.msgVoucherInvalid, 'error');
+          return;
+        }
+        if (!response.ok) {
+          setStatus(msg.msgVoucherCheckUnavailable, 'error');
+          return;
+        }
+        var payload = await response.json();
+        var voucher = payload && payload.data;
+        if (!voucher || voucher.status !== 'active' || typeof voucher.balance !== 'number') {
+          setStatus(msg.msgVoucherInvalid, 'error');
+          return;
+        }
+        var amountInput = form.querySelector('input[name="amount"]');
+        if (amountInput && !amountInput.value) {
+          var remaining = amountDue() - netPayments();
+          var suggested = Math.min(voucher.balance, remaining > 0 ? remaining : voucher.balance);
+          if (suggested > 0) amountInput.value = window.utCurrency.toMajor(suggested);
+        }
+        setStatus(fmt(msg.msgVoucherBalance, formatMoney(voucher.balance)), 'info');
+      } catch (err) {
+        console.error('voucher balance check failed:', err);
+        setStatus(msg.msgVoucherCheckUnavailable, 'error');
+      }
+    }
+
+    function addVoucherIssue(){
+      if (!issueForm) return false;
+      var data = new FormData(issueForm);
+      var amountMinor = toMinor(data.get('amount'));
+      if (amountMinor <= 0) {
+        setStatus(msg.msgAmountPositive, 'error');
+        return false;
+      }
+      var issue = { amount: amountMinor };
+      var code = String(data.get('code') || '').trim();
+      if (code) issue.code = code;
+      var holder = String(data.get('holder_label') || '').trim();
+      if (holder) issue.holder_label = holder;
+      pendingVoucherIssues.push(issue);
+      renderVoucherIssues();
+      issueForm.reset();
+      setStatus(fmt(msg.msgVoucherAdded, formatMoney(amountMinor)), 'success');
+      return true;
+    }
+
     function fillRemaining(){
-      var total = basketTotal();
+      var total = amountDue();
       if (!total) {
         setStatus(msg.msgBasketUnavailable, 'error');
         return;
@@ -355,7 +497,7 @@ window.utCurrency = (function(){
             'Content-Type': 'application/json',
             'Accept': 'text/html'
           },
-          body: JSON.stringify({ payments: payments, offline: offlineOverrideEnabled() || !navigator.onLine })
+          body: JSON.stringify({ payments: payments, issue_vouchers: pendingVoucherIssues, offline: offlineOverrideEnabled() || !navigator.onLine })
         });
         var text = await response.text();
         var genericFailure = msg.msgPaymentFailed;
@@ -388,6 +530,10 @@ window.utCurrency = (function(){
         }
         payments = [];
         renderPayments();
+        pendingVoucherIssues = [];
+        renderVoucherIssues();
+        if (issueForm) issueForm.reset();
+        if (issueDetails) issueDetails.open = false;
         clearForm();
         setStatus(msg.msgSaleCompleted, 'success');
         // ut-docs#1252: the split-tender card now lives inside the
@@ -414,9 +560,32 @@ window.utCurrency = (function(){
     clearBtn.addEventListener('click', function(){
       payments = [];
       renderPayments();
+      pendingVoucherIssues = [];
+      renderVoucherIssues();
+      if (issueForm) issueForm.reset();
       clearForm();
       setStatus(msg.msgCleared, 'info');
     });
+    if (methodSelect) {
+      methodSelect.addEventListener('change', syncVoucherField);
+    }
+    if (voucherCheckBtn) {
+      voucherCheckBtn.addEventListener('click', checkVoucherBalance);
+    }
+    if (issueAddBtn) {
+      issueAddBtn.addEventListener('click', addVoucherIssue);
+    }
+    if (vouchersList) {
+      vouchersList.addEventListener('click', function(e){
+        var target = e.target.closest('[data-remove-voucher]');
+        if (!target) return;
+        var idx = Number(target.getAttribute('data-remove-voucher'));
+        if (Number.isNaN(idx)) return;
+        pendingVoucherIssues.splice(idx, 1);
+        renderVoucherIssues();
+        setStatus(msg.msgVoucherRemoved, 'info');
+      });
+    }
     if (fillBtn) {
       fillBtn.addEventListener('click', fillRemaining);
     }
@@ -432,6 +601,8 @@ window.utCurrency = (function(){
     });
 
     renderPayments();
+    renderVoucherIssues();
+    syncVoucherField();
   }
 
   ready(initSplitTender);
