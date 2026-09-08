@@ -470,7 +470,16 @@
            generates one at checkout; the pilot merchant types the code
            printed on a physical card instead. -->
       <details class="split-issue-voucher" id="split-tender-issue">
-        <summary>{{ T "tender.issue_voucher.title" }}</summary>
+        <!-- ux: a bare <details>/<summary> reads as inert text next to this
+             panel's full-height pill buttons (Complete Sale/Clear/Fill
+             Remaining are all 54px .btn.secondary-class controls) — a
+             touchscreen cashier is unlikely to notice a 22px muted text
+             row as tappable. Reusing .btn.secondary here (the same class
+             every other secondary action in this panel already carries)
+             makes it read as an obviously-interactive control instead of
+             inventing a new affordance; the disclosure marker still shows
+             open/closed state (app.css adds the chevron). -->
+        <summary class="btn secondary split-issue-voucher-summary">{{ T "tender.issue_voucher.title" }}</summary>
         <p class="split-issue-voucher-hint">{{ T "tender.issue_voucher.hint" }} {{ helpLink "vouchers" }}</p>
         <form class="split-tender-form" id="split-tender-issue-form" autocomplete="off">
           <div class="split-grid">

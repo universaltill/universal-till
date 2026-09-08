@@ -1938,8 +1938,22 @@ body.osk-padded .payment-overlay {
 .split-voucher-field label { flex: 1; min-width: 0; }
 .split-voucher-field .btn { flex: 0 0 auto; }
 .split-issue-voucher { border-top: 1px dashed var(--border); padding-top: .4rem; }
-.split-issue-voucher summary { cursor: pointer; font-weight: 600; font-size: .85rem; }
-.split-issue-voucher-hint { font-size: .8rem; color: var(--muted); margin: .25rem 0 .4rem; }
+/* ux fix (ut-docs#1832 gate): a plain <summary> defaults to list-item
+   text with a tiny UA disclosure triangle — easy to miss on a touchscreen
+   next to this panel's 54px pill buttons. .split-issue-voucher-summary
+   layers on top of the existing .btn.secondary class (same control every
+   other secondary action here already uses) so it reads as tappable; the
+   list-item styling is suppressed and a chevron re-added via ::after
+   (rotated when [open]) so open/closed state is still visible without the
+   invisible-until-you-look-closely UA marker. */
+.split-issue-voucher-summary { width: 100%; justify-content: space-between; list-style: none; }
+.split-issue-voucher-summary::-webkit-details-marker { display: none; }
+.split-issue-voucher-summary::marker { content: ''; }
+.split-issue-voucher-summary::after {
+  content: '▾'; font-size: .8em; transition: transform .12s ease;
+}
+.split-issue-voucher[open] > .split-issue-voucher-summary::after { transform: rotate(180deg); }
+.split-issue-voucher-hint { font-size: .8rem; color: var(--muted); margin: .4rem 0 .4rem; }
 .split-issue-voucher .split-tender-form { margin-bottom: .4rem; }
 .pill-code { font-family: monospace; overflow-wrap: anywhere; }
 .split-tender-payments { margin: .25rem 0; display: flex; flex-direction: column; gap: .4rem; }
