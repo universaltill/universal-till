@@ -145,6 +145,21 @@
       {{ if .TSESignature.QRDataURI }}<div class="receipt-tse-qr"><img src="{{ .TSESignature.QRDataURI }}" alt="" width="140" height="140"></div>{{ end }}
     </div>
     {{ end }}
+    {{ if .DeviceReceipt }}
+    <!-- Fiscal DEVICE receipt (Turkey's YN ÖKC, fiscal_device_hook.go): the
+         certified device printed the legal receipt (mali fiş); this copy
+         shows the device's own receipt number, serial and Z counter so the
+         two can be matched. Real recorded values only, absent fields
+         skipped — factual data display, no compliance-outcome claim
+         (ADR-0040). -->
+    <div class="receipt-legal receipt-fiscal-device">
+      <div class="receipt-legal-label">{{ T "receipt.fiscal.device.title" }}</div>
+      <div class="receipt-legal-line">{{ T "receipt.fiscal.device.receipt_no" }}: {{ .DeviceReceipt.ReceiptNo }}</div>
+      {{ if .DeviceReceipt.Serial }}<div class="receipt-legal-line">{{ T "receipt.fiscal.device.serial" }}: {{ .DeviceReceipt.Serial }}</div>{{ end }}
+      {{ if .DeviceReceipt.ZNo }}<div class="receipt-legal-line">{{ T "receipt.fiscal.device.z_no" }}: {{ .DeviceReceipt.ZNo }}</div>{{ end }}
+      {{ if .DeviceReceipt.IssuedAt }}<div class="receipt-legal-line">{{ T "receipt.fiscal.device.issued_at" }}: {{ .DeviceReceipt.IssuedAt }}</div>{{ end }}
+    </div>
+    {{ end }}
     {{ if .DesignFooter }}<div class="receipt-design-line" style="margin-top:.5rem"><small>{{ .DesignFooter }}</small></div>{{ end }}
     {{ if .PrinterUnavailable }}
     <div class="receipt-printer-warning">

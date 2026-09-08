@@ -34,6 +34,15 @@ const fiscalSigningRenameMigrationVersion = 9
 // upgraded till takes — rather than a hand-executed copy of its SQL. The
 // schema itself is unchanged by 009 (it only rewrites settings rows), so
 // dropping the ledger row is an exact stand-in for a pre-009 database.
+//
+// It rewinds EVERY version at or above 009, not just 009 itself. Deleting
+// only 009's row leaves any later migration recorded, so the runner sees a
+// missing 009 sitting below a higher applied watermark and correctly refuses
+// to boot ("a migration file was renumbered under an already-applied
+// version") — which made this test fail the moment a 010 existed, for a
+// reason that had nothing to do with the rename it covers. Re-running the
+// later migrations is safe: this helper's contract is that they are
+// re-appliable, which is why they use IF NOT EXISTS.
 func openAtPreRenameSchema(t *testing.T) (*DB, string) {
 	t.Helper()
 	path := filepath.Join(t.TempDir(), "fiscal-signing-rename.db")
@@ -48,7 +57,7 @@ func openAtPreRenameSchema(t *testing.T) (*DB, string) {
 	if applied != 1 {
 		t.Fatalf("migration %d not recorded as applied on a fresh DB — has it been renumbered?", fiscalSigningRenameMigrationVersion)
 	}
-	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version = ?`, fiscalSigningRenameMigrationVersion); err != nil {
+	if _, err := d.DB.Exec(`DELETE FROM schema_migrations WHERE version >= ?`, fiscalSigningRenameMigrationVersion); err != nil {
 		t.Fatalf("rewind ledger: %v", err)
 	}
 	return d, path

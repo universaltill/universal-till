@@ -13,6 +13,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -578,4 +579,180 @@ func TestFiscalSettings_UpsertGuards(t *testing.T) {
 			t.Fatalf("signing_device_failing_since must be untouched by the refused clear, got %q", v)
 		}
 	})
+}
+
+// ut-docs#1750 (second independent review, finding F1). The Turkish
+// fiscal-device gate reads store.country, but store.country is writable by a
+// MANAGER through /api/settings/upsert, while the flag it protects
+// (fiscal.KeySigningDeviceConfigured) is owner-only everywhere else — see
+// "manager cannot flip fiscal toggles" above. Nothing used to reset fiscal
+// state when the country changed, so a manager could round-trip the country
+// and keep the flag:
+//
+//	install tax-tr -> country=TR -> POST /api/fiscal-device/confirm -> country=DE
+//
+// leaving a German till in fiscal.Allowed with no TSE at all — the same end
+// state ADR-0048 Decision 2.2 says has no override path. Changing the
+// country must therefore clear the signing-device flags, in BOTH directions:
+// a German till relabelled TR must not carry its TSE flag in as "an ÖKC has
+// proven it prints" either.
+func TestFiscalSettings_CountryChangeClearsSigningDeviceFlags(t *testing.T) {
+	mux, dp := newFiscalTestDeps(t)
+	registerSettings(mux, dp)
+	ctx := context.Background()
+	admin := auth.User{ID: "user1", Role: "admin"}
+
+	for _, tc := range []struct{ name, from, to string }{
+		{"TR confirmed then relabelled DE", "TR", "DE"},
+		{"DE configured then relabelled TR", "DE", "TR"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if err := dp.Settings.Set(ctx, common.KeyCountry, tc.from); err != nil {
+				t.Fatal(err)
+			}
+			if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
+				t.Fatal(err)
+			}
+			if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceFailingSince, "2026-09-01T00:00:00Z"); err != nil {
+				t.Fatal(err)
+			}
+
+			form := "key=" + common.KeyCountry + "&value=" + tc.to
+			req := httptest.NewRequest(http.MethodPost, "/api/settings/upsert", strings.NewReader(form))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			req = auth.WithUser(req, admin)
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusOK && rec.Code != http.StatusNoContent {
+				t.Fatalf("country change: %d %s", rec.Code, rec.Body.String())
+			}
+
+			if v, _, _ := dp.Settings.Get(ctx, fiscal.KeySigningDeviceConfigured); v == "true" {
+				t.Fatalf("%s->%s: signing_device_configured survived the country change — a fiscal posture proven for one market must never carry into another", tc.from, tc.to)
+			}
+			if v, _, _ := dp.Settings.Get(ctx, fiscal.KeySigningDeviceFailingSince); v != "" {
+				t.Fatalf("%s->%s: failing_since survived the country change, got %q", tc.from, tc.to, v)
+			}
+		})
+	}
+}
+
+// ut-docs#1750 (third review, F1). The reproduced bypass: /api/settings/save
+// is a SECOND writer of store.country, gated at manager level like upsert,
+// and the first fix guarded only upsert. A manager could move the shop to TR,
+// let an ordinary cashier sale auto-confirm the device against the bundled
+// simulator, then move it back to DE — landing a German till in
+// fiscal.Allowed with no TSE, with no owner involved at any step.
+func TestFiscalSettings_SaveHandlerCannotRoundTripCountryPastAConfirmedDevice(t *testing.T) {
+	mux, dp := newFiscalTestDeps(t)
+	registerSettings(mux, dp)
+	ctx := context.Background()
+	if _, err := dp.Db.Exec(`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('mgr9','mgr9','Manager Nine','x','manager')`); err != nil {
+		t.Fatal(err)
+	}
+	manager := auth.User{ID: "mgr9", Role: "manager"}
+	save := func(country string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/settings/save", strings.NewReader("country="+country))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		req = auth.WithUser(req, manager)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	// Step 1: TR while nothing is proven — legitimate, must be allowed.
+	if rec := save("TR"); rec.Code != http.StatusOK && rec.Code != http.StatusNoContent {
+		t.Fatalf("moving to TR with no posture must be allowed, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// Step 2: a device proves itself (this path needs no permission at all).
+	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
+		t.Fatal(err)
+	}
+	// Step 3: the relabel back to DE — must NOT be a manager's to make.
+	rec := save("DE")
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("a manager must not relabel the shop while a signing device is confirmed, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if v, _, _ := dp.Settings.Get(ctx, common.KeyCountry); strings.EqualFold(strings.TrimSpace(v), "DE") {
+		t.Fatal("country was moved to DE despite the refusal")
+	}
+	// The shop is still TR, so the German scenario never materialises — which
+	// is the point. Confirm the posture is intact for the market it was
+	// actually proven in, i.e. the refusal did not half-apply.
+	if err := dp.Settings.Set(ctx, fiscal.KeySystemOfRecord, "true"); err != nil {
+		t.Fatal(err)
+	}
+	if g, err := fiscal.EvaluateGate(ctx, dp.Settings, "TR", time.Now().UTC()); err != nil || g.Decision != fiscal.Allowed {
+		t.Fatalf("the TR shop that genuinely confirmed a device must still sell: decision=%v err=%v", g.Decision, err)
+	}
+}
+
+// ut-docs#1750 (third review, F3) — a regression an earlier draft of this fix
+// introduced. Clearing the flag on any country change let a MANAGER bounce a
+// German shop's country and wipe a genuine, provisioned TSE posture, hard-
+// blocking checkout — exactly the capability that was just taken away from
+// /api/fiscal-device/unpair. The authority check has to come first.
+func TestFiscalSettings_ManagerCannotClearAGermanTSEByBouncingCountry(t *testing.T) {
+	mux, dp := newFiscalTestDeps(t)
+	registerSettings(mux, dp)
+	ctx := context.Background()
+	if _, err := dp.Db.Exec(`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('mgr9','mgr9','Manager Nine','x','manager')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, common.KeyCountry, "DE"); err != nil {
+		t.Fatal(err)
+	}
+	dp.State = common.LoadState(ctx, dp.Settings, dp.Cfg)
+	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	form := "key=" + common.KeyCountry + "&value=FR"
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/upsert", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, auth.User{ID: "mgr9", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if v, _, _ := dp.Settings.Get(ctx, fiscal.KeySigningDeviceConfigured); v != "true" {
+		t.Fatalf("a manager cleared a provisioned German TSE posture by bouncing the country (flag now %q) — that hard-blocks checkout", v)
+	}
+}
+
+// An OWNER may still move the country, and the posture is cleared when they
+// do — fail-closed, and audited on the posture key itself (the ADR-0048
+// fiscal-toggle audit only fires when the written key IS the fiscal key).
+func TestFiscalSettings_OwnerCountryChangeClearsAndAuditsPosture(t *testing.T) {
+	mux, dp := newFiscalTestDeps(t)
+	registerSettings(mux, dp)
+	ctx := context.Background()
+	if _, err := dp.Db.Exec(`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('own1','own1','Owner One','x','admin')`); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, common.KeyCountry, "TR"); err != nil {
+		t.Fatal(err)
+	}
+	dp.State = common.LoadState(ctx, dp.Settings, dp.Cfg)
+	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
+		t.Fatal(err)
+	}
+
+	form := "key=" + common.KeyCountry + "&value=DE"
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/upsert", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, auth.User{ID: "own1", Role: "admin"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK && rec.Code != http.StatusNoContent {
+		t.Fatalf("owner country change: %d %s", rec.Code, rec.Body.String())
+	}
+	if v, _, _ := dp.Settings.Get(ctx, fiscal.KeySigningDeviceConfigured); v == "true" {
+		t.Fatal("posture must not survive an owner's country change either")
+	}
+	ok, err := data.NewPOSRepo(dp.Db).HasAuditEntry(ctx, "settings", fiscal.KeySigningDeviceConfigured, "tse_configured_changed")
+	if err != nil || !ok {
+		t.Fatalf("posture clear must be audited on the posture key: ok=%v err=%v", ok, err)
+	}
 }

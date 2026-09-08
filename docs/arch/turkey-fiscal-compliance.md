@@ -226,6 +226,10 @@ the merchant; our free tier never carries it).
 
 ### 3.2 Engineering (this repo + `ut-plugin-tax-tr`)
 
+*Status 2026-09-03: items 1–3 and 5–6 below are built (see
+`turkey-launch-playbook.md` E-steps); the maker-specific wire drivers in
+item 1 are scaffolds awaiting integrator documentation and a device.*
+
 1. **`ut-plugin-tax-tr` device plugin** (ADR-0001 process plugin for
    hardware, ADR-0025 Decision 2): implement GMP-3 wired mode first (LAN,
    deterministic, offline-friendly), then one maker REST surface (Hugin PC
