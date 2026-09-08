@@ -151,4 +151,12 @@ var (
 	// receipt number — not a real print (ut-docs#1763). The till must
 	// treat this exactly like a decline: no receipt, no sale.
 	ErrNoReceipt = errors.New("okc: device answered ok with no receipt number")
+	// ErrMalformedResponse: the device's answer parses as valid JSON but a
+	// field has the wrong type (e.g. a numeric receipt_no from a buggy
+	// maker bridge) — distinct from ErrDeviceUnreachable, because the
+	// device likely DID answer (and may have printed); "unreachable" is
+	// the one decline path an operator is trained to just retry, which
+	// only stays safe under the device's own request_id idempotency
+	// (ut-docs#1782).
+	ErrMalformedResponse = errors.New("okc: device response has a malformed field")
 )
