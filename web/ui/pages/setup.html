@@ -493,7 +493,10 @@
                still there, unsuppressed, once the operator reaches /import
                for real. -->
           <input type="hidden" name="wizard" value="1">
-          <label>{{ T "import.file" }} <input type="file" name="file" accept=".csv,text/csv,.bkp,application/zip,application/octet-stream" required></label>
+          <!-- Kept in sync with import.html's own accept= — ut-docs#1247
+               (.bkp) and ut-docs#1837 (.xlsx), same reasoning: a UX hint
+               only, never trusted server-side (see import_page.go). -->
+          <label>{{ T "import.file" }} <input type="file" name="file" accept=".csv,text/csv,.bkp,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/zip,application/octet-stream" required></label>
           <button class="btn primary" type="submit" style="margin-top:.5rem">{{ T "import.preview" }}</button>
         </form>
         <!-- Touch-legible on purpose, same treatment as import.html's own
