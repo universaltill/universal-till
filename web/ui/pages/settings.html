@@ -1246,6 +1246,9 @@
           <option value="utf8"  {{ if eq $p.Charset "utf8" }}selected{{ end }}>UTF-8</option>
           <option value="ascii" {{ if eq $p.Charset "ascii" }}selected{{ end }}>ASCII</option>
           <option value="cp858" {{ if eq $p.Charset "cp858" }}selected{{ end }}>{{ T "settings.printer.charset_cp858" }}</option>
+          <option value="win1250" {{ if eq $p.Charset "win1250" }}selected{{ end }}>{{ T "settings.printer.charset_win1250" }}</option>
+          <option value="win1253" {{ if eq $p.Charset "win1253" }}selected{{ end }}>{{ T "settings.printer.charset_win1253" }}</option>
+          <option value="win1257" {{ if eq $p.Charset "win1257" }}selected{{ end }}>{{ T "settings.printer.charset_win1257" }}</option>
         </select>
       </label>
     </div>

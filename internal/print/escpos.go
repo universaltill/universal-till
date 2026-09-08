@@ -40,7 +40,7 @@ type Doc struct {
 	// that predates this setting (ut-docs#1136) keeps today's behaviour --
 	// resolves to pin 2.
 	DrawerPin int
-	Charset   string // "utf8" (default), "ascii", or "cp858"
+	Charset   string // "utf8" (default), "ascii", "cp858", "win1250", "win1257", or "win1253"
 	// Logo is a pre-encoded GS v 0 raster block (RasterLogo), printed
 	// centered above the store name when present.
 	Logo []byte
@@ -302,29 +302,112 @@ func encodeText(s, charset string) []byte {
 		// Trading a broken currency symbol for a receipt full of '?' is not
 		// a fix, so unmappable runes are now folded to their closest
 		// CP858-representable form first and '?' is the last resort only.
-		out := make([]byte, 0, len(s))
-		for _, r := range s {
-			if b, ok := charmap.CodePage858.EncodeRune(r); ok {
-				out = append(out, b)
-				continue
-			}
-			out = append(out, foldToCP858(r)...)
-		}
-		return out
+		return encodeCharmap(s, charmap.CodePage858)
+	// win1250/win1257/win1253 (ut-docs#1733): same per-rune-transcode-or-fold
+	// shape as cp858 above, extending currency-symbol coverage to markets
+	// CP858 cannot reach without losing their own alphabet. Unlike CP858,
+	// each of these already natively encodes the everyday Word/Excel
+	// typography (en/em dash, curly quotes, bullet, ellipsis — verified
+	// against their own EncodeRune) that charmapPunctuationFold exists to patch, so
+	// they reuse the same fold table only for what's left: 'œ'/'Œ' and the
+	// rest of foldToCharmap's decomposition step.
+	case "win1250":
+		return encodeCharmap(s, charmap.Windows1250)
+	case "win1257":
+		return encodeCharmap(s, charmap.Windows1257)
+	case "win1253":
+		return encodeCharmap(s, charmap.Windows1253)
 	default: // "utf8" and the zero value — raw pass-through, unchanged
 		return []byte(s)
 	}
 }
 
-// codepageSelectCmd returns the ESC/POS code-page selection command for a
-// charset, or nil when no selection is sent. Only cp858 selects a page
-// (ESC t 19 — PC858, the Euro variant of PC850); utf8 and ascii keep
-// today's behaviour of never touching the printer's code-page state.
-func codepageSelectCmd(charset string) []byte {
-	if charset == "cp858" {
-		return []byte{0x1b, 0x74, 0x13}
+// Encodable reports whether s prints under charset without any rune
+// degrading to the '?' last resort. Callers that carry translated text onto
+// a single-byte-code-page printer (e.g. kitchen tickets, ut-docs#261/#1733)
+// use this to decide whether the printer's own charset can actually render a
+// locale's translation, rather than assuming any restricted charset means
+// "Latin-only" — win1253 (Greek) legitimately renders Greek, for example.
+//
+// Checked rune-by-rune against the real encode/fold logic, NOT by scanning
+// encodeText's OUTPUT bytes for '?' (independent review finding, ut-docs#1733):
+// a literal '?' already present in s — a perfectly ordinary character in a
+// translated string — is not a degraded rune, and a caller can never tell
+// the two apart from the output alone.
+func Encodable(s, charset string) bool {
+	for _, r := range s {
+		if !runeEncodable(r, charset) {
+			return false
+		}
 	}
-	return nil
+	return true
+}
+
+func runeEncodable(r rune, charset string) bool {
+	switch charset {
+	case "ascii":
+		return r == '\t' || (r >= 0x20 && r <= 0x7e)
+	case "cp858":
+		return charmapRuneEncodable(r, charmap.CodePage858)
+	case "win1250":
+		return charmapRuneEncodable(r, charmap.Windows1250)
+	case "win1257":
+		return charmapRuneEncodable(r, charmap.Windows1257)
+	case "win1253":
+		return charmapRuneEncodable(r, charmap.Windows1253)
+	default: // "utf8" and the zero value — raw pass-through, always encodable
+		return true
+	}
+}
+
+// charmapRuneEncodable mirrors encodeCharmap's own per-rune decision: r
+// encodes if cp has it natively, or if foldToCharmap can fold it to
+// something other than the bare '?' last resort (that single-byte 0x3F
+// sentinel is the only value foldToCharmap ever returns for a rune it truly
+// cannot represent — no successful punctuation substitution or NFKD
+// decomposition ever collapses to it).
+func charmapRuneEncodable(r rune, cp *charmap.Charmap) bool {
+	if _, ok := cp.EncodeRune(r); ok {
+		return true
+	}
+	folded := foldToCharmap(r, cp)
+	return !(len(folded) == 1 && folded[0] == '?')
+}
+
+// encodeCharmap transcodes s to cp per-rune, folding anything cp cannot
+// encode via foldToCharmap rather than erroring or corrupting the stream.
+func encodeCharmap(s string, cp *charmap.Charmap) []byte {
+	out := make([]byte, 0, len(s))
+	for _, r := range s {
+		if b, ok := cp.EncodeRune(r); ok {
+			out = append(out, b)
+			continue
+		}
+		out = append(out, foldToCharmap(r, cp)...)
+	}
+	return out
+}
+
+// codepageSelectCmd returns the ESC/POS code-page selection command for a
+// charset, or nil when no selection is sent. utf8 and ascii keep today's
+// behaviour of never touching the printer's code-page state. Page numbers are
+// Epson's own published ESC t reference: 19 = PC858 (Euro variant of PC850),
+// 45 = WPC1250, 47 = WPC1253, 51 = WPC1257 — the same printers that accept
+// ESC t 19 also accept the Windows-125x pages, which is what makes ut-docs#1733's
+// fix possible without new hardware.
+func codepageSelectCmd(charset string) []byte {
+	switch charset {
+	case "cp858":
+		return []byte{0x1b, 0x74, 0x13}
+	case "win1250":
+		return []byte{0x1b, 0x74, 45}
+	case "win1253":
+		return []byte{0x1b, 0x74, 47}
+	case "win1257":
+		return []byte{0x1b, 0x74, 51}
+	default:
+		return nil
+	}
 }
 
 // Validate reports a friendly error for an obviously broken document.
@@ -425,13 +508,18 @@ func RenderLabel(name, price, code, charset string) []byte {
 	return b.Bytes()
 }
 
-// cp858Punctuation maps typography CP858 has no slot for onto the plain
-// ASCII a receipt can actually print. These are the characters that reach a
-// receipt through ordinary content rather than through an exotic alphabet:
-// Word/Excel autocorrect puts curly quotes and en-dashes into imported
-// catalogs and footer text, so a till whose shop name or "thank you" line
-// came from a spreadsheet hits them on every single sale.
-var cp858Punctuation = map[rune]string{
+// charmapPunctuationFold maps typography a single-byte code page has no slot
+// for onto the plain ASCII a receipt can actually print. These are the
+// characters that reach a receipt through ordinary content rather than
+// through an exotic alphabet: Word/Excel autocorrect puts curly quotes and
+// en-dashes into imported catalogs and footer text, so a till whose shop
+// name or "thank you" line came from a spreadsheet hits them on every single
+// sale. Shared across cp858/win1250/win1257/win1253 (ut-docs#1733) — CP858 is
+// the only one of the four that actually needs most of these (the Windows
+// 125x pages already natively encode dashes/quotes/bullet/ellipsis), but the
+// table costs nothing to share and 'œ'/'Œ' and the rest of the decomposition
+// step in foldToCharmap are missing from all four alike.
+var charmapPunctuationFold = map[rune]string{
 	'\u2010': "-", '\u2011': "-", '\u2012': "-", '\u2013': "-", // hyphen, non-breaking hyphen, figure dash, en dash
 	'\u2014': "-", '\u2015': "-", '\u2212': "-", // em dash, horizontal bar, minus sign
 	'\u2018': "'", '\u2019': "'", '\u201b': "'", '\u2032': "'", // curly single quotes, prime
@@ -452,14 +540,15 @@ var cp858Punctuation = map[rune]string{
 	'\u202f': " ", '\u205f': " ",
 }
 
-// foldToCP858 renders one rune CP858 cannot encode as the closest thing it
+// foldToCharmap renders one rune cp cannot encode as the closest thing it
 // can, in three escalating steps: an explicit punctuation substitution, then
 // a compatibility decomposition with combining marks stripped (which turns
-// 'œ'→"oe", 'ﬁ'→"fi", and any accented letter CP858 lacks into its base
+// 'œ'→"oe", 'ﬁ'→"fi", and any accented letter cp lacks into its base
 // letter), then '?' as the visible last resort — the same last resort this
-// arm has always had, just reached far less often (ut-docs#1728).
-func foldToCP858(r rune) []byte {
-	if sub, ok := cp858Punctuation[r]; ok {
+// arm has always had, just reached far less often (ut-docs#1728, generalized
+// to any single-byte code page in ut-docs#1733).
+func foldToCharmap(r rune, cp *charmap.Charmap) []byte {
+	if sub, ok := charmapPunctuationFold[r]; ok {
 		return []byte(sub)
 	}
 	t := transform.Chain(norm.NFKD, runes.Remove(runes.In(unicode.Mn)), norm.NFC)
@@ -468,7 +557,7 @@ func foldToCP858(r rune) []byte {
 		out := make([]byte, 0, len(folded))
 		ok := true
 		for _, fr := range folded {
-			b, enc := charmap.CodePage858.EncodeRune(fr)
+			b, enc := cp.EncodeRune(fr)
 			if !enc {
 				ok = false
 				break

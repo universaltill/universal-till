@@ -9,16 +9,27 @@ import (
 
 const (
 	keyPrinterCharset = "printer.charset"
-	// keyPrinterCharsetAdopted records that the one-time default adoption
-	// below has already run, so it never second-guesses the operator twice.
-	// Versioned in the value, not the key: a future adoption pass can bump
-	// "v1" without leaving a second dead key behind.
+	// keyPrinterCharsetAdopted records that the adoption pass below has
+	// already run FOR THIS VERSION, so it never second-guesses the operator
+	// twice at the version it already ran at. Versioned in the value, not
+	// the key, exactly as designed: currentAdoptionVersion bumped from "v1"
+	// to "v2" in ut-docs#1733, which is the "future adoption pass" that
+	// comment always meant — DefaultCharset started resolving 7 more
+	// locales to a real code page (win1250/win1257/win1253) that used to
+	// resolve to "utf8", and every till in those markets that had already
+	// completed a v1 pass (and is therefore still sitting on the "utf8" a
+	// v1 pass left it on, since v1 never had anything better to offer them)
+	// would otherwise never be re-evaluated and would keep printing mojibake
+	// forever — precisely the "#1243 closed while the defect was still on
+	// real receipts" failure this mechanism exists to prevent (independent
+	// review finding, ut-docs#1733).
 	keyPrinterCharsetAdopted = "printer.charset.adopted"
+	currentAdoptionVersion   = "v2"
 )
 
 // AdoptDefaultPrinterCharset switches a till that is still carrying the
 // never-chosen "utf8" printer charset onto the code page its currency and
-// locale actually need — exactly once, at boot.
+// locale actually need — once per currentAdoptionVersion, at boot.
 //
 // ut-docs#1728. Resolving the default at READ time (see pages.printerConfig)
 // only helps a till with nothing stored, and almost no real till is in that
@@ -32,9 +43,25 @@ const (
 //
 // Deliberately conservative:
 //
-//   - It runs once. The marker is written whatever the outcome, so an
-//     operator who genuinely wants UTF-8 sets it after this and is never
-//     overridden again.
+//   - It runs once PER VERSION. The marker is written whatever the
+//     outcome, so within one version an operator who genuinely wants
+//     UTF-8 sets it after this and is not overridden again at that same
+//     version. A version bump (currentAdoptionVersion, e.g. ut-docs#1733
+//     teaching DefaultCharset seven more locales) deliberately re-opens
+//     the question for any till still sitting on "utf8" — there is no way
+//     to distinguish "never touched" from "operator deliberately chose
+//     utf8" (both are the same stored value), so a till whose owner
+//     re-picked utf8 after an earlier version's pass can see one more
+//     automatic move when a version bump ships. The alternative — a till
+//     in a newly-covered market staying on mojibake forever because an
+//     earlier version's pass already spent the marker before that
+//     market's code page existed — is worse, and is exactly what
+//     ut-docs#1733 fixed here (see that card for the concrete case: every
+//     already-set-up Greek/Croatian/Slovenian/Slovak/Estonian/Latvian/
+//     Lithuanian till was frozen on "utf8" by a v1 pass that had nothing
+//     better to offer it, and this file's own versioning mechanism —
+//     documented but unused until now — is what makes catching that up
+//     possible without a second dead key).
 //   - It only ever moves "utf8" (or nothing) — an explicit "ascii" or
 //     "cp858" is a real choice about real hardware and is left untouched,
 //     per the project rule that installing defaults must not clobber an
@@ -63,7 +90,7 @@ const (
 func (s *Store) AdoptDefaultPrinterCharset(ctx context.Context) (from, to string, changed bool, err error) {
 	if v, _, gErr := s.Get(ctx, keyPrinterCharsetAdopted); gErr != nil {
 		return "", "", false, gErr
-	} else if strings.TrimSpace(v) != "" {
+	} else if strings.TrimSpace(v) == currentAdoptionVersion {
 		return "", "", false, nil
 	}
 
@@ -103,7 +130,7 @@ func (s *Store) AdoptDefaultPrinterCharset(ctx context.Context) (from, to string
 		}
 		from, to, changed = current, want, true
 	}
-	if err := s.Set(ctx, keyPrinterCharsetAdopted, "v1"); err != nil {
+	if err := s.Set(ctx, keyPrinterCharsetAdopted, currentAdoptionVersion); err != nil {
 		return from, to, changed, err
 	}
 	return from, to, changed, nil

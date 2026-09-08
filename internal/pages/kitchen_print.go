@@ -67,20 +67,28 @@ func kitchenLineModeLabel(locale, charset, saleOrderType, lineOrderType string) 
 	return kitchenTicketText(locale, charset, "basket.order_type.dine_in")
 }
 
-// kitchenTicketText translates key for locale, with a Latin-safe fallback
-// (review finding, ut-docs#261; extended to cp858 in ut-docs#1243): both
-// printer.charset=="ascii" and =="cp858" are single-byte code pages that
-// can't render non-Latin scripts — encodeText (internal/print) maps every
-// unmappable rune to "?" under either, so an ar/fa translation would print
-// as a run of question marks. Before ut-docs#261, kitchen tickets were
-// hardcoded English and never hit this path at all; now that they carry
-// real translated text, degrade to the English string (always ASCII, so
-// safe under both restricted charsets) rather than garbage. utf8-charset
-// setups (the default) are unaffected.
+// kitchenTicketText translates key for locale, with a printer-safe fallback
+// (review finding, ut-docs#261; extended to cp858 in ut-docs#1243, and to
+// win1250/win1257/win1253 in ut-docs#1733): "ascii" and every single-byte
+// code page can't render every script — encodeText (internal/print) maps
+// every unmappable rune to "?" under any of them, so e.g. an ar/fa
+// translation would print as a run of question marks on a cp858 printer.
+// Before ut-docs#261, kitchen tickets were hardcoded English and never hit
+// this path at all; now that they carry real translated text, degrade to the
+// English string (always ASCII, so safe under every restricted charset)
+// rather than garbage. utf8-charset setups (the default) are unaffected.
+//
+// A restricted charset is not automatically "Latin-only, so any non-ASCII
+// text needs the fallback": win1253 (Greek) genuinely renders Greek, and
+// cp858 genuinely renders every language in cp858Languages — so this checks
+// actual encodability (print.Encodable) rather than assuming non-ASCII means
+// unprintable, which would otherwise force a Greek shop's own kitchen
+// tickets to English precisely on the locale this card exists to serve.
 func kitchenTicketText(locale, charset, key string) string {
 	v := httpx.T(locale, key)
-	restricted := charset == "ascii" || charset == "cp858"
-	if !restricted || isASCII(v) {
+	restricted := charset == "ascii" || charset == "cp858" ||
+		charset == "win1250" || charset == "win1257" || charset == "win1253"
+	if !restricted || isASCII(v) || print.Encodable(v, charset) {
 		return v
 	}
 	return httpx.T("en", key)

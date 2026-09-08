@@ -40,6 +40,52 @@ func TestAdoptDefaultPrinterCharset_MovesStoredUTF8ForEuroStore(t *testing.T) {
 	}
 }
 
+// ut-docs#1733 (independent review finding): a Greek/Croatian/... till that
+// already completed a "v1" adoption pass under #1728 is frozen on "utf8"
+// forever unless a version bump re-opens the question — v1 had nothing
+// better to offer those locales, so every one of them is sitting on exactly
+// the stored value this mechanism treats as "already decided." This is the
+// concrete failure the versioned marker (documented since #1728, unused
+// until now) exists to let a future pass fix.
+func TestAdoptDefaultPrinterCharset_V1ToV2ReopensNewlyCoveredLocale(t *testing.T) {
+	ctx := context.Background()
+	s := newTestStore(t)
+	mustSet(t, s, "setup.completed", "true")
+	mustSet(t, s, "store.currency", "EUR")
+	mustSet(t, s, "store.locale", "el-GR")
+	mustSet(t, s, keyPrinterCharset, "utf8")
+	// Simulate a till that already ran the OLD (#1728) adoption pass: it
+	// found nothing to move (win1253 didn't exist yet) but still spent the
+	// one-shot marker at that version.
+	mustSet(t, s, keyPrinterCharsetAdopted, "v1")
+
+	from, to, changed, err := s.AdoptDefaultPrinterCharset(ctx)
+	if err != nil || !changed {
+		t.Fatalf("AdoptDefaultPrinterCharset = changed=%v err=%v, want changed=true err=nil", changed, err)
+	}
+	if from != "utf8" || to != "win1253" {
+		t.Fatalf("reported from=%q to=%q, want utf8 -> win1253", from, to)
+	}
+	if got := mustGet(t, s, keyPrinterCharset); got != "win1253" {
+		t.Fatalf("printer.charset = %q, want win1253", got)
+	}
+	if got := mustGet(t, s, keyPrinterCharsetAdopted); got != currentAdoptionVersion {
+		t.Fatalf("adoption marker = %q, want it bumped to %q", got, currentAdoptionVersion)
+	}
+
+	// Runs exactly once per version, same as before: an operator who
+	// deliberately goes back to UTF-8 after THIS version's pass must not be
+	// overridden again at this same version.
+	mustSet(t, s, keyPrinterCharset, "utf8")
+	_, _, changed, err = s.AdoptDefaultPrinterCharset(ctx)
+	if err != nil || changed {
+		t.Fatalf("second run at same version = changed=%v err=%v, want changed=false err=nil", changed, err)
+	}
+	if got := mustGet(t, s, keyPrinterCharset); got != "utf8" {
+		t.Fatalf("printer.charset after a deliberate re-pick = %q, want it left as utf8", got)
+	}
+}
+
 func TestAdoptDefaultPrinterCharset_LeavesExplicitChoicesAlone(t *testing.T) {
 	ctx := context.Background()
 	for _, explicit := range []string{"ascii", "cp858"} {
