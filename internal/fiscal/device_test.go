@@ -17,6 +17,12 @@ func TestParseDeviceEvidence(t *testing.T) {
 		{"null field", `{"status":"approved","fiscal_device":null}`, false},
 		{"no receipt no", `{"status":"approved","fiscal_device":{"serial":"AV1"}}`, false},
 		{"blank receipt no", `{"fiscal_device":{"receipt_no":"   "}}`, false},
+		// \u200b is ZERO WIDTH SPACE and \ufeff is the BOM/ZWNBSP (JSON
+		// Unicode category Cf (format), which unicode.IsSpace/TrimSpace do
+		// not treat as whitespace. ut-docs#1781: a receipt_no made up of
+		// only these must still count as blank.
+		{"zero-width-space-only receipt no", `{"fiscal_device":{"receipt_no":"\u200b\u200b"}}`, false},
+		{"BOM-only receipt no", `{"fiscal_device":{"receipt_no":"\ufeff"}}`, false},
 		{"valid", `{"status":"approved","fiscal_device":{"maker":"beko","serial":"AV1","receipt_no":" 000123 ","z_no":4,"issued_at":"2026-09-03T10:00:00+03:00"}}`, true},
 	}
 	for _, c := range cases {

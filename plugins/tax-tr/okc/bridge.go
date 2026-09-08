@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"io"
 	"strings"
+	"unicode"
 )
 
 // BridgeDriver speaks the Universal Till ÖKC bridge protocol v0: one JSON
@@ -107,7 +108,7 @@ func (d *BridgeDriver) Sale(req SaleRequest) (Evidence, error) {
 	if ev.ReceiptKind == "" {
 		ev.ReceiptKind = "mali_fis"
 	}
-	if strings.TrimSpace(ev.ReceiptNo) == "" {
+	if isBlankReceiptNo(ev.ReceiptNo) {
 		return Evidence{}, ErrNoReceipt
 	}
 	return normalizeEvidence(ev, d.Config), nil
@@ -125,10 +126,27 @@ func (d *BridgeDriver) Refund(req RefundRequest) (Evidence, error) {
 	if ev.ReceiptKind == "" {
 		ev.ReceiptKind = "iade_fisi"
 	}
-	if strings.TrimSpace(ev.ReceiptNo) == "" {
+	if isBlankReceiptNo(ev.ReceiptNo) {
 		return Evidence{}, ErrNoReceipt
 	}
 	return normalizeEvidence(ev, d.Config), nil
+}
+
+// isBlankReceiptNo mirrors internal/fiscal's identical helper of the same
+// name (ut-docs#1781) — duplicated, not imported, matching this package's
+// existing pattern of mirroring internal/fiscal's field names (see
+// protocol.go's Evidence) rather than depending on it, so this plugin
+// stays extractable into its own module/repo later (ADR-0009). Both must
+// stay behaviourally identical: whitespace AND Unicode "format" characters
+// (Cf — zero-width space U+200B, BOM/ZWNBSP U+FEFF, …) count as blank, not
+// just what unicode.IsSpace/strings.TrimSpace strip.
+func isBlankReceiptNo(s string) bool {
+	for _, r := range s {
+		if !unicode.IsSpace(r) && !unicode.In(r, unicode.Cf) {
+			return false
+		}
+	}
+	return true
 }
 
 func (d *BridgeDriver) Status() (Status, error) {
