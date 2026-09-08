@@ -123,6 +123,32 @@ func TestScanCacheClearsOnReset(t *testing.T) {
 	}
 }
 
+// ut-docs#1762: TenderAttemptID anchors the idempotency key a retried
+// tender attempt (same basket) sends a payment/fiscal-device plugin --
+// stable across repeated calls on the same basket, but a genuinely new
+// basket (after Reset) must never reuse it.
+func TestTenderAttemptID_StableUntilResetThenFresh(t *testing.T) {
+	resolver := &countingResolver{lines: map[string]BasketLine{
+		"ABC": {SKU: "ABC", Name: "Apple", Qty: 1, PriceCents: 100},
+	}}
+	s := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000, TaxInclusive: false}, resolver)
+
+	first := s.TenderAttemptID()
+	if first == "" {
+		t.Fatal("TenderAttemptID returned empty")
+	}
+	if again := s.TenderAttemptID(); again != first {
+		t.Fatalf("TenderAttemptID changed across calls with no reset: %q then %q", first, again)
+	}
+
+	s.Reset()
+
+	afterReset := s.TenderAttemptID()
+	if afterReset == first {
+		t.Fatalf("TenderAttemptID reused the previous basket's id after Reset: %q", afterReset)
+	}
+}
+
 func TestScanCacheClearsOnRemove(t *testing.T) {
 	resolver := &countingResolver{
 		lines: map[string]BasketLine{

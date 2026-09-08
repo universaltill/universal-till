@@ -82,6 +82,14 @@ type Service struct {
 	// its plugin asks detects the race after re-locking and refuses to commit
 	// a snapshot that no longer matches current state. Guarded by mu.
 	recomputeGen uint64
+	// tenderAttemptID anchors a stable idempotency identity for the CURRENT
+	// basket's payment-authorize retries (ut-docs#1762): a payment/fiscal-
+	// device plugin gate needs the SAME request id on every retry of the
+	// same tender attempt so it can recognise a repeat and answer once
+	// instead of taking the money (and printing the fiscal receipt) twice.
+	// Minted lazily by TenderAttemptID on first read after a reset; cleared
+	// by resetLocked so the next, genuinely different basket mints its own.
+	tenderAttemptID string
 }
 
 type Config struct {
@@ -1274,6 +1282,22 @@ func (s *Service) Reset() {
 	s.resetLocked()
 }
 
+// TenderAttemptID returns a stable id for the current basket's tender
+// attempt, minting one on first call after the last reset (ut-docs#1762).
+// Every retried tender POST against the SAME basket (the operator re-
+// tapping Pay after a decline/timeout) gets the same id back; Reset()
+// (a completed sale, or the basket being cleared) clears it so the next
+// basket mints its own — this must never be reused across two different
+// sales.
+func (s *Service) TenderAttemptID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tenderAttemptID == "" {
+		s.tenderAttemptID = uuid.NewString()
+	}
+	return s.tenderAttemptID
+}
+
 // resetLocked is Reset's lock-free core — also called by Restore before
 // loading a snapshot. Caller must hold s.mu.
 func (s *Service) resetLocked() {
@@ -1293,6 +1317,7 @@ func (s *Service) resetLocked() {
 	s.orderType = ""
 	s.tableID = ""
 	s.tableLabel = ""
+	s.tenderAttemptID = ""
 }
 
 func (s *Service) clearCacheForCode(code string) {

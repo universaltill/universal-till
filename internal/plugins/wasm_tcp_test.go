@@ -649,8 +649,17 @@ func TestWasmRuntimeTCPTimeoutWidening(t *testing.T) {
 	w.mu.Lock()
 	w.hasTCP[pluginID] = true
 	w.mu.Unlock()
-	if got := w.timeoutFor(pluginID, "payment.zvt.authorize"); got != 10*time.Second {
-		t.Fatalf("tcp-permitted timeout = %v, want netTimeout 10s", got)
+	// ut-docs#1762: an authorize/refund event for a net/TCP-permitted
+	// plugin gets the paymentGateTimeout floor (30s), not the generic 10s
+	// netTimeout — a real chip-and-PIN authorization routinely takes
+	// longer than 10s on its own.
+	if got := w.timeoutFor(pluginID, "payment.zvt.authorize"); got != 30*time.Second {
+		t.Fatalf("tcp-permitted authorize timeout = %v, want paymentGateTimeout 30s", got)
+	}
+	// A non-authorize/refund event for the same plugin still gets the
+	// plain netTimeout — the widening is scoped to the payment-gate class.
+	if got := w.timeoutFor(pluginID, "some.other.event"); got != 10*time.Second {
+		t.Fatalf("tcp-permitted non-gate timeout = %v, want netTimeout 10s", got)
 	}
 }
 

@@ -946,8 +946,25 @@ func blockingPaymentEvent(ctx context.Context, d *common.Deps, method, suffix st
 // discarding it — the tender authorize gate uses this to read back
 // plugin-reported data (e.g. a reader-captured tip amount) alongside the
 // approve/decline verdict. resp is nil in every case blockingPaymentEvent
-// would return nil with nothing to report (no entry, no subscriber).
+// would return nil with nothing to report (no entry, no subscriber). Uses a
+// fresh event id per call, same as always — callers that need the SAME id
+// across a retry (the tender authorize gate) use
+// blockingPaymentEventWithResponseAndID instead.
 func blockingPaymentEventWithResponse(ctx context.Context, d *common.Deps, method, suffix string, payload map[string]any) (json.RawMessage, error) {
+	return blockingPaymentEventWithResponseAndID(ctx, d, method, suffix, "", payload)
+}
+
+// blockingPaymentEventWithResponseAndID behaves exactly like
+// blockingPaymentEventWithResponse, except a non-empty requestID is used as
+// the published event's id instead of a freshly minted one (ut-docs#1762).
+// The tender authorize gate passes a stable per-tender-attempt id so a
+// retried tender (the operator re-tapping Pay after a decline/timeout on
+// the SAME basket) asks the plugin the SAME question — letting a
+// fiscal-device or payment-gateway plugin recognise the repeat and answer
+// once, instead of charging/printing again. An empty requestID keeps the
+// original fresh-id-per-call behaviour (blockingPaymentEventWithResponse's
+// contract, used by the refund gate).
+func blockingPaymentEventWithResponseAndID(ctx context.Context, d *common.Deps, method, suffix, requestID string, payload map[string]any) (json.RawMessage, error) {
 	entries, err := data.NewPluginRepo(d.Db).ListPaymentEntries(ctx)
 	if err != nil || len(entries) == 0 {
 		return nil, nil
@@ -962,7 +979,14 @@ func blockingPaymentEventWithResponse(ctx context.Context, d *common.Deps, metho
 			return nil, nil
 		}
 		payload["plugin_id"] = e.PluginID
-		resp, err := bus.PublishAuthorize(ctx, event, payload)
+		if requestID == "" {
+			resp, err := bus.PublishAuthorize(ctx, event, payload)
+			if err != nil {
+				return nil, err
+			}
+			return resp, nil
+		}
+		resp, err := bus.PublishAuthorizeWithID(ctx, requestID, event, payload)
 		if err != nil {
 			return nil, err
 		}
