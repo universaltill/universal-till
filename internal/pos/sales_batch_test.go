@@ -239,6 +239,41 @@ func TestCompleteSale_NegativeInventoryGuardSemanticsPreserved(t *testing.T) {
 			t.Fatal("expected insufficient-stock error for item with no inventory row")
 		}
 	})
+
+	// ut-docs#1843, the shape behind the pilot merchant's complaint: he
+	// tracks no stock at all, so nothing he sells has any quantity behind
+	// it. The subtest above proves the guard sells nothing in that state;
+	// this one is the shop-owner-visible promise of the setting that turns
+	// the guard off.
+	//
+	// Deliberately separate from "AllowNegativeInventory bypasses the guard"
+	// above, which starts from a real inventory row of 4: an ABSENT row and
+	// a row at zero are different code paths in CurrentQtyBatch (found=false
+	// vs found=true) and only the latter was ever asserted. Both reach the
+	// same `cur + qtyDelta < 0`, which is why the merchant's symptom is
+	// identical either way — an imported item actually gets a row at 0
+	// (CreateItemTx → ensureInventoryRowExec), while a stockless deployment
+	// with no stock_locations at all gets none.
+	t.Run("AllowNegativeInventory sells an item with no inventory row at all", func(t *testing.T) {
+		db := setupSaleDB(t)
+		defer db.Close()
+		_, _ = db.Exec(`INSERT INTO stock_locations(id,name) VALUES('loc1','Main')`)
+		_, _ = db.Exec(`INSERT INTO items(id, sku, name, base_price, is_active) VALUES('itm9','SKU9','Untracked', 500, 1)`)
+		_, _ = db.Exec(`INSERT INTO payment_methods(id,name,type,is_active) VALUES('cash','Cash','cash',1)`)
+
+		in := baseInput([]SaleLineInput{
+			{ItemID: "itm9", Name: "Untracked", Qty: 1, UnitPrice: money.FromMinor(500), TaxRateBasisPoints: 2000, LocationID: "loc1"},
+		})
+		in.AllowNegativeInventory = true
+		if _, err := CompleteSale(ctx, db, in); err != nil {
+			t.Fatalf("a shop that does not track stock must still be able to sell: %v", err)
+		}
+		var sales int
+		_ = db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&sales)
+		if sales != 1 {
+			t.Fatalf("sales rows = %d, want 1", sales)
+		}
+	})
 }
 
 // A sale whose lines carry no modifiers and no discounts must sail through
