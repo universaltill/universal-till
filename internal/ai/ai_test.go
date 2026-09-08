@@ -36,6 +36,19 @@ func TestFromEnvInfersProvider(t *testing.T) {
 	}
 }
 
+// An explicit UT_AI_PROVIDER=openai defaults BOTH vision and ask models to
+// DefaultOpenAIModel — one model covers both capabilities for OpenAI, unlike
+// Ollama's vision/text split.
+func TestFromEnvOpenAIDefaultsModel(t *testing.T) {
+	clearEnv(t)
+	t.Setenv("UT_AI_PROVIDER", "openai")
+	t.Setenv("UT_AI_API_KEY", "k")
+	cfg := FromEnv()
+	if cfg.Provider != "openai" || cfg.Model != DefaultOpenAIModel || cfg.AskModel != DefaultOpenAIModel {
+		t.Fatalf("got %+v, want provider=openai, model/ask_model=%q", cfg, DefaultOpenAIModel)
+	}
+}
+
 func TestNewDisabledWithoutBackend(t *testing.T) {
 	if New(Config{}).Enabled() {
 		t.Fatal("no backend must be disabled")
@@ -46,12 +59,28 @@ func TestNewDisabledWithoutBackend(t *testing.T) {
 	if New(Config{Provider: "claude"}).Enabled() {
 		t.Fatal("claude without key must be disabled")
 	}
+	if New(Config{Provider: "openai"}).Enabled() {
+		t.Fatal("openai without key must be disabled")
+	}
 	var nilSvc *Service
 	if nilSvc.Enabled() {
 		t.Fatal("nil service must be disabled")
 	}
 	if !New(Config{Provider: "ollama", Endpoint: "http://x", Model: "m"}).Enabled() {
 		t.Fatal("ollama with endpoint must be enabled")
+	}
+}
+
+// Unlike claude, openai implements the ask loop — New() must wire it up so
+// CanAsk reports true, and default the vision/ask models to
+// DefaultOpenAIModel when the caller (ai_resolve.go) leaves them empty.
+func TestNewOpenAIWithKeyEnabledAndCanAsk(t *testing.T) {
+	svc := New(Config{Provider: "openai", APIKey: "k"})
+	if !svc.Enabled() {
+		t.Fatal("openai with a key must be enabled")
+	}
+	if !svc.CanAsk() {
+		t.Fatal("openai implements the ask loop — CanAsk must be true")
 	}
 }
 

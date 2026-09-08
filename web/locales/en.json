@@ -526,7 +526,7 @@
   "plugins.none_found": "No plugins found",
   "plugins.none_found_hint": "Try adjusting your filters or refresh the catalog.",
   "plugins.retry": "Retry install",
-  "plugins.settings.ai.hosted_provider_notice": "Choosing the hosted provider (provider = claude) sends what the AI features work on out of your premises to that provider's servers (Anthropic, United States): for Identify by camera, the product photo plus your catalog's item names, SKUs and reference photos; and once a hosted provider supports Ask your till, your questions together with the sales and stock figures used to answer them. Self-hosted (Ollama, the default) keeps all of it on your own hardware. The key you enter is your own account with that provider — you pay them directly, and Universal Till holds no account there.",
+  "plugins.settings.ai.hosted_provider_notice": "Choosing a hosted provider (provider = claude or openai) sends what the AI features work on out of your premises to that provider's servers (Anthropic or OpenAI, both United States): for Identify by camera, the product photo plus your catalog's item names, SKUs and reference photos, with either provider. For Ask your till: with claude, nothing is sent — there is no hosted implementation yet, so it hides itself instead; with openai, your questions are sent together with the sales and stock figures used to answer them. Self-hosted (Ollama, the default) keeps all of it on your own hardware. The key you enter is your own account with that provider — you pay them directly, and Universal Till holds no account there.",
   "plugins.settings.none": "This plugin has no settings.",
   "plugins.settings.per_till": "this till only",
   "plugins.settings.save": "Save settings",

@@ -498,7 +498,7 @@
          that; range is already enforced server-side (payments-fee handler). -->
     <input type="text" inputmode="decimal" name="percent" pattern="[0-9]+(\.[0-9]{1,2})?" value="{{ .PercentMaj }}" placeholder="%">
     <span class="muted">% +</span>
-    <input type="text" inputmode="decimal" name="fixed" pattern="{{ if eq currency.Decimals 0 }}[0-9]+{{ else }}[0-9]+(\.[0-9]{1,2})?{{ end }}" value="{{ .FixedMaj }}" placeholder="0.00">
+    <input type="text" inputmode="decimal" name="fixed" {{ moneypattern currency.Decimals false }} value="{{ .FixedMaj }}" placeholder="0.00">
     <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
     <span id="fee-msg-{{ .ID }}" aria-live="polite" class="fee-msg"></span>
   </form>

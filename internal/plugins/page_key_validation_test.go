@@ -99,6 +99,15 @@ func TestPersistManifest_PageKeyFormatValidation(t *testing.T) {
 	if err := PersistManifest(ctx, d.DB, pageManifest("com.bad.page3", "ns:key"), InstallOptions{}); err == nil || !strings.Contains(err.Error(), "':'") {
 		t.Fatalf("page key containing ':' must be rejected with a clear message, got: %v", err)
 	}
+	// ut-docs#1812: FindPageKeyConflicts (plugin_repo.go) compares candidate
+	// keys against existing ones with SQLite's default case-sensitive TEXT
+	// collation, so without this check a differently-cased key (e.g. "Docs2"
+	// alongside an existing "docs2") would install cleanly as a distinct menu
+	// entry instead of being caught as a conflict — the same gap ut-docs#1811
+	// fixed for payment keys.
+	if err := PersistManifest(ctx, d.DB, pageManifest("com.bad.page4", "MixedCase"), InstallOptions{}); err == nil || !strings.Contains(err.Error(), "MixedCase") {
+		t.Fatalf("mixed-case page key must be rejected with a message naming the key, got: %v", err)
+	}
 }
 
 func TestPersistManifest_PageKeySelfUpgradeNotAConflict(t *testing.T) {
