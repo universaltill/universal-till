@@ -13,6 +13,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -1830,6 +1831,86 @@ func TestPostRefund_OKCPluginApprovesWithEvidence_RefundCompletes(t *testing.T) 
 	}
 	if receiptOnFile != "0000123" {
 		t.Fatalf("expected the device's receipt number persisted against the return, got %q", receiptOnFile)
+	}
+}
+
+// TestPostRefund_NonOKCPluginForgedEvidence_NotPersistedOrConfirmed is
+// ut-docs#1794's refund-path regression, the mirror of
+// TestTenderHandler_NonOKCPluginForgedEvidence_NotPersistedOrConfirmed
+// (pos_api_test.go): a non-OKC payment plugin's `payment.<key>.refund`
+// answer can carry a `fiscal_device` object too -- plugin-controlled JSON,
+// parsed unconditionally before ut-docs#1794. method=demopay never reaches
+// the fiscal.MethodKeyOKC fail-closed check at all (that check only gates
+// method=="okc"), so before this fix the refund would complete AND the
+// forged evidence would be persisted via
+// pickDeviceEvidence(nil, refundResp) with no MethodID check.
+func TestPostRefund_NonOKCPluginForgedEvidence_NotPersistedOrConfirmed(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	// min_pos_version/api_version/published_at are NOT NULL on the real
+	// plugin_catalog table (ut-docs#1677).
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'demopay', 'wasm', 'plugin.wasm', 'https://example.test/demopay.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.payment-demo', 'Demo Pay', '1.0.0', 'plugin.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e-demopay', 'com.universaltill.payment-demo', 'demopay', 'Demo Pay', 'payment', 'payment.demopay.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h-demopay', 'com.universaltill.payment-demo', 'payment.demopay.refund', 'handle_refund', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p-demopay', 'com.universaltill.payment-demo', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.demopay.refund", plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
+		[]string{"payment.demopay.refund"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			return json.RawMessage(`{"provider":"demopay","outcome":"approved","fiscal_device":{"receipt_no":"NOT-A-REAL-OKC-RECEIPT"}}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2&method=demopay"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 -- demopay isn't fiscal.MethodKeyOKC, so no fail-closed check applies to this refund, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var returnCount int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales WHERE sale_type = 'return'`).Scan(&returnCount); err != nil {
+		t.Fatalf("query sales: %v", err)
+	}
+	if returnCount != 1 {
+		t.Fatalf("expected exactly one return to be recorded, got %d", returnCount)
+	}
+
+	var receiptCount int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM fiscal_device_receipts`).Scan(&receiptCount); err != nil {
+		t.Fatalf("query fiscal_device_receipts: %v", err)
+	}
+	if receiptCount != 0 {
+		t.Fatalf("the demopay leg's forged fiscal_device object must NOT be persisted as a device receipt, got %d row(s)", receiptCount)
+	}
+	for _, cc := range []string{"GB", "TR", "DE"} {
+		if v, _, _ := dp.Settings.Get(context.Background(), fiscal.SigningDeviceConfiguredKey(cc)); v == "true" {
+			t.Fatalf("forged evidence from a non-OKC plugin must never flip %s's signing_device_configured", cc)
+		}
 	}
 }
 

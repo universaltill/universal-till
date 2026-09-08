@@ -75,7 +75,28 @@ func deviceAuthorizePayloadExtras(in pos.SaleInput, payments []pos.PaymentInput)
 // split tender), so first-wins is the only sensible rule; a later leg's
 // evidence, if a plugin ever returned one, is logged and dropped rather
 // than silently replacing what was already printed.
-func pickDeviceEvidence(current *fiscal.DeviceEvidence, resp json.RawMessage) *fiscal.DeviceEvidence {
+//
+// ut-docs#1794: methodID gates which leg's response is even eligible to be
+// parsed as device evidence. Before this check, a `fiscal_device` object was
+// accepted from ANY payment method's response — a non-OKC plugin (card
+// terminal, QR, demo) could return one, forged or otherwise, and have it
+// persisted via recordFiscalDeviceEvidence, potentially flipping
+// fiscal.signing_device_configured true with no real device ever involved.
+// Only fiscal.MethodKeyOKC's own leg may ever contribute evidence.
+//
+// The drop is LOGGED rather than silent (independent review, ut-docs#1794):
+// a cash/card/QR leg that carries no `fiscal_device` object is the normal
+// case and says nothing, but one that DOES carry a valid-looking object is
+// a payment plugin attempting to fabricate fiscal evidence — the only
+// trace of the attempt this till would otherwise keep is the absence of a
+// receipt row, which is indistinguishable from nothing having happened.
+func pickDeviceEvidence(current *fiscal.DeviceEvidence, methodID string, resp json.RawMessage) *fiscal.DeviceEvidence {
+	if methodID != fiscal.MethodKeyOKC {
+		if forged, ok := fiscal.ParseDeviceEvidence(resp); ok {
+			logging.L().Warnf("fiscal device: payment method %q (not %q) returned a fiscal_device object claiming receipt %s — rejected, not persisted (ut-docs#1794)", methodID, fiscal.MethodKeyOKC, forged.ReceiptNo)
+		}
+		return current
+	}
 	ev, ok := fiscal.ParseDeviceEvidence(resp)
 	if !ok {
 		return current

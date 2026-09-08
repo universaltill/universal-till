@@ -57,16 +57,38 @@ func TestDeviceAuthorizePayloadExtras_NetsOutChangeGiven(t *testing.T) {
 }
 
 func TestPickDeviceEvidence_FirstWins(t *testing.T) {
-	first := pickDeviceEvidence(nil, json.RawMessage(`{"status":"approved","fiscal_device":{"receipt_no":"1"}}`))
+	first := pickDeviceEvidence(nil, fiscal.MethodKeyOKC, json.RawMessage(`{"status":"approved","fiscal_device":{"receipt_no":"1"}}`))
 	if first == nil || first.ReceiptNo != "1" {
 		t.Fatalf("first = %+v", first)
 	}
-	kept := pickDeviceEvidence(first, json.RawMessage(`{"fiscal_device":{"receipt_no":"2"}}`))
+	kept := pickDeviceEvidence(first, fiscal.MethodKeyOKC, json.RawMessage(`{"fiscal_device":{"receipt_no":"2"}}`))
 	if kept != first {
 		t.Fatalf("second leg replaced the first receipt: %+v", kept)
 	}
-	if got := pickDeviceEvidence(nil, json.RawMessage(`{"status":"approved"}`)); got != nil {
+	if got := pickDeviceEvidence(nil, fiscal.MethodKeyOKC, json.RawMessage(`{"status":"approved"}`)); got != nil {
 		t.Fatalf("no evidence must stay nil, got %+v", got)
+	}
+}
+
+// TestPickDeviceEvidence_RejectsNonOKCMethod is ut-docs#1794's core
+// regression: a `fiscal_device` object in a non-OKC method's response must
+// never be parsed as device evidence at all — not "parsed then discarded",
+// genuinely never accepted, so a forged object from a card/QR/demo plugin
+// can't be persisted or flip fiscal.signing_device_configured.
+func TestPickDeviceEvidence_RejectsNonOKCMethod(t *testing.T) {
+	forged := json.RawMessage(`{"provider":"demopay","outcome":"approved","fiscal_device":{"receipt_no":"NOT-A-REAL-OKC-RECEIPT"}}`)
+	if got := pickDeviceEvidence(nil, "demopay", forged); got != nil {
+		t.Fatalf("a non-OKC method's fiscal_device object must be rejected outright, got %+v", got)
+	}
+	// A non-OKC leg answering AFTER a real OKC leg already recorded evidence
+	// must not be able to overwrite it either (defense in depth: first-wins
+	// already protects this, but the MethodID check must independently hold).
+	real := pickDeviceEvidence(nil, fiscal.MethodKeyOKC, json.RawMessage(`{"fiscal_device":{"receipt_no":"OKC-1"}}`))
+	if real == nil || real.ReceiptNo != "OKC-1" {
+		t.Fatalf("real = %+v", real)
+	}
+	if got := pickDeviceEvidence(real, "demopay", forged); got != real {
+		t.Fatalf("a non-OKC leg must not be able to replace already-recorded OKC evidence, got %+v", got)
 	}
 }
 

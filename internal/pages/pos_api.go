@@ -214,12 +214,17 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// customer's money — unlike ut-docs#1779's per-leg evidence check
 	// below, which can only know an OKC leg's own answer after asking it.
 	// Gating on LEG IDENTITY here, never on the sale-wide deviceEvidence
-	// accumulator computed in the loop below: that accumulator takes
-	// evidence from ANY method's response with no MethodID check of its
-	// own (pickDeviceEvidence's doc comment), so a non-OKC plugin
-	// returning a forged `fiscal_device` object would otherwise launder
-	// a sale that used no OKC leg at all — confirmed exploitable against
-	// an evidence-based version of this same check (independent review).
+	// accumulator computed in the loop below: at the time this check was
+	// written, that accumulator took evidence from ANY method's response
+	// with no MethodID check of its own, so a non-OKC plugin returning a
+	// forged `fiscal_device` object would otherwise launder a sale that
+	// used no OKC leg at all — confirmed exploitable against an
+	// evidence-based version of this same check (independent review).
+	// pickDeviceEvidence has since gained its own MethodID check
+	// (ut-docs#1794), but this check still deliberately doesn't depend on
+	// it: presence of an OKC leg is knowable from `payments` alone, before
+	// any plugin round trip, which is strictly earlier than an
+	// accumulator built from plugin responses can ever be.
 	// Scoped to gate.Decision == Allowed specifically: BlockedNeverConfigured/
 	// BlockedTSEFailing already refused the sale above (enforceFiscalGate),
 	// and AllowedWithOverride already gets its own honestly-distinguishing
@@ -347,13 +352,14 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		// object, or an invalid one, would otherwise let the sale complete
 		// with zero fiscal evidence. This MUST gate on THIS LEG's own
 		// parsed response, never the sale-wide deviceEvidence accumulator
-		// below: pickDeviceEvidence keeps first-wins evidence from ANY
-		// payment method's response (plugin-controlled JSON, parsed
-		// unconditionally, no MethodID check of its own), so gating on the
-		// accumulator would let an earlier leg's evidence launder a LATER
-		// OKC leg that returned none — independent review (ut-docs#1779)
-		// confirmed this empirically for both a non-OKC leg preceding an
-		// empty OKC leg, and a second OKC leg in a split tender.
+		// below — independent review (ut-docs#1779) confirmed a
+		// laundering bypass empirically for both a non-OKC leg preceding
+		// an empty OKC leg, and a second OKC leg in a split tender.
+		// pickDeviceEvidence has since gained its own MethodID check
+		// (ut-docs#1794), which independently closes the non-OKC-leg case,
+		// but the second-OKC-leg case is untouched by that fix — first-wins
+		// means a first OKC leg's valid receipt would still cover a second
+		// OKC leg that returned none if this per-leg gate were removed.
 		if _, legValid := fiscal.ParseDeviceEvidence(resp); p.MethodID == fiscal.MethodKeyOKC && !legValid {
 			log.Printf("tender rejected: fiscal device %q approved sale with no receipt evidence (attempt %s) (ut-docs#1779 fail-closed)", p.MethodID, requestID)
 			return "", &fiscalDeviceNoReceiptError{Method: p.MethodID}
@@ -361,7 +367,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		// A fiscal-device plugin's approved answer carries what the device
 		// printed (`fiscal_device`); persisted against the sale below, once
 		// the sale row exists. Absent for every other plugin.
-		deviceEvidence = pickDeviceEvidence(deviceEvidence, resp)
+		deviceEvidence = pickDeviceEvidence(deviceEvidence, p.MethodID, resp)
 		// A card-terminal plugin (e.g. a reader that prompts the customer
 		// for a tip) can report the tip it actually captured back on its
 		// authorize response — this overrides whatever tip (if any) the
