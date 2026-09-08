@@ -185,6 +185,14 @@ func TestPersistManifest_PaymentKeyFormatAndSelfUpgrade(t *testing.T) {
 	if err := PersistManifest(ctx, d.DB, paymentManifest("com.bad.pay", " cash"), InstallOptions{}); err == nil {
 		t.Fatal("payment key with surrounding whitespace must be rejected — ' cash' would mint a padded payment_methods id")
 	}
+	// ut-docs#1811: FindPaymentKeyConflicts compares candidate keys against
+	// existing ones with SQLite's default case-sensitive TEXT collation, so
+	// without this check a differently-cased key (e.g. "OKC" alongside an
+	// existing "okc") would install cleanly as a distinct tender instead of
+	// being caught as a conflict.
+	if err := PersistManifest(ctx, d.DB, paymentManifest("com.bad.pay", "OKC"), InstallOptions{}); err == nil || !strings.Contains(err.Error(), "OKC") {
+		t.Fatalf("mixed-case payment key must be rejected with a message naming the key, got: %v", err)
+	}
 
 	// Reinstall/upgrade of the SAME plugin with the same key is not a
 	// collision — its own earlier entry must not block it.
