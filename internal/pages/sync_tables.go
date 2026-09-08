@@ -2,6 +2,7 @@ package pages
 
 import (
 	"net/http"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
@@ -50,7 +51,7 @@ func registerSyncTables(mux *http.ServeMux, d *common.Deps) {
 			writeSyncOrdersJSON(w, http.StatusUnauthorized, nil, "unauthorized")
 			return
 		}
-		states, err := posRepo.ListTablesWithState(r.Context())
+		states, err := posRepo.ListTablesWithState(r.Context(), time.Now().Add(-tillClaimTTL))
 		if err != nil {
 			logging.L().Errorf("sync tables list: %v", err)
 			writeSyncOrdersJSON(w, http.StatusInternalServerError, nil, "server error")
