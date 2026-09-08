@@ -235,9 +235,18 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	attemptID := engine.TenderAttemptID()
 	var deviceEvidence *fiscal.DeviceEvidence
 	for i, p := range payments {
+		amount := p.Amount
+		if p.MethodID == fiscal.MethodKeyOKC {
+			// ut-docs#1764: the device must be told the actual sale amount,
+			// not the gross cash handed over -- net out change here so this
+			// leg's "amount" stays equal to deviceExtras' "total" below
+			// (both net of change), matching plugins/tax-tr/okc/bridge.go's
+			// Amount==Total invariant for a normal, non-split tender.
+			amount = amount.Sub(p.ChangeGiven)
+		}
 		payload := map[string]any{
 			"method":    p.MethodID,
-			"amount":    p.Amount.Minor(),
+			"amount":    amount.Minor(),
 			"reference": p.Reference,
 		}
 		if p.MethodID == fiscal.MethodKeyOKC {
@@ -1107,6 +1116,19 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		for _, p := range in.Payments {
 			if p.Method == "" || p.Amount <= 0 {
 				continue
+			}
+			// ut-docs#1764 (independent review): pos.CompleteSale's
+			// netPayments already rejects change > amount as invalid
+			// (internal/pos/sales.go), but that check runs AFTER this
+			// payment has already gone through a plugin's blocking
+			// authorize call below -- for the fiscal-device (OKC) method
+			// that round trip nets Amount-ChangeGiven into what the device
+			// is told and can print, so an impossible change must be
+			// refused HERE, before any plugin ever sees it, not just
+			// before the sale persists.
+			if p.Change < 0 || p.Change > p.Amount {
+				http.Error(w, "invalid change amount", http.StatusBadRequest)
+				return
 			}
 			if err := repo.EnsurePaymentMethod(r.Context(), p.Method); err != nil {
 				// ut-docs#923: a genuine internal/setup failure (the FK-upsert

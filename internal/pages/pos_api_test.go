@@ -918,6 +918,143 @@ func TestTenderHandler_SplitTender_SecondOKCLegWithNoEvidenceRefused(t *testing.
 	}
 }
 
+// TestTenderHandler_OKCPluginReceivesNetOfChangeAmount is ut-docs#1764: a
+// cash-with-change OKC tender must tell the device the actual sale amount
+// (120, ABC's seeded price+tax), not the 200 gross tendered before the 80
+// change was handed back — the device prints "total", and a fiscal receipt
+// for more than the sale actually cost is a real compliance problem, not
+// cosmetic.
+func TestTenderHandler_OKCPluginReceivesNetOfChangeAmount(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.tax-tr', '1.0.0', 'Turkiye fiscal device', 'okc', 'wasm', 'plugin.wasm', 'https://example.test/tax-tr.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.tax-tr', 'Turkiye fiscal device', '1.0.0', 'plugin.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e1', 'com.universaltill.tax-tr', 'okc', 'Yazarkasa (OKC)', 'payment', 'payment.okc.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h1', 'com.universaltill.tax-tr', 'payment.okc.authorize', 'handle_authorize', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p1', 'com.universaltill.tax-tr', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.okc.authorize", plugins.Blocking)
+	var received map[string]any
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-tr",
+		[]string{"payment.okc.authorize"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			if err := json.Unmarshal(ev.Payload, &received); err != nil {
+				t.Fatalf("unmarshal authorize payload: %v", err)
+			}
+			return json.RawMessage(`{"provider":"okc","outcome":"approved","fiscal_device":{"receipt_no":"12345"}}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	// Sale total is 120 (ABC's 100 + 20% tax). Customer hands over 200 cash,
+	// gets 80 change.
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"okc","amount":200,"change":80}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	if received == nil {
+		t.Fatal("plugin never received an authorize call")
+	}
+	if got, want := received["amount"], float64(120); got != want {
+		t.Fatalf("plugin's \"amount\" = %v, want %v (net of change, not the 200 gross tender)", got, want)
+	}
+	if got, want := received["total"], float64(120); got != want {
+		t.Fatalf("plugin's \"total\" = %v, want %v (net of change, not the 200 gross tender)", got, want)
+	}
+}
+
+// TestTenderHandler_RejectsChangeGreaterThanAmount is ut-docs#1764's
+// independent-review finding: pos.CompleteSale's netPayments already
+// rejects change > amount as invalid (internal/pos/sales.go), but that
+// check only runs AFTER completeTender's plugin-authorize round trip --
+// so before this test's fix, a malformed request reached the OKC fiscal
+// device with a negative "amount"/"total" (amount minus an
+// impossibly-large change) before the till's own validation ever fired.
+// A legally-binding fiscal receipt can't be un-printed, so this must be
+// rejected before any plugin ever sees it, not just before the sale
+// persists.
+func TestTenderHandler_RejectsChangeGreaterThanAmount(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.tax-tr', '1.0.0', 'Turkiye fiscal device', 'okc', 'wasm', 'plugin.wasm', 'https://example.test/tax-tr.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.tax-tr', 'Turkiye fiscal device', '1.0.0', 'plugin.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e1', 'com.universaltill.tax-tr', 'okc', 'Yazarkasa (OKC)', 'payment', 'payment.okc.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h1', 'com.universaltill.tax-tr', 'payment.okc.authorize', 'handle_authorize', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p1', 'com.universaltill.tax-tr', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.okc.authorize", plugins.Blocking)
+	pluginCalled := false
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-tr",
+		[]string{"payment.okc.authorize"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			pluginCalled = true
+			return json.RawMessage(`{"provider":"okc","outcome":"approved","fiscal_device":{"receipt_no":"12345"}}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	// change (250) exceeds amount (200) -- impossible, and never legitimate.
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"okc","amount":200,"change":250}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if pluginCalled {
+		t.Fatal("the fiscal device must never be called with an impossible change > amount -- this must be rejected before the authorize round trip, not after")
+	}
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for change > amount, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
 func TestTenderHandler_InvalidJSONBodyRejected(t *testing.T) {
 	mux, dp := newPOSTestDeps(t)
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
