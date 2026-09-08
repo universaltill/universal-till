@@ -1046,6 +1046,16 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 				var stockWarning string
 				stockRecorded := false
 				switch {
+				case it.HasTracksStock && !it.TracksStock && it.HasStock && it.Stock > 0:
+					// ut-docs#1843: the source system answered "Track
+					// inventory? No" for this item, so its Quantity column is
+					// not a stock level — it is a placeholder the source
+					// itself does not believe. Recording it would invent an
+					// on-hand figure nobody stated. Warned rather than
+					// dropped silently, exactly like the negative-quantity
+					// case below: the operator should know a number in their
+					// file did not become stock.
+					stockWarning = fmt.Sprintf(T("import.status.stock_not_tracked"), it.Stock)
 				case it.HasStock && it.Stock < 0:
 					// catimport parses a negative quantity happily and it is
 					// then dropped by the `> 0` test below with no trace —

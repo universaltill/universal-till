@@ -121,8 +121,21 @@ type ImportItem struct {
 	IsWeighed   bool
 	Stock       float64 // opening quantity from the source system
 	HasStock    bool    // the file carried a parseable stock value
-	Issue       string  // one of the Issue* consts, non-empty = row cannot be imported
-	IssueDetail string  // the row's dynamic value for reason codes that need one (e.g. the raw price string for IssueBadPrice)
+	// TracksStock is the source system's own per-item answer to "should
+	// this item be stock-tracked?", and HasTracksStock says the file
+	// actually carried a parseable one (ut-docs#1843). The two are separate
+	// for the same reason Stock/HasStock are: "the column said No" and "no
+	// column" must not collapse into the same false.
+	//
+	// This matters because a source that does not track an item still
+	// writes a Quantity for it — the German pilot merchant's real SumUp
+	// export says `Track inventory? = No` for all 116 items and
+	// `Quantity = 0` for all 116. Importing that 0 as a real opening stock
+	// level would be recording a fact the source explicitly disclaimed.
+	TracksStock    bool
+	HasTracksStock bool
+	Issue          string // one of the Issue* consts, non-empty = row cannot be imported
+	IssueDetail    string // the row's dynamic value for reason codes that need one (e.g. the raw price string for IssueBadPrice)
 	// BarcodeType is the internal/barcode registry id that Barcode matched
 	// (ADR-0059, ut-docs#936), e.g. "EAN13" / "CODE128" / "INTERNAL_PLU".
 	// Empty when Barcode is empty. The pages layer passes this to
@@ -211,6 +224,13 @@ var columnSynonyms = map[string][]string{
 	"description": {"description", "details"},
 	"weighed":     {"sold by weight", "weighed", "sold by weight (y/n)", "weighed (y/n)"},
 	"stock":       {"in stock", "stock", "quantity", "qty", "in_stock", "on_hand", "on hand", "current quantity", "stock quantity", "opening stock"},
+	// The source system's per-item "is this item stock-tracked at all?"
+	// answer (ut-docs#1843). SumUp's header is "Track inventory? (Yes/No)";
+	// stripTrailingParen's second pass reduces that to "track inventory?",
+	// so BOTH the question-marked and bare forms are listed rather than
+	// relying on one of the two passes. A file without this column is
+	// unchanged: absent ⇒ HasTracksStock false ⇒ nothing is inferred.
+	"track_stock": {"track inventory", "track inventory?", "track stock", "track stock?", "tracks stock", "inventory tracking", "stock control", "enable stock control"},
 	// Tax columns (ut-docs#512): optional, ignored when absent so existing
 	// Loyverse/Square exports are unchanged. "takeaway tax" carries the
 	// off-premises rate where the source distinguishes one (§12 UStG). A
@@ -484,6 +504,15 @@ func Parse(r io.Reader, currencyDecimals int, enabledSymbologyIDs []string, useI
 		if raw := get(rec, "stock"); raw != "" {
 			if qty, err := strconv.ParseFloat(strings.ReplaceAll(raw, ",", ""), 64); err == nil {
 				item.Stock, item.HasStock = qty, true
+			}
+		}
+		// ut-docs#1843: same optional-column shape, but note it is parsed
+		// with parseYesNo and not isTruthy — isTruthy answers "is this
+		// yes?", which maps an unrecognised value and an explicit "No" onto
+		// the identical false, and here those two must stay distinguishable.
+		if raw := get(rec, "track_stock"); raw != "" {
+			if b, ok := parseYesNo(raw); ok {
+				item.TracksStock, item.HasTracksStock = b, true
 			}
 		}
 		// Tax columns are optional too, but — unlike stock — a present cell
@@ -764,6 +793,21 @@ func allDigits(s string) bool {
 		}
 	}
 	return true
+}
+
+// parseYesNo reads an explicit yes/no cell, reporting whether it recognised
+// the value at all. isTruthy above cannot serve here: it answers "is this
+// yes?", so an explicit "No" and an unrecognised value both come back false
+// (ut-docs#1843, where "the source said do not track this" and "the source
+// said nothing" must lead to different behaviour).
+func parseYesNo(s string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "y", "yes", "true", "1", "t":
+		return true, true
+	case "n", "no", "false", "0", "f":
+		return false, true
+	}
+	return false, false
 }
 
 func isTruthy(s string) bool {

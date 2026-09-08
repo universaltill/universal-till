@@ -20,3 +20,11 @@ Tracks on-hand quantities per item and variant. Sales reduce stock automatically
 2. Record a delivery with goods-in; use an adjustment for waste, breakage or count corrections — enter a negative quantity to remove stock (on a touch till, tap the on-screen keyboard's "-" key first).
 3. The inventory page predicts how many days of stock remain and suggests how much to order; the reports page carries a low-stock alert chip too.
 4. Stock locations (Locations, manager only) are shop-wide and always managed from the **main till**: on a joined till, creating, renaming or deactivating one shows a message pointing you back to the main till instead.
+
+## If you do not track stock at all
+
+Some shops never count stock — they just want every item to sell, every time. Turn on **Settings → Stock → "Sell items without tracking stock"**. Items then sell even when the till has no stock record for them, and no sale is ever refused for being out of stock.
+
+Leave it off if you want the till to stop a sale when an item runs out. That is the default, and it is why a catalogue imported from a system that did not track stock cannot sell anything until you turn this on.
+
+When you import from a system that records **"Track inventory? No"** for an item, the till does not treat that item's quantity column as a real stock level — the import tells you it did not carry it, rather than inventing an on-hand figure your old system never claimed.
