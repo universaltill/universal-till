@@ -70,6 +70,24 @@ func isTaxRateOverridesKey(key string) bool {
 	return key == "takeaway_rate_overrides"
 }
 
+// settingNoticeKey returns the i18n key of a disclosure rendered ABOVE one
+// specific plugin setting's input, or "" for every other field. Today the
+// only adopter is the AI plugin's hosted-provider api_key (ADR-0085,
+// ut-docs#1708): an operator must read what a hosted vendor receives before
+// they can type a key, so the notice is scoped to that plugin's that key —
+// not to every plugin's every secret field (same per-plugin-key
+// special-case family as isTaxRateOverridesKey). The template only renders
+// this inside the `.Secret` branch (review finding, ut-docs#1708) — every
+// key this returns non-"" for today also matches the secret heuristic, so
+// that's never been observed, but a future adopter on a plain-text setting
+// would get a silently-dropped notice; wire a non-secret render path first.
+func settingNoticeKey(pluginID, key string) string {
+	if pluginID == AIPluginID && key == "api_key" {
+		return "plugins.settings.ai.hosted_provider_notice"
+	}
+	return ""
+}
+
 // taxOverrideRow is one row of the typed takeaway-overrides editor: either
 // an active tax code (Orphan=false) or an existing override entry whose
 // tax_code_id no longer matches an active tax code (Orphan=true, kept only
@@ -251,6 +269,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		PerTill    bool // register-scoped: this till's own value, never synced
 		Typed      bool // rendered as the typed takeaway-overrides editor instead
 		TaxRows    []taxOverrideRow
+		Notice     string // i18n key of a disclosure shown above the input (settingNoticeKey); "" = none
 	}
 
 	mux.HandleFunc("GET /plugins/{id}/settings", func(w http.ResponseWriter, r *http.Request) {
@@ -273,7 +292,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 			if json.Unmarshal([]byte(row.ValueJSON), &v) != nil {
 				v = row.ValueJSON // non-string JSON edits raw
 			}
-			sv := settingView{Key: row.Key, Value: v, Secret: isSecret(row.Key), PerTill: row.Scope == "register"}
+			sv := settingView{Key: row.Key, Value: v, Secret: isSecret(row.Key), PerTill: row.Scope == "register", Notice: settingNoticeKey(pluginID, row.Key)}
 			if sv.Secret {
 				sv.IsSet = v != ""
 				sv.Value = "" // never render a secret's value into the page
