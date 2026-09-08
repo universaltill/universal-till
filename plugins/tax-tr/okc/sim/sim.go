@@ -33,6 +33,13 @@ type Options struct {
 	Silent bool
 	// Delay is added before every answer.
 	Delay time.Duration
+	// ReceiptNoOverride, when non-nil, replaces a successful sale/refund
+	// answer's receipt_no with this exact value — including "" or
+	// whitespace-only — simulating a malformed device/maker-SDK that says
+	// {"ok":true} without ever giving a usable receipt number (ut-docs#1763).
+	// Nothing is counted as printed when the override yields no usable
+	// number, matching a real device that didn't actually print.
+	ReceiptNoOverride *string
 }
 
 // Server is one simulated device listening on a loopback (or LAN) port.
@@ -185,14 +192,20 @@ func (s *Server) handle(line []byte) answer {
 				return answer{"ok": false, "error": "a fiscal receipt needs at least one line"}
 			}
 		}
-		s.receiptNo++
-		s.today++
-		no := fmt.Sprintf("%07d", s.receiptNo)
+		no := fmt.Sprintf("%07d", s.receiptNo+1)
+		if s.opts.ReceiptNoOverride != nil {
+			no = *s.opts.ReceiptNoOverride
+		}
 		kind := "mali_fis"
 		if req.Op == "refund" {
 			kind = "iade_fisi"
 		}
-		s.log = append(s.log, Printed{Op: req.Op, RequestID: req.RequestID, Amount: req.Amount, Lines: len(req.Lines), ReceiptNo: no})
+		if strings.TrimSpace(no) != "" {
+			// Only a usable receipt number counts as an actual print.
+			s.receiptNo++
+			s.today++
+			s.log = append(s.log, Printed{Op: req.Op, RequestID: req.RequestID, Amount: req.Amount, Lines: len(req.Lines), ReceiptNo: no})
+		}
 		resp := answer{
 			"ok":           true,
 			"kind":         "okc",

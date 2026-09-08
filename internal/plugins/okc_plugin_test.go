@@ -182,6 +182,17 @@ func TestOKCPlugin_RefusesTenderWhenDeviceCannotPrint(t *testing.T) {
 			t.Fatal("an unreachable device must refuse the tender")
 		}
 	})
+	t.Run("ok but no receipt", func(t *testing.T) {
+		empty := ""
+		s := startOKCSim(t, sim.Options{ReceiptNoOverride: &empty})
+		seedOKCSettings(t, repo, pluginID, s.Port())
+		if _, err := runOKCEvent(t, w, repo, db, pluginID, "payment.okc.authorize", authorizePayload(3000, 3000)); err == nil {
+			t.Fatal("an ok:true answer with no receipt number must refuse the tender, not commit the sale")
+		}
+		if n := len(s.Log()); n != 0 {
+			t.Fatalf("receiptless answer printed %d receipts", n)
+		}
+	})
 	t.Run("scaffold driver", func(t *testing.T) {
 		s := startOKCSim(t, sim.Options{})
 		seedOKCSettings(t, repo, pluginID, s.Port())
