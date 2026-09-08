@@ -29,6 +29,12 @@ type Config struct {
 	APIKey   string // claude provider only
 }
 
+// DefaultClaudeModel is the model the claude provider runs when none is
+// configured. Exported so the AI plugin's settings path
+// (internal/pages/ai_resolve.go, ADR-0085) defaults to the same model as the
+// UT_AI_* env path below — one constant, so the two can't drift apart.
+const DefaultClaudeModel = "claude-haiku-4-5"
+
 // FromEnv reads UT_AI_PROVIDER / UT_AI_ENDPOINT / UT_AI_MODEL / UT_AI_API_KEY.
 // Provider is inferred when unset: an endpoint means ollama, a key means
 // claude, neither means disabled.
@@ -53,7 +59,7 @@ func FromEnv() Config {
 		case "ollama":
 			cfg.Model = "llama3.2-vision"
 		case "claude":
-			cfg.Model = "claude-haiku-4-5"
+			cfg.Model = DefaultClaudeModel
 		}
 	}
 	// The vision model does camera identify; the ask loop needs a

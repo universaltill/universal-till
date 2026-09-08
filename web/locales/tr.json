@@ -526,6 +526,7 @@
   "plugins.none_found": "Eklenti bulunamadı",
   "plugins.none_found_hint": "Filtrelerinizi ayarlamayı veya kataloğu yenilemeyi deneyin.",
   "plugins.retry": "Kurulumu yeniden dene",
+  "plugins.settings.ai.hosted_provider_notice": "Barındırılan sağlayıcıyı seçmek (provider = claude), yapay zekâ özelliklerinin üzerinde çalıştığı verileri dükkânınızın dışına, o sağlayıcının sunucularına (Anthropic, ABD) gönderir: \"Kamerayla tanı\" için ürün fotoğrafı ile kataloğunuzdaki ürün adları, SKU kodları ve referans fotoğrafları; barındırılan bir sağlayıcı \"Kasanıza sorun\"u desteklediğinde ise sorularınız ile yanıt için kullanılan satış ve stok rakamları. Kendi sunucunuzda (Ollama, varsayılan) seçeneği bunların tümünü kendi donanımınızda tutar. Girdiğiniz anahtar o sağlayıcıdaki kendi hesabınızdır — ödemeyi doğrudan ona yaparsınız ve Universal Till'in orada hiçbir hesabı yoktur.",
   "plugins.settings.none": "Bu eklentinin ayarı yok.",
   "plugins.settings.per_till": "yalnızca bu kasa",
   "plugins.settings.save": "Ayarları kaydet",
