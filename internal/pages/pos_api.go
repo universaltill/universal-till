@@ -1246,6 +1246,14 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 
 		var payments []pos.PaymentInput
 		for _, p := range in.Payments {
+			// ut-docs#1795: canonicalize case here, once, before ANY use --
+			// EnsurePaymentMethod, the persisted PaymentInput.MethodID, the
+			// plugin-entry lookup (blockingPaymentEventWithResponseAndID),
+			// and every fiscal.MethodKeyOKC comparison below then agree on
+			// one form. See refund_page.go's identical fix for why this
+			// canonicalizes the request value rather than making each
+			// comparison site case-insensitive.
+			p.Method = strings.ToLower(strings.TrimSpace(p.Method))
 			if p.Method == "" || p.Amount <= 0 {
 				continue
 			}
@@ -1300,7 +1308,9 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		// Fallback for form-encoded tender buttons (hx-vals)
 		if len(payments) == 0 {
 			if err := r.ParseForm(); err == nil {
-				method := r.Form.Get("method")
+				// ut-docs#1795: same canonicalization as the JSON-payments
+				// branch above.
+				method := strings.ToLower(strings.TrimSpace(r.Form.Get("method")))
 				amountStr := r.Form.Get("amount")
 				var amount int64
 				if amt, err := strconv.ParseInt(amountStr, 10, 64); err == nil && amt > 0 {

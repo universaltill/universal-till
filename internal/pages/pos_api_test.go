@@ -747,6 +747,63 @@ func TestTenderHandler_OKCPluginApprovesWithNoEvidence_SaleRefused(t *testing.T)
 	}
 }
 
+// TestTenderHandler_UppercaseOKCMethod_StillRoutesToPluginAndFailsClosed is
+// ut-docs#1795: a tender whose `method` is cased differently from the
+// installed plugin entry's key ("OKC" vs the tax-tr manifest's "okc") must
+// behave IDENTICALLY to the exact-case request above -- routed to the real
+// OKC plugin, and refused when that plugin approves with no receipt
+// evidence. Before this card's fix, the case mismatch made
+// blockingPaymentEventWithResponseAndID's exact-string EntryKey lookup miss
+// entirely: the plugin was never even invoked (confirmed via the counter
+// below), so the tender fell through as an ordinary payment method with no
+// fiscal-device gate ever applying -- a silent sidestep of the #1779/#1788
+// fail-closed check, not a decline.
+func TestTenderHandler_UppercaseOKCMethod_StillRoutesToPluginAndFailsClosed(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+	installTaxTRPlugin(t, dp)
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.okc.authorize", plugins.Blocking)
+	invoked := false
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-tr",
+		[]string{"payment.okc.authorize"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			invoked = true
+			// Approved (nil error = not a decline), but no `fiscal_device`
+			// object at all -- same shape as the exact-case test above.
+			return json.RawMessage(`{"provider":"okc","outcome":"approved"}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"OKC","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if !invoked {
+		t.Fatal("expected the OKC plugin's payment.okc.authorize handler to be invoked for method \"OKC\" (case-insensitive routing) — it was never called")
+	}
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("expected 402 (declined -- no fiscal-device evidence), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&count); err != nil {
+		t.Fatalf("query sales: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no sale to be recorded when the OKC plugin approved with no receipt evidence, got %d", count)
+	}
+}
+
 // installTaxTRPlugin seeds the com.universaltill.tax-tr plugin's catalog/
 // plugin/entry/hook/permission rows — the same fixture shape
 // TestTenderHandler_OKCPluginApprovesWithNoEvidence_SaleRefused above hand-
