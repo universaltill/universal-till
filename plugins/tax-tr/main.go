@@ -220,6 +220,8 @@ func declined(err error) {
 		logf("okc: tender refused — %v", err)
 	case errors.Is(err, okc.ErrDriverNotImplemented), errors.Is(err, okc.ErrUnknownDriver):
 		logf("okc: tender refused — plugin not ready for this device: %v", err)
+	case errors.Is(err, okc.ErrMalformedResponse):
+		logf("okc: tender refused — device answered but its bridge sent a malformed field, check the maker integration: %v", err)
 	default:
 		logf("okc: tender refused — %v", err)
 	}

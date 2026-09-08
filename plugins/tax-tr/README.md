@@ -61,7 +61,14 @@ refuses the tender exactly like a decline** (ut-docs#1763) — `{"ok":true}`
 alone is not a receipt, and a bridge author's wire response MUST NOT treat
 it as one. This is enforced in the reference `bridge` driver itself
 (`okc.BridgeDriver.Sale`/`Refund`), so it holds regardless of what core does
-with the answer.
+with the answer. **A response that is syntactically valid JSON but has a
+wrong-typed field** (e.g. a buggy maker bridge sending `receipt_no` as a
+JSON number instead of a string) is a *distinct* decline reason
+(`okc.ErrMalformedResponse`), logged separately from a genuine
+unreachable/no-answer device (`okc.ErrDeviceUnreachable`) — the device
+likely DID answer, and may have already printed, so this is not the class
+of failure a maker bridge author should treat as "just retry" without first
+checking the field type their bridge is actually sending (ut-docs#1782).
 
 ## Drivers (`okc.driver`)
 

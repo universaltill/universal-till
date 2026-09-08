@@ -130,6 +130,58 @@ func TestBridgeSale_SilentDeviceTimesOut(t *testing.T) {
 	}
 }
 
+// rawServer starts a one-shot TCP listener that accepts exactly one
+// connection and writes raw verbatim (newline-terminated) as its answer,
+// simulating a bridge sending a specific wire payload — including one no
+// real device would send, like a wrong-typed field.
+func rawServer(t *testing.T, raw string) int {
+	t.Helper()
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("listen: %v", err)
+	}
+	t.Cleanup(func() { ln.Close() })
+	go func() {
+		conn, err := ln.Accept()
+		if err != nil {
+			return
+		}
+		defer conn.Close()
+		conn.Write([]byte(raw + "\n"))
+	}()
+	return ln.Addr().(*net.TCPAddr).Port
+}
+
+// A maker bridge that answers with a wrong-typed field (receipt_no as a
+// JSON number instead of a string — a plausible integration mistake) has
+// still answered: that must not fold into the generic "unreachable" bucket,
+// the one decline path an operator is trained to just retry (ut-docs#1782).
+func TestBridgeSale_MalformedField(t *testing.T) {
+	port := rawServer(t, `{"ok":true,"receipt_no":42,"serial":"SIM-0001","maker":"sim"}`)
+	d := okc.NewBridgeDriver(netTransport{}, okc.Config{Host: "127.0.0.1", Port: port})
+	_, err := d.Sale(sale(1))
+	if !errors.Is(err, okc.ErrMalformedResponse) {
+		t.Fatalf("err = %v, want ErrMalformedResponse", err)
+	}
+	if errors.Is(err, okc.ErrDeviceUnreachable) {
+		t.Fatalf("err = %v must NOT also be ErrDeviceUnreachable — that's the class this card splits it out of", err)
+	}
+	if !strings.Contains(err.Error(), "receipt_no") {
+		t.Fatalf("err = %v, want it to name the offending field", err)
+	}
+}
+
+// Genuinely non-JSON bytes are NOT this card's scope and must still surface
+// as ErrDeviceUnreachable — a regression guard for the branch this card
+// splits in two.
+func TestBridgeSale_GarbageAnswerStillUnreachable(t *testing.T) {
+	port := rawServer(t, `not json at all`)
+	d := okc.NewBridgeDriver(netTransport{}, okc.Config{Host: "127.0.0.1", Port: port})
+	if _, err := d.Sale(sale(1)); !errors.Is(err, okc.ErrDeviceUnreachable) {
+		t.Fatalf("err = %v, want ErrDeviceUnreachable", err)
+	}
+}
+
 // A device that says {"ok":true} but gives no usable receipt number must
 // be treated exactly like a decline — no receipt, no sale (ut-docs#1763).
 func TestBridgeSale_RefusedWhenReceiptNoEmpty(t *testing.T) {

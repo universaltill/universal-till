@@ -3,6 +3,7 @@ package okc
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -194,6 +195,11 @@ func roundTripOn(conn io.ReadWriter, req bridgeRequest) (bridgeResponse, error) 
 	}
 	var resp bridgeResponse
 	if err := json.Unmarshal(line, &resp); err != nil {
+		var typeErr *json.UnmarshalTypeError
+		if errors.As(err, &typeErr) {
+			return bridgeResponse{}, fmt.Errorf("%w: field %q: expected %s, got %s (%q)",
+				ErrMalformedResponse, typeErr.Field, typeErr.Type, typeErr.Value, strings.TrimSpace(string(line)))
+		}
 		return bridgeResponse{}, fmt.Errorf("%w: unparseable answer %q", ErrDeviceUnreachable, strings.TrimSpace(string(line)))
 	}
 	if !resp.OK {
