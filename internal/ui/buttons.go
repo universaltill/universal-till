@@ -519,60 +519,41 @@ func (h *ButtonsHTTP) Remove(w http.ResponseWriter, r *http.Request) {
 
 type PriceResolverAdapter struct{ Store *ButtonStore }
 
+// Resolve looks up code against the full variant/item/shortcut/SKU/name
+// chain (a.resolve, backed by POSRepo.ResolveShortcutLineDecoded) exactly
+// once (ut-docs#1660). Before this, Resolve probed the chain once per
+// candidate shape it was checking for (variant, then item, then shortcut,
+// then a SKU/name fallback) and discarded every result whose shape didn't
+// match — up to 4 identical round trips for the same code, since the chain
+// is a pure, deterministic lookup: the SAME code always yields the SAME
+// row. There was never a second, differently-scoped search hiding in that
+// fallthrough (resolveShortcut's "has an ItemID" check could never fire —
+// resolveItem already claims every match with an ItemID and no VariantID,
+// and resolveVariant already claims every match with a VariantID; the
+// old resolveTextSearch was reached only by a match with neither, and
+// returned true unconditionally, whatever the shape) — every shape that
+// resolves at all was always going to end up returning true, just after
+// wastefully re-querying to find out.
+//
+// The one genuine second case is a code with surrounding whitespace: every
+// current caller (internal/pos.Service) already trims before calling
+// Resolve, so this never fires in production, but Resolve is a public
+// method satisfying the pos.PriceResolver interface, and a direct/future
+// caller could pass untrimmed input — so a second, trimmed attempt is kept
+// as an explicit, conditional fallback (only reached when the raw lookup
+// missed AND trimming would actually change the query), not a fixed extra
+// call on every miss.
 func (a PriceResolverAdapter) Resolve(code string) (pos.BasketLine, bool) {
 	ctx := context.Background()
 
-	if line, ok := a.resolveVariant(ctx, code); ok {
+	if line, ok := a.resolve(ctx, code); ok {
 		return line, true
 	}
-	if line, ok := a.resolveItem(ctx, code); ok {
-		return line, true
-	}
-	if line, ok := a.resolveShortcut(ctx, code); ok {
-		return line, true
-	}
-	if line, ok := a.resolveTextSearch(ctx, code); ok {
-		return line, true
-	}
-	return pos.BasketLine{}, false
-}
-
-func (a PriceResolverAdapter) resolveVariant(ctx context.Context, code string) (pos.BasketLine, bool) {
-	line, ok := a.resolve(ctx, code)
-	if ok && line.VariantID != "" {
-		return line, true
-	}
-	return pos.BasketLine{}, false
-}
-
-func (a PriceResolverAdapter) resolveItem(ctx context.Context, code string) (pos.BasketLine, bool) {
-	line, ok := a.resolve(ctx, code)
-	if ok && line.ItemID != "" && line.VariantID == "" {
-		return line, true
-	}
-	return pos.BasketLine{}, false
-}
-
-func (a PriceResolverAdapter) resolveShortcut(ctx context.Context, code string) (pos.BasketLine, bool) {
-	line, ok := a.resolve(ctx, code)
-	if ok && line.ItemID != "" {
-		return line, true
-	}
-	return pos.BasketLine{}, false
-}
-
-// resolveTextSearch falls back to SKU or name search when barcode lookups miss.
-func (a PriceResolverAdapter) resolveTextSearch(ctx context.Context, code string) (pos.BasketLine, bool) {
-	q := strings.TrimSpace(code)
-	if q == "" {
+	trimmed := strings.TrimSpace(code)
+	if trimmed == "" || trimmed == code {
 		return pos.BasketLine{}, false
 	}
-
-	line, ok := a.resolve(ctx, q)
-	if ok {
-		return line, true
-	}
-	return pos.BasketLine{}, false
+	return a.resolve(ctx, trimmed)
 }
 
 func (a PriceResolverAdapter) resolve(ctx context.Context, code string) (pos.BasketLine, bool) {
