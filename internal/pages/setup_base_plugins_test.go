@@ -8,9 +8,11 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
@@ -60,6 +62,67 @@ func TestResolveAndInstallBasePlugin_DEHappyPath(t *testing.T) {
 	}
 	if hits := mkt.downloadTokenHits(); hits != 1 {
 		t.Fatalf("expected exactly one download-token request, got %d", hits)
+	}
+}
+
+// ut-docs#1111: every install-flow test up to this one used publishVersion's
+// CanonicalType:"page" fixture (even TestResolveAndInstallBasePlugin_DEHappyPath
+// above, despite its catalog entry claiming CanonicalType:"language" —
+// #1055's own wire-shape fix never touched the *installed artifact*), so
+// nothing proved the download -> verify -> extract -> Reload -> syncLocales
+// -> SetOverlays chain a real language pack depends on actually works
+// end to end. This drives that whole chain through the real install path
+// and asserts a REAL config.I18n.T() call renders the plugin-shipped
+// string afterward — not PluginActive, not a cookie, and not a
+// captureLocalizer stub (manager_test.go's TestSetLocalizerSyncsPluginLocales
+// already covers Manager.syncLocales in isolation by writing locale files
+// straight to disk; this test is the marketplace-download counterpart it
+// was missing).
+func TestResolveAndInstallBasePlugin_LanguagePackLocaleRendersAfterInstall(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+
+	// A minimal, hermetic base translator — just enough for T's fallback
+	// chain to have somewhere to land; no dependency on the real shipped
+	// web/locales content.
+	i18n, err := config.NewI18nFS(fstest.MapFS{
+		"en.json": &fstest.MapFile{Data: []byte(`{"nav.home":"Home"}`)},
+	}, "en")
+	if err != nil {
+		t.Fatalf("build test i18n: %v", err)
+	}
+	dp.Pm.SetLocalizer(i18n)
+
+	const wantGerman = "Startseite"
+	if got := i18n.T("de", "nav.home"); got == wantGerman {
+		t.Fatalf("nav.home already renders %q in de before any plugin is installed — test fixture is not proving anything", wantGerman)
+	}
+
+	mkt := newFakeMarketplace(t, nil)
+	mkt.publishLanguageVersion(t, "listing-lang-de", "ut-plugin-language-de", "1.0.0", "de", []byte(`{"nav.home":"`+wantGerman+`"}`))
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	spec := basePluginSpec{CanonicalType: "language", Locale: "de"}
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("resolveAndInstallBasePlugin: %v", err)
+	}
+
+	active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-de")
+	if err != nil {
+		t.Fatalf("PluginActive: %v", err)
+	}
+	if !active {
+		t.Fatal("expected ut-plugin-language-de to be installed and active")
+	}
+	if hits := mkt.downloadTokenHits(); hits != 1 {
+		t.Fatalf("expected exactly one download-token request, got %d", hits)
+	}
+
+	// The actual proof this card exists for: a real T() call, through the
+	// real overlay-precedence code, fed by the real
+	// download->extract->Reload->syncLocales->SetOverlays chain.
+	if got := i18n.T("de", "nav.home"); got != wantGerman {
+		t.Fatalf("i18n.T(%q, %q) = %q after install, want %q — the installed language pack's locale file never reached the translator", "de", "nav.home", got, wantGerman)
 	}
 }
 
