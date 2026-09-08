@@ -59,10 +59,23 @@ type Table struct {
 // raw created_at of the OLDEST open (held) order assigned to the table —
 // exactly as stored ("2006-01-02 15:04:05" from the held_sales schema
 // default, or RFC3339 if a writer sets it explicitly); empty when free.
+//
+// HasLiveClaim/ClaimTillID/ClaimTillName/ClaimTillOnline describe the
+// table_claims row alone (ut-docs#1714, follow-up from the #1393 review) —
+// they stay zero-valued when occupancy comes only from a held order with no
+// claim, which is the existing, unrelated "held order only" case
+// (tables.error.held_order_only). ClaimTillID "" (with HasLiveClaim true)
+// is this (primary) till's own local claim, per the till_id="" convention
+// ClaimTable/ForceReleaseTableClaim already use — always "online" with
+// itself, so ClaimTillName/ClaimTillOnline aren't meaningful for it.
 type TableWithState struct {
 	Table
-	Occupied      bool
-	OccupiedSince string
+	Occupied        bool
+	OccupiedSince   string
+	HasLiveClaim    bool
+	ClaimTillID     string
+	ClaimTillName   string
+	ClaimTillOnline bool
 }
 
 func validTableShape(shape string) bool { return shape == "rect" || shape == "round" }
@@ -643,16 +656,55 @@ func (r *POSRepo) ClearLocalTableClaims(ctx context.Context) error {
 // the consuming side (tables_page.go's elapsedMinutes); MIN compares them
 // as raw text, which is exact within one shape and only approximate
 // across the two — acceptable for a state that should not co-exist.
-func (r *POSRepo) ListTablesWithState(ctx context.Context) ([]TableWithState, error) {
+//
+// A SECOND, separate LEFT JOIN (ut-docs#1714) pulls the claim's own
+// till_id/till name/online-ness — kept apart from the UNION above because
+// that UNION deliberately loses which source (held order vs. claim)
+// contributed, and this needs the claim specifically. table_claims.table_id
+// is a PRIMARY KEY and tills.id is a PRIMARY KEY, and tc is joined straight
+// onto t.id, so every row inside one GROUP BY t.id group carries the SAME
+// tc/ti values — but the new columns are STILL wrapped in MAX(), because a
+// bare, non-aggregated column in a query that already contains an aggregate
+// (MIN(o.since), one line above) is undefined per standard SQL: it is
+// correct here only by accident of those two primary keys, and would start
+// silently picking an arbitrary row the day this join is widened (a claim
+// history table, a second claim per table, a join through o.table_id
+// instead of t.id). An independent review re-derived this: an
+// unwrapped-bare-column build of THIS query shape could not be made to
+// misattribute a claim, under SQLite or otherwise, so treat MAX() here as
+// the thing that makes the invariant hold by construction rather than as a
+// fix for an observed cross-attribution. MAX() over a
+// group with at most one non-NULL row is a genuine aggregate and returns
+// that one value deterministically — same reasoning this function already
+// applies to OccupiedSince via MIN(o.since), just not yet applied
+// consistently to every bare column when this was first written.
+//
+// recentCutoff is the "a till seen at or after this looks online" bound, and
+// is a PARAMETER for the same reason ClaimTableForTill's and
+// ForceReleaseTableClaim's are (independent review, ut-docs#1714): the bound
+// itself is policy owned by internal/pages' single tillClaimTTL constant,
+// which this package cannot import. Deriving it here from a `now` argument
+// plus a local `2 * time.Minute` literal would have made this the fourth
+// copy of that number and the only one that could silently drift out of
+// step with the sync status chip and the post-release
+// released_other_till_recent message. Callers pass
+// time.Now().Add(-tillClaimTTL), exactly as they already do for the two
+// methods above.
+func (r *POSRepo) ListTablesWithState(ctx context.Context, recentCutoff time.Time) ([]TableWithState, error) {
+	cutoff := recentCutoff.UTC().Format(time.RFC3339)
 	rows, err := r.db.QueryContext(ctx, `
 SELECT t.id, t.label, t.area_zone, t.seat_count, t.shape, t.pos_x, t.pos_y, t.enabled,
-       t.created_at, t.updated_at, COALESCE(MIN(o.since), '')
+       t.created_at, t.updated_at, COALESCE(MIN(o.since), ''),
+       MAX(tc.table_id IS NOT NULL), COALESCE(MAX(tc.till_id), ''), COALESCE(MAX(ti.name), ''),
+       COALESCE(MAX(ti.last_seen_at), '')
 FROM tables t
 LEFT JOIN (
     SELECT table_id, created_at AS since FROM held_sales WHERE table_id IS NOT NULL
     UNION ALL
     SELECT table_id, claimed_at AS since FROM table_claims
 ) o ON o.table_id = t.id
+LEFT JOIN table_claims tc ON tc.table_id = t.id
+LEFT JOIN tills ti ON ti.id = tc.till_id AND tc.till_id != ''
 GROUP BY t.id
 ORDER BY t.area_zone, t.label`)
 	if err != nil {
@@ -663,12 +715,20 @@ ORDER BY t.area_zone, t.label`)
 	for rows.Next() {
 		var t TableWithState
 		var enabled int
+		var claimTillLastSeen string
 		if err := rows.Scan(&t.ID, &t.Label, &t.AreaZone, &t.SeatCount, &t.Shape, &t.PosX, &t.PosY,
-			&enabled, &t.CreatedAt, &t.UpdatedAt, &t.OccupiedSince); err != nil {
+			&enabled, &t.CreatedAt, &t.UpdatedAt, &t.OccupiedSince,
+			&t.HasLiveClaim, &t.ClaimTillID, &t.ClaimTillName, &claimTillLastSeen); err != nil {
 			return nil, fmt.Errorf("scan table state: %w", err)
 		}
 		t.Enabled = enabled == 1
 		t.Occupied = t.OccupiedSince != ""
+		if t.HasLiveClaim {
+			// till_id="" (this till's own local claim) is always online with
+			// itself — the same convention ForceReleaseTableClaim's own
+			// "always online with itself" comment already documents.
+			t.ClaimTillOnline = t.ClaimTillID == "" || claimTillLastSeen >= cutoff
+		}
 		out = append(out, t)
 	}
 	if err := rows.Err(); err != nil {

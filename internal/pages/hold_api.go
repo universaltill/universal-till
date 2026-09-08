@@ -112,7 +112,7 @@ func registerHoldAPI(mux *http.ServeMux, d *common.Deps) {
 		// chrome renders at all (ADR-0054 soft-gate).
 		labelByTableID := map[string]string{}
 		var freeTables []data.TableWithState
-		if states, err := tablesWithStateForDisplay(ctx, d, posRepo); err == nil {
+		if states, err := tablesWithStateForDisplay(ctx, d, posRepo, time.Now().Add(-tillClaimTTL)); err == nil {
 			for _, s := range states {
 				if !s.Enabled {
 					continue

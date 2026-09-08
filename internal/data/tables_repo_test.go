@@ -187,7 +187,7 @@ func TestListTablesWithState_AllFreeBeforeOrderAssignmentShips(t *testing.T) {
 		t.Fatalf("seed held sale: %v", err)
 	}
 
-	rows, err := repo.ListTablesWithState(ctx)
+	rows, err := repo.ListTablesWithState(ctx, time.Now().Add(-2*time.Minute))
 	if err != nil {
 		t.Fatalf("ListTablesWithState: %v", err)
 	}
@@ -222,7 +222,7 @@ INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id, c
 		t.Fatalf("seed held sales: %v", err)
 	}
 
-	rows, err := repo.ListTablesWithState(ctx)
+	rows, err := repo.ListTablesWithState(ctx, time.Now().Add(-2*time.Minute))
 	if err != nil {
 		t.Fatalf("ListTablesWithState: %v", err)
 	}
@@ -683,7 +683,7 @@ VALUES ('h1','',0,0,'{}',?, '2026-08-18 10:05:00')`, bothID); err != nil {
 		t.Fatalf("seed claim: %v", err)
 	}
 
-	rows, err := repo.ListTablesWithState(ctx)
+	rows, err := repo.ListTablesWithState(ctx, time.Now().Add(-2*time.Minute))
 	if err != nil {
 		t.Fatalf("ListTablesWithState: %v", err)
 	}
@@ -704,6 +704,78 @@ VALUES ('h1','',0,0,'{}',?, '2026-08-18 10:05:00')`, bothID); err != nil {
 	}
 	if len(rows) != 3 {
 		t.Fatalf("a table with both a held row and a claim must still list exactly once; got %d rows", len(rows))
+	}
+}
+
+// ListTablesWithState's HasLiveClaim/ClaimTillID/ClaimTillName/
+// ClaimTillOnline (ut-docs#1714, follow-up from the #1393 review): a manager
+// must be able to tell a stuck claim from a live one before pressing "Free
+// table". Covers all four cases in one table so the boundary between them is
+// asserted directly, not just each case in isolation.
+func TestListTablesWithState_ClaimTillVisibility(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+	now := time.Now().UTC()
+
+	heldOnlyID, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	ownClaimID, err := repo.CreateTable(ctx, "T2", "", 4, "rect", 300, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	onlineForeignID, err := repo.CreateTable(ctx, "T3", "", 4, "rect", 500, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+	staleForeignID, err := repo.CreateTable(ctx, "T4", "", 4, "rect", 700, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	// T1: held order only, no claim at all — the existing, unrelated case.
+	if _, err := dbo.DB.Exec(`
+INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id, created_at)
+VALUES ('h1','',0,0,'{}',?, '2026-08-18 10:05:00')`, heldOnlyID); err != nil {
+		t.Fatalf("seed held sale: %v", err)
+	}
+	// T2: this (primary) till's own local claim — till_id="".
+	if claimed, err := repo.ClaimTable(ctx, ownClaimID); err != nil || !claimed {
+		t.Fatalf("ClaimTable T2: claimed=%v err=%v", claimed, err)
+	}
+	// T3: a foreign till's claim, seen well within the 2-minute online bound.
+	seedTill(t, dbo, "till-online", now.Add(-30*time.Second).Format(time.RFC3339))
+	mustExec(t, dbo, `INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, ?, 'till-online')`,
+		onlineForeignID, now.Format(time.RFC3339))
+	// T4: a foreign till's claim, last seen well outside the bound — stale.
+	seedTill(t, dbo, "till-stale", now.Add(-10*time.Minute).Format(time.RFC3339))
+	mustExec(t, dbo, `INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, ?, 'till-stale')`,
+		staleForeignID, now.Format(time.RFC3339))
+
+	rows, err := repo.ListTablesWithState(ctx, now.Add(-2*time.Minute))
+	if err != nil {
+		t.Fatalf("ListTablesWithState: %v", err)
+	}
+	byLabel := map[string]TableWithState{}
+	for _, r := range rows {
+		byLabel[r.Label] = r
+	}
+
+	if t1 := byLabel["T1"]; t1.HasLiveClaim {
+		t.Fatalf("held-order-only table must report no live claim: %+v", t1)
+	}
+	t2 := byLabel["T2"]
+	if !t2.HasLiveClaim || t2.ClaimTillID != "" || !t2.ClaimTillOnline {
+		t.Fatalf("this till's own claim must report HasLiveClaim, empty ClaimTillID, always online: %+v", t2)
+	}
+	t3 := byLabel["T3"]
+	if !t3.HasLiveClaim || t3.ClaimTillID != "till-online" || t3.ClaimTillName != "Till till-online" || !t3.ClaimTillOnline {
+		t.Fatalf("recently-seen foreign till's claim must report its name and online=true: %+v", t3)
+	}
+	t4 := byLabel["T4"]
+	if !t4.HasLiveClaim || t4.ClaimTillID != "till-stale" || t4.ClaimTillName != "Till till-stale" || t4.ClaimTillOnline {
+		t.Fatalf("stale foreign till's claim must report its name and online=false: %+v", t4)
 	}
 }
 

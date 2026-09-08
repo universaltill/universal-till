@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
@@ -799,7 +800,7 @@ func holdTestTableClaimed(t *testing.T, dp *common.Deps, tableID string) bool {
 
 func holdTestTableOccupied(t *testing.T, dp *common.Deps, tableID string) bool {
 	t.Helper()
-	states, err := data.NewPOSRepo(dp.Db).ListTablesWithState(context.Background())
+	states, err := data.NewPOSRepo(dp.Db).ListTablesWithState(context.Background(), time.Now().Add(-tillClaimTTL))
 	if err != nil {
 		t.Fatalf("ListTablesWithState: %v", err)
 	}

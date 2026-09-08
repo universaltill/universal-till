@@ -131,11 +131,11 @@ func registerTables(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#1392: a replica shows the PRIMARY's live occupancy when
 		// reachable, falling back to its own local state otherwise — see
 		// tablesWithStateForDisplay's own doc comment.
-		states, err := tablesWithStateForDisplay(r.Context(), d, posRepo)
+		now := time.Now().UTC()
+		states, err := tablesWithStateForDisplay(r.Context(), d, posRepo, now.Add(-tillClaimTTL))
 		if err != nil {
 			return nil, err
 		}
-		now := time.Now().UTC()
 		out := make([]tableTile, 0, len(states))
 		for _, s := range states {
 			out = append(out, tableTile{TableWithState: s, OpenMinutes: elapsedMinutes(s.OccupiedSince, now)})

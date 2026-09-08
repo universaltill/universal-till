@@ -440,6 +440,14 @@ func TestClaimTableWriteThrough_LocalBranchExpiresAnotherTillsStaleClaim(t *test
 // reachable, so adding reconciliation to it must not have made it easier to
 // fail than the single INSERT it replaced — offline-first, ADR-0003. Simulated
 // here by removing the `tills` table the reconciliation joins against.
+//
+// The final check reads table_claims directly rather than through
+// tableOccupied/ListTablesWithState (ut-docs#1714): that query now ALSO
+// joins tills, to surface which till holds a live claim, so it can no
+// longer run once this test has dropped the table — a real till never runs
+// with tills missing entirely (it's created by a core migration), so this
+// stays a faithful check of the thing the test actually verifies (the
+// fallback wrote the local claim row), not a weakening of it.
 func TestClaimTableWriteThrough_LocalBranchStillClaimsWhenReconcileFails(t *testing.T) {
 	_, dp := newPOSTestDeps(t)
 	repo := data.NewPOSRepo(dp.Db)
@@ -454,7 +462,11 @@ func TestClaimTableWriteThrough_LocalBranchStillClaimsWhenReconcileFails(t *test
 	if err != nil || !claimed {
 		t.Fatalf("the local claim must still succeed when reconciliation cannot run, got claimed=%v err=%v", claimed, err)
 	}
-	if !tableOccupied(t, dp, t1) {
+	var claimCount int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM table_claims WHERE table_id = ?`, t1).Scan(&claimCount); err != nil {
+		t.Fatalf("read table_claims: %v", err)
+	}
+	if claimCount != 1 {
 		t.Fatal("the fallback must actually have written the local claim row")
 	}
 }
