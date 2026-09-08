@@ -42,6 +42,16 @@ var ErrVoucherNotActive = errors.New("voucher is not active")
 // explicitly defers partial-voucher/partial-cash split logic).
 var ErrVoucherInsufficientBalance = errors.New("voucher balance does not cover the tendered amount")
 
+// ErrVoucherRedemptionAlreadyRecorded is returned by RecordVoucherTransaction
+// when a 'redemption' row already exists for the same (voucher_id, sale_id)
+// — the ux_voucher_tx_redemption_once partial unique index (migration 012,
+// ADR-0084 Decision 2) refusing a second application of one sale's
+// redemption of one voucher. Every in-tree writer pre-checks with
+// VoucherRedemptionRecorded inside the same transaction, so reaching this
+// sentinel means a writer bypassed that check; it is classified as a
+// permanent (non-retryable) failure, same as ErrVoucherIDExists.
+var ErrVoucherRedemptionAlreadyRecorded = errors.New("voucher redemption already recorded for this sale")
+
 // ErrVoucherRedeemedCannotVoid is returned when voiding a sale whose issued
 // voucher has already been partly or fully redeemed elsewhere (ut-docs#1008
 // review, blocker F2): the void is refused outright — fail-closed — because
