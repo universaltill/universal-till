@@ -797,6 +797,17 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					status, skipped = T("import.status.sku_already_in_catalog"), true
 				}
 			}
+			// ut-docs#1839: a row with NEITHER a SKU nor a barcode is never
+			// reached by either check above, so it always inserted — the
+			// normal shape of a SumUp café export (both columns optional,
+			// empty by default), not an edge case. Fall back to a
+			// normalised (name, department, category) match, the same
+			// identity import.help already claims re-import is safe by.
+			if !skipped && it.SKU == "" && it.Barcode == "" {
+				if exists, _ := repo.ItemExistsByNameAndCategory(r.Context(), it.Name, it.Department, it.Category); exists {
+					status, skipped = T("import.status.name_already_in_catalog"), true
+				}
+			}
 			if !skipped {
 				importable++
 			}
