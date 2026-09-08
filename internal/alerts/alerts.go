@@ -41,6 +41,28 @@ func init() {
 func firstDelay() time.Duration   { return time.Duration(firstDelayNS.Load()) }
 func tickInterval() time.Duration { return time.Duration(tickIntervalNS.Load()) }
 
+// nowOverride pins the instant Start's loop treats as "now" when deciding
+// whether yesterday's sales were unusual — atomic.Pointer, not a plain var,
+// for the same reason firstDelayNS/tickIntervalNS above are atomic.Int64:
+// the loop goroutine reads it independently of a test's write. nil (the
+// zero value, and always the case in production) means "use the real
+// clock." A test pins it because unusualSales buckets by LOCAL calendar day
+// (POSRepo.DayTotal's 'localtime' SQL modifier): a test that seeds baseline
+// data anchored to one instant but leaves this call reading the live wall
+// clock a few milliseconds later silently disagrees about what "today" is
+// whenever that live read and the seed anchor fall on different local
+// calendar dates — which happens for roughly half of every 24h in any
+// non-UTC timezone, and even in UTC whenever the two reads straddle
+// midnight (ut-docs#1769).
+var nowOverride atomic.Pointer[time.Time]
+
+func now() time.Time {
+	if p := nowOverride.Load(); p != nil {
+		return *p
+	}
+	return time.Now()
+}
+
 // runningOutCount shares the inventory page's exact decision
 // (data.LowStockItem.IsRunningOut, same as internal/pages/inventory_page.go's
 // stockLevelsForDisplay): items whose on-hand stock covers ≤ their effective
@@ -51,9 +73,13 @@ func runningOutCount(ctx context.Context, db *sql.DB) (int, error) {
 	// +1s pad: SQL window comparisons truncate to whole seconds, so an
 	// exact-now exclusive upper bound can drop a sale committed in this
 	// same wall-clock second (see reportNow's doc comment in
-	// internal/pages/reports_page.go).
-	now := time.Now().Add(time.Second)
-	rates, err := repo.ItemDailySellRates(ctx, now.Add(-28*24*time.Hour), now)
+	// internal/pages/reports_page.go). Deliberately the real wall clock,
+	// not now() above — this is a rolling 28-day window, not a
+	// calendar-day bucket, so it was never the flaky half of ut-docs#1769.
+	// Named nowPad rather than now to avoid shadowing the package-level
+	// now() helper.
+	nowPad := time.Now().Add(time.Second)
+	rates, err := repo.ItemDailySellRates(ctx, nowPad.Add(-28*24*time.Hour), nowPad)
 	if err != nil || len(rates) == 0 {
 		return 0, err
 	}
@@ -191,7 +217,7 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, wg *sync.WaitGro
 			if err := pushDigest(ctx, cfg, db); err != nil {
 				logging.L().Warnf("alerts: digest push failed (will retry tomorrow): %v", err)
 			}
-			if ratio, total, unusual := unusualSales(ctx, db, time.Now()); unusual {
+			if ratio, total, unusual := unusualSales(ctx, db, now()); unusual {
 				if err := pushNotify(ctx, cfg, "unusual_sales", map[string]any{
 					"ratio_pct": int(ratio * 100),
 					"total":     total,
