@@ -182,7 +182,14 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// Additive basket fields for a fiscal-DEVICE payment plugin (Turkey's
 	// YN ÖKC, fiscal_device_hook.go): the device prints the legal receipt
 	// itself, so it needs the lines and VAT rates, not just an amount.
-	// Computed once per tender; ignored by every other payment plugin.
+	// Computed once per tender, but merged ONLY into the fiscal-device
+	// plugin's own payment leg (fiscal.MethodKeyOKC) — every other payment
+	// plugin (card terminal, QR, demo) only ever asked for method/amount/
+	// reference, and merging it unconditionally into every plugin's
+	// payload regardless of MethodID handed the whole basket (every line,
+	// quantity and price) to every payment plugin in every country, a
+	// least-privilege regression with no visible interface change
+	// (ut-docs#1766).
 	deviceExtras := deviceAuthorizePayloadExtras(saleInput, payments)
 	var deviceEvidence *fiscal.DeviceEvidence
 	for i, p := range payments {
@@ -191,8 +198,10 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			"amount":    p.Amount.Minor(),
 			"reference": p.Reference,
 		}
-		for k, v := range deviceExtras {
-			payload[k] = v
+		if p.MethodID == fiscal.MethodKeyOKC {
+			for k, v := range deviceExtras {
+				payload[k] = v
+			}
 		}
 		resp, err := blockingPaymentEventWithResponse(ctx, d, p.MethodID, "authorize", payload)
 		if err != nil {
