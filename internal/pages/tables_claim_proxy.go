@@ -182,6 +182,60 @@ func claimTableWriteThrough(ctx context.Context, d *common.Deps, repo *data.POSR
 	return claimed, nil
 }
 
+// reaffirmHeldOrderTableClaims write-throughs this till's PRIMARY-side claim
+// for every entry in held that has a table. Shared by Init's boot re-claim
+// step and the periodic re-affirm tick (ut-docs#1724,
+// sync_admin.go's StartHeldOrderClaimReaffirm) so both stay in lockstep with
+// claimTableWriteThrough's own behavior instead of drifting apart.
+//
+// What this actually fixes (corrected after independent review found the
+// first version's own doc comment described the wrong mechanism): staleness
+// is judged on tills.last_seen_at, NOT on table_claims.claimed_at — see
+// ClaimTableForTill's own doc comment. claimed_at is write-only bookkeeping
+// (only ever read back for the floor plan's "occupied since" display), so
+// re-claiming a table this till already owns cannot, by itself, protect it
+// from ever being judged stale — that protection already comes from
+// last_seen_at, refreshed by ANY authenticated call this till makes to the
+// primary (syncTill touches it on every request), this one included.
+//
+// What this call DOES provide is recovery, not prevention: if this till's
+// PRIMARY-side row for a held order's table is simply gone by the time this
+// runs — taken over by a different till while this one was unreachable and
+// since released or itself gone stale, or lost to some other race — the
+// call above re-creates it (an ordinary INSERT, since nothing conflicting
+// remains) rather than leaving the held order's cross-till occupancy wrong
+// until this till's next restart (the only prior trigger, via Init's own
+// boot re-claim step). Bounded to roughly one tick interval instead of
+// "until restart" is the real improvement ut-docs#1724 asked for.
+//
+// It does NOT and cannot forcibly reclaim a table a different, currently
+// live till legitimately holds (ClaimTableForTill only ever evicts a STALE
+// claim) — claimed=false with no error in that case is the correct, expected
+// outcome, not a bug; see reaffirmHeldOrderTableClaims' own claimed=false
+// handling below for why that must not be logged as an error on the
+// periodic path. Best-effort and non-fatal throughout: a per-table failure
+// is logged, never blocks the caller — same offline-first stance as
+// claimTableWriteThrough itself. logPrefix distinguishes the two callers'
+// log lines; logRefusalAsError controls whether a plain claimed=false (no
+// err) logs at Error (boot: true, matching the original one-shot-at-startup
+// log line byte-for-byte) or Debug (periodic: false — an indefinitely
+// displaced held order would otherwise Errorf every tick for the rest of
+// its life, burying real errors in noise).
+func reaffirmHeldOrderTableClaims(ctx context.Context, d *common.Deps, posRepo *data.POSRepo, held []data.HeldSale, logPrefix string, logRefusalAsError bool) {
+	for _, h := range held {
+		if h.TableID == "" {
+			continue
+		}
+		claimed, err := claimTableWriteThrough(ctx, d, posRepo, h.TableID)
+		switch {
+		case err != nil, !claimed && logRefusalAsError:
+			logging.L().Errorf("%s held order %s's table %s: claimed=%v err=%v", logPrefix, h.ID, h.TableID, claimed, err)
+		case !claimed:
+			logging.L().Debugf("%s: held order %s's table %s is currently held by a different, live till — will retry next tick", logPrefix, h.ID, h.TableID)
+		}
+	}
+}
+
 // releaseTableClaimWriteThrough is THE release call behind pos_api.go's
 // releaseTableClaim helper: a "" tableID is the common no-table case and a
 // no-op; otherwise the primary is told to release this till's claim there

@@ -341,15 +341,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		}
 		_ = releaseAllTableClaimsOnPrimary(ctx, dp, tableClaimProxyClient, keepTableIDs)
 
-		posRepo := data.NewPOSRepo(db)
-		for _, h := range held {
-			if h.TableID == "" {
-				continue
-			}
-			if claimed, err := claimTableWriteThrough(ctx, dp, posRepo, h.TableID); err != nil || !claimed {
-				log.Errorf("boot re-claim held order %s's table %s: claimed=%v err=%v", h.ID, h.TableID, claimed, err)
-			}
-		}
+		reaffirmHeldOrderTableClaims(ctx, dp, data.NewPOSRepo(db), held, "boot re-claim", true)
 	}
 
 	// Register routes
@@ -395,6 +387,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	StartSyncPush(bgCtx, dp, wg)        // replica journal loop (ADR-0011 D3); joined by app.Run's drain
 	rederiveSettings := newRederiveSettings(dp, authDisabled, i18n)
 	StartSyncPull(bgCtx, dp, rederiveSettings, wg)  // joined by app.Run's drain
+	StartHeldOrderClaimReaffirm(bgCtx, dp, wg)      // periodic held-order table-claim re-affirm (ut-docs#1724); joined by app.Run's drain
 	StartCloudSync(bgCtx, dp, rederiveSettings, wg) // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain
 	StartEODScheduler(bgCtx, dp, wg)                // background Z-report (docs: G30); joined by app.Run's drain
 	StartAutoUpdateScheduler(bgCtx, dp, wg)         // background unattended update (ut-docs#79); joined by app.Run's drain
