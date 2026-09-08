@@ -120,7 +120,7 @@ func registerUsers(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 	renderUsers := func(w http.ResponseWriter, r *http.Request, actor auth.User, errKey string) {
 		users, err := repo.ListUsers(r.Context())
 		if err != nil {
-			http.Error(w, "failed to load users", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
 		type row struct {

@@ -77,7 +77,7 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 	renderRegisters := func(w http.ResponseWriter, r *http.Request, errKey string) {
 		regs, err := posRepo.ListRegistersForAdmin(r.Context())
 		if err != nil {
-			http.Error(w, "failed to load registers", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
 		// Name-resolution uses every location (including a deactivated one a
@@ -85,7 +85,7 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 		// picker below, which deliberately only offers active locations.
 		allLocs, err := posRepo.ListStockLocations(r.Context())
 		if err != nil {
-			http.Error(w, "failed to load stock locations", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
 		locNames := make(map[string]string, len(allLocs))
@@ -94,7 +94,7 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 		}
 		locs, err := posRepo.ListActiveStockLocations(r.Context())
 		if err != nil {
-			http.Error(w, "failed to load stock locations", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
 		activeLoc := make(map[string]bool, len(locs))
@@ -115,7 +115,7 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 			}
 			inUse, err := posRepo.RegisterInUse(r.Context(), reg.ID)
 			if err != nil {
-				http.Error(w, "failed to load registers", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
+				httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 				return
 			}
 			v.InUse = inUse

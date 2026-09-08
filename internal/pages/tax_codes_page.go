@@ -204,7 +204,7 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 		}
 		views, err := repo.ListAllTaxCodes(r.Context())
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "taxcodes.err.list_failed", "taxcodes_list_page", err) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "taxcodes.err.list_failed", err)
 			return
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))

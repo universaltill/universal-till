@@ -1317,11 +1317,12 @@ func TestSyncPromote_ValidatesBeforeElevating(t *testing.T) {
 }
 
 // --- ut-docs#946 (924 increment 4): raw err.Error() leaks now route through
-// common.LogAndLocalizedError. Each test below forces a REAL failure (a
-// dropped table, a read-only connection, a file blocking a directory
-// MkdirAll needs, or oversized real input, never a mock/stub repo) at one
-// specific call site and asserts the localized message appears while the
-// raw SQL/Go error text does not.
+// common.LogAndLocalizedError (the page-route case below, GET /tills, has
+// since moved to httpx.RenderError per ut-docs#1663). Each test below
+// forces a REAL failure (a dropped table, a read-only connection, a file
+// blocking a directory MkdirAll needs, or oversized real input, never a
+// mock/stub repo) at one specific call site and asserts the localized
+// message appears while the raw SQL/Go error text does not.
 //
 // Line 261 (advertisableHost's lanIPv4 failure inside POST
 // /api/sync/enroll-token) is not covered by a forced-failure test here:

@@ -152,7 +152,7 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 	renderFiscalRegister := func(w http.ResponseWriter, r *http.Request, errKey string) {
 		entries, err := fiscalStore.List(r.Context())
 		if err != nil {
-			http.Error(w, "failed to load fiscal register", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
 		// The "add entry" picker offers active registers only, same
@@ -161,7 +161,7 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 		// the tax office.
 		registers, err := posRepo.ListRegisters(r.Context())
 		if err != nil {
-			http.Error(w, "failed to load registers", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
 
