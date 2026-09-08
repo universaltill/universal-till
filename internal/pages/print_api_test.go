@@ -955,6 +955,31 @@ func TestPostSettingsPrinter_ValidatesModeAndCharset(t *testing.T) {
 	}
 }
 
+// ut-docs#1733 (independent review finding): the encoder supporting a
+// charset is not the same as the operator's own save endpoint actually
+// accepting it — an allow-list that forgets a new value silently discards
+// the operator's choice back to "utf8" with no error, which nothing here
+// pinned before this test. Each of the three new values must round-trip.
+func TestPostSettingsPrinter_AcceptsNewEurozoneCharsets(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	for _, charset := range []string{"win1250", "win1257", "win1253"} {
+		t.Run(charset, func(t *testing.T) {
+			mux, dp := newPrintAPITestDeps(t)
+			rec := httptest.NewRecorder()
+			req := httptest.NewRequest(http.MethodPost, "/api/settings/printer",
+				strings.NewReader("mode=network&address=192.168.1.50:9100&charset="+charset))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			mux.ServeHTTP(rec, req)
+			if rec.Code != http.StatusNoContent {
+				t.Fatalf("expected 204, got %d: %s", rec.Code, rec.Body.String())
+			}
+			if cfg := printerConfig(context.Background(), dp); cfg.Charset != charset {
+				t.Fatalf("expected charset %q to persist, got %q", charset, cfg.Charset)
+			}
+		})
+	}
+}
+
 // TestPostSettingsPrinter_DrawerPin (ut-docs#1136): the drawer-kick
 // connector pin is a real setting now, persisted like mode/charset, with
 // the same "reject garbage, don't silently store it" treatment as an

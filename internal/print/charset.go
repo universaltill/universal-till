@@ -33,16 +33,54 @@ import "strings"
 //
 // Anything this returns is only ever a DEFAULT. An operator who picks a
 // charset explicitly keeps it (see settings.AdoptDefaultPrinterCharset).
+//
+// ut-docs#1733. CP858 (above) only covers Western European alphabets — eight
+// eurozone countries (Greek, Maltese, Croatian, Slovenian, Slovak, Estonian,
+// Latvian, Lithuanian) still fell through to the utf8 pass-through and its
+// mojibake. The obvious next DOS-era pages (CP852 Central European, CP869
+// Greek) don't fix it: CP869 isn't in golang.org/x/text/encoding/charmap at
+// all, and CP852 has no '€' slot whatsoever (verified against
+// charmap.CodePage852.EncodeRune) — it predates the Euro entirely, so
+// switching to it would fix the alphabet and leave the currency symbol
+// exactly as broken as utf8 leaves it today. The printer's own ESC/POS
+// code-table (`ESC t n`, Epson's published reference) also offers the
+// *Windows* 125x pages, which got a later Euro-sign update the DOS pages
+// never did — those are both selectable on the same hardware and present in
+// charmap, so this resolves to those instead:
+//
+//   - Windows-1250 (Central European) covers Croatian/Slovenian/Slovak.
+//   - Windows-1257 (Baltic Rim) covers Estonian/Latvian/Lithuanian — CP852
+//     cannot: it lacks the Baltic long-vowel letters (ā/ē/ī/ū etc.).
+//   - Windows-1253 (Greek) covers the Greek alphabet.
+//
+// Maltese (ċ/ġ/ħ) is NOT covered by any of the above (verified) and stays on
+// the utf8 pass-through — split into a follow-up card rather than guessed.
+//
+// Windows-1250 has NO '£' (verified against charmap.Windows1250.EncodeRune —
+// unlike Windows-1257/1253, which both carry it at 0xA3, same as CP858's
+// 0x9C). A GBP store on hr/sl/sk/... would trade a working '£' for a folded
+// '?', which is worse than the utf8 pass-through it started from — so unlike
+// cp858/win1257/win1253, win1250 only ever activates for EUR, never GBP
+// (independent review finding, ut-docs#1733).
 func DefaultCharset(currency, locale string) string {
-	switch strings.ToUpper(strings.TrimSpace(currency)) {
+	cur := strings.ToUpper(strings.TrimSpace(currency))
+	switch cur {
 	case "EUR", "GBP":
 	default:
 		return "utf8"
 	}
-	if !cp858Language(locale) {
+	switch {
+	case cp858Language(locale):
+		return "cp858"
+	case windows1250Language(locale) && cur == "EUR":
+		return "win1250"
+	case windows1257Language(locale):
+		return "win1257"
+	case windows1253Language(locale):
+		return "win1253"
+	default:
 		return "utf8"
 	}
-	return "cp858"
 }
 
 // cp858Language reports whether CP858 can represent the everyday text of a
@@ -64,9 +102,51 @@ var cp858Languages = map[string]bool{
 }
 
 func cp858Language(locale string) bool {
+	return cp858Languages[primaryLanguageSubtag(locale)]
+}
+
+// windows1250Languages covers Windows-1250's Central European repertoire —
+// verified against charmap.Windows1250.EncodeRune for each language's
+// diacritics (Croatian č/ć/đ/š/ž, Slovenian č/š/ž, Slovak ľ/ĺ/ŕ/ô) plus '€'.
+var windows1250Languages = map[string]bool{
+	"hr": true, "sl": true, "sk": true,
+}
+
+func windows1250Language(locale string) bool {
+	return windows1250Languages[primaryLanguageSubtag(locale)]
+}
+
+// windows1257Languages covers Windows-1257's Baltic Rim repertoire — verified
+// against charmap.Windows1257.EncodeRune for each language's diacritics
+// (Estonian š/ž, Latvian ā/č/ē/ģ/ī/ķ/ļ/ņ/š/ū/ž, Lithuanian ą/č/ę/ė/į/š/ų/ū/ž)
+// plus '€'. CP852 cannot substitute here: it lacks the Baltic long-vowel
+// letters entirely (verified).
+var windows1257Languages = map[string]bool{
+	"et": true, "lv": true, "lt": true,
+}
+
+func windows1257Language(locale string) bool {
+	return windows1257Languages[primaryLanguageSubtag(locale)]
+}
+
+// windows1253Languages covers Windows-1253's Greek repertoire — verified
+// against charmap.Windows1253.EncodeRune for the full Greek alphabet plus
+// '€'.
+var windows1253Languages = map[string]bool{
+	"el": true,
+}
+
+func windows1253Language(locale string) bool {
+	return windows1253Languages[primaryLanguageSubtag(locale)]
+}
+
+// primaryLanguageSubtag normalizes a locale to its primary language subtag
+// ("de-AT" and "de_DE" both answer "de"), shared by every *Language check
+// above so a region this list never enumerated still resolves correctly.
+func primaryLanguageSubtag(locale string) string {
 	l := strings.ToLower(strings.TrimSpace(locale))
 	if i := strings.IndexAny(l, "-_"); i >= 0 {
 		l = l[:i]
 	}
-	return cp858Languages[l]
+	return l
 }

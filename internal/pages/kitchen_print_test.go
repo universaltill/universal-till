@@ -350,6 +350,59 @@ func TestBuildKitchenTicket_CP858CharsetFallsBackToEnglishForNonLatinLocale(t *t
 	}
 }
 
+// ut-docs#1733: win1250/win1257/win1253 are the same shape of single-byte
+// restriction as ascii/cp858 above — none of them can render Arabic, so a
+// mismatched locale/charset pairing (e.g. an operator manually picking
+// win1253 on an ar-locale till) must still fall back to English rather than
+// leak "?" runs, exactly like the ascii/cp858 cases already do.
+func TestBuildKitchenTicket_NewCharsetsFallBackToEnglishForNonLatinLocale(t *testing.T) {
+	for _, charset := range []string{"win1250", "win1257", "win1253"} {
+		t.Run(charset, func(t *testing.T) {
+			chdirRoot(t)
+			i18n, err := config.NewI18n("web/locales", "en")
+			if err != nil {
+				t.Fatal(err)
+			}
+			httpx.InitI18n(i18n, "ar")
+			defer httpx.InitI18n(i18n, "en") // restore the default other tests assume
+
+			dbase, err := db.Open(filepath.Join(t.TempDir(), "kitchen-"+charset+".db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer dbase.Close()
+
+			mustExec := func(q string, args ...any) {
+				t.Helper()
+				if _, err := dbase.DB.Exec(q, args...); err != nil {
+					t.Fatalf("exec %s: %v", q, err)
+				}
+			}
+			mustExec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-bagel','BAGEL','Bagel',250,1)`)
+			mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, order_type, currency, subtotal, discount_total, tax_total, total, created_at) VALUES ('sale-` + charset + `','R-0105-` + charset + `','completed','sale','takeaway','GBP',250,0,0,250,datetime('now'))`)
+			mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax) VALUES ('line-` + charset + `','sale-` + charset + `',1,'itm-bagel','Bagel',1,250,0,0,0,250,250)`)
+
+			dp := &common.Deps{Db: dbase.DB, Settings: settings.NewStore(dbase.DB)}
+			if err := dp.Settings.Set(context.Background(), keyPrinterCharset, charset); err != nil {
+				t.Fatal(err)
+			}
+			ticket, err := buildKitchenTicket(context.Background(), dp, "R-0105-"+charset)
+			if err != nil {
+				t.Fatalf("buildKitchenTicket: %v", err)
+			}
+			if ticket.Station != "KITCHEN" {
+				t.Errorf("ticket.Station = %q, want English fallback %q under %s charset", ticket.Station, "KITCHEN", charset)
+			}
+			if ticket.OrderLabel != "ORDER" {
+				t.Errorf("ticket.OrderLabel = %q, want English fallback %q under %s charset", ticket.OrderLabel, "ORDER", charset)
+			}
+			if ticket.OrderType != "Takeaway" {
+				t.Errorf("ticket.OrderType = %q, want English fallback %q under %s charset", ticket.OrderType, "Takeaway", charset)
+			}
+		})
+	}
+}
+
 // --- Kitchen station routing (universaltill/ut-docs#516) ---------------------
 //
 // printKitchen now resolves each sale line to zero or more kitchen stations
