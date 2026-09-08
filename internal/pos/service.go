@@ -65,6 +65,12 @@ type Service struct {
 	// and what a "move to a different table" operation keys on.
 	tableID    string
 	tableLabel string
+	// voucherID/voucherBalance (ut-docs#1833) mirror the Basket's own
+	// VoucherID/VoucherBalance -- the pending Gutschein a scan resolved,
+	// offered as tender. Not totals-relevant (see Basket's doc comment),
+	// so unlike customerID/tableID it has no entry in totalsSnapshot.
+	voucherID      string
+	voucherBalance money.Money
 	// taxAsker, when set, can override a line's tax rate per the current
 	// order type — see TaxRateAsker. nil (the default) means core just uses
 	// each line's own configured rate, unaffected by order type.
@@ -382,6 +388,18 @@ type Basket struct {
 	// empty when the sale has none.
 	TableID    string `json:"tableId,omitempty"`
 	TableLabel string `json:"tableLabel,omitempty"`
+	// VoucherID/VoucherBalance (ut-docs#1833) are the Gutschein a scan just
+	// resolved and is now offered as tender -- both empty/zero when no
+	// voucher is pending. VoucherBalance is the balance AT SCAN TIME (never
+	// re-read live), money.Money per this repo's money rule, never a float.
+	// Set by Service.SetPendingVoucher, cleared by ClearPendingVoucher and
+	// by resetLocked on sale completion (same point CustomerID/CustomerName
+	// are cleared) so a redeemed or abandoned voucher never leaks into the
+	// next sale. Neither field is totals-relevant -- commitTotalsLocked
+	// never touches them, so, like ToastMessage, they survive every
+	// recompute untouched until explicitly changed.
+	VoucherID      string      `json:"voucherId,omitempty"`
+	VoucherBalance money.Money `json:"voucherBalance,omitempty"`
 }
 
 // HasDineInLine reports whether any line is consumed on the premises --
@@ -1350,6 +1368,10 @@ func (s *Service) resetLocked() {
 	s.tableID = ""
 	s.tableLabel = ""
 	s.tenderAttemptID = ""
+	// ut-docs#1833: a completed/abandoned sale's pending voucher must never
+	// leak into the next one, same reasoning as customerID/CustomerID above.
+	s.voucherID = ""
+	s.voucherBalance = 0
 }
 
 func (s *Service) clearCacheForCode(code string) {
@@ -1478,6 +1500,52 @@ func (s *Service) setCustomerLocked(id, name string) {
 	s.customerName = name
 	s.basket.CustomerID = id
 	s.basket.CustomerName = name
+}
+
+// PendingVoucherID returns the id of the voucher currently offered as
+// tender against this basket (ut-docs#1833), or "" when none is pending.
+func (s *Service) PendingVoucherID() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.voucherID
+}
+
+// PendingVoucherBalance returns the pending voucher's balance as it stood
+// at scan time (money.Money, never a float) -- 0 when none is pending.
+func (s *Service) PendingVoucherBalance() money.Money {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.voucherBalance
+}
+
+// SetPendingVoucher stashes the voucher a scan just resolved (ut-docs#1833)
+// so the sale screen can offer its balance as a tender option, mirroring
+// SetCustomer's id+basket write shape. Not totals-relevant, so unlike
+// SetCustomerID this never bumps recomputeGen -- no in-flight optimistic
+// recompute (ut-docs#1317) can overwrite it, because commitTotalsLocked
+// never writes VoucherID/VoucherBalance at all (same reasoning as
+// ToastMessage, see its own doc comment).
+func (s *Service) SetPendingVoucher(id string, balance money.Money) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.voucherID = id
+	s.voucherBalance = balance
+	s.basket.VoucherID = id
+	s.basket.VoucherBalance = balance
+}
+
+// ClearPendingVoucher removes any voucher currently offered as tender.
+// resetLocked calls the same clearing directly (it already holds s.mu and
+// already zeroes s.basket wholesale) rather than through this method, at
+// the exact point CustomerID/CustomerName are cleared, so a redeemed or
+// abandoned voucher never leaks into the next sale.
+func (s *Service) ClearPendingVoucher() {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.voucherID = ""
+	s.voucherBalance = 0
+	s.basket.VoucherID = ""
+	s.basket.VoucherBalance = 0
 }
 
 // // simple in-memory resolver
