@@ -58,6 +58,27 @@ func (e *fiscalDeviceNoReceiptError) Error() string {
 	return "fiscal device approved with no receipt evidence: " + e.Method
 }
 
+// fiscalDeviceRequiredError signals ut-docs#1768's per-sale backstop: a
+// shop in a fiscal.RequiresPerSaleDeviceReceipt market (Turkey today) that
+// is system-of-record with its signing device confirmed AND healthy
+// (fiscal.Allowed) declared no payment leg keyed fiscal.MethodKeyOKC at
+// all. RequiresHardGate's posture flag proves the device has EVER printed
+// a receipt, not that THIS sale would go through it — Law No. 3100
+// requires a mali fiş per sale, cash included, not once per till
+// (reference/turkey-compliance.md §1, §8's tracked gap). Deliberately NOT
+// raised for BlockedNeverConfigured/BlockedTSEFailing (enforceFiscalGate
+// already refused those sales earlier) or for AllowedWithOverride (that
+// posture already gets its own honestly-distinguishing audit marker below,
+// the sale/unsigned_override entry, unconditioned on country). Reuses the
+// #1779 toast copy at both tender surfaces rather than adding a new i18n
+// key across every locale/plugin pack for what is, to the operator, the
+// same instruction: route the sale through the fiscal device.
+type fiscalDeviceRequiredError struct{}
+
+func (e *fiscalDeviceRequiredError) Error() string {
+	return "fiscal gate: system-of-record sale declared no fiscal-device payment leg"
+}
+
 // fiscalNeverConfiguredError signals the ADR-0048 hard block: a shop in a
 // hard-gated market (fiscal.RequiresHardGate — Germany and, since
 // ut-docs#1208, Turkey) declared itself system-of-record without a
@@ -182,6 +203,55 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		return "", err
 	}
 
+	// ut-docs#1768: RequiresHardGate's posture flag proves the shop's
+	// signing device has EVER printed, not that THIS sale routed through
+	// it — fiscal.RequiresPerSaleDeviceReceipt names the markets (Turkey
+	// today) where every sale, cash included, must go through the device
+	// itself. Checked on the DECLARED payment methods, before any
+	// plugin round trip: presence of a fiscal.MethodKeyOKC leg is fully
+	// knowable from `payments` alone, so a shop lacking one is refused
+	// before any OTHER plugin (e.g. a card terminal) captures the
+	// customer's money — unlike ut-docs#1779's per-leg evidence check
+	// below, which can only know an OKC leg's own answer after asking it.
+	// Gating on LEG IDENTITY here, never on the sale-wide deviceEvidence
+	// accumulator computed in the loop below: that accumulator takes
+	// evidence from ANY method's response with no MethodID check of its
+	// own (pickDeviceEvidence's doc comment), so a non-OKC plugin
+	// returning a forged `fiscal_device` object would otherwise launder
+	// a sale that used no OKC leg at all — confirmed exploitable against
+	// an evidence-based version of this same check (independent review).
+	// Scoped to gate.Decision == Allowed specifically: BlockedNeverConfigured/
+	// BlockedTSEFailing already refused the sale above (enforceFiscalGate),
+	// and AllowedWithOverride already gets its own honestly-distinguishing
+	// audit marker below (the sale/unsigned_override entry), unconditioned
+	// on country — verified that marker still fires with no OKC leg present.
+	// Deliberately checks PRESENCE only, never leg amounts: whether an OKC
+	// leg must cover the sale's whole total (web/help/*/fiscal-device.md's
+	// "a split between the device and another method is refused") is
+	// plugin-owned validation (plugins/tax-tr/okc/protocol.go's
+	// ErrSplitTender, surfaced as an ordinary decline) — a separate
+	// concern from this card's own scope, which is only "did ANY leg use
+	// the device at all".
+	if fiscal.RequiresPerSaleDeviceReceipt(d.CurrentState().Country) && gate.Decision == fiscal.Allowed {
+		systemOfRecord, err := fiscal.IsSystemOfRecord(ctx, fiscalSettingsReader(d))
+		if err != nil {
+			return "", err
+		}
+		if systemOfRecord {
+			hasOKCLeg := false
+			for _, p := range payments {
+				if p.MethodID == fiscal.MethodKeyOKC {
+					hasOKCLeg = true
+					break
+				}
+			}
+			if !hasOKCLeg {
+				log.Printf("tender rejected: %s system-of-record sale declared no fiscal.MethodKeyOKC payment leg (ut-docs#1768 fail-closed)", d.CurrentState().Country)
+				return "", &fiscalDeviceRequiredError{}
+			}
+		}
+	}
+
 	// fiscal.sign.start (ADR-0077 Decision 1, ut-docs#1519): fires HERE,
 	// immediately after the ADR-0048 gate has allowed the sale to proceed
 	// and before the payment.<key>.authorize loop below — so it runs in
@@ -302,6 +372,7 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 			payments[i].TipAmount = money.FromMinor(tip)
 		}
 	}
+
 	// Tip recipient default (ADR-0061 Decision 3), decided HERE — the one
 	// choke point every tender surface (cashier and kiosk) goes through,
 	// right where a plugin-reported tip also lands: an installed country
@@ -1431,8 +1502,13 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			// status (no sale row was created either way) but its own copy
 			// telling the operator to check the device first.
 			var noReceipt *fiscalDeviceNoReceiptError
-			if errors.As(err, &noReceipt) {
-				log.Printf("tender rejected: %v (ut-docs#1779 fail-closed)", err)
+			var deviceRequired *fiscalDeviceRequiredError
+			if errors.As(err, &noReceipt) || errors.As(err, &deviceRequired) {
+				// ut-docs#1768: same operator-facing copy as #1779's per-leg
+				// backstop above — whether an OKC leg answered with no
+				// evidence, or no leg used the device at all, the fix is the
+				// same instruction: route the sale through the fiscal device.
+				log.Printf("tender rejected: %v", err)
 				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.fiscal_device_no_receipt"), http.StatusPaymentRequired)
 				return
 			}

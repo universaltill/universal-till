@@ -16,6 +16,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -743,6 +744,384 @@ func TestTenderHandler_OKCPluginApprovesWithNoEvidence_SaleRefused(t *testing.T)
 	}
 	if count != 0 {
 		t.Fatalf("expected no sale to be recorded when the OKC plugin approved with no receipt evidence, got %d", count)
+	}
+}
+
+// installTaxTRPlugin seeds the com.universaltill.tax-tr plugin's catalog/
+// plugin/entry/hook/permission rows — the same fixture shape
+// TestTenderHandler_OKCPluginApprovesWithNoEvidence_SaleRefused above hand-
+// rolls once; factored out here so ut-docs#1768's tests below (three of
+// them) don't triple that boilerplate.
+func installTaxTRPlugin(t *testing.T, dp *common.Deps) {
+	t.Helper()
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.tax-tr', '1.0.0', 'Turkiye fiscal device', 'okc', 'wasm', 'plugin.wasm', 'https://example.test/tax-tr.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.tax-tr', 'Turkiye fiscal device', '1.0.0', 'plugin.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e-taxtr', 'com.universaltill.tax-tr', 'okc', 'Yazarkasa (OKC)', 'payment', 'payment.okc.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h-taxtr', 'com.universaltill.tax-tr', 'payment.okc.authorize', 'handle_authorize', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p-taxtr', 'com.universaltill.tax-tr', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// installDemoPayPlugin seeds a non-fiscal-device payment plugin (the same
+// fixture shape TestTenderHandler_SplitTender_EarlierLegEvidenceCannotCoverMissingOKCReceipt
+// below hand-rolls) -- used by ut-docs#1768's forged-evidence regression
+// test to prove a plugin other than com.universaltill.tax-tr cannot
+// satisfy the per-sale OKC-leg requirement merely by echoing a
+// fiscal_device object.
+func installDemoPayPlugin(t *testing.T, dp *common.Deps) {
+	t.Helper()
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'demopay', 'wasm', 'plugin.wasm', 'https://example.test/demopay.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.payment-demo', 'Demo Pay', '1.0.0', 'plugin.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e-demopay', 'com.universaltill.payment-demo', 'demopay', 'Demo Pay', 'payment', 'payment.demopay.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h-demopay', 'com.universaltill.payment-demo', 'payment.demopay.authorize', 'handle_authorize', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p-demopay', 'com.universaltill.payment-demo', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// setTRSystemOfRecordConfigured puts the shop in Turkey, hard-gated,
+// system-of-record, with a confirmed and healthy signing device — the
+// fiscal.Allowed posture ut-docs#1768's per-sale check layers on top of.
+// Reloads dp.State so d.CurrentState().Country reflects the write, exactly
+// as every production settings writer does (TestFiscalSettings_
+// CountryChangeClearsSigningDeviceFlags above uses the same pattern).
+func setTRSystemOfRecordConfigured(t *testing.T, dp *common.Deps) {
+	t.Helper()
+	ctx := context.Background()
+	if err := dp.Settings.Set(ctx, common.KeyCountry, "TR"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, fiscal.KeySystemOfRecord, "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, fiscal.SigningDeviceConfiguredKey("TR"), "true"); err != nil {
+		t.Fatal(err)
+	}
+	dp.State = common.LoadState(ctx, dp.Settings, dp.Cfg)
+}
+
+// TestTenderHandler_TRSystemOfRecordCashOnly_NoDeviceEvidence_Refused is
+// ut-docs#1768: the TR hard gate (ADR-0048/#1208) is a one-time posture
+// flag proving the shop's device has EVER printed, not that THIS sale used
+// it. A system-of-record TR shop whose device is confirmed and healthy
+// (fiscal.Allowed — the gate itself would let this tender through) must
+// still be refused here if the sale never touched fiscal.MethodKeyOKC at
+// all: a plain cash tender obtains no mali fiş, exactly the gap the
+// ut-docs#1750 review recorded as "cash included — a cashier tapping Nakit
+// completes a sale with no mali fiş, no marker and no receipt notice."
+func TestTenderHandler_TRSystemOfRecordCashOnly_NoDeviceEvidence_Refused(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	setTRSystemOfRecordConfigured(t, dp)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"cash","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("expected 402 (refused -- TR system-of-record sale with no fiscal-device leg), got %d: %s", rec.Code, rec.Body.String())
+	}
+	// Independent review: assert the SPECIFIC refusal copy, not just the
+	// status code -- paymentDeclinedError also maps to 402, and a test
+	// that can't tell the two apart would still pass if this check were
+	// silently replaced by an unrelated decline.
+	if !strings.Contains(rec.Body.String(), "fiscal device") {
+		t.Fatalf("expected the #1779/#1768 fiscal-device refusal copy, got: %s", rec.Body.String())
+	}
+
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&count); err != nil {
+		t.Fatalf("query sales: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no sale to be recorded for a TR system-of-record cash-only tender, got %d", count)
+	}
+}
+
+// TestTenderHandler_TRSystemOfRecordForgedEvidenceFromNonOKCPlugin_StillRefused is
+// the independent-review BLOCKER-1 regression: the check must gate on
+// PAYMENT-LEG IDENTITY (was any leg's MethodID == fiscal.MethodKeyOKC),
+// never on the sale-wide deviceEvidence accumulator. That accumulator
+// (pickDeviceEvidence) takes evidence from ANY method's response with no
+// MethodID check of its own -- a non-OKC plugin (card/QR/demo) can return
+// a `fiscal_device` object, forged or otherwise, and an evidence-based
+// version of this check would have let it launder a sale that used NO real
+// OKC leg at all. Confirmed empirically against an earlier, evidence-based
+// draft of this fix: HTTP 200, one sale row, zero OKC legs.
+func TestTenderHandler_TRSystemOfRecordForgedEvidenceFromNonOKCPlugin_StillRefused(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	setTRSystemOfRecordConfigured(t, dp)
+	installDemoPayPlugin(t, dp)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.demopay.authorize", plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
+		[]string{"payment.demopay.authorize"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			// demopay is NOT fiscal.MethodKeyOKC, but nothing stops its
+			// answer from carrying a fiscal_device object -- plugin-
+			// controlled JSON, parsed unconditionally.
+			return json.RawMessage(`{"provider":"demopay","outcome":"approved","fiscal_device":{"receipt_no":"NOT-A-REAL-OKC-RECEIPT"}}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"demopay","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("expected 402 -- no leg used fiscal.MethodKeyOKC, a non-OKC plugin's forged evidence must not launder this sale, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := countSales(t, dp); got != 0 {
+		t.Fatalf("expected no sale to be recorded, got %d", got)
+	}
+}
+
+// TestTenderHandler_TRSystemOfRecordCardOnly_RefusedBeforeAuthorize is the
+// independent-review BLOCKER-2 regression: a shop lacking any
+// fiscal.MethodKeyOKC leg is provably knowable from the DECLARED payment
+// methods alone, before any plugin's payment.<key>.authorize round trip —
+// so the refusal must happen BEFORE that call, never after a card (or
+// other) plugin has already captured the customer's money with no way to
+// unwind it. Proven here by asserting the card plugin's authorize hook is
+// never invoked at all, not merely that the sale is refused.
+func TestTenderHandler_TRSystemOfRecordCardOnly_RefusedBeforeAuthorize(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	setTRSystemOfRecordConfigured(t, dp)
+	installDemoPayPlugin(t, dp)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.demopay.authorize", plugins.Blocking)
+	authorizeCalls := 0
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
+		[]string{"payment.demopay.authorize"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			authorizeCalls++
+			return json.RawMessage(`{"provider":"demopay","outcome":"approved"}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"demopay","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("expected 402, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if authorizeCalls != 0 {
+		t.Fatalf("expected the per-sale OKC-leg check to refuse BEFORE any payment.<key>.authorize round trip -- demopay's authorize hook was called %d time(s), which would mean the customer's money could already be taken", authorizeCalls)
+	}
+	if got := countSales(t, dp); got != 0 {
+		t.Fatalf("expected no sale to be recorded, got %d", got)
+	}
+}
+
+// TestTenderHandler_TRSystemOfRecordOverride_CashOnly_AllowedAndAudited
+// covers the AllowedWithOverride posture ut-docs#1768's own check
+// deliberately does not re-block: a device confirmed but currently
+// FAILING, with an active owner override, must still complete a cash-only
+// sale -- the override's existing unsigned_override audit marker (fired
+// unconditionally of country, pos_api.go's completeTender) already
+// satisfies "recorded in a way that is honestly distinguishable" per the
+// card's own acceptance criteria, so this posture must not be hard-blocked
+// on top of that.
+func TestTenderHandler_TRSystemOfRecordOverride_CashOnly_AllowedAndAudited(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	ctx := context.Background()
+	setTRSystemOfRecordConfigured(t, dp)
+	if err := dp.Settings.Set(ctx, fiscal.SigningDeviceFailingSinceKey("TR"), "2026-09-01T00:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, fiscal.KeyOverrideUntil, time.Now().Add(time.Hour).UTC().Format(time.RFC3339)); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, fiscal.KeyOverrideReason, "device outage"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, fiscal.KeyOverrideActor, "user1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"cash","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 -- an active owner override permits a cash sale while the device is known-failing, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := countSales(t, dp); got != 1 {
+		t.Fatalf("expected exactly 1 sale, got %d", got)
+	}
+	var n int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM audit_log WHERE entity_type='sale' AND action='unsigned_override'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("expected the sale to carry its own unsigned_override audit marker (honestly-distinguishable record), got %d", n)
+	}
+}
+
+// TestTenderHandler_DESystemOfRecordCashOnly_NotBlocked is the independent-
+// review MAJOR-3 regression: fiscal.RequiresPerSaleDeviceReceipt is scoped
+// to Turkey only (Germany's TSE already signs/declares per sale via
+// fiscal.sign.ask, ADR-0044) -- a German system-of-record shop with a
+// confirmed, healthy TSE must keep completing plain cash sales exactly as
+// before this card, proving ut-docs#1768's check cannot regress into
+// blocking every hard-gated market's cash tenders.
+func TestTenderHandler_DESystemOfRecordCashOnly_NotBlocked(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	ctx := context.Background()
+	if err := dp.Settings.Set(ctx, common.KeyCountry, "DE"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, fiscal.KeySystemOfRecord, "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, fiscal.SigningDeviceConfiguredKey("DE"), "true"); err != nil {
+		t.Fatal(err)
+	}
+	dp.State = common.LoadState(ctx, dp.Settings, dp.Cfg)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"cash","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 -- ut-docs#1768's per-sale check must not apply to DE, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := countSales(t, dp); got != 1 {
+		t.Fatalf("expected exactly 1 sale, got %d", got)
+	}
+}
+
+// TestTenderHandler_TRSystemOfRecordWithOKCEvidence_Allowed is the
+// companion positive case: the SAME posture (system-of-record, device
+// confirmed and healthy) with a payment leg that actually went through
+// fiscal.MethodKeyOKC and returned valid evidence must still complete
+// normally -- ut-docs#1768 must not turn every TR sale into a hard block,
+// only the ones that genuinely bypassed the device.
+func TestTenderHandler_TRSystemOfRecordWithOKCEvidence_Allowed(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	setTRSystemOfRecordConfigured(t, dp)
+	installTaxTRPlugin(t, dp)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.okc.authorize", plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-tr",
+		[]string{"payment.okc.authorize"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			return json.RawMessage(`{"provider":"okc","outcome":"approved","fiscal_device":{"receipt_no":"OKC-0001"}}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"okc","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 -- the sale carried valid OKC device evidence, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&count); err != nil {
+		t.Fatalf("query sales: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly 1 sale, got %d", count)
+	}
+}
+
+// TestTenderHandler_TRShadowMode_CashOnly_NotBlocked is the non-regression
+// case turkey-compliance.md §8 names explicitly: "Shadow mode … no new
+// fiscal-device blocker found — our software is not the point of fiscal
+// record in that mode." A TR shop that has NOT declared
+// fiscal.system_of_record (shadow/trial/demo) must keep completing
+// cash-only sales exactly as before ut-docs#1768 -- the new per-sale check
+// is scoped to a live, system-of-record shop only.
+func TestTenderHandler_TRShadowMode_CashOnly_NotBlocked(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	ctx := context.Background()
+	if err := dp.Settings.Set(ctx, common.KeyCountry, "TR"); err != nil {
+		t.Fatal(err)
+	}
+	// Deliberately NOT setting fiscal.KeySystemOfRecord or the TR
+	// signing_device_configured row -- shadow mode, nothing confirmed.
+	dp.State = common.LoadState(ctx, dp.Settings, dp.Cfg)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"cash","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 -- a shadow-mode TR shop is not gated, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
 
