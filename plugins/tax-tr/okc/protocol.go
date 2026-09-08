@@ -103,9 +103,15 @@ type Config struct {
 }
 
 // Normalize fills defaults: bridge driver, localhost, port 4711, 3 s
-// connect, 8 s read. Read is generous because the device waits for the
-// customer to present a card — but it must stay under the till's own
-// authorize deadline for tcp: plugins, which is the hard ceiling.
+// connect, 25 s read. Read is generous because the device waits for the
+// customer to present a card — a real chip-and-PIN authorization commonly
+// takes 7-15s at the terminal, sometimes longer over a slow GPRS/cellular
+// link to the issuer (ut-docs#1762) — but it must stay under the till's
+// own authorize/refund deadline for tcp: plugins (paymentGateTimeout,
+// internal/plugins/wasm_runtime.go, 30s), which is the hard ceiling: this
+// read timeout firing first is what lets the driver return a clean
+// ErrDeviceUnreachable instead of the whole plugin call being killed mid-
+// read by that outer deadline.
 func (c Config) Normalize() Config {
 	if c.Driver == "" {
 		c.Driver = "bridge"
@@ -120,7 +126,7 @@ func (c Config) Normalize() Config {
 		c.ConnectTimeoutMs = 3000
 	}
 	if c.ReadTimeoutMs <= 0 {
-		c.ReadTimeoutMs = 8000
+		c.ReadTimeoutMs = 25000
 	}
 	return c
 }

@@ -87,7 +87,7 @@ tests show the exact shape to implement.
 | `okc.port` | `4711` | device (or bridge) port |
 | `okc.maker` | | maker name to record when the device does not report one |
 | `okc.connect_timeout_ms` | `3000` | dial deadline |
-| `okc.read_timeout_ms` | `8000` | how long to wait for the device to finish (card presented, paper printed) |
+| `okc.read_timeout_ms` | `25000` | how long to wait for the device to finish (card presented, paper printed) — must stay under the till's own 30s authorize/refund deadline for tcp: plugins (ut-docs#1762) |
 
 Permissions: `tcp:*` (the device address is a setting, so the exact host:port
 cannot be declared in the manifest — same review-gated convention as other

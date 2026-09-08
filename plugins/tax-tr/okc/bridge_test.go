@@ -165,6 +165,42 @@ func TestBridgeRefund_RefusedWhenReceiptNoEmpty(t *testing.T) {
 	}
 }
 
+// ut-docs#1762: models the real failure -- the device is genuinely slow (a
+// real chip-and-PIN tender), the till's first attempt gives up before the
+// device answers, and a retry with the SAME request id must get the
+// original result rather than a second mali fiş. The device already
+// records the sale (sim.go's handle() runs before its artificial Delay),
+// so the first attempt's timeout does not mean nothing happened -- it
+// means our side stopped waiting too early, exactly like the old 10s
+// WASM-runtime ceiling this card also widens.
+func TestBridgeSale_SlowFirstAttemptThenRetryPrintsOnce(t *testing.T) {
+	delay := 300 * time.Millisecond
+	s := startSim(t, sim.Options{Delay: delay})
+
+	// First attempt: a deadline shorter than the device's real answer time
+	// (modelling the old, too-tight ceiling) gives up before the device
+	// responds.
+	first := okc.NewBridgeDriver(netTransport{readTimeout: 50 * time.Millisecond}, okc.Config{Host: "127.0.0.1", Port: s.Port()})
+	if _, err := first.Sale(sale(1)); !errors.Is(err, okc.ErrDeviceUnreachable) {
+		t.Fatalf("first attempt err = %v, want ErrDeviceUnreachable (simulated give-up)", err)
+	}
+
+	// Retry with the SAME request id (sale(1) always uses "ev-1") and a
+	// deadline generous enough for the device's real response time -- what
+	// this card's timeout widening is for.
+	retry := okc.NewBridgeDriver(netTransport{readTimeout: 2 * time.Second}, okc.Config{Host: "127.0.0.1", Port: s.Port()})
+	second, err := retry.Sale(sale(1))
+	if err != nil {
+		t.Fatalf("retry: %v", err)
+	}
+	if second.ReceiptNo != "0000001" {
+		t.Fatalf("retry evidence = %+v, want the original receipt returned again", second)
+	}
+	if n := len(s.Log()); n != 1 {
+		t.Fatalf("device printed %d receipts for one retried tender attempt, want 1", n)
+	}
+}
+
 func TestBridgeRefundStatusZClose(t *testing.T) {
 	s := startSim(t, sim.Options{ZNo: 9})
 	d := okc.NewBridgeDriver(netTransport{}, okc.Config{Host: "127.0.0.1", Port: s.Port()})
@@ -210,7 +246,7 @@ func TestNewDriver(t *testing.T) {
 
 func TestConfigNormalize(t *testing.T) {
 	c := okc.Config{}.Normalize()
-	if c.Driver != "bridge" || c.Host != "127.0.0.1" || c.Port != 4711 || c.ConnectTimeoutMs != 3000 || c.ReadTimeoutMs != 8000 {
+	if c.Driver != "bridge" || c.Host != "127.0.0.1" || c.Port != 4711 || c.ConnectTimeoutMs != 3000 || c.ReadTimeoutMs != 25000 {
 		t.Fatalf("defaults: %+v", c)
 	}
 	c = okc.Config{Port: 70000}.Normalize()
