@@ -114,6 +114,10 @@ jobs:
         run: bash scripts/ci/guard-android-external-links.sh
       - name: Android external-link hand-off guard regression test
         run: bash scripts/ci/guard-android-external-links_test.sh
+      - name: Android manifest implied-feature guard
+        run: bash scripts/ci/guard-android-manifest-features.sh
+      - name: Android manifest implied-feature guard regression test
+        run: bash scripts/ci/guard-android-manifest-features_test.sh
       # guard-gobind-skip.sh's real-CI mode runs in android-ci.yml (it needs
       # gobind on PATH, and only makes sense when android/**/mobile/**
       # changed) — but its regression test is pure bash against throwaway
