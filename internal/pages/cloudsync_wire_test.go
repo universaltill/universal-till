@@ -10,6 +10,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	appdb "github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -422,5 +423,32 @@ func TestCloudAdjustStock_AuditActorSatisfiesRealForeignKey(t *testing.T) {
 	}
 	if !strings.Contains(dataJSON, "cloud:") {
 		t.Fatalf("expected the audit payload to keep the adjustment's cloud origin visible now the actor can't, got %q", dataJSON)
+	}
+}
+
+// --- rejectRemoteFiscalPostureWrite ---
+
+// ADR-0083 (ut-docs#1767), independent review finding: the cloud
+// set_setting directive has no HTTP session to check a role against, so it
+// must refuse the two signing-device posture keys outright rather than
+// silently writing them (owner-only everywhere else) or, worse, silently
+// NOT writing them — the flat wire name written verbatim used to be a dead
+// key once the split gave every real reader a per-country row, turning a
+// remote revocation ("set false") into a no-op that still reported
+// success while the till kept selling on the stale "true" row.
+func TestRejectRemoteFiscalPostureWrite(t *testing.T) {
+	d := newCloudSyncTestDeps(t)
+	if err := rejectRemoteFiscalPostureWrite(d, fiscal.KeySystemOfRecord); err != nil {
+		t.Fatalf("rejectRemoteFiscalPostureWrite(%q): unrelated key must not be refused: %v", fiscal.KeySystemOfRecord, err)
+	}
+	for _, key := range []string{
+		"fiscal.signing_device_configured",
+		"fiscal.signing_device_failing_since",
+		"fiscal.signing_device_configured.de",
+		"fiscal.signing_device_configured.TR",
+	} {
+		if err := rejectRemoteFiscalPostureWrite(d, key); err == nil {
+			t.Fatalf("rejectRemoteFiscalPostureWrite(%q): want an error, got nil — a remote directive must not be able to flip this compliance gate", key)
+		}
 	}
 }

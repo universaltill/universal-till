@@ -29,17 +29,22 @@ func fiscalDevicePluginActive(ctx context.Context, d *common.Deps) bool {
 // and active. It is the same pair menu_page.go already gates the tile on.
 //
 // ut-docs#1750 (independent review, finding 2). This is a security gate, not
-// a tidiness one. Since ADR-0081 the confirm/unpair endpoints below write
-// fiscal.KeySigningDeviceConfigured — the SAME key fiscal.EvaluateGate reads
-// for GERMANY — and registerFiscalDeviceTR is registered on every till
-// regardless of country. Without this check one manager POST to
-// /api/fiscal-device/confirm lifted a German till out of
-// BlockedNeverConfigured, the one state ADR-0048 Decision 2.2 says has no
-// override path, and every sale after it completed unsigned. The German
-// route to that same flag costs a real TSE credential written to the
-// credential store and read back off disk (setup_tse.go); a button must not
-// be a shortcut around it. The mirror matters too: unpair sets the key
+// a tidiness one. Between ADR-0081 and ADR-0083 the confirm/unpair endpoints
+// below wrote the SAME key fiscal.EvaluateGate read for GERMANY — and
+// registerFiscalDeviceTR is registered on every till regardless of country.
+// Without this check one manager POST to /api/fiscal-device/confirm lifted a
+// German till out of BlockedNeverConfigured, the one state ADR-0048 Decision
+// 2.2 says has no override path, and every sale after it completed unsigned.
+// The German route to that same flag costs a real TSE credential written to
+// the credential store and read back off disk (setup_tse.go); a button must
+// not be a shortcut around it. The mirror matters too: unpair sets the key
 // false, so on a German till it was a one-click way to hard-block checkout.
+//
+// ADR-0083 (ut-docs#1767) since made the posture rows per country, so the
+// endpoints below now write Turkey's own row (resolved against the current
+// store.country, which this guard has just proven is TR) and could not reach
+// Germany's even without it. The guard stays: it is still what keeps a
+// non-Turkish shop from declaring an ÖKC posture it does not have.
 //
 // The GET page itself stays reachable on any country on purpose — the
 // docs-shots screenshot harness renders it, the same constraint
@@ -96,7 +101,10 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 		ctx := r.Context()
 		configured, systemOfRecord := false, false
 		if d.Settings != nil {
-			if v, _, err := d.Settings.Get(ctx, fiscal.KeySigningDeviceConfigured); err == nil {
+			// Turkey's own posture row (ADR-0083): this page is only ever
+			// about the ÖKC, so it must show the ÖKC's state, never a
+			// German TSE's.
+			if v, _, err := d.Settings.Get(ctx, fiscal.SigningDeviceConfiguredKey(d.CurrentState().Country)); err == nil {
 				configured = settingIsTrue(v)
 			}
 			if v, _, err := d.Settings.Get(ctx, fiscal.KeySystemOfRecord); err == nil {
@@ -187,7 +195,7 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server") // page-error:allow mirrors fiscal_register_page.go, tracked in ut-docs#1458
 			return
 		}
-		if err := d.Settings.Set(r.Context(), fiscal.KeySigningDeviceConfigured, "true"); err != nil {
+		if err := d.Settings.Set(r.Context(), fiscal.SigningDeviceConfiguredKey(d.CurrentState().Country), "true"); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server", "fiscal_device", err) // page-error:allow mirrors fiscal_register_page.go, tracked in ut-docs#1458
 			return
 		}
@@ -227,7 +235,7 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 			common.LocalizedError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server") // page-error:allow mirrors fiscal_register_page.go, tracked in ut-docs#1458
 			return
 		}
-		if err := d.Settings.Set(r.Context(), fiscal.KeySigningDeviceConfigured, "false"); err != nil {
+		if err := d.Settings.Set(r.Context(), fiscal.SigningDeviceConfiguredKey(d.CurrentState().Country), "false"); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "fiscaldevice.error.server", "fiscal_device", err) // page-error:allow mirrors fiscal_register_page.go, tracked in ut-docs#1458
 			return
 		}

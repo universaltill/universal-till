@@ -10,6 +10,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/fiscal"
+	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
 // TSE never configured: the chip must render nothing at all (ut-docs#685) —
@@ -29,13 +30,49 @@ func TestFiscalChip_NotConfigured_RendersNothing(t *testing.T) {
 	}
 }
 
+// configureSigningDeviceForChip puts the shop in a gated market (DE) with
+// that market's own posture row set — ADR-0083: the chip reads the CURRENT
+// country's row, the same one the tender gate reads for it.
+func configureSigningDeviceForChip(t *testing.T, dp *common.Deps) {
+	t.Helper()
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "DE" })
+	if err := dp.Settings.Set(context.Background(), fiscal.SigningDeviceConfiguredKey("DE"), "true"); err != nil {
+		t.Fatal(err)
+	}
+}
+
+// ADR-0083: another market's confirmed device must not light this shop's
+// chip — a German shop with only Turkey's row set is, for Germany, never
+// configured, and the chip must say so (by rendering nothing) exactly as
+// the gate would.
+func TestFiscalChip_ReadsCurrentCountrysRowOnly(t *testing.T) {
+	mux, dp := newFiscalTestDeps(t)
+	initPagesI18n(t)
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "DE" })
+	if err := dp.Settings.Set(context.Background(), fiscal.SigningDeviceConfiguredKey("TR"), "true"); err != nil {
+		t.Fatal(err)
+	}
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/fiscal-chip", nil), manager))
+	if rec.Code != http.StatusOK || rec.Body.Len() != 0 {
+		t.Fatalf("a DE shop with only TR's row set must render no chip, got %d %q", rec.Code, rec.Body.String())
+	}
+	if err := dp.Settings.Set(context.Background(), fiscal.SigningDeviceConfiguredKey("DE"), "true"); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/fiscal-chip", nil), manager))
+	if !strings.Contains(rec.Body.String(), "fiscal-chip ok") {
+		t.Fatalf("once DE's own row is set the chip must render, got %q", rec.Body.String())
+	}
+}
+
 // Configured, no sales yet: healthy — nothing to complain about.
 func TestFiscalChip_ConfiguredNoSales_RendersOK(t *testing.T) {
 	mux, dp := newFiscalTestDeps(t)
 	initPagesI18n(t)
-	if err := dp.Settings.Set(context.Background(), fiscal.KeySigningDeviceConfigured, "true"); err != nil {
-		t.Fatal(err)
-	}
+	configureSigningDeviceForChip(t, dp)
 
 	// ut-docs#1539 (independent review): /fiscal-register is gated on the
 	// "settings" permission (requireManager, fiscal_register_page.go) and
@@ -80,9 +117,7 @@ func TestFiscalChip_ConfiguredNoSales_RendersOK(t *testing.T) {
 func TestFiscalChip_CashierSessionGetsNoLink(t *testing.T) {
 	mux, dp := newFiscalTestDeps(t)
 	initPagesI18n(t)
-	if err := dp.Settings.Set(context.Background(), fiscal.KeySigningDeviceConfigured, "true"); err != nil {
-		t.Fatal(err)
-	}
+	configureSigningDeviceForChip(t, dp)
 
 	cashier := auth.User{ID: "c1", Role: "cashier", DisplayName: "Cash"}
 	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/ui/fiscal-chip", nil), cashier)
@@ -112,9 +147,7 @@ func TestFiscalChip_ConfiguredLastSaleGapped_RendersWarnWithCount(t *testing.T) 
 	mux, dp := newFiscalTestDeps(t)
 	initPagesI18n(t)
 	ctx := context.Background()
-	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
-		t.Fatal(err)
-	}
+	configureSigningDeviceForChip(t, dp)
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
 		t.Fatal(err)
 	}
@@ -167,9 +200,7 @@ func TestFiscalChip_ForeignJournaledSaleDoesNotClearWarn(t *testing.T) {
 	mux, dp := newFiscalTestDeps(t)
 	initPagesI18n(t)
 	ctx := context.Background()
-	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
-		t.Fatal(err)
-	}
+	configureSigningDeviceForChip(t, dp)
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
 		t.Fatal(err)
 	}

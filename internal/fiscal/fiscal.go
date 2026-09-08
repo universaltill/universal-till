@@ -11,7 +11,12 @@
 // (ADR-0081, ut-docs#1587) — the Germany-specific "TSE" names ADR-0048
 // originally assigned them are migrated in place on upgrade (migration 009
 // for settings rows; NewSigningDeviceCredentialStore for the on-disk
-// credential).
+// credential). The two posture keys — configured, failing-since — are
+// stored PER COUNTRY (ADR-0083, ut-docs#1767; migration 011 splits an
+// upgraded till's single row onto its declared country): each gated market
+// reads and writes its own row, so a device confirmed for one market can
+// never be read back through another's gate. SigningDeviceConfiguredKey /
+// SigningDeviceFailingSinceKey are the only way to name those rows.
 //
 // This package owns the policy only. Enforcement lives behind one shared
 // helper, internal/pages.enforceFiscalGate, called by every money-moving
@@ -61,27 +66,20 @@ import (
 // from ADR-0047's list. Migration 009 renames the ADR-0048-era
 // fiscal.tse_* rows in place on upgrade, so an already-configured shop
 // keeps its posture.
+//
+// The system-of-record flag and the override window below are GLOBAL —
+// one row per shop. The two posture keys (configured / failing-since) are
+// NOT constants: they are per country, named only through
+// SigningDeviceConfiguredKey / SigningDeviceFailingSinceKey (ADR-0083,
+// ut-docs#1767). The override keys stay global deliberately — an override
+// is short-lived (MaxOverrideMinutes), always owner-granted and always
+// audit-logged with its own reason/actor, so one shared window has a
+// small, time-bounded blast radius, unlike the posture keys, which decide
+// Allowed vs. Blocked on every sale with no time bound at all.
 const (
 	// KeySystemOfRecord: this shop is taking real, legally-binding sales
 	// (vs shadow/trial/demo). Unset → false.
 	KeySystemOfRecord = "fiscal.system_of_record"
-	// KeySigningDeviceConfigured: this shop has its market's mandated
-	// signing device set up (any ownership model, ADR-0045). Unset → false.
-	KeySigningDeviceConfigured = "fiscal.signing_device_configured"
-	// KeySigningDeviceFailingSince: RFC3339 timestamp when a configured
-	// signing device became known-failing; absent/empty = healthy. Not
-	// operator-settable via any UI, and — deliberately — NO production
-	// writer exists yet: the fiscal.sign.ask point (ut-docs#675) does not
-	// drive this key, because none of the failures it can observe (timeout,
-	// transport error, plugin-declared "unreachable", unusable answer)
-	// distinguishes "the device itself is known bad" (expired cert, a TSE
-	// dongle pulled, provider-reported fault — what this key means,
-	// ADR-0048 Decision 1) from "we currently can't reach it". A future
-	// fiscal.sign.ask contract version adding a device-confirmed-broken
-	// response state would be the right first writer. Set directly in
-	// tests only. Never to be set from a mere network-offline condition
-	// (ADR-0048 Decision 1).
-	KeySigningDeviceFailingSince = "fiscal.signing_device_failing_since"
 	// KeyOverrideUntil: RFC3339 end of the currently-granted owner override
 	// window. Absent/empty/expired = no active override.
 	KeyOverrideUntil = "fiscal.signing_override_until"
@@ -92,6 +90,46 @@ const (
 	// override.
 	KeyOverrideActor = "fiscal.signing_override_actor"
 )
+
+// SigningDeviceConfiguredKey names the settings row recording that this
+// shop has COUNTRY's mandated signing device set up (any ownership model,
+// ADR-0045). Unset → false. "fiscal.signing_device_configured.de" for
+// Germany, ".tr" for Turkey; country is lower-cased and trimmed so a shop
+// whose store.country was stored as free text ("tr", " TR ") lands on the
+// same row as one the setup wizard uppercased.
+//
+// Per country, not one shared row (ADR-0083, ut-docs#1767): a shop's fiscal
+// posture is proven for ONE market, but the row a market's gate reads was
+// selected by store.country — ordinary, manager-writable shop config — so
+// with a single shared row the round-trip country=TR → a sale auto-confirms
+// the ÖKC → country=DE left a German till reading fiscal.Allowed with no TSE
+// at all (ut-docs#1750). Separate rows make that independence a property of
+// the data model rather than of write-path discipline: EvaluateGate for DE
+// can only ever see the DE row.
+func SigningDeviceConfiguredKey(country string) string {
+	return "fiscal.signing_device_configured." + strings.ToLower(strings.TrimSpace(country))
+}
+
+// SigningDeviceFailingSinceKey names the settings row holding the RFC3339
+// timestamp at which COUNTRY's configured signing device became
+// known-failing; absent/empty = healthy. Per country for the same reason
+// as SigningDeviceConfiguredKey (ADR-0083): a device known bad in one
+// market must not turn another market's healthy device into
+// BlockedTSEFailing.
+//
+// Not operator-settable via any UI, and — deliberately — NO production
+// writer exists yet: the fiscal.sign.ask point (ut-docs#675) does not drive
+// this key, because none of the failures it can observe (timeout, transport
+// error, plugin-declared "unreachable", unusable answer) distinguishes "the
+// device itself is known bad" (expired cert, a TSE dongle pulled,
+// provider-reported fault — what this key means, ADR-0048 Decision 1) from
+// "we currently can't reach it". A future fiscal.sign.ask contract version
+// adding a device-confirmed-broken response state would be the right first
+// writer. Set directly in tests only. Never to be set from a mere
+// network-offline condition (ADR-0048 Decision 1).
+func SigningDeviceFailingSinceKey(country string) string {
+	return "fiscal.signing_device_failing_since." + strings.ToLower(strings.TrimSpace(country))
+}
 
 // OverrideAcknowledgement is the fixed confirmation phrase an override
 // request must carry, typed exactly (ADR-0048 Decision 3's typed
@@ -144,11 +182,12 @@ type Gate struct {
 // enforcement point that notices a plugin's absence must be core's, not
 // the absent plugin's, the same reasoning that already gates DE while
 // ut-plugin-tax-de is itself an incomplete skeleton. A TR shop that
-// declares fiscal.system_of_record with no fiscal.signing_device_configured
-// (for TR: no device has yet proven it prints, fiscal_device_hook.go) hits
-// BlockedNeverConfigured instead of silently completing an unsigned sale.
-// The next fiscalised market (ADR-0047's list) is a further one-line
-// addition here.
+// declares fiscal.system_of_record with no
+// fiscal.signing_device_configured.tr (for TR: no device has yet proven it
+// prints, fiscal_device_hook.go) hits BlockedNeverConfigured instead of
+// silently completing an unsigned sale. The next fiscalised market
+// (ADR-0047's list) is a further one-line addition here — the per-country
+// key functions take any country string, so it needs no key of its own.
 func RequiresHardGate(country string) bool {
 	switch country {
 	case "DE", "TR":
@@ -181,7 +220,10 @@ func EvaluateGate(ctx context.Context, s SettingsReader, country string, now tim
 		return Gate{Decision: Allowed}, nil
 	}
 
-	configured, err := boolSetting(ctx, s, KeySigningDeviceConfigured)
+	// Both posture reads are against THIS country's own rows (ADR-0083):
+	// the country argument selects the row, so no other market's posture
+	// can reach this decision.
+	configured, err := boolSetting(ctx, s, SigningDeviceConfiguredKey(country))
 	if err != nil {
 		return Gate{}, err
 	}
@@ -192,9 +234,10 @@ func EvaluateGate(ctx context.Context, s SettingsReader, country string, now tim
 		return Gate{Decision: BlockedNeverConfigured}, nil
 	}
 
-	failingSince, _, err := s.Get(ctx, KeySigningDeviceFailingSince)
+	failingSinceKey := SigningDeviceFailingSinceKey(country)
+	failingSince, _, err := s.Get(ctx, failingSinceKey)
 	if err != nil {
-		return Gate{}, fmt.Errorf("fiscal gate: read %s: %w", KeySigningDeviceFailingSince, err)
+		return Gate{}, fmt.Errorf("fiscal gate: read %s: %w", failingSinceKey, err)
 	}
 	if strings.TrimSpace(failingSince) == "" {
 		// Configured and healthy.

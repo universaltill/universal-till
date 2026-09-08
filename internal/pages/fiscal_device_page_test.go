@@ -123,7 +123,7 @@ func TestFiscalDevicePage_ShowsPluginSettingsAndLastReceipt(t *testing.T) {
 	if err := repo.RecordFiscalDeviceReceipt(t.Context(), data.FiscalDeviceReceipt{SaleID: "s1", Maker: "beko", Serial: "AV777", ReceiptNo: "0000042", ZNo: 9, IssuedAt: "2026-09-03T10:00:00+03:00"}); err != nil {
 		t.Fatal(err)
 	}
-	_ = d.Settings.Set(t.Context(), fiscal.KeySigningDeviceConfigured, "true")
+	_ = d.Settings.Set(t.Context(), fiscal.SigningDeviceConfiguredKey("TR"), "true")
 	_ = d.Settings.Set(t.Context(), fiscal.KeySystemOfRecord, "true")
 
 	rec := httptest.NewRecorder()
@@ -156,8 +156,12 @@ func TestFiscalDevicePage_ConfirmAndUnpairFlipTheGateFlagWithAudit(t *testing.T)
 	if rec.Code != http.StatusSeeOther || !strings.Contains(rec.Header().Get("Location"), "fiscaldevice.msg.confirmed") {
 		t.Fatalf("confirm: %d %s", rec.Code, rec.Header().Get("Location"))
 	}
-	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); v != "true" {
-		t.Fatalf("tse_configured after confirm = %q, want true", v)
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.SigningDeviceConfiguredKey("TR")); v != "true" {
+		t.Fatalf("TR's signing_device_configured after confirm = %q, want true", v)
+	}
+	// ADR-0083: the Turkish page writes Turkey's row and nothing else.
+	if v, ok, _ := d.Settings.Get(t.Context(), fiscal.SigningDeviceConfiguredKey("DE")); ok && v != "" {
+		t.Fatalf("confirm must not touch Germany's row, got %q", v)
 	}
 	if ok, _ := repo.HasAuditEntry(t.Context(), "fiscal_device", "till", fiscalDeviceAuditConfirmed); !ok {
 		t.Fatal("expected a fiscal_device_confirmed audit row")
@@ -168,8 +172,8 @@ func TestFiscalDevicePage_ConfirmAndUnpairFlipTheGateFlagWithAudit(t *testing.T)
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("unpair: %d", rec.Code)
 	}
-	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); v != "false" {
-		t.Fatalf("tse_configured after unpair = %q, want false", v)
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.SigningDeviceConfiguredKey("TR")); v != "false" {
+		t.Fatalf("TR's signing_device_configured after unpair = %q, want false", v)
 	}
 	if ok, _ := repo.HasAuditEntry(t.Context(), "fiscal_device", "till", fiscalDeviceAuditUnpaired); !ok {
 		t.Fatal("expected a fiscal_device_unpaired audit row")
@@ -216,10 +220,12 @@ func setCountry(t *testing.T, d *common.Deps, code string) {
 	d.State = common.LoadState(t.Context(), settings.NewStore(d.Db), d.Cfg)
 }
 
-// ut-docs#1750, independent review finding 2. This is the severe one: since
-// ADR-0081 the Turkish device page writes the SAME settings key that
-// Germany's TSE gate reads (fiscal.KeySigningDeviceConfigured), and
-// registerFiscalDeviceTR is registered on every till regardless of country.
+// ut-docs#1750, independent review finding 2. This is the severe one: between
+// ADR-0081 and ADR-0083 the Turkish device page wrote the SAME settings key
+// that Germany's TSE gate read, and registerFiscalDeviceTR is registered on
+// every till regardless of country. (ADR-0083 split the rows per country,
+// so the page now cannot reach Germany's row at all; the market guard stays
+// as the thing that keeps a non-Turkish shop from declaring an ÖKC posture.)
 // So one manager POST to /api/fiscal-device/confirm on a GERMAN till lifted
 // BlockedNeverConfigured — the one state ADR-0048 Decision 2.2 says has no
 // override path — and every sale after it completed unsigned.
@@ -238,8 +244,10 @@ func TestFiscalDeviceConfirm_RefusedOutsideTurkey(t *testing.T) {
 	if rec.Code == http.StatusSeeOther || rec.Code == http.StatusOK {
 		t.Fatalf("confirm must be refused on a DE till, got %d", rec.Code)
 	}
-	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); v == "true" {
-		t.Fatal("a DE till's TSE gate flag was flipped by the Turkish device page — ADR-0048 Decision 2.2 says this state has no override path")
+	for _, cc := range []string{"DE", "TR"} {
+		if v, _, _ := d.Settings.Get(t.Context(), fiscal.SigningDeviceConfiguredKey(cc)); v == "true" {
+			t.Fatalf("a DE till's %s posture row was flipped by the Turkish device page — ADR-0048 Decision 2.2 says this state has no override path", cc)
+		}
 	}
 }
 
@@ -251,13 +259,13 @@ func TestFiscalDeviceUnpair_RefusedOutsideTurkey(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	seedActiveTaxTrPlugin(t, d.Db, true)
 	setCountry(t, d, "DE")
-	if err := d.Settings.Set(t.Context(), fiscal.KeySigningDeviceConfigured, "true"); err != nil {
+	if err := d.Settings.Set(t.Context(), fiscal.SigningDeviceConfiguredKey("DE"), "true"); err != nil {
 		t.Fatal(err)
 	}
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/fiscal-device/unpair", nil))
-	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); v != "true" {
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.SigningDeviceConfiguredKey("DE")); v != "true" {
 		t.Fatalf("a DE till's configured flag was cleared by the Turkish device page (now %q) — that hard-blocks checkout", v)
 	}
 }
@@ -275,7 +283,7 @@ func TestFiscalDeviceConfirm_AllowedForTurkeyWithPlugin(t *testing.T) {
 	if rec.Code != http.StatusSeeOther {
 		t.Fatalf("expected 303 for a TR till with the plugin active, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); v != "true" {
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.SigningDeviceConfiguredKey("TR")); v != "true" {
 		t.Fatalf("TR confirm must set the flag, got %q", v)
 	}
 }
@@ -290,7 +298,7 @@ func TestFiscalDeviceConfirm_RefusedForTurkeyWithoutPlugin(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, "/api/fiscal-device/confirm", nil))
-	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); v == "true" {
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.SigningDeviceConfiguredKey("TR")); v == "true" {
 		t.Fatal("confirm must be refused for a TR till with no fiscal-device plugin active")
 	}
 }
@@ -325,13 +333,13 @@ func TestFiscalDeviceConfirm_RequiresOwnerPermissionNotJustManager(t *testing.T)
 	if rec := post(auth.User{ID: "mgr9", Role: "manager"}); rec.Code != http.StatusForbidden {
 		t.Fatalf("a manager must not be able to declare fiscal posture by hand, got %d", rec.Code)
 	}
-	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); v == "true" {
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.SigningDeviceConfiguredKey("TR")); v == "true" {
 		t.Fatal("manager confirm must not have set the flag")
 	}
 	if rec := post(auth.User{ID: "own1", Role: "admin"}); rec.Code != http.StatusSeeOther {
 		t.Fatalf("an owner must still be able to confirm, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if v, _, _ := d.Settings.Get(t.Context(), fiscal.KeySigningDeviceConfigured); v != "true" {
+	if v, _, _ := d.Settings.Get(t.Context(), fiscal.SigningDeviceConfiguredKey("TR")); v != "true" {
 		t.Fatalf("owner confirm must set the flag, got %q", v)
 	}
 }

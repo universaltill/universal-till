@@ -145,10 +145,14 @@ func TestFiscalGate_NonGermanShopUnaffected(t *testing.T) {
 	ctx := context.Background()
 	// Country stays the GB default. Set every fiscal key to the most
 	// blocking combination — none of it may matter outside a gated market.
+	// Both the shop's own (GB) posture rows and a gated market's (DE) are
+	// seeded: neither may reach a non-gated shop's tender (ADR-0083).
 	for k, v := range map[string]string{
-		fiscal.KeySystemOfRecord:            "true",
-		fiscal.KeySigningDeviceConfigured:   "false",
-		fiscal.KeySigningDeviceFailingSince: "2026-08-14T09:00:00Z",
+		fiscal.KeySystemOfRecord:                  "true",
+		fiscal.SigningDeviceConfiguredKey("GB"):   "false",
+		fiscal.SigningDeviceFailingSinceKey("GB"): "2026-08-14T09:00:00Z",
+		fiscal.SigningDeviceConfiguredKey("DE"):   "false",
+		fiscal.SigningDeviceFailingSinceKey("DE"): "2026-08-14T09:00:00Z",
 	} {
 		if err := dp.Settings.Set(ctx, k, v); err != nil {
 			t.Fatal(err)
@@ -171,10 +175,10 @@ func TestFiscalGate_FailingTSEBlockedWithoutOverride(t *testing.T) {
 	mux, dp := newFiscalTestDeps(t)
 	makeGermanSystemOfRecord(t, dp)
 	ctx := context.Background()
-	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
+	if err := dp.Settings.Set(ctx, fiscal.SigningDeviceConfiguredKey("DE"), "true"); err != nil {
 		t.Fatal(err)
 	}
-	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceFailingSince, "2026-08-14T09:00:00Z"); err != nil {
+	if err := dp.Settings.Set(ctx, fiscal.SigningDeviceFailingSinceKey("DE"), "2026-08-14T09:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := dp.Engine.Scan("ABC"); err != nil {
@@ -249,10 +253,10 @@ func seedFailingConfiguredTSE(t *testing.T, dp *common.Deps) {
 	t.Helper()
 	ctx := context.Background()
 	makeGermanSystemOfRecord(t, dp)
-	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
+	if err := dp.Settings.Set(ctx, fiscal.SigningDeviceConfiguredKey("DE"), "true"); err != nil {
 		t.Fatal(err)
 	}
-	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceFailingSince, "2026-08-14T09:00:00Z"); err != nil {
+	if err := dp.Settings.Set(ctx, fiscal.SigningDeviceFailingSinceKey("DE"), "2026-08-14T09:00:00Z"); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -558,47 +562,95 @@ func TestFiscalSettings_UpsertGuards(t *testing.T) {
 		// (#675). An admin trying to set OR clear it through the generic
 		// editor must be refused, not silently accepted.
 		mux, dp := dp2mux(t)
-		rec := post(mux, admin, fiscal.KeySigningDeviceFailingSince, "2026-08-14T09:00:00Z")
+		// ADR-0083: the wire-level name is still the flat logical key; the
+		// row it would have reached is the current country's own.
+		storageKey := fiscal.SigningDeviceFailingSinceKey(dp.CurrentState().Country)
+		rec := post(mux, admin, wireKeySigningDeviceFailingSince, "2026-08-14T09:00:00Z")
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400 setting signing_device_failing_since via upsert, got %d: %s", rec.Code, rec.Body.String())
 		}
-		if v, ok, _ := dp.Settings.Get(context.Background(), fiscal.KeySigningDeviceFailingSince); ok && v != "" {
+		if v, ok, _ := dp.Settings.Get(context.Background(), storageKey); ok && v != "" {
 			t.Fatalf("signing_device_failing_since must not be stored via upsert, got %q", v)
 		}
 
 		// Also refused when the key already has a (test-seeded) value and
 		// the request tries to clear it.
-		if err := dp.Settings.Set(context.Background(), fiscal.KeySigningDeviceFailingSince, "2026-08-14T09:00:00Z"); err != nil {
+		if err := dp.Settings.Set(context.Background(), storageKey, "2026-08-14T09:00:00Z"); err != nil {
 			t.Fatal(err)
 		}
-		rec = post(mux, admin, fiscal.KeySigningDeviceFailingSince, "")
+		rec = post(mux, admin, wireKeySigningDeviceFailingSince, "")
 		if rec.Code != http.StatusBadRequest {
 			t.Fatalf("expected 400 clearing signing_device_failing_since via upsert, got %d: %s", rec.Code, rec.Body.String())
 		}
-		if v, _, _ := dp.Settings.Get(context.Background(), fiscal.KeySigningDeviceFailingSince); v != "2026-08-14T09:00:00Z" {
+		if v, _, _ := dp.Settings.Get(context.Background(), storageKey); v != "2026-08-14T09:00:00Z" {
 			t.Fatalf("signing_device_failing_since must be untouched by the refused clear, got %q", v)
+		}
+
+		// ADR-0083: naming a per-country row directly (the All-settings
+		// card's free-text key input can) is the same key, same refusal —
+		// the split must not open a side door onto the storage rows.
+		for _, k := range []string{fiscal.SigningDeviceFailingSinceKey("DE"), fiscal.SigningDeviceFailingSinceKey("TR")} {
+			rec = post(mux, admin, k, "2026-08-14T09:00:00Z")
+			if rec.Code != http.StatusBadRequest {
+				t.Fatalf("expected 400 setting %s via upsert, got %d: %s", k, rec.Code, rec.Body.String())
+			}
+		}
+	})
+
+	t.Run("per-country signing_device_configured rows are owner-only too", func(t *testing.T) {
+		// ADR-0083 split the posture key into per-country rows, and the
+		// All-settings card lets any key be posted by name. The owner-only
+		// gate on the flat logical name must therefore cover the storage
+		// rows themselves, or a manager could write
+		// fiscal.signing_device_configured.de directly — the very state
+		// ADR-0048 Decision 2.2 says has no override path.
+		mux, dp := dp2mux(t)
+		for _, k := range []string{fiscal.SigningDeviceConfiguredKey("DE"), fiscal.SigningDeviceConfiguredKey("TR"), "fiscal.signing_device_configured.DE"} {
+			rec := post(mux, manager, k, "true")
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("manager posting %s: expected 403, got %d: %s", k, rec.Code, rec.Body.String())
+			}
+		}
+		for _, cc := range []string{"DE", "TR"} {
+			if v, _, _ := dp.Settings.Get(context.Background(), fiscal.SigningDeviceConfiguredKey(cc)); v == "true" {
+				t.Fatalf("manager must not have set %s's posture row", cc)
+			}
+		}
+		// An owner may, and the row lands under the normalised per-country
+		// name whatever casing was posted, so it is the row the gate reads.
+		rec := post(mux, admin, "fiscal.signing_device_configured.DE", "true")
+		if rec.Code != http.StatusOK && rec.Code != http.StatusNoContent {
+			t.Fatalf("owner posting a per-country row: %d %s", rec.Code, rec.Body.String())
+		}
+		if v, _, _ := dp.Settings.Get(context.Background(), fiscal.SigningDeviceConfiguredKey("DE")); v != "true" {
+			t.Fatalf("owner's explicit per-country write must land on the normalised DE row, got %q", v)
+		}
+		if _, ok, _ := dp.Settings.Get(context.Background(), "fiscal.signing_device_configured.DE"); ok {
+			t.Fatal("the un-normalised key must not be stored as a separate row")
 		}
 	})
 }
 
 // ut-docs#1750 (second independent review, finding F1). The Turkish
 // fiscal-device gate reads store.country, but store.country is writable by a
-// MANAGER through /api/settings/upsert, while the flag it protects
-// (fiscal.KeySigningDeviceConfigured) is owner-only everywhere else — see
-// "manager cannot flip fiscal toggles" above. Nothing used to reset fiscal
-// state when the country changed, so a manager could round-trip the country
-// and keep the flag:
+// MANAGER through /api/settings/upsert, while the flag it protects is
+// owner-only everywhere else — see "manager cannot flip fiscal toggles"
+// above. Nothing used to reset fiscal state when the country changed, so a
+// manager could round-trip the country and keep the flag:
 //
 //	install tax-tr -> country=TR -> POST /api/fiscal-device/confirm -> country=DE
 //
 // leaving a German till in fiscal.Allowed with no TSE at all — the same end
-// state ADR-0048 Decision 2.2 says has no override path. Changing the
-// country must therefore clear the signing-device flags, in BOTH directions:
-// a German till relabelled TR must not carry its TSE flag in as "an ÖKC has
-// proven it prints" either.
+// state ADR-0048 Decision 2.2 says has no override path.
+//
+// ADR-0083 (ut-docs#1767) made the posture rows per country, which is what
+// structurally closes that round-trip: the TR row can never be read by the
+// DE gate. The clear-on-change behaviour is kept (a shop that left a market
+// holds no live "configured" declaration for it), retargeted at the row of
+// the country being LEFT, and it must leave the new country's row — an
+// independent row — alone: neither cleared, nor created. That is the exact
+// scenario the card is about, in both directions.
 func TestFiscalSettings_CountryChangeClearsSigningDeviceFlags(t *testing.T) {
-	mux, dp := newFiscalTestDeps(t)
-	registerSettings(mux, dp)
 	ctx := context.Background()
 	admin := auth.User{ID: "user1", Role: "admin"}
 
@@ -607,14 +659,30 @@ func TestFiscalSettings_CountryChangeClearsSigningDeviceFlags(t *testing.T) {
 		{"DE configured then relabelled TR", "DE", "TR"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			// Fresh deps per direction: the audit assertions below are
+			// per-row, and the first direction's legitimate audit on TR's
+			// row would otherwise still be there for the second.
+			mux, dp := newFiscalTestDeps(t)
+			registerSettings(mux, dp)
 			if err := dp.Settings.Set(ctx, common.KeyCountry, tc.from); err != nil {
 				t.Fatal(err)
 			}
-			if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
+			// The handlers read the country through d.CurrentState(), so
+			// the live state must reflect the row — as it does in
+			// production, where every writer of store.country re-derives it.
+			dp.State = common.LoadState(ctx, dp.Settings, dp.Cfg)
+			if err := dp.Settings.Set(ctx, fiscal.SigningDeviceConfiguredKey(tc.from), "true"); err != nil {
 				t.Fatal(err)
 			}
-			if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceFailingSince, "2026-09-01T00:00:00Z"); err != nil {
+			if err := dp.Settings.Set(ctx, fiscal.SigningDeviceFailingSinceKey(tc.from), "2026-09-01T00:00:00Z"); err != nil {
 				t.Fatal(err)
+			}
+			// The destination's rows do not exist before the change, and
+			// must not exist after it either.
+			for _, k := range []string{fiscal.SigningDeviceConfiguredKey(tc.to), fiscal.SigningDeviceFailingSinceKey(tc.to)} {
+				if err := dp.Settings.Set(ctx, k, ""); err != nil {
+					t.Fatal(err)
+				}
 			}
 
 			form := "key=" + common.KeyCountry + "&value=" + tc.to
@@ -627,13 +695,65 @@ func TestFiscalSettings_CountryChangeClearsSigningDeviceFlags(t *testing.T) {
 				t.Fatalf("country change: %d %s", rec.Code, rec.Body.String())
 			}
 
-			if v, _, _ := dp.Settings.Get(ctx, fiscal.KeySigningDeviceConfigured); v == "true" {
-				t.Fatalf("%s->%s: signing_device_configured survived the country change — a fiscal posture proven for one market must never carry into another", tc.from, tc.to)
+			if v, _, _ := dp.Settings.Get(ctx, fiscal.SigningDeviceConfiguredKey(tc.from)); v == "true" {
+				t.Fatalf("%s->%s: %s's signing_device_configured survived the country change — a shop that left a market holds no live posture for it", tc.from, tc.to, tc.from)
 			}
-			if v, _, _ := dp.Settings.Get(ctx, fiscal.KeySigningDeviceFailingSince); v != "" {
-				t.Fatalf("%s->%s: failing_since survived the country change, got %q", tc.from, tc.to, v)
+			if v, _, _ := dp.Settings.Get(ctx, fiscal.SigningDeviceFailingSinceKey(tc.from)); v != "" {
+				t.Fatalf("%s->%s: %s's failing_since survived the country change, got %q", tc.from, tc.to, tc.from, v)
+			}
+			for _, k := range []string{fiscal.SigningDeviceConfiguredKey(tc.to), fiscal.SigningDeviceFailingSinceKey(tc.to)} {
+				if v, _, _ := dp.Settings.Get(ctx, k); v != "" {
+					t.Fatalf("%s->%s: the country change touched the NEW country's row %s (now %q) — it is an independent row and must be left alone", tc.from, tc.to, k, v)
+				}
+			}
+			// The audit lands on the row that was cleared, naming the market.
+			ok, err := data.NewPOSRepo(dp.Db).HasAuditEntry(ctx, "settings", fiscal.SigningDeviceConfiguredKey(tc.from), "tse_configured_changed")
+			if err != nil || !ok {
+				t.Fatalf("posture clear must be audited on %s's own row: ok=%v err=%v", tc.from, ok, err)
+			}
+			if ok, _ := data.NewPOSRepo(dp.Db).HasAuditEntry(ctx, "settings", fiscal.SigningDeviceConfiguredKey(tc.to), "tse_configured_changed"); ok {
+				t.Fatalf("no audit may be written against %s's row — nothing about it changed", tc.to)
 			}
 		})
+	}
+}
+
+// ADR-0083: a pre-existing row for the DESTINATION country is left exactly
+// as it was by a country change. It cannot arise from the ordinary flows
+// (leaving a market clears its row), but an owner can write a per-country
+// row by name, and the migration can carry one — either way it is that
+// market's own declaration, and moving into the market must not clear it
+// AND must not be what confirms it.
+func TestFiscalSettings_CountryChangeLeavesDestinationRowUntouched(t *testing.T) {
+	mux, dp := newFiscalTestDeps(t)
+	registerSettings(mux, dp)
+	ctx := context.Background()
+	admin := auth.User{ID: "user1", Role: "admin"}
+	if err := dp.Settings.Set(ctx, common.KeyCountry, "TR"); err != nil {
+		t.Fatal(err)
+	}
+	dp.State = common.LoadState(ctx, dp.Settings, dp.Cfg)
+	if err := dp.Settings.Set(ctx, fiscal.SigningDeviceConfiguredKey("TR"), "true"); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.Settings.Set(ctx, fiscal.SigningDeviceConfiguredKey("DE"), "false"); err != nil {
+		t.Fatal(err)
+	}
+
+	form := "key=" + common.KeyCountry + "&value=DE"
+	req := httptest.NewRequest(http.MethodPost, "/api/settings/upsert", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req = auth.WithUser(req, admin)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK && rec.Code != http.StatusNoContent {
+		t.Fatalf("country change: %d %s", rec.Code, rec.Body.String())
+	}
+	if v, _, _ := dp.Settings.Get(ctx, fiscal.SigningDeviceConfiguredKey("DE")); v != "false" {
+		t.Fatalf("DE's own row must be untouched by moving into DE, got %q", v)
+	}
+	if v, _, _ := dp.Settings.Get(ctx, fiscal.SigningDeviceConfiguredKey("TR")); v == "true" {
+		t.Fatal("TR's row must be cleared on leaving TR")
 	}
 }
 
@@ -664,8 +784,9 @@ func TestFiscalSettings_SaveHandlerCannotRoundTripCountryPastAConfirmedDevice(t 
 	if rec := save("TR"); rec.Code != http.StatusOK && rec.Code != http.StatusNoContent {
 		t.Fatalf("moving to TR with no posture must be allowed, got %d: %s", rec.Code, rec.Body.String())
 	}
-	// Step 2: a device proves itself (this path needs no permission at all).
-	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
+	// Step 2: a device proves itself (this path needs no permission at all)
+	// — on Turkey's own row, the one the ÖKC flow writes (ADR-0083).
+	if err := dp.Settings.Set(ctx, fiscal.SigningDeviceConfiguredKey("TR"), "true"); err != nil {
 		t.Fatal(err)
 	}
 	// Step 3: the relabel back to DE — must NOT be a manager's to make.
@@ -703,7 +824,7 @@ func TestFiscalSettings_ManagerCannotClearAGermanTSEByBouncingCountry(t *testing
 		t.Fatal(err)
 	}
 	dp.State = common.LoadState(ctx, dp.Settings, dp.Cfg)
-	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
+	if err := dp.Settings.Set(ctx, fiscal.SigningDeviceConfiguredKey("DE"), "true"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -716,7 +837,7 @@ func TestFiscalSettings_ManagerCannotClearAGermanTSEByBouncingCountry(t *testing
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if v, _, _ := dp.Settings.Get(ctx, fiscal.KeySigningDeviceConfigured); v != "true" {
+	if v, _, _ := dp.Settings.Get(ctx, fiscal.SigningDeviceConfiguredKey("DE")); v != "true" {
 		t.Fatalf("a manager cleared a provisioned German TSE posture by bouncing the country (flag now %q) — that hard-blocks checkout", v)
 	}
 }
@@ -735,7 +856,7 @@ func TestFiscalSettings_OwnerCountryChangeClearsAndAuditsPosture(t *testing.T) {
 		t.Fatal(err)
 	}
 	dp.State = common.LoadState(ctx, dp.Settings, dp.Cfg)
-	if err := dp.Settings.Set(ctx, fiscal.KeySigningDeviceConfigured, "true"); err != nil {
+	if err := dp.Settings.Set(ctx, fiscal.SigningDeviceConfiguredKey("TR"), "true"); err != nil {
 		t.Fatal(err)
 	}
 
@@ -748,10 +869,13 @@ func TestFiscalSettings_OwnerCountryChangeClearsAndAuditsPosture(t *testing.T) {
 	if rec.Code != http.StatusOK && rec.Code != http.StatusNoContent {
 		t.Fatalf("owner country change: %d %s", rec.Code, rec.Body.String())
 	}
-	if v, _, _ := dp.Settings.Get(ctx, fiscal.KeySigningDeviceConfigured); v == "true" {
+	if v, _, _ := dp.Settings.Get(ctx, fiscal.SigningDeviceConfiguredKey("TR")); v == "true" {
 		t.Fatal("posture must not survive an owner's country change either")
 	}
-	ok, err := data.NewPOSRepo(dp.Db).HasAuditEntry(ctx, "settings", fiscal.KeySigningDeviceConfigured, "tse_configured_changed")
+	if v, ok, _ := dp.Settings.Get(ctx, fiscal.SigningDeviceConfiguredKey("DE")); ok && v != "" {
+		t.Fatalf("moving to DE must not create or set DE's own row (ADR-0083), got %q", v)
+	}
+	ok, err := data.NewPOSRepo(dp.Db).HasAuditEntry(ctx, "settings", fiscal.SigningDeviceConfiguredKey("TR"), "tse_configured_changed")
 	if err != nil || !ok {
 		t.Fatalf("posture clear must be audited on the posture key: ok=%v err=%v", ok, err)
 	}

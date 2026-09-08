@@ -96,9 +96,10 @@ const (
 	// (BEFORE any network attempt, so an offline wizard run survives), moved
 	// through pending_kickoff → awaiting_ready by the kickoff call/retry,
 	// and cleared on confirmed local receipt of the operational credential.
-	// Empty/unset means nothing in flight. Distinct from
-	// fiscal.KeySigningDeviceConfigured, which only ever flips true on that confirmed
-	// receipt — never optimistically.
+	// Empty/unset means nothing in flight. Distinct from Germany's
+	// per-country posture row (fiscal.SigningDeviceConfiguredKey("DE"),
+	// ADR-0083), which only ever flips true on that confirmed receipt —
+	// never optimistically.
 	KeyTSEProvisioningState = "fiscal.tse_provisioning_state"
 	// KeyPendingFiscalSignRetries used to hold the JSON list of sales
 	// queued for background re-signing under fiscal.sign.ask's old
