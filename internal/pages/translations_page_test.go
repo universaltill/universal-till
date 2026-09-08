@@ -130,14 +130,17 @@ func TestRegisterTranslations_GET_RendersAvailableLocales(t *testing.T) {
 
 func TestTranslationsTable_FiltersByQuery(t *testing.T) {
 	mux, _, _ := newTranslationsTestDeps(t)
-	// A key that certainly exists (used throughout this same test suite).
-	req := withManager(httptest.NewRequest(http.MethodGet, "/ui/translations-table?edit_locale=en&q=sync.chip_queued", nil))
+	// A key that certainly exists and is actually rendered somewhere
+	// (sync_chip.html) — ut-docs#1759 removed sync.chip_queued (the bare
+	// form this test used to use) as a dead key never referenced by any
+	// template, so it can no longer stand in for "a key that exists".
+	req := withManager(httptest.NewRequest(http.MethodGet, "/ui/translations-table?edit_locale=en&q=sync.chip_offline", nil))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /ui/translations-table: code %d body %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "sync.chip_queued") {
+	if !strings.Contains(rec.Body.String(), "sync.chip_offline") {
 		t.Fatalf("expected the matching key in the filtered table, got %q", rec.Body.String())
 	}
 
@@ -147,14 +150,14 @@ func TestTranslationsTable_FiltersByQuery(t *testing.T) {
 	if rec.Code != http.StatusOK {
 		t.Fatalf("GET /ui/translations-table (no match): code %d", rec.Code)
 	}
-	if strings.Contains(rec.Body.String(), "sync.chip_queued") {
+	if strings.Contains(rec.Body.String(), "sync.chip_offline") {
 		t.Fatalf("expected the query to filter out non-matching keys")
 	}
 }
 
 func TestTranslationsSet_RequiresManager(t *testing.T) {
 	mux, _, _ := newTranslationsTestDeps(t)
-	form := url.Values{"edit_locale": {"en"}, "key": {"sync.chip_queued"}, "value": {"Queued"}}
+	form := url.Values{"edit_locale": {"en"}, "key": {"sync.chip_offline"}, "value": {"Offline"}}
 	req := httptest.NewRequest(http.MethodPost, "/api/translations/set", strings.NewReader(form.Encode()))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec := httptest.NewRecorder()
