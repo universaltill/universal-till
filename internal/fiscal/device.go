@@ -61,16 +61,22 @@ func (e *DeviceEvidence) Valid() bool {
 	return e != nil && !isBlankReceiptNo(e.ReceiptNo)
 }
 
-// isBlankReceiptNo reports whether s has no usable content once both
-// Unicode whitespace AND invisible "format" characters (category Cf —
-// zero-width space U+200B, the BOM/ZWNBSP U+FEFF, joiners, …) are
-// stripped. strings.TrimSpace/unicode.IsSpace alone do not cover Cf, so a
-// receipt_no consisting only of e.g. a zero-width space passed a plain
-// TrimSpace-based emptiness check and was persisted as a "valid" receipt
-// that rendered blank everywhere (ut-docs#1781).
+// isInvisibleRune reports whether r is Unicode whitespace OR an invisible
+// "format" character (category Cf — zero-width space U+200B, the
+// BOM/ZWNBSP U+FEFF, joiners, …). unicode.IsSpace alone does not cover Cf.
+func isInvisibleRune(r rune) bool {
+	return unicode.IsSpace(r) || unicode.In(r, unicode.Cf)
+}
+
+// isBlankReceiptNo reports whether s has no usable content once
+// isInvisibleRune-matching characters are stripped. strings.TrimSpace
+// alone does not cover Cf, so a receipt_no consisting only of e.g. a
+// zero-width space passed a plain TrimSpace-based emptiness check and was
+// persisted as a "valid" receipt that rendered blank everywhere
+// (ut-docs#1781).
 func isBlankReceiptNo(s string) bool {
 	for _, r := range s {
-		if !unicode.IsSpace(r) && !unicode.In(r, unicode.Cf) {
+		if !isInvisibleRune(r) {
 			return false
 		}
 	}
@@ -94,7 +100,15 @@ func ParseDeviceEvidence(resp json.RawMessage) (*DeviceEvidence, bool) {
 		return nil, false
 	}
 	ev := parsed.FiscalDevice
-	ev.ReceiptNo = strings.TrimSpace(ev.ReceiptNo)
+	// TrimFunc, not TrimSpace: strip the same invisible/Cf edge characters
+	// isBlankReceiptNo already treats as blank (ut-docs#1790), not just
+	// Unicode whitespace — a receipt_no with real digits sandwiched
+	// between zero-width characters at the edges is valid evidence, but
+	// must be stored without those edges or it won't exact-match a
+	// freshly typed/scanned value on a reprint-by-receipt-number lookup.
+	// TrimFunc only touches the edges, so any interior/embedded Cf
+	// character (not this card's concern) survives untouched.
+	ev.ReceiptNo = strings.TrimFunc(ev.ReceiptNo, isInvisibleRune)
 	if ev.Kind == "" {
 		ev.Kind = "okc"
 	}
