@@ -42,9 +42,13 @@ const fiscalDeviceAuditUnpaired = "fiscal_device_unpaired"
 // payment-provider contract's base shape is untouched. Amounts stay
 // integer minor units (ADR-0004).
 func deviceAuthorizePayloadExtras(in pos.SaleInput, payments []pos.PaymentInput) map[string]any {
+	// ut-docs#1764: a cash-with-change leg's Amount is what the customer
+	// physically handed over, not what the sale cost -- net out ChangeGiven
+	// so the device is told the actual sale amount (internal/pos's own
+	// payment-sufficiency check nets the same way, sales.go's netPayments).
 	var total int64
 	for _, p := range payments {
-		total += p.Amount.Minor()
+		total += p.Amount.Sub(p.ChangeGiven).Minor()
 	}
 	lines := make([]map[string]any, 0, len(in.Lines))
 	for _, l := range in.Lines {

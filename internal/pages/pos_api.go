@@ -42,6 +42,22 @@ func (e *paymentDeclinedError) Error() string {
 	return "payment declined: " + e.Method
 }
 
+// fiscalDeviceNoReceiptError signals the ut-docs#1779 fail-closed backstop:
+// a fiscal-device payment method (fiscal.MethodKeyOKC) approved the tender
+// but its answer carried no valid `fiscal_device` receipt. Distinct from
+// paymentDeclinedError on purpose — the device plugin may already have
+// taken the customer's money before answering, so the operator must be
+// told to check the device rather than simply "declined, try another
+// method" (which invites a double charge); each tender surface maps this
+// to its own, more specific copy.
+type fiscalDeviceNoReceiptError struct {
+	Method string
+}
+
+func (e *fiscalDeviceNoReceiptError) Error() string {
+	return "fiscal device approved with no receipt evidence: " + e.Method
+}
+
 // fiscalNeverConfiguredError signals the ADR-0048 hard block: a shop in a
 // hard-gated market (fiscal.RequiresHardGate — Germany and, since
 // ut-docs#1208, Turkey) declared itself system-of-record without a
@@ -220,9 +236,18 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	attemptID := engine.TenderAttemptID()
 	var deviceEvidence *fiscal.DeviceEvidence
 	for i, p := range payments {
+		amount := p.Amount
+		if p.MethodID == fiscal.MethodKeyOKC {
+			// ut-docs#1764: the device must be told the actual sale amount,
+			// not the gross cash handed over -- net out change here so this
+			// leg's "amount" stays equal to deviceExtras' "total" below
+			// (both net of change), matching plugins/tax-tr/okc/bridge.go's
+			// Amount==Total invariant for a normal, non-split tender.
+			amount = amount.Sub(p.ChangeGiven)
+		}
 		payload := map[string]any{
 			"method":    p.MethodID,
-			"amount":    p.Amount.Minor(),
+			"amount":    amount.Minor(),
 			"reference": p.Reference,
 		}
 		if p.MethodID == fiscal.MethodKeyOKC {
@@ -244,6 +269,24 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		resp, err := blockingPaymentEventWithResponseAndID(ctx, d, p.MethodID, "authorize", requestID, payload)
 		if err != nil {
 			return "", &paymentDeclinedError{Method: p.MethodID}
+		}
+		// ut-docs#1779: an independent, per-leg backstop. MethodKeyOKC's own
+		// doc comment claims "fail-closed by construction, no override
+		// path", but that only holds as long as every OKC plugin polices
+		// itself — a plugin that exits 0 (approved) with no `fiscal_device`
+		// object, or an invalid one, would otherwise let the sale complete
+		// with zero fiscal evidence. This MUST gate on THIS LEG's own
+		// parsed response, never the sale-wide deviceEvidence accumulator
+		// below: pickDeviceEvidence keeps first-wins evidence from ANY
+		// payment method's response (plugin-controlled JSON, parsed
+		// unconditionally, no MethodID check of its own), so gating on the
+		// accumulator would let an earlier leg's evidence launder a LATER
+		// OKC leg that returned none — independent review (ut-docs#1779)
+		// confirmed this empirically for both a non-OKC leg preceding an
+		// empty OKC leg, and a second OKC leg in a split tender.
+		if _, legValid := fiscal.ParseDeviceEvidence(resp); p.MethodID == fiscal.MethodKeyOKC && !legValid {
+			log.Printf("tender rejected: fiscal device %q approved sale with no receipt evidence (attempt %s) (ut-docs#1779 fail-closed)", p.MethodID, requestID)
+			return "", &fiscalDeviceNoReceiptError{Method: p.MethodID}
 		}
 		// A fiscal-device plugin's approved answer carries what the device
 		// printed (`fiscal_device`); persisted against the sale below, once
@@ -1129,6 +1172,19 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			if p.Method == "" || p.Amount <= 0 {
 				continue
 			}
+			// ut-docs#1764 (independent review): pos.CompleteSale's
+			// netPayments already rejects change > amount as invalid
+			// (internal/pos/sales.go), but that check runs AFTER this
+			// payment has already gone through a plugin's blocking
+			// authorize call below -- for the fiscal-device (OKC) method
+			// that round trip nets Amount-ChangeGiven into what the device
+			// is told and can print, so an impossible change must be
+			// refused HERE, before any plugin ever sees it, not just
+			// before the sale persists.
+			if p.Change < 0 || p.Change > p.Amount {
+				http.Error(w, "invalid change amount", http.StatusBadRequest)
+				return
+			}
 			if err := repo.EnsurePaymentMethod(r.Context(), p.Method); err != nil {
 				// ut-docs#923: a genuine internal/setup failure (the FK-upsert
 				// itself hit a DB-layer error), not a reachable business
@@ -1366,6 +1422,18 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				// self-order kiosk's own "selforder.checkout.declined" copy.
 				log.Printf("tender rejected: %v", err)
 				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.payment_declined"), http.StatusPaymentRequired)
+				return
+			}
+			// ut-docs#1779: distinct from a plain decline above — the device
+			// plugin answered "approved" (it may already have taken the
+			// customer's money) but gave no receipt evidence, so "declined,
+			// try another method" would risk a double charge. Same 402
+			// status (no sale row was created either way) but its own copy
+			// telling the operator to check the device first.
+			var noReceipt *fiscalDeviceNoReceiptError
+			if errors.As(err, &noReceipt) {
+				log.Printf("tender rejected: %v (ut-docs#1779 fail-closed)", err)
+				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.fiscal_device_no_receipt"), http.StatusPaymentRequired)
 				return
 			}
 			// German TSE hard gate (ADR-0048): same in-place, localized

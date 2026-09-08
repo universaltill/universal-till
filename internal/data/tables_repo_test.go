@@ -400,17 +400,24 @@ func TestForceReleaseTableClaim(t *testing.T) {
 	if err != nil {
 		t.Fatalf("CreateTable: %v", err)
 	}
+	// recentCutoff mirrors the caller's real time.Now().Add(-tillClaimTTL);
+	// a fixed cutoff well in the past here, since none of these claims
+	// belong to a till this test seeds into `tills` at all.
+	recentCutoff := time.Now().Add(-2 * time.Minute)
 
 	// No claim, no held sale: idempotent no-op, nothing to report freed.
-	released, stillHeld, err := repo.ForceReleaseTableClaim(ctx, id)
-	if err != nil || released || stillHeld {
-		t.Fatalf("on a free table: released=%v stillHeld=%v err=%v, want false/false/nil", released, stillHeld, err)
+	result, err := repo.ForceReleaseTableClaim(ctx, id, recentCutoff)
+	if err != nil || result.Released || result.StillHeld || result.OtherTillRecentlySeen {
+		t.Fatalf("on a free table: result=%+v err=%v, want all-false/nil", result, err)
 	}
 
 	// A claim owned by a DIFFERENT till (the crash-orphaned/never-revisited
 	// case this action exists for) is force-released regardless of
 	// ownership — ReleaseTableClaimForTill, by contrast, is scoped and
-	// would leave this exact row untouched.
+	// would leave this exact row untouched. 'some-other-till' has no row
+	// in `tills` at all, so OtherTillRecentlySeen must stay false — this
+	// till genuinely has no idea whether that till is even real, let alone
+	// online, and must never claim otherwise.
 	if _, err := dbo.DB.Exec(
 		`INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, ?, 'some-other-till')`,
 		id, time.Now().UTC().Format(time.RFC3339)); err != nil {
@@ -419,21 +426,21 @@ func TestForceReleaseTableClaim(t *testing.T) {
 	if ok, err := repo.IsTableFree(ctx, id, ""); err != nil || ok {
 		t.Fatalf("expected T1 occupied by the seeded claim, got ok=%v err=%v", ok, err)
 	}
-	released, stillHeld, err = repo.ForceReleaseTableClaim(ctx, id)
-	if err != nil || !released || stillHeld {
-		t.Fatalf("releasing a foreign claim: released=%v stillHeld=%v err=%v, want true/false/nil", released, stillHeld, err)
+	result, err = repo.ForceReleaseTableClaim(ctx, id, recentCutoff)
+	if err != nil || !result.Released || result.StillHeld || result.OtherTillRecentlySeen {
+		t.Fatalf("releasing an unknown foreign claim: result=%+v err=%v, want Released=true, rest false", result, err)
 	}
 	if ok, err := repo.IsTableFree(ctx, id, ""); err != nil || !ok {
 		t.Fatalf("expected T1 free after force-release, got ok=%v err=%v", ok, err)
 	}
 
 	// Idempotent: calling it again on the now-free table is a safe no-op.
-	if released, _, err := repo.ForceReleaseTableClaim(ctx, id); err != nil || released {
-		t.Fatalf("second call: released=%v err=%v, want false/nil", released, err)
+	if result, err := repo.ForceReleaseTableClaim(ctx, id, recentCutoff); err != nil || result.Released {
+		t.Fatalf("second call: result=%+v err=%v, want Released=false/nil", result, err)
 	}
 
 	// A genuine held_sales row is NEVER touched: releasing the claim on a
-	// table that ALSO has a real held order must report stillHeld=true and
+	// table that ALSO has a real held order must report StillHeld=true and
 	// must leave the held order (and hence the table's occupied state)
 	// completely alone.
 	if claimed, err := repo.ClaimTable(ctx, id); err != nil || !claimed {
@@ -444,12 +451,87 @@ func TestForceReleaseTableClaim(t *testing.T) {
 		id); err != nil {
 		t.Fatalf("seed held sale: %v", err)
 	}
-	released, stillHeld, err = repo.ForceReleaseTableClaim(ctx, id)
-	if err != nil || !released || !stillHeld {
-		t.Fatalf("with a held order attached: released=%v stillHeld=%v err=%v, want true/true/nil", released, stillHeld, err)
+	result, err = repo.ForceReleaseTableClaim(ctx, id, recentCutoff)
+	if err != nil || !result.Released || !result.StillHeld {
+		t.Fatalf("with a held order attached: result=%+v err=%v, want Released=true, StillHeld=true", result, err)
 	}
 	if ok, err := repo.IsTableFree(ctx, id, ""); err != nil || ok {
 		t.Fatalf("a real held order must still occupy the table after force-release, got ok=%v err=%v", ok, err)
+	}
+}
+
+// ut-docs#1723: held_sales is never cross-till visible (sync_admin_repo.go
+// deliberately excludes it), so before this fix a manager pressing "Free
+// table" on a table occupied ONLY by a held order parked on a different,
+// currently-online till got no signal at all — the same plain "freed"
+// outcome as an actually-stale claim. ForceReleaseTableClaim now reports
+// OtherTillRecentlySeen using data the primary already has honestly:
+// table_claims.till_id (who held the claim) and tills.last_seen_at (was
+// that till recently online) — NOT proof a held order exists there, just
+// the strongest signal available without a cross-till held_sales query
+// this codebase has no mechanism to make (no primary→replica reverse call
+// exists anywhere here; see docs/code-reviews for this card's own record).
+func TestForceReleaseTableClaim_OtherTillRecentlySeen(t *testing.T) {
+	dbo, repo := openTablesTestDB(t)
+	ctx := context.Background()
+	tills := NewTillsRepo(dbo.DB)
+
+	id, err := repo.CreateTable(ctx, "T1", "", 4, "rect", 100, 100)
+	if err != nil {
+		t.Fatalf("CreateTable: %v", err)
+	}
+
+	recentTill, err := tills.InsertTill(ctx, "Kitchen-2", "hash1")
+	if err != nil {
+		t.Fatalf("InsertTill (recent): %v", err)
+	}
+	staleTill, err := tills.InsertTill(ctx, "Kitchen-3", "hash2")
+	if err != nil {
+		t.Fatalf("InsertTill (stale): %v", err)
+	}
+	if _, err := dbo.DB.Exec(`UPDATE tills SET last_seen_at = ? WHERE id = ?`,
+		time.Now().UTC().Format(time.RFC3339), recentTill); err != nil {
+		t.Fatalf("seed recent last_seen_at: %v", err)
+	}
+	if _, err := dbo.DB.Exec(`UPDATE tills SET last_seen_at = ? WHERE id = ?`,
+		time.Now().Add(-10*time.Minute).UTC().Format(time.RFC3339), staleTill); err != nil {
+		t.Fatalf("seed stale last_seen_at: %v", err)
+	}
+
+	cutoff := time.Now().Add(-2 * time.Minute)
+
+	// A claim owned by a till last seen WITHIN cutoff: recently-seen.
+	if _, err := dbo.DB.Exec(
+		`INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, ?, ?)`,
+		id, time.Now().UTC().Format(time.RFC3339), recentTill); err != nil {
+		t.Fatalf("seed recent-till claim: %v", err)
+	}
+	result, err := repo.ForceReleaseTableClaim(ctx, id, cutoff)
+	if err != nil || !result.Released || !result.OtherTillRecentlySeen || result.OtherTillID != recentTill {
+		t.Fatalf("claim owned by a recently-seen till: result=%+v err=%v, want Released=true OtherTillRecentlySeen=true OtherTillID=%q", result, err, recentTill)
+	}
+
+	// A claim owned by a till last seen OUTSIDE cutoff: not recently-seen —
+	// same "we genuinely don't know" outcome as an untracked till.
+	if _, err := dbo.DB.Exec(
+		`INSERT INTO table_claims (table_id, claimed_at, till_id) VALUES (?, ?, ?)`,
+		id, time.Now().UTC().Format(time.RFC3339), staleTill); err != nil {
+		t.Fatalf("seed stale-till claim: %v", err)
+	}
+	result, err = repo.ForceReleaseTableClaim(ctx, id, cutoff)
+	if err != nil || !result.Released || result.OtherTillRecentlySeen || result.OtherTillID != "" {
+		t.Fatalf("claim owned by a stale till: result=%+v err=%v, want Released=true OtherTillRecentlySeen=false OtherTillID=\"\"", result, err)
+	}
+
+	// This till's OWN local claim (till_id="") is never a foreign-till
+	// signal, however recentCutoff is set — that convention (ClaimTable)
+	// must never be misread as "a different till, recently seen."
+	if claimed, err := repo.ClaimTable(ctx, id); err != nil || !claimed {
+		t.Fatalf("ClaimTable: claimed=%v err=%v", claimed, err)
+	}
+	result, err = repo.ForceReleaseTableClaim(ctx, id, cutoff)
+	if err != nil || !result.Released || result.OtherTillRecentlySeen {
+		t.Fatalf("this till's own local claim: result=%+v err=%v, want Released=true OtherTillRecentlySeen=false", result, err)
 	}
 }
 

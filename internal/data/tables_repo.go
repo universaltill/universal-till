@@ -304,46 +304,112 @@ func (r *POSRepo) ReleaseTableClaim(ctx context.Context, tableID string) error {
 // see tables_repo_test.go's TestForceReleaseTableClaim and the design note
 // on ClearLocalTableClaims above.
 //
-// released reports whether a claim actually existed to drop (false is a
-// safe, ordinary outcome for an already-free table — same no-op convention
-// as ReleaseTableClaim). stillHeld reports whether a held_sales row is
-// STILL attached to the table afterwards: a genuine held order is never
-// touched here, so a table with a real parked order correctly reads
-// occupied again immediately — the caller uses stillHeld to tell the
-// manager that clearing the claim did not fully free the table, rather than
-// silently discarding a real order to make the floor plan look free.
-// A transaction, not two independent statements (independent review
-// finding, ut-docs#1393): with two separate calls, a failure on the
-// held_sales read after the DELETE had already committed would report an
-// error — "could not free the table" — for a claim that WAS actually
-// dropped, and the caller's audit write (gated on err == nil) would never
-// record that real state change. Wrapping both in one transaction makes
-// the two outcomes exactly consistent: either the claim was dropped AND
-// stillHeld reflects reality, or nothing changed and the reported error is
-// accurate.
-func (r *POSRepo) ForceReleaseTableClaim(ctx context.Context, tableID string) (released bool, stillHeld bool, err error) {
+// TableReleaseResult is ForceReleaseTableClaim's outcome (ut-docs#1723):
+// what the DELETE removed, plus enough about who owned it for the
+// manager-facing message to be honest about cross-till risk without
+// pretending this till can see a replica's held_sales (it can't — that
+// table is deliberately never synced, sync_admin_repo.go).
+type TableReleaseResult struct {
+	// Released reports whether a claim actually existed to drop (false is
+	// a safe, ordinary outcome for an already-free table — same no-op
+	// convention as ReleaseTableClaim).
+	Released bool
+	// StillHeld reports whether a held_sales row is STILL attached to the
+	// table afterwards: a genuine held order is never touched here, so a
+	// table with a real parked order correctly reads occupied again
+	// immediately — the caller uses this to tell the manager that
+	// clearing the claim did not fully free the table, rather than
+	// silently discarding a real order to make the floor plan look free.
+	// This is local-only evidence (this till's own held_sales), which is
+	// exactly why OtherTillRecentlySeen below exists too.
+	StillHeld bool
+	// OtherTillRecentlySeen reports whether the claim just dropped
+	// belonged to a DIFFERENT till (till_id != "") that this primary has
+	// heard from within recentCutoff. This is NOT proof a held order
+	// exists there — held_sales isn't cross-till visible at all — it is
+	// the strongest honest signal this till actually has: "that till was
+	// probably still active a moment ago, so if it had something parked
+	// here, this may have just made it invisible."
+	OtherTillRecentlySeen bool
+	// OtherTillID is the claim's owning till, for the audit log only,
+	// and ONLY when OtherTillRecentlySeen is true — it is the identity
+	// behind that signal, not an independent "who held the claim" field.
+	// It is therefore "" in every other case: no claim at all, this
+	// till's own local till_id="" row, AND a foreign till that is stale
+	// or no longer enrolled (reading "" as "it was a local claim" would
+	// be wrong — pair it with OtherTillRecentlySeen, never alone).
+	// Never surfaced in the manager-facing message — T() has no
+	// placeholder substitution, see tables_page.go.
+	OtherTillID string
+}
+
+// A transaction, not several independent statements (independent review
+// finding, ut-docs#1393, extended for ut-docs#1723): a failure partway
+// through would otherwise report "could not free the table" for a claim
+// that WAS actually dropped, and the caller's audit write (gated on
+// err == nil) would never record that real state change. Wrapping every
+// read/write in one transaction keeps the outcome exactly consistent:
+// either the claim was dropped AND the rest of the result reflects
+// reality, or nothing changed and the reported error is accurate.
+func (r *POSRepo) ForceReleaseTableClaim(ctx context.Context, tableID string, recentCutoff time.Time) (TableReleaseResult, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return false, false, fmt.Errorf("force release table claim: begin: %w", err)
+		return TableReleaseResult{}, fmt.Errorf("force release table claim: begin: %w", err)
 	}
 	defer func() { _ = tx.Rollback() }()
 
+	// Read the claim's owner BEFORE the DELETE below removes the row —
+	// the till_id="" convention (ClaimTable) means "this till's own local
+	// claim," which is never a foreign-till signal, so it's left as "".
+	var claimTillID string
+	switch err := tx.QueryRowContext(ctx,
+		`SELECT till_id FROM table_claims WHERE table_id = ?`, tableID).Scan(&claimTillID); {
+	case err == sql.ErrNoRows:
+		// no claim at all; claimTillID stays ""
+	case err != nil:
+		return TableReleaseResult{}, fmt.Errorf("force release table claim: read claim: %w", err)
+	}
+
 	res, err := tx.ExecContext(ctx, `DELETE FROM table_claims WHERE table_id = ?`, tableID)
 	if err != nil {
-		return false, false, fmt.Errorf("force release table claim: %w", err)
+		return TableReleaseResult{}, fmt.Errorf("force release table claim: %w", err)
 	}
 	n, err := res.RowsAffected()
 	if err != nil {
-		return false, false, fmt.Errorf("force release table claim: %w", err)
+		return TableReleaseResult{}, fmt.Errorf("force release table claim: %w", err)
 	}
+
+	result := TableReleaseResult{Released: n > 0}
+
+	// A foreign claim (till_id != "") is "recently seen" when the SAME
+	// 2-minute online bound the sync status chip and ClaimTableForTill's
+	// own staleness cutoff use (tillClaimTTL, internal/pages) says this
+	// till was heard from within recentCutoff — mirrors the exact
+	// last_seen_at >= ? comparison ClaimTableForTill already makes
+	// (tables_repo.go, above), same RFC3339 string format.
+	if claimTillID != "" {
+		var seen int
+		if err := tx.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM tills WHERE id = ? AND last_seen_at IS NOT NULL AND last_seen_at >= ?`,
+			claimTillID, recentCutoff.UTC().Format(time.RFC3339)).Scan(&seen); err != nil {
+			return TableReleaseResult{}, fmt.Errorf("force release table claim: check till: %w", err)
+		}
+		if seen > 0 {
+			result.OtherTillRecentlySeen = true
+			result.OtherTillID = claimTillID
+		}
+	}
+
 	var heldCount int
 	if err := tx.QueryRowContext(ctx, `SELECT COUNT(*) FROM held_sales WHERE table_id = ?`, tableID).Scan(&heldCount); err != nil {
-		return false, false, fmt.Errorf("force release table claim: check held sales: %w", err)
+		return TableReleaseResult{}, fmt.Errorf("force release table claim: check held sales: %w", err)
 	}
+	result.StillHeld = heldCount > 0
+
 	if err := tx.Commit(); err != nil {
-		return false, false, fmt.Errorf("force release table claim: commit: %w", err)
+		return TableReleaseResult{}, fmt.Errorf("force release table claim: commit: %w", err)
 	}
-	return n > 0, heldCount > 0, nil
+	return result, nil
 }
 
 // ClaimTableForTill reserves tableID on behalf of an enrolled replica till
