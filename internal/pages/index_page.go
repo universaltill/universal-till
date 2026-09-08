@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"html/template"
 	"net/http"
+	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fiscal"
@@ -84,9 +85,17 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 		// voucher id (and refuses change), which the grid has no field for
 		// — CompleteSale would reject the payment, or worse, record an
 		// untracked 'gift' tender that debits no voucher at all.
+		// Case-folded (ut-docs#1832 review): built-in rows carry a lowercase
+		// type, but a PLUGIN-provided method's type comes straight out of
+		// its manifest — SyncPluginPaymentMethods lifts it verbatim from
+		// config_json's `method_type` with no canonicalization — so a
+		// manifest saying "Voucher" would slip a voucher-type method into
+		// the one-tap grid. Matches how pos.CompleteSale itself compares a
+		// payment's MethodID, and the request-boundary lowercasing
+		// ut-docs#1795 established for payment methods generally.
 		gridMethods := make([]data.PaymentMethod, 0, len(payMethods))
 		for _, m := range payMethods {
-			if m.Type != "voucher" {
+			if !strings.EqualFold(strings.TrimSpace(m.Type), "voucher") {
 				gridMethods = append(gridMethods, m)
 			}
 		}

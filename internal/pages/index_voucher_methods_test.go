@@ -98,3 +98,26 @@ func TestIndexVoucherMethods_DefaultNeverVoucher(t *testing.T) {
 		t.Fatalf("Split select still has to offer the voucher method: %s", sel)
 	}
 }
+
+// ut-docs#1832 review: a PLUGIN-provided payment method's type is lifted
+// verbatim out of its manifest (SyncPluginPaymentMethods reads config_json's
+// `method_type` with no canonicalization), so the Pay-grid exclusion has to
+// be case-folded — a manifest declaring "Voucher" must not buy a one-tap
+// full-amount button that records an untracked tender debiting no voucher.
+func TestIndexVoucherMethods_PayGridExcludesMixedCaseVoucherType(t *testing.T) {
+	mux, dp := quickPayTestMux(t)
+	if _, err := dp.Db.Exec(
+		`INSERT INTO payment_methods (id, name, type, is_active, sort_order, plugin_id)
+		 VALUES ('plugin_gs', 'Plugin Gutschein', 'Voucher', 1, 50, 'com.t.gs')`); err != nil {
+		t.Fatalf("seed mixed-case voucher method: %v", err)
+	}
+	home := getHome(t, mux)
+
+	grid := payGridSnippet(t, home)
+	if strings.Contains(grid, `data-method="plugin_gs"`) {
+		t.Errorf("Pay grid must exclude a Type=%q method case-insensitively:\n%s", "Voucher", grid)
+	}
+	if sel := splitMethodSelectSnippet(t, home); !strings.Contains(sel, `<option value="plugin_gs"`) {
+		t.Errorf("Split select must still offer the plugin voucher method: %s", sel)
+	}
+}
