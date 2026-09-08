@@ -174,6 +174,55 @@ func TestImport_CommitLockReleasedAfterRequestFinishes(t *testing.T) {
 	}
 }
 
+// TestImport_CommitLockReleasedAfterRequestFinishes_CodelessRowsDedupe
+// (ut-docs#1839) is the above test's missing twin: the existing test only
+// covers a row that carries a SKU. A real SumUp café export carries NEITHER
+// a SKU nor a barcode for any row (both columns are optional and empty by
+// default on that source) — before this card's fix, such a row was never
+// even compared against the catalog, so a second sequential import of the
+// same file duplicated it (a real export went 116 items → 230). This drives
+// the real handler twice, exactly like the SKU-bearing test above, and
+// must fail against the pre-fix code (nothing dedupes a codeless row).
+func TestImport_CommitLockReleasedAfterRequestFinishes_CodelessRowsDedupe(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	// No SKU, no barcode column value — the SumUp café export shape. Two
+	// rows sharing a category, one with a leading/trailing-space name (the
+	// real export's first row was literally " Eistee") to prove the
+	// normalisation the repo-layer check applies.
+	csv := "Name,SKU,Price,Category,In stock\n" +
+		" Eistee ,,2.50,Drinks,0\n" +
+		"Chips,,1.99,Snacks,0\n"
+
+	for i := 0; i < 2; i++ {
+		body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
+		req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+		req.Header.Set("Content-Type", ct)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("commit %d: code %d body %s", i, rec.Code, rec.Body.String())
+		}
+	}
+
+	var n int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE name = ? COLLATE NOCASE`, "Eistee").Scan(&n); err != nil {
+		t.Fatalf("count items: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected exactly 1 'Eistee' item after a sequential re-import of a codeless row, got %d (re-import duplicated it)", n)
+	}
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE name = ? COLLATE NOCASE`, "Chips").Scan(&n); err != nil {
+		t.Fatalf("count items: %v", err)
+	}
+	if n != 1 {
+		t.Fatalf("expected exactly 1 'Chips' item after a sequential re-import of a codeless row, got %d (re-import duplicated it)", n)
+	}
+}
+
 // TestImport_ConcurrentSKURaceAcrossDifferentFilesSkipsCleanly (ut-docs#1510)
 // covers the race the content-hash lock above does NOT catch on its own:
 // two DIFFERENT uploads (different bytes, so each gets its own reservation

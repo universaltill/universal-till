@@ -108,6 +108,53 @@ func TestUncoveredRoutes(t *testing.T) {
 	}
 }
 
+// de ships no web/locales/de.json (its UI strings come from the external
+// ut-plugin-language-de pack — see manualOnlyLocales' own doc comment), so
+// without manualOnlyLocales it would be invisible to a glob of web/locales
+// and this guard would silently never check it. This is the regression this
+// test exists to catch: en can gain a topic with no German counterpart and
+// nothing here would fail.
+func TestShippedLocalesIncludesManualOnlyLocales(t *testing.T) {
+	t.Chdir(filepath.Join("..", "..", ".."))
+
+	got, err := shippedLocales()
+	if err != nil {
+		t.Fatalf("shippedLocales: %v", err)
+	}
+	if !slices.Contains(got, "de") {
+		t.Errorf("shippedLocales() = %v, want it to contain %q (manual-only locale, no web/locales/de.json exists)", got, "de")
+	}
+	// ar/fa/tr are the actual core-shipped web/locales/*.json today — this
+	// is an anti-false-pass check that the glob half of shippedLocales
+	// still runs at all, not just the manualOnlyLocales union.
+	for _, want := range []string{"ar", "fa", "tr"} {
+		if !slices.Contains(got, want) {
+			t.Errorf("shippedLocales() = %v, missing core-shipped locale %q", got, want)
+		}
+	}
+}
+
+// Integration: the REAL embedded manual must have a complete German topic
+// set — every id en has, de has too. Exercised as a test (not just the
+// guard's own CI step) so a future en-only topic added without its German
+// translation fails `go test ./...` immediately, the same safety net
+// ar/fa/tr already get from being core-shipped locales. This overlaps with
+// internal/pages' own TestManualIsTranslatedInEveryShippedLocale (both call
+// manual.Load(uiassets.HelpFS, "help") — internal/pages.Library() is
+// literally that same call, cached behind a sync.Once, not a different
+// entry point) — kept anyway so this package's own tests fail without
+// requiring internal/pages to also be run, since guard-help-topics.sh only
+// exercises this package directly.
+func TestManualIsFullyTranslatedIntoGerman(t *testing.T) {
+	lib, err := manual.Load(uiassets.HelpFS, "help")
+	if err != nil {
+		t.Fatalf("loading embedded manual: %v", err)
+	}
+	if missing := lib.MissingTranslations("de"); len(missing) > 0 {
+		t.Errorf("German manual is missing topics: %v", missing)
+	}
+}
+
 // Integration: the REAL internal/pages tree against the REAL embedded manual
 // must be fully covered — this is the check CI runs, exercised as a test so
 // a coverage regression fails `go test ./...` too, not only the guard step.

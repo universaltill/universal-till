@@ -1834,6 +1834,7 @@
   "import.status.created": "oluşturuldu",
   "import.status.barcode_already_in_catalog": "barkod zaten katalogda mevcut",
   "import.status.sku_already_in_catalog": "SKU zaten katalogda mevcut",
+  "import.status.name_already_in_catalog": "ad zaten katalogda mevcut",
   "import.status.missing_name": "isim eksik",
   "import.status.missing_name_and_bad_price": "isim eksik ve geçersiz fiyat: %s",
   "import.status.bad_price": "geçersiz fiyat: %s",

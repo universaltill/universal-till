@@ -139,16 +139,32 @@ func Load(fsys fs.FS, root string) (*Library, error) {
 			// the topics come from — the embedded manual stays self-contained
 			// — and injected here, at load time, so a topic served as an
 			// English fallback carries the English screenshot along with the
-			// English text rather than a broken locale-specific link. A
-			// topic without one renders exactly as before: no placeholder,
-			// no broken image. Inserted right after the topic's own <h1> (not
+			// English text rather than a broken locale-specific link. When
+			// THIS topic is a genuine, real translation (not itself falling
+			// back) but simply has no screenshot of its own yet — the normal
+			// state for a newly-added locale, before anyone has run
+			// `make docs-shots` against a build in that language — fall back
+			// to the FallbackLocale's own screenshot rather than showing no
+			// image at all: the picture is still accurate (the screen layout
+			// doesn't depend on locale), and "an English screenshot under
+			// German prose" is a strictly better first cut than a manual
+			// that silently shows zero pictures for an entire language. A
+			// topic missing a screenshot in EVERY locale (FallbackLocale
+			// included) renders exactly as before: no placeholder, no broken
+			// image. Inserted right after the topic's own <h1> (not
 			// prepended before it) so the rendered document still opens with
 			// a heading — screen readers get "Selling & checkout" once, as a
 			// heading, not once as unlabelled alt text and again as the title.
-			if _, statErr := fs.Stat(fsys, path.Join(root, "img", locale, tp.ID+".png")); statErr == nil {
+			imgLocale := locale
+			if _, statErr := fs.Stat(fsys, path.Join(root, "img", locale, tp.ID+".png")); statErr != nil && locale != FallbackLocale {
+				if _, fbErr := fs.Stat(fsys, path.Join(root, "img", FallbackLocale, tp.ID+".png")); fbErr == nil {
+					imgLocale = FallbackLocale
+				}
+			}
+			if _, statErr := fs.Stat(fsys, path.Join(root, "img", imgLocale, tp.ID+".png")); statErr == nil {
 				fig := fmt.Sprintf(
 					`<figure class="manual-shot"><img src="/help/img/%s/%s.png" alt="%s" loading="lazy"></figure>`,
-					locale, tp.ID, template.HTMLEscapeString(tp.Title),
+					imgLocale, tp.ID, template.HTMLEscapeString(tp.Title),
 				)
 				html := string(tp.HTML)
 				if i := strings.Index(html, "</h1>"); i >= 0 {

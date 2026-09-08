@@ -1834,6 +1834,7 @@
   "import.status.created": "ایجاد شد",
   "import.status.barcode_already_in_catalog": "بارکد قبلاً در کاتالوگ موجود است",
   "import.status.sku_already_in_catalog": "کد کالا (SKU) قبلاً در کاتالوگ موجود است",
+  "import.status.name_already_in_catalog": "نام قبلاً در کاتالوگ موجود است",
   "import.status.missing_name": "نام موجود نیست",
   "import.status.missing_name_and_bad_price": "نام موجود نیست و قیمت نامعتبر: %s",
   "import.status.bad_price": "قیمت نامعتبر: %s",
