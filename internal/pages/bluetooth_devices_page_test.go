@@ -566,3 +566,134 @@ func TestBluetoothForgetAPI_ErrorPaths(t *testing.T) {
 		t.Errorf("forget with no Bluetooth = %d, want 503", rec.Code)
 	}
 }
+
+// ut-docs#1751: the operator turned Bluetooth on in Android's own settings
+// and the page still said there was no Bluetooth on this till, because a
+// switched-off radio arrived as ErrUnavailable — a notice that sends them
+// looking for a hardware or service fault. An adapter that is merely off
+// is the one degraded state they can clear themselves, so it gets its own
+// notice and the button that clears it.
+func TestBluetoothDevicesPage_AdapterOffOffersToTurnItOn(t *testing.T) {
+	mux, _ := newBluetoothDevicesTestMux(t)
+	stubBluetooth(t, &fakeBluetoothClient{listErr: bluetooth.ErrAdapterOff}, nil)
+
+	rec := btGet(mux, "/bluetooth-devices", &btManager)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /bluetooth-devices with the adapter off = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="bluetooth-adapter-off"`) {
+		t.Error("expected the adapter-off notice")
+	}
+	if !strings.Contains(body, `data-testid="bt-enable-btn"`) {
+		t.Error("expected the turn-on-Bluetooth action; a notice with no way forward is the defect this card reported")
+	}
+	// Rendered hidden, and unhidden by the page's own script only when the
+	// native bridge answers. The same page is served over the LAN to a
+	// satellite station or a manager's laptop, where no Android dialog can
+	// be raised at all — a live-looking button that does nothing there is
+	// worse than no button.
+	if i := strings.Index(body, `data-testid="bt-enable-btn"`); i >= 0 {
+		end := strings.Index(body[i:], ">")
+		if end < 0 || !strings.Contains(body[i:i+end], "hidden") {
+			t.Error("the enable button must be rendered hidden; only the native bridge may reveal it")
+		}
+	}
+	if strings.Contains(body, `data-testid="bluetooth-unavailable"`) {
+		t.Error("must not also claim this till has no Bluetooth — it has one, switched off")
+	}
+}
+
+// The permission case must not reuse the access-denied notice: that one
+// names the ADR-0078 D-Bus policy file, which does not exist on a tablet
+// and points the operator at a packaging fault instead of a prompt they
+// can answer.
+func TestBluetoothDevicesPage_PermissionRequiredOffersToGrantIt(t *testing.T) {
+	mux, _ := newBluetoothDevicesTestMux(t)
+	stubBluetooth(t, &fakeBluetoothClient{listErr: bluetooth.ErrPermissionRequired}, nil)
+
+	rec := btGet(mux, "/bluetooth-devices", &btManager)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /bluetooth-devices without permission = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `data-testid="bluetooth-permission-required"`) {
+		t.Error("expected the permission-required notice")
+	}
+	if !strings.Contains(body, `data-testid="bt-permission-btn"`) {
+		t.Error("expected the grant-permission action")
+	}
+	if strings.Contains(body, `data-testid="bluetooth-access-denied"`) {
+		t.Error("must not show the D-Bus packaging hint on a permission refusal")
+	}
+}
+
+// Scanning with the radio off or without permission returns nothing and
+// reads as "the app is broken again" — the same disabled guard the other
+// degraded states already get.
+func TestBluetoothDevicesPage_ScanDisabledInNewDegradedStates(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		err  error
+	}{
+		{"adapter off", bluetooth.ErrAdapterOff},
+		{"permission required", bluetooth.ErrPermissionRequired},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mux, _ := newBluetoothDevicesTestMux(t)
+			stubBluetooth(t, &fakeBluetoothClient{listErr: tc.err}, nil)
+
+			body := btGet(mux, "/bluetooth-devices", &btManager).Body.String()
+			i := strings.Index(body, `id="bt-scan-btn"`)
+			if i < 0 {
+				t.Fatal("scan button missing from the page")
+			}
+			end := strings.Index(body[i:], ">")
+			if end < 0 || !strings.Contains(body[i:i+end], "disabled") {
+				t.Errorf("scan button is not disabled: %q", body[i:i+max(end, 0)])
+			}
+		})
+	}
+}
+
+func TestBluetoothListAPI_NewStatesMapToDistinctCodes(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		err      error
+		wantCode int
+		wantBody string
+	}{
+		{"adapter off", bluetooth.ErrAdapterOff, http.StatusServiceUnavailable, "bluetooth_adapter_off"},
+		{"permission required", bluetooth.ErrPermissionRequired, http.StatusForbidden, "bluetooth_permission_required"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			mux, _ := newBluetoothDevicesTestMux(t)
+			stubBluetooth(t, &fakeBluetoothClient{listErr: tc.err}, nil)
+
+			rec := btGet(mux, "/api/bluetooth-devices", &btManager)
+			if rec.Code != tc.wantCode {
+				t.Fatalf("GET /api/bluetooth-devices = %d, want %d: %s", rec.Code, tc.wantCode, rec.Body.String())
+			}
+			if !strings.Contains(rec.Body.String(), tc.wantBody) {
+				t.Errorf("body = %s, want code %q", rec.Body.String(), tc.wantBody)
+			}
+		})
+	}
+}
+
+// Android has no API an ordinary app may call to remove a bond. Reporting
+// that as a generic failure would be a lie of the useful-sounding kind:
+// the operator CAN unpair, in Android's own settings, and the distinct
+// code is what lets the page say so.
+func TestBluetoothForgetAPI_UnsupportedMapsToItsOwnCode(t *testing.T) {
+	mux, _ := newBluetoothDevicesTestMux(t)
+	stubBluetooth(t, &fakeBluetoothClient{forgetErr: bluetooth.ErrForgetUnsupported}, nil)
+
+	rec := btPostJSON(mux, "/api/bluetooth-devices/forget", `{"address":"AA:BB:CC:DD:EE:FF"}`, &btManager)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("POST forget with an unsupported platform = %d, want 409: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "bluetooth_forget_unsupported") {
+		t.Errorf("body = %s, want the distinct forget-unsupported code", rec.Body.String())
+	}
+}

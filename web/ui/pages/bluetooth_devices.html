@@ -20,7 +20,33 @@
 <p class="tag warn" data-testid="bluetooth-access-denied">{{ T "bluetoothdevices.access_denied" }}</p>
 {{ else if .unsupported }}
 <p class="tag warn" data-testid="bluetooth-unsupported">{{ T "bluetoothdevices.platform_unsupported" }}</p>
+{{ else if .adapterOff }}
+{{/* ut-docs#1751: the two states below are the ones the person standing at
+     the till can clear themselves, so unlike the notices above they carry
+     the action that clears them. The button is hidden until the page's own
+     script confirms the native bridge is there: the same page is reachable
+     from any browser on the LAN (a satellite station, a manager's laptop),
+     where a system prompt cannot be raised at all and a live-looking button
+     that does nothing would be worse than no button. */}}
+<div class="tag warn bt-notice" data-testid="bluetooth-adapter-off">
+  <span>{{ T "bluetoothdevices.adapter_off" }}</span>
+  <button type="button" id="bt-enable-btn" data-testid="bt-enable-btn" class="btn primary bt-native-action" hidden>{{ T "bluetoothdevices.adapter_off_action" }}</button>
+  <span class="muted bt-native-hint">{{ T "bluetoothdevices.native_action_hint" }}</span>
+</div>
+{{ else if .permissionRequired }}
+<div class="tag warn bt-notice" data-testid="bluetooth-permission-required">
+  <span>{{ T "bluetoothdevices.permission_required" }}</span>
+  <button type="button" id="bt-permission-btn" data-testid="bt-permission-btn" class="btn primary bt-native-action" hidden>{{ T "bluetoothdevices.permission_required_action" }}</button>
+  <span class="muted bt-native-hint">{{ T "bluetoothdevices.native_action_hint" }}</span>
+</div>
 {{ end }}
+
+<style>
+  /* Logical properties only (RTL locales lay out from the other edge with
+     no extra CSS). The notice wraps rather than clipping: the German
+     action labels are roughly twice the English ones. */
+  .bt-notice { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+</style>
 
 <div class="users-layout">
   <div class="card users-list">
@@ -63,7 +89,7 @@
          paired solely by the manager clicking Pair on it below. Disabled
          outright when the notice above says there is no Bluetooth to scan
          with. See the script block at the end of this file. */}}
-    <button id="bt-scan-btn" type="button" class="btn primary" style="width:100%" {{ if or .unavailable .accessDenied .unsupported }}disabled{{ end }}>{{ T "bluetoothdevices.scan_button" }}</button>
+    <button id="bt-scan-btn" type="button" class="btn primary" style="width:100%" {{ if or .unavailable .accessDenied .unsupported .adapterOff .permissionRequired }}disabled{{ end }}>{{ T "bluetoothdevices.scan_button" }}</button>
     <div id="bt-scan-msg" class="muted" aria-live="polite" style="min-height:1.2rem; margin-block-start:.5rem"></div>
     <div id="bt-scan-results"></div>
     <p class="muted" style="margin-block-start:.5rem">{{ T "bluetoothdevices.candidates_help" }}</p>
@@ -95,7 +121,11 @@
     inputDevice: "{{ T "bluetoothdevices.input_device" }}",
     bluezUnavailable: "{{ T "bluetoothdevices.bluez_unavailable" }}",
     accessDenied: "{{ T "bluetoothdevices.access_denied" }}",
-    platformUnsupported: "{{ T "bluetoothdevices.platform_unsupported" }}"
+    platformUnsupported: "{{ T "bluetoothdevices.platform_unsupported" }}",
+    adapterOff: "{{ T "bluetoothdevices.adapter_off" }}",
+    permissionRequired: "{{ T "bluetoothdevices.permission_required" }}",
+    forgetUnsupported: "{{ T "bluetoothdevices.forget_unsupported" }}",
+    forgetUnsupportedAction: "{{ T "bluetoothdevices.forget_unsupported_action" }}"
   };
   // error.code (bluetooth_devices_page.go's apiError) → what the manager reads.
   function messageFor(code, fallback) {
@@ -105,6 +135,9 @@
       case 'bluetooth_unsupported_platform': return T.platformUnsupported;
       case 'bluetooth_not_found': return T.notFound;
       case 'bluetooth_pairing_failed': return T.pairRefused;
+      case 'bluetooth_adapter_off': return T.adapterOff;
+      case 'bluetooth_permission_required': return T.permissionRequired;
+      case 'bluetooth_forget_unsupported': return T.forgetUnsupported;
       default: return fallback;
     }
   }
@@ -115,6 +148,39 @@
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ address: address })
     }).then(function (r) { return r.json(); });
+  }
+
+  // ut-docs#1751: an Android permission prompt and the system's
+  // "turn Bluetooth on" dialog can only be raised by the app's own
+  // Activity — never by the Go handler, and never by a browser that is not
+  // this app's WebView. AndroidKiosk is the existing, already-reviewed
+  // bridge (ut-docs#1254/#1435); these calls take no arguments, so nothing
+  // this page renders can steer what they do. Absent bridge => the buttons
+  // stay hidden and the notice alone is shown, which is the correct
+  // rendering for a manager viewing this till's page from another machine.
+  var native = window.AndroidKiosk;
+  var hasNative = !!(native && typeof native.hasBluetoothControls === 'function' && native.hasBluetoothControls());
+  Array.prototype.forEach.call(document.querySelectorAll('.bt-native-action'), function (b) { b.hidden = !hasNative; });
+  Array.prototype.forEach.call(document.querySelectorAll('.bt-native-hint'), function (h) { h.hidden = hasNative; });
+  function onClick(id, fn) {
+    var el = document.getElementById(id);
+    if (el && hasNative) { el.addEventListener('click', fn); }
+  }
+  onClick('bt-enable-btn', function () { native.requestBluetoothEnable(); });
+  onClick('bt-permission-btn', function () { native.requestBluetoothPermissions(); });
+
+  // Android has no API an ordinary app may call to remove a bond, so a
+  // failed Forget is not a fault to report and forget about — the operator
+  // can still do it, in the OS's own settings, and this takes them there.
+  function offerBluetoothSettings(container) {
+    if (!hasNative || container.querySelector('.bt-settings-btn')) { return; }
+    var b = document.createElement('button');
+    b.type = 'button';
+    b.className = 'btn secondary bt-settings-btn';
+    b.style.marginInlineStart = '.5rem';
+    b.textContent = T.forgetUnsupportedAction;
+    b.addEventListener('click', function () { native.openBluetoothSettings(); });
+    container.appendChild(b);
   }
 
   var scanBtn = document.getElementById('bt-scan-btn');
@@ -194,6 +260,7 @@
           if (j.error) {
             btn.disabled = false;
             pairedMsg.textContent = messageFor(j.error.code, T.forgetError);
+            if (j.error.code === 'bluetooth_forget_unsupported') { offerBluetoothSettings(pairedMsg); }
             return;
           }
           pairedMsg.textContent = T.forgottenConfirm;

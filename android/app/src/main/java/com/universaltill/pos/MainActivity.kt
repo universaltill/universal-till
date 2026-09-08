@@ -1,9 +1,11 @@
 package com.universaltill.pos
 
+import android.Manifest
 import android.app.Activity
 import android.app.ActivityManager
 import android.app.DownloadManager
 import android.app.admin.DevicePolicyManager
+import android.bluetooth.BluetoothAdapter
 import android.content.ActivityNotFoundException
 import android.content.ComponentName
 import android.content.Context
@@ -20,6 +22,7 @@ import android.os.Environment
 import android.os.Handler
 import android.os.IBinder
 import android.os.Looper
+import android.provider.Settings
 import android.util.Base64
 import android.util.Log
 import android.view.PixelCopy
@@ -225,6 +228,77 @@ class MainActivity : AppCompatActivity() {
             val granted = grantedMediaResources(request.resources)
             if (granted.isEmpty()) request.deny() else request.grant(granted.toTypedArray())
         }
+
+    // ut-docs#1751: the two Bluetooth prompts. Neither can come from the Go
+    // handler or from BluetoothBridgeImpl — a runtime permission dialog and
+    // ACTION_REQUEST_ENABLE both need an Activity, and the bridge runs on a
+    // Service's Context by design. Both launchers simply reload the page:
+    // it re-asks the server, which re-asks the adapter, so whatever the
+    // operator just answered is reflected without any client-side state.
+    private val bluetoothEnableLauncher =
+        registerForActivityResult(ActivityResultContracts.StartActivityForResult()) {
+            // Deliberately ignores resultCode. RESULT_CANCELED here can mean
+            // "declined" OR that the radio came on anyway on some OEM
+            // builds, and the page's own re-read is the honest answer either
+            // way — reporting a refusal we cannot be sure of is how a
+            // working feature gets described as broken.
+            webView.reload()
+        }
+
+    private val bluetoothPermissionLauncher =
+        registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) { result ->
+            // A permanently-denied permission (the operator ticked "don't
+            // ask again", or Android decided not to show the dialog at all)
+            // means this launcher will never show anything again: the button
+            // would silently do nothing on every subsequent press, which is
+            // precisely the dead-end this card is about. Send them to the
+            // one place that CAN still grant it.
+            val denied = result.values.any { !it }
+            val permanentlyDenied = denied && bluetoothPermissionsToRequest().none { shouldShowRequestPermissionRationale(it) }
+            if (permanentlyDenied) {
+                openAppSettings()
+            } else {
+                webView.reload()
+            }
+        }
+
+    /** The runtime permissions the Bluetooth page needs on this API level. */
+    private fun bluetoothPermissionsToRequest(): Array<String> =
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            arrayOf(Manifest.permission.BLUETOOTH_SCAN, Manifest.permission.BLUETOOTH_CONNECT)
+        } else {
+            // Below API 31 the Bluetooth permissions are install-time; what
+            // is actually missing at runtime is location, because that is
+            // what gates scan RESULTS there.
+            arrayOf(Manifest.permission.ACCESS_FINE_LOCATION)
+        }
+
+    /**
+     * True when screen pinning is active, in which case Android refuses to
+     * start another package's activity **and throws nothing** — the tap is a
+     * silent no-op (review finding, ut-docs#1751). A dead button is the exact
+     * failure this card was filed to remove, so say what is wrong instead.
+     * Runtime permission dialogs are NOT blocked by lock task, so the
+     * "Allow Bluetooth access" path is unaffected and deliberately does not
+     * call this.
+     */
+    private fun bluetoothActionBlockedByLockdown(): Boolean {
+        val am = getSystemService(Context.ACTIVITY_SERVICE) as? ActivityManager ?: return false
+        val pinned = runCatching { am.lockTaskModeState != ActivityManager.LOCK_TASK_MODE_NONE }
+            .getOrDefault(false)
+        if (pinned) {
+            Toast.makeText(this, R.string.bluetooth_settings_blocked_in_lockdown, Toast.LENGTH_LONG).show()
+        }
+        return pinned
+    }
+
+    private fun openAppSettings() {
+        runCatching {
+            startActivity(
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null)),
+            )
+        }
+    }
 
     /**
      * The subset of a [PermissionRequest]'s resources whose backing Android
@@ -469,6 +543,98 @@ class MainActivity : AppCompatActivity() {
                 ""
             } finally {
                 bitmap.recycle()
+            }
+        }
+
+        /**
+         * ut-docs#1751. The Bluetooth devices page renders its "turn it on"
+         * and "allow access" buttons hidden and asks this first, because the
+         * SAME page is served over the LAN to any other browser — a manager's
+         * laptop, a satellite station — where no native bridge exists and a
+         * button that raises an Android dialog is meaningless. A live-looking
+         * control that does nothing is worse than no control.
+         */
+        @JavascriptInterface
+        fun hasBluetoothControls(): Boolean = true
+
+        /**
+         * Asks Android to switch the radio on. An ordinary app **cannot** do
+         * this silently: `BluetoothAdapter.enable()` is deprecated and a
+         * no-op for non-privileged apps from Android 13, and this app is not
+         * device-owner provisioned (verified on the pilot tablet, Android 16,
+         * `Device Owner Type: -1`). ACTION_REQUEST_ENABLE — a system prompt
+         * the operator confirms — is the supported route, which is why the
+         * page's wording says the till will ask rather than promising to do
+         * it. Takes no argument, like every other method on this bridge.
+         */
+        @JavascriptInterface
+        fun requestBluetoothEnable() {
+            runOnUiThread {
+                val adapter = BluetoothAdapter.getDefaultAdapter()
+                if (adapter == null) {
+                    // No radio at all: the page's own notice already says so
+                    // and there is nothing to prompt for.
+                    return@runOnUiThread
+                }
+                if (adapter.isEnabled) {
+                    webView.reload()
+                    return@runOnUiThread
+                }
+                // ACTION_REQUEST_ENABLE is itself permission-protected on
+                // API 31+ (Settings' RequestPermissionActivity requires
+                // BLUETOOTH_CONNECT), so launching it without the grant
+                // throws SecurityException — on the main thread, which kills
+                // the till (review finding, ut-docs#1751). Ask for the
+                // permission instead; once granted the page reloads and
+                // offers this button again in a state where it works.
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                    ContextCompat.checkSelfPermission(
+                        this@MainActivity,
+                        Manifest.permission.BLUETOOTH_CONNECT,
+                    ) != PackageManager.PERMISSION_GRANTED
+                ) {
+                    requestBluetoothPermissions()
+                    return@runOnUiThread
+                }
+                if (bluetoothActionBlockedByLockdown()) return@runOnUiThread
+                try {
+                    bluetoothEnableLauncher.launch(Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE))
+                } catch (e: ActivityNotFoundException) {
+                    // No system activity handles it (heavily stripped OEM
+                    // build): fall back to the settings screen rather than
+                    // dying, same never-crash-the-till posture as the rest
+                    // of this file.
+                    openBluetoothSettings()
+                } catch (e: SecurityException) {
+                    // Belt and braces for the case above: an OEM build that
+                    // gates this on something else again must not take the
+                    // till down with it.
+                    Log.w(TAG, "ACTION_REQUEST_ENABLE refused", e)
+                    openBluetoothSettings()
+                }
+            }
+        }
+
+        /** Raises the runtime permission prompt the scan actually needs. */
+        @JavascriptInterface
+        fun requestBluetoothPermissions() {
+            runOnUiThread {
+                runCatching { bluetoothPermissionLauncher.launch(bluetoothPermissionsToRequest()) }
+            }
+        }
+
+        /**
+         * Android's own Bluetooth settings. Two callers: the operator who
+         * declined a prompt, and Forget — there is no public API for an app
+         * to remove a bond, so unpairing genuinely has to happen here (see
+         * BluetoothBridgeImpl.forget).
+         */
+        @JavascriptInterface
+        fun openBluetoothSettings() {
+            runOnUiThread {
+                if (bluetoothActionBlockedByLockdown()) return@runOnUiThread
+                runCatching { startActivity(Intent(Settings.ACTION_BLUETOOTH_SETTINGS)) }
+                    .onFailure { openAppSettings() }
             }
         }
     }

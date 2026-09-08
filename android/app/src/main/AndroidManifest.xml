@@ -42,6 +42,41 @@
          what decides, never an assumption that a camera exists. -->
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
+    <!-- ut-docs#1751: the Bluetooth devices page. WITHOUT these the app is
+         refused by Android no matter what the Kotlin bridge does — which is
+         half of why the page listed nothing on a tablet whose Bluetooth was
+         demonstrably switched on. minSdk here is 24, so BOTH permission
+         regimes are live in the field and both have to be declared:
+         API 31+ splits Bluetooth into runtime-granted BLUETOOTH_SCAN
+         (discover) and BLUETOOTH_CONNECT (read a bonded device's name, bond
+         with it); API 30 and below instead auto-grants BLUETOOTH/
+         BLUETOOTH_ADMIN at install and gates scan RESULTS behind location,
+         hence ACCESS_FINE_LOCATION there and only there. neverForLocation
+         states the truth that this till never derives location from a scan,
+         which is also why FINE_LOCATION carries maxSdkVersion="30" rather
+         than being requested on modern Android at all.
+         The <uses-feature required="false"> below is REQUIRED to stay
+         installable on radio-less hardware, and reasoning it away was
+         backwards (review finding, ut-docs#1751): BLUETOOTH,
+         BLUETOOTH_ADMIN, BLUETOOTH_SCAN and BLUETOOTH_CONNECT are all on
+         Android's "permissions that imply feature requirements" list, so
+         OMITTING the element makes the store derive
+         android.hardware.bluetooth required="TRUE" — the exact opposite of
+         the intent. Only an explicit required="false" says "use it if the
+         hardware has it". Sideloaded installs never cared either way; store
+         distribution does. -->
+    <uses-feature android:name="android.hardware.bluetooth" android:required="false" />
+    <uses-feature android:name="android.hardware.bluetooth_le" android:required="false" />
+    <uses-permission
+        android:name="android.permission.BLUETOOTH_SCAN"
+        android:usesPermissionFlags="neverForLocation" />
+    <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
+    <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
+    <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <uses-permission
+        android:name="android.permission.ACCESS_FINE_LOCATION"
+        android:maxSdkVersion="30" />
+
     <!-- MODIFY_AUDIO_SETTINGS is normal (auto-granted), needed by the
          WebView's audio-capture path for route/gain setup during a
          getUserMedia({audio}) session. -->

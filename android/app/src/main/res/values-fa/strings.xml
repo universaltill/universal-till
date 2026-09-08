@@ -10,4 +10,5 @@
     <string name="notification_channel_name">سرویس صندوق فروش</string>
     <string name="kiosk_pin_not_engaged">قفل کیوسک فعال نیست — این دستگاه ایمن نشده است</string>
     <string name="external_link_failed">باز کردن پیوند در مرورگر ممکن نشد.</string>
+    <string name="bluetooth_settings_blocked_in_lockdown">ابتدا از حالت قفل خارج شوید — تا زمانی که صندوق قفل است، تنظیمات بلوتوث اندروید باز نمی‌شود.</string>
 </resources>
