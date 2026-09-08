@@ -744,14 +744,46 @@ func (s *Service) snapshotForTotalsLocked() totalsSnapshot {
 	}
 }
 
+// vatLinePool and chargeTaxLinePool (ut-docs#1358) hand computeTotals a
+// reusable scratch slice for its two per-call, per-line accumulators
+// instead of allocating a fresh one on every single basket mutation — the
+// 2026-08-30 performance audit's finding: "a full O(n) walk twice plus
+// three fresh slice allocations per call." Pooling is safe across
+// recomputeTotals' optimistic unlocked path (ut-docs#1317): each
+// computeTotals call Gets its own exclusive buffer and Puts it back only
+// after it is done reading from it, so two concurrent unlocked calls never
+// share one backing array. Neither VATBandsForSale nor ServiceChargeTax
+// retains the slice it's given past the call (both only aggregate from it),
+// so it's safe to reuse the instant they return.
+var vatLinePool = sync.Pool{New: func() any { s := make([]VATLine, 0, 16); return &s }}
+var chargeTaxLinePool = sync.Pool{New: func() any { s := make([]ChargeTaxLine, 0, 16); return &s }}
+
 // computeTotals derives the basket totals from snap alone — it touches no
 // *Service state, so recomputeTotals may run it with OR without s.mu held.
 // This is where the plugin asks happen (the per-line AskTaxRateBP loop and
 // the AskChargePolicy call), which on a cache miss can take ~100ms each.
 // Line totals are written into snap.lines (the snapshot's private copy).
+//
+// Single-pass over snap.lines (ut-docs#1358): the per-line discount/subtotal
+// derivation and the per-line tax-rate/VAT-line derivation are independent
+// of each other — the tax pass only reads l.LineTotal (which THIS pass just
+// set) and snap.cfg, never the whole-basket `discount` computed below from
+// `sub` — so both used to walk snap.lines separately for no reason. Fusing
+// them halves the per-call line-walk cost; whole-basket `discount` still has
+// to wait until `sub` is fully known, so it's computed once after the loop,
+// same as before.
 func computeTotals(snap totalsSnapshot) computedTotals {
 	var c computedTotals
 	var sub money.Money
+	var total money.Money
+
+	vatLinesPtr := vatLinePool.Get().(*[]VATLine)
+	chargeTaxLinesPtr := chargeTaxLinePool.Get().(*[]ChargeTaxLine)
+	defer vatLinePool.Put(vatLinesPtr)
+	defer chargeTaxLinePool.Put(chargeTaxLinesPtr)
+	vatLines := (*vatLinesPtr)[:0]
+	chargeTaxLines := (*chargeTaxLinesPtr)[:0]
+
 	for i := range snap.lines {
 		l := &snap.lines[i]
 		lineBase := AmountForQuantity(l.PriceCents, l.Qty)
@@ -761,7 +793,19 @@ func computeTotals(snap totalsSnapshot) computedTotals {
 		}
 		l.LineTotal = lineNet
 		sub = sub.Add(lineNet)
+
+		// ADR-0073: each line is rated for ITS OWN mode, not the basket's.
+		rateBP, _ := effectiveTaxRateBPFor(*l, snap.taxAsker, l.OrderType, snap.cfg.TaxRateBasisPoints)
+		lineTax, lineTotal := ComputeTaxBasisPoints(l.LineTotal, rateBP, snap.cfg.TaxInclusive)
+		total = total.Add(lineTotal)
+		vatLines = append(vatLines, VATLine{RateBP: rateBP, LineTotal: lineTotal.Minor(), TaxAmount: lineTax.Minor()})
+		chargeTaxLines = append(chargeTaxLines, ChargeTaxLine{RateBP: rateBP, Net: l.LineTotal})
 	}
+	// Write back through the pointer: append above may have grown past the
+	// pooled buffer's original capacity and returned a new backing array.
+	*vatLinesPtr = vatLines
+	*chargeTaxLinesPtr = chargeTaxLines
+
 	c.subtotal = sub
 	var discount money.Money
 	switch snap.discountType {
@@ -786,18 +830,6 @@ func computeTotals(snap totalsSnapshot) computedTotals {
 	// `discount` on an inclusive-priced sale, so the live basket panel would
 	// show a different VAT figure than the receipt/invoice for exactly the
 	// sales that fix corrected.
-	var total money.Money
-	vatLines := make([]VATLine, 0, len(snap.lines))
-	chargeTaxLines := make([]ChargeTaxLine, 0, len(snap.lines))
-	for i := range snap.lines {
-		l := &snap.lines[i]
-		// ADR-0073: each line is rated for ITS OWN mode, not the basket's.
-		rateBP, _ := effectiveTaxRateBPFor(*l, snap.taxAsker, l.OrderType, snap.cfg.TaxRateBasisPoints)
-		lineTax, lineTotal := ComputeTaxBasisPoints(l.LineTotal, rateBP, snap.cfg.TaxInclusive)
-		total = total.Add(lineTotal)
-		vatLines = append(vatLines, VATLine{RateBP: rateBP, LineTotal: lineTotal.Minor(), TaxAmount: lineTax.Minor()})
-		chargeTaxLines = append(chargeTaxLines, ChargeTaxLine{RateBP: rateBP, Net: l.LineTotal})
-	}
 	// serviceCharge=0: orthogonal to the chargeTax fold below, same
 	// reasoning as computeSaleTotals (internal/pos/sales.go).
 	var tax money.Money
