@@ -360,10 +360,32 @@ func (eb *EventBus) PublishAuthorize(ctx context.Context, eventType string, payl
 	return resp, err
 }
 
+// PublishAuthorizeWithID behaves exactly like PublishAuthorize but uses id
+// as the event's id instead of minting a fresh one (ut-docs#1762). A
+// payment authorize/refund gate that may be retried (the operator re-
+// tapping Pay after a decline/timeout on the SAME tender attempt) needs
+// the retry to carry the SAME id, since that id is what a fiscal-device or
+// payment-gateway plugin forwards downstream as its own idempotency/
+// request key — a fresh id per retry defeats the device's own de-dup and
+// can double-charge/double-print. Every other caller keeps getting a
+// fresh id via Publish/PublishAuthorize, unaffected by this.
+func (eb *EventBus) PublishAuthorizeWithID(ctx context.Context, id, eventType string, payload interface{}) (json.RawMessage, error) {
+	_, resp, err := eb.publishWithID(ctx, id, eventType, payload)
+	return resp, err
+}
+
 // publish is Publish's real implementation; it additionally returns the
 // last successful Blocking handler's raw response so PublishAuthorize can
 // surface it without duplicating the dispatch/permission/audit logic above.
 func (eb *EventBus) publish(ctx context.Context, eventType string, payload interface{}) (eventID string, resp json.RawMessage, err error) {
+	return eb.publishWithID(ctx, uuid.NewString(), eventType, payload)
+}
+
+// publishWithID is publish's real implementation, taking the event id as a
+// parameter instead of always minting one (ut-docs#1762) — see
+// PublishAuthorizeWithID's doc comment for why a caller sometimes needs to
+// supply its own.
+func (eb *EventBus) publishWithID(ctx context.Context, id, eventType string, payload interface{}) (eventID string, resp json.RawMessage, err error) {
 	// Encode payload
 	payloadBytes, err := json.Marshal(payload)
 	if err != nil {
@@ -371,7 +393,7 @@ func (eb *EventBus) publish(ctx context.Context, eventType string, payload inter
 	}
 
 	event := Event{
-		ID:        uuid.NewString(),
+		ID:        id,
 		Type:      eventType,
 		Timestamp: time.Now().UTC(),
 		Payload:   payloadBytes,

@@ -978,6 +978,162 @@ func TestTenderHandler_DeclinedPaymentShowsLocalizedMessageNotRawError(t *testin
 	}
 }
 
+// ut-docs#1762: the operator manually re-tapping Pay on the SAME basket
+// after a decline/timeout must ask the payment/fiscal-device plugin the
+// SAME question (same event id, which a device plugin forwards downstream
+// as its own idempotency/request key) -- a fresh id per retry is what let a
+// real chip-and-PIN retry double-charge and print two mali fiş. Verified
+// end to end through the real POST /api/pos/tender handler, not just at
+// the completeTender/EventBus level -- see okc bridge_test.go's
+// TestBridgeSale_SlowFirstAttemptThenRetryPrintsOnce for the device-level
+// half of this fix (the device itself already de-dupes correctly once it
+// is actually asked the same request twice).
+func TestTenderHandler_RetriedTenderOnSameBasketReusesIdempotencyKey(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'demo', 'wasm', 'demo.wasm', 'https://example.test/demo.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.payment-demo', 'Demo Pay', '1.0.0', 'demo.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e1', 'com.universaltill.payment-demo', 'demopay', 'Demo Pay', 'payment', 'payment.demopay.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h1', 'com.universaltill.payment-demo', 'payment.demopay.authorize', 'handle_authorize', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p1', 'com.universaltill.payment-demo', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.demopay.authorize", plugins.Blocking)
+	var seenIDs []string
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
+		[]string{"payment.demopay.authorize"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			seenIDs = append(seenIDs, ev.ID)
+			// Every attempt in this test declines -- what's under test is
+			// whether a retry on the same basket carries the same id, not
+			// what happens on eventual success.
+			return nil, errors.New("demopay: card declined")
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	body := `{"payments":[{"method":"demopay","amount":120}],"offline":true}`
+	for i := 0; i < 2; i++ {
+		req := httptest.NewRequest(http.MethodPost, "/api/pos/tender", strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusPaymentRequired {
+			t.Fatalf("attempt %d: want 402 on a declined plugin gate, got %d: %s", i, rec.Code, rec.Body.String())
+		}
+	}
+
+	if len(seenIDs) != 2 {
+		t.Fatalf("plugin saw %d authorize calls, want 2 (one per tender attempt): %v", len(seenIDs), seenIDs)
+	}
+	if seenIDs[0] == "" {
+		t.Fatalf("first attempt's event id was empty")
+	}
+	if seenIDs[0] != seenIDs[1] {
+		t.Fatalf("retry on the SAME basket used a different idempotency key: first=%q second=%q", seenIDs[0], seenIDs[1])
+	}
+}
+
+// ut-docs#1762 independent review finding: TenderAttemptID alone is stable
+// across ANY retry on the same basket -- including one where the operator
+// (or, on the shared kiosk engine, a second customer) changed what's being
+// paid before retrying. Reusing the SAME idempotency key there would make
+// the device's own dedup hand back the FIRST attempt's memoized approval
+// for what is now the WRONG amount, unnoticed. The fix folds the
+// authorize payload's own content into the key, so a changed amount must
+// mint a different key even though the basket was never Reset() between
+// attempts.
+func TestTenderHandler_ChangedPaymentOnSameBasketGetsDifferentIdempotencyKey(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.payment-demo', '1.0.0', 'Demo Pay', 'demo', 'wasm', 'demo.wasm', 'https://example.test/demo.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.payment-demo', 'Demo Pay', '1.0.0', 'demo.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e1', 'com.universaltill.payment-demo', 'demopay', 'Demo Pay', 'payment', 'payment.demopay.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h1', 'com.universaltill.payment-demo', 'payment.demopay.authorize', 'handle_authorize', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p1', 'com.universaltill.payment-demo', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.demopay.authorize", plugins.Blocking)
+	var seenIDs []string
+	var seenAmounts []int64
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
+		[]string{"payment.demopay.authorize"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			seenIDs = append(seenIDs, ev.ID)
+			var p struct {
+				Amount int64 `json:"amount"`
+			}
+			_ = json.Unmarshal(ev.Payload, &p)
+			seenAmounts = append(seenAmounts, p.Amount)
+			return nil, errors.New("demopay: card declined")
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	// First attempt: 120. Declined, basket survives untouched (same as the
+	// sibling test above). Second attempt, SAME basket, but the operator
+	// changed the tendered amount to 90 before retrying -- a genuinely
+	// different payment, not a retry of the first.
+	for _, amount := range []int{120, 90} {
+		req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+			strings.NewReader(fmt.Sprintf(`{"payments":[{"method":"demopay","amount":%d}],"offline":true}`, amount)))
+		req.Header.Set("Content-Type", "application/json")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusPaymentRequired {
+			t.Fatalf("amount=%d: want 402 on a declined plugin gate, got %d: %s", amount, rec.Code, rec.Body.String())
+		}
+	}
+
+	if len(seenIDs) != 2 {
+		t.Fatalf("plugin saw %d authorize calls, want 2: %v", len(seenIDs), seenIDs)
+	}
+	if seenAmounts[0] == seenAmounts[1] {
+		t.Fatalf("test setup bug: both attempts carried the same amount %v", seenAmounts)
+	}
+	if seenIDs[0] == seenIDs[1] {
+		t.Fatalf("a DIFFERENT payment (amount %d then %d) on the same basket reused the SAME idempotency key %q -- the device would replay the first attempt's stale approval for the new amount", seenAmounts[0], seenAmounts[1], seenIDs[0])
+	}
+}
+
 // ut-docs#929: EnsureStockLocation's failure path -- called before the
 // payment loop (and thus before EnsurePaymentMethod), so it's a different
 // code path from the #923 tests below -- used to leak raw Go error text

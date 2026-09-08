@@ -3,6 +3,7 @@ package pages
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -184,6 +185,31 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// itself, so it needs the lines and VAT rates, not just an amount.
 	// Computed once per tender; ignored by every other payment plugin.
 	deviceExtras := deviceAuthorizePayloadExtras(saleInput, payments)
+	// attemptID anchors this tender attempt's idempotency identity
+	// (ut-docs#1762): stable for as long as the operator is retrying THIS
+	// basket (e.g. re-tapping Pay after a device timeout/decline).
+	// engine.Reset() (a completed sale, or the basket being cleared) mints
+	// a new one for whatever basket comes next — this must never be reused
+	// across two different sales.
+	//
+	// attemptID alone is NOT enough, though (independent review finding,
+	// ut-docs#1762): nothing clears it on an in-place basket EDIT (Scan,
+	// Remove, discount, …), only on Reset. A declined/timed-out tender
+	// followed by the operator changing the basket before retrying — or,
+	// on the kiosk engine, a second customer picking up where a first
+	// customer's timed-out tender left off — would otherwise resend the
+	// SAME key for a now-DIFFERENT payment, and the device's own dedup
+	// (keyed on request_id alone, ut-docs#1762's whole point) would hand
+	// back the FIRST attempt's memoized approval for the wrong amount,
+	// unnoticed. So the per-payment key below also folds in a hash of
+	// this payment's actual authorize payload (amount/method/reference
+	// plus the fiscal-device line/tax extras): identical content on a
+	// genuine retry keeps the same key (still dedupes correctly); changed
+	// content mints a distinct key (a real new request, never confused
+	// with the old one). i (the payment's position in this tender) keeps
+	// a split tender's separate legs distinct even when two legs happen
+	// to carry identical content.
+	attemptID := engine.TenderAttemptID()
 	var deviceEvidence *fiscal.DeviceEvidence
 	for i, p := range payments {
 		payload := map[string]any{
@@ -194,7 +220,18 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 		for k, v := range deviceExtras {
 			payload[k] = v
 		}
-		resp, err := blockingPaymentEventWithResponse(ctx, d, p.MethodID, "authorize", payload)
+		// json.Marshal sorts map keys, so this hash is stable regardless
+		// of map iteration/insertion order. payload is built entirely from
+		// plain strings/numbers above, so a marshal error here can only
+		// mean a future caller broke that invariant — fail loudly rather
+		// than silently falling back to a less-safe key.
+		payloadBytes, err := json.Marshal(payload)
+		if err != nil {
+			return "", fmt.Errorf("marshal authorize payload for idempotency key: %w", err)
+		}
+		payloadDigest := sha256.Sum256(payloadBytes)
+		requestID := fmt.Sprintf("%s:%d:%x", attemptID, i, payloadDigest[:8])
+		resp, err := blockingPaymentEventWithResponseAndID(ctx, d, p.MethodID, "authorize", requestID, payload)
 		if err != nil {
 			return "", &paymentDeclinedError{Method: p.MethodID}
 		}

@@ -31,7 +31,7 @@
     { "key": "okc.port", "default_value": "4711" },
     { "key": "okc.maker", "default_value": "" },
     { "key": "okc.connect_timeout_ms", "default_value": "3000" },
-    { "key": "okc.read_timeout_ms", "default_value": "8000" }
+    { "key": "okc.read_timeout_ms", "default_value": "25000" }
   ],
   "permissions": ["tcp:*", "storage.local.1MB"]
 }

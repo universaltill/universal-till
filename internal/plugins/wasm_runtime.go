@@ -95,6 +95,28 @@ func isImportClassEvent(eventType string) bool {
 	return eventType == "import.requested.ask"
 }
 
+// paymentGateTimeout is the deadline floor for a ".authorize"/".refund"
+// event on a net/TCP-permitted plugin (ut-docs#1762) — the family already
+// treated as one blocking payment-gate class elsewhere in this file (see
+// wasmResultLogLine's own ".ask"/".authorize"/".refund" grouping). This used
+// to fall through to the generic netTimeout (10s), but a real chip-and-PIN
+// authorization routinely takes longer than that on its own: published
+// data puts a typical EMV dip-and-verify at ~7-10s, with an average ~15s
+// while the terminal waits on the issuer's answer end to end (US Payments
+// Forum / industry sources on EMV transaction speed). Turkey's ÖKC device
+// additionally prints the fiscal receipt only after that approval. 30s
+// gives real headroom over that worst case (a slow GPRS/cellular link to
+// the acquirer) while still bounding a genuinely wedged/malicious guest —
+// the same reasoning exportTimeout/importTimeout already apply to their own
+// event classes above.
+const paymentGateTimeout = 30 * time.Second
+
+// isPaymentGateClassEvent reports whether eventType is a payment
+// authorize/refund gate event — see paymentGateTimeout.
+func isPaymentGateClassEvent(eventType string) bool {
+	return strings.HasSuffix(eventType, ".authorize") || strings.HasSuffix(eventType, ".refund")
+}
+
 // timeoutFor picks the deadline HandleEvent gives eventType for pluginID:
 // the net:* permission widening applies as before, then the export/report
 // or import class floor is applied on top (never narrows a wider net
@@ -104,10 +126,19 @@ func isImportClassEvent(eventType string) bool {
 func (w *WasmRuntime) timeoutFor(pluginID, eventType string) time.Duration {
 	w.mu.Lock()
 	timeout := w.timeout
-	if w.hasNet[pluginID] || w.hasTCP[pluginID] {
+	netPermitted := w.hasNet[pluginID] || w.hasTCP[pluginID]
+	if netPermitted {
 		timeout = w.netTimeout // room for the http_request / tcp_* host calls
 	}
 	w.mu.Unlock()
+	// paymentGateTimeout only widens a NET/TCP-PERMITTED plugin's own
+	// authorize/refund deadline (ut-docs#1762) — a plugin with neither
+	// permission can't reach a card/fiscal device or gateway at all, so an
+	// authorize/refund handler there is local logic only and keeps the
+	// base w.timeout.
+	if netPermitted && isPaymentGateClassEvent(eventType) && timeout < paymentGateTimeout {
+		timeout = paymentGateTimeout
+	}
 	if isExportClassEvent(eventType) && timeout < exportTimeout {
 		timeout = exportTimeout
 	}
