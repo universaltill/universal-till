@@ -594,3 +594,100 @@ func TestSettingsKeepDemoItemEndpoint(t *testing.T) {
 		t.Fatal("itm001 still flagged is_sample_data after keep-as-own")
 	}
 }
+
+// ut-docs#1840 review finding F4: the KeptReasonEdited branch of the kept
+// list — its two buttons, their hx-post URLs, and the shared message span
+// id both must reference — was previously exercised by no test at all.
+// This is exactly the ut-docs#865 F1 invariant the diff's own code comment
+// claims to preserve, so assert it directly rather than trusting the
+// comment.
+func TestSettingsRemoveDemoCatalogueEndpoint_EditedItemRowHasBothButtons(t *testing.T) {
+	mux, d := newRealDBDeps(t)
+	repo := data.NewDemoSeedRepo(d.Db)
+	if err := repo.SeedDemoCatalogue(t.Context()); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Real trading history elsewhere forces strict mode, so the edited item
+	// is KEPT (not removed outright) and shows up in the rendered list.
+	if _, err := d.Db.Exec(`INSERT INTO items (id, name, base_price) VALUES ('own-1', 'My Own Item', 250)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO sales (id, receipt_no, subtotal, total) VALUES ('s-1', 'R-1', 250, 250)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO sale_lines
+		(id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+		VALUES ('sl-1', 's-1', 1, 'own-1', 'My Own Item', 1, 250, 0, 0, 250, 250)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.Exec(`UPDATE items SET name = 'Flat White' WHERE id = 'itm001'`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postForm(mux, "/api/settings/remove-demo-catalogue", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manager remove: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`hx-post="/api/settings/demo-item/itm001/remove"`,
+		`hx-post="/api/settings/demo-item/itm001/keep"`,
+		`hx-target="[id=&#34;demo-item-msg-itm001&#34;]"`,
+		`id="demo-item-msg-itm001"`,
+		"Flat White",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("edited-item row missing %q\nbody=%s", want, body)
+		}
+	}
+}
+
+// ut-docs#1840 review finding F3: an unknown/already-gone item id must be
+// refused BEFORE checkOrElevate — a cashier hitting either per-item
+// endpoint with a bogus id should get a plain not-found, never a manager-PIN
+// prompt for an action that was always going to be a no-op.
+func TestSettingsDemoItemEndpoints_UnknownIDNeverElevates(t *testing.T) {
+	mux, d := newRealDBDeps(t)
+	if err := data.NewDemoSeedRepo(d.Db).SeedDemoCatalogue(t.Context()); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	for _, path := range []string{
+		"/api/settings/demo-item/does-not-exist/remove",
+		"/api/settings/demo-item/does-not-exist/keep",
+	} {
+		rec := postForm(mux, path, url.Values{}, &cashUser)
+		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "elevation-dialog") {
+			t.Fatalf("%s: code=%d body=%s, want a plain refusal with no elevation prompt", path, rec.Code, rec.Body.String())
+		}
+		if !strings.Contains(rec.Body.String(), "error") {
+			t.Fatalf("%s: body=%s, want an error span", path, rec.Body.String())
+		}
+	}
+}
+
+// ut-docs#1840 review finding F2: the elevated success path must NOT set
+// X-UT-Response: ok — that header tells elevation_prompt.html's retry form
+// to reload the whole page, which would wipe out every OTHER kept row the
+// merchant hasn't resolved yet. Mirrors remove-demo-catalogue's own bulk
+// handler, which never sets it either.
+func TestSettingsRemoveDemoItemEndpoint_ElevatedSuccessDoesNotSetReloadHeader(t *testing.T) {
+	mux, d := newRealDBDeps(t)
+	repo := data.NewDemoSeedRepo(d.Db)
+	if err := repo.SeedDemoCatalogue(t.Context()); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	mgrID, cashierID := seedElevationUsers(t, d)
+	_ = mgrID
+	cashier := auth.User{ID: cashierID, Role: "cashier"}
+	if _, err := d.Db.Exec(`UPDATE items SET name = 'Flat White' WHERE id = 'itm001'`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postForm(mux, "/api/settings/demo-item/itm001/keep", url.Values{"override_pin": {"555222"}}, &cashier)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Kept") {
+		t.Fatalf("elevated keep-as-own: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("X-UT-Response") != "" {
+		t.Fatalf("elevated keep-as-own set X-UT-Response = %q, want unset (would reload and wipe the rest of the kept list)", rec.Header().Get("X-UT-Response"))
+	}
+}

@@ -106,14 +106,14 @@ SELECT NOT EXISTS (
 )`
 
 // demoItemReasonCaseSQL is the per-item CASE that both keptDemoItems (bulk,
-// scans every remaining is_sample_data=1 item) and demoItemKeptReason
-// (single item, RemoveDemoItem's own server-side re-check) share — one
-// definition so the two can't silently drift apart. `i` is the items row
-// alias the caller's FROM/WHERE supplies. Mirrors remove_demo.sql's own
-// safety predicate exactly: held (parked basket) outranks history (sold/
-// adjusted) outranks edited (pristine mismatch only) — the two hard
-// blockers are checked first regardless of which also applies, since
-// "held" and "history" are never relaxed by mode but "edited" always is.
+// scans every remaining is_sample_data=1 item) and RemoveDemoItem's own
+// inline server-side re-check share — one definition so the two can't
+// silently drift apart. `i` is the items row alias the caller's FROM/WHERE
+// supplies. Mirrors remove_demo.sql's own safety predicate exactly: held
+// (parked basket) outranks history (sold/adjusted) outranks edited
+// (pristine mismatch only) — the two hard blockers are checked first
+// regardless of which also applies, since "held" and "history" are never
+// relaxed by mode but "edited" always is.
 const demoItemReasonCaseSQL = `
 CASE
 	WHEN EXISTS (SELECT 1 FROM held_sales h WHERE h.payload LIKE '%"item_id":"' || i.id || '"%')
@@ -140,6 +140,14 @@ END`
 // "still flagged is_sample_data=1" and "kept" are the same set by
 // construction, so this needs no separate id list. Ordered by name for a
 // stable, readable Settings-page list.
+//
+// Deliberately does NOT join demo_seed_items (unlike the removal scripts
+// themselves): any is_sample_data=1 row outside the seeded id set falls
+// through demoItemReasonCaseSQL's ELSE into ReasonEdited (ut-docs#1840
+// review finding F7). Harmless today — demo_catalogue.sql is the only
+// writer of is_sample_data=1, and it seeds exactly seeddata.ItemIDs — but
+// if that invariant ever changes, such a row would be offered "remove
+// anyway" under a reason that doesn't actually apply to it.
 func keptDemoItems(ctx context.Context, tx *sql.Tx) ([]KeptDemoItem, error) {
 	rows, err := tx.QueryContext(ctx, `
 SELECT i.id, COALESCE(i.sku, ''), i.name, `+demoItemReasonCaseSQL+`
@@ -305,6 +313,24 @@ func (r *DemoSeedRepo) KeepDemoItemAsOwn(ctx context.Context, itemID string) err
 // catalogue (drives the Settings "sample data present" note).
 func (r *DemoSeedRepo) SampleItemCount(ctx context.Context) (int, error) {
 	return sampleCount(ctx, r.db, "items")
+}
+
+// IsSampleItem reports whether itemID currently names an is_sample_data=1
+// item — the cheap, no-mutation existence check RemoveDemoItem/
+// KeepDemoItemAsOwn's HTTP handlers run BEFORE checkOrElevate (ut-docs#1840
+// review finding F3, mirroring the established convention at
+// dismiss-pending-base-plugin's own `matched` check, settings_page.go): a
+// request that was always going to be a no-op shouldn't burn an approver's
+// live PIN entry, and validating the id early means an invalid one gets a
+// plain 404 instead of first rendering a PIN prompt with caller-chosen text
+// in its approver-facing summary.
+func (r *DemoSeedRepo) IsSampleItem(ctx context.Context, itemID string) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM items WHERE id = ? AND is_sample_data = 1`, itemID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("check sample item %s: %w", itemID, err)
+	}
+	return n > 0, nil
 }
 
 // SeedDemoCustomersPromos (re)inserts the 3 demo customers + 3 demo promo

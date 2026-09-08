@@ -637,6 +637,13 @@ func TestRemoveDemoCatalogueKeepsHeldSaleItem(t *testing.T) {
 	if removed != 49 || len(kept) != 1 {
 		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, len(kept))
 	}
+	// ut-docs#1840 review finding F4: the reported reason, not just the
+	// count, must be "held" — this is what routes the Settings page to
+	// render the plain "in a parked sale" text instead of offering a
+	// "remove anyway" button it would then have to refuse.
+	if kept[0].ID != "itm003" || kept[0].Reason != KeptReasonHeld {
+		t.Fatalf("kept[0] = %+v; want itm003/held", kept[0])
+	}
 	var n int
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm003'`).Scan(&n); err != nil {
 		t.Fatal(err)
@@ -899,6 +906,44 @@ func TestRemoveDemoItemRefusesHeldItem(t *testing.T) {
 	err := repo.RemoveDemoItem(ctx, "itm001")
 	if !errors.Is(err, ErrDemoItemHasHistory) {
 		t.Fatalf("RemoveDemoItem = %v, want ErrDemoItemHasHistory", err)
+	}
+}
+
+// ut-docs#1840 review finding F4: the held_sales_archive arm specifically —
+// a demo item parked in a basket that was later swept into the archive by a
+// reset, before ever being tendered — must refuse "remove anyway" exactly
+// like a still-live held sale does. This is the sharpest version of the
+// non-regression the card's own text demands: demoItemReasonCaseSQL is
+// shared between the bulk kept-list AND this single-item safety re-check,
+// so a bug in this specific arm would both mislabel the row "edited" in the
+// list AND let "remove anyway" delete an item a restorable archive batch
+// still depends on.
+func TestRemoveDemoItemRefusesHeldArchiveItem(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO reset_batches (id, created_at, sales_count) VALUES ('batch1','2026-01-01T00:00:00Z',0)`); err != nil {
+		t.Fatal(err)
+	}
+	payload := `{"lines":[{"sku":"SKU-0001","name":"Held Item","qty":1,"price_cents":100,"item_id":"itm001"}],"total":100}`
+	if _, err := d.DB.Exec(`INSERT INTO held_sales_archive (id, label, total_minor, line_count, payload, created_at, reset_batch_id)
+	   VALUES ('ha1','Table 4',100,1,?,'2026-01-01T00:00:00Z','batch1')`, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	err := repo.RemoveDemoItem(ctx, "itm001")
+	if !errors.Is(err, ErrDemoItemHasHistory) {
+		t.Fatalf("RemoveDemoItem = %v, want ErrDemoItemHasHistory", err)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm001'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("itm001 was removed despite being referenced by an archived held sale")
 	}
 }
 

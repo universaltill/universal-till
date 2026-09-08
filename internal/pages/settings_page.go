@@ -228,27 +228,63 @@ func writeKeptDemoItemsHTML(b *strings.Builder, locale string, items []data.Kept
 			fmt.Fprintf(b, `<span>%s</span> `, html.EscapeString(httpx.T(locale, "settings.data.demo_kept_reason_edited")))
 			fmt.Fprintf(b, `<button class="btn secondary" data-testid="demo-item-remove-anyway" `+
 				`hx-post="/api/settings/demo-item/%s/remove" hx-confirm="%s" `+
-				`hx-target="#demo-item-msg-%s" hx-swap="innerHTML" hx-disabled-elt="this">%s</button> `,
+				`hx-target="%s" hx-swap="innerHTML" hx-disabled-elt="this">%s</button> `,
 				id, html.EscapeString(httpx.T(locale, "settings.data.demo_item_remove_anyway_confirm")),
-				id, html.EscapeString(httpx.T(locale, "settings.data.demo_item_remove_anyway_btn")))
+				html.EscapeString(demoItemMsgSelector(it.ID)), html.EscapeString(httpx.T(locale, "settings.data.demo_item_remove_anyway_btn")))
 			fmt.Fprintf(b, `<button class="btn secondary" data-testid="demo-item-keep-own" `+
 				`hx-post="/api/settings/demo-item/%s/keep" `+
-				`hx-target="#demo-item-msg-%s" hx-swap="innerHTML" hx-disabled-elt="this">%s</button>`,
-				id, id, html.EscapeString(httpx.T(locale, "settings.data.demo_item_keep_own_btn")))
+				`hx-target="%s" hx-swap="innerHTML" hx-disabled-elt="this">%s</button>`,
+				id, html.EscapeString(demoItemMsgSelector(it.ID)), html.EscapeString(httpx.T(locale, "settings.data.demo_item_keep_own_btn")))
 		case data.KeptReasonHeld:
 			fmt.Fprintf(b, `<span>%s</span>`, html.EscapeString(httpx.T(locale, "settings.data.demo_kept_reason_held")))
 		default: // data.KeptReasonHistory
-			// ut-docs#1840 AC4: name the real mechanism (deactivate, then
-			// Catalog cleanup) instead of leaving the merchant to find it on
-			// their own — the reason text itself already sets the honest
-			// expectation that trading history is never removed, only hidden.
+			// ut-docs#1840 AC4 / review finding F1: name the real mechanism
+			// (deactivate the item from Catalog, then run Catalog cleanup
+			// from Settings → Data — manager only) rather than a positional
+			// "below", which is simply wrong here: Catalog cleanup lives on
+			// THIS SAME /settings page, in a manager-only block ABOVE the
+			// Sample Data section, not below it, and this section itself is
+			// visible to non-managers too (gated on sampleCount, not
+			// isManager) — so a cashier reading "below" has no such section
+			// on their page at all. The reason text names the location
+			// explicitly instead; the button still links to /catalog, which
+			// is genuinely step one (deactivating the item).
 			fmt.Fprintf(b, `<span>%s</span> <a class="btn secondary" href="/catalog">%s</a>`,
 				html.EscapeString(httpx.T(locale, "settings.data.demo_kept_reason_history")),
 				html.EscapeString(httpx.T(locale, "settings.data.demo_go_to_catalog_btn")))
 		}
-		fmt.Fprintf(b, ` <span id="demo-item-msg-%s" class="muted" aria-live="polite"></span></li>`, id)
+		fmt.Fprintf(b, ` <span id="%s" class="muted" aria-live="polite"></span></li>`, html.EscapeString(demoItemMsgID(it.ID)))
 	}
 	b.WriteString(`</ul>`)
+}
+
+// demoItemMsgID is the DOM id shared by a kept-item row's message span, the
+// row's own buttons' hx-target, and the elevation prompt's hxTarget for the
+// two per-item endpoints (RemoveDemoItem/KeepDemoItemAsOwn) — one definition
+// so the three call sites can't drift apart.
+func demoItemMsgID(itemID string) string { return "demo-item-msg-" + itemID }
+
+// demoItemMsgSelector is demoItemMsgID as an htmx hx-target: the
+// attribute-selector form, not a bare "#"+id (ut-docs#1840 review finding
+// F3, mirroring dismiss-pending-base-plugin's own
+// `[id="pending-plugin-msg-%s"]` above) — itemID is never validated against
+// CSS identifier syntax, so a bare "#"+id could break on a value that would
+// need escaping there.
+func demoItemMsgSelector(itemID string) string {
+	return fmt.Sprintf(`[id="%s"]`, demoItemMsgID(itemID))
+}
+
+// disableDemoItemRowButtonsScript is appended to a successful remove/keep
+// response (ut-docs#1840 review finding F9): without it, the row's OTHER
+// button stays clickable after one resolves the item, and clicking it next
+// returns a confusing "already gone" for an item just deliberately kept (or
+// vice versa). Same allowScriptTags convention this codebase already uses
+// for self-contained post-swap behavior (see elevation_prompt.html's own
+// dialog.show() and GetLowStock's low-stock badge script) — the script tag
+// lands inside the row's own #demo-item-msg-<id> span (this handler's only
+// swap target), so `.closest` reaches the row without needing an id.
+func disableDemoItemRowButtonsScript() string {
+	return `<script>(function(s){var li=s.closest('.demo-kept-item');if(li){li.querySelectorAll('button').forEach(function(b){b.disabled=true;});}})(document.currentScript)</script>`
 }
 
 func registerSettings(mux *http.ServeMux, d *common.Deps) {
@@ -1498,15 +1534,39 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 	// plugin's #chip-row/#chip-row-msg split above), so a first-time
 	// elevation hint can never wipe out the row's own retry target the way
 	// ut-docs#865 finding F1 hit #restore-resume-block.
+	//
+	// ut-docs#1840 review findings F2/F3, both fixed here:
+	//   - F3: the id is checked against IsSampleItem BEFORE checkOrElevate
+	//     (same convention as dismiss-pending-base-plugin's own `matched`
+	//     check above) — an unknown/already-gone id never burns an
+	//     approver's PIN entry, and the hxTarget uses the attribute-selector
+	//     form (demoItemMsgSelector) rather than a bare "#"+id, since id is
+	//     never validated against CSS-identifier syntax.
+	//   - F2: does NOT set X-UT-Response: ok on the elevated success path.
+	//     That header (see dismiss-pending-base-plugin below) tells
+	//     elevation_prompt.html's retry form to window.location.reload() —
+	//     exactly wrong here, since a reload would wipe out the OTHER kept
+	//     rows the merchant hasn't resolved yet. Leaving it unset matches
+	//     remove-demo-catalogue's own bulk handler above, which never sets
+	//     it either.
 	mux.HandleFunc("POST /api/settings/demo-item/{id}/remove", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		id := r.PathValue("id")
+		isSample, err := data.NewDemoSeedRepo(d.Db).IsSampleItem(r.Context(), id)
+		if err != nil {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			return
+		}
+		if !isSample {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, httpx.T(locale, "settings.data.demo_item_not_found"))
+			return
+		}
 		_ = r.ParseForm()
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
 			renderElevationPrompt(w, r, "/api/settings/demo-item/"+id+"/remove",
-				"#demo-item-msg-"+id,
+				demoItemMsgSelector(id),
 				fmt.Sprintf(httpx.T(locale, "elevation.summary.remove_demo_item"), id), nil, elev)
 			return
 		}
@@ -1522,26 +1582,33 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		settingsAudit(r, posRepo, elev, "demo_data", id, "demo_item_removed", nil)
-		if elev.Outcome == elevated {
-			w.Header().Set("X-UT-Response", "ok")
-		}
-		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "settings.data.demo_item_removed"))
+		fmt.Fprintf(w, `<span>✓ %s</span>%s`, httpx.T(locale, "settings.data.demo_item_removed"), disableDemoItemRowButtonsScript())
 	})
 
 	// ut-docs#1840 AC3's other resolution: "keep as my own item" — clears
 	// is_sample_data so this item becomes a permanent catalog item, never
 	// offered for removal again. No trading-history re-check needed (this
 	// action doesn't delete anything), but still elevation/audit-gated like
-	// every other mutating Settings→Data action on this page.
+	// every other mutating Settings→Data action on this page. Same F2/F3
+	// fixes as the remove endpoint above.
 	mux.HandleFunc("POST /api/settings/demo-item/{id}/keep", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		id := r.PathValue("id")
+		isSample, err := data.NewDemoSeedRepo(d.Db).IsSampleItem(r.Context(), id)
+		if err != nil {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			return
+		}
+		if !isSample {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, httpx.T(locale, "settings.data.demo_item_not_found"))
+			return
+		}
 		_ = r.ParseForm()
 		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
 		if elev.Outcome == needsElevation {
 			renderElevationPrompt(w, r, "/api/settings/demo-item/"+id+"/keep",
-				"#demo-item-msg-"+id,
+				demoItemMsgSelector(id),
 				fmt.Sprintf(httpx.T(locale, "elevation.summary.keep_demo_item"), id), nil, elev)
 			return
 		}
@@ -1554,10 +1621,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		settingsAudit(r, posRepo, elev, "demo_data", id, "demo_item_kept_as_own", nil)
-		if elev.Outcome == elevated {
-			w.Header().Set("X-UT-Response", "ok")
-		}
-		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "settings.data.demo_item_kept"))
+		fmt.Fprintf(w, `<span>✓ %s</span>%s`, httpx.T(locale, "settings.data.demo_item_kept"), disableDemoItemRowButtonsScript())
 	})
 
 	// Dismiss the "restore from another POS?" resume prompt (ut-docs#617)
