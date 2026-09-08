@@ -7,7 +7,7 @@
 <div class="menu-grid">
   {{ range .Tiles }}
   <a class="menu-tile" href="{{ .Href }}">
-    <span class="menu-ico">{{ if .IconSVG }}{{ .IconSVG }}{{ else }}{{ .Icon }}{{ end }}</span>
+    <span class="menu-ico" aria-hidden="true">{{ .IconSVG }}</span>
     <span class="menu-label">{{ T .Label }}</span>
   </a>
   {{ end }}
@@ -19,7 +19,7 @@
        still living outside the Menu launcher. -->
   <button type="button" class="menu-tile" data-testid="menu-pfand-open"
           onclick="document.getElementById('pfand-result').textContent=''; var prev=document.activeElement; document.getElementById('pfand-modal').show(); if (document.getElementById('pfand-modal').contains(document.activeElement)) { document.activeElement.blur(); if (prev && prev!==document.body && prev.focus) prev.focus(); }">
-    <span class="menu-ico">♻️</span>
+    <span class="menu-ico" aria-hidden="true">{{ icon "recycle" }}</span>
     <span class="menu-label">{{ T "pfand.action" }}</span>
   </button>
 </div>
@@ -81,7 +81,7 @@
 </dialog>
 
 <div class="menu-lang">
-  <span class="menu-lang-label">🌐 {{ T "setup.language.title" }}</span>
+  <span class="menu-lang-label"><span class="menu-lang-ico" aria-hidden="true">{{ icon "globe" }}</span> {{ T "setup.language.title" }}</span>
   <!-- ut-docs#1125: native name (nativelocalename), not the bare code — same
        fix and same no-flag reasoning as setup.html's language step and
        settings.html's default-locale picker; this is the third render site

@@ -14,27 +14,32 @@ import (
 // ☰ Menu button on the sale screen.
 
 type menuTile struct {
-	Href, Icon, Label string
+	Href, Label string
 	// IconSVG is a drawn glyph from the shared icon set
-	// (internal/httpx/icons.go), for the few routes where no emoji says the
-	// right thing. When set it replaces Icon; every other tile keeps the
-	// emoji it has always had. Empty for almost every tile — see iconSVGFor.
+	// (internal/httpx/icons.go). Every core route now has one — see
+	// iconSVGFor — so this is never empty for a rendered tile; a
+	// plugin-contributed route with no entry there falls back to
+	// genericFallbackIcon, applied in add() below.
 	IconSVG template.HTML
 }
 
-// iconSVGFor maps a nav route to a drawn icon name, overriding iconFor.
+// iconSVGFor maps a nav route to a drawn icon name.
 //
-// ut-docs#1720 (product owner, on the real tablet): the Bluetooth Devices
-// tile used 📶 (ANTENNA BARS) — the mobile-reception glyph, which says
-// "signal strength", not "Bluetooth". ut-docs#76 picked it knowingly,
-// because Unicode has no Bluetooth codepoint; what it could not do is make
-// an emoji mean something Unicode has never encoded. The runic
-// approximation (U+16D2) is not an answer either — it depends on font
-// coverage Android WebView does not reliably have, and an empty box on the
-// device our pilots run is worse than the wrong icon.
+// ut-docs#1720 (product owner, on the real tablet) started this map with
+// just Bluetooth Devices: the tile used 📶 (ANTENNA BARS) — the
+// mobile-reception glyph, which says "signal strength", not "Bluetooth".
+// ut-docs#76 picked it knowingly, because Unicode has no Bluetooth
+// codepoint; what it could not do is make an emoji mean something Unicode
+// has never encoded. ut-docs#1845 (product owner + German pilot merchant,
+// "look at the design and icons — so modern and beautiful" re: a
+// competitor POS) extended it to every remaining core route, retiring the
+// old `iconFor` emoji map entirely: an emoji is a glyph from whatever
+// colour-emoji font the platform ships, so the same build looked different
+// on Android/desktop/Pi and read as unfinished ("like Windows 3.1",
+// ut-docs#1830) next to a competitor's consistent line-icon set. Every
+// entry here uses the icon set the nav rail already moved to
+// (ut-docs#1423) rather than inventing a second mechanism.
 //
-// So this reaches for the icon set the nav rail already moved to
-// (ut-docs#1423) rather than inventing a second mechanism for one tile.
 // Anything added here must also be a real entry in httpx's icon map —
 // TestMenuPage_EveryDrawnTileIconNameResolves is that guard, because
 // icons_test.go's template scanner only sees a literal {{ icon "name" }}
@@ -44,6 +49,28 @@ type menuTile struct {
 // a plugin brings with it, so a plugin-contributed tile can never get an
 // entry here. See genericFallbackIcon below for that case (ut-docs#1722).
 var iconSVGFor = map[string]string{
+	"/":                  "receipt",
+	"/designer":          "palette",
+	"/inventory":         "package",
+	"/shifts":            "clock",
+	"/journal":           "book-open",
+	"/reports":           "chart-column",
+	"/settings":          "settings",
+	"/plugins":           "puzzle",
+	"/catalog":           "tag",
+	"/help":              "help",
+	"/users":             "users",
+	"/locations":         "map-pin",
+	"/registers":         "calculator",
+	"/kitchen-stations":  "chef-hat",
+	"/tables":            "table",
+	"/country-settings":  "flag",
+	"/translations":      "globe",
+	"/tills":             "monitor",
+	"/report-issue":      "bug",
+	"/fiscal-register":   "clipboard-list",
+	"/fiscal-device":     "receipt",
+	"/orders":            "bell",
 	"/bluetooth-devices": "bluetooth",
 }
 
@@ -56,45 +83,14 @@ var iconSVGFor = map[string]string{
 // deliberate, separate decision, not an oversight).
 const genericFallbackIcon = "puzzle"
 
-// iconFor maps a nav route to a touch-friendly emoji glyph.
-var iconFor = map[string]string{
-	"/":                 "🧾",
-	"/designer":         "🎨",
-	"/inventory":        "📦",
-	"/shifts":           "🕒",
-	"/journal":          "📒",
-	"/reports":          "📊",
-	"/settings":         "⚙️",
-	"/plugins":          "🧩",
-	"/catalog":          "🏷️",
-	"/help":             "❓",
-	"/users":            "👤",
-	"/locations":        "📍",
-	"/registers":        "🧮",
-	"/kitchen-stations": "🍳",
-	"/tables":           "🪑",
-	"/country-settings": "🌍",
-	"/translations":     "🌐",
-	"/tills":            "🖥️",
-	"/report-issue":     "🐞",
-	"/fiscal-register":  "📋",
-	"/fiscal-device":    "🧾",
-	// ut-docs#1371: /orders had no entry here, so every Orders tile fell
-	// through to the "▪️" no-icon fallback below — the exact "plain black
-	// square" the report described, not a font-coverage gap. 🛎️ (service
-	// bell) over a generic 🔔 notification bell — /orders is a kitchen-
-	// progress board (preparing/ready/collected), closer to "order ready
-	// for pickup" than "you have a notification" (independent review nit).
-	"/orders": "🛎️",
-}
-
 func registerMenu(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("/menu", func(w http.ResponseWriter, r *http.Request) {
 		var tiles []menuTile
-		// add resolves a tile's icon in three steps: a drawn glyph from
-		// iconSVGFor (core routes only), else an emoji from iconFor, else
-		// the generic drawn fallback (ut-docs#1722) — never the bare "▪️"
-		// square ut-docs#1371 first reported.
+		// add resolves a tile's icon in two steps: a drawn glyph from
+		// iconSVGFor (core routes only), else the generic drawn fallback
+		// (ut-docs#1722) — never the bare "▪️" square ut-docs#1371 first
+		// reported, and never an emoji (ut-docs#1845 retired the last of
+		// those, iconFor, entirely).
 		//
 		// A plugin cannot declare its own icon here (Architect decision,
 		// ut-docs#1722): the manifest's existing ManifestEntry.IconPath
@@ -114,11 +110,10 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 		// from nothing.
 		add := func(href, label string) {
 			svg := httpx.Icon(iconSVGFor[href])
-			icon := iconFor[href]
-			if icon == "" && svg == "" {
+			if svg == "" {
 				svg = httpx.Icon(genericFallbackIcon)
 			}
-			tiles = append(tiles, menuTile{Href: href, Icon: icon, Label: label, IconSVG: svg})
+			tiles = append(tiles, menuTile{Href: href, Label: label, IconSVG: svg})
 		}
 		for _, m := range d.MenuSnapshot() {
 			add(m.Href, m.Label)
