@@ -216,6 +216,39 @@ func (m *fakeMarketplace) publishWasmTaxVersion(t *testing.T, listingID, pluginI
 	l.latest = version
 }
 
+// publishLanguageVersion publishes a signed, asset-only (runtime "none")
+// CanonicalType:"language" release shipping a real locales/<locale>.json
+// overlay — the marketplace-install-flow counterpart to Manager's own
+// direct-to-disk syncLocales unit test (manager_test.go's
+// TestSetLocalizerSyncsPluginLocales, which writes files straight to
+// paths.Plugins() and never exercises download/verify/extract at all).
+// ut-docs#1111: nothing before this proved a language pack installed
+// through the REAL marketplace download path actually changes what gets
+// rendered — every existing install-flow test using publishVersion's
+// CanonicalType:"page" fixture only asserted PluginActive/the ut_lang
+// cookie.
+func (m *fakeMarketplace) publishLanguageVersion(t *testing.T, listingID, pluginID, version, locale string, localeJSON []byte) {
+	t.Helper()
+	manifest := &plugins.Manifest{
+		ID:            pluginID,
+		Name:          "Fixture Language Pack " + pluginID,
+		Version:       version,
+		Runtime:       "none",
+		CanonicalType: "language",
+		DeviceArch:    "any",
+	}
+	artifact := signedFakeMktArtifactWithLocale(t, m.privateKey, manifest, locale, localeJSON)
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	l := m.listings[listingID]
+	if l == nil {
+		l = &fakeMktListing{releases: map[string]fakeMktRelease{}}
+		m.listings[listingID] = l
+	}
+	l.releases[version] = fakeMktRelease{artifact: artifact, manifest: manifest, checksum: sha256Hex(artifact)}
+	l.latest = version
+}
+
 // unpublish removes every release of a listing, so any further download-token
 // request for it 404s — a marketplace that can no longer serve the plugin
 // (delisted, region-blocked, or simply gone). Used to drive the broken-plugin
@@ -475,6 +508,58 @@ func signedFakeMktArtifactWithBinary(t *testing.T, privateKey ed25519.PrivateKey
 	// accepts an empty manifest.ArtifactHash (only a NON-empty one is compared
 	// to the download checksum), and re-packing would change the checksum
 	// again. Clear it so the packed manifest and the served checksum agree.
+	manifest.ArtifactHash = ""
+	return archive.Bytes()
+}
+
+// signedFakeMktArtifactWithLocale is signedFakeMktArtifactWithBinary's
+// counterpart for an asset-only (runtime "none") language-pack manifest: it
+// packs manifest.json plus a single locales/<locale>.json overlay — no
+// executable at all, matching a real ut-plugin-language-* pack — into a
+// signed .tar.gz. localeJSON must be valid JSON in config.I18n's overlay
+// shape (a flat map[string]string).
+func signedFakeMktArtifactWithLocale(t *testing.T, privateKey ed25519.PrivateKey, manifest *plugins.Manifest, locale string, localeJSON []byte) []byte {
+	t.Helper()
+	canonical := *manifest
+	canonical.Signature = ""
+	canonicalBytes, err := json.Marshal(canonical)
+	if err != nil {
+		t.Fatalf("marshal canonical manifest: %v", err)
+	}
+	manifest.Signature = hex.EncodeToString(ed25519.Sign(privateKey, canonicalBytes))
+
+	manifestBytes, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatalf("marshal manifest: %v", err)
+	}
+	var archive bytes.Buffer
+	gzWriter := gzip.NewWriter(&archive)
+	tarWriter := tar.NewWriter(gzWriter)
+	for _, f := range []struct {
+		name string
+		data []byte
+		mode int64
+	}{
+		{"manifest.json", manifestBytes, 0o644},
+		{"locales/" + locale + ".json", localeJSON, 0o644},
+	} {
+		if err := tarWriter.WriteHeader(&tar.Header{Name: f.name, Mode: f.mode, Size: int64(len(f.data))}); err != nil {
+			t.Fatalf("write tar header: %v", err)
+		}
+		if _, err := tarWriter.Write(f.data); err != nil {
+			t.Fatalf("write tar data: %v", err)
+		}
+	}
+	if err := tarWriter.Close(); err != nil {
+		t.Fatalf("close tar writer: %v", err)
+	}
+	if err := gzWriter.Close(); err != nil {
+		t.Fatalf("close gzip writer: %v", err)
+	}
+	manifest.ArtifactHash = sha256Hex(archive.Bytes())
+	// Same reasoning as signedFakeMktArtifactWithBinary: the installer only
+	// compares a NON-empty manifest.ArtifactHash to the download checksum,
+	// and re-packing after hashing would change the checksum again.
 	manifest.ArtifactHash = ""
 	return archive.Bytes()
 }
