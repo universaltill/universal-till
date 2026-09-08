@@ -683,6 +683,7 @@
   "reports.eod.range_title": "Z raporu (tarih aralığı)",
   "reports.eod.range_to": "Bitiş",
   "reports.eod.run": "Gün sonu raporu çalıştır",
+  "reports.eod.tips": "Bahşişler",
   "reports.eod.title": "Gün sonu",
   "reports.eod.unattributed": "Bilinmiyor",
   "reports.eod.variance_flag": "Cash count variance",
