@@ -372,6 +372,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		saleID, err := completeTender(r.Context(), d, d.KioskEngine, repo, saleInput, saleInput.Payments, "kiosk")
 		if err != nil {
 			var declined *paymentDeclinedError
+			var noReceipt *fiscalDeviceNoReceiptError
 			var fiscalNC *fiscalNeverConfiguredError
 			var fiscalTF *fiscalTSEFailingError
 			status := http.StatusBadRequest
@@ -380,6 +381,15 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			case errors.As(err, &declined):
 				status = http.StatusPaymentRequired
 				msgKey = "selforder.checkout.declined"
+			case errors.As(err, &noReceipt):
+				// ut-docs#1779: the device may already have taken the
+				// customer's money before answering with no receipt — an
+				// anonymous kiosk customer can't check the device
+				// themselves, so (like the fiscal hard gate below) this
+				// points them to the counter rather than inviting a
+				// self-service retry that risks a double charge.
+				status = http.StatusConflict
+				msgKey = "selforder.checkout.fiscal_device_no_receipt"
 			case errors.As(err, &fiscalNC), errors.As(err, &fiscalTF):
 				// German TSE hard gate (ADR-0048) — same fail-closed rule
 				// as the cashier tender path, same shape as the blocked-tax
