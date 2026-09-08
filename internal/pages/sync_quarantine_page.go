@@ -41,6 +41,10 @@ var quarantineReasonKeys = map[string]string{
 	"unknown cashier/customer/register/table id on replica-local sale":     "sync.quarantine_reason.unknown_sale_reference",
 	"unknown item/variant id on replica-local sale line":                   "sync.quarantine_reason.unknown_line_reference",
 	"foreign key violation on replay (unresolved replica-local reference)": "sync.quarantine_reason.unresolved_reference",
+	// ADR-0084 (ut-docs#1716): a journaled sale with two payment legs
+	// against one voucher, refused by the one-redemption-per-voucher-per-
+	// sale idempotency key — a pre-#1716 replica could produce one.
+	"same voucher redeemed twice in one journaled sale": "sync.quarantine_reason.duplicate_voucher_redemption",
 }
 
 // registerSyncQuarantinePage serves the quarantined-LAN-sync-journal-entry

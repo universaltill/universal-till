@@ -18,6 +18,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/google/uuid"
 	qrcode "github.com/skip2/go-qrcode"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
@@ -296,38 +297,72 @@ func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, re
 	// sale: any failure lands on the proceed-and-declare surface below.
 	signRes := dispatchFiscalSignAsk(ctx, d, &saleInput)
 
-	// Cross-till voucher redemption (ut-docs#1668): for every tracked
-	// voucher payment, validate against the PRIMARY's CURRENT balance
-	// BEFORE this till's own local DebitVoucherForRedemption ever runs
-	// (inside pos.CompleteSale below) — a voucher issued at another till
-	// has no local vouchers row here at all, so without this the local
-	// debit would fail closed with ErrVoucherNotFound even though the
-	// voucher is perfectly good shop-wide. On a replica with a reachable
-	// primary, its answer is authoritative: a definitive refusal (void /
-	// insufficient balance) aborts the tender right here, with NO sale row
-	// ever attempted — the same end result as today's local failure, just
-	// decided against a fresh shop-wide balance instead of a stale or
-	// nonexistent local copy. This is a VALIDATION check only — see
-	// voucher_sync_proxy.go's own doc comment for why nothing is ever
-	// debited on the primary here; the local debit below (forced via
-	// VoucherPreauthorized) is the only debit that ever actually happens,
-	// reaching the primary the normal way, once, via the sales journal.
-	// Not a replica, or the primary unreachable: this payment is left
+	// Cross-till voucher redemption (ut-docs#1668, made atomic by ADR-0084 /
+	// ut-docs#1716): for every tracked voucher payment, RESERVE the
+	// redemption on the PRIMARY before this till's own local
+	// DebitVoucherForRedemption ever runs (inside pos.CompleteSale below) —
+	// a voucher issued at another till has no local vouchers row here at
+	// all, so without this the local debit would fail closed with
+	// ErrVoucherNotFound even though the voucher is perfectly good
+	// shop-wide. On a replica with a reachable primary, the primary's
+	// answer is authoritative AND serializing: /redeem runs the guarded
+	// debit on the primary's database, so two tills racing for one balance
+	// commit one after the other and the second is refused cleanly. A
+	// definitive refusal (void / insufficient balance) aborts the tender
+	// right here, with NO sale row ever attempted.
+	//
+	// The reservation IS a debit on the primary (this is what #1668's
+	// read-only design deliberately avoided, and what ADR-0084 makes safe):
+	//   - It is keyed on saleInput.SaleID, the SAME id this sale is
+	//     persisted under and journals up with, so the primary's eventual
+	//     journal replay (pos.CompleteSale, VoucherRedemptionRecorded)
+	//     recognizes the debit it already holds and does not apply it
+	//     again. That id must therefore exist BEFORE the first reservation:
+	//     dispatchFiscalSignStart above only mints it when a plugin
+	//     subscribes to fiscal.sign.start — on most tills nothing does —
+	//     so it is minted here if still empty (pos.CompleteSale honours a
+	//     pre-set SaleID rather than generating its own).
+	//   - Every reservation made in THIS attempt is tracked, and released
+	//     on the primary (releaseReservedVouchers → POST .../release) if a
+	//     later payment is refused or pos.CompleteSale itself fails for any
+	//     reason — synchronously, before returning, and before any local
+	//     sale row exists, so no journal entry can ever be produced for a
+	//     released attempt. This closes the orphaned-debit bug the first
+	//     draft had. (A crash in the window between a successful
+	//     reservation and the local commit is the accepted residual risk,
+	//     ADR-0084 Decision 4.)
+	//   - Two legs against the SAME voucher in one sale are refused up
+	//     front (pos.DuplicateVoucherPaymentError — the idempotency key is
+	//     one redemption per voucher per sale), BEFORE anything is
+	//     reserved, so an invalid sale never round-trips to the primary.
+	// Not a replica, or the primary unreachable / 404: this payment is left
 	// exactly as it always was, going through the normal local validation
 	// next (offline-first, unchanged).
+	if saleInput.SaleID == "" {
+		saleInput.SaleID = uuid.NewString()
+	}
+	if err := pos.DuplicateVoucherPaymentError(saleInput.Payments); err != nil {
+		return "", err
+	}
+	var reservedVoucherIDs []string
 	for i := range saleInput.Payments {
 		if saleInput.Payments[i].VoucherID == "" {
 			continue
 		}
-		preauth, err := voucherRedeemWriteThrough(ctx, d, repo, saleInput.Payments[i].VoucherID, saleInput.Payments[i].Amount.Minor())
+		preauth, err := voucherRedeemWriteThrough(ctx, d, repo, saleInput.Payments[i].VoucherID, saleInput.Payments[i].Amount.Minor(), saleInput.SaleID)
 		if err != nil {
+			releaseReservedVouchers(ctx, d, reservedVoucherIDs, saleInput.SaleID)
 			return "", err
 		}
 		saleInput.Payments[i].VoucherPreauthorized = preauth
+		if preauth {
+			reservedVoucherIDs = append(reservedVoucherIDs, saleInput.Payments[i].VoucherID)
+		}
 	}
 
 	saleID, err := pos.CompleteSale(ctx, d.Db, saleInput)
 	if err != nil {
+		releaseReservedVouchers(ctx, d, reservedVoucherIDs, saleInput.SaleID)
 		return "", err
 	}
 

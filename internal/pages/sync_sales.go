@@ -163,6 +163,19 @@ func permanentJournalFailureReason(err error) string {
 		// falsify the audit trail. Quarantining, not guessing, is correct
 		// here for the whole class, not just this instance of it.
 		return foreignKeyViolationReason(err)
+	case errors.Is(err, pos.ErrDuplicateVoucherPayment), errors.Is(err, data.ErrVoucherRedemptionAlreadyRecorded):
+		// ADR-0084 (ut-docs#1716): one redemption per voucher per sale is
+		// now the idempotency key (ux_voucher_tx_redemption_once), so a
+		// journaled sale carrying two payment legs against the SAME voucher
+		// — which a pre-#1716 replica's CompleteSale accepted — is refused
+		// by CompleteSale's validation pass (ErrDuplicateVoucherPayment),
+		// or, for any writer that got past it, by the index itself
+		// (ErrVoucherRedemptionAlreadyRecorded). One structural condition,
+		// one reason: it recurs identically on every retry, and rejecting
+		// the whole batch for it would wedge that replica's replication
+		// across the upgrade window — exactly what this allowlist exists to
+		// prevent (ADR-0065). Quarantined for a human, not guessed at.
+		return "same voucher redeemed twice in one journaled sale"
 	default:
 		return ""
 	}

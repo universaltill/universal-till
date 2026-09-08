@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/pos"
 )
 
 // TestApplyJournal_UnknownCashierIDIsQuarantined is ut-docs#1686's first
@@ -178,6 +179,11 @@ func TestPermanentJournalFailureReason_AllReasonsHaveALocaleKey(t *testing.T) {
 		// default branch, e.g. a payments.method_id race outside EnsurePaymentMethod's
 		// window.
 		fmt.Errorf("insert payment: constraint failed: FOREIGN KEY constraint failed (787)"),
+		// ADR-0084 (ut-docs#1716): two legs against one voucher in a
+		// journaled sale — refused by CompleteSale's validation, or by the
+		// ux_voucher_tx_redemption_once index for a writer that got past it.
+		fmt.Errorf("payments 1 and 2: voucher \"GS-1\": %w", pos.ErrDuplicateVoucherPayment),
+		fmt.Errorf("record voucher transaction: %w", data.ErrVoucherRedemptionAlreadyRecorded),
 	}
 	for _, err := range cases {
 		reason := permanentJournalFailureReason(err)

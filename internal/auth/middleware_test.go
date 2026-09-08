@@ -208,9 +208,20 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		// perfectly and is still 401'd here, so the proxy silently falls
 		// back to local-only and a voucher issued at another till goes back
 		// to being unredeemable here: the /api/sync/stock failure class,
-		// again. Read-only (no redeem/debit endpoint — see
-		// sync_vouchers.go's own doc comment).
+		// again.
 		"/api/sync/vouchers/GS-0001",
+		// ADR-0084 (ut-docs#1716): the primary-side idempotent reservation
+		// pair a replica's voucherRedeemWriteThrough / releaseVoucherOnPrimary
+		// (voucher_sync_proxy.go) proxy to at tender time. Bearer-authed in
+		// the handler (syncTill), same as the lookup above — without these
+		// entries the replica authenticates perfectly and is still 401'd
+		// here, so the proxy silently falls back to local-only and the
+		// two-till double-redemption race this ADR closes is back, with no
+		// error anywhere: the /api/sync/stock failure class, again. (/redeem
+		// used to sit in the must-NOT-be-exempt list below, pinning the
+		// ut-docs#1668 read-only decision; ADR-0084 supersedes that.)
+		"/api/sync/vouchers/GS-0001/redeem",
+		"/api/sync/vouchers/GS-0001/release",
 		// ADR-0082 (ut-docs#1739): the one-shot plugin-settings encryption
 		// key fetch a replica's KeyStore makes against its primary on first
 		// use. Bearer-authed in the handler (syncTill), same as
@@ -261,17 +272,21 @@ func TestSyncPullPathsAreExempt(t *testing.T) {
 		"/orders",
 		"/api/sync/orders/R-0001/void",
 		"/api/sync/orders/R-0001/status/extra",
-		// ut-docs#1668 review: same segment-boundary concern for the new
+		// ut-docs#1668 review: same segment-boundary concern for the
 		// /api/sync/vouchers/{id} exemption — a bare
 		// HasPrefix("/api/sync/vouchers/") would also exempt some future
-		// .../{id}/<action> route (there is no such handler today — this is
-		// a read-only lookup only — but the exemption logic itself must not
-		// accidentally cover one), and the bare list-with-no-id form must
-		// stay gated too.
+		// .../{id}/<action> route, and the bare list-with-no-id form must
+		// stay gated too. ADR-0084 (ut-docs#1716) exempts exactly TWO
+		// suffixed actions (/redeem, /release — see the must-be-exempt list
+		// above); anything else under the id (/void, an action this card
+		// does not add) and an extra path segment past a real suffix
+		// (/redeem/extra) must still be gated.
 		"/vouchers",
 		"/api/sync/vouchers/",
-		"/api/sync/vouchers/GS-0001/redeem",
 		"/api/sync/vouchers/GS-0001/void",
+		"/api/sync/vouchers/GS-0001/redeem/extra",
+		"/api/sync/vouchers/GS-0001/release/extra",
+		"/api/sync/vouchers//redeem",
 	} {
 		if exempt(p) {
 			t.Errorf("%s must NOT be exempt — it is an operator surface", p)

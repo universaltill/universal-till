@@ -225,15 +225,35 @@ func exempt(path string) bool {
 	// ut-docs#1668: the primary-side cross-till voucher lookup a replica's
 	// fetchVoucherFromPrimary (voucher_sync_proxy.go) proxies to —
 	// syncTill-authed in the handler exactly like /api/sync/tables above.
-	// Read-only (no redeem/debit endpoint here — see sync_vouchers.go's own
-	// doc comment for why), so bounded to exactly one id segment, no
-	// suffix. Omitting this would silently no-op the whole feature exactly
-	// like the /api/sync/stock incident this switch's own comment
-	// documents — the proxy falls back to local-only on a 401, and a
-	// voucher issued elsewhere goes back to being unredeemable here.
+	// The plain GET is bounded to exactly one id segment, no suffix.
+	// Omitting this would silently no-op the whole feature exactly like the
+	// /api/sync/stock incident this switch's own comment documents — the
+	// proxy falls back to local-only on a 401, and a voucher issued
+	// elsewhere goes back to being unredeemable here.
 	// TestSyncPullPathsAreExempt pins this shape.
 	if rest, ok := strings.CutPrefix(path, "/api/sync/vouchers/"); ok && rest != "" && !strings.Contains(rest, "/") {
 		return true
+	}
+	// ADR-0084 (ut-docs#1716): the primary-side idempotent reservation pair
+	// a replica's voucherRedeemWriteThrough / releaseVoucherOnPrimary
+	// (voucher_sync_proxy.go) proxy to at tender time — POST
+	// /api/sync/vouchers/{id}/redeem and .../{id}/release, syncTill-authed
+	// in the handler. Same bounded shape as /api/sync/orders/{id}/status
+	// above: exactly one id segment between the prefix and one of the two
+	// known suffixes, so this can never accidentally exempt some future
+	// .../{id}/<other action> route that ought to stay session-gated.
+	// Without these a replica authenticates perfectly, is 401'd here first,
+	// and the proxy silently falls back to local-only — reopening the
+	// two-till double-redemption race this ADR closes with no error
+	// anywhere (the /api/sync/stock failure class, again).
+	// TestSyncPullPathsAreExempt pins this shape.
+	if rest, ok := strings.CutPrefix(path, "/api/sync/vouchers/"); ok {
+		if id, ok := strings.CutSuffix(rest, "/redeem"); ok && id != "" && !strings.Contains(id, "/") {
+			return true
+		}
+		if id, ok := strings.CutSuffix(rest, "/release"); ok && id != "" && !strings.Contains(id, "/") {
+			return true
+		}
 	}
 	return false
 }

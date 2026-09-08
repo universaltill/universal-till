@@ -1165,6 +1165,7 @@
   "sync.quarantine_intro": "فروشی که یک صندوق پیوسته ارسال کرده و این صندوق نتوانسته آن را در دفتر فروشگاه اعمال کند، به‌جای گم شدن بی‌صدا، اینجا نگه‌داری می‌شود — این فروش هرگز ثبت نشده، پس این فهرست تنها سابقهٔ ماندگار آن است.",
   "sync.quarantine_none": "هیچ مورد قرنطینه‌شده‌ای نیست — همهٔ فروش‌های همهٔ صندوق‌ها با موفقیت اعمال شده‌اند.",
   "sync.quarantine_open": "مشاهدهٔ موارد قرنطینه‌شده",
+  "sync.quarantine_reason.duplicate_voucher_redemption": "استرداد یک کوپن دو بار در یک فروش در بازپخش",
   "sync.quarantine_reason.unknown_line_reference": "کالا یا گونهٔ ناشناخته در ردیف فروش هنگام بازپخش",
   "sync.quarantine_reason.unknown_sale_reference": "صندوق‌دار، مشتری، صندوق یا میز ناشناخته در بازپخش",
   "sync.quarantine_reason.unknown_voucher_redemption": "کوپن ناشناخته در بازپخش استرداد",
