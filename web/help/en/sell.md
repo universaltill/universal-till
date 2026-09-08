@@ -5,7 +5,7 @@ section: Everyday selling
 order: 10
 summary: "The main register screen: scan or pick items, take payment, print or skip the receipt."
 routes: [/, /ui/basket, /ui/buttons, /ui/held, /refund/{receipt}]
-keywords: [basket, checkout, tender, pay, scan, hold, discount, camera, table, tables, modifier, customization, customer, loyalty, promo, order type, takeaway, dine in, suggestions, offline, sync chip]
+keywords: [basket, checkout, tender, pay, scan, hold, discount, camera, table, tables, modifier, customization, customer, loyalty, promo, order type, takeaway, dine in, suggestions, offline, sync chip, voucher, gutschein, gift card]
 ---
 
 # Selling & checkout
@@ -42,6 +42,17 @@ There are two separate kinds of discount, and they don't stack the same way — 
 What can go wrong: the scan box doesn't tell a bad promo code apart from an unrecognized item barcode — an inactive, expired, or unknown code is refused with the same "Item not found" message a mystery barcode gets, so a code that never scanned probably means it isn't active (or the shop's clock has moved past its end date) rather than a scanner problem. A code restricted to a specific customer only applies once that customer is linked to the sale (see below) — scanned before that, it's refused the same way.
 
 A per-line discount that's bigger than the line itself is accepted while you're building the basket, but the sale is refused when you try to take payment, with a generic "couldn't be completed" message that doesn't say why — if a payment is unexpectedly refused, check that every line's discount is smaller than that line's own price.
+
+## Redeeming a Gutschein (voucher)
+
+If your shop sells vouchers (Gutscheine — gift cards with a stored balance), scanning one at the barcode box during a sale resolves it and offers its balance as a payment option, right there in the Payment panel — there's no separate "voucher mode" to switch into first. The till recognizes a voucher code by its shape (starting `GS-`), the same way it recognizes a customer or promo code typed or scanned into that same box, so it's automatically told apart from a product scan.
+
+- **Found and usable:** a success message names the voucher and its available balance, and a new button appears in the Payment panel labelled with the voucher's id and balance — tap it to apply the balance as tender. If the voucher's balance covers more than the sale total, only what the sale needs is taken and the rest stays on the voucher for next time (a partial redemption).
+- **A voucher worth less than the sale:** the voucher button only completes a sale it covers in full. If the balance is smaller than the total, tapping it is refused with "Amount received does not cover the sale total" — combining a tracked voucher with a second payment method isn't supported yet. Until it is, either put enough on the voucher side first, or take the whole sale with another method.
+- **Found but not usable:** a voucher that's already fully redeemed, voided, or otherwise not active gets its own message rather than being silently ignored.
+- **Not recognized at all:** an unknown or mistyped voucher code gets its own "not found" message — distinct from both the above and from a plain "Item not found".
+
+This works the same whether this till issued the voucher itself or another till in the shop did, and whether or not the till is currently online — resolving a voucher never depends on the network any more than ringing up an item does.
 
 ## Dine-in or takeaway
 

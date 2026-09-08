@@ -1,5 +1,11 @@
 {{ define "basket" }}
-<div class="basket" id="basket">
+<!-- data-voucher-id/data-voucher-balance-minor (ut-docs#1833): the pending
+     Gutschein a scan just resolved, if any -- empty when none is pending.
+     Read by index.html's own pay-voucher-btn script on every htmx:afterSwap,
+     the same data-attribute bridge .total's data-minor already uses for the
+     fee-hint script, since the payment overlay's pay-grid lives OUTSIDE this
+     swapped fragment and can't react to it any other way. -->
+<div class="basket" id="basket" data-voucher-id="{{ .VoucherID }}" data-voucher-balance-minor="{{ .VoucherBalance.Minor }}">
   {{ if .ToastMessage }}
     {{ if eq .ToastLevel "error" }}
     <div class="pos-notice error" id="toast-message" role="alert">
