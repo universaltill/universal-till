@@ -364,3 +364,97 @@ func TestFiscalDevicePage_ShowsConfirmForTurkeyWithActivePluginAndNoDevice(t *te
 		t.Fatalf("the unavailable notice must not show when actions ARE available, got: %s", body)
 	}
 }
+
+// ut-docs#1786 (last slice of #1458): every error this page can answer with
+// must render the full operator layout (nav rail, "Back to sale"), not a
+// bare untranslated body — on a pinned Android kiosk a bare body is a dead
+// end with no way back. #1663 already proved this pattern for the sibling
+// German page; this is the same proof for the 6 sites #1663 deliberately
+// deferred here to avoid colliding with the then-in-flight Turkey ÖKC work.
+func TestFiscalDevicePage_EveryErrorRendersFullLayout(t *testing.T) {
+	assertFullLayoutError := func(t *testing.T, rec *httptest.ResponseRecorder, wantCode int) {
+		t.Helper()
+		if rec.Code != wantCode {
+			t.Fatalf("code = %d, want %d: %s", rec.Code, wantCode, rec.Body.String())
+		}
+		body := rec.Body.String()
+		if !strings.Contains(body, `class="nav"`) {
+			t.Fatalf("error response has no nav rail (bare body, dead end on a pinned kiosk):\n%s", body)
+		}
+	}
+
+	// Site 1 (line 88): the shared requireManager gate every handler below
+	// goes through first — a non-manager on any of them.
+	t.Run("non-manager GET", func(t *testing.T) {
+		mux, d := newFiscalDeviceTestMux(t)
+		seedActiveTaxTrPlugin(t, d.Db, true)
+		setCountry(t, d, "TR")
+		cashier := auth.User{ID: "c1", Role: "cashier", DisplayName: "Cash"}
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/fiscal-device", nil), cashier)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		assertFullLayoutError(t, rec, http.StatusForbidden)
+	})
+
+	// Site 2 (line 116, inside render): posRepo.LatestFiscalDeviceReceipt
+	// fails — force it by closing the DB out from under an otherwise-valid
+	// manager GET.
+	t.Run("GET with a failing repo read", func(t *testing.T) {
+		mux, d := newFiscalDeviceTestMux(t)
+		t.Setenv("UT_AUTH", "off")
+		seedActiveTaxTrPlugin(t, d.Db, true)
+		setCountry(t, d, "TR")
+		if err := d.Db.Close(); err != nil {
+			t.Fatal(err)
+		}
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/fiscal-device", nil))
+		assertFullLayoutError(t, rec, http.StatusInternalServerError)
+	})
+
+	// Sites 3 & 5 (lines 195, 235): confirm/unpair when d.Settings is nil —
+	// the config-not-loaded case neither handler can proceed past.
+	for _, tt := range []struct {
+		name string
+		path string
+	}{
+		{"confirm with no Settings store", "/api/fiscal-device/confirm"},
+		{"unpair with no Settings store", "/api/fiscal-device/unpair"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mux, d := newFiscalDeviceTestMux(t)
+			t.Setenv("UT_AUTH", "off")
+			seedActiveTaxTrPlugin(t, d.Db, true)
+			setCountry(t, d, "TR")
+			d.Settings = nil
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, tt.path, nil))
+			assertFullLayoutError(t, rec, http.StatusInternalServerError)
+		})
+	}
+
+	// Sites 4 & 6 (lines 199, 239): confirm/unpair when d.Settings.Set
+	// itself fails — drop the settings table so Set fails while everything
+	// the market-active gate needs (the plugins tables) stays intact, so
+	// the request actually reaches the Set call instead of 404ing earlier.
+	for _, tt := range []struct {
+		name string
+		path string
+	}{
+		{"confirm with a failing Settings.Set", "/api/fiscal-device/confirm"},
+		{"unpair with a failing Settings.Set", "/api/fiscal-device/unpair"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mux, d := newFiscalDeviceTestMux(t)
+			t.Setenv("UT_AUTH", "off")
+			seedActiveTaxTrPlugin(t, d.Db, true)
+			setCountry(t, d, "TR")
+			if _, err := d.Db.Exec(`DROP TABLE settings`); err != nil {
+				t.Fatal(err)
+			}
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodPost, tt.path, nil))
+			assertFullLayoutError(t, rec, http.StatusInternalServerError)
+		})
+	}
+}
