@@ -1688,6 +1688,151 @@ func TestPostRefund_ProviderRefundDeclinedShowsLocalizedMessageNotRawError(t *te
 	}
 }
 
+// TestPostRefund_OKCPluginApprovesWithNoEvidence_RefundRefused is
+// ut-docs#1788, the refund-path mirror of ut-docs#1779's core fail-closed
+// backstop: a fiscal-device (OKC) plugin that answers the payment.okc.refund
+// hook "approved" with no `fiscal_device` object (the iade fişi) must not be
+// able to complete a Turkey refund. fiscal.MethodKeyOKC's fail-closed
+// guarantee only holds as long as every OKC plugin polices itself -- this
+// proves core has an INDEPENDENT backstop on the refund path too, mirroring
+// TestTenderHandler_OKCPluginApprovesWithNoEvidence_SaleRefused's harness
+// (pos_api_test.go) but against POST /api/refund.
+func TestPostRefund_OKCPluginApprovesWithNoEvidence_RefundRefused(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	// min_pos_version/api_version/published_at are NOT NULL on the real
+	// plugin_catalog table (ut-docs#1677).
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.tax-tr', '1.0.0', 'Turkiye fiscal device', 'okc', 'wasm', 'plugin.wasm', 'https://example.test/tax-tr.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.tax-tr', 'Turkiye fiscal device', '1.0.0', 'plugin.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e1', 'com.universaltill.tax-tr', 'okc', 'Yazarkasa (OKC)', 'payment', 'payment.okc.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h1', 'com.universaltill.tax-tr', 'payment.okc.refund', 'handle_refund', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p1', 'com.universaltill.tax-tr', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers() // process-global singleton; isolate from other tests using the same plugin id/event
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.okc.refund", plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-tr",
+		[]string{"payment.okc.refund"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			// Approved (nil error = not a decline), but no `fiscal_device`
+			// object at all -- the exact shape a buggy/malicious OKC plugin
+			// could return.
+			return json.RawMessage(`{"provider":"okc","outcome":"approved"}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2&method=okc"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusPaymentRequired {
+		t.Fatalf("expected 402 (refused -- no fiscal-device evidence), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales WHERE sale_type = 'return'`).Scan(&count); err != nil {
+		t.Fatalf("query sales: %v", err)
+	}
+	if count != 0 {
+		t.Fatalf("expected no return to be recorded when the OKC plugin approved the refund with no receipt evidence, got %d", count)
+	}
+}
+
+// TestPostRefund_OKCPluginApprovesWithEvidence_RefundCompletes is the
+// positive-path sibling of TestPostRefund_OKCPluginApprovesWithNoEvidence_RefundRefused
+// (independent review, ut-docs#1788): with nothing else changed, an OKC
+// plugin that DOES return valid `fiscal_device` evidence (the iade fişi)
+// must let the refund complete as before. Without this test, a future
+// tightening of the ut-docs#1788 check (e.g. also requiring a specific
+// receipt_kind) could start refusing every real Turkish refund with zero
+// test failures — mirrors TestTenderHandler_OKCPluginReceivesBasketDetail's
+// (pos_api_test.go) role as the sale-side happy-path pin.
+func TestPostRefund_OKCPluginApprovesWithEvidence_RefundCompletes(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	// min_pos_version/api_version/published_at are NOT NULL on the real
+	// plugin_catalog table (ut-docs#1677).
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES ('com.universaltill.tax-tr', '1.0.0', 'Turkiye fiscal device', 'okc', 'wasm', 'plugin.wasm', 'https://example.test/tax-tr.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES ('com.universaltill.tax-tr', 'Turkiye fiscal device', '1.0.0', 'plugin.wasm', 'wasm', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, trigger_event, is_active)
+	          VALUES ('e1', 'com.universaltill.tax-tr', 'okc', 'Yazarkasa (OKC)', 'payment', 'payment.okc.requested', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_hooks (id, plugin_id, event, action, is_active)
+	          VALUES ('h1', 'com.universaltill.tax-tr', 'payment.okc.refund', 'handle_refund', 1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_permissions (id, plugin_id, permission, granted)
+	          VALUES ('p1', 'com.universaltill.tax-tr', 'events:receive', 1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers() // process-global singleton; isolate from other tests using the same plugin id/event
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.okc.refund", plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-tr",
+		[]string{"payment.okc.refund"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			// Approved WITH a real receipt -- the iade fişi a well-behaved
+			// device plugin actually returns.
+			return json.RawMessage(`{"provider":"okc","outcome":"approved","fiscal_device":{"receipt_no":"0000123","receipt_kind":"iade_fisi"}}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=2&method=okc"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (refund completes -- valid fiscal-device evidence provided), got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales WHERE sale_type = 'return'`).Scan(&count); err != nil {
+		t.Fatalf("query sales: %v", err)
+	}
+	if count != 1 {
+		t.Fatalf("expected exactly one return to be recorded when the OKC plugin approved the refund with valid receipt evidence, got %d", count)
+	}
+
+	var receiptOnFile string
+	if err := dp.Db.QueryRow(`SELECT receipt_no FROM fiscal_device_receipts`).Scan(&receiptOnFile); err != nil {
+		t.Fatalf("query fiscal_device_receipts: %v", err)
+	}
+	if receiptOnFile != "0000123" {
+		t.Fatalf("expected the device's receipt number persisted against the return, got %q", receiptOnFile)
+	}
+}
+
 // ut-docs#944: CompleteSale's own failure used to leak raw Go/SQL error text
 // via http.Error(w, err.Error(), 400). Forced here by dropping
 // stock_movements -- a table CompleteSale's own transaction writes to

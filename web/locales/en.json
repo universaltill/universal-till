@@ -623,6 +623,7 @@
   "refund.col.sold": "Sold",
   "refund.error.fiscal_never_configured": "Refund not completed: this shop is set to record real sales as its country's legal system of record, but no fiscal-signing device is configured, so the till will not record this refund. Set up your country's required fiscal-signing device — your own hardware, your own cloud account, or a managed subscription, where available — or ask an administrator to take the shop out of live-sales mode until it's ready.",
   "refund.error.fiscal_tse_failing": "Refund not completed: the shop's fiscal-signing device is currently reported as failing, so the till will not record this refund. An owner (admin) can grant a temporary, time-limited override, or try again once the device is working.",
+  "refund.error.fiscal_device_no_receipt": "The fiscal device didn't confirm a receipt for this refund — check the device before trying again",
   "refund.error.provider_declined": "The payment provider declined this refund — try again or choose another method",
   "refund.error.server": "Something went wrong. Please try again.",
   "refund.fully_refunded": "fully refunded",
