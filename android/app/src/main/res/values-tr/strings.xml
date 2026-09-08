@@ -7,4 +7,5 @@
     <string name="notification_channel_name">Universal Till servisi</string>
     <string name="kiosk_pin_not_engaged">Kiosk kilidi etkin değil — bu cihaz güvenli değil</string>
     <string name="external_link_failed">Bağlantı tarayıcıda açılamadı.</string>
+    <string name="bluetooth_settings_blocked_in_lockdown">Önce kilit modundan çıkın — kasa kilitliyken Android’in Bluetooth ayarları açılamaz.</string>
 </resources>

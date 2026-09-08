@@ -17,4 +17,9 @@
          can fail on a device with no browser app; the operator has to be told,
          otherwise the tap looks exactly like the silent no-op this ticket fixed. -->
     <string name="external_link_failed">Couldn’t open the link in a browser.</string>
+    <!-- ut-docs#1751 (review finding): under screen pinning, Android blocks
+         startActivity into another package with no exception at all, so the
+         page's "Open Bluetooth settings" button would be a silent no-op —
+         precisely the dead end this card exists to remove. -->
+    <string name="bluetooth_settings_blocked_in_lockdown">Exit lockdown first — Android’s Bluetooth settings can’t open while the till is locked.</string>
 </resources>

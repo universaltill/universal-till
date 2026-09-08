@@ -24,5 +24,9 @@ Bluetooth barkod okuyucuyu veya teraziyi kasayla POS'un içinden eşleştirin �
 - Cihaz PIN isterse buradan eşleştirilemez. Neredeyse her Bluetooth okuyucu ve terazi PIN'siz eşleşir; ısrar eden nadir bir cihaz için kurulumu yapan kişiye danışın.
 - Menzil dışındaki ya da kapalı bir cihaz yalnızca *bağlı değil* olarak görünür; bu asla bir satışı ya da kasadaki başka bir şeyi durdurmaz.
 - Bluetooth'u olmayan bir kasada (adaptör yok ya da Bluetooth hizmeti çalışmıyor) sayfa bunu söyler ve tarama düğmesi kapalıdır — başka hiçbir şey değişmez.
-- Android bir kasada Bluetooth eşleştirme henüz kullanılamıyor — sayfa bunu açıkça söyler, var olmayan bir donanım veya ayar sorunu ima etmeden.
+- Android tabanlı bir kasada (tablet), sayfa aynı şekilde çalışır; yalnızca Android'in kendisinin dayattığı üç şey vardır:
+    - **Bluetooth kapalıysa**, sayfa bunu söyler ve **Bluetooth aç** düğmesini sunar. Ardından Android onayınızı ister — hiçbir uygulamanın Bluetooth'u kendiliğinden açmasına izin verilmez, bu yüzden kasa bu onayı atlayamaz.
+    - **İlk seferde** sayfa, bu kasaya henüz Bluetooth kullanma izni verilmediğini söyler ve **Bluetooth erişim izni ver** düğmesini sunar; Android yalnızca siz bu düğmeye bastığınızda sorar. Reddederseniz sayfa bunu söyler ve düğmeye yeniden basabilirsiniz; "bir daha sorma" dediyseniz sizi uygulamanın kendi izin ekranına götürür.
+    - **Unut** uygulamanın içinden çalışmayabilir. Android, uygulamalara eşleştirmeyi kaldırmak için desteklenen bir yol vermez; bu yüzden bazı Android sürümlerinde başarılı olur, diğerlerinde sayfa bunu açıkça söyler ve bunu orada yapmanız için **Bluetooth ayarlarını aç** düğmesini verir. Her iki durumda da, hâlâ eşleştirilmiş bir cihazı unuttuğunu asla iddia etmez.
+- Bu üç düğme yalnızca kasanın kendisinde görünür. Bu sayfayı ağdaki başka bir bilgisayardan açarsanız neyin yanlış olduğunu yine görürsünüz, ancak değişikliğin kasada yapılması gerekir.
 - Eşleştirme ve unutma, kimin yaptığıyla birlikte denetim izine kaydedilir.

@@ -126,6 +126,19 @@ func registerBluetoothDevices(mux *http.ServeMux, d *common.Deps) {
 			apiError(w, http.StatusServiceUnavailable, "bluetooth_access_denied")
 		case errors.Is(err, bluetooth.ErrUnsupportedPlatform):
 			apiError(w, http.StatusServiceUnavailable, "bluetooth_unsupported_platform")
+		// ut-docs#1751. Each of these three is a different thing the person
+		// at the till does next, which is the whole reason they are not
+		// folded into the cases above: switch the radio on, answer a
+		// permission prompt, or unpair in the OS's own settings. 403 for
+		// the permission case because it is genuinely "you have not been
+		// allowed", not "this is temporarily out"; 409 for forget because
+		// the request is well-formed and simply cannot be satisfied here.
+		case errors.Is(err, bluetooth.ErrAdapterOff):
+			apiError(w, http.StatusServiceUnavailable, "bluetooth_adapter_off")
+		case errors.Is(err, bluetooth.ErrPermissionRequired):
+			apiError(w, http.StatusForbidden, "bluetooth_permission_required")
+		case errors.Is(err, bluetooth.ErrForgetUnsupported):
+			apiError(w, http.StatusConflict, "bluetooth_forget_unsupported")
 		case errors.Is(err, bluetooth.ErrNotFound):
 			apiError(w, http.StatusNotFound, "bluetooth_not_found")
 		case errors.Is(err, bluetooth.ErrPairingFailed):
@@ -170,11 +183,13 @@ func registerBluetoothDevices(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		var (
-			devices      []bluetooth.Device
-			unavailable  bool
-			accessDenied bool
-			unsupported  bool
-			errKey       string
+			devices            []bluetooth.Device
+			unavailable        bool
+			accessDenied       bool
+			unsupported        bool
+			adapterOff         bool
+			permissionRequired bool
+			errKey             string
 		)
 		c, err := newBluetoothClient()
 		if err == nil {
@@ -200,6 +215,19 @@ func registerBluetoothDevices(mux *http.ServeMux, d *common.Deps) {
 			// it (ut-docs#1643). Distinct from `unavailable`, whose notice
 			// wrongly implies a hardware/service fix would help.
 			unsupported = true
+		case errors.Is(err, bluetooth.ErrAdapterOff):
+			// ut-docs#1751: the radio is present and reachable, just off.
+			// Deliberately NOT `unavailable`: that notice says this till
+			// has no Bluetooth, so an operator who has already switched it
+			// on in the OS settings reads it as the app being broken —
+			// which is exactly what was reported. This state is the one
+			// the operator can clear themselves, and the page offers it.
+			adapterOff = true
+		case errors.Is(err, bluetooth.ErrPermissionRequired):
+			// Distinct from accessDenied, whose notice names the ADR-0078
+			// D-Bus policy file — a packaging fault that has no meaning on
+			// a tablet, where the fix is a permission prompt.
+			permissionRequired = true
 		default:
 			log.Printf("[bluetooth] list failed: %v", err)
 			errKey = "bluetoothdevices.list_error"
@@ -208,14 +236,16 @@ func registerBluetoothDevices(mux *http.ServeMux, d *common.Deps) {
 			devices = []bluetooth.Device{}
 		}
 		httpx.Render("ui/pages/bluetooth_devices.html", map[string]any{
-			"title":        "Bluetooth devices",
-			"theme":        d.CurrentState().Theme,
-			"menuItems":    d.MenuSnapshot(),
-			"devices":      devices,
-			"unavailable":  unavailable,
-			"accessDenied": accessDenied,
-			"unsupported":  unsupported,
-			"errKey":       errKey,
+			"title":              "Bluetooth devices",
+			"theme":              d.CurrentState().Theme,
+			"menuItems":          d.MenuSnapshot(),
+			"devices":            devices,
+			"unavailable":        unavailable,
+			"accessDenied":       accessDenied,
+			"unsupported":        unsupported,
+			"adapterOff":         adapterOff,
+			"permissionRequired": permissionRequired,
+			"errKey":             errKey,
 		})(w, r)
 	})
 

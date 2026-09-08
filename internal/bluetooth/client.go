@@ -104,6 +104,31 @@ var (
 	// actively wrong here — the hardware can be present and healthy, the
 	// feature simply isn't implemented for this platform yet.
 	ErrUnsupportedPlatform = errors.New("bluetooth: not supported on this platform")
+	// ErrAdapterOff: the adapter exists and this till can reach it, but the
+	// radio is switched off (ut-docs#1751). Android-only in practice — the
+	// D-Bus path reports a powered-down adapter as ErrUnavailable because
+	// BlueZ needs an admin, not the person standing at the till, to change
+	// it. Kept distinct because it is the one degraded state the operator
+	// can clear themselves, in one tap, from the page they are already on:
+	// ErrUnavailable's "no Bluetooth on this till" wording sends them to
+	// look for a hardware or service fault that does not exist. This is
+	// the exact misdiagnosis ut-docs#1751 was filed for.
+	ErrAdapterOff = errors.New("bluetooth: the adapter is switched off")
+	// ErrPermissionRequired: the platform refused because this app has not
+	// been granted the runtime permission it needs to scan or connect
+	// (Android's BLUETOOTH_SCAN/BLUETOOTH_CONNECT). Distinct from
+	// ErrAccessDenied, whose message names the ADR-0078 D-Bus policy file —
+	// meaningless on a tablet, and it points an operator at a packaging
+	// fault when the actual fix is a permission prompt they can answer.
+	ErrPermissionRequired = errors.New("bluetooth: permission to use Bluetooth has not been granted")
+	// ErrForgetUnsupported: this platform has no API an ordinary app may
+	// call to remove a bond. Android is the case: BluetoothDevice.removeBond
+	// is hidden and this app targets an SDK level where the hidden-API
+	// blocklist rejects the reflective call. Reporting it as a generic
+	// failure would be a lie of the useful-sounding kind — the operator CAN
+	// unpair, just in Android's own settings, so the page says that and
+	// takes them there.
+	ErrForgetUnsupported = errors.New("bluetooth: unpairing is not supported on this platform")
 )
 
 // maxCandidates caps how many devices one Scan reports. A busy shop floor

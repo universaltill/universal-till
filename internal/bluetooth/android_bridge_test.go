@@ -495,7 +495,7 @@ func TestClassifyBridgeErr_UnrecognizedMessagePassesThrough(t *testing.T) {
 	if !errors.Is(got, boom) {
 		t.Fatalf("classifyBridgeErr(unrecognized) = %v, want it to still wrap the original error", got)
 	}
-	for _, sentinel := range []error{ErrAccessDenied, ErrUnavailable, ErrNotFound, ErrPairingFailed, ErrUnsupportedPlatform} {
+	for _, sentinel := range []error{ErrAccessDenied, ErrUnavailable, ErrNotFound, ErrPairingFailed, ErrUnsupportedPlatform, ErrAdapterOff, ErrPermissionRequired, ErrForgetUnsupported} {
 		if errors.Is(got, sentinel) {
 			t.Fatalf("classifyBridgeErr(unrecognized) wrongly matches %v", sentinel)
 		}
@@ -517,5 +517,83 @@ func TestAndroidClient_ClassifiedErrorSurfacesThroughListDevices(t *testing.T) {
 	_, err := c.ListDevices(context.Background())
 	if !errors.Is(err, ErrAccessDenied) {
 		t.Fatalf("ListDevices err = %v, want it to wrap ErrAccessDenied", err)
+	}
+}
+
+// ut-docs#1751: three states the Linux backend never had to express,
+// because BlueZ has no equivalent of "the radio is switched off but
+// present", "the app was never granted permission to look" or "this
+// platform has no API to unpair at all". Each maps to a different thing
+// the operator does next, so each needs its own sentinel — reusing
+// ErrUnavailable for an adapter that is merely off is exactly the
+// misdiagnosis this card was filed for: its notice implies a hardware or
+// service fix, and the operator had already switched Bluetooth on.
+func TestClassifyBridgeErr_AndroidOnlyPrefixesMapToSentinels(t *testing.T) {
+	cases := []struct {
+		msg  string
+		want error
+	}{
+		{"ADAPTER_OFF: BluetoothAdapter.isEnabled() == false", ErrAdapterOff},
+		{"PERMISSION_REQUIRED: BLUETOOTH_SCAN not granted", ErrPermissionRequired},
+		{"FORGET_UNSUPPORTED: removeBond is not reachable on this API level", ErrForgetUnsupported},
+	}
+	for _, tc := range cases {
+		t.Run(tc.msg, func(t *testing.T) {
+			got := classifyBridgeErr(errors.New(tc.msg))
+			if !errors.Is(got, tc.want) {
+				t.Fatalf("classifyBridgeErr(%q) = %v, want it to wrap %v", tc.msg, got, tc.want)
+			}
+		})
+	}
+}
+
+// The whole point of the new sentinels is that they are NOT the old ones:
+// a page that renders "no Bluetooth on this till" for a radio the operator
+// can switch on in one tap is the defect, not a cosmetic difference.
+func TestClassifyBridgeErr_AndroidOnlySentinelsAreDistinct(t *testing.T) {
+	cases := map[string][]error{
+		"ADAPTER_OFF: off":                 {ErrUnavailable, ErrAccessDenied, ErrUnsupportedPlatform},
+		"PERMISSION_REQUIRED: not granted": {ErrUnavailable, ErrAdapterOff, ErrUnsupportedPlatform},
+		"FORGET_UNSUPPORTED: no API":       {ErrUnavailable, ErrAccessDenied, ErrNotFound, ErrPairingFailed},
+	}
+	for msg, mustNotMatch := range cases {
+		t.Run(msg, func(t *testing.T) {
+			got := classifyBridgeErr(errors.New(msg))
+			for _, sentinel := range mustNotMatch {
+				if errors.Is(got, sentinel) {
+					t.Fatalf("classifyBridgeErr(%q) wrongly also matches %v", msg, sentinel)
+				}
+			}
+		})
+	}
+}
+
+// The separator is part of the contract, not incidental formatting: the
+// Kotlin side builds its messages as "TOKEN: detail" (BluetoothBridgeImpl's
+// BridgeError), and classifyBridgeErr matches on token+": ". Without this
+// test, changing the match to a bare token prefix passes every other test
+// here while silently classifying an unrelated message that merely starts
+// with the same word (review finding, ut-docs#1751).
+func TestClassifyBridgeErr_RequiresTheColonSeparator(t *testing.T) {
+	for _, msg := range []string{
+		"ADAPTER_OFF",                        // no separator at all
+		"ADAPTER_OFFERED something happened", // token is a prefix of a longer word
+		"PERMISSION_REQUIREDish",
+		"UNAVAILABLE-adapter is null", // wrong separator
+	} {
+		t.Run(msg, func(t *testing.T) {
+			got := classifyBridgeErr(errors.New(msg))
+			for _, sentinel := range []error{
+				ErrAdapterOff, ErrPermissionRequired, ErrForgetUnsupported,
+				ErrUnavailable, ErrAccessDenied, ErrNotFound, ErrPairingFailed,
+			} {
+				if errors.Is(got, sentinel) {
+					t.Fatalf("classifyBridgeErr(%q) classified as %v; only a real %q prefix may classify", msg, sentinel, "TOKEN: ")
+				}
+			}
+			if got == nil {
+				t.Fatal("an unclassified message must still be a real error")
+			}
+		})
 	}
 }
