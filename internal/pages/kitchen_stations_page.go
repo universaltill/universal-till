@@ -131,22 +131,22 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 		ctx := r.Context()
 		stations, err := posRepo.ListKitchenStations(ctx)
 		if err != nil {
-			http.Error(w, "failed to load kitchen stations", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
 		categories, err := catRepo.ListCategories(ctx)
 		if err != nil {
-			http.Error(w, "failed to load categories", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
 		catRoutes, err := posRepo.AllCategoryStationRoutes(ctx)
 		if err != nil {
-			http.Error(w, "failed to load category routing", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
 		overrides, err := posRepo.ListItemStationOverrides(ctx)
 		if err != nil {
-			http.Error(w, "failed to load item overrides", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
 
@@ -183,7 +183,7 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 			}
 			found, err := posRepo.SearchActiveItems(ctx, q, 0, 20)
 			if err != nil {
-				http.Error(w, "failed to search items", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
+				httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 				return
 			}
 			for _, it := range found {
