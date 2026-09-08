@@ -1,37 +1,31 @@
 package catimport
 
 import (
+	"archive/zip"
 	"bytes"
 	"errors"
+	"io"
 	"testing"
 
 	"github.com/xuri/excelize/v2"
 )
 
 // buildXLSX writes rows (headers first) into a fresh in-memory workbook's
-// default sheet ("Sheet1") and returns the encoded bytes. Test helper only.
+// default sheet ("Sheet1") and returns the encoded bytes. Test helper only —
+// every multi-sheet test (e.g. TestParseXLSX_FirstSheetOnly) builds its
+// workbook directly with excelize instead, since this helper only ever
+// needs to write to the one default sheet.
 func buildXLSX(t *testing.T, rows [][]string) []byte {
-	t.Helper()
-	return buildXLSXSheet(t, "Sheet1", rows)
-}
-
-func buildXLSXSheet(t *testing.T, sheet string, rows [][]string) []byte {
 	t.Helper()
 	f := excelize.NewFile()
 	defer f.Close()
-	if sheet != "Sheet1" {
-		if _, err := f.NewSheet(sheet); err != nil {
-			t.Fatalf("NewSheet: %v", err)
-		}
-		f.SetActiveSheet(0)
-	}
 	for r, row := range rows {
 		for c, v := range row {
 			cell, err := excelize.CoordinatesToCellName(c+1, r+1)
 			if err != nil {
 				t.Fatalf("CoordinatesToCellName: %v", err)
 			}
-			if err := f.SetCellStr(sheet, cell, v); err != nil {
+			if err := f.SetCellStr("Sheet1", cell, v); err != nil {
 				t.Fatalf("SetCellStr: %v", err)
 			}
 		}
@@ -144,6 +138,198 @@ func TestParseXLSX_GermanLocaleNumericPrice(t *testing.T) {
 	}
 	if len(res.Items) != 1 || res.Items[0].PriceMinor != 123456 {
 		t.Fatalf("got %+v, want PriceMinor=123456", res.Items)
+	}
+}
+
+// TestParseXLSX_RoundingDisplayFormatDoesNotChangePrice (review finding,
+// ut-docs#1837): GetRows APPLIES a cell's number format, so a numeric price
+// cell carrying a zero-decimal display format ("#,##0" or "0" — a merchant
+// formatting the column as a plain Number, or an export tool writing one)
+// renders as "1" for a stored 1.4. Reading that would have priced a €1.40
+// item at €1.00 on the operator's real catalog with no warning at all — the
+// same silent money-corruption class ut-docs#586 exists to prevent, just
+// arriving through a spreadsheet instead of a CSV. The numeric columns are
+// therefore read from a raw, unformatted pass. Pinned per-format so a
+// regression names the format that broke.
+func TestParseXLSX_RoundingDisplayFormatDoesNotChangePrice(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		numFmt string
+		stored float64
+		want   int64
+	}{
+		{"zero-decimal number format", "#,##0", 1.4, 140},
+		{"bare zero format", "0", 1.4, 140},
+		{"rounds up when displayed", "0", 0.89, 89},
+		{"grouped two-decimal", "#,##0.00", 1234.56, 123456},
+		{"currency suffix", `#,##0.00\ "€"`, 1234.56, 123456},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			f := excelize.NewFile()
+			defer f.Close()
+			if err := f.SetCellStr("Sheet1", "A1", "Name"); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.SetCellStr("Sheet1", "B1", "Price"); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.SetCellStr("Sheet1", "A2", "Espressomaschine"); err != nil {
+				t.Fatal(err)
+			}
+			if err := f.SetCellValue("Sheet1", "B2", tc.stored); err != nil {
+				t.Fatal(err)
+			}
+			numFmt := tc.numFmt
+			st, err := f.NewStyle(&excelize.Style{CustomNumFmt: &numFmt})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err := f.SetCellStyle("Sheet1", "B2", "B2", st); err != nil {
+				t.Fatal(err)
+			}
+			var buf bytes.Buffer
+			if _, err := f.WriteTo(&buf); err != nil {
+				t.Fatal(err)
+			}
+			res, err := ParseXLSX(bytes.NewReader(buf.Bytes()), int64(buf.Len()), 2, testEnabledIDs, false)
+			if err != nil {
+				t.Fatalf("ParseXLSX: %v", err)
+			}
+			if len(res.Items) != 1 || res.Items[0].PriceMinor != tc.want {
+				t.Fatalf("got %+v, want PriceMinor=%d — the cell's DISPLAY format must never change the imported price", res.Items, tc.want)
+			}
+		})
+	}
+}
+
+// TestParseXLSX_PercentFormattedTaxCell is the other half of the finding
+// above: the tax columns must KEEP the formatted value, because a
+// percent-formatted cell stores 0.19 and reading that raw would parse
+// "successfully" as a 0.19% rate — silently wrong on a compliance-sensitive
+// field (ut-docs#512), where a wrong price at least stays visible on the
+// preview grid.
+func TestParseXLSX_PercentFormattedTaxCell(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+	for cell, v := range map[string]string{"A1": "Name", "B1": "Price", "C1": "Tax rate", "A2": "Widget", "B2": "2.00"} {
+		if err := f.SetCellStr("Sheet1", cell, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.SetCellValue("Sheet1", "C2", 0.19); err != nil {
+		t.Fatal(err)
+	}
+	pct := "0%"
+	st, err := f.NewStyle(&excelize.Style{CustomNumFmt: &pct})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := f.SetCellStyle("Sheet1", "C2", "C2", st); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if _, err := f.WriteTo(&buf); err != nil {
+		t.Fatal(err)
+	}
+	res, err := ParseXLSX(bytes.NewReader(buf.Bytes()), int64(buf.Len()), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseXLSX: %v", err)
+	}
+	if len(res.Items) != 1 || !res.Items[0].HasTax || res.Items[0].TaxRateBP != 1900 {
+		t.Fatalf("got %+v, want a 1900bp (19%%) rate from a percent-formatted cell", res.Items)
+	}
+}
+
+// TestParseXLSX_BlankSeparatorRowSkipped (review finding, ut-docs#1837):
+// encoding/csv drops a blank line, so Parse never produces a row for one;
+// GetRows hands back an empty record instead, which used to become a
+// phantom "missing name and bad price" row on the preview grid for a
+// spreadsheet that a CSV of the same export imported cleanly (AC1).
+func TestParseXLSX_BlankSeparatorRowSkipped(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+	// Row 3 is left entirely empty between the two data rows.
+	for cell, v := range map[string]string{"A1": "Name", "B1": "Price", "A2": "Widget", "B2": "2.00", "A4": "Gadget", "B4": "3.00"} {
+		if err := f.SetCellStr("Sheet1", cell, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	var buf bytes.Buffer
+	if _, err := f.WriteTo(&buf); err != nil {
+		t.Fatal(err)
+	}
+	res, err := ParseXLSX(bytes.NewReader(buf.Bytes()), int64(buf.Len()), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseXLSX: %v", err)
+	}
+	if len(res.Items) != 2 {
+		t.Fatalf("got %d items %+v, want 2 — a blank separator row is not a problem row", len(res.Items), res.Items)
+	}
+	// And byte-for-byte the same outcome the CSV of that export gives.
+	csvRes, err := Parse(bytes.NewReader([]byte("Name,Price\nWidget,2.00\n\nGadget,3.00\n")), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if len(csvRes.Items) != len(res.Items) {
+		t.Fatalf("xlsx produced %d items, the same export as CSV produced %d (AC1: they must agree)", len(res.Items), len(csvRes.Items))
+	}
+	for i := range res.Items {
+		if res.Items[i].Name != csvRes.Items[i].Name || res.Items[i].PriceMinor != csvRes.Items[i].PriceMinor || res.Items[i].Issue != csvRes.Items[i].Issue {
+			t.Errorf("row %d differs: xlsx=%+v csv=%+v", i, res.Items[i], csvRes.Items[i])
+		}
+	}
+}
+
+// TestParseXLSX_DecompressionBombRejected (review finding, ut-docs#1837):
+// excelize's default UnzipSizeLimit is 16GB and ReadZipReader buffers a
+// non-worksheet member whole in RAM, so a small upload declaring a huge
+// member would be allocated in full — an OOM kill of the whole POS process
+// (checkout included) on the Pi-class hardware this ships on, from one
+// upload. Both the sniff and the parse must bound it.
+func TestParseXLSX_DecompressionBombRejected(t *testing.T) {
+	base := buildXLSX(t, [][]string{{"Name", "Price"}, {"Widget", "2.00"}})
+	zr, err := zip.NewReader(bytes.NewReader(base), int64(len(base)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var out bytes.Buffer
+	zw := zip.NewWriter(&out)
+	for _, fh := range zr.File {
+		rc, oerr := fh.Open()
+		if oerr != nil {
+			t.Fatal(oerr)
+		}
+		w, cerr := zw.Create(fh.Name)
+		if cerr != nil {
+			t.Fatal(cerr)
+		}
+		if _, err := io.Copy(w, rc); err != nil {
+			t.Fatal(err)
+		}
+		_ = rc.Close()
+	}
+	w, err := zw.Create("xl/bomb.xml")
+	if err != nil {
+		t.Fatal(err)
+	}
+	chunk := make([]byte, 1<<20) // compresses to almost nothing
+	for written := 0; written <= xlsxMaxUnzipSize; written += len(chunk) {
+		if _, err := w.Write(chunk); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatal(err)
+	}
+	b := out.Bytes()
+	if int64(len(b)) > xlsxMaxUnzipSize/8 {
+		t.Fatalf("the bomb fixture (%d bytes) must stay far smaller than the limit it trips, or it proves nothing", len(b))
+	}
+	if LooksLikeXLSXZip(bytes.NewReader(b), int64(len(b))) {
+		t.Errorf("the sniff accepted a workbook declaring more than %d bytes unzipped", xlsxMaxUnzipSize)
+	}
+	if _, err := ParseXLSX(bytes.NewReader(b), int64(len(b)), 2, testEnabledIDs, false); err == nil {
+		t.Errorf("ParseXLSX accepted a workbook declaring more than %d bytes unzipped", xlsxMaxUnzipSize)
 	}
 }
 

@@ -36,11 +36,48 @@ var (
 	ErrXLSXMergedCells = errors.New("this workbook uses merged cells, which cannot be read reliably")
 )
 
+// xlsxMaxUnzipSize bounds the TOTAL uncompressed size of every member of
+// an uploaded .xlsx before excelize buffers any of it (review finding,
+// ut-docs#1837 — the same decompression-bomb class ParseBkp already guards
+// with bkpMaxMetaSize/bkpMaxDBSize, which this path had no equivalent of).
+// excelize's own default is 16GB (UnzipSizeLimit, templates.go), and
+// ReadZipReader buffers every non-worksheet member whole in RAM: a ~200KB
+// upload declaring a 200MB member is accepted and allocated today,
+// measured, and the default lets that scale to 16GB — an OOM kill of the
+// whole POS process (checkout included) from one manager-gated, or on a
+// first-boot till anonymous, upload. 128MB is far above any real catalog
+// workbook (a measured 8,000-row export with six columns is ~250KB on the
+// wire and a couple of MB unzipped) and far below anything that can hurt
+// the Pi-class hardware this runs on. Worksheet/sharedStrings members above
+// excelize's derived UnzipXMLSizeLimit (min(this, 16MB)) still stream via a
+// temp file that f.Close() removes, so RAM stays bounded well under this
+// even at the cap.
+const xlsxMaxUnzipSize = 128 << 20
+
+// xlsxOpenOptions is the single place both excelize.OpenReader calls on
+// this path (the sniff and the real parse) get their limits from, so the
+// two can never drift apart.
+func xlsxOpenOptions() excelize.Options {
+	return excelize.Options{UnzipSizeLimit: xlsxMaxUnzipSize}
+}
+
 // xlsMagic is the OLE2/CFBF signature every legacy binary Office file
 // (.xls, .doc, .ppt, ...) starts with — distinct from .xlsx's ZIP
 // signature (import_page.go's zipMagic; .xlsx is a ZIP container, .xls is
 // not). Sniffed by LooksLikeLegacyXLS.
 var xlsMagic = []byte{0xD0, 0xCF, 0x11, 0xE0, 0xA1, 0xB1, 0x1A, 0xE1}
+
+// isBlankRow reports whether a worksheet row carries no non-whitespace
+// value in any cell — GetRows's representation of a blank separator row,
+// which encoding/csv drops silently on the CSV path (see ParseXLSX's loop).
+func isBlankRow(rec []string) bool {
+	for _, c := range rec {
+		if strings.TrimSpace(c) != "" {
+			return false
+		}
+	}
+	return true
+}
 
 // LooksLikeLegacyXLS reports whether the first bytes of an upload are a
 // legacy binary .xls (or other OLE2-container Office file). The pages
@@ -64,7 +101,7 @@ func LooksLikeLegacyXLS(header []byte) bool {
 // to ParseBkp's existing ErrBkpMissingFiles → "bkp_unrecognised" message
 // rather than a new, third failure path.
 func LooksLikeXLSXZip(r io.ReaderAt, size int64) bool {
-	f, err := excelize.OpenReader(io.NewSectionReader(r, 0, size))
+	f, err := excelize.OpenReader(io.NewSectionReader(r, 0, size), xlsxOpenOptions())
 	if err != nil {
 		return false
 	}
@@ -84,14 +121,26 @@ func LooksLikeXLSXZip(r io.ReaderAt, size int64) bool {
 //
 // Only the first worksheet is read (AC2) — GetRows already returns each
 // row trimmed to its own extent (ragged, like CSV's FieldsPerRecord=-1).
-// German-locale price/tax cells (AC3) need no special handling here: a
-// genuinely-numeric Excel cell always round-trips through GetRows as a
-// plain dot-decimal string (Excel's own locale-specific *display*
-// formatting, e.g. "1.234,56", is not part of the stored value and
-// excelize does not reproduce it) — and a cell the source stored as
-// German-formatted TEXT is read back as that literal string and goes
-// through ParsePrice exactly like a CSV cell would, which already handles
-// decimal-comma notation (ut-docs#586). A leading title row or trailing
+// A row with no non-empty cell at all is skipped outright, matching
+// encoding/csv's own handling of a blank line so a blank separator row in
+// a spreadsheet doesn't become a phantom "missing name and bad price"
+// problem row the CSV of the same export would never produce (AC1).
+//
+// Cell values (AC3) come from GetRows, which APPLIES each cell's number
+// format — that is what turns a percent-stored tax cell (0.19 under a "0%"
+// format) into the "19%" ParseTaxRateBP expects, and it renders grouped or
+// currency-suffixed money ("1,234.56", "1.234,56 €") into forms ParsePrice
+// already normalises (ut-docs#586). It is NOT safe for money on its own,
+// though: a display format that ROUNDS (e.g. "#,##0" or "0" on a stored
+// 1.4) renders as "1", and importing that would silently price a €1.40
+// item at €1.00 — so the price and stock columns are read from a second,
+// RAW pass (getNum below) and only fall back to the formatted text when
+// the raw cell isn't a plain number (a text-stored German price such as
+// "1.234,56" comes back byte-identical from either pass and goes through
+// ParsePrice exactly like a CSV cell would). Tax deliberately keeps the
+// formatted value: its raw counterpart for a percent-formatted cell is
+// 0.19, which parses "successfully" as 0.19% — silently wrong on a
+// compliance-sensitive field. A leading title row or trailing
 // totals row (AC4) is not specially detected: a title row fails the same
 // "no name column recognised" check a malformed CSV header would
 // (ErrNoNameColumn), and a totals row surfaces the same per-row
@@ -106,7 +155,7 @@ func LooksLikeXLSXZip(r io.ReaderAt, size int64) bool {
 // export doesn't show a literal "'=FOO" — a CSV-round-trip concern that
 // doesn't apply to a third-party spreadsheet export.
 func ParseXLSX(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyIDs []string, useItemNumbersAsBarcodes bool) (Result, error) {
-	f, err := excelize.OpenReader(io.NewSectionReader(r, 0, size))
+	f, err := excelize.OpenReader(io.NewSectionReader(r, 0, size), xlsxOpenOptions())
 	if err != nil {
 		return Result{}, fmt.Errorf("open xlsx: %w", err)
 	}
@@ -152,9 +201,47 @@ func ParseXLSX(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbology
 		return strings.TrimSpace(rec[i])
 	}
 
+	// Second, RAW pass for the numeric columns only — see the doc comment
+	// above for why the formatted pass alone silently rounds money. Skipped
+	// entirely when the file carries neither column, so a workbook that
+	// needs it doesn't pay for one that doesn't.
+	var rawRows [][]string
+	_, hasPrice := idx["price"]
+	_, hasStock := idx["stock"]
+	if hasPrice || hasStock {
+		rawRows, rerr = f.GetRows(sheetName, excelize.Options{RawCellValue: true})
+		if rerr != nil {
+			return Result{}, fmt.Errorf("read raw rows: %w", rerr)
+		}
+	}
+	// getNum returns the value to parse for a numeric column: the raw,
+	// unformatted cell when it is a plain number (no display rounding, no
+	// grouping, no currency suffix), else the formatted text — which is
+	// what a text-stored cell ("1.234,56") and an empty cell both land on.
+	getNum := func(rowNo int, rec []string, field string) string {
+		i, ok := idx[field]
+		if ok && rowNo < len(rawRows) && i < len(rawRows[rowNo]) {
+			if raw := strings.TrimSpace(rawRows[rowNo][i]); raw != "" {
+				if _, err := strconv.ParseFloat(raw, 64); err == nil {
+					return raw
+				}
+			}
+		}
+		return get(rec, field)
+	}
+
 	// Same "first occurrence wins" convention as Parse (ut-docs#1224/#1222).
 	seenForBarcode := map[string]bool{}
-	for _, rec := range rows[1:] {
+	for rowNo, rec := range rows[1:] {
+		rowNo++ // rows[0] is the header; rowNo now indexes rows/rawRows alike
+		// A wholly-empty row is a blank line, not a row with problems:
+		// encoding/csv skips those outright, so Parse never sees one, and a
+		// spreadsheet's own blank separator row must behave the same (AC1)
+		// instead of surfacing a phantom missing-name/bad-price row on the
+		// preview grid for the operator to puzzle over.
+		if isBlankRow(rec) {
+			continue
+		}
 		rawBarcode := get(rec, "barcode")
 		dec, barcodeMatched := normalizeBarcode(rawBarcode, enabledSymbologyIDs)
 		item := ImportItem{
@@ -174,9 +261,9 @@ func ParseXLSX(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbology
 		if v := get(rec, "variation"); v != "" && !strings.EqualFold(v, "regular") && res.Format == "square" {
 			item.Name = strings.TrimSpace(item.Name + " " + v)
 		}
-		price, perr := ParsePrice(get(rec, "price"), currencyDecimals)
+		price, perr := ParsePrice(getNum(rowNo, rec, "price"), currencyDecimals)
 		item.PriceMinor = price
-		if raw := get(rec, "stock"); raw != "" {
+		if raw := getNum(rowNo, rec, "stock"); raw != "" {
 			if qty, err := strconv.ParseFloat(strings.ReplaceAll(raw, ",", ""), 64); err == nil {
 				item.Stock, item.HasStock = qty, true
 			}

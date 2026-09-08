@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/xuri/excelize/v2"
 )
 
@@ -98,6 +99,93 @@ func TestImport_AutoDetectsXLSXUpload_Commit(t *testing.T) {
 	}
 	if name != "Widget" || price != 150 {
 		t.Fatalf("Widget parsed wrong: name=%q price=%d", name, price)
+	}
+}
+
+// TestImport_XLSXUnconfirmedCurrencyGatedAndReparses is the xlsx mirror of
+// TestImport_UnconfirmedCurrency_BkpPathGatedAndReparses (review finding,
+// ut-docs#1837 — the same coverage gap F10 closed for .bkp on ut-docs#970).
+// The currency-confirm branch re-parses the ORIGINAL upload bytes under the
+// confirmed currency's decimal count, and this card added a third case to
+// that switch; nothing exercised it. It is also the one place ParseXLSX is
+// called after the upload's own Seek position has been moved (the hash, the
+// sniff, the first parse), so it proves ParseXLSX's io.ReaderAt access is
+// genuinely offset-independent rather than accidentally working. 5.00 is
+// 500 minor units under GBP (2 decimals) and 5 under IRT (0), so a stale
+// first parse is observable.
+func TestImport_XLSXUnconfirmedCurrencyGatedAndReparses(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	t.Cleanup(func() { httpx.InitCurrency("GBP") })
+	dp := newImportTestDepsWithCurrencyState(t, false)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	xlsxBytes := buildXLSXForPagesTest(t, [][]string{
+		{"Name", "SKU", "Price", "Category"},
+		{"Latte Macchiato", "LM1", "5.00", "Getränke"},
+	})
+
+	// First attempt: unconfirmed currency must prompt, not import.
+	body, ct := multipartFile(t, "catalog.xlsx", xlsxBytes, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("unconfirmed xlsx commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	var n int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE sku = 'LM1'`).Scan(&n); err != nil {
+		t.Fatalf("count items: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("unconfirmed xlsx commit wrote %d rows, want 0 (it must prompt first)", n)
+	}
+
+	// Confirm as IRT (0 decimals, unlike GBP's 2).
+	body2, ct2 := multipartFile(t, "catalog.xlsx", xlsxBytes, map[string]string{"commit": "1", "confirm_currency": "IRT"})
+	req2 := httptest.NewRequest(http.MethodPost, "/api/import", body2)
+	req2.Header.Set("Content-Type", ct2)
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("confirmed xlsx commit: code %d body %s", rec2.Code, rec2.Body.String())
+	}
+	var priceMinor int64
+	if err := dp.Db.QueryRow(`SELECT base_price FROM items WHERE sku = 'LM1'`).Scan(&priceMinor); err != nil {
+		t.Fatalf("item not created: %v (body: %s)", err, rec2.Body.String())
+	}
+	if priceMinor != 5 {
+		t.Fatalf("xlsx price = %d minor units, want 5 (IRT, 0 decimals — proves the workbook bytes were re-parsed under the confirmed currency, not just relabeled)", priceMinor)
+	}
+}
+
+// TestImport_BkpStillRoutesToBkpParserAfterXLSXSniff guards the rewiring
+// this card did to the format branch (review finding, ut-docs#1837): isBkp
+// stopped being "the upload is a ZIP" and became "a ZIP that LooksLikeXLSXZip
+// rejected". A .bkp backup is a plain ZIP with the identical magic bytes, so
+// a sniff that got too eager would silently send the pilot's own till backup
+// through the workbook parser and fail an import that works today.
+func TestImport_BkpStillRoutesToBkpParserAfterXLSXSniff(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	body, ct := multipartFile(t, "Backup 2026-08-09.bkp", buildBkpZipForPagesTest(t), nil)
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK {
+		t.Fatalf("preview: code %d body %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Latte") {
+		t.Fatalf(".bkp must still route to ParseBkp after the xlsx sniff, got: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "worksheet") {
+		t.Fatalf(".bkp preview must not claim a worksheet was read, got: %s", rec.Body.String())
 	}
 }
 
