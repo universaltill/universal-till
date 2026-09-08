@@ -29,6 +29,22 @@ import (
 	"github.com/universaltill/universal-till/web/locales"
 )
 
+// baseMenu is the Menu launcher's core tile list (ut-docs#1829: no "nav.home"
+// entry -- the menu screen's own back_to_sale button, "← Back to sale", is
+// the only way back to selling; a redundant "Home"/"Start" tile that led to
+// the same screen read as meaningless and named it a third, inconsistent way).
+var baseMenu = []common.MenuItem{
+	{Href: "/designer", Label: "nav.designer"},
+	{Href: "/inventory", Label: "nav.inventory"},
+	{Href: "/shifts", Label: "nav.shifts"},
+	{Href: "/journal", Label: "nav.journal"},
+	{Href: "/orders", Label: "nav.orders"},
+	{Href: "/reports", Label: "nav.reports"},
+	{Href: "/settings", Label: "nav.settings"},
+	{Href: "/plugins", Label: "nav.plugins"},
+	{Href: "/catalog", Label: "nav.catalog"},
+}
+
 // Init builds the page mux and returns the *common.Deps instance it wired
 // every handler with, so app.Run can join Deps.AsyncWork (best-effort
 // print/kitchen/invoice goroutines started after a request already
@@ -188,21 +204,6 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	}, resolver)
 	kioskEngine.SetTaxRateAsker(taxAsker)
 	kioskEngine.SetChargePolicyAsker(chargeAsker)
-
-	// Labels are locale keys; the nav renders them through T (unknown keys —
-	// e.g. plugin menu labels from manifests — pass through unchanged).
-	baseMenu := []common.MenuItem{
-		{Href: "/", Label: "nav.home"},
-		{Href: "/designer", Label: "nav.designer"},
-		{Href: "/inventory", Label: "nav.inventory"},
-		{Href: "/shifts", Label: "nav.shifts"},
-		{Href: "/journal", Label: "nav.journal"},
-		{Href: "/orders", Label: "nav.orders"},
-		{Href: "/reports", Label: "nav.reports"},
-		{Href: "/settings", Label: "nav.settings"},
-		{Href: "/plugins", Label: "nav.plugins"},
-		{Href: "/catalog", Label: "nav.catalog"},
-	}
 
 	// One auth service for the whole till: login, sessions AND manager-PIN
 	// approvals share a single device-wide lockout.
