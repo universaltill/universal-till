@@ -107,6 +107,9 @@ func (d *BridgeDriver) Sale(req SaleRequest) (Evidence, error) {
 	if ev.ReceiptKind == "" {
 		ev.ReceiptKind = "mali_fis"
 	}
+	if strings.TrimSpace(ev.ReceiptNo) == "" {
+		return Evidence{}, ErrNoReceipt
+	}
 	return normalizeEvidence(ev, d.Config), nil
 }
 
@@ -121,6 +124,9 @@ func (d *BridgeDriver) Refund(req RefundRequest) (Evidence, error) {
 	ev := resp.evidence()
 	if ev.ReceiptKind == "" {
 		ev.ReceiptKind = "iade_fisi"
+	}
+	if strings.TrimSpace(ev.ReceiptNo) == "" {
+		return Evidence{}, ErrNoReceipt
 	}
 	return normalizeEvidence(ev, d.Config), nil
 }

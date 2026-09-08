@@ -130,6 +130,41 @@ func TestBridgeSale_SilentDeviceTimesOut(t *testing.T) {
 	}
 }
 
+// A device that says {"ok":true} but gives no usable receipt number must
+// be treated exactly like a decline — no receipt, no sale (ut-docs#1763).
+func TestBridgeSale_RefusedWhenReceiptNoEmpty(t *testing.T) {
+	empty := ""
+	s := startSim(t, sim.Options{ReceiptNoOverride: &empty})
+	d := okc.NewBridgeDriver(netTransport{}, okc.Config{Host: "127.0.0.1", Port: s.Port()})
+	if _, err := d.Sale(sale(1)); !errors.Is(err, okc.ErrNoReceipt) {
+		t.Fatalf("err = %v, want ErrNoReceipt", err)
+	}
+	if n := len(s.Log()); n != 0 {
+		t.Fatalf("a receiptless answer must not count as printed, got %d", n)
+	}
+}
+
+// Whitespace-only is just as unusable as empty — trimmed, not just
+// string-equal-to-"".
+func TestBridgeSale_RefusedWhenReceiptNoWhitespace(t *testing.T) {
+	whitespace := "   "
+	s := startSim(t, sim.Options{ReceiptNoOverride: &whitespace})
+	d := okc.NewBridgeDriver(netTransport{}, okc.Config{Host: "127.0.0.1", Port: s.Port()})
+	if _, err := d.Sale(sale(1)); !errors.Is(err, okc.ErrNoReceipt) {
+		t.Fatalf("err = %v, want ErrNoReceipt", err)
+	}
+}
+
+// Same invariant on the refund leg.
+func TestBridgeRefund_RefusedWhenReceiptNoEmpty(t *testing.T) {
+	empty := ""
+	s := startSim(t, sim.Options{ReceiptNoOverride: &empty})
+	d := okc.NewBridgeDriver(netTransport{}, okc.Config{Host: "127.0.0.1", Port: s.Port()})
+	if _, err := d.Refund(okc.RefundRequest{RequestID: "r-1", Amount: 1500, OriginalReceipt: "0000001"}); !errors.Is(err, okc.ErrNoReceipt) {
+		t.Fatalf("err = %v, want ErrNoReceipt", err)
+	}
+}
+
 // ut-docs#1762: models the real failure -- the device is genuinely slow (a
 // real chip-and-PIN tender), the till's first attempt gives up before the
 // device answers, and a retry with the SAME request id must get the

@@ -346,12 +346,12 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		}
 		list, err := invRepo.List(r.Context(), from, to)
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "invoice.error.server", "invoice", err) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "invoice.error.server", err)
 			return
 		}
 		net, tax, gross, err := invRepo.Totals(r.Context(), from, to)
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "invoice.error.server", "invoice", err) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "invoice.error.server", err)
 			return
 		}
 		httpx.Render("ui/pages/invoices.html", map[string]any{
@@ -423,7 +423,7 @@ func registerInvoices(mux *http.ServeMux, d *common.Deps) {
 		}
 		sale, _, err := posRepo.GetSaleDetailByID(r.Context(), inv.SaleID)
 		if err != nil {
-			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "invoice.error.server", "invoice", err) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "invoice.error.server", err)
 			return
 		}
 		var seller invoiceSeller

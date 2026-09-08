@@ -676,7 +676,8 @@ func TestPluginSettingsPage_GET_UnparseableStoredValueFallsBackToRawInput(t *tes
 }
 
 // --- ut-docs#946 (924 increment 4): raw err.Error() leaks now route through
-// common.LogAndLocalizedError. Each test below forces a REAL failure (a
+// httpx.RenderError (ut-docs#1663 migrated these page-route sites off
+// common.LogAndLocalizedError). Each test below forces a REAL failure (a
 // dropped table or a read-only connection, never a mock/stub repo) at one
 // specific call site and asserts the localized "plugins.error.server"
 // copy appears while the raw SQL/Go error text does not.

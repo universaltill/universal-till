@@ -51,7 +51,7 @@ func registerPromotions(mux *http.ServeMux, d *common.Deps) {
 	renderPromotions := func(w http.ResponseWriter, r *http.Request, errKey string) {
 		list, err := posRepo.ListPromotionsForAdmin(r.Context())
 		if err != nil {
-			http.Error(w, "failed to load promotions", http.StatusInternalServerError) // page-error:allow not yet migrated, tracked in ut-docs#1458
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
 		views := make([]promotionView, 0, len(list))

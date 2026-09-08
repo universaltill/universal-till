@@ -45,17 +45,23 @@ Existing payment plugins ignore the extra fields.
  "receipt_no":"0000042","receipt_kind":"mali_fis","z_no":7,"issued_at":"2026-09-03T10:12:00+03:00"}}
 ```
 
-Core persists `fiscal_device` verbatim (`data.FiscalDeviceReceipt`); evidence
-without `receipt_no` is ignored. `receipt_kind` is `mali_fis` for a sale,
-`iade_fisi` for a refund, `bilgi_fisi` when the device printed an
-information slip instead (invoice-documented sale).
+Core persists `fiscal_device` verbatim (`data.FiscalDeviceReceipt`).
+`receipt_kind` is `mali_fis` for a sale, `iade_fisi` for a refund,
+`bilgi_fisi` when the device printed an information slip instead
+(invoice-documented sale).
 
 **Rules the plugin enforces:** the ÖKC method must take the whole sale
 (`amount == total`) — the device prints one fiscal receipt per sale, so a
 split tender across the device and another method is refused; a device that
 declines, times out or is unreachable refuses the tender (basket kept, the
 cashier retries); a retried authorize carries the same event id, which the
-device side uses as an idempotency key so nothing prints twice.
+device side uses as an idempotency key so nothing prints twice; **a device
+answer with no usable `receipt_no` (empty, missing, or whitespace-only)
+refuses the tender exactly like a decline** (ut-docs#1763) — `{"ok":true}`
+alone is not a receipt, and a bridge author's wire response MUST NOT treat
+it as one. This is enforced in the reference `bridge` driver itself
+(`okc.BridgeDriver.Sale`/`Refund`), so it holds regardless of what core does
+with the answer.
 
 ## Drivers (`okc.driver`)
 
