@@ -58,7 +58,6 @@ const genericFallbackIcon = "puzzle"
 
 // iconFor maps a nav route to a touch-friendly emoji glyph.
 var iconFor = map[string]string{
-	"/":                 "🧾",
 	"/designer":         "🎨",
 	"/inventory":        "📦",
 	"/shifts":           "🕒",

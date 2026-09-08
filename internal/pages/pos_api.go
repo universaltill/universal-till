@@ -700,6 +700,45 @@ func pluginReportedTipAmount(resp json.RawMessage) (amount int64, ok bool) {
 	return *parsed.TipAmount, true
 }
 
+// resolveReceiptScanDestination is the ut-docs#1818 scan-routing decision:
+// given a code the caller has already confirmed is a real receipt number,
+// it returns EITHER a redirect path (the scan should land there) OR a
+// locale toast key (the scan should stay on the sale screen and say so),
+// never both.
+//
+// There is deliberately no "already refunded" branch: a refund never sets
+// sales.status to "refunded" -- it inserts a separate sale_type='return'
+// row (refund_page.go) -- so that state is unreachable from real data; an
+// earlier draft of this function carried one anyway (review finding,
+// ut-docs#1818).
+func resolveReceiptScanDestination(ctx context.Context, d *common.Deps, repo *data.POSRepo, code string) (redirectPath, toastKey string) {
+	detail, found, err := repo.GetSaleDetail(ctx, code)
+	if err != nil || !found {
+		// ReceiptExists just said yes; a read failure or a miss right after
+		// is a genuine DB hiccup, not a business fact about this sale -- say
+		// so honestly rather than claim "not completed" for a sale whose
+		// status was never actually read. Still never a hard error response
+		// (ADR-0003: a scan must never block on this).
+		return "", "pos.toast.receipt_read_error"
+	}
+	if detail.SaleType != "sale" || detail.Status != "completed" {
+		return "", "pos.toast.receipt_not_completed"
+	}
+	status, tracked := latestOrderStatusForReceipt(ctx, d, repo, code)
+	if !tracked {
+		// No kitchen-status tracking on this sale -- today's behaviour.
+		return "/refund/" + url.PathEscape(code), ""
+	}
+	switch status {
+	case pos.OrderStatusCancelled:
+		return "", "pos.toast.receipt_order_cancelled"
+	case pos.OrderStatusCollected:
+		return "/refund/" + url.PathEscape(code), ""
+	default: // new, preparing, ready
+		return "/orders/" + url.PathEscape(code), ""
+	}
+}
+
 func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewPOSRepo(d.Db)
 	mux.HandleFunc("/api/pos/scan", func(w http.ResponseWriter, r *http.Request) {
@@ -772,6 +811,57 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		// If the scan is a Gutschein (voucher) barcode, resolve it and offer
+		// its balance as tender -- no separate "voucher mode" (ut-docs#1833).
+		// Checked here, before item resolution, so looksLikeVoucherCode's
+		// "GS-" match is tried before any product/promo/refund path gets a
+		// chance at the code (see its doc comment for why this ordering can
+		// never collide with a real product or customer scan). All three
+		// outcomes below return directly -- none of them may fall through to
+		// the item/promo/refund branches further down.
+		if looksLikeVoucherCode(code) {
+			// Same two-step resolution GET /api/vouchers/{id} uses
+			// (voucher_api.go): a local read first, then the cross-till
+			// primary fallback (voucher_sync_proxy.go, ut-docs#1668) on a
+			// genuine local miss -- offline-first and satellite-till-safe
+			// for free, no new network path introduced here.
+			v, err := repo.GetVoucherBalance(r.Context(), nil, code)
+			found := err == nil
+			if !found && errors.Is(err, data.ErrVoucherNotFound) {
+				if primaryV, ok := fetchVoucherFromPrimary(r.Context(), d, voucherProxyClient, code); ok {
+					v, found = primaryV, true
+				}
+			}
+			switch {
+			case found && v.Status == "active" && v.BalanceMinor > 0:
+				// Stash the pending voucher on the engine (internal/pos)
+				// so the sale screen can offer its balance as a pay-grid
+				// tender option -- cleared on sale completion/reset the
+				// same way CustomerID is (pos.Service.resetLocked).
+				d.Engine.SetPendingVoucher(v.ID, money.FromMinor(v.BalanceMinor))
+				b := d.Engine.Basket()
+				b.ToastMessage = fmt.Sprintf(httpx.T(locale, "pos.toast.voucher_scan_found"), v.ID, money.FromMinor(v.BalanceMinor).String())
+				b.ToastLevel = "success"
+				render(&b)
+			case found:
+				// A real voucher, but zero balance or not 'active' (already
+				// redeemed, or voided) -- a distinct toast from both the
+				// success and not-found cases, never a silent no-op.
+				b := d.Engine.Basket()
+				b.ToastMessage = fmt.Sprintf(httpx.T(locale, "pos.toast.voucher_scan_unusable"), v.ID)
+				b.ToastLevel = "error"
+				render(&b)
+			default:
+				// Neither the local DB nor (when this till is a replica) the
+				// primary knows this id.
+				b := d.Engine.Basket()
+				b.ToastMessage = fmt.Sprintf(httpx.T(locale, "pos.toast.voucher_scan_not_found"), code)
+				b.ToastLevel = "error"
+				render(&b)
+			}
+			return
+		}
+
 		// Fast path: resolve item before any DB lookups to keep scan latency low.
 		if b, found, _ := d.Engine.ScanQtyWithResult(code, in.Qty); found {
 			render(b)
@@ -793,11 +883,35 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
-		// Scan-to-refund (docs: refunds.md): a printed receipt carries its
-		// number as a barcode — scanning it opens the refund screen.
+		// Scan-to-refund / scan-to-collect (ut-docs#1818): a printed receipt
+		// carries its number as a barcode. Where the scan now lands depends
+		// on the order's own lifecycle status (internal/pos.OrderStatus*):
+		// an uncollected tracked order goes to its own order view with a
+		// one-tap Collect action; a collected or never-tracked completed
+		// sale goes straight to refund exactly as before; anything else (a
+		// cancelled order or a sale that never completed) says so plainly
+		// instead of silently bouncing through /journal the way landing on
+		// /refund for one of those would. See latestOrderStatusForReceipt
+		// (order_status.go) for why this DOES need a primary-proxy call on
+		// a replica, unlike voucher lookup's own local-only read.
 		if exists, _ := repo.ReceiptExists(r.Context(), code); exists {
-			w.Header().Set("HX-Redirect", "/refund/"+url.PathEscape(code))
-			w.WriteHeader(http.StatusOK)
+			if redirectPath, toastKey := resolveReceiptScanDestination(r.Context(), d, repo, code); redirectPath != "" {
+				w.Header().Set("HX-Redirect", redirectPath)
+				w.WriteHeader(http.StatusOK)
+			} else {
+				b := d.Engine.Basket()
+				b.ToastMessage = httpx.T(locale, toastKey)
+				// receipt_read_error is a genuine DB-read failure, same
+				// severity as this handler's other miss-path toasts below;
+				// the other two are plain status facts about a real,
+				// successfully-read sale, not failures.
+				if toastKey == "pos.toast.receipt_read_error" {
+					b.ToastLevel = "error"
+				} else {
+					b.ToastLevel = "info"
+				}
+				render(&b)
+			}
 			return
 		}
 
@@ -1316,6 +1430,26 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				if amt, err := strconv.ParseInt(amountStr, 10, 64); err == nil && amt > 0 {
 					amount = amt
 				}
+				// ut-docs#1833 (review): the scan-to-redeem pay-grid button
+				// (#pay-voucher-btn, web/ui/pages/index.html) is a
+				// form-encoded hx-vals button like every other quick-tender
+				// button -- no json-enc extension is registered anywhere in
+				// web/ui -- so its voucher_id arrives HERE, not in the JSON
+				// `payments` branch above. Without reading it, the tender
+				// degraded to a generic UNTRACKED voucher payment: the sale
+				// completed and the goods left the shop, but vouchers.balance
+				// was never debited and no 'redemption' voucher_transactions
+				// row was written, so the same voucher could be redeemed
+				// again without limit. Same TrimSpace + 64-char bound the
+				// JSON branch applies (control characters and the
+				// balance/over-tender rules are enforced one layer down by
+				// pos.CompleteSale's netPayments/validateVoucherID, shared by
+				// both branches).
+				formVoucherID := strings.TrimSpace(r.Form.Get("voucher_id"))
+				if len(formVoucherID) > 64 {
+					http.Error(w, "invalid voucher id", http.StatusBadRequest)
+					return
+				}
 				if method != "" {
 					if err := repo.EnsurePaymentMethod(r.Context(), method); err != nil {
 						// Same ut-docs#923 fix as the JSON-payments branch above --
@@ -1326,9 +1460,10 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 						return
 					}
 					payments = append(payments, pos.PaymentInput{
-						MethodID: method,
-						Amount:   money.FromMinor(amount),
-						Currency: d.CurrentState().Currency,
+						MethodID:  method,
+						Amount:    money.FromMinor(amount),
+						Currency:  d.CurrentState().Currency,
+						VoucherID: formVoucherID,
 					})
 				}
 			}
@@ -2039,6 +2174,40 @@ func looksLikeCustomerCode(code string) bool {
 		return next >= '0' && next <= '9'
 	}
 	return false
+}
+
+// looksLikeVoucherCode reports whether code is a Gutschein (voucher)
+// barcode rather than a product or customer scan (ut-docs#1833, ADR-0059
+// companion): a case-insensitive "GS-" prefix match, same style as
+// looksLikeCustomerCode above. Voucher ids are operator-supplied free text
+// (data.POSRepo.CreateVoucher never generates one) -- fixtures across this
+// codebase already use "GS-" as the convention ("GS" = Gutschein).
+//
+// Why checking this before item resolution is provably safe against a real
+// product/customer scan: looksLikeCustomerCode's own prefixes are
+// CUST*/LOY-/LOY<digit>, none of which start "GS-", so the two can never
+// both match the same code; and every catalog barcode symbology this till
+// accepts (internal/barcode/registry.go -- EAN13/EAN8/UPCA/UPCE/GTIN14 and
+// the two weight-embedded GS1 variants) is PURELY NUMERIC, so none of them
+// can ever start with the letters "GS-" either. Only CODE128/CODE39/
+// INTERNAL_PLU admit free text at all, and a shop configuring one of those
+// is already expected to keep its own item codes clear of the CUST/LOY-
+// prefixes above; avoiding "GS-" the same way is the same existing
+// convention, not a new constraint this card introduces.
+//
+// Symbology recommendation for GENERATING a voucher barcode (ut-docs#1833,
+// the companion #1832 issuing-UI card): CODE128. Every purely-numeric GS1
+// symbology already registered (EAN13/EAN8/UPCA/UPCE/GTIN14, and the two
+// weight-embedded variants) cannot encode an alphanumeric code like
+// "GS-1234" at all -- a numeric-only symbology would force voucher ids to
+// be digits, losing the human-readable "GS-" convention this whole scan
+// branch relies on. CODE128 is the one registered symbology that both
+// accepts free-text alphanumeric input AND prints compactly at
+// receipt-printer resolution (CODE39, the other alphanumeric option in the
+// registry, needs roughly twice the width per character for the same data
+// -- a poor fit for a small voucher/gift-card slip).
+func looksLikeVoucherCode(code string) bool {
+	return strings.HasPrefix(strings.ToUpper(strings.TrimSpace(code)), "GS-")
 }
 
 // publishSaleCompleted loads the authoritative sale snapshot and publishes a

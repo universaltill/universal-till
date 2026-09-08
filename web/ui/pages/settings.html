@@ -596,6 +596,42 @@
   });
 })();
 </script>
+<!-- ut-docs#1843: the pilot merchant does not track stock at all and could
+     not sell ANYTHING, because CompleteSale's guard reads an item with no
+     inventory row as quantity 0. The switch that turns that guard off has
+     existed on the server for a long time (pos.allow_negative_inventory)
+     with no control anywhere in web/ — reachable only by hand-editing the
+     settings key/value table. Same single-checkbox hx-post/revert-on-failure
+     pattern as the two cards above; elevation-wired, so it renders for every
+     role and the server decides (settings_page.go).
+     The label states the CONSEQUENCE, not the mechanism: "negative
+     inventory" is our word, not a shop owner's. -->
+<div class="card settings-wide">
+  <h2>{{ T "settings.stock_tracking.title" }} {{ helpLink "inventory" }}</h2>
+  <label style="display:block; margin:.35rem 0">
+    <input type="checkbox" id="allow-negative-inventory-cb" name="enabled"
+           hx-post="/api/settings/allow-negative-inventory" hx-trigger="change" hx-swap="none"
+           hx-vals="js:{enabled: document.getElementById('allow-negative-inventory-cb').checked}"
+           hx-on::before-request="document.getElementById('allow-negative-inventory-msg').textContent=''"
+           hx-on::after-request="if(!event.detail.successful){this.checked=!this.checked;document.getElementById('settings-save-error').hidden=false}"
+           {{ if .settings.AllowNegativeInventory }}checked{{ end }}>
+    {{ T "settings.stock_tracking.label" }}
+  </label>
+  <p class="muted">{{ T "settings.stock_tracking.hint" }}</p>
+  <div id="allow-negative-inventory-msg" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+</div>
+<script>
+(function () {
+  var cb = document.getElementById('allow-negative-inventory-cb');
+  if (!cb) return;
+  var msg = document.getElementById('allow-negative-inventory-msg');
+  var T = { saved: "{{ T "settings.display.change_saved" }}" };
+  cb.addEventListener('htmx:afterRequest', function (ev) {
+    var ct = ev.detail.xhr.getResponseHeader('Content-Type') || '';
+    if (ev.detail.successful && ct.indexOf('text/html') === -1) { renderNotice(msg, 'success', T.saved); }
+  });
+})();
+</script>
 <div class="card settings-wide">
   <h2>{{ T "settings.backup.title" }} {{ helpLink "backups" }}</h2>
   <p class="muted">{{ T "settings.backup.help" }}</p>
