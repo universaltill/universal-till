@@ -1025,6 +1025,51 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		settingsRespondSaved(w, r, elev)
 	})
 
+	// "Sell items without tracking stock" (ut-docs#1843). Same manager-
+	// gated, elevation-wired, persist-a-bool shape as launch-on-startup
+	// above, but this one changes what the till DOES, not just what it
+	// remembers: CompleteSale's stock guard rejects any line whose item
+	// has no inventory row (a missing row reads as quantity 0, so 0-1 < 0),
+	// and the German pilot merchant's 116-item SumUp catalogue has no
+	// inventory rows at all because his source system says "Track
+	// inventory? No" for every one of them. The capability was complete on
+	// the server and reachable only by hand-editing the settings table —
+	// the same "backend done, no UI" shape as the voucher screens in
+	// ut-docs#1832.
+	//
+	// SaveState-then-SetState (not UpdateState) on purpose, per
+	// ut-docs#157: a failed persist must never become the in-memory state
+	// and ride along on the next unrelated successful save.
+	mux.HandleFunc("POST /api/settings/allow-negative-inventory", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		_ = r.ParseForm()
+		b, err := strconv.ParseBool(strings.TrimSpace(r.Form.Get("enabled")))
+		if err != nil {
+			http.Error(w, "enabled must be a boolean", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			summaryKey := "elevation.summary.allow_negative_inventory_off"
+			if b {
+				summaryKey = "elevation.summary.allow_negative_inventory_on"
+			}
+			renderElevationPrompt(w, r, "/api/settings/allow-negative-inventory", "#allow-negative-inventory-msg",
+				httpx.T(locale, summaryKey),
+				[]elevationHiddenField{{Name: "enabled", Value: r.Form.Get("enabled")}}, elev)
+			return
+		}
+		st := d.CurrentState()
+		st.AllowNegativeInventory = b
+		if err := common.SaveState(r.Context(), d.Settings, st); err != nil {
+			http.Error(w, "could not save", http.StatusInternalServerError)
+			return
+		}
+		d.SetState(st)
+		settingsAudit(r, posRepo, elev, "settings", common.KeyAllowNegativeInventory, "allow_negative_inventory_changed", map[string]any{"enabled": b})
+		settingsRespondSaved(w, r, elev)
+	})
+
 	// Barcode symbology checklist (ADR-0059 Decision §2, ut-docs#935): one
 	// checkbox per internal/barcode registry entry, persisted immediately
 	// via SettingsRepo.SetEnabledBarcodeSymbologies — same manager-gated,
@@ -2105,7 +2150,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 				if bp, ok := common.ParseServiceChargeRateBasisPoints(value); ok {
 					s.ServiceChargeRateBasisPoints = bp
 				}
-			case "pos.allow_negative_inventory":
+			case common.KeyAllowNegativeInventory:
 				s.AllowNegativeInventory = truthy(value)
 			}
 		})
