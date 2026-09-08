@@ -229,7 +229,7 @@ func TestManualIsTranslatedInEveryShippedLocale(t *testing.T) {
 	if err != nil {
 		t.Fatalf("library: %v", err)
 	}
-	for _, loc := range []string{"fa", "ar", "tr"} {
+	for _, loc := range []string{"fa", "ar", "tr", "de"} {
 		if missing := l.MissingTranslations(loc); len(missing) > 0 {
 			t.Errorf("locale %s is missing manual topics: %v", loc, missing)
 		}

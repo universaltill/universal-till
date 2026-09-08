@@ -82,16 +82,35 @@ func main() {
 	fmt.Println("✓ help-topics guard: no route conflicts, every topic parses, all shipped locales complete, every page route has a claiming topic")
 }
 
-// shippedLocales lists the product's shipped locales from web/locales/*.json
-// (the base locale, en, excluded) — the same registry guard-i18n.sh checks
-// every locale file's key set against. Run via `go run` from the repo root
-// (guard-help-topics.sh cds there first), so a relative path is correct.
+// manualOnlyLocales are locales whose USER MANUAL (web/help/<locale>) is
+// owned and shipped by this repo even though their day-to-day UI strings are
+// NOT — a manual-only locale ships its web/locales/<code>.json from an
+// external ut-plugin-language-<code> pack instead (see universal-till/
+// CLAUDE.md's i18n section, and scripts/ci/check-lang-pack-drift.sh's own
+// PACKS list for the same de/es split). shippedLocales() below derives its
+// set from web/locales/*.json, which is exactly right for ar/fa/tr (shipped
+// as core JSON, so a missing locale directory there IS a fully-deleted
+// locale worth failing loudly on) but blind to de/es, which never have a
+// core web/locales/<code>.json to glob — so without this list, adding
+// web/help/de/ would build fine yet never actually be enforced by this
+// guard, and a later en-only topic could silently ship with no German
+// translation. Add a locale here only once its web/help/<locale> tree is
+// actually complete (see ut-docs#1827 for de) — adding one before that
+// would fail this guard immediately, for a real reason.
+var manualOnlyLocales = []string{"de"}
+
+// shippedLocales lists every locale this guard must enforce manual-topic
+// parity for: the product's shipped UI locales from web/locales/*.json (the
+// base locale, en, excluded) — the same registry guard-i18n.sh checks every
+// locale file's key set against — union manualOnlyLocales above. Run via
+// `go run` from the repo root (guard-help-topics.sh cds there first), so a
+// relative path is correct.
 func shippedLocales() ([]string, error) {
 	matches, err := filepath.Glob(filepath.Join("web", "locales", "*.json"))
 	if err != nil {
 		return nil, fmt.Errorf("listing web/locales: %w", err)
 	}
-	var locales []string
+	locales := append([]string(nil), manualOnlyLocales...)
 	for _, m := range matches {
 		locale := strings.TrimSuffix(filepath.Base(m), ".json")
 		if locale == manual.FallbackLocale {
