@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/money"
 	_ "modernc.org/sqlite"
 )
 
@@ -592,4 +593,100 @@ type staticResolver struct {
 func (s *staticResolver) Resolve(code string) (BasketLine, bool) {
 	line, ok := s.lines[code]
 	return line, ok
+}
+
+// BenchmarkComputeTotals benchmarks computeTotals in isolation at realistic
+// basket sizes — the exact hot path ut-docs#1358 (2026-08-30 performance
+// audit, section A finding 1) flagged: every basket mutation walked the
+// whole line slice twice, plus allocated fresh VATLine/ChargeTaxLine scratch
+// slices on every call. No taxAsker/chargeAsker is installed here, so this
+// exercises recomputeTotals' fast (never-unlocked) path only — production
+// always installs both (internal/pages/init.go) and runs the optimistic
+// unlocked path instead (ut-docs#1317), where a cache-miss plugin ask can
+// cost ~100ms and dwarfs anything measured here. This benchmark's saving is
+// real but only shows up on a cache hit; it says nothing about the
+// asker-installed cost. Run with:
+//
+//	go test -bench=BenchmarkComputeTotals -benchmem ./internal/pos
+func BenchmarkComputeTotals(b *testing.B) {
+	for _, n := range []int{10, 50, 100} {
+		b.Run(fmt.Sprintf("%dLines", n), func(b *testing.B) {
+			lines := make([]BasketLine, n)
+			for i := range lines {
+				lines[i] = BasketLine{
+					SKU:        fmt.Sprintf("SKU%03d", i),
+					Qty:        1,
+					PriceCents: money.FromMinor(int64(100 + i)),
+					TaxRateBP:  2000,
+				}
+			}
+			snap := totalsSnapshot{
+				lines: lines,
+				cfg:   Config{TaxRateBasisPoints: 2000},
+			}
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				_ = computeTotals(snap)
+			}
+		})
+	}
+}
+
+// BenchmarkBuildBasketFromScratch benchmarks building an N-line basket one
+// ScanQty call at a time — the real shape of a cashier ringing items up one
+// tap at a time, which is what actually pays the audit's "one line built at
+// a time triggers a full recompute of every line added so far" cost, not
+// just the new one. Comparing the 50- and 100-line sub-benchmarks' ns/op
+// shows whether that per-basket cost grows worse than linearly.
+func BenchmarkBuildBasketFromScratch(b *testing.B) {
+	for _, n := range []int{50, 100} {
+		b.Run(fmt.Sprintf("%dLines", n), func(b *testing.B) {
+			resolver := make(mapResolver, n)
+			for i := 0; i < n; i++ {
+				sku := fmt.Sprintf("SKU%03d", i)
+				resolver[sku] = BasketLine{
+					SKU: sku,
+					// ItemID must be distinct per line (review finding
+					// ut-docs#1358 F1): mergeResolved's merge test is
+					// `SKU match OR (ItemID match AND VariantID match)` —
+					// leaving ItemID/VariantID at their zero value made the
+					// second clause trivially true for every pair
+					// regardless of SKU, so every ScanQty call below
+					// collapsed into a single line instead of building N
+					// distinct ones, and the benchmark silently measured a
+					// 1-line basket's cost N times over.
+					ItemID:     sku,
+					PriceCents: money.FromMinor(int64(100 + i)),
+					TaxRateBP:  2000,
+				}
+			}
+			svc := NewServiceWithResolver(Config{TaxRateBasisPoints: 2000}, resolver)
+			// Sanity-check the fixture once, outside the timed loop: a
+			// basket that silently merges into fewer than n lines makes
+			// this benchmark structurally incapable of showing the
+			// per-mutation cost it exists to measure (exactly how the
+			// bug above went unnoticed until review).
+			for j := 0; j < n; j++ {
+				if _, err := svc.ScanQty(fmt.Sprintf("SKU%03d", j), 1); err != nil {
+					b.Fatalf("fixture scan: %v", err)
+				}
+			}
+			if got := len(svc.Lines()); got != n {
+				b.Fatalf("fixture built %d lines, want %d — mergeResolved collapsed the basket", got, n)
+			}
+			svc.Reset()
+
+			b.ReportAllocs()
+			b.ResetTimer()
+			for i := 0; i < b.N; i++ {
+				svc.Reset()
+				for j := 0; j < n; j++ {
+					if _, err := svc.ScanQty(fmt.Sprintf("SKU%03d", j), 1); err != nil {
+						b.Fatalf("scan: %v", err)
+					}
+				}
+			}
+		})
+	}
 }
