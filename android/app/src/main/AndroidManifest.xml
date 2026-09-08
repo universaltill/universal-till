@@ -35,11 +35,18 @@
          Both are dangerous permissions, requested at runtime by
          MainActivity's WebChromeClient.onPermissionRequest — lazily, only
          when a page actually starts a capture, never at boot — and only
-         for the till's own loopback origin. Deliberately NO matching
-         <uses-feature android:name="android.hardware.camera"> here: a till
-         may run on hardware without any camera, and declaring the feature
-         would make the app uninstallable there; the runtime check is
-         what decides, never an assumption that a camera exists. -->
+         for the till's own loopback origin. A till may run on hardware
+         without a camera or a microphone, so both stay installable there:
+         CAMERA and RECORD_AUDIO are on Android's "permissions that imply
+         feature requirements" list (ut-docs#1770, same bug already fixed
+         for the Bluetooth permissions below in ut-docs#1751) — omitting
+         the matching <uses-feature required="false"> makes the store
+         DERIVE the feature as required="true", the opposite of the
+         intent. The runtime permission check above is what decides
+         whether the hardware is actually used, never an assumption that
+         it exists. -->
+    <uses-feature android:name="android.hardware.camera" android:required="false" />
+    <uses-feature android:name="android.hardware.microphone" android:required="false" />
     <uses-permission android:name="android.permission.CAMERA" />
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <!-- ut-docs#1751: the Bluetooth devices page. WITHOUT these the app is
@@ -73,6 +80,17 @@
     <uses-permission android:name="android.permission.BLUETOOTH_CONNECT" />
     <uses-permission android:name="android.permission.BLUETOOTH" android:maxSdkVersion="30" />
     <uses-permission android:name="android.permission.BLUETOOTH_ADMIN" android:maxSdkVersion="30" />
+    <!-- ut-docs#1770: ACCESS_FINE_LOCATION is ALSO on the implied-feature
+         list — it derives both android.hardware.location and
+         android.hardware.location.gps. It is declared here purely to
+         unlock pre-API-31 Bluetooth scan results (see the comment above;
+         neverForLocation on BLUETOOTH_SCAN already states this till never
+         reads real location from either path), not because the till has
+         or needs a GPS/location radio, so both derived features must stay
+         required="false" for the same reason as the camera/microphone/
+         Bluetooth ones above. -->
+    <uses-feature android:name="android.hardware.location" android:required="false" />
+    <uses-feature android:name="android.hardware.location.gps" android:required="false" />
     <uses-permission
         android:name="android.permission.ACCESS_FINE_LOCATION"
         android:maxSdkVersion="30" />
