@@ -74,8 +74,13 @@
          matched neither text/csv nor application/zip and made the file
          unselectable in Android's system picker. Add it alongside the
          existing hints rather than removing them, so this only ever widens
-         what's selectable. -->
-    <label>{{ T "import.file" }} <input type="file" name="file" accept=".csv,text/csv,.bkp,application/zip,application/octet-stream" required></label>
+         what's selectable.
+         ut-docs#1837: same reasoning for .xlsx — the merchant's Android
+         picker greyed out his workbook because neither the .xlsx extension
+         nor its real MIME type (application/vnd.openxmlformats-
+         officedocument.spreadsheetml.sheet) was in this list at all, so he
+         couldn't even select the file to reach a parse error. -->
+    <label>{{ T "import.file" }} <input type="file" name="file" accept=".csv,text/csv,.bkp,.xlsx,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet,application/zip,application/octet-stream" required></label>
     <div style="display:flex; gap:.4rem; margin-top:.5rem">
       <button class="btn" type="submit" onclick="document.getElementById('import-commit').value='0'">{{ T "import.preview" }}</button>
       <button class="btn primary" type="submit" onclick="document.getElementById('import-commit').value='1'">{{ T "import.import" }}</button>
