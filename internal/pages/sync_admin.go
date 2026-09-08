@@ -497,6 +497,47 @@ func syncPullTick(ctx context.Context, d *common.Deps, client *http.Client, refr
 	}
 }
 
+// StartHeldOrderClaimReaffirm periodically re-affirms this till's PRIMARY-side
+// table claim for every currently held order (ut-docs#1724) — the periodic
+// sibling of Init's boot re-claim step (ut-docs#1704). See
+// reaffirmHeldOrderTableClaims' doc comment (tables_claim_proxy.go) for what
+// this mechanism actually protects against: RECOVERY of a claim row that
+// went missing while this till couldn't reach the primary, bounded to
+// roughly one tick interval instead of "until this till's next restart" (the
+// only prior trigger). It is not, and cannot be, prevention of a live till's
+// legitimate takeover — staleness is judged on tills.last_seen_at, which
+// this till's own ordinary sync calls already refresh the moment
+// connectivity returns, independent of this tick's cadence. Reuses the same
+// 30s cadence as StartSyncPull/StartSyncPush for consistency, not because
+// the interval itself bears on correctness. Safe to run unconditionally on
+// every till, primary included: claimTableWriteThrough already no-ops to a
+// plain local claim when there's no primary configured or it's unreachable,
+// same as the boot re-claim step this mirrors. wg registers the goroutine
+// with app.Run's shutdown drain, same join shape as every other Start* loop
+// here.
+func StartHeldOrderClaimReaffirm(ctx context.Context, d *common.Deps, wg *sync.WaitGroup) {
+	posRepo := data.NewPOSRepo(d.Db)
+	runSyncLoop(ctx, wg, nil, func() { heldOrderClaimReaffirmTick(ctx, d, posRepo) })
+}
+
+// heldOrderClaimReaffirmTick is one tick of StartHeldOrderClaimReaffirm,
+// extracted so it can be driven directly in tests instead of only via the
+// real 30s ticker (same shape as syncPullTick above). Short-circuits before
+// any write-through call when there are no held orders at all — the common
+// case — so a till with nothing parked pays only the one HeldSalesRepo.List
+// read per tick, no extra network round trip.
+func heldOrderClaimReaffirmTick(ctx context.Context, d *common.Deps, posRepo *data.POSRepo) {
+	held, err := data.NewHeldSalesRepo(d.Db).List(ctx)
+	if err != nil {
+		logging.L().Errorf("periodic table-claim re-affirm: list held sales: %v", err)
+		return
+	}
+	if len(held) == 0 {
+		return
+	}
+	reaffirmHeldOrderTableClaims(ctx, d, posRepo, held, "periodic re-affirm", false)
+}
+
 // syncPullPlugins is the plugin-set section of syncPullTick (ut-docs#460,
 // ADR-0011 amendment 2026-08-08): fetch the primary's active
 // marketplace-plugin registry and converge this replica's installed set to

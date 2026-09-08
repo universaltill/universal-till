@@ -498,6 +498,35 @@ func TestStartSyncPull_JoinsWaitGroupAndExitsOnCtxCancel(t *testing.T) {
 	}
 }
 
+// StartHeldOrderClaimReaffirm (ut-docs#1724) must register its goroutine on
+// the caller's wg too — same runSyncLoop primitive as StartSyncPull, so this
+// mirrors that test exactly rather than trusting the shared implementation
+// by inference.
+func TestStartHeldOrderClaimReaffirm_JoinsWaitGroupAndExitsOnCtxCancel(t *testing.T) {
+	dp := newMigratedSyncDeps(t, "replica-reaffirm-join.db")
+	ctx, cancel := context.WithCancel(context.Background())
+	var wg sync.WaitGroup
+	StartHeldOrderClaimReaffirm(ctx, dp, &wg)
+
+	registered := make(chan struct{})
+	go func() { wg.Wait(); close(registered) }()
+	select {
+	case <-registered:
+		t.Fatal("wg.Wait() returned before ctx was even cancelled — StartHeldOrderClaimReaffirm never called wg.Add, so this test cannot prove the join")
+	case <-time.After(100 * time.Millisecond):
+	}
+
+	cancel()
+
+	done := make(chan struct{})
+	go func() { wg.Wait(); close(done) }()
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		t.Fatal("StartHeldOrderClaimReaffirm's goroutine did not call wg.Done() within 2s of ctx cancel — not joined to the shutdown drain")
+	}
+}
+
 // --- syncPullTick ---
 
 func TestSyncPullTick_NoPrimaryConfigured_NoOp(t *testing.T) {
