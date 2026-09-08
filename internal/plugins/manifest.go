@@ -244,6 +244,15 @@ func validatePaymentEntryKeys(ctx context.Context, repo *data.PluginRepo, tx *sq
 		if strings.Contains(e.Key, ":") {
 			return fmt.Errorf("payment entry key %q must not contain ':'", e.Key)
 		}
+		// ut-docs#1811: FindPaymentKeyConflicts (plugin_repo.go) compares
+		// candidate keys against existing ones with SQLite's default
+		// case-sensitive TEXT collation, so a differently-cased key (e.g.
+		// "OKC" alongside an existing "okc") would otherwise install
+		// cleanly as a distinct tender instead of being caught as a
+		// conflict, silently fragmenting reporting.
+		if e.Key != strings.ToLower(e.Key) {
+			return fmt.Errorf("payment entry key %q must be lowercase", e.Key)
+		}
 		if reservedTenderSentinelKeys[strings.ToLower(e.Key)] {
 			return fmt.Errorf("payment entry key %q is reserved for the till's own \"no payment\"/\"mixed payments\" tender-type label — pick a different key", e.Key)
 		}
