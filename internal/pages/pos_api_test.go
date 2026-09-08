@@ -870,12 +870,17 @@ func TestTenderHandler_TRSystemOfRecordCashOnly_NoDeviceEvidence_Refused(t *test
 // TestTenderHandler_TRSystemOfRecordForgedEvidenceFromNonOKCPlugin_StillRefused is
 // the independent-review BLOCKER-1 regression: the check must gate on
 // PAYMENT-LEG IDENTITY (was any leg's MethodID == fiscal.MethodKeyOKC),
-// never on the sale-wide deviceEvidence accumulator. That accumulator
-// (pickDeviceEvidence) takes evidence from ANY method's response with no
-// MethodID check of its own -- a non-OKC plugin (card/QR/demo) can return
-// a `fiscal_device` object, forged or otherwise, and an evidence-based
-// version of this check would have let it launder a sale that used NO real
-// OKC leg at all. Confirmed empirically against an earlier, evidence-based
+// never on the sale-wide deviceEvidence accumulator. At the time this check
+// was written, that accumulator (pickDeviceEvidence) took evidence from ANY
+// method's response with no MethodID check of its own -- a non-OKC plugin
+// (card/QR/demo) can return a `fiscal_device` object, forged or otherwise,
+// and an evidence-based version of this check would have let it launder a
+// sale that used NO real OKC leg at all. pickDeviceEvidence has since
+// gained its own MethodID check (ut-docs#1794 --
+// TestTenderHandler_NonOKCPluginForgedEvidence_NotPersistedOrConfirmed
+// covers that layer directly), but this check still deliberately doesn't
+// depend on it -- see the leg-identity comment in pos_api.go. Confirmed
+// empirically against an earlier, evidence-based
 // draft of this fix: HTTP 200, one sale row, zero OKC legs.
 func TestTenderHandler_TRSystemOfRecordForgedEvidenceFromNonOKCPlugin_StillRefused(t *testing.T) {
 	mux, dp := newPOSTestDeps(t)
@@ -911,6 +916,72 @@ func TestTenderHandler_TRSystemOfRecordForgedEvidenceFromNonOKCPlugin_StillRefus
 	}
 	if got := countSales(t, dp); got != 0 {
 		t.Fatalf("expected no sale to be recorded, got %d", got)
+	}
+}
+
+// TestTenderHandler_NonOKCPluginForgedEvidence_NotPersistedOrConfirmed is
+// ut-docs#1794's core regression, at the layer the other forged-evidence
+// test above does NOT reach: that test's shop is TR system-of-record, so
+// the sale is refused by the separate #1768 hasOKCLeg gate before
+// pickDeviceEvidence's own MethodID check ever matters. This test uses the
+// default (non-TR, non-hard-gated) shop, where nothing else blocks the
+// sale, to prove the fabricated evidence itself is never accepted: the sale
+// completes normally (a demopay tender with no OKC leg is legitimate here),
+// but the forged `fiscal_device` object it carried must not be persisted to
+// fiscal_device_receipts, and must not flip any country's
+// signing_device_configured flag.
+func TestTenderHandler_NonOKCPluginForgedEvidence_NotPersistedOrConfirmed(t *testing.T) {
+	mux, dp := newPOSTestDeps(t)
+	installDemoPayPlugin(t, dp)
+	if _, err := dp.Engine.Scan("ABC"); err != nil {
+		t.Fatalf("seed scan: %v", err)
+	}
+
+	bus := plugins.SharedBus(dp.Db)
+	bus.ResetSubscribers()
+	t.Cleanup(bus.ResetSubscribers)
+	bus.SetEventMode("payment.demopay.authorize", plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.payment-demo",
+		[]string{"payment.demopay.authorize"},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			// demopay is NOT fiscal.MethodKeyOKC, but nothing stops its
+			// answer from carrying a fiscal_device object -- plugin-
+			// controlled JSON, parsed unconditionally before ut-docs#1794.
+			return json.RawMessage(`{"provider":"demopay","outcome":"approved","fiscal_device":{"receipt_no":"NOT-A-REAL-OKC-RECEIPT"}}`), nil
+		}); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/pos/tender",
+		strings.NewReader(`{"payments":[{"method":"demopay","amount":120}],"offline":true}`))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 -- this shop has no OKC-leg requirement, a demopay-only sale is otherwise legitimate here, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var out struct {
+		Data struct {
+			SaleID string `json:"saleId"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("decode response: %v", err)
+	}
+	if out.Data.SaleID == "" {
+		t.Fatal("expected a saleId in the response")
+	}
+
+	if _, ok, err := data.NewPOSRepo(dp.Db).GetFiscalDeviceReceipt(context.Background(), out.Data.SaleID); err != nil {
+		t.Fatalf("GetFiscalDeviceReceipt: %v", err)
+	} else if ok {
+		t.Fatal("the demopay leg's forged fiscal_device object must NOT be persisted as a device receipt")
+	}
+	for _, cc := range []string{"GB", "TR", "DE"} {
+		if v, _, _ := dp.Settings.Get(context.Background(), fiscal.SigningDeviceConfiguredKey(cc)); v == "true" {
+			t.Fatalf("forged evidence from a non-OKC plugin must never flip %s's signing_device_configured", cc)
+		}
 	}
 }
 
@@ -1128,12 +1199,17 @@ func TestTenderHandler_TRShadowMode_CashOnly_NotBlocked(t *testing.T) {
 // TestTenderHandler_SplitTender_EarlierLegEvidenceCannotCoverMissingOKCReceipt
 // is ut-docs#1779's independent-review finding (BLOCKER 1): the fail-closed
 // check must gate on the OKC leg's OWN parsed response, never the sale-wide
-// deviceEvidence accumulator — pickDeviceEvidence keeps first-wins evidence
-// from ANY payment method's response (plugin-controlled JSON, parsed with no
-// MethodID check of its own), so a non-OKC leg that happens to carry a
-// `fiscal_device` object must not "cover" a LATER OKC leg that returned
-// none. Confirmed by the reviewer to bypass the original (accumulator-
-// gated) version of this fix: HTTP 200, one sale row.
+// deviceEvidence accumulator. At the time of this fix, pickDeviceEvidence
+// kept first-wins evidence from ANY payment method's response with no
+// MethodID check of its own, so a non-OKC leg that happens to carry a
+// `fiscal_device` object could "cover" a LATER OKC leg that returned none —
+// confirmed by the reviewer to bypass the original (accumulator-gated)
+// version of this fix: HTTP 200, one sale row. pickDeviceEvidence has since
+// gained its own MethodID check (ut-docs#1794), which independently closes
+// this specific non-OKC-leg case too, but the per-leg gate below stays
+// load-bearing for the sibling second-OKC-leg case
+// (TestTenderHandler_SplitTender_SecondOKCLegWithNoEvidenceRefused), which
+// #1794's fix does not touch.
 func TestTenderHandler_SplitTender_EarlierLegEvidenceCannotCoverMissingOKCReceipt(t *testing.T) {
 	mux, dp := newPOSTestDeps(t)
 	if _, err := dp.Engine.Scan("ABC"); err != nil {

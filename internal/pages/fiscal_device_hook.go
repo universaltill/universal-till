@@ -75,7 +75,18 @@ func deviceAuthorizePayloadExtras(in pos.SaleInput, payments []pos.PaymentInput)
 // split tender), so first-wins is the only sensible rule; a later leg's
 // evidence, if a plugin ever returned one, is logged and dropped rather
 // than silently replacing what was already printed.
-func pickDeviceEvidence(current *fiscal.DeviceEvidence, resp json.RawMessage) *fiscal.DeviceEvidence {
+//
+// ut-docs#1794: methodID gates which leg's response is even eligible to be
+// parsed as device evidence. Before this check, a `fiscal_device` object was
+// accepted from ANY payment method's response — a non-OKC plugin (card
+// terminal, QR, demo) could return one, forged or otherwise, and have it
+// persisted via recordFiscalDeviceEvidence, potentially flipping
+// fiscal.signing_device_configured true with no real device ever involved.
+// Only fiscal.MethodKeyOKC's own leg may ever contribute evidence.
+func pickDeviceEvidence(current *fiscal.DeviceEvidence, methodID string, resp json.RawMessage) *fiscal.DeviceEvidence {
+	if methodID != fiscal.MethodKeyOKC {
+		return current
+	}
 	ev, ok := fiscal.ParseDeviceEvidence(resp)
 	if !ok {
 		return current

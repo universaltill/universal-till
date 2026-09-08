@@ -831,6 +831,11 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// reproduce here, but gating on the leg's own response rather than
 		// the accumulator keeps this check's reasoning identical to its
 		// sale-side sibling rather than accidentally-correct by omission.
+		// pickDeviceEvidence also carries its own MethodID check now
+		// (ut-docs#1794): a non-OKC `method` can no longer have its response
+		// parsed as device evidence at all, closing the fabrication gap this
+		// handler's single call below (pickDeviceEvidence(nil, method, ...))
+		// used to be exposed to.
 		if _, valid := fiscal.ParseDeviceEvidence(refundResp); method == fiscal.MethodKeyOKC && !valid {
 			log.Printf("refund rejected: fiscal device %q approved refund with no receipt evidence (ut-docs#1788 fail-closed)", method)
 			common.LogAndLocalizedError(w, r, http.StatusPaymentRequired, "refund.error.fiscal_device_no_receipt", "refund", errors.New("fiscal device approved refund with no receipt evidence"))
@@ -932,7 +937,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 		// refund's payment leg went through a device plugin: persisted
 		// against the return's own sale row, same as completeTender does
 		// for a sale (fiscal_device_hook.go).
-		recordFiscalDeviceEvidence(r.Context(), d, repo, saleID, actorID, pickDeviceEvidence(nil, refundResp))
+		recordFiscalDeviceEvidence(r.Context(), d, repo, saleID, actorID, pickDeviceEvidence(nil, method, refundResp))
 		// Mirror the restock to inventory connectors (best-effort, non-blocking).
 		publishStockAdjustedForSale(r.Context(), d, saleInput)
 		// A replica's refund is a journaled sale like any other (ADR-0011
