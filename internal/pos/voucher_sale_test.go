@@ -847,3 +847,153 @@ func TestCompleteSale_PersistsPaymentVoucherID(t *testing.T) {
 		t.Fatalf("payments.voucher_id = %q, want GS-PERSIST1", got)
 	}
 }
+
+// ADR-0084 (ut-docs#1716): the journal replay of a sale whose voucher payment
+// was already RESERVED on this database via /redeem at tender time must not
+// debit the voucher a second time. A pre-existing 'redemption'
+// voucher_transactions row for the SAME (voucher_id, sale_id) — what the
+// reservation wrote — tells CompleteSale the debit is already applied: it
+// skips the debit and the ledger row, but still inserts the payment row and
+// the sale normally. This is the assertion that fails without this card.
+func TestCompleteSale_SkipsVoucherDebitAlreadyRecordedForSameSale(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupVoucherDB(t)
+	repo := data.NewPOSRepo(sqlDB)
+
+	if _, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		VoucherIssues: []VoucherIssueInput{{VoucherID: "GS-RSV1", Amount: money.FromMinor(1500)}},
+		Payments:      []PaymentInput{{MethodID: "cash", Amount: money.FromMinor(1500)}},
+	}); err != nil {
+		t.Fatalf("issue sale: %v", err)
+	}
+
+	// Simulate the reservation /redeem already applied for this sale id:
+	// the balance is already down by 1000 and the (voucher, sale) row exists.
+	const saleID = "sale-reserved-1"
+	if err := repo.DebitVoucherForRedemption(ctx, nil, "GS-RSV1", 1000, false); err != nil {
+		t.Fatalf("simulate reservation debit: %v", err)
+	}
+	if err := repo.RecordVoucherTransaction(ctx, nil, data.VoucherTransaction{
+		ID: "tx-reserved", VoucherID: "GS-RSV1", SaleID: saleID, Type: "redemption",
+		AmountMinor: 1000, CreatedAt: "2026-09-08T10:00:00Z",
+	}); err != nil {
+		t.Fatalf("simulate reservation row: %v", err)
+	}
+
+	// The replica's own local sale for that SAME sale id (VoucherPreauthorized
+	// true, as completeTender sets it after a successful reservation) — and,
+	// identically, the primary's journal replay (AllowVoucherOverdraft true).
+	for _, in := range []SaleInput{
+		{SaleType: "sale", SaleID: saleID, Currency: "EUR", TaxInclusive: true,
+			Lines:    []SaleLineInput{articleLine()},
+			Payments: []PaymentInput{{MethodID: "voucher", VoucherID: "GS-RSV1", Amount: money.FromMinor(1000), VoucherPreauthorized: true}}},
+	} {
+		gotID, err := CompleteSale(ctx, sqlDB, in)
+		if err != nil {
+			t.Fatalf("CompleteSale with an already-recorded redemption: %v", err)
+		}
+		if gotID != saleID {
+			t.Fatalf("sale id = %q, want the pre-set %q", gotID, saleID)
+		}
+	}
+
+	var balance int64
+	var status string
+	if err := sqlDB.QueryRow(`SELECT balance, status FROM vouchers WHERE id = 'GS-RSV1'`).Scan(&balance, &status); err != nil {
+		t.Fatalf("read voucher: %v", err)
+	}
+	if balance != 500 || status != "active" {
+		t.Fatalf("balance after sale with already-recorded redemption = %d/%q, want 500/'active' — debited ZERO further times (a second debit would read -500)", balance, status)
+	}
+	var txCount int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM voucher_transactions WHERE voucher_id = 'GS-RSV1' AND sale_id = ? AND type = 'redemption'`, saleID).Scan(&txCount); err != nil {
+		t.Fatal(err)
+	}
+	if txCount != 1 {
+		t.Fatalf("redemption rows for the sale = %d, want exactly 1 (the reservation's own)", txCount)
+	}
+	var payCount int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM payments WHERE sale_id = ? AND voucher_id = 'GS-RSV1'`, saleID).Scan(&payCount); err != nil {
+		t.Fatal(err)
+	}
+	if payCount != 1 {
+		t.Fatalf("payment rows = %d, want 1 — the payment itself must still insert normally", payCount)
+	}
+
+	// Control: a DIFFERENT sale redeeming the same voucher is a new
+	// redemption and debits as usual (the key is the pair, not the voucher).
+	if _, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", SaleID: "sale-other", Currency: "EUR", TaxInclusive: true,
+		Lines: []SaleLineInput{articleLine()},
+		Payments: []PaymentInput{
+			{MethodID: "voucher", VoucherID: "GS-RSV1", Amount: money.FromMinor(500)},
+			{MethodID: "cash", Amount: money.FromMinor(500)},
+		},
+	}); err != nil {
+		t.Fatalf("control sale: %v", err)
+	}
+	if err := sqlDB.QueryRow(`SELECT balance FROM vouchers WHERE id = 'GS-RSV1'`).Scan(&balance); err != nil {
+		t.Fatal(err)
+	}
+	if balance != 0 {
+		t.Fatalf("balance after a different sale's redemption = %d, want 0", balance)
+	}
+}
+
+// ADR-0084 brief addendum, correction 2: one sale carrying TWO payment legs
+// against the SAME voucher would hit ux_voucher_tx_redemption_once as a raw
+// constraint violation mid-transaction (and, worse, its second leg would be
+// mistaken for an already-applied reservation by the idempotency check).
+// Rejected up front, fail-closed, with a clear error — same style as the
+// issued-in-this-same-sale guard above it.
+func TestCompleteSale_RejectsSameVoucherTwiceInOneSale(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupVoucherDB(t)
+
+	if _, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		VoucherIssues: []VoucherIssueInput{{VoucherID: "GS-TWICE", Amount: money.FromMinor(2000)}},
+		Payments:      []PaymentInput{{MethodID: "cash", Amount: money.FromMinor(2000)}},
+	}); err != nil {
+		t.Fatalf("issue sale: %v", err)
+	}
+
+	_, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		Lines: []SaleLineInput{articleLine()},
+		Payments: []PaymentInput{
+			{MethodID: "voucher", VoucherID: "GS-TWICE", Amount: money.FromMinor(600)},
+			{MethodID: "voucher", VoucherID: " GS-TWICE ", Amount: money.FromMinor(400)},
+		},
+	})
+	if !errors.Is(err, ErrDuplicateVoucherPayment) {
+		t.Fatalf("same voucher twice in one sale: err = %v, want ErrDuplicateVoucherPayment", err)
+	}
+	var balance int64
+	if err := sqlDB.QueryRow(`SELECT balance FROM vouchers WHERE id = 'GS-TWICE'`).Scan(&balance); err != nil {
+		t.Fatal(err)
+	}
+	if balance != 2000 {
+		t.Fatalf("balance after rejected duplicate-voucher sale = %d, want untouched 2000", balance)
+	}
+	var saleCount int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM sales WHERE tender_type = 'voucher'`).Scan(&saleCount); err != nil {
+		t.Fatal(err)
+	}
+	if saleCount != 0 {
+		t.Fatalf("rejected sale persisted %d sale(s), want 0", saleCount)
+	}
+	// The shared helper completeTender uses to refuse the same shape BEFORE
+	// reserving anything on the primary agrees.
+	if err := DuplicateVoucherPaymentError([]PaymentInput{
+		{MethodID: "voucher", VoucherID: "A"}, {MethodID: "voucher", VoucherID: "B"}, {MethodID: "cash"},
+	}); err != nil {
+		t.Fatalf("distinct vouchers: %v, want nil", err)
+	}
+	if err := DuplicateVoucherPaymentError([]PaymentInput{
+		{MethodID: "voucher", VoucherID: "A"}, {MethodID: "voucher", VoucherID: "A"},
+	}); !errors.Is(err, ErrDuplicateVoucherPayment) {
+		t.Fatalf("duplicate vouchers: err = %v, want ErrDuplicateVoucherPayment", err)
+	}
+}

@@ -308,6 +308,38 @@ const MaxVoucherIssuesPerSale = 50
 // classifyTenderError can map it to its own toast via errors.Is.
 var ErrVoucherOvertender = errors.New("voucher redemption exceeds the amount the sale still needs")
 
+// ErrDuplicateVoucherPayment rejects a sale carrying two payment legs against
+// the same tracked voucher (ADR-0084 brief addendum, correction 2). Nothing
+// used to stop this; with ut-docs#1716's idempotency key — ONE 'redemption'
+// voucher_transactions row per (voucher_id, sale_id), enforced by
+// ux_voucher_tx_redemption_once — a second leg would either trip that
+// constraint as a raw error mid-transaction or, worse, be mistaken for an
+// already-applied reservation and silently skipped. Refused up front instead,
+// fail-closed, in the same validation pass as the issued-in-this-same-sale
+// guard. Two legs against one voucher have no legitimate use: a single leg
+// for the combined amount is the same tender.
+var ErrDuplicateVoucherPayment = errors.New("the same voucher cannot be redeemed twice in one sale")
+
+// DuplicateVoucherPaymentError reports ErrDuplicateVoucherPayment (naming the
+// voucher) when two payments carry the same non-empty, trimmed VoucherID,
+// else nil. CompleteSale applies it in its validation pass; completeTender
+// (internal/pages/pos_api.go) applies it BEFORE reserving anything on the
+// primary, so an invalid sale never round-trips to the primary at all.
+func DuplicateVoucherPaymentError(payments []PaymentInput) error {
+	seen := make(map[string]int, len(payments))
+	for i, p := range payments {
+		vid := strings.TrimSpace(p.VoucherID)
+		if vid == "" {
+			continue
+		}
+		if first, dup := seen[vid]; dup {
+			return fmt.Errorf("payments %d and %d: voucher %q: %w", first+1, i+1, vid, ErrDuplicateVoucherPayment)
+		}
+		seen[vid] = i
+	}
+	return nil
+}
+
 const receiptRetryLimit = 5
 
 var errReceiptConflictRetry = errors.New("receipt_conflict_retry")
@@ -621,6 +653,13 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 		if issuedIDs[vid] {
 			return "", fmt.Errorf("payment %d: voucher %q is issued in this same sale and cannot also pay for it", i+1, vid)
 		}
+	}
+	// …and refuse two payment legs against the SAME voucher (ADR-0084,
+	// ut-docs#1716): the (voucher_id, sale_id) redemption idempotency key
+	// admits exactly one redemption per voucher per sale. Checked after the
+	// trim above so " GS-1 " and "GS-1" are recognized as the same voucher.
+	if err := DuplicateVoucherPaymentError(in.Payments); err != nil {
+		return "", err
 	}
 	if in.Currency == "" {
 		in.Currency = "GBP"
@@ -965,27 +1004,50 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				// (ut-docs#1053, journal replay only) forces the debit past
 				// the balance check — unknown/inactive still roll back.
 				if p.VoucherID != "" {
-					// force: AllowVoucherOverdraft (sale-wide, journal replay
-					// only) OR this ONE payment's own VoucherPreauthorized
-					// (ut-docs#1668, cross-till write-through — see its own
-					// doc comment on PaymentInput). Never widen
-					// VoucherPreauthorized to the whole sale: a different
-					// voucher payment in the same sale whose primary call
-					// never happened (or was refused) must still go through
-					// the normal, unforced check right here.
-					force := in.AllowVoucherOverdraft || p.VoucherPreauthorized
-					if err := repo.DebitVoucherForRedemption(ctx, tx, p.VoucherID, p.Amount.Minor(), force); err != nil {
+					// Idempotency against a primary-side reservation
+					// (ADR-0084 Decision 2, ut-docs#1716): if a 'redemption'
+					// row already exists for this exact (voucher, saleID)
+					// pair, the debit was already applied on THIS database by
+					// POST /api/sync/vouchers/{id}/redeem at tender time
+					// (the replica reserved under the same sale id it then
+					// journaled), and this is that sale's journal replay
+					// arriving — skip the debit and the ledger row, keep the
+					// payment row. This is exactly what closes the
+					// double-debit that got the first mutating endpoint
+					// reverted. On every other path (a live local tender, or
+					// the primary's own direct tender) no such row can
+					// pre-exist for a never-before-seen sale id, so behaviour
+					// is unchanged there. Read under the sale's own
+					// transaction, so the check and the debit it guards can
+					// never observe different states.
+					alreadyApplied, err := repo.VoucherRedemptionRecorded(ctx, tx, p.VoucherID, saleID)
+					if err != nil {
 						return err
 					}
-					if err := repo.RecordVoucherTransaction(ctx, tx, data.VoucherTransaction{
-						ID:          uuid.NewString(),
-						VoucherID:   p.VoucherID,
-						SaleID:      saleID,
-						Type:        "redemption",
-						AmountMinor: p.Amount.Minor(),
-						CreatedAt:   now,
-					}); err != nil {
-						return err
+					if !alreadyApplied {
+						// force: AllowVoucherOverdraft (sale-wide, journal
+						// replay only) OR this ONE payment's own
+						// VoucherPreauthorized (ut-docs#1668, cross-till
+						// write-through — see its own doc comment on
+						// PaymentInput). Never widen VoucherPreauthorized to
+						// the whole sale: a different voucher payment in the
+						// same sale whose primary call never happened (or was
+						// refused) must still go through the normal, unforced
+						// check right here.
+						force := in.AllowVoucherOverdraft || p.VoucherPreauthorized
+						if err := repo.DebitVoucherForRedemption(ctx, tx, p.VoucherID, p.Amount.Minor(), force); err != nil {
+							return err
+						}
+						if err := repo.RecordVoucherTransaction(ctx, tx, data.VoucherTransaction{
+							ID:          uuid.NewString(),
+							VoucherID:   p.VoucherID,
+							SaleID:      saleID,
+							Type:        "redemption",
+							AmountMinor: p.Amount.Minor(),
+							CreatedAt:   now,
+						}); err != nil {
+							return err
+						}
 					}
 				}
 			}
