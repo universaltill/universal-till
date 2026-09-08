@@ -41,6 +41,26 @@ func init() {
 func firstDelay() time.Duration   { return time.Duration(firstDelayNS.Load()) }
 func tickInterval() time.Duration { return time.Duration(tickIntervalNS.Load()) }
 
+// unusualSalesNowOverride lets a test pin what Start's loop treats as "now"
+// when it calls unusualSales — atomic.Value for the same
+// read-independently-of-a-test's-write reason as firstDelayNS/tickIntervalNS
+// above. Without this seam, TestStart_RunsDigestLoopBody had to seed its
+// synthetic sales against one time.Now() call and rely on the loop's own,
+// independent time.Now() call (unusualSalesNow below) landing on the same
+// local calendar day — which silently disagreed whenever the test ran near
+// local midnight in a timezone offset from UTC, exactly the ut-docs#969
+// day-boundary class of bug, reintroduced at the Start-loop level rather
+// than fixed at the unusualSales-unit level a second time (ut-docs#1769).
+var unusualSalesNowOverride atomic.Value // stores func() time.Time
+
+// unusualSalesNow returns the override installed by a test, or time.Now().
+func unusualSalesNow() time.Time {
+	if f, ok := unusualSalesNowOverride.Load().(func() time.Time); ok && f != nil {
+		return f()
+	}
+	return time.Now()
+}
+
 // runningOutCount shares the inventory page's exact decision
 // (data.LowStockItem.IsRunningOut, same as internal/pages/inventory_page.go's
 // stockLevelsForDisplay): items whose on-hand stock covers ≤ their effective
@@ -191,7 +211,7 @@ func Start(ctx context.Context, cfg *config.Config, db *sql.DB, wg *sync.WaitGro
 			if err := pushDigest(ctx, cfg, db); err != nil {
 				logging.L().Warnf("alerts: digest push failed (will retry tomorrow): %v", err)
 			}
-			if ratio, total, unusual := unusualSales(ctx, db, time.Now()); unusual {
+			if ratio, total, unusual := unusualSales(ctx, db, unusualSalesNow()); unusual {
 				if err := pushNotify(ctx, cfg, "unusual_sales", map[string]any{
 					"ratio_pct": int(ratio * 100),
 					"total":     total,

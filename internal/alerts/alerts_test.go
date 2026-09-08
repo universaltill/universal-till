@@ -497,11 +497,40 @@ func TestUnusualSales_ThinBaselineIsNotUnusual(t *testing.T) {
 // run pushDigest/unusualSales and tick again — proven here via the
 // package's own test-overridable firstDelay/tickInterval, driven fast enough
 // to observe at least one real digest push land on a fake marketplace.
-func TestStart_RunsDigestLoopBody(t *testing.T) {
+//
+// ref anchors EVERY timestamp this scenario writes AND the loop's own
+// unusualSales(ctx, db, unusualSalesNow()) call, via unusualSalesNowOverride
+// — the whole point being that the unusual-sales half of the loop body reads
+// the same clock the data was seeded from (ut-docs#1769). It is NOT wall-
+// clock-independent end to end: the other half, pushDigest → runningOutCount,
+// still reads time.Now() for its 28-day window and has no seam, which is why
+// scenarioRef keeps ref a few days from today rather than at a fixed date.
+// Before this seam existed, the seeded data was anchored to one time.Now()
+// call and the loop's internal ref came from an independent time.Now() call a moment
+// later; those two disagreed about which local calendar day was "today"
+// whenever the test happened to run near local midnight in a timezone
+// offset from UTC — reproduced for real at 00:15 local — silently shifting
+// every "days ago" bucket by one and making unusualSales find fewer than 3
+// baseline weeks, so it never fired. Same root cause TestUnusualSales_
+// EveryWeekdayIsDeterministic already fixed at the unusualSales-unit level
+// for ut-docs#969; this is that same class of bug reappearing one layer up,
+// in Start's own wiring, which had no seam to share a ref through.
+func runDigestLoopScenario(t *testing.T, ref time.Time) {
+	t.Helper()
 	origFirst, origTick := firstDelayNS.Load(), tickIntervalNS.Load()
 	t.Cleanup(func() { firstDelayNS.Store(origFirst); tickIntervalNS.Store(origTick) })
 	firstDelayNS.Store(int64(2 * time.Millisecond))
 	tickIntervalNS.Store(int64(2 * time.Millisecond))
+
+	unusualSalesNowOverride.Store(func() time.Time { return ref })
+	// Restore the REAL clock, not a pinned zero time: a func returning
+	// time.Time{} would leave every later Start() in this binary querying
+	// year-1 buckets. A typed nil is what unusualSalesNow's own f != nil
+	// branch exists for, and atomic.Value accepts it (it only panics on a
+	// nil *interface*, and the concrete type stays func() time.Time).
+	// Registered second, so LIFO cleanup order runs it BEFORE the interval
+	// restore — both only after the loop goroutine has joined below.
+	t.Cleanup(func() { unusualSalesNowOverride.Store((func() time.Time)(nil)) })
 
 	f := filepath.Join(t.TempDir(), "loop.db")
 	database, err := db.Open(f)
@@ -519,18 +548,25 @@ func TestStart_RunsDigestLoopBody(t *testing.T) {
 	mustExec(`INSERT INTO items (id, name, sku, base_price, is_active) VALUES ('it-l','Cola','L',100,1)`)
 	mustExec(`INSERT INTO stock_locations (id, name) VALUES ('loc-l','Floor')`)
 	mustExec(`INSERT INTO inventory (id, item_id, location_id, quantity) VALUES ('inv-l','it-l','loc-l',6)`)
+	// created_at is written in genuine UTC, the shape production actually
+	// writes (internal/pos/sales.go) and the shape DayTotal's single
+	// 'localtime' conversion assumes — see TestUnusualSales' note. ref's own
+	// Location is irrelevant to the query either way: DayTotal normalizes it
+	// through ref.UTC() before binding it.
 	mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
-	          VALUES ('sl','RL','completed','sale',5600,0,5600, datetime('now','-1 days'))`)
+	          VALUES ('sl','RL','completed','sale',5600,0,5600, ?)`, ref.AddDate(0, 0, -1).UTC().Format(time.RFC3339))
 	mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
 	          VALUES ('ll','sl',1,'it-l','Cola',56,100,0,0,0,5600,5600)`)
 
 	// Also seed an unusual-sales baseline (4 selling weeks back) plus a
 	// blowout "yesterday" so Start's loop exercises BOTH of its pushes in
 	// one iteration — a modest low-stock digest is not enough on its own
-	// to prove the unusual-sales half of the loop body actually runs.
-	noon := time.Now().UTC().Truncate(24 * time.Hour).Add(12 * time.Hour)
+	// to prove the unusual-sales half of the loop body actually runs. Every
+	// "days ago" offset is computed from the SAME ref the loop itself will
+	// query against (via unusualSalesNowOverride above), not a fresh clock
+	// read, so seeding and querying can never disagree about "today".
 	sale := func(id string, daysAgo, total int) {
-		createdAt := noon.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
+		createdAt := ref.AddDate(0, 0, -daysAgo).UTC().Format(time.RFC3339)
 		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
 		          VALUES (?, ?, 'completed', 'sale', ?, 0, ?, ?)`,
 			id, "R-"+id, total, total, createdAt)
@@ -559,6 +595,14 @@ func TestStart_RunsDigestLoopBody(t *testing.T) {
 	}}
 
 	ctx, cancel := context.WithCancel(context.Background())
+	// Belt-and-braces for the t.Fatal paths below, which return without
+	// reaching the explicit cancel(): deferred LIFO puts this before
+	// `defer database.Close()`, so the loop goroutine is told to stop before
+	// the DB it queries is closed under it. Without it a failing subtest
+	// leaves the loop spinning into a closed handle (observed: repeated
+	// "query sell rates: sql: database is closed" warnings) while the next
+	// subtest is already running.
+	defer cancel()
 	var wg sync.WaitGroup
 	Start(ctx, cfg, d, &wg)
 
@@ -575,5 +619,85 @@ func TestStart_RunsDigestLoopBody(t *testing.T) {
 	cancel()
 	if !waitWithin(&wg, 2*time.Second) {
 		t.Fatal("Start's loop goroutine did not join wg within 2s of ctx cancel")
+	}
+}
+
+// scenarioRef builds the digest-loop scenario's reference instant: the given
+// wall-clock time-of-day, in the given zone, on the calendar day three days
+// before today.
+//
+// The offset from today is deliberate in BOTH directions, and neither end is
+// free to change:
+//
+//   - It must not be a hard-coded past date. Start's loop has a second half,
+//     pushDigest → runningOutCount, which still reads the real clock for its
+//     28-day sell-rate window (ItemDailySellRates) and has no override seam.
+//     The scenario's low-stock sale is seeded at ref-1day, so a fixed ref
+//     ages out of that window and the low_stock_digest push silently stops
+//     firing — the test would go red on a future calendar date for reasons
+//     unrelated to what it tests. Three days back is inside the 28-day
+//     window with three weeks of margin, forever.
+//   - It must not be today either. The 3-day offset is what gives this test
+//     its teeth: with unusualSalesNowOverride removed, Start's loop queries
+//     the real clock, whose "yesterday" and 4-weeks-back buckets sit 3 days
+//     away from the seeded ones — and 3 never coincides with the detector's
+//     7-day baseline lattice — so unusualSales finds no baseline week and
+//     the test fails, which is exactly what a regression test for
+//     ut-docs#1769 must do when the fix is reverted.
+func scenarioRef(hour, min int, zone *time.Location) time.Time {
+	y, m, d := time.Now().UTC().Date()
+	day := time.Date(y, m, d, 0, 0, 0, 0, time.UTC).AddDate(0, 0, -3)
+	return time.Date(day.Year(), day.Month(), day.Day(), hour, min, 0, 0, zone)
+}
+
+func TestStart_RunsDigestLoopBody(t *testing.T) {
+	runDigestLoopScenario(t, scenarioRef(12, 0, time.UTC))
+}
+
+// TestStart_RunsDigestLoopBody_AnyLocalHour is the regression test for
+// ut-docs#1769: the loop must reach the same verdict for a reference instant
+// anywhere in the day, including ones sitting either side of a calendar-day
+// boundary, instead of only at whatever hour the suite happens to run.
+//
+// What each case actually varies, precisely — the seam is narrower than it
+// looks, so be careful reading intent into the zones:
+//
+//   - DayTotal binds ref.UTC() and buckets with SQLite's 'localtime', which
+//     is the PROCESS's timezone, not the ref's. A ref's Location therefore
+//     never reaches the query; only the instant it denotes does. The zones
+//     below are how a shop's own local midnight is expressed as an instant,
+//     and are documentation of that intent — they are not, on their own,
+//     coverage of a non-UTC process timezone. Truly sweeping the process
+//     timezone would mean setting TZ around SQLite, which is deferred
+//     (ut-docs#1769 review).
+//   - So the real variable is time-of-day, and these three are 07:55Z,
+//     15:05Z and 12:00Z — instants five minutes either side of a local
+//     midnight for a shop west and east of UTC, plus a midday control. Those
+//     are exactly the instants where the OLD code's second, independent
+//     time.Now() read could land on a different calendar day than the seed
+//     data, shifting every "days ago" bucket by one so unusualSales found
+//     fewer than 3 baseline weeks and never fired (reproduced for real at
+//     00:15 local). Sharing one ref through unusualSalesNowOverride makes
+//     that structurally impossible, whatever the host clock says.
+//
+// Note the local/UTC dates of these instants deliberately DIFFER: 23:55
+// west of UTC is already tomorrow in UTC, 00:05 east of UTC is still
+// yesterday. (The mirror hours — 00:05 west, 23:55 east — would keep both
+// on the same UTC date and demonstrate nothing.)
+func TestStart_RunsDigestLoopBody_AnyLocalHour(t *testing.T) {
+	west := time.FixedZone("UTC-8", -8*3600)
+	east := time.FixedZone("UTC+9", 9*3600)
+	cases := []struct {
+		name string
+		ref  time.Time
+	}{
+		{"just-before-local-midnight-west-of-UTC", scenarioRef(23, 55, west)},
+		{"just-after-local-midnight-east-of-UTC", scenarioRef(0, 5, east)},
+		{"local-noon-UTC", scenarioRef(12, 0, time.UTC)},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			runDigestLoopScenario(t, c.ref)
+		})
 	}
 }
