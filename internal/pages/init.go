@@ -33,16 +33,20 @@ import (
 // entry -- the menu screen's own back_to_sale button, "← Back to sale", is
 // the only way back to selling; a redundant "Home"/"Start" tile that led to
 // the same screen read as meaningless and named it a third, inconsistent way).
+// ut-docs#1897: "Catalog" and "Inventory" folded into one "Items" tile
+// opening a section list (Library/Categories/Inventory/Modifiers/Option
+// sets) — SumUp's Items area, on the pilot merchant's own comparison
+// (ut-docs#1830). /catalog and /inventory are unchanged routes, still
+// directly reachable as sections from /items.
 var baseMenu = []common.MenuItem{
 	{Href: "/designer", Label: "nav.designer"},
-	{Href: "/inventory", Label: "nav.inventory"},
 	{Href: "/shifts", Label: "nav.shifts"},
 	{Href: "/journal", Label: "nav.journal"},
 	{Href: "/orders", Label: "nav.orders"},
 	{Href: "/reports", Label: "nav.reports"},
 	{Href: "/settings", Label: "nav.settings"},
 	{Href: "/plugins", Label: "nav.plugins"},
-	{Href: "/catalog", Label: "nav.catalog"},
+	{Href: "/items", Label: "nav.items"},
 }
 
 // Init builds the page mux and returns the *common.Deps instance it wired
@@ -413,6 +417,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerTablePicker(mux, dp) // basket table-assignment picker (ut-docs#820, ADR-0054)
 	registerInventoryAPI(mux, dp)
 	registerInventoryPage(mux, dp)
+	registerItemsPage(mux, dp) // Items section list (ut-docs#1897): the new top-level "Items" nav tile's destination
 	registerShiftsAPI(mux, dp)
 	registerShiftsPage(mux, dp)
 	registerReportsPage(mux, dp)
