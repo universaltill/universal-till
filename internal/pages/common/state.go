@@ -21,7 +21,17 @@ const (
 	// already read/wrote at boot, but until #861 nothing but that one
 	// boot-time round-trip ever touched it. Settings' Language card is the
 	// first live writer.
-	KeyLocale            = "store.locale"
+	KeyLocale = "store.locale"
+	// KeyLocaleConfirmed marks that an operator has explicitly chosen a
+	// locale via Settings' Language card (POST /api/settings/save's
+	// "locale" form field) — mirrors KeyCurrencyConfirmed. This is the
+	// ONLY writer (ut-docs#1074): the country-derivation paths (ut-docs#1027,
+	// setup_page.go / settings_page.go's country-change handling) and the
+	// base-plugin post-install catch-up (setup_base_plugins.go,
+	// applyDerivedLocaleIfLanguagePackNowAvailable) are themselves DERIVING
+	// a locale, not an operator choosing one, and must never set this — or
+	// a later, better derivation could never correct an earlier guess.
+	KeyLocaleConfirmed   = "store.locale_confirmed"
 	KeyTaxInclusive      = "store.tax_inclusive"
 	KeyTaxRate           = "store.tax_rate"
 	KeyServiceChargeRate = "store.service_charge_rate_pct"

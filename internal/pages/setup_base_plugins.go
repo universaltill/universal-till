@@ -8,7 +8,9 @@ import (
 	"sync"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/enroll"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
@@ -193,13 +195,99 @@ func resolveAndInstallBasePlugin(ctx context.Context, d *common.Deps, spec baseP
 	// matching the sibling checks costs nothing and keeps the three from
 	// silently drifting apart.
 	if status, hadStatus, statusErr := plugins.NewInstallStatusStore(d.Db).Get(ctx, listingID); statusErr == nil && hadStatus && status.State == plugins.InstallStateActive && status.PluginID != "" {
-		return nil // idempotent: this listing is already installed and active
+		// idempotent: this listing is already installed and active. Still
+		// run the ut-docs#1074 locale catch-up below rather than returning
+		// early — a prior call may have installed the pack without the
+		// locale ever having been applied (e.g. it became "safe to preset"
+		// only after this listing was already active from an earlier run).
+		if spec.CanonicalType == "language" {
+			applyDerivedLocaleIfLanguagePackNowAvailable(ctx, d, spec.Locale)
+		}
+		return nil
 	}
 
 	if _, err := cloudInstallPluginVersion(ctx, d, listingID, best.Version); err != nil {
 		return fmt.Errorf("install %s@%s: %w", listingID, best.Version, err)
 	}
+	if spec.CanonicalType == "language" {
+		applyDerivedLocaleIfLanguagePackNowAvailable(ctx, d, spec.Locale)
+	}
 	return nil
+}
+
+// applyDerivedLocaleIfLanguagePackNowAvailable is ut-docs#1074's catch-up
+// half of ut-docs#1027: at country-selection time, localeSafeToPreset
+// (country_settings_page.go) deliberately leaves an RTL locale
+// (country_settings.DefaultLocale) unapplied when its base language pack
+// isn't installed yet — see that function's own doc comment. Nothing
+// re-checked that once the pack actually finished installing, until now.
+// Called from resolveAndInstallBasePlugin right after a "language"-type
+// spec is confirmed installed-and-active (fresh install or the idempotent
+// already-active branch), so it covers all three paths that reach that
+// function: the setup wizard's synchronous attempt
+// (installBasePluginsForSetup), the background retry (basePluginRetryTick),
+// and an operator manually installing a language pack (the wizard's own
+// step-1 catalog tile, setup_language_catalog.go's
+// setupLanguageInstallHandler).
+//
+// Never overrides an operator's own explicit choice
+// (common.KeyLocaleConfirmed, set only by Settings' Language card), and
+// only applies when the just-installed locale is actually the shop's
+// current country's own configured default — installing an unrelated
+// second language (browsing, a multi-lingual staff member) must never
+// silently switch the shop's default away from what the operator's country
+// choice already implies.
+func applyDerivedLocaleIfLanguagePackNowAvailable(ctx context.Context, d *common.Deps, installedLocale string) {
+	st := d.CurrentState()
+	if st.Country == "" {
+		return
+	}
+	confirmed, _, err := d.Settings.Get(ctx, common.KeyLocaleConfirmed)
+	if err != nil {
+		logging.L().Warnf("base plugin install: read %s: %v", common.KeyLocaleConfirmed, err)
+		return
+	}
+	if confirmed == "true" {
+		return
+	}
+	cs, ok, err := data.NewCountrySettingsRepo(d.Db).Get(ctx, st.Country)
+	if err != nil || !ok || cs.DefaultLocale == "" {
+		return
+	}
+	if baseLang(strings.TrimSpace(cs.DefaultLocale)) != baseLang(strings.TrimSpace(installedLocale)) {
+		return // an unrelated language pack — never clobber the derived default
+	}
+	if st.Locale == cs.DefaultLocale {
+		return // already applied
+	}
+	if !localeSafeToPreset(cs.DefaultLocale) {
+		// Can genuinely happen: localeInList (this file) matches a listing
+		// by base language, so a pack that ships e.g. locales/fa-IR.json
+		// rather than fa.json satisfies the resolve step above but not
+		// localeSafeToPreset's exact-code check against
+		// httpx.AvailableLocales() — silently staying pending forever with
+		// no signal otherwise.
+		logging.L().Warnf("base plugin install: %s installed but %s still not safe to preset (available: %v)",
+			installedLocale, cs.DefaultLocale, httpx.AvailableLocales())
+		return
+	}
+	// Build the candidate on the CURRENT state and persist-then-commit
+	// (common.SaveState, then d.SetState) — never d.UpdateState first: that
+	// would commit the new locale into shared memory before the DB write
+	// even succeeds, so a failed SaveState (disk full, SQLITE_BUSY) would
+	// leave d.State changed but the DB unchanged, silently riding along on
+	// the next unrelated successful save. Same failure Deps.SetState's own
+	// doc comment warns about, and the exact pattern every sibling handler
+	// in this package already follows (see settings_page.go's country/
+	// currency/locale handlers).
+	cand := st
+	cand.Locale = cs.DefaultLocale
+	if err := common.SaveState(ctx, d.Settings, cand); err != nil {
+		logging.L().Errorf("base plugin install: persist derived locale: %v", err)
+		return
+	}
+	d.SetState(cand)
+	httpx.SetDefaultLocale(cand.Locale)
 }
 
 // localeInList reports whether the catalog listing's availableLocales cover

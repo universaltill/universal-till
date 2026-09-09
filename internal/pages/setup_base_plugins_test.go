@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -14,6 +15,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 )
@@ -308,6 +310,234 @@ func TestResolveAndInstallBasePlugin_IdempotentWhenAlreadyActive(t *testing.T) {
 	}
 	if count != 1 {
 		t.Fatalf("expected exactly one plugins row, got %d", count)
+	}
+}
+
+// --- applyDerivedLocaleIfLanguagePackNowAvailable (ut-docs#1074) ---
+//
+// ut-docs#1027 already derives store.locale from country_settings at
+// country-selection time, synchronously — but only when localeSafeToPreset
+// says it's safe (country_settings_page.go): a non-RTL locale always is, an
+// RTL one (fa/ar/ur/he/...) only once its base language pack is already
+// available. Of the seeded builtin countries, IR (fa-IR) and AE (ar-AE) are
+// RTL but their base languages SHIP BUNDLED (web/locales/fa.json,
+// web/locales/ar.json — see TestSetupWizardDerivesLocaleFromCountry's own
+// "AE derives ar-AE (RTL, but ar ships bundled — safe)" case), so #1027
+// already presets both of those synchronously with no plugin install
+// involved at all. PK's own default (ur-PK) is the one seeded country whose
+// language is genuinely RTL AND not bundled — nothing ships web/locales/
+// ur.json, and nothing in setupBasePlugins auto-installs it — so it is the
+// one real case #1027 deliberately leaves unapplied at country-selection
+// time. These tests drive the other half: what happens once a matching
+// language pack actually finishes installing, through the one function
+// (resolveAndInstallBasePlugin) all three installers (the wizard's
+// synchronous attempt, the background retry, and an operator manually
+// installing via the wizard tile / marketplace) funnel through.
+//
+// localeSafeToPreset gates on httpx.AvailableLocales() — the PACKAGE-LEVEL
+// translator wired by httpx.InitI18n, a SEPARATE object from whatever
+// dp.Pm.SetLocalizer alone points the Manager's own reload/overlay chain
+// at (production pairs them, see internal/pages/init.go: one i18n instance
+// passed to both InitI18n and SetLocalizer in the same breath). These tests
+// must wire both together too, deterministically — go test runs every test
+// in this package in one shared process, and something else in this same
+// binary (e.g. setup_page_test.go's initAuthTestI18n) may already have
+// called httpx.InitI18n with the REAL bundle (ar/en/fa/tr, all of which
+// bundle "ur"'s neighbours but not "ur" itself) by the time this test runs;
+// relying on that ambient state rather than setting it explicitly here
+// would make the test's outcome depend on file/test run order.
+func newHermeticEnOnlyI18n(t *testing.T, dp *common.Deps) *config.I18n {
+	t.Helper()
+	i18n, err := config.NewI18nFS(fstest.MapFS{
+		"en.json": &fstest.MapFile{Data: []byte(`{"nav.home":"Home"}`)},
+	}, "en")
+	if err != nil {
+		t.Fatalf("build test i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+	dp.Pm.SetLocalizer(i18n)
+	return i18n
+}
+
+func TestResolveAndInstallBasePlugin_AppliesCountryLocaleOnceRTLPackInstalled(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK" })
+	newHermeticEnOnlyI18n(t, dp)
+	if slices.Contains(httpx.AvailableLocales(), "ur") {
+		t.Fatal("ur is already available before any plugin is installed — test fixture is not proving anything")
+	}
+
+	before := dp.CurrentState().Locale
+	if before == "ur-PK" {
+		t.Fatalf("store.locale is already ur-PK before any plugin is installed — test fixture is not proving anything")
+	}
+
+	mkt := newFakeMarketplace(t, nil)
+	mkt.publishLanguageVersion(t, "listing-lang-ur", "ut-plugin-language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
+	mkt.setCatalog(marketplace.PluginSummary{
+		ID: "ut-plugin-language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
+		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"ur"},
+	})
+	dp.Cfg.Marketplace = mkt.config()
+
+	spec := basePluginSpec{CanonicalType: "language", Locale: "ur"}
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("resolveAndInstallBasePlugin: %v", err)
+	}
+
+	if !slices.Contains(httpx.AvailableLocales(), "ur") {
+		t.Fatal("ur still not in httpx.AvailableLocales() after install — the download->extract->Reload->syncLocales->SetOverlays chain never reached the wired translator, so this test cannot prove anything past this point")
+	}
+	if got := dp.CurrentState().Locale; got != "ur-PK" {
+		t.Fatalf("store.locale = %q after the matching RTL language pack installed, want %q (PK's own country_settings default, now safe to preset)", got, "ur-PK")
+	}
+}
+
+func TestResolveAndInstallBasePlugin_DoesNotOverrideExplicitlyConfirmedLocale(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	newHermeticEnOnlyI18n(t, dp)
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK"; s.Locale = "en-US" })
+	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	if err := dp.Settings.Set(t.Context(), common.KeyLocaleConfirmed, "true"); err != nil {
+		t.Fatalf("mark locale confirmed: %v", err)
+	}
+
+	mkt := newFakeMarketplace(t, nil)
+	mkt.publishLanguageVersion(t, "listing-lang-ur", "ut-plugin-language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
+	mkt.setCatalog(marketplace.PluginSummary{
+		ID: "ut-plugin-language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
+		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"ur"},
+	})
+	dp.Cfg.Marketplace = mkt.config()
+
+	spec := basePluginSpec{CanonicalType: "language", Locale: "ur"}
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("resolveAndInstallBasePlugin: %v", err)
+	}
+
+	if !slices.Contains(httpx.AvailableLocales(), "ur") {
+		t.Fatal("ur still not in httpx.AvailableLocales() after install — this test needs the pack to have actually become safe-to-preset, or it isn't proving the confirmed-flag guard at all")
+	}
+	if got := dp.CurrentState().Locale; got != "en-US" {
+		t.Fatalf("store.locale = %q, want it left at the operator's explicitly confirmed %q — an installed language pack must never override an explicit choice", got, "en-US")
+	}
+}
+
+func TestResolveAndInstallBasePlugin_IgnoresLanguagePackNotMatchingCountryDefault(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK"; s.Locale = "en-US" })
+	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+
+	// PK's own default is ur-PK — installing an unrelated German pack (a
+	// merchant browsing/previewing a second language) must never switch the
+	// shop's default away from what the operator's own country calls for.
+	// Doesn't need the hermetic i18n wiring above: baseLang("ur-PK") !=
+	// baseLang("de") short-circuits before localeSafeToPreset is ever
+	// consulted, so this holds regardless of what's globally available.
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	spec := basePluginSpec{CanonicalType: "language", Locale: "de"}
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("resolveAndInstallBasePlugin: %v", err)
+	}
+
+	if got := dp.CurrentState().Locale; got != "en-US" {
+		t.Fatalf("store.locale = %q, want unchanged %q — installing a language pack that doesn't match the shop's own country default must be a no-op", got, "en-US")
+	}
+}
+
+// TestResolveAndInstallBasePlugin_LocaleAppliesOnlyViaIdempotentAlreadyActivePath
+// proves the idempotent "already installed and active" branch actually runs
+// the locale catch-up ON ITS OWN, not just that it's harmless alongside the
+// fresh-install branch: the FIRST call installs the plugin while the shop's
+// country doesn't match yet (so the fresh-install branch's own locale
+// application is a deliberate no-op), then the country is set to match and
+// a SECOND call — which necessarily takes the idempotent branch, since the
+// listing is already active — is the only call that can possibly apply the
+// locale. Deleting the idempotent branch's call to
+// applyDerivedLocaleIfLanguagePackNowAvailable must fail this test.
+func TestResolveAndInstallBasePlugin_LocaleAppliesOnlyViaIdempotentAlreadyActivePath(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	newHermeticEnOnlyI18n(t, dp)
+	mkt := newFakeMarketplace(t, nil)
+	mkt.publishLanguageVersion(t, "listing-lang-ur", "ut-plugin-language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
+	mkt.setCatalog(marketplace.PluginSummary{
+		ID: "ut-plugin-language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
+		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"ur"},
+	})
+	dp.Cfg.Marketplace = mkt.config()
+	spec := basePluginSpec{CanonicalType: "language", Locale: "ur"}
+
+	// First call: no country set yet, so applyDerivedLocaleIfLanguagePackNowAvailable
+	// returns immediately (st.Country == "") without ever reaching the
+	// country/locale match logic. This call's only effect is installing
+	// the plugin (which also makes "ur" available) and making the listing
+	// InstallStateActive.
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("first attempt (install only): %v", err)
+	}
+	if got := dp.CurrentState().Locale; got == "ur-PK" {
+		t.Fatalf("store.locale = %q after the first call with no country set — the locale must not have been applied yet", got)
+	}
+	active, err := data.NewPluginRepo(dp.Db).PluginActive(t.Context(), "ut-plugin-language-ur")
+	if err != nil || !active {
+		t.Fatalf("expected ut-plugin-language-ur active after first call: active=%v err=%v", active, err)
+	}
+
+	// Second call: same listing (still active, so this takes the
+	// idempotent branch — cloudInstallPluginVersion never runs again), now
+	// with a matching country. If the idempotent branch didn't also call
+	// the locale catch-up, nothing else in this test would ever apply it.
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK" })
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("second (idempotent) attempt: %v", err)
+	}
+	if hits := mkt.downloadTokenHits(); hits != 1 {
+		t.Fatalf("expected exactly one download-token request across both attempts (second must take the idempotent branch), got %d", hits)
+	}
+	if got := dp.CurrentState().Locale; got != "ur-PK" {
+		t.Fatalf("store.locale = %q after the idempotent already-active call with a matching country, want ur-PK — the idempotent branch must run the locale catch-up too", got)
+	}
+}
+
+func TestResolveAndInstallBasePlugin_IdempotentPathDoesNotOverrideExplicitlyConfirmedLocale(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	newHermeticEnOnlyI18n(t, dp)
+	mkt := newFakeMarketplace(t, nil)
+	mkt.publishLanguageVersion(t, "listing-lang-ur", "ut-plugin-language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
+	mkt.setCatalog(marketplace.PluginSummary{
+		ID: "ut-plugin-language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
+		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"ur"},
+	})
+	dp.Cfg.Marketplace = mkt.config()
+	spec := basePluginSpec{CanonicalType: "language", Locale: "ur"}
+
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("first attempt: %v", err)
+	}
+	if !slices.Contains(httpx.AvailableLocales(), "ur") {
+		t.Fatal("ur still not available after install — this test needs the pack to have actually become safe-to-preset, or it isn't proving the confirmed-flag guard on the idempotent path at all")
+	}
+
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK"; s.Locale = "en-US" })
+	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	if err := dp.Settings.Set(t.Context(), common.KeyLocaleConfirmed, "true"); err != nil {
+		t.Fatalf("mark locale confirmed: %v", err)
+	}
+
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("second (idempotent) attempt: %v", err)
+	}
+	if got := dp.CurrentState().Locale; got != "en-US" {
+		t.Fatalf("store.locale = %q after a confirmed manual change, want it left at en-US even on the idempotent already-active path", got)
 	}
 }
 
