@@ -25,7 +25,13 @@ import (
 // the local /ui/orders fragment renders, so a replica can re-render its own
 // HTML fragment from them unchanged.
 type syncOrderRow struct {
-	ReceiptNo            string `json:"receipt_no"`
+	ReceiptNo string `json:"receipt_no"`
+	// DisplayNo (ut-docs#1817): the short customer-facing order number, so
+	// a replica's re-rendered fragment shows the SAME number the primary's
+	// own board does, not a locally re-derived one -- see the omitempty
+	// notes on data.OrderListEntry.DisplayNo and data.SaleDetail.DisplayNo
+	// for the identical wire-additivity convention this follows.
+	DisplayNo            string `json:"display_no,omitempty"`
 	OrderType            string `json:"order_type"`
 	Status               string `json:"status"`
 	StatusUpdatedAt      string `json:"status_updated_at"`
@@ -75,6 +81,7 @@ func registerSyncOrders(mux *http.ServeMux, d *common.Deps) {
 		for _, e := range entries {
 			rows = append(rows, syncOrderRow{
 				ReceiptNo:            e.ReceiptNo,
+				DisplayNo:            e.DisplayNo,
 				OrderType:            e.OrderType,
 				Status:               e.Status,
 				StatusUpdatedAt:      e.StatusUpdatedAt,

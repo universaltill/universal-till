@@ -297,9 +297,16 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 		}
 	}
 	in := pos.SaleInput{
-		SaleType:               j.Sale.SaleType,
-		SaleID:                 j.Sale.ID,
-		ReceiptNo:              j.Sale.ReceiptNo,
+		SaleType:  j.Sale.SaleType,
+		SaleID:    j.Sale.ID,
+		ReceiptNo: j.Sale.ReceiptNo,
+		// ut-docs#1817: DisplayNo rides the journal the SAME way ReceiptNo
+		// already does -- j.Sale (data.SaleDetail) carries it via its own
+		// COALESCE(NULLIF(display_no,''), receipt_no) read, and passing it
+		// through here means CompleteSale reuses it AS GIVEN rather than
+		// independently re-deriving a (possibly different) one on this
+		// replica -- see pos.SaleInput.DisplayNo's own doc comment.
+		DisplayNo:              j.Sale.DisplayNo,
 		Currency:               j.Sale.Currency,
 		TaxInclusive:           saleIsTaxInclusive(j.Sale),
 		CashierID:              j.Sale.CashierID,

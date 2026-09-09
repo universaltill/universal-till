@@ -634,6 +634,35 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "plugins.settings.saved"))
 	})
 
+	// Order-number scheme (ut-docs#1817): how NextDisplayNo counts the
+	// short, customer-facing order number -- a SEPARATE setting from
+	// receipt_no, which this never touches. Same elevation+audit shape as
+	// payments-default just above.
+	mux.HandleFunc("POST /api/settings/order-no-scheme", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		_ = r.ParseForm()
+		scheme := strings.TrimSpace(r.Form.Get("scheme"))
+		if scheme != data.DisplayNoSchemeTradingPeriodReset && scheme != data.DisplayNoSchemeLifetimeNoReset {
+			http.Error(w, "scheme must be trading_period_reset or lifetime_no_reset", http.StatusBadRequest)
+			return
+		}
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/order-no-scheme", "#order-no-scheme-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.order_no_scheme"), httpx.T(locale, "settings.order_no.scheme_"+scheme)),
+				[]elevationHiddenField{{Name: "scheme", Value: scheme}}, elev)
+			return
+		}
+		if err := d.Settings.Set(r.Context(), data.SaleDisplayNoSchemeKey, scheme); err != nil {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			return
+		}
+		settingsAudit(r, posRepo, elev, "settings", data.SaleDisplayNoSchemeKey, "order_no_scheme_changed",
+			map[string]any{"scheme": scheme})
+		fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "plugins.settings.saved"))
+	})
+
 	// Per-provider fee rules (B4): percent + fixed per transaction, feeding
 	// the checkout cost hints. Stored as JSON per method.
 	mux.HandleFunc("POST /api/settings/payments-fee", func(w http.ResponseWriter, r *http.Request) {

@@ -34,7 +34,15 @@ type OrderStatusEvent struct {
 // kitchen/receipt print attempt failed, in which case they carry its
 // RFC3339 timestamp.
 type OrderListEntry struct {
-	ReceiptNo            string
+	ReceiptNo string
+	// DisplayNo (ut-docs#1817) is the short, customer-facing order number,
+	// already resolved to ReceiptNo when the sale has none -- same
+	// COALESCE(NULLIF(display_no,''), receipt_no) convention as
+	// SaleDetail.DisplayNo. ReceiptNo above stays the row's real identity
+	// (element ids, the /journal/{receipt_no} link, the
+	// /api/orders/{receipt_no}/status target) -- only the rendered TEXT
+	// should ever switch to DisplayNo.
+	DisplayNo            string
 	OrderType            string
 	Status               string
 	StatusUpdatedAt      string
@@ -184,7 +192,8 @@ func (r *POSRepo) ListRecentOrders(ctx context.Context, limit int) ([]OrderListE
 	}
 	rows, err := r.db.QueryContext(ctx, `
 SELECT receipt_no, COALESCE(order_type, ''), order_status, COALESCE(order_status_updated_at, ''), created_at,
-       COALESCE(kitchen_print_failed_at, ''), COALESCE(receipt_print_failed_at, '')
+       COALESCE(kitchen_print_failed_at, ''), COALESCE(receipt_print_failed_at, ''),
+       COALESCE(NULLIF(display_no, ''), receipt_no)
 FROM sales
 WHERE sale_type = 'sale' AND status = 'completed'
   AND order_status NOT IN ('collected', 'cancelled')
@@ -198,7 +207,7 @@ LIMIT ?
 	var out []OrderListEntry
 	for rows.Next() {
 		var e OrderListEntry
-		if err := rows.Scan(&e.ReceiptNo, &e.OrderType, &e.Status, &e.StatusUpdatedAt, &e.CreatedAt, &e.KitchenPrintFailedAt, &e.ReceiptPrintFailedAt); err != nil {
+		if err := rows.Scan(&e.ReceiptNo, &e.OrderType, &e.Status, &e.StatusUpdatedAt, &e.CreatedAt, &e.KitchenPrintFailedAt, &e.ReceiptPrintFailedAt, &e.DisplayNo); err != nil {
 			return nil, fmt.Errorf("scan recent order: %w", err)
 		}
 		out = append(out, e)

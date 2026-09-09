@@ -21,7 +21,16 @@ import (
 // TrackedOrder is the status-only view of a sale the anonymous tracking page
 // may see. Timestamps are RFC3339 TEXT, same as the sales table itself.
 type TrackedOrder struct {
-	ReceiptNo       string
+	ReceiptNo string
+	// DisplayNo (ut-docs#1817) is the short, customer-facing order number
+	// shown on /o/{token} -- already resolved to ReceiptNo when the sale
+	// has none, same COALESCE(NULLIF(display_no,''),receipt_no) convention
+	// as SaleDetail.DisplayNo. Populated by LookupOrderByTrackingToken only
+	// -- ListLiveTrackedOrders' query below doesn't select it (that method
+	// feeds the cloud relay push, ADR-0070, an operator/cloud surface with
+	// no need for the customer-facing short number), so a LiveTrackedOrder
+	// carries "" here, which is fine: nothing reads it.
+	DisplayNo       string
 	Status          string
 	StatusUpdatedAt string
 	CreatedAt       string
@@ -187,9 +196,10 @@ func (r *POSRepo) LookupOrderByTrackingToken(ctx context.Context, token string) 
 	}
 	var o TrackedOrder
 	err := r.db.QueryRowContext(ctx, `
-SELECT receipt_no, order_status, COALESCE(order_status_updated_at, ''), created_at
+SELECT receipt_no, order_status, COALESCE(order_status_updated_at, ''), created_at,
+       COALESCE(NULLIF(display_no, ''), receipt_no)
 FROM sales WHERE tracking_token = ?
-`, token).Scan(&o.ReceiptNo, &o.Status, &o.StatusUpdatedAt, &o.CreatedAt)
+`, token).Scan(&o.ReceiptNo, &o.Status, &o.StatusUpdatedAt, &o.CreatedAt, &o.DisplayNo)
 	if errors.Is(err, sql.ErrNoRows) {
 		return TrackedOrder{}, false, nil
 	}
