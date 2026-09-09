@@ -73,7 +73,16 @@ type SaleInput struct {
 	OriginalSaleID string // for returns; creates sale_links entry when set
 	Note           string
 	ReceiptNo      string
-	ActorID        string
+	// DisplayNo (ut-docs#1817) is the short, customer-facing order number --
+	// an ADDITIONAL identity, never a substitute for ReceiptNo above. Same
+	// pre-allocated-vs-empty convention as ReceiptNo: "" (the live checkout
+	// path) means CompleteSale allocates one via displayNoAllocator; a
+	// non-empty value (a synced/replayed journal, sync_sales.go) is used
+	// AS GIVEN so a replica reproduces the exact number the original
+	// customer/kitchen ticket already showed, rather than independently
+	// re-deriving a possibly-different one.
+	DisplayNo string
+	ActorID   string
 	// AllowNegativeInventory, when false, makes CompleteSale reject any sale
 	// line that would take THIS till's local stock copy negative. It is a
 	// PRIMARY-only policy (ADR-0036, amending ADR-0011 §3 — ut-docs#404):
@@ -351,6 +360,17 @@ const (
 
 var receiptAllocator = func(ctx context.Context, tx *sql.Tx, repo *data.POSRepo) (string, error) {
 	return repo.NextReceiptNo(ctx, tx)
+}
+
+// displayNoAllocator (ut-docs#1817) mirrors receiptAllocator exactly --
+// same test-seam shape (a package var, overridable in tests), same
+// signature. Deliberately does NOT share a retry loop with receiptNo: a
+// display-no collision within the same trading period only happens if two
+// tills ever share a prefix (already a misconfiguration NextReceiptNo
+// itself doesn't guard against either), and unlike receipt_no there is no
+// UNIQUE constraint on display_no to conflict against -- see migration 014.
+var displayNoAllocator = func(ctx context.Context, tx *sql.Tx, repo *data.POSRepo) (string, error) {
+	return repo.NextDisplayNo(ctx, tx)
 }
 
 func computeSaleTotals(in SaleInput) (subtotal, taxTotal, serviceCharge, voucherIssueTotal, total money.Money, err error) {
@@ -841,9 +861,22 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 					return err
 				}
 			}
+			// ut-docs#1817: same allocate-when-empty shape as receiptNo just
+			// above, in the SAME transaction -- a synced/replayed journal
+			// (sync_sales.go) always arrives with in.DisplayNo already set,
+			// so this only ever allocates on the live checkout path.
+			displayNo := in.DisplayNo
+			if displayNo == "" {
+				var err error
+				displayNo, err = displayNoAllocator(ctx, tx, repo)
+				if err != nil {
+					return err
+				}
+			}
 			if err := repo.InsertSale(ctx, tx, data.InsertSaleParams{
 				SaleID:                  saleID,
 				ReceiptNo:               receiptNo,
+				DisplayNo:               displayNo,
 				SaleType:                in.SaleType,
 				RegisterID:              in.RegisterID,
 				CashierID:               in.CashierID,
@@ -873,6 +906,7 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				return err
 			}
 			in.ReceiptNo = receiptNo
+			in.DisplayNo = displayNo
 
 			// ut-docs#1318: build every per-line row up front (line IDs are
 			// caller-generated, same as before), then land them in a handful

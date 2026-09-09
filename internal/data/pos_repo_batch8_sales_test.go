@@ -138,6 +138,181 @@ VALUES ('sale-t9', 'T9-000000042', 'completed', 'sale', 'GBP', 100, 100, '2026-0
 	}
 }
 
+// ut-docs#1817: NextDisplayNo's own sequencing, mirroring
+// TestPOSRepo_NextReceiptNo_Sequencing's structure exactly (same prefix
+// reuse, same non-numeric-legacy-value tolerance) plus the two behaviours
+// that are NEW to this method: the trading-period-reset default actually
+// resets after an "eod" close, and the lifetime_no_reset scheme doesn't.
+func TestPOSRepo_NextDisplayNo_Sequencing(t *testing.T) {
+	d := openBatch8DB(t, "display_no.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	// Empty DB, no scheme configured: defaults to trading_period_reset,
+	// starts at 1, NOT zero-padded (unlike NextReceiptNo's %09d).
+	got, err := repo.NextDisplayNo(ctx, nil)
+	if err != nil || got != "1" {
+		t.Fatalf("NextDisplayNo(empty) = (%q,%v), want (1,nil)", got, err)
+	}
+
+	// Using the issued number advances the sequence.
+	mustExec(t, d, `INSERT INTO sales (id, receipt_no, display_no, status, sale_type, currency, subtotal, total, created_at)
+VALUES ('sale-dn-1', 'R1', '1', 'completed', 'sale', 'GBP', 100, 100, '2026-07-30T10:00:00Z')`)
+	got, err = repo.NextDisplayNo(ctx, nil)
+	if err != nil || got != "2" {
+		t.Fatalf("NextDisplayNo(after 1 sale) = (%q,%v), want (2,nil)", got, err)
+	}
+
+	// Non-numeric legacy display_no casts to 0 and must not break the counter.
+	mustExec(t, d, `INSERT INTO sales (id, receipt_no, display_no, status, sale_type, currency, subtotal, total, created_at)
+VALUES ('sale-dn-legacy', 'R-legacy', 'B12', 'completed', 'sale', 'GBP', 100, 100, '2026-07-30T10:01:00Z')`)
+	got, err = repo.NextDisplayNo(ctx, nil)
+	if err != nil || got != "2" {
+		t.Fatalf("NextDisplayNo(with legacy display_no) = (%q,%v), want (2,nil)", got, err)
+	}
+
+	// A NULL display_no (a sale predating migration 013) must not break the
+	// counter either -- COALESCE(MAX(...),0) already covers this, pinned
+	// here so a future refactor can't silently regress it.
+	mustExec(t, d, `INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, total, created_at)
+VALUES ('sale-dn-nulldisplay', 'R-nulldisplay', 'completed', 'sale', 'GBP', 100, 100, '2026-07-30T10:01:30Z')`)
+	got, err = repo.NextDisplayNo(ctx, nil)
+	if err != nil || got != "2" {
+		t.Fatalf("NextDisplayNo(with NULL display_no) = (%q,%v), want (2,nil)", got, err)
+	}
+
+	// ADR-0011 synced replica: the till prefix namespaces the counter, same
+	// sync.receipt_prefix NextReceiptNo already reads -- another till's
+	// display numbers (different prefix) never bleed into this max.
+	mustExec(t, d, `INSERT INTO settings (key, value) VALUES ('sync.receipt_prefix', 'T2-')`)
+	mustExec(t, d, `INSERT INTO sales (id, receipt_no, display_no, status, sale_type, currency, subtotal, total, created_at)
+VALUES ('sale-dn-t2', 'T2-000000007', 'T2-5', 'completed', 'sale', 'GBP', 100, 100, '2026-07-30T10:02:00Z')`)
+	mustExec(t, d, `INSERT INTO sales (id, receipt_no, display_no, status, sale_type, currency, subtotal, total, created_at)
+VALUES ('sale-dn-t9', 'T9-000000042', 'T9-99', 'completed', 'sale', 'GBP', 100, 100, '2026-07-30T10:03:00Z')`)
+	got, err = repo.NextDisplayNo(ctx, nil)
+	if err != nil || got != "T2-6" {
+		t.Fatalf("NextDisplayNo(prefixed) = (%q,%v), want (T2-6,nil)", got, err)
+	}
+
+	// The checkout path calls it inside a transaction, same as NextReceiptNo.
+	tx, err := d.DB.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err = repo.NextDisplayNo(ctx, tx)
+	if err != nil || got != "T2-6" {
+		t.Fatalf("NextDisplayNo(in tx) = (%q,%v), want (T2-6,nil)", got, err)
+	}
+	tx.Rollback()
+
+	// Trading-period-reset: after this till's first "eod" close, only sales
+	// created AFTER that close count -- the SAME boundary generateEOD's own
+	// LatestArchivedAt(ctx,"eod") call uses (ADR-0066 Decision 6), so this
+	// can never disagree with what the close report itself showed as "this
+	// period".
+	//
+	// report_archive.created_at is written in archiveTimestampFmt
+	// ("2006-01-02 15:04:05", SPACE-separated -- the schema's own
+	// datetime('now') DEFAULT and ArchiveReport's explicit write both use
+	// this shape), NOT time.RFC3339 like sales.created_at. Seeding it in
+	// RFC3339 here would have been a false-positive test: independent
+	// review (ut-docs#1817) caught that an earlier draft of this test used
+	// the WRONG format and so never actually exercised the real bug --
+	// 'T' (0x54) sorts after ' ' (0x20) in a bare string compare, so a
+	// same-calendar-day sale would ALWAYS read as "after the close"
+	// regardless of its real time, and the reset would silently never
+	// reset. Production's actual shape is what belongs here.
+	mustExec(t, d, `INSERT INTO report_archive (id, kind, period, content_json, created_at)
+VALUES ('eod-1', 'eod', '2026-07-30', '{}', '2026-07-30 10:02:30')`)
+	got, err = repo.NextDisplayNo(ctx, nil)
+	// Only sale-dn-t2 (10:02:00Z) is before the close; sale-dn-t9 (10:03:00Z)
+	// is after -- but t9 uses a DIFFERENT prefix, so under the T2- prefix
+	// the post-close count is 0, next is 1. Both t2 and the close are on the
+	// SAME calendar day (2026-07-30), which is exactly the case a
+	// space-vs-'T' format mismatch would get wrong -- this assertion is the
+	// one that actually pins the fix, not just the concept of resetting.
+	if err != nil || got != "T2-1" {
+		t.Fatalf("NextDisplayNo(after eod close, T2- prefix, same calendar day) = (%q,%v), want (T2-1,nil)", got, err)
+	}
+
+	// A sale created AFTER the close, same prefix, must be counted --
+	// confirms the boundary isn't just excluding everything.
+	mustExec(t, d, `INSERT INTO sales (id, receipt_no, display_no, status, sale_type, currency, subtotal, total, created_at)
+VALUES ('sale-dn-t2-postclose', 'T2-postclose', 'T2-1', 'completed', 'sale', 'GBP', 100, 100, '2026-07-30T11:00:00Z')`)
+	got, err = repo.NextDisplayNo(ctx, nil)
+	if err != nil || got != "T2-2" {
+		t.Fatalf("NextDisplayNo(one sale after close) = (%q,%v), want (T2-2,nil)", got, err)
+	}
+
+	// lifetime_no_reset: ignores the close boundary entirely, keeps counting
+	// every sale ever recorded under this prefix.
+	mustExec(t, d, `INSERT OR REPLACE INTO settings (key, value) VALUES ('sale.display_no_scheme', 'lifetime_no_reset')`)
+	got, err = repo.NextDisplayNo(ctx, nil)
+	if err != nil || got != "T2-6" {
+		t.Fatalf("NextDisplayNo(lifetime_no_reset, ignores eod close) = (%q,%v), want (T2-6,nil)", got, err)
+	}
+}
+
+// TestPOSRepo_NextDisplayNo_DoesNotDeadlockInsideTxOnSingleConnectionPool
+// (ut-docs#1817, independent review finding S1) pins the fix for a real
+// deadlock: NextDisplayNo's trading-period-reset branch used to call
+// r.LatestArchivedAt, which always queries via r.db, never exec(tx) --
+// running it from INSIDE the caller's own transaction, on a *sql.DB
+// restricted to one connection, deadlocks forever (the open tx holds the
+// only connection; the second r.db query blocks waiting for a connection
+// that will never free). internal/pages' own tests caught this the hard
+// way (a real 10-minute test-suite timeout), but only because
+// openPagesTestDB happens to call SetMaxOpenConns(1) -- nothing in THIS
+// package, which actually owns NextDisplayNo, made the connection to the
+// bug obvious, and a green `internal/data` run alone would not have caught
+// a regression back to r.LatestArchivedAt. This test restricts the pool
+// itself so the regression is caught here, fast and locally, with a
+// message that names the actual failure mode instead of a bare test-binary
+// timeout.
+func TestPOSRepo_NextDisplayNo_DoesNotDeadlockInsideTxOnSingleConnectionPool(t *testing.T) {
+	d := openBatch8DB(t, "display_no_deadlock.db")
+	// Real production pools aren't literally capped at 1, but the failure
+	// mode only needs a pool that CAN run out -- 1 is the cheapest way to
+	// force it deterministically, same technique openPagesTestDB already
+	// uses for a different reason (ut-docs#878).
+	d.DB.SetMaxOpenConns(1)
+	repo := NewPOSRepo(d.DB)
+
+	// Seed an "eod" close so the trading-period-reset branch actually
+	// exercises the report_archive read this regression is about -- the
+	// deadlock only triggers on that code path, not on lifetime_no_reset.
+	mustExec(t, d, `INSERT INTO report_archive (id, kind, period, content_json, created_at)
+VALUES ('eod-1', 'eod', '2026-07-30', '{}', '2026-07-30 10:02:30')`)
+
+	tx, err := d.DB.Begin()
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+	defer cancel()
+	done := make(chan struct{})
+	var got string
+	var callErr error
+	go func() {
+		defer close(done)
+		got, callErr = repo.NextDisplayNo(ctx, tx)
+	}()
+	select {
+	case <-done:
+		if callErr != nil {
+			t.Fatalf("NextDisplayNo: %v", callErr)
+		}
+		if got != "1" {
+			t.Fatalf("NextDisplayNo = %q, want %q", got, "1")
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("NextDisplayNo deadlocked inside an open transaction on a single-connection pool -- " +
+			"almost certainly regressed to a bare r.db query (e.g. r.LatestArchivedAt) instead of exec(tx); see NextDisplayNo's own doc comment")
+	}
+}
+
 func TestPOSRepo_InsertSale_ReadBackRoundtrip(t *testing.T) {
 	d := openBatch8DB(t, "roundtrip.db")
 	ctx := context.Background()
