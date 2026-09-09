@@ -142,8 +142,14 @@ test('a field added directly is NOT guarded while OSK is disabled (ut-docs#1022 
   // BY DESIGN" — so this exercises `enabled === false`.
   await setOskMode(page, 'auto');
 
+  // ut-docs#1901: deliberately NOT openNewItemForm(page) here — this test
+  // needs `enabled` to stay false (no touchstart AND no click anywhere
+  // yet, per the 'auto' mode reasoning above), and openNewItemForm()'s own
+  // click on #item-form-add-btn is exactly the "any click, anywhere" the
+  // sibling ut-docs#1262 test below proves flips `enabled` true. This test
+  // only ever touches a synthetic field via page.evaluate, never a real
+  // dialog field, so it doesn't need the dialog open at all.
   await page.goto('/catalog');
-  await openNewItemForm(page);
   // The MutationObserver calls guardField(node) directly on every added
   // node, bypassing guardSweep()'s own `if (!enabled) return`. Without the
   // same gate inside guardField() itself, a field arriving as a top-level
