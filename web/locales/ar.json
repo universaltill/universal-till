@@ -168,6 +168,7 @@
   "catalog.save_variant": "حفظ المتغيّر",
   "catalog.search_placeholder": "ابحث عن الأصناف…",
   "catalog.sold_by_weight": "يُباع بالوزن",
+  "catalog.stock_untracked": "لا يتم تتبع المخزون",
   "catalog.tax_code": "رمز الضريبة",
   "catalog.tax_code.inactive": "غير نشط",
   "catalog.tax_code.none": "— بدون —",

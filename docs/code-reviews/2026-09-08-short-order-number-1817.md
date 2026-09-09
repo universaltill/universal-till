@@ -16,7 +16,7 @@ from `receipt_no` — `receipt_no` is unchanged: still the permanent
 fiscal/audit identity (ADR-0042), the scan-to-refund barcode target, and
 the primary key every existing feature already addresses a sale by.
 
-- **`internal/db/migrations/013_sale_display_no.sql`** — `ALTER TABLE
+- **`internal/db/migrations/014_sale_display_no.sql`** — `ALTER TABLE
   sales ADD COLUMN display_no TEXT` on both `sales` and its archive twin
   `sales_archive` (see `internal/db/migrations/001_init.sql`'s own
   column-identical requirement). Nullable, no backfill: an old row falls

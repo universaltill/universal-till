@@ -44,13 +44,14 @@ func TestImport_TrackInventoryNoDoesNotCarryStock(t *testing.T) {
 	// The point of the whole change: the source's quantity is not recorded
 	// as an on-hand level.
 	//
-	// Note the row itself still EXISTS at zero: CatalogRepo.CreateItemTx
-	// calls ensureInventoryRowExec for every item it creates, independently
-	// of any stock movement, so "no inventory row at all" is not reachable
-	// from the import path (ut-docs#1843's card body assumed it was — the
-	// merchant's symptom is identical either way, because a row at 0 fails
-	// the same `cur + qtyDelta < 0` guard a missing row does). Asserting the
-	// quantity, not the row count, is what actually encodes the promise.
+	// As of ut-docs#1850, this specific row no longer exists at all:
+	// CreateItemTx now skips ensureInventoryRowExec for a StockUntracked
+	// item (this test's "No" answer persists onto the item, see
+	// TestImport_TrackInventoryNoPersistsItemAsStockUntracked below), so
+	// there is genuinely no inventory row, not a row pinned at zero.
+	// COALESCE(SUM(...),0) reads 0 either way, so this assertion alone
+	// can't tell the two apart — that's exactly why the dedicated
+	// stock_untracked assertion exists as its own test.
 	var qty float64
 	if err := dp.Db.QueryRow(`SELECT COALESCE(SUM(quantity),0) FROM inventory WHERE item_id = (SELECT id FROM items WHERE sku='W1')`).Scan(&qty); err != nil {
 		t.Fatalf("read inventory: %v", err)
@@ -120,5 +121,64 @@ func TestImport_TrackInventoryYesCarriesStock(t *testing.T) {
 	}
 	if qty != 4 {
 		t.Fatalf("a tracked item must carry its opening stock, got %v", qty)
+	}
+}
+
+// TestImport_TrackInventoryNoPersistsItemAsStockUntracked covers ut-docs#1850
+// step 2: the "Track inventory? No" answer must persist onto the created
+// item's own stock_untracked flag, not just skip this one opening-stock
+// movement — otherwise a later sale of the same item would still drive it
+// negative and it would still show up in low-stock lists.
+func TestImport_TrackInventoryNoPersistsItemAsStockUntracked(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	csv := "Name,SKU,Barcode,Price,Category,In stock,Track inventory? (Yes/No)\n" +
+		"Widget,W1,5012345678900,1.50,Snacks,4,No\n"
+	body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	var untracked bool
+	if err := dp.Db.QueryRow(`SELECT stock_untracked FROM items WHERE sku='W1'`).Scan(&untracked); err != nil {
+		t.Fatalf("read stock_untracked: %v", err)
+	}
+	if !untracked {
+		t.Fatalf("expected the imported item to persist as stock_untracked=true, got false")
+	}
+}
+
+// The "Yes" case is the regression guard: an explicitly tracked import must
+// NOT be marked untracked.
+func TestImport_TrackInventoryYesPersistsItemAsTracked(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	csv := "Name,SKU,Barcode,Price,Category,In stock,Track inventory? (Yes/No)\n" +
+		"Widget,W1,5012345678900,1.50,Snacks,4,Yes\n"
+	body, ct := multipartCSV(t, csv, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+
+	var untracked bool
+	if err := dp.Db.QueryRow(`SELECT stock_untracked FROM items WHERE sku='W1'`).Scan(&untracked); err != nil {
+		t.Fatalf("read stock_untracked: %v", err)
+	}
+	if untracked {
+		t.Fatalf("expected the imported item to persist as stock_untracked=false, got true")
 	}
 }

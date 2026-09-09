@@ -168,6 +168,7 @@
   "catalog.save_variant": "ذخیره گونه",
   "catalog.search_placeholder": "جستجوی کالا…",
   "catalog.sold_by_weight": "فروش وزنی",
+  "catalog.stock_untracked": "موجودی پیگیری نمی‌شود",
   "catalog.tax_code": "کد مالیات",
   "catalog.tax_code.inactive": "غیرفعال",
   "catalog.tax_code.none": "— هیچ‌کدام —",

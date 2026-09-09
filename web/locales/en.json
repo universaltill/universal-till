@@ -168,6 +168,7 @@
   "catalog.save_variant": "Save Variant",
   "catalog.search_placeholder": "Search items…",
   "catalog.sold_by_weight": "Sold by weight",
+  "catalog.stock_untracked": "Not stock-tracked",
   "catalog.tax_code": "Tax code",
   "catalog.tax_code.inactive": "inactive",
   "catalog.tax_code.none": "— none —",

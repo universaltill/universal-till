@@ -1053,6 +1053,10 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 					Description: it.Description, CategoryID: catID,
 					TaxCodeID: taxCodeID,
 					Unit:      "each", IsWeighed: it.IsWeighed, IsActive: true,
+					// ut-docs#1850: the source's own "Track inventory? No"
+					// answer persists onto the created item, not just onto
+					// this row's one-time stock-recording decision below.
+					StockUntracked: it.HasTracksStock && !it.TracksStock,
 				})
 				if err != nil {
 					_ = tx.Rollback()

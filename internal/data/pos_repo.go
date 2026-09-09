@@ -676,6 +676,7 @@ LEFT JOIN inventory inv ON inv.item_id = i.id
 LEFT JOIN stock_locations sl ON sl.id = inv.location_id
 WHERE i.reorder_level > 0
   AND COALESCE(inv.quantity, 0) < i.reorder_level
+  AND i.stock_untracked = 0
 `
 	args := []any{}
 	if locationID != "" {
@@ -1449,6 +1450,13 @@ type DeadStockRow struct {
 
 // DeadStock lists active items with on-hand stock and ZERO sales over
 // [from, to), most tied-up value first.
+//
+// ut-docs#1850 (review): stock_untracked items are excluded, same as
+// ListStockLevels and GetLowStockItems. An item switched untracked keeps
+// whatever inventory row it already had (the quantity is real history and
+// is deliberately not destroyed, so un-ticking the flag brings it back) —
+// but that leftover row must not resurface as "capital tied up in dead
+// stock" on a report for an item the shop has said it does not count.
 func (r *POSRepo) DeadStock(ctx context.Context, from, to time.Time, limit int) ([]DeadStockRow, error) {
 	fromStr, toStr := windowArgs(from, to)
 	rows, err := r.db.QueryContext(ctx, `
@@ -1457,6 +1465,7 @@ SELECT i.name, COALESCE(i.sku, ''), SUM(inv.quantity) AS qty,
 FROM inventory inv
 JOIN items i ON i.id = inv.item_id
 WHERE i.is_active = 1 AND inv.quantity > 0
+  AND i.stock_untracked = 0
   AND i.id NOT IN (
     SELECT DISTINCT COALESCE(NULLIF(sl.item_id, ''), v.item_id) FROM sale_lines sl
     JOIN sales s ON s.id = sl.sale_id
@@ -4269,6 +4278,7 @@ FROM inventory inv
 JOIN items i ON i.id = inv.item_id
 LEFT JOIN stock_locations sl ON sl.id = inv.location_id
 WHERE i.is_active = 1
+  AND i.stock_untracked = 0
 ORDER BY i.name, sl.name`)
 	if err != nil {
 		return nil, fmt.Errorf("query stock levels: %w", err)
@@ -4623,6 +4633,137 @@ func (r *POSRepo) CurrentQtyBatch(ctx context.Context, tx *sql.Tx, keys []StockK
 			return nil, fmt.Errorf("read inventory batch: %w", err)
 		}
 		rows.Close()
+	}
+	return out, nil
+}
+
+// StockTrackKey identifies an item or variant for UntrackedByKey — exactly
+// one of ItemID/VariantID set, same convention as StockKey. Deliberately
+// NOT StockKey itself: stock_untracked is a property of the item, not the
+// (item, location) pair StockKey keys inventory rows by, so reusing
+// StockKey here would require callers to carry a LocationID that plays no
+// part in the lookup — a real risk of a caller building the lookup key with
+// one location and the built StockKey (from a different/empty location)
+// never matching it.
+type StockTrackKey struct {
+	ItemID    string
+	VariantID string
+}
+
+// UntrackedByKey reports, per given item/variant, whether it is NOT
+// stock-tracked (ut-docs#1850) — true exactly when the resolved item's own
+// stock_untracked flag is set. A variant resolves through its PARENT item
+// (item_variants.item_id): the flag lives on the item, never on the variant.
+//
+// The map value is deliberately in the same inverted sense as the column and
+// as catalogtypes.ItemInput.StockUntracked, so a missing key's `false` zero
+// value means TRACKED — the fail-safe direction. A key that resolves to
+// nothing (a bad id, a deleted row) is simply absent from the returned map,
+// which every caller therefore reads as tracked without needing an explicit
+// found check: stock tracking is never silently switched off because a
+// lookup came back empty. (Named UntrackedByKey, not TrackedByKey, for the
+// same reason the column is stock_untracked and not track_stock — see
+// 013_items_stock_untracked.sql: the zero value must mean "tracked", and a
+// name in the opposite sense to the value it returns is exactly the landmine
+// that naming convention exists to avoid.)
+//
+// Duplicate input keys are fine.
+func (r *POSRepo) UntrackedByKey(ctx context.Context, tx *sql.Tx, keys []StockTrackKey) (map[StockTrackKey]bool, error) {
+	out := make(map[StockTrackKey]bool, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+	for i, k := range keys {
+		if k.ItemID != "" && k.VariantID != "" {
+			return nil, fmt.Errorf("stock track key %d: cannot specify both itemID and variantID", i+1)
+		}
+		if k.ItemID == "" && k.VariantID == "" {
+			return nil, fmt.Errorf("stock track key %d: itemID or variantID required", i+1)
+		}
+	}
+	var itemIDs, variantIDs []string
+	seenItem := make(map[string]bool)
+	seenVariant := make(map[string]bool)
+	for _, k := range keys {
+		if k.ItemID != "" && !seenItem[k.ItemID] {
+			seenItem[k.ItemID] = true
+			itemIDs = append(itemIDs, k.ItemID)
+		}
+		if k.VariantID != "" && !seenVariant[k.VariantID] {
+			seenVariant[k.VariantID] = true
+			variantIDs = append(variantIDs, k.VariantID)
+		}
+	}
+	exec := r.exec(tx)
+	if len(itemIDs) > 0 {
+		chunk := batchChunkSize(1)
+		for start := 0; start < len(itemIDs); start += chunk {
+			end := start + chunk
+			if end > len(itemIDs) {
+				end = len(itemIDs)
+			}
+			part := itemIDs[start:end]
+			args := make([]any, len(part))
+			placeholders := make([]string, len(part))
+			for i, id := range part {
+				args[i] = id
+				placeholders[i] = "?"
+			}
+			rows, err := exec.QueryContext(ctx,
+				`SELECT id, stock_untracked FROM items WHERE id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+			if err != nil {
+				return nil, fmt.Errorf("read item track flags: %w", err)
+			}
+			for rows.Next() {
+				var id string
+				var untracked bool
+				if err := rows.Scan(&id, &untracked); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan item track flags: %w", err)
+				}
+				out[StockTrackKey{ItemID: id}] = untracked
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("read item track flags: %w", err)
+			}
+			rows.Close()
+		}
+	}
+	if len(variantIDs) > 0 {
+		chunk := batchChunkSize(1)
+		for start := 0; start < len(variantIDs); start += chunk {
+			end := start + chunk
+			if end > len(variantIDs) {
+				end = len(variantIDs)
+			}
+			part := variantIDs[start:end]
+			args := make([]any, len(part))
+			placeholders := make([]string, len(part))
+			for i, id := range part {
+				args[i] = id
+				placeholders[i] = "?"
+			}
+			rows, err := exec.QueryContext(ctx,
+				`SELECT iv.id, i.stock_untracked FROM item_variants iv JOIN items i ON i.id = iv.item_id WHERE iv.id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+			if err != nil {
+				return nil, fmt.Errorf("read variant track flags: %w", err)
+			}
+			for rows.Next() {
+				var id string
+				var untracked bool
+				if err := rows.Scan(&id, &untracked); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan variant track flags: %w", err)
+				}
+				out[StockTrackKey{VariantID: id}] = untracked
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("read variant track flags: %w", err)
+			}
+			rows.Close()
+		}
 	}
 	return out, nil
 }
