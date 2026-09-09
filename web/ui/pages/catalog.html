@@ -80,6 +80,7 @@
       </div>
       <div class="field-checks">
         <label><input type="checkbox" name="isWeighed" id="item-weighed" value="1"> {{ T "catalog.sold_by_weight" }}</label>
+        <label><input type="checkbox" name="stockUntracked" id="item-stock-untracked" value="1"> {{ T "catalog.stock_untracked" }}</label>
         <!-- Checkbox semantics: an unchecked box submits nothing, so this
              pairs it with a hidden isActive=0 (same convention as the
              variant/modifier-group forms in catalog_variants.html) —
@@ -335,6 +336,7 @@
     document.getElementById('item-brand').value = row.dataset.brand;
     document.getElementById('item-tax').value = row.dataset.tax;
     document.getElementById('item-weighed').checked = row.dataset.weighed === '1';
+    document.getElementById('item-stock-untracked').checked = row.dataset.stockUntracked === '1';
     document.getElementById('item-active').checked = true;
     document.getElementById('item-price').value = window.utCurrency.toMajor(parseInt(row.dataset.price || '0', 10));
     setMode(true, row.dataset.name);

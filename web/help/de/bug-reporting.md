@@ -19,7 +19,7 @@ Stimmt etwas an der Kasse nicht? Senden Sie einen Bericht — getippt, gesproche
 3. Drücken Sie „Bericht speichern“. Der Bericht wird sofort auf der Kasse gespeichert — auch offline — und lädt automatisch in die Cloud hoch, sobald das Geschäft wieder online ist.
 4. Hinweis: Eine Aufzeichnung stoppt, wenn Sie zu einer anderen Seite wechseln — senden Sie Ihren Bericht also, bevor Sie wegnavigieren.
 
-Sie erreichen dies auch über das ☰-Menü über die Kachel 🐞 Problem melden.
+Sie erreichen dies auch über das ☰-Menü über die Kachel Problem melden.
 
 In der Android-Kasse-App erfasst 📷 Screenshot aufnehmen direkt, was die App gerade anzeigt — keine Berechtigungsabfrage. Auch die Sprachnotiz funktioniert: Beim ersten Aufnehmen fragt Android nach Mikrofonzugriff; einmal erlaubt, starten spätere Aufnahmen sofort (bei Ablehnung wieder aktivieren unter Telefon-Einstellungen → Apps → Universal Till → Berechtigungen). Bildschirmaufzeichnung und das Fotografieren mit der Kamera sind in der Android-App noch nicht verfügbar.
 

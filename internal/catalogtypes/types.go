@@ -15,6 +15,12 @@ type ItemInput struct {
 	// IsSampleData marks rows inserted by the opt-in demo catalogue seed
 	// (ut-docs#539) so the UI can badge them.
 	IsSampleData bool
+	// StockUntracked marks an item that carries no stock movements or
+	// inventory row at all (ut-docs#1850), independent of the shop-wide
+	// AllowNegativeInventory switch. Named in the inverted sense so its
+	// Go zero value (false) means "tracked" — see
+	// 013_items_stock_untracked.sql for why that direction matters.
+	StockUntracked bool
 }
 
 type VariantInput struct {

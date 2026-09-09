@@ -56,8 +56,9 @@
       <span class="nav-toggle-label">{{ T "kiosk.inventory" }}</span>
     </a>
     <!-- ut-docs#1349 (product owner, reported twice live): Orders was only
-         reachable via ☰ Menu → Orders (the tile itself, and its 🛎️ icon,
-         already exist — ut-docs#1371/menu_page.go's iconFor). This
+         reachable via ☰ Menu → Orders (the tile itself, and its icon,
+         already exist — ut-docs#1371/menu_page.go's iconSVGFor, since
+         ut-docs#1845 the only icon mechanism there). This
          promotes it to a one-tap rail shortcut, same pattern and same
          phone-width tradeoff as Inventory just above: .nav-rail-only
          (hidden at <=480px) because the Menu tile already covers phone

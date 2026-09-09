@@ -34,7 +34,7 @@ func TestDeleteResetBatch_NoTradingHistory_DeletesRegardlessOfWindow(t *testing.
 	x(`INSERT INTO shifts (id, register_id, cashier_id, opening_cash) VALUES ('sh1','r1','u1',5000)`)
 
 	repo := data.NewPOSRepo(d.DB)
-	n, batchID, err := repo.ResetTransactionHistory(context.Background(), "")
+	n, batchID, err := repo.ResetTransactionHistory(context.Background(), "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -45,7 +45,7 @@ func TestDeleteResetBatch_NoTradingHistory_DeletesRegardlessOfWindow(t *testing.
 	// created_at is "now" -- well inside any real retention window -- and
 	// the purge must still succeed because there is no trading history to
 	// protect.
-	if err := repo.DeleteResetBatch(context.Background(), batchID, ""); err != nil {
+	if err := repo.DeleteResetBatch(context.Background(), batchID, "", ""); err != nil {
 		t.Fatalf("delete batch with zero sales must not be gated by retention: %v", err)
 	}
 	if c := count("reset_batches"); c != 0 {
@@ -61,14 +61,14 @@ func TestDeleteResetBatch_WithinRetentionWindow_Refused(t *testing.T) {
 	seedFullSale(t, x)
 
 	repo := data.NewPOSRepo(d.DB)
-	_, batchID, err := repo.ResetTransactionHistory(context.Background(), "")
+	_, batchID, err := repo.ResetTransactionHistory(context.Background(), "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
 	// No country configured -- must fall back to the global floor
 	// (GlobalArchiveMinDays), not "no restriction". created_at is "now", so
 	// the batch is fully inside any positive window.
-	err = repo.DeleteResetBatch(context.Background(), batchID, "")
+	err = repo.DeleteResetBatch(context.Background(), batchID, "", "")
 	var within *data.ArchiveWithinRetentionWindowError
 	if !errors.As(err, &within) {
 		t.Fatalf("delete within window: got %v, want *ArchiveWithinRetentionWindowError", err)
@@ -89,13 +89,13 @@ func TestDeleteResetBatch_OutsideRetentionWindow_Deletes(t *testing.T) {
 	seedFullSale(t, x)
 
 	repo := data.NewPOSRepo(d.DB)
-	_, batchID, err := repo.ResetTransactionHistory(context.Background(), "")
+	_, batchID, err := repo.ResetTransactionHistory(context.Background(), "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
 	setBatchCreatedAt(t, x, batchID, time.Now().AddDate(0, 0, -int(data.GlobalArchiveMinDays)-1))
 
-	if err := repo.DeleteResetBatch(context.Background(), batchID, ""); err != nil {
+	if err := repo.DeleteResetBatch(context.Background(), batchID, "", ""); err != nil {
 		t.Fatalf("delete outside window: %v", err)
 	}
 	if c := count("reset_batches"); c != 0 {
@@ -118,7 +118,7 @@ func TestDeleteResetBatch_RetainedUntilDateIsPurgeableFromMidnight(t *testing.T)
 	seedFullSale(t, x)
 
 	repo := data.NewPOSRepo(d.DB)
-	_, batchID, err := repo.ResetTransactionHistory(context.Background(), "")
+	_, batchID, err := repo.ResetTransactionHistory(context.Background(), "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestDeleteResetBatch_RetainedUntilDateIsPurgeableFromMidnight(t *testing.T)
 		laterHour, laterMin, laterSec, 0, time.UTC)
 	setBatchCreatedAt(t, x, batchID, archivedAt)
 
-	if err := repo.DeleteResetBatch(context.Background(), batchID, ""); err != nil {
+	if err := repo.DeleteResetBatch(context.Background(), batchID, "", ""); err != nil {
 		t.Fatalf("purge on the retained-until date itself, before the original time-of-day: got %v, want success", err)
 	}
 	if c := count("reset_batches"); c != 0 {
@@ -171,7 +171,7 @@ func TestDeleteResetBatch_BoundaryEitherSideOfCountryWindow(t *testing.T) {
 	seedFullSale(t, x)
 
 	repo := data.NewPOSRepo(d.DB)
-	_, batchID, err := repo.ResetTransactionHistory(context.Background(), "")
+	_, batchID, err := repo.ResetTransactionHistory(context.Background(), "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -179,7 +179,7 @@ func TestDeleteResetBatch_BoundaryEitherSideOfCountryWindow(t *testing.T) {
 	// Archived 4 days ago: 1 day still inside the 5-day window -- refused.
 	setBatchCreatedAt(t, x, batchID, time.Now().AddDate(0, 0, -4))
 	var within *data.ArchiveWithinRetentionWindowError
-	if err := repo.DeleteResetBatch(context.Background(), batchID, ""); !errors.As(err, &within) {
+	if err := repo.DeleteResetBatch(context.Background(), batchID, "", ""); !errors.As(err, &within) {
 		t.Fatalf("delete 1 day inside window: got %v, want *ArchiveWithinRetentionWindowError", err)
 	}
 	if c := count("reset_batches"); c != 1 {
@@ -188,7 +188,7 @@ func TestDeleteResetBatch_BoundaryEitherSideOfCountryWindow(t *testing.T) {
 
 	// Archived 6 days ago: 1 day past the 5-day window -- deletes.
 	setBatchCreatedAt(t, x, batchID, time.Now().AddDate(0, 0, -6))
-	if err := repo.DeleteResetBatch(context.Background(), batchID, ""); err != nil {
+	if err := repo.DeleteResetBatch(context.Background(), batchID, "", ""); err != nil {
 		t.Fatalf("delete 1 day past window: %v", err)
 	}
 	if c := count("reset_batches"); c != 0 {
@@ -199,7 +199,7 @@ func TestDeleteResetBatch_BoundaryEitherSideOfCountryWindow(t *testing.T) {
 func TestDeleteResetBatch_UnknownBatch(t *testing.T) {
 	d, _, _ := resetTestDB(t, "purge_unknown.db")
 	repo := data.NewPOSRepo(d.DB)
-	err := repo.DeleteResetBatch(context.Background(), "does-not-exist", "")
+	err := repo.DeleteResetBatch(context.Background(), "does-not-exist", "", "")
 	if !errors.Is(err, data.ErrResetBatchNotFound) {
 		t.Fatalf("delete unknown batch: got %v, want ErrResetBatchNotFound", err)
 	}
@@ -214,12 +214,12 @@ func TestDeleteResetBatch_UnknownCountryFallsBackToGlobalFloor(t *testing.T) {
 	seedFullSale(t, x)
 
 	repo := data.NewPOSRepo(d.DB)
-	_, batchID, err := repo.ResetTransactionHistory(context.Background(), "")
+	_, batchID, err := repo.ResetTransactionHistory(context.Background(), "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
 	var within *data.ArchiveWithinRetentionWindowError
-	if err := repo.DeleteResetBatch(context.Background(), batchID, ""); !errors.As(err, &within) {
+	if err := repo.DeleteResetBatch(context.Background(), batchID, "", ""); !errors.As(err, &within) {
 		t.Fatalf("delete with unknown country code: got %v, want *ArchiveWithinRetentionWindowError", err)
 	}
 	if c := count("reset_batches"); c != 1 {
@@ -242,7 +242,7 @@ func TestListResetBatches_ZeroSalesBatch_AlwaysPurgeable(t *testing.T) {
 
 	repo := data.NewPOSRepo(d.DB)
 	ctx := context.Background()
-	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -269,7 +269,7 @@ func TestListResetBatches_WithinRetentionWindow_NotPurgeable(t *testing.T) {
 	repo := data.NewPOSRepo(d.DB)
 	ctx := context.Background()
 	// created_at is "now" -- fully inside the global floor window.
-	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -295,7 +295,7 @@ func TestListResetBatches_OutsideRetentionWindow_Purgeable(t *testing.T) {
 
 	repo := data.NewPOSRepo(d.DB)
 	ctx := context.Background()
-	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -327,7 +327,7 @@ func TestListResetBatches_BoundaryMatchesDeleteResetBatchFromMidnight(t *testing
 
 	repo := data.NewPOSRepo(d.DB)
 	ctx := context.Background()
-	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -365,7 +365,7 @@ func TestListResetBatches_BoundaryMatchesDeleteResetBatchFromMidnight(t *testing
 
 	// And DeleteResetBatch itself must agree -- the two paths must never
 	// disagree on the same batch.
-	if err := repo.DeleteResetBatch(ctx, batchID, ""); err != nil {
+	if err := repo.DeleteResetBatch(ctx, batchID, "", ""); err != nil {
 		t.Fatalf("DeleteResetBatch disagreed with ListResetBatches' Purgeable=true: %v", err)
 	}
 }
