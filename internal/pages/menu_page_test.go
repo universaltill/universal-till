@@ -363,10 +363,19 @@ func TestMenuPage_BluetoothTileUsesTheBluetoothSymbolNotSignalBars(t *testing.T)
 // competitor POS on the pilot tablet): the Menu screen's tiles (iconFor),
 // the Pfand-refund tile, and the language-switcher label all carried
 // emoji. TestMenuPage_BluetoothTileUsesTheBluetoothSymbolNotSignalBars
-// already pins one glyph (📶) gone for good; this is the page-wide guard
-// that every other one that ever appeared here stays gone too, covering
-// the tile grid, the Pfand tile, and the language row in one render.
-func TestMenuPage_NoEmojiAnywhereOnThePage(t *testing.T) {
+// already pins one glyph (📶) gone for good; this is the guard that every
+// other one that ever appeared here stays gone too, covering the tile
+// grid, the Pfand tile, and the language row in one render.
+//
+// Named for what it actually checks (independent review, ut-docs#1845):
+// a fixed denylist of the specific glyphs this page used to render, NOT a
+// full-page Unicode emoji scan — this page also renders shared layout
+// chrome (web/ui/layouts/base.html) that carries its own, unrelated
+// glyphs (📷 the bugreport screenshot button, ✦/⬆/✕ the update banner/
+// close controls), which are out of scope for ut-docs#1845 ("no emoji
+// left in menu/nav markup" — that chrome isn't menu/nav) and deliberately
+// not asserted against here.
+func TestMenuPage_NoRetiredTileEmoji(t *testing.T) {
 	mux, _ := newMenuPageTestDeps(t, []common.MenuItem{
 		{Href: "/", Label: "nav.till"},
 		{Href: "/designer", Label: "nav.designer"},

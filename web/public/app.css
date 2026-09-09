@@ -380,7 +380,12 @@ body.menu-screen .session-admin-link { display: none; }
    nav.html's rail actions, sized to the surrounding text via em rather than
    .menu-ico's fixed box (there's no separate label span to anchor to here,
    the icon sits inline with its own text). */
-.btn-ico { display: inline-flex; vertical-align: -0.15em; }
+/* No vertical-align here (a flex item ignores it, and every .btn/.a.btn is
+   display:inline-flex already — this class only needs to size its own
+   svg child); the flex gap on .btn/.menu-lang-label supplies the spacing
+   next to the label text once the whitespace text node between the spans
+   collapses. */
+.btn-ico { display: inline-flex; }
 .btn-ico svg { inline-size: 1em; block-size: 1em; display: block; }
 
 /* Language switcher on the touch menu page — big, obvious buttons so a

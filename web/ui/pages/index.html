@@ -294,8 +294,11 @@
          open the overlay, but the overlay can legitimately be open (e.g.
          Escape-less kiosks tabbing back), and closing it on success is
          then exactly right; when it's closed the handler is a no-op.
-         ⚡ prefix is decorative, this file's existing unkeyed icon
-         convention (🛒/♻️); the label itself is live DB data (.Name) or
+         ⚡ prefix is decorative, this file's existing unkeyed emoji-prefix
+         convention (see the 🛒 New Sale button below, still unconverted —
+         ut-docs#1845 only touched this file's phone-width nav-shortcut
+         row, .kiosk-actions above, not this tender row); the label itself
+         is live DB data (.Name) or
          the same tender.cash fallback the pay-grid's own else-branch uses. -->
     <div class="tender-quickpay">
       {{ if .defaultPayMethod }}

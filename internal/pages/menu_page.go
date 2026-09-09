@@ -63,7 +63,7 @@ var iconSVGFor = map[string]string{
 	"/locations":         "map-pin",
 	"/registers":         "calculator",
 	"/kitchen-stations":  "chef-hat",
-	"/tables":            "table",
+	"/tables":            "utensils-crossed",
 	"/country-settings":  "flag",
 	"/translations":      "globe",
 	"/tills":             "monitor",
