@@ -11,7 +11,7 @@ design must be a plugin' is not expressible today"
 `internal/pages/menu_layout_settings_page.go` (new),
 `internal/pages/common/{deps,state}.go`, `internal/pages/init.go`,
 `internal/plugins/{manifest,manifest_verifier,plugins,rollback}.go`,
-`internal/data/plugin_repo.go`, `internal/db/migrations/017_*.sql`,
+`internal/data/plugin_repo.go`, `internal/db/migrations/018_*.sql`,
 `internal/httpx/{httpx,icons}.go`, `plugins/layout-salon/` (new),
 `scripts/ci/guard-plugin-menu-read{,_test}.sh`, `web/locales/*.json`,
 `web/ui/pages/{menu,menu_layout,settings}.html`, `web/public/app.css`
@@ -25,7 +25,7 @@ see its reasoning)
 `registerMenu`'s imperative `add(...)` sequence became a declared table
 (`uislot.CoreMenu`) resolved through `uislot.Resolve`, which core's own
 tiles and a `layout` plugin's amendments both go through. New canonical
-type `layout` (taxonomy 21 → 22, amending ADR-0002), migration 017 widening
+type `layout` (taxonomy 21 → 22, amending ADR-0002), migration 018 widening
 the `plugin_entries.type` CHECK, install-time validation on both
 `PersistManifest` and `Rollback`, a "Hidden menu tiles" Settings surface
 with per-entry restore, and `plugins/layout-salon` as the first real
@@ -36,7 +36,7 @@ with per-entry restore, and `plugins/layout-salon` as the first real
 The reviewer verified rather than accepted the claims: it re-ran the
 zero-allocation benchmark itself
 (`BenchmarkResolve_ZeroAmendments-12  1.987 ns/op  0 B/op  0 allocs/op`),
-applied migration 017 to a scratch database seeded from 001→016 and
+applied migration 018 (numbered 017 at review time) to a scratch database seeded from 001→016 and
 checked rows, indexes, foreign keys and cascade behaviour survived, and
 falsified three TDD claims by removing the production behaviour and
 confirming the tests fail. No false-pass tests were found. It also traced

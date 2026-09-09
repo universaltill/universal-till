@@ -1,4 +1,4 @@
--- 017_plugin_entries_type_layout.sql — ADR-0088 Decision B (ut-docs#1904):
+-- 018_plugin_entries_type_layout.sql — ADR-0088 Decision B (ut-docs#1904):
 -- the plugin-type taxonomy gains `layout` (declarative UI structure, the
 -- axis `theme` — asset-only CSS — deliberately is not), so the
 -- plugin_entries.type CHECK constraint has to admit it. ADR-0002's price
