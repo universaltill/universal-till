@@ -239,8 +239,19 @@ func fetchOrdersFromPrimary(ctx context.Context, d *common.Deps, client *http.Cl
 	}
 	entries := make([]data.OrderListEntry, 0, len(out.Data))
 	for _, row := range out.Data {
+		// ut-docs#1817: an older primary (pre-#1817) omits display_no from
+		// the JSON entirely (its own syncOrderRow lacks the field), which
+		// decodes as "" here -- fall back to ReceiptNo explicitly, the same
+		// COALESCE(NULLIF(display_no,''),receipt_no) every SQL-layer reader
+		// already applies, since this proxy path bypasses that SQL layer
+		// completely (it reads the primary's JSON, never its DB).
+		displayNo := row.DisplayNo
+		if displayNo == "" {
+			displayNo = row.ReceiptNo
+		}
 		entries = append(entries, data.OrderListEntry{
 			ReceiptNo:            row.ReceiptNo,
+			DisplayNo:            displayNo,
 			OrderType:            row.OrderType,
 			Status:               row.Status,
 			StatusUpdatedAt:      row.StatusUpdatedAt,
@@ -426,7 +437,14 @@ func streamOrderStatus(w http.ResponseWriter, r *http.Request, d *common.Deps) {
 // the shop-wide /ui/orders board and the per-station /ui/kitchen-display
 // fragment (ut-docs#544), so the two can never drift in shape.
 type orderRow struct {
-	ReceiptNo       string
+	ReceiptNo string
+	// DisplayNo (ut-docs#1817) is the short customer-facing order number
+	// the template shows instead of ReceiptNo — already resolved to
+	// ReceiptNo when the sale has none (data.OrderListEntry.DisplayNo's own
+	// COALESCE). ReceiptNo above stays the row's real identity for the
+	// /journal/{receipt_no} link and the /api/orders/{receipt_no}/status
+	// target.
+	DisplayNo       string
 	OrderType       string
 	StatusKey       string
 	Status          string
@@ -470,6 +488,7 @@ func orderRowsFor(ctx context.Context, repo *data.POSRepo, entries []data.OrderL
 		}
 		rows = append(rows, orderRow{
 			ReceiptNo:          e.ReceiptNo,
+			DisplayNo:          e.DisplayNo,
 			OrderType:          e.OrderType,
 			StatusKey:          orderStatusLabelKey(e.Status),
 			Status:             e.Status,
