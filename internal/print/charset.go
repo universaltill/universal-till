@@ -62,6 +62,24 @@ import "strings"
 // '?', which is worse than the utf8 pass-through it started from — so unlike
 // cp858/win1257/win1253, win1250 only ever activates for EUR, never GBP
 // (independent review finding, ut-docs#1733).
+//
+// ut-docs#1775 (market:tr track, split from #1733 on purpose — see that
+// card's own "Turkish is deliberately left out ... not this card's scope").
+// Windows-1254 (Turkish) was verified against charmap.Windows1254.EncodeRune:
+// it covers the full Turkish alphabet (ş/ı/ğ/Ş/İ/Ğ/ç/ö/ü) AND both '€'
+// (0x80) and '£' (0xA3) — the same shape as win1257/win1253, not win1250's
+// EUR-only restriction, so win1254 activates for either currency.
+//
+// TRY is deliberately NOT added to the currency gate above, even though this
+// card exists specifically for the Turkish market: Windows-1254 does NOT
+// encode '₺' (verified — EncodeRune reports ok=false for U+20BA, which
+// predates the code page). Adding TRY here would trade one broken currency
+// symbol (utf8's mojibake) for another (win1254's folded '?'), the same
+// non-improvement win1250 was kept away from GBP for above. So a TRY store
+// stays on the utf8 pass-through exactly as before; only a EUR/GBP store
+// whose language is Turkish (e.g. serving both currencies, or a market:tr
+// shop pricing in euro) gets switched — a real Lira default is a separate,
+// unverified follow-up, not this one guessed past.
 func DefaultCharset(currency, locale string) string {
 	cur := strings.ToUpper(strings.TrimSpace(currency))
 	switch cur {
@@ -78,6 +96,8 @@ func DefaultCharset(currency, locale string) string {
 		return "win1257"
 	case windows1253Language(locale):
 		return "win1253"
+	case windows1254Language(locale):
+		return "win1254"
 	default:
 		return "utf8"
 	}
@@ -138,6 +158,17 @@ var windows1253Languages = map[string]bool{
 
 func windows1253Language(locale string) bool {
 	return windows1253Languages[primaryLanguageSubtag(locale)]
+}
+
+// windows1254Languages covers Windows-1254's Turkish repertoire — verified
+// against charmap.Windows1254.EncodeRune for the full Turkish alphabet
+// (ş/ı/ğ/Ş/İ/Ğ plus the shared Latin ç/ö/ü) alongside both '€' and '£'.
+var windows1254Languages = map[string]bool{
+	"tr": true,
+}
+
+func windows1254Language(locale string) bool {
+	return windows1254Languages[primaryLanguageSubtag(locale)]
 }
 
 // primaryLanguageSubtag normalizes a locale to its primary language subtag

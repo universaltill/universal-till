@@ -40,7 +40,7 @@ type Doc struct {
 	// that predates this setting (ut-docs#1136) keeps today's behaviour --
 	// resolves to pin 2.
 	DrawerPin int
-	Charset   string // "utf8" (default), "ascii", "cp858", "win1250", "win1257", or "win1253"
+	Charset   string // "utf8" (default), "ascii", "cp858", "win1250", "win1257", "win1253", or "win1254"
 	// Logo is a pre-encoded GS v 0 raster block (RasterLogo), printed
 	// centered above the store name when present.
 	Logo []byte
@@ -317,6 +317,24 @@ func encodeText(s, charset string) []byte {
 		return encodeCharmap(s, charmap.Windows1257)
 	case "win1253":
 		return encodeCharmap(s, charmap.Windows1253)
+	// win1254 (ut-docs#1775, market:tr): same per-rune-transcode-or-fold shape
+	// as win1250/1257/1253 above, added later for Turkish — natively encodes
+	// the Turkish alphabet plus '€'/'£'. Unlike those three, it ALSO natively
+	// encodes 'œ'/'Œ' and the rest of the Word/Excel typography
+	// charmapPunctuationFold exists to patch (verified against
+	// charmap.Windows1254.EncodeRune — Windows-1254 is built on the same
+	// Western European base as Windows-1252). That narrows what the fold
+	// path is FOR here, but does not retire it: an item name carrying a
+	// Central European/Baltic letter this page lacks (č/ā/ž/ą/ė/ū/Ž, …) still
+	// reaches foldToCharmap's NFKD decomposition step exactly as it does for
+	// win1250/1257/1253, same as ĳ/Ĳ/ŀ/Ŀ/№ still reach the explicit
+	// punctuation table — win1254 is missing those too (independent review
+	// finding, ut-docs#1775). Only the everyday Word/Excel typography subset
+	// (dashes/quotes/bullet/ellipsis/œ/Œ) skips the fold and encodes
+	// natively; '?' remains the last resort for a script this page genuinely
+	// can't represent (Arabic, Farsi, CJK, …), same as every other arm here.
+	case "win1254":
+		return encodeCharmap(s, charmap.Windows1254)
 	default: // "utf8" and the zero value — raw pass-through, unchanged
 		return []byte(s)
 	}
@@ -355,6 +373,8 @@ func runeEncodable(r rune, charset string) bool {
 		return charmapRuneEncodable(r, charmap.Windows1257)
 	case "win1253":
 		return charmapRuneEncodable(r, charmap.Windows1253)
+	case "win1254":
+		return charmapRuneEncodable(r, charmap.Windows1254)
 	default: // "utf8" and the zero value — raw pass-through, always encodable
 		return true
 	}
@@ -392,9 +412,9 @@ func encodeCharmap(s string, cp *charmap.Charmap) []byte {
 // charset, or nil when no selection is sent. utf8 and ascii keep today's
 // behaviour of never touching the printer's code-page state. Page numbers are
 // Epson's own published ESC t reference: 19 = PC858 (Euro variant of PC850),
-// 45 = WPC1250, 47 = WPC1253, 51 = WPC1257 — the same printers that accept
-// ESC t 19 also accept the Windows-125x pages, which is what makes ut-docs#1733's
-// fix possible without new hardware.
+// 45 = WPC1250, 47 = WPC1253, 48 = WPC1254, 51 = WPC1257 — the same printers
+// that accept ESC t 19 also accept the Windows-125x pages, which is what
+// makes ut-docs#1733's (and #1775's) fix possible without new hardware.
 func codepageSelectCmd(charset string) []byte {
 	switch charset {
 	case "cp858":
@@ -403,6 +423,8 @@ func codepageSelectCmd(charset string) []byte {
 		return []byte{0x1b, 0x74, 45}
 	case "win1253":
 		return []byte{0x1b, 0x74, 47}
+	case "win1254":
+		return []byte{0x1b, 0x74, 48}
 	case "win1257":
 		return []byte{0x1b, 0x74, 51}
 	default:
@@ -514,11 +536,12 @@ func RenderLabel(name, price, code, charset string) []byte {
 // through an exotic alphabet: Word/Excel autocorrect puts curly quotes and
 // en-dashes into imported catalogs and footer text, so a till whose shop
 // name or "thank you" line came from a spreadsheet hits them on every single
-// sale. Shared across cp858/win1250/win1257/win1253 (ut-docs#1733) — CP858 is
-// the only one of the four that actually needs most of these (the Windows
-// 125x pages already natively encode dashes/quotes/bullet/ellipsis), but the
-// table costs nothing to share and 'œ'/'Œ' and the rest of the decomposition
-// step in foldToCharmap are missing from all four alike.
+// sale. Shared across cp858/win1250/win1257/win1253/win1254 (ut-docs#1733,
+// #1775) — CP858 is the only one of the five that actually needs most of
+// these (the Windows 125x pages already natively encode dashes/quotes/
+// bullet/ellipsis), but the table costs nothing to share and 'œ'/'Œ' and the
+// rest of the decomposition step in foldToCharmap are missing from all five
+// alike.
 var charmapPunctuationFold = map[rune]string{
 	'\u2010': "-", '\u2011': "-", '\u2012': "-", '\u2013': "-", // hyphen, non-breaking hyphen, figure dash, en dash
 	'\u2014': "-", '\u2015': "-", '\u2212': "-", // em dash, horizontal bar, minus sign

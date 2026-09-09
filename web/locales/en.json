@@ -1691,6 +1691,7 @@
   "settings.printer.charset_cp858": "Western Europe (CP858 — €/£)",
   "settings.printer.charset_win1250": "Central Europe (Windows-1250 — €/č/ž)",
   "settings.printer.charset_win1253": "Greek (Windows-1253 — €/α/β)",
+  "settings.printer.charset_win1254": "Turkish (Windows-1254 — €/ş/ı)",
   "settings.printer.charset_win1257": "Baltic (Windows-1257 — €/ā/š)",
   "settings.printer.device": "Device path",
   "settings.printer.discover.error": "Could not search this network for printers.",
