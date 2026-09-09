@@ -857,3 +857,103 @@ func TestSettingsDismissPendingBasePluginEndpoint_RejectsMismatch(t *testing.T) 
 		})
 	}
 }
+
+// TestHandleInstallFromMarketplace_AppliesLocaleCatchUpForLanguagePack is
+// ut-docs#1893: the marketplace Plugins-store install path
+// (plugin_api.go's handleInstallFromMarketplace) is a fourth way to install
+// a language pack, alongside the three resolveAndInstallBasePlugin already
+// covers (setup wizard, background retry, wizard catalog tile) and this
+// file's own TestResolveAndInstallBasePlugin_AppliesCountryLocaleOnceRTLPackInstalled
+// already proves for those three. Same scenario, mirrored through the real
+// HTTP install handler instead of calling resolveAndInstallBasePlugin
+// directly: an RTL pack whose install was deferred at setup time (base
+// language not installed yet) gets installed later from the store page, and
+// the shop's country default locale must switch the same way it would have
+// via any of the other three paths.
+func TestHandleInstallFromMarketplace_AppliesLocaleCatchUpForLanguagePack(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	t.Setenv("UT_AUTH", "off")
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK" })
+	newHermeticEnOnlyI18n(t, dp)
+	if slices.Contains(httpx.AvailableLocales(), "ur") {
+		t.Fatal("ur is already available before any plugin is installed — test fixture is not proving anything")
+	}
+	if before := dp.CurrentState().Locale; before == "ur-PK" {
+		t.Fatalf("store.locale is already ur-PK before any plugin is installed — test fixture is not proving anything")
+	}
+
+	mkt := newFakeMarketplace(t, nil)
+	mkt.publishLanguageVersion(t, "listing-lang-ur", "ut-plugin-language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
+	mkt.setCatalog(marketplace.PluginSummary{
+		ID: "ut-plugin-language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
+		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"ur"},
+	})
+	dp.Cfg.Marketplace = mkt.config()
+
+	mux := http.NewServeMux()
+	registerPluginAPI(mux, dp)
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/install-from-marketplace",
+		strings.NewReader(`{"listing_id":"listing-lang-ur"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("install listing-lang-ur via /api/plugins/install-from-marketplace: %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	if !slices.Contains(httpx.AvailableLocales(), "ur") {
+		t.Fatal("ur still not in httpx.AvailableLocales() after install — the download->extract->Reload->syncLocales->SetOverlays chain never reached the wired translator, so this test cannot prove anything past this point")
+	}
+	if got := dp.CurrentState().Locale; got != "ur-PK" {
+		t.Fatalf("store.locale = %q after installing the matching RTL language pack from the marketplace Plugins-store page, want %q (PK's own country_settings default, now safe to preset) — ut-docs#1893", got, "ur-PK")
+	}
+}
+
+// TestHandleInstallFromMarketplace_LocaleCatchUpFindsListingBeyondFirstCatalogPage
+// is the independent review's own finding on ut-docs#1893: the real ut-cloud
+// catalog paginates (~20 listings/page), and setup_language_catalog.go's own
+// browse fetch already had to learn this the hard way (ut-docs#1108,
+// TestSetupWizardCatalogFollowsPaginationAcrossMultiplePages below). A
+// single-page catalog fetch in languagePackLocalesForListing would silently
+// find nothing for any "language" listing sitting past page 1 — the
+// install still succeeds, but the locale catch-up quietly no-ops, which is
+// exactly the bug this card exists to fix, just reappearing one layer down.
+// Forces the just-installed listing onto catalog page 2 (page size 1, an
+// unrelated "es" listing filling page 1) and proves the catch-up still
+// finds and applies it.
+func TestHandleInstallFromMarketplace_LocaleCatchUpFindsListingBeyondFirstCatalogPage(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	t.Setenv("UT_AUTH", "off")
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK" })
+	newHermeticEnOnlyI18n(t, dp)
+
+	mkt := newFakeMarketplace(t, nil)
+	mkt.publishLanguageVersion(t, "listing-lang-ur", "ut-plugin-language-ur", "1.0.0", "ur", []byte(`{"nav.home":"صفحہ اول"}`))
+	mkt.setCatalog(
+		marketplace.PluginSummary{
+			ID: "ut-plugin-language-es", ListingID: "listing-lang-es", Name: "Spanish language pack",
+			Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"es"},
+		},
+		marketplace.PluginSummary{
+			ID: "ut-plugin-language-ur", ListingID: "listing-lang-ur", Name: "Urdu language pack",
+			Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"ur"},
+		},
+	)
+	mkt.setCatalogPageSize(1)
+	dp.Cfg.Marketplace = mkt.config()
+
+	mux := http.NewServeMux()
+	registerPluginAPI(mux, dp)
+	req := httptest.NewRequest(http.MethodPost, "/api/plugins/install-from-marketplace",
+		strings.NewReader(`{"listing_id":"listing-lang-ur"}`))
+	req.Header.Set("Content-Type", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("install listing-lang-ur via /api/plugins/install-from-marketplace: %d (%s)", rec.Code, rec.Body.String())
+	}
+
+	if got := dp.CurrentState().Locale; got != "ur-PK" {
+		t.Fatalf("store.locale = %q after installing a language pack that sits on catalog page 2 (page size 1), want %q — an unpaginated catalog fetch would silently miss this listing", got, "ur-PK")
+	}
+}
