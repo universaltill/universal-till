@@ -1,4 +1,4 @@
-import { test, expect } from '@playwright/test';
+import { test, expect } from './fixtures';
 
 // ADR-0088 / ut-docs#1904 — a `layout` plugin restructures the Menu.
 //
