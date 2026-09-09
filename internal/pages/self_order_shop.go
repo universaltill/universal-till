@@ -49,6 +49,7 @@ func loadShopItems(ctx context.Context, d *common.Deps) ([]shopItem, error) {
 		ids = append(ids, it.ID)
 	}
 	hasMods, _ := data.NewModifierRepo(d.Db).ItemIDsWithModifiers(ctx, ids)
+	thumbnails, _ := repo.ItemThumbnails(ctx) // best-effort: a read error just means every tile falls back to no-image, same as a missing row
 
 	out := make([]shopItem, 0, len(items))
 	for _, it := range items {
@@ -71,7 +72,14 @@ func loadShopItems(ctx context.Context, d *common.Deps) ([]shopItem, error) {
 			Code:         code,
 			PriceMinor:   it.BasePrice,
 			HasModifiers: hasMods[it.ID],
-			ImageURL:     "/public/assets/items/" + it.ID + "/thumb.png",
+			// item_images (ut-docs#1870), not a hardcoded upload-only path:
+			// an item's thumbnail may be a built-in category icon (the
+			// picker, ut-docs#1844, or the auto-import placeholder,
+			// ut-docs#1189), which never lived under
+			// /public/assets/items/<id>/thumb.png. thumbnails[it.ID] is ""
+			// for an item with no thumbnail row at all — the grid template's
+			// onerror already hides a tile whose ImageURL 404s/is empty.
+			ImageURL: thumbnails[it.ID],
 		})
 	}
 	return out, nil
