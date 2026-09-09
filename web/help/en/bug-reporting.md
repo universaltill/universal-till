@@ -19,7 +19,7 @@ Something wrong with the till? Send a report — typed, spoken, or with a screen
 3. Press Save report. The report is stored on the till straight away — even offline — and uploads to the cloud automatically once the shop is online.
 4. Note: a recording stops if you move to another page, so send your report before navigating away.
 
-You can also reach it from the ☰ Menu via the 🐞 Report an issue tile.
+You can also reach it from the ☰ Menu via the Report an issue tile.
 
 On the Android till app, 📷 Take screenshot captures what the app is showing directly — no permission prompt. The voice note works too: the first time you record one, Android asks for microphone access; allow it once and later recordings start straight away (if you refused, turn it back on under the phone's Settings → Apps → Universal Till → Permissions). Screen recording, and taking photos with the camera, aren't available in the Android app yet.
 

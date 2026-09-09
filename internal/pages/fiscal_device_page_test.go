@@ -198,7 +198,7 @@ func TestMenuPage_FiscalDeviceTileRequiresTurkeyAndPlugin(t *testing.T) {
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
-	if !strings.Contains(body, `href="/fiscal-device"`) || !strings.Contains(body, "🧾") {
+	if !strings.Contains(body, `href="/fiscal-device"`) || !strings.Contains(body, `data-icon="receipt"`) {
 		t.Fatalf("expected the fiscal-device tile once TR + plugin active, got: %s", body)
 	}
 
