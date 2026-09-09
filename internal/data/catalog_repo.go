@@ -1350,31 +1350,9 @@ func (r *CatalogRepo) EnsureDefaultThumbnail(ctx context.Context, itemID, path s
 	return nil
 }
 
-// ItemThumbnails returns every item's thumbnail path (item_images,
-// role=thumbnail), keyed by item id — the whole-catalog counterpart to
-// ItemBarcodes/ItemVariants above, for the catalog list's initial render
-// (ut-docs#1842). An item with no thumbnail row simply has no entry; the
-// caller decides what an absent entry means (nothing to show).
-func (r *CatalogRepo) ItemThumbnails(ctx context.Context) (map[string]string, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT item_id, path FROM item_images WHERE role = 'thumbnail'`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]string{}
-	for rows.Next() {
-		var id, path string
-		if err := rows.Scan(&id, &path); err != nil {
-			return nil, err
-		}
-		out[id] = path
-	}
-	return out, rows.Err()
-}
-
 // ItemThumbnailFor returns one item's thumbnail path (item_images,
 // role=thumbnail), or "" if it has none — the single-item counterpart to
-// ItemThumbnails above, mirroring ItemBarcodesFor/ItemVariantsFor for a
+// ItemThumbnails below, mirroring ItemBarcodesFor/ItemVariantsFor for a
 // row-level OOB mutation response (ut-docs#1842) that doesn't need the
 // whole-table map.
 func (r *CatalogRepo) ItemThumbnailFor(ctx context.Context, itemID string) (string, error) {
@@ -1459,10 +1437,16 @@ func (r *CatalogRepo) SetItemThumbnail(ctx context.Context, itemID, path string)
 // should only look up IDs it already knows are active (loadShopItems does,
 // via ListItems). Same one-query-for-all-items shape as
 // ItemBarcodes/ItemVariants above, for callers building a list of tiles
-// (e.g. the self-order kiosk grid, ut-docs#1870) that would otherwise pay
-// one query per item via ItemThumbnailPath. An item missing from the
-// returned map has no thumbnail row at all — callers fall back to their own
-// no-image handling, same as ItemThumbnailPath's ok=false case.
+// (e.g. the catalog list's initial render, ut-docs#1842; the self-order
+// kiosk grid, ut-docs#1870) that would otherwise pay one query per item via
+// ItemThumbnailPath. An item missing from the returned map has no
+// thumbnail row at all — callers fall back to their own no-image handling
+// (nothing to show), same as ItemThumbnailPath's ok=false case.
+//
+// (#1842 and #1870 each independently added this exact method — same
+// signature, same body — and both merged to main within minutes of each
+// other, producing a duplicate-declaration compile break that neither
+// PR's own CI ever saw in isolation. This comment is the surviving copy.)
 func (r *CatalogRepo) ItemThumbnails(ctx context.Context) (map[string]string, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT item_id, path FROM item_images WHERE role = 'thumbnail'`)
 	if err != nil {
