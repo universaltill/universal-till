@@ -889,8 +889,13 @@
             hx-confirm="{{ T "settings.data.demo_confirm" }}"
             hx-target="#demo-remove-msg" hx-swap="innerHTML"
             hx-disabled-elt="this">{{ T "settings.data.demo_remove_btn" }}</button>
-    <span id="demo-remove-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></span>
   </div>
+  <!-- ut-docs#1840: was a <span> — the fragment this now swaps in can
+       include a <ul> of kept items (writeKeptDemoItemsHTML,
+       internal/pages/settings_page.go), block content a <span> can't
+       legally contain. A <div> keeps the same hx-target id/hx-swap
+       contract every other bit of this handler already relies on. -->
+  <div id="demo-remove-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
   {{ end }}
 
   {{ if .isManager }}
