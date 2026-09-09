@@ -24,6 +24,10 @@
   .receipt-tse-qr img {max-width: 100%;}
   .receipt-printer-warning {display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; background: #fff7ed; border: 1px solid #fdba74; color: #9a3412; padding: 0.5rem; border-radius: 4px; margin: 0.75rem 0;}
   .receipt-printer-message {font-size: 0.9rem;}
+  .receipt-ask {border-top: 1px dashed #e5e7eb; margin-top: 0.75rem; padding-top: 0.75rem;}
+  .receipt-ask-title {font-weight: 600; margin-bottom: 0.5rem;}
+  .receipt-ask-actions {display: flex; gap: 0.5rem;}
+  .receipt-ask-actions .btn {flex: 1; min-height: 3rem;}
   @media print {
     /* Take the receipt OUT of the sale-screen grid: the fixed-height kiosk
        grid pins the basket to a narrow side column (the opposite side in
@@ -185,6 +189,25 @@
     <div class="receipt-printer-warning">
       <span class="receipt-printer-message">{{ T "receipt.printer.unavailable" }}</span>
       <button class="btn secondary receipt-printer-retry" type="button" onclick="window.print()">{{ T "receipt.printer.retry" }}</button>
+    </div>
+    {{ end }}
+    {{ if eq .ReceiptPolicy "ask" }}
+    <!-- ADR-0089 (ut-docs#1907): the shop's receipt policy is "ask" — the
+         cashier asks the customer and taps the answer. Paper or none only
+         in this iteration (Decision 4; a digital option lands with
+         ut-docs#1603). The sale is already committed server-side before
+         this HTML renders, so neither button can block or fail it: Print
+         reuses the exact reprint POST the Print button below already uses
+         (browser print dialog as the fallback, same as that button) and
+         hides this block; No receipt just hides the block — no network, no
+         state change. The action row below stays exactly as it is for
+         always/never and as the fallback once the prompt is answered. -->
+    <div class="receipt-ask" id="receipt-ask" role="group" aria-label="{{ T "receipt.ask.title" }}">
+      <div class="receipt-ask-title">{{ T "receipt.ask.title" }}</div>
+      <div class="receipt-ask-actions">
+        <button class="btn primary" type="button" onclick="var el=document.getElementById('receipt-ask');fetch('/api/print/receipt/{{ .ReceiptNo }}',{method:'POST'}).then(function(r){if(!r.ok){window.print();}el.hidden=true;}).catch(function(){window.print();el.hidden=true;})">{{ T "receipt.ask.paper" }}</button>
+        <button class="btn secondary" type="button" onclick="document.getElementById('receipt-ask').hidden=true">{{ T "receipt.ask.none" }}</button>
+      </div>
     </div>
     {{ end }}
     <div class="actions">

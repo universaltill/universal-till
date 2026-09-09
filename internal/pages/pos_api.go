@@ -1761,8 +1761,11 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 		if err != nil {
 			printerAvailable = false
 		}
-		// The built-in ESC/POS path counts as a printer too.
-		if printerConfig(r.Context(), d).Enabled() {
+		// The built-in ESC/POS path counts as a printer too. Read once: the
+		// same resolved config also carries the shop's receipt policy
+		// (ADR-0089) the receipt view needs for its "ask" prompt.
+		printerCfg := printerConfig(r.Context(), d)
+		if printerCfg.Enabled() {
 			printerAvailable = true
 		}
 		printerUnavailable := !printerAvailable
@@ -1812,7 +1815,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 			issuedVouchers = append(issuedVouchers, receiptVoucherIssue{Code: v.VoucherID, Amount: v.Amount.Minor()})
 		}
 		receiptHTML, renderErr := renderReceipt(funcs, receiptNo, saleLines, payments, dbSubtotal, dbTax, dbTotal, d.CurrentState().TaxInclusive, discount.Minor(), discountType, discountRaw, legalBlocks, printerUnavailable, unsignedOverride, unsignedFiscalSigning, unsignedCannotSign, tseSignature, deviceReceipt,
-			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d), tableLabelForReceipt, issuedVouchers)
+			storeNameOrDefault(r.Context(), d), receiptDesignFromSettings(r.Context(), d), tableLabelForReceipt, issuedVouchers, printerCfg.ReceiptPolicy)
 		if renderErr != nil {
 			printerUnavailable = true
 			receiptHTML = `<div class="receipt-printer-warning"><span class="receipt-printer-message">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.unavailable")) + `</span><button class="btn secondary receipt-printer-retry" type="button" onclick="window.print()">` + template.HTMLEscapeString(funcs["T"].(func(string) string)("receipt.printer.retry")) + `</button></div>`
@@ -2059,7 +2062,10 @@ func normalizeLegalLines(text string, lines []string) []string {
 	return out
 }
 
-func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, deviceReceipt *data.FiscalDeviceReceipt, storeName string, design receiptDesign, tableLabel string, issuedVouchers []receiptVoucherIssue) (string, error) {
+// receiptPolicy (ADR-0089) is the shop's resolved receipt policy: "ask"
+// renders the "would you like a receipt?" prompt above the action row;
+// "always"/"never" (or "") render the receipt exactly as before.
+func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLineInput, payments []pos.PaymentInput, subtotal, taxTotal, total int64, taxInclusive bool, saleDiscount int64, saleDiscountType string, saleDiscountRaw int64, legalBlocks []receiptLegalBlock, printerUnavailable bool, unsignedOverride bool, unsignedFiscalSigning bool, unsignedCannotSign bool, tseSignature *data.FiscalTSESignature, deviceReceipt *data.FiscalDeviceReceipt, storeName string, design receiptDesign, tableLabel string, issuedVouchers []receiptVoucherIssue, receiptPolicy string) (string, error) {
 	// Fixed file set, parsed once and cloned per call thereafter
 	// (ut-docs#1320) — this runs on every completed sale.
 	t, err := httpx.ClonedTemplate("pages.renderReceipt", "receipt.html", funcs,
@@ -2181,11 +2187,15 @@ func renderReceipt(funcs template.FuncMap, receiptNo string, lines []pos.SaleLin
 		// served at, resolved server-side before the basket was reset — ""
 		// when no table was assigned, guarded by {{ if .TableLabel }} in the
 		// template.
-		"TableLabel":   tableLabel,
-		"DesignHeader": design.Header,
-		"DesignFooter": design.Footer,
-		"ShowTax":      design.ShowTax,
-		"ShowBarcode":  design.ShowBarcode,
+		"TableLabel": tableLabel,
+		// ReceiptPolicy (ADR-0089): "ask" shows the paper-or-none prompt
+		// above the action row. The sale is already committed by the time
+		// this renders, so neither answer can affect it.
+		"ReceiptPolicy": receiptPolicy,
+		"DesignHeader":  design.Header,
+		"DesignFooter":  design.Footer,
+		"ShowTax":       design.ShowTax,
+		"ShowBarcode":   design.ShowBarcode,
 	}
 	var buf bytes.Buffer
 	if err := t.ExecuteTemplate(&buf, "receipt", data); err != nil {

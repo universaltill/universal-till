@@ -20,18 +20,29 @@ import (
 
 // Printer settings keys (docs: architecture/receipt-printing.md).
 const (
-	keyPrinterMode      = "printer.mode"    // off | network | device
-	keyPrinterAddress   = "printer.address" // host[:port]
-	keyPrinterDevice    = "printer.device"  // /dev/usb/lp0
-	keyPrinterCharset   = "printer.charset" // utf8 | ascii | cp858 | win1250 | win1257 | win1253
-	keyPrinterAuto      = "printer.auto_print"
-	keyPrinterKitchen   = "printer.kitchen_addr" // kitchen printer host[:port] or device path
-	keyPrinterDrawerPin = "printer.drawer_pin"   // "2" | "5" (ut-docs#1136)
+	keyPrinterMode    = "printer.mode"    // off | network | device
+	keyPrinterAddress = "printer.address" // host[:port]
+	keyPrinterDevice  = "printer.device"  // /dev/usb/lp0
+	keyPrinterCharset = "printer.charset" // utf8 | ascii | cp858 | win1250 | win1257 | win1253
+	// keyPrinterAuto is the LEGACY boolean (ADR-0089 superseded it with the
+	// three-way keyPrinterReceiptPolicy). Read-only from now on: never
+	// written by new saves, only consulted when keyPrinterReceiptPolicy is
+	// unset so a shop that saved under the old checkbox keeps its behaviour
+	// bit-for-bit without a migration.
+	keyPrinterAuto = "printer.auto_print"
+	// keyPrinterReceiptPolicy: always | ask | never (ADR-0089 Decision 1).
+	keyPrinterReceiptPolicy = "printer.receipt_policy"
+	keyPrinterKitchen       = "printer.kitchen_addr" // kitchen printer host[:port] or device path
+	keyPrinterDrawerPin     = "printer.drawer_pin"   // "2" | "5" (ut-docs#1136)
 
 	// Read-only here: the store identity the printer charset default is
 	// resolved from (ut-docs#1728). Owned by settings.SaveRuntimeConfig.
 	keyStoreCurrency = "store.currency"
 	keyStoreLocale   = "store.locale"
+	// keyStoreCountry: read-only here too — the interim Germany receipt-
+	// policy carve-out keys off it (ADR-0089 Decision 3,
+	// receiptPolicyLockedForCountry). Same row every other reader uses.
+	keyStoreCountry = common.KeyCountry
 )
 
 // parseDrawerPin resolves the drawer_pin setting to 2 or 5. Anything else --
@@ -85,10 +96,44 @@ func printerConfigChecked(ctx context.Context, d *common.Deps) (print.Config, er
 		Address:        get(keyPrinterAddress, ""),
 		Device:         get(keyPrinterDevice, ""),
 		Charset:        get(keyPrinterCharset, ""),
-		AutoPrint:      get(keyPrinterAuto, "true") == "true",
+		ReceiptPolicy:  get(keyPrinterReceiptPolicy, ""),
 		KitchenAddress: get(keyPrinterKitchen, ""),
 		DrawerPin:      parseDrawerPin(get(keyPrinterDrawerPin, "2")),
 	}
+	// ADR-0089 Decision 1: an unset (or unrecognized) printer.receipt_policy
+	// derives from the LEGACY printer.auto_print boolean, resolved on read
+	// rather than by a migration — the same idiom as the charset default
+	// below, and for the same lazy-argument reason: the legacy read only
+	// fires when nothing usable is stored under the new key. "true"/unset →
+	// always, anything else → never, which is exactly the old
+	// `get(keyPrinterAuto, "true") == "true"` truth table, so an existing
+	// shop's behaviour is bit-for-bit unchanged until it opts into "ask".
+	if !isReceiptPolicy(cfg.ReceiptPolicy) {
+		cfg.ReceiptPolicy = receiptPolicyNever
+		if get(keyPrinterAuto, "true") == "true" {
+			cfg.ReceiptPolicy = receiptPolicyAlways
+		}
+	}
+	// ADR-0089 Decision 2: an installed country-tax plugin may narrow the
+	// permitted set; a stored choice outside it is clamped here, at read
+	// time, never left silently in effect. No answer = unrestricted. Skipped
+	// once the settings read itself is known broken — the caller only wants
+	// the definite error then, and the bus would have to hit the same DB.
+	if firstErr == nil {
+		if allowed, ok := askReceiptPolicy(ctx, d.Db); ok {
+			cfg.ReceiptPolicy = clampReceiptPolicy(cfg.ReceiptPolicy, allowed)
+		}
+	}
+	// ADR-0089 Decision 3: INTERIM core-only Germany carve-out, applied LAST
+	// so it is the final word regardless of the stored value or any plugin
+	// answer. Temporary pending ut-docs#1908 — see receiptPolicyLockedForCountry.
+	if receiptPolicyLockedForCountry(get(keyStoreCountry, "")) {
+		cfg.ReceiptPolicy = receiptPolicyAlways
+	}
+	// AutoPrint stays the one bit printReceiptAsync gates on: only "always"
+	// prints unprompted; "ask" and "never" both leave printing to the
+	// receipt screen (the prompt, or the manual Print button).
+	cfg.AutoPrint = cfg.ReceiptPolicy == receiptPolicyAlways
 	// ut-docs#1728: an unset charset resolves from the store's own
 	// currency/locale rather than the hardcoded "utf8" that used to sit in
 	// the get() default above. That hardcoded value is what made
@@ -490,7 +535,7 @@ func clampCopies(n int) int {
 func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 
-	// Printer settings (manager): mode/address/device/charset/auto-print.
+	// Printer settings (manager): mode/address/device/charset/receipt policy.
 	// ut-docs#866: checkOrElevate/InsertAuditElevated (#557/#796) — same
 	// mechanism as settings_page.go's own sites. ParseForm moved ahead of
 	// the gate solely so override_pin is readable (ut-docs#796 convention).
@@ -510,9 +555,30 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		address := strings.TrimSpace(r.Form.Get("address"))
 		device := strings.TrimSpace(r.Form.Get("device"))
 		kitchenAddr := strings.TrimSpace(r.Form.Get("kitchenAddr"))
-		auto := "false"
-		if r.Form.Get("autoPrint") == "on" || r.Form.Get("autoPrint") == "1" {
-			auto = "true"
+		// receiptPolicy (ADR-0089): always | ask | never. Unknown/empty
+		// falls back to "always" — the value that never skips a receipt —
+		// same "unknown → safe default" shape as charset above. Replaces
+		// the old autoPrint checkbox; the legacy key is no longer written
+		// (it stays readable for shops that never revisit this form).
+		receiptPolicy := strings.ToLower(strings.TrimSpace(r.Form.Get("receiptPolicy")))
+		switch receiptPolicy {
+		case receiptPolicyAsk, receiptPolicyNever:
+		default:
+			receiptPolicy = receiptPolicyAlways
+		}
+		// ADR-0089 Decision 2: a choice the installed country plugin forbids
+		// is rejected here, not stored-then-clamped — the merchant should
+		// see the refusal, not a silently different effective setting.
+		if allowed, ok := askReceiptPolicy(r.Context(), d.Db); !receiptPolicyPermitted(receiptPolicy, allowed, ok) {
+			http.Error(w, "receiptPolicy is not permitted by the installed country plugin (allowed: "+strings.Join(allowed, ", ")+")", http.StatusBadRequest)
+			return
+		}
+		// ADR-0089 Decision 3: interim Germany carve-out — only "always"
+		// saves for a DE shop (see receiptPolicyLockedForCountry).
+		if country, _, err := d.Settings.Get(r.Context(), keyStoreCountry); err == nil &&
+			receiptPolicyLockedForCountry(country) && receiptPolicy != receiptPolicyAlways {
+			http.Error(w, "receiptPolicy must be always for a shop in Germany", http.StatusBadRequest)
+			return
 		}
 		// drawerPin: empty (a client that predates this field) silently
 		// keeps today's behaviour rather than rejecting the whole form;
@@ -536,7 +602,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 					{Name: "address", Value: address},
 					{Name: "device", Value: device},
 					{Name: "kitchenAddr", Value: kitchenAddr},
-					{Name: "autoPrint", Value: r.Form.Get("autoPrint")},
+					{Name: "receiptPolicy", Value: receiptPolicy},
 					{Name: "drawerPin", Value: drawerPin},
 				}, elev)
 			return
@@ -546,15 +612,15 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = d.Settings.Set(r.Context(), keyPrinterDevice, device)
 		_ = d.Settings.Set(r.Context(), keyPrinterCharset, charset)
 		_ = d.Settings.Set(r.Context(), keyPrinterKitchen, kitchenAddr)
-		_ = d.Settings.Set(r.Context(), keyPrinterAuto, auto)
+		_ = d.Settings.Set(r.Context(), keyPrinterReceiptPolicy, receiptPolicy)
 		_ = d.Settings.Set(r.Context(), keyPrinterDrawerPin, drawerPin)
 		// ut-docs#866 review (N4): payload is deliberately partial — mode/
-		// charset/auto_print only, not address/device/kitchenAddr. Those are
-		// LAN network/device identifiers, not shop-config content worth
+		// charset/receipt_policy only, not address/device/kitchenAddr. Those
+		// are LAN network/device identifiers, not shop-config content worth
 		// journaling into the audit log's long-lived history. drawer_pin is
 		// shop-config content the same way mode/charset are, so it's included.
 		settingsAudit(r, posRepo, elev, "settings", "printer", "printer_settings_changed",
-			map[string]any{"mode": mode, "charset": charset, "auto_print": auto, "drawer_pin": drawerPin})
+			map[string]any{"mode": mode, "charset": charset, "receipt_policy": receiptPolicy, "drawer_pin": drawerPin})
 		settingsRespondSaved(w, r, elev)
 	})
 
