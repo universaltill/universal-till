@@ -9,23 +9,28 @@ import "fmt"
 // (docs/arch/turkey-launch-playbook.md steps 3–4, ut-docs#1280).
 var DriverNames = []string{"bridge", "gmp3", "hugin-pclink", "pavo-rest", "token-x"}
 
-// NewDriver picks the driver named in cfg.Driver.
+// NewDriver picks the driver named in cfg.Driver, wrapped with
+// NewValidatingDriver so every driver it returns enforces the "no usable
+// receipt_no → refuse" invariant, whether or not that driver's own Sale/
+// Refund already checks it (ut-docs#1780).
 func NewDriver(t Transport, cfg Config) (Driver, error) {
 	cfg = cfg.Normalize()
+	var d Driver
 	switch cfg.Driver {
 	case "bridge":
-		return NewBridgeDriver(t, cfg), nil
+		d = NewBridgeDriver(t, cfg)
 	case "gmp3":
-		return &GMP3Driver{Transport: t, Config: cfg}, nil
+		d = &GMP3Driver{Transport: t, Config: cfg}
 	case "hugin-pclink":
-		return &HuginPCLinkDriver{Transport: t, Config: cfg}, nil
+		d = &HuginPCLinkDriver{Transport: t, Config: cfg}
 	case "pavo-rest":
-		return &PavoRESTDriver{Transport: t, Config: cfg}, nil
+		d = &PavoRESTDriver{Transport: t, Config: cfg}
 	case "token-x":
-		return &TokenXDriver{Transport: t, Config: cfg}, nil
+		d = &TokenXDriver{Transport: t, Config: cfg}
 	default:
 		return nil, fmt.Errorf("%w: %q (known: %v)", ErrUnknownDriver, cfg.Driver, DriverNames)
 	}
+	return NewValidatingDriver(d), nil
 }
 
 // GMP3Driver will speak GİB's "ÖKC – Harici Donanım ve Yazılım Haberleşme
