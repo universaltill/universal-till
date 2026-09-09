@@ -4,8 +4,8 @@ title: Order status (kitchen progress)
 section: Everyday selling
 order: 45
 summary: "Mark each order's progress — preparing, ready, collected — with one tap, so everyone can see where an order is."
-routes: [/orders]
-keywords: [orders, kitchen, preparing, ready, collected, cancelled, status]
+routes: [/orders, /orders/{receipt}]
+keywords: [orders, kitchen, preparing, ready, collected, cancelled, status, scan, collect]
 ---
 
 # Order status (kitchen progress)
@@ -15,12 +15,13 @@ Mark each order's progress — preparing, ready, collected — with one tap, so 
 ## How to use it
 
 1. Open **Orders** — the 🛎️ icon in the rail on the sale screen, or from the ☰ menu. This is the *active* queue: recent, still-in-progress sales are listed newest first, each with its current status.
-2. Tap **Preparing** when the kitchen starts on an order, **Ready** when it can be picked up, and **Collected** when the customer has it. Any operator can do this — no manager PIN needed.
-3. Every change records who made it and when, next to the status. The receipt number links to the full receipt in the Journal — except an order shown here because it was taken on a *different* till (see the note below), where the number is shown but isn't a link, since this till doesn't hold that receipt itself.
-4. **Cancel order** marks an order cancelled. It works at any point until the order is collected; a collected order can't be cancelled.
-5. Marking an order **Collected**, or cancelling it, removes it from this list right away — it's done, so it stops taking up space in the active queue. Nothing is deleted: the receipt, every status change, and who did what stay exactly where they always did, in the Journal.
-6. An order's status only ever moves forward (Collected and Cancelled are the end of the line). Tapping an earlier step by mistake (or a second till reporting an old status after being offline) changes nothing — the till just keeps showing the later status. That's deliberate, not a fault.
-7. Orders from sales made before this feature (or that nobody has tapped yet) show **Not started** — nothing changes for them until someone taps a status.
+2. Scanning a customer's receipt barcode at the sale screen also opens their order directly, if it hasn't been collected yet — with the same one-tap **Collected** button, and a link to Refund if that's what they actually need instead. A receipt that's already collected, or was never tracked, opens Refund directly, exactly as scanning any other finished receipt does; a cancelled order, or a sale that never completed, just says so on the sale screen.
+3. Tap **Preparing** when the kitchen starts on an order, **Ready** when it can be picked up, and **Collected** when the customer has it. Any operator can do this — no manager PIN needed.
+4. Every change records who made it and when, next to the status. The receipt number links to the full receipt in the Journal — except an order shown here because it was taken on a *different* till (see the note below), where the number is shown but isn't a link, since this till doesn't hold that receipt itself.
+5. **Cancel order** marks an order cancelled. It works at any point until the order is collected; a collected order can't be cancelled.
+6. Marking an order **Collected**, or cancelling it, removes it from this list right away — it's done, so it stops taking up space in the active queue. Nothing is deleted: the receipt, every status change, and who did what stay exactly where they always did, in the Journal.
+7. An order's status only ever moves forward (Collected and Cancelled are the end of the line). Tapping an earlier step by mistake (or a second till reporting an old status after being offline) changes nothing — the till just keeps showing the later status. That's deliberate, not a fault.
+8. Orders from sales made before this feature (or that nobody has tapped yet) show **Not started** — nothing changes for them until someone taps a status.
 
 ## Notes
 

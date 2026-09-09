@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/universaltill/universal-till/internal/data/seeddata"
@@ -36,47 +37,300 @@ func (r *DemoSeedRepo) SeedDemoCatalogue(ctx context.Context) error {
 	return tx.Commit()
 }
 
-// RemoveDemoCatalogue deletes every UNTOUCHED demo item (plus its dependents
-// and any demo category/brand nothing references any more) and reports how
-// many demo items it removed and how many it had to keep because the shop
-// already sold them (directly or via a variant) or stock-adjusted them. The
-// safety predicate is the shared seeddata removal script — the exact rule
-// migration 036 applies on upgrade.
+// KeptDemoItem is one demo item RemoveDemoCatalogue could not remove, plus
+// WHY (ut-docs#1840 AC2 — the old response reported only a bare count with
+// one reason for all of them, "already in use", which is simply false for
+// an item kept only because it was edited).
+//
+//   - ReasonEdited: sku/name/base_price no longer match the seeded values,
+//     but the item has no trading history at all. Only reachable when
+//     RemoveDemoCatalogue ran in STRICT mode (the till has real trading
+//     history elsewhere) — in relaxed mode this reason can never remain,
+//     since a relaxed-mode item blocked only by this predicate is removed,
+//     not kept. Safe to remove on request (RemoveDemoItem) or to keep
+//     permanently as the operator's own (KeepDemoItemAsOwn) — ut-docs#1840
+//     AC3.
+//   - ReasonHistory: the item (or a variant) has a live or archived
+//     sale_lines/stock_movements row. Never offered a "remove anyway" —
+//     doing so would either FK-fail or silently orphan a restorable
+//     archive batch (ut-docs#1840's own "Do not regress" section). Points
+//     the operator at Catalog cleanup instead (AC4), which handles this
+//     case for any inactive, never-sold item, sample or not.
+//   - ReasonHeld: the item (or a variant) is referenced by a parked
+//     (held) basket, live or archived. Same non-negotiable as history —
+//     removing it would FK-fail the moment that basket is tendered.
+type KeptDemoItem struct {
+	ID     string
+	SKU    string
+	Name   string
+	Reason string
+}
+
+const (
+	KeptReasonEdited  = "edited"
+	KeptReasonHistory = "history"
+	KeptReasonHeld    = "held"
+)
+
+// demoTillHasNoRealHistorySQL is ut-docs#1840 AC1's till-level gate,
+// exactly the definition its own acceptance criteria recommends: no
+// sale_lines/stock_movements row, live or archived, that references a
+// NON-sample item (directly or via a variant). It says nothing about demo
+// items' own history — a demo item that has itself been sold or
+// stock-adjusted while trying the till out is still individually protected
+// by RemoveDemoRelaxedSQL's unchanged trading-history clauses either way,
+// so relaxing this gate never widens those. When true, a shop has never
+// traded for real and the pristine-match restriction has nothing left to
+// protect.
+const demoTillHasNoRealHistorySQL = `
+SELECT NOT EXISTS (
+	SELECT 1 FROM sale_lines sl JOIN items i ON i.id = sl.item_id WHERE i.is_sample_data = 0
+	UNION ALL
+	SELECT 1 FROM sale_lines sl JOIN item_variants v ON v.id = sl.variant_id
+	                            JOIN items i ON i.id = v.item_id WHERE i.is_sample_data = 0
+	UNION ALL
+	SELECT 1 FROM stock_movements sm JOIN items i ON i.id = sm.item_id WHERE i.is_sample_data = 0
+	UNION ALL
+	SELECT 1 FROM stock_movements sm JOIN item_variants v ON v.id = sm.variant_id
+	                                 JOIN items i ON i.id = v.item_id WHERE i.is_sample_data = 0
+	UNION ALL
+	SELECT 1 FROM sale_lines_archive sl JOIN items i ON i.id = sl.item_id WHERE i.is_sample_data = 0
+	UNION ALL
+	SELECT 1 FROM sale_lines_archive sl JOIN item_variants v ON v.id = sl.variant_id
+	                                    JOIN items i ON i.id = v.item_id WHERE i.is_sample_data = 0
+	UNION ALL
+	SELECT 1 FROM stock_movements_archive sm JOIN items i ON i.id = sm.item_id WHERE i.is_sample_data = 0
+	UNION ALL
+	SELECT 1 FROM stock_movements_archive sm JOIN item_variants v ON v.id = sm.variant_id
+	                                         JOIN items i ON i.id = v.item_id WHERE i.is_sample_data = 0
+)`
+
+// demoItemReasonCaseSQL is the per-item CASE that both keptDemoItems (bulk,
+// scans every remaining is_sample_data=1 item) and RemoveDemoItem's own
+// inline server-side re-check share — one definition so the two can't
+// silently drift apart. `i` is the items row alias the caller's FROM/WHERE
+// supplies. Mirrors remove_demo.sql's own safety predicate exactly: held
+// (parked basket) outranks history (sold/adjusted) outranks edited
+// (pristine mismatch only) — the two hard blockers are checked first
+// regardless of which also applies, since "held" and "history" are never
+// relaxed by mode but "edited" always is.
+const demoItemReasonCaseSQL = `
+CASE
+	WHEN EXISTS (SELECT 1 FROM held_sales h WHERE h.payload LIKE '%"item_id":"' || i.id || '"%')
+	  OR EXISTS (SELECT 1 FROM held_sales h JOIN item_variants v ON v.item_id = i.id
+	             WHERE h.payload LIKE '%"variant_id":"' || v.id || '"%')
+	  OR EXISTS (SELECT 1 FROM held_sales_archive h WHERE h.payload LIKE '%"item_id":"' || i.id || '"%')
+	  OR EXISTS (SELECT 1 FROM held_sales_archive h JOIN item_variants v ON v.item_id = i.id
+	             WHERE h.payload LIKE '%"variant_id":"' || v.id || '"%')
+	THEN 'held'
+	WHEN EXISTS (SELECT 1 FROM sale_lines sl WHERE sl.item_id = i.id)
+	  OR EXISTS (SELECT 1 FROM sale_lines sl JOIN item_variants v ON v.id = sl.variant_id WHERE v.item_id = i.id)
+	  OR EXISTS (SELECT 1 FROM stock_movements sm WHERE sm.item_id = i.id)
+	  OR EXISTS (SELECT 1 FROM stock_movements sm JOIN item_variants v ON v.id = sm.variant_id WHERE v.item_id = i.id)
+	  OR EXISTS (SELECT 1 FROM sale_lines_archive sl WHERE sl.item_id = i.id)
+	  OR EXISTS (SELECT 1 FROM sale_lines_archive sl JOIN item_variants v ON v.id = sl.variant_id WHERE v.item_id = i.id)
+	  OR EXISTS (SELECT 1 FROM stock_movements_archive sm WHERE sm.item_id = i.id)
+	  OR EXISTS (SELECT 1 FROM stock_movements_archive sm JOIN item_variants v ON v.id = sm.variant_id WHERE v.item_id = i.id)
+	THEN 'history'
+	ELSE 'edited'
+END`
+
+// keptDemoItems reports every remaining is_sample_data=1 item, with why it
+// wasn't removed. Called AFTER the removal script has run: at that point
+// "still flagged is_sample_data=1" and "kept" are the same set by
+// construction, so this needs no separate id list. Ordered by name for a
+// stable, readable Settings-page list.
+//
+// Deliberately does NOT join demo_seed_items (unlike the removal scripts
+// themselves): any is_sample_data=1 row outside the seeded id set falls
+// through demoItemReasonCaseSQL's ELSE into ReasonEdited (ut-docs#1840
+// review finding F7). Harmless today — demo_catalogue.sql is the only
+// writer of is_sample_data=1, and it seeds exactly seeddata.ItemIDs — but
+// if that invariant ever changes, such a row would be offered "remove
+// anyway" under a reason that doesn't actually apply to it.
+func keptDemoItems(ctx context.Context, tx *sql.Tx) ([]KeptDemoItem, error) {
+	rows, err := tx.QueryContext(ctx, `
+SELECT i.id, COALESCE(i.sku, ''), i.name, `+demoItemReasonCaseSQL+`
+FROM items i
+WHERE i.is_sample_data = 1
+ORDER BY i.name`)
+	if err != nil {
+		return nil, fmt.Errorf("list kept demo items: %w", err)
+	}
+	defer rows.Close()
+	var out []KeptDemoItem
+	for rows.Next() {
+		var it KeptDemoItem
+		if err := rows.Scan(&it.ID, &it.SKU, &it.Name, &it.Reason); err != nil {
+			return nil, err
+		}
+		out = append(out, it)
+	}
+	return out, rows.Err()
+}
+
+// RemoveDemoCatalogue deletes every demo item RemoveDemoRelaxedSQL/
+// RemoveDemoSQL's safety predicate allows (plus dependents and any demo
+// category/brand nothing references any more), and reports how many it
+// removed and which ones it had to keep, and why (ut-docs#1840 AC1/AC2).
+//
+// Which script runs is decided once per call, by demoTillHasNoRealHistorySQL:
+// a till that has never traded for real gets the relaxed variant (an edited
+// demo item is removable too — AC1); a till that has real trading history
+// anywhere gets the strict variant, unchanged from before this card (an
+// edited demo item is kept, offered "remove anyway"/"keep as my own item"
+// via RemoveDemoItem/KeepDemoItemAsOwn instead — AC3).
 //
 // The whole operation runs in one transaction: the TEMP ID tables the shared
 // scripts use are per-connection, and a transaction is also what pins
-// database/sql to a single connection between the two script executions.
-func (r *DemoSeedRepo) RemoveDemoCatalogue(ctx context.Context) (removed, kept int, err error) {
+// database/sql to a single connection between the script executions.
+func (r *DemoSeedRepo) RemoveDemoCatalogue(ctx context.Context) (removed int, kept []KeptDemoItem, err error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, 0, fmt.Errorf("begin demo removal: %w", err)
+		return 0, nil, fmt.Errorf("begin demo removal: %w", err)
 	}
 	defer tx.Rollback()
 
 	before, err := sampleCount(ctx, tx, "items")
 	if err != nil {
-		return 0, 0, err
+		return 0, nil, err
 	}
+
+	var relaxed bool
+	if err := tx.QueryRowContext(ctx, demoTillHasNoRealHistorySQL).Scan(&relaxed); err != nil {
+		return 0, nil, fmt.Errorf("check till trading history: %w", err)
+	}
+
 	if _, err := tx.ExecContext(ctx, seeddata.DemoIDsSQL); err != nil {
-		return 0, 0, fmt.Errorf("load demo id lists: %w", err)
+		return 0, nil, fmt.Errorf("load demo id lists: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, seeddata.RemoveDemoSQL); err != nil {
-		return 0, 0, fmt.Errorf("remove demo catalogue: %w", err)
+	removeSQL := seeddata.RemoveDemoSQL
+	if relaxed {
+		removeSQL = seeddata.RemoveDemoRelaxedSQL
 	}
-	after, err := sampleCount(ctx, tx, "items")
+	if _, err := tx.ExecContext(ctx, removeSQL); err != nil {
+		return 0, nil, fmt.Errorf("remove demo catalogue: %w", err)
+	}
+
+	kept, err = keptDemoItems(ctx, tx)
 	if err != nil {
-		return 0, 0, err
+		return 0, nil, err
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, 0, err
+		return 0, nil, err
 	}
-	return before - after, after, nil
+	return before - len(kept), kept, nil
+}
+
+// ErrDemoItemNotFound: RemoveDemoItem/KeepDemoItemAsOwn's target id doesn't
+// exist, or isn't (or is no longer) a sample-data item — nothing to act on.
+var ErrDemoItemNotFound = errors.New("demo item not found")
+
+// ErrDemoItemHasHistory: RemoveDemoItem was asked to remove an item this
+// package would never remove regardless of mode — it (or a variant) has a
+// live/archived sale, stock movement, or parked basket referencing it.
+// Wraps the specific reason (KeptReasonHistory or KeptReasonHeld) so the
+// caller can render the right message rather than a generic refusal.
+var ErrDemoItemHasHistory = errors.New("demo item has trading history")
+
+// RemoveDemoItem removes exactly one demo item on request — ut-docs#1840
+// AC3's "remove anyway" action for an item whose ONLY reason for being kept
+// is KeptReasonEdited (this is always safe: that reason means every
+// trading-history/held-basket check already passed). Re-checks server-side
+// rather than trusting the client's last-seen reason — the item may have
+// been sold or parked in the basket since the page last rendered — and
+// refuses (ErrDemoItemHasHistory) if the live reason is now "history" or
+// "held". Not offered at all for an item that was never sample data.
+func (r *DemoSeedRepo) RemoveDemoItem(ctx context.Context, itemID string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin demo item removal: %w", err)
+	}
+	defer tx.Rollback()
+
+	var reason string
+	err = tx.QueryRowContext(ctx, `
+SELECT `+demoItemReasonCaseSQL+`
+FROM items i
+WHERE i.id = ? AND i.is_sample_data = 1`, itemID).Scan(&reason)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrDemoItemNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("check demo item %s: %w", itemID, err)
+	}
+	if reason == KeptReasonHistory || reason == KeptReasonHeld {
+		return fmt.Errorf("%w: %s", ErrDemoItemHasHistory, reason)
+	}
+
+	// Same cascade cleanup as the bulk scripts (inventory/price_history have
+	// no ON DELETE CASCADE); the item delete itself cascades to
+	// item_barcodes/item_images/item_variants/shortcut_buttons/related_items/
+	// item_modifiers/item_station_routes exactly as remove_demo.sql documents.
+	// Demo category/brand cleanup is deliberately left to the next bulk
+	// "Remove sample data" run rather than duplicated here — a category with
+	// no items left is harmless to leave briefly, and there's no data-safety
+	// reason to repeat that pass for a single-item action.
+	if _, err := tx.ExecContext(ctx, `
+DELETE FROM inventory
+ WHERE item_id = ?
+    OR variant_id IN (SELECT id FROM item_variants WHERE item_id = ?)`, itemID, itemID); err != nil {
+		return fmt.Errorf("clear inventory for demo item %s: %w", itemID, err)
+	}
+	if _, err := tx.ExecContext(ctx, `
+DELETE FROM price_history
+ WHERE item_id = ?
+    OR variant_id IN (SELECT id FROM item_variants WHERE item_id = ?)`, itemID, itemID); err != nil {
+		return fmt.Errorf("clear price history for demo item %s: %w", itemID, err)
+	}
+	res, err := tx.ExecContext(ctx, `DELETE FROM items WHERE id = ? AND is_sample_data = 1`, itemID)
+	if err != nil {
+		return fmt.Errorf("remove demo item %s: %w", itemID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrDemoItemNotFound
+	}
+	return tx.Commit()
+}
+
+// KeepDemoItemAsOwn clears one demo item's is_sample_data flag — ut-docs#1840
+// AC3's "keep as my own item" resolution for an item kept only because it
+// was edited. The item becomes a normal, permanent catalog item: it stops
+// counting toward SampleItemCount, stops appearing in the Settings "kept"
+// list, and a later "Remove sample data" run never touches it again.
+func (r *DemoSeedRepo) KeepDemoItemAsOwn(ctx context.Context, itemID string) error {
+	res, err := r.db.ExecContext(ctx, `UPDATE items SET is_sample_data = 0 WHERE id = ? AND is_sample_data = 1`, itemID)
+	if err != nil {
+		return fmt.Errorf("keep demo item %s as own: %w", itemID, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrDemoItemNotFound
+	}
+	return nil
 }
 
 // SampleItemCount reports how many sample-data items are currently in the
 // catalogue (drives the Settings "sample data present" note).
 func (r *DemoSeedRepo) SampleItemCount(ctx context.Context) (int, error) {
 	return sampleCount(ctx, r.db, "items")
+}
+
+// IsSampleItem reports whether itemID currently names an is_sample_data=1
+// item — the cheap, no-mutation existence check RemoveDemoItem/
+// KeepDemoItemAsOwn's HTTP handlers run BEFORE checkOrElevate (ut-docs#1840
+// review finding F3, mirroring the established convention at
+// dismiss-pending-base-plugin's own `matched` check, settings_page.go): a
+// request that was always going to be a no-op shouldn't burn an approver's
+// live PIN entry, and validating the id early means an invalid one gets a
+// plain 404 instead of first rendering a PIN prompt with caller-chosen text
+// in its approver-facing summary.
+func (r *DemoSeedRepo) IsSampleItem(ctx context.Context, itemID string) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM items WHERE id = ? AND is_sample_data = 1`, itemID).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("check sample item %s: %w", itemID, err)
+	}
+	return n > 0, nil
 }
 
 // SeedDemoCustomersPromos (re)inserts the 3 demo customers + 3 demo promo

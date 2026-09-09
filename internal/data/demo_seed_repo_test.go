@@ -2,6 +2,7 @@ package data
 
 import (
 	"context"
+	"errors"
 	"path/filepath"
 	"testing"
 
@@ -103,8 +104,8 @@ func TestRemoveDemoCatalogue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
-	if removed != 48 || kept != 2 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 48, 2", removed, kept)
+	if removed != 48 || len(kept) != 2 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 48, 2", removed, len(kept))
 	}
 
 	var n int
@@ -139,8 +140,8 @@ func TestRemoveDemoCatalogue(t *testing.T) {
 	if err != nil {
 		t.Fatalf("second RemoveDemoCatalogue: %v", err)
 	}
-	if removed != 0 || kept != 2 {
-		t.Fatalf("second RemoveDemoCatalogue = removed %d, kept %d; want 0, 2", removed, kept)
+	if removed != 0 || len(kept) != 2 {
+		t.Fatalf("second RemoveDemoCatalogue = removed %d, kept %d; want 0, 2", removed, len(kept))
 	}
 }
 
@@ -151,17 +152,21 @@ func TestRemoveDemoCatalogueEmpty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveDemoCatalogue on empty DB: %v", err)
 	}
-	if removed != 0 || kept != 0 {
-		t.Fatalf("RemoveDemoCatalogue on empty DB = removed %d, kept %d; want 0, 0", removed, kept)
+	if removed != 0 || len(kept) != 0 {
+		t.Fatalf("RemoveDemoCatalogue on empty DB = removed %d, kept %d; want 0, 0", removed, len(kept))
 	}
 }
 
-// ut-docs#566: a shop that configures its till before opening — renaming,
-// repricing, or re-SKU'ing a demo item — has already made it real, even
-// with zero sale_lines/stock_movements history. Each edit is independently
-// sufficient to keep the item; a genuinely untouched sibling item is
-// removed as before, proving the predicate doesn't just keep everything.
-func TestRemoveDemoCatalogueKeepsEditedItem(t *testing.T) {
+// ut-docs#1840 (supersedes ut-docs#566's original assertion, which encoded
+// the exact bug this card fixes as "correct": a shop that has never traded
+// for real has nothing left for the pristine-match rule to protect, so
+// renaming/repricing/re-SKU'ing a demo item no longer disqualifies it from
+// "Remove sample data" — AC1's till-level gate (demoTillHasNoRealHistorySQL)
+// picks the relaxed script whenever no non-sample item has any trading
+// history anywhere, live or archived, and this DB has only demo data in it.
+// A genuinely untouched sibling item is removed exactly as before, proving
+// the predicate isn't just "remove everything now."
+func TestRemoveDemoCatalogueRemovesEditedItemsWhenTillHasNoRealHistory(t *testing.T) {
 	d := openDemoSeedTestDB(t)
 	ctx := context.Background()
 	repo := NewDemoSeedRepo(d.DB)
@@ -170,7 +175,8 @@ func TestRemoveDemoCatalogueKeepsEditedItem(t *testing.T) {
 	}
 
 	// itm001 renamed, itm002 repriced, itm003 re-SKU'd — no sale, no stock
-	// movement against any of them.
+	// movement against any of them, and nothing non-sample anywhere in this
+	// till.
 	if _, err := d.DB.Exec(`UPDATE items SET name = 'Flat White' WHERE id = 'itm001'`); err != nil {
 		t.Fatal(err)
 	}
@@ -185,27 +191,53 @@ func TestRemoveDemoCatalogueKeepsEditedItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
-	if removed != 47 || kept != 3 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 47, 3", removed, kept)
+	if removed != 50 || len(kept) != 0 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 50, 0 (edited items are removable when the till has never traded for real)", removed, len(kept))
 	}
-	for _, id := range []string{"itm001", "itm002", "itm003"} {
+	for _, id := range []string{"itm001", "itm002", "itm003", "itm004"} {
 		var n int
 		if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = ?`, id).Scan(&n); err != nil {
 			t.Fatal(err)
 		}
-		if n != 1 {
-			t.Errorf("edited item %s was removed", id)
+		if n != 0 {
+			t.Errorf("edited item %s survived removal — want it gone, same as an untouched item", id)
 		}
 	}
-	// itm004, genuinely untouched, is gone like the rest of the 47.
-	var n int
-	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm004'`).Scan(&n); err != nil {
+}
+
+// The strict counterpart: the moment the till has ANY real (non-sample)
+// trading history, RemoveDemoCatalogue falls back to the pristine-match
+// rule exactly as it always has — an edited demo item is kept, and
+// KeptDemoItem reports why (ReasonEdited), so AC3's "remove anyway"/"keep
+// as my own item" resolution has something to act on.
+func TestRemoveDemoCatalogueKeepsEditedItemWhenTillHasRealHistory(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+
+	// A real (non-sample) item, genuinely sold — this is what flips the
+	// till-level gate to "has real history," independent of anything
+	// touching the demo catalogue itself.
+	seedRealSale(t, d, "own-1", "s-1")
+
+	// itm001 renamed — no sale, no stock movement against it.
+	if _, err := d.DB.Exec(`UPDATE items SET name = 'Flat White' WHERE id = 'itm001'`); err != nil {
 		t.Fatal(err)
 	}
-	if n != 0 {
-		t.Error("untouched item itm004 was kept — predicate over-broadened, not just the edited items")
+
+	removed, kept, err := repo.RemoveDemoCatalogue(ctx)
+	if err != nil {
+		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
-	// Their name/price edits survived the removal pass untouched.
+	if removed != 49 || len(kept) != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1 (a till with real trading history keeps an edited item)", removed, len(kept))
+	}
+	if kept[0].ID != "itm001" || kept[0].Reason != KeptReasonEdited {
+		t.Fatalf("kept[0] = %+v; want itm001/edited", kept[0])
+	}
 	var name string
 	if err := d.DB.QueryRow(`SELECT name FROM items WHERE id = 'itm001'`).Scan(&name); err != nil {
 		t.Fatal(err)
@@ -565,8 +597,8 @@ func TestRemoveDemoCatalogueLeavesOwnItemsAlone(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if removed != 50 || kept != 0 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 50, 0", removed, kept)
+	if removed != 50 || len(kept) != 0 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 50, 0", removed, len(kept))
 	}
 	var n int
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'own-1'`).Scan(&n); err != nil {
@@ -602,8 +634,15 @@ func TestRemoveDemoCatalogueKeepsHeldSaleItem(t *testing.T) {
 		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
 	// Kept: itm003 (held sale). Removed: the other 49 items.
-	if removed != 49 || kept != 1 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, kept)
+	if removed != 49 || len(kept) != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, len(kept))
+	}
+	// ut-docs#1840 review finding F4: the reported reason, not just the
+	// count, must be "held" — this is what routes the Settings page to
+	// render the plain "in a parked sale" text instead of offering a
+	// "remove anyway" button it would then have to refuse.
+	if kept[0].ID != "itm003" || kept[0].Reason != KeptReasonHeld {
+		t.Fatalf("kept[0] = %+v; want itm003/held", kept[0])
 	}
 	var n int
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm003'`).Scan(&n); err != nil {
@@ -640,8 +679,8 @@ func TestRemoveDemoCatalogueKeepsHeldSaleVariantItem(t *testing.T) {
 		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
 	// Kept: itm041 (held sale, via its variant). Removed: the other 49.
-	if removed != 49 || kept != 1 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, kept)
+	if removed != 49 || len(kept) != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, len(kept))
 	}
 	var n int
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm041'`).Scan(&n); err != nil {
@@ -677,8 +716,8 @@ func TestRemoveDemoCatalogueKeepsSaleArchiveItem(t *testing.T) {
 		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
 	// Kept: itm003 (archived sale line). Removed: the other 49 items.
-	if removed != 49 || kept != 1 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, kept)
+	if removed != 49 || len(kept) != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, len(kept))
 	}
 	var n int
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm003'`).Scan(&n); err != nil {
@@ -706,8 +745,8 @@ func TestRemoveDemoCatalogueKeepsSaleArchiveVariantItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
-	if removed != 49 || kept != 1 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, kept)
+	if removed != 49 || len(kept) != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, len(kept))
 	}
 	var n int
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm041'`).Scan(&n); err != nil {
@@ -739,8 +778,8 @@ func TestRemoveDemoCatalogueKeepsStockArchiveItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
-	if removed != 49 || kept != 1 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, kept)
+	if removed != 49 || len(kept) != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, len(kept))
 	}
 	var n int
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm003'`).Scan(&n); err != nil {
@@ -778,8 +817,8 @@ func TestRemoveDemoCatalogueKeepsHeldSaleArchiveItem(t *testing.T) {
 	if err != nil {
 		t.Fatalf("RemoveDemoCatalogue: %v", err)
 	}
-	if removed != 49 || kept != 1 {
-		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, kept)
+	if removed != 49 || len(kept) != 1 {
+		t.Fatalf("RemoveDemoCatalogue = removed %d, kept %d; want 49, 1", removed, len(kept))
 	}
 	var n int
 	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm003'`).Scan(&n); err != nil {
@@ -787,6 +826,252 @@ func TestRemoveDemoCatalogueKeepsHeldSaleArchiveItem(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatal("item referenced only by an archived held sale was removed")
+	}
+}
+
+// ut-docs#1840 AC3: "remove anyway" on a demo item kept only for
+// ReasonEdited. Needs a strict-mode till (real trading history elsewhere),
+// otherwise RemoveDemoCatalogue itself would already have removed the
+// edited item and there'd be nothing left to demonstrate the per-item path
+// on.
+func TestRemoveDemoItemRemovesEditedItem(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	seedRealSale(t, d, "own-1", "s-1")
+	if _, err := d.DB.Exec(`UPDATE items SET name = 'Flat White' WHERE id = 'itm001'`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.RemoveDemoItem(ctx, "itm001"); err != nil {
+		t.Fatalf("RemoveDemoItem: %v", err)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm001'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Error("itm001 survived RemoveDemoItem")
+	}
+}
+
+// The server-side re-check: even though the client only ever offers "remove
+// anyway" for a ReasonEdited row, RemoveDemoItem must refuse an item that
+// actually has trading history rather than trust the caller — the item
+// could have been sold in the gap between the page rendering and the click.
+func TestRemoveDemoItemRefusesItemWithHistory(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	seedRealSale(t, d, "own-1", "s-1")
+	if _, err := d.DB.Exec(`INSERT INTO stock_movements (id, item_id, location_id, type, quantity)
+		VALUES ('sm-1', 'itm001', 'loc_main', 'adjust', 3)`); err != nil {
+		t.Fatal(err)
+	}
+
+	err := repo.RemoveDemoItem(ctx, "itm001")
+	if !errors.Is(err, ErrDemoItemHasHistory) {
+		t.Fatalf("RemoveDemoItem = %v, want ErrDemoItemHasHistory", err)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm001'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Error("itm001 was removed despite having stock-movement history")
+	}
+}
+
+// A held (parked) sale is refused the same way as sold/stock-adjusted
+// history — this is what "never widen the FK-safety clauses" (ut-docs#1840's
+// own "Do not regress") means for the per-item path specifically.
+func TestRemoveDemoItemRefusesHeldItem(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	payload := `{"lines":[{"sku":"SKU-0001","name":"Held Item","qty":1,"price_cents":100,"item_id":"itm001"}],"total":100}`
+	if _, err := d.DB.Exec(`INSERT INTO held_sales (id, label, payload) VALUES ('h-1', 'Table 4', ?)`, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	err := repo.RemoveDemoItem(ctx, "itm001")
+	if !errors.Is(err, ErrDemoItemHasHistory) {
+		t.Fatalf("RemoveDemoItem = %v, want ErrDemoItemHasHistory", err)
+	}
+}
+
+// ut-docs#1840 review finding F4: the held_sales_archive arm specifically —
+// a demo item parked in a basket that was later swept into the archive by a
+// reset, before ever being tendered — must refuse "remove anyway" exactly
+// like a still-live held sale does. This is the sharpest version of the
+// non-regression the card's own text demands: demoItemReasonCaseSQL is
+// shared between the bulk kept-list AND this single-item safety re-check,
+// so a bug in this specific arm would both mislabel the row "edited" in the
+// list AND let "remove anyway" delete an item a restorable archive batch
+// still depends on.
+func TestRemoveDemoItemRefusesHeldArchiveItem(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO reset_batches (id, created_at, sales_count) VALUES ('batch1','2026-01-01T00:00:00Z',0)`); err != nil {
+		t.Fatal(err)
+	}
+	payload := `{"lines":[{"sku":"SKU-0001","name":"Held Item","qty":1,"price_cents":100,"item_id":"itm001"}],"total":100}`
+	if _, err := d.DB.Exec(`INSERT INTO held_sales_archive (id, label, total_minor, line_count, payload, created_at, reset_batch_id)
+	   VALUES ('ha1','Table 4',100,1,?,'2026-01-01T00:00:00Z','batch1')`, payload); err != nil {
+		t.Fatal(err)
+	}
+
+	err := repo.RemoveDemoItem(ctx, "itm001")
+	if !errors.Is(err, ErrDemoItemHasHistory) {
+		t.Fatalf("RemoveDemoItem = %v, want ErrDemoItemHasHistory", err)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm001'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("itm001 was removed despite being referenced by an archived held sale")
+	}
+}
+
+// A non-existent (or already-removed / already non-sample) id is a clean
+// not-found, not a silent no-op or a generic error.
+func TestRemoveDemoItemNotFound(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := repo.RemoveDemoItem(ctx, "does-not-exist"); !errors.Is(err, ErrDemoItemNotFound) {
+		t.Fatalf("RemoveDemoItem(does-not-exist) = %v, want ErrDemoItemNotFound", err)
+	}
+	// A real, non-sample item id is equally "not found" from this method's
+	// point of view — it only ever acts on is_sample_data = 1 rows.
+	if _, err := d.DB.Exec(`INSERT INTO items (id, name, base_price) VALUES ('own-1', 'My Own Item', 250)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.RemoveDemoItem(ctx, "own-1"); !errors.Is(err, ErrDemoItemNotFound) {
+		t.Fatalf("RemoveDemoItem(own-1) = %v, want ErrDemoItemNotFound (not a sample item)", err)
+	}
+}
+
+// ut-docs#1840 AC3's other resolution: "keep as my own item" clears
+// is_sample_data permanently — the item survives, stops counting as sample
+// data, and a later RemoveDemoCatalogue run never touches it again even
+// when the till has no real trading history (the case that would otherwise
+// remove it outright).
+func TestKeepDemoItemAsOwn(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.DB.Exec(`UPDATE items SET name = 'Flat White' WHERE id = 'itm001'`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.KeepDemoItemAsOwn(ctx, "itm001"); err != nil {
+		t.Fatalf("KeepDemoItemAsOwn: %v", err)
+	}
+	var flagged int
+	if err := d.DB.QueryRow(`SELECT is_sample_data FROM items WHERE id = 'itm001'`).Scan(&flagged); err != nil {
+		t.Fatal(err)
+	}
+	if flagged != 0 {
+		t.Fatal("itm001 still flagged is_sample_data after KeepDemoItemAsOwn")
+	}
+
+	removed, kept, err := repo.RemoveDemoCatalogue(ctx)
+	if err != nil {
+		t.Fatalf("RemoveDemoCatalogue: %v", err)
+	}
+	// itm001 is no longer sample data at all, so it's neither removed nor
+	// kept-and-reported — it's simply outside this method's scope now,
+	// exactly like any other operator-owned item.
+	if removed != 49 || len(kept) != 0 {
+		t.Fatalf("RemoveDemoCatalogue after KeepDemoItemAsOwn = removed %d, kept %d; want 49, 0", removed, len(kept))
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm001'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("itm001 was removed even though it was kept as the operator's own item")
+	}
+}
+
+func TestKeepDemoItemAsOwnNotFound(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if err := repo.KeepDemoItemAsOwn(ctx, "does-not-exist"); !errors.Is(err, ErrDemoItemNotFound) {
+		t.Fatalf("KeepDemoItemAsOwn(does-not-exist) = %v, want ErrDemoItemNotFound", err)
+	}
+}
+
+// keptDemoItems' reason priority: an item that is BOTH edited AND has
+// trading history reports "history", not "edited" — the harder blocker
+// wins, since "edited" is the only one of the three a merchant can act on
+// via "remove anyway."
+func TestRemoveDemoCatalogueKeptReasonPriorityHistoryOverEdited(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	seedRealSale(t, d, "own-1", "s-1") // force strict mode
+	if _, err := d.DB.Exec(`UPDATE items SET name = 'Flat White' WHERE id = 'itm001'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO stock_movements (id, item_id, location_id, type, quantity)
+		VALUES ('sm-1', 'itm001', 'loc_main', 'adjust', 3)`); err != nil {
+		t.Fatal(err)
+	}
+
+	_, kept, err := repo.RemoveDemoCatalogue(ctx)
+	if err != nil {
+		t.Fatalf("RemoveDemoCatalogue: %v", err)
+	}
+	if len(kept) != 1 || kept[0].ID != "itm001" || kept[0].Reason != KeptReasonHistory {
+		t.Fatalf("kept = %+v; want exactly itm001/history", kept)
+	}
+}
+
+// seedRealSale inserts one minimal real (non-sample) item and sale line —
+// the shared setup several tests above use purely to flip
+// demoTillHasNoRealHistorySQL to "has real history" (strict mode), when the
+// specific item/line ids don't matter to the test itself.
+func seedRealSale(t *testing.T, d *db.DB, itemID, saleID string) {
+	t.Helper()
+	if _, err := d.DB.Exec(`INSERT INTO items (id, name, base_price) VALUES (?, 'My Own Item', 250)`, itemID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO sales (id, receipt_no, subtotal, total) VALUES (?, 'R-1', 250, 250)`, saleID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO sale_lines
+		(id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+		VALUES (?, ?, 1, ?, 'My Own Item', 1, 250, 0, 0, 250, 250)`, saleID+"-sl", saleID, itemID); err != nil {
+		t.Fatal(err)
 	}
 }
 
