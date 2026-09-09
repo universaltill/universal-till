@@ -8,4 +8,6 @@
     <string name="kiosk_pin_not_engaged">Kiosk kilidi etkin değil — bu cihaz güvenli değil</string>
     <string name="external_link_failed">Bağlantı tarayıcıda açılamadı.</string>
     <string name="bluetooth_settings_blocked_in_lockdown">Önce kilit modundan çıkın — kasa kilitliyken Android’in Bluetooth ayarları açılamaz.</string>
+    <string name="error_bar_message">Bu sayfa yüklenemedi.</string>
+    <string name="error_bar_action">Kasaya dön</string>
 </resources>
