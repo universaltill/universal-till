@@ -548,8 +548,8 @@
        shorter ones), and flex-wrap treats the checkbox and its text as
        separate wrapping items, visually detaching the checkbox from its
        own label (caught by actually screenshotting this section — see
-       settings.printer.auto/settings.telemetry.enable for the same
-       plain-<label> precedent this follows instead). -->
+       settings.telemetry.enable for the same plain-<label> precedent this
+       follows instead). -->
   <label style="display:block; margin:.35rem 0">
     <!-- ut-docs#935 review BLOCKER 1: a `js:` hx-vals expression is
          evaluated as a bare `Function(...)()` call (see htmx's own
@@ -1376,7 +1376,27 @@
       <input type="text" name="kitchenAddr" id="printer-kitchen-addr-input" value="{{ $p.KitchenAddress }}" placeholder="192.168.1.60:9100" dir="ltr">
       <span class="muted">{{ T "settings.printer.kitchen_help" }}</span>
     </label>
-    <label><input type="checkbox" name="autoPrint" {{ if $p.AutoPrint }}checked{{ end }}> {{ T "settings.printer.auto" }}</label>
+    <!-- ADR-0089 (ut-docs#1907): the old "print automatically" checkbox is
+         now a three-way receipt policy — always / ask the customer / never.
+         $p.ReceiptPolicy is the RESOLVED value (legacy auto_print
+         derivation, plugin clamp and the interim Germany carve-out already
+         applied), so what is pre-selected is what actually happens at the
+         till. For a DE shop the control is locked to "always" (a disabled
+         <select> is not submitted, hence the hidden field carrying the one
+         value the save handler will accept) with a factual note — no
+         compliance-outcome claim (ADR-0040); this lock is temporary,
+         pending ut-docs#1908, see receiptPolicyLockedForCountry. -->
+    <label>{{ T "settings.printer.receipt_policy.title" }}
+      <select name="receiptPolicy" {{ if .receiptPolicyLocked }}disabled{{ end }}>
+        <option value="always" {{ if eq $p.ReceiptPolicy "always" }}selected{{ end }}>{{ T "settings.printer.receipt_policy.always" }}</option>
+        <option value="ask" {{ if eq $p.ReceiptPolicy "ask" }}selected{{ end }}>{{ T "settings.printer.receipt_policy.ask" }}</option>
+        <option value="never" {{ if eq $p.ReceiptPolicy "never" }}selected{{ end }}>{{ T "settings.printer.receipt_policy.never" }}</option>
+      </select>
+    </label>
+    {{ if .receiptPolicyLocked }}
+    <input type="hidden" name="receiptPolicy" value="always">
+    <p class="muted receipt-policy-locked" style="margin:.2rem 0 0">{{ T "settings.printer.receipt_policy.locked_de" }}</p>
+    {{ end }}
     <div style="display:flex; gap:.4rem; align-items:center; margin-top:.5rem">
       <button class="btn" type="submit">{{ T "settings.printer.apply" }}</button>
       <!-- ut-docs#866 review (N3): un-gating this card newly exposes these

@@ -227,9 +227,11 @@ func NewButtonStore(db *sql.DB) *ButtonStore {
 }
 
 // LoadCategories returns the flat category list the sale-screen grid nests
-// buttons under (see BuildCategoryGroups).
+// buttons under (see BuildCategoryGroups). ListActiveCategories, not
+// ListCategories (ut-docs#1898): a deactivated category must not offer
+// itself as a sale-screen tab.
 func (s *ButtonStore) LoadCategories(ctx context.Context) ([]data.CategoryNode, error) {
-	return s.catalogRepo.ListCategories(ctx)
+	return s.catalogRepo.ListActiveCategories(ctx)
 }
 
 type SearchResult struct {

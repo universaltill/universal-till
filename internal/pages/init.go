@@ -466,6 +466,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerKitchenDisplay(mux, dp)   // per-station kitchen display screen, HDMI-local (ut-docs#544)
 	registerBluetoothDevices(mux, dp) // in-POS Bluetooth HID pairing panel (ut-docs#76, ADR-0078)
 	registerTables(mux, dp)           // table floor plan (ut-docs#814, ADR-0054)
+	registerCategories(mux, dp)       // categories admin (ut-docs#1898)
 	registerCountrySettings(mux, dp)  // per-country defaults (ut-docs#659)
 	registerTranslations(mux, dp, i18n)
 	registerSetup(mux, dp, authSvc)
