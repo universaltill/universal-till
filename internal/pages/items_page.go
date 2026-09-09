@@ -19,13 +19,18 @@ type itemsSection struct {
 	Href                 string // empty = not yet available
 }
 
-// itemsSections is the fixed section list. Option sets links to /catalog
-// today (the per-item variants panel lives there) because the reusable,
-// named-set generator itself (ut-docs#1900) hasn't shipped — it is a real,
-// reachable feature today, unlike Categories/Modifiers, so it is NOT
-// disabled.
+// itemsSections is the fixed section list. Library reuses nav.catalog (the
+// same key /catalog's own <h1> renders) rather than a separate "Library"
+// name — independent review (ut-docs#1897) caught that two different
+// English names for the same destination is exactly the disorientation
+// this card exists to fix. Option sets links to /catalog today (the
+// per-item variants panel lives there) because the reusable, named-set
+// generator itself (ut-docs#1900) hasn't shipped — it is a real, reachable
+// feature today, unlike Categories/Modifiers, so it is NOT disabled; its
+// subtitle says so honestly rather than implying a dedicated screen that
+// doesn't exist yet.
 var itemsSections = []itemsSection{
-	{NameKey: "items.library.name", SubtitleKey: "items.library.subtitle", Href: "/catalog"},
+	{NameKey: "nav.catalog", SubtitleKey: "items.library.subtitle", Href: "/catalog"},
 	{NameKey: "items.categories.name", SubtitleKey: "items.categories.subtitle", Href: ""},
 	{NameKey: "items.inventory.name", SubtitleKey: "items.inventory.subtitle", Href: "/inventory"},
 	{NameKey: "items.modifiers.name", SubtitleKey: "items.modifiers.subtitle", Href: ""},

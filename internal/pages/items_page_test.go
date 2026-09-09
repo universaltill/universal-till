@@ -19,7 +19,10 @@ func TestItemsPage_RendersFiveSectionsWithNameAndSubtitle(t *testing.T) {
 	}
 	body := rec.Body.String()
 
-	for _, want := range []string{"Library", "Categories", "Inventory", "Modifiers", "Option sets"} {
+	// Library reuses "nav.catalog" (= "Catalog") rather than a separate
+	// "Library" name, so /catalog's own <h1> and this section's name match
+	// (independent-review fix, ut-docs#1897).
+	for _, want := range []string{"Catalog", "Categories", "Inventory", "Modifiers", "Option sets"} {
 		if !strings.Contains(body, want) {
 			t.Errorf("expected section name %q in body", want)
 		}
@@ -29,7 +32,7 @@ func TestItemsPage_RendersFiveSectionsWithNameAndSubtitle(t *testing.T) {
 		"Organise your items",
 		"Track what&#39;s in stock", // html/template escapes the apostrophe
 		"Add extras to items at checkout",
-		"Quickly create item variations",
+		"Open an item to edit its variations",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("expected subtitle %q in body", want)
