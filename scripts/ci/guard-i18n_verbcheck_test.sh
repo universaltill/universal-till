@@ -127,6 +127,16 @@ expect_fail "an invented %d verb"
 plant "zz.verb.percent-literal" "100%% done, %d left" "100%% fertig, %d verbleibend"
 expect_pass "a %% literal alongside a real verb"
 
+# A dropped %% (ut-docs#1873): the locale value loses one of the two `%`
+# characters in the literal-percent pair. This extracts the IDENTICAL
+# verb-token list on both sides (['%d'] -- %% is discarded as "not a
+# verb" either way), so the verb-token comparison alone passes vacuously;
+# only a separate count-of-%%-occurrences check catches it. Left
+# unfixed, this is the exact %!d(MISSING)-class corruption check 8 exists
+# to prevent.
+plant "zz.verb.percent-dropped" "50%% off, %d left" "50% off, %d left"
+expect_fail "a dropped %% (locale lost one of the two literal percent characters)"
+
 # Plain English "%" immediately followed by a flag-shaped letter (the
 # real false positive found against this repo's own en.json while writing
 # this check: "a 10%-off code") must never be mistaken for a verb.
