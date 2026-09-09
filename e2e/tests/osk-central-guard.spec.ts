@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, setOskMode } from './helpers';
+import { watchConsole, setOskMode, openNewItemForm } from './helpers';
 
 async function typeViaOsk(page: Page, digits: string) {
   for (const d of digits) {
@@ -27,6 +27,7 @@ test('every OSK-able field gets inputmode="none" up front, before any interactio
   await setOskMode(page, 'on');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   // #item-name never had, and (per the fix) doesn't need, its own template
   // guard — exactly the class of field the double-keyboard bug hit.
   const name = page.locator('#item-name');
@@ -41,6 +42,7 @@ test('a numeric-inputmode text field still gets the numeric OSK layout despite b
   await setOskMode(page, 'on');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   // #item-barcode is type="text" inputmode="numeric" — isNumeric() has to
   // read the ORIGINAL inputmode, not the live "none" the up-front guard
   // just overwrote it with, or every such field would silently fall back
@@ -62,6 +64,7 @@ test('re-tapping a field after visiting another one does not let the native keyb
   await setOskMode(page, 'on');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   const name = page.locator('#item-name');
   const sku = page.locator('#item-sku');
 
@@ -94,6 +97,7 @@ test('OSK mode off never forces inputmode anywhere, and leaves real inputmode va
   await setOskMode(page, 'off');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   expect(await page.locator('#item-name').getAttribute('inputmode')).toBeNull();
   // The field's own real, page-authored inputmode is untouched — osk.js
   // returns before it ever runs when mode is "off".
@@ -107,6 +111,7 @@ test('a field added to the page after load gets the same up-front guard (htmx sw
   await setOskMode(page, 'on');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   // Two shapes of "content arrives after load": the added node IS the
   // field itself (an htmx outerHTML swap whose response root is the input,
   // or a bare oob swap — exercises guardField(node) directly, called on
@@ -137,6 +142,13 @@ test('a field added directly is NOT guarded while OSK is disabled (ut-docs#1022 
   // BY DESIGN" — so this exercises `enabled === false`.
   await setOskMode(page, 'auto');
 
+  // ut-docs#1901: deliberately NOT openNewItemForm(page) here — this test
+  // needs `enabled` to stay false (no touchstart AND no click anywhere
+  // yet, per the 'auto' mode reasoning above), and openNewItemForm()'s own
+  // click on #item-form-add-btn is exactly the "any click, anywhere" the
+  // sibling ut-docs#1262 test below proves flips `enabled` true. This test
+  // only ever touches a synthetic field via page.evaluate, never a real
+  // dialog field, so it doesn't need the dialog open at all.
   await page.goto('/catalog');
   // The MutationObserver calls guardField(node) directly on every added
   // node, bypassing guardSweep()'s own `if (!enabled) return`. Without the
@@ -168,6 +180,7 @@ test('a plain click (no touchstart) still enables auto mode, for a device whose 
   await setOskMode(page, 'auto');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   const name = page.locator('#item-name');
   // Pre-fix: 'auto' + no touchstart ever fired (this browser has no touch)
   // meant `enabled` stayed false forever, so clicking here would never
@@ -283,6 +296,7 @@ test('a field disabled at sweep time gets guarded once it is enabled in place, w
   await setOskMode(page, 'on');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   // wantsOSK() correctly skips a disabled field at sweep time — but until
   // this fix, nothing re-swept it if it was later flipped enabled via the
   // `.disabled` IDL property alone (no childList mutation for the
@@ -317,6 +331,7 @@ test('a non-numeric field is left alone on a locale osk.js has no layout for; a 
   // gain a layout of its own. ?lang= sets <html lang> directly without
   // requiring any matching language plugin to actually be installed.
   await page.goto('/catalog?lang=zz');
+  await openNewItemForm(page);
   await expect(page.locator('body')).toHaveAttribute('data-osk', 'on');
 
   // Suppressing the native keyboard here, with no OSK layout able to
@@ -349,6 +364,7 @@ test('de OSK renders a real QWERTZ layout and types umlauts/ß (ut-docs#1047)', 
   await setOskMode(page, 'on');
 
   await page.goto('/catalog?lang=de');
+  await openNewItemForm(page);
   // localeSupported() now recognises 'de', so the native keyboard goes back
   // to being suppressed for non-numeric fields too (the opposite assertion
   // from the 'zz' test above — this is the fix this locale used to lack).
@@ -397,6 +413,7 @@ test('es OSK renders accented vowels/ñ and types real Spanish characters (ut-do
   await setOskMode(page, 'on');
 
   await page.goto('/catalog?lang=es');
+  await openNewItemForm(page);
   const name = page.locator('#item-name');
   await expect(name).toHaveAttribute('inputmode', 'none');
 
@@ -454,6 +471,7 @@ test('sym layer includes inverted punctuation ¿ and ¡ (ut-docs#1148)', async (
   await setOskMode(page, 'on');
 
   await page.goto('/catalog?lang=en');
+  await openNewItemForm(page);
   const name = page.locator('#item-name');
   await name.click();
   await expect(page.locator('#osk')).toBeVisible();

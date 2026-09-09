@@ -2,6 +2,11 @@
 <div class="page-head">
   <h1>{{ T "nav.catalog" }}</h1>
   <div style="display:flex; gap:.5rem; align-items:center">
+    <!-- ut-docs#1901: the add/edit-item form is now a full-screen
+         <dialog> (#item-form-modal, below) instead of an always-visible
+         360px side panel, so creating a NEW item needs an explicit
+         trigger — clearForm() resets it to create-mode before opening. -->
+    <button id="item-form-add-btn" class="btn primary" type="button">{{ T "catalog.add_item_btn" }}</button>
     <a class="btn secondary" href="/import">{{ T "import.title" }}</a>
     <a class="btn secondary" href="/catalog/tax-codes">{{ T "taxcodes.title" }}</a>
     <!-- ut-docs#1899: the per-item modifier editor lives in the item detail
@@ -38,11 +43,33 @@
   <div class="catalog-list">
     {{ template "catalog_table" . }}
   </div>
+</div>
 
+<!-- ut-docs#1901: the add/edit-item form, converted from a 360px sticky
+     side panel into a near-full-screen <dialog> — a <dialog> element,
+     but its OWN class (.item-form-modal, app.css) rather than reusing
+     .modifier-modal, which stays capped at 28rem for its other,
+     genuinely compact callers. Opened via .show(), NOT showModal() — see
+     app.css's own comment on .item-form-modal for why (the on-screen
+     keyboard, appended to <body>, would otherwise be unreachable on
+     kiosk hardware — the same fix (ut-docs#1385) already applied to
+     #hold-modal/#pfand-modal/#elevation-modal/#table-add-modal/
+     .payment-overlay). That means no native ::backdrop and, unlike a
+     showModal() dialog, no automatic Escape-to-close — closed via
+     item-form-close-btn only. Opened via item-form-add-btn (new item) or
+     a catalog row click (edit — see the script below). The
+     image/label-printing/keypad-mapper sections that used to be this
+     panel's <details> children move inside
+     unchanged — they were already children of .catalog-form, so this
+     restructure carries them along. -->
+<dialog id="item-form-modal" class="item-form-modal" aria-labelledby="item-form-title">
   <div class="card catalog-form">
     <div class="catalog-form-head">
       <h3 id="item-form-title">{{ T "catalog.new_item" }}</h3>
-      <button class="btn secondary" type="button" id="item-form-reset" hidden>{{ T "catalog.plus_new" }}</button>
+      <div style="display:flex; gap:.5rem; align-items:center">
+        <button class="btn secondary" type="button" id="item-form-reset" hidden>{{ T "catalog.plus_new" }}</button>
+        <button class="btn secondary" type="button" id="item-form-close-btn" onclick="document.getElementById('item-form-modal').close()">{{ T "common.close" }}</button>
+      </div>
     </div>
     <form id="item-form" autocomplete="off">
       <input type="hidden" name="id" id="item-id">
@@ -81,6 +108,27 @@
       <div class="field-pair">
         <label>{{ T "catalog.category" }} <select name="categoryId" id="item-category"><option value="">{{ T "catalog.category.none" }}</option>{{ range .Categories }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}</select></label>
         <label>{{ T "catalog.brand" }} <select name="brandId" id="item-brand"><option value="">{{ T "catalog.brand.none" }}</option>{{ range .Brands }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}</select></label>
+      </div>
+      <!-- ut-docs#1901: fixed swatch palette for a photo-less item's
+           sale-screen tile color — SAME .picker-grid/.picker-tile pattern
+           and aria-pressed toggle convention as #builtin-icon-grid below,
+           not a free color picker (validated server-side against
+           catalogtypes.ItemColors() in validateLookups; a raw value would
+           otherwise flow straight into a CSS custom property). #item-color
+           is the single hidden field actually submitted; the "none" tile
+           clears it (stored empty). -->
+      <div style="margin-bottom:.55rem">
+        <div style="font-size:.82rem; margin-bottom:.25rem">{{ T "catalog.color" }}</div>
+        <div id="item-color-grid" class="picker-grid item-color-grid" role="group" aria-label="{{ T "catalog.color" }}">
+          {{ range .ItemColors }}
+          <button type="button" class="picker-tile item-color-tile" data-color="{{ .Hex }}" aria-pressed="false" title="{{ T .I18nKey }}" style="--swatch: {{ .Hex }}">
+            <span class="swatch-dot" aria-hidden="true"></span>
+            <span>{{ T .I18nKey }}</span>
+          </button>
+          {{ end }}
+          <button type="button" class="picker-tile item-color-tile" data-color="" aria-pressed="true">{{ T "catalog.color.none" }}</button>
+        </div>
+        <input type="hidden" name="color" id="item-color">
       </div>
       <div class="field-checks">
         <label><input type="checkbox" name="isWeighed" id="item-weighed" value="1"> {{ T "catalog.sold_by_weight" }}</label>
@@ -211,7 +259,7 @@
     </details>
 
   </div>
-</div>
+</dialog>
 
 {{ template "catalog_variants" . }}
 
@@ -222,6 +270,51 @@
   var submit = document.getElementById('item-form-submit');
   var resetBtn = document.getElementById('item-form-reset');
   var msg = document.getElementById('item-form-msg');
+  // ut-docs#1901: the form is now a near-full-screen <dialog> instead of
+  // an always-visible side panel — opened explicitly (item-form-add-btn
+  // for a new item, a catalog row click for edit) rather than always
+  // being on screen.
+  var modal = document.getElementById('item-form-modal');
+  // ut-docs#1901 UX fix: bumped whenever the CURRENT dialog session
+  // changes — opened fresh (either trigger below) OR the operator touches
+  // any field after a save (the 'input' listener below). The delayed
+  // auto-close after a successful save (search "auto-close" below) only
+  // fires if this is still the same, untouched session that saved, so
+  // neither of two real flows gets the form yanked shut on them: (1) a
+  // cashier who saves item A and immediately reopens the dialog for item
+  // B inside the close-delay window, and (2) a cashier who saves item A
+  // and — WITHOUT closing — starts typing item B straight into the same
+  // still-open, auto-cleared dialog (the create path's own clearForm()
+  // leaves it open and ready for exactly this). A plain item-id
+  // comparison can't tell two different NEW-item sessions apart (both
+  // have id ''), which is why this is a separate counter rather than
+  // reusing #item-id.
+  var formSession = 0;
+  // ut-docs#1901: opened via .show(), NOT showModal() — same reasoning
+  // (and same established fix, ut-docs#1385) as #hold-modal/#pfand-modal/
+  // #elevation-modal/#table-add-modal/.payment-overlay elsewhere in this
+  // codebase: showModal()'s top-layer/inert-outside-the-dialog behaviour
+  // makes the custom on-screen keyboard (#osk, appended to <body>, never
+  // re-parented into whichever dialog is open) completely unreachable —
+  // there is no OS keyboard to fall back to on kiosk hardware. This form
+  // has MORE OSK-triggering fields than any of those five (barcode, name,
+  // price, SKU, description...), so it would have been the worst instance
+  // of this bug in the app, not a minor one. Both open call sites route
+  // through this rather than a bare modal.show() call — kept as its own
+  // function for a consistent name with the .close() call sites, and
+  // because (unlike showModal()) .show() is a documented no-op when
+  // already open, so this also stays safe against the same
+  // already-open-dialog case showModal() would have thrown on.
+  function openModal() {
+    modal.show();
+  }
+  // ut-docs#1901 UX fix: any field the operator touches after a save
+  // invalidates that save's pending auto-close (search "auto-close"
+  // below) — covers typing straight into the same still-open, auto-
+  // cleared dialog to create a SECOND item without ever closing between
+  // the two (formSession alone doesn't change on its own for that case,
+  // since the dialog was never re-opened).
+  form.addEventListener('input', function () { formSession++; });
 
   // ut-docs#238: item-form-msg/autofill-msg/keypad-log migrate off ad-hoc
   // .textContent status strings onto the documented .pos-notice pattern
@@ -240,7 +333,16 @@
     builtinIconUpdated: "{{ T "catalog.builtin_icon.updated" }}",
     builtinIconErrorGeneric: "{{ T "catalog.error.server" }}",
     builtinIconSuggestedTitleSuffix: "{{ T "catalog.builtin_icon.suggested_hint" }}",
-    builtinIconCustomActive: "{{ T "catalog.builtin_icon.custom_active" }}"
+    builtinIconCustomActive: "{{ T "catalog.builtin_icon.custom_active" }}",
+    // ut-docs#1901: setMode's title/submit-label text used to be two bare
+    // English literals ('New Item'/'Edit: ' + name, 'Create Item'/'Save
+    // Changes') — moved onto this page-local i18n object, same pattern as
+    // every other string here (CLAUDE.md: this includes inline <script>
+    // blocks, not just template markup).
+    itemFormNewTitle: "{{ T "catalog.new_item" }}",
+    itemFormEditPrefix: "{{ T "catalog.edit_item_prefix" }}",
+    itemFormCreateBtn: "{{ T "catalog.create_item" }}",
+    itemFormSaveChangesBtn: "{{ T "catalog.save_changes" }}"
   };
 
   // Builds the .pos-notice markup into `el` (empty text clears the slot
@@ -283,8 +385,8 @@
   }
 
   function setMode(editing, name) {
-    title.textContent = editing ? 'Edit: ' + name : 'New Item';
-    submit.textContent = editing ? 'Save Changes' : 'Create Item';
+    title.textContent = editing ? NOTICE_MSG.itemFormEditPrefix + name : NOTICE_MSG.itemFormNewTitle;
+    submit.textContent = editing ? NOTICE_MSG.itemFormSaveChangesBtn : NOTICE_MSG.itemFormCreateBtn;
     resetBtn.hidden = !editing;
   }
 
@@ -292,11 +394,58 @@
     form.reset();
     document.getElementById('item-id').value = '';
     document.getElementById('item-image-url').value = '';
+    setColorTiles('');
     setMode(false);
     msg.textContent = '';
     document.getElementById('autofill-msg').textContent = '';
   }
-  resetBtn.addEventListener('click', clearForm);
+  // ut-docs#1901 UX fix (independent review finding): resetBtn ("＋ New")
+  // is a session-changing entry point same as the add-button/row-click/
+  // color-swatch sites above — without bumping formSession here too, a
+  // still-open edit dialog's pending auto-close timer (search
+  // "auto-close" below) can fire on a FRESH form the operator just reset
+  // to, mid-typing, exactly the race this counter exists to prevent.
+  resetBtn.addEventListener('click', function () { clearForm(); formSession++; });
+
+  // ut-docs#1901: opens the dialog fresh, ready to create a NEW item — the
+  // only way to reach the create-item form now the panel isn't always on
+  // screen.
+  var addBtn = document.getElementById('item-form-add-btn');
+  if (addBtn) {
+    addBtn.addEventListener('click', function () {
+      clearForm();
+      formSession++;
+      openModal();
+    });
+  }
+
+  // Fixed swatch palette (ut-docs#1901) — same .picker-grid/aria-pressed
+  // toggle convention as the built-in icon grid below. #item-color is the
+  // one hidden field actually submitted; clicking a tile (including the
+  // "none" tile, whose data-color is "") sets it and repaints which tile
+  // reads pressed.
+  var colorGrid = document.getElementById('item-color-grid');
+  var colorInput = document.getElementById('item-color');
+  function setColorTiles(hex) {
+    if (!colorGrid) return;
+    colorGrid.querySelectorAll('.item-color-tile').forEach(function (btn) {
+      var pressed = (btn.dataset.color || '') === (hex || '');
+      btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+    });
+  }
+  if (colorGrid) {
+    colorGrid.addEventListener('click', function (ev) {
+      var btn = ev.target.closest('.item-color-tile');
+      if (!btn) return;
+      var hex = btn.dataset.color || '';
+      colorInput.value = hex;
+      setColorTiles(hex);
+      // ut-docs#1901 UX fix: a swatch tile is a <button>, not a native
+      // form control that fires 'input' — the form-level listener above
+      // wouldn't otherwise see this as "the operator touched the form".
+      formSession++;
+    });
+  }
 
   // Barcode auto-fill from open product databases (G15 increment 1).
   var autofillMsg = document.getElementById('autofill-msg');
@@ -378,7 +527,13 @@
     document.getElementById('item-stock-untracked').checked = row.dataset.stockUntracked === '1';
     document.getElementById('item-active').checked = true;
     document.getElementById('item-price').value = window.utCurrency.toMajor(parseInt(row.dataset.price || '0', 10));
+    document.getElementById('item-color').value = row.dataset.color || '';
+    setColorTiles(row.dataset.color || '');
     setMode(true, row.dataset.name);
+    formSession++;
+    // ut-docs#1901: the form is now a dialog — a row click must actually
+    // open it, or there is no way to reach the edit form at all.
+    openModal();
     document.querySelectorAll('.pick-item').forEach(function (el) { el.value = row.dataset.id; });
     // Load the item's variants/barcodes editor panel (full-width, below the
     // list) and bring it into view.
@@ -458,6 +613,10 @@
     var failed = false;
     function markFailed() { failed = true; }
     document.body.addEventListener('htmx:responseError', markFailed, { once: true });
+    // ut-docs#1901 UX fix: captured BEFORE clearForm() may blank #item-id,
+    // so the delayed auto-close below (search "auto-close") can tell
+    // whether this is still the same dialog session that just saved.
+    var savingSession = formSession;
     htmx.ajax('POST', url, { source: '#item-form', target: '#catalog-table', swap: 'none' })
       .then(function () {
         submit.disabled = false;
@@ -473,6 +632,24 @@
         if (!editing) clearForm();
         renderNotice(msg, 'success', NOTICE_MSG.itemFormSaved);
         filterRows();
+        // ut-docs#1901 UX fix: the form is now a full-screen dialog, not
+        // an always-visible side panel — leaving it open after a
+        // successful save strands the operator behind a full-screen
+        // dialog with no obvious next step (found live: a Playwright-
+        // driven save left the dialog open over the "Saved" toast in
+        // every locale tested). Auto-close after 1.5s — comfortably long
+        // enough to read "Saved" (confirmed live), deliberately shorter
+        // than the toast's own ~2.5s auto-expire (scheduleToastDismiss,
+        // app.js) rather than matching it, since the toast itself stays
+        // visible a moment longer than the dialog needs to — and only if
+        // this dialog is still showing the SAME session that saved — not
+        // reopened for a different item (edit), a fresh create, or reset
+        // via "＋ New" in the meantime.
+        setTimeout(function () {
+          if (!modal.open) return;
+          if (formSession !== savingSession) return;
+          modal.close();
+        }, 1500);
       })
       // Only a network-level failure (see the ut-docs#917 note above)
       // rejects instead of resolving — without this the button would stay

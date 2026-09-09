@@ -40,6 +40,8 @@ type Button struct {
 	Price        int64  `json:"price,omitempty"` // minor units, display only
 	HasModifiers bool   `json:"hasModifiers,omitempty"`
 	CategoryID   string `json:"categoryId,omitempty"` // the item's category, empty when uncategorized
+	// Color is the item's tile swatch (ut-docs#1901) — empty when unset.
+	Color string `json:"color,omitempty"`
 }
 
 // ButtonVM is the view-model passed to templates.
@@ -50,6 +52,11 @@ type ButtonVM struct {
 	ImageURL     string `json:"imageUrl,omitempty"`
 	Price        int64  `json:"price,omitempty"` // minor units, display only
 	HasModifiers bool   `json:"hasModifiers,omitempty"`
+	// Color is the item's tile swatch (ut-docs#1901) — product-tile
+	// (buttons.html) renders it as the tile's solid background, via
+	// --tile-color, ONLY when the tile has no ImageURL: a real photo
+	// always wins.
+	Color string `json:"color,omitempty"`
 }
 
 func ToVM(b []Button) []ButtonVM {
@@ -68,6 +75,7 @@ func toButtonVM(x Button) ButtonVM {
 		ImageURL:     x.ImageURL,
 		Price:        x.Price,
 		HasModifiers: x.HasModifiers,
+		Color:        x.Color,
 	}
 }
 
@@ -321,6 +329,7 @@ func (s *ButtonStore) Load() ([]Button, error) {
 			Price:        b.Price,
 			HasModifiers: hasMods[b.ItemID],
 			CategoryID:   b.CategoryID,
+			Color:        b.Color,
 		})
 	}
 	return out, nil
