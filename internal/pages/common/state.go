@@ -25,6 +25,15 @@ const (
 	KeyTaxInclusive      = "store.tax_inclusive"
 	KeyTaxRate           = "store.tax_rate"
 	KeyServiceChargeRate = "store.service_charge_rate_pct"
+	// KeyAllowNegativeInventory is the shop-wide "let items sell with no
+	// stock behind them" switch, surfaced in Settings as "Sell items
+	// without tracking stock" (ut-docs#1843). It has existed and been
+	// honoured by CompleteSale since long before that card; what #1843
+	// added was any way for a merchant to reach it. Default false, i.e.
+	// the stock guard is ON — a shop that never records stock cannot sell
+	// anything at all until this is turned on, because an item with no
+	// inventory row reads as quantity 0.
+	KeyAllowNegativeInventory = "pos.allow_negative_inventory"
 	// KeyShopType holds the ADR-0026 shop-type taxonomy value chosen in the
 	// setup wizard (cafe|retail|service|hospitality|market_stall|other) —
 	// ut-docs#539. Optional: empty/missing is fine.
@@ -213,7 +222,7 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 			st.ServiceChargeRateBasisPoints = bp
 		}
 	}
-	if v := get("pos.allow_negative_inventory", strconv.FormatBool(st.AllowNegativeInventory)); v != "" {
+	if v := get(KeyAllowNegativeInventory, strconv.FormatBool(st.AllowNegativeInventory)); v != "" {
 		if b, err := strconv.ParseBool(v); err == nil {
 			st.AllowNegativeInventory = b
 		}
@@ -372,17 +381,17 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 	}
 
 	kv := map[string]string{
-		KeyTheme:                       st.Theme,
-		KeyCurrency:                    st.Currency,
-		KeyCountry:                     st.Country,
-		KeyRegion:                      st.Region,
-		KeyLocale:                      st.Locale,
-		KeyTaxInclusive:                strconv.FormatBool(st.TaxInclusive),
-		KeyTaxRate:                     strconv.Itoa(st.TaxRatePct),
-		KeyServiceChargeRate:           FormatServiceChargeRatePercent(st.ServiceChargeRateBasisPoints),
-		"pos.allow_negative_inventory": strconv.FormatBool(st.AllowNegativeInventory),
-		KeyIdleLock:                    strconv.Itoa(st.IdleLockMinutes),
-		KeyKioskIdleReset:              strconv.Itoa(st.KioskIdleResetSeconds),
+		KeyTheme:                  st.Theme,
+		KeyCurrency:               st.Currency,
+		KeyCountry:                st.Country,
+		KeyRegion:                 st.Region,
+		KeyLocale:                 st.Locale,
+		KeyTaxInclusive:           strconv.FormatBool(st.TaxInclusive),
+		KeyTaxRate:                strconv.Itoa(st.TaxRatePct),
+		KeyServiceChargeRate:      FormatServiceChargeRatePercent(st.ServiceChargeRateBasisPoints),
+		KeyAllowNegativeInventory: strconv.FormatBool(st.AllowNegativeInventory),
+		KeyIdleLock:               strconv.Itoa(st.IdleLockMinutes),
+		KeyKioskIdleReset:         strconv.Itoa(st.KioskIdleResetSeconds),
 	}
 	if writeWindowMode {
 		kv[KeyWindowMode] = ClampWindowMode(st.WindowMode)

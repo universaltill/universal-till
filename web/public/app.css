@@ -2611,6 +2611,17 @@ body.login-screen {
 .set-divider { margin-block-start: .8rem; border-block-start: 1px solid var(--border);
                padding-block-start: .6rem; }
 
+/* ut-docs#1840: the "Remove sample data" kept-items list (Settings → Data)
+   — one row per item RemoveDemoCatalogue couldn't remove, with its real
+   reason and (for an edited item) inline resolution buttons. Logical
+   properties throughout so it lays out correctly in the RTL locales
+   (fa/ar) with no extra rule. */
+.demo-kept-list { list-style: none; margin: .4rem 0 0; padding: 0; display: flex;
+                  flex-direction: column; gap: .5rem; }
+.demo-kept-item { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem;
+                  padding-block: .3rem; border-block-end: 1px solid var(--border); }
+.demo-kept-item:last-child { border-block-end: none; }
+
 /* Self-order kiosk exit (ADR-0020, ut-docs#208): a discreet PIN-gated way
    back to till settings, reachable from every kiosk screen — the start
    screen, the browse/cart screen (in the header's own flex row, never
