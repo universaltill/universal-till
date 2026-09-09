@@ -11,7 +11,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -355,6 +354,13 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// GDPR: erase a customer's personal data (keeps their sales, anonymised).
+	// Step-up re-authentication (ut-docs#1860, ADR-0087) replaces the old
+	// one-click flow — this endpoint used to have no confirmation at all,
+	// the one #1841 gap that card's own scope (the four data_api.go
+	// handlers) didn't cover. The elevation summary references the
+	// customer by id, not name/phone/email — those are exactly the fields
+	// about to be erased, so the confirmation step must not put them on
+	// screen (or in the audit log) a second time.
 	mux.HandleFunc("POST /api/data/customers/erase", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "data_management") {
 			respond(w, http.StatusForbidden, false, "manager only")
@@ -366,7 +372,16 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			respond(w, http.StatusBadRequest, false, "customer id required")
 			return
 		}
-		ok, err := data.NewPOSRepo(d.Db).EraseCustomer(r.Context(), id, auth.UserID(r))
+		elev := checkStepUp(d, r, "data_management", r.FormValue("override_pin"))
+		if elev.Outcome != elevated {
+			locale := httpx.ResolveLocale(w, r)
+			renderElevationPrompt(w, r, "/api/data/customers/erase", "#cust-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.data_customer_erase"), id),
+				[]elevationHiddenField{{Name: "id", Value: id}}, elev)
+			return
+		}
+		actorID, blockedActorID := elevationActors(elev)
+		ok, err := data.NewPOSRepo(d.Db).EraseCustomer(r.Context(), id, actorID, blockedActorID)
 		if err != nil {
 			respond(w, http.StatusInternalServerError, false, err.Error())
 			return
