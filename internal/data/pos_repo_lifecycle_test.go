@@ -479,32 +479,50 @@ func TestEndOfDay_FindsJournaledSaleOnOriginDayNotIngestDay(t *testing.T) {
 	dbx := newPOSLifecycleTestDB(t)
 	ctx := context.Background()
 
-	// InsertSale (via seedLifecycleSale) stamps local_date from ITS OWN
-	// created_at argument — here the ingest-time stand-in "2026-01-02" —
-	// exactly as CompleteSale does with the receiving till's wall-clock
-	// "now" for a journaled-in sale.
-	seedLifecycleSale(t, dbx, "sale1", "R1", "sale", "completed", "2026-01-02T00:30:00Z", 100, 20)
+	// Anchored at local noon and 48h apart, not the original midnight-
+	// straddling "day + 32 minutes": a ±14h zone offset can move a midday
+	// timestamp's local date by at most one day, so two midday timestamps a
+	// full 48h apart can never collapse onto the same local day the way the
+	// old ~32-minute gap did once shifted by a large offset (e.g.
+	// TZ=Pacific/Auckland, NZDT +13 in January, put both the old origin and
+	// ingest timestamps on the same local day — ut-docs#1869).
+	const ingestAt = "2026-01-03T12:00:00Z" // ingest-time stand-in: this till's wall-clock "now"
+	const originAt = "2026-01-01T12:00:00Z" // true origin: two days earlier, once journal-in corrects it
 
-	// The journal-in step: the true origin timestamp is a day EARLIER.
-	if err := dbx.repo.SetSaleProvenance(ctx, "sale1", "till-origin", "2026-01-01T23:58:00Z"); err != nil {
+	// InsertSale (via seedLifecycleSale) stamps local_date from ITS OWN
+	// created_at argument — the ingest-time stand-in above — exactly as
+	// CompleteSale does with the receiving till's wall-clock "now" for a
+	// journaled-in sale.
+	seedLifecycleSale(t, dbx, "sale1", "R1", "sale", "completed", ingestAt, 100, 20)
+
+	// The journal-in step: the true origin timestamp is two days earlier.
+	if err := dbx.repo.SetSaleProvenance(ctx, "sale1", "till-origin", originAt); err != nil {
 		t.Fatal(err)
 	}
 
-	origin, err := dbx.repo.EndOfDay(ctx, "2026-01-01")
+	// Derive the expected calendar days via SQLite's own date(...,
+	// 'localtime') — the same expression the production query uses — rather
+	// than a hardcoded literal, so the assertion holds under every host
+	// timezone this suite runs under, not just the one it was written in
+	// (ut-docs#1869, same fix class as b8ExpectedDay's own doc comment).
+	originDay := b8ExpectedDay(t, dbx.d, mustParseRFC3339(t, originAt), 0, 0)
+	ingestDay := b8ExpectedDay(t, dbx.d, mustParseRFC3339(t, ingestAt), 0, 0)
+
+	origin, err := dbx.repo.EndOfDay(ctx, originDay)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if origin.SalesCount != 1 || origin.Gross != 100 {
-		t.Fatalf("EndOfDay(origin day 2026-01-01) = SalesCount=%d Gross=%d, want 1/100 (the journaled-in sale must be found on the day it actually happened)",
-			origin.SalesCount, origin.Gross)
+		t.Fatalf("EndOfDay(origin day %s) = SalesCount=%d Gross=%d, want 1/100 (the journaled-in sale must be found on the day it actually happened)",
+			originDay, origin.SalesCount, origin.Gross)
 	}
 
-	ingest, err := dbx.repo.EndOfDay(ctx, "2026-01-02")
+	ingest, err := dbx.repo.EndOfDay(ctx, ingestDay)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if ingest.SalesCount != 0 {
-		t.Fatalf("EndOfDay(ingest day 2026-01-02) = SalesCount=%d, want 0 (must not remain on the day it was merely received)", ingest.SalesCount)
+		t.Fatalf("EndOfDay(ingest day %s) = SalesCount=%d, want 0 (must not remain on the day it was merely received)", ingestDay, ingest.SalesCount)
 	}
 }
 
