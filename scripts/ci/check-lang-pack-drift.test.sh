@@ -145,8 +145,13 @@ fresh_case() {
     core_json="${fixture_root}/web/locales/en.json"
 }
 
-# fixture_pack REPO CODE MODE
-# Populates the fixture server root for one pack repo. MODE is:
+# _write_pack_content REPO CODE MODE CONTENT_DIR
+# Writes one pack's script/locale/baseline fixtures into CONTENT_DIR (a
+# ref-named directory under the fixture server root -- normally the
+# resolved commit SHA, see fixture_pack below; ut-docs#1939's own
+# regression cases below call this directly to write DIFFERENT content
+# under a "main"-named directory, since that's the whole thing under test).
+# MODE is:
 #   sync    -- every core key present, translated to a value that is
 #              neither empty nor byte-identical to core's (real "in sync",
 #              not just same-content -- an identical value would itself
@@ -155,33 +160,20 @@ fresh_case() {
 #              with the thing under test)
 #   drift   -- locale file missing one key core has (real new drift, not
 #              in any baseline)
-#   unreachable -- don't write this repo's raw-file fixtures (script/
-#              locale/baseline/allowlist), so the script's `fetch` 404s and
-#              hard-fails for this repo. The commits/main API fixture is
-#              still written (independent review, LOW: modeling "repo
-#              deleted" would need to skip that too, but the outcome is
-#              identical either way -- that call is best-effort and never
-#              gates the check).
 # All fixtures get empty baseline/allowlist files (ratcheting behavior is
 # tested by the pack-side check-key-drift.test.sh, not re-tested here).
-fixture_pack() {
-    local repo="$1" code="$2" mode="$3"
-    local base="${server_root}/${repo}"
+_write_pack_content() {
+    local repo="$1" code="$2" mode="$3" content_dir="$4"
     local script_source
     script_source="$(pack_script_source "$repo")"
 
-    mkdir -p "${base}/commits"
-    printf '{"sha":"test-%s"}' "$repo" > "${base}/commits/main"
-
-    [ "$mode" = "unreachable" ] && return 0
-
-    mkdir -p "${base}/main/scripts" "${base}/main/locales" "${base}/main/i18n-baseline"
-    cp "$script_source" "${base}/main/scripts/check-key-drift.sh"
-    : > "${base}/main/i18n-baseline/${code}.untranslated.txt"
-    : > "${base}/main/i18n-baseline/${code}.same-as-en.txt"
+    mkdir -p "${content_dir}/scripts" "${content_dir}/locales" "${content_dir}/i18n-baseline"
+    cp "$script_source" "${content_dir}/scripts/check-key-drift.sh"
+    : > "${content_dir}/i18n-baseline/${code}.untranslated.txt"
+    : > "${content_dir}/i18n-baseline/${code}.same-as-en.txt"
 
     if [ "$mode" = "sync" ]; then
-        python3 - "$core_json" "${base}/main/locales/${code}.json" <<'PY'
+        python3 - "$core_json" "${content_dir}/locales/${code}.json" <<'PY'
 import json, sys
 core = json.load(open(sys.argv[1]))
 # A real, non-empty, non-identical "translation" of every core key -- full
@@ -190,7 +182,7 @@ pack = {k: f"[xx] {v}" for k, v in core.items()}
 json.dump(pack, open(sys.argv[2], "w"))
 PY
     elif [ "$mode" = "drift" ]; then
-        python3 - "$core_json" "${base}/main/locales/${code}.json" <<'PY'
+        python3 - "$core_json" "${content_dir}/locales/${code}.json" <<'PY'
 import json, sys
 core = json.load(open(sys.argv[1]))
 # Same "real translation" as the sync case, MINUS one key -- new,
@@ -200,9 +192,32 @@ pack = {k: f"[xx] {v}" for k, v in core.items() if k != dropped}
 json.dump(pack, open(sys.argv[2], "w"))
 PY
     else
-        echo "fixture_pack: unknown mode $mode" >&2
+        echo "_write_pack_content: unknown mode $mode" >&2
         return 1
     fi
+}
+
+# fixture_pack REPO CODE MODE [SHA]
+# Populates the fixture server root for one pack repo: the commits/main API
+# response (defaulting to a fixed per-repo test SHA, distinct from "main" on
+# purpose -- see ut-docs#1939 below), and -- unless MODE is "unreachable"
+# (don't write this repo's raw-file fixtures at all, so the script's `fetch`
+# 404s and hard-fails for this repo; the commits/main fixture is still
+# written, since that call is best-effort and never gates the check on its
+# own) -- the pack content under that SHA's own directory, since
+# check-lang-pack-drift.sh now fetches content by the resolved commit SHA,
+# not by "main" (ut-docs#1939).
+fixture_pack() {
+    local repo="$1" code="$2" mode="$3"
+    local sha="${4:-test-${repo}}"
+    local base="${server_root}/${repo}"
+
+    mkdir -p "${base}/commits"
+    printf '{"sha":"%s"}' "$sha" > "${base}/commits/main"
+
+    [ "$mode" = "unreachable" ] && return 0
+
+    _write_pack_content "$repo" "$code" "$mode" "${base}/${sha}"
 }
 
 start_server() {
@@ -348,6 +363,33 @@ fixture_pack ut-plugin-language-de de sync
 fixture_pack ut-plugin-language-es es unreachable
 start_server
 assert_fail_repos "es unreachable" "https://github.com/universaltill/ut-plugin-language-es"
+
+# --- Case 5 (ut-docs#1939): content is read from the resolved commit SHA,
+# never from the (possibly CDN-stale) "main" ref, when the SHA lookup
+# succeeds. de's SHA-path content is fully in sync; de's "main"-path content
+# is DRIFTED. Before ut-docs#1939's fix, the script fetched from "main"
+# unconditionally, so this case would have failed on de's drift -- pinning
+# this proves the fetch really is keyed off the resolved SHA now, not just
+# that the SHA is printed in the log. ---
+fresh_case
+printf '{"a.b":"Hello","c.d":"World"}' > "$core_json"
+fixture_pack ut-plugin-language-de de sync
+fixture_pack ut-plugin-language-es es sync
+_write_pack_content ut-plugin-language-de de drift "${server_root}/ut-plugin-language-de/main"
+start_server
+assert_pass "reads pack content at the resolved commit SHA, not the (possibly stale) main ref"
+
+# --- Case 6 (ut-docs#1939): when the commits/main API lookup itself fails
+# (de's endpoint here 404s -- no commits/main fixture written), the script
+# must still fall back to fetching content from "main" rather than failing
+# outright -- de's content exists ONLY at the "main" path, not under any
+# SHA. ---
+fresh_case
+printf '{"a.b":"Hello","c.d":"World"}' > "$core_json"
+fixture_pack ut-plugin-language-es es sync
+_write_pack_content ut-plugin-language-de de sync "${server_root}/ut-plugin-language-de/main"
+start_server
+assert_pass "falls back to the main ref when the commit-SHA lookup itself fails"
 
 echo
 if [ "$FAILS" -ne 0 ]; then

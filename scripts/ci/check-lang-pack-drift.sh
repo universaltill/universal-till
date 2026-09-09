@@ -85,9 +85,11 @@ CURL_OPTS=(--fail --silent --show-error --location
     --connect-timeout 10 --max-time 60)
 
 fetch() {
-    # $1 = repo, $2 = path in repo, $3 = local destination
-    local repo="$1" path="$2" dest="$3"
-    local url="${RAW_BASE}/${repo}/main/${path}"
+    # $1 = repo, $2 = path in repo, $3 = local destination, $4 = git ref
+    # (a commit SHA, preferred -- see call site for why; falls back to a
+    # branch name like "main" only when a SHA couldn't be resolved)
+    local repo="$1" path="$2" dest="$3" ref="$4"
+    local url="${RAW_BASE}/${repo}/${ref}/${path}"
     mkdir -p "$(dirname "$dest")"
     if ! curl "${CURL_OPTS[@]}" "$url" -o "$dest"; then
         echo "check-lang-pack-drift: FAILED to fetch ${url}" >&2
@@ -108,16 +110,33 @@ for entry in "${PACKS[@]}"; do
     code="${entry##*:}"
     pack_dir="${WORKDIR}/${repo}"
 
-    # Best-effort only (see CORE_SHA note above) -- never gates the check.
+    # A failed lookup here no longer just costs a log annotation (see
+    # ut-docs#1939 below) -- but it's still not worth hard-failing the whole
+    # check over: fall back to the "main" branch ref, same as this script's
+    # behavior before #1939, when the SHA can't be resolved (network,
+    # unauthenticated GitHub API, low rate limit on shared runner egress IPs).
     pack_sha="$(curl --fail --silent --max-time 10 "${API_BASE}/${repo}/commits/main" 2>/dev/null \
         | python3 -c 'import json,sys; print(json.load(sys.stdin).get("sha","unknown"))' 2>/dev/null \
         || echo unknown)"
     echo "check-lang-pack-drift: checking ${repo}@${pack_sha} (locale: ${code})"
 
-    if ! fetch "$repo" "scripts/check-key-drift.sh" "${pack_dir}/scripts/check-key-drift.sh" \
-        || ! fetch "$repo" "locales/${code}.json" "${pack_dir}/locales/${code}.json" \
-        || ! fetch "$repo" "i18n-baseline/${code}.untranslated.txt" "${pack_dir}/i18n-baseline/${code}.untranslated.txt" \
-        || ! fetch "$repo" "i18n-baseline/${code}.same-as-en.txt" "${pack_dir}/i18n-baseline/${code}.same-as-en.txt"; then
+    # ut-docs#1939: fetch pack content at the resolved commit SHA, not the
+    # "main" branch ref. raw.githubusercontent.com's branch-ref path is
+    # CDN-fronted with a short per-edge TTL (~5 min) and can lag a merge by
+    # several minutes, while pack_sha above always comes from the strongly
+    # consistent GitHub API -- fetching by "main" could check content OLDER
+    # than the commit this script just printed as "checking", producing a
+    # failure message that names a SHA which would actually have passed. A
+    # SHA-addressed raw URL is immutable, so fetching by ref="$pack_sha" also
+    # makes that printed SHA causally the thing that was checked, not a
+    # best-effort annotation next to it.
+    ref="$pack_sha"
+    [ "$ref" = "unknown" ] && ref="main"
+
+    if ! fetch "$repo" "scripts/check-key-drift.sh" "${pack_dir}/scripts/check-key-drift.sh" "$ref" \
+        || ! fetch "$repo" "locales/${code}.json" "${pack_dir}/locales/${code}.json" "$ref" \
+        || ! fetch "$repo" "i18n-baseline/${code}.untranslated.txt" "${pack_dir}/i18n-baseline/${code}.untranslated.txt" "$ref" \
+        || ! fetch "$repo" "i18n-baseline/${code}.same-as-en.txt" "${pack_dir}/i18n-baseline/${code}.same-as-en.txt" "$ref"; then
         overall_fail=1
         FAILED_REPOS+=("$repo")
         echo
