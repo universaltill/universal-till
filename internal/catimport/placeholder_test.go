@@ -89,8 +89,8 @@ func TestPlaceholderIcon_AllIconsKnown(t *testing.T) {
 		seen[kw.icon] = true
 	}
 	for icon := range seen {
-		path := iconPath(icon)
-		if path == "" {
+		path, ok := IconPath(icon)
+		if !ok || path == "" {
 			t.Errorf("icon key %q has no known asset path", icon)
 			continue
 		}
@@ -100,6 +100,49 @@ func TestPlaceholderIcon_AllIconsKnown(t *testing.T) {
 		onDisk := filepath.Join(repoRoot, "web", filepath.FromSlash(path))
 		if _, err := os.Stat(onDisk); err != nil {
 			t.Errorf("icon key %q → %q, but no file at %s: %v", icon, path, onDisk, err)
+		}
+	}
+}
+
+// TestIconPath_UnknownKeyIsNotOK: the picker (ut-docs#1844) trusts this ok
+// flag to reject a bad/forged icon key from a client request — an empty
+// string with no ok=false would be indistinguishable from a genuine (if
+// oddly empty) path.
+func TestIconPath_UnknownKeyIsNotOK(t *testing.T) {
+	if path, ok := IconPath("not-a-real-icon"); ok || path != "" {
+		t.Errorf("IconPath(bogus) = (%q, %v), want (\"\", false)", path, ok)
+	}
+}
+
+// TestBuiltinIcons_MatchesIconPath (ut-docs#1844): the picker UI enumerates
+// BuiltinIcons() to render its grid, and separately validates a submitted
+// choice via IconPath — the two must agree on every key, or a tile the UI
+// happily renders could be rejected by the server that's supposed to
+// accept it back.
+func TestBuiltinIcons_MatchesIconPath(t *testing.T) {
+	icons := BuiltinIcons()
+	if len(icons) == 0 {
+		t.Fatal("BuiltinIcons() returned none")
+	}
+	seenKeys := map[string]bool{}
+	for _, ic := range icons {
+		if ic.Key == "" {
+			t.Errorf("BuiltinIcons() entry with empty Key: %+v", ic)
+		}
+		if ic.I18nKey == "" {
+			t.Errorf("BuiltinIcons() entry %q has no I18nKey", ic.Key)
+		}
+		if seenKeys[ic.Key] {
+			t.Errorf("BuiltinIcons() duplicate key %q", ic.Key)
+		}
+		seenKeys[ic.Key] = true
+		wantPath, ok := IconPath(ic.Key)
+		if !ok {
+			t.Errorf("BuiltinIcons() key %q not recognised by IconPath", ic.Key)
+			continue
+		}
+		if ic.Path != wantPath {
+			t.Errorf("BuiltinIcons() key %q Path = %q, want %q (from IconPath)", ic.Key, ic.Path, wantPath)
 		}
 	}
 }

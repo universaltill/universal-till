@@ -31,6 +31,10 @@
 #      template {{ T "key" }} usage, so a typo'd key built in Go and handed
 #      to one of these call shapes was invisible to any check and silently
 #      fell back to rendering the raw key text at runtime.
+#   8. Every locale value's format/template verbs (%d, %s, {{name}}, {0}, ...)
+#      must match en.json's for that key (ut-docs#1865) — checks 1-2 only
+#      compare key SETS, so a translation could drop/invent/change a verb
+#      while keeping the same key and every check above stays green.
 # Fails CI so a new page/string can't ship untranslated.
 set -euo pipefail
 
@@ -405,10 +409,147 @@ if key_call_hits:
     for f, i, call, k in key_call_hits:
         print(f"  {f}:{i}: {call}(...): {k!r}")
 
+# 8. Printf/template verb parity across locales (ut-docs#1865, found during
+#    the ut-docs#1841 review). Checks 1-2 above only compare KEY SETS -- a
+#    translation can drop, invent, or change a format specifier while
+#    keeping the same key, and every gate above stays green. That is a
+#    silent, live-visible bug: an en.json value like
+#    "Permanently remove %d inactive product(s) that were never sold." can
+#    ship as a locale value missing "%d" entirely and render
+#    "...%!d(MISSING)" in production, in the one sentence whose entire job
+#    is stating that number (see the linked card for the real dialog this
+#    happened to during review).
+#
+#    Two token dialects appear in this codebase's locale values and both
+#    must be checked:
+#      - Go fmt verbs: %d, %s, %v, %.2f, %02d, ... and Go's explicit
+#        positional form, %[n]verb.
+#      - template tokens already used elsewhere: {{name}} and {N}.
+#    %% is a literal percent sign, never a verb, and must never appear in
+#    the extracted token list on its own account.
+#
+#    Deliberately NOT supported: the `-`/`+`/` `/`#` printf FLAG characters.
+#    These values are translated prose, not literal Go source, and prose
+#    routinely contains "%" immediately followed by a flag-shaped
+#    character with no fmt.Sprintf behind it at all -- caught for real
+#    against this repo's own en.json while writing this check:
+#    setup.demo_data.hint's "a 10%-off code" parsed as flag "-" + verb "o"
+#    (octal) under a permissive `[-+ 0#]*` flag class, a false positive on
+#    ordinary English, not a format string. Every real verb this codebase
+#    actually uses (ut-docs#1865's own example is a bare %d) is a width/
+#    precision digit run plus a verb letter, never a flag -- so requiring
+#    a digit or verb letter immediately after `%` (no flag class at all)
+#    keeps the real shape covered while a coincidental "N%-word" in prose
+#    no longer parses as anything. Same recall-for-precision tradeoff this
+#    file's other checks already make (see check 3's own header). A
+#    trailing `(?![A-Za-z])` on both verb alternatives closes the sibling
+#    gap independent review found: without it, "%20den" (Turkish
+#    ablative) or "10%off" (no hyphen) still parsed as a verb followed by
+#    ordinary letters. Checked against every real locale value in this
+#    repo -- zero extractions change.
+#
+#    ORDER MATTERS, with one deliberate exception: a plain (non-positional)
+#    %s/%d/... fills arguments strictly in written order, so two locales
+#    that use the same verbs in a different order are formatting DIFFERENT
+#    call-site arguments into each slot -- a real bug, not a stylistic
+#    reorder, and must fail. The only way a translation may legitimately
+#    reorder arguments (some languages need to) is by using Go's explicit
+#    positional verbs (%[1]s, %[2]d, ...), which say outright which
+#    argument goes where instead of relying on writing order. So: if
+#    NEITHER side uses a positional printf verb, the ordered printf-verb
+#    lists must match exactly. If EITHER side uses one, both sides' printf
+#    verbs must be positional EXCLUSIVELY (a string mixing positional and
+#    implicit verbs can't be safely verified by this check and is treated
+#    as a mismatch rather than guessed at) and are then compared by
+#    explicit index -> verb shape, order-independent -- a dropped,
+#    invented, or changed verb at a given argument index still fails; only
+#    the writing order is exempt. Template tokens ({{name}}/{N}) are a
+#    SEPARATE dialect from printf verbs and are always compared as their
+#    own ordered list regardless of what the printf side is doing --
+#    independent review found that treating them as one pool made a verb
+#    at a template-token argument index required, which no translation
+#    (not even a byte-for-byte copy of en.json) could ever satisfy.
+verb_re = re.compile(
+    r'%%'
+    r'|%\[(\d+)\]\d*(?:\.\d+)?[vTtbcdoOqxXUeEfFgGspw](?![A-Za-z])'
+    r'|%\d*(?:\.\d+)?[vTtbcdoOqxXUeEfFgGspw](?![A-Za-z])'
+    r'|\{\{[^{}]*\}\}'
+    r'|\{\d+\}'
+)
+
+def verb_tokens(s):
+    # (token_text, explicit_index_or_None, is_template) -- skips the %%
+    # literal. is_template distinguishes {{..}}/{N} from printf verbs so
+    # the two dialects are never compared against each other.
+    out = []
+    for m in verb_re.finditer(s):
+        tok = m.group(0)
+        if tok == '%%':
+            continue
+        if tok.startswith('{'):
+            out.append((tok, None, True))
+        else:
+            out.append((tok, int(m.group(1)) if m.group(1) else None, False))
+    return out
+
+def verb_shape(tok):
+    # strip the "[n]" so a positional and non-positional verb of the same
+    # shape compare equal once matched up by index.
+    return re.sub(r'^%\[\d+\]', '%', tok)
+
+def printf_tokens(toks):
+    return [(t, idx) for t, idx, is_tmpl in toks if not is_tmpl]
+
+def template_tokens(toks):
+    return [t for t, _, is_tmpl in toks if is_tmpl]
+
+def mixes_positional_and_implicit(a_pf, b_pf):
+    a_pos = any(idx is not None for _, idx in a_pf)
+    b_pos = any(idx is not None for _, idx in b_pf)
+    def fully_positional(toks):
+        return bool(toks) and all(idx is not None for _, idx in toks)
+    return (a_pos or b_pos) and not (fully_positional(a_pf) and fully_positional(b_pf))
+
+def verbs_match(a, b):
+    a_toks, b_toks = verb_tokens(a), verb_tokens(b)
+    if template_tokens(a_toks) != template_tokens(b_toks):
+        return False
+    a_pf, b_pf = printf_tokens(a_toks), printf_tokens(b_toks)
+    a_pos = any(idx is not None for _, idx in a_pf)
+    b_pos = any(idx is not None for _, idx in b_pf)
+    if not a_pos and not b_pos:
+        return [t for t, _ in a_pf] == [t for t, _ in b_pf]
+    if mixes_positional_and_implicit(a_pf, b_pf):
+        return False
+    a_map = {idx: verb_shape(t) for t, idx in a_pf}
+    b_map = {idx: verb_shape(t) for t, idx in b_pf}
+    return a_map == b_map
+
+base_values = json.load(open("web/locales/en.json"))
+verb_hits = []
+for path in sorted(glob.glob("web/locales/*.json")):
+    if path.endswith("en.json"):
+        continue
+    loc_values = json.load(open(path))
+    for k in sorted(base_values.keys() & loc_values.keys()):
+        if not verbs_match(base_values[k], loc_values[k]):
+            verb_hits.append((path, k, verb_tokens(base_values[k]), verb_tokens(loc_values[k])))
+
+if verb_hits:
+    fail = True
+    print("guard-i18n: locale value has a format/template verb mismatch against en.json (dropped, invented, changed, or un-declared reordering):")
+    for path, k, a_toks, b_toks in verb_hits:
+        a_list = [t for t, _, _ in a_toks]
+        b_list = [t for t, _, _ in b_toks]
+        note = ""
+        if mixes_positional_and_implicit(printf_tokens(a_toks), printf_tokens(b_toks)):
+            note = " (mixes positional and implicit verbs; use one style consistently on both sides)"
+        print(f"  {path}: {k}: en={a_list} vs {b_list}{note}")
+
 if fail:
     sys.exit(1)
 print(f"✓ i18n guard: {len(used)} template keys resolve; all locales match en.json; "
       f"no hardcoded Go-side response strings found; no hand-written hx-vals literals found; "
       f"no hardcoded inline-JS status strings found; no hardcoded ToastMessage literals found; "
-      f"no missing Go-side i18n key literals found")
+      f"no missing Go-side i18n key literals found; no format/template verb mismatches found")
 PY

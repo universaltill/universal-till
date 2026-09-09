@@ -17,7 +17,7 @@
   <table class="table">
     <thead>
       <tr>
-        <th>{{ T "orders.col.receipt" }}</th>
+        <th>{{ T "orders.col.order_no" }}</th>
         <th>{{ T "orders.col.time" }}</th>
         <th>{{ T "orders.col.status" }}</th>
         {{/* Print-failure warnings (ut-docs#517a). Its own cell, not part of
@@ -40,8 +40,12 @@
         {{/* ut-docs#1350: a primary-sourced row (this till's own DB never
              replicates DOWN) may name a receipt this till has never heard
              of — linking it to /journal/{receipt_no} would 404, so those
-             rows show the plain receipt number instead of a link. */}}
-        <td>{{ if .JournalLinkable }}<a href="/journal/{{ .ReceiptNo }}">{{ .ReceiptNo }}</a>{{ else }}{{ .ReceiptNo }}{{ end }}{{ if eq .OrderType "takeaway" }} <span class="muted">{{ T "basket.order_type.takeaway" }}</span>{{ else if eq .OrderType "mixed" }} <span class="muted">{{ T "basket.order_type.mixed" }}</span>{{ end }}</td>
+             rows show the plain number instead of a link.
+             ut-docs#1817: the LINK TARGET stays ReceiptNo (the row's real
+             identity — /journal/{receipt_no} doesn't know display_no) but
+             the visible TEXT is DisplayNo, already resolved to ReceiptNo
+             when the sale has none. */}}
+        <td>{{ if .JournalLinkable }}<a href="/journal/{{ .ReceiptNo }}">{{ .DisplayNo }}</a>{{ else }}{{ .DisplayNo }}{{ end }}{{ if eq .OrderType "takeaway" }} <span class="muted">{{ T "basket.order_type.takeaway" }}</span>{{ else if eq .OrderType "mixed" }} <span class="muted">{{ T "basket.order_type.mixed" }}</span>{{ end }}</td>
         <td>{{ .CreatedAt }}</td>
         <td id="order-status-{{ .ReceiptNo }}">
           <span class="order-status" data-status="{{ .Status }}">{{ T .StatusKey }}</span>

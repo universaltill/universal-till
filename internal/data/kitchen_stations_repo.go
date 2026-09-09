@@ -256,7 +256,8 @@ func (r *POSRepo) ListRecentOrdersForStation(ctx context.Context, stationID stri
 	}
 	rows, err := r.db.QueryContext(ctx, `
 SELECT s.receipt_no, COALESCE(s.order_type, ''), s.order_status, COALESCE(s.order_status_updated_at, ''), s.created_at,
-       COALESCE(s.kitchen_print_failed_at, ''), COALESCE(s.receipt_print_failed_at, '')
+       COALESCE(s.kitchen_print_failed_at, ''), COALESCE(s.receipt_print_failed_at, ''),
+       COALESCE(NULLIF(s.display_no, ''), s.receipt_no)
 FROM sales s
 WHERE s.sale_type = 'sale' AND s.status = 'completed'
   AND s.order_status NOT IN ('collected', 'cancelled')
@@ -284,7 +285,7 @@ LIMIT ?2
 	var out []OrderListEntry
 	for rows.Next() {
 		var e OrderListEntry
-		if err := rows.Scan(&e.ReceiptNo, &e.OrderType, &e.Status, &e.StatusUpdatedAt, &e.CreatedAt, &e.KitchenPrintFailedAt, &e.ReceiptPrintFailedAt); err != nil {
+		if err := rows.Scan(&e.ReceiptNo, &e.OrderType, &e.Status, &e.StatusUpdatedAt, &e.CreatedAt, &e.KitchenPrintFailedAt, &e.ReceiptPrintFailedAt, &e.DisplayNo); err != nil {
 			return nil, fmt.Errorf("scan recent order for station: %w", err)
 		}
 		out = append(out, e)

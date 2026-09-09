@@ -120,22 +120,66 @@ func tokenize(s string) map[string]bool {
 	return words
 }
 
-// iconPath maps an icon key to its bundled asset's public path, empty for
-// an unknown key. The bundled set itself lives at
-// web/public/assets/category-icons/*.svg.
-func iconPath(icon string) string {
+// IconPath maps a built-in icon key to its bundled asset's public path.
+// ok is false for a key this package doesn't recognise — callers that take
+// an icon key from outside the process (ut-docs#1844's picker takes one
+// from a POST body) must check it rather than trust an empty path is a
+// deliberate "no icon" answer.
+func IconPath(icon string) (path string, ok bool) {
 	switch icon {
 	case "coffee", "pastry", "sandwich", "drink", "generic":
-		return "/public/assets/category-icons/" + icon + ".svg"
+		return "/public/assets/category-icons/" + icon + ".svg", true
 	default:
-		return ""
+		return "", false
 	}
 }
 
-// PlaceholderIconPath is PlaceholderIcon plus iconPath in one call — what
+// PlaceholderIconPath is PlaceholderIcon plus IconPath in one call — what
 // callers actually want: a path ready to store as an item_images.path
 // value (see data.CatalogRepo.EnsureDefaultThumbnail), through the same
 // "/public/assets/..." convention the manual upload path already uses.
+// PlaceholderIcon only ever returns a key IconPath recognises, so the ok
+// return is dropped here.
 func PlaceholderIconPath(name, category string) string {
-	return iconPath(PlaceholderIcon(name, category))
+	path, _ := IconPath(PlaceholderIcon(name, category))
+	return path
+}
+
+// BuiltinIcon is one bundled category icon offered by the catalog image
+// picker (ut-docs#1844): Key is the stored identifier (matches the asset
+// filename and what IconPath/PlaceholderIcon return), Path its public
+// asset path, and I18nKey the locale key for its display label — the
+// picker template renders {{ T .I18nKey }}, never a hardcoded label
+// (universal-till/CLAUDE.md's i18n rule).
+type BuiltinIcon struct {
+	Key, Path, I18nKey string
+}
+
+// BuiltinIcons returns every built-in category icon in a fixed display
+// order, for a UI picker to enumerate. The set intentionally matches
+// IconPath's known keys exactly (TestBuiltinIcons_MatchesIconPath pins
+// this) — adding an icon here with no IconPath case, or vice versa, is a
+// bug, not a style choice.
+func BuiltinIcons() []BuiltinIcon {
+	return []BuiltinIcon{
+		{Key: "coffee", Path: mustIconPath("coffee"), I18nKey: "catalog.builtin_icon.coffee"},
+		{Key: "drink", Path: mustIconPath("drink"), I18nKey: "catalog.builtin_icon.drink"},
+		{Key: "sandwich", Path: mustIconPath("sandwich"), I18nKey: "catalog.builtin_icon.sandwich"},
+		{Key: "pastry", Path: mustIconPath("pastry"), I18nKey: "catalog.builtin_icon.pastry"},
+		{Key: "generic", Path: mustIconPath("generic"), I18nKey: "catalog.builtin_icon.generic"},
+	}
+}
+
+// mustIconPath is BuiltinIcons()'s own literal list resolving its paths
+// through IconPath instead of duplicating the "/public/assets/..." string
+// a second time — the two can't drift out of sync by construction. Panics
+// on an unknown key, which would mean BuiltinIcons() itself has a typo;
+// TestBuiltinIcons_MatchesIconPath also catches this without needing to
+// crash the binary.
+func mustIconPath(icon string) string {
+	path, ok := IconPath(icon)
+	if !ok {
+		panic("catimport: BuiltinIcons() key " + icon + " unknown to IconPath")
+	}
+	return path
 }

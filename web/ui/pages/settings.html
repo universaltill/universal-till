@@ -505,6 +505,28 @@
   {{ end }}
 </div>
 {{ end }}
+<!-- ut-docs#1817: the short customer-facing order number scheme -- a sale
+     keeps its permanent receipt_no unchanged (refunds/reports/fiscal
+     record); this only picks how the SEPARATE, additional display number
+     is counted. Unconditional (unlike the payMethods-gated card above --
+     there's no "no data yet" state for this one, the setting always
+     applies). Elevation-gated + audited, same convention as every other
+     settings write on this page (see payments-default just above). -->
+<div class="card">
+  <h2>{{ T "settings.order_no.title" }} {{ helpLink "order-status" }}</h2>
+  <p class="muted">{{ T "settings.order_no.help" }}</p>
+  <form hx-post="/api/settings/order-no-scheme" hx-target="#order-no-scheme-msg" hx-swap="innerHTML">
+    {{ $orderNoScheme := index .settingsMap "sale.display_no_scheme" }}
+    <label class="set-row">{{ T "settings.order_no.scheme" }}
+      <select name="scheme">
+        <option value="trading_period_reset" {{ if ne $orderNoScheme "lifetime_no_reset" }}selected{{ end }}>{{ T "settings.order_no.scheme_trading_period_reset" }}</option>
+        <option value="lifetime_no_reset" {{ if eq $orderNoScheme "lifetime_no_reset" }}selected{{ end }}>{{ T "settings.order_no.scheme_lifetime_no_reset" }}</option>
+      </select>
+      <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
+      <span id="order-no-scheme-msg" aria-live="polite"></span>
+    </label>
+  </form>
+</div>
 <div class="card">
   <!-- ADR-0059 Decision §2, ut-docs#935: shop-selectable barcode symbology
        checklist. One checkbox per internal/barcode registry entry, saved

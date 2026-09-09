@@ -4367,6 +4367,140 @@ FROM sales WHERE receipt_no LIKE ? || '%'`,
 	return fmt.Sprintf("%s%09d", prefix, next), nil
 }
 
+// SaleDisplayNoSchemeKey selects the counting window NextDisplayNo uses --
+// see the two DisplayNoScheme* constants below. Unset (new install, or a
+// pre-ut-docs#1817 database) reads as "" from the settings table, which
+// NextDisplayNo treats the same as DisplayNoSchemeTradingPeriodReset (its
+// documented default), never as an error.
+const SaleDisplayNoSchemeKey = "sale.display_no_scheme"
+
+const (
+	// DisplayNoSchemeTradingPeriodReset resets the count to 1 right after
+	// each close (ADR-0066 Decision 6's own close-to-close boundary, via
+	// LatestArchivedAt(ctx, "eod") -- the SAME instant generateEOD uses for
+	// its own report period). Matches the researched competitor default:
+	// Square ships exactly this ("daily auto-reset ticket numbers", rolled
+	// out because carried-over numbers from the day before make kitchen
+	// tickets and call-outs harder to track); SumUp/ready2order/Lightspeed
+	// all show short per-day-or-shift order numbers in their own UI. This
+	// is the default.
+	DisplayNoSchemeTradingPeriodReset = "trading_period_reset"
+	// DisplayNoSchemeLifetimeNoReset never resets -- a plain running count
+	// for a shop that would rather not restart at 1 every close (low daily
+	// volume, or an operator who finds a reset confusing). Deliberately NOT
+	// a wrapping counter (the card's own third example, "#01-#99 wraps"):
+	// this table is archive-only (ADR-0042, rows are never deleted), so a
+	// wrap derived from MAX(display_no) the same stateless way NextReceiptNo
+	// derives its own count can never actually cycle -- the old, still-
+	// present high-water row keeps winning MAX() forever, which would
+	// re-wrap on almost every sale instead of advancing. A real wrapping
+	// scheme needs its own persistent counter row, not a MAX-derived one --
+	// tracked separately (see ut-docs#1817's close-out) rather than shipped
+	// broken here.
+	//
+	// Trade-off, noted rather than fixed here (independent review, S2): the
+	// unbounded MAX(...) scan this scheme runs has no useful index --
+	// display_no carries no index of its own, and a LIKE-prefix predicate
+	// can't use one under SQLite's default collation anyway -- so it's a
+	// full scan of `sales` on every checkout for a shop that opts into
+	// this scheme, growing with the shop's lifetime sale count. The
+	// default scheme doesn't have this cost (bounded to the current
+	// trading period via report_archive). Acceptable for now since this is
+	// opt-in, not the default; an index becomes worth adding if a real
+	// shop on this scheme is ever seen with checkout latency from it.
+	DisplayNoSchemeLifetimeNoReset = "lifetime_no_reset"
+)
+
+// NextDisplayNo allocates the next short, customer-facing order number for
+// a sale -- an ADDITIONAL identity to receipt_no (ut-docs#1817), never a
+// replacement: receipt_no keeps its own independent, gapless allocation
+// (NextReceiptNo, called separately) exactly as before. Reuses the SAME
+// per-till sync.receipt_prefix NextReceiptNo already reads for multi-till
+// collision safety -- two tills sharing a room can never call out the same
+// display number, with no second prefixing mechanism invented. Offline-safe
+// by construction: one local SQLite read in the caller's own transaction,
+// no network round-trip, same as NextReceiptNo.
+//
+// Read via a bare SELECT MAX(...)+1, not a real DB sequence -- the same
+// trade-off NextReceiptNo already accepts: a crash between allocating and
+// inserting leaves a gap, never a collision (a collision is caught by the
+// caller's own retry-on-conflict loop in internal/pos/sales.go, which this
+// rides alongside in the exact same transaction as the receipt-no
+// allocation).
+//
+// The scheme itself is read here, inside exec(tx), rather than taken as a
+// parameter -- same reason prefix is read this way and not passed in: a
+// caller (internal/pos/sales.go) may be running with tx == nil in a test,
+// and exec(tx) is what safely falls back to r.db for that case. A caller
+// passing its own pre-read tx.QueryRowContext for this would reintroduce
+// exactly the nil-tx panic exec(tx) exists to avoid.
+func (r *POSRepo) NextDisplayNo(ctx context.Context, tx *sql.Tx) (string, error) {
+	exec := r.exec(tx)
+	var prefix string
+	_ = exec.QueryRowContext(ctx,
+		`SELECT value FROM settings WHERE key = 'sync.receipt_prefix'`).Scan(&prefix)
+	var scheme string
+	_ = exec.QueryRowContext(ctx,
+		`SELECT value FROM settings WHERE key = ?`, SaleDisplayNoSchemeKey).Scan(&scheme)
+
+	// since bounds the count to the current trading period for the default
+	// scheme -- "" (compares before any real created_at ever could, so the
+	// WHERE clause below is effectively unbounded) for
+	// DisplayNoSchemeLifetimeNoReset and for a till that has never closed
+	// yet, both of which want every sale ever recorded under this prefix.
+	//
+	// Deliberately NOT r.LatestArchivedAt (which always queries via r.db,
+	// never exec(tx)): a real deadlock, not a theoretical one -- confirmed
+	// by TestFiscalChip_ConfiguredLastSaleGapped_RendersWarnWithCount timing
+	// out at 10 minutes while this method, running inside CompleteSale's own
+	// transaction, blocked forever in database/sql.(*DB).conn waiting for a
+	// second connection that the pool never frees (the in-flight tx holds
+	// the only one). Reading the SAME "eod" boundary inline through exec
+	// keeps it on the SAME connection as everything else in this method,
+	// same reason prefix/scheme are read that way above.
+	//
+	// report_archive.created_at and sales.created_at are NOT the same text
+	// shape -- archiveTimestampFmt ("2006-01-02 15:04:05", space-separated)
+	// vs. sales' plain time.RFC3339 ("...T...Z") -- so a bare string compare
+	// between them is wrong: 'T' (0x54) sorts after ' ' (0x20), so
+	// created_at > since would read true for a same-calendar-day sale
+	// regardless of actual time, and the "reset" would never actually
+	// reset (caught by independent review, ut-docs#1817 — verified live: a
+	// probe with the real archive format left the counter monotonically
+	// increasing across closes instead of returning to 1). Parse with the
+	// SAME layout LatestArchivedAt itself uses, then re-format to RFC3339
+	// to match sales.created_at's own shape, exactly what LatestArchivedAt
+	// would have handed back had it been safe to call here.
+	var since string
+	if scheme != DisplayNoSchemeLifetimeNoReset {
+		var raw sql.NullString
+		_ = exec.QueryRowContext(ctx,
+			`SELECT MAX(created_at) FROM report_archive WHERE kind = 'eod'`).Scan(&raw)
+		if raw.Valid {
+			if ts, err := time.Parse(archiveTimestampFmt, raw.String); err == nil {
+				since = ts.UTC().Format(time.RFC3339)
+			}
+			// A parse failure leaves since == "" -- same fail-open-to-
+			// unbounded behaviour as "no close yet", never an error: a
+			// malformed archive row must not block every sale on this till.
+		}
+	}
+	var maxVal sql.NullInt64
+	if err := exec.QueryRowContext(ctx, `
+SELECT COALESCE(MAX(CAST(substr(display_no, ?) AS INTEGER)), 0)
+FROM sales WHERE display_no LIKE ? || '%' AND created_at > ?`,
+		len(prefix)+1, prefix, since).Scan(&maxVal); err != nil {
+		return "", fmt.Errorf("next display no: %w", err)
+	}
+	next := maxVal.Int64 + 1
+	if next < 1 {
+		next = 1
+	}
+	// No zero-padding, unlike receipt_no's %09d -- the entire point is a
+	// short, callable number.
+	return fmt.Sprintf("%s%d", prefix, next), nil
+}
+
 // CurrentQty returns quantity and whether a matching inventory row existed.
 //
 // ut-docs#1353: reject "both set" up front, same as AggregateInventory's
@@ -5033,6 +5167,13 @@ type InsertSaleParams struct {
 	SyncAttempts      int
 	SyncNextAttemptAt string
 	SyncLastError     string
+	// DisplayNo (ut-docs#1817) is the short, customer-facing order number
+	// allocated by NextDisplayNo -- an ADDITIONAL field, never a substitute
+	// for ReceiptNo above. "" is legitimately valid (a scheme/prefix that
+	// resolves to nothing, or a caller that never allocated one) -- every
+	// reader falls back to receipt_no when this is empty, so it is not in
+	// validateRequired below.
+	DisplayNo string
 }
 
 // validateRequired checks the InsertSaleParams fields that must never be
@@ -5075,9 +5216,9 @@ func (r *POSRepo) InsertSale(ctx context.Context, tx *sql.Tx, p InsertSaleParams
 		offlineVal = 1
 	}
 	_, err := r.exec(tx).ExecContext(ctx, `
-INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, order_type, table_id, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total, rounding, note, created_at, completed_at, local_date)
-VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, COALESCE(date(?, 'localtime'), ''))
-`, p.SaleID, p.ReceiptNo, p.SaleType, p.TenderType, p.OrderType, nullIfEmpty(p.TableID), offlineVal, p.SyncStatus, p.SyncAttempts, nullIfEmpty(p.SyncNextAttemptAt), nullIfEmpty(p.SyncLastError), nullIfEmpty(p.RegisterID), nullIfEmpty(p.CashierID), nullIfEmpty(p.CustomerID), p.Currency, p.Subtotal, p.DiscountTotal, p.TaxTotal, p.Total, p.ServiceCharge, p.ServiceChargeTaxBasisBP, p.VoucherIssueTotal, nullIfEmpty(p.Note), p.CreatedAt, p.CreatedAt, p.CreatedAt)
+INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, order_type, table_id, offline, sync_status, sync_attempts, sync_next_attempt_at, sync_last_error, register_id, cashier_id, customer_id, currency, subtotal, discount_total, tax_total, total, service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total, rounding, note, created_at, completed_at, local_date, display_no)
+VALUES (?, ?, 'completed', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, COALESCE(date(?, 'localtime'), ''), ?)
+`, p.SaleID, p.ReceiptNo, p.SaleType, p.TenderType, p.OrderType, nullIfEmpty(p.TableID), offlineVal, p.SyncStatus, p.SyncAttempts, nullIfEmpty(p.SyncNextAttemptAt), nullIfEmpty(p.SyncLastError), nullIfEmpty(p.RegisterID), nullIfEmpty(p.CashierID), nullIfEmpty(p.CustomerID), p.Currency, p.Subtotal, p.DiscountTotal, p.TaxTotal, p.Total, p.ServiceCharge, p.ServiceChargeTaxBasisBP, p.VoucherIssueTotal, nullIfEmpty(p.Note), p.CreatedAt, p.CreatedAt, p.CreatedAt, nullIfEmpty(p.DisplayNo))
 	if err != nil {
 		return fmt.Errorf("insert sale: %w", err)
 	}
@@ -6400,8 +6541,18 @@ func (r *POSRepo) SaleCompletedAt(ctx context.Context, saleID string) (time.Time
 // the json tags below are load-bearing for universal-till/CLAUDE.md's
 // snake_case rule on that surface, not just documentation (ut-docs#262).
 type SaleDetail struct {
-	ID         string `json:"id"`
-	ReceiptNo  string `json:"receipt_no"`
+	ID        string `json:"id"`
+	ReceiptNo string `json:"receipt_no"`
+	// DisplayNo (ut-docs#1817) is the short, customer-facing order number,
+	// ALREADY resolved to receipt_no when the sale has none (a legacy row
+	// predating migration 013, or a scheme that produced ""): GetSaleDetail
+	// selects COALESCE(NULLIF(display_no, ''), receipt_no), so every caller
+	// gets a display value with no fallback logic of its own. omitempty
+	// keeps the LAN-sync journal wire additive, same convention as
+	// VoucherIssueTotal/Charges above -- a pre-1.x peer's journal simply
+	// lacks the key, which a receiving side reads as "no display_no", the
+	// exact state that peer's own sales were already in.
+	DisplayNo  string `json:"display_no,omitempty"`
 	Status     string `json:"status"`
 	SaleType   string `json:"sale_type"`
 	TenderType string `json:"tender_type"`
@@ -6553,12 +6704,14 @@ func (r *POSRepo) GetSaleDetail(ctx context.Context, receiptNo string) (SaleDeta
 SELECT s.id, s.receipt_no, s.status, s.sale_type, s.tender_type, s.order_type, s.offline, s.sync_status,
        s.currency, s.subtotal, s.discount_total, s.tax_total, s.total, s.service_charge_amount,
        s.service_charge_tax_basis_bp, s.voucher_issue_total, s.created_at,
-       COALESCE(s.cashier_id, ''), COALESCE(s.table_id, ''), COALESCE(t.label, '')
+       COALESCE(s.cashier_id, ''), COALESCE(s.table_id, ''), COALESCE(t.label, ''),
+       COALESCE(NULLIF(s.display_no, ''), s.receipt_no)
 FROM sales s LEFT JOIN tables t ON t.id = s.table_id
 WHERE s.receipt_no = ?`, receiptNo).Scan(
 		&d.ID, &d.ReceiptNo, &d.Status, &d.SaleType, &d.TenderType, &d.OrderType, &d.Offline,
 		&d.SyncStatus, &d.Currency, &d.Subtotal, &d.DiscountTotal, &d.TaxTotal,
-		&d.Total, &d.ServiceCharge, &d.ServiceChargeTaxBasisBP, &d.VoucherIssueTotal, &d.CreatedAt, &d.CashierID, &d.TableID, &d.TableLabel)
+		&d.Total, &d.ServiceCharge, &d.ServiceChargeTaxBasisBP, &d.VoucherIssueTotal, &d.CreatedAt, &d.CashierID, &d.TableID, &d.TableLabel,
+		&d.DisplayNo)
 	if err == sql.ErrNoRows {
 		return SaleDetail{}, false, nil
 	}

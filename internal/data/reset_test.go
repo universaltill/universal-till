@@ -402,6 +402,49 @@ func TestResetThenRestoreRoundTrip_SaleTrackingToken(t *testing.T) {
 	}
 }
 
+// ut-docs#1817: sales.display_no (migration 013) must round-trip through
+// sales_archive for the exact reason every earlier ALTER's own test here
+// already established (055/056/007 above) — a column present on the live
+// table but missing from resetArchiveTables' "sales" cols string is
+// silently dropped by a Settings -> Data -> Clear/Restore cycle rather than
+// erroring, which here would mean every restored sale loses its short
+// customer-facing order number in favour of the column DEFAULT NULL,
+// falling back to its (correct, but longer) receipt_no everywhere until a
+// new sale is made.
+func TestResetThenRestoreRoundTrip_SaleDisplayNo(t *testing.T) {
+	d, x, count := resetTestDB(t, "restore_sale_display_no.db")
+	seedFullSale(t, x)
+	x(`UPDATE sales SET display_no = '7' WHERE id = 's1'`)
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
+	if err != nil {
+		t.Fatalf("reset: %v", err)
+	}
+	var archivedDisplayNo string
+	if err := d.DB.QueryRow(`SELECT COALESCE(display_no,'') FROM sales_archive WHERE id='s1' AND reset_batch_id=?`, batchID).Scan(&archivedDisplayNo); err != nil {
+		t.Fatalf("read archived display_no: %v", err)
+	}
+	if archivedDisplayNo != "7" {
+		t.Fatalf("archived display_no = %q, want %q", archivedDisplayNo, "7")
+	}
+
+	if _, err := repo.RestoreResetBatch(ctx, batchID, "", ""); err != nil {
+		t.Fatalf("restore: %v", err)
+	}
+	if c := count("sales"); c != 2 {
+		t.Fatalf("sales after restore: %d rows, want 2", c)
+	}
+	detail, ok, err := repo.GetSaleDetail(ctx, "R1")
+	if err != nil {
+		t.Fatalf("GetSaleDetail after restore: %v", err)
+	}
+	if !ok || detail.DisplayNo != "7" {
+		t.Fatalf("restored sale must keep its display_no: ok=%v %+v", ok, detail)
+	}
+}
+
 // ut-docs#1342 (independent review): sales.local_date/voided_local_date,
 // payments.local_date and worker_allocations.local_date (migration 007) must
 // round-trip through their _archive twins for exactly the reason 055/056/058

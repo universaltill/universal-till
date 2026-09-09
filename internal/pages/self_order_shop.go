@@ -414,9 +414,14 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
-		receiptNo, _, _, _, _ := repo.SaleTotals(r.Context(), saleID)
-		if receiptNo == "" {
-			receiptNo = saleID
+		// ut-docs#1817: GetSaleDetailByID (not the narrower SaleTotals) so
+		// the confirmation screen gets DisplayNo already resolved to
+		// ReceiptNo when the sale has none, same convention as every other
+		// display_no reader in this codebase.
+		detail, ok, _ := repo.GetSaleDetailByID(r.Context(), saleID)
+		receiptNo, displayNo := detail.ReceiptNo, detail.DisplayNo
+		if !ok || receiptNo == "" {
+			receiptNo, displayNo = saleID, saleID
 		}
 		// Customer order tracking QR (ut-docs#527) — best-effort: the sale
 		// is committed, so a missing QR (no LAN-dialable address, encode
@@ -424,6 +429,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 		trackingQR, trackingURL := orderTrackingQRView(r, repo, receiptNo, httpx.ResolveLocale(w, r))
 		httpx.RenderPartial("ui/partials/self_order_confirmation.html", map[string]any{
 			"ReceiptNo":   receiptNo,
+			"DisplayNo":   displayNo,
 			"TrackingQR":  trackingQR,
 			"TrackingURL": trackingURL,
 		})(w, r)
