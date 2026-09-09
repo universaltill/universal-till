@@ -23,8 +23,15 @@ const (
 	// forever — precisely the "#1243 closed while the defect was still on
 	// real receipts" failure this mechanism exists to prevent (independent
 	// review finding, ut-docs#1733).
+	//
+	// Bumped again "v2" -> "v3" in ut-docs#1775: DefaultCharset now resolves
+	// win1254 for a Turkish-language EUR/GBP store, which used to fall
+	// through to "utf8" under v2 for the exact same reason the v1->v2 bump
+	// exists above — a till that already spent its v2 pass with nothing
+	// better to offer a Turkish locale is sitting on "utf8" and would never
+	// be re-evaluated without this bump.
 	keyPrinterCharsetAdopted = "printer.charset.adopted"
-	currentAdoptionVersion   = "v2"
+	currentAdoptionVersion   = "v3"
 )
 
 // AdoptDefaultPrinterCharset switches a till that is still carrying the

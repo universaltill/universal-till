@@ -1691,6 +1691,7 @@
   "settings.printer.charset_cp858": "أوروبا الغربية (CP858 — €/£)",
   "settings.printer.charset_win1250": "أوروبا الوسطى (Windows-1250 — €/č/ž)",
   "settings.printer.charset_win1253": "اليونانية (Windows-1253 — €/α/β)",
+  "settings.printer.charset_win1254": "التركية (Windows-1254 — €/ş/ı)",
   "settings.printer.charset_win1257": "دول البلطيق (Windows-1257 — €/ā/š)",
   "settings.printer.device": "مسار الجهاز",
   "settings.printer.discover.error": "تعذر البحث عن طابعات في هذه الشبكة.",

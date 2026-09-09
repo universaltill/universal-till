@@ -2097,6 +2097,29 @@ func TestSettingsPage_PrinterCardHidesTestPrintAndDesignerLinkFromCashier(t *tes
 // (receipt + kitchen) both have their own input id for the page's JS to
 // target, so a future edit can't silently drop one field's "Use for X"
 // wiring without a visible test failure.
+// ut-docs#1775: the settings page's charset dropdown must actually render
+// the new win1254 option with its translated label — a passing
+// internal/print unit test proves the ENCODER supports win1254, not that
+// an operator can find and pick it on the real Settings screen.
+func TestSettingsPage_PrinterCardHasWin1254CharsetOption(t *testing.T) {
+	mux, _, _ := newFullAuthDeps(t)
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req = auth.WithUser(req, mgrUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `value="win1254"`) {
+		t.Fatal("printer charset dropdown is missing the win1254 <option>")
+	}
+	if !strings.Contains(body, "Windows-1254") {
+		t.Fatal("printer charset dropdown is missing the win1254 option's translated label")
+	}
+}
+
 func TestSettingsPage_PrinterCardHasDiscoverableAddressFieldIDs(t *testing.T) {
 	mux, _, _ := newFullAuthDeps(t)
 
