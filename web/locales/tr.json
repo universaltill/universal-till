@@ -504,6 +504,7 @@
   "fiscaldevice.driver.note": "Bugün yalnızca bridge sürücüsü tamamdır (bir köprü programıyla ya da test simülatörüyle konuşur). Bitmemiş bir üretici sürücüsü, -mış gibi yapmak yerine her ödemeyi reddeder.",
   "fiscaldevice.error.not_found": "Bulunamadı",
   "fiscaldevice.error.owner_required": "Mağaza sahibi (yönetici) gerekli",
+  "fiscaldevice.error.owner_required_country_change": "Mali imza cihazı onaylıyken ülkeyi değiştirmek için mağaza sahibi (yönetici) gerekli",
   "fiscaldevice.error.server": "Mali cihaz sayfası yüklenemedi. Yeniden deneyin ya da menüden çalışmaya devam edin.",
   "fiscaldevice.intro": "Onaylı yazarkasa (YN ÖKC) parayı alır ve yasal fişi basar; kasa her satışta cihazın fiş numarasını kaydeder. Bu sayfa cihazı kasanın tarafından gösterir — vergi dairesiyle hiç konuşmaz.",
   "fiscaldevice.last.issued_at": "Düzenlenme zamanı",
