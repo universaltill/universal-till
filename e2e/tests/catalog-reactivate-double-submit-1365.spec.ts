@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, openNewItemForm } from './helpers';
+import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
 
 // ut-docs#1365: the item-form submit button was never disabled while a
 // save request was in flight — harmless before ut-docs#1363 (every
@@ -23,11 +23,12 @@ test.describe('catalog item-form double-submit (ut-docs#1365)', () => {
     await page.locator('#item-price').fill('1.00');
     await page.locator('#item-form-submit').click();
     await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
-    // ut-docs#1901: close explicitly — the dialog is non-modal (.show(),
+    // ut-docs#1901: close it — the dialog is non-modal (.show(),
     // ut-docs#1385's OSK fix), so nothing outside it is inert, but its
     // large `position: fixed` box covers and intercepts the row click
-    // below.
-    await page.locator('#item-form-close-btn').click();
+    // below. ut-docs#1929: via closeItemForm, race-tolerant of the
+    // save-success auto-close timer.
+    await closeItemForm(page);
 
     const row = page.locator('.catalog-row', { hasText: name });
     await expect(row).toBeVisible();

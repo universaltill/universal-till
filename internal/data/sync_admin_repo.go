@@ -132,6 +132,25 @@ var adminTables = []adminTable{
 	{name: "item_barcodes", pk: []string{"barcode"}},
 	{name: "item_variants", pk: []string{"id"}, hasIsActive: true, unique: []string{"sku"}},
 	{name: "variant_barcodes", pk: []string{"barcode"}},
+	// ut-docs#1900: reusable option sets (migration 017) are catalog
+	// structure of exactly the same shop-wide kind as item_modifier_groups
+	// below — the generated variants themselves already travel as
+	// item_variants rows above, and a satellite that had the rows but not
+	// the sets/links they came from would show the item's range with no
+	// record of what it was generated from. Mutation is primary-only
+	// (catalog/handlers.go's requirePrimary on every option-set route),
+	// which is what makes syncing safe, same as #1667's reasoning for the
+	// modifier tables. Ordered for their FKs: option_set_values ->
+	// option_sets; item_option_sets -> items + option_sets;
+	// item_variant_options -> item_variants + option_set_values (all
+	// applied after items/item_variants above). option_sets has a real
+	// is_active plus UNIQUE(name), so it retires like items on an FK-blocked
+	// prune; option_set_values' UNIQUE is (option_set_id, value), and
+	// mangling `value` alone keeps that pair unique too.
+	{name: "option_sets", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}},
+	{name: "option_set_values", pk: []string{"id"}, unique: []string{"value"}},
+	{name: "item_option_sets", pk: []string{"item_id", "option_set_id"}},
+	{name: "item_variant_options", pk: []string{"variant_id", "option_set_value_id"}},
 	{name: "related_items", pk: []string{"item_id", "related_item_id"}},
 	// ut-docs#1667: same shape as #1546 (tables/kitchen_stations) — catalog
 	// structure that reads shop-wide but was missing from this list

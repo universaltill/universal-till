@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, openNewItemForm } from './helpers';
+import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
 
 // ut-docs#1356: bulk "backfill barcodes from SKU" on the Catalog page —
 // preview-before-apply, reusing #1224's exact SKU→barcode derivation. This
@@ -26,10 +26,9 @@ test('backfilling barcodes from SKU previews then assigns a derived barcode to a
   // (.show(), ut-docs#1385's OSK fix), so nothing outside it is inert, but
   // it IS a large `position: fixed` box (z-index 500) that covers the
   // page-head backfill button below and intercepts its click. Close it
-  // explicitly rather than relying on the save-success auto-close timer,
-  // which would make this test's timing depend on an implementation detail
-  // it isn't testing.
-  await page.locator('#item-form-close-btn').click();
+  // (ut-docs#1929: race-tolerant of the save-success auto-close timer —
+  // see closeItemForm's own comment) before touching that button.
+  await closeItemForm(page);
 
   const row = page.locator('.catalog-row', { hasText: name });
   await expect(row).toBeVisible();

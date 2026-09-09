@@ -32,7 +32,9 @@ func TestItemsPage_RendersFiveSectionsWithNameAndSubtitle(t *testing.T) {
 		"Organise your items",
 		"Track what&#39;s in stock", // html/template escapes the apostrophe
 		"Add extras to items at checkout",
-		"Open an item to edit its variations",
+		// ut-docs#1900: was "Open an item to edit its variations" while the
+		// generator had no screen of its own; now it describes the feature.
+		"Generate item variants from reusable lists",
 	} {
 		if !strings.Contains(body, want) {
 			t.Errorf("expected subtitle %q in body", want)
@@ -49,8 +51,14 @@ func TestItemsPage_LibraryAndInventoryAndOptionSetsAndModifiersAreLiveLinks(t *t
 	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
 
-	if strings.Count(body, `href="/catalog"`) != 2 { // Library + Option sets both point here today
-		t.Errorf("expected two links to /catalog (Library, Option sets), got body: %s", body)
+	if strings.Count(body, `href="/catalog"`) != 1 { // Library only
+		t.Errorf("expected exactly one link to /catalog (Library), got body: %s", body)
+	}
+	// ut-docs#1900: wired up in the same merge that landed
+	// /catalog/option-sets — this row pointed at /catalog only because the
+	// dedicated screen didn't exist yet (same story as Modifiers below).
+	if !strings.Contains(body, `href="/catalog/option-sets"`) {
+		t.Errorf("expected a link to /catalog/option-sets, got body: %s", body)
 	}
 	if !strings.Contains(body, `href="/inventory"`) {
 		t.Errorf("expected a link to /inventory, got body: %s", body)

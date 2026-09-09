@@ -55,6 +55,35 @@
 
     <div class="catalog-detail-variants">
       <div class="muted catalog-detail-label">{{ T "catalog.variants" }}</div>
+
+      <!-- ut-docs#1900: reusable option sets. Pick up to two of the shop's
+           sets (defined once on /catalog/option-sets) and generate this
+           item's range as real item_variants rows in one step. Purely
+           additive: the manual per-variant grid below is untouched, and
+           re-generating only ever adds the combinations that don't exist
+           yet (item_variant_options is the idempotency key). -->
+      <div class="option-set-pick">
+        {{ if not .OptionSets }}
+        <p class="muted" style="margin:0">{{ T "catalog.variants.no_option_sets" }} <a href="/catalog/option-sets">{{ T "catalog.option_sets.title" }}</a></p>
+        {{ else }}
+        <form hx-post="/api/catalog/item/option-sets" hx-target="#catalog-variants" hx-swap="outerHTML" class="option-set-pick-row">
+          <input type="hidden" name="panelItem" value="{{ .ItemID }}">
+          <span class="option-set-pick-label">{{ T "catalog.variants.apply_option_sets" }}</span>
+          {{ range .OptionSets }}
+          <label class="option-set-pick-box"><input type="checkbox" name="optionSetIds" value="{{ .ID }}"{{ if index $.AppliedSetIDs .ID }} checked{{ end }}> {{ .Name }}</label>
+          {{ end }}
+          <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+        </form>
+        <form hx-post="/api/catalog/item/generate-variants" hx-target="#catalog-variants" hx-swap="outerHTML" class="option-set-pick-row">
+          <input type="hidden" name="panelItem" value="{{ .ItemID }}">
+          <button class="btn" type="submit">{{ T "catalog.variants.generate" }}</button>
+          <span class="muted option-set-pick-hint">{{ T "catalog.variants.generate_hint" }}</span>
+        </form>
+        {{ end }}
+        {{ if .GenerateNoSets }}<p class="option-set-pick-msg" role="status">{{ T "catalog.variants.generate_none_applied" }}</p>{{ end }}
+        {{ if .Generated }}<p class="option-set-pick-msg" role="status">{{ printf (T "catalog.variants.generated_count") .GeneratedCount }}</p>{{ end }}
+      </div>
+
       {{ if not .Variants }}<p class="muted">{{ T "catalog.variants.none" }}</p>{{ end }}
 
       {{ range .Variants }}
@@ -242,6 +271,18 @@
           el.value = window.utCurrency.toMajor(minor);
         }
       });
+      // ut-docs#1900: at most two option sets per item. The repo enforces
+      // this for real (ApplyOptionSetsToItem); this only greys out the
+      // remaining boxes once two are ticked so the limit is visible before
+      // Save, not just as an error after it.
+      var setBoxes = document.querySelectorAll('#catalog-variants .option-set-pick input[name="optionSetIds"]');
+      function syncOptionSetLimit() {
+        var checked = 0;
+        setBoxes.forEach(function (b) { if (b.checked) checked++; });
+        setBoxes.forEach(function (b) { b.disabled = !b.checked && checked >= 2; });
+      }
+      setBoxes.forEach(function (b) { b.addEventListener('change', syncOptionSetLimit); });
+      syncOptionSetLimit();
     })();
   </script>
   {{ end }}

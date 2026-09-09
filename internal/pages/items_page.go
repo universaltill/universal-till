@@ -25,22 +25,25 @@ type itemsSection struct {
 // same key /catalog's own <h1> renders) rather than a separate "Library"
 // name — independent review (ut-docs#1897) caught that two different
 // English names for the same destination is exactly the disorientation
-// this card exists to fix. Option sets links to /catalog today (the
-// per-item variants panel lives there) because the reusable, named-set
-// generator itself (ut-docs#1900) hasn't shipped — it is a real, reachable
-// feature today, so it is NOT disabled; its subtitle says so honestly
-// rather than implying a dedicated screen that doesn't exist yet.
-// Categories links to /categories as of ut-docs#1898 — this section list
-// is the ONLY navigation to that page (it gets no top-level nav tile of
-// its own, same as /catalog), so leaving it disabled here would make the
-// screen reachable by typed URL only. Modifiers links to /modifiers as of
-// ut-docs#1899, wired up the same way once that screen shipped.
+// this card exists to fix. Option sets pointed at /catalog while the
+// reusable, named-set generator hadn't shipped, with a subtitle that said
+// so honestly rather than implying a dedicated screen that didn't exist;
+// ut-docs#1900 landed that screen, so this row now points at its real
+// destination (/catalog/option-sets) and its subtitle describes the
+// feature — same wiring-up, in the same merge that lands the screen, that
+// Categories and Modifiers got below. Categories links to /categories as
+// of ut-docs#1898 — this section list is the ONLY navigation to that page
+// (it gets no top-level nav tile of its own, same as /catalog), so
+// leaving it disabled here would make the screen reachable by typed URL
+// only. Modifiers points at /modifiers (ut-docs#1899) — this row was
+// originally left disabled ("coming soon") because that screen didn't
+// exist yet when #1897 shipped; wired up in the same merge that landed it.
 var itemsSections = []itemsSection{
 	{NameKey: "nav.catalog", SubtitleKey: "items.library.subtitle", Href: "/catalog"},
 	{NameKey: "items.categories.name", SubtitleKey: "items.categories.subtitle", Href: "/categories"},
 	{NameKey: "items.inventory.name", SubtitleKey: "items.inventory.subtitle", Href: "/inventory"},
 	{NameKey: "items.modifiers.name", SubtitleKey: "items.modifiers.subtitle", Href: "/modifiers"},
-	{NameKey: "items.option_sets.name", SubtitleKey: "items.option_sets.subtitle", Href: "/catalog"},
+	{NameKey: "items.option_sets.name", SubtitleKey: "items.option_sets.subtitle", Href: "/catalog/option-sets"},
 }
 
 // registerItemsPage wires GET /items — the section-list landing page the

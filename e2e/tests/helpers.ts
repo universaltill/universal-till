@@ -314,3 +314,22 @@ export async function openNewItemForm(page: Page) {
   await page.locator('#item-form-add-btn').click();
   await expect(page.locator('#item-form-modal')).toBeVisible();
 }
+
+// ut-docs#1929: ut-docs#1901's own save-success handler auto-closes
+// #item-form-modal ~1.5s after the success notice appears (so the dialog
+// never strands the operator over the toast) — a call site that instead
+// waits for that same notice and then clicks #item-form-close-btn is
+// racing that timer. Playwright is normally far inside the 1.5s window, so
+// this hasn't actually flaked, but under real CI load the timer could win
+// first, closing the dialog before the click lands and leaving
+// #item-form-close-btn `display:none` (.item-form-modal:not([open])) —
+// timing out the click. Calling .close() directly is idempotent regardless
+// of which side won the race (native <dialog>.close() on an already-closed
+// dialog is a documented no-op), so this asserts the END state rather than
+// racing a specific path to it. Not a replacement for exercising the real
+// button — keep at least one call site (catalog-active-checkbox-1367.spec.ts)
+// on the literal click, so #item-form-close-btn itself still gets covered.
+export async function closeItemForm(page: Page) {
+  await page.locator('#item-form-modal').evaluate((el: HTMLDialogElement) => el.close());
+  await expect(page.locator('#item-form-modal')).toBeHidden();
+}

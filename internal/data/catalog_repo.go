@@ -1987,12 +1987,41 @@ func (r *CatalogRepo) CreateVariant(ctx context.Context, in catalogtypes.Variant
 	if !in.IsActive {
 		active = 0
 	}
-	_, err := r.db.ExecContext(ctx, `
+	// ut-docs#1900: a blank SKU gets a generated one. The manual add-variant
+	// row has promised "auto if blank" (catalog.auto_if_blank) all along
+	// while this stored NULL and generated nothing; the option-set generator
+	// (OptionSetRepo.GenerateVariants) relies on every generated variant
+	// carrying a real SKU, so the fix lands on this shared insert path and
+	// covers both. A collision on the generated code is astronomically
+	// unlikely (8 hex chars of a fresh UUID) but not impossible, so retry a
+	// bounded number of times with a fresh code rather than assume it.
+	autoSKU := strings.TrimSpace(in.SKU) == ""
+	attempts := 1
+	if autoSKU {
+		attempts = 3
+	}
+	var err error
+	for attempt := 0; attempt < attempts; attempt++ {
+		if autoSKU {
+			in.SKU = generatedVariantSKU()
+		}
+		_, err = r.db.ExecContext(ctx, `
 INSERT INTO item_variants (id, item_id, sku, name, price, cost_price, is_active)
 VALUES (?, ?, ?, ?, ?, ?, ?)
 `, in.ID, in.ItemID, nullableString(in.SKU), in.Name, in.Price, nullableInt64(in.CostPrice), active)
-	if err != nil {
+		if err == nil {
+			break
+		}
 		if isUniqueViolation(err) {
+			err = ErrSKUExists
+			if autoSKU {
+				continue
+			}
+		}
+		break
+	}
+	if err != nil {
+		if errors.Is(err, ErrSKUExists) {
 			return "", ErrSKUExists
 		}
 		return "", fmt.Errorf("insert variant: %w", err)
@@ -2026,6 +2055,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 		}
 	}
 	return in.ID, nil
+}
+
+// generatedVariantSKU is the short code CreateVariant assigns to a variant
+// added with a blank SKU (ut-docs#1900): "VAR-" + the first 8 hex chars of a
+// fresh UUID, upper-cased so it reads like the hand-typed SKUs around it.
+func generatedVariantSKU() string {
+	return "VAR-" + strings.ToUpper(uuid.NewString()[:8])
 }
 
 func (r *CatalogRepo) UpdateVariant(ctx context.Context, in catalogtypes.VariantInput) error {

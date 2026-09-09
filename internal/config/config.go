@@ -78,6 +78,18 @@ type Config struct {
 	Marketplace   MarketplaceConfig
 	DevMode       bool
 	DefaultLocale string // BCP 47 format: en-US, fr-CA, es-MX, etc.
+	// CompiledDefaultLocale is UT_DEFAULT_LOCALE's resolved value (or its
+	// "en-US" fallback), captured once here and never touched again —
+	// unlike Locales.Locale, which internal/settings.Store.LoadRuntimeConfig
+	// overwrites with the shop's persisted store.locale on every boot after
+	// the first (see that function's own doc comment). A caller that needs
+	// "what did this till boot with before any shop ever touched its
+	// locale" (ut-docs#1892's backfill is exactly this) must read THIS
+	// field, not Locales.Locale, which is live-mutable state by the time
+	// pages.Init ever sees it. Also distinct from the top-level
+	// DefaultLocale field above, which is UT_MARKETPLACE_LOCALE — the
+	// marketplace/catalog locale, an unrelated concept (ut-docs#863 review).
+	CompiledDefaultLocale string
 	// add more fields as needed (DB, SB, etc.)
 }
 
@@ -133,6 +145,10 @@ func Init() (*Config, error) {
 	}
 	cfg.Locales = locales
 	cfg.DefaultLocale = getenv("UT_MARKETPLACE_LOCALE", "en-US") // BCP 47 format for marketplace
+	// Snapshot locales.Locale into its own immutable field (ut-docs#1892) —
+	// see CompiledDefaultLocale's own doc comment on the struct for why this
+	// can't just be cfg.Locales.Locale read later.
+	cfg.CompiledDefaultLocale = locales.Locale
 	// if you need validation, do it here and return an error
 	return cfg, nil
 }

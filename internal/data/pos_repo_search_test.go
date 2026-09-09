@@ -6,7 +6,6 @@ import (
 	"testing"
 
 	"github.com/google/uuid"
-	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
@@ -62,24 +61,25 @@ func TestPOSRepo_LookupActiveVariant_ValidatesInput(t *testing.T) {
 
 // TestPOSRepo_LookupActiveVariant_TolerantOfNullSKU is ut-docs#1205 (same
 // landmine class as ut-docs#1176): item_variants.sku is a nullable UNIQUE
-// column, and CatalogRepo.CreateVariant stores NULL for a variant created
-// with no SKU. Before the COALESCE(sku, ”) fix, calling LookupActiveVariant
-// on such a variant failed with "sql: Scan error … converting NULL to
-// string is unsupported" instead of returning the variant with SKU == "".
+// column, and until ut-docs#1900 CatalogRepo.CreateVariant stored NULL for
+// a variant created with no SKU (it now generates one — see
+// TestCreateVariant_BlankSKUGetsGeneratedSKU), so every till that created a
+// blank-SKU variant before that fix still carries such rows. Before the
+// COALESCE(sku, ”) fix, calling LookupActiveVariant on such a variant
+// failed with "sql: Scan error … converting NULL to string is unsupported"
+// instead of returning the variant with SKU == "". The legacy row is seeded
+// directly here, exactly as it sits in those databases.
 func TestPOSRepo_LookupActiveVariant_TolerantOfNullSKU(t *testing.T) {
 	db := testsupport.NewCatalogTestDB(t)
-	catalogRepo := NewCatalogRepo(db)
 	posRepo := NewPOSRepo(db)
 	ctx := context.Background()
 
 	itemID := uuid.NewString()
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: itemID, SKU: "SKU-20", Name: "Item", BasePrice: 100, IsActive: true})
 
-	variantID, err := catalogRepo.CreateVariant(ctx, catalogtypes.VariantInput{
-		ItemID: itemID, Name: "No-SKU Variant", Price: 250, IsActive: true, // SKU left blank → stored as NULL
-	})
-	if err != nil {
-		t.Fatalf("CreateVariant: %v", err)
+	variantID := uuid.NewString()
+	if _, err := db.ExecContext(ctx, `INSERT INTO item_variants (id, item_id, sku, name, price, is_active) VALUES (?, ?, NULL, 'No-SKU Variant', 250, 1)`, variantID, itemID); err != nil {
+		t.Fatalf("seed legacy NULL-sku variant: %v", err)
 	}
 
 	var sku sql.NullString
