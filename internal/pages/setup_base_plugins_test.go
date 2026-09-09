@@ -18,6 +18,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
+	"github.com/universaltill/universal-till/internal/settings"
 )
 
 // newBasePluginTestDeps is newMigratedSyncDeps (real, fully migrated schema —
@@ -545,12 +546,14 @@ func TestResolveAndInstallBasePlugin_IdempotentPathDoesNotOverrideExplicitlyConf
 
 func TestBackfillLocaleConfirmed_MarksLocaleThatMatchesNeitherAutomaticValue(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
-	// "fr-FR" is neither the compiled bundled default (en-US) nor PK's own
-	// country default (ur-PK) — under this codebase's own three-writer rule
-	// (see the function's doc comment), the only way store.locale could have
-	// ended up here is a manual choice, made before ut-docs#1074's
-	// KeyLocaleConfirmed existed.
-	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK"; s.Locale = "fr-FR" })
+	// "de-AT" is neither the compiled default (dp.Cfg.CompiledDefaultLocale,
+	// "en" in this fixture) nor ANY seeded country's own DefaultLocale (see
+	// the 001_init.sql country_settings seed list — de-DE/DE, not de-AT, is
+	// the only German-ish entry) — under this codebase's closed-set-of-
+	// writers rule (see the function's doc comment), the only way
+	// store.locale could have ended up here is a manual choice, made before
+	// ut-docs#1074's KeyLocaleConfirmed existed.
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK"; s.Locale = "de-AT" })
 	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
 		t.Fatalf("seed state: %v", err)
 	}
@@ -579,9 +582,9 @@ func TestBackfillLocaleConfirmed_MarksLocaleThatMatchesNeitherAutomaticValue(t *
 func TestBackfillLocaleConfirmed_LeavesFreshRTLPendingShopUnconfirmed(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
 	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK" }) // locale left untouched
-	bundledDefault := dp.Cfg.Locales.Locale
+	bundledDefault := dp.Cfg.CompiledDefaultLocale
 	if got := dp.CurrentState().Locale; got != bundledDefault {
-		t.Fatalf("store.locale = %q before any derivation, want the compiled bundled default %q — test fixture is not proving anything", got, bundledDefault)
+		t.Fatalf("store.locale = %q before any derivation, want the compiled default %q — test fixture is not proving anything", got, bundledDefault)
 	}
 	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
 		t.Fatalf("seed state: %v", err)
@@ -620,7 +623,7 @@ func TestBackfillLocaleConfirmed_LeavesAlreadyDerivedLocaleUnconfirmed(t *testin
 
 func TestBackfillLocaleConfirmed_NoPendingBasePlugins_NoOp(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
-	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK"; s.Locale = "fr-FR" })
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK"; s.Locale = "de-AT" })
 	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
 		t.Fatalf("seed state: %v", err)
 	}
@@ -639,7 +642,7 @@ func TestBackfillLocaleConfirmed_NoPendingBasePlugins_NoOp(t *testing.T) {
 
 func TestBackfillLocaleConfirmed_PendingNonLanguageSpecOnly_NoOp(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
-	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK"; s.Locale = "fr-FR" })
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK"; s.Locale = "de-AT" })
 	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
 		t.Fatalf("seed state: %v", err)
 	}
@@ -661,7 +664,7 @@ func TestBackfillLocaleConfirmed_PendingNonLanguageSpecOnly_NoOp(t *testing.T) {
 
 func TestBackfillLocaleConfirmed_AlreadyConfirmed_Idempotent(t *testing.T) {
 	dp := newBasePluginTestDeps(t)
-	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK"; s.Locale = "fr-FR" })
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK"; s.Locale = "de-AT" })
 	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
 		t.Fatalf("seed state: %v", err)
 	}
@@ -678,6 +681,83 @@ func TestBackfillLocaleConfirmed_AlreadyConfirmed_Idempotent(t *testing.T) {
 		t.Fatalf("read %s: %v", common.KeyLocaleConfirmed, err)
 	} else if !ok || confirmed != "true" {
 		t.Fatalf("%s = (%q, ok=%v) after running against an already-confirmed till, want it left at (true, true)", common.KeyLocaleConfirmed, confirmed, ok)
+	}
+}
+
+// TestBackfillLocaleConfirmed_SurvivesProductionBootOrdering is the
+// regression test for ut-docs#1892 review finding F1: internal/app/app.go
+// runs settingsStore.LoadRuntimeConfig(ctx, cfg) on the SAME *config.Config
+// pointer that later becomes Deps.Cfg, and LoadRuntimeConfig overwrites
+// Locales.Locale with the shop's persisted store.locale — unconditionally,
+// on every boot after the first. An earlier version of this fix compared
+// against d.Cfg.Locales.Locale directly, which made the "never touched"
+// guard trivially true in production (st.Locale IS Locales.Locale by then)
+// and silently turned the whole backfill into a no-op on every real till —
+// caught only because a reviewer replicated this exact ordering. This test
+// pins it: seed a genuinely diverged, persisted store.locale, THEN run
+// LoadRuntimeConfig against the same cfg (the real app.go call, same
+// package, same method) exactly as app.go does before pages.Init ever
+// constructs Deps, and only then run the backfill.
+func TestBackfillLocaleConfirmed_SurvivesProductionBootOrdering(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK"; s.Locale = "de-AT" })
+	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "language", Locale: "ur"}}); err != nil {
+		t.Fatalf("seed pending base plugins: %v", err)
+	}
+
+	compiledBefore := dp.Cfg.CompiledDefaultLocale
+	// The real app.go boot sequence: LoadRuntimeConfig mutates cfg in place,
+	// overwriting Locales.Locale with the persisted store.locale ("de-AT").
+	settings.NewStore(dp.Db).LoadRuntimeConfig(t.Context(), dp.Cfg)
+	if dp.Cfg.Locales.Locale != "de-AT" {
+		t.Fatalf("Locales.Locale = %q after LoadRuntimeConfig, want de-AT — test fixture is not replicating production ordering", dp.Cfg.Locales.Locale)
+	}
+	if dp.Cfg.CompiledDefaultLocale != compiledBefore {
+		t.Fatalf("CompiledDefaultLocale changed from %q to %q after LoadRuntimeConfig — it must stay immutable, that's the whole point of the separate field", compiledBefore, dp.Cfg.CompiledDefaultLocale)
+	}
+
+	backfillLocaleConfirmedForDivergedPendingTills(t.Context(), dp)
+
+	confirmed, ok, err := dp.Settings.Get(t.Context(), common.KeyLocaleConfirmed)
+	if err != nil {
+		t.Fatalf("read %s: %v", common.KeyLocaleConfirmed, err)
+	}
+	if !ok || confirmed != "true" {
+		t.Fatalf("%s = (%q, ok=%v) after production-ordered boot with a genuinely diverged locale, want (true, true) — comparing against the mutated Locales.Locale instead of CompiledDefaultLocale would make this a no-op on every real till", common.KeyLocaleConfirmed, confirmed, ok)
+	}
+}
+
+// TestBackfillLocaleConfirmed_LeavesLeftoverPreviousCountryDefaultUnconfirmed
+// is the regression test for ut-docs#1892 review finding F2c: a merchant
+// who changes country while an RTL pack is still pending leaves
+// store.locale at the PREVIOUS country's default, because derivation to the
+// NEW country's default is skipped the same way the never-touched case is
+// (localeSafeToPreset("ur-PK") is false until the pack installs) — nothing
+// ever rewrites the stale "de-DE". Checking only the CURRENT country's
+// default would misclassify that leftover as a manual choice and
+// permanently disable the catch-up for exactly the shop this card exists to
+// protect.
+func TestBackfillLocaleConfirmed_LeavesLeftoverPreviousCountryDefaultUnconfirmed(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	// Country is PK now, but store.locale is still "de-DE" -- DE's own
+	// default, left over from before the country was changed.
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK"; s.Locale = "de-DE" })
+	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "language", Locale: "ur"}}); err != nil {
+		t.Fatalf("seed pending base plugins: %v", err)
+	}
+
+	backfillLocaleConfirmedForDivergedPendingTills(t.Context(), dp)
+
+	if confirmed, _, err := dp.Settings.Get(t.Context(), common.KeyLocaleConfirmed); err != nil {
+		t.Fatalf("read %s: %v", common.KeyLocaleConfirmed, err)
+	} else if confirmed == "true" {
+		t.Fatal("a locale left over from a PREVIOUS country's default was marked confirmed — this permanently disables the derive-on-install catch-up once PK's own ur-PK pack finally installs, for exactly the shop ut-docs#1892 exists to protect")
 	}
 }
 
