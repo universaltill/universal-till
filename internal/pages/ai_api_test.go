@@ -17,6 +17,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/ai"
 	"github.com/universaltill/universal-till/internal/config"
+	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/imaging"
 	"github.com/universaltill/universal-till/internal/pages/common"
@@ -266,8 +267,14 @@ func TestIdentifyAPI_RejectsMissingOrInvalidPhoto(t *testing.T) {
 func TestIdentifyAPI_SuccessReturnsMatchesWithPriceAndThumbAndAudits(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, db := newAIAPITestDeps(t)
-	// itm1/ABC/£1.00 is seeded by seedForPages.
-	writeTestPNG(t, paths.Data("public", "assets", "items", "itm1", "thumb.png"))
+	// itm1/ABC/£1.00 is seeded by seedForPages. This is the "real uploaded
+	// photo" half of ut-docs#1875's acceptance criteria: ThumbURL now comes
+	// from the item_images table (data.CatalogRepo.ItemThumbnails), not an
+	// os.Stat of thumb.png on disk, so seed it the same way the catalog
+	// upload handler does — via the repository, not a raw file write.
+	if err := data.NewCatalogRepo(db).SetItemThumbnail(t.Context(), "itm1", "/public/assets/items/itm1/thumb.png"); err != nil {
+		t.Fatalf("seed item thumbnail: %v", err)
+	}
 	dp.AI = fakeIdentifyServer(t, ai.IdentifyResult{
 		SuggestedName: "Apple",
 		// A hallucinated id outside the requested catalog (only itm1 was
@@ -313,7 +320,7 @@ func TestIdentifyAPI_SuccessReturnsMatchesWithPriceAndThumbAndAudits(t *testing.
 		t.Fatalf("expected the resolved price rendered, got %q", m.PriceDisplay)
 	}
 	if m.ThumbURL != "/public/assets/items/itm1/thumb.png" {
-		t.Fatalf("expected the thumb URL now that the stable-data-dir bug is fixed, got %q", m.ThumbURL)
+		t.Fatalf("expected the uploaded-photo thumb URL from item_images, got %q", m.ThumbURL)
 	}
 
 	var payload string
@@ -322,6 +329,86 @@ func TestIdentifyAPI_SuccessReturnsMatchesWithPriceAndThumbAndAudits(t *testing.
 	}
 	if !strings.Contains(payload, `"matches":1`) {
 		t.Fatalf("expected the audit payload to record the match count, got: %s", payload)
+	}
+}
+
+// TestIdentifyAPI_ThumbURLResolvesBuiltInCategoryIcon is ut-docs#1875's
+// primary regression: before this fix, ThumbURL was resolved by os.Stat-ing
+// an upload-only "<item>/thumb.png" path, which a built-in category icon
+// (e.g. the catalog image picker, ut-docs#1844, or the automatic import
+// placeholder, ut-docs#1189) never lives at — item_images stores it under a
+// path like "/public/assets/category-icons/coffee.svg" instead. No file on
+// disk is needed here: item_images.path is already the servable path,
+// exactly as data.CatalogRepo.ItemThumbnails' own doc comment says.
+func TestIdentifyAPI_ThumbURLResolvesBuiltInCategoryIcon(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, db := newAIAPITestDeps(t)
+	const iconPath = "/public/assets/category-icons/coffee.svg"
+	if err := data.NewCatalogRepo(db).SetItemThumbnail(t.Context(), "itm1", iconPath); err != nil {
+		t.Fatalf("seed built-in icon thumbnail: %v", err)
+	}
+	dp.AI = fakeIdentifyServer(t, ai.IdentifyResult{
+		Matches: []ai.Candidate{{ItemID: "itm1", Confidence: "high"}},
+	})
+
+	req := multipartPhotoRequest(t, "/api/pos/identify", testPNGBytes(t), nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var out struct {
+		Data struct {
+			Matches []struct {
+				ThumbURL string `json:"thumb_url"`
+			} `json:"matches"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("expected valid JSON, got: %v\nbody: %s", err, rec.Body.String())
+	}
+	if len(out.Data.Matches) != 1 {
+		t.Fatalf("expected exactly one match, got %+v", out.Data)
+	}
+	if got := out.Data.Matches[0].ThumbURL; got != iconPath {
+		t.Fatalf("expected the built-in category icon path as ThumbURL, got %q", got)
+	}
+}
+
+// TestIdentifyAPI_ThumbURLEmptyWhenNoThumbnailSet is ut-docs#1875's third
+// acceptance criterion: an item with no item_images row at all must return
+// an empty ThumbURL, not an error.
+func TestIdentifyAPI_ThumbURLEmptyWhenNoThumbnailSet(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newAIAPITestDeps(t)
+	// itm1 is seeded by seedForPages with no item_images row.
+	dp.AI = fakeIdentifyServer(t, ai.IdentifyResult{
+		Matches: []ai.Candidate{{ItemID: "itm1", Confidence: "high"}},
+	})
+
+	req := multipartPhotoRequest(t, "/api/pos/identify", testPNGBytes(t), nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var out struct {
+		Data struct {
+			Matches []struct {
+				ThumbURL string `json:"thumb_url"`
+			} `json:"matches"`
+		} `json:"data"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &out); err != nil {
+		t.Fatalf("expected valid JSON, got: %v\nbody: %s", err, rec.Body.String())
+	}
+	if len(out.Data.Matches) != 1 {
+		t.Fatalf("expected exactly one match, got %+v", out.Data)
+	}
+	if got := out.Data.Matches[0].ThumbURL; got != "" {
+		t.Fatalf("expected no ThumbURL for an item with no thumbnail, got %q", got)
 	}
 }
 
