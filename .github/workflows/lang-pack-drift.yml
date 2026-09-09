@@ -75,7 +75,25 @@ jobs:
       # check-key-drift.test.sh (ut-docs#1857).
       - name: lang-pack-drift guard self-tests
         if: always()
-        run: bash scripts/ci/check-lang-pack-drift.test.sh
+        # ut-docs#1866: the self-tests' own fixture setup fetches each
+        # pack's real check-key-drift.sh live from raw.githubusercontent.com
+        # when no sibling checkout is on disk (always true on this bare
+        # runner) -- see check-lang-pack-drift.test.sh's own header. That
+        # fetch runs on EVERY trigger including push:main, which has no
+        # paths: filter and is meant to be immune to an external repo's
+        # transient unavailability (see the `on:` comment above). A real
+        # self-test assertion failure must still block (exit 1, unchanged);
+        # only "couldn't even fetch the fixture" (exit 2, see the test
+        # file's own `pack_script_source`) is treated as non-blocking here.
+        shell: bash
+        run: |
+          status=0
+          bash scripts/ci/check-lang-pack-drift.test.sh || status=$?
+          if [ "$status" -eq 2 ]; then
+            echo "::warning::lang-pack-drift guard self-tests: could not fetch a pack's real check-key-drift.sh fixture from raw.githubusercontent.com (no sibling checkout on this runner). Self-tests did not run this time -- this is a fixture-availability gap, not evidence of drift, and does not block. Re-run if this persists."
+            exit 0
+          fi
+          exit "$status"
       - name: Language-pack drift guard against core base locale (ut-docs#299)
         # `shell: bash` is REQUIRED, not cosmetic: the Actions default shell
         # is `bash -e {0}` with NO pipefail, so a bare `script | tee` reports

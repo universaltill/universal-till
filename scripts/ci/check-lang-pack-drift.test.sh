@@ -87,10 +87,18 @@ pack_script_source() {
     fi
 
     echo "check-lang-pack-drift.test.sh: cannot find or fetch a real check-key-drift.sh for ${repo} (set ${override_var}=<path> to use a local one)" >&2
-    return 1
+    # Exit 2, not 1: this specific branch means "no local checkout AND the
+    # live raw.githubusercontent.com fetch failed" -- a fixture-availability
+    # problem, not evidence the guard itself is broken. ut-docs#1866: the
+    # calling CI step tolerates exit 2 (does not block push:main on it) but
+    # still treats every other failure in this file (a real assertion
+    # mismatch, the unknown-mode guard below, start_server's port-detect
+    # failure) as exit 1 and blocking, same as before.
+    return 2
 }
 # Fail fast at load time if either pack's real script isn't reachable, same
-# as before -- better than discovering it mid-case.
+# as before -- better than discovering it mid-case. A fetch failure here
+# propagates as exit 2 (see the comment on that `return` above), not 1.
 pack_script_source ut-plugin-language-de > /dev/null
 pack_script_source ut-plugin-language-es > /dev/null
 
