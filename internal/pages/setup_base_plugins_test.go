@@ -541,6 +541,146 @@ func TestResolveAndInstallBasePlugin_IdempotentPathDoesNotOverrideExplicitlyConf
 	}
 }
 
+// --- backfillLocaleConfirmedForDivergedPendingTills (ut-docs#1892) ---
+
+func TestBackfillLocaleConfirmed_MarksLocaleThatMatchesNeitherAutomaticValue(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	// "fr-FR" is neither the compiled bundled default (en-US) nor PK's own
+	// country default (ur-PK) — under this codebase's own three-writer rule
+	// (see the function's doc comment), the only way store.locale could have
+	// ended up here is a manual choice, made before ut-docs#1074's
+	// KeyLocaleConfirmed existed.
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK"; s.Locale = "fr-FR" })
+	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "language", Locale: "ur"}}); err != nil {
+		t.Fatalf("seed pending base plugins: %v", err)
+	}
+
+	backfillLocaleConfirmedForDivergedPendingTills(t.Context(), dp)
+
+	confirmed, ok, err := dp.Settings.Get(t.Context(), common.KeyLocaleConfirmed)
+	if err != nil {
+		t.Fatalf("read %s: %v", common.KeyLocaleConfirmed, err)
+	}
+	if !ok || confirmed != "true" {
+		t.Fatalf("%s = (%q, ok=%v), want (true, ok=true) — a locale matching neither automatic value, with a pending language install, must be backfilled", common.KeyLocaleConfirmed, confirmed, ok)
+	}
+}
+
+// TestBackfillLocaleConfirmed_LeavesFreshRTLPendingShopUnconfirmed is the
+// regression test for the exact trap ut-docs#1074's own review rejected: a
+// brand-new shop whose RTL locale hasn't been derived yet (still sitting at
+// the compiled bundled default, with its language pack genuinely pending)
+// must NOT be marked confirmed — that would silently disable
+// applyDerivedLocaleIfLanguagePackNowAvailable for it forever, defeating
+// ut-docs#1074's entire purpose.
+func TestBackfillLocaleConfirmed_LeavesFreshRTLPendingShopUnconfirmed(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK" }) // locale left untouched
+	bundledDefault := dp.Cfg.Locales.Locale
+	if got := dp.CurrentState().Locale; got != bundledDefault {
+		t.Fatalf("store.locale = %q before any derivation, want the compiled bundled default %q — test fixture is not proving anything", got, bundledDefault)
+	}
+	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "language", Locale: "ur"}}); err != nil {
+		t.Fatalf("seed pending base plugins: %v", err)
+	}
+
+	backfillLocaleConfirmedForDivergedPendingTills(t.Context(), dp)
+
+	if confirmed, _, err := dp.Settings.Get(t.Context(), common.KeyLocaleConfirmed); err != nil {
+		t.Fatalf("read %s: %v", common.KeyLocaleConfirmed, err)
+	} else if confirmed == "true" {
+		t.Fatal("a brand-new shop still at the compiled default, with its language pack genuinely pending, was marked confirmed — this defeats ut-docs#1074's derive-on-install path for every such shop")
+	}
+}
+
+func TestBackfillLocaleConfirmed_LeavesAlreadyDerivedLocaleUnconfirmed(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "DE"; s.Locale = "de-DE" }) // already == country default
+	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "language", Locale: "de"}}); err != nil {
+		t.Fatalf("seed pending base plugins: %v", err)
+	}
+
+	backfillLocaleConfirmedForDivergedPendingTills(t.Context(), dp)
+
+	if confirmed, _, err := dp.Settings.Get(t.Context(), common.KeyLocaleConfirmed); err != nil {
+		t.Fatalf("read %s: %v", common.KeyLocaleConfirmed, err)
+	} else if confirmed == "true" {
+		t.Fatal("a locale that already equals the country default was marked confirmed — there was nothing to protect, and this pre-empts a legitimate future re-derivation")
+	}
+}
+
+func TestBackfillLocaleConfirmed_NoPendingBasePlugins_NoOp(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK"; s.Locale = "fr-FR" })
+	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	// No pending base plugins at all — this backfill exists only to protect
+	// against a pending "language" spec's own catch-up, so nothing pending
+	// means nothing to protect against.
+
+	backfillLocaleConfirmedForDivergedPendingTills(t.Context(), dp)
+
+	if confirmed, _, err := dp.Settings.Get(t.Context(), common.KeyLocaleConfirmed); err != nil {
+		t.Fatalf("read %s: %v", common.KeyLocaleConfirmed, err)
+	} else if confirmed == "true" {
+		t.Fatal("marked confirmed with no pending base plugins at all")
+	}
+}
+
+func TestBackfillLocaleConfirmed_PendingNonLanguageSpecOnly_NoOp(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK"; s.Locale = "fr-FR" })
+	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	// A pending spec of some other canonical type can never reach
+	// applyDerivedLocaleIfLanguagePackNowAvailable (resolveAndInstallBasePlugin
+	// only calls it for CanonicalType == "language"), so it poses no risk.
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "tax", Locale: "de"}}); err != nil {
+		t.Fatalf("seed pending base plugins: %v", err)
+	}
+
+	backfillLocaleConfirmedForDivergedPendingTills(t.Context(), dp)
+
+	if confirmed, _, err := dp.Settings.Get(t.Context(), common.KeyLocaleConfirmed); err != nil {
+		t.Fatalf("read %s: %v", common.KeyLocaleConfirmed, err)
+	} else if confirmed == "true" {
+		t.Fatal("marked confirmed with only a non-language pending spec")
+	}
+}
+
+func TestBackfillLocaleConfirmed_AlreadyConfirmed_Idempotent(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "PK"; s.Locale = "fr-FR" })
+	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	if err := dp.Settings.Set(t.Context(), common.KeyLocaleConfirmed, "true"); err != nil {
+		t.Fatalf("mark locale confirmed: %v", err)
+	}
+	if err := savePendingBasePlugins(t.Context(), dp, []basePluginSpec{{CanonicalType: "language", Locale: "ur"}}); err != nil {
+		t.Fatalf("seed pending base plugins: %v", err)
+	}
+
+	backfillLocaleConfirmedForDivergedPendingTills(t.Context(), dp)
+
+	if confirmed, ok, err := dp.Settings.Get(t.Context(), common.KeyLocaleConfirmed); err != nil {
+		t.Fatalf("read %s: %v", common.KeyLocaleConfirmed, err)
+	} else if !ok || confirmed != "true" {
+		t.Fatalf("%s = (%q, ok=%v) after running against an already-confirmed till, want it left at (true, true)", common.KeyLocaleConfirmed, confirmed, ok)
+	}
+}
+
 // --- installBasePluginsForSetup (the wizard's own hook) ---
 
 func TestInstallBasePluginsForSetup_NoMappingIsNoOp(t *testing.T) {

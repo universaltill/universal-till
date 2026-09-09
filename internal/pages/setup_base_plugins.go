@@ -290,6 +290,94 @@ func applyDerivedLocaleIfLanguagePackNowAvailable(ctx context.Context, d *common
 	httpx.SetDefaultLocale(cand.Locale)
 }
 
+// backfillLocaleConfirmedForDivergedPendingTills is ut-docs#1892's one-time
+// boot-time backfill for a gap ut-docs#1074 itself deferred (that review's
+// finding F4): common.KeyLocaleConfirmed is write-forward-only, with no
+// backfill for a shop that manually diverged store.locale away from its
+// country's default BEFORE the flag existed. Concretely: a shop set up
+// offline still has a "language" spec sitting in KeyPendingBasePlugins; the
+// operator meanwhile changed store.locale by hand, pre-#1074, so
+// KeyLocaleConfirmed was never set (it didn't exist yet). Once the pending
+// pack finally installs, applyDerivedLocaleIfLanguagePackNowAvailable would
+// silently flip the locale back to the country default — an operator choice
+// overridden with no action and no audit trail.
+//
+// The heuristic #1074's own review explored and rejected was "store.locale
+// diverges from the country default" alone — that also matches a
+// perfectly ordinary, never-touched shop still waiting on an RTL pack
+// (localeSafeToPreset leaves an RTL locale unapplied until its pack is
+// available, so store.locale sits at the compiled bundled default,
+// necessarily different from the country's own RTL default): marking THAT
+// shop confirmed would defeat ut-docs#1074's entire purpose for it.
+//
+// The narrower signal used here closes that gap: common.KeyLocaleConfirmed's
+// own doc comment establishes there are only three writers of store.locale —
+// the compiled bundled default (d.Cfg.Locales.Locale, written once at first
+// boot), the country-derivation paths (always the country's OWN current
+// default), and Settings' Language card (the one manual-choice path). So a
+// locale that is neither the bundled default NOR the current country
+// default cannot have been written by anything but a manual choice — the
+// exact positive evidence of "an operator chose this" that a bare
+// divergence check can't distinguish from "not derived yet." A shop
+// currently sitting at either automatic value is left untouched, so the
+// derive-on-install path can still run for it exactly as designed.
+//
+// Runs once per boot, synchronously, before StartBasePluginRetry's
+// background loop can ever reach the code path this protects against —
+// ordering matters here, not just eventual consistency.
+func backfillLocaleConfirmedForDivergedPendingTills(ctx context.Context, d *common.Deps) {
+	confirmed, _, err := d.Settings.Get(ctx, common.KeyLocaleConfirmed)
+	if err != nil {
+		logging.L().Warnf("locale-confirmed backfill: read %s: %v", common.KeyLocaleConfirmed, err)
+		return
+	}
+	if confirmed == "true" {
+		return // already set — a genuine prior choice, or an earlier boot
+		// already ran this backfill. Idempotent either way.
+	}
+	pending, err := loadPendingBasePlugins(ctx, d)
+	if err != nil {
+		logging.L().Warnf("locale-confirmed backfill: load pending base plugins: %v", err)
+		return
+	}
+	hasPendingLanguage := false
+	for _, s := range pending {
+		if s.CanonicalType == "language" {
+			hasPendingLanguage = true
+			break
+		}
+	}
+	if !hasPendingLanguage {
+		return // nothing pending that could ever trigger the derive-on-install
+		// path this backfill exists to protect against.
+	}
+	st := d.CurrentState()
+	if st.Country == "" || st.Locale == "" {
+		return
+	}
+	cs, ok, err := data.NewCountrySettingsRepo(d.Db).Get(ctx, st.Country)
+	if err != nil {
+		logging.L().Warnf("locale-confirmed backfill: read country settings for %s: %v", st.Country, err)
+		return
+	}
+	if !ok || cs.DefaultLocale == "" {
+		return
+	}
+	if st.Locale == strings.TrimSpace(d.Cfg.Locales.Locale) || st.Locale == cs.DefaultLocale {
+		// Sits at one of the two automatic values — either never touched, or
+		// already correctly derived. Neither is evidence of a manual choice,
+		// and marking either would wrongly pre-empt a legitimate future
+		// derivation (see the doc comment above).
+		return
+	}
+	if err := d.Settings.Set(ctx, common.KeyLocaleConfirmed, "true"); err != nil {
+		logging.L().Errorf("locale-confirmed backfill: persist %s: %v", common.KeyLocaleConfirmed, err)
+		return
+	}
+	logging.L().Infof("locale-confirmed backfill: marked %s for country=%s locale=%s (diverges from both the compiled default and %s's own default %s) — a pending language-pack install would otherwise have silently overridden it",
+		common.KeyLocaleConfirmed, st.Country, st.Locale, st.Country, cs.DefaultLocale)
+}
+
 // languagePackLocalesForListing looks up the marketplace catalog for the
 // AvailableLocales of a canonical_type "language" listing (ut-docs#1893).
 // resolveAndInstallBasePlugin already knows a listing's locale because it
