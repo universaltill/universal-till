@@ -48,6 +48,39 @@ func TestModifiersPage_ListsGroupsAcrossItemsWithItemName(t *testing.T) {
 	}
 }
 
+// ut-docs#1914: the item name links back to /catalog with a ?item= deep
+// link, since a merchant previously had to remember the item's name and
+// find its row by hand — same "how do you get back there" gap #1899's own
+// review flagged.
+func TestModifiersPage_ItemNameLinksBackToCatalogItem(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "COFFEE", Name: "Flat White", BasePrice: 320, IsActive: true})
+
+	repo := data.NewModifierRepo(db)
+	if _, err := repo.CreateGroup(t.Context(), "g1", "itm1", "Extras", true, 1, 2, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default", Currency: "GBP"}, Menu: []common.MenuItem{}})
+
+	req := httptest.NewRequest(http.MethodGet, "/modifiers", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `href="/catalog?item=itm1"`) {
+		t.Errorf("expected the item name to link back to /catalog?item=itm1, got: %s", body)
+	}
+	if !strings.Contains(body, `<a href="/catalog?item=itm1">Flat White</a>`) {
+		t.Errorf("expected the item name itself to be the link text, got: %s", body)
+	}
+}
+
 func TestModifiersPage_EmptyShopShowsEmptyState(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
