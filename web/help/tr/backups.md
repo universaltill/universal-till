@@ -18,7 +18,7 @@ Tüm dükkân verinizin (katalog, satışlar, ayarlar) anlık kopyaları; indiri
 ## Bir yedeği geri yükleme
 
 Geri yükleme, tüm mevcut verinin seçilen yedekle değiştirilmesi demektir —
-onaylamak için `RESTORE` yazın, çünkü bu, ayarlar sayfasının kendisinden
+onaylamak için yönetici PIN'inizi girin, çünkü bu, ayarlar sayfasının kendisinden
 geri alınamaz (değiştirilen veri, ihtiyaç duyarsanız diye kendi yedeği
 olarak saklanır). Geri yükledikten sonra **Şimdi yeniden başlat**'a
 tıklayın; kasa kendini yeniden başlatır — klavyeye ya da fişi çekmeye
