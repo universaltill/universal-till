@@ -539,7 +539,20 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 .catalog-detail { margin-block-start: 1rem; }
 .catalog-detail-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr);
                        gap: 1.25rem; align-items: start; }
-@media (max-width: 900px) { .catalog-detail-grid { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .catalog-detail-grid { grid-template-columns: minmax(0, 1fr); } }
+/* ut-docs#1900 (found on the option-set panel's 360px driven run): the
+   variants column is a grid item, and a grid item's automatic minimum size
+   is its min-content — which .vg-cols' min-inline-size: 54rem sets at
+   ~918px. So the column ignored its minmax(0, 1fr) track and overflowed
+   the card at every viewport below that (the COST column clipped even at
+   the 1024 kiosk width), and .variant-grid's own overflow-x: auto never
+   got to scroll because its parent was already wide enough. min-inline-
+   size: 0 lets the column shrink to its track; the grid then scrolls
+   inside it as that rule intended, and everything above the grid (the
+   apply/generate block) wraps at the real viewport width. The 1fr track
+   in the ≤900px rule above is minmax(0, 1fr) for the same reason (plain
+   1fr means minmax(auto, 1fr), which re-grows the track to min-content). */
+.catalog-detail-variants { min-inline-size: 0; }
 .catalog-detail-title { display: flex; align-items: center; gap: .6rem; margin-block-end: .6rem; }
 .catalog-detail-title h3 { margin: 0; }
 .catalog-detail-title .thumb { inline-size: 44px; block-size: 44px; object-fit: cover;
@@ -567,6 +580,30 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 .modifier-admin-options { margin-block-start: .35rem; }
 .modifier-admin-group-new { border: 1px dashed var(--border); border-radius: var(--radius);
                              padding: .6rem .75rem; }
+/* ---------- Option sets (ut-docs#1900) ---------- */
+/* The item panel's apply/generate block, above the variant grid. Flex-wrap
+   so the checkbox row folds cleanly at 360px; logical properties only. */
+.option-set-pick { border: 1px dashed var(--border); border-radius: var(--radius);
+                   padding: .6rem .75rem; margin-block-end: .6rem; }
+.option-set-pick-row { display: flex; flex-wrap: wrap; gap: .5rem .75rem; align-items: center;
+                       margin-block-end: .35rem; }
+.option-set-pick-row:last-child { margin-block-end: 0; }
+.option-set-pick-label { font-size: .75rem; font-weight: 600; text-transform: uppercase;
+                         letter-spacing: .04em; color: var(--muted); }
+/* Same reason as .modifier-admin-group-row label: the global label rule
+   stacks label text above its control; these wrap a checkbox inline. */
+.option-set-pick-box { display: inline-flex; flex-direction: row; align-items: center; gap: .3rem; }
+.option-set-pick-box:has(input:disabled) { opacity: .5; }
+.option-set-pick-hint { font-size: .8rem; flex: 1 1 14rem; min-inline-size: 0; }
+.option-set-pick-msg { margin: .35rem 0 0; font-size: .9rem; font-weight: 600; }
+/* The shop-wide screen: a plain stack, like /modifiers. */
+.option-sets-list { display: flex; flex-direction: column; gap: .75rem; max-inline-size: 36rem; }
+.option-set-card .chip-add { margin-block-start: .45rem; }
+/* Values are words ("Small"), not codes — override .chip's monospace. */
+.option-set-chip { font-family: inherit; font-size: .85rem; }
+.option-set-new { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-block-start: 0; }
+.option-set-new input[type="text"] { flex: 1 1 12rem; inline-size: auto; }
+
 .chip-row { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; min-block-size: 1.6rem; }
 .chip { display: inline-flex; align-items: center; gap: .35rem; padding: .12rem .55rem;
         border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2);

@@ -22,12 +22,13 @@ type itemsSection struct {
 // same key /catalog's own <h1> renders) rather than a separate "Library"
 // name — independent review (ut-docs#1897) caught that two different
 // English names for the same destination is exactly the disorientation
-// this card exists to fix. Option sets links to /catalog today (the
-// per-item variants panel lives there) because the reusable, named-set
-// generator itself (ut-docs#1900) hasn't shipped — it is a real, reachable
-// feature today, unlike Categories, so it is NOT disabled; its subtitle
-// says so honestly rather than implying a dedicated screen that doesn't
-// exist yet. Modifiers points at /modifiers (ut-docs#1899) — this row was
+// this card exists to fix. Option sets pointed at /catalog while the
+// reusable, named-set generator hadn't shipped, with a subtitle that said
+// so honestly rather than implying a dedicated screen that didn't exist;
+// ut-docs#1900 landed that screen, so this row now points at its real
+// destination (/catalog/option-sets) and its subtitle describes the
+// feature — same wiring-up, in the same merge that lands the screen, that
+// Modifiers got below. Modifiers points at /modifiers (ut-docs#1899) — this row was
 // originally left disabled ("coming soon") because that screen didn't
 // exist yet when #1897 shipped; wired up in the same merge that landed it.
 var itemsSections = []itemsSection{
@@ -35,7 +36,7 @@ var itemsSections = []itemsSection{
 	{NameKey: "items.categories.name", SubtitleKey: "items.categories.subtitle", Href: ""},
 	{NameKey: "items.inventory.name", SubtitleKey: "items.inventory.subtitle", Href: "/inventory"},
 	{NameKey: "items.modifiers.name", SubtitleKey: "items.modifiers.subtitle", Href: "/modifiers"},
-	{NameKey: "items.option_sets.name", SubtitleKey: "items.option_sets.subtitle", Href: "/catalog"},
+	{NameKey: "items.option_sets.name", SubtitleKey: "items.option_sets.subtitle", Href: "/catalog/option-sets"},
 }
 
 // registerItemsPage wires GET /items — the section-list landing page the
