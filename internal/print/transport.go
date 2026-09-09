@@ -21,7 +21,7 @@ type Config struct {
 	Mode    string // off | network | device
 	Address string // network: host[:port], default port 9100
 	Device  string // device: character device path, e.g. /dev/usb/lp0
-	Charset string // utf8 | ascii | cp858 | win1250 | win1257 | win1253
+	Charset string // utf8 | ascii | cp858 | win1250 | win1257 | win1253 | win1254
 	// ReceiptPolicy is the resolved shop-wide receipt policy (ADR-0089):
 	// always | ask | never. AutoPrint is derived from it (== "always") so
 	// the existing auto-print gate needs no change; callers that render
