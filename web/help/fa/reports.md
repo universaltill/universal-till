@@ -156,50 +156,49 @@ JSON دانلود کنید، مثلاً برای تحویل به حسابرس.
 بخش فقط زمانی نمایش داده می‌شود که حداقل یک تعدیل در آن بازه وجود داشته
 باشد.
 
-## Counting the drawer at close: skim & new float
+## شمارش کشو هنگام بستن: برداشت به گاوصندوق و موجودی جدید
 
-The opening cash for a new shift is **carried over automatically** from
-the register's last close — whatever the previous close left in the
-drawer is pre-filled, so you confirm it rather than re-type it. You can
-still edit the figure if the drawer was corrected in between; whatever
-you submit is what's recorded.
+وجه نقد ابتدایی یک شیفت جدید از آخرین بستن صندوق **به‌طور خودکار منتقل
+می‌شود** — هر مبلغی که بستن قبلی در کشو باقی گذاشته از پیش پر می‌شود، تا
+آن را تأیید کنید نه اینکه دوباره تایپ کنید. اگر در این میان کشو اصلاح شده باشد باز
+هم می‌توانید رقم را ویرایش کنید؛ هر چه ارسال کنید همان ثبت می‌شود.
 
-When you close a shift, count the drawer and enter the counted cash as
-before. Two optional extras join it:
+هنگام بستن یک شیفت، کشو را بشمارید و وجه شمارش‌شده را مثل قبل وارد کنید.
+دو مورد اختیاری به آن اضافه می‌شود:
 
-- **Skim to safe** — the amount you move from the drawer to the safe as
-  part of the close. The counted cash minus the skim becomes the drawer's
-  **new float**, which is what the next shift on that register opens with.
-  A skim can't exceed the counted cash, and it never changes the expected
-  figure — the variance always compares your count against takings
-  *before* the skim, so moving money to the safe can't hide a shortage.
-  An optional reason can be recorded with it.
-- **Denomination count** — an optional per-denomination count (how many
-  of each coin and note) stored with the close as a count protocol, for
-  shops that want the till count documented piece by piece. Leave it
-  empty to skip it entirely.
+- **برداشت به گاوصندوق** — مبلغی که به‌عنوان بخشی از بستن شیفت، از کشو به
+  گاوصندوق منتقل می‌کنید. وجه شمارش‌شده منهای این برداشت، **موجودی جدید**
+  کشو می‌شود، که شیفت بعدی روی همان صندوق با آن باز می‌شود. برداشت
+  نمی‌تواند از وجه شمارش‌شده بیشتر باشد و هرگز رقم مورد انتظار را تغییر
+  نمی‌دهد — مغایرت همیشه شمارش شما را با فروش *پیش از* برداشت مقایسه
+  می‌کند، بنابراین انتقال پول به گاوصندوق نمی‌تواند کسری را پنهان کند.
+  می‌توان یک دلیل اختیاری هم برای آن ثبت کرد.
+- **شمارش به تفکیک اسکناس و سکه** — شمارش اختیاری به تفکیک هر نوع سکه و
+  اسکناس، که همراه با بستن شیفت به‌عنوان صورت‌جلسهٔ شمارش ذخیره می‌شود،
+  برای فروشگاه‌هایی که می‌خواهند شمارش صندوق تکه‌به‌تکه مستند شود. برای
+  رد شدن از آن، خالی بگذارید.
 
-## Cash reconciliation on the day-end report
+## تطبیق نقدی در گزارش پایان روز (Z)
 
-The printed end-of-day (Z) report gains a **CASH RECONCILIATION**
-section on any day at least one shift was closed: opening float, cash
-sales, tips held out (only printed on a day that actually has a cash
-tip), pay-ins, pay-outs, calculated (what should be in the drawers),
-counted (what was in them), variance, skim to safe, and the new float
-carried to the next day. Cash sales excludes any cash tip the same way
-tips are already held out of revenue elsewhere on the report — that is
-why the "Tips held out" line sits between cash sales and pay-ins:
-opening float + cash sales + tips held out + pay-ins + pay-outs together
-equal calculated, so the section's own figures still add up once cash
-tipping is in use, not just on an ordinary no-tip day. Skim to safe is
-entered as part of closing the shift, after calculated is already fixed
-for the day, which is why it is listed below variance rather than folded
-into that sum. A non-zero variance is flagged with
-`!!` on the printout, and the Day-end tab marks that day's row with a
-warning tag so a discrepancy is visible on screen without reprinting
-each period. A day with no closed shift still produces a complete
-report — the section is simply absent, and running End of day is never
-blocked on closing a shift.
+گزارش چاپی پایان روز (Z) در هر روزی که دست‌کم یک شیفت بسته شده باشد، بخش
+**CASH RECONCILIATION** (تطبیق نقدی) پیدا می‌کند: موجودی ابتدایی، فروش نقدی، انعام‌های
+کنارگذاشته‌شده (فقط در روزی چاپ می‌شود که واقعاً انعام نقدی داشته)،
+واریزی‌ها، برداشت‌ها، مورد انتظار (آنچه باید در کشوها باشد)، شمارش‌شده
+(آنچه واقعاً در آن‌ها بود)، مغایرت، برداشت به گاوصندوق، و موجودی جدیدی که
+به روز بعد منتقل می‌شود. فروش نقدی هیچ انعام نقدی را شامل نمی‌شود، درست
+همان‌طور که انعام‌ها در جای دیگر گزارش هم از درآمد کنار گذاشته شده‌اند —
+به همین دلیل سطر «Tips held out» (انعام‌های کنارگذاشته‌شده) بین فروش نقدی و واریزی‌ها
+قرار دارد: موجودی ابتدایی + فروش نقدی + انعام‌های کنارگذاشته‌شده +
+واریزی‌ها + برداشت‌ها روی هم برابر با مورد انتظار می‌شود، پس ارقام این
+بخش حتی وقتی انعام نقدی استفاده می‌شود هم جمع درست درمی‌آید، نه فقط در
+یک روز معمولیِ بدون انعام. برداشت به گاوصندوق به‌عنوان بخشی از بستن شیفت
+وارد می‌شود، بعد از آنکه مورد انتظار آن روز از قبل مشخص شده — به همین
+دلیل زیر مغایرت فهرست می‌شود نه داخل آن مجموع. مغایرت غیرصفر با علامت
+`!!` روی چاپ مشخص می‌شود، و تب پایان روز با یک برچسب هشدار سطر آن روز را
+علامت می‌زند تا مغایرت بدون نیاز به چاپ دوبارهٔ هر دوره روی صفحه دیده
+شود. روزی که هیچ شیفتی در آن بسته نشده باشد باز هم گزارشی کامل تولید
+می‌کند — این بخش فقط وجود ندارد، و اجرای پایان روز هرگز به بستن یک شیفت
+وابسته نیست.
 
 ## دیدن فروش همهٔ صندوق‌ها (دفتر فروش)
 
