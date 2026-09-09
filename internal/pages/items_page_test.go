@@ -40,7 +40,7 @@ func TestItemsPage_RendersFiveSectionsWithNameAndSubtitle(t *testing.T) {
 	}
 }
 
-func TestItemsPage_LibraryAndInventoryAndOptionSetsAreLiveLinks(t *testing.T) {
+func TestItemsPage_LibraryAndInventoryAndOptionSetsAndModifiersAreLiveLinks(t *testing.T) {
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 	registerItemsPage(mux, dp)
 
@@ -55,9 +55,14 @@ func TestItemsPage_LibraryAndInventoryAndOptionSetsAreLiveLinks(t *testing.T) {
 	if !strings.Contains(body, `href="/inventory"`) {
 		t.Errorf("expected a link to /inventory, got body: %s", body)
 	}
+	// ut-docs#1899: wired up in the same merge that landed /modifiers —
+	// this row was disabled only because the screen didn't exist yet.
+	if !strings.Contains(body, `href="/modifiers"`) {
+		t.Errorf("expected a link to /modifiers, got body: %s", body)
+	}
 }
 
-func TestItemsPage_CategoriesAndModifiersAreDisabledNotDeadLinks(t *testing.T) {
+func TestItemsPage_OnlyCategoriesIsDisabledNotDeadLink(t *testing.T) {
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 	registerItemsPage(mux, dp)
 
@@ -66,11 +71,13 @@ func TestItemsPage_CategoriesAndModifiersAreDisabledNotDeadLinks(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
 
-	if strings.Count(body, `aria-disabled="true"`) != 2 {
-		t.Errorf("expected exactly 2 disabled sections (Categories, Modifiers), got body: %s", body)
+	// Modifiers (ut-docs#1899) is live now; only Categories (ut-docs#1898,
+	// a separate in-flight card) is still "coming soon".
+	if strings.Count(body, `aria-disabled="true"`) != 1 {
+		t.Errorf("expected exactly 1 disabled section (Categories), got body: %s", body)
 	}
 	if !strings.Contains(body, "Coming soon") {
-		t.Errorf("expected a coming-soon marker on the disabled sections, got body: %s", body)
+		t.Errorf("expected a coming-soon marker on the disabled section, got body: %s", body)
 	}
 }
 

@@ -10,10 +10,9 @@ import (
 // itemsSection is one row of the /items section list — the "Items" area's
 // SumUp-style landing page (ut-docs#1897): a section list where each entry
 // is a bold name plus a one-line subtitle, replacing the flat "Catalog"
-// nav tile. Href empty means the section has no screen yet (Categories and
-// Modifiers — ut-docs#1898/#1899, tracked separately, deliberately NOT
-// built by this card) and renders as a disabled "coming soon" row instead
-// of a dead link.
+// nav tile. Href empty means the section has no screen yet (Categories —
+// ut-docs#1898, tracked separately, not built by this card) and renders as
+// a disabled "coming soon" row instead of a dead link.
 type itemsSection struct {
 	NameKey, SubtitleKey string
 	Href                 string // empty = not yet available
@@ -26,14 +25,16 @@ type itemsSection struct {
 // this card exists to fix. Option sets links to /catalog today (the
 // per-item variants panel lives there) because the reusable, named-set
 // generator itself (ut-docs#1900) hasn't shipped — it is a real, reachable
-// feature today, unlike Categories/Modifiers, so it is NOT disabled; its
-// subtitle says so honestly rather than implying a dedicated screen that
-// doesn't exist yet.
+// feature today, unlike Categories, so it is NOT disabled; its subtitle
+// says so honestly rather than implying a dedicated screen that doesn't
+// exist yet. Modifiers points at /modifiers (ut-docs#1899) — this row was
+// originally left disabled ("coming soon") because that screen didn't
+// exist yet when #1897 shipped; wired up in the same merge that landed it.
 var itemsSections = []itemsSection{
 	{NameKey: "nav.catalog", SubtitleKey: "items.library.subtitle", Href: "/catalog"},
 	{NameKey: "items.categories.name", SubtitleKey: "items.categories.subtitle", Href: ""},
 	{NameKey: "items.inventory.name", SubtitleKey: "items.inventory.subtitle", Href: "/inventory"},
-	{NameKey: "items.modifiers.name", SubtitleKey: "items.modifiers.subtitle", Href: ""},
+	{NameKey: "items.modifiers.name", SubtitleKey: "items.modifiers.subtitle", Href: "/modifiers"},
 	{NameKey: "items.option_sets.name", SubtitleKey: "items.option_sets.subtitle", Href: "/catalog"},
 }
 
