@@ -201,6 +201,14 @@ func TestItemCreate_InputValidation(t *testing.T) {
 		{"unknown category", "name=Tea&price=100&categoryId=nope", "invalid categories id"},
 		{"unknown brand", "name=Tea&price=100&brandId=nope", "invalid brands id"},
 		{"unknown tax code", "name=Tea&price=100&taxCode=nope", "invalid tax_codes id"},
+		// ut-docs#1901: color is a fixed, curated palette (catalogtypes.
+		// ItemColors), not a free color picker — a value outside it must
+		// be rejected, same as an unknown category/brand/tax id above. A
+		// syntactically-valid hex that's simply not in the palette must
+		// be rejected too (this isn't format validation, it's an
+		// allowlist: the value flows into a CSS custom property
+		// downstream).
+		{"unrecognized color", "name=Tea&price=100&color=%23ff0000", "invalid color"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {

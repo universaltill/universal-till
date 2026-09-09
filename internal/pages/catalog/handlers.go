@@ -20,6 +20,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/barcode"
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -348,6 +349,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"HasThumbnails": hasThumbnails,
 			"EmptyColspan":  emptyRowColspan(hasThumbnails),
 			"BuiltinIcons":  catimport.BuiltinIcons(),
+			"ItemColors":    catalogtypes.ItemColors(),
 		}
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "layouts", "base.html"),
@@ -1556,7 +1558,11 @@ func parseItemInput(r *http.Request) (pos.ItemInput, error) {
 		BrandID:     brand,
 		Description: strings.TrimSpace(r.Form.Get("description")),
 		Unit:        strings.TrimSpace(r.Form.Get("unit")),
-		IsWeighed:   r.Form.Get("isWeighed") == "1" || strings.ToLower(r.Form.Get("isWeighed")) == "on",
+		// ut-docs#1901: "" is a real, valid value here (the "no color"
+		// swatch tile) — validated against the fixed palette allowlist by
+		// validateLookups below, same convention as category/brand/tax.
+		Color:     strings.TrimSpace(r.Form.Get("color")),
+		IsWeighed: r.Form.Get("isWeighed") == "1" || strings.ToLower(r.Form.Get("isWeighed")) == "on",
 		// ut-docs#1850: unchecked (missing from the form) correctly reads
 		// as false/tracked — no hidden-fallback trick needed, unlike
 		// isActive below (that one defaults CHECKED, this one doesn't).
@@ -1658,6 +1664,16 @@ func validateLookups(ctx context.Context, repo *data.CatalogRepo, in pos.ItemInp
 		if err := repo.ValidateLookup(ctx, "tax_codes", *in.TaxCodeID, false); err != nil {
 			return err
 		}
+	}
+	// ut-docs#1901: color has no lookup table (it's a fixed, curated
+	// palette, not an admin-editable list), so this checks it against
+	// catalogtypes.ItemColors() directly rather than calling
+	// repo.ValidateLookup — same "clean, bounded, hand-written" error
+	// convention the caller's own comment already documents for this
+	// function's other checks (never raw SQL/driver text), since a raw,
+	// unvalidated value here would otherwise reach a CSS custom property.
+	if !catalogtypes.ValidItemColor(in.Color) {
+		return errors.New("invalid color")
 	}
 	return nil
 }
