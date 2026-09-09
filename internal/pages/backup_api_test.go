@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -40,9 +41,15 @@ func newBackupTestDeps(t *testing.T) (*http.ServeMux, *common.Deps, string) {
 	}
 	t.Cleanup(func() { d.Close() })
 
+	// checkStepUp (ut-docs#1860, ADR-0087) needs a real AuthSvc and a real
+	// manager PIN to drive POST /api/backup/restore's elevation path — same
+	// precedent as data_api_test.go's seedDataAPIManager/dataAPITestManagerPIN,
+	// reused here rather than duplicated (same package).
+	seedDataAPIManager(t, d.DB)
 	dp := &common.Deps{
-		Cfg: &config.Config{DBPath: dbPath},
-		Db:  d.DB,
+		Cfg:     &config.Config{DBPath: dbPath},
+		Db:      d.DB,
+		AuthSvc: auth.NewService(d.DB),
 	}
 	mux := http.NewServeMux()
 	registerBackupAPI(mux, dp)
@@ -76,9 +83,14 @@ func TestCopyBackupTo_CopiesBytesAndCreatesDestDir(t *testing.T) {
 
 // ut-docs#557: POST /api/backup/now moved off the flat deny() 403 onto
 // checkOrElevate — a denied caller now gets the in-place elevation prompt
-// (200, htmx-swappable) instead. download/save-copy/restore below are
-// deliberately NOT wired to elevation yet (see the Dev report) and keep
-// the old flat-403 deny() gate unchanged.
+// (200, htmx-swappable) instead. download/save-copy keep the flat-403
+// deny() gate unchanged (read-only/local-machine actions, out of scope for
+// either card). restore also keeps deny() as its FIRST gate (ut-docs#1860:
+// the UI reaching it is already manager-only, same precondition
+// checkStepUp's own doc comment requires) but layers checkStepUp behind
+// it — an unauthenticated/non-manager caller still gets a flat 403 here,
+// never the elevation prompt; see TestRestoreBackup_NoPIN_NeedsElevation_NoMutation
+// for the elevation path itself, once past this gate.
 func TestBackupAPI_AllEndpointsRequireManager(t *testing.T) {
 	mux, _, _ := newBackupTestDeps(t)
 	cases := []struct{ method, path string }{
@@ -282,36 +294,80 @@ func TestSaveCopy_InvalidNameAndRealCopyToDownloads(t *testing.T) {
 	}
 }
 
-func TestRestoreBackup_RequiresRestoreConfirmationCaseInsensitive(t *testing.T) {
+// ut-docs#1860 (ADR-0087): the typed RESTORE word is gone — no override_pin
+// at all must get the elevation prompt (referencing the backup by name,
+// which already carries its date), not a 400, and must stage nothing.
+func TestRestoreBackup_NoPIN_NeedsElevation_NoMutation(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _, dbPath := newBackupTestDeps(t)
+	name := createRealSnapshot(t, dbPath)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/backup/restore", strings.NewReader("name="+name))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("expected the elevation prompt's text/html Content-Type, got %q: %s", ct, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), name) {
+		t.Fatalf("expected the elevation summary to name the backup being restored, got: %s", rec.Body.String())
+	}
+	if db.PendingRestore(dbPath) {
+		t.Fatalf("expected no restore staged without a PIN")
+	}
+}
+
+// A wrong PIN is a real failed attempt: prompt re-renders with the
+// invalid-PIN error, and still stages nothing.
+func TestRestoreBackup_WrongPIN_NoMutation(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _, dbPath := newBackupTestDeps(t)
+	name := createRealSnapshot(t, dbPath)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/backup/restore", strings.NewReader("name="+name+"&override_pin=000000"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Invalid PIN") {
+		t.Fatalf("expected the invalid-PIN error (elevation.error_invalid_pin) in the re-rendered prompt, got: %s", rec.Body.String())
+	}
+	if db.PendingRestore(dbPath) {
+		t.Fatalf("expected no restore staged on a wrong PIN")
+	}
+}
+
+func TestRestoreBackup_ValidPIN_StagesRestoreAndAudits(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp, dbPath := newBackupTestDeps(t)
 	name := createRealSnapshot(t, dbPath)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/backup/restore", strings.NewReader("name="+name+"&confirm=nope"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 without the RESTORE confirmation, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if db.PendingRestore(dbPath) {
-		t.Fatalf("expected no restore staged after a rejected confirmation")
-	}
-
-	// Case-insensitive per strings.ToUpper in the handler.
-	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/backup/restore", strings.NewReader("name="+name+"&confirm=restore"))
+	req := httptest.NewRequest(http.MethodPost, "/api/backup/restore", strings.NewReader("name="+name+"&override_pin="+dataAPITestManagerPIN))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200 for a lowercase 'restore' confirmation, got %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("expected 200 for a valid manager PIN, got %d: %s", rec.Code, rec.Body.String())
 	}
 	if !db.PendingRestore(dbPath) {
 		t.Fatalf("expected the restore to actually be staged on disk")
 	}
-	var action string
-	if err := dp.Db.QueryRow(`SELECT action FROM audit_log WHERE action='restore_staged'`).Scan(&action); err != nil {
+	var actorID, blockedActorID sql.NullString
+	if err := dp.Db.QueryRow(`SELECT actor_id, blocked_actor_id FROM audit_log WHERE action='restore_staged'`).Scan(&actorID, &blockedActorID); err != nil {
 		t.Fatalf("expected a restore_staged audit row for this destructive action: %v", err)
+	}
+	// UT_AUTH=off means there's no distinct blocked session user here (the
+	// approver IS the only identity in play) -- dual attribution itself is
+	// covered end-to-end by data_api_test.go's
+	// TestDataManagementEndpoints_ValidPIN_AuditRecordsApprover pattern;
+	// this just confirms the actor is recorded at all.
+	if !actorID.Valid || actorID.String == "" {
+		t.Fatalf("expected a non-empty audit actor_id, got %v", actorID)
 	}
 }
 
@@ -383,7 +439,7 @@ func TestRestoreBackup_MissingSnapshotIsLocalized(t *testing.T) {
 
 	rec := httptest.NewRecorder()
 	req := httptest.NewRequest(http.MethodPost, "/api/backup/restore",
-		strings.NewReader("name=unitill-pos-99999999-999999.db&confirm=RESTORE"))
+		strings.NewReader("name=unitill-pos-99999999-999999.db&override_pin="+dataAPITestManagerPIN))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(rec, req)
 
@@ -525,7 +581,7 @@ func TestRestoreBackup_SuccessRendersRestartButtonWhenSupported(t *testing.T) {
 	name := createRealSnapshot(t, dbPath)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/backup/restore", strings.NewReader("name="+name+"&confirm=RESTORE"))
+	req := httptest.NewRequest(http.MethodPost, "/api/backup/restore", strings.NewReader("name="+name+"&override_pin="+dataAPITestManagerPIN))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -555,7 +611,7 @@ func TestRestoreBackup_SuccessShowsCloseAndReopenWhenUnsupported(t *testing.T) {
 	name := createRealSnapshot(t, dbPath)
 
 	rec := httptest.NewRecorder()
-	req := httptest.NewRequest(http.MethodPost, "/api/backup/restore", strings.NewReader("name="+name+"&confirm=RESTORE"))
+	req := httptest.NewRequest(http.MethodPost, "/api/backup/restore", strings.NewReader("name="+name+"&override_pin="+dataAPITestManagerPIN))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {

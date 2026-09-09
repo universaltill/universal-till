@@ -701,7 +701,7 @@ func TestEraseCustomer(t *testing.T) {
 	if err != nil || len(found) != 1 || found[0].ID != "c1" {
 		t.Fatalf("search: err=%v found=%+v", err, found)
 	}
-	ok, err := repo.EraseCustomer(context.Background(), "c1", "")
+	ok, err := repo.EraseCustomer(context.Background(), "c1", "", "")
 	if err != nil || !ok {
 		t.Fatalf("erase: ok=%v err=%v", ok, err)
 	}
@@ -886,7 +886,7 @@ func TestEraseCustomer_AnonymisesArchivedSaleToo(t *testing.T) {
 		t.Fatalf("setup: sales_archive.customer_id = c1, count=%d err=%v, want 1", archived, err)
 	}
 
-	ok, err := repo.EraseCustomer(ctx, "c1", "")
+	ok, err := repo.EraseCustomer(ctx, "c1", "", "")
 	if err != nil || !ok {
 		t.Fatalf("erase: ok=%v err=%v, want ok=true err=nil", ok, err)
 	}

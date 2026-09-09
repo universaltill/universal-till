@@ -18,8 +18,8 @@ Snapshots of all your shop data (catalog, sales, settings) that you can download
 
 ## Restoring a backup
 
-Restoring replaces all current data with the chosen backup — type
-`RESTORE` to confirm, since this can't be undone from the settings page
+Restoring replaces all current data with the chosen backup — confirm
+with your manager PIN, since this can't be undone from the settings page
 itself (the replaced data is kept as its own backup, in case you need it
 back). After restoring, click **Restart now** and the till restarts
 itself — no need to reach for a keyboard or a plug. On Windows the till

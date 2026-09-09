@@ -636,8 +636,12 @@
   <h2>{{ T "settings.backup.title" }} {{ helpLink "backups" }}</h2>
   <p class="muted">{{ T "settings.backup.help" }}</p>
   <!-- ut-docs#867: the Backup-now button is elevation-wired, so it renders for
-       every session; the backup file list below (names/dates, save-copy,
-       restore — flat-denied endpoints, real content) stays manager-only. -->
+       every session; the backup file list below (names/dates, save-copy —
+       flat-denied endpoints, real content) stays manager-only. Restore
+       ALSO stays behind that same flat deny() gate first (the UI here is
+       already manager-only, checkStepUp's own precondition), but is
+       itself step-up elevation-wired behind it since ut-docs#1860
+       (ADR-0087) — see the form below. -->
   <div class="set-row set-below">
     <button class="btn" hx-post="/api/backup/now" hx-target="#backup-msg" hx-swap="innerHTML">{{ T "settings.backup.now" }}</button>
     <span id="backup-msg" aria-live="polite"></span>
@@ -654,9 +658,13 @@
         <td>{{ .Size }}</td>
         <td style="display:flex; gap:.3rem">
           <button class="btn secondary" hx-post="/api/backup/save-copy/{{ .Name }}" hx-target="#backup-dl-msg" hx-swap="innerHTML">{{ T "settings.backup.download" }}</button>
+          <!-- ut-docs#1860 (ADR-0087): step-up re-authentication replaces
+               the old typed RESTORE word — the elevation dialog's own OOB
+               swap (elevation_prompt.html) handles the rest via this same
+               hx-post form, exactly like data_api.go's checkStepUp sites
+               (data-reset-btn etc.) need no special JS wiring beyond htmx. -->
           <form hx-post="/api/backup/restore" hx-target="#restore-msg" hx-swap="innerHTML" style="display:flex; gap:.3rem">
             <input type="hidden" name="name" value="{{ .Name }}">
-            <input type="text" name="confirm" placeholder="{{ T "settings.backup.confirm_placeholder" }}" style="width:8rem" required>
             <button class="btn secondary" type="submit">{{ T "settings.backup.restore" }}</button>
           </form>
         </td>
@@ -689,14 +697,15 @@
   <!-- ut-docs#867: the three elevation-wired actions in this card
        (remove-demo-catalogue, dismiss-restore-prompt,
        dismiss-pending-base-plugin) render unconditionally, each behind its
-       own DATA guard exactly as before. ut-docs#1841 (ADR-0087) moved the
-       remaining destructive/PII tools — reset-transactions, archive
-       restore/purge, catalog cleanup — off their old flat typed-word
-       confirmation onto the SAME step-up elevation path (checkStepUp,
-       window.utPostWithElevation below): a manager PIN is required at the
-       moment of the irreversible act, not just a typed word. GDPR
-       search/erase and export are unchanged for now and stay manager-only
-       raw fetch() flows with no elevation path. -->
+       own DATA guard exactly as before. ut-docs#1841 (ADR-0087) moved
+       reset-transactions, archive restore/purge and catalog cleanup off
+       their old flat typed-word confirmation onto the step-up elevation
+       path (checkStepUp, window.utPostWithElevation below). ut-docs#1860
+       closed the one gap #1841 left in this same settings area — GDPR
+       customer erase is now step-up elevation-wired too (see the
+       cust-results click handler below), and backup restore above got
+       the same treatment in place of its typed RESTORE word. Only export
+       stays manager-only raw fetch() with no elevation path. -->
   {{ if .isManager }}
   <p class="muted">{{ T "settings.data.help" }}</p>
   <p class="muted" style="color:#b45309">{{ T "settings.data.warn" }}</p>
@@ -1041,15 +1050,20 @@
   out.addEventListener('click', function (ev) {
     var b = ev.target.closest('[data-erase]');
     if (!b) return;
-    if (!confirm("Erase this customer's personal data? Their sales are kept but anonymised. This cannot be undone.")) return;
+    // ut-docs#1860 (ADR-0087): step-up re-authentication (a manager PIN,
+    // required at the moment of the act) replaces the old plain
+    // window.confirm() dialog — same reasoning as cat-cleanup-btn below:
+    // the elevation dialog itself states which customer and requires a
+    // real manager PIN, a strictly stronger confirmation than a browser
+    // confirm() ever was.
     b.disabled = true;
-    fetch('/api/data/customers/erase', {
-      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ id: b.getAttribute('data-erase') }).toString()
-    }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
-      renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
-      if (r.ok) { b.closest('div').remove(); } else { b.disabled = false; }
-    }); }).catch(function (e) { b.disabled = false; renderNotice(msg, 'error', e); });
+    var row = b.closest('div');
+    window.utPostWithElevation('/api/data/customers/erase', { id: b.getAttribute('data-erase') }, function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
+        if (r.ok) { row.remove(); } else { b.disabled = false; }
+      });
+    }, function () { b.disabled = false; }).catch(function (e) { b.disabled = false; renderNotice(msg, 'error', e); });
   });
 })();
 (function () {

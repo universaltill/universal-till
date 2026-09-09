@@ -5573,6 +5573,15 @@ ORDER BY name LIMIT ?`, like, like, like, limit)
 // (keeping the sales, which are financial records, but anonymous) and
 // deletes the customer row. Audited. Returns false if no such customer.
 //
+// actorID/blockedActorID (ut-docs#1860, ADR-0087): dual attribution for the
+// checkStepUp path, mirroring ResetTransactionHistory's own parameters
+// (reset_archive_repo.go) — actorID is whoever actually authorised the
+// erasure (the session user on the plain path, the APPROVER once a
+// checkStepUp PIN elevated the request), blockedActorID is the
+// originally-blocked session user, set only when elevated ("" otherwise).
+// Written into the SAME audit-log insert this function already does, inside
+// the SAME transaction, rather than a second insert from the handler layer.
+//
 // The sales_archive unlink (ut-docs#640, independent review) closes the
 // same gap ErrArchiveReferencesRemoved documents for CleanupObsoleteItems
 // and the demo-data removal script: right after a reset-transactions run,
@@ -5593,7 +5602,7 @@ ORDER BY name LIMIT ?`, like, like, like, limit)
 // else in this codebase reads sales_archive.customer_id, and it matches
 // this function's own existing contract ("keeping the sales... but
 // anonymous") instead of inventing a different rule for the archived half.
-func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID string) (bool, error) {
+func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID, blockedActorID string) (bool, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return false, err
@@ -5618,7 +5627,11 @@ func (r *POSRepo) EraseCustomer(ctx context.Context, id, actorID string) (bool, 
 		return false, nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	if err := r.InsertAudit(ctx, tx, actorID, "customer", id, "customer_erased", nil, now, ""); err != nil {
+	if blockedActorID != "" {
+		if err := r.InsertAuditElevated(ctx, tx, actorID, blockedActorID, "customer", id, "customer_erased", nil, now, ""); err != nil {
+			return false, err
+		}
+	} else if err := r.InsertAudit(ctx, tx, actorID, "customer", id, "customer_erased", nil, now, ""); err != nil {
 		return false, err
 	}
 	if err := tx.Commit(); err != nil {

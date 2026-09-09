@@ -758,7 +758,10 @@ func TestEraseCustomer_RequiresIDAndReportsNotFound(t *testing.T) {
 		t.Fatalf("expected 400 without an id, got %d: %s", rec.Code, rec.Body.String())
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/data/customers/erase", strings.NewReader("id=does-not-exist"))
+	// A real PIN, since the id is what's under test here, not the
+	// elevation gate itself (that's TestEraseCustomer_NoPIN_NeedsElevation_NoMutation
+	// and TestEraseCustomer_ElevatedByApprover_ErasesAndRecordsApprover below).
+	req := httptest.NewRequest(http.MethodPost, "/api/data/customers/erase", strings.NewReader("id=does-not-exist&override_pin="+dataAPITestManagerPIN))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec = httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
@@ -767,28 +770,44 @@ func TestEraseCustomer_RequiresIDAndReportsNotFound(t *testing.T) {
 	}
 }
 
-func TestEraseCustomer_ErasesRealCustomer(t *testing.T) {
+// ut-docs#1860 (ADR-0087): erase used to be a one-click flat-403 endpoint —
+// the one GDPR/destructive gap #1841's own scope (the four data_api.go
+// handlers) didn't cover. No override_pin at all must get the elevation
+// prompt, referencing the customer by id (not name/phone/email — those are
+// exactly the fields about to be erased), and must touch nothing.
+func TestEraseCustomer_NoPIN_NeedsElevation_NoMutation(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newDataAPITestDeps(t)
 	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO customers(id,name) VALUES('cust1','Jane Doe')`); err != nil {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/data/customers/erase", strings.NewReader("id=cust1"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	rec := postForm(mux, "/api/data/customers/erase", url.Values{"id": {"cust1"}}, nil)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+		t.Fatalf("expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("expected the elevation prompt's text/html Content-Type, got %q: %s", ct, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "Jane Doe") {
+		t.Fatalf("expected the elevation summary to reference the customer by id, NOT by name (that's exactly the PII about to be erased), got: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "cust1") {
+		t.Fatalf("expected the elevation summary to reference the customer id, got: %s", rec.Body.String())
 	}
 	var count int
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM customers WHERE id='cust1'`).Scan(&count); err != nil {
 		t.Fatal(err)
 	}
-	if count != 0 {
-		t.Fatalf("expected the customer erased, still found %d rows", count)
+	if count != 1 {
+		t.Fatalf("expected NO mutation without a PIN, still want the customer present, got %d rows", count)
 	}
 }
+
+// The full elevated-erase + audit-actor assertion lives in
+// TestDataManagementEndpoints_ValidPIN_AuditRecordsApprover's "customer-erase"
+// case below, alongside the other three checkStepUp-gated endpoints, rather
+// than duplicating that table's setup/assertion shape here.
 
 func TestGetObsoleteItems_ListsInactiveNeverSoldItems(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
@@ -984,6 +1003,16 @@ func TestDataManagementEndpoints_ValidPIN_AuditRecordsApprover(t *testing.T) {
 				return "/api/data/cleanup-catalog", url.Values{"override_pin": {dataAPITestManagerPIN}}
 			},
 			entityType: "system", entityID: "catalog", action: "catalog_cleanup",
+		},
+		{
+			name: "customer-erase",
+			setup: func(t *testing.T, mux *http.ServeMux, dp *common.Deps) (string, url.Values) {
+				if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO customers(id,name) VALUES('cust1','Jane Doe')`); err != nil {
+					t.Fatal(err)
+				}
+				return "/api/data/customers/erase", url.Values{"id": {"cust1"}, "override_pin": {dataAPITestManagerPIN}}
+			},
+			entityType: "customer", entityID: "cust1", action: "customer_erased",
 		},
 	}
 

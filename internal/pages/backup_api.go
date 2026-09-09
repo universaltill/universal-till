@@ -216,19 +216,45 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		name := strings.TrimSpace(r.Form.Get("name"))
 		locale := httpx.ResolveLocale(w, r)
-		// Destructive: the form must carry the literal confirmation word.
-		if strings.ToUpper(strings.TrimSpace(r.Form.Get("confirm"))) != "RESTORE" {
-			http.Error(w, httpx.T(locale, "settings.backup.confirm_required"), http.StatusBadRequest)
+		// ut-docs#1860 (ADR-0087): step-up re-authentication replaces the old
+		// typed RESTORE word. This is plausibly the single most destructive
+		// action in the product — it discards the entire live database — and
+		// a typed word is no stronger a barrier than an already-logged-in
+		// session. checkStepUp (not checkOrElevate), because the UI reaching
+		// this handler is already manager-only ({{ if .isManager }} in
+		// settings.html) AND already canPerform-gated by deny() above, so
+		// every session that gets here is exactly the one checkOrElevate
+		// would wave through with no PIN at all — same shape as
+		// data_api.go's four Settings → Data handlers (ut-docs#1841).
+		elev := checkStepUp(d, r, "data_management", r.FormValue("override_pin"))
+		if elev.Outcome != elevated {
+			renderElevationPrompt(w, r, "/api/backup/restore", "#restore-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.backup_restore"), name),
+				[]elevationHiddenField{{Name: "name", Value: name}}, elev)
 			return
+		}
+		// auditElev records the audit row inside the SAME dual-attribution
+		// shape elevationActors/InsertAuditElevated establish elsewhere
+		// (data_api.go, reset_archive_repo.go): the approver as actor once
+		// elevated, with the originally-blocked session user carried
+		// alongside it.
+		auditElev := func(action string, payload map[string]any) {
+			actorID, blockedActorID := elevationActors(elev)
+			now := time.Now().UTC().Format(time.RFC3339)
+			if blockedActorID != "" {
+				_ = posRepo.InsertAuditElevated(r.Context(), nil, actorID, blockedActorID, "backup", "-", action, payload, now, "")
+				return
+			}
+			_ = posRepo.InsertAudit(r.Context(), nil, actorID, "backup", "-", action, payload, now, "")
 		}
 		if err := db.StageRestore(dbPath, name); err != nil {
 			// Raw err.Error() here is intentional, not a leak (ut-docs#947
 			// Problem 1 — see the same note on "backup_failed" above).
-			audit(r, "restore_stage_failed", map[string]any{"file": name, "error": err.Error()})
+			auditElev("restore_stage_failed", map[string]any{"file": name, "error": err.Error()})
 			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "settings.backup.stage_failed", "backup_restore", err)
 			return
 		}
-		audit(r, "restore_staged", map[string]any{"file": name})
+		auditElev("restore_staged", map[string]any{"file": name})
 		// ut-docs#1613: the old flat "restart the till to finish" text was a
 		// dead end identical to pairing_wait.html's pre-#1550 "joined"
 		// screen — this reuses the same internal/procrestart mechanism via
