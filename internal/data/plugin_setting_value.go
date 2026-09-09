@@ -15,6 +15,15 @@ import (
 // one wrap deeper. ut-docs#1269: MergeAdditiveJSONMapSetting used to write
 // the raw unwrapped object instead, so the on-disk shape silently depended
 // on which write path touched a setting last; this is the fix.
+//
+// ut-docs#1946: internal/plugins/manifest.go's install-time default-value
+// seeding is the third writer of a map-typed value_json (alongside
+// MergeAdditiveJSONMapSetting and writeTaxOverrides) and now also calls this
+// function for a manifest default_value declared as a JSON object, so a
+// freshly-installed plugin's row is canonical from the first write instead
+// of depending on the first merge/save to rewrite it. DecodeMapSettingValue
+// below still tolerates a raw-object row for any value written before this
+// fix landed.
 func EncodeMapSettingValue(v any) (string, error) {
 	marshaled, err := json.Marshal(v)
 	if err != nil {
