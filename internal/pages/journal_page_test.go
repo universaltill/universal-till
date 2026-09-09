@@ -428,9 +428,15 @@ func TestJournalUIFilters_TillAndDay(t *testing.T) {
 	if !strings.Contains(body, `name="till"`) || !strings.Contains(body, `name="day"`) {
 		t.Fatalf("expected till/day filter controls in /ui/journal: %s", body)
 	}
-	// Staleness line for the enrolled till.
-	if !strings.Contains(body, "Kiosk 2") || !strings.Contains(body, "2026-08-15T08:00:00Z") {
+	// Staleness line for the enrolled till. ut-docs#1894 moved LastSeenAt to
+	// the locale-aware `datetime` template func, so this no longer asserts
+	// the raw RFC3339 string (exact formatting is covered by
+	// TestJournalUI_RendersLocaleFormattedTillLastSeenAt below).
+	if !strings.Contains(body, "Kiosk 2") {
 		t.Fatalf("expected staleness line for enrolled till: %s", body)
+	}
+	if strings.Contains(body, "2026-08-15T08:00:00Z") {
+		t.Fatalf("staleness line must not show the raw RFC3339 timestamp: %s", body)
 	}
 
 	// till=all: behaviorally identical to no param -- both sales, with a
