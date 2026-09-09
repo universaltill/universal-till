@@ -428,9 +428,15 @@ func TestJournalUIFilters_TillAndDay(t *testing.T) {
 	if !strings.Contains(body, `name="till"`) || !strings.Contains(body, `name="day"`) {
 		t.Fatalf("expected till/day filter controls in /ui/journal: %s", body)
 	}
-	// Staleness line for the enrolled till.
-	if !strings.Contains(body, "Kiosk 2") || !strings.Contains(body, "2026-08-15T08:00:00Z") {
+	// Staleness line for the enrolled till. ut-docs#1894 moved LastSeenAt to
+	// the locale-aware `datetime` template func, so this no longer asserts
+	// the raw RFC3339 string (exact formatting is covered by
+	// TestJournalUI_RendersLocaleFormattedTillLastSeenAt below).
+	if !strings.Contains(body, "Kiosk 2") {
 		t.Fatalf("expected staleness line for enrolled till: %s", body)
+	}
+	if strings.Contains(body, "2026-08-15T08:00:00Z") {
+		t.Fatalf("staleness line must not show the raw RFC3339 timestamp: %s", body)
 	}
 
 	// till=all: behaviorally identical to no param -- both sales, with a
@@ -686,6 +692,34 @@ func TestJournalUIAndDetail_RenderLocaleFormattedCreatedAt(t *testing.T) {
 	}
 	if !strings.Contains(body, "15.08.2026 09:30") {
 		t.Fatalf("journal detail must show the de-DE-formatted date+time: %s", body)
+	}
+}
+
+// ut-docs#1894: the "till last synced" status line's LastSeenAt now renders
+// through the locale-aware `datetime` template func instead of the raw
+// RFC3339 string, same as #1632's CreatedAt fix above.
+func TestJournalUI_RendersLocaleFormattedTillLastSeenAt(t *testing.T) {
+	orig := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = orig })
+
+	mux, d := newJournalMux(t)
+	if _, err := d.Db.Exec(`INSERT INTO tills (id, name, bearer_hash, enrolled_at, last_seen_at)
+		VALUES ('till-1', 'Kitchen till', 'hash-1', '2026-08-15T08:00:00Z', '2026-08-15T09:30:00Z')`); err != nil {
+		t.Fatalf("seed till: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/journal?limit=full&lang=de-DE", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ui/journal = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "2026-08-15T09:30:00Z") {
+		t.Fatalf("till-last-synced line must not show the raw RFC3339 timestamp: %s", body)
+	}
+	if !strings.Contains(body, "15.08.2026 09:30") {
+		t.Fatalf("till-last-synced line must show the de-DE-formatted LastSeenAt: %s", body)
 	}
 }
 

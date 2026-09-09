@@ -292,6 +292,40 @@ func TestOrdersListFragment_ShowsStatusAndButtons(t *testing.T) {
 	}
 }
 
+// ut-docs#1894: the orders list's CreatedAt and StatusUpdatedAt columns now
+// render through the locale-aware `datetime` template func instead of the
+// raw RFC3339 string (same pattern as journal's #1632 fix). Seeds fixed
+// timestamps directly on the sales row rather than via postOrderStatus,
+// which stamps order_status_updated_at with the current time.
+func TestOrdersListFragment_RendersLocaleFormattedTimestamps(t *testing.T) {
+	orig := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = orig })
+
+	mux, _, dbase := newOrderStatusTestDeps(t)
+	if _, err := dbase.DB.Exec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, order_status, order_status_updated_at)
+		VALUES ('sale-dt', 'R-DT', 'completed', 'sale', 'GBP', 370, 0, 0, 370, '2026-08-15T09:30:00Z', 'preparing', '2026-08-15T10:15:00Z')`); err != nil {
+		t.Fatalf("seed sale: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/orders?lang=de-DE", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "2026-08-15T09:30:00Z") || strings.Contains(body, "2026-08-15T10:15:00Z") {
+		t.Fatalf("orders list must not show a raw RFC3339 timestamp: %s", body)
+	}
+	if !strings.Contains(body, "15.08.2026 09:30") {
+		t.Fatalf("orders list must show the de-DE-formatted CreatedAt: %s", body)
+	}
+	if !strings.Contains(body, "15.08.2026 10:15") {
+		t.Fatalf("orders list must show the de-DE-formatted StatusUpdatedAt: %s", body)
+	}
+}
+
 // ut-docs#517a: a sale whose latest kitchen/receipt print attempt failed
 // must carry a visible warning in the orders list — a paid kiosk order must
 // never be silently lost to an out-of-paper printer.

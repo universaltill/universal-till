@@ -146,8 +146,8 @@
           {{ else }}
           <td>{{ .Name }}</td>
           {{ end }}
-          <td>{{ .EnrolledAt }}</td>
-          <td>{{ if .LastSeenAt }}{{ .LastSeenAt }}{{ else }}—{{ end }}</td>
+          <td>{{ datetime .EnrolledAt }}</td>
+          <td>{{ if .LastSeenAt }}{{ datetime .LastSeenAt }}{{ else }}—{{ end }}</td>
           <td>
           {{/* ut-docs#405: revoke is a primary-authoritative write (same
                rule as catalog/settings, ADR-0011 §2) — .Tills now syncs to

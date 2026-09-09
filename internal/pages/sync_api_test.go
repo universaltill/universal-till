@@ -108,6 +108,39 @@ func newSyncAPITestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	return mux, dp
 }
 
+// ut-docs#1894: the /tills roster's EnrolledAt and LastSeenAt columns now
+// render through the locale-aware `datetime` template func instead of the
+// raw RFC3339 string (same pattern as journal's #1632 fix).
+func TestTillsPage_RendersLocaleFormattedTimestamps(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	orig := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = orig })
+
+	mux, dp := newSyncAPITestDeps(t)
+	if _, err := dp.Db.Exec(`INSERT INTO tills (id, name, bearer_hash, enrolled_at, last_seen_at)
+		VALUES ('till-1', 'Kitchen till', 'hash-1', '2026-08-15T09:30:00Z', '2026-08-15T10:15:00Z')`); err != nil {
+		t.Fatalf("seed till: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/tills?lang=de-DE", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "2026-08-15T09:30:00Z") || strings.Contains(body, "2026-08-15T10:15:00Z") {
+		t.Fatalf("tills page must not show a raw RFC3339 timestamp: %s", body)
+	}
+	if !strings.Contains(body, "15.08.2026 09:30") {
+		t.Fatalf("tills page must show the de-DE-formatted EnrolledAt: %s", body)
+	}
+	if !strings.Contains(body, "15.08.2026 10:15") {
+		t.Fatalf("tills page must show the de-DE-formatted LastSeenAt: %s", body)
+	}
+}
+
 // Most tests below set UT_AUTH=off: canPerform(d, r, "sync_management")
 // (used by several of these handlers, ut-docs#707) checks the session role
 // or UT_AUTH=off, so this reaches the manager-gated endpoints without

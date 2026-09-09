@@ -22,7 +22,7 @@
         <td>{{ .TillName }}</td>
         <td>{{ .ReceiptNo }}</td>
         <td>{{ .Reason }}</td>
-        <td>{{ .QuarantinedAt }}</td>
+        <td>{{ datetime .QuarantinedAt }}</td>
       </tr>
       {{ end }}
     </tbody>

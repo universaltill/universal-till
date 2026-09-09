@@ -59,8 +59,14 @@ func TestJournalView_ShowFiltersGatesCrossTillUI(t *testing.T) {
 	if !strings.Contains(full, "Kiosk 2") {
 		t.Fatalf("full journal view must render the Till column/staleness line: %s", full)
 	}
-	if !strings.Contains(full, "2026-08-15T08:00:00Z") {
-		t.Fatalf("full journal view must render the till's LastSeenAt: %s", full)
+	// ut-docs#1894 moved the staleness line's LastSeenAt to the
+	// locale-aware `datetime` template func, so it's no longer the raw
+	// RFC3339 string. Not asserting the exact formatted value here since
+	// `datetime` renders in the process's Local time zone and this test
+	// doesn't pin it (unlike internal/pages's own locale-formatting
+	// regression tests) -- just that the raw stored value is gone.
+	if strings.Contains(full, "2026-08-15T08:00:00Z") {
+		t.Fatalf("full journal view must not render the till's LastSeenAt as a raw RFC3339 string: %s", full)
 	}
 }
 
