@@ -60,7 +60,7 @@
     <tbody>
       {{ range .Detail }}
       <tr>
-        <td>{{ .AllocatedAt }}</td>
+        <td>{{ datetime .AllocatedAt }}</td>
         <td>{{ .Worker }}</td>
         <td>{{ if eq .SourceType "tip" }}{{ T "reports.tips.type_tip" }}{{ else }}{{ T "reports.tips.type_service_charge" }}{{ end }}</td>
         <td style="text-align:end">{{ money .AmountMinor }}</td>

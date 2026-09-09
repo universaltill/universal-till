@@ -46,10 +46,10 @@
              the visible TEXT is DisplayNo, already resolved to ReceiptNo
              when the sale has none. */}}
         <td>{{ if .JournalLinkable }}<a href="/journal/{{ .ReceiptNo }}">{{ .DisplayNo }}</a>{{ else }}{{ .DisplayNo }}{{ end }}{{ if eq .OrderType "takeaway" }} <span class="muted">{{ T "basket.order_type.takeaway" }}</span>{{ else if eq .OrderType "mixed" }} <span class="muted">{{ T "basket.order_type.mixed" }}</span>{{ end }}</td>
-        <td>{{ .CreatedAt }}</td>
+        <td>{{ datetime .CreatedAt }}</td>
         <td id="order-status-{{ .ReceiptNo }}">
           <span class="order-status" data-status="{{ .Status }}">{{ T .StatusKey }}</span>
-          {{ if .StatusUpdatedAt }}<span class="muted">{{ .StatusUpdatedAt }}</span>{{ end }}
+          {{ if .StatusUpdatedAt }}<span class="muted">{{ datetime .StatusUpdatedAt }}</span>{{ end }}
         </td>
         {{/* One warning per LINE (div, not adjacent spans): a sale can carry
              both, and inline they run together into a single unreadable

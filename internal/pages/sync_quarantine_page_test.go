@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
@@ -82,6 +83,59 @@ func TestSyncQuarantinePage_ManagerOnlyAndRendersRealData(t *testing.T) {
 	}
 	if strings.Contains(body, "unknown voucher on redemption replay") {
 		t.Fatalf("sync-quarantine page rendered the raw untranslated reason string, want the translated sync.quarantine_reason.unknown_voucher_redemption key:\n%s", body)
+	}
+}
+
+// ut-docs#1894: QuarantinedAt now renders through the locale-aware
+// `datetime` template func instead of the raw RFC3339 string, same pattern
+// as journal's #1632 fix.
+func TestSyncQuarantinePage_RendersLocaleFormattedTimestamp(t *testing.T) {
+	orig := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = orig })
+
+	chdirRoot(t)
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+
+	if _, err := db.Exec(`INSERT INTO tills(id, name, bearer_hash, enrolled_at) VALUES ('till-2','Front Counter','x','2026-01-01T00:00:00Z')`); err != nil {
+		t.Fatalf("seed till: %v", err)
+	}
+	if err := data.NewPOSRepo(db).InsertJournalQuarantine(context.Background(), data.JournalQuarantineEntry{
+		TillID: "till-2", SaleID: "sale-q1", ReceiptNo: "T2-Q001",
+		Reason: "unknown voucher on redemption replay", PayloadJSON: `{}`,
+		QuarantinedAt: "2026-08-15T09:30:00Z",
+	}); err != nil {
+		t.Fatalf("seed quarantine entry: %v", err)
+	}
+
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+
+	cfg := &config.Config{Theme: "default"}
+	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db), AuthSvc: auth.NewService(db)}
+	mux := http.NewServeMux()
+	registerSyncQuarantinePage(mux, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/sync-quarantine?lang=de-DE", nil)
+	req = auth.WithUser(req, auth.User{ID: "mgr-1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manager = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "2026-08-15T09:30:00Z") {
+		t.Fatalf("sync-quarantine page must not show the raw RFC3339 timestamp: %s", body)
+	}
+	if !strings.Contains(body, "15.08.2026 09:30") {
+		t.Fatalf("sync-quarantine page must show the de-DE-formatted QuarantinedAt: %s", body)
 	}
 }
 

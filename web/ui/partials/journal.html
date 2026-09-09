@@ -20,7 +20,7 @@
     {{ if .Tills }}
       <div class="journal-till-status muted">
         {{ range .Tills }}
-          <div>{{ if .LastSeenAt }}{{ printf (T "journal.till_last_synced") .Name .LastSeenAt }}{{ else }}{{ printf (T "journal.till_last_synced") .Name "—" }}{{ end }}</div>
+          <div>{{ if .LastSeenAt }}{{ printf (T "journal.till_last_synced") .Name (datetime .LastSeenAt) }}{{ else }}{{ printf (T "journal.till_last_synced") .Name "—" }}{{ end }}</div>
         {{ end }}
       </div>
     {{ end }}

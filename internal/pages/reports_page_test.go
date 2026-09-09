@@ -978,6 +978,45 @@ func TestReportsPage_TipsTabShowsReceivedVsAllocated(t *testing.T) {
 	}
 }
 
+// ut-docs#1894: the tips tab's allocation-detail AllocatedAt column now
+// renders through the locale-aware `datetime` template func instead of the
+// raw RFC3339 string, same pattern as journal's #1632 fix.
+func TestReportsPage_TipsTabRendersLocaleFormattedAllocatedAt(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	orig := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = orig })
+
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','Worker One','cashier',1)`); err != nil {
+		t.Fatal(err)
+	}
+	// Within the tab's default 14-day window (relative to "now") rather
+	// than a fixed calendar date, so this test doesn't go stale.
+	allocatedAt := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Minute)
+	localDate := allocatedAt.Format("2006-01-02")
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('wa1','tip','','worker1',300,?,'shift payout',?)`,
+		allocatedAt.Format(time.RFC3339), localDate); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsTab(t, mux, "tips", "?days=14&lang=de-DE")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	rawTimestamp := allocatedAt.Format(time.RFC3339)
+	if strings.Contains(body, rawTimestamp) {
+		t.Fatalf("tips tab must not show the raw RFC3339 timestamp: %s", body)
+	}
+	wantFormatted := allocatedAt.Format("02.01.2006 15:04")
+	if !strings.Contains(body, wantFormatted) {
+		t.Fatalf("tips tab must show the de-DE-formatted AllocatedAt (%s): %s", wantFormatted, body)
+	}
+}
+
 // ut-docs#1274: reports_tab_tips.html's #tips-amount field hardcoded a fixed
 // 2-decimal pattern/placeholder regardless of the shop's real configured
 // currency, same defect class as shifts.html (see

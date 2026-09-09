@@ -482,8 +482,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if resetBatchesErr != nil {
 			logging.L().Errorf("list reset batches: %v", resetBatchesErr)
 		}
-		// Same human-friendly date format the backups table already uses
-		// (backup_api.go's listBackupsForUI) rather than a raw RFC3339 string.
+		// Locale-aware date format (ut-docs#1130/#1632/#1894) — NOT the same
+		// as the .backups table above, which turned out on inspection to
+		// still be a hardcoded "2006-01-02 15:04" (listBackupsForUI in
+		// backup_api.go); that's a separate, still-open gap (ut-docs#1936),
+		// deliberately not folded into this card's fixed scope.
 		// Purgeable/RetainedUntilDisplay (ut-docs#698) let the template show
 		// per-row purge eligibility instead of every row offering a
 		// Delete-permanently control that a gated batch will just refuse.
@@ -498,11 +501,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		for _, b := range resetBatchesRaw {
 			display := b.CreatedAt
 			if t, err := time.Parse(time.RFC3339, b.CreatedAt); err == nil {
-				display = t.Format("2006-01-02 15:04")
+				display = httpx.FormatDateTime(t.Local(), locale)
 			}
 			view := resetBatchView{ID: b.ID, CreatedAt: display, SalesCount: b.SalesCount, Purgeable: b.Purgeable}
 			if !b.RetainedUntil.IsZero() {
-				view.RetainedUntilDisplay = b.RetainedUntil.Format("2006-01-02")
+				view.RetainedUntilDisplay = httpx.FormatDate(b.RetainedUntil.Local(), locale)
 			}
 			resetBatches = append(resetBatches, view)
 		}

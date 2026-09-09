@@ -1031,6 +1031,43 @@ func TestSettingsPage_TillRegisterPickerRendersAndSelects(t *testing.T) {
 	}
 }
 
+// ut-docs#1894: the reset-archives list's CreatedAt and RetainedUntilDisplay
+// now render through locale-aware formatting (httpx.FormatDateTime/
+// FormatDate) instead of a hardcoded Go layout, same pattern as journal's
+// #1632 fix. RetainedUntil = created_at's date + data.GlobalArchiveMinDays
+// (no country configured in this fixture, so the global floor applies).
+func TestSettingsPage_ResetArchivesRendersLocaleFormattedTimestamps(t *testing.T) {
+	orig := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = orig })
+
+	mux, d := newRealDBDeps(t)
+	createdAt := "2026-08-15T09:30:00Z"
+	if _, err := d.Db.Exec(`INSERT INTO reset_batches (id, created_at, sales_count) VALUES ('b-gated', ?, 3)`, createdAt); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/settings?lang=de-DE", nil)
+	req = auth.WithUser(req, mgrUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, createdAt) {
+		t.Fatalf("reset-archives row must not show the raw RFC3339 CreatedAt: %s", body)
+	}
+	if !strings.Contains(body, "15.08.2026 09:30") {
+		t.Fatalf("reset-archives row must show the de-DE-formatted CreatedAt: %s", body)
+	}
+	retainedUntil := time.Date(2026, 8, 15, 0, 0, 0, 0, time.UTC).AddDate(0, 0, int(data.GlobalArchiveMinDays))
+	wantRetained := retainedUntil.Format("02.01.2006")
+	if !strings.Contains(body, wantRetained) {
+		t.Fatalf("gated row must show the de-DE-formatted RetainedUntilDisplay (%s): %s", wantRetained, body)
+	}
+}
+
 // ut-docs#698: a batch still inside its retention window must show the
 // retained-until date and NOT offer the Delete-permanently button, so an
 // operator never steps through the manager-PIN prompt (ut-docs#1841,
