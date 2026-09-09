@@ -1395,9 +1395,12 @@ func (r *CatalogRepo) SetItemThumbnail(ctx context.Context, itemID, path string)
 	return nil
 }
 
-// ItemThumbnails returns every active item's current thumbnail path (built-in
-// icon or uploaded photo — item_images.path is already the servable path
-// either way), keyed by item id. Same one-query-for-all-items shape as
+// ItemThumbnails returns every item's current thumbnail path, active or not
+// (built-in icon or uploaded photo — item_images.path is already the
+// servable path either way), keyed by item id — it does not itself filter
+// on items.is_active, so a caller that only wants active items' thumbnails
+// should only look up IDs it already knows are active (loadShopItems does,
+// via ListItems). Same one-query-for-all-items shape as
 // ItemBarcodes/ItemVariants above, for callers building a list of tiles
 // (e.g. the self-order kiosk grid, ut-docs#1870) that would otherwise pay
 // one query per item via ItemThumbnailPath. An item missing from the
