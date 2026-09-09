@@ -204,9 +204,11 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 	// even though those would also accept printLocale.
 	printLocale := httpx.DefaultLocale()
 	money := func(minor int64) string { return httpx.FormatMoneyLatin(minor, printLocale) }
+	// ut-docs#1632: FormatDateTimeLatin is FormatDateLatin plus the same
+	// "15:04" clock this used to hand-concatenate — same output, one call.
 	receiptDate := detail.CreatedAt
 	if t, err := time.Parse(time.RFC3339, detail.CreatedAt); err == nil {
-		receiptDate = httpx.FormatDateLatin(t.Local(), printLocale) + " " + t.Local().Format("15:04")
+		receiptDate = httpx.FormatDateTimeLatin(t.Local(), printLocale)
 	}
 
 	doc := print.Doc{

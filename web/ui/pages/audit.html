@@ -43,7 +43,7 @@
     <tbody>
       {{ range .Entries }}
       <tr>
-        <td class="muted" style="white-space:nowrap">{{ .CreatedAt }}</td>
+        <td class="muted" style="white-space:nowrap">{{ datetime .CreatedAt }}</td>
         <td>{{ if .ActorName }}{{ .ActorName }}{{ else }}<span class="muted">{{ T "audit.system_actor" }}</span>{{ end }}</td>
         <td>{{ .EntityType }} <span class="muted">{{ .EntityID }}</span></td>
         <td>{{ .Action }}</td>

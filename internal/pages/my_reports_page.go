@@ -113,6 +113,10 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		// ut-docs#1632: resolved once, unconditionally — CapturedAt below
+		// needs it on every row, not just the overflow-count message.
+		locale := httpx.ResolveLocale(w, r)
+
 		// ut-docs#445: ListSent's rowLimit silently drops anything beyond
 		// it with no indication more exist. This count is a purely LOCAL
 		// SQLite read — zero network calls, same offline-first contract as
@@ -123,7 +127,6 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 		if totalSent, cerr := repo.CountSent(r.Context()); cerr != nil {
 			logging.L().Warnf("my-reports: counting sent issue reports: %v", cerr)
 		} else if totalSent > rowLimit {
-			locale := httpx.ResolveLocale(w, r)
 			moreNotShownText = fmt.Sprintf(httpx.T(locale, "issuereport.my_reports.more_not_shown"), totalSent-rowLimit)
 		}
 		sentRows := make([]myReportRow, 0, len(reports))
@@ -133,7 +136,7 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 			sentRows = append(sentRows, myReportRow{
 				ID:             rec.ID,
 				Note:           rec.Note,
-				CapturedAt:     rec.CapturedAt.UTC().Format("2006-01-02 15:04"),
+				CapturedAt:     httpx.FormatDateTime(rec.CapturedAt.Local(), locale),
 				capturedAtTime: rec.CapturedAt,
 				StatusKey:      issueReportDisplayStatusKey(rec.Status, rec.GithubIssueState),
 				HadAudio:       rec.HadAudio,
@@ -170,7 +173,7 @@ func registerMyReportsPage(mux *http.ServeMux, d *common.Deps) {
 			row := myReportRow{
 				ID:             b.Meta.ID,
 				Note:           b.Meta.Note,
-				CapturedAt:     b.Meta.CreatedAt.UTC().Format("2006-01-02 15:04"),
+				CapturedAt:     httpx.FormatDateTime(b.Meta.CreatedAt.Local(), locale),
 				capturedAtTime: b.Meta.CreatedAt,
 				HadAudio:       b.AudioPath != "",
 				HadVideo:       b.VideoPath != "",
