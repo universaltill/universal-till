@@ -502,6 +502,19 @@ body.osk-padded { padding-block-end: 15.5rem; }
 .osk-fn { max-inline-size: 6rem; font-size: .95rem; background: var(--surface-2); }
 .osk-space { flex: 5 1 0; max-inline-size: 22rem; }
 .osk-on { background: var(--accent); color: var(--accent-contrast); }
+/* ut-docs#1835: caps latched (double-tap Shift) needs to read as visibly
+   different from the one-shot .osk-on above — an operator glancing at the
+   key mid-word needs to tell "still armed for one letter" from "stays on
+   until I tap again" without waiting to see what the next letter does.
+   --warning vs --accent is a clear hue difference on every theme except
+   `amber` (whose own --accent IS an orange, close to --warning's amber) —
+   checked all four shipped theme plugins (Tester step). The inset ring
+   below is theme-invariant (drawn in --accent-contrast, white on every
+   theme, never redefined) so the two states stay tellable apart by SHAPE
+   even where their hues nearly collide, and color is never the only
+   signal (osk-on has no ring at all). */
+.osk-caps { background: var(--warning); color: var(--accent-contrast);
+            box-shadow: inset 0 0 0 2px var(--accent-contrast); }
 .osk-toggle { flex: 0 0 auto; font-size: 1.2rem; line-height: 1; }
 
 /* Touch tills: no pointer arrow parked over the sale screen (cursor.js —
