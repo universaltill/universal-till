@@ -1,0 +1,22 @@
+{{ define "content" }}
+<h1>{{ T "items.title" }}</h1>
+
+<div class="settings-grid">
+{{ range .Sections }}
+  {{ if .Href }}
+  <a class="card" href="{{ .Href }}" style="display:block; text-decoration:none; color:inherit">
+    <h3 style="margin:.2rem 0">{{ T .NameKey }}</h3>
+    <p class="muted">{{ T .SubtitleKey }}</p>
+  </a>
+  {{ else }}
+  <div class="card" aria-disabled="true" style="opacity:.6">
+    <div style="display:flex; justify-content:space-between; align-items:baseline; gap:.5rem">
+      <h3 style="margin:.2rem 0">{{ T .NameKey }}</h3>
+      <span class="tag">{{ T "items.coming_soon" }}</span>
+    </div>
+    <p class="muted">{{ T .SubtitleKey }}</p>
+  </div>
+  {{ end }}
+{{ end }}
+</div>
+{{ end }}
