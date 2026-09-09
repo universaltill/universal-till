@@ -143,15 +143,21 @@ func TestPOSRepo_SalesByDay_BusinessDayBoundary_MergesTradingNight(t *testing.T)
 	ctx := context.Background()
 	repo := NewPOSRepo(d.DB)
 
-	// 23:30 UTC one calendar date, 01:30 UTC the next — same trading night,
-	// both before the 04:00 business-day boundary rolls over.
-	t1 := time.Date(2026, 8, 12, 23, 30, 0, 0, time.UTC)
-	t2 := time.Date(2026, 8, 13, 1, 30, 0, 0, time.UTC)
+	// Anchored in LOCAL time, not fixed UTC clock hours (ut-docs#1869): the
+	// "same trading night" scenario needs t1/t2 to straddle the host's own
+	// local midnight and both stay before the local 04:00 cutoff, on any TZ
+	// this suite runs under. A fixed 23:30Z/01:30Z pair only did that by
+	// luck for hosts near UTC — at TZ=Asia/Tehran (+3:30), 01:30Z becomes
+	// 05:00 local, past the 04:00 boundary, landing t2 on the FOLLOWING
+	// business day instead of merging with t1's.
+	localMidnight := time.Date(2026, 8, 13, 0, 0, 0, 0, time.Local)
+	t1 := localMidnight.Add(-30 * time.Minute) // Aug12 23:30 local
+	t2 := localMidnight.Add(90 * time.Minute)  // Aug13 01:30 local
 	b8Sale(t, d, "n1", b8At(t1), "completed", "sale", 100, 1000)
 	b8Sale(t, d, "n2", b8At(t2), "completed", "sale", 50, 500)
 
-	from := time.Date(2026, 8, 12, 0, 0, 0, 0, time.UTC)
-	to := time.Date(2026, 8, 14, 0, 0, 0, 0, time.UTC)
+	from := localMidnight.AddDate(0, 0, -1)
+	to := localMidnight.AddDate(0, 0, 1)
 
 	rows, err := repo.SalesByDay(ctx, from, to, 4, 0)
 	if err != nil {
