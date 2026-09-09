@@ -744,7 +744,18 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 		}
 
 		valueJSON := ""
-		if s.DefaultValue != nil {
+		if mapDefault, ok := s.DefaultValue.(map[string]interface{}); ok {
+			// ut-docs#1946: a manifest declaring default_value as a JSON
+			// object decodes to a Go map here, and the generic
+			// json.Marshal below the bare object shape rather than
+			// data.EncodeMapSettingValue's JSON-string-wrapped canonical
+			// shape — the same divergence ut-docs#1269 already closed for
+			// MergeAdditiveJSONMapSetting/writeTaxOverrides. Route through
+			// the shared seam so a fresh install's row is canonical from
+			// the start instead of depending on the first merge/save to
+			// rewrite it.
+			valueJSON, _ = data.EncodeMapSettingValue(mapDefault)
+		} else if s.DefaultValue != nil {
 			b, _ := json.Marshal(s.DefaultValue)
 			valueJSON = string(b)
 		}

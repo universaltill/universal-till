@@ -325,6 +325,60 @@ func TestPersistManifest(t *testing.T) {
 	}
 }
 
+// TestPersistManifest_MapDefaultValueWritesCanonicalShape pins ut-docs#1946:
+// a manifest declaring default_value as a JSON object (decodes to a Go
+// map[string]interface{}) must seed plugin_settings.value_json in the same
+// JSON-string-wrapped canonical shape data.EncodeMapSettingValue produces
+// for MergeAdditiveJSONMapSetting/writeTaxOverrides (ut-docs#1269) — not the
+// raw unwrapped object the install path wrote before this fix.
+func TestPersistManifest_MapDefaultValueWritesCanonicalShape(t *testing.T) {
+	db := setupTestDB(t)
+	defer db.Close()
+
+	manifest := &Manifest{
+		ID:         "com.test.mapdefault",
+		Name:       "Map Default Test",
+		Version:    "1.0.0",
+		Entrypoint: "./test",
+		Settings: []ManifestSetting{
+			{
+				Key:          "rate_overrides",
+				DefaultValue: map[string]interface{}{"a": float64(700)},
+				Scope:        "global",
+			},
+		},
+	}
+
+	ctx := context.Background()
+	if err := PersistManifest(ctx, db, manifest, InstallOptions{}); err != nil {
+		t.Fatalf("PersistManifest failed: %v", err)
+	}
+
+	var stored string
+	if err := db.QueryRowContext(ctx, `
+		SELECT value_json FROM plugin_settings WHERE plugin_id = ? AND key = ?
+	`, manifest.ID, "rate_overrides").Scan(&stored); err != nil {
+		t.Fatalf("query value_json: %v", err)
+	}
+
+	want, err := data.EncodeMapSettingValue(manifest.Settings[0].DefaultValue)
+	if err != nil {
+		t.Fatalf("data.EncodeMapSettingValue: %v", err)
+	}
+	if stored != want {
+		t.Fatalf("value_json = %q, want the canonical JSON-string-wrapped shape %q (raw-object shape is only for pre-existing rows written before ut-docs#1946)", stored, want)
+	}
+
+	// Round-trips through the shared read-side seam back to the original map.
+	var got map[string]interface{}
+	if err := json.Unmarshal([]byte(data.DecodeMapSettingValue(stored)), &got); err != nil {
+		t.Fatalf("decode stored value: %v", err)
+	}
+	if got["a"] != float64(700) {
+		t.Fatalf("decoded value = %v, want a=700", got)
+	}
+}
+
 // TestPersistManifest_ImportEntryDeclarationsRoundtrip covers ut-docs#599's
 // manifest half: an import entry's entities/file_formats declarations
 // (ManifestEntry.Entities/.FileFormats) parse from plugin.json, survive
