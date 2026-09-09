@@ -1,0 +1,28 @@
+{
+  "id": "com.universaltill.layout-salon",
+  "name": "Salon layout",
+  "version": "0.1.0",
+  "description": "A hair salon / barber shop Menu: no Tables, no Kitchen stations, Items shown as Services and listed first. Changes only what the Menu shows — the catalog, options and stock underneath are untouched.",
+  "author": "Universal Till Contributors",
+  "website": "https://universaltill.com",
+  "runtime": "none",
+  "canonical_type": "layout",
+  "device_arch": "any",
+  "min_pos_version": "1.0.0",
+  "entries": [
+    {
+      "type": "layout",
+      "key": "menu",
+      "label": "layout.salon.name",
+      "config": {
+        "slot": "menu",
+        "amendments": [
+          { "key": "/tables", "hide": true },
+          { "key": "/kitchen-stations", "hide": true },
+          { "key": "/items", "label_key": "layout.salon.services", "icon": "scissors", "order": 50 }
+        ]
+      }
+    }
+  ],
+  "permissions": []
+}
