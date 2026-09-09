@@ -1350,28 +1350,6 @@ func (r *CatalogRepo) EnsureDefaultThumbnail(ctx context.Context, itemID, path s
 	return nil
 }
 
-// ItemThumbnails returns every item's thumbnail path (item_images,
-// role=thumbnail), keyed by item id — the whole-catalog counterpart to
-// ItemBarcodes/ItemVariants above, for the catalog list's initial render
-// (ut-docs#1842). An item with no thumbnail row simply has no entry; the
-// caller decides what an absent entry means (nothing to show).
-func (r *CatalogRepo) ItemThumbnails(ctx context.Context) (map[string]string, error) {
-	rows, err := r.db.QueryContext(ctx, `SELECT item_id, path FROM item_images WHERE role = 'thumbnail'`)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := map[string]string{}
-	for rows.Next() {
-		var id, path string
-		if err := rows.Scan(&id, &path); err != nil {
-			return nil, err
-		}
-		out[id] = path
-	}
-	return out, rows.Err()
-}
-
 // ItemThumbnailFor returns one item's thumbnail path (item_images,
 // role=thumbnail), or "" if it has none — the single-item counterpart to
 // ItemThumbnails above, mirroring ItemBarcodesFor/ItemVariantsFor for a
@@ -1462,7 +1440,13 @@ func (r *CatalogRepo) SetItemThumbnail(ctx context.Context, itemID, path string)
 // (e.g. the self-order kiosk grid, ut-docs#1870) that would otherwise pay
 // one query per item via ItemThumbnailPath. An item missing from the
 // returned map has no thumbnail row at all — callers fall back to their own
-// no-image handling, same as ItemThumbnailPath's ok=false case.
+// no-image handling, same as ItemThumbnailPath's ok=false case. Also the
+// catalog list's initial-render lookup (ut-docs#1842) — two concurrent PRs
+// each independently added this same helper for their own caller, and git
+// merged both non-conflicting insertions cleanly, leaving two byte-identical
+// definitions that failed the build (same class of bug as ut-docs#1872's
+// duplicate locale keys: a clean merge that still ships a duplicate).
+// Deduplicated to this one definition; both callers use it unchanged.
 func (r *CatalogRepo) ItemThumbnails(ctx context.Context) (map[string]string, error) {
 	rows, err := r.db.QueryContext(ctx, `SELECT item_id, path FROM item_images WHERE role = 'thumbnail'`)
 	if err != nil {
