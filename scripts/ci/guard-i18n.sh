@@ -42,6 +42,17 @@
 #      following real verb even parses as to Go's fmt parser without
 #      changing the extracted verb-token list at all, so it shipped green
 #      before this count check existed.
+#   9. No locale file (web/locales/*.json, en.json included) may define the
+#      same top-level key twice (ut-docs#1872). Every check above, plus this
+#      script's own `keys()` helper, parses these files with plain
+#      `json.load`, which silently keeps only the LAST of a duplicated key —
+#      real precedent: two lanes each independently added the same five keys
+#      to a language pack's locale file at a different point in the file,
+#      git merged both additions with no conflict, and every guard (this one
+#      included, pre-fix) reported clean because the parser had already
+#      thrown one copy away before any check ever saw the data. This check
+#      reads the raw key/value PAIR list instead of the parsed object, so a
+#      duplicate is visible before anything discards it.
 # Fails CI so a new page/string can't ship untranslated.
 set -euo pipefail
 
@@ -568,10 +579,44 @@ if verb_hits:
             note = " (mixes positional and implicit verbs; use one style consistently on both sides)"
         print(f"  {path}: {k}: en={a_list} vs {b_list}{note}")
 
+# 9. Duplicate keys within a single locale file (ut-docs#1872) -- see the
+#    header comment's item 9 for the full why. Reads the raw pair list via
+#    object_pairs_hook instead of the parsed dict, so a key defined twice in
+#    the same file is visible even though json.load would otherwise keep
+#    only the last write and hide it from every check above.
+def duplicate_keys(path):
+    dupes = []
+
+    def hook(pairs):
+        seen = set()
+        for k, _ in pairs:
+            if k in seen:
+                dupes.append(k)
+            seen.add(k)
+        return dict(pairs)
+
+    with open(path) as f:
+        json.load(f, object_pairs_hook=hook)
+    return sorted(set(dupes))
+
+dup_hits = []
+for path in sorted(glob.glob("web/locales/*.json")):
+    dupes = duplicate_keys(path)
+    if dupes:
+        dup_hits.append((path, dupes))
+
+if dup_hits:
+    fail = True
+    print("guard-i18n: duplicate key(s) within a single locale file (last write silently wins):")
+    for path, dupes in dup_hits:
+        for k in dupes:
+            print(f"  {path}: {k}")
+
 if fail:
     sys.exit(1)
 print(f"✓ i18n guard: {len(used)} template keys resolve; all locales match en.json; "
       f"no hardcoded Go-side response strings found; no hand-written hx-vals literals found; "
       f"no hardcoded inline-JS status strings found; no hardcoded ToastMessage literals found; "
-      f"no missing Go-side i18n key literals found; no format/template verb mismatches found")
+      f"no missing Go-side i18n key literals found; no format/template verb mismatches found; "
+      f"no duplicate keys found")
 PY
