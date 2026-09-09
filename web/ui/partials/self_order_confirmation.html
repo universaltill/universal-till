@@ -1,6 +1,9 @@
 <div class="order-confirmation">
   <h3>{{ T "selforder.confirm.title" }}</h3>
-  <p class="order-confirmation-receipt">{{ T "selforder.confirm.receipt" }}: {{ .ReceiptNo }}</p>
+  <!-- ut-docs#1817: DisplayNo is the short customer-facing order number
+       (already resolved to ReceiptNo when the sale has none) -- ReceiptNo
+       itself is never shown here, it only feeds the tracking QR above. -->
+  <p class="order-confirmation-receipt">{{ T "selforder.confirm.receipt" }}: {{ .DisplayNo }}</p>
   <p class="muted">{{ T "selforder.confirm.hint" }}</p>
   {{ if .TrackingQR }}
   <!-- Order-tracking QR (ut-docs#527): scanning opens /o/{token} on the

@@ -51,6 +51,7 @@ func orderTrackingStatusData(o data.TrackedOrder, token string) map[string]any {
 	return map[string]any{
 		"Token":     token,
 		"ReceiptNo": o.ReceiptNo,
+		"DisplayNo": o.DisplayNo,
 		"Status":    o.Status,
 		"StatusKey": orderStatusLabelKey(o.Status),
 		"UpdatedAt": o.StatusUpdatedAt,

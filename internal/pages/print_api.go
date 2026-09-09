@@ -220,6 +220,19 @@ func buildReceiptDoc(ctx context.Context, d *common.Deps, receiptNo string) (pri
 		Charset:   cfg.Charset,
 		DrawerPin: cfg.DrawerPin,
 	}
+	// ut-docs#1817: the short, customer-facing order number is an ADDITIONAL
+	// line, never a replacement for "Receipt " above — receipt_no stays the
+	// printed fiscal identity and the scan-to-refund barcode target
+	// (sibling card ut-docs#1818). Only printed when it actually differs
+	// from receipt_no (a configured scheme resolved to something shorter);
+	// a legacy sale with no display_no would otherwise print the same
+	// number twice. English literal, matching every other Meta line in
+	// this function — this receipt path is not yet migrated to T()/
+	// printLocale (see the money/date handling above), a pre-existing gap
+	// this card does not attempt to close.
+	if detail.DisplayNo != "" && detail.DisplayNo != detail.ReceiptNo {
+		doc.Meta = append([]string{"Order " + detail.DisplayNo}, doc.Meta...)
+	}
 	if rd.ShowBarcode {
 		// Scan-to-refund (G28): the receipt number as a barcode.
 		doc.Barcode = detail.ReceiptNo

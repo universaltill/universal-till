@@ -34,7 +34,9 @@
       {{ if .NotFound }}
       <p class="muted">{{ T "tracking.not_found" }}</p>
       {{ else }}
-      <p class="tracking-receipt">{{ T "selforder.confirm.receipt" }}: {{ .ReceiptNo }}</p>
+      <!-- ut-docs#1817: DisplayNo is the short customer-facing order number,
+           already resolved to ReceiptNo when the sale has none. -->
+      <p class="tracking-receipt">{{ T "selforder.confirm.receipt" }}: {{ .DisplayNo }}</p>
       {{ template "order_tracking_status" . }}
       <p class="tracking-fineprint">{{ T "tracking.disclosure" }}</p>
       {{ end }}
