@@ -185,8 +185,8 @@ func TestDepartmentsForDay_QuantityZeroLineSurvives(t *testing.T) {
 	x(`INSERT INTO categories (id, name, parent_id) VALUES ('grocery','Grocery',NULL)`)
 	x(`INSERT INTO items (id, name, base_price, category_id) VALUES ('milk','Milk',200,'grocery')`)
 
-	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at)
-	   VALUES ('s1','R1','completed','sale',200,200,?)`, eod1012At(tm))
+	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at, local_date)
+	   VALUES ('s1','R1','completed','sale',200,200,?,date(?,'localtime'))`, eod1012At(tm), eod1012At(tm))
 	// Line 1: a normal sale of 1 unit.
 	x(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
 	   VALUES ('l1','s1',1,'milk','Milk',1,200,0,0,200,200)`)
@@ -237,8 +237,8 @@ func TestSalesForTaxBands_QuantityZeroLineWithRealTotalSurvives(t *testing.T) {
 	tm := time.Date(2026, 8, 20, 10, 0, 0, 0, time.UTC)
 
 	x(`INSERT INTO items (id, name, base_price) VALUES ('milk','Milk',200)`)
-	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at)
-	   VALUES ('s1','R1','completed','sale',200,200,?)`, eod1012At(tm))
+	x(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, total, created_at, local_date)
+	   VALUES ('s1','R1','completed','sale',200,200,?,date(?,'localtime'))`, eod1012At(tm), eod1012At(tm))
 	x(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
 	   VALUES ('l1','s1',1,'milk','Milk',1,200,0,0,200,200)`)
 	x(`INSERT INTO sale_lines (id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
