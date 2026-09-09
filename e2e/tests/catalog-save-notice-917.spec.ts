@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, openNewItemForm } from './helpers';
+import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
 
 // ut-docs#917: the item form's "Saved" notice was rendered and then wiped in
 // the same synchronous tick on the NEW-item path, so the operator never saw
@@ -71,11 +71,12 @@ test.describe('catalog item-form save notice (ut-docs#917)', () => {
     await fillNewItem(page, name);
     await page.locator('#item-form-submit').click();
     await expect(page.locator(msgSel).locator('.pos-notice.success')).toBeVisible();
-    // ut-docs#1901: close explicitly — the dialog is non-modal (.show(),
+    // ut-docs#1901: close it — the dialog is non-modal (.show(),
     // ut-docs#1385's OSK fix), so nothing outside it is inert, but its
     // large `position: fixed` box covers and intercepts the row click
-    // below.
-    await page.locator('#item-form-close-btn').click();
+    // below. ut-docs#1929: via closeItemForm, race-tolerant of the
+    // save-success auto-close timer.
+    await closeItemForm(page);
 
     // Click a plain cell, not the row's centre — the row-click handler
     // deliberately ignores clicks that land on a `.btn` inside it.

@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, setOskMode, openNewItemForm } from './helpers';
+import { watchConsole, setOskMode, openNewItemForm, closeItemForm } from './helpers';
 
 // ut-docs#1284: found by independent review of ut-docs#1275, out of that
 // card's explicitly-scoped five admin-screen files. Same root cause as
@@ -198,8 +198,9 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     // stacking: the dialog is a large `position: fixed` box near the top
     // of the viewport and can simply sit ON TOP of wherever the variants
     // panel renders, intercepting pointer events the same way any
-    // overlapping fixed element would.
-    await page.locator('#item-form-close-btn').click();
+    // overlapping fixed element would. ut-docs#1929: via closeItemForm,
+    // race-tolerant of the save-success auto-close timer.
+    await closeItemForm(page);
   }
 
   // The field ut-docs#1284's own issue body actually names at this line
