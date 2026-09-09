@@ -439,9 +439,12 @@ body.sale-screen .session-admin-link { display: none; }
 /* ---------- Plugin content pages (FAQ etc.) ---------- */
 .plugin-content-search { display: block; min-width: 260px; max-width: 100%;
                           margin: 0 0 1rem; }
-.catalog-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px;
+/* ut-docs#1901: the add/edit-item form moved into a full-screen <dialog>
+   (#item-form-modal below), so the list no longer shares this row with a
+   permanent 360px side panel — single column at every width now, not just
+   under the old 900px breakpoint. */
+.catalog-layout { display: grid; grid-template-columns: minmax(0, 1fr);
                   gap: 1rem; align-items: start; }
-@media (max-width: 900px) { .catalog-layout { grid-template-columns: 1fr; } }
 /* The items list scrolls INSIDE its card (sticky header) instead of making
    the page kilometres tall — the detail panel below stays one glance away. */
 .catalog-list #catalog-table { max-block-size: min(34rem, 62vh); overflow-y: auto; }
@@ -625,10 +628,51 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
    isActive checkbox, meant to show only in edit mode) stays visibly
    flex-displayed on page load. Found live while testing ut-docs#259. */
 .field-checks[hidden] { display: none; }
-/* The catalog's right panel must never tower over the page: it sticks and
-   scrolls inside itself (Farshid: "right panel is too long"). */
-.catalog-form { position: sticky; inset-block-start: .8rem;
-                max-block-size: calc(100vh - 9rem); overflow-y: auto; }
+/* ut-docs#1901: the add/edit-item form is now a near-full-screen <dialog>
+   (#item-form-modal, opened via .show() from catalog.html) instead of a
+   permanently-visible 360px sticky side panel — the dialog itself scrolls
+   internally (below), so .catalog-form no longer needs its own
+   sticky/max-height treatment; it's now just the fields' layout wrapper.
+   Opened via .show(), NOT showModal() — same fix, same reasoning
+   (ut-docs#1385) as #hold-modal/#pfand-modal/#elevation-modal/
+   #table-add-modal/.payment-overlay above: showModal()'s top-layer/
+   inert-outside behaviour makes the custom on-screen keyboard (#osk,
+   appended to <body>, never re-parented into whichever dialog is open)
+   completely unreachable, and this form has more OSK-triggering fields
+   (barcode, name, price, SKU, description...) than any of those five.
+   `position: fixed` + explicit centering replace the native top-layer
+   centering .show() no longer provides; `z-index: 500` matches the same
+   five for the identical reason (needed now that .show() doesn't get the
+   browser's native stacking), staying below #osk's `z-index: 1000` so the
+   keyboard still renders on top of whichever field it's typing into
+   here. No ::backdrop rule — a .show() dialog never paints one, same as
+   the other five non-modal dialogs, none of which replicate dimming. */
+.item-form-modal { position: fixed; inset-block-start: 4vh; inset-inline: 0; margin-inline: auto;
+                    z-index: 500; width: 94vw; max-width: 60rem; max-height: 92vh; overflow-y: auto;
+                    border: 1px solid var(--border); border-radius: var(--radius);
+                    box-shadow: var(--shadow); padding: 1.25rem 1.5rem;
+                    /* ut-docs#1901 (independent review, N1): explicit,
+                       same as .payment-overlay above — without it this
+                       relies on the UA's own dialog background (`canvas`)
+                       showing through around the child .card, which is
+                       correct today only because no theme plugin yet
+                       overrides that default (see the elevation-modal
+                       block below for the trap this avoids). */
+                    background: var(--surface); }
+.item-form-modal:not([open]) { display: none; }
+/* ut-docs#1901 (independent review, N3): 700px is ALREADY inside the
+   94vw base rule's own applicable range (94vw doesn't change by width),
+   so only `padding` actually differs here — `width: 94vw` is a dead
+   restatement, not a real override. */
+@media (max-width: 700px) { .item-form-modal { padding: 1rem; } }
+/* ut-docs#1901, same fix as body.osk-padded .payment-overlay above: the
+   OSK is `position: fixed` + `z-index: 1000`, spanning the bottom 15.5rem
+   of the viewport regardless of this dialog's own box — without this,
+   whichever field/button sits in that band (very likely here: this form
+   is taller than .payment-overlay's, and Create Item/Save Changes is
+   near its own bottom) is genuinely covered, not merely close to an
+   edge, the exact failure #1385 found for the payment overlay. */
+body.osk-padded .item-form-modal { max-height: calc(92vh - 15.5rem); }
 .catalog-extra { margin-top: .9rem; border-top: 1px solid var(--border); padding-top: .6rem; }
 .catalog-extra summary { font-weight: 600; cursor: pointer; color: var(--muted);
                          font-size: .85rem; }
@@ -1179,6 +1223,16 @@ a.btn, a.btn:hover { text-decoration: none; }
 .btn-tile { border-inline-start: 4px solid var(--cat-color, var(--accent)); padding-inline-start: calc(.4rem - 3px); }
 .btn-tile:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15, 23, 42, .12); }
 .btn-tile:active { transform: scale(.97); }
+/* ut-docs#1901: solid tile-color background for a photo-less item — set
+   via --tile-color (product-tile, buttons.html), inline per tile, only
+   when the item has no image AND a color. Every catalogtypes.ItemColors()
+   swatch is a deliberately dark/muted tone (the "Slate" direction), so a
+   single fixed white foreground reads on all of them without per-swatch
+   contrast logic — same reasoning as .picker-tile[aria-pressed] not
+   needing one either. */
+.btn-tile.tile-colored { background: var(--tile-color); }
+.btn-tile.tile-colored .tile-name,
+.btn-tile.tile-colored .tile-price { color: #fff; }
 .tile-name {
   font-weight: 600; font-size: .9rem; line-height: 1.2; white-space: normal;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
@@ -2474,6 +2528,23 @@ body.login-screen {
    tabbing onto a suggested tile shows BOTH the dashed suggestion ring and
    :focus-visible's own outline. */
 .builtin-icon-tile.builtin-icon-suggested { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); border-style: dashed; }
+
+/* Item color swatch picker (ut-docs#1901): same .picker-grid/.picker-tile
+   pattern and aria-pressed convention as the built-in icon grid just
+   above, one small dot + translated name per tile rather than an image.
+   --swatch (set inline per tile, catalog.html) feeds .swatch-dot's
+   background — the one place a raw hex from catalogtypes.ItemColors()
+   reaches CSS on the PICKER side; the tile's own selected/pressed state
+   still comes from .picker-tile[aria-pressed="true"], unchanged. */
+.item-color-grid { grid-template-columns: repeat(auto-fill, minmax(6rem, 1fr)); }
+.item-color-tile { flex-direction: column; gap: .3rem; min-block-size: 3.6rem; padding: .5rem .4rem; font-size: .78rem; font-weight: 500; }
+.swatch-dot { display: block; inline-size: 1.15rem; block-size: 1.15rem; border-radius: 50%;
+              background: var(--swatch, transparent); border: 1px solid rgba(15, 23, 42, .18); }
+/* Catalog list (ut-docs#1901, cheap nice-to-have): a small dot next to the
+   item name so a color is visible in the list too, not only on the
+   sale-screen tile. */
+.color-dot { display: inline-block; inline-size: .65rem; block-size: .65rem; border-radius: 50%;
+             margin-inline-end: .4rem; vertical-align: middle; border: 1px solid rgba(15, 23, 42, .18); }
 
 /* Bottom status bar: always-visible version + live connectivity. Bookends the
    dark top nav; part of the body flex column so it sits at the bottom. */
