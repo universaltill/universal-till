@@ -1,0 +1,46 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "orders.view.title" }} #{{ .Sale.ReceiptNo }}</h1>
+  <a class="btn secondary" href="/orders">← {{ T "orders.title" }}</a>
+</div>
+
+<div class="card" style="max-width:46rem">
+  <p id="order-status-line"><span class="order-status" data-status="{{ .Status }}">{{ T .StatusKey }}</span></p>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>{{ T "journal.detail.item" }}</th>
+        <th>{{ T "journal.detail.qty" }}</th>
+        <th>{{ T "journal.detail.price" }}</th>
+        <th>{{ T "journal.detail.total" }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Sale.Lines }}
+      <tr>
+        <td>{{ .Name }}{{ if .SKU }} <span class="muted">{{ .SKU }}</span>{{ end }}</td>
+        <td>{{ .Qty }}</td>
+        <td>{{ money .UnitPrice }}</td>
+        <td>{{ money .LineTotal }}</td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  <p style="margin-top:.6rem"><strong>{{ T "journal.detail.total" }}: {{ money .Sale.Total }}</strong></p>
+
+  <div style="margin-top:1rem">
+    {{/* Reuses the exact same one-tap endpoint + OrderStatusAllowed guard
+         the /orders board's own Collect button posts to (ut-docs#1818) --
+         no new mutation path, and the SAME target-the-status-cell pattern
+         orders_list.html's own buttons use, not a swap of the button
+         itself -- so the header's status line, the button and the refund
+         link all stay consistent after the tap (a stale header was a
+         review finding on this page's first draft). A terminal status's
+         OOB row-delete marker safely no-ops here since this page has no
+         order-row-{receipt} element. Tapping Collect again afterwards is a
+         harmless no-op under OrderStatusAllowed's forward-only rule. */}}
+    <button class="btn" hx-post="/api/orders/{{ .Sale.ReceiptNo }}/status" hx-vals='{"status":"collected"}' hx-target="#order-status-line" hx-swap="innerHTML" data-testid="collect-btn">{{ T "orders.status.collected" }}</button>
+    <a class="btn secondary" href="/refund/{{ .Sale.ReceiptNo }}">{{ T "orders.view.refund_link" }}</a>
+  </div>
+</div>
+{{ end }}
