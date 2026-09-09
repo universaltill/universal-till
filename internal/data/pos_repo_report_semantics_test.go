@@ -133,7 +133,16 @@ func TestWindowReports_ExcludeReturns_DeptTillPayments(t *testing.T) {
 		t.Fatalf("SalesByTill = %+v, want one row count 1 / revenue 500", tills)
 	}
 
-	day, err := repo.DepartmentsForDay(ctx, when[:10])
+	// ut-docs#1864: NOT when[:10]. b8At formats as UTC, but DepartmentsForDay
+	// groups by the LOCAL business day, so a UTC-derived date key disagrees
+	// with the query for any host timezone where now-2h lands on a different
+	// UTC date than local date -- making this test fail for a few hours every
+	// night (BST and NZST both fail at 01:06 UTC; UTC and PDT pass). Derive
+	// the key through SQLite's own date(...,'localtime') instead, exactly as
+	// ut-docs#559 already did for the sibling assertions in
+	// pos_repo_batch8_reports_test.go -- see b8ExpectedDay's doc comment,
+	// which describes this precise bug class.
+	day, err := repo.DepartmentsForDay(ctx, b8ExpectedDay(t, d, tm, 0, 0))
 	if err != nil {
 		t.Fatal(err)
 	}
