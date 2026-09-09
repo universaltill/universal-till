@@ -49,7 +49,11 @@ type menuTile struct {
 // a plugin brings with it, so a plugin-contributed tile can never get an
 // entry here. See genericFallbackIcon below for that case (ut-docs#1722).
 var iconSVGFor = map[string]string{
-	"/":                  "receipt",
+	// Dead today (baseMenu deliberately has no "/" entry -- ut-docs#1829,
+	// TestBaseMenu_NoRedundantHomeTile -- so add() never looks this key
+	// up), kept only so a future caller doesn't have to guess: matches
+	// nav.html's own sale-entry-point icon (ut-docs#1896).
+	"/":                  "shopping-cart",
 	"/designer":          "palette",
 	"/inventory":         "package",
 	"/shifts":            "clock",

@@ -25,7 +25,12 @@ import (
 // keep the same viewBox/stroke attributes: iconHTML wraps the bare paths in
 // one shared <svg> element precisely so no icon can drift on its own again.
 var railIcons = map[string]string{
-	// Sale screen (nav.till)
+	// Receipt document glyph — the fiscal-device menu tile. Was also the
+	// sale-screen nav rail's "nav.till" icon until ut-docs#1896 swapped that
+	// one spot to "shopping-cart" (see below): a receipt reads as a place
+	// ("the till"), a cart reads as the action ("sell"), and the product
+	// owner's comparison against the SumUp app on the pilot tablet asked for
+	// the latter.
 	"receipt": `<path d="M4 2v20l2-1 2 1 2-1 2 1 2-1 2 1 2-1 2 1V2l-2 1-2-1-2 1-2-1-2 1-2-1-2 1Z"/><path d="M14 8H8"/><path d="M16 12H8"/><path d="M13 16H8"/>`,
 	// Menu (nav.menu)
 	"menu": `<line x1="4" x2="20" y1="12" y2="12"/><line x1="4" x2="20" y1="6" y2="6"/><line x1="4" x2="20" y1="18" y2="18"/>`,
@@ -104,7 +109,10 @@ var railIcons = map[string]string{
 	"clipboard-list":   `<rect width="8" height="4" x="8" y="2" rx="1" ry="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/><path d="M12 11h4"/><path d="M12 16h4"/><path d="M8 11h.01"/><path d="M8 16h.01"/>`,
 	// Pfand-refund tile (menu.html) and the tender quick-pay row (index.html
 	// phone-fallback) — see those templates' own comments.
-	"recycle":       `<path d="M7 19H4.815a1.83 1.83 0 0 1-1.57-.881 1.785 1.785 0 0 1-.004-1.784L7.196 9.5"/><path d="M11 19h8.203a1.83 1.83 0 0 0 1.556-.89 1.784 1.784 0 0 0 0-1.775l-1.226-2.12"/><path d="m14 16-3 3 3 3"/><path d="M8.293 13.596 7.196 9.5 3.1 10.598"/><path d="m9.344 5.811 1.093-1.892A1.83 1.83 0 0 1 11.985 3a1.784 1.784 0 0 1 1.546.888l3.943 6.843"/><path d="m13.378 9.633 4.096 1.098 1.097-4.096"/>`,
+	"recycle": `<path d="M7 19H4.815a1.83 1.83 0 0 1-1.57-.881 1.785 1.785 0 0 1-.004-1.784L7.196 9.5"/><path d="M11 19h8.203a1.83 1.83 0 0 0 1.556-.89 1.784 1.784 0 0 0 0-1.775l-1.226-2.12"/><path d="m14 16-3 3 3 3"/><path d="M8.293 13.596 7.196 9.5 3.1 10.598"/><path d="m9.344 5.811 1.093-1.892A1.83 1.83 0 0 1 11.985 3a1.784 1.784 0 0 1 1.546.888l3.943 6.843"/><path d="m13.378 9.633 4.096 1.098 1.097-4.096"/>`,
+	// Also the sale-screen nav rail's "nav.till" icon and both "back to
+	// sale" buttons (menu.html, error_page.html) since ut-docs#1896 — every
+	// entry point back to selling now draws the same cart glyph.
 	"shopping-cart": `<path d="m2.05 2.05 1.099-.028a1 1 0 0 1 1.008.815l2.69 14.347A1 1 0 0 0 7.83 18H18"/><path d="M4.563 5h16.435a1 1 0 0 1 .981 1.204l-1.026 6.226A2 2 0 0 1 18.962 14H6.25"/><circle cx="18" cy="20" r="2"/><circle cx="8" cy="20" r="2"/>`,
 }
 

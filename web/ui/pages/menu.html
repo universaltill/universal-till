@@ -1,7 +1,10 @@
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "nav.menu" }}</h1>
-  <a class="btn primary btn-touch" href="/">← {{ T "menu.back_to_sale" }}</a>
+  <!-- ut-docs#1896: the plain "←" text arrow is replaced by the same
+       shopping-cart glyph the nav rail's own sale entry point now uses
+       (nav.html), so every route back to selling reads consistently. -->
+  <a class="btn primary btn-touch" href="/"><span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span> {{ T "menu.back_to_sale" }}</a>
 </div>
 
 <div class="menu-grid">
