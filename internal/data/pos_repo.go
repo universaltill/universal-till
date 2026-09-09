@@ -5667,6 +5667,29 @@ type ObsoleteItem struct {
 	Name string
 }
 
+// CountObsoleteItems returns how many items CleanupObsoleteItems would
+// remove — ALL of them, with no LIMIT, unlike ListObsoleteItems.
+//
+// ut-docs#1841: the step-up PIN dialog's summary states this count, and it
+// is the only description of the blast radius the approver sees before
+// authorising a permanent deletion. ListObsoleteItems caps at 200 rows
+// (its own `limit` clamp) because it feeds a preview TABLE, where showing
+// the first 200 is reasonable; CleanupObsoleteItems has no such cap and
+// deletes every matching row. Reusing the list's length as the count would
+// therefore promise "remove 200 products" and then delete 350 — understating
+// a destructive action in the exact sentence that exists to prevent one.
+// Same obsoleteItemsWhere predicate as both, so the three can never disagree
+// about which rows are in scope.
+func (r *POSRepo) CountObsoleteItems(ctx context.Context) (int64, error) {
+	var n int64
+	if err := r.db.QueryRowContext(ctx, `
+SELECT COUNT(*) FROM items
+WHERE `+obsoleteItemsWhere).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count obsolete items: %w", err)
+	}
+	return n, nil
+}
+
 // ListObsoleteItems returns the inactive, never-sold items that CleanupObsoleteItems
 // would remove, so the manager can preview before confirming.
 func (r *POSRepo) ListObsoleteItems(ctx context.Context, limit int) ([]ObsoleteItem, error) {
@@ -5696,7 +5719,13 @@ ORDER BY name LIMIT ?`, limit)
 // operational children (inventory levels, price history; barcodes/images/variants
 // cascade). Items with any sale or stock history are left untouched. Audited.
 // Returns the number of items removed.
-func (r *POSRepo) CleanupObsoleteItems(ctx context.Context, actorID string) (int64, error) {
+//
+// blockedActorID (ut-docs#1841, ADR-0087): see ResetTransactionHistory's
+// doc comment (reset_archive_repo.go) — "" on the plain path, the
+// originally-blocked session user once a checkStepUp PIN elevated the
+// request; the audit row uses InsertAuditElevated instead of InsertAudit
+// exactly when this is non-empty.
+func (r *POSRepo) CleanupObsoleteItems(ctx context.Context, actorID, blockedActorID string) (int64, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -5725,7 +5754,12 @@ func (r *POSRepo) CleanupObsoleteItems(ctx context.Context, actorID string) (int
 		return 0, nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	if err := r.InsertAudit(ctx, tx, actorID, "system", "catalog", "catalog_cleanup",
+	if blockedActorID != "" {
+		if err := r.InsertAuditElevated(ctx, tx, actorID, blockedActorID, "system", "catalog", "catalog_cleanup",
+			map[string]any{"items_deleted": count}, now, ""); err != nil {
+			return 0, err
+		}
+	} else if err := r.InsertAudit(ctx, tx, actorID, "system", "catalog", "catalog_cleanup",
 		map[string]any{"items_deleted": count}, now, ""); err != nil {
 		return 0, err
 	}

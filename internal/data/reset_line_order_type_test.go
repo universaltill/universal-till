@@ -21,7 +21,7 @@ func TestResetThenRestoreRoundTrip_SaleLineOrderType(t *testing.T) {
 
 	repo := data.NewPOSRepo(d.DB)
 	ctx := context.Background()
-	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -29,7 +29,7 @@ func TestResetThenRestoreRoundTrip_SaleLineOrderType(t *testing.T) {
 	if err := d.DB.QueryRow(`SELECT order_type FROM sale_lines_archive WHERE id='l1'`).Scan(&archived); err != nil || archived != "takeaway" {
 		t.Fatalf("archived l1 order_type=%q err=%v, want takeaway", archived, err)
 	}
-	if _, err := repo.RestoreResetBatch(ctx, batchID, ""); err != nil {
+	if _, err := repo.RestoreResetBatch(ctx, batchID, "", ""); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 	var restored string
