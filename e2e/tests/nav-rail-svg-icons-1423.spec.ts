@@ -48,8 +48,10 @@ test.describe('sale-screen nav rail icons are one SVG set (ut-docs#1423)', () =>
       expect(b.w, `${b.icon} must render at a real size`).toBeGreaterThan(16);
     }
     const names = boxes.map((b) => b.icon);
+    // 'shopping-cart', not 'receipt': ut-docs#1896 swapped the till rail
+    // item's icon to the cart glyph the "Sell" label now goes with.
     expect(names, 'bug — one of the two icons that regressed twice — must be in the parity set').toEqual(
-      expect.arrayContaining(['bug', 'help', 'receipt']),
+      expect.arrayContaining(['bug', 'help', 'shopping-cart']),
     );
   });
 
@@ -57,7 +59,7 @@ test.describe('sale-screen nav rail icons are one SVG set (ut-docs#1423)', () =>
     await page.setViewportSize({ width: 360, height: 740 });
     await page.goto('/catalog');
     const till = page.locator('[data-testid="nav-till"]');
-    await expect(till.locator('svg[data-icon="receipt"]')).toBeVisible();
+    await expect(till.locator('svg[data-icon="shopping-cart"]')).toBeVisible();
     await expect(till.locator('.nav-toggle-label')).toBeVisible();
   });
 });

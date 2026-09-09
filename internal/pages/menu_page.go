@@ -53,7 +53,13 @@ type menuTile struct {
 // tile can never get an entry here. See genericFallbackIcon below for that
 // case (ut-docs#1722).
 var iconSVGFor = map[string]string{
-	"/":          "receipt",
+	// "/" is not a declared uislot.CoreMenu entry (ut-docs#1829's
+	// TestBaseMenu_NoRedundantHomeTile / its ADR-0088 successor keep it
+	// that way), so this key is unreachable through the tile-rendering
+	// path today -- kept only so a future caller doesn't have to guess.
+	// "shopping-cart", not "receipt": matches nav.html's own
+	// sale-entry-point icon (ut-docs#1896).
+	"/":          "shopping-cart",
 	"/inventory": "package",
 	"/catalog":   "tag",
 	"/tills":     "monitor",
