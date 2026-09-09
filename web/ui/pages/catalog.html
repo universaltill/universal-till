@@ -1,7 +1,10 @@
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "nav.catalog" }}</h1>
-  <div style="display:flex; gap:.5rem; align-items:center">
+  <!-- flex-wrap (ut-docs#1900): with the Option sets button (and #1901's
+       new Add-item button) this row no longer fits 1024px in one line —
+       it wraps instead of pushing the search box off-screen. -->
+  <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center">
     <!-- ut-docs#1901: the add/edit-item form is now a full-screen
          <dialog> (#item-form-modal, below) instead of an always-visible
          360px side panel, so creating a NEW item needs an explicit
@@ -13,6 +16,11 @@
          panel below (catalog_variants.html); this is the shop-wide browse
          screen for seeing every group across every item at once. -->
     <a class="btn secondary" href="/modifiers">{{ T "modifiers.title" }}</a>
+    <!-- ut-docs#1900: reusable option sets ("Size: S / M / L") are defined
+         once on their own screen and applied per item from the detail
+         panel below — a sibling of the Modifiers button, same placement
+         the #1899 review settled on, not a new top-level nav tile. -->
+    <a class="btn secondary" href="/catalog/option-sets">{{ T "catalog.option_sets.button" }}</a>
     <button id="catalog-export-btn" class="btn secondary" hx-post="/api/catalog/export-save" hx-target="#export-msg" hx-swap="innerHTML">{{ T "import.export_btn" }}</button>
     <div id="export-msg" class="muted" aria-live="polite"></div>
     <!-- ut-docs#1356: bulk backfill, preview-before-apply — same

@@ -137,7 +137,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// barcode summaries), so the affected item's ROW rides along as an HTMX
 	// out-of-band fragment when withTable is set (ut-docs#1363 — previously
 	// this injected the entire re-rendered table).
-	renderVariantsPanel := func(w http.ResponseWriter, r *http.Request, itemID string, withTable bool) {
+	//
+	// extra is merged into the panel's template data on top of the standard
+	// fields — the option-set generator's one-shot confirmation line
+	// (ut-docs#1900: "N variant(s) created" / "apply a set first") rides
+	// along this way rather than through a second render path.
+	renderVariantsPanelWith := func(w http.ResponseWriter, r *http.Request, itemID string, withTable bool, extra map[string]any) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		pdata := map[string]any{"ItemID": "", "ItemName": ""}
 		if itemID != "" {
@@ -157,6 +162,22 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				// ADR-0020: shows deactivated groups/options too (unlike the
 				// sale-time ListGroupsForItem) so a manager can reactivate one.
 				modGroups, _ := data.NewModifierRepo(d.Db).ListAllGroupsForItem(r.Context(), itemID)
+				// ut-docs#1900: the shop's option sets (active only — the
+				// checkbox row offers what can be applied now) and which of
+				// them this item's range is generated from.
+				optRepo := data.NewOptionSetRepo(d.Db)
+				allSets, _ := optRepo.ListOptionSets(r.Context())
+				optionSets := make([]data.OptionSetView, 0, len(allSets))
+				for _, s := range allSets {
+					if s.IsActive {
+						optionSets = append(optionSets, s)
+					}
+				}
+				applied, _ := optRepo.ItemOptionSets(r.Context(), itemID)
+				appliedIDs := make(map[string]bool, len(applied))
+				for _, s := range applied {
+					appliedIDs[s.ID] = true
+				}
 				pdata = map[string]any{
 					"ItemID":         itemID,
 					"ItemName":       label.Name,
@@ -165,6 +186,11 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 					"CostMajor":      costMajor,
 					"LeadTimeDays":   leadTimeDays,
 					"ModifierGroups": modGroups,
+					"OptionSets":     optionSets,
+					"AppliedSetIDs":  appliedIDs,
+				}
+				for k, v := range extra {
+					pdata[k] = v
 				}
 			}
 		}
@@ -174,6 +200,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if withTable {
 			writeRowOOB(w, r, itemID, false, snapshotThumbColumn(r))
 		}
+	}
+	renderVariantsPanel := func(w http.ResponseWriter, r *http.Request, itemID string, withTable bool) {
+		renderVariantsPanelWith(w, r, itemID, withTable, nil)
 	}
 
 	// Variant options as JSON — the labels form's variant picker.
@@ -349,6 +378,147 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"theme":     d.CurrentState().Theme,
 			"Groups":    groups,
 		})(w, r)
+	})
+
+	// Reusable option sets (ut-docs#1900): a shop-wide screen where a
+	// merchant defines a named, ordered axis once ("Size: S / M / L") and
+	// the per-item panel (catalog_variants.html) applies up to two of them
+	// to generate the item's real item_variants range in one step. Kept
+	// separate from checkout-time modifiers (/modifiers, ADR-0020), which
+	// change nothing here.
+	mux.HandleFunc("GET /catalog/option-sets", func(w http.ResponseWriter, r *http.Request) {
+		sets, err := data.NewOptionSetRepo(d.Db).ListOptionSets(r.Context())
+		if err != nil {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
+			return
+		}
+		httpx.Render("ui/pages/option_sets.html", map[string]any{
+			"title":     "Option sets",
+			"menuItems": d.MenuSnapshot(),
+			"theme":     d.CurrentState().Theme,
+			"Sets":      sets,
+		})(w, r)
+	})
+
+	// renderOptionSetsList answers a mutation on the option-sets screen with
+	// its re-rendered list fragment (#option-sets-list, outerHTML swap).
+	renderOptionSetsList := func(w http.ResponseWriter, r *http.Request) {
+		sets, err := data.NewOptionSetRepo(d.Db).ListOptionSets(r.Context())
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+			return
+		}
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		httpx.RenderWith(files(
+			filepath.Join("web", "ui", "pages", "option_sets.html"),
+		), funcs)("option_sets_list", map[string]any{"Sets": sets})(w, r)
+	}
+
+	// Create a shop-wide option set. Not item-scoped: called from the
+	// option-sets screen (re-renders its list); a panelItem, if one ever
+	// arrives, re-renders that item's panel instead so the new set shows up
+	// in its checkbox row immediately.
+	mux.HandleFunc("POST /api/catalog/option-set", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
+		_ = r.ParseForm()
+		name := strings.TrimSpace(r.Form.Get("name"))
+		if name == "" {
+			http.Error(w, "name required", http.StatusBadRequest)
+			return
+		}
+		if _, err := data.NewOptionSetRepo(d.Db).CreateOptionSet(r.Context(), name); err != nil {
+			optionSetAwareError(w, r, http.StatusBadRequest, err)
+			return
+		}
+		if panelItem := strings.TrimSpace(r.Form.Get("panelItem")); panelItem != "" {
+			renderVariantsPanel(w, r, panelItem, false)
+			return
+		}
+		renderOptionSetsList(w, r)
+	})
+
+	// Append a value to an option set (sort_order = max + 1).
+	mux.HandleFunc("POST /api/catalog/option-set-value", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
+		_ = r.ParseForm()
+		setID := strings.TrimSpace(r.Form.Get("optionSetId"))
+		value := strings.TrimSpace(r.Form.Get("value"))
+		if setID == "" || value == "" {
+			http.Error(w, "optionSetId and value required", http.StatusBadRequest)
+			return
+		}
+		if _, err := data.NewOptionSetRepo(d.Db).AddOptionSetValue(r.Context(), setID, value); err != nil {
+			optionSetAwareError(w, r, http.StatusBadRequest, err)
+			return
+		}
+		if panelItem := strings.TrimSpace(r.Form.Get("panelItem")); panelItem != "" {
+			renderVariantsPanel(w, r, panelItem, false)
+			return
+		}
+		renderOptionSetsList(w, r)
+	})
+
+	// Apply the checked option sets (repeated optionSetIds, checkbox DOM
+	// order = axis order) to the panel's item. The repo enforces the
+	// at-most-two rule as a real constraint; the panel's checkbox row also
+	// disables a third box client-side, but that is a convenience, not the
+	// guard.
+	mux.HandleFunc("POST /api/catalog/item/option-sets", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
+		_ = r.ParseForm()
+		itemID := strings.TrimSpace(r.Form.Get("panelItem"))
+		if itemID == "" {
+			http.Error(w, "panelItem required", http.StatusBadRequest)
+			return
+		}
+		var ids []string
+		for _, id := range r.Form["optionSetIds"] {
+			if id = strings.TrimSpace(id); id != "" {
+				ids = append(ids, id)
+			}
+		}
+		if err := data.NewOptionSetRepo(d.Db).ApplyOptionSetsToItem(r.Context(), itemID, ids); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
+			return
+		}
+		renderVariantsPanel(w, r, itemID, false)
+	})
+
+	// Run the generator: one item_variants row per missing combination of
+	// the item's applied sets' values, never duplicating or removing an
+	// existing one (safe to re-run after adding a value — the
+	// ut-docs#1839 re-import-duplication class of bug is exactly what the
+	// item_variant_options link table exists to prevent). Answers with the
+	// panel plus a "N variant(s) created" line; the item's table row rides
+	// along OOB since its variant summary just changed.
+	mux.HandleFunc("POST /api/catalog/item/generate-variants", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
+		_ = r.ParseForm()
+		itemID := strings.TrimSpace(r.Form.Get("panelItem"))
+		if itemID == "" {
+			http.Error(w, "panelItem required", http.StatusBadRequest)
+			return
+		}
+		created, err := data.NewOptionSetRepo(d.Db).GenerateVariants(r.Context(), itemID)
+		if errors.Is(err, data.ErrNoOptionSetsApplied) {
+			// Not a failure — the operator just pressed Generate before
+			// Apply. Say so in the panel rather than with an error toast.
+			renderVariantsPanelWith(w, r, itemID, false, map[string]any{"GenerateNoSets": true})
+			return
+		}
+		if err != nil {
+			skuAwareError(w, r, http.StatusBadRequest, err)
+			return
+		}
+		renderVariantsPanelWith(w, r, itemID, true, map[string]any{"Generated": true, "GeneratedCount": created})
 	})
 
 	mux.HandleFunc("/api/catalog/item", func(w http.ResponseWriter, r *http.Request) {
@@ -1519,6 +1689,18 @@ func files(paths ...string) []string { return paths }
 func skuAwareError(w http.ResponseWriter, r *http.Request, status int, err error) {
 	if errors.Is(err, data.ErrSKUExists) {
 		common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.sku_exists")
+		return
+	}
+	common.LogAndLocalizedError(w, r, status, "catalog.error.invalid_request", "catalog", err)
+}
+
+// optionSetAwareError is skuAwareError's twin for the option-set routes
+// (ut-docs#1900): a duplicate set name or a duplicate value within a set is
+// the one mistake an operator actually makes here, so it gets its own
+// actionable message; anything else takes the generic translated+logged path.
+func optionSetAwareError(w http.ResponseWriter, r *http.Request, status int, err error) {
+	if errors.Is(err, data.ErrOptionSetExists) || errors.Is(err, data.ErrOptionSetValueExists) {
+		common.LocalizedError(w, r, status, "catalog.option_sets.exists")
 		return
 	}
 	common.LogAndLocalizedError(w, r, status, "catalog.error.invalid_request", "catalog", err)
