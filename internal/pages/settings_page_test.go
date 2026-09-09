@@ -2566,3 +2566,44 @@ func TestSettingsShowsFiscalSignerMissingBanner(t *testing.T) {
 		t.Fatal("banner still shown once a signer plugin is active")
 	}
 }
+
+// ut-docs#1887 (sibling to #1814): the raw-key /api/settings/upsert path's
+// two "owner (admin) required" gates (fiscal.KeyOverrideUntil/Reason/Actor
+// and fiscal.KeySystemOfRecord/wireKeySigningDeviceConfigured — ADR-0048's
+// fiscal_tse_override check, admin/super_admin only) used to answer with a
+// bare, untranslated http.Error body instead of the established
+// httpx.RenderError + fiscaldevice.error.owner_required treatment #1814
+// already gave the same gate on fiscal_device_page.go.
+func TestSettingsUpsert_OwnerRequiredGatesAreTranslatedFullLayout(t *testing.T) {
+	// KeyOverrideUntil's family 400s on any non-empty value BEFORE the
+	// owner-required check even runs (real validation, not a role check —
+	// see the comment above that switch) — clearing (empty value) is the
+	// only way to reach ITS owner-required site specifically.
+	cases := []struct {
+		key   string
+		value string
+	}{
+		{fiscal.KeyOverrideUntil, ""},
+		{fiscal.KeySystemOfRecord, "true"},
+		{"fiscal.signing_device_configured", "true"},
+	}
+	for _, c := range cases {
+		t.Run(c.key, func(t *testing.T) {
+			mux, _, _ := newFullAuthDeps(t)
+			// mgrUser is a manager, not admin/super_admin — fiscal_tse_override
+			// refuses it (ADR-0048 Decision 3).
+			rec := postForm(mux, "/api/settings/upsert", url.Values{"key": {c.key}, "value": {c.value}}, &mgrUser)
+			if rec.Code != http.StatusForbidden {
+				t.Fatalf("code = %d, want 403: %s", rec.Code, rec.Body.String())
+			}
+			body := rec.Body.String()
+			if !strings.Contains(body, `class="nav"`) {
+				t.Fatalf("error response has no nav rail (bare body, dead end on a pinned kiosk):\n%s", body)
+			}
+			want := en("fiscaldevice.error.owner_required")
+			if !strings.Contains(body, want) {
+				t.Fatalf("expected the translated owner_required message %q, got: %s", want, body)
+			}
+		})
+	}
+}

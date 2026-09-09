@@ -77,6 +77,10 @@ jobs:
         run: bash scripts/ci/guard-page-http-error_test.sh
       - name: Plugin-menu locked-read guard regression test
         run: bash scripts/ci/guard-plugin-menu-read_test.sh
+      - name: Plugin-settings BumpGeneration guard
+        run: bash scripts/ci/guard-plugin-settings-bump.sh
+      - name: Plugin-settings BumpGeneration guard regression test
+        run: bash scripts/ci/guard-plugin-settings-bump_test.sh
       - name: i18n coverage guard
         run: bash scripts/ci/guard-i18n.sh
       - name: i18n coverage guard regression test
