@@ -15,6 +15,7 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fiscal"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
@@ -365,16 +366,37 @@ func TestFiscalOverride_PINPaths(t *testing.T) {
 
 	cashier := auth.User{ID: "cash1", Role: "cashier"}
 
-	// No PIN at all: forbidden.
+	// No PIN at all: forbidden. ut-docs#1887 (sibling to #1814): this and
+	// the manager-PIN case below used to answer with the raw literal
+	// "owner (admin) approval required" instead of the translated
+	// fiscaldevice.error.owner_required text every other owner-required
+	// gate in this codebase already uses.
 	rec := grantOverride(t, mux, cashier, validOverrideBody(""))
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 with no PIN, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if want := en("fiscaldevice.error.owner_required"); !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("expected the translated owner_required message %q, got: %s", want, rec.Body.String())
+	}
+	// Prove this is actually locale-aware, not an English literal that
+	// happens to match en() by coincidence — request Farsi explicitly.
+	faReq := httptest.NewRequest(http.MethodPost, "/api/fiscal/signing-override?lang=fa", strings.NewReader(validOverrideBody("")))
+	faReq.Header.Set("Content-Type", "application/json")
+	faReq.Header.Set("Accept", "application/json")
+	faReq = auth.WithUser(faReq, cashier)
+	faRec := httptest.NewRecorder()
+	mux.ServeHTTP(faRec, faReq)
+	if want := httpx.T("fa", "fiscaldevice.error.owner_required"); !strings.Contains(faRec.Body.String(), want) {
+		t.Fatalf("expected the Farsi owner_required message %q, got: %s", want, faRec.Body.String())
 	}
 
 	// Manager PIN: authenticates, but the role isn't owner/admin — refused.
 	rec = grantOverride(t, mux, cashier, validOverrideBody(`,"owner_pin":"246801"`))
 	if rec.Code != http.StatusForbidden {
 		t.Fatalf("expected 403 for a manager PIN, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if want := en("fiscaldevice.error.owner_required"); !strings.Contains(rec.Body.String(), want) {
+		t.Fatalf("expected the translated owner_required message %q, got: %s", want, rec.Body.String())
 	}
 
 	// Admin PIN: granted, and the ADMIN (not the requesting cashier) is the
