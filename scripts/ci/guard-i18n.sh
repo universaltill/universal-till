@@ -34,7 +34,14 @@
 #   8. Every locale value's format/template verbs (%d, %s, {{name}}, {0}, ...)
 #      must match en.json's for that key (ut-docs#1865) — checks 1-2 only
 #      compare key SETS, so a translation could drop/invent/change a verb
-#      while keeping the same key and every check above stays green.
+#      while keeping the same key and every check above stays green. This
+#      also covers the COUNT of literal %% occurrences (ut-docs#1873) — the
+#      verb-token extraction discards %% as "not a verb" (correctly — it
+#      never consumes an argument), but a translator dropping one of a
+#      pair's `%` characters (`"50%% off"` -> `"50% off"`) shifts what the
+#      following real verb even parses as to Go's fmt parser without
+#      changing the extracted verb-token list at all, so it shipped green
+#      before this count check existed.
 # Fails CI so a new page/string can't ship untranslated.
 set -euo pipefail
 
@@ -510,8 +517,18 @@ def mixes_positional_and_implicit(a_pf, b_pf):
         return bool(toks) and all(idx is not None for _, idx in toks)
     return (a_pos or b_pos) and not (fully_positional(a_pf) and fully_positional(b_pf))
 
+def percent_literal_count(s):
+    # Count of literal %% occurrences (ut-docs#1873). verb_tokens() already
+    # extracts these via the same regex but discards them ("not a verb");
+    # counting them separately catches a dropped/invented %% that leaves
+    # the real verb-token list unchanged but still corrupts the string for
+    # Go's fmt parser (see check 8's header comment for the concrete case).
+    return sum(1 for m in verb_re.finditer(s) if m.group(0) == '%%')
+
 def verbs_match(a, b):
     a_toks, b_toks = verb_tokens(a), verb_tokens(b)
+    if percent_literal_count(a) != percent_literal_count(b):
+        return False
     if template_tokens(a_toks) != template_tokens(b_toks):
         return False
     a_pf, b_pf = printf_tokens(a_toks), printf_tokens(b_toks)
@@ -533,16 +550,21 @@ for path in sorted(glob.glob("web/locales/*.json")):
     loc_values = json.load(open(path))
     for k in sorted(base_values.keys() & loc_values.keys()):
         if not verbs_match(base_values[k], loc_values[k]):
-            verb_hits.append((path, k, verb_tokens(base_values[k]), verb_tokens(loc_values[k])))
+            verb_hits.append((
+                path, k, verb_tokens(base_values[k]), verb_tokens(loc_values[k]),
+                percent_literal_count(base_values[k]), percent_literal_count(loc_values[k]),
+            ))
 
 if verb_hits:
     fail = True
     print("guard-i18n: locale value has a format/template verb mismatch against en.json (dropped, invented, changed, or un-declared reordering):")
-    for path, k, a_toks, b_toks in verb_hits:
+    for path, k, a_toks, b_toks, a_pct, b_pct in verb_hits:
         a_list = [t for t, _, _ in a_toks]
         b_list = [t for t, _, _ in b_toks]
         note = ""
-        if mixes_positional_and_implicit(printf_tokens(a_toks), printf_tokens(b_toks)):
+        if a_pct != b_pct:
+            note = f" (differing count of literal %% occurrences: {a_pct} vs {b_pct})"
+        elif mixes_positional_and_implicit(printf_tokens(a_toks), printf_tokens(b_toks)):
             note = " (mixes positional and implicit verbs; use one style consistently on both sides)"
         print(f"  {path}: {k}: en={a_list} vs {b_list}{note}")
 
