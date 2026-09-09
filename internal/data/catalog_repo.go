@@ -1334,18 +1334,15 @@ func (r *CatalogRepo) EnsureDefaultThumbnail(ctx context.Context, itemID, path s
 	if itemID == "" || path == "" {
 		return errors.New("itemID and path required")
 	}
-	var exists int
-	err := r.db.QueryRowContext(ctx,
-		`SELECT 1 FROM item_images WHERE item_id = ? AND role = 'thumbnail' LIMIT 1`, itemID,
-	).Scan(&exists)
-	if err == nil {
-		return nil // already has a thumbnail — never overwrite it
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("check existing thumbnail: %w", err)
-	}
+	// A single atomic INSERT OR IGNORE (ut-docs#1871): the old SELECT-then-
+	// INSERT let two concurrent calls for the same item both see "no
+	// thumbnail" and both INSERT, producing two role='thumbnail' rows. The
+	// ux_item_images_thumbnail_once unique index (item_id, role) now makes
+	// a second INSERT a constraint violation instead of a silent duplicate;
+	// OR IGNORE turns that violation into exactly this function's own
+	// "already has a thumbnail — never overwrite it" no-op.
 	if _, err := r.db.ExecContext(ctx,
-		`INSERT INTO item_images (id, item_id, path, role) VALUES (?, ?, ?, 'thumbnail')`,
+		`INSERT OR IGNORE INTO item_images (id, item_id, path, role) VALUES (?, ?, ?, 'thumbnail')`,
 		uuid.NewString(), itemID, path,
 	); err != nil {
 		return fmt.Errorf("insert placeholder thumbnail: %w", err)
@@ -1438,23 +1435,19 @@ func (r *CatalogRepo) SetItemThumbnail(ctx context.Context, itemID, path string)
 	if itemID == "" || path == "" {
 		return errors.New("itemID and path required")
 	}
-	res, err := r.db.ExecContext(ctx,
-		`UPDATE item_images SET path = ? WHERE item_id = ? AND role = 'thumbnail'`,
-		path, itemID,
-	)
-	if err != nil {
-		return fmt.Errorf("update thumbnail: %w", err)
-	}
-	if n, err := res.RowsAffected(); err != nil {
-		return fmt.Errorf("update thumbnail: %w", err)
-	} else if n > 0 {
-		return nil
-	}
+	// A single atomic upsert (ut-docs#1871): the old UPDATE-then-INSERT let
+	// two concurrent calls for the same item both see the UPDATE affect 0
+	// rows and both fall through to INSERT, producing two role='thumbnail'
+	// rows — any reader doing SELECT ... LIMIT 1 with no ORDER BY then
+	// answered nondeterministically. ON CONFLICT makes the whole
+	// check-and-write one statement, so no interleaving of a second
+	// concurrent call can land between the check and the write.
 	if _, err := r.db.ExecContext(ctx,
-		`INSERT INTO item_images (id, item_id, path, role) VALUES (?, ?, ?, 'thumbnail')`,
+		`INSERT INTO item_images (id, item_id, path, role) VALUES (?, ?, ?, 'thumbnail')
+		 ON CONFLICT(item_id, role) DO UPDATE SET path = excluded.path`,
 		uuid.NewString(), itemID, path,
 	); err != nil {
-		return fmt.Errorf("insert thumbnail: %w", err)
+		return fmt.Errorf("upsert thumbnail: %w", err)
 	}
 	return nil
 }
