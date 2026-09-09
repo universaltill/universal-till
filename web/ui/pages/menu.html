@@ -9,6 +9,10 @@
 
 <div class="menu-grid">
   {{ range .Tiles }}
+  {{/* ADR-0088: a `layout` plugin may group tiles; the heading spans the
+       grid row and appears only where the group changes, so a till with
+       no grouped amendment renders exactly what it always did. */}}
+  {{ if .GroupHeading }}<h2 class="menu-group">{{ T .GroupHeading }}</h2>{{ end }}
   <a class="menu-tile" href="{{ .Href }}">
     <span class="menu-ico" aria-hidden="true">{{ .IconSVG }}</span>
     <span class="menu-label">{{ T .Label }}</span>

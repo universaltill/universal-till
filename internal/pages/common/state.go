@@ -2,13 +2,16 @@ package common
 
 import (
 	"context"
+	"encoding/json"
 	"math"
+	"sort"
 	"strconv"
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
+	"github.com/universaltill/universal-till/internal/uislot"
 )
 
 const (
@@ -433,4 +436,72 @@ func BuildMenu(base []MenuItem, pm *plugins.Manager) []MenuItem {
 		}
 	}
 	return items
+}
+
+// MenuRestoredKeysSetting persists the Menu keys a manager restored from
+// Settings → Hidden menu tiles (ADR-0088 Decision D) as a JSON array of
+// core menu keys. A settings row, not a plugin_entries flag: a restore is
+// per DESTINATION and must outlive the plugin that hid it being reloaded,
+// updated or joined by a second plugin hiding the same key.
+const MenuRestoredKeysSetting = "menu.restored_keys"
+
+// RestoredMenuKeys reads MenuRestoredKeysSetting. Nil-safe on the store
+// (deps without settings restore nothing); a malformed value restores
+// nothing rather than failing the menu.
+func RestoredMenuKeys(ctx context.Context, s *settings.Store) map[string]bool {
+	out := map[string]bool{}
+	if s == nil {
+		return out
+	}
+	raw, ok, err := s.Get(ctx, MenuRestoredKeysSetting)
+	if err != nil || !ok || strings.TrimSpace(raw) == "" {
+		return out
+	}
+	var keys []string
+	if err := json.Unmarshal([]byte(raw), &keys); err != nil {
+		return out
+	}
+	for _, k := range keys {
+		out[k] = true
+	}
+	return out
+}
+
+// SaveRestoredMenuKeys writes MenuRestoredKeysSetting, sorted so the stored
+// value is stable regardless of restore order.
+func SaveRestoredMenuKeys(ctx context.Context, s *settings.Store, keys map[string]bool) error {
+	list := make([]string, 0, len(keys))
+	for k, on := range keys {
+		if on {
+			list = append(list, k)
+		}
+	}
+	sort.Strings(list)
+	raw, err := json.Marshal(list)
+	if err != nil {
+		return err
+	}
+	return s.Set(ctx, MenuRestoredKeysSetting, string(raw))
+}
+
+// BuildMenuAmendments is BuildMenu's sibling for ADR-0088: the amendments
+// the Menu renders with — every active layout plugin's, minus the hides the
+// merchant restored. Returns nil when nothing applies, so the zero-plugin
+// render path stays uislot.Resolve's length-check fast path. Nil-safe on
+// pm. Read pm.LayoutAmendments only under PluginMu (both callers do).
+func BuildMenuAmendments(pm *plugins.Manager, restored map[string]bool) []uislot.Amendment {
+	if pm == nil || len(pm.LayoutAmendments) == 0 {
+		return nil
+	}
+	out := make([]uislot.Amendment, 0, len(pm.LayoutAmendments))
+	for _, a := range pm.LayoutAmendments {
+		if a.Hide && restored[a.Key] {
+			continue
+		}
+		out = append(out, a)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
 }

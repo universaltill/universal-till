@@ -80,6 +80,10 @@ var railIcons = map[string]string{
 	// per-platform emoji-metrics risk (ut-docs#1423). Lucide's "puzzle"
 	// path, unmodified.
 	"puzzle": `<path d="M15.39 4.39a1 1 0 0 0 1.68-.474 2.5 2.5 0 1 1 3.014 3.015 1 1 0 0 0-.474 1.68l1.683 1.682a2.414 2.414 0 0 1 0 3.414L19.61 15.39a1 1 0 0 1-1.68-.474 2.5 2.5 0 1 0-3.014 3.015 1 1 0 0 1 .474 1.68l-1.683 1.682a2.414 2.414 0 0 1-3.414 0L8.61 19.61a1 1 0 0 0-1.68.474 2.5 2.5 0 1 1-3.014-3.015 1 1 0 0 0 .474-1.68l-1.683-1.682a2.414 2.414 0 0 1 0-3.414L4.39 8.61a1 1 0 0 1 1.68.474 2.5 2.5 0 1 0 3.014-3.015 1 1 0 0 1-.474-1.68l1.683-1.682a2.414 2.414 0 0 1 3.414 0z"/>`,
+	// Scissors — a services/salon tile (plugins/layout-salon re-icons
+	// /items with it, ADR-0088 Decision H: a `layout` plugin names an icon
+	// from THIS set, never a file). Lucide's "scissors" path, unmodified.
+	"scissors": `<circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/>`,
 	// The remaining entries below (ut-docs#1845) replace the Menu launcher's
 	// per-tile emoji (menu_page.go's old `iconFor`) with the rest of this
 	// same Lucide set, so every core menu tile — not just Bluetooth — now
