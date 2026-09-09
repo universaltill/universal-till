@@ -325,6 +325,7 @@ test('a non-numeric field is left alone on a locale osk.js has no layout for; a 
   // gain a layout of its own. ?lang= sets <html lang> directly without
   // requiring any matching language plugin to actually be installed.
   await page.goto('/catalog?lang=zz');
+  await openNewItemForm(page);
   await expect(page.locator('body')).toHaveAttribute('data-osk', 'on');
 
   // Suppressing the native keyboard here, with no OSK layout able to
@@ -357,6 +358,7 @@ test('de OSK renders a real QWERTZ layout and types umlauts/ß (ut-docs#1047)', 
   await setOskMode(page, 'on');
 
   await page.goto('/catalog?lang=de');
+  await openNewItemForm(page);
   // localeSupported() now recognises 'de', so the native keyboard goes back
   // to being suppressed for non-numeric fields too (the opposite assertion
   // from the 'zz' test above — this is the fix this locale used to lack).
@@ -405,6 +407,7 @@ test('es OSK renders accented vowels/ñ and types real Spanish characters (ut-do
   await setOskMode(page, 'on');
 
   await page.goto('/catalog?lang=es');
+  await openNewItemForm(page);
   const name = page.locator('#item-name');
   await expect(name).toHaveAttribute('inputmode', 'none');
 
@@ -462,6 +465,7 @@ test('sym layer includes inverted punctuation ¿ and ¡ (ut-docs#1148)', async (
   await setOskMode(page, 'on');
 
   await page.goto('/catalog?lang=en');
+  await openNewItemForm(page);
   const name = page.locator('#item-name');
   await name.click();
   await expect(page.locator('#osk')).toBeVisible();
