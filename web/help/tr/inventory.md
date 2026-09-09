@@ -25,3 +25,7 @@ Bazı işletmeler stok saymaz — her ürünün her zaman satılabilmesini ister
 Kasanın, ürün bittiğinde satışı durdurmasını istiyorsanız kapalı bırakın. Varsayılan budur; stok takibi yapmayan bir sistemden aktarılan bir katalogun siz bu seçeneği açana kadar hiçbir şey satamamasının nedeni de budur.
 
 Bir ürün için **„Stok takibi? Hayır"** bilgisini taşıyan bir sistemden içe aktarma yaptığınızda kasa, o ürünün miktar sütununu gerçek bir stok seviyesi saymaz — eski sisteminizin hiç iddia etmediği bir mevcut miktarı uydurmak yerine, miktarın aktarılmadığını size bildirir.
+
+## Tek bir ürün için stok takibini kapatma
+
+Yukarıdaki ayar mağaza geneli. Yalnızca birkaç ürün hiç stok taşımamalıysa — sadece teslimatla gelen bir kalem, tek tek saymadığınız bir fıçı gibi — her şey için mağaza geneli ayarı açmak yerine, o ürünün Katalog'daki kendi kaydında **„Stok takibi yapılmıyor"** seçeneğini işaretleyin. Bu ürün böylece serbestçe satılır, her stok kontrolünde atlanır ve Envanter'de veya düşük stok listesinde hiç görünmez; mağazanızdaki diğer tüm ürünler ise normal şekilde takip edilmeye devam eder.

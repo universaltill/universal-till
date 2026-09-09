@@ -775,6 +775,35 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 			if err != nil {
 				return err
 			}
+			// ut-docs#1850: per-item stock tracking. An item/variant flagged
+			// stock_untracked never gets a stock check or a stock movement,
+			// regardless of the shop-wide AllowNegativeInventory switch (that
+			// switch narrows back to "permit negatives on items you DO
+			// track"). A line with neither ItemID nor VariantID (an ad-hoc,
+			// non-catalog line) has no item to be untracked, so it's excluded
+			// from the lookup and treated as tracked — unchanged behavior.
+			trackKeys := make([]data.StockTrackKey, 0, len(in.Lines))
+			for _, l := range in.Lines {
+				if l.ItemID == "" && l.VariantID == "" {
+					continue
+				}
+				trackKeys = append(trackKeys, data.StockTrackKey{ItemID: l.ItemID, VariantID: l.VariantID})
+			}
+			untrackedFlags, err := repo.UntrackedByKey(ctx, tx, trackKeys)
+			if err != nil {
+				return err
+			}
+			// isUntracked defaults false (tracked) for a line with no
+			// catalog item, and fail-safe defaults false (tracked) for any
+			// key UntrackedByKey's lookup didn't resolve (a missing key's
+			// zero value is false) — never silently stop tracking stock
+			// because a lookup came back empty.
+			isUntracked := func(l SaleLineInput) bool {
+				if l.ItemID == "" && l.VariantID == "" {
+					return false
+				}
+				return untrackedFlags[data.StockTrackKey{ItemID: l.ItemID, VariantID: l.VariantID}]
+			}
 			if !in.AllowNegativeInventory {
 				// Same semantics as the old loop, deliberately: every line is
 				// checked independently against the same pre-sale quantity (a
@@ -783,6 +812,9 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				// against a running total — pre-existing quirk, preserved; the
 				// batched check must not be stricter than the loop it replaced.
 				for _, l := range in.Lines {
+					if isUntracked(l) {
+						continue
+					}
 					cur := currentQtys[data.StockKey{LocationID: l.LocationID, ItemID: l.ItemID, VariantID: l.VariantID}]
 					qtyDelta := l.Qty
 					if in.SaleType == "sale" {
@@ -923,6 +955,14 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				}
 
 				// Stock movement: negative for sale, positive for return.
+				// ut-docs#1850: an untracked item/variant gets no
+				// stock_movements row and no inventory row at all — skip it
+				// entirely rather than recording a movement that would
+				// otherwise drive its inventory row negative or into
+				// existence for the first time.
+				if isUntracked(l) {
+					continue
+				}
 				qty := l.Qty
 				if in.SaleType == "sale" {
 					qty = -qty

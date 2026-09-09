@@ -301,12 +301,13 @@ func setupOfflineDB(t *testing.T) *sql.DB {
 	stmts := []string{
 		`CREATE TABLE stock_locations (id TEXT PRIMARY KEY, name TEXT NOT NULL)`,
 		`CREATE TABLE items (
-			id TEXT PRIMARY KEY, 
-			sku TEXT NOT NULL, 
-			name TEXT NOT NULL, 
-			base_price INTEGER NOT NULL, 
+			id TEXT PRIMARY KEY,
+			sku TEXT NOT NULL,
+			name TEXT NOT NULL,
+			base_price INTEGER NOT NULL,
 			reorder_level INTEGER NOT NULL DEFAULT 0,
-			is_active INTEGER NOT NULL DEFAULT 1
+			is_active INTEGER NOT NULL DEFAULT 1,
+			stock_untracked INTEGER NOT NULL DEFAULT 0
 		)`,
 		`CREATE TABLE inventory (
 			id TEXT PRIMARY KEY, 

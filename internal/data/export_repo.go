@@ -183,6 +183,13 @@ func (r *POSRepo) StockForExport(ctx context.Context) ([]ExportStockRow, error) 
 // Both the variant and its parent item must be active — a deactivated
 // item's variant stock doesn't appear, matching ListStockLevels'
 // i.is_active filter for item-level rows.
+//
+// ut-docs#1850 (review): the parent's stock_untracked filter is here for the
+// same reason, and matches ListStockLevels/GetLowStockItems. A leftover
+// variant inventory row (from before the parent was switched untracked)
+// must not travel out in an export/report plugin's stock payload as if it
+// were a real on-hand figure, when the same item's own row is filtered out
+// of every screen that shows stock.
 func (r *POSRepo) variantStockForExport(ctx context.Context) ([]ExportStockRow, error) {
 	rows, err := r.db.QueryContext(ctx, `
 SELECT i.id, i.name, v.id, v.sku, v.name, inv.location_id, COALESCE(sl.name, ''),
@@ -192,6 +199,7 @@ JOIN item_variants v ON v.id = inv.variant_id
 JOIN items i ON i.id = v.item_id
 LEFT JOIN stock_locations sl ON sl.id = inv.location_id
 WHERE i.is_active = 1 AND v.is_active = 1
+  AND i.stock_untracked = 0
 ORDER BY i.name, v.name, sl.name`)
 	if err != nil {
 		return nil, fmt.Errorf("query variant stock for export: %w", err)

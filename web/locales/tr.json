@@ -168,6 +168,7 @@
   "catalog.save_variant": "Varyantı kaydet",
   "catalog.search_placeholder": "Ürünlerde ara…",
   "catalog.sold_by_weight": "Ağırlığa göre satılır",
+  "catalog.stock_untracked": "Stok takibi yapılmıyor",
   "catalog.tax_code": "Vergi kodu",
   "catalog.tax_code.inactive": "pasif",
   "catalog.tax_code.none": "— yok —",
