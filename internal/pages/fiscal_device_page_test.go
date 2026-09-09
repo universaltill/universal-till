@@ -457,4 +457,63 @@ func TestFiscalDevicePage_EveryErrorRendersFullLayout(t *testing.T) {
 			assertFullLayoutError(t, rec, http.StatusInternalServerError)
 		})
 	}
+
+	// Sites 7 & 9 (ut-docs#1814): confirm/unpair's "owner (admin) required"
+	// gate (canPerform("fiscal_tse_override") — admin/super_admin only, see
+	// TestFiscalDeviceConfirm_RequiresOwnerPermissionNotJustManager for the
+	// status-code proof) used to answer with a bare, untranslated
+	// http.Error body — this is the layout/i18n proof for the same gate.
+	for _, tt := range []struct {
+		name string
+		path string
+	}{
+		{"confirm refused for a manager (owner-only gate)", "/api/fiscal-device/confirm"},
+		{"unpair refused for a manager (owner-only gate)", "/api/fiscal-device/unpair"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mux, d := newFiscalDeviceTestMux(t)
+			t.Setenv("UT_AUTH", "on")
+			seedActiveTaxTrPlugin(t, d.Db, true)
+			setCountry(t, d, "TR")
+			if _, err := d.Db.Exec(`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('mgr-layout','mgr-layout','mgr-layout','x','manager')`); err != nil {
+				t.Fatal(err)
+			}
+			req := auth.WithUser(httptest.NewRequest(http.MethodPost, tt.path, nil), auth.User{ID: "mgr-layout", Role: "manager"})
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			assertFullLayoutError(t, rec, http.StatusForbidden)
+			if !strings.Contains(rec.Body.String(), en("fiscaldevice.error.owner_required")) {
+				t.Fatalf("expected the translated owner_required message, got: %s", rec.Body.String())
+			}
+		})
+	}
+
+	// Sites 8 & 10 (ut-docs#1814): confirm/unpair's "not found" gate
+	// (fiscalDeviceMarketActive — a non-TR till, or TR without the active
+	// plugin) also used to answer with a bare, untranslated http.Error
+	// body. An admin passes the owner-only gate above so the request
+	// actually reaches this second check instead of 403ing first.
+	for _, tt := range []struct {
+		name string
+		path string
+	}{
+		{"confirm not found outside Turkey", "/api/fiscal-device/confirm"},
+		{"unpair not found outside Turkey", "/api/fiscal-device/unpair"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			mux, d := newFiscalDeviceTestMux(t)
+			t.Setenv("UT_AUTH", "on")
+			setCountry(t, d, "DE") // not Turkey — fiscalDeviceMarketActive is false regardless of any plugin
+			if _, err := d.Db.Exec(`INSERT INTO users(id,username,display_name,pin_hash,role) VALUES('own-layout','own-layout','own-layout','x','admin')`); err != nil {
+				t.Fatal(err)
+			}
+			req := auth.WithUser(httptest.NewRequest(http.MethodPost, tt.path, nil), auth.User{ID: "own-layout", Role: "admin"})
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, req)
+			assertFullLayoutError(t, rec, http.StatusNotFound)
+			if !strings.Contains(rec.Body.String(), en("fiscaldevice.error.not_found")) {
+				t.Fatalf("expected the translated not_found message, got: %s", rec.Body.String())
+			}
+		})
+	}
 }

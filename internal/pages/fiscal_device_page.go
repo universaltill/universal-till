@@ -179,7 +179,7 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 		// at all. This is the manual fallback, and declaring fiscal posture
 		// by hand is an owner's act.
 		if !canPerform(d, r, "fiscal_tse_override") {
-			http.Error(w, "owner (admin) required", http.StatusForbidden)
+			httpx.RenderError(w, r, http.StatusForbidden, "fiscaldevice.error.owner_required", nil)
 			return
 		}
 		// ut-docs#1750: not this shop's flow. 404 rather than 403 because
@@ -188,7 +188,7 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 		// this same URL, so nothing is hidden by the status code (review F4
 		// corrected an earlier comment here that claimed otherwise).
 		if !fiscalDeviceMarketActive(r.Context(), d) {
-			http.Error(w, "not found", http.StatusNotFound)
+			httpx.RenderError(w, r, http.StatusNotFound, "fiscaldevice.error.not_found", nil)
 			return
 		}
 		if d.Settings == nil {
@@ -221,14 +221,14 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 		// at all. This is the manual fallback, and declaring fiscal posture
 		// by hand is an owner's act.
 		if !canPerform(d, r, "fiscal_tse_override") {
-			http.Error(w, "owner (admin) required", http.StatusForbidden)
+			httpx.RenderError(w, r, http.StatusForbidden, "fiscaldevice.error.owner_required", nil)
 			return
 		}
 		// ut-docs#1750: same gate as confirm above, and it matters just as
 		// much in this direction — this sets the flag FALSE, so ungated it
 		// let a manager on a German till hard-block the shop's checkout.
 		if !fiscalDeviceMarketActive(r.Context(), d) {
-			http.Error(w, "not found", http.StatusNotFound)
+			httpx.RenderError(w, r, http.StatusNotFound, "fiscaldevice.error.not_found", nil)
 			return
 		}
 		if d.Settings == nil {
