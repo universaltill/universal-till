@@ -402,12 +402,12 @@ func TestJournalUIFilters_TillAndDay(t *testing.T) {
 	if _, err := d.Db.Exec(`INSERT INTO tills (id, name, bearer_hash, last_seen_at) VALUES ('till-x', 'Kiosk 2', 'bh-x', '2026-08-15T08:00:00Z')`); err != nil {
 		t.Fatalf("seed till: %v", err)
 	}
-	if _, err := d.Db.Exec(`INSERT INTO sales(id, receipt_no, status, sale_type, tender_type, offline, sync_status, currency, subtotal, discount_total, tax_total, total, created_at, till_id)
-		VALUES ('sale-local', 'R-LOCAL', 'completed', 'sale', 'cash', 0, 'synced', 'GBP', 100, 0, 20, 120, '2026-08-15T09:00:00Z', '')`); err != nil {
+	if _, err := d.Db.Exec(`INSERT INTO sales(id, receipt_no, status, sale_type, tender_type, offline, sync_status, currency, subtotal, discount_total, tax_total, total, created_at, local_date, till_id)
+		VALUES ('sale-local', 'R-LOCAL', 'completed', 'sale', 'cash', 0, 'synced', 'GBP', 100, 0, 20, 120, '2026-08-15T09:00:00Z', date('2026-08-15T09:00:00Z','localtime'), '')`); err != nil {
 		t.Fatalf("seed local sale: %v", err)
 	}
-	if _, err := d.Db.Exec(`INSERT INTO sales(id, receipt_no, status, sale_type, tender_type, offline, sync_status, currency, subtotal, discount_total, tax_total, total, created_at, till_id)
-		VALUES ('sale-x', 'R-TILLX', 'completed', 'sale', 'cash', 0, 'synced', 'GBP', 100, 0, 20, 120, '2026-08-14T09:00:00Z', 'till-x')`); err != nil {
+	if _, err := d.Db.Exec(`INSERT INTO sales(id, receipt_no, status, sale_type, tender_type, offline, sync_status, currency, subtotal, discount_total, tax_total, total, created_at, local_date, till_id)
+		VALUES ('sale-x', 'R-TILLX', 'completed', 'sale', 'cash', 0, 'synced', 'GBP', 100, 0, 20, 120, '2026-08-14T09:00:00Z', date('2026-08-14T09:00:00Z','localtime'), 'till-x')`); err != nil {
 		t.Fatalf("seed till-x sale: %v", err)
 	}
 

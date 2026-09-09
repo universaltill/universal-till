@@ -49,7 +49,15 @@ func TestSalesByDepartment_RollsSubcategoriesToDepartment(t *testing.T) {
 	x(`INSERT INTO items (id, name, base_price, category_id) VALUES ('milk','Milk',200,'grocery')`)
 	x(`INSERT INTO items (id, name, base_price, category_id) VALUES ('mystery','Mystery',999,NULL)`)
 
-	x(`INSERT INTO sales (id, receipt_no, status, subtotal, total) VALUES ('s1','R1','completed',0,0)`)
+	// local_date is set from the same 'now' instant as created_at's default
+	// (both computed in this one statement, so they can't disagree) — since
+	// migration 007/ut-docs#1664, DepartmentsForDay reads local_date
+	// directly rather than re-deriving the day from created_at at read
+	// time, so a fixture leaving it at the column default ('') would make
+	// the smoke check below structurally unable to ever find a row, on any
+	// host, independent of timezone (review finding, ut-docs#1664).
+	x(`INSERT INTO sales (id, receipt_no, status, subtotal, total, created_at, local_date)
+	   VALUES ('s1','R1','completed',0,0, datetime('now'), date('now','localtime'))`)
 	lineNo := 0
 	line := func(id, item string, qty float64, total int64) {
 		lineNo++
@@ -87,11 +95,12 @@ func TestSalesByDepartment_RollsSubcategoriesToDepartment(t *testing.T) {
 		t.Fatalf("first department = %q, want Electronics (highest revenue)", rows[0].Department)
 	}
 
-	// A single-day query should match for today's sales.
+	// A single-day query should match for today's sales. s1's local_date was
+	// seeded as date('now','localtime') above, so day=date('now') matches
+	// deterministically now (ut-docs#1664) -- still tolerant of a boundary
+	// tick between the two 'now' evaluations, hence the smoke-only fallback.
 	dayRows, err := repo.DepartmentsForDay(context.Background(), "now")
 	if err == nil && len(dayRows) == 0 {
-		// date('now') vs stored datetime — smoke only; the window query above is
-		// the authoritative assertion.
 		t.Log("DepartmentsForDay returned no rows for 'now' (timezone/date boundary)")
 	}
 }

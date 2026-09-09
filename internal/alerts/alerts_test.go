@@ -48,9 +48,13 @@ func TestUnusualSales(t *testing.T) {
 		// time here instead double-applies the conversion and silently shifts
 		// the computed date on any non-UTC machine.
 		createdAt := ref.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
-		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
-		          VALUES (?, ?, 'completed', 'sale', ?, 0, ?, ?)`,
-			id, "R-"+id, total, total, createdAt)
+		// local_date is set via date(?, 'localtime') on the same createdAt
+		// literal, exactly as InsertSale does in production (ut-docs#1342) —
+		// DayTotal now reads local_date directly (ut-docs#1664), so a fixture
+		// leaving it at the column default ('') would silently never match.
+		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at, local_date)
+		          VALUES (?, ?, 'completed', 'sale', ?, 0, ?, ?, date(?, 'localtime'))`,
+			id, "R-"+id, total, total, createdAt, createdAt)
 	}
 	// Baseline: same weekday 1-4 weeks back ≈ 1000/day.
 	sale("b1", 8, 1000)
@@ -99,9 +103,11 @@ func TestUnusualSales_EveryWeekdayIsDeterministic(t *testing.T) {
 			}
 			sale := func(id string, daysAgo, total int) {
 				createdAt := ref.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
-				mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
-				          VALUES (?, ?, 'completed', 'sale', ?, 0, ?, ?)`,
-					id, "R-"+id, total, total, createdAt)
+				// local_date populated the same way as TestUnusualSales'
+				// own sale() helper — DayTotal reads it directly (ut-docs#1664).
+				mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at, local_date)
+				          VALUES (?, ?, 'completed', 'sale', ?, 0, ?, ?, date(?, 'localtime'))`,
+					id, "R-"+id, total, total, createdAt, createdAt)
 			}
 			sale("b1", 8, 1000)
 			sale("b2", 15, 900)
@@ -479,9 +485,13 @@ func TestUnusualSales_ThinBaselineIsNotUnusual(t *testing.T) {
 	ref := time.Now().UTC()
 	sale := func(id string, daysAgo, total int) {
 		createdAt := ref.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
-		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
-		          VALUES (?, ?, 'completed', 'sale', ?, 0, ?, ?)`,
-			id, "R-"+id, total, total, createdAt)
+		// local_date is set via date(?, 'localtime') on the same createdAt
+		// literal, exactly as InsertSale does in production (ut-docs#1342) —
+		// DayTotal now reads local_date directly (ut-docs#1664), so a fixture
+		// leaving it at the column default ('') would silently never match.
+		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at, local_date)
+		          VALUES (?, ?, 'completed', 'sale', ?, 0, ?, ?, date(?, 'localtime'))`,
+			id, "R-"+id, total, total, createdAt, createdAt)
 	}
 	// Only 2 of the 4 baseline weeks sold anything; a huge "yesterday" must
 	// still not be flagged since the baseline itself is too thin to trust.
@@ -567,9 +577,11 @@ func testStartRunsDigestLoopBody(t *testing.T, anchorHour int) {
 	// fresh, independent read of the wall clock.
 	sale := func(id string, daysAgo, total int) {
 		createdAt := anchor.AddDate(0, 0, -daysAgo).Format(time.RFC3339)
-		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
-		          VALUES (?, ?, 'completed', 'sale', ?, 0, ?, ?)`,
-			id, "R-"+id, total, total, createdAt)
+		// local_date populated the same way as TestUnusualSales' own sale()
+		// helper — DayTotal reads it directly (ut-docs#1664).
+		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at, local_date)
+		          VALUES (?, ?, 'completed', 'sale', ?, 0, ?, ?, date(?, 'localtime'))`,
+			id, "R-"+id, total, total, createdAt, createdAt)
 	}
 	sale("bl1", 8, 1000)
 	sale("bl2", 15, 1000)
