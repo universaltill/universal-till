@@ -298,3 +298,48 @@ func TestFormatQty(t *testing.T) {
 		t.Errorf("FormatQtyLatin fa = %q, want Latin digits", got)
 	}
 }
+
+// ut-docs#1632: en-IN/ur-PK group digits the Indian way — the last 3 digits
+// as one group, then every 2 digits leftward ("123456789" ->
+// "12,34,56,789") — a different grouping WIDTH, not just a different
+// separator byte, so this exercises a real branch in formatGrouped, not
+// just numberSeparators' table. ur-PK also digit-substitutes (base
+// language "ur" -> the Persian/Extended-Arabic-Indic set, same as fa) —
+// covering that the two mechanisms compose correctly, same as the
+// existing fa/ar regression checks above.
+func TestFormatMoney_IndianGrouping(t *testing.T) {
+	InitCurrency("INR")
+	cases := []struct {
+		locale string
+		minor  int64
+		want   string
+	}{
+		{"en-IN", 12345678900, "₹12,34,56,789.00"}, // 9-digit group before decimals
+		{"en-IN", 12345600, "₹1,23,456.00"},        // issue's own example, 6-digit
+		{"en-IN", 123400, "₹1,234.00"},             // 4 digits before the trailing 3 - no head group
+		{"en-IN", 12300, "₹123.00"},                // <=3 digits - no grouping at all
+	}
+	for _, c := range cases {
+		if got := FormatMoney(c.minor, c.locale); got != c.want {
+			t.Errorf("FormatMoney(%d, %s) = %q, want %q", c.minor, c.locale, got, c.want)
+		}
+	}
+	InitCurrency("PKR")
+	// ur-PK: same Indian grouping, PLUS digit substitution on top (base
+	// language "ur"), same composition FormatMoney already proves for fa.
+	if got := FormatMoney(12345600, "ur-PK"); got != "₨۱٬۲۳٬۴۵۶٫۰۰" {
+		t.Errorf("FormatMoney ur-PK = %q, want Indian grouping + Persian-set digits", got)
+	}
+	// Every other locale keeps uniform 3-digit grouping — this table
+	// change must not leak into unrelated locales.
+	if got := FormatMoney(12345600, "en-GB"); got != "₨123,456.00" {
+		t.Errorf("FormatMoney en-GB (unaffected control) = %q", got)
+	}
+	InitCurrency("GBP")
+}
+
+func TestFormatQty_IndianGrouping(t *testing.T) {
+	if got := FormatQty(1234567.5, "en-IN"); got != "12,34,567.5" {
+		t.Errorf("FormatQty en-IN = %q, want Indian grouping", got)
+	}
+}

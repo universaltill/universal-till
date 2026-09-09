@@ -43,7 +43,7 @@
             <td>{{ money .Total }}</td>
             <td>{{ tenderLabel .TenderType }}</td>
             <td>{{ .SyncStatus }}</td>
-            <td>{{ .CreatedAt }}</td>
+            <td>{{ datetime .CreatedAt }}</td>
             {{ if $.ShowFilters }}<td>{{ if eq .TillID "" }}{{ T "reports.this_till" }}{{ else if .TillName }}{{ .TillName }}{{ else }}{{ T "journal.till_unknown" }}{{ end }}</td>{{ end }}
           </tr>
         {{ end }}

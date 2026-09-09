@@ -49,3 +49,19 @@ func FormatDate(t time.Time, locale string) string {
 func FormatDateLatin(t time.Time, locale string) string {
 	return t.Format(dateLayout(locale))
 }
+
+// FormatDateTime renders t as FormatDate's date-ordering convention plus a
+// 24-hour clock ("HH:MM"), space-separated, digit shape following locale
+// the same way (ut-docs#1632) — for a per-event timestamp (a journal row,
+// an audit entry, a filed bug report) where the time of day is part of
+// what identifies the row, unlike FormatDate's date-only use (an invoice's
+// issue date).
+func FormatDateTime(t time.Time, locale string) string {
+	return LocalizeDigits(t.Format(dateLayout(locale)+" 15:04"), locale)
+}
+
+// FormatDateTimeLatin is FormatDateTime without digit-shape substitution —
+// same reasoning as FormatDateLatin.
+func FormatDateTimeLatin(t time.Time, locale string) string {
+	return t.Format(dateLayout(locale) + " 15:04")
+}
