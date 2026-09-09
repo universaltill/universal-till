@@ -254,19 +254,40 @@ func applyDerivedLocaleIfLanguagePackNowAvailable(ctx context.Context, d *common
 	if err != nil || !ok || cs.DefaultLocale == "" {
 		return
 	}
-	if baseLang(cs.DefaultLocale) != baseLang(installedLocale) {
+	if baseLang(strings.TrimSpace(cs.DefaultLocale)) != baseLang(strings.TrimSpace(installedLocale)) {
 		return // an unrelated language pack — never clobber the derived default
 	}
-	if st.Locale == cs.DefaultLocale || !localeSafeToPreset(cs.DefaultLocale) {
-		return // already applied, or still not safe (shouldn't happen right after install, but defensive)
+	if st.Locale == cs.DefaultLocale {
+		return // already applied
 	}
-	newSt := d.UpdateState(func(s *common.RuntimeState) { s.Locale = cs.DefaultLocale })
-	if err := common.SaveState(ctx, d.Settings, newSt); err != nil {
+	if !localeSafeToPreset(cs.DefaultLocale) {
+		// Can genuinely happen: localeInList (this file) matches a listing
+		// by base language, so a pack that ships e.g. locales/fa-IR.json
+		// rather than fa.json satisfies the resolve step above but not
+		// localeSafeToPreset's exact-code check against
+		// httpx.AvailableLocales() — silently staying pending forever with
+		// no signal otherwise.
+		logging.L().Warnf("base plugin install: %s installed but %s still not safe to preset (available: %v)",
+			installedLocale, cs.DefaultLocale, httpx.AvailableLocales())
+		return
+	}
+	// Build the candidate on the CURRENT state and persist-then-commit
+	// (common.SaveState, then d.SetState) — never d.UpdateState first: that
+	// would commit the new locale into shared memory before the DB write
+	// even succeeds, so a failed SaveState (disk full, SQLITE_BUSY) would
+	// leave d.State changed but the DB unchanged, silently riding along on
+	// the next unrelated successful save. Same failure Deps.SetState's own
+	// doc comment warns about, and the exact pattern every sibling handler
+	// in this package already follows (see settings_page.go's country/
+	// currency/locale handlers).
+	cand := st
+	cand.Locale = cs.DefaultLocale
+	if err := common.SaveState(ctx, d.Settings, cand); err != nil {
 		logging.L().Errorf("base plugin install: persist derived locale: %v", err)
 		return
 	}
-	d.SetState(newSt)
-	httpx.SetDefaultLocale(newSt.Locale)
+	d.SetState(cand)
+	httpx.SetDefaultLocale(cand.Locale)
 }
 
 // localeInList reports whether the catalog listing's availableLocales cover

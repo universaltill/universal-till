@@ -2199,11 +2199,24 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// country's default isn't safe yet, locale is left exactly as
 			// it was — a partial, not full, answer to "never mismatched,"
 			// but the safe one.
+			//
+			// ut-docs#1074: also never re-derive once the operator has
+			// EXPLICITLY chosen a locale via Settings' Language card
+			// (common.KeyLocaleConfirmed) — a country change is not that
+			// choice, and silently overriding it here would be the exact
+			// clobber this same card exists to prevent, just from a
+			// different call site.
 			if strings.TrimSpace(r.Form.Get("locale")) == "" {
-				if cs, ok, csErr := data.NewCountrySettingsRepo(d.Db).Get(r.Context(), v); csErr == nil && ok &&
-					cs.DefaultLocale != st.Locale && localeSafeToPreset(cs.DefaultLocale) {
-					st.Locale = cs.DefaultLocale
-					auditPayload["locale"] = cs.DefaultLocale
+				localeConfirmed, _, lcErr := d.Settings.Get(r.Context(), common.KeyLocaleConfirmed)
+				if lcErr != nil {
+					logging.L().Warnf("settings: read %s: %v", common.KeyLocaleConfirmed, lcErr)
+				}
+				if localeConfirmed != "true" {
+					if cs, ok, csErr := data.NewCountrySettingsRepo(d.Db).Get(r.Context(), v); csErr == nil && ok &&
+						cs.DefaultLocale != st.Locale && localeSafeToPreset(cs.DefaultLocale) {
+						st.Locale = cs.DefaultLocale
+						auditPayload["locale"] = cs.DefaultLocale
+					}
 				}
 			}
 		}
@@ -2473,8 +2486,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// under the state write lock.
 		var derivedLocale string
 		if key == common.KeyCountry {
-			if cs, ok, csErr := data.NewCountrySettingsRepo(d.Db).Get(r.Context(), value); csErr == nil && ok && localeSafeToPreset(cs.DefaultLocale) {
-				derivedLocale = cs.DefaultLocale
+			// ut-docs#1074: never re-derive once the operator has explicitly
+			// chosen a locale via Settings' Language card — same guard as
+			// the /api/settings/save country handler just above.
+			localeConfirmed, _, lcErr := d.Settings.Get(r.Context(), common.KeyLocaleConfirmed)
+			if lcErr != nil {
+				logging.L().Warnf("settings: read %s: %v", common.KeyLocaleConfirmed, lcErr)
+			}
+			if localeConfirmed != "true" {
+				if cs, ok, csErr := data.NewCountrySettingsRepo(d.Db).Get(r.Context(), value); csErr == nil && ok && localeSafeToPreset(cs.DefaultLocale) {
+					derivedLocale = cs.DefaultLocale
+				}
 			}
 		}
 		st := d.UpdateState(func(s *common.RuntimeState) {
