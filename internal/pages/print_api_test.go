@@ -938,7 +938,7 @@ func TestPostSettingsPrinter_ValidatesModeAndCharset(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/settings/printer", strings.NewReader("mode=network&address=192.168.1.50:9100&charset=weird&autoPrint=on"))
+	req = httptest.NewRequest(http.MethodPost, "/api/settings/printer", strings.NewReader("mode=network&address=192.168.1.50:9100&charset=weird"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {

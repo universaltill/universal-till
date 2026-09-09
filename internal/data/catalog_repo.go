@@ -1021,13 +1021,22 @@ type CategoryNode struct {
 	ParentID  string // empty for a top-level category
 	SortOrder int
 	Color     string // empty when no explicit color is set
+	IsActive  bool
 }
 
-// ListCategories returns every category (flat, parent_id/color intact) for
-// building the sale-screen's nested, color-coded category grid.
+// ListCategories returns every category (active AND inactive, flat,
+// parent_id/color intact) for building the sale-screen's nested,
+// color-coded category grid — historically ListCategories fed that grid
+// directly; since ut-docs#1898 the grid uses ListActiveCategories below
+// instead (a deactivated category must not offer itself as a sale-screen
+// tab) and this method stays only for the categories admin screen's own
+// "show inactive rows too, so they can be reactivated" need — though the
+// admin screen actually reads ListCategoriesForAdmin (below) for its
+// per-row item counts; ListCategories itself keeps its ALL-rows contract
+// and existing ordering unchanged for whatever else still relies on it.
 func (r *CatalogRepo) ListCategories(ctx context.Context) ([]CategoryNode, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT id, name, COALESCE(parent_id, ''), sort_order, COALESCE(color, '')
+SELECT id, name, COALESCE(parent_id, ''), sort_order, COALESCE(color, ''), is_active
 FROM categories
 ORDER BY sort_order, name`)
 	if err != nil {
@@ -1037,27 +1046,256 @@ ORDER BY sort_order, name`)
 	var out []CategoryNode
 	for rows.Next() {
 		var c CategoryNode
-		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color); err != nil {
+		var active int
+		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active); err != nil {
 			return nil, fmt.Errorf("list categories: %w", err)
 		}
+		c.IsActive = active == 1
 		out = append(out, c)
 	}
 	return out, rows.Err()
 }
 
+// ListActiveCategories is ListCategories filtered to is_active = 1 — what
+// every SALE-facing consumer must use instead of ListCategories
+// (ut-docs#1898): the sale-screen category tab bar (ButtonStore.
+// LoadCategories) and the kitchen-station routing grid
+// (kitchen_stations_page.go's renderPage). The catalog item-edit category
+// <select> deliberately does NOT use this — it stays on the unfiltered
+// CatalogRepo.ReadLookup read (categories is in lookupUnfilteredByActive,
+// see that var's own comment) precisely so a still-referenced-but-
+// deactivated category never disappears from the <select> and silently
+// clears an item's category_id on save (ut-docs#1898 review finding F2;
+// the item-count guard on SetCategoryActive does not fully prevent this —
+// see that var's comment for why).
+func (r *CatalogRepo) ListActiveCategories(ctx context.Context) ([]CategoryNode, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT id, name, COALESCE(parent_id, ''), sort_order, COALESCE(color, '')
+FROM categories
+WHERE is_active = 1
+ORDER BY sort_order, name`)
+	if err != nil {
+		return nil, fmt.Errorf("list active categories: %w", err)
+	}
+	defer rows.Close()
+	var out []CategoryNode
+	for rows.Next() {
+		var c CategoryNode
+		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color); err != nil {
+			return nil, fmt.Errorf("list active categories: %w", err)
+		}
+		c.IsActive = true
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// CategoryAdminRow is one category as the categories admin page
+// (ut-docs#1898) needs it: everything ListCategories has, plus how many
+// currently-ACTIVE items point at it — the count that gates deactivation
+// (SetCategoryActive) and explains to the operator why a deactivate was
+// blocked.
+type CategoryAdminRow struct {
+	ID        string
+	Name      string
+	ParentID  string
+	SortOrder int
+	Color     string
+	IsActive  bool
+	ItemCount int
+}
+
+// ListCategoriesForAdmin returns every category (active and inactive, so a
+// retired one can be reactivated) with its active-item count in one query —
+// a LEFT JOIN + COUNT, the same idiom BarcodeExists/SKUExists in this file
+// already use for a cheap aggregate, avoiding an N+1 per-row count query.
+func (r *CatalogRepo) ListCategoriesForAdmin(ctx context.Context) ([]CategoryAdminRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT c.id, c.name, COALESCE(c.parent_id, ''), c.sort_order, COALESCE(c.color, ''), c.is_active,
+       COUNT(i.id) AS item_count
+FROM categories c
+LEFT JOIN items i ON i.category_id = c.id AND i.is_active = 1
+GROUP BY c.id
+ORDER BY c.sort_order, c.name`)
+	if err != nil {
+		return nil, fmt.Errorf("list categories for admin: %w", err)
+	}
+	defer rows.Close()
+	out := make([]CategoryAdminRow, 0)
+	for rows.Next() {
+		var c CategoryAdminRow
+		var active int
+		if err := rows.Scan(&c.ID, &c.Name, &c.ParentID, &c.SortOrder, &c.Color, &active, &c.ItemCount); err != nil {
+			return nil, fmt.Errorf("list categories for admin: %w", err)
+		}
+		c.IsActive = active == 1
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// ErrCategoryNameRequired reports that CreateCategory/RenameCategory got a
+// blank (post-trim) name — the categories admin page (ut-docs#1898) maps
+// this to a localized validation message instead of writing an empty row.
+var ErrCategoryNameRequired = errors.New("category name is required")
+
+// ErrCategoryNotFound reports that RenameCategory/SetCategoryActive's id
+// doesn't match any categories row.
+var ErrCategoryNotFound = errors.New("category not found")
+
+// ErrCategoryHasItems reports that SetCategoryActive(..., false) was
+// refused because Count active items still point at the category — the
+// AC's "deactivating a category with items in it is handled explicitly
+// (blocked, not a silent fall-back-to-uncategorised or cascade)"
+// requirement (ut-docs#1898). No row is changed when this is returned.
+type ErrCategoryHasItems struct{ Count int }
+
+func (e *ErrCategoryHasItems) Error() string {
+	return fmt.Sprintf("category has %d active item(s)", e.Count)
+}
+
+// CreateCategory adds a new, active, top-level category (ut-docs#1898).
+// Nesting is out of scope for the admin screen — parent_id is always NULL
+// here, matching this card's non-goals; EnsureCategory (import) and any
+// pre-existing nested data are unaffected. sort_order appends to the end of
+// the existing list (current max + 1, or 0 for the first category) so a
+// newly-created category shows up last, not interleaved.
+func (r *CatalogRepo) CreateCategory(ctx context.Context, name string) (string, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return "", ErrCategoryNameRequired
+	}
+	var maxOrder sql.NullInt64
+	if err := r.db.QueryRowContext(ctx, `SELECT MAX(sort_order) FROM categories`).Scan(&maxOrder); err != nil {
+		return "", fmt.Errorf("create category: %w", err)
+	}
+	sortOrder := 0
+	if maxOrder.Valid {
+		sortOrder = int(maxOrder.Int64) + 1
+	}
+	id := uuid.NewString()
+	if _, err := r.db.ExecContext(ctx,
+		`INSERT INTO categories (id, name, sort_order, is_active) VALUES (?, ?, ?, 1)`,
+		id, name, sortOrder); err != nil {
+		return "", fmt.Errorf("create category: %w", err)
+	}
+	return id, nil
+}
+
+// RenameCategory changes a category's display name; id (and every item
+// pointing at it) is unaffected.
+func (r *CatalogRepo) RenameCategory(ctx context.Context, id, name string) error {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ErrCategoryNameRequired
+	}
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET name = ? WHERE id = ?`, name, id)
+	if err != nil {
+		return fmt.Errorf("rename category: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrCategoryNotFound
+	}
+	return nil
+}
+
+// activeItemCountForCategory counts currently-active items pointing at
+// categoryID — shared by SetCategoryActive's deactivate guard.
+func (r *CatalogRepo) activeItemCountForCategory(ctx context.Context, categoryID string) (int, error) {
+	var n int
+	if err := r.db.QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM items WHERE category_id = ? AND is_active = 1`, categoryID).Scan(&n); err != nil {
+		return 0, fmt.Errorf("count active items for category: %w", err)
+	}
+	return n, nil
+}
+
+// SetCategoryActive soft-disables/re-enables a category (ut-docs#1898,
+// mirrors SetStockLocationActive's pattern). Deactivating is refused
+// (ErrCategoryHasItems, no row changed) while any active item still points
+// at it — deactivate/delete-with-items is handled explicitly rather than
+// silently reassigning those items to "uncategorised" or cascading the
+// deactivation onto them. Reactivating never needs this guard.
+func (r *CatalogRepo) SetCategoryActive(ctx context.Context, id string, active bool) error {
+	if !active {
+		n, err := r.activeItemCountForCategory(ctx, id)
+		if err != nil {
+			return err
+		}
+		if n > 0 {
+			return &ErrCategoryHasItems{Count: n}
+		}
+	}
+	v := 0
+	if active {
+		v = 1
+	}
+	res, err := r.db.ExecContext(ctx, `UPDATE categories SET is_active = ? WHERE id = ?`, v, id)
+	if err != nil {
+		return fmt.Errorf("set category active: %w", err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrCategoryNotFound
+	}
+	return nil
+}
+
+// SetCategorySortOrder persists a full reorder — one UPDATE per position,
+// in a transaction — mirroring ShortcutsRepo.UpdateOrder's shape
+// (internal/data/shortcuts_repo.go), the repo-side counterpart of
+// buttons_api.go's move-up/move-down reorder endpoint this card's own
+// reorder route is modelled on.
+func (r *CatalogRepo) SetCategorySortOrder(ctx context.Context, orderedIDs []string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("set category sort order: %w", err)
+	}
+	defer tx.Rollback()
+	stmt, err := tx.PrepareContext(ctx, `UPDATE categories SET sort_order = ? WHERE id = ?`)
+	if err != nil {
+		return fmt.Errorf("set category sort order: %w", err)
+	}
+	defer stmt.Close()
+	for i, id := range orderedIDs {
+		if _, err := stmt.ExecContext(ctx, i, id); err != nil {
+			return fmt.Errorf("set category sort order: %w", err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("set category sort order: %w", err)
+	}
+	return nil
+}
+
 // lookupUnfilteredByActive names the lookup tables ReadLookup returns in
-// full regardless of is_active, where the column's ONLY writer is admin-
-// sync's FK-blocked retire-in-place (sync_admin_repo.go deleteMissing) and
-// not any UI. brands (ut-docs#1610): migration 004 added the column so a
-// retired brand is flagged like the other five UNIQUE-display tables, but
-// /catalog feeds BOTH its item-edit brand <select> and its brandName row
-// resolver from this reader — so a retired-but-still-referenced brand must
-// keep appearing under its real name exactly as it did before the column
-// existed. Hiding it would blank the row's brand and let the next save of
-// that item silently clear its brand_id (the <select> can no longer offer
-// the value), the same failure ListAllTaxCodes exists to prevent for the
-// tax-code <select> — see taxCodeNameFunc in internal/pages/catalog.
-var lookupUnfilteredByActive = map[string]bool{"brands": true}
+// full regardless of is_active. brands (ut-docs#1610): migration 004 added
+// the column so a retired brand is flagged like the other five UNIQUE-
+// display tables, but /catalog feeds BOTH its item-edit brand <select> and
+// its brandName row resolver from this reader — so a retired-but-still-
+// referenced brand must keep appearing under its real name exactly as it
+// did before the column existed. Hiding it would blank the row's brand and
+// let the next save of that item silently clear its brand_id (the <select>
+// can no longer offer the value), the same failure ListAllTaxCodes exists
+// to prevent for the tax-code <select> — see taxCodeNameFunc in
+// internal/pages/catalog.
+//
+// categories (ut-docs#1898 review finding F2): same failure, two writers
+// this time — SetCategoryActive's own item-count guard keeps a *manually*
+// deactivated category free of active items at the moment it flips, but
+// admin-sync's FK-blocked retire-in-place (sync_admin_repo.go
+// deleteMissing, enabled for categories by this same card) bypasses that
+// guard entirely, and a manually-deactivated category can still end up
+// referenced later if one of its (inactive-at-the-time) items is
+// reactivated. Either way, filtering ReadLookup("categories") would blank
+// catalog.html's item-edit <select> for a still-referenced category and
+// silently null its category_id on the next save — unlike brands/tax
+// codes, categories has no "(inactive)" label on this <select> today
+// (tracked as a follow-up, not required to fix the data-loss risk): the
+// name simply keeps appearing, matching pre-#1898 behaviour exactly.
+// ListActiveCategories (below) remains the correct, filtered read for
+// every SALE-facing surface (sale-screen tabs, kitchen-station routing) —
+// only this item-edit/row-resolver path needs the unfiltered read.
+var lookupUnfilteredByActive = map[string]bool{"brands": true, "categories": true}
 
 func (r *CatalogRepo) ReadLookup(ctx context.Context, table string) ([]Lookup, error) {
 	var rows *sql.Rows

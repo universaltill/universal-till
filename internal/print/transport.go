@@ -18,11 +18,17 @@ type Transport interface {
 
 // Config mirrors the printer.* settings.
 type Config struct {
-	Mode      string // off | network | device
-	Address   string // network: host[:port], default port 9100
-	Device    string // device: character device path, e.g. /dev/usb/lp0
-	Charset   string // utf8 | ascii | cp858 | win1250 | win1257 | win1253
-	AutoPrint bool
+	Mode    string // off | network | device
+	Address string // network: host[:port], default port 9100
+	Device  string // device: character device path, e.g. /dev/usb/lp0
+	Charset string // utf8 | ascii | cp858 | win1250 | win1257 | win1253
+	// ReceiptPolicy is the resolved shop-wide receipt policy (ADR-0089):
+	// always | ask | never. AutoPrint is derived from it (== "always") so
+	// the existing auto-print gate needs no change; callers that render
+	// the sale-completion screen read ReceiptPolicy itself to decide
+	// whether to show the "would you like a receipt?" prompt.
+	ReceiptPolicy string
+	AutoPrint     bool
 	// DrawerPin is the drawer-kick connector pin: 2 (default) or 5
 	// (ut-docs#1136). See Doc.DrawerPin in escpos.go for the byte mapping.
 	DrawerPin int
