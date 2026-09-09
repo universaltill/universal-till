@@ -13,9 +13,11 @@
 # file must still be caught — independent review, ut-docs#1357, found the
 # first draft's file-scoped escape hatch silenced the whole file instead),
 # proves the guard fails closed rather than silently no-ops when its own
-# writer pattern matches nothing, and proves the guard still passes on the
+# writer pattern matches nothing, proves the guard still passes on the
 # real, unmodified codebase (every known production call site was already
-# fixed by ut-docs#222/#1351).
+# fixed by ut-docs#222/#1351), and (ut-docs#1942) proves the scan also
+# catches a violation planted under cmd/, scripts/, and e2e/ — not just
+# internal/.
 #
 # Same fixture-planting convention as guard-price-history-sync_test.sh —
 # scratch files under internal/, cleaned up on exit via a trap, never a
@@ -171,6 +173,51 @@ func zzGuardTestPartialAllowUnmarked(ctx context.Context, db data.DBTX) {
 }'
 expect_fail "a second, unmarked writer-call line in a file that also has an allowed line" \
   "zz_guard_test_PartialAllowInSameFile.go"
+clear_fixtures
+
+# ut-docs#1942: the scan must also cover cmd/, scripts/, and e2e/ — not just
+# internal/ — since nothing stops a future seed/smoke tool under one of
+# those trees from writing a plugin setting an .ask-hook asker reads,
+# unguarded. One planted violation per newly-covered directory, each in a
+# real existing package so `go vet`/gofmt-adjacent tooling would still see
+# valid Go if it ever ran over these fixtures.
+plant "cmd/unitill-uninstall" "main" "CmdMissingBump" 'import (
+	"context"
+
+	"github.com/universaltill/universal-till/internal/data"
+)
+
+func zzGuardTestCmdMissingBump(ctx context.Context, db data.DBTX) {
+	_ = data.NewPluginRepo(db).UpsertPluginSetting(ctx, "com.example.tax", "rate", `+"`"+`"700"`+"`"+`)
+}'
+expect_fail "a plugin-settings writer call under cmd/ with no BumpGeneration reference" \
+  "zz_guard_test_CmdMissingBump.go"
+clear_fixtures
+
+plant "scripts/e2e_seed" "main" "ScriptsMissingBump" 'import (
+	"context"
+
+	"github.com/universaltill/universal-till/internal/data"
+)
+
+func zzGuardTestScriptsMissingBump(ctx context.Context, db data.DBTX) {
+	_ = data.NewPluginRepo(db).UpsertPluginSettingScoped(ctx, "com.example.tax", "rate", `+"`"+`"700"`+"`"+`, "global", false)
+}'
+expect_fail "a plugin-settings writer call under scripts/ with no BumpGeneration reference" \
+  "zz_guard_test_ScriptsMissingBump.go"
+clear_fixtures
+
+plant "e2e/seed_demo" "main" "E2eMissingBump" 'import (
+	"context"
+
+	"github.com/universaltill/universal-till/internal/data"
+)
+
+func zzGuardTestE2eMissingBump(ctx context.Context, db data.DBTX) {
+	_ = data.NewPluginRepo(db).MergeAdditiveJSONMapSetting(ctx, "com.example.tax", "rate", `+"`"+`"700"`+"`"+`)
+}'
+expect_fail "a plugin-settings writer call under e2e/ with no BumpGeneration reference" \
+  "zz_guard_test_E2eMissingBump.go"
 clear_fixtures
 
 # The writers' own definition file (internal/data/plugin_repo.go) must stay
