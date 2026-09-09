@@ -163,6 +163,27 @@ func dataAPIRespond(w http.ResponseWriter, status int, ok bool, msg string) {
 	_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": msg})
 }
 
+// elevationActors resolves one elevationCheck into the (actor, blockedActor)
+// pair the audit layer wants (ut-docs#1841, ADR-0087).
+//
+// actorID is whoever actually authorised the action — the approver once a
+// PIN elevated the request, the session user otherwise. blockedActorID is
+// the originally-blocked session user, and is set ONLY when the approver
+// genuinely differs from them: a manager stepping up with their own PIN is
+// still Outcome==elevated (checkStepUp never returns allowed), and must not
+// be recorded as its own "blocked" actor. Empty blockedActorID is what makes
+// the repositories choose InsertAudit over InsertAuditElevated.
+func elevationActors(elev elevationCheck) (actorID, blockedActorID string) {
+	actorID = elev.ActorID
+	if elev.Outcome == elevated {
+		actorID = elev.ApproverID
+		if elev.ApproverID != elev.ActorID {
+			blockedActorID = elev.ActorID
+		}
+	}
+	return actorID, blockedActorID
+}
+
 // registerDataAPI wires the manager-gated Data-management actions. Clearing
 // test data before go-live is all-or-nothing and audited (it cannot cherry-pick
 // individual sales). More operations (customer erasure, catalog cleanup) build
@@ -170,17 +191,34 @@ func dataAPIRespond(w http.ResponseWriter, status int, ok bool, msg string) {
 func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 	respond := dataAPIRespond
 
+	// ut-docs#1841 (ADR-0087): step-up re-authentication, not a typed word.
+	// This card's UI sits behind {{ if .isManager }} AND this same
+	// canPerform("data_management") gate — the only sessions that ever
+	// reach this handler are exactly the ones checkOrElevate would wave
+	// through with NO PIN at all, so checkStepUp is used instead: it never
+	// short-circuits on canPerform, it always demands a fresh PIN.
 	mux.HandleFunc("POST /api/data/reset-transactions", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "data_management") {
 			respond(w, http.StatusForbidden, false, "manager only")
 			return
 		}
 		_ = r.ParseForm()
-		if strings.TrimSpace(r.FormValue("confirm")) != "RESET" {
-			respond(w, http.StatusBadRequest, false, "type RESET to confirm")
+		elev := checkStepUp(d, r, "data_management", r.FormValue("override_pin"))
+		// Tested POSITIVELY (ut-docs#1841 review finding 3): only an
+		// `elevated` outcome may fall through to the mutation. Branching on
+		// `== needsElevation` instead is correct only while checkStepUp
+		// structurally cannot return `allowed` -- so a one-token edit back to
+		// checkOrElevate, or a new outcome value, would silently reopen the
+		// whole bypass with no compile error. This way the mutation is
+		// unreachable by construction, not by invariant.
+		if elev.Outcome != elevated {
+			locale := httpx.ResolveLocale(w, r)
+			renderElevationPrompt(w, r, "/api/data/reset-transactions", "#data-reset-msg",
+				httpx.T(locale, "elevation.summary.data_reset_transactions"), nil, elev)
 			return
 		}
-		n, batchID, err := data.NewPOSRepo(d.Db).ResetTransactionHistory(r.Context(), auth.UserID(r))
+		actorID, blockedActorID := elevationActors(elev)
+		n, batchID, err := data.NewPOSRepo(d.Db).ResetTransactionHistory(r.Context(), actorID, blockedActorID)
 		if err != nil {
 			respond(w, http.StatusInternalServerError, false, err.Error())
 			return
@@ -230,18 +268,25 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 	// the batch references a catalog/customer record removed after the
 	// reset (independent review, ut-docs#187 — see
 	// data.ErrArchiveReferencesRemoved's doc comment). Gated exactly like
-	// reset itself: manager + its own typed confirmation.
+	// reset itself: manager + step-up re-authentication (ut-docs#1841,
+	// ADR-0087) — the batch id round-trips via the URL path, not a hidden
+	// field, so the elevation dialog's re-POST to this same URL still
+	// carries it.
 	mux.HandleFunc("POST /api/data/reset-archives/{id}/restore", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "data_management") {
 			respond(w, http.StatusForbidden, false, "manager only")
 			return
 		}
 		_ = r.ParseForm()
-		if strings.TrimSpace(r.FormValue("confirm")) != "RESTORE" {
-			respond(w, http.StatusBadRequest, false, "type RESTORE to confirm")
+		elev := checkStepUp(d, r, "data_management", r.FormValue("override_pin"))
+		if elev.Outcome != elevated {
+			locale := httpx.ResolveLocale(w, r)
+			renderElevationPrompt(w, r, "/api/data/reset-archives/"+r.PathValue("id")+"/restore", "#archives-msg",
+				httpx.T(locale, "elevation.summary.data_archive_restore"), nil, elev)
 			return
 		}
-		n, err := data.NewPOSRepo(d.Db).RestoreResetBatch(r.Context(), r.PathValue("id"), auth.UserID(r))
+		actorID, blockedActorID := elevationActors(elev)
+		n, err := data.NewPOSRepo(d.Db).RestoreResetBatch(r.Context(), r.PathValue("id"), actorID, blockedActorID)
 		if err != nil {
 			switch {
 			case errors.Is(err, data.ErrResetBatchNotFound):
@@ -259,10 +304,10 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// ADR-0042 §3 / ut-docs#661: permanently purge one archived reset
-	// batch. Gated exactly like restore (manager + a fresh typed
-	// confirmation), plus the retention-window check DeleteResetBatch
-	// enforces in the repository itself — this handler cannot route around
-	// it, only surface what it decided.
+	// batch. Gated exactly like restore (manager + step-up
+	// re-authentication, ut-docs#1841/ADR-0087), plus the retention-window
+	// check DeleteResetBatch enforces in the repository itself — this
+	// handler cannot route around it, only surface what it decided.
 	mux.HandleFunc("POST /api/data/reset-archives/{id}/purge", func(w http.ResponseWriter, r *http.Request) {
 		locale := httpx.ResolveLocale(w, r)
 		if !canPerform(d, r, "data_management") {
@@ -270,11 +315,14 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		_ = r.ParseForm()
-		if strings.TrimSpace(r.FormValue("confirm")) != "PURGE" {
-			respond(w, http.StatusBadRequest, false, httpx.T(locale, "settings.data.archives_purge_confirm_required"))
+		elev := checkStepUp(d, r, "data_management", r.FormValue("override_pin"))
+		if elev.Outcome != elevated {
+			renderElevationPrompt(w, r, "/api/data/reset-archives/"+r.PathValue("id")+"/purge", "#archives-msg",
+				httpx.T(locale, "elevation.summary.data_archive_purge"), nil, elev)
 			return
 		}
-		err := data.NewPOSRepo(d.Db).DeleteResetBatch(r.Context(), r.PathValue("id"), auth.UserID(r))
+		actorID, blockedActorID := elevationActors(elev)
+		err := data.NewPOSRepo(d.Db).DeleteResetBatch(r.Context(), r.PathValue("id"), actorID, blockedActorID)
 		if err != nil {
 			var within *data.ArchiveWithinRetentionWindowError
 			switch {
@@ -346,17 +394,40 @@ func registerDataAPI(mux *http.ServeMux, d *common.Deps) {
 	})
 
 	// Catalog cleanup: permanently remove the previewed obsolete items.
+	// Step-up re-authentication (ut-docs#1841, ADR-0087) replaces the typed
+	// CLEANUP word.
 	mux.HandleFunc("POST /api/data/cleanup-catalog", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "data_management") {
 			respond(w, http.StatusForbidden, false, "manager only")
 			return
 		}
 		_ = r.ParseForm()
-		if strings.TrimSpace(r.FormValue("confirm")) != "CLEANUP" {
-			respond(w, http.StatusBadRequest, false, "type CLEANUP to confirm")
+		elev := checkStepUp(d, r, "data_management", r.FormValue("override_pin"))
+		if elev.Outcome != elevated {
+			// The elevation summary states the count (ut-docs#1841's own
+			// design). CountObsoleteItems, NOT ListObsoleteItems: the
+			// preview list caps at 200 rows while the cleanup deletes
+			// every matching row, so the list's length would understate
+			// the blast radius in the one sentence the approver reads
+			// before authorising it. Deliberately best-effort: a lookup
+			// failure FAILS CLOSED rather than prompting with a wrong
+			// number: "remove 0 product(s)" would understate the blast
+			// radius exactly as the capped list did, and a count query
+			// that cannot run means the DB is unhealthy — refusing a mass
+			// deletion at that moment is the safe answer, and the
+			// operator simply retries.
+			locale := httpx.ResolveLocale(w, r)
+			count, cerr := data.NewPOSRepo(d.Db).CountObsoleteItems(r.Context())
+			if cerr != nil {
+				respond(w, http.StatusInternalServerError, false, cerr.Error())
+				return
+			}
+			renderElevationPrompt(w, r, "/api/data/cleanup-catalog", "#cat-msg",
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.data_catalog_cleanup"), count), nil, elev)
 			return
 		}
-		n, err := data.NewPOSRepo(d.Db).CleanupObsoleteItems(r.Context(), auth.UserID(r))
+		actorID, blockedActorID := elevationActors(elev)
+		n, err := data.NewPOSRepo(d.Db).CleanupObsoleteItems(r.Context(), actorID, blockedActorID)
 		if err != nil {
 			respond(w, http.StatusInternalServerError, false, err.Error())
 			return

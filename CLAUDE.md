@@ -70,11 +70,19 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   external `ut-plugin-language-{de,es}` packs. `lang-pack-drift` CI
   (`.github/workflows/lang-pack-drift.yml`) checks this: **blocking** on
   `push` to `main`, **advisory-only** on a PR that touches `en.json`
-  (shows a `::warning::` on the Files-changed tab plus the exact missing
+  (shows a `::warning::` on the Files-changed tab naming exactly which pack
+  repo(s) need a follow-up PR — ut-docs#1857 — plus the exact missing
   key(s) in the Actions job summary, never blocks merge) so the gap
   surfaces to the author before `main` goes red, not after. The PR check
   is `paths:`-scoped, so it doesn't run at all on a PR that never touched
   `en.json` — its absence from that PR's check list is normal, not stuck.
+  `scripts/ci/check-lang-pack-drift.test.sh` self-tests the guard itself
+  (fixture pack repos over a throwaway local HTTP server) and runs before
+  it in CI, same pattern as each pack repo's own `check-key-drift.test.sh`.
+  Each fixture's `check-key-drift.sh` comes from a local sibling checkout
+  if one is on disk, else a live fetch from that pack's own `main` (so the
+  test still runs on a bare CI checkout of just this repo) — see that
+  script's own header if you need the exact resolution order.
   Never add it to branch protection's required checks for the same reason
   (most PRs would show no check run, which reads as "waiting forever").
 - Validate all external input (users, plugins, devices).

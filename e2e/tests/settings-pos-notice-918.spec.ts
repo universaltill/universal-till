@@ -43,31 +43,39 @@ test('window-mode save renders a real .pos-notice, not a bare glyph-prefixed tex
   assertClean();
 });
 
-// The Data card's reset-transactions control (manager-only, the same
-// script block covering data-reset/archives/customers/catalog-cleanup/
-// export) exercises the client-side validation-error path — a wrong
-// confirmation string never reaches the server, the cheapest way to prove
-// the error-level branch (role="alert", persists rather than
-// auto-expiring) without mutating real data.
-test('data-reset confirmation-mismatch error renders role="alert" and persists', async ({ page }) => {
+// ut-docs#1841 (ADR-0087): the Data card's reset-transactions control
+// dropped its typed-word confirmation for step-up manager-PIN
+// re-authentication (checkStepUp) — window.utPostWithElevation (app.js)
+// opens the shared #elevation-modal dialog instead of a client-side
+// validation-error span. This drives that dialog for real: an empty first
+// click gets the first-time prompt (no error yet), a wrong PIN re-renders
+// the SAME dialog with a real server-side invalid-PIN error — the
+// cheapest way to prove the error path without a seeded manager PIN this
+// e2e fixture has no way to provide (UT_AUTH=off never needed one before).
+test('data-reset now requires a manager PIN step-up, not a typed word (ut-docs#1841)', async ({ page }) => {
   const assertClean = watchConsole(page);
   await page.goto('/settings');
 
-  const confirmInput = page.locator('#data-reset-confirm');
   const btn = page.locator('#data-reset-btn');
   await expect(btn).toBeVisible();
-  await confirmInput.fill('not-the-right-word');
   await btn.click();
 
-  const notice = page.locator('#data-reset-msg .pos-notice.error');
-  await expect(notice).toBeVisible();
-  await expect(notice).toHaveAttribute('role', 'alert');
-  await expect(notice.locator('.notice-text')).not.toContainText('✗');
+  // First-time prompt: the shared elevation dialog, carrying this action's
+  // own translated summary, no error yet.
+  const dialog = page.locator('#elevation-modal');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.locator('.elevation-summary')).toBeVisible();
+  await expect(dialog.locator('.login-error')).toHaveCount(0);
 
-  // Errors persist until dismissed (scheduleToastDismiss skips .error) —
-  // give the 2.5s auto-expire window a moment to prove it does NOT fire.
-  await page.waitForTimeout(3000);
-  await expect(notice).toBeVisible();
+  // A wrong PIN is a real failed attempt against the server's own
+  // AuthorizeManager, not a client-side check — the dialog re-renders
+  // with a genuine invalid-PIN error, and stays open (never a terminal
+  // success/refusal state).
+  await dialog.locator('input[name="override_pin"]').fill('000000');
+  await dialog.locator('button[type="submit"]').click();
+
+  await expect(page.locator('#elevation-modal .login-error')).toBeVisible();
+  await expect(page.locator('#elevation-modal')).toBeVisible();
 
   assertClean();
 });

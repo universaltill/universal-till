@@ -58,10 +58,10 @@ func TestMenuPage_RendersConfiguredTilesWithMappedIcons(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `href="/inventory"`) || !strings.Contains(body, "📦") {
+	if !strings.Contains(body, `href="/inventory"`) || !strings.Contains(body, `data-icon="package"`) {
 		t.Fatalf("expected the inventory tile with its mapped icon, got: %s", body)
 	}
-	if !strings.Contains(body, `href="/reports"`) || !strings.Contains(body, "📊") {
+	if !strings.Contains(body, `href="/reports"`) || !strings.Contains(body, `data-icon="chart-column"`) {
 		t.Fatalf("expected the reports tile with its mapped icon, got: %s", body)
 	}
 	// Tile order follows d.Menu order -- it's the actual on-screen layout,
@@ -93,8 +93,11 @@ func TestMenuPage_OrdersTileHasAMappedIcon(t *testing.T) {
 	if !strings.Contains(body, `href="/orders"`) {
 		t.Fatalf("expected the orders tile rendered, got: %s", body)
 	}
-	if strings.Contains(body, `<span class="menu-ico">▪️</span>`) {
+	if strings.Contains(body, `▪️`) {
 		t.Fatalf("expected the orders tile NOT to use the no-icon fallback, got: %s", body)
+	}
+	if !strings.Contains(body, `data-icon="bell"`) {
+		t.Fatalf("expected the orders tile's mapped icon, got: %s", body)
 	}
 }
 
@@ -167,10 +170,10 @@ func TestMenuPage_ManagerOnlyTilesGatedByRole(t *testing.T) {
 	if !strings.Contains(body, `href="/users"`) || !strings.Contains(body, `href="/translations"`) {
 		t.Fatalf("expected the manager-only tiles with UT_AUTH=off, got: %s", body)
 	}
-	if !strings.Contains(body, `href="/report-issue"`) || !strings.Contains(body, "🐞") {
+	if !strings.Contains(body, `href="/report-issue"`) || !strings.Contains(body, `data-icon="bug"`) {
 		t.Fatalf("expected the report-issue tile with its icon, reachable from the menu with UT_AUTH=off, got: %s", body)
 	}
-	if !strings.Contains(body, `href="/locations"`) || !strings.Contains(body, "📍") {
+	if !strings.Contains(body, `href="/locations"`) || !strings.Contains(body, `data-icon="map-pin"`) {
 		t.Fatalf("expected the locations tile with its icon, reachable from the menu with UT_AUTH=off, got: %s", body)
 	}
 	if strings.Contains(rec.Body.String(), `href="/locations"`) {
@@ -203,7 +206,7 @@ func TestMenuPage_FiscalRegisterTileRequiresPluginNotJustCountry(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec2.Code, rec2.Body.String())
 	}
 	body := rec2.Body.String()
-	if !strings.Contains(body, `href="/fiscal-register"`) || !strings.Contains(body, "📋") {
+	if !strings.Contains(body, `href="/fiscal-register"`) || !strings.Contains(body, `data-icon="clipboard-list"`) {
 		t.Fatalf("expected the fiscal-register tile once DE + plugin active, got: %s", body)
 	}
 }
@@ -353,6 +356,63 @@ func TestMenuPage_BluetoothTileUsesTheBluetoothSymbolNotSignalBars(t *testing.T)
 	// in the menu, so it should now be gone from the page entirely.
 	if strings.Contains(body, "📶") {
 		t.Errorf("the antenna-bars emoji must not appear anywhere on the menu any more, got: %s", body)
+	}
+}
+
+// ut-docs#1845 (product owner + German pilot merchant, comparing against a
+// competitor POS on the pilot tablet): the Menu screen's tiles (iconFor),
+// the Pfand-refund tile, and the language-switcher label all carried
+// emoji. TestMenuPage_BluetoothTileUsesTheBluetoothSymbolNotSignalBars
+// already pins one glyph (📶) gone for good; this is the guard that every
+// other one that ever appeared here stays gone too, covering the tile
+// grid, the Pfand tile, and the language row in one render.
+//
+// Named for what it actually checks (independent review, ut-docs#1845):
+// a fixed denylist of the specific glyphs this page used to render, NOT a
+// full-page Unicode emoji scan — this page also renders shared layout
+// chrome (web/ui/layouts/base.html) that carries its own, unrelated
+// glyphs (📷 the bugreport screenshot button, ✦/⬆/✕ the update banner/
+// close controls), which are out of scope for ut-docs#1845 ("no emoji
+// left in menu/nav markup" — that chrome isn't menu/nav) and deliberately
+// not asserted against here.
+func TestMenuPage_NoRetiredTileEmoji(t *testing.T) {
+	mux, _ := newMenuPageTestDeps(t, []common.MenuItem{
+		{Href: "/", Label: "nav.till"},
+		{Href: "/designer", Label: "nav.designer"},
+		{Href: "/inventory", Label: "nav.inventory"},
+		{Href: "/shifts", Label: "nav.shifts"},
+		{Href: "/journal", Label: "nav.journal"},
+		{Href: "/reports", Label: "nav.reports"},
+		{Href: "/settings", Label: "nav.settings"},
+		{Href: "/plugins", Label: "nav.plugins"},
+		{Href: "/catalog", Label: "nav.catalog"},
+		{Href: "/orders", Label: "nav.orders"},
+	})
+	t.Setenv("UT_AUTH", "off") // also renders every manager-gated tile below
+
+	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	// Every glyph the old iconFor map (menu tiles) and menu.html's two
+	// standalone spans (Pfand, language) ever used, plus the "no icon"
+	// fallback square ut-docs#1371 replaced. Deliberately not "/fiscal-
+	// register" or "/fiscal-device"'s 📋/🧾 here — those tiles need
+	// country+plugin setup this render doesn't do, so they're covered by
+	// their own dedicated tests (TestMenuPage_FiscalRegisterTile...)
+	// instead; 🧾 is still checked below via the always-rendered "/" tile.
+	oldEmoji := []string{
+		"🧾", "🎨", "📦", "🕒", "📒", "📊", "⚙️", "🧩", "🏷️", "❓", "👤",
+		"📍", "🧮", "🍳", "🪑", "🌍", "🌐", "🖥️", "🐞", "🛎️", "♻️", "▪️", "📶",
+	}
+	for _, e := range oldEmoji {
+		if strings.Contains(body, e) {
+			t.Errorf("expected no emoji left on the menu page (ut-docs#1845), found %q in: %s", e, body)
+		}
 	}
 }
 

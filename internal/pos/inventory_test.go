@@ -392,6 +392,7 @@ CREATE TABLE items (
   name TEXT NOT NULL,
   category TEXT NOT NULL,
   reorder_level INTEGER NOT NULL DEFAULT 0,
+  stock_untracked INTEGER NOT NULL DEFAULT 0,
   created_at TEXT NOT NULL
 );
 
