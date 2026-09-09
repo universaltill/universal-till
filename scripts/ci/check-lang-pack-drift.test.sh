@@ -206,7 +206,16 @@ start_server() {
     # confirmed by pid/ppid mismatch). `--directory` (Python 3.7+) serves
     # the fixture root without a `cd`, so `$!` here is python3's own real
     # pid.
-    python3 -m http.server 0 --bind 127.0.0.1 --directory "$server_root" \
+    # Found live on the actual GitHub Actions runner (not just locally):
+    # PYTHONUNBUFFERED=1 happens to be set in this pipeline's own container
+    # (it isn't on a stock Actions runner), so redirecting stderr to a
+    # regular file switches Python from line-buffered to fully block-
+    # buffered -- the one-line startup log below can sit in that buffer
+    # indefinitely (the server never writes enough after it to force a
+    # flush), so a bare CI runner never sees it inside the poll loop below,
+    # every single time. `-u` forces unbuffered stdio regardless of what
+    # the calling environment happens to have set.
+    python3 -u -m http.server 0 --bind 127.0.0.1 --directory "$server_root" \
         > "${work_dir}/server.log" 2>&1 &
     server_pid=$!
     # python3 -m http.server logs its actual bound port to stderr on
