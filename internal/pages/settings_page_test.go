@@ -1032,10 +1032,10 @@ func TestSettingsPage_TillRegisterPickerRendersAndSelects(t *testing.T) {
 }
 
 // ut-docs#698: a batch still inside its retention window must show the
-// retained-until date and NOT offer the Delete-permanently confirm flow, so
-// an operator never types PURGE and confirms only to be refused; a batch
-// outside the window (or with no sales at all) must offer the control
-// exactly as before.
+// retained-until date and NOT offer the Delete-permanently button, so an
+// operator never steps through the manager-PIN prompt (ut-docs#1841,
+// ADR-0087) only to be refused; a batch outside the window (or with no
+// sales at all) must offer the control exactly as before.
 func TestSettingsPage_ResetArchivesShowsPurgeEligibility(t *testing.T) {
 	// newFullAuthDeps' hand-built fixture schema has no reset_batches table
 	// (it's not a real migrated DB) -- newRealDBDeps (demo_seed_opt_in_test.go)

@@ -3,6 +3,7 @@ package data_test
 import (
 	"context"
 	"errors"
+	"fmt"
 	"path/filepath"
 	"testing"
 
@@ -87,7 +88,7 @@ func TestResetTransactionHistoryClearsSalesKeepsCatalog(t *testing.T) {
 
 	itemsBefore := count("items") // fresh DB may seed a sample catalog
 
-	n, batchID, err := data.NewPOSRepo(d.DB).ResetTransactionHistory(context.Background(), "")
+	n, batchID, err := data.NewPOSRepo(d.DB).ResetTransactionHistory(context.Background(), "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -157,7 +158,7 @@ func TestResetTransactionHistory_ClearsHeldOrdersTableClaim(t *testing.T) {
 		t.Fatalf("test setup: want 1 table_claims row before reset, got %d", c)
 	}
 
-	if _, _, err := data.NewPOSRepo(d.DB).ResetTransactionHistory(context.Background(), ""); err != nil {
+	if _, _, err := data.NewPOSRepo(d.DB).ResetTransactionHistory(context.Background(), "", ""); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
 
@@ -178,7 +179,7 @@ func TestResetThenRestoreRoundTrip(t *testing.T) {
 
 	repo := data.NewPOSRepo(d.DB)
 	ctx := context.Background()
-	n, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	n, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -194,7 +195,7 @@ func TestResetThenRestoreRoundTrip(t *testing.T) {
 		t.Fatalf("ListResetBatches = %+v, want one batch %s with 2 sales", batches, batchID)
 	}
 
-	restored, err := repo.RestoreResetBatch(ctx, batchID, "")
+	restored, err := repo.RestoreResetBatch(ctx, batchID, "", "")
 	if err != nil {
 		t.Fatalf("restore: %v", err)
 	}
@@ -283,7 +284,7 @@ func TestResetThenRestoreRoundTrip_CardPresentFields(t *testing.T) {
 
 	repo := data.NewPOSRepo(d.DB)
 	ctx := context.Background()
-	if _, batchID, err := repo.ResetTransactionHistory(ctx, ""); err != nil {
+	if _, batchID, err := repo.ResetTransactionHistory(ctx, "", ""); err != nil {
 		t.Fatalf("reset: %v", err)
 	} else {
 		var maskedPAN string
@@ -294,7 +295,7 @@ func TestResetThenRestoreRoundTrip_CardPresentFields(t *testing.T) {
 			t.Fatalf("archived masked_pan = %q, want %q", maskedPAN, "VISA •••• 4242")
 		}
 
-		if _, err := repo.RestoreResetBatch(ctx, batchID, ""); err != nil {
+		if _, err := repo.RestoreResetBatch(ctx, batchID, "", ""); err != nil {
 			t.Fatalf("restore: %v", err)
 		}
 	}
@@ -326,7 +327,7 @@ func TestResetThenRestoreRoundTrip_SaleTableID(t *testing.T) {
 
 	repo := data.NewPOSRepo(d.DB)
 	ctx := context.Background()
-	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -338,7 +339,7 @@ func TestResetThenRestoreRoundTrip_SaleTableID(t *testing.T) {
 		t.Fatalf("archived table_id = %q, want tbl1", archivedTableID)
 	}
 
-	if _, err := repo.RestoreResetBatch(ctx, batchID, ""); err != nil {
+	if _, err := repo.RestoreResetBatch(ctx, batchID, "", ""); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 	if c := count("sales"); c != 2 {
@@ -373,7 +374,7 @@ func TestResetThenRestoreRoundTrip_SaleTrackingToken(t *testing.T) {
 		t.Fatalf("EnsureOrderTrackingToken: %v", err)
 	}
 
-	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -385,7 +386,7 @@ func TestResetThenRestoreRoundTrip_SaleTrackingToken(t *testing.T) {
 		t.Fatalf("archived tracking_token = %q, want %q", archivedToken, token)
 	}
 
-	if _, err := repo.RestoreResetBatch(ctx, batchID, ""); err != nil {
+	if _, err := repo.RestoreResetBatch(ctx, batchID, "", ""); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 	if c := count("sales"); c != 2 {
@@ -417,7 +418,7 @@ func TestResetThenRestoreRoundTrip_SaleDisplayNo(t *testing.T) {
 
 	repo := data.NewPOSRepo(d.DB)
 	ctx := context.Background()
-	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -429,7 +430,7 @@ func TestResetThenRestoreRoundTrip_SaleDisplayNo(t *testing.T) {
 		t.Fatalf("archived display_no = %q, want %q", archivedDisplayNo, "7")
 	}
 
-	if _, err := repo.RestoreResetBatch(ctx, batchID, ""); err != nil {
+	if _, err := repo.RestoreResetBatch(ctx, batchID, "", ""); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 	if c := count("sales"); c != 2 {
@@ -476,7 +477,7 @@ func TestResetThenRestoreRoundTrip_LocalDateColumns(t *testing.T) {
 
 	repo := data.NewPOSRepo(d.DB)
 	ctx := context.Background()
-	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -504,7 +505,7 @@ func TestResetThenRestoreRoundTrip_LocalDateColumns(t *testing.T) {
 		t.Fatalf("archived worker_allocations.local_date = %q, want 2026-01-01", archWALocalDate)
 	}
 
-	if _, err := repo.RestoreResetBatch(ctx, batchID, ""); err != nil {
+	if _, err := repo.RestoreResetBatch(ctx, batchID, "", ""); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 	if c := count("sales"); c != 2 {
@@ -560,7 +561,7 @@ func TestResetThenRestoreRoundTrip_CreditNote(t *testing.T) {
 
 	repo := data.NewPOSRepo(d.DB)
 	ctx := context.Background()
-	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -572,7 +573,7 @@ func TestResetThenRestoreRoundTrip_CreditNote(t *testing.T) {
 		t.Fatalf("invoices_archive: got %d err=%v, want 2 (original + credit note)", archived, err)
 	}
 
-	if _, err := repo.RestoreResetBatch(ctx, batchID, ""); err != nil {
+	if _, err := repo.RestoreResetBatch(ctx, batchID, "", ""); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 	if c := count("invoices"); c != 2 {
@@ -612,7 +613,7 @@ func TestResetThenRestoreRoundTrip_RefundOfLineID(t *testing.T) {
 
 	repo := data.NewPOSRepo(d.DB)
 	ctx := context.Background()
-	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -627,7 +628,7 @@ func TestResetThenRestoreRoundTrip_RefundOfLineID(t *testing.T) {
 		t.Fatalf("archived refund_of_line_id = %q, want l1", archivedRefundOf)
 	}
 
-	if _, err := repo.RestoreResetBatch(ctx, batchID, ""); err != nil {
+	if _, err := repo.RestoreResetBatch(ctx, batchID, "", ""); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 	if c := count("sale_lines"); c != 2 {
@@ -648,7 +649,7 @@ func TestRestoreRefusesWhenShopHasTradedSinceReset(t *testing.T) {
 
 	repo := data.NewPOSRepo(d.DB)
 	ctx := context.Background()
-	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -656,7 +657,7 @@ func TestRestoreRefusesWhenShopHasTradedSinceReset(t *testing.T) {
 	// (and would collide on receipt numbering — ADR-0042 §2).
 	x(`INSERT INTO sales (id, receipt_no, subtotal, total) VALUES ('post1','R1',999,999)`)
 
-	_, err = repo.RestoreResetBatch(ctx, batchID, "")
+	_, err = repo.RestoreResetBatch(ctx, batchID, "", "")
 	if !errors.Is(err, data.ErrShopHasTradedSinceReset) {
 		t.Fatalf("restore after trading: err=%v, want ErrShopHasTradedSinceReset", err)
 	}
@@ -687,7 +688,7 @@ func TestRestoreRefusesWhenArchiveReferencesRemovedItem(t *testing.T) {
 
 	repo := data.NewPOSRepo(d.DB)
 	ctx := context.Background()
-	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -696,7 +697,7 @@ func TestRestoreRefusesWhenArchiveReferencesRemovedItem(t *testing.T) {
 	// exactly what those actions do today.
 	x(`DELETE FROM items WHERE id = 'i1'`)
 
-	_, err = repo.RestoreResetBatch(ctx, batchID, "")
+	_, err = repo.RestoreResetBatch(ctx, batchID, "", "")
 	if !errors.Is(err, data.ErrArchiveReferencesRemoved) {
 		t.Fatalf("restore after item removed: err=%v, want ErrArchiveReferencesRemoved", err)
 	}
@@ -718,7 +719,7 @@ func TestRestoreRefusesWhenArchiveReferencesRemovedItem(t *testing.T) {
 
 func TestRestoreNonexistentBatchReturnsNotFound(t *testing.T) {
 	d, _, _ := resetTestDB(t, "notfound.db")
-	_, err := data.NewPOSRepo(d.DB).RestoreResetBatch(context.Background(), "no-such-batch", "")
+	_, err := data.NewPOSRepo(d.DB).RestoreResetBatch(context.Background(), "no-such-batch", "", "")
 	if !errors.Is(err, data.ErrResetBatchNotFound) {
 		t.Fatalf("restore of unknown batch: err=%v, want ErrResetBatchNotFound", err)
 	}
@@ -794,7 +795,7 @@ func TestCleanupObsoleteItems(t *testing.T) {
 	if err != nil || len(preview) != 1 || preview[0].ID != "obs" {
 		t.Fatalf("preview should list only 'obs': err=%v got=%+v", err, preview)
 	}
-	n, err := repo.CleanupObsoleteItems(context.Background(), "")
+	n, err := repo.CleanupObsoleteItems(context.Background(), "", "")
 	if err != nil || n != 1 {
 		t.Fatalf("cleanup: n=%d err=%v", n, err)
 	}
@@ -842,7 +843,7 @@ func TestCleanupObsoleteItems_ItemWithKitchenStationRouteCascades(t *testing.T) 
 		t.Fatalf("SetItemStationRoutes: %v", err)
 	}
 
-	n, err := repo.CleanupObsoleteItems(context.Background(), "")
+	n, err := repo.CleanupObsoleteItems(context.Background(), "", "")
 	if err != nil {
 		t.Fatalf("cleanup must not fail on an item with a station route: %v", err)
 	}
@@ -868,7 +869,7 @@ func TestCleanupObsoleteItems_KeepsItemReferencedOnlyByArchive(t *testing.T) {
 
 	repo := data.NewPOSRepo(d.DB)
 	ctx := context.Background()
-	if _, _, err := repo.ResetTransactionHistory(ctx, ""); err != nil {
+	if _, _, err := repo.ResetTransactionHistory(ctx, "", ""); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
 	// Live sale_lines/stock_movements are now empty; only the archive
@@ -886,7 +887,7 @@ func TestCleanupObsoleteItems_KeepsItemReferencedOnlyByArchive(t *testing.T) {
 		}
 	}
 
-	n, err := repo.CleanupObsoleteItems(ctx, "")
+	n, err := repo.CleanupObsoleteItems(ctx, "", "")
 	if err != nil {
 		t.Fatalf("CleanupObsoleteItems: %v", err)
 	}
@@ -920,7 +921,7 @@ func TestEraseCustomer_AnonymisesArchivedSaleToo(t *testing.T) {
 
 	repo := data.NewPOSRepo(d.DB)
 	ctx := context.Background()
-	if _, _, err := repo.ResetTransactionHistory(ctx, ""); err != nil {
+	if _, _, err := repo.ResetTransactionHistory(ctx, "", ""); err != nil {
 		t.Fatalf("reset: %v", err)
 	}
 	var archived int
@@ -955,7 +956,7 @@ func TestEraseCustomer_AnonymisesArchivedSaleToo(t *testing.T) {
 	if err != nil || len(batches) != 1 {
 		t.Fatalf("ListResetBatches: %+v, %v", batches, err)
 	}
-	if _, err := repo.RestoreResetBatch(ctx, batches[0].ID, ""); err != nil {
+	if _, err := repo.RestoreResetBatch(ctx, batches[0].ID, "", ""); err != nil {
 		t.Fatalf("restore after erasure: %v", err)
 	}
 	var liveCID *string
@@ -983,7 +984,7 @@ func TestResetThenRestoreRoundTrip_ShiftNewFloatCountProtocol(t *testing.T) {
 
 	repo := data.NewPOSRepo(d.DB)
 	ctx := context.Background()
-	_, batchID, err := repo.ResetTransactionHistory(ctx, "")
+	_, batchID, err := repo.ResetTransactionHistory(ctx, "", "")
 	if err != nil {
 		t.Fatalf("reset: %v", err)
 	}
@@ -1001,7 +1002,7 @@ func TestResetThenRestoreRoundTrip_ShiftNewFloatCountProtocol(t *testing.T) {
 		t.Errorf("archived count_protocol = %q, want the seeded JSON", archivedProtocol)
 	}
 
-	if _, err := repo.RestoreResetBatch(ctx, batchID, ""); err != nil {
+	if _, err := repo.RestoreResetBatch(ctx, batchID, "", ""); err != nil {
 		t.Fatalf("restore: %v", err)
 	}
 	if c := count("shifts"); c != 1 {
@@ -1018,5 +1019,65 @@ func TestResetThenRestoreRoundTrip_ShiftNewFloatCountProtocol(t *testing.T) {
 	}
 	if restoredProtocol != `{"5000":10,"100":11,"10":1}` {
 		t.Errorf("restored count_protocol = %q, want the seeded JSON", restoredProtocol)
+	}
+}
+
+// TestCountObsoleteItems_NotCappedLikeList is the regression guard for
+// ut-docs#1841's step-up PIN summary. That summary tells the approver how
+// many products are about to be permanently deleted, and it is the only
+// description of the blast radius they see before authorising it.
+//
+// ListObsoleteItems clamps its limit to 200 because it feeds a preview
+// table; CleanupObsoleteItems has no cap and deletes every matching row. So
+// deriving the summary's count from len(ListObsoleteItems(...)) would
+// promise "remove 200 products" and then delete all 250 here — understating
+// a destructive action in the exact sentence that exists to prevent one.
+func TestCountObsoleteItems_NotCappedLikeList(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "count-obsolete.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+
+	const total = 250 // deliberately above ListObsoleteItems' 200 clamp
+	for i := 0; i < total; i++ {
+		if _, err := d.DB.Exec(
+			`INSERT INTO items (id, name, base_price, is_active) VALUES (?, ?, 100, 0)`,
+			fmt.Sprintf("obs%03d", i), fmt.Sprintf("Obsolete %03d", i)); err != nil {
+			t.Fatalf("seed item %d: %v", i, err)
+		}
+	}
+
+	repo := data.NewPOSRepo(d.DB)
+	ctx := context.Background()
+
+	// The preview really is capped -- this is the trap being guarded against,
+	// asserted rather than assumed so the test fails loudly if the clamp moves.
+	preview, err := repo.ListObsoleteItems(ctx, 0)
+	if err != nil {
+		t.Fatalf("ListObsoleteItems: %v", err)
+	}
+	if len(preview) != 200 {
+		t.Fatalf("ListObsoleteItems should clamp to 200, got %d", len(preview))
+	}
+
+	count, err := repo.CountObsoleteItems(ctx)
+	if err != nil {
+		t.Fatalf("CountObsoleteItems: %v", err)
+	}
+	if count != total {
+		t.Fatalf("CountObsoleteItems = %d, want %d (the number cleanup actually deletes)", count, total)
+	}
+
+	// And the count must equal what the deletion really removes.
+	deleted, err := repo.CleanupObsoleteItems(ctx, "", "")
+	if err != nil {
+		t.Fatalf("CleanupObsoleteItems: %v", err)
+	}
+	if deleted != int64(total) {
+		t.Fatalf("CleanupObsoleteItems removed %d, want %d", deleted, total)
+	}
+	if deleted != count {
+		t.Fatalf("summary count (%d) disagreed with what was deleted (%d)", count, deleted)
 	}
 }

@@ -101,6 +101,43 @@ func checkOrElevate(dp *common.Deps, r *http.Request, action, pin string) elevat
 	if canPerform(dp, r, action) {
 		return elevationCheck{Outcome: allowed, ActorID: actorID}
 	}
+	return verifyElevationPIN(dp, r, action, actorID, pin)
+}
+
+// checkStepUp is checkOrElevate's step-up sibling (ut-docs#1841, ADR-0087):
+// where checkOrElevate answers "can this session do X, and if not, can a
+// PIN get it past that denial", checkStepUp always demands a fresh PIN —
+// it NEVER short-circuits to allowed just because canPerform(action) is
+// already true for the session. actorID is always the session user
+// (getSessionUserID); Outcome is elevated only once a real approver PIN
+// verified, exactly like checkOrElevate's own PIN path (same
+// AuthorizeManager/Can sequence, same lockout sharing, same error
+// mapping) — the two functions differ ONLY in whether canPerform can ever
+// skip the PIN check at all.
+//
+// Use checkStepUp when the action is irreversible (or destroys/moves real
+// data) and the UI that reaches the handler is ALREADY manager-only — e.g.
+// a {{ if .isManager }} block whose buttons ALSO canPerform-gate the
+// handler itself. In that shape every session reaching the handler is
+// exactly the session checkOrElevate would wave through with no PIN at
+// all, which would be strictly WEAKER than whatever confirmation existed
+// before (see data_api.go's four Settings → Data handlers: catalog
+// cleanup, reset transaction history, archive purge, archive restore —
+// the case this was built for). Use checkOrElevate everywhere else: its
+// whole point is to let a session that CAN'T normally perform an action
+// recover via a manager's PIN instead of a flat 403 — checkStepUp has no
+// such recovery role, it only re-proves authority someone already holds.
+func checkStepUp(dp *common.Deps, r *http.Request, action, pin string) elevationCheck {
+	actorID := getSessionUserID(r)
+	return verifyElevationPIN(dp, r, action, actorID, pin)
+}
+
+// verifyElevationPIN is the PIN-verification leg checkOrElevate and
+// checkStepUp both run once they've decided a PIN check is actually
+// needed — factored out so the two never duplicate (and risk drifting)
+// the AuthorizeManager/Can sequence, the lockout-sharing behaviour, or the
+// error-to-Outcome mapping. Never called directly by a handler.
+func verifyElevationPIN(dp *common.Deps, r *http.Request, action, actorID, pin string) elevationCheck {
 	if pin == "" {
 		return elevationCheck{Outcome: needsElevation, ActorID: actorID}
 	}
