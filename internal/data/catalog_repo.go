@@ -1204,6 +1204,21 @@ func (r *CatalogRepo) ensureInventoryRow(ctx context.Context, itemID, variantID 
 // caller-supplied *sql.Tx (CreateItemTx) — both satisfy database/sql's
 // ExecContext/QueryRowContext, so a plain execer interface covers both
 // without duplicating the statements.
+//
+// ut-docs#1850 (review): the insert is guarded by its own NOT EXISTS, not by
+// INSERT OR IGNORE against ux_inventory_item. That index is
+// UNIQUE(item_id, variant_id, location_id) and SQLite treats NULLs as
+// DISTINCT in a unique index — every row this helper writes has exactly one
+// of item_id/variant_id NULL by the table's own CHECK constraint, so the
+// index NEVER fires for it and OR IGNORE silently ignored nothing. The
+// "if one doesn't already exist" in the doc comment above was therefore not
+// true: a second call for the same item duplicated the row (and with it the
+// item's on-hand quantity, which ListStockLevels/DeadStock/StockForExport
+// all SUM). Harmless while the only caller was create-once, but this card
+// added a second caller (updateItemExec, restoring the row for an item
+// switched back to tracked) that calls it repeatedly. `IS` rather than `=`
+// so the NULL half of the key compares NULL-safely; one statement rather
+// than SELECT-then-INSERT so there is no check-then-act window.
 func ensureInventoryRowExec(ctx context.Context, ex execer, itemID, variantID string) error {
 	var locationID string
 	err := ex.QueryRowContext(ctx, `SELECT id FROM stock_locations WHERE name = 'Main' OR id = 'loc_main' ORDER BY id LIMIT 1`).Scan(&locationID)
@@ -1216,9 +1231,14 @@ func ensureInventoryRowExec(ctx context.Context, ex execer, itemID, variantID st
 		return fmt.Errorf("find default location: %w", err)
 	}
 	_, err = ex.ExecContext(ctx, `
-INSERT OR IGNORE INTO inventory (id, item_id, variant_id, location_id, quantity)
-VALUES (?, ?, ?, ?, 0)
-`, uuid.NewString(), nullIfEmpty(itemID), nullIfEmpty(variantID), locationID)
+INSERT INTO inventory (id, item_id, variant_id, location_id, quantity)
+SELECT ?, ?, ?, ?, 0
+WHERE NOT EXISTS (
+    SELECT 1 FROM inventory
+    WHERE item_id IS ? AND variant_id IS ? AND location_id = ?
+)
+`, uuid.NewString(), nullIfEmpty(itemID), nullIfEmpty(variantID), locationID,
+		nullIfEmpty(itemID), nullIfEmpty(variantID), locationID)
 	if err != nil {
 		return fmt.Errorf("insert inventory row: %w", err)
 	}
@@ -1585,6 +1605,20 @@ WHERE id = ?
 		}
 		return fmt.Errorf("update item: %w", err)
 	}
+	// ut-docs#1850 (review): switching an item back to tracked has to be able
+	// to give it the inventory row CreateItem skipped while it was untracked
+	// — without this the item is missing from the Inventory screen entirely
+	// (ListStockLevels JOINs inventory), not even listed at zero like every
+	// other tracked item, until someone happens to record a goods-in for it.
+	// INSERT OR IGNORE against ux_inventory_item, so re-saving an item that
+	// already has a row is a no-op rather than a duplicate. Best-effort and
+	// logged, exactly like CreateItem's own call: a stockless deployment (no
+	// stock_locations table at all) must still be able to edit its catalog.
+	if !in.StockUntracked {
+		if err := ensureInventoryRowExec(ctx, ex, in.ID, ""); err != nil {
+			logging.L().Warnf("catalog: update item %s: inventory row not created: %v", in.ID, err)
+		}
+	}
 	return nil
 }
 
@@ -1615,8 +1649,30 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 	// Same reasoning as CreateItem: without this a new variant has no
 	// inventory row and is invisible on the Inventory page. Best-effort,
 	// same as CreateItem — never fails variant creation itself.
-	if err := r.ensureInventoryRow(ctx, "", in.ID); err != nil {
-		logging.L().Warnf("catalog: create variant %s: inventory row not created: %v", in.ID, err)
+	//
+	// ut-docs#1850 (review): except when the PARENT item is stock_untracked.
+	// The flag lives on the item, not the variant — CompleteSale already
+	// resolves a variant line's tracked status through item_variants.item_id
+	// (UntrackedByKey) — so a variant of an untracked item must not carry an
+	// inventory row either. Without this check CreateItem correctly skips the
+	// item's own row while every variant added afterwards quietly re-creates
+	// exactly the rows the flag exists to prevent, and leaks them to
+	// export/report plugins through StockForExport's variant half.
+	//
+	// Fail-safe in the same direction as sales.go's isUntracked: an
+	// unreadable or missing parent flag is treated as TRACKED, so a lookup
+	// problem can never silently stop tracking a variant's stock.
+	parentUntracked := false
+	if err := r.db.QueryRowContext(ctx, `SELECT stock_untracked FROM items WHERE id = ?`, in.ItemID).Scan(&parentUntracked); err != nil {
+		parentUntracked = false
+		if !errors.Is(err, sql.ErrNoRows) {
+			logging.L().Warnf("catalog: create variant %s: parent stock-tracking flag unreadable, assuming tracked: %v", in.ID, err)
+		}
+	}
+	if !parentUntracked {
+		if err := r.ensureInventoryRow(ctx, "", in.ID); err != nil {
+			logging.L().Warnf("catalog: create variant %s: inventory row not created: %v", in.ID, err)
+		}
 	}
 	return in.ID, nil
 }

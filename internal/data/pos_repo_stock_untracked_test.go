@@ -5,11 +5,11 @@ import (
 	"testing"
 )
 
-// TestPOSRepo_TrackedByKey covers ut-docs#1850: resolving whether an item
+// TestPOSRepo_UntrackedByKey covers ut-docs#1850: resolving whether an item
 // or variant is stock-tracked, by item id, by variant id (resolved through
 // its parent item), and the fail-safe default (missing key => tracked)
 // for an id that matches nothing.
-func TestPOSRepo_TrackedByKey(t *testing.T) {
+func TestPOSRepo_UntrackedByKey(t *testing.T) {
 	dbo := openBatchDB(t)
 	seedBatchCatalog(t, dbo)
 	// itmA/varC(->itmA) are seeded tracked by default; add an explicitly
@@ -26,9 +26,9 @@ func TestPOSRepo_TrackedByKey(t *testing.T) {
 		{VariantID: "varU"}, // untracked, resolved through parent itmU
 		{ItemID: "itmA"},    // duplicate, must be tolerated
 	}
-	got, err := repo.TrackedByKey(ctx, nil, keys)
+	got, err := repo.UntrackedByKey(ctx, nil, keys)
 	if err != nil {
-		t.Fatalf("TrackedByKey: %v", err)
+		t.Fatalf("UntrackedByKey: %v", err)
 	}
 	if untracked := got[StockTrackKey{ItemID: "itmA"}]; untracked {
 		t.Errorf("itmA: got untracked=true, want false (tracked)")
@@ -49,10 +49,10 @@ func TestPOSRepo_TrackedByKey(t *testing.T) {
 		t.Errorf("expected unknown id to be absent from the map")
 	}
 
-	if _, err := repo.TrackedByKey(ctx, nil, []StockTrackKey{{}}); err == nil {
+	if _, err := repo.UntrackedByKey(ctx, nil, []StockTrackKey{{}}); err == nil {
 		t.Errorf("expected error for a key with neither ItemID nor VariantID set")
 	}
-	if _, err := repo.TrackedByKey(ctx, nil, []StockTrackKey{{ItemID: "itmA", VariantID: "varC"}}); err == nil {
+	if _, err := repo.UntrackedByKey(ctx, nil, []StockTrackKey{{ItemID: "itmA", VariantID: "varC"}}); err == nil {
 		t.Errorf("expected error for a key with both ItemID and VariantID set")
 	}
 }

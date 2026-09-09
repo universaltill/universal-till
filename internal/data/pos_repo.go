@@ -1450,6 +1450,13 @@ type DeadStockRow struct {
 
 // DeadStock lists active items with on-hand stock and ZERO sales over
 // [from, to), most tied-up value first.
+//
+// ut-docs#1850 (review): stock_untracked items are excluded, same as
+// ListStockLevels and GetLowStockItems. An item switched untracked keeps
+// whatever inventory row it already had (the quantity is real history and
+// is deliberately not destroyed, so un-ticking the flag brings it back) —
+// but that leftover row must not resurface as "capital tied up in dead
+// stock" on a report for an item the shop has said it does not count.
 func (r *POSRepo) DeadStock(ctx context.Context, from, to time.Time, limit int) ([]DeadStockRow, error) {
 	fromStr, toStr := windowArgs(from, to)
 	rows, err := r.db.QueryContext(ctx, `
@@ -1458,6 +1465,7 @@ SELECT i.name, COALESCE(i.sku, ''), SUM(inv.quantity) AS qty,
 FROM inventory inv
 JOIN items i ON i.id = inv.item_id
 WHERE i.is_active = 1 AND inv.quantity > 0
+  AND i.stock_untracked = 0
   AND i.id NOT IN (
     SELECT DISTINCT COALESCE(NULLIF(sl.item_id, ''), v.item_id) FROM sale_lines sl
     JOIN sales s ON s.id = sl.sale_id
@@ -4495,7 +4503,7 @@ func (r *POSRepo) CurrentQtyBatch(ctx context.Context, tx *sql.Tx, keys []StockK
 	return out, nil
 }
 
-// StockTrackKey identifies an item or variant for TrackedByKey — exactly
+// StockTrackKey identifies an item or variant for UntrackedByKey — exactly
 // one of ItemID/VariantID set, same convention as StockKey. Deliberately
 // NOT StockKey itself: stock_untracked is a property of the item, not the
 // (item, location) pair StockKey keys inventory rows by, so reusing
@@ -4508,14 +4516,25 @@ type StockTrackKey struct {
 	VariantID string
 }
 
-// TrackedByKey reports whether each given item/variant should be
-// stock-tracked (ut-docs#1850) — false only when the resolved item's own
-// stock_untracked flag is set. A key not found (e.g. a bad id) is
-// deliberately ABSENT from neither map slot's zero value story: it is
-// simply missing from the returned map, and the caller must treat a
-// missing key as tracked=true (fail-safe — never silently stop tracking
-// stock because a lookup came back empty). Duplicate input keys are fine.
-func (r *POSRepo) TrackedByKey(ctx context.Context, tx *sql.Tx, keys []StockTrackKey) (map[StockTrackKey]bool, error) {
+// UntrackedByKey reports, per given item/variant, whether it is NOT
+// stock-tracked (ut-docs#1850) — true exactly when the resolved item's own
+// stock_untracked flag is set. A variant resolves through its PARENT item
+// (item_variants.item_id): the flag lives on the item, never on the variant.
+//
+// The map value is deliberately in the same inverted sense as the column and
+// as catalogtypes.ItemInput.StockUntracked, so a missing key's `false` zero
+// value means TRACKED — the fail-safe direction. A key that resolves to
+// nothing (a bad id, a deleted row) is simply absent from the returned map,
+// which every caller therefore reads as tracked without needing an explicit
+// found check: stock tracking is never silently switched off because a
+// lookup came back empty. (Named UntrackedByKey, not TrackedByKey, for the
+// same reason the column is stock_untracked and not track_stock — see
+// 013_items_stock_untracked.sql: the zero value must mean "tracked", and a
+// name in the opposite sense to the value it returns is exactly the landmine
+// that naming convention exists to avoid.)
+//
+// Duplicate input keys are fine.
+func (r *POSRepo) UntrackedByKey(ctx context.Context, tx *sql.Tx, keys []StockTrackKey) (map[StockTrackKey]bool, error) {
 	out := make(map[StockTrackKey]bool, len(keys))
 	if len(keys) == 0 {
 		return out, nil

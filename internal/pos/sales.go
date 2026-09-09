@@ -789,19 +789,20 @@ func CompleteSale(ctx context.Context, sqlDB *sql.DB, in SaleInput) (string, err
 				}
 				trackKeys = append(trackKeys, data.StockTrackKey{ItemID: l.ItemID, VariantID: l.VariantID})
 			}
-			trackedFlags, err := repo.TrackedByKey(ctx, tx, trackKeys)
+			untrackedFlags, err := repo.UntrackedByKey(ctx, tx, trackKeys)
 			if err != nil {
 				return err
 			}
 			// isUntracked defaults false (tracked) for a line with no
 			// catalog item, and fail-safe defaults false (tracked) for any
-			// key TrackedByKey's lookup didn't resolve — never silently stop
-			// tracking stock because a lookup came back empty.
+			// key UntrackedByKey's lookup didn't resolve (a missing key's
+			// zero value is false) — never silently stop tracking stock
+			// because a lookup came back empty.
 			isUntracked := func(l SaleLineInput) bool {
 				if l.ItemID == "" && l.VariantID == "" {
 					return false
 				}
-				return trackedFlags[data.StockTrackKey{ItemID: l.ItemID, VariantID: l.VariantID}]
+				return untrackedFlags[data.StockTrackKey{ItemID: l.ItemID, VariantID: l.VariantID}]
 			}
 			if !in.AllowNegativeInventory {
 				// Same semantics as the old loop, deliberately: every line is
