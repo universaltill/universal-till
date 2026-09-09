@@ -2,6 +2,7 @@ package pages
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -39,7 +40,8 @@ func TestExportRequestPayloadSchema_PinnedFields(t *testing.T) {
 
 func TestExportResponseSchema_PinnedFields(t *testing.T) {
 	assertJSONFields(t, "exportResponse", reflect.TypeOf(exportResponse{}), []string{
-		"ok", "filename", "content_b64", "message", "error",
+		"ok", "filename,omitempty", "content_b64,omitempty",
+		"message,omitempty", "error,omitempty",
 	})
 }
 
@@ -57,7 +59,7 @@ func TestExportSaleRowSchema_PinnedFields(t *testing.T) {
 
 func TestExportStockRowSchema_PinnedFields(t *testing.T) {
 	assertJSONFields(t, "data.ExportStockRow", reflect.TypeOf(data.ExportStockRow{}), []string{
-		"item_id", "name", "sku", "variant_id", "variant_name",
+		"item_id", "name", "sku", "variant_id,omitempty", "variant_name,omitempty",
 		"location_id", "location_name", "current_qty", "reorder_level",
 	})
 }
@@ -86,9 +88,20 @@ func TestExportEODCloseExportSchema_PinnedFields(t *testing.T) {
 }
 
 // assertJSONFields walks typ's exported struct fields in declaration order
-// and asserts their `json` tag names (the part before any ",omitempty" or
-// other option) exactly match want, in the same order. A field tagged
-// `json:"-"` is skipped, matching encoding/json's own behavior.
+// and asserts their `json` tag names exactly match want, in the same order.
+// An entry in want carries a ",omitempty" suffix exactly when the field's
+// tag does: whether a field is omitted-when-empty is itself part of this
+// contract, not a formatting detail — plugin-manifest.md documents
+// `variant_id`/`variant_name` as absent-on-item-rows *because* they are
+// omitempty, and `eod_closes` as deliberately NOT omitempty so that `[]`
+// (no closes in range) stays wire-distinguishable from `null` (entity not
+// declared / not granted). Adding or dropping the option silently breaks
+// either of those documented behaviours without changing a single field
+// name, so the pin covers it.
+//
+// A field tagged `json:"-"` is skipped, matching encoding/json (note the
+// `json:"-,"` special case, which names a field literally "-" and is not
+// skipped). Unexported fields never reach the wire and are skipped too.
 func assertJSONFields(t *testing.T, typeName string, typ reflect.Type, want []string) {
 	t.Helper()
 	if typ.Kind() != reflect.Struct {
@@ -97,16 +110,22 @@ func assertJSONFields(t *testing.T, typeName string, typ reflect.Type, want []st
 	var got []string
 	for i := 0; i < typ.NumField(); i++ {
 		f := typ.Field(i)
+		if f.PkgPath != "" { // unexported — never marshaled
+			continue
+		}
 		tag, ok := f.Tag.Lookup("json")
 		if !ok {
 			t.Fatalf("%s: field %s has no `json` tag -- every field on the wire must be explicitly named", typeName, f.Name)
 		}
-		name, _, _ := stripJSONTagOptions(tag)
-		if name == "-" {
+		name, hasOmitempty := splitJSONTag(tag)
+		if name == "-" && !strings.Contains(tag, ",") {
 			continue
 		}
 		if name == "" {
 			t.Fatalf("%s: field %s has an empty json tag name", typeName, f.Name)
+		}
+		if hasOmitempty {
+			name += ",omitempty"
 		}
 		got = append(got, name)
 	}
@@ -119,25 +138,17 @@ func assertJSONFields(t *testing.T, typeName string, typ reflect.Type, want []st
 	}
 }
 
-// stripJSONTagOptions splits a struct tag's `json:"..."` value into its
-// name and the remaining comma-separated options (e.g. "omitempty").
-func stripJSONTagOptions(tag string) (name string, hasOmitempty bool, rest string) {
-	parts := make([]string, 0, 2)
-	start := 0
-	for i := 0; i <= len(tag); i++ {
-		if i == len(tag) || tag[i] == ',' {
-			parts = append(parts, tag[start:i])
-			start = i + 1
-		}
-	}
-	name = parts[0]
-	for _, opt := range parts[1:] {
+// splitJSONTag splits a struct tag's `json:"..."` value into its wire name
+// (everything before the first comma) and whether "omitempty" appears among
+// the comma-separated options after it — the same split encoding/json does.
+func splitJSONTag(tag string) (name string, hasOmitempty bool) {
+	name, opts, _ := strings.Cut(tag, ",")
+	for opts != "" {
+		var opt string
+		opt, opts, _ = strings.Cut(opts, ",")
 		if opt == "omitempty" {
 			hasOmitempty = true
 		}
 	}
-	if len(parts) > 1 {
-		rest = tag[len(name)+1:]
-	}
-	return name, hasOmitempty, rest
+	return name, hasOmitempty
 }
