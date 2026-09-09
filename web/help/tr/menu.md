@@ -9,7 +9,7 @@ routes: [/menu, /settings/menu]
 
 # Menü ekranı
 
-Satış ekranındaki **☰ Menü** düğmesine dokunun; kasanın her bölümü için birer büyük karo açılır. Gitmek istediğiniz karoya dokunun; satışa dönmek için logoya dokunun. Depozito iadesi başka bir sayfaya gitmeden, olduğu yerde küçük bir form olarak açılır.
+Satış ekranındaki **☰ Menü** düğmesine dokunun; kasanın her bölümü için birer büyük karo açılır. Gitmek istediğiniz karoya dokunun; satışa dönmek için sayfanın üstündeki **← Satışa dön** düğmesine — ya da her sayfada bulunan gezinti çubuğundaki **Kasa** simgesine — dokunun. Depozito iadesi başka bir sayfaya gitmeden, olduğu yerde küçük bir form olarak açılır.
 
 ## Bir düzen eklentisinin gizlediği karolar
 
