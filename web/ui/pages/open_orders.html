@@ -1,0 +1,41 @@
+{{ define "content" }}
+{{/* Open orders (ut-docs#1918): every order currently parked on this till,
+     as a full list -- the sale screen's "On hold" strip shows the same
+     orders as chips but has no room for table / items / total / age side by
+     side. Read-only: resuming happens on the sale screen (the strip's chip),
+     since a resume needs the live basket empty and lands the cashier there
+     anyway -- hence the Back to sale button, not a per-row action. */}}
+<div class="page-head">
+  <h1>{{ T "open_orders.title" }}</h1>
+  <a class="btn primary btn-touch" href="/">← {{ T "menu.back_to_sale" }}</a>
+</div>
+<div class="card users-list">
+  {{ if not .orders }}
+  <p class="muted" data-testid="open-orders-empty">{{ T "open_orders.empty" }}</p>
+  {{ else }}
+  <p class="muted">{{ T "open_orders.hint" }}</p>
+  <table class="table">
+    <thead>
+      <tr>
+        <th>{{ T "open_orders.col.label" }}</th>
+        <th>{{ T "open_orders.col.table" }}</th>
+        <th>{{ T "open_orders.col.lines" }}</th>
+        <th>{{ T "open_orders.col.total" }}</th>
+        <th>{{ T "open_orders.col.age" }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .orders }}
+      <tr data-held-id="{{ .ID }}">
+        <td>{{ .Label }}</td>
+        <td>{{ .TableLabel }}</td>
+        <td>{{ .LineCount }}</td>
+        <td>{{ money .Total }}</td>
+        <td>{{ printf (T "open_orders.age_minutes") .AgeMinutes }}</td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ end }}
+</div>
+{{ end }}

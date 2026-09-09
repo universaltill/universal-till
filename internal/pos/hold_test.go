@@ -53,7 +53,7 @@ func TestSnapshotRestoreRoundTrip(t *testing.T) {
 	_, _ = s.Scan("A")
 	s.Reset()
 
-	s.Restore(back)
+	s.RestoreHeld(back, HeldOrigin{})
 	got := s.Basket()
 	if len(got.Lines) != 2 {
 		t.Fatalf("restored lines = %d, want 2", len(got.Lines))
@@ -106,7 +106,7 @@ func TestSnapshotRestoreRoundTrip_PreservesTable(t *testing.T) {
 	s.SetTable("tbl-9", "T9")
 	s.Reset()
 
-	s.Restore(back)
+	s.RestoreHeld(back, HeldOrigin{})
 	if got := s.TableID(); got != "tbl-1" {
 		t.Fatalf("restored TableID = %q, want tbl-1", got)
 	}
@@ -160,7 +160,7 @@ func TestSnapshotRestoreRoundTrip_PreservesOrderType(t *testing.T) {
 	_, _ = s.Scan("DRINK")
 	s.Reset()
 
-	s.Restore(back)
+	s.RestoreHeld(back, HeldOrigin{})
 	if got := s.OrderType(); got != OrderTypeTakeaway {
 		t.Fatalf("restored OrderType() = %q, want %q (silently reverted to dine-in)", got, OrderTypeTakeaway)
 	}
@@ -216,7 +216,7 @@ func TestSnapshotRestoreRoundTrip_PreservesModifiers(t *testing.T) {
 	}
 
 	s.Reset()
-	s.Restore(back)
+	s.RestoreHeld(back, HeldOrigin{})
 	got := s.Basket()
 
 	if got.Total != want.Total {
@@ -227,5 +227,98 @@ func TestSnapshotRestoreRoundTrip_PreservesModifiers(t *testing.T) {
 	}
 	if got.Lines[0].Modifiers[0].OptionName != "Large" || got.Lines[0].Modifiers[0].PriceDeltaMinor != 30 {
 		t.Fatalf("modifier snapshot corrupted on restore: %+v", got.Lines[0].Modifiers[0])
+	}
+}
+
+// TestRestoreHeld_RecordsOriginUntilResetOrTender (ut-docs#1918): the
+// held-sale origin is the order's stable identity across park -> resume ->
+// re-park. It must be readable after RestoreHeld, absent after a plain
+// Restore (a snapshot with no row behind it), and cleared by every path
+// that ends the basket's life -- Reset, a fresh RestoreHeld/Restore, and
+// Tender -- so the next customer's sale can never inherit it.
+func TestRestoreHeld_RecordsOriginUntilResetOrTender(t *testing.T) {
+	s := newHoldService()
+	if got := s.HeldOrigin(); !got.IsZero() {
+		t.Fatalf("new service HeldOrigin = %+v, want zero", got)
+	}
+	_, _ = s.Scan("A")
+	snap := s.Snapshot()
+	s.Reset()
+
+	origin := HeldOrigin{ID: "hold-1", Label: "Table 4", CreatedAt: "2026-09-09 10:00:00"}
+	s.RestoreHeld(snap, origin)
+	if got := s.HeldOrigin(); got != origin {
+		t.Fatalf("HeldOrigin after RestoreHeld = %+v, want %+v", got, origin)
+	}
+	if len(s.Basket().Lines) != 1 {
+		t.Fatalf("RestoreHeld must still restore the lines, got %d", len(s.Basket().Lines))
+	}
+
+	// A plain Restore (no row behind it) wipes any previous origin.
+	s.RestoreHeld(snap, HeldOrigin{})
+	if got := s.HeldOrigin(); !got.IsZero() {
+		t.Fatalf("HeldOrigin after plain Restore = %+v, want zero", got)
+	}
+
+	s.RestoreHeld(snap, origin)
+	s.Reset()
+	if got := s.HeldOrigin(); !got.IsZero() {
+		t.Fatalf("HeldOrigin after Reset = %+v, want zero", got)
+	}
+
+	s.RestoreHeld(snap, origin)
+	if _, err := s.Tender(money.FromMinor(150), "cash"); err != nil {
+		t.Fatal(err)
+	}
+	if got := s.HeldOrigin(); !got.IsZero() {
+		t.Fatalf("HeldOrigin after Tender = %+v, want zero", got)
+	}
+}
+
+// TestVoidingEveryLine_ClearsHeldOrigin (ut-docs#1918, independent review
+// finding): a cashier can also empty a resumed basket one line at a time
+// (RemoveLine/Remove) instead of tapping Reset. Without this, heldOrigin
+// keeps pointing at the old held_sales row after every line is gone, and an
+// UNRELATED sale rung up in the same "session" and later parked would be
+// upserted under the old order's id/label/created_at -- silently replacing
+// it on the Open orders page.
+func TestVoidingEveryLine_ClearsHeldOrigin(t *testing.T) {
+	s := newHoldService()
+	_, _ = s.Scan("A")
+	_, _ = s.Scan("B")
+	snap := s.Snapshot()
+	s.Reset()
+	origin := HeldOrigin{ID: "hold-1", Label: "Table 4", CreatedAt: "2026-09-09 10:00:00"}
+	s.RestoreHeld(snap, origin)
+
+	lines := s.Basket().Lines
+	if len(lines) != 2 {
+		t.Fatalf("setup: want 2 lines, got %d", len(lines))
+	}
+	// Void one of two lines: origin must survive, this is still the SAME
+	// order, just missing an item.
+	s.RemoveLine(lines[0].LineKey)
+	if got := s.HeldOrigin(); got != origin {
+		t.Fatalf("HeldOrigin after voiding one of two lines = %+v, want unchanged %+v", got, origin)
+	}
+	// Void the last line: the basket is now empty, and nothing describes
+	// this order any more -- origin must clear.
+	s.RemoveLine(lines[1].LineKey)
+	if s.HasItems() {
+		t.Fatalf("setup: basket should be empty after voiding both lines")
+	}
+	if got := s.HeldOrigin(); !got.IsZero() {
+		t.Fatalf("HeldOrigin after voiding every line = %+v, want zero", got)
+	}
+
+	// Same guarantee via the SKU-based Remove (merged-line path).
+	_, _ = s.Scan("A")
+	_, _ = s.Scan("A")
+	snap2 := s.Snapshot()
+	s.Reset()
+	s.RestoreHeld(snap2, origin)
+	s.Remove("A")
+	if got := s.HeldOrigin(); !got.IsZero() {
+		t.Fatalf("HeldOrigin after Remove(sku) empties the basket = %+v, want zero", got)
 	}
 }

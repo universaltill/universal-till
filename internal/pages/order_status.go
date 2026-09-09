@@ -507,7 +507,7 @@ func registerOrderStatus(mux *http.ServeMux, d *common.Deps) {
 	// fragment so a tap can swap just the row's status cell.
 	mux.HandleFunc("GET /orders", func(w http.ResponseWriter, r *http.Request) {
 		httpx.Render("ui/pages/orders.html", map[string]any{
-			"title":     "Orders",
+			"title":     "Order status",
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
 		})(w, r)

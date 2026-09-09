@@ -73,6 +73,11 @@ var iconSVGFor = map[string]string{
 	"/fiscal-device":     "receipt",
 	"/orders":            "bell",
 	"/bluetooth-devices": "bluetooth",
+	// ut-docs#1918: parked baskets -- the cart glyph reads as "a basket put
+	// aside", and is otherwise unused on the menu (the Pfand tile is
+	// "recycle"); "bell" stays with /orders, whose rail entry (nav.html) and
+	// manual topic already describe it as the concierge bell.
+	"/open-orders": "shopping-cart",
 }
 
 // genericFallbackIcon is the deliberate generic glyph a menu tile falls
@@ -119,6 +124,11 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 		for _, m := range d.MenuSnapshot() {
 			add(m.Href, m.Label)
 		}
+		// Open orders (ut-docs#1918): a cashier surface (the sale screen's
+		// held strip as a full list), so it sits with the ungated tiles --
+		// not in baseMenu, which also feeds the top nav rail, where a second
+		// orders entry next to the bell would just be clutter.
+		add("/open-orders", "open_orders.title")
 		add("/help", "nav.help")
 		// Manager-only destinations (mirrors the session chip).
 		//
