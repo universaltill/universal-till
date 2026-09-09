@@ -97,6 +97,11 @@ fetch() {
 }
 
 overall_fail=0
+# Names of packs that failed their check this run (ut-docs#1857) -- kept
+# separate from overall_fail (a plain flag) so the end-of-run summary can
+# name exactly which pack repo(s) need a follow-up PR, instead of leaving
+# the reader to re-scan the whole log for which of N packs actually failed.
+FAILED_REPOS=()
 
 for entry in "${PACKS[@]}"; do
     repo="${entry%%:*}"
@@ -114,6 +119,7 @@ for entry in "${PACKS[@]}"; do
         || ! fetch "$repo" "i18n-baseline/${code}.untranslated.txt" "${pack_dir}/i18n-baseline/${code}.untranslated.txt" \
         || ! fetch "$repo" "i18n-baseline/${code}.same-as-en.txt" "${pack_dir}/i18n-baseline/${code}.same-as-en.txt"; then
         overall_fail=1
+        FAILED_REPOS+=("$repo")
         echo
         continue
     fi
@@ -121,6 +127,7 @@ for entry in "${PACKS[@]}"; do
     if ! UT_CORE_EN_JSON="$CORE_EN_JSON" bash "${pack_dir}/scripts/check-key-drift.sh"; then
         echo "check-lang-pack-drift: ${repo} FAILED (see above)" >&2
         overall_fail=1
+        FAILED_REPOS+=("$repo")
     else
         echo "check-lang-pack-drift: ${repo} ok"
     fi
@@ -129,6 +136,15 @@ done
 
 if [ "$overall_fail" -ne 0 ]; then
     echo "check-lang-pack-drift: one or more language packs have drifted from core -- see above." >&2
+    # ut-docs#1857: name exactly which pack repo(s) need a follow-up PR, in
+    # a fixed, greppable format the calling workflow can lift into the
+    # PR-facing advisory annotation -- the whole point of this card is that
+    # "see the job summary" was too easy to scroll past, so the caller
+    # needs this without having to re-parse per-pack prose above.
+    echo "check-lang-pack-drift: pack(s) needing a follow-up PR:" >&2
+    for repo in "${FAILED_REPOS[@]}"; do
+        echo "  - https://github.com/universaltill/${repo}" >&2
+    done
     exit 1
 fi
 
