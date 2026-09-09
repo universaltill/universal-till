@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, openNewItemForm } from './helpers';
 
 // ut-docs#916: htmx never swaps a non-2xx response into its target by
 // default (it fires htmx:responseError and discards the body instead).
@@ -33,6 +33,9 @@ test.describe('admin htmx error fragments are shown, not silently dropped (ut-do
   test('print/labels failure (404, unknown item) shows a visible error on catalog.html', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/catalog');
+    // ut-docs#1901: the labels form (and the rest of .catalog-extra) moved
+    // inside the item-form dialog, which starts closed.
+    await openNewItemForm(page);
     // The labels form lives inside a collapsed <details>.
     await page.locator('.catalog-extra:has(#labels-item-id) summary').click();
     // Bypass the picker UI and drive the hidden field directly — the bug

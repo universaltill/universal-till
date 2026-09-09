@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, setOskMode } from './helpers';
+import { watchConsole, setOskMode, openNewItemForm } from './helpers';
 
 async function typeViaOsk(page: Page, digits: string) {
   for (const d of digits) {
@@ -27,6 +27,7 @@ test('every OSK-able field gets inputmode="none" up front, before any interactio
   await setOskMode(page, 'on');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   // #item-name never had, and (per the fix) doesn't need, its own template
   // guard — exactly the class of field the double-keyboard bug hit.
   const name = page.locator('#item-name');
@@ -41,6 +42,7 @@ test('a numeric-inputmode text field still gets the numeric OSK layout despite b
   await setOskMode(page, 'on');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   // #item-barcode is type="text" inputmode="numeric" — isNumeric() has to
   // read the ORIGINAL inputmode, not the live "none" the up-front guard
   // just overwrote it with, or every such field would silently fall back
@@ -62,6 +64,7 @@ test('re-tapping a field after visiting another one does not let the native keyb
   await setOskMode(page, 'on');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   const name = page.locator('#item-name');
   const sku = page.locator('#item-sku');
 
@@ -94,6 +97,7 @@ test('OSK mode off never forces inputmode anywhere, and leaves real inputmode va
   await setOskMode(page, 'off');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   expect(await page.locator('#item-name').getAttribute('inputmode')).toBeNull();
   // The field's own real, page-authored inputmode is untouched — osk.js
   // returns before it ever runs when mode is "off".
@@ -107,6 +111,7 @@ test('a field added to the page after load gets the same up-front guard (htmx sw
   await setOskMode(page, 'on');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   // Two shapes of "content arrives after load": the added node IS the
   // field itself (an htmx outerHTML swap whose response root is the input,
   // or a bare oob swap — exercises guardField(node) directly, called on
@@ -138,6 +143,7 @@ test('a field added directly is NOT guarded while OSK is disabled (ut-docs#1022 
   await setOskMode(page, 'auto');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   // The MutationObserver calls guardField(node) directly on every added
   // node, bypassing guardSweep()'s own `if (!enabled) return`. Without the
   // same gate inside guardField() itself, a field arriving as a top-level
@@ -168,6 +174,7 @@ test('a plain click (no touchstart) still enables auto mode, for a device whose 
   await setOskMode(page, 'auto');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   const name = page.locator('#item-name');
   // Pre-fix: 'auto' + no touchstart ever fired (this browser has no touch)
   // meant `enabled` stayed false forever, so clicking here would never
@@ -283,6 +290,7 @@ test('a field disabled at sweep time gets guarded once it is enabled in place, w
   await setOskMode(page, 'on');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   // wantsOSK() correctly skips a disabled field at sweep time — but until
   // this fix, nothing re-swept it if it was later flipped enabled via the
   // `.disabled` IDL property alone (no childList mutation for the
