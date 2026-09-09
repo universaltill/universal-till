@@ -318,6 +318,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"SyncPrimary":   d.SyncPrimaryURL(r.Context()),
 			"HasThumbnails": hasThumbnails,
 			"EmptyColspan":  emptyRowColspan(hasThumbnails),
+			"BuiltinIcons":  catimport.BuiltinIcons(),
 		}
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "layouts", "base.html"),
@@ -749,6 +750,117 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		writeRowOOB(w, r, itemID, false, hadThumbColumn)
 	})
 
+	// Built-in icon picker (ut-docs#1844): a bundled category icon
+	// (catimport.BuiltinIcons — the same 5 assets PlaceholderIcon already
+	// picks from for imageless imports) is a valid alternative to an
+	// uploaded photo, stored through the identical item_images/thumbnail
+	// row so every existing reader (POS grid, basket, self-order,
+	// suggestions) needs no change to pick it up.
+	//
+	// icon-state tells the picker what to show when it opens for a given
+	// item: which built-in key (if any) is currently selected, whether the
+	// current thumbnail is instead a custom upload (a built-in choice and a
+	// custom photo are mutually exclusive — picking one always replaces
+	// the other, same as the existing upload-over-placeholder behaviour),
+	// and which key PlaceholderIcon's own keyword match would suggest for
+	// this item's actual name/category — so a still-imageless item shows a
+	// sensible preselected tile instead of nothing.
+	mux.HandleFunc("GET /api/catalog/item/icon-state", func(w http.ResponseWriter, r *http.Request) {
+		itemID := strings.TrimSpace(r.URL.Query().Get("item_id"))
+		if itemID == "" {
+			writeJSON(w, http.StatusBadRequest, nil, "item_id required")
+			return
+		}
+		itm, ok, err := repo.GetItem(r.Context(), itemID)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+			return
+		}
+		if !ok {
+			writeJSON(w, http.StatusNotFound, nil, "item not found")
+			return
+		}
+		var categoryName string
+		if itm.CategoryID != nil {
+			if cat, err := repo.GetLookup(r.Context(), "categories", *itm.CategoryID); err == nil {
+				categoryName = cat.Name
+			}
+		}
+		suggestedKey := catimport.PlaceholderIcon(itm.Name, categoryName)
+		selectedKey := ""
+		isCustom := false
+		if path, hasPath, err := repo.ItemThumbnailPath(r.Context(), itemID); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+			return
+		} else if hasPath {
+			isCustom = true
+			for _, ic := range catimport.BuiltinIcons() {
+				if ic.Path == path {
+					selectedKey = ic.Key
+					isCustom = false
+					break
+				}
+			}
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"selected_key":  selectedKey,
+			"is_custom":     isCustom,
+			"suggested_key": suggestedKey,
+		}, "")
+	})
+
+	// Choosing (or clearing) a built-in icon. icon="" (or "none") clears
+	// back to no thumbnail at all — distinct from picking "generic", which
+	// is a real, visible choice. Deliberately NOT requirePrimary-gated,
+	// same reasoning as item/image above: this only ever touches
+	// item_images, which sync_admin_repo.go's adminTables explicitly
+	// excludes (files/icon choices don't travel over the sync bundle).
+	mux.HandleFunc("POST /api/catalog/item/icon", func(w http.ResponseWriter, r *http.Request) {
+		// Choosing or clearing a built-in icon writes/removes an
+		// item_images/thumbnail row exactly like the upload handler below
+		// — it can just as easily be the catalog's first-ever thumbnail,
+		// or clear its last one, so it needs the same before-the-mutation
+		// snapshot for the OOB response to stay consistent with the
+		// <thead> (ut-docs#1842 review F1/F2).
+		hadThumbColumn := snapshotThumbColumn(r)
+		_ = r.ParseForm()
+		itemID := strings.TrimSpace(r.Form.Get("item_id"))
+		// Review finding F1 (ut-docs#1844): this handler now also removes
+		// an item's uploaded thumbnail file (see removeUploadedThumbnail
+		// below), which makes item_id reach a filesystem path for the
+		// first time on this route — so it needs the same path-traversal
+		// guard the sibling upload handler already applies to itemID.
+		if itemID == "" || strings.ContainsAny(itemID, "/\\.") {
+			http.Error(w, "valid item_id required", http.StatusBadRequest)
+			return
+		}
+		if ok, err := repo.ItemExists(r.Context(), itemID); err != nil || !ok {
+			http.Error(w, "item not found", http.StatusNotFound)
+			return
+		}
+		icon := strings.TrimSpace(r.Form.Get("icon"))
+		if icon == "" || icon == "none" {
+			if err := repo.ClearItemThumbnail(r.Context(), itemID); err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+				return
+			}
+			removeUploadedThumbnail(itemID)
+			writeRowOOB(w, r, itemID, false, hadThumbColumn)
+			return
+		}
+		path, ok := catimport.IconPath(icon)
+		if !ok {
+			http.Error(w, "unknown icon", http.StatusBadRequest)
+			return
+		}
+		if err := repo.SetItemThumbnail(r.Context(), itemID, path); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+			return
+		}
+		removeUploadedThumbnail(itemID)
+		writeRowOOB(w, r, itemID, false, hadThumbColumn)
+	})
+
 	// Variant image upload → assets/items/<itemID>/variants/<variantID>/thumb.png
 	// (docs: architecture/variant-images.md). Fallback chain: variant → item →
 	// placeholder, resolved by the template's imgv versioned URLs.
@@ -1143,6 +1255,31 @@ func saveLookupImage(ctx context.Context, c *productlookup.Client, itemID, imgUR
 	}
 	defer out.Close()
 	return png.Encode(out, img)
+}
+
+// removeUploadedThumbnail deletes an item's uploaded thumbnail file, if one
+// exists, at the same "public/assets/items/<id>/thumb.png" path the upload
+// handler above writes to. This is the built-in icon picker's (ut-docs#1844)
+// fix for review finding F1: three surfaces resolve an item's photo by this
+// path CONVENTION rather than through item_images — catalog_row.html and
+// catalog_variants.html's `imgExists` check, and self_order_shop.go's
+// hardcoded ImageURL (that file's own comment already documents this same
+// convention-vs-item_images split, ut-docs#1189). Without this, choosing a
+// built-in icon (or clearing back to none) updates item_images but leaves
+// the old uploaded photo file in place, so those three surfaces keep
+// showing the superseded photo while every item_images-driven surface (POS
+// grid, basket, search, suggestions) correctly shows the new choice —
+// visibly inconsistent. Best-effort: the DB write (the record of what the
+// operator actually chose) already succeeded by the time this runs, so a
+// stray leftover file on disk is a cosmetic follow-up, not a reason to fail
+// the request the operator is waiting on. itemID is validated by the caller
+// (no "/", "\" or "." — see the path-traversal guard on the /icon route)
+// before it ever reaches this function.
+func removeUploadedThumbnail(itemID string) {
+	path := filepath.Join(paths.Data("public", "assets", "items", itemID), "thumb.png")
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		log.Printf("[catalog] remove superseded upload for %s: %v", itemID, err)
+	}
 }
 
 // bufResponseWriter captures a partial render into a buffer so it can be
