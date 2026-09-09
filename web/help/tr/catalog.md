@@ -4,7 +4,7 @@ title: Katalog, varyantlar ve barkodlar
 section: Dükkanı kurma
 order: 110
 summary: "Ürünleriniz: adlar, fiyatlar, reyonlar, ürün varyantları (beden, aroma…) ve ürün ya da varyant başına istediğiniz kadar barkod."
-routes: [/catalog, /import, /modifiers]
+routes: [/catalog, /import, /items, /modifiers]
 ---
 
 # Katalog, varyantlar ve barkodlar

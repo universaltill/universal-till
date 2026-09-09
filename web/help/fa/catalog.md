@@ -4,7 +4,7 @@ title: کاتالوگ، تنوع‌ها و بارکدها
 section: راه‌اندازی فروشگاه
 order: 110
 summary: "محصولات شما: نام‌ها، قیمت‌ها، دسته‌ها، تنوع‌های کالا (سایز، طعم…) و هر تعداد بارکد برای هر کالا یا هر تنوع."
-routes: [/catalog, /import, /modifiers]
+routes: [/catalog, /import, /items, /modifiers]
 ---
 
 # کاتالوگ، تنوع‌ها و بارکدها

@@ -58,6 +58,7 @@ var iconSVGFor = map[string]string{
 	"/settings":          "settings",
 	"/plugins":           "puzzle",
 	"/catalog":           "tag",
+	"/items":             "tag", // ut-docs#1897: the "Items" tile that replaced the flat "Catalog" one
 	"/help":              "help",
 	"/users":             "users",
 	"/locations":         "map-pin",

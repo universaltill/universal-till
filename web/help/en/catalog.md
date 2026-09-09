@@ -4,7 +4,7 @@ title: Catalog, variants & barcodes
 section: Setting up your shop
 order: 110
 summary: "Your products: names, prices, departments, item variants (size, flavour…) and any number of barcodes per item or per variant."
-routes: [/catalog, /import, /modifiers]
+routes: [/catalog, /import, /items, /modifiers]
 keywords: [items, prices, barcode, variants, modifiers, import, export]
 ---
 
