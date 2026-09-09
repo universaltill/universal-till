@@ -2439,6 +2439,36 @@ body.login-screen {
 }
 [x-cloak] { display: none !important; }
 
+/* Catalog built-in image picker (ut-docs#1844): a smaller .picker-grid of
+   icon tiles inside the "Item image" details panel, icon-above-label
+   (review finding F6: a touchscreen till can't rely on the hover-only
+   `title` tooltip .picker-tile's base text-only layout assumes, so each
+   tile also carries a real visible label). .builtin-icon-suggested marks
+   PlaceholderIcon's own keyword-match suggestion. JS applies "pressed" and
+   "suggested" mutually exclusively (see setBuiltinIconTiles in
+   catalog.html) — a real choice always outranks a suggestion — but review
+   finding F4 also lets "none" show pressed AND another tile show
+   suggested at once (two independent facts: "this is the current — empty
+   — state" and "here's what picking one now would suggest"), so both
+   classes CAN legitimately coexist on different tiles at once; they just
+   never coexist on the SAME tile. */
+.builtin-icon-section .picker-grid { grid-template-columns: repeat(auto-fill, minmax(4.6rem, 1fr)); }
+.builtin-icon-tile {
+  flex-direction: column; gap: .3rem;
+  min-block-size: 3.6rem; padding: .5rem .4rem;
+  font-size: .78rem; font-weight: 500;
+}
+.builtin-icon-tile img { display: block; }
+/* Review finding F5: .picker-tile:focus-visible's own outline (above) and
+   a plain `outline` here have identical specificity, so whichever rule
+   comes later in source wins regardless of focus state — a suggested tile
+   that receives keyboard focus would show only the dashed suggestion ring
+   with no distinct focus indicator. box-shadow is a different property
+   entirely, so the two rules can never fight over the same declaration:
+   tabbing onto a suggested tile shows BOTH the dashed suggestion ring and
+   :focus-visible's own outline. */
+.builtin-icon-tile.builtin-icon-suggested { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); border-style: dashed; }
+
 /* Bottom status bar: always-visible version + live connectivity. Bookends the
    dark top nav; part of the body flex column so it sits at the bottom. */
 .statusbar {

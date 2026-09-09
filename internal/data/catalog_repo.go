@@ -1395,6 +1395,42 @@ func (r *CatalogRepo) SetItemThumbnail(ctx context.Context, itemID, path string)
 	return nil
 }
 
+// ItemThumbnailPath returns an item's current thumbnail path, if it has
+// one. ok is false when the item has no item_images/thumbnail row at all
+// (never uploaded, never given a placeholder) — the catalog image picker
+// (ut-docs#1844) uses this to distinguish "no image set" from a
+// (theoretically) empty path, and to preselect the currently-assigned
+// built-in icon when one is set.
+func (r *CatalogRepo) ItemThumbnailPath(ctx context.Context, itemID string) (path string, ok bool, err error) {
+	err = r.db.QueryRowContext(ctx,
+		`SELECT path FROM item_images WHERE item_id = ? AND role = 'thumbnail' LIMIT 1`, itemID,
+	).Scan(&path)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("read thumbnail: %w", err)
+	}
+	return path, true, nil
+}
+
+// ClearItemThumbnail removes an item's thumbnail row entirely (ut-docs#1844's
+// picker "none" choice) — unlike SetItemThumbnail, there is no path to set
+// afterward, so this deletes rather than updates. A no-op, not an error,
+// when the item already has no thumbnail row (a double-click, a stale
+// picker state).
+func (r *CatalogRepo) ClearItemThumbnail(ctx context.Context, itemID string) error {
+	if itemID == "" {
+		return errors.New("itemID required")
+	}
+	if _, err := r.db.ExecContext(ctx,
+		`DELETE FROM item_images WHERE item_id = ? AND role = 'thumbnail'`, itemID,
+	); err != nil {
+		return fmt.Errorf("clear thumbnail: %w", err)
+	}
+	return nil
+}
+
 // ItemCostPrice returns the item's cost price in minor units (0 = unset).
 func (r *CatalogRepo) ItemCostPrice(ctx context.Context, itemID string) (int64, error) {
 	var cost sql.NullInt64
