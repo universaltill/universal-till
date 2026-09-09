@@ -13,7 +13,7 @@ full-screen form — no tile colour, no modifier attachment"
   (`.item-form-modal`), reclaiming the catalog list's width (confirms
   ut-docs#1842's row-action fix stays reachable).
 - A fixed, curated 8-swatch tile colour on items (new `items.color`
-  column, migration `018_items_color.sql`), server-side allowlisted
+  column, migration `019_items_color.sql`), server-side allowlisted
   (`catalogtypes.ItemColors()` / `ValidItemColor()`) since the stored
   value flows into a CSS custom property downstream — a real security
   control, not just UX. Rendered as the sale-screen tile's solid

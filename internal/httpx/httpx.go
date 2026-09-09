@@ -473,6 +473,19 @@ func ResolveLocale(w http.ResponseWriter, r *http.Request) string {
 		})
 		return lang
 	}
+	return RequestLocale(r)
+}
+
+// RequestLocale is ResolveLocale without the side effect: the same
+// query-param → cookie → default resolution, but it never writes the
+// ut_lang cookie. For a handler that needs the locale BEFORE it calls
+// Render (which resolves again, and would otherwise emit a second
+// Set-Cookie for the same ?lang= — menu_page.go's label fallback,
+// ADR-0088 Decision G).
+func RequestLocale(r *http.Request) string {
+	if lang := r.URL.Query().Get("lang"); lang != "" {
+		return lang
+	}
 	// cookie
 	if c, err := r.Cookie("ut_lang"); err == nil && c.Value != "" {
 		return c.Value
