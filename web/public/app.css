@@ -644,9 +644,21 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 .item-form-modal { position: fixed; inset-block-start: 4vh; inset-inline: 0; margin-inline: auto;
                     z-index: 500; width: 94vw; max-width: 60rem; max-height: 92vh; overflow-y: auto;
                     border: 1px solid var(--border); border-radius: var(--radius);
-                    box-shadow: var(--shadow); padding: 1.25rem 1.5rem; }
+                    box-shadow: var(--shadow); padding: 1.25rem 1.5rem;
+                    /* ut-docs#1901 (independent review, N1): explicit,
+                       same as .payment-overlay above — without it this
+                       relies on the UA's own dialog background (`canvas`)
+                       showing through around the child .card, which is
+                       correct today only because no theme plugin yet
+                       overrides that default (see the elevation-modal
+                       block below for the trap this avoids). */
+                    background: var(--surface); }
 .item-form-modal:not([open]) { display: none; }
-@media (max-width: 700px) { .item-form-modal { width: 94vw; padding: 1rem; } }
+/* ut-docs#1901 (independent review, N3): 700px is ALREADY inside the
+   94vw base rule's own applicable range (94vw doesn't change by width),
+   so only `padding` actually differs here — `width: 94vw` is a dead
+   restatement, not a real override. */
+@media (max-width: 700px) { .item-form-modal { padding: 1rem; } }
 /* ut-docs#1901, same fix as body.osk-padded .payment-overlay above: the
    OSK is `position: fixed` + `z-index: 1000`, spanning the bottom 15.5rem
    of the viewport regardless of this dialog's own box — without this,

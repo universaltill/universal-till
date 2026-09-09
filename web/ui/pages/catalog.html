@@ -395,7 +395,13 @@
     msg.textContent = '';
     document.getElementById('autofill-msg').textContent = '';
   }
-  resetBtn.addEventListener('click', clearForm);
+  // ut-docs#1901 UX fix (independent review finding): resetBtn ("＋ New")
+  // is a session-changing entry point same as the add-button/row-click/
+  // color-swatch sites above — without bumping formSession here too, a
+  // still-open edit dialog's pending auto-close timer (search
+  // "auto-close" below) can fire on a FRESH form the operator just reset
+  // to, mid-typing, exactly the race this counter exists to prevent.
+  resetBtn.addEventListener('click', function () { clearForm(); formSession++; });
 
   // ut-docs#1901: opens the dialog fresh, ready to create a NEW item — the
   // only way to reach the create-item form now the panel isn't always on
@@ -625,14 +631,16 @@
         // ut-docs#1901 UX fix: the form is now a full-screen dialog, not
         // an always-visible side panel — leaving it open after a
         // successful save strands the operator behind a full-screen
-        // modal with no obvious next step (found live: a Playwright-
+        // dialog with no obvious next step (found live: a Playwright-
         // driven save left the dialog open over the "Saved" toast in
-        // every locale tested). Auto-close, but only after the same
-        // ~2.5s window the toast itself stays up (scheduleToastDismiss,
-        // app.js) so the operator actually gets to read the confirmation
-        // first, and only if this dialog is still showing the SAME
-        // session that saved — not reopened for a different item (edit)
-        // or a fresh create in the meantime.
+        // every locale tested). Auto-close after 1.5s — comfortably long
+        // enough to read "Saved" (confirmed live), deliberately shorter
+        // than the toast's own ~2.5s auto-expire (scheduleToastDismiss,
+        // app.js) rather than matching it, since the toast itself stays
+        // visible a moment longer than the dialog needs to — and only if
+        // this dialog is still showing the SAME session that saved — not
+        // reopened for a different item (edit), a fresh create, or reset
+        // via "＋ New" in the meantime.
         setTimeout(function () {
           if (!modal.open) return;
           if (formSession !== savingSession) return;

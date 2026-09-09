@@ -71,8 +71,10 @@ test.describe('catalog item-form save notice (ut-docs#917)', () => {
     await fillNewItem(page, name);
     await page.locator('#item-form-submit').click();
     await expect(page.locator(msgSel).locator('.pos-notice.success')).toBeVisible();
-    // ut-docs#1901: close explicitly — the row click below (outside the
-    // dialog) is inert while a showModal() dialog is still open.
+    // ut-docs#1901: close explicitly — the dialog is non-modal (.show(),
+    // ut-docs#1385's OSK fix), so nothing outside it is inert, but its
+    // large `position: fixed` box covers and intercepts the row click
+    // below.
     await page.locator('#item-form-close-btn').click();
 
     // Click a plain cell, not the row's centre — the row-click handler

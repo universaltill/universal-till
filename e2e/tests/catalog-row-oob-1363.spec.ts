@@ -27,9 +27,11 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
     await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
     // ut-docs#1901: close explicitly — nearly every caller of this helper
     // goes on to click something OUTSIDE the dialog (a row, the search
-    // box, a danger button), which is inert while a showModal() dialog is
-    // still open. The two callers that only ever read afterward are
-    // unaffected by closing early.
+    // box, a danger button). The dialog is non-modal (.show(),
+    // ut-docs#1385's OSK fix) so nothing is inert, but its large
+    // `position: fixed` box covers those targets and intercepts the
+    // click. The two callers that only ever read afterward are unaffected
+    // by closing early.
     await page.locator('#item-form-close-btn').click();
     await expect(page.locator(`.catalog-row[data-name="${name}"]`)).toBeVisible();
   }
@@ -173,8 +175,9 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
     await page.locator('#item-price').fill('1.00');
     await page.locator('#item-form-submit').click();
     await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
-    // ut-docs#1901: close explicitly — the search box below is outside
-    // the dialog, inert while it's still open.
+    // ut-docs#1901: close explicitly — the search box below sits under the
+    // dialog's large `position: fixed` box, which intercepts its click
+    // (the dialog is non-modal, so this is stacking, not inertness).
     await page.locator('#item-form-close-btn').click();
 
     const newRow = page.locator(`.catalog-row[data-name="${name}"]`);
@@ -207,8 +210,9 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
     await page.locator(`.catalog-row[data-name="${name}"]`).locator('td').nth(1).click();
     await expect(page.locator('#vf-new')).toBeAttached();
     // ut-docs#1901: close the edit dialog the row click just opened — the
-    // variants panel and search box below are both outside it, inert
-    // while it's still open.
+    // variants panel and search box below are both outside it, and the
+    // dialog's large `position: fixed` box sits over them and intercepts
+    // their clicks (stacking, not inertness — the dialog is non-modal).
     await page.locator('#item-form-close-btn').click();
     const row = page.locator(`.catalog-row[data-name="${name}"]`);
     await page.locator('#catalog-search').fill('zzz-no-such-item');

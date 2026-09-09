@@ -306,8 +306,8 @@ export async function createTable(page: Page, label: string) {
 // after page.goto('/catalog') (the pre-#1901 shape, when the panel was
 // always on screen) now hangs forever waiting for a hidden input to become
 // visible. Editing an EXISTING item still opens the dialog on its own (the
-// row-click handler calls showModal()) — this helper is only for the
-// NEW-item path, which now needs an explicit trigger click first. Kept
+// row-click handler calls openModal()/.show()) — this helper is only for
+// the NEW-item path, which now needs an explicit trigger click first. Kept
 // here rather than duplicated inline across every catalog spec, same
 // reasoning as ensureOperator/createTable above.
 export async function openNewItemForm(page: Page) {

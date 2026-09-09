@@ -23,8 +23,10 @@ test.describe('catalog item-form double-submit (ut-docs#1365)', () => {
     await page.locator('#item-price').fill('1.00');
     await page.locator('#item-form-submit').click();
     await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
-    // ut-docs#1901: close explicitly — the row click below (outside the
-    // dialog) is inert while a showModal() dialog is still open.
+    // ut-docs#1901: close explicitly — the dialog is non-modal (.show(),
+    // ut-docs#1385's OSK fix), so nothing outside it is inert, but its
+    // large `position: fixed` box covers and intercepts the row click
+    // below.
     await page.locator('#item-form-close-btn').click();
 
     const row = page.locator('.catalog-row', { hasText: name });
@@ -36,18 +38,22 @@ test.describe('catalog item-form double-submit (ut-docs#1365)', () => {
     expect(itemId).not.toBe('');
     await expect(page.locator('#item-active')).toBeChecked();
 
-    // ut-docs#1901: deactivate it WITHOUT touching the (now-modal) edit
-    // form — reproduces the exact precondition handlers.go's update
-    // handler calls out: "deactivate a row while the edit form still
-    // holds that item, then save." Pre-#1901 this was a second UI
-    // element (the row's own danger button) reachable on the same page
-    // alongside the always-visible side panel; now that the editor is a
-    // showModal() dialog, everything outside it (that button included) is
-    // inert while it's open — so this drives the same server-side race
-    // via a direct request instead, which is arguably the MORE realistic
-    // reproduction anyway (a second tab/operator deactivating the item
-    // while this one still has it open for editing, not two controls on
-    // one screen that a real user could never both reach at once).
+    // ut-docs#1901: deactivate it WITHOUT touching the open edit dialog —
+    // reproduces the exact precondition handlers.go's update handler
+    // calls out: "deactivate a row while the edit form still holds that
+    // item, then save." Pre-#1901 this was a second UI element (the row's
+    // own danger button) reachable on the same page alongside the
+    // always-visible side panel. The editor is a <dialog> now — non-modal
+    // (.show(), ut-docs#1385's OSK fix), so that button is NOT inert, but
+    // the dialog's large `position: fixed` box (z-index 500, 94vw wide,
+    // up to 92vh tall from 4vh down) sits over the list and intercepts
+    // the click, and closing the dialog first would destroy the very
+    // precondition under test (the form must still hold the item). So
+    // this drives the same server-side race via a direct request instead,
+    // which is arguably the MORE realistic reproduction anyway (a second
+    // tab/operator deactivating the item while this one still has it open
+    // for editing, not two controls on one screen that a real user could
+    // never both reach at once).
     const deactivateResp = await page.request.post('/api/catalog/item/deactivate', {
       form: { id: itemId },
     });

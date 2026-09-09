@@ -33,8 +33,10 @@ test.describe('catalog category/brand select (ut-docs#1430)', () => {
     await page.locator('#item-price').fill('3.50');
     await page.locator('#item-form-submit').click();
     await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
-    // ut-docs#1901: close explicitly — the row click below (outside the
-    // dialog) is inert while a showModal() dialog is still open.
+    // ut-docs#1901: close explicitly — the dialog is non-modal (.show(),
+    // ut-docs#1385's OSK fix), so nothing outside it is inert, but its
+    // large `position: fixed` box covers and intercepts the row click
+    // below.
     await page.locator('#item-form-close-btn').click();
 
     // The new row's own category cell shows "Food" by name (AC: items

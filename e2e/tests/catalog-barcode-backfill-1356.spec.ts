@@ -22,11 +22,13 @@ test('backfilling barcodes from SKU previews then assigns a derived barcode to a
   await page.locator('#item-price').fill('3.00');
   await page.locator('#item-form-submit').click();
   await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
-  // ut-docs#1901: the item form is a showModal() <dialog> now — everything
-  // outside it (including the page-head backfill button below) is inert
-  // while it's open. Close it explicitly rather than relying on the
-  // save-success auto-close timer, which would make this test's timing
-  // depend on an implementation detail it isn't testing.
+  // ut-docs#1901: the item form is a <dialog> now — opened NON-modally
+  // (.show(), ut-docs#1385's OSK fix), so nothing outside it is inert, but
+  // it IS a large `position: fixed` box (z-index 500) that covers the
+  // page-head backfill button below and intercepts its click. Close it
+  // explicitly rather than relying on the save-success auto-close timer,
+  // which would make this test's timing depend on an implementation detail
+  // it isn't testing.
   await page.locator('#item-form-close-btn').click();
 
   const row = page.locator('.catalog-row', { hasText: name });
