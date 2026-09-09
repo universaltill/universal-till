@@ -82,6 +82,59 @@ func TestWaitForAttachRetriesUntilProbeSucceeds(t *testing.T) {
 	}
 }
 
+// TestAttachDecisionLine covers waitForAttach's stderr diagnostic
+// (ut-docs#1279, review follow-up to ut-docs#1199): the decision itself was
+// previously invisible in the log, so a field engineer reading journal
+// output on an affected till had no way to tell which branch the shell took
+// or how long it spent deciding without a hardware trip. Split out as a
+// pure string-builder (same "test the pure logic, leave the Fprintf
+// untested" split as startup_gate.go's holdFor vs. waitForSafeStartup) so
+// the message content is directly testable without capturing os.Stderr.
+func TestAttachDecisionLine(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		retryWindow bool
+		attempts    int
+		elapsed     time.Duration
+		attached    bool
+		want        string
+	}{
+		{
+			name:        "no retry window, attached on the single probe",
+			retryWindow: false, attempts: 1, elapsed: 0, attached: true,
+			want: "attach gate: no retry window (decided immediately), attached to an existing server after 1 probe over 0s (ut-docs#1199)\n",
+		},
+		{
+			name:        "no retry window, gives up on the single probe",
+			retryWindow: false, attempts: 1, elapsed: 0, attached: false,
+			want: "attach gate: no retry window (decided immediately), no existing server — spawning our own after 1 probe over 0s (ut-docs#1199)\n",
+		},
+		{
+			name:        "retry window open, attached on the very first probe",
+			retryWindow: true, attempts: 1, elapsed: 0, attached: true,
+			want: "attach gate: retry window open, attached to an existing server after 1 probe over 0s (ut-docs#1199)\n",
+		},
+		{
+			name:        "retry window open, attached after retrying",
+			retryWindow: true, attempts: 4, elapsed: 1500 * time.Millisecond, attached: true,
+			want: "attach gate: retry window open, attached to an existing server after 4 probes over 1.5s (ut-docs#1199)\n",
+		},
+		{
+			name:        "retry window open, gives up once the window closes",
+			retryWindow: true, attempts: 3, elapsed: 1 * time.Second, attached: false,
+			want: "attach gate: retry window open, no existing server — spawning our own after 3 probes over 1s (ut-docs#1199)\n",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := attachDecisionLine(tc.retryWindow, tc.attempts, tc.elapsed, tc.attached)
+			if got != tc.want {
+				t.Errorf("attachDecisionLine(%v, %d, %v, %v) = %q, want %q",
+					tc.retryWindow, tc.attempts, tc.elapsed, tc.attached, got, tc.want)
+			}
+		})
+	}
+}
+
 // TestWaitForAttachGivesUpAtDeadlineNeverAttaches covers the genuine
 // no-service case (dev launch, tarball install, or a .deb whose service is
 // simply down): the probe never succeeds, so waitForAttach must give up
