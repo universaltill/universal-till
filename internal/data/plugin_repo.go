@@ -68,7 +68,7 @@ ON CONFLICT(id) DO UPDATE SET
     is_active = 1,
     trust_level = 'trusted',
     updated_at = excluded.updated_at
-`, time.Now(), time.Now(), id)
+`, time.Now().UTC().Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339), id)
 	if err != nil {
 		return pluginObs.wrapf("install_plugin", "install plugin %s", err, id)
 	}

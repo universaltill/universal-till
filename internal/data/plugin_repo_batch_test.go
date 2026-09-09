@@ -165,6 +165,42 @@ func TestGetPluginVersionsAt_MatchesSingularSemantics(t *testing.T) {
 	}
 }
 
+// TestGetPluginVersionsAt_SameDayBoundary mirrors
+// TestGetPluginVersionAt_SameDayBoundary (plugin_repo_lifecycle_test.go):
+// a 24h-in-the-past "before" query, like the one above, differs in its
+// RFC3339 *date* component too, which masks the ut-docs#1880 storage bug
+// even when it's present. A same-day, minutes-scale boundary doesn't get
+// that accidental cover, so it's the test that would actually catch a
+// future divergence between this batched query and the singular one.
+func TestGetPluginVersionsAt_SameDayBoundary(t *testing.T) {
+	d, _ := newBatchTestDB(t)
+	ctx := context.Background()
+	repo := NewPluginRepo(d.DB)
+
+	seedCatalogEntry(t, d, "com.example.a", "1.0.0")
+	beforeInstall := time.Now().Add(-1 * time.Minute)
+	if err := repo.InstallPlugin(ctx, nil, "com.example.a"); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.GetPluginVersionsAt(ctx, []string{"com.example.a"}, beforeInstall)
+	if err != nil {
+		t.Fatalf("GetPluginVersionsAt (before, same day): %v", err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("expected no version active one minute before install (same day), got %+v", got)
+	}
+
+	afterInstall := time.Now().Add(1 * time.Minute)
+	got, err = repo.GetPluginVersionsAt(ctx, []string{"com.example.a"}, afterInstall)
+	if err != nil {
+		t.Fatalf("GetPluginVersionsAt (after, same day): %v", err)
+	}
+	if got["com.example.a"] != "1.0.0" {
+		t.Fatalf("expected version 1.0.0 active one minute after install (same day), got %+v", got)
+	}
+}
+
 func TestGetPluginVersionsAt_ConstantQueryCount(t *testing.T) {
 	d, path := newBatchTestDB(t)
 	ctx := context.Background()
