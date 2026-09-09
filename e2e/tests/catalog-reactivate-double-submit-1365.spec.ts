@@ -52,11 +52,15 @@ test.describe('catalog item-form double-submit (ut-docs#1365)', () => {
       form: { id: itemId },
     });
     expect(deactivateResp.ok()).toBeTruthy();
-    // Note: this went via a raw request, not a page click, so htmx never
-    // processed the response's row-removal OOB fragment — `row` stays in
-    // the DOM (stale) until the next real htmx swap touches it. That's
-    // expected and not what this test is checking; the reactivation
-    // itself (below) does trigger a real swap and IS checked.
+    // This went via a raw request, not a page click, so htmx never
+    // processed the response's row-removal OOB fragment — the stale
+    // pre-deactivation row is still sitting in the DOM. Remove it
+    // ourselves (same end state a real click's OOB delete would have
+    // left), or the reactivation below inserts a SECOND row for the same
+    // item alongside this stale one — a false failure of the very
+    // "does not duplicate its row" assertion this test exists to make,
+    // caused by this test's own request bypass, not a real product bug.
+    await row.evaluate((el) => el.remove());
 
     // The form still holds the now-inactive item, Active still checked —
     // saving from here is a reactivation. Hold the update response so both

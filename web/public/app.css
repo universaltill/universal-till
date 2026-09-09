@@ -623,16 +623,38 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
    flex-displayed on page load. Found live while testing ut-docs#259. */
 .field-checks[hidden] { display: none; }
 /* ut-docs#1901: the add/edit-item form is now a near-full-screen <dialog>
-   (#item-form-modal, opened via showModal() from catalog.html) instead of
-   a permanently-visible 360px sticky side panel — the dialog itself
-   scrolls internally (below), so .catalog-form no longer needs its own
-   sticky/max-height treatment; it's now just the fields' layout wrapper. */
-.item-form-modal { width: 94vw; max-width: 60rem; max-height: 92vh; overflow-y: auto;
+   (#item-form-modal, opened via .show() from catalog.html) instead of a
+   permanently-visible 360px sticky side panel — the dialog itself scrolls
+   internally (below), so .catalog-form no longer needs its own
+   sticky/max-height treatment; it's now just the fields' layout wrapper.
+   Opened via .show(), NOT showModal() — same fix, same reasoning
+   (ut-docs#1385) as #hold-modal/#pfand-modal/#elevation-modal/
+   #table-add-modal/.payment-overlay above: showModal()'s top-layer/
+   inert-outside behaviour makes the custom on-screen keyboard (#osk,
+   appended to <body>, never re-parented into whichever dialog is open)
+   completely unreachable, and this form has more OSK-triggering fields
+   (barcode, name, price, SKU, description...) than any of those five.
+   `position: fixed` + explicit centering replace the native top-layer
+   centering .show() no longer provides; `z-index: 500` matches the same
+   five for the identical reason (needed now that .show() doesn't get the
+   browser's native stacking), staying below #osk's `z-index: 1000` so the
+   keyboard still renders on top of whichever field it's typing into
+   here. No ::backdrop rule — a .show() dialog never paints one, same as
+   the other five non-modal dialogs, none of which replicate dimming. */
+.item-form-modal { position: fixed; inset-block-start: 4vh; inset-inline: 0; margin-inline: auto;
+                    z-index: 500; width: 94vw; max-width: 60rem; max-height: 92vh; overflow-y: auto;
                     border: 1px solid var(--border); border-radius: var(--radius);
                     box-shadow: var(--shadow); padding: 1.25rem 1.5rem; }
-.item-form-modal::backdrop { background: rgba(15, 23, 42, .45); }
 .item-form-modal:not([open]) { display: none; }
 @media (max-width: 700px) { .item-form-modal { width: 94vw; padding: 1rem; } }
+/* ut-docs#1901, same fix as body.osk-padded .payment-overlay above: the
+   OSK is `position: fixed` + `z-index: 1000`, spanning the bottom 15.5rem
+   of the viewport regardless of this dialog's own box — without this,
+   whichever field/button sits in that band (very likely here: this form
+   is taller than .payment-overlay's, and Create Item/Save Changes is
+   near its own bottom) is genuinely covered, not merely close to an
+   edge, the exact failure #1385 found for the payment overlay. */
+body.osk-padded .item-form-modal { max-height: calc(92vh - 15.5rem); }
 .catalog-extra { margin-top: .9rem; border-top: 1px solid var(--border); padding-top: .6rem; }
 .catalog-extra summary { font-weight: 600; cursor: pointer; color: var(--muted);
                          font-size: .85rem; }

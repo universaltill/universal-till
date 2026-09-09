@@ -42,15 +42,20 @@
 </div>
 
 <!-- ut-docs#1901: the add/edit-item form, converted from a 360px sticky
-     side panel into a near-full-screen <dialog> — the same <dialog>/
-     ::backdrop/showModal() mechanics as #barcode-backfill-modal above and
-     #modifier-modal (buttons.html), but its OWN class (.item-form-modal,
-     app.css) rather than reusing .modifier-modal, which stays capped at
-     28rem for its other, genuinely compact callers. Opened via
-     item-form-add-btn (new item) or a catalog row click (edit — see the
-     script below), closed via item-form-close-btn or Esc (native
-     <dialog> behavior). The image/label-printing/keypad-mapper sections
-     that used to be this panel's <details> children move inside
+     side panel into a near-full-screen <dialog> — a <dialog> element,
+     but its OWN class (.item-form-modal, app.css) rather than reusing
+     .modifier-modal, which stays capped at 28rem for its other,
+     genuinely compact callers. Opened via .show(), NOT showModal() — see
+     app.css's own comment on .item-form-modal for why (the on-screen
+     keyboard, appended to <body>, would otherwise be unreachable on
+     kiosk hardware — the same fix (ut-docs#1385) already applied to
+     #hold-modal/#pfand-modal/#elevation-modal/#table-add-modal/
+     .payment-overlay). That means no native ::backdrop and, unlike a
+     showModal() dialog, no automatic Escape-to-close — closed via
+     item-form-close-btn only. Opened via item-form-add-btn (new item) or
+     a catalog row click (edit — see the script below). The
+     image/label-printing/keypad-mapper sections that used to be this
+     panel's <details> children move inside
      unchanged — they were already children of .catalog-form, so this
      restructure carries them along. -->
 <dialog id="item-form-modal" class="item-form-modal" aria-labelledby="item-form-title">
@@ -281,16 +286,23 @@
   // have id ''), which is why this is a separate counter rather than
   // reusing #item-id.
   var formSession = 0;
-  // ut-docs#1901: native <dialog>.showModal() THROWS (InvalidStateError)
-  // if called while the dialog is already open — a real, reachable case
-  // now that a successful save auto-closes the dialog on a delay (search
-  // "auto-close" below): an operator (or a fast test) can click a
-  // DIFFERENT row to edit, or "+ Add item" again, before that delay
-  // fires, while this dialog is still open from the save they just made.
-  // Both open call sites route through this instead of a bare
-  // modal.showModal() call.
+  // ut-docs#1901: opened via .show(), NOT showModal() — same reasoning
+  // (and same established fix, ut-docs#1385) as #hold-modal/#pfand-modal/
+  // #elevation-modal/#table-add-modal/.payment-overlay elsewhere in this
+  // codebase: showModal()'s top-layer/inert-outside-the-dialog behaviour
+  // makes the custom on-screen keyboard (#osk, appended to <body>, never
+  // re-parented into whichever dialog is open) completely unreachable —
+  // there is no OS keyboard to fall back to on kiosk hardware. This form
+  // has MORE OSK-triggering fields than any of those five (barcode, name,
+  // price, SKU, description...), so it would have been the worst instance
+  // of this bug in the app, not a minor one. Both open call sites route
+  // through this rather than a bare modal.show() call — kept as its own
+  // function for a consistent name with the .close() call sites, and
+  // because (unlike showModal()) .show() is a documented no-op when
+  // already open, so this also stays safe against the same
+  // already-open-dialog case showModal() would have thrown on.
   function openModal() {
-    if (!modal.open) modal.showModal();
+    modal.show();
   }
   // ut-docs#1901 UX fix: any field the operator touches after a save
   // invalidates that save's pending auto-close (search "auto-close"
