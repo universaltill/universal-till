@@ -262,6 +262,16 @@
   }
 
   var osk = null, current = null, shift = false, layer = '';
+  // Caps-lock latch (ut-docs#1835): two Shift taps within SHIFT_LATCH_MS of
+  // each other, with no character typed in between, latch `shift` on
+  // instead of it clearing after the next char. `shiftLatched` is the
+  // latch itself; `shift` still doubles as "uppercase the next/current
+  // char" for both the momentary and latched cases, so render()/press()'s
+  // casing logic below needs no separate latched-vs-momentary branch —
+  // only the two clear/toggle sites (below, and the default case's
+  // post-insert clear) care which one is active.
+  var shiftLatched = false, lastShiftTap = 0;
+  var SHIFT_LATCH_MS = 400;
 
   function baseLayout() {
     var lang = (document.documentElement.lang || 'en').slice(0, 2);
@@ -406,7 +416,7 @@
         b.className = 'osk-key' +
           (k === 'SPACE' ? ' osk-space' : '') +
           (k.length > 1 && k !== 'SPACE' && k !== 'لا' ? ' osk-fn' : '') +
-          (k === '⇧' && shift ? ' osk-on' : '');
+          (k === '⇧' && shiftLatched ? ' osk-caps' : (k === '⇧' && shift ? ' osk-on' : ''));
         b.textContent = k === 'SPACE' ? '' : (shift && k.length === 1 ? k.toLocaleUpperCase(baseLayout()) : k);
         r.appendChild(b);
       });
@@ -439,7 +449,25 @@
   function press(k) {
     switch (k) {
       case '⌫': backspace(); return;
-      case '⇧': shift = !shift; render(); return;
+      case '⇧':
+        var nowTap = Date.now();
+        if (shiftLatched) {
+          // A tap while latched always clears the latch back to no-shift —
+          // never back to a fresh one-shot (that would need a third tap to
+          // turn off, which reads as broken, not as a keyboard).
+          shiftLatched = false;
+          shift = false;
+        } else if (shift && (nowTap - lastShiftTap) <= SHIFT_LATCH_MS) {
+          // Second tap while the first tap's one-shot is still armed (no
+          // char typed in between, or this would already be false) and
+          // within the window: latch. `shift` is already true.
+          shiftLatched = true;
+        } else {
+          shift = !shift;
+        }
+        lastShiftTap = nowTap;
+        render();
+        return;
       case '?123': layer = 'sym'; render(); return;
       case 'ABC': layer = baseLayout(); render(); return;
       case 'SPACE': insert(' '); return;
@@ -457,7 +485,9 @@
         return;
       default:
         insert(shift && k.length === 1 ? k.toLocaleUpperCase(baseLayout()) : k);
-        if (shift) { shift = false; render(); }
+        // Only the momentary one-shot clears after a char; a latch persists
+        // until the Shift key itself is tapped again (case '⇧' above).
+        if (shift && !shiftLatched) { shift = false; render(); }
     }
   }
 
@@ -468,6 +498,7 @@
     current = el;
     if (!osk) build();
     shift = false;
+    shiftLatched = false;
     layer = isNumeric(el) ? (isSigned(el) ? 'numSigned' : 'num') : baseLayout();
     render();
     osk.classList.add('osk-open');
@@ -516,6 +547,12 @@
     // this override in the first place when the new mode is "off" —
     // nothing left to restore there.
     current = null;
+    // Belt-and-braces alongside show()'s own reset above: show() already
+    // clears the latch on the next open, but a latch left set across a
+    // hide-with-no-reopen (e.g. the operator finishes and walks away)
+    // should not silently persist as UI state nothing is showing.
+    shift = false;
+    shiftLatched = false;
     if (!osk) return;
     osk.classList.remove('osk-open');
     document.body.classList.remove('osk-padded');
