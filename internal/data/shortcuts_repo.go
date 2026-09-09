@@ -24,6 +24,11 @@ type ShortcutButton struct {
 	ImageURL   string
 	Price      int64  // item base price in minor units, for display on the tile
 	CategoryID string // the item's category, empty when uncategorized
+	// Color is the item's tile swatch (ut-docs#1901, catalogtypes.
+	// ItemColors) — empty when the item has none set. Only meaningful for
+	// a photo-less tile (product-tile, buttons.html): an item WITH an
+	// image keeps showing its photo regardless of Color.
+	Color string
 }
 
 func (r *ShortcutsRepo) LoadButtons(ctx context.Context) ([]ShortcutButton, error) {
@@ -40,7 +45,7 @@ func (r *ShortcutsRepo) LoadButtons(ctx context.Context) ([]ShortcutButton, erro
 	rows, err := r.db.QueryContext(ctx, `
 SELECT sb.label, sb.barcode, sb.item_id,
        COALESCE(sb.image_path, (SELECT path FROM item_images img WHERE img.item_id = sb.item_id AND img.role = 'thumbnail' LIMIT 1)),
-       COALESCE(i.base_price, 0), COALESCE(i.category_id, '')
+       COALESCE(i.base_price, 0), COALESCE(i.category_id, ''), COALESCE(i.color, '')
 FROM shortcut_buttons sb
 LEFT JOIN items i ON i.id = sb.item_id
 ORDER BY sb.sort_order, sb.label`)
@@ -52,7 +57,7 @@ ORDER BY sb.sort_order, sb.label`)
 	for rows.Next() {
 		var b ShortcutButton
 		var img sql.NullString
-		if err := rows.Scan(&b.Label, &b.Barcode, &b.ItemID, &img, &b.Price, &b.CategoryID); err != nil {
+		if err := rows.Scan(&b.Label, &b.Barcode, &b.ItemID, &img, &b.Price, &b.CategoryID, &b.Color); err != nil {
 			err = shortcutsObs.wrap("load_buttons", err)
 			return nil, err
 		}

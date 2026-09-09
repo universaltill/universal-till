@@ -350,13 +350,14 @@ func TestBuildKitchenTicket_CP858CharsetFallsBackToEnglishForNonLatinLocale(t *t
 	}
 }
 
-// ut-docs#1733: win1250/win1257/win1253 are the same shape of single-byte
-// restriction as ascii/cp858 above — none of them can render Arabic, so a
-// mismatched locale/charset pairing (e.g. an operator manually picking
-// win1253 on an ar-locale till) must still fall back to English rather than
-// leak "?" runs, exactly like the ascii/cp858 cases already do.
+// ut-docs#1733 (and win1254, ut-docs#1775): win1250/win1257/win1253/win1254
+// are the same shape of single-byte restriction as ascii/cp858 above — none
+// of them can render Arabic, so a mismatched locale/charset pairing (e.g. an
+// operator manually picking win1253 on an ar-locale till) must still fall
+// back to English rather than leak "?" runs, exactly like the ascii/cp858
+// cases already do.
 func TestBuildKitchenTicket_NewCharsetsFallBackToEnglishForNonLatinLocale(t *testing.T) {
-	for _, charset := range []string{"win1250", "win1257", "win1253"} {
+	for _, charset := range []string{"win1250", "win1257", "win1253", "win1254"} {
 		t.Run(charset, func(t *testing.T) {
 			chdirRoot(t)
 			i18n, err := config.NewI18n("web/locales", "en")

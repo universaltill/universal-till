@@ -160,7 +160,7 @@ func TestRenderReceipt_DeviceReceiptBlock(t *testing.T) {
 	payments := []pos.PaymentInput{{MethodID: "okc", Amount: 1500}}
 	dev := &data.FiscalDeviceReceipt{SaleID: "s", Maker: "beko", Serial: "AV0001234", ReceiptNo: "0000042", ReceiptKind: "mali_fis", ZNo: 7, IssuedAt: "2026-09-03T10:12:00+03:00"}
 
-	html, err := renderReceipt(funcs, "123", lines, payments, 1500, 0, 1500, true, 0, "", 0, nil, false, false, false, false, nil, dev, "Bakkal", receiptDesign{ShowTax: true}, "", nil)
+	html, err := renderReceipt(funcs, "123", lines, payments, 1500, 0, 1500, true, 0, "", 0, nil, false, false, false, false, nil, dev, "Bakkal", receiptDesign{ShowTax: true}, "", nil, "")
 	if err != nil {
 		t.Fatalf("renderReceipt: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestRenderReceipt_DeviceReceiptBlock(t *testing.T) {
 			t.Fatalf("expected %q in receipt, got: %s", want, html)
 		}
 	}
-	plain, err := renderReceipt(funcs, "123", lines, payments, 1500, 0, 1500, true, 0, "", 0, nil, false, false, false, false, nil, nil, "Bakkal", receiptDesign{ShowTax: true}, "", nil)
+	plain, err := renderReceipt(funcs, "123", lines, payments, 1500, 0, 1500, true, 0, "", 0, nil, false, false, false, false, nil, nil, "Bakkal", receiptDesign{ShowTax: true}, "", nil, "")
 	if err != nil {
 		t.Fatal(err)
 	}

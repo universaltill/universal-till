@@ -8,6 +8,8 @@
 </div>
 <div class="card">
   <p>{{ .Message }}</p>
-  <a class="btn primary btn-touch" href="/">← {{ T "menu.back_to_sale" }}</a>
+  <!-- ut-docs#1896: same shopping-cart glyph as menu.html's back-to-sale
+       button and the nav rail's sale entry point, for consistency. -->
+  <a class="btn primary btn-touch" href="/"><span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span> {{ T "menu.back_to_sale" }}</a>
 </div>
 {{ end }}

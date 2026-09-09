@@ -938,7 +938,7 @@ func TestPostSettingsPrinter_ValidatesModeAndCharset(t *testing.T) {
 	}
 
 	rec = httptest.NewRecorder()
-	req = httptest.NewRequest(http.MethodPost, "/api/settings/printer", strings.NewReader("mode=network&address=192.168.1.50:9100&charset=weird&autoPrint=on"))
+	req = httptest.NewRequest(http.MethodPost, "/api/settings/printer", strings.NewReader("mode=network&address=192.168.1.50:9100&charset=weird"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusNoContent {
@@ -959,10 +959,12 @@ func TestPostSettingsPrinter_ValidatesModeAndCharset(t *testing.T) {
 // charset is not the same as the operator's own save endpoint actually
 // accepting it — an allow-list that forgets a new value silently discards
 // the operator's choice back to "utf8" with no error, which nothing here
-// pinned before this test. Each of the three new values must round-trip.
-func TestPostSettingsPrinter_AcceptsNewEurozoneCharsets(t *testing.T) {
+// pinned before this test. Each of the four new values must round-trip
+// (win1254 added ut-docs#1775 — Turkish, not a eurozone locale, hence the
+// name below no longer says "eurozone").
+func TestPostSettingsPrinter_AcceptsNewSingleBytePageCharsets(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	for _, charset := range []string{"win1250", "win1257", "win1253"} {
+	for _, charset := range []string{"win1250", "win1257", "win1253", "win1254"} {
 		t.Run(charset, func(t *testing.T) {
 			mux, dp := newPrintAPITestDeps(t)
 			rec := httptest.NewRecorder()

@@ -158,6 +158,15 @@ jobs:
         # ut-docs#1567's locked-worktree finding) would go undetected
         # indefinitely.
         run: bash scripts/prune-stale-worktrees_test.sh
+      - name: Retry-with-backoff script regression test
+        # scripts/ci/retry-with-backoff.sh itself is invoked directly by the
+        # desktop-shell and e2e jobs below (ut-docs#1933), not by this build
+        # job — but its test is fully hermetic (own mktemp -d scratch dir,
+        # fake commands, no real apt/network/sudo) so nothing stops it
+        # running here, same reasoning as the stale-worktree test just
+        # above. Without this, a regression in the retry/backoff logic
+        # would go undetected until the next real apt-repo outage.
+        run: bash scripts/ci/retry-with-backoff_test.sh
       - name: Makefile version-stamp guard
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
@@ -306,8 +315,15 @@ jobs:
       - uses: actions/setup-go@v5
         with: { go-version: '1.25' }
       - name: Install GTK/WebKit dev headers
+        # ut-docs#1933: apt-get update against this runner image's
+        # pre-configured Google Chrome repo intermittently fails with a
+        # "Hash Sum mismatch" -- a known, recurring, external CDN-edge
+        # issue on GitHub-hosted Ubuntu runners, not anything in this
+        # repo. Retry with backoff, clearing the local apt index cache
+        # between attempts so a retry can't just re-serve the same stale
+        # index (scripts/ci/retry-with-backoff.sh).
         run: |
-          sudo apt-get update
+          bash scripts/ci/retry-with-backoff.sh 3 5 --clear-apt-lists -- sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
       - name: Build unitill-desktop (desktop build tag)
         env:
@@ -390,9 +406,15 @@ jobs:
           exit 1
       - name: Install E2E dependencies
         working-directory: tests/e2e
+        # ut-docs#1933: `playwright install --with-deps` shells out to
+        # apt-get, which hits the same intermittent "Hash Sum mismatch"
+        # against this runner image's pre-configured Google Chrome repo as
+        # the desktop-shell job's own apt-get update above -- see that
+        # step's comment. Retry the whole install with backoff, clearing
+        # the local apt index cache between attempts.
         run: |
           npm install
-          npx playwright install --with-deps chromium
+          bash ../../scripts/ci/retry-with-backoff.sh 3 5 --clear-apt-lists -- npx playwright install --with-deps chromium
       - name: Run Playwright tests
         working-directory: tests/e2e
         env:
