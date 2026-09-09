@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/paths"
@@ -159,9 +160,17 @@ func TestChooseIcon_RejectsUnknownIconKey(t *testing.T) {
 // a built-in icon stores it exactly like an upload (item_images/thumbnail,
 // same table/role), and the response is a row OOB fragment, same protocol
 // as every other catalog mutation (ut-docs#1363) — never the whole table.
+//
+// A SECOND item already carries a thumbnail, so this choice isn't the
+// catalog's first-ever image — the thumbnail column is already showing
+// and can't flip (ut-docs#1842 review F1). See
+// TestChooseIcon_FirstEverThumbnailSwapsWholeTable below for the deliberate
+// exception when it IS the first one.
 func TestChooseIcon_SetsBuiltinThumbnail(t *testing.T) {
 	mux, db := newCatalogMux(t)
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Item", BasePrice: 100, IsActive: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm2", SKU: "SKU2", Name: "Already Imaged Item", BasePrice: 100, IsActive: true})
+	testsupport.SeedImage(t, db, "img-itm2", "itm2", "/public/assets/items/itm2/thumb.png")
 
 	rec := postForm(t, mux, "/api/catalog/item/icon", "item_id=itm1&icon=coffee")
 	if rec.Code != http.StatusOK {
@@ -175,6 +184,29 @@ func TestChooseIcon_SetsBuiltinThumbnail(t *testing.T) {
 	}
 	if path != "/public/assets/category-icons/coffee.svg" {
 		t.Errorf("path = %q, want the coffee icon path", path)
+	}
+}
+
+// TestChooseIcon_FirstEverThumbnailSwapsWholeTable is ut-docs#1842 review
+// F1's scenario applied to the icon picker: choosing a built-in icon for
+// the catalog's first-ever image can't be answered with a plain row
+// fragment either — the <thead> and every sibling row need the new column
+// too, which only a whole-table swap can provide.
+func TestChooseIcon_FirstEverThumbnailSwapsWholeTable(t *testing.T) {
+	mux, db := newCatalogMux(t)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Item", BasePrice: 100, IsActive: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm2", SKU: "SKU2", Name: "Plain Item", BasePrice: 100, IsActive: true})
+
+	rec := postForm(t, mux, "/api/catalog/item/icon", "item_id=itm1&icon=coffee")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("choose icon: code %d body %s", rec.Code, rec.Body.String())
+	}
+	got := rec.Body.String()
+	if got == "" || !strings.Contains(got, `id="catalog-table" hx-swap-oob="true"`) {
+		t.Fatalf("expected a whole-table OOB swap on the first-ever thumbnail:\n%s", got)
+	}
+	if !strings.Contains(got, `id="catalog-row-itm2"`) {
+		t.Fatalf("expected the untouched sibling row in the swapped table:\n%s", got)
 	}
 }
 

@@ -1334,23 +1334,62 @@ func (r *CatalogRepo) EnsureDefaultThumbnail(ctx context.Context, itemID, path s
 	if itemID == "" || path == "" {
 		return errors.New("itemID and path required")
 	}
-	var exists int
-	err := r.db.QueryRowContext(ctx,
-		`SELECT 1 FROM item_images WHERE item_id = ? AND role = 'thumbnail' LIMIT 1`, itemID,
-	).Scan(&exists)
-	if err == nil {
-		return nil // already has a thumbnail — never overwrite it
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return fmt.Errorf("check existing thumbnail: %w", err)
-	}
+	// A single atomic INSERT OR IGNORE (ut-docs#1871): the old SELECT-then-
+	// INSERT let two concurrent calls for the same item both see "no
+	// thumbnail" and both INSERT, producing two role='thumbnail' rows. The
+	// ux_item_images_thumbnail_once unique index (item_id, role) now makes
+	// a second INSERT a constraint violation instead of a silent duplicate;
+	// OR IGNORE turns that violation into exactly this function's own
+	// "already has a thumbnail — never overwrite it" no-op.
 	if _, err := r.db.ExecContext(ctx,
-		`INSERT INTO item_images (id, item_id, path, role) VALUES (?, ?, ?, 'thumbnail')`,
+		`INSERT OR IGNORE INTO item_images (id, item_id, path, role) VALUES (?, ?, ?, 'thumbnail')`,
 		uuid.NewString(), itemID, path,
 	); err != nil {
 		return fmt.Errorf("insert placeholder thumbnail: %w", err)
 	}
 	return nil
+}
+
+// ItemThumbnailFor returns one item's thumbnail path (item_images,
+// role=thumbnail), or "" if it has none — the single-item counterpart to
+// ItemThumbnails below, mirroring ItemBarcodesFor/ItemVariantsFor for a
+// row-level OOB mutation response (ut-docs#1842) that doesn't need the
+// whole-table map.
+func (r *CatalogRepo) ItemThumbnailFor(ctx context.Context, itemID string) (string, error) {
+	var path string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT path FROM item_images WHERE item_id = ? AND role = 'thumbnail' LIMIT 1`, itemID,
+	).Scan(&path)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// HasAnyThumbnail reports whether any currently-ACTIVE item has a
+// thumbnail (item_images, role=thumbnail). This is the catalog list's
+// column-collapse decision (ut-docs#1842 AC2): the thumbnail column only
+// exists when it has something to show somewhere in the listing — a
+// thumbnail belonging only to a deactivated (no longer listed) item must
+// not keep the column alive. Re-checked fresh on every row-level OOB
+// mutation too, so a mutation response agrees with whatever the initial
+// render (which asks the same question) currently shows.
+func (r *CatalogRepo) HasAnyThumbnail(ctx context.Context) (bool, error) {
+	var exists int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT 1 FROM item_images ii JOIN items i ON i.id = ii.item_id
+		 WHERE ii.role = 'thumbnail' AND i.is_active = 1 LIMIT 1`,
+	).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // SetItemThumbnail unconditionally sets an item's thumbnail (item_images,
@@ -1374,25 +1413,56 @@ func (r *CatalogRepo) SetItemThumbnail(ctx context.Context, itemID, path string)
 	if itemID == "" || path == "" {
 		return errors.New("itemID and path required")
 	}
-	res, err := r.db.ExecContext(ctx,
-		`UPDATE item_images SET path = ? WHERE item_id = ? AND role = 'thumbnail'`,
-		path, itemID,
-	)
-	if err != nil {
-		return fmt.Errorf("update thumbnail: %w", err)
-	}
-	if n, err := res.RowsAffected(); err != nil {
-		return fmt.Errorf("update thumbnail: %w", err)
-	} else if n > 0 {
-		return nil
-	}
+	// A single atomic upsert (ut-docs#1871): the old UPDATE-then-INSERT let
+	// two concurrent calls for the same item both see the UPDATE affect 0
+	// rows and both fall through to INSERT, producing two role='thumbnail'
+	// rows — any reader doing SELECT ... LIMIT 1 with no ORDER BY then
+	// answered nondeterministically. ON CONFLICT makes the whole
+	// check-and-write one statement, so no interleaving of a second
+	// concurrent call can land between the check and the write.
 	if _, err := r.db.ExecContext(ctx,
-		`INSERT INTO item_images (id, item_id, path, role) VALUES (?, ?, ?, 'thumbnail')`,
+		`INSERT INTO item_images (id, item_id, path, role) VALUES (?, ?, ?, 'thumbnail')
+		 ON CONFLICT(item_id, role) DO UPDATE SET path = excluded.path`,
 		uuid.NewString(), itemID, path,
 	); err != nil {
-		return fmt.Errorf("insert thumbnail: %w", err)
+		return fmt.Errorf("upsert thumbnail: %w", err)
 	}
 	return nil
+}
+
+// ItemThumbnails returns every item's current thumbnail path, active or not
+// (built-in icon or uploaded photo — item_images.path is already the
+// servable path either way), keyed by item id — it does not itself filter
+// on items.is_active, so a caller that only wants active items' thumbnails
+// should only look up IDs it already knows are active (loadShopItems does,
+// via ListItems). Same one-query-for-all-items shape as
+// ItemBarcodes/ItemVariants above, for callers building a list of tiles
+// (e.g. the catalog list's initial render, ut-docs#1842; the self-order
+// kiosk grid, ut-docs#1870) that would otherwise pay one query per item via
+// ItemThumbnailPath. An item missing from the returned map has no
+// thumbnail row at all — callers fall back to their own no-image handling
+// (nothing to show), same as ItemThumbnailPath's ok=false case.
+//
+// (Merge note: #1842 and #1870 each independently added this exact method
+// — same signature, same body — and both merged to main within minutes of
+// each other, producing a duplicate-declaration compile break on main
+// that neither PR's own CI ever saw in isolation. Deduped while merging
+// main into ut-docs#1858's branch; this comment is the surviving copy.)
+func (r *CatalogRepo) ItemThumbnails(ctx context.Context) (map[string]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT item_id, path FROM item_images WHERE role = 'thumbnail'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, path string
+		if err := rows.Scan(&id, &path); err != nil {
+			return nil, err
+		}
+		out[id] = path
+	}
+	return out, rows.Err()
 }
 
 // ItemThumbnailPath returns an item's current thumbnail path, if it has

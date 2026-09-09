@@ -2,7 +2,9 @@ package data_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
@@ -163,6 +165,245 @@ func TestSetItemThumbnail_OverwritesAPlaceholder(t *testing.T) {
 	}
 	if path != realPhoto {
 		t.Fatalf("path = %q, want the real photo to have replaced the placeholder icon", path)
+	}
+}
+
+// TestItemThumbnails_ReturnsPathsForItemsThatHaveOne is ut-docs#1842: the
+// catalog list needs each item's real thumbnail path (item_images,
+// role=thumbnail), keyed by item id — not a guessed <id>/thumb.png file
+// path. An item with no row simply has no entry in the map.
+func TestItemThumbnails_ReturnsPathsForItemsThatHaveOne(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	ctx := context.Background()
+	repo := data.NewCatalogRepo(d.DB)
+
+	withImage, err := repo.CreateItem(ctx, catalogtypes.ItemInput{Name: "Latte", BasePrice: 300, IsActive: true})
+	if err != nil {
+		t.Fatalf("CreateItem: %v", err)
+	}
+	withoutImage, err := repo.CreateItem(ctx, catalogtypes.ItemInput{Name: "Water", BasePrice: 150, IsActive: true})
+	if err != nil {
+		t.Fatalf("CreateItem: %v", err)
+	}
+	if err := repo.SetItemThumbnail(ctx, withImage, "/public/assets/items/"+withImage+"/thumb.png"); err != nil {
+		t.Fatalf("SetItemThumbnail: %v", err)
+	}
+
+	got, err := repo.ItemThumbnails(ctx)
+	if err != nil {
+		t.Fatalf("ItemThumbnails: %v", err)
+	}
+	if got[withImage] != "/public/assets/items/"+withImage+"/thumb.png" {
+		t.Fatalf("ItemThumbnails[%s] = %q, want the thumb path", withImage, got[withImage])
+	}
+	if _, ok := got[withoutImage]; ok {
+		t.Fatalf("ItemThumbnails[%s] should have no entry, got %q", withoutImage, got[withoutImage])
+	}
+}
+
+// TestItemThumbnailFor_EmptyWhenNone mirrors ItemBarcodesFor's single-item
+// counterpart: writeCatalogRowOOB needs one item's thumbnail path without
+// paying for the whole-table map.
+func TestItemThumbnailFor_EmptyWhenNone(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	ctx := context.Background()
+	repo := data.NewCatalogRepo(d.DB)
+
+	id, err := repo.CreateItem(ctx, catalogtypes.ItemInput{Name: "Water", BasePrice: 150, IsActive: true})
+	if err != nil {
+		t.Fatalf("CreateItem: %v", err)
+	}
+
+	got, err := repo.ItemThumbnailFor(ctx, id)
+	if err != nil {
+		t.Fatalf("ItemThumbnailFor: %v", err)
+	}
+	if got != "" {
+		t.Fatalf("ItemThumbnailFor = %q, want empty for an imageless item", got)
+	}
+
+	if err := repo.SetItemThumbnail(ctx, id, "/public/assets/category-icons/coffee.svg"); err != nil {
+		t.Fatalf("SetItemThumbnail: %v", err)
+	}
+	got, err = repo.ItemThumbnailFor(ctx, id)
+	if err != nil {
+		t.Fatalf("ItemThumbnailFor: %v", err)
+	}
+	if got != "/public/assets/category-icons/coffee.svg" {
+		t.Fatalf("ItemThumbnailFor = %q, want the set path", got)
+	}
+}
+
+// TestHasAnyThumbnail_ActiveItemsOnly is the catalog list's column-collapse
+// decision (ut-docs#1842 AC2): the thumbnail column only exists at all
+// when SOME currently-active item has one. A thumbnail belonging only to
+// a deactivated item must not keep the column alive.
+func TestHasAnyThumbnail_ActiveItemsOnly(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	ctx := context.Background()
+	repo := data.NewCatalogRepo(d.DB)
+
+	id, err := repo.CreateItem(ctx, catalogtypes.ItemInput{Name: "Water", BasePrice: 150, IsActive: true})
+	if err != nil {
+		t.Fatalf("CreateItem: %v", err)
+	}
+
+	has, err := repo.HasAnyThumbnail(ctx)
+	if err != nil {
+		t.Fatalf("HasAnyThumbnail: %v", err)
+	}
+	if has {
+		t.Fatalf("HasAnyThumbnail = true before any item has an image")
+	}
+
+	if err := repo.SetItemThumbnail(ctx, id, "/public/assets/items/"+id+"/thumb.png"); err != nil {
+		t.Fatalf("SetItemThumbnail: %v", err)
+	}
+	has, err = repo.HasAnyThumbnail(ctx)
+	if err != nil {
+		t.Fatalf("HasAnyThumbnail: %v", err)
+	}
+	if !has {
+		t.Fatalf("HasAnyThumbnail = false after an active item got an image")
+	}
+
+	if err := repo.DeactivateItem(ctx, id); err != nil {
+		t.Fatalf("DeactivateItem: %v", err)
+	}
+	has, err = repo.HasAnyThumbnail(ctx)
+	if err != nil {
+		t.Fatalf("HasAnyThumbnail: %v", err)
+	}
+	if has {
+		t.Fatalf("HasAnyThumbnail = true after the only imaged item was deactivated")
+	}
+}
+
+// TestSetItemThumbnailConcurrentRace is the ut-docs#1871 regression:
+// pre-fix, SetItemThumbnail was a non-atomic UPDATE-then-INSERT, so two
+// concurrent calls for the same item could both see the UPDATE affect 0
+// rows and both fall through to INSERT, producing two role='thumbnail'
+// rows. Exactly one must ever exist, whatever interleaving the scheduler
+// picks. Uses a real file-backed DB (not an in-memory DSN, which gives
+// each pooled connection its own isolated database and can't exercise
+// multi-connection locking at all) and repeats the race across several
+// rounds, same reasoning as TestUpdateItemReturningWasActiveConcurrentRace
+// in catalog_repo_update_item_race_test.go.
+func TestSetItemThumbnailConcurrentRace(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	ctx := context.Background()
+	repo := data.NewCatalogRepo(d.DB)
+
+	id, err := repo.CreateItem(ctx, catalogtypes.ItemInput{Name: "Cappuccino", BasePrice: 250, IsActive: true})
+	if err != nil {
+		t.Fatalf("CreateItem: %v", err)
+	}
+
+	const rounds = 15
+	const n = 8
+	for round := 0; round < rounds; round++ {
+		var errs [n]error
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for j := 0; j < n; j++ {
+			wg.Add(1)
+			go func(j int) {
+				defer wg.Done()
+				<-start // all released together to maximise the race window
+				errs[j] = repo.SetItemThumbnail(ctx, id, fmt.Sprintf("/public/assets/items/%s/round%d-caller%d.png", id, round, j))
+			}(j)
+		}
+		close(start)
+		wg.Wait()
+
+		for j := 0; j < n; j++ {
+			if errs[j] != nil {
+				t.Fatalf("round %d call %d: unexpected error: %v", round, j, errs[j])
+			}
+		}
+
+		var count int
+		if err := d.DB.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM item_images WHERE item_id = ? AND role = 'thumbnail'`, id,
+		).Scan(&count); err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+		if count != 1 {
+			t.Fatalf("round %d: expected exactly 1 thumbnail row after %d concurrent SetItemThumbnail calls, got %d — duplicate-row race", round, n, count)
+		}
+	}
+}
+
+// TestEnsureDefaultThumbnailConcurrentRace: EnsureDefaultThumbnail's
+// pre-fix SELECT-then-INSERT has the identical race shape as
+// SetItemThumbnail above, and ut-docs#1871's unique index makes a second,
+// unguarded INSERT for the same (item_id, role) a constraint violation
+// instead of a silent duplicate — so this must keep working (still no
+// error, still exactly one row) after the index lands.
+func TestEnsureDefaultThumbnailConcurrentRace(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	ctx := context.Background()
+	repo := data.NewCatalogRepo(d.DB)
+
+	const rounds = 15
+	const n = 8
+	for round := 0; round < rounds; round++ {
+		id, err := repo.CreateItem(ctx, catalogtypes.ItemInput{
+			Name: fmt.Sprintf("Race Item %d", round), BasePrice: 250, IsActive: true,
+		})
+		if err != nil {
+			t.Fatalf("round %d: CreateItem: %v", round, err)
+		}
+
+		var errs [n]error
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for j := 0; j < n; j++ {
+			wg.Add(1)
+			go func(j int) {
+				defer wg.Done()
+				<-start
+				errs[j] = repo.EnsureDefaultThumbnail(ctx, id, "/public/assets/category-icons/coffee.svg")
+			}(j)
+		}
+		close(start)
+		wg.Wait()
+
+		for j := 0; j < n; j++ {
+			if errs[j] != nil {
+				t.Fatalf("round %d call %d: unexpected error: %v", round, j, errs[j])
+			}
+		}
+
+		var count int
+		if err := d.DB.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM item_images WHERE item_id = ? AND role = 'thumbnail'`, id,
+		).Scan(&count); err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+		if count != 1 {
+			t.Fatalf("round %d: expected exactly 1 thumbnail row after %d concurrent EnsureDefaultThumbnail calls, got %d — duplicate-row race", round, n, count)
+		}
 	}
 }
 
