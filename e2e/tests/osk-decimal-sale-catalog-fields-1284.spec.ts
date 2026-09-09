@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, setOskMode } from './helpers';
+import { watchConsole, setOskMode, openNewItemForm } from './helpers';
 
 // ut-docs#1284: found by independent review of ut-docs#1275, out of that
 // card's explicitly-scoped five admin-screen files. Same root cause as
@@ -162,6 +162,7 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     const assertClean = watchConsole(page);
     await setOskMode(page, 'on');
     await page.goto('/catalog');
+    await openNewItemForm(page);
 
     const price = page.locator('#item-price');
     await price.click();
@@ -179,6 +180,7 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
   // observed flake source in this file, unlike every scan elsewhere in
   // this suite which already waits on its own request).
   async function createProbeItemAndOpenVariants(page: import('@playwright/test').Page, name: string) {
+    await openNewItemForm(page);
     await page.locator('#item-name').fill(name);
     await page.locator('#item-price').fill('1.00');
     await Promise.all([
