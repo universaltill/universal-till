@@ -351,10 +351,14 @@ func TestPOSRepo_ListActivePaymentMethods(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ListActivePaymentMethods: %v", err)
 	}
+	// ut-docs#1832: Type rides along so the sale screen can keep a
+	// voucher-type method out of the one-tap Pay grid (it needs a voucher
+	// id, which that grid has no field for) while still offering it in the
+	// Split select.
 	want := []PaymentMethod{
-		{ID: "cash", Name: "Cash", PluginID: ""},
-		{ID: "card", Name: "Card", PluginID: ""},
-		{ID: "stripe", Name: "Stripe", PluginID: "com.example.stripe"},
+		{ID: "cash", Name: "Cash", Type: "cash", PluginID: ""},
+		{ID: "card", Name: "Card", Type: "card", PluginID: ""},
+		{ID: "stripe", Name: "Stripe", Type: "card", PluginID: "com.example.stripe"},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d methods, want %d: %#v", len(got), len(want), got)
@@ -373,6 +377,46 @@ func TestPOSRepo_ListActivePaymentMethods(t *testing.T) {
 	}
 	if len(got) != 3 || got[0].ID != "card" || got[1].ID != "cash" || got[2].ID != "stripe" {
 		t.Fatalf("sort_order not respected: %#v", got)
+	}
+}
+
+// ut-docs#1832: a freshly migrated database carries the 'voucher' payment
+// method (013_voucher_payment_method.sql) alongside the unchanged 001_init
+// 'gift' row. pos.CompleteSale only honours a payment's voucher_id when its
+// MethodID is literally "voucher" — the legacy 'gift' row (type='voucher',
+// id='gift') never satisfied that, which is why the tender UI had no way to
+// redeem a tracked voucher without an API client. Both rows report their
+// type so the sale screen can route them to the Split select only.
+func TestPOSRepo_ListActivePaymentMethods_SeededVoucherMethod(t *testing.T) {
+	dbo := newBatch8DB(t, "lpm-seed.db")
+	repo := NewPOSRepo(dbo.DB)
+
+	got, err := repo.ListActivePaymentMethods(context.Background())
+	if err != nil {
+		t.Fatalf("ListActivePaymentMethods: %v", err)
+	}
+	byID := map[string]PaymentMethod{}
+	for _, m := range got {
+		byID[m.ID] = m
+	}
+	voucher, ok := byID["voucher"]
+	if !ok {
+		t.Fatalf("migrated database has no active 'voucher' payment method: %#v", got)
+	}
+	if voucher.Type != "voucher" || voucher.Name != "Voucher" {
+		t.Fatalf("voucher method = %+v, want Type 'voucher', Name 'Voucher'", voucher)
+	}
+	gift, ok := byID["gift"]
+	if !ok {
+		t.Fatalf("001_init 'gift' row must stay exactly as shipped: %#v", got)
+	}
+	if gift.Type != "voucher" || gift.Name != "Gift Card" {
+		t.Fatalf("gift method = %+v, want the unchanged 001_init row (Type 'voucher', Name 'Gift Card')", gift)
+	}
+	// Seeded after the three 001_init rows (sort_order 4), so the existing
+	// Pay-grid head-of-list (cash/card) is untouched by the new row.
+	if got[len(got)-1].ID != "voucher" {
+		t.Fatalf("voucher method should sort last among built-ins, got order %#v", got)
 	}
 }
 
@@ -398,9 +442,9 @@ func TestPOSRepo_ListActiveNonCashPaymentMethods(t *testing.T) {
 	// excluded no matter how many there are, and inactive methods must not
 	// resurface. Non-cash, non-card types (voucher) are allowed through.
 	want := []PaymentMethod{
-		{ID: "card", Name: "Card", PluginID: ""},
-		{ID: "stripe", Name: "Stripe", PluginID: "com.example.stripe"},
-		{ID: "gift", Name: "Gift Card", PluginID: ""},
+		{ID: "card", Name: "Card", Type: "card", PluginID: ""},
+		{ID: "stripe", Name: "Stripe", Type: "card", PluginID: "com.example.stripe"},
+		{ID: "gift", Name: "Gift Card", Type: "voucher", PluginID: ""},
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d methods, want %d: %#v", len(got), len(want), got)

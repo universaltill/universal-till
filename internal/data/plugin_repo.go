@@ -2064,9 +2064,21 @@ func (r *PluginRepo) SyncPluginPaymentMethods(ctx context.Context) error {
 	// from a not-yet-upgraded primary — and the hijacking plugin may not
 	// even exist locally, so the deactivate step below would otherwise pin
 	// the row inactive forever.
+	//
+	// 'voucher' joined this list with 013_voucher_payment_method.sql
+	// (ut-docs#1832 review): it is a seeded built-in exactly like the other
+	// three, so the invariant's own wording already covered it. Not
+	// reachable damage today — the upsert below cannot take ownership of a
+	// plugin_id IS NULL row (its DO UPDATE ... WHERE compares against NULL
+	// and never matches), and syncAdminTables gives payment_methods
+	// skipCols ["plugin_id"] so the LAN path cannot import one either — but
+	// leaving the new built-in out would have made this repair the one
+	// place that silently disagreed about what "built-in" means, and a
+	// hijacked+deactivated 'voucher' row is precisely the regression that
+	// takes tracked voucher redemption back out of the cashier UI.
 	if _, err := r.db.ExecContext(ctx, `
 UPDATE payment_methods SET plugin_id = NULL, is_active = 1
-WHERE id IN ('cash', 'card', 'gift') AND plugin_id IS NOT NULL`); err != nil {
+WHERE id IN ('cash', 'card', 'gift', 'voucher') AND plugin_id IS NOT NULL`); err != nil {
 		return fmt.Errorf("sync plugin payment methods (built-in invariant): %w", err)
 	}
 	if _, err := r.db.ExecContext(ctx, `
