@@ -4,6 +4,10 @@
   <div style="display:flex; gap:.5rem; align-items:center">
     <a class="btn secondary" href="/import">{{ T "import.title" }}</a>
     <a class="btn secondary" href="/catalog/tax-codes">{{ T "taxcodes.title" }}</a>
+    <!-- ut-docs#1899: the per-item modifier editor lives in the item detail
+         panel below (catalog_variants.html); this is the shop-wide browse
+         screen for seeing every group across every item at once. -->
+    <a class="btn secondary" href="/modifiers">{{ T "modifiers.title" }}</a>
     <button id="catalog-export-btn" class="btn secondary" hx-post="/api/catalog/export-save" hx-target="#export-msg" hx-swap="innerHTML">{{ T "import.export_btn" }}</button>
     <div id="export-msg" class="muted" aria-live="polite"></div>
     <!-- ut-docs#1356: bulk backfill, preview-before-apply — same
