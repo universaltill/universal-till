@@ -40,9 +40,9 @@ func (m *Manager) SetLocalizer(l Localizer) {
 // the translator as overlays (base files win on conflict). Language packs are
 // asset-only plugins (runtime "none", canonical_type "language") but any
 // active plugin may ship translations for its own strings (ADR-0010) — see
-// docs/architecture/plugin-architecture.md's "Plugin i18n" section for the
-// convention plugin authors should follow to avoid the collision this
-// function detects below.
+// ut-docs/architecture/plugin-architecture.md's (sibling repo) "Plugin i18n"
+// section for the convention plugin authors should follow to avoid the
+// collision this function detects below.
 //
 // Plugins are processed in a stable sorted-by-id order (InstalledIDs, not the
 // bare m.Installed map) so that if two different plugins ever ship the same
@@ -84,7 +84,7 @@ func (m *Manager) syncLocales() {
 			}
 			for k, v := range msgs {
 				if prevID, ok := source[locale][k]; ok && prevID != id {
-					log.Printf("plugin %s's locale key %q for %q is shadowed by plugin %s's overlay of the same key — only %s's translation is used; pick a non-colliding key name (see docs/architecture/plugin-architecture.md's Plugin i18n section)", prevID, k, locale, id, id)
+					log.Printf("plugin %s's locale key %q for %q is shadowed by plugin %s's overlay of the same key — only %s's translation is used; pick a non-colliding key name (see ut-docs/architecture/plugin-architecture.md's Plugin i18n section)", prevID, k, locale, id, id)
 				}
 				overlays[locale][k] = v
 				source[locale][k] = id
