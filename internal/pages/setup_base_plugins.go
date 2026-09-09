@@ -290,6 +290,52 @@ func applyDerivedLocaleIfLanguagePackNowAvailable(ctx context.Context, d *common
 	httpx.SetDefaultLocale(cand.Locale)
 }
 
+// languagePackLocalesForListing looks up the marketplace catalog for the
+// AvailableLocales of a canonical_type "language" listing (ut-docs#1893).
+// resolveAndInstallBasePlugin already knows a listing's locale because it
+// starts from a basePluginSpec carrying one; a marketplace-store install
+// (plugin_api.go's handleInstallFromMarketplace) starts from nothing but a
+// listing id, so this re-derives it the same way resolveAndInstallBasePlugin
+// resolves listingID: matched against either the summary's ID or its
+// ListingID field, since the two already converge to the same value
+// (PluginSummary.UnmarshalJSON's firstNonEmptyStr fallback either way).
+// Returns ok=false — never an error — for "not a language pack", "listing
+// not found", or a catalog call failure: this is a best-effort lookup for a
+// plugin that's already finished installing, so a marketplace hiccup here
+// must never be surfaced as an install failure.
+//
+// Follows NextPageToken the same way setup_language_catalog.go's own
+// catalog fetch does (ut-docs#1108) — the real ut-cloud catalog paginates
+// at ~20 listings/page, and a single-page fetch here would silently miss
+// this locale catch-up for any "language" listing beyond page 1. Bounded by
+// the same setupLanguageCatalogMaxPages cap for the same reason: far beyond
+// any real catalog today, while still guaranteeing termination against a
+// malformed/hostile server that keeps returning a non-empty token forever.
+func languagePackLocalesForListing(ctx context.Context, client *marketplace.Client, listingID string) ([]string, bool) {
+	pageToken := ""
+	for page := 0; page < setupLanguageCatalogMaxPages; page++ {
+		resp, err := client.ListPlugins(ctx, &marketplace.ListPluginsRequest{Capability: []string{"language"}, PageToken: pageToken})
+		if err != nil {
+			logging.L().Warnf("base plugin install: locale catch-up: list catalog for %s: %v", listingID, err)
+			return nil, false
+		}
+		for i := range resp.Plugins {
+			p := &resp.Plugins[i]
+			if p.CanonicalType != "language" {
+				continue
+			}
+			if p.ID == listingID || p.ListingID == listingID {
+				return p.AvailableLocales, true
+			}
+		}
+		if resp.NextPageToken == "" {
+			return nil, false
+		}
+		pageToken = resp.NextPageToken
+	}
+	return nil, false
+}
+
 // localeInList reports whether the catalog listing's availableLocales cover
 // want. Two tags match when their base language matches, compared
 // case-insensitively: locale tags are case-insensitive ("de" == "DE"), the

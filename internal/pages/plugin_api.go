@@ -306,6 +306,24 @@ func handleInstallFromMarketplace(d *common.Deps) http.HandlerFunc {
 			log.Printf("Warning: failed to reload plugin manager: %v", err)
 		}
 
+		// ut-docs#1893: the setup wizard's synchronous install, its
+		// background retry, and its own step-1 catalog tile all run
+		// ut-docs#1074's locale catch-up (applyDerivedLocaleIfLanguagePackNowAvailable)
+		// right after a "language" plugin installs — this marketplace
+		// Plugins-store install is a fourth path to install one and was
+		// never wired to it, so an operator installing a deferred RTL pack
+		// from here got no locale switch. Must run AFTER ReloadPlugins
+		// above: that's what wires the pack's locale files into
+		// httpx.AvailableLocales(), which localeSafeToPreset (called
+		// inside the catch-up) checks. Best-effort, same as the
+		// takeaway-overrides reconcile above — the install has already
+		// succeeded regardless.
+		if locales, ok := languagePackLocalesForListing(ctx, client, req.ListingID); ok {
+			for _, loc := range locales {
+				applyDerivedLocaleIfLanguagePackNowAvailable(ctx, d, loc)
+			}
+		}
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"data": map[string]interface{}{
