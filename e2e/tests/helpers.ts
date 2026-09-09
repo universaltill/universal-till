@@ -299,3 +299,18 @@ export async function createTable(page: Page, label: string) {
     page.locator('.users-form form[action="/api/tables"] button[type=submit]').click(),
   ]);
 }
+
+// ut-docs#1901: the catalog add/edit-item form moved from an always-visible
+// 360px sticky side panel into a <dialog> (#item-form-modal) that starts
+// closed — every existing catalog spec that filled #item-name straight
+// after page.goto('/catalog') (the pre-#1901 shape, when the panel was
+// always on screen) now hangs forever waiting for a hidden input to become
+// visible. Editing an EXISTING item still opens the dialog on its own (the
+// row-click handler calls openModal()/.show()) — this helper is only for
+// the NEW-item path, which now needs an explicit trigger click first. Kept
+// here rather than duplicated inline across every catalog spec, same
+// reasoning as ensureOperator/createTable above.
+export async function openNewItemForm(page: Page) {
+  await page.locator('#item-form-add-btn').click();
+  await expect(page.locator('#item-form-modal')).toBeVisible();
+}

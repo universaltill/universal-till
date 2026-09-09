@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, setOskMode } from './helpers';
+import { watchConsole, setOskMode, openNewItemForm } from './helpers';
 
 // ut-docs#1835: osk.js's Shift was a plain one-shot toggle — no caps lock —
 // so a German merchant typing catalog item names (every noun capitalised)
@@ -26,6 +26,7 @@ test('double-tapping Shift latches caps: every following letter stays uppercase 
   await setOskMode(page, 'on');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   const name = page.locator('#item-name');
   await name.click();
   await expect(page.locator('#osk')).toBeVisible();
@@ -58,6 +59,7 @@ test('a single Shift tap keeps today\'s one-shot behaviour exactly (no regressio
   await setOskMode(page, 'on');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   const name = page.locator('#item-name');
   await name.click();
   await expect(page.locator('#osk')).toBeVisible();
@@ -84,6 +86,7 @@ test('a slow second Shift tap (outside the latch window) just toggles shift off,
   await setOskMode(page, 'on');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   const name = page.locator('#item-name');
   await name.click();
   await expect(page.locator('#osk')).toBeVisible();
@@ -106,6 +109,7 @@ test('closing the keyboard clears the latch', async ({ page }) => {
   await setOskMode(page, 'on');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   const name = page.locator('#item-name');
   await name.click();
   await expect(page.locator('#osk')).toBeVisible();
@@ -134,6 +138,7 @@ test('the latch survives a round trip through the ?123 symbol layer, and survive
   await setOskMode(page, 'on');
 
   await page.goto('/catalog');
+  await openNewItemForm(page);
   const name = page.locator('#item-name');
   await name.click();
   await expect(page.locator('#osk')).toBeVisible();

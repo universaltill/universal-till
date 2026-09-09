@@ -109,3 +109,46 @@ func TestLoadButtons_CarriesItemCategoryID(t *testing.T) {
 		t.Fatalf("expected empty CategoryID for an uncategorized item, got %q", got)
 	}
 }
+
+// TestLoadButtons_CarriesItemColor pins that each loaded button carries its
+// item's color (ut-docs#1901), same shape as CategoryID above — the
+// sale-screen grid needs this to paint a photo-less item's tile. An item
+// with no color must come back with an empty Color, not error or a
+// synthetic value. Uses the real migrated schema (db.Open), unlike the
+// ui/data packages' hand-rolled test schemas, so this also guards that
+// migration 017 actually adds items.color.
+func TestLoadButtons_CarriesItemColor(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "shortcuts.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	ctx := context.Background()
+	ex := func(q string, args ...any) {
+		if _, err := d.DB.ExecContext(ctx, q, args...); err != nil {
+			t.Fatalf("seed %q: %v", q, err)
+		}
+	}
+
+	ex(`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit, color) VALUES ('item-a','SKU-A','Latte',320,1,0,'each','#0f172a')`)
+	ex(`INSERT INTO shortcut_buttons (barcode, item_id, label, sort_order) VALUES ('BTN-A','item-a','Latte',1)`)
+
+	ex(`INSERT INTO items (id, sku, name, base_price, is_active, is_weighed, unit) VALUES ('item-b','SKU-B','Loose Sweet',10,1,0,'each')`)
+	ex(`INSERT INTO shortcut_buttons (barcode, item_id, label, sort_order) VALUES ('BTN-B','item-b','Loose Sweet',2)`)
+
+	repo := data.NewShortcutsRepo(d.DB)
+	btns, err := repo.LoadButtons(ctx)
+	if err != nil {
+		t.Fatalf("LoadButtons: %v", err)
+	}
+	byLabel := map[string]data.ShortcutButton{}
+	for _, b := range btns {
+		byLabel[b.Label] = b
+	}
+	if got := byLabel["Latte"].Color; got != "#0f172a" {
+		t.Fatalf("expected Color #0f172a for Latte, got %q", got)
+	}
+	if got := byLabel["Loose Sweet"].Color; got != "" {
+		t.Fatalf("expected empty Color for an item with no color set, got %q", got)
+	}
+}

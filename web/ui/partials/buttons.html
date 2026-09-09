@@ -194,12 +194,22 @@
 </section>
 {{ end }}
 
+{{/* ut-docs#1901: a photo-less item's tile gets a solid background from
+     its saved swatch (Color, set in the catalog item form's color
+     picker) — the "Slate" design direction's "colour-coded text tiles
+     for photo-less catalogs" (#146). Never shown when an image IS set:
+     the photo always wins. .tile-colored (app.css) is the toggled class
+     that actually applies --tile-color as the background; the inline
+     style below only ever sets the custom property itself, mirroring how
+     --cat-color is set inline per category elsewhere in this file. */}}
 {{ define "product-tile" }}
+  {{ $colored := and (not .ImageURL) .Color }}
   {{ if .HasModifiers }}
   <button
-    class="btn-tile"
+    class="btn-tile{{ if $colored }} tile-colored{{ end }}"
     data-name="{{ .Label }}"
     x-show="matches($el)"
+    {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}
     hx-get="/ui/pos/modifiers?item={{ .ItemID }}&code={{ .Code }}"
     hx-trigger="click"
     hx-target="#modifier-modal"
@@ -211,9 +221,10 @@
   </button>
   {{ else }}
   <button
-    class="btn-tile"
+    class="btn-tile{{ if $colored }} tile-colored{{ end }}"
     data-name="{{ .Label }}"
     x-show="matches($el)"
+    {{ if $colored }}style="--tile-color: {{ .Color }}"{{ end }}
     hx-post="/api/pos/scan"
     hx-vals='{{ jsonVals "code" .Code }}'
     hx-trigger="click"
