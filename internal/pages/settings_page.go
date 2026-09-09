@@ -2224,6 +2224,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			if slices.Contains(httpx.AvailableLocales(), v) {
 				st.Locale = v
 				auditPayload["locale"] = v
+				// ut-docs#1074: this form field is the one genuine
+				// operator-explicit locale choice (Settings' Language
+				// card) — mark it confirmed so no later derivation
+				// (ut-docs#1027's country-change re-derive, or this
+				// card's own base-plugin-install catch-up) ever
+				// silently overrides it.
+				if err := d.Settings.Set(r.Context(), common.KeyLocaleConfirmed, "true"); err != nil {
+					logging.L().Errorf("settings: mark locale confirmed: %v", err)
+				}
 			}
 		}
 		// TaxInclusive/AllowNegativeInventory are deliberately NOT set here:

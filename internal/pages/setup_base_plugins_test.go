@@ -311,6 +311,146 @@ func TestResolveAndInstallBasePlugin_IdempotentWhenAlreadyActive(t *testing.T) {
 	}
 }
 
+// --- applyDerivedLocaleIfLanguagePackNowAvailable (ut-docs#1074) ---
+//
+// ut-docs#1027 already derives store.locale from country_settings at
+// country-selection time, synchronously — but only when localeSafeToPreset
+// says it's safe (country_settings_page.go): a non-RTL locale always is,
+// an RTL one (fa/ar/ur/he/...) only once its base language pack is already
+// installed. IR's own builtin default_locale is "fa-IR" (RTL), and nothing
+// in setupBasePlugins auto-installs it, so at country-selection time it is
+// deliberately left unapplied — these tests drive the other half: what
+// happens once a matching language pack actually finishes installing,
+// through the one function (resolveAndInstallBasePlugin) all three
+// installers (the wizard's synchronous attempt, the background retry, and
+// an operator manually installing via the wizard tile / marketplace) funnel
+// through.
+
+func TestResolveAndInstallBasePlugin_AppliesCountryLocaleOnceRTLPackInstalled(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "IR" })
+	i18n, err := config.NewI18nFS(fstest.MapFS{
+		"en.json": &fstest.MapFile{Data: []byte(`{"nav.home":"Home"}`)},
+	}, "en")
+	if err != nil {
+		t.Fatalf("build test i18n: %v", err)
+	}
+	dp.Pm.SetLocalizer(i18n)
+
+	before := dp.CurrentState().Locale
+	if before == "fa-IR" {
+		t.Fatalf("store.locale is already fa-IR before any plugin is installed — test fixture is not proving anything")
+	}
+
+	mkt := newFakeMarketplace(t, nil)
+	mkt.publishLanguageVersion(t, "listing-lang-fa", "ut-plugin-language-fa", "1.0.0", "fa", []byte(`{"nav.home":"خانه"}`))
+	mkt.setCatalog(marketplace.PluginSummary{
+		ID: "ut-plugin-language-fa", ListingID: "listing-lang-fa", Name: "Persian language pack",
+		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"fa"},
+	})
+	dp.Cfg.Marketplace = mkt.config()
+
+	spec := basePluginSpec{CanonicalType: "language", Locale: "fa"}
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("resolveAndInstallBasePlugin: %v", err)
+	}
+
+	if got := dp.CurrentState().Locale; got != "fa-IR" {
+		t.Fatalf("store.locale = %q after the matching RTL language pack installed, want %q (IR's own country_settings default, now safe to preset)", got, "fa-IR")
+	}
+}
+
+func TestResolveAndInstallBasePlugin_DoesNotOverrideExplicitlyConfirmedLocale(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "IR"; s.Locale = "en-US" })
+	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	if err := dp.Settings.Set(t.Context(), common.KeyLocaleConfirmed, "true"); err != nil {
+		t.Fatalf("mark locale confirmed: %v", err)
+	}
+
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-fa": "ut-plugin-language-fa"})
+	mkt.setCatalog(marketplace.PluginSummary{
+		ID: "ut-plugin-language-fa", ListingID: "listing-lang-fa", Name: "Persian language pack",
+		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"fa"},
+	})
+	dp.Cfg.Marketplace = mkt.config()
+
+	spec := basePluginSpec{CanonicalType: "language", Locale: "fa"}
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("resolveAndInstallBasePlugin: %v", err)
+	}
+
+	if got := dp.CurrentState().Locale; got != "en-US" {
+		t.Fatalf("store.locale = %q, want it left at the operator's explicitly confirmed %q — an installed language pack must never override an explicit choice", got, "en-US")
+	}
+}
+
+func TestResolveAndInstallBasePlugin_IgnoresLanguagePackNotMatchingCountryDefault(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "IR"; s.Locale = "en-US" })
+	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+
+	// IR's own default is fa-IR — installing an unrelated German pack (a
+	// merchant browsing/previewing a second language) must never switch the
+	// shop's default away from what the operator's own country calls for.
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-de": "ut-plugin-language-de"})
+	mkt.setCatalog(deLanguageCatalogEntry("listing-lang-de", "ut-plugin-language-de", "1.0.0"))
+	dp.Cfg.Marketplace = mkt.config()
+
+	spec := basePluginSpec{CanonicalType: "language", Locale: "de"}
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("resolveAndInstallBasePlugin: %v", err)
+	}
+
+	if got := dp.CurrentState().Locale; got != "en-US" {
+		t.Fatalf("store.locale = %q, want unchanged %q — installing a language pack that doesn't match the shop's own country default must be a no-op", got, "en-US")
+	}
+}
+
+func TestResolveAndInstallBasePlugin_LocaleAppliesEvenOnIdempotentAlreadyActivePath(t *testing.T) {
+	dp := newBasePluginTestDeps(t)
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "IR" })
+	mkt := newFakeMarketplace(t, map[string]string{"listing-lang-fa": "ut-plugin-language-fa"})
+	mkt.setCatalog(marketplace.PluginSummary{
+		ID: "ut-plugin-language-fa", ListingID: "listing-lang-fa", Name: "Persian language pack",
+		Version: "1.0.0", CanonicalType: "language", AvailableLocales: []string{"fa"},
+	})
+	dp.Cfg.Marketplace = mkt.config()
+	spec := basePluginSpec{CanonicalType: "language", Locale: "fa"}
+
+	// First call installs and applies the locale.
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("first attempt: %v", err)
+	}
+	if got := dp.CurrentState().Locale; got != "fa-IR" {
+		t.Fatalf("store.locale = %q after first install, want fa-IR", got)
+	}
+
+	// Simulate an operator manually switching away afterward, then a second
+	// convergent call (e.g. a retry tick after the plugin already installed)
+	// must NOT re-clobber it back — the idempotent "already active" branch
+	// still checks the confirmed flag/current value like the fresh-install
+	// branch does, it isn't a separate unguarded path.
+	dp.UpdateState(func(s *common.RuntimeState) { s.Locale = "en-US" })
+	if err := common.SaveState(t.Context(), dp.Settings, dp.CurrentState()); err != nil {
+		t.Fatalf("seed state: %v", err)
+	}
+	if err := dp.Settings.Set(t.Context(), common.KeyLocaleConfirmed, "true"); err != nil {
+		t.Fatalf("mark locale confirmed: %v", err)
+	}
+
+	if err := resolveAndInstallBasePlugin(t.Context(), dp, spec); err != nil {
+		t.Fatalf("second (idempotent) attempt: %v", err)
+	}
+	if got := dp.CurrentState().Locale; got != "en-US" {
+		t.Fatalf("store.locale = %q after a confirmed manual change, want it left at en-US even on the idempotent already-active path", got)
+	}
+}
+
 // --- installBasePluginsForSetup (the wizard's own hook) ---
 
 func TestInstallBasePluginsForSetup_NoMappingIsNoOp(t *testing.T) {
