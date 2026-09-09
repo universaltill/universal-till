@@ -2,7 +2,9 @@ package data_test
 
 import (
 	"context"
+	"fmt"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/catalogtypes"
@@ -163,5 +165,121 @@ func TestSetItemThumbnail_OverwritesAPlaceholder(t *testing.T) {
 	}
 	if path != realPhoto {
 		t.Fatalf("path = %q, want the real photo to have replaced the placeholder icon", path)
+	}
+}
+
+// TestSetItemThumbnailConcurrentRace is the ut-docs#1871 regression:
+// pre-fix, SetItemThumbnail was a non-atomic UPDATE-then-INSERT, so two
+// concurrent calls for the same item could both see the UPDATE affect 0
+// rows and both fall through to INSERT, producing two role='thumbnail'
+// rows. Exactly one must ever exist, whatever interleaving the scheduler
+// picks. Uses a real file-backed DB (not an in-memory DSN, which gives
+// each pooled connection its own isolated database and can't exercise
+// multi-connection locking at all) and repeats the race across several
+// rounds, same reasoning as TestUpdateItemReturningWasActiveConcurrentRace
+// in catalog_repo_update_item_race_test.go.
+func TestSetItemThumbnailConcurrentRace(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	ctx := context.Background()
+	repo := data.NewCatalogRepo(d.DB)
+
+	id, err := repo.CreateItem(ctx, catalogtypes.ItemInput{Name: "Cappuccino", BasePrice: 250, IsActive: true})
+	if err != nil {
+		t.Fatalf("CreateItem: %v", err)
+	}
+
+	const rounds = 15
+	const n = 8
+	for round := 0; round < rounds; round++ {
+		var errs [n]error
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for j := 0; j < n; j++ {
+			wg.Add(1)
+			go func(j int) {
+				defer wg.Done()
+				<-start // all released together to maximise the race window
+				errs[j] = repo.SetItemThumbnail(ctx, id, fmt.Sprintf("/public/assets/items/%s/round%d-caller%d.png", id, round, j))
+			}(j)
+		}
+		close(start)
+		wg.Wait()
+
+		for j := 0; j < n; j++ {
+			if errs[j] != nil {
+				t.Fatalf("round %d call %d: unexpected error: %v", round, j, errs[j])
+			}
+		}
+
+		var count int
+		if err := d.DB.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM item_images WHERE item_id = ? AND role = 'thumbnail'`, id,
+		).Scan(&count); err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+		if count != 1 {
+			t.Fatalf("round %d: expected exactly 1 thumbnail row after %d concurrent SetItemThumbnail calls, got %d — duplicate-row race", round, n, count)
+		}
+	}
+}
+
+// TestEnsureDefaultThumbnailConcurrentRace: EnsureDefaultThumbnail's
+// pre-fix SELECT-then-INSERT has the identical race shape as
+// SetItemThumbnail above, and ut-docs#1871's unique index makes a second,
+// unguarded INSERT for the same (item_id, role) a constraint violation
+// instead of a silent duplicate — so this must keep working (still no
+// error, still exactly one row) after the index lands.
+func TestEnsureDefaultThumbnailConcurrentRace(t *testing.T) {
+	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = d.Close() })
+	ctx := context.Background()
+	repo := data.NewCatalogRepo(d.DB)
+
+	const rounds = 15
+	const n = 8
+	for round := 0; round < rounds; round++ {
+		id, err := repo.CreateItem(ctx, catalogtypes.ItemInput{
+			Name: fmt.Sprintf("Race Item %d", round), BasePrice: 250, IsActive: true,
+		})
+		if err != nil {
+			t.Fatalf("round %d: CreateItem: %v", round, err)
+		}
+
+		var errs [n]error
+		start := make(chan struct{})
+		var wg sync.WaitGroup
+		for j := 0; j < n; j++ {
+			wg.Add(1)
+			go func(j int) {
+				defer wg.Done()
+				<-start
+				errs[j] = repo.EnsureDefaultThumbnail(ctx, id, "/public/assets/category-icons/coffee.svg")
+			}(j)
+		}
+		close(start)
+		wg.Wait()
+
+		for j := 0; j < n; j++ {
+			if errs[j] != nil {
+				t.Fatalf("round %d call %d: unexpected error: %v", round, j, errs[j])
+			}
+		}
+
+		var count int
+		if err := d.DB.QueryRowContext(ctx,
+			`SELECT COUNT(*) FROM item_images WHERE item_id = ? AND role = 'thumbnail'`, id,
+		).Scan(&count); err != nil {
+			t.Fatalf("round %d: %v", round, err)
+		}
+		if count != 1 {
+			t.Fatalf("round %d: expected exactly 1 thumbnail row after %d concurrent EnsureDefaultThumbnail calls, got %d — duplicate-row race", round, n, count)
+		}
 	}
 }
