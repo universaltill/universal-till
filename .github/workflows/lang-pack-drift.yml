@@ -40,6 +40,7 @@ on:
     paths:
       - 'web/locales/en.json'
       - 'scripts/ci/check-lang-pack-drift.sh'
+      - 'scripts/ci/check-lang-pack-drift.test.sh'
       - '.github/workflows/lang-pack-drift.yml'
   workflow_dispatch: {}
 # WARNING: never add this job as a required status check in branch
@@ -68,6 +69,13 @@ jobs:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      # Self-tests run first (and even if a later step would fail) so a red
+      # drift run always comes with an answer to "is the guard itself
+      # sound?" -- same pattern each pack repo's own ci.yml already uses for
+      # check-key-drift.test.sh (ut-docs#1857).
+      - name: lang-pack-drift guard self-tests
+        if: always()
+        run: bash scripts/ci/check-lang-pack-drift.test.sh
       - name: Language-pack drift guard against core base locale (ut-docs#299)
         # `shell: bash` is REQUIRED, not cosmetic: the Actions default shell
         # is `bash -e {0}` with NO pipefail, so a bare `script | tee` reports
@@ -82,15 +90,57 @@ jobs:
         run: |
           { echo "## lang-pack-drift"; echo '```'; } >> "$GITHUB_STEP_SUMMARY"
           status=0
-          bash scripts/ci/check-lang-pack-drift.sh 2>&1 \
-            | tee -a "$GITHUB_STEP_SUMMARY" || status=$?
+          # ut-docs#1857: capture to a file (not piped straight to tee) so
+          # this step can ALSO grep the output below for exactly which pack
+          # repo(s) need a follow-up PR, and fold that into the annotation
+          # itself -- the job summary alone ("see the job summary") was
+          # advisory to the point of easy to miss, which is the exact gap
+          # ut-docs#1857 exists to close. Same bytes reach
+          # $GITHUB_STEP_SUMMARY either way, so the existing fenced-block
+          # behavior (and its own MEDIUM-LOW fix from ut-docs#669) is
+          # unchanged.
+          RUN_OUTPUT="$(mktemp)"
+          bash scripts/ci/check-lang-pack-drift.sh > "$RUN_OUTPUT" 2>&1 || status=$?
+          # Independent review (ut-docs#1857): also echo to the step's own
+          # console log, not just the summary file. `cat X >> $SUMMARY` alone
+          # left the job log itself bare on a real failure (no output at
+          # all beyond the exit code) -- regressing the one place someone
+          # landing on a red `push:main` run looks first.
+          cat "$RUN_OUTPUT"
+          cat "$RUN_OUTPUT" >> "$GITHUB_STEP_SUMMARY"
           echo '```' >> "$GITHUB_STEP_SUMMARY"
           if [ "$status" -ne 0 ] && [ "$GITHUB_EVENT_NAME" = "pull_request" ]; then
+            # Pull the "pack(s) needing a follow-up PR" block the script
+            # prints on failure (see check-lang-pack-drift.sh) into the
+            # annotation text itself, so the author sees exactly which
+            # repo(s) to open a PR against without opening the job summary.
+            # Falls back to the old generic wording if the script's output
+            # ever changes shape -- a missing enrichment must never turn
+            # into a missing signal.
+            #
+            # Independent review (ut-docs#1857), HIGH: this `run:` block is
+            # `shell: bash` == `bash -eo pipefail {0}` (see the comment
+            # above). A `grep -oE` that matches NOTHING exits 1; under
+            # pipefail that failure propagates through the whole pipeline
+            # into this assignment, and errexit then kills the step on this
+            # exact line -- before the generic-wording fallback below ever
+            # runs. That is precisely the "no annotation, and the PR check
+            # goes red" outcome this whole mechanism exists to prevent,
+            # reproduced and confirmed live in review. `|| true` inside a
+            # subshell keeps a real grep failure (no match) from ever
+            # reaching pipefail, while a genuinely malformed command would
+            # still be a bash syntax/exec error, not silently swallowed.
+            PACK_REPOS="$( (grep -oE 'https://github\.com/universaltill/[A-Za-z0-9_.-]+' "$RUN_OUTPUT" || true) | sort -u | paste -sd, - | sed 's/,/, /g')"
+            if [ -n "$PACK_REPOS" ]; then
+              MSG="lang-pack-drift: key(s) added here need a follow-up PR against: ${PACK_REPOS}"
+            else
+              MSG="lang-pack-drift: a language pack is missing key(s) added here"
+            fi
             # Annotation, not a PR comment: surfaces on the PR's Files-
             # changed tab (where the author is already looking, having just
             # touched en.json) with zero extra permissions -- keeps
             # `contents: read` intact, no `pull-requests: write` needed.
-            echo "::warning file=web/locales/en.json::lang-pack-drift: a language pack is missing key(s) added here -- see the job summary. Advisory on this PR; this WILL block main after merge."
+            echo "::warning file=web/locales/en.json::${MSG} -- see the job summary for the exact keys. Advisory on this PR; this WILL block main after merge."
             # Advisory means advisory: force the check itself green on a PR
             # run regardless of what the script found. This is the actual
             # non-blocking mechanism (see the `on:` comment above for why
@@ -99,4 +149,5 @@ jobs:
             # blocking, unchanged.
             status=0
           fi
+          rm -f "$RUN_OUTPUT"
           exit "$status"
