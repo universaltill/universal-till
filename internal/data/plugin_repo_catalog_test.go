@@ -242,6 +242,45 @@ func TestPluginRepo_SyncPluginPaymentMethods_InvalidConfigDefaultsToCard(t *test
 	}
 }
 
+// ut-docs#1832 review: SyncPluginPaymentMethods' built-in-repair statement
+// enumerates the seeded built-ins by literal id. 013_voucher_payment_method.sql
+// added a fourth one ('voucher'), the row the cashier UI's tracked-redemption
+// path depends on — a hijacked-then-deactivated 'voucher' row would silently
+// take voucher redemption back out of the Split tab. Pin it alongside the
+// original three so a future edit to that list can't quietly drop it again.
+func TestPluginRepo_SyncPluginPaymentMethods_RepairsHijackedBuiltIns(t *testing.T) {
+	ctx := context.Background()
+	d := openMigratedDB(t, "till.db")
+	repo := NewPluginRepo(d.DB)
+
+	// Simulate damage: every seeded built-in marked as owned by a plugin
+	// that isn't installed here, and deactivated.
+	if _, err := d.DB.ExecContext(ctx, `
+UPDATE payment_methods SET plugin_id = 'com.t.hijack', is_active = 0
+WHERE id IN ('cash', 'card', 'gift', 'voucher')`); err != nil {
+		t.Fatalf("seed hijacked built-ins: %v", err)
+	}
+
+	if err := repo.SyncPluginPaymentMethods(ctx); err != nil {
+		t.Fatalf("sync: %v", err)
+	}
+
+	for _, id := range []string{"cash", "card", "gift", "voucher"} {
+		var pluginID any
+		var isActive int
+		if err := d.QueryRow(`SELECT plugin_id, is_active FROM payment_methods WHERE id = ?`, id).
+			Scan(&pluginID, &isActive); err != nil {
+			t.Fatalf("read built-in %q: %v", id, err)
+		}
+		if pluginID != nil {
+			t.Errorf("built-in %q must be released back to plugin_id NULL, got %v", id, pluginID)
+		}
+		if isActive != 1 {
+			t.Errorf("built-in %q must be reactivated by the repair, got is_active=%d", id, isActive)
+		}
+	}
+}
+
 func TestPluginRepo_ListPageEntries(t *testing.T) {
 	ctx := context.Background()
 	d := openMigratedDB(t, "till.db")

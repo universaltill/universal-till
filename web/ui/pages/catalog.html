@@ -148,6 +148,36 @@
         <button class="btn" type="submit">{{ T "catalog.upload_image" }}</button>
         <div id="image-msg" class="muted" style="min-height:1.2rem"></div>
       </form>
+
+      <!-- ut-docs#1844: the bundled built-in icons (the same set
+           catimport.PlaceholderIcon already picks from for imageless
+           imports) as an alternative to an upload, above. Reuses
+           .picker-grid/.picker-tile (app.css) — the same touch-first
+           tile picker as the setup wizard's country/shop-type choosers —
+           rather than inventing a second grid pattern. Shares
+           #image-item-id/#image-item-label with the upload form above:
+           this section only works for an already-selected existing item,
+           same restriction the upload form already has (there's nowhere
+           to store an image against an item that doesn't exist yet). -->
+      <div class="builtin-icon-section">
+        <div class="muted">{{ T "catalog.builtin_icon.hint" }}</div>
+        <div id="builtin-icon-grid" class="picker-grid" role="group" aria-label="{{ T "catalog.builtin_icon.hint" }}">
+          {{ range .BuiltinIcons }}
+          <!-- Review finding F6 (ut-docs#1844): the label is visible text,
+               not a hover-only title — this is a touchscreen till
+               (reference/ux-guidelines.md), nothing here can depend on
+               hover to be understood. `title` stays as a bonus tooltip for
+               a mouse/desktop session; the alt text and this span carry
+               the same identical string so neither is the "real" one. -->
+          <button type="button" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" aria-pressed="false" title="{{ T .I18nKey }}">
+            <img src="{{ .Path }}" alt="" width="28" height="28">
+            <span>{{ T .I18nKey }}</span>
+          </button>
+          {{ end }}
+          <button type="button" class="picker-tile builtin-icon-tile" data-icon="none" aria-pressed="false">{{ T "catalog.builtin_icon.none" }}</button>
+        </div>
+        <div id="builtin-icon-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+      </div>
     </details>
 
     <details class="catalog-extra">
@@ -201,7 +231,12 @@
     itemFormSaved: "{{ T "catalog.item_form.saved" }}",
     itemFormErrorGeneric: "{{ T "catalog.error.server" }}",
     keypadNoTarget: "{{ T "catalog.keypad.no_target" }}",
-    keypadFailedGeneric: "{{ T "catalog.keypad.failed_generic" }}"
+    keypadFailedGeneric: "{{ T "catalog.keypad.failed_generic" }}",
+    builtinIconPickItemFirst: "{{ T "catalog.builtin_icon.pick_item_first" }}",
+    builtinIconUpdated: "{{ T "catalog.builtin_icon.updated" }}",
+    builtinIconErrorGeneric: "{{ T "catalog.error.server" }}",
+    builtinIconSuggestedTitleSuffix: "{{ T "catalog.builtin_icon.suggested_hint" }}",
+    builtinIconCustomActive: "{{ T "catalog.builtin_icon.custom_active" }}"
   };
 
   // Builds the .pos-notice markup into `el` (empty text clears the slot
@@ -350,6 +385,7 @@
       });
     var imgLabel = document.getElementById('image-item-label');
     if (imgLabel) { imgLabel.value = row.dataset.name; document.getElementById('image-item-id').value = row.dataset.id; }
+    refreshBuiltinIconState(row.dataset.id);
     var lblLabel = document.getElementById('labels-item-label');
     if (lblLabel) { lblLabel.value = row.dataset.name; document.getElementById('labels-item-id').value = row.dataset.id; }
     var kpLabel = document.getElementById('keypad-item-label');
@@ -627,6 +663,12 @@
         imageForm.removeEventListener('htmx:responseError', markFailed);
         if (failed) return;
         imsg.textContent = '✓ image updated'; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
+        // ut-docs#1844: an upload also changes what the built-in icon
+        // grid should show (is_custom becomes true, any previously-pressed
+        // built-in tile is no longer current) — without this the grid
+        // keeps showing whatever state it had before this upload until
+        // the operator clicks the row again.
+        refreshBuiltinIconState(id);
         filterRows();
       })
       .catch(function () {
@@ -636,6 +678,122 @@
         imsg.textContent = '✗ ' + NOTICE_MSG.itemFormErrorGeneric;
       });
   });
+
+  // Built-in icon picker (ut-docs#1844).
+  var builtinIconGrid = document.getElementById('builtin-icon-grid');
+  var builtinIconMsg = document.getElementById('builtin-icon-msg');
+
+  // Paints the grid's toggle state (review finding F4, ut-docs#1844: the
+  // first version never read is_custom, so a custom photo and a genuinely
+  // imageless item were visually identical, and the "none" tile — despite
+  // its own doc comment calling it mutually exclusive with the others —
+  // could never actually show pressed). Three states, mutually exclusive:
+  //   - isCustom: a real uploaded photo is set. No built-in tile (none
+  //     included) is pressed — a built-in choice isn't "in effect" the way
+  //     the others are — and #builtin-icon-msg says so explicitly, since
+  //     tapping any tile here silently replaces that photo (removeUploaded
+  //     Thumbnail, server-side).
+  //   - selectedKey: that one built-in tile is pressed.
+  //   - neither: truly no thumbnail at all — the "none" tile is pressed
+  //     (making it a real, visible member of the toggle group, not a
+  //     permanently-unpressed odd one out), AND the suggestion marker can
+  //     show on top of it (the two aren't in tension: "none" pressed says
+  //     "this is the current state," the dashed tile says "here's what
+  //     picking one now would suggest" — see refreshBuiltinIconState).
+  // A real choice (isCustom or selectedKey) always suppresses the
+  // suggestion outline — it only ever means something for the "nothing
+  // set yet" state.
+  // preserveMsg: skip managing #builtin-icon-msg entirely — used right
+  // after a tile click already rendered its own success/error notice
+  // there (refreshBuiltinIconState's post-choose call), so the "current
+  // image is an uploaded photo" info state doesn't immediately overwrite
+  // (and hide) the confirmation the operator just saw.
+  function setBuiltinIconTiles(selectedKey, suggestedKey, isCustom, preserveMsg) {
+    if (!builtinIconGrid) return;
+    var hasNoImage = !selectedKey && !isCustom;
+    if (!preserveMsg) {
+      // renderNotice clears the slot itself when text is falsy, so this is
+      // also how a stale "current image is an uploaded photo" notice gets
+      // cleared once a freshly-selected row's item isn't a custom photo.
+      renderNotice(builtinIconMsg, 'info', isCustom ? NOTICE_MSG.builtinIconCustomActive : '');
+    }
+    builtinIconGrid.querySelectorAll('.builtin-icon-tile').forEach(function (btn) {
+      var icon = btn.dataset.icon;
+      var pressed = isCustom ? false : (icon === 'none' ? hasNoImage : icon === selectedKey);
+      btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+      var suggested = hasNoImage && icon !== 'none' && icon === suggestedKey;
+      btn.classList.toggle('builtin-icon-suggested', suggested);
+      btn.title = suggested ? (btn.dataset.baseTitle || btn.title) + ' — ' + NOTICE_MSG.builtinIconSuggestedTitleSuffix : (btn.dataset.baseTitle || btn.title);
+    });
+  }
+
+  // Remembers each tile's own translated label before the suggestion
+  // marker starts appending to `title` — otherwise a second suggestion
+  // pass (a different item selected, still no thumbnail) would append
+  // onto its own previous append instead of the plain label.
+  if (builtinIconGrid) {
+    builtinIconGrid.querySelectorAll('.builtin-icon-tile[title]').forEach(function (btn) {
+      btn.dataset.baseTitle = btn.title;
+    });
+  }
+
+  // Called on every row selection (see the row-click handler above) so the
+  // grid always reflects the newly-selected item, not whichever item was
+  // clicked previously.
+  function refreshBuiltinIconState(itemId, preserveMsg) {
+    if (!builtinIconGrid) return;
+    if (!itemId) { setBuiltinIconTiles('', '', false, preserveMsg); return; }
+    fetch('/api/catalog/item/icon-state?item_id=' + encodeURIComponent(itemId))
+      .then(function (res) { return res.json(); })
+      .then(function (r) {
+        var d = (r && r.data) || {};
+        setBuiltinIconTiles(d.selected_key || '', d.suggested_key || '', !!d.is_custom, preserveMsg);
+      })
+      // Best-effort: a failed read just leaves the grid showing no
+      // selection/suggestion rather than blocking the row selection itself.
+      .catch(function () { setBuiltinIconTiles('', '', false, preserveMsg); });
+  }
+
+  if (builtinIconGrid) {
+    // Same reasoning as imageForm's own listener above: this request has
+    // its own message slot (#builtin-icon-msg), so the page-global
+    // htmx:responseError handler (which paints into the ITEM form's `msg`)
+    // must never see this event — stopPropagation before it can bubble
+    // there. `source: '#builtin-icon-grid'` below is what makes htmx
+    // dispatch the event on this element in the first place, so this
+    // listener sees it during the bubble phase, ahead of document.body.
+    builtinIconGrid.addEventListener('htmx:responseError', function (ev) {
+      ev.stopPropagation();
+    });
+    builtinIconGrid.addEventListener('click', function (ev) {
+      var btn = ev.target.closest('.builtin-icon-tile');
+      if (!btn) return;
+      var id = document.getElementById('image-item-id').value;
+      if (!id) { renderNotice(builtinIconMsg, 'error', NOTICE_MSG.builtinIconPickItemFirst); return; }
+      var icon = btn.dataset.icon;
+      // Same ut-docs#917 resolve-on-any-response caveat as the item/image
+      // forms above: guard the success branch with a responseError flag
+      // rather than trusting htmx.ajax's promise to reject on a 4xx.
+      var failed = false;
+      function markFailed() { failed = true; }
+      builtinIconGrid.addEventListener('htmx:responseError', markFailed, { once: true });
+      htmx.ajax('POST', '/api/catalog/item/icon', {
+        source: '#builtin-icon-grid', target: '#catalog-table', swap: 'none',
+        values: { item_id: id, icon: icon }
+      }).then(function () {
+        builtinIconGrid.removeEventListener('htmx:responseError', markFailed);
+        if (failed) { renderNotice(builtinIconMsg, 'error', NOTICE_MSG.builtinIconErrorGeneric); return; }
+        renderNotice(builtinIconMsg, 'success', NOTICE_MSG.builtinIconUpdated);
+        // preserveMsg=true: don't let the state refresh below immediately
+        // clear the success notice just rendered above.
+        refreshBuiltinIconState(id, true);
+        filterRows();
+      }).catch(function () {
+        builtinIconGrid.removeEventListener('htmx:responseError', markFailed);
+        renderNotice(builtinIconMsg, 'error', NOTICE_MSG.builtinIconErrorGeneric);
+      });
+    });
+  }
 
   // Keypad mapping (ADR-0021): a physical HID-keyboard-emulating keypad
   // "types" its programmed code into whatever has focus, terminated by

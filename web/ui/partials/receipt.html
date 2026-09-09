@@ -15,6 +15,7 @@
   .receipt-payments ul {list-style: none; padding: 0; margin: 0;}
   .receipt-payments li {display: flex; justify-content: space-between; margin-bottom: 0.35rem;}
   .receipt-payments small {color: #6b7280; display: block; text-align: end;}
+  .receipt-voucher-code {font-family: monospace; overflow-wrap: anywhere;}
   .receipt-legal {border-top: 1px dashed #e5e7eb; margin-top: 0.75rem; padding-top: 0.75rem; font-size: 0.85rem; color: #374151;}
   .receipt-legal-label {font-weight: 600; margin-bottom: 0.25rem;}
   .receipt-legal-line {margin: 0.15rem 0;}
@@ -72,6 +73,7 @@
               <strong>{{ .Method }}</strong>
               {{ if .MaskedPAN }}
                 <small>{{ .MaskedPAN }}{{ if .AuthCode }} &middot; {{ T "receipt.auth_code" }} {{ .AuthCode }}{{ end }}</small>
+              {{ else if .VoucherID }}<small class="receipt-voucher-code">{{ .VoucherID }}{{ if .Reference }} &middot; {{ .Reference }}{{ end }}</small>
               {{ else if .Reference }}<small>{{ .Reference }}</small>{{ end }}
             </div>
             <div>
@@ -79,6 +81,24 @@
               {{ if gt .Change 0 }}<small>{{ T "receipt.change" }} {{ money .Change }}</small>{{ end }}
               {{ if gt .Tip 0 }}<small>{{ T "receipt.tip" }} {{ money .Tip }}</small>{{ end }}
             </div>
+          </li>
+        {{ end }}
+      </ul>
+    </div>
+    {{ end }}
+    {{ if .IssuedVouchers }}
+    <!-- ut-docs#1832: every voucher this sale ISSUED, with its final code —
+         the operator's preprinted one, or the code the till generated for
+         a blank entry. The receipt is the only place a generated code is
+         ever shown, so this is what the customer spends later. Same block
+         shape as Payments above; absent entirely when nothing was issued. -->
+    <div class="receipt-payments receipt-vouchers">
+      <h3>{{ T "receipt.vouchers.issued" }}</h3>
+      <ul>
+        {{ range .IssuedVouchers }}
+          <li>
+            <div><strong class="receipt-voucher-code">{{ .Code }}</strong></div>
+            <div>{{ money .Amount }}</div>
           </li>
         {{ end }}
       </ul>

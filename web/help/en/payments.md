@@ -44,3 +44,7 @@ What can go wrong:
 - **Complete Sale** with the pending payments still short of the total is refused with a message that the amount received doesn't cover the sale total — add the rest (or use **Fill Remaining**) before trying again.
 - **Fill Remaining** itself is refused if the pending payments already cover the total (there's nothing left to fill), or if the basket isn't in a state to accept a payment right now.
 - The Amount and Change boxes here take a normal currency amount (e.g. `2.50`) — unlike the small per-line discount box on the basket itself, which takes the smallest currency unit (see **Selling & checkout**'s Discounts section) — so don't carry that habit over between the two.
+
+## Gift vouchers
+
+To sell a gift voucher, or take one the till issued as payment, use the **Split** tab too — see [Gift vouchers](/help/vouchers).

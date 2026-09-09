@@ -56,6 +56,16 @@ var wantSplitTenderMsgAttrs = []string{
 	"sale-completed",
 	"select-method",
 	"submitting",
+	// ut-docs#1832: voucher redemption (voucher-id field + balance check)
+	// and voucher issue ("Sell a voucher") in the same panel.
+	"no-pending-vouchers",
+	"voucher-added",
+	"voucher-auto-code",
+	"voucher-balance",
+	"voucher-check-unavailable",
+	"voucher-id-required",
+	"voucher-invalid",
+	"voucher-removed",
 }
 
 // splitTenderMsgLocaleKeys maps each attribute to the locale key it renders,
@@ -78,6 +88,20 @@ var splitTenderMsgLocaleKeys = map[string]string{
 	"sale-completed": "tender.status.sale_completed",
 	"select-method":  "tender.status.select_method",
 	"submitting":     "tender.status.submitting",
+	// ut-docs#1832 voucher UI. Three of these reuse keys the server-rendered
+	// markup / the tender-failure toast already own rather than minting
+	// near-duplicates: the empty-list copy, the "generated at checkout"
+	// stand-in for a blank code, and the not-found/inactive verdict of the
+	// balance check (the same verdict pos.CompleteSale's rejection toast
+	// gives at submit time, so the operator sees one wording, not two).
+	"no-pending-vouchers":       "tender.issue_voucher.no_pending",
+	"voucher-added":             "tender.status.voucher_added",
+	"voucher-auto-code":         "tender.issue_voucher.auto_code",
+	"voucher-balance":           "tender.status.voucher_balance",
+	"voucher-check-unavailable": "tender.status.voucher_check_unavailable",
+	"voucher-id-required":       "tender.status.voucher_id_required",
+	"voucher-invalid":           "pos.toast.voucher_invalid",
+	"voucher-removed":           "tender.status.voucher_removed",
 }
 
 // dataMsgAttrsOnSplitTenderCard returns the data-msg-* attributes declared on
