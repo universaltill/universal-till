@@ -220,7 +220,7 @@ func (r *CatalogRepo) ListItems(ctx context.Context) ([]catalogtypes.ItemInput, 
 	// COALESCE(sku, '') — ut-docs#1176: sku is nullable (no real SKU stores
 	// NULL, not a UUID), and itm.SKU below is a plain string, so scanning a
 	// NULL directly would error on every item that has no real SKU.
-	rows, err := r.db.QueryContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data, stock_untracked FROM items WHERE is_active = 1 ORDER BY name`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data, stock_untracked, color FROM items WHERE is_active = 1 ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -228,8 +228,8 @@ func (r *CatalogRepo) ListItems(ctx context.Context) ([]catalogtypes.ItemInput, 
 	var out []catalogtypes.ItemInput
 	for rows.Next() {
 		var itm catalogtypes.ItemInput
-		var tax, cat, brand, desc sql.NullString
-		if err := rows.Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData, &itm.StockUntracked); err != nil {
+		var tax, cat, brand, desc, color sql.NullString
+		if err := rows.Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData, &itm.StockUntracked, &color); err != nil {
 			return nil, err
 		}
 		if desc.Valid {
@@ -243,6 +243,9 @@ func (r *CatalogRepo) ListItems(ctx context.Context) ([]catalogtypes.ItemInput, 
 		}
 		if brand.Valid {
 			itm.BrandID = &brand.String
+		}
+		if color.Valid {
+			itm.Color = color.String
 		}
 		out = append(out, itm)
 	}
@@ -320,9 +323,9 @@ func (r *CatalogRepo) GetItem(ctx context.Context, itemID string) (catalogtypes.
 // *sql.DB.
 func getItemExec(ctx context.Context, ex execer, itemID string) (catalogtypes.ItemInput, bool, error) {
 	var itm catalogtypes.ItemInput
-	var tax, cat, brand, desc sql.NullString
-	err := ex.QueryRowContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data, stock_untracked FROM items WHERE id = ?`, itemID).
-		Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData, &itm.StockUntracked)
+	var tax, cat, brand, desc, color sql.NullString
+	err := ex.QueryRowContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data, stock_untracked, color FROM items WHERE id = ?`, itemID).
+		Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData, &itm.StockUntracked, &color)
 	if errors.Is(err, sql.ErrNoRows) {
 		return catalogtypes.ItemInput{}, false, nil
 	}
@@ -340,6 +343,9 @@ func getItemExec(ctx context.Context, ex execer, itemID string) (catalogtypes.It
 	}
 	if brand.Valid {
 		itm.BrandID = &brand.String
+	}
+	if color.Valid {
+		itm.Color = color.String
 	}
 	return itm, true, nil
 }
@@ -1162,9 +1168,9 @@ func (r *CatalogRepo) CreateItem(ctx context.Context, in catalogtypes.ItemInput)
 		active = 0
 	}
 	_, err := r.db.ExecContext(ctx, `
-INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, stock_untracked)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, in.ID, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked))
+INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, stock_untracked, color)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, in.ID, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked), nullableString(in.Color))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return "", ErrSKUExists
@@ -1283,9 +1289,9 @@ func (r *CatalogRepo) CreateItemTx(ctx context.Context, tx *sql.Tx, in catalogty
 		active = 0
 	}
 	_, err := tx.ExecContext(ctx, `
-INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, stock_untracked)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, in.ID, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked))
+INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, stock_untracked, color)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, in.ID, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked), nullableString(in.Color))
 	if err != nil {
 		// ut-docs#1510: unlike CreateItem, this branch never translated a
 		// UNIQUE(sku) violation into the distinguishable ErrSKUExists — a
@@ -1702,9 +1708,10 @@ SET sku = COALESCE(NULLIF(?, ''), sku),
     tax_code_id = ?,
     is_active = ?,
     is_weighed = ?,
-    stock_untracked = ?
+    stock_untracked = ?,
+    color = ?
 WHERE id = ?
-`, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked), in.ID)
+`, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked), nullableString(in.Color), in.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrSKUExists
