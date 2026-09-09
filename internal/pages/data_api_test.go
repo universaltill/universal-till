@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -10,6 +11,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
@@ -18,6 +20,12 @@ import (
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/settings"
 )
+
+// dataAPITestManagerPIN is the known PIN seedDataAPIManager sets on the
+// manager it creates (ut-docs#1841) — real tests against checkStepUp's
+// AuthorizeManager/Can path need a genuine PIN to authenticate, unlike the
+// old typed-word confirmation these endpoints used to gate on.
+const dataAPITestManagerPIN = "246800"
 
 func newDataAPITestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	t.Helper()
@@ -36,6 +44,7 @@ func newDataAPITestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 	db := openPagesTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	seedForPages(t, db)
+	seedDataAPIManager(t, db)
 
 	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
 	pm, err := plugins.Init(t.Context(), cfg, db)
@@ -50,10 +59,36 @@ func newDataAPITestDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
 		Pm:       pm,
 		Settings: settings.NewStore(db),
+		AuthSvc:  auth.NewService(db),
 	}
 	mux := http.NewServeMux()
 	registerDataAPI(mux, dp)
 	return mux, dp
+}
+
+// seedDataAPIManager creates a manager user with a known, real PIN
+// (dataAPITestManagerPIN) so tests can drive checkStepUp's real
+// AuthorizeManager/Can path against the four elevation-wired Data
+// endpoints (ut-docs#1841) — UT_AUTH=off alone bypasses canPerform
+// entirely and has no bearing on checkStepUp, which always needs a real
+// PIN regardless of that escape hatch. Returns the manager's real id, so a
+// test can assert an audit row's actor/approver against it directly
+// instead of a hardcoded literal.
+func seedDataAPIManager(t *testing.T, db *sql.DB) string {
+	t.Helper()
+	authRepo := data.NewAuthRepo(db)
+	id, err := authRepo.CreateUser(t.Context(), "dataapi-mgr", "Data API Manager", "manager")
+	if err != nil {
+		t.Fatalf("seedDataAPIManager: create user: %v", err)
+	}
+	hash, err := auth.HashPIN(dataAPITestManagerPIN)
+	if err != nil {
+		t.Fatalf("seedDataAPIManager: hash pin: %v", err)
+	}
+	if err := authRepo.SetUserPIN(t.Context(), id, hash); err != nil {
+		t.Fatalf("seedDataAPIManager: set pin: %v", err)
+	}
+	return id
 }
 
 func dataAPIJSONBody(t *testing.T, rec *httptest.ResponseRecorder) map[string]any {
@@ -100,20 +135,55 @@ func TestDataAPI_AllEndpointsRequireManager(t *testing.T) {
 	}
 }
 
-func TestResetTransactions_RequiresExactConfirmString(t *testing.T) {
+// ut-docs#1841 (ADR-0087): the typed RESET word is gone — a manager session
+// (UT_AUTH=off passes the first canPerform gate trivially) with NO
+// override_pin at all must get the elevation prompt, not a 400, and must
+// touch no data whatsoever.
+func TestResetTransactions_NoPIN_NeedsElevation_NoMutation(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, _ := newDataAPITestDeps(t)
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
 
 	rec := postForm(mux, "/api/data/reset-transactions", nil, nil)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 without confirm, got %d: %s", rec.Code, rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/data/reset-transactions", strings.NewReader("confirm=reset"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for a lowercase/wrong confirm value, got %d: %s", rec.Code, rec.Body.String())
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("expected the elevation prompt's text/html Content-Type, got %q: %s", ct, rec.Body.String())
+	}
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("expected NO mutation without a PIN, got %d sales rows (want 1 untouched)", count)
+	}
+}
+
+// A wrong PIN is a real failed attempt: the prompt re-renders with the
+// invalid-PIN error key, and still no mutation.
+func TestResetTransactions_WrongPIN_NoMutation(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {"000000"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Invalid PIN") {
+		t.Fatalf("expected the invalid-PIN error (elevation.error_invalid_pin) in the re-rendered prompt, got: %s", rec.Body.String())
+	}
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("expected NO mutation on a wrong PIN, got %d sales rows (want 1 untouched)", count)
 	}
 }
 
@@ -124,10 +194,7 @@ func TestResetTransactions_ClearsSalesWhenConfirmed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/data/reset-transactions", strings.NewReader("confirm=RESET"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -181,7 +248,7 @@ func TestResetArchives_ListAndRestoreRoundTrip(t *testing.T) {
 	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
 		t.Fatal(err)
 	}
-	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -223,12 +290,16 @@ func TestResetArchives_ListAndRestoreRoundTrip(t *testing.T) {
 		t.Fatalf("list: gated batch must carry a retained_until date, got %+v", batch)
 	}
 
-	// Restore requires the typed confirmation.
-	rec = postForm(mux, "/api/data/reset-archives/"+id+"/restore", url.Values{"confirm": {"restore"}}, nil)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("restore with wrong confirm: expected 400, got %d: %s", rec.Code, rec.Body.String())
+	// Restore requires step-up re-authentication (ut-docs#1841, ADR-0087) —
+	// a wrong PIN is refused with the elevation prompt, not a mutation.
+	rec = postForm(mux, "/api/data/reset-archives/"+id+"/restore", url.Values{"override_pin": {"000000"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("restore with wrong PIN: expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
 	}
-	rec = postForm(mux, "/api/data/reset-archives/"+id+"/restore", url.Values{"confirm": {"RESTORE"}}, nil)
+	if !strings.Contains(rec.Body.String(), "Invalid PIN") {
+		t.Fatalf("expected the invalid-PIN error in the re-rendered prompt, got: %s", rec.Body.String())
+	}
+	rec = postForm(mux, "/api/data/reset-archives/"+id+"/restore", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("restore: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -252,7 +323,7 @@ func TestResetArchivesRestore_NotFoundAndConflict(t *testing.T) {
 	mux, dp := newDataAPITestDeps(t)
 
 	// Unknown batch → 404, not a 500/panic.
-	rec := postForm(mux, "/api/data/reset-archives/no-such-batch/restore", url.Values{"confirm": {"RESTORE"}}, nil)
+	rec := postForm(mux, "/api/data/reset-archives/no-such-batch/restore", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown batch: expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -261,7 +332,7 @@ func TestResetArchivesRestore_NotFoundAndConflict(t *testing.T) {
 	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
 		t.Fatal(err)
 	}
-	rec = postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	rec = postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -272,7 +343,7 @@ func TestResetArchivesRestore_NotFoundAndConflict(t *testing.T) {
 	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('post1','R001','completed','sale','GBP',50,0,0,50,datetime('now'))`); err != nil {
 		t.Fatal(err)
 	}
-	rec = postForm(mux, "/api/data/reset-archives/"+batchID+"/restore", url.Values{"confirm": {"RESTORE"}}, nil)
+	rec = postForm(mux, "/api/data/reset-archives/"+batchID+"/restore", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("restore after trading: expected 409, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -294,17 +365,19 @@ func TestResetArchivesRestore_NotFoundAndConflict(t *testing.T) {
 }
 
 // ut-docs#661: POST .../purge is the permanent delete ADR-0042 §3 left
-// unbuilt. These pin the handler's own contract (confirm token, status
-// codes) over the fixture DB, which has no country configured -- so every
-// purge here falls back to GlobalArchiveMinDays, same as a shop that never
-// picked a country.
-func TestResetArchivesPurge_RequiresExactConfirmString(t *testing.T) {
+// unbuilt. These pin the handler's own contract (status codes) over the
+// fixture DB, which has no country configured -- so every purge here falls
+// back to GlobalArchiveMinDays, same as a shop that never picked a country.
+//
+// ut-docs#1841 (ADR-0087): the typed PURGE word is gone — no override_pin
+// at all must get the elevation prompt, and touch nothing.
+func TestResetArchivesPurge_NoPIN_NeedsElevation_NoMutation(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newDataAPITestDeps(t)
 	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
 		t.Fatal(err)
 	}
-	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -312,23 +385,58 @@ func TestResetArchivesPurge_RequiresExactConfirmString(t *testing.T) {
 	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"confirm": {"purge"}}, nil)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("purge with wrong confirm: expected 400, got %d: %s", rec.Code, rec.Body.String())
+	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("purge without a PIN: expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("expected the elevation prompt's text/html Content-Type, got %q: %s", ct, rec.Body.String())
 	}
 	var remaining int
 	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM reset_batches`).Scan(&remaining); err != nil {
 		t.Fatal(err)
 	}
 	if remaining != 1 {
-		t.Fatalf("wrong-confirm purge must touch nothing, got %d batches remaining", remaining)
+		t.Fatalf("a PIN-less purge attempt must touch nothing, got %d batches remaining", remaining)
+	}
+}
+
+// A wrong PIN on purge is a real failed attempt: prompt re-renders with the
+// invalid-PIN error, and still no mutation.
+func TestResetArchivesPurge_WrongPIN_NoMutation(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var id string
+	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
+		t.Fatal(err)
+	}
+	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"override_pin": {"000000"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("purge with wrong PIN: expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Invalid PIN") {
+		t.Fatalf("expected the invalid-PIN error (elevation.error_invalid_pin) in the re-rendered prompt, got: %s", rec.Body.String())
+	}
+	var remaining int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM reset_batches`).Scan(&remaining); err != nil {
+		t.Fatal(err)
+	}
+	if remaining != 1 {
+		t.Fatalf("a wrong-PIN purge attempt must touch nothing, got %d batches remaining", remaining)
 	}
 }
 
 func TestResetArchivesPurge_UnknownBatchNotFound(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, _ := newDataAPITestDeps(t)
-	rec := postForm(mux, "/api/data/reset-archives/no-such-batch/purge", url.Values{"confirm": {"PURGE"}}, nil)
+	rec := postForm(mux, "/api/data/reset-archives/no-such-batch/purge", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusNotFound {
 		t.Fatalf("unknown batch: expected 404, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -340,7 +448,7 @@ func TestResetArchivesPurge_WithinGlobalFloorRefused(t *testing.T) {
 	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
 		t.Fatal(err)
 	}
-	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -351,7 +459,7 @@ func TestResetArchivesPurge_WithinGlobalFloorRefused(t *testing.T) {
 
 	// created_at is "now" -- well inside the 10-year global floor, no
 	// country configured.
-	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"confirm": {"PURGE"}}, nil)
+	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("purge within window: expected 409, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -382,7 +490,7 @@ func TestResetArchivesPurge_NoTradingHistoryDeletesImmediately(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newDataAPITestDeps(t)
 	// No sale at all -- reset still writes a header row with sales_count=0.
-	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -390,7 +498,7 @@ func TestResetArchivesPurge_NoTradingHistoryDeletesImmediately(t *testing.T) {
 	if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
 		t.Fatal(err)
 	}
-	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"confirm": {"PURGE"}}, nil)
+	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("purge of a zero-sales batch: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -409,7 +517,7 @@ func TestResetArchivesPurge_OutsideWindowDeletes(t *testing.T) {
 	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
 		t.Fatal(err)
 	}
-	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -422,7 +530,7 @@ func TestResetArchivesPurge_OutsideWindowDeletes(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"confirm": {"PURGE"}}, nil)
+	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("purge outside window: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -449,7 +557,7 @@ func TestResetArchivesList_OutsideWindowIsPurgeable(t *testing.T) {
 	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
 		t.Fatal(err)
 	}
-	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -505,7 +613,7 @@ func TestResetArchivesPurge_CountryConfiguredWindow(t *testing.T) {
 	if _, err := dp.Db.Exec(`INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
 		t.Fatal(err)
 	}
-	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -519,7 +627,7 @@ func TestResetArchivesPurge_CountryConfiguredWindow(t *testing.T) {
 		time.Now().AddDate(0, 0, -4).UTC().Format(time.RFC3339), id); err != nil {
 		t.Fatal(err)
 	}
-	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"confirm": {"PURGE"}}, nil)
+	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusConflict {
 		t.Fatalf("purge 1 day inside GB's window: expected 409, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -529,7 +637,7 @@ func TestResetArchivesPurge_CountryConfiguredWindow(t *testing.T) {
 		time.Now().AddDate(0, 0, -6).UTC().Format(time.RFC3339), id); err != nil {
 		t.Fatal(err)
 	}
-	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"confirm": {"PURGE"}}, nil)
+	rec = postForm(mux, "/api/data/reset-archives/"+id+"/purge", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("purge 1 day past GB's window: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -549,11 +657,13 @@ func newRealDBDataAPIDeps(t *testing.T) (*http.ServeMux, *common.Deps) {
 		t.Fatalf("open db: %v", err)
 	}
 	t.Cleanup(func() { dbo.Close() })
+	seedDataAPIManager(t, dbo.DB)
 	dp := &common.Deps{
 		Db:       dbo.DB,
 		Settings: settings.NewStore(dbo.DB),
 		Cfg:      &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}},
 		Menu:     []common.MenuItem{{Href: "/", Label: "Home"}},
+		AuthSvc:  auth.NewService(dbo.DB),
 	}
 	mux := http.NewServeMux()
 	registerDataAPI(mux, dp)
@@ -576,7 +686,7 @@ func TestResetArchivesRestore_ReferencesRemovedItem(t *testing.T) {
 	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sale_lines(id,sale_id,line_no,item_id,name_snapshot,quantity,unit_price,tax_rate_bp,tax_amount,total_before_tax,total_after_tax) VALUES('l1','s1',1,'itm-reset187','Widget',1,100,0,0,100,100)`); err != nil {
 		t.Fatal(err)
 	}
-	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"confirm": {"RESET"}}, nil)
+	rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -590,7 +700,7 @@ func TestResetArchivesRestore_ReferencesRemovedItem(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rec = postForm(mux, "/api/data/reset-archives/"+batchID+"/restore", url.Values{"confirm": {"RESTORE"}}, nil)
+	rec = postForm(mux, "/api/data/reset-archives/"+batchID+"/restore", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusUnprocessableEntity {
 		t.Fatalf("restore after item removed: expected 422, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -712,19 +822,59 @@ func TestGetObsoleteItems_ListsInactiveNeverSoldItems(t *testing.T) {
 	}
 }
 
-func TestCleanupCatalog_RequiresExactConfirmString(t *testing.T) {
+// ut-docs#1841 (ADR-0087): the typed CLEANUP word is gone — no
+// override_pin at all must get the elevation prompt, carrying the item
+// count in its summary, and touch nothing.
+func TestCleanupCatalog_NoPIN_NeedsElevation_NoMutation(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
-	mux, _ := newDataAPITestDeps(t)
-	rec := postForm(mux, "/api/data/cleanup-catalog", nil, nil)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 without confirm, got %d: %s", rec.Code, rec.Body.String())
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO items(id,sku,name,base_price,is_active) VALUES('obs1','OLD','Old Discontinued Product',100,0)`); err != nil {
+		t.Fatal(err)
 	}
-	req := httptest.NewRequest(http.MethodPost, "/api/data/cleanup-catalog", strings.NewReader("confirm=cleanup"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusBadRequest {
-		t.Fatalf("expected 400 for a lowercase/wrong confirm value, got %d: %s", rec.Code, rec.Body.String())
+
+	rec := postForm(mux, "/api/data/cleanup-catalog", nil, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("expected the elevation prompt's text/html Content-Type, got %q: %s", ct, rec.Body.String())
+	}
+	// The summary states the count (ut-docs#1841's own design) — 1 obsolete
+	// item is staged above.
+	if !strings.Contains(rec.Body.String(), "1 inactive product") {
+		t.Fatalf("expected the elevation summary to state the obsolete-item count, got: %s", rec.Body.String())
+	}
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE id='obs1'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("expected NO mutation without a PIN, still want the obsolete item present, got %d rows", count)
+	}
+}
+
+// A wrong PIN is a real failed attempt: prompt re-renders with the
+// invalid-PIN error, and still no mutation.
+func TestCleanupCatalog_WrongPIN_NoMutation(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newDataAPITestDeps(t)
+	if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO items(id,sku,name,base_price,is_active) VALUES('obs1','OLD','Old Discontinued Product',100,0)`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postForm(mux, "/api/data/cleanup-catalog", url.Values{"override_pin": {"000000"}}, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200 (elevation prompt), got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Invalid PIN") {
+		t.Fatalf("expected the invalid-PIN error (elevation.error_invalid_pin) in the re-rendered prompt, got: %s", rec.Body.String())
+	}
+	var count int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM items WHERE id='obs1'`).Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 1 {
+		t.Fatalf("expected NO mutation on a wrong PIN, still want the obsolete item present, got %d rows", count)
 	}
 }
 
@@ -735,10 +885,7 @@ func TestCleanupCatalog_RemovesObsoleteItemsWhenConfirmed(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	req := httptest.NewRequest(http.MethodPost, "/api/data/cleanup-catalog", strings.NewReader("confirm=CLEANUP"))
-	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
+	rec := postForm(mux, "/api/data/cleanup-catalog", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
@@ -756,5 +903,122 @@ func TestCleanupCatalog_RemovesObsoleteItemsWhenConfirmed(t *testing.T) {
 	}
 	if itm1 != 1 {
 		t.Fatalf("expected the active seeded item to survive cleanup")
+	}
+}
+
+// ut-docs#1841 (ADR-0087): a valid manager PIN records the APPROVER's id as
+// the audit row's actor — not the session user checkStepUp actually
+// blocked — with dual attribution (InsertAuditElevated's blocked_actor_id)
+// carrying the originally-blocked session user. Uses a REAL second manager
+// as the session (not just an auth.WithUser-attached synthetic id) because
+// audit_log.blocked_actor_id has a real FK against users(id), enforced
+// (PRAGMA foreign_keys=ON) — a synthetic session id would violate it the
+// moment dual attribution is exercised.
+func TestDataManagementEndpoints_ValidPIN_AuditRecordsApprover(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	// resetForApproverTest performs a plain reset-transactions (as the
+	// seeded manager, via its own PIN, no approver-attribution assertions
+	// of its own) and returns the resulting batch id, for the restore/purge
+	// cases below which need a real batch to act on. withSale=false (the
+	// purge case) keeps sales_count at 0 so the batch purges unconditionally
+	// (TestResetArchivesPurge_NoTradingHistoryDeletesImmediately's own
+	// precedent) rather than tripping the real-trading-history retention
+	// gate this test has no interest in exercising.
+	resetForApproverTest := func(t *testing.T, mux *http.ServeMux, dp *common.Deps, withSale bool) string {
+		t.Helper()
+		if withSale {
+			if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
+				t.Fatal(err)
+			}
+		}
+		rec := postForm(mux, "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}, nil)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("setup reset: expected 200, got %d: %s", rec.Code, rec.Body.String())
+		}
+		var id string
+		if err := dp.Db.QueryRow(`SELECT id FROM reset_batches`).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		return id
+	}
+
+	cases := []struct {
+		name       string
+		setup      func(t *testing.T, mux *http.ServeMux, dp *common.Deps) (path string, form url.Values)
+		entityType string
+		entityID   string
+		action     string
+	}{
+		{
+			name: "reset-transactions",
+			setup: func(t *testing.T, mux *http.ServeMux, dp *common.Deps) (string, url.Values) {
+				if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',100,0,0,100,datetime('now'))`); err != nil {
+					t.Fatal(err)
+				}
+				return "/api/data/reset-transactions", url.Values{"override_pin": {dataAPITestManagerPIN}}
+			},
+			entityType: "system", entityID: "transactions", action: "transaction_history_reset",
+		},
+		{
+			name: "reset-archives-restore",
+			setup: func(t *testing.T, mux *http.ServeMux, dp *common.Deps) (string, url.Values) {
+				id := resetForApproverTest(t, mux, dp, true)
+				return "/api/data/reset-archives/" + id + "/restore", url.Values{"override_pin": {dataAPITestManagerPIN}}
+			},
+			entityType: "system", entityID: "transactions", action: "transaction_history_restored",
+		},
+		{
+			name: "reset-archives-purge",
+			setup: func(t *testing.T, mux *http.ServeMux, dp *common.Deps) (string, url.Values) {
+				id := resetForApproverTest(t, mux, dp, false)
+				return "/api/data/reset-archives/" + id + "/purge", url.Values{"override_pin": {dataAPITestManagerPIN}}
+			},
+			entityType: "system", entityID: "transactions", action: "transaction_archive_purged",
+		},
+		{
+			name: "cleanup-catalog",
+			setup: func(t *testing.T, mux *http.ServeMux, dp *common.Deps) (string, url.Values) {
+				if _, err := dp.Db.ExecContext(t.Context(), `INSERT INTO items(id,sku,name,base_price,is_active) VALUES('obs1','OLD','Old Discontinued Product',100,0)`); err != nil {
+					t.Fatal(err)
+				}
+				return "/api/data/cleanup-catalog", url.Values{"override_pin": {dataAPITestManagerPIN}}
+			},
+			entityType: "system", entityID: "catalog", action: "catalog_cleanup",
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			mux, dp := newDataAPITestDeps(t)
+			authRepo := data.NewAuthRepo(dp.Db)
+			sessionMgrID, err := authRepo.CreateUser(t.Context(), "session-mgr-"+tc.name, "Session Manager", "manager")
+			if err != nil {
+				t.Fatalf("create session manager: %v", err)
+			}
+
+			path, form := tc.setup(t, mux, dp)
+			rec := postForm(mux, path, form, &auth.User{ID: sessionMgrID, Role: "manager"})
+			if rec.Code != http.StatusOK {
+				t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+
+			var actorID, blockedActorID sql.NullString
+			if err := dp.Db.QueryRow(
+				`SELECT actor_id, blocked_actor_id FROM audit_log WHERE entity_type = ? AND entity_id = ? AND action = ? ORDER BY created_at DESC LIMIT 1`,
+				tc.entityType, tc.entityID, tc.action,
+			).Scan(&actorID, &blockedActorID); err != nil {
+				t.Fatalf("query audit_log: %v", err)
+			}
+			var approverID string
+			if err := dp.Db.QueryRow(`SELECT id FROM users WHERE username = 'dataapi-mgr'`).Scan(&approverID); err != nil {
+				t.Fatalf("look up seeded manager: %v", err)
+			}
+			if !actorID.Valid || actorID.String != approverID {
+				t.Fatalf("audit actor_id = %v, want the approver's id %q (not the session user %q)", actorID, approverID, sessionMgrID)
+			}
+			if !blockedActorID.Valid || blockedActorID.String != sessionMgrID {
+				t.Fatalf("audit blocked_actor_id = %v, want the originally-blocked session user %q", blockedActorID, sessionMgrID)
+			}
+		})
 	}
 }

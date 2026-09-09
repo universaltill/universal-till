@@ -198,8 +198,19 @@ var restoreEmptyCheckTables = []string{"sales", "held_sales", "shifts", "stock_m
 // (test-data) report for today survives permanently. A manager doing a
 // go-live reset on the same day test EOD reports were run should reset
 // before generating any further EOD reports that day; there is no
-// automatic reconciliation. See settings.data.reset_confirm_dialog.
-func (r *POSRepo) ResetTransactionHistory(ctx context.Context, actorID string) (int64, string, error) {
+// automatic reconciliation. See settings.data.warn (the card's own warning
+// text) — the step-up PIN dialog's own summary is
+// elevation.summary.data_reset_transactions (ut-docs#1841, ADR-0087).
+// actorID/blockedActorID (ut-docs#1841, ADR-0087): dual attribution for the
+// checkStepUp path, mirroring generateEOD's own actor/blockedActorID
+// parameters (eod_api.go) — actorID is whoever actually performed the
+// action (the session user on the plain path, the APPROVER once a
+// checkStepUp PIN elevated the request), blockedActorID is the
+// originally-blocked session user, set only when elevated ("" otherwise).
+// Written into the SAME audit-log insert this function already does,
+// inside the SAME transaction, rather than a second insert from the
+// handler layer, so the mutation and its audit row stay atomic.
+func (r *POSRepo) ResetTransactionHistory(ctx context.Context, actorID, blockedActorID string) (int64, string, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, "", err
@@ -258,7 +269,12 @@ VALUES (?, ?, ?, ?)`, batchID, now, nullIfEmpty(actorID), count); err != nil {
 		}
 	}
 
-	if err := r.InsertAudit(ctx, tx, actorID, "system", "transactions", "transaction_history_reset",
+	if blockedActorID != "" {
+		if err := r.InsertAuditElevated(ctx, tx, actorID, blockedActorID, "system", "transactions", "transaction_history_reset",
+			map[string]any{"sales_archived": count, "batch_id": batchID}, now, ""); err != nil {
+			return 0, "", err
+		}
+	} else if err := r.InsertAudit(ctx, tx, actorID, "system", "transactions", "transaction_history_reset",
 		map[string]any{"sales_archived": count, "batch_id": batchID}, now, ""); err != nil {
 		return 0, "", err
 	}
@@ -351,7 +367,10 @@ ORDER BY created_at DESC, id DESC LIMIT 200`)
 // ErrArchiveReferencesRemoved if a row in the batch points at a catalog/
 // customer record removed after the reset (see that error's doc comment).
 // Manager-gated at the handler.
-func (r *POSRepo) RestoreResetBatch(ctx context.Context, batchID, actorID string) (int64, error) {
+// blockedActorID: see ResetTransactionHistory's doc comment (ut-docs#1841,
+// ADR-0087) — "" on the plain path, the originally-blocked session user
+// once a checkStepUp PIN elevated the request.
+func (r *POSRepo) RestoreResetBatch(ctx context.Context, batchID, actorID, blockedActorID string) (int64, error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return 0, err
@@ -448,7 +467,12 @@ func (r *POSRepo) RestoreResetBatch(ctx context.Context, batchID, actorID string
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	if err := r.InsertAudit(ctx, tx, actorID, "system", "transactions", "transaction_history_restored",
+	if blockedActorID != "" {
+		if err := r.InsertAuditElevated(ctx, tx, actorID, blockedActorID, "system", "transactions", "transaction_history_restored",
+			map[string]any{"batch_id": batchID, "sales_restored": restored}, now, ""); err != nil {
+			return 0, err
+		}
+	} else if err := r.InsertAudit(ctx, tx, actorID, "system", "transactions", "transaction_history_restored",
 		map[string]any{"batch_id": batchID, "sales_restored": restored}, now, ""); err != nil {
 		return 0, err
 	}
@@ -534,8 +558,9 @@ func computeRetainedUntil(archivedAt time.Time, minDays int64) time.Time {
 //
 // Returns ErrResetBatchNotFound for an unknown id, and
 // *ArchiveWithinRetentionWindowError (still within the window) otherwise.
-// Manager-gated at the handler, same as reset/restore.
-func (r *POSRepo) DeleteResetBatch(ctx context.Context, batchID, actorID string) error {
+// Manager-gated at the handler, same as reset/restore. blockedActorID: see
+// ResetTransactionHistory's doc comment (ut-docs#1841, ADR-0087).
+func (r *POSRepo) DeleteResetBatch(ctx context.Context, batchID, actorID, blockedActorID string) error {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
@@ -578,7 +603,12 @@ func (r *POSRepo) DeleteResetBatch(ctx context.Context, batchID, actorID string)
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
-	if err := r.InsertAudit(ctx, tx, actorID, "system", "transactions", "transaction_archive_purged",
+	if blockedActorID != "" {
+		if err := r.InsertAuditElevated(ctx, tx, actorID, blockedActorID, "system", "transactions", "transaction_archive_purged",
+			map[string]any{"batch_id": batchID, "sales_count": salesCount}, now, ""); err != nil {
+			return err
+		}
+	} else if err := r.InsertAudit(ctx, tx, actorID, "system", "transactions", "transaction_archive_purged",
 		map[string]any{"batch_id": batchID, "sales_count": salesCount}, now, ""); err != nil {
 		return err
 	}

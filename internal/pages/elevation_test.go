@@ -163,6 +163,96 @@ func TestCheckOrElevate_Elevated(t *testing.T) {
 	}
 }
 
+// --- checkStepUp (ut-docs#1841, ADR-0087) ---
+//
+// The trap this guards against: checkOrElevate returns `allowed` WITHOUT
+// ever asking for a PIN once canPerform(action) is already true. The four
+// Settings → Data destructive actions (reset transaction history, archive
+// restore/purge, catalog cleanup) sit behind {{ if .isManager }} AND their
+// own canPerform(..., "data_management") gate — exactly the sessions
+// checkOrElevate would wave straight through with NO re-authentication at
+// all, which is strictly WEAKER than the typed-word confirmation it would
+// replace. checkStepUp exists specifically so a session that can already
+// perform the action still gets asked to re-prove it at the moment of the
+// irreversible act.
+func TestCheckStepUp_CanPerformTrue_EmptyPIN_StillNeedsElevation(t *testing.T) {
+	dp := newElevationTestDeps(t)
+	// A manager session: canPerform(dp, r, "settings") is true for this
+	// role, exactly the case checkOrElevate would short-circuit to
+	// `allowed` on. checkStepUp must NOT: it must demand a PIN regardless.
+	r := elevationRequest(auth.User{ID: "mgr-session", Role: "manager"})
+
+	got := checkStepUp(dp, r, "settings", "")
+
+	if got.Outcome != needsElevation {
+		t.Fatalf("Outcome = %v, want needsElevation (canPerform()==true must NOT short-circuit checkStepUp — ut-docs#1841)", got.Outcome)
+	}
+	if got.ActorID != "mgr-session" {
+		t.Fatalf("ActorID = %q, want mgr-session", got.ActorID)
+	}
+	if got.ApproverID != "" {
+		t.Fatalf("ApproverID = %q, want empty — no PIN was supplied", got.ApproverID)
+	}
+	if got.Err != nil {
+		t.Fatalf("Err = %v, want nil (first-time prompt, not a failed attempt)", got.Err)
+	}
+}
+
+// The PIN-verification path is identical to checkOrElevate's own: a wrong
+// PIN is a real failed attempt (Err set), not a first-time prompt.
+func TestCheckStepUp_WrongPIN(t *testing.T) {
+	dp := newElevationTestDeps(t)
+	r := elevationRequest(auth.User{ID: "mgr-session", Role: "manager"})
+
+	got := checkStepUp(dp, r, "settings", "000000")
+
+	if got.Outcome != needsElevation {
+		t.Fatalf("Outcome = %v, want needsElevation", got.Outcome)
+	}
+	if got.Err == nil {
+		t.Fatal("Err = nil, want a wrong-PIN error")
+	}
+}
+
+// A correct manager PIN elevates even when the SAME manager is the session
+// user — checkStepUp never treats "session user already holds the role" as
+// a reason to skip verification.
+func TestCheckStepUp_ValidPIN_Elevates(t *testing.T) {
+	dp := newElevationTestDeps(t)
+	r := elevationRequest(auth.User{ID: "mgr-session", Role: "manager"})
+
+	got := checkStepUp(dp, r, "settings", "135790")
+
+	if got.Outcome != elevated {
+		t.Fatalf("Outcome = %v, want elevated", got.Outcome)
+	}
+	if got.ActorID != "mgr-session" {
+		t.Fatalf("ActorID = %q, want mgr-session", got.ActorID)
+	}
+	if got.ApproverID == "" {
+		t.Fatal("ApproverID = \"\", want the approver's real id")
+	}
+	if got.Err != nil {
+		t.Fatalf("Err = %v, want nil", got.Err)
+	}
+}
+
+// A nil AuthSvc fails closed, exactly like checkOrElevate's own precedent.
+func TestCheckStepUp_NilAuthSvc_FailsClosed(t *testing.T) {
+	dp := newElevationTestDeps(t)
+	dp.AuthSvc = nil
+	r := elevationRequest(auth.User{ID: "mgr-session", Role: "manager"})
+
+	got := checkStepUp(dp, r, "settings", "000000")
+
+	if got.Outcome != needsElevation {
+		t.Fatalf("Outcome = %v, want needsElevation", got.Outcome)
+	}
+	if got.Err == nil {
+		t.Fatal("Err = nil, want an error — a nil AuthSvc must fail closed")
+	}
+}
+
 // Auth disabled (UT_AUTH=off) short-circuits canPerform to true, same escape
 // hatch every other canPerform() call site gets — no elevation needed.
 func TestCheckOrElevate_AuthDisabled_Allowed(t *testing.T) {
@@ -446,5 +536,52 @@ func TestElevationPrompt_CarriesOSKToggleForOverridePIN(t *testing.T) {
 	}
 	if !hasDescendantInput(form, "override_pin") {
 		t.Fatal("the OSK toggle's enclosing <form> must be the one containing override_pin")
+	}
+}
+
+// TestElevationActors_SelfApproval is ut-docs#1841 review finding 5: every
+// other test in this area drives the case where the approver differs from
+// the session user, but the overwhelmingly common real case is one manager
+// re-entering their OWN PIN on a till they are already signed into.
+//
+// There, blockedActorID must stay empty (so the repositories write a plain
+// InsertAudit, not InsertAuditElevated recording the manager as their own
+// "blocked" actor) while actorID is still that manager. The distinction
+// rests entirely on elevationActors' `ApproverID != ActorID` guard, which
+// nothing else exercises -- drop it and every self-approval starts writing
+// a nonsensical audit row that survives review because no test fails.
+func TestElevationActors_SelfApproval(t *testing.T) {
+	for _, tc := range []struct {
+		name                            string
+		elev                            elevationCheck
+		wantActorID, wantBlockedActorID string
+	}{
+		{
+			name:        "manager approves with their own PIN -- no dual attribution",
+			elev:        elevationCheck{Outcome: elevated, ActorID: "mgr-1", ApproverID: "mgr-1"},
+			wantActorID: "mgr-1", wantBlockedActorID: "",
+		},
+		{
+			name:        "a different manager approves -- dual attribution",
+			elev:        elevationCheck{Outcome: elevated, ActorID: "cashier-9", ApproverID: "mgr-1"},
+			wantActorID: "mgr-1", wantBlockedActorID: "cashier-9",
+		},
+		{
+			// UT_AUTH=off: no session user at all. blockedActorID must stay
+			// empty so audit_log's FK on blocked_actor_id is never handed "".
+			name:        "no session user -- no dual attribution",
+			elev:        elevationCheck{Outcome: elevated, ActorID: "", ApproverID: "mgr-1"},
+			wantActorID: "mgr-1", wantBlockedActorID: "",
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			actorID, blockedActorID := elevationActors(tc.elev)
+			if actorID != tc.wantActorID {
+				t.Errorf("actorID = %q, want %q", actorID, tc.wantActorID)
+			}
+			if blockedActorID != tc.wantBlockedActorID {
+				t.Errorf("blockedActorID = %q, want %q", blockedActorID, tc.wantBlockedActorID)
+			}
+		})
 	}
 }
