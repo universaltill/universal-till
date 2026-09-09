@@ -62,14 +62,55 @@ func TestPersistManifest_RefusesHidingProtectedKey(t *testing.T) {
 	}
 }
 
-func TestPersistManifest_AllowsRestructuringProtectedKey(t *testing.T) {
+// A protected key may be MOVED and GROUPED at install: that positions a
+// statutory destination without disguising it.
+func TestPersistManifest_AllowsReorderingAndRegroupingProtectedKey(t *testing.T) {
 	d := openRealDB(t)
 	err := PersistManifest(context.Background(), d.DB, layoutManifest("com.example.mover",
 		map[string]any{"key": "/settings", "order": 50},
-		map[string]any{"key": "/journal", "label_key": "x.journal", "icon": "book-open", "group": "x.group"},
+		map[string]any{"key": "/journal", "group": "x.group"},
 	), InstallOptions{})
 	if err != nil {
-		t.Fatalf("reorder/re-label/re-icon/re-group of protected keys must install: %v", err)
+		t.Fatalf("reorder/re-group of protected keys must install: %v", err)
+	}
+}
+
+// ...but re-label and re-icon are refused at INSTALL, not just at parse.
+// ADR-0088 Decision E originally permitted them, on the reasoning that they
+// "keep the destination visible". The independent review of ut-docs#1904
+// disproved that by driving it: /report-issue re-labelled to "Catalog" with
+// a tag icon and moved last is nominally visible and actually unfindable,
+// and the Decision D recovery surface reported nothing because it lists
+// hides. The label and icon are the identity a merchant recognises a
+// statutory surface by, so they are protected like its presence.
+//
+// This is the install-path half of
+// uislot.TestParseMenuAmendments_ProtectedKeyCannotBeRelabelledOrReiconed —
+// it also proves the refusal rolls the whole transaction back, so a
+// half-installed plugin never lingers.
+func TestPersistManifest_RefusesRelabellingOrReiconingProtectedKey(t *testing.T) {
+	d := openRealDB(t)
+	ctx := context.Background()
+	for name, amendment := range map[string]map[string]any{
+		"re-label": {"key": "/journal", "label_key": "x.journal"},
+		"re-icon":  {"key": "/fiscal-register", "icon": "tag"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := PersistManifest(ctx, d.DB, layoutManifest("com.example.disguise", amendment), InstallOptions{})
+			if err == nil {
+				t.Fatal("re-labelling/re-iconing a protected key must be refused at install")
+			}
+			if !strings.Contains(err.Error(), amendment["key"].(string)) {
+				t.Fatalf("refusal must name the protected key, got: %v", err)
+			}
+			var n int
+			if err := d.DB.QueryRow(`SELECT COUNT(*) FROM plugins WHERE id = 'com.example.disguise'`).Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+			if n != 0 {
+				t.Fatalf("refused plugin left %d plugins row(s), want 0 (transaction must roll back)", n)
+			}
+		})
 	}
 }
 
@@ -244,6 +285,61 @@ func TestLayoutSalonPlugin_InstallsAndDeclaresItsAmendments(t *testing.T) {
 		for _, key := range introduced {
 			if strings.TrimSpace(msgs[key]) == "" {
 				t.Errorf("locales/%s.json is missing %q", locale, key)
+			}
+		}
+	}
+}
+
+// shippingLocalesBeyondCore are the locales this product ships as external
+// LANGUAGE PACKS (ut-plugin-language-{de,es}) rather than in web/locales.
+// They are listed explicitly because no test in this repo can see those
+// sibling repos, and the consequence of forgetting one is silent: a plugin
+// label with no translation for the locale falls back to the core label
+// (ADR-0088 Decision G, correctly), so the amendment simply does nothing
+// and nothing anywhere reports it.
+//
+// That is not hypothetical — it is what the independent review of
+// ut-docs#1904 (F4) found: the salon plugin shipped en/ar/fa/tr only, so on
+// the GERMAN pilot till, the one market with a real merchant, its re-label
+// of Items to "Services" was a silent no-op. The test above globs
+// web/locales/*.json and by construction could never catch that.
+var shippingLocalesBeyondCore = []string{"de", "es"}
+
+func TestLayoutSalonPlugin_ShipsLocalesForTheLanguagePackMarketsToo(t *testing.T) {
+	root := filepath.Join("..", "..", "plugins", "layout-salon")
+
+	raw, err := os.ReadFile(filepath.Join(root, "locales", "en.json"))
+	if err != nil {
+		t.Fatalf("salon layout must ship en.json: %v", err)
+	}
+	var base map[string]string
+	if err := json.Unmarshal(raw, &base); err != nil {
+		t.Fatalf("locales/en.json: %v", err)
+	}
+	if len(base) == 0 {
+		t.Fatal("locales/en.json declares no keys — this test would assert nothing")
+	}
+
+	for _, locale := range shippingLocalesBeyondCore {
+		got, err := os.ReadFile(filepath.Join(root, "locales", locale+".json"))
+		if err != nil {
+			t.Errorf("salon layout ships no locale file for language-pack market %q — "+
+				"its amendments would silently fall back to English there: %v", locale, err)
+			continue
+		}
+		var msgs map[string]string
+		if err := json.Unmarshal(got, &msgs); err != nil {
+			t.Errorf("locales/%s.json: %v", locale, err)
+			continue
+		}
+		for key, english := range base {
+			switch v := strings.TrimSpace(msgs[key]); {
+			case v == "":
+				t.Errorf("locales/%s.json is missing %q", locale, key)
+			case v == english:
+				// The ut-docs#292 failure mode: present, non-empty, and still
+				// English. A key-set-only check passes it; a merchant reads it.
+				t.Errorf("locales/%s.json leaves %q untranslated (still %q)", locale, key, english)
 			}
 		}
 	}

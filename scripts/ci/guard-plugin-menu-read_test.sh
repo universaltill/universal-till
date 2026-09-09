@@ -160,6 +160,22 @@ func TestZzGuardFixture(t *testing.T) {
 expect_pass "an unlocked read inside a _test.go file"
 clear_fixture "TestFileExempt" "_test.go"
 
+# A NEW call site of BuildMenuAmendments (independent review of
+# ut-docs#1904, F4). The field pattern cannot see this — the function reads
+# pm.LayoutAmendments off a *plugins.Manager PARAMETER, not through a
+# *common.Deps — so the call-site allowlist is what actually guards it. A
+# fourth caller must fail until whoever adds it states which lock it holds.
+plant "RogueBuildMenuAmendmentsCaller" 'package pages
+
+func zzGuardTestHandler(pm *plugins.Manager) []uislot.Amendment {
+	return common.BuildMenuAmendments(pm, nil)
+}'
+expect_fail "a new, non-allowlisted BuildMenuAmendments call site"
+clear_fixture "RogueBuildMenuAmendmentsCaller"
+
+# ...while the three allowlisted call sites (deps.go, state.go, init.go)
+# keep the clean codebase passing — asserted by the baseline check below.
+
 # Baseline: the guard must still pass on the real, unmodified codebase.
 if ! bash "${GUARD}" >/tmp/guard_plugin_menu_test_out.$$ 2>&1; then
   echo "❌ FAIL: guard rejects the clean codebase (false positive introduced)" >&2

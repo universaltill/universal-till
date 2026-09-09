@@ -2798,3 +2798,11 @@ body.login-screen {
   inline-size: 1.3rem; block-size: 1.3rem; border-radius: 50%; border: 1px solid var(--border, #e2e8f0);
   background: var(--surface, #fff); color: inherit; cursor: pointer; font-size: .7rem; line-height: 1; padding: 0; }
 .bugreport-thumb-remove:hover, .bugreport-thumb-remove:focus-visible { background: var(--surface-2, #f8fafc); }
+
+/* ADR-0088 / ut-docs#1904: the "Open" link on the Hidden menu tiles page.
+   It sits on its own line under the destination name — inline, it read as
+   part of the label ("Tables & floor plan Open"), the two-labels-in-one-row
+   defect ut-docs#300 shipped once already. Block + margin-block-start, not
+   a float or a left/right margin, so RTL needs no separate rule. */
+.menulayout-dest { display: block; }
+.menulayout-goto { display: inline-block; margin-block-start: 0.25rem; font-size: 0.875rem; }

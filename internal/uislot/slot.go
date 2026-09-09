@@ -53,7 +53,9 @@ type Entry struct {
 	// zero-amendment path never sorts (Decision I).
 	Order int
 	// Group is an optional locale key; the renderer draws a heading when
-	// consecutive entries change group.
+	// consecutive entries change group. Resolve gathers same-group entries
+	// so they ARE consecutive (groupTogether) — without that, a group whose
+	// members land apart in Order rendered its heading twice.
 	Group string
 	// VisibleIf is the NAME of a predicate registered in core (never an
 	// expression — Decision C's security decision). "" means always.
@@ -189,6 +191,7 @@ func Resolve(entries []Entry, amendments []Amendment) []Entry {
 	}
 	out := make([]Entry, 0, len(entries))
 	reordered := false
+	regrouped := false
 	for _, e := range entries {
 		hidden := false
 		for _, a := range amendments {
@@ -211,6 +214,7 @@ func Resolve(entries []Entry, amendments []Amendment) []Entry {
 			}
 			if a.Group != "" {
 				e.Group = a.Group
+				regrouped = true
 			}
 			if a.Icon != "" {
 				if e.IconFallback == "" {
@@ -226,7 +230,54 @@ func Resolve(entries []Entry, amendments []Amendment) []Entry {
 	if reordered {
 		sort.SliceStable(out, func(i, j int) bool { return out[i].Order < out[j].Order })
 	}
+	if regrouped {
+		groupTogether(out)
+	}
 	return out
+}
+
+// groupTogether makes "re-group" actually group (independent review of
+// ut-docs#1904, F2). The renderer draws a heading whenever CONSECUTIVE
+// entries change group, so two entries given the same group but landing
+// apart in Order rendered the same heading TWICE with unrelated tiles
+// between them — run-labelling, not grouping.
+//
+// Each group is anchored at the position of its earliest member and its
+// remaining members are pulled up behind it; ungrouped entries keep their
+// relative order around them. Stable: a slot with no grouped entries, or
+// one whose groups are already contiguous, comes out byte-identical.
+func groupTogether(out []Entry) {
+	first := make(map[string]int, len(out))
+	for i, e := range out {
+		if e.Group == "" {
+			continue
+		}
+		if _, seen := first[e.Group]; !seen {
+			first[e.Group] = i
+		}
+	}
+	if len(first) == 0 {
+		return
+	}
+	// rank: an entry sorts at its group's earliest position (ungrouped
+	// entries at their own), so groups gather without reordering anything
+	// across group boundaries.
+	rank := func(i int) int {
+		if g := out[i].Group; g != "" {
+			return first[g]
+		}
+		return i
+	}
+	idx := make([]int, len(out))
+	for i := range idx {
+		idx[i] = i
+	}
+	sort.SliceStable(idx, func(a, b int) bool { return rank(idx[a]) < rank(idx[b]) })
+	sorted := make([]Entry, len(out))
+	for pos, i := range idx {
+		sorted[pos] = out[i]
+	}
+	copy(out, sorted)
 }
 
 // Conflict is an install-time collision between two plugins restructuring
@@ -380,8 +431,27 @@ func parseAmendment(pluginID string, obj map[string]any) (Amendment, error) {
 	if !a.Hide && !a.Restructures() {
 		return a, fmt.Errorf("key %q: amendment does nothing (set hide, order, label_key, group or icon)", a.Key)
 	}
-	if a.Hide && IsProtectedMenuKey(a.Key) {
-		return a, fmt.Errorf("key %q is a protected destination and cannot be hidden by a plugin (ADR-0088)", a.Key)
+	if IsProtectedMenuKey(a.Key) {
+		// A protected destination's IDENTITY is protected, not just its
+		// presence (ADR-0088 Decision E, tightened by the independent
+		// review of ut-docs#1904). Hiding /fiscal-register is refused —
+		// but re-labelling it "Catalog" with a tag icon left it nominally
+		// "visible" while making it unfindable to the merchant who needs
+		// it under §146a Abs. 4 AO, which defeats the whole purpose of
+		// protecting it. The label and the icon ARE how a merchant
+		// recognises a tile, so they are refused too.
+		//
+		// order and group stay allowed: they move a protected tile
+		// without disguising it, and a vertical legitimately needs to
+		// position statutory destinations alongside its own.
+		switch {
+		case a.Hide:
+			return a, fmt.Errorf("key %q is a protected destination and cannot be hidden by a plugin (ADR-0088)", a.Key)
+		case a.LabelKey != "":
+			return a, fmt.Errorf("key %q is a protected destination and cannot be re-labelled by a plugin (ADR-0088)", a.Key)
+		case a.Icon != "":
+			return a, fmt.Errorf("key %q is a protected destination and cannot be re-iconed by a plugin (ADR-0088)", a.Key)
+		}
 	}
 	return a, nil
 }

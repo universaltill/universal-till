@@ -25,10 +25,15 @@
       {{ range .rows }}
       <tr>
         <td>
-          {{ T .LabelKey }}
+          <span class="menulayout-dest">{{ T .LabelKey }}</span>
           {{/* Decision D: hidden from the Menu, never from the router — the
-               destination is one tap away from here regardless. */}}
-          <a class="muted" href="{{ .Href }}">{{ T "menulayout.go_there" }}</a>
+               destination is one tap away from here regardless.
+
+               On its own line, deliberately: inline after the label it read
+               as part of it ("Tables & floor plan Open"), the same two-
+               labels-in-one-row defect ut-docs#300 shipped. Block placement
+               also keeps it correct in RTL without a physical-side rule. */}}
+          <a class="muted menulayout-goto" href="{{ .Href }}">{{ T "menulayout.go_there" }}</a>
         </td>
         <td>{{ range $i, $name := .Plugins }}{{ if $i }}, {{ end }}{{ $name }}{{ end }}</td>
         <td>{{ if .Restored }}{{ T "menulayout.state.restored" }}{{ else }}{{ T "menulayout.state.hidden" }}{{ end }}</td>

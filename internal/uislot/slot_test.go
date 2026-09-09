@@ -29,25 +29,73 @@ func TestParseMenuAmendments_ProtectedKeyCannotBeHidden(t *testing.T) {
 
 // Decision E's second half: reorder / re-label / re-group / re-icon ARE
 // permitted on a protected key — they keep the destination visible.
-func TestParseMenuAmendments_ProtectedKeyCanBeRestructured(t *testing.T) {
+// A protected key may be MOVED and GROUPED — that positions a statutory
+// destination without disguising it, and a vertical legitimately needs to.
+func TestParseMenuAmendments_ProtectedKeyCanBeReorderedAndRegrouped(t *testing.T) {
 	for _, key := range ProtectedMenuKeys {
 		t.Run(key, func(t *testing.T) {
 			got, err := ParseMenuAmendments("com.example.layout", map[string]any{
 				"amendments": []any{map[string]any{
-					"key": key, "order": float64(5), "label_key": "x.y", "group": "g.k", "icon": "tag",
+					"key": key, "order": float64(5), "group": "g.k",
 				}},
 			})
 			if err != nil {
-				t.Fatalf("restructuring protected key %q must be allowed: %v", key, err)
+				t.Fatalf("reordering/regrouping protected key %q must be allowed: %v", key, err)
 			}
 			if len(got) != 1 || got[0].Key != key || got[0].Order == nil || *got[0].Order != 5 ||
-				got[0].LabelKey != "x.y" || got[0].Group != "g.k" || got[0].Icon != "tag" || got[0].Hide {
+				got[0].Group != "g.k" || got[0].Hide {
 				t.Fatalf("parsed amendment mismatch: %+v", got)
 			}
 			if got[0].PluginID != "com.example.layout" {
 				t.Fatalf("amendment must carry its plugin id, got %+v", got[0])
 			}
 		})
+	}
+}
+
+// ...but it may NOT be re-labelled or re-iconed. Refusing only `hide` left
+// a hole the independent review of ut-docs#1904 drove end to end: a plugin
+// re-labelled /report-issue to "Catalog" with a tag icon and moved it last,
+// and the "Hidden menu tiles" recovery page reported nothing amended,
+// because it lists hides. A tile whose label and icon are attacker-chosen
+// is not meaningfully "visible" — which is all Decision E's permission to
+// restructure protected keys was ever resting on. The label and the icon
+// ARE the identity a merchant recognises a statutory surface by, so they
+// are protected exactly like its presence.
+func TestParseMenuAmendments_ProtectedKeyCannotBeRelabelledOrReiconed(t *testing.T) {
+	for _, key := range ProtectedMenuKeys {
+		for _, tc := range []struct{ name, field, want string }{
+			{"relabel", "label_key", "cannot be re-labelled"},
+			{"reicon", "icon", "cannot be re-iconed"},
+		} {
+			t.Run(key+"/"+tc.name, func(t *testing.T) {
+				_, err := ParseMenuAmendments("com.example.layout", map[string]any{
+					"amendments": []any{map[string]any{"key": key, tc.field: "nav.catalog"}},
+				})
+				if err == nil {
+					t.Fatalf("%s of protected key %q must be refused at install", tc.name, key)
+				}
+				if !strings.Contains(err.Error(), tc.want) || !strings.Contains(err.Error(), key) {
+					t.Fatalf("error must name the key and what was refused, got: %v", err)
+				}
+			})
+		}
+	}
+}
+
+// A non-protected key stays fully amendable — the refusal above must not
+// have quietly frozen the mechanism's whole point.
+func TestParseMenuAmendments_UnprotectedKeyStillFullyAmendable(t *testing.T) {
+	got, err := ParseMenuAmendments("com.example.layout", map[string]any{
+		"amendments": []any{map[string]any{
+			"key": "/items", "order": float64(50), "label_key": "layout.salon.services", "icon": "scissors",
+		}},
+	})
+	if err != nil {
+		t.Fatalf("/items is not protected and must stay amendable: %v", err)
+	}
+	if len(got) != 1 || got[0].LabelKey != "layout.salon.services" || got[0].Icon != "scissors" {
+		t.Fatalf("parsed amendment mismatch: %+v", got)
 	}
 }
 
@@ -282,5 +330,55 @@ func TestCoreMenu_IsWellFormed(t *testing.T) {
 	}
 	if _, ok := CoreMenuEntry("/nope"); ok {
 		t.Error("CoreMenuEntry must not find an undeclared key")
+	}
+}
+
+// "re-group" must actually group. The renderer draws a heading whenever
+// CONSECUTIVE entries change group, so before groupTogether two entries
+// given the same group but landing apart in Order rendered the SAME
+// heading twice with unrelated tiles between them (independent review of
+// ut-docs#1904, F2) — run-labelling, not grouping.
+func TestResolve_SameGroupEntriesEndUpAdjacent(t *testing.T) {
+	entries := []Entry{
+		{Key: "/a", Order: 10}, {Key: "/b", Order: 20}, {Key: "/c", Order: 30},
+		{Key: "/d", Order: 40}, {Key: "/e", Order: 50},
+	}
+	five := 5
+	got := Resolve(entries, []Amendment{
+		{PluginID: "p", Key: "/a", Group: "g", Order: &five},
+		{PluginID: "p", Key: "/d", Group: "g"},
+	})
+	var keys, groups []string
+	for _, e := range got {
+		keys = append(keys, e.Key)
+		groups = append(groups, e.Group)
+	}
+	if len(got) != 5 {
+		t.Fatalf("grouping must not drop or duplicate entries, got %v", keys)
+	}
+	// The two grouped entries are adjacent, so the renderer emits ONE heading.
+	headings := 0
+	prev := ""
+	for _, g := range groups {
+		if g != "" && g != prev {
+			headings++
+		}
+		prev = g
+	}
+	if headings != 1 {
+		t.Fatalf("same group must render one heading, got %d for %v / %v", headings, keys, groups)
+	}
+	if got[0].Key != "/a" || got[1].Key != "/d" {
+		t.Fatalf("group members must gather at the earliest member's position, got %v", keys)
+	}
+}
+
+// Grouping must be a no-op when no amendment sets a group — the zero and
+// near-zero paths stay byte-identical.
+func TestResolve_NoGroupAmendmentLeavesOrderUntouched(t *testing.T) {
+	entries := []Entry{{Key: "/a", Order: 10}, {Key: "/b", Order: 20}, {Key: "/c", Order: 30}}
+	got := Resolve(entries, []Amendment{{PluginID: "p", Key: "/b", LabelKey: "x.y"}})
+	if len(got) != 3 || got[0].Key != "/a" || got[1].Key != "/b" || got[2].Key != "/c" {
+		t.Fatalf("a label-only amendment must not reorder anything, got %+v", got)
 	}
 }
