@@ -157,50 +157,51 @@ göre nakit düzeltmeleri" dökümü gösterir — örneğin o dönemdeki tüm
 "bu hafta ödenen toplam depozito iadesi" gibi bir rakam görebilirsiniz. Bu
 bölüm yalnızca dönem içinde en az bir düzeltme olduğunda görünür.
 
-## Counting the drawer at close: skim & new float
+## Kapanışta çekmece sayımı: çelik kasaya çekim ve yeni bakiye
 
-The opening cash for a new shift is **carried over automatically** from
-the register's last close — whatever the previous close left in the
-drawer is pre-filled, so you confirm it rather than re-type it. You can
-still edit the figure if the drawer was corrected in between; whatever
-you submit is what's recorded.
+Yeni bir vardiyanın açılış nakdi, kasanın son kapanışından **otomatik
+olarak devralınır** — önceki kapanışta çekmecede kalan tutar önceden
+doldurulur, böylece yeniden yazmak yerine yalnızca onaylarsınız. Arada
+çekmece düzeltildiyse rakamı yine de düzenleyebilirsiniz; ne gönderirseniz
+o kaydedilir.
 
-When you close a shift, count the drawer and enter the counted cash as
-before. Two optional extras join it:
+Bir vardiyayı kapatırken çekmeceyi sayın ve sayılan nakdi eskisi gibi
+girin. Buna iki isteğe bağlı ek eklenir:
 
-- **Skim to safe** — the amount you move from the drawer to the safe as
-  part of the close. The counted cash minus the skim becomes the drawer's
-  **new float**, which is what the next shift on that register opens with.
-  A skim can't exceed the counted cash, and it never changes the expected
-  figure — the variance always compares your count against takings
-  *before* the skim, so moving money to the safe can't hide a shortage.
-  An optional reason can be recorded with it.
-- **Denomination count** — an optional per-denomination count (how many
-  of each coin and note) stored with the close as a count protocol, for
-  shops that want the till count documented piece by piece. Leave it
-  empty to skip it entirely.
+- **Çelik kasaya çekim** — kapanışın bir parçası olarak çekmeceden çelik
+  kasaya taşıdığınız tutar. Sayılan nakit eksi çekim, çekmecenin **yeni
+  bakiyesini** oluşturur; bu da o kasadaki bir sonraki vardiyanın hangi
+  tutarla açılacağıdır. Çekim, sayılan nakdi aşamaz ve beklenen tutarı
+  asla değiştirmez — fark her zaman sayımınızı çekimden *önceki*
+  hasılatla karşılaştırır, böylece parayı çelik kasaya taşımak bir açığı
+  gizleyemez. İsteğe bağlı bir gerekçe de kaydedilebilir.
+- **Kupür sayımı** — kapanışla birlikte bir sayım tutanağı olarak
+  saklanan, isteğe bağlı kupür bazlı sayım (her bozuk para ve banknottan
+  kaç adet olduğu); kasa sayımını kupür kupür belgelemek isteyen
+  mağazalar içindir. Tamamen atlamak için boş bırakın.
 
-## Cash reconciliation on the day-end report
+## Gün sonu (Z) raporunda nakit mutabakatı
 
-The printed end-of-day (Z) report gains a **CASH RECONCILIATION**
-section on any day at least one shift was closed: opening float, cash
-sales, tips held out (only printed on a day that actually has a cash
-tip), pay-ins, pay-outs, calculated (what should be in the drawers),
-counted (what was in them), variance, skim to safe, and the new float
-carried to the next day. Cash sales excludes any cash tip the same way
-tips are already held out of revenue elsewhere on the report — that is
-why the "Tips held out" line sits between cash sales and pay-ins:
-opening float + cash sales + tips held out + pay-ins + pay-outs together
-equal calculated, so the section's own figures still add up once cash
-tipping is in use, not just on an ordinary no-tip day. Skim to safe is
-entered as part of closing the shift, after calculated is already fixed
-for the day, which is why it is listed below variance rather than folded
-into that sum. A non-zero variance is flagged with
-`!!` on the printout, and the Day-end tab marks that day's row with a
-warning tag so a discrepancy is visible on screen without reprinting
-each period. A day with no closed shift still produces a complete
-report — the section is simply absent, and running End of day is never
-blocked on closing a shift.
+En az bir vardiyanın kapatıldığı her günde, basılı gün sonu (Z) raporuna
+bir **CASH RECONCILIATION** (nakit mutabakatı) bölümü eklenir: açılış bakiyesi, nakit satışlar,
+ayrılan bahşişler (yalnızca o gün gerçekten nakit bahşiş varsa basılır),
+nakit girişleri, nakit çıkışları, beklenen (çekmecelerde olması gereken),
+sayılan (çekmecelerde bulunan), fark, çelik kasaya çekim ve ertesi güne
+devreden yeni bakiye. Nakit satışlar, bahşişlerin raporun başka yerlerinde
+zaten hasılattan ayrı tutulmasıyla aynı şekilde, hiçbir nakit bahşişi
+içermez — "Tips held out" (ayrılan bahşişler) satırının nakit satışlar ile nakit girişleri
+arasında yer almasının nedeni de budur: açılış bakiyesi + nakit satışlar +
+ayrılan bahşişler + nakit girişleri + nakit çıkışları toplamı beklenen
+tutara eşittir, böylece nakit bahşiş kullanıldığında da, sıradan bahşişsiz
+bir günde olduğu gibi, bölümün kendi rakamları tutar. Çelik kasaya çekim,
+vardiya kapatılırken, o gün için beklenen tutar zaten kesinleşmişken
+girilir; bu yüzden o toplama katılmak yerine farkın altında listelenir.
+Sıfırdan farklı bir fark, çıktıda `!!` ile işaretlenir ve Gün sonu sekmesi,
+her dönemi yeniden yazdırmaya gerek kalmadan ekranda görülebilmesi için o
+günün satırını bir uyarı etiketiyle işaretler. Kapatılmış vardiyası
+olmayan bir gün yine de eksiksiz bir rapor üretir — bölüm yalnızca
+bulunmaz ve Gün sonu işlemi bir vardiyanın kapatılmasına asla bağlı
+değildir.
 
 ## Tüm kasaların satışlarını görme (İşlem geçmişi)
 

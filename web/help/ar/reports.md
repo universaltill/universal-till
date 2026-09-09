@@ -147,50 +147,46 @@ JSON، مثلاً لتسليمها لمدقق حسابات.
 المسحوبة هذا الأسبوع" دون فتح صفحة التدقيق. يظهر هذا القسم فقط عند وجود
 تعديل واحد على الأقل خلال الفترة.
 
-## Counting the drawer at close: skim & new float
+## عد الدرج عند الإغلاق: السحب إلى الخزنة والرصيد الجديد
 
-The opening cash for a new shift is **carried over automatically** from
-the register's last close — whatever the previous close left in the
-drawer is pre-filled, so you confirm it rather than re-type it. You can
-still edit the figure if the drawer was corrected in between; whatever
-you submit is what's recorded.
+النقد الافتتاحي لوردية جديدة **يُرحَّل تلقائياً** من آخر إغلاق للصندوق —
+أي مبلغ تركه الإغلاق السابق في الدرج يُملأ مسبقاً، فتؤكده بدلاً من إعادة
+كتابته. يمكنك تعديل الرقم إن جرى تصحيح الدرج في الأثناء؛ وما تُرسله هو ما
+يُسجَّل.
 
-When you close a shift, count the drawer and enter the counted cash as
-before. Two optional extras join it:
+عند إغلاق وردية، عُدّ الدرج وأدخل النقد المعدود كما كان يحدث سابقاً.
+تنضم إليه إضافتان اختياريتان:
 
-- **Skim to safe** — the amount you move from the drawer to the safe as
-  part of the close. The counted cash minus the skim becomes the drawer's
-  **new float**, which is what the next shift on that register opens with.
-  A skim can't exceed the counted cash, and it never changes the expected
-  figure — the variance always compares your count against takings
-  *before* the skim, so moving money to the safe can't hide a shortage.
-  An optional reason can be recorded with it.
-- **Denomination count** — an optional per-denomination count (how many
-  of each coin and note) stored with the close as a count protocol, for
-  shops that want the till count documented piece by piece. Leave it
-  empty to skip it entirely.
+- **السحب إلى الخزنة** — المبلغ الذي تنقله من الدرج إلى الخزنة كجزء من
+  الإغلاق. النقد المعدود ناقص السحب يصبح **الرصيد الجديد** للدرج، وهو ما
+  تُفتح به الوردية التالية على ذلك الصندوق. لا يمكن أن يتجاوز السحب النقد
+  المعدود، ولا يغيّر أبداً الرقم المتوقع — فالفرق يقارن دائماً عدّك
+  بالمبيعات *قبل* السحب، بحيث لا يمكن لنقل المال إلى الخزنة أن يخفي عجزاً.
+  يمكن تسجيل سبب اختياري معه.
+- **عدّ الفئات النقدية** — عدّ اختياري لكل فئة نقدية (عدد كل قطعة معدنية
+  وورقة نقدية) يُحفظ مع الإغلاق كمحضر عدّ، للمتاجر التي تريد توثيق عدّ
+  الصندوق قطعة بقطعة. اتركه فارغاً لتخطّيه بالكامل.
 
-## Cash reconciliation on the day-end report
+## التسوية النقدية في تقرير نهاية اليوم (Z)
 
-The printed end-of-day (Z) report gains a **CASH RECONCILIATION**
-section on any day at least one shift was closed: opening float, cash
-sales, tips held out (only printed on a day that actually has a cash
-tip), pay-ins, pay-outs, calculated (what should be in the drawers),
-counted (what was in them), variance, skim to safe, and the new float
-carried to the next day. Cash sales excludes any cash tip the same way
-tips are already held out of revenue elsewhere on the report — that is
-why the "Tips held out" line sits between cash sales and pay-ins:
-opening float + cash sales + tips held out + pay-ins + pay-outs together
-equal calculated, so the section's own figures still add up once cash
-tipping is in use, not just on an ordinary no-tip day. Skim to safe is
-entered as part of closing the shift, after calculated is already fixed
-for the day, which is why it is listed below variance rather than folded
-into that sum. A non-zero variance is flagged with
-`!!` on the printout, and the Day-end tab marks that day's row with a
-warning tag so a discrepancy is visible on screen without reprinting
-each period. A day with no closed shift still produces a complete
-report — the section is simply absent, and running End of day is never
-blocked on closing a shift.
+يكتسب تقرير نهاية اليوم (Z) المطبوع قسم **CASH RECONCILIATION** (التسوية النقدية) في أي يوم
+أُغلقت فيه وردية واحدة على الأقل: الرصيد الافتتاحي، المبيعات النقدية،
+الإكراميات المحتجزة (تُطبع فقط في يوم توجد فيه إكرامية نقدية فعلاً)،
+الإضافات النقدية، المسحوبات النقدية، المتوقع (ما ينبغي أن يكون في
+الأدراج)، المعدود (ما كان فيها فعلاً)، الفرق، السحب إلى الخزنة، والرصيد
+الجديد المرحَّل لليوم التالي. تستبعد المبيعات النقدية أي إكرامية نقدية
+بنفس الطريقة التي تُحتجز بها الإكراميات من الإيراد في مكان آخر من
+التقرير — لهذا يقع سطر "Tips held out" (الإكراميات المحتجزة) بين المبيعات النقدية
+والإضافات النقدية: الرصيد الافتتاحي + المبيعات النقدية + الإكراميات
+المحتجزة + الإضافات النقدية + المسحوبات النقدية يساوي مجموعها المتوقع،
+بحيث تظل أرقام القسم متوازنة عند استخدام الإكرامية النقدية، لا في يوم
+عادي بلا إكرامية فقط. يُدخَل السحب إلى الخزنة كجزء من إغلاق الوردية، بعد
+أن يكون المتوقع قد تحدَّد بالفعل لليوم، ولهذا يُدرَج أسفل الفرق بدلاً من
+ضمّه إلى ذلك المجموع. يُعلَّم أي فرق غير صفري بعلامة `!!` على الطباعة،
+ويضع تبويب نهاية اليوم علامة تحذير على صف ذلك اليوم بحيث تظهر أي مفارقة
+على الشاشة دون إعادة طباعة كل فترة. اليوم الذي لا تُغلق فيه أي وردية ينتج
+عنه تقرير كامل مع ذلك — يكون القسم غائباً فحسب، ولا يتوقف تشغيل نهاية
+اليوم أبداً على إغلاق وردية.
 
 ## عرض مبيعات كل الصناديق (سجل المبيعات)
 
