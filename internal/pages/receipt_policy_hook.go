@@ -41,11 +41,20 @@ func isReceiptPolicy(s string) bool {
 // and nothing here may ever block a sale or a settings save (ADR-0050
 // Decision 2: "the plugin's absence must not be catastrophic").
 //
-// Deliberately NOT memoized the way pluginChargePolicyAsker is: this is
-// asked from printerConfigChecked (settings read) and the printer-settings
-// save handler, not from the per-keystroke totals recompute, so a plain
-// one-shot ask is the right shape. The zero-plugin fast path is still one
-// map lookup (HasSubscribers) with no module boot.
+// NOT memoized the way pluginChargePolicyAsker is — an accepted, temporary
+// gap, not a considered tradeoff (review finding, 2026-09-09): every
+// printerConfig/printerConfigChecked caller goes through here, and that
+// includes the tender/checkout handler, kitchen-ticket printing, EOD, and
+// invoice rendering (12 call sites total, not just the settings read and
+// save paths this comment used to claim). The zero-plugin fast path stays
+// one map lookup (HasSubscribers), so this costs nothing today — no
+// installed plugin answers receipt.policy.ask yet. The moment one does,
+// every one of those call sites pays a synchronous WASM dispatch plus an
+// event_dispatch audit INSERT (EventBus.Ask -> auditDispatch) on its own
+// hot path, same as charge.policy.ask would without pluginChargePolicyAsker's
+// memoization. Add the same bus-generation-keyed caching here before
+// ut-plugin-tax-de (or any plugin) actually subscribes — tracked as a
+// follow-up, not done in this change.
 const receiptPolicyAskEvent = "receipt.policy.ask"
 
 // receiptPolicyAskPayload is the event payload a subscribing plugin receives
