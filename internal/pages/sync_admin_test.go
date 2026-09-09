@@ -39,6 +39,12 @@ func newMigratedSyncDeps(t *testing.T, name string) *common.Deps {
 	cfg := &config.Config{
 		Theme:   "default",
 		Locales: config.Locales{Currency: "GBP", Locale: "en", TaxRate: 20},
+		// CompiledDefaultLocale mirrors Locales.Locale here, same as
+		// config.Init() sets them identically at boot (ut-docs#1892) —
+		// LoadRuntimeConfig is what diverges them in production by
+		// overwriting Locales.Locale with the persisted store.locale; this
+		// fixture never calls it, so both fields legitimately still agree.
+		CompiledDefaultLocale: "en",
 		Marketplace: config.MarketplaceConfig{
 			EndpointURL: "http://localhost:8081",
 		},
