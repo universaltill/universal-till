@@ -113,6 +113,9 @@ func TestInitDefaults(t *testing.T) {
 	if cfg.DefaultLocale != "en-US" {
 		t.Errorf("DefaultLocale = %q", cfg.DefaultLocale)
 	}
+	if cfg.CompiledDefaultLocale != "en-US" {
+		t.Errorf("CompiledDefaultLocale = %q, want en-US (same as Locales.Locale at Init() time)", cfg.CompiledDefaultLocale)
+	}
 }
 
 // Every env var must actually reach the field it's documented to control —
@@ -221,6 +224,11 @@ func TestInitHonorsEnvOverrides(t *testing.T) {
 	}
 	if cfg.DefaultLocale != "de-DE" {
 		t.Errorf("DefaultLocale = %q, want the UT_MARKETPLACE_LOCALE override", cfg.DefaultLocale)
+	}
+	// CompiledDefaultLocale tracks UT_DEFAULT_LOCALE (same as Locales.Locale
+	// at Init() time), not UT_MARKETPLACE_LOCALE — ut-docs#1892.
+	if cfg.CompiledDefaultLocale != "de-DE" {
+		t.Errorf("CompiledDefaultLocale = %q, want the UT_DEFAULT_LOCALE override", cfg.CompiledDefaultLocale)
 	}
 }
 
