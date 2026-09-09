@@ -202,6 +202,77 @@ func TestSelfOrderShop_HiddenTileRuleOverridesTileDisplay(t *testing.T) {
 	}
 }
 
+// TestSelfOrderShop_GridResolvesImageFromItemImages is the ut-docs#1870 fix:
+// the grid must resolve each tile's image through item_images, the same way
+// every other surface (sale screen, basket, search — internal/data/pos_repo.go)
+// does, instead of assuming every item's thumbnail lives at the upload-only
+// /public/assets/items/<id>/thumb.png path. A built-in category icon (the
+// ut-docs#1844 picker's own path shape) previously either showed a stale
+// uploaded photo still sitting at that guessed path, or a 404 hidden by the
+// tile's onerror.
+func TestSelfOrderShop_GridResolvesImageFromItemImages(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	if _, err := d.DB.Exec(`INSERT INTO item_images (id, item_id, path, role) VALUES ('img1','itm-coffee','/public/assets/category-icons/coffee.svg','thumbnail')`); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/self-order/grid", nil))
+	body := rec.Body.String()
+	if !strings.Contains(body, "/public/assets/category-icons/coffee.svg") {
+		t.Fatalf("grid tile should show the item's built-in icon from item_images, got: %s", body)
+	}
+	if strings.Contains(body, "/public/assets/items/itm-coffee/thumb.png") {
+		t.Fatal("grid must not fall back to the hardcoded upload-only thumbnail path when item_images says otherwise")
+	}
+}
+
+// An item with an actually-uploaded photo (still an item_images row, just a
+// different path shape) must keep showing it — no regression from routing
+// image resolution through item_images instead of a guessed path.
+func TestSelfOrderShop_GridStillShowsUploadedPhoto(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	const uploadPath = "/public/assets/items/itm-coffee/thumb.png"
+	if _, err := d.DB.Exec(`INSERT INTO item_images (id, item_id, path, role) VALUES ('img1','itm-coffee',?,'thumbnail')`, uploadPath); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/self-order/grid", nil))
+	if !strings.Contains(rec.Body.String(), uploadPath) {
+		t.Fatalf("an item with a real uploaded photo should still show it: %s", rec.Body.String())
+	}
+}
+
+// An item with no item_images row at all must render with an empty image
+// src — the tile's own onerror already hides a broken/absent image — rather
+// than a guessed upload path that always 404s.
+func TestSelfOrderShop_GridItemWithNoThumbnailHasNoGuessedPath(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-tea", "TEA", "5000002", "Tea", 250)
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/self-order/grid", nil))
+	body := rec.Body.String()
+	if strings.Contains(body, "/public/assets/items/itm-tea/thumb.png") {
+		t.Fatal("an item with no item_images row must not get a guessed upload path that will 404")
+	}
+	if !strings.Contains(body, `src="" alt=""`) {
+		t.Fatalf("expected an empty image src for an item with no thumbnail, got: %s", body)
+	}
+}
+
 func TestSelfOrderShop_ScanAddsPlainItem(t *testing.T) {
 	dp, d := setupSelfOrderShopDeps(t)
 	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
