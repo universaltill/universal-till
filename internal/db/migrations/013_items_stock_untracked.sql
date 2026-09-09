@@ -1,0 +1,25 @@
+-- 013_items_stock_untracked.sql — ut-docs#1850 (step 2 of #1843: per-item
+-- stock tracking, not just a shop-wide "sell without tracking stock"
+-- switch).
+--
+-- Adds stock_untracked to items. #1843 shipped a shop-wide
+-- AllowNegativeInventory switch (permit selling ANY item past zero); this
+-- is the separate, per-item statement "do not track stock for this item at
+-- all" — no stock_movements row, no inventory row, excluded from the
+-- Inventory screen and low-stock lists, regardless of the shop-wide switch.
+--
+-- Named stock_untracked (inverted sense), NOT track_stock as the issue
+-- body loosely suggested: a `track_stock bool` field's Go zero value is
+-- false, so every ItemInput literal across the codebase that doesn't
+-- explicitly set it (seed data, existing tests, any call site this change
+-- doesn't touch) would silently construct an UNTRACKED item — a landmine
+-- across every existing call site. `stock_untracked` with a false zero
+-- value has the opposite, safe default: an item is tracked unless someone
+-- explicitly says otherwise, matching this column's own DEFAULT 0.
+--
+-- Shipped as an ADDITIVE migration rather than an edit to 001_init.sql:
+-- editing 001_init.sql changes its checksum, and internal/db/db.go's
+-- verifyAppliedMigrations hard-fails an already-migrated database on any
+-- checksum drift — bricking every device that already migrated, including
+-- the pilot install. See 004_brands_is_active.sql for the same trap.
+ALTER TABLE items ADD COLUMN stock_untracked INTEGER NOT NULL DEFAULT 0;

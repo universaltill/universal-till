@@ -38,7 +38,7 @@ func setupSaleDB(t *testing.T) *sql.DB {
 		// ut-docs#820: GetSaleDetail LEFT JOINs tables to resolve a sale's
 		// TableLabel -- needed even though no test row sets sales.table_id.
 		`CREATE TABLE tables (id TEXT PRIMARY KEY, label TEXT NOT NULL);`,
-		`CREATE TABLE items (id TEXT PRIMARY KEY, sku TEXT, name TEXT, base_price INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
+		`CREATE TABLE items (id TEXT PRIMARY KEY, sku TEXT, name TEXT, base_price INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, stock_untracked INTEGER NOT NULL DEFAULT 0);`,
 		`CREATE TABLE item_variants (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, price INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 		// local_date/voided_local_date: column-identical to
 		// internal/db/migrations/007_report_query_local_date_columns.sql

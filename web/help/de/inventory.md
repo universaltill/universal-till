@@ -28,3 +28,7 @@ Manche Geschäfte zählen nie Bestand — sie möchten einfach, dass sich jeder 
 Lassen Sie die Option aus, wenn die Kasse den Verkauf stoppen soll, sobald ein Artikel aufgebraucht ist. Das ist die Voreinstellung — und der Grund, warum ein aus einem System ohne Bestandsführung importierter Katalog zunächst gar nichts verkaufen kann, bis Sie diese Option einschalten.
 
 Wenn Sie aus einem System importieren, das für einen Artikel **„Bestandsführung? Nein“** vermerkt, behandelt die Kasse dessen Mengenspalte nicht als echten Lagerbestand — der Import weist Sie darauf hin, dass die Menge nicht übernommen wurde, statt einen Bestand zu erfinden, den Ihr altes System nie behauptet hat.
+
+## Bestandsführung für einen einzelnen Artikel abschalten
+
+Die Einstellung oben gilt geschäftsweit. Wenn nur einzelne Artikel nie Bestand führen sollen — eine reine Lieferposition, ein Fass, das Sie nicht einzeln zählen — aktivieren Sie stattdessen **„Kein Lagerbestand erfasst“** direkt am Artikel im Katalog, statt die geschäftsweite Einstellung für alles einzuschalten. Dieser Artikel verkauft sich dann uneingeschränkt, wird von jeder Bestandsprüfung übersprungen und taucht nie im Bestand oder auf einer Liste mit niedrigem Bestand auf, während alle anderen Artikel Ihres Geschäfts weiterhin normal geführt werden.

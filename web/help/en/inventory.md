@@ -28,3 +28,7 @@ Some shops never count stock — they just want every item to sell, every time. 
 Leave it off if you want the till to stop a sale when an item runs out. That is the default, and it is why a catalogue imported from a system that did not track stock cannot sell anything until you turn this on.
 
 When you import from a system that records **"Track inventory? No"** for an item, the till does not treat that item's quantity column as a real stock level — the import tells you it did not carry it, rather than inventing an on-hand figure your old system never claimed.
+
+## Stop tracking stock for one item
+
+The setting above is shop-wide. If only a few items should never carry stock — a delivery-only line, a keg you don't count individually — tick **Not stock-tracked** on that item's own entry in the Catalog, instead of turning the shop-wide setting on for everything. That item then sells freely, is skipped by every stock check, and never shows up in Inventory or on a low-stock list, while every other item in your shop keeps being tracked normally.

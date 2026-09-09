@@ -676,6 +676,7 @@ LEFT JOIN inventory inv ON inv.item_id = i.id
 LEFT JOIN stock_locations sl ON sl.id = inv.location_id
 WHERE i.reorder_level > 0
   AND COALESCE(inv.quantity, 0) < i.reorder_level
+  AND i.stock_untracked = 0
 `
 	args := []any{}
 	if locationID != "" {
@@ -4269,6 +4270,7 @@ FROM inventory inv
 JOIN items i ON i.id = inv.item_id
 LEFT JOIN stock_locations sl ON sl.id = inv.location_id
 WHERE i.is_active = 1
+  AND i.stock_untracked = 0
 ORDER BY i.name, sl.name`)
 	if err != nil {
 		return nil, fmt.Errorf("query stock levels: %w", err)
@@ -4489,6 +4491,126 @@ func (r *POSRepo) CurrentQtyBatch(ctx context.Context, tx *sql.Tx, keys []StockK
 			return nil, fmt.Errorf("read inventory batch: %w", err)
 		}
 		rows.Close()
+	}
+	return out, nil
+}
+
+// StockTrackKey identifies an item or variant for TrackedByKey — exactly
+// one of ItemID/VariantID set, same convention as StockKey. Deliberately
+// NOT StockKey itself: stock_untracked is a property of the item, not the
+// (item, location) pair StockKey keys inventory rows by, so reusing
+// StockKey here would require callers to carry a LocationID that plays no
+// part in the lookup — a real risk of a caller building the lookup key with
+// one location and the built StockKey (from a different/empty location)
+// never matching it.
+type StockTrackKey struct {
+	ItemID    string
+	VariantID string
+}
+
+// TrackedByKey reports whether each given item/variant should be
+// stock-tracked (ut-docs#1850) — false only when the resolved item's own
+// stock_untracked flag is set. A key not found (e.g. a bad id) is
+// deliberately ABSENT from neither map slot's zero value story: it is
+// simply missing from the returned map, and the caller must treat a
+// missing key as tracked=true (fail-safe — never silently stop tracking
+// stock because a lookup came back empty). Duplicate input keys are fine.
+func (r *POSRepo) TrackedByKey(ctx context.Context, tx *sql.Tx, keys []StockTrackKey) (map[StockTrackKey]bool, error) {
+	out := make(map[StockTrackKey]bool, len(keys))
+	if len(keys) == 0 {
+		return out, nil
+	}
+	for i, k := range keys {
+		if k.ItemID != "" && k.VariantID != "" {
+			return nil, fmt.Errorf("stock track key %d: cannot specify both itemID and variantID", i+1)
+		}
+		if k.ItemID == "" && k.VariantID == "" {
+			return nil, fmt.Errorf("stock track key %d: itemID or variantID required", i+1)
+		}
+	}
+	var itemIDs, variantIDs []string
+	seenItem := make(map[string]bool)
+	seenVariant := make(map[string]bool)
+	for _, k := range keys {
+		if k.ItemID != "" && !seenItem[k.ItemID] {
+			seenItem[k.ItemID] = true
+			itemIDs = append(itemIDs, k.ItemID)
+		}
+		if k.VariantID != "" && !seenVariant[k.VariantID] {
+			seenVariant[k.VariantID] = true
+			variantIDs = append(variantIDs, k.VariantID)
+		}
+	}
+	exec := r.exec(tx)
+	if len(itemIDs) > 0 {
+		chunk := batchChunkSize(1)
+		for start := 0; start < len(itemIDs); start += chunk {
+			end := start + chunk
+			if end > len(itemIDs) {
+				end = len(itemIDs)
+			}
+			part := itemIDs[start:end]
+			args := make([]any, len(part))
+			placeholders := make([]string, len(part))
+			for i, id := range part {
+				args[i] = id
+				placeholders[i] = "?"
+			}
+			rows, err := exec.QueryContext(ctx,
+				`SELECT id, stock_untracked FROM items WHERE id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+			if err != nil {
+				return nil, fmt.Errorf("read item track flags: %w", err)
+			}
+			for rows.Next() {
+				var id string
+				var untracked bool
+				if err := rows.Scan(&id, &untracked); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan item track flags: %w", err)
+				}
+				out[StockTrackKey{ItemID: id}] = untracked
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("read item track flags: %w", err)
+			}
+			rows.Close()
+		}
+	}
+	if len(variantIDs) > 0 {
+		chunk := batchChunkSize(1)
+		for start := 0; start < len(variantIDs); start += chunk {
+			end := start + chunk
+			if end > len(variantIDs) {
+				end = len(variantIDs)
+			}
+			part := variantIDs[start:end]
+			args := make([]any, len(part))
+			placeholders := make([]string, len(part))
+			for i, id := range part {
+				args[i] = id
+				placeholders[i] = "?"
+			}
+			rows, err := exec.QueryContext(ctx,
+				`SELECT iv.id, i.stock_untracked FROM item_variants iv JOIN items i ON i.id = iv.item_id WHERE iv.id IN (`+strings.Join(placeholders, ",")+`)`, args...)
+			if err != nil {
+				return nil, fmt.Errorf("read variant track flags: %w", err)
+			}
+			for rows.Next() {
+				var id string
+				var untracked bool
+				if err := rows.Scan(&id, &untracked); err != nil {
+					rows.Close()
+					return nil, fmt.Errorf("scan variant track flags: %w", err)
+				}
+				out[StockTrackKey{VariantID: id}] = untracked
+			}
+			if err := rows.Err(); err != nil {
+				rows.Close()
+				return nil, fmt.Errorf("read variant track flags: %w", err)
+			}
+			rows.Close()
+		}
 	}
 	return out, nil
 }

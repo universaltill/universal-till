@@ -87,7 +87,7 @@ func setupBenchmarkDB(tb testing.TB) *sql.DB {
 	stmts := []string{
 		`PRAGMA foreign_keys = ON;`,
 		`CREATE TABLE stock_locations (id TEXT PRIMARY KEY, name TEXT);`,
-		`CREATE TABLE items (id TEXT PRIMARY KEY, sku TEXT, name TEXT, description TEXT, category_id TEXT, brand_id TEXT, unit TEXT, base_price INTEGER NOT NULL, tax_code_id TEXT, is_active INTEGER NOT NULL DEFAULT 1, is_weighed INTEGER NOT NULL DEFAULT 0);`,
+		`CREATE TABLE items (id TEXT PRIMARY KEY, sku TEXT, name TEXT, description TEXT, category_id TEXT, brand_id TEXT, unit TEXT, base_price INTEGER NOT NULL, tax_code_id TEXT, is_active INTEGER NOT NULL DEFAULT 1, is_weighed INTEGER NOT NULL DEFAULT 0, stock_untracked INTEGER NOT NULL DEFAULT 0);`,
 		`CREATE TABLE item_barcodes (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, barcode TEXT NOT NULL);`,
 		`CREATE TABLE item_variants (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, price INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 		// local_date/voided_local_date: column-identical to migration 007

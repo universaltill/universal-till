@@ -220,7 +220,7 @@ func (r *CatalogRepo) ListItems(ctx context.Context) ([]catalogtypes.ItemInput, 
 	// COALESCE(sku, '') — ut-docs#1176: sku is nullable (no real SKU stores
 	// NULL, not a UUID), and itm.SKU below is a plain string, so scanning a
 	// NULL directly would error on every item that has no real SKU.
-	rows, err := r.db.QueryContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data FROM items WHERE is_active = 1 ORDER BY name`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data, stock_untracked FROM items WHERE is_active = 1 ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +229,7 @@ func (r *CatalogRepo) ListItems(ctx context.Context) ([]catalogtypes.ItemInput, 
 	for rows.Next() {
 		var itm catalogtypes.ItemInput
 		var tax, cat, brand, desc sql.NullString
-		if err := rows.Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData); err != nil {
+		if err := rows.Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData, &itm.StockUntracked); err != nil {
 			return nil, err
 		}
 		if desc.Valid {
@@ -321,8 +321,8 @@ func (r *CatalogRepo) GetItem(ctx context.Context, itemID string) (catalogtypes.
 func getItemExec(ctx context.Context, ex execer, itemID string) (catalogtypes.ItemInput, bool, error) {
 	var itm catalogtypes.ItemInput
 	var tax, cat, brand, desc sql.NullString
-	err := ex.QueryRowContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data FROM items WHERE id = ?`, itemID).
-		Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData)
+	err := ex.QueryRowContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data, stock_untracked FROM items WHERE id = ?`, itemID).
+		Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData, &itm.StockUntracked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return catalogtypes.ItemInput{}, false, nil
 	}
@@ -1162,9 +1162,9 @@ func (r *CatalogRepo) CreateItem(ctx context.Context, in catalogtypes.ItemInput)
 		active = 0
 	}
 	_, err := r.db.ExecContext(ctx, `
-INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, in.ID, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed))
+INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, stock_untracked)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, in.ID, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return "", ErrSKUExists
@@ -1181,8 +1181,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	// row (stock tracking is opt-in), so a failure here — e.g. no
 	// stock_locations table at all, a legitimately stockless deployment —
 	// must never fail item creation itself, only get logged.
-	if err := r.ensureInventoryRow(ctx, in.ID, ""); err != nil {
-		logging.L().Warnf("catalog: create item %s: inventory row not created: %v", in.ID, err)
+	// ut-docs#1850: an item created stock_untracked gets NO inventory row
+	// at all, not even the usual zero-quantity placeholder — the whole
+	// point of the flag is that this item never appears in Inventory.
+	if !in.StockUntracked {
+		if err := r.ensureInventoryRow(ctx, in.ID, ""); err != nil {
+			logging.L().Warnf("catalog: create item %s: inventory row not created: %v", in.ID, err)
+		}
 	}
 	return in.ID, nil
 }
@@ -1258,9 +1263,9 @@ func (r *CatalogRepo) CreateItemTx(ctx context.Context, tx *sql.Tx, in catalogty
 		active = 0
 	}
 	_, err := tx.ExecContext(ctx, `
-INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, in.ID, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed))
+INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, stock_untracked)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, in.ID, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked))
 	if err != nil {
 		// ut-docs#1510: unlike CreateItem, this branch never translated a
 		// UNIQUE(sku) violation into the distinguishable ErrSKUExists — a
@@ -1276,9 +1281,12 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	}
 	// Same reasoning as CreateItem: the item is already valid and sellable
 	// without a stock row (stock tracking is opt-in), so this must never
-	// fail — or roll back — item creation, only get logged.
-	if err := ensureInventoryRowExec(ctx, tx, in.ID, ""); err != nil {
-		logging.L().Warnf("catalog: create item %s: inventory row not created: %v", in.ID, err)
+	// fail — or roll back — item creation, only get logged. ut-docs#1850:
+	// stock_untracked skips the row entirely, same as CreateItem.
+	if !in.StockUntracked {
+		if err := ensureInventoryRowExec(ctx, tx, in.ID, ""); err != nil {
+			logging.L().Warnf("catalog: create item %s: inventory row not created: %v", in.ID, err)
+		}
 	}
 	return in.ID, nil
 }
@@ -1567,9 +1575,10 @@ SET sku = COALESCE(NULLIF(?, ''), sku),
     base_price = ?,
     tax_code_id = ?,
     is_active = ?,
-    is_weighed = ?
+    is_weighed = ?,
+    stock_untracked = ?
 WHERE id = ?
-`, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), in.ID)
+`, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked), in.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrSKUExists
