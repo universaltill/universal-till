@@ -2411,12 +2411,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		switch logicalKey {
 		case fiscal.KeyOverrideUntil, fiscal.KeyOverrideReason, fiscal.KeyOverrideActor:
 			if !canPerform(d, r, "fiscal_tse_override") {
-				http.Error(w, "owner (admin) required", http.StatusForbidden)
+				httpx.RenderError(w, r, http.StatusForbidden, "fiscaldevice.error.owner_required", nil)
 				return
 			}
 		case fiscal.KeySystemOfRecord, wireKeySigningDeviceConfigured:
 			if !canPerform(d, r, "fiscal_tse_override") {
-				http.Error(w, "owner (admin) required", http.StatusForbidden)
+				httpx.RenderError(w, r, http.StatusForbidden, "fiscaldevice.error.owner_required", nil)
 				return
 			}
 		}

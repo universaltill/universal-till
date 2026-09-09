@@ -189,8 +189,15 @@ func createSigningOverride(dp *common.Deps) http.HandlerFunc {
 		}
 		actorID := requestedBy
 		if !canPerform(dp, r, "fiscal_tse_override") {
+			// ut-docs#1887 (sibling to #1814): reuses the same
+			// fiscaldevice.error.owner_required key the page-route gate
+			// uses — locale resolved once here since both owner-required
+			// refusals in this handler need it, unlike the other
+			// call sites in this function (deliberately untouched,
+			// ut-docs#893's much larger tracked sweep).
+			locale := httpx.ResolveLocale(w, r)
 			if req.OwnerPIN == "" {
-				respondFiscalError(w, r, http.StatusForbidden, "owner (admin) approval required")
+				respondFiscalError(w, r, http.StatusForbidden, httpx.T(locale, "fiscaldevice.error.owner_required"))
 				return
 			}
 			svc := dp.AuthSvc
@@ -216,7 +223,7 @@ func createSigningOverride(dp *common.Deps) http.HandlerFunc {
 				return
 			}
 			if approver.Role != "admin" && approver.Role != "super_admin" {
-				respondFiscalError(w, r, http.StatusForbidden, "owner (admin) approval required")
+				respondFiscalError(w, r, http.StatusForbidden, httpx.T(locale, "fiscaldevice.error.owner_required"))
 				return
 			}
 			actorID = approver.ID

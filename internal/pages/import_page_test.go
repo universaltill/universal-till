@@ -841,7 +841,7 @@ func TestImport_TaxColumnsGroupOntoTaxCodesAndPopulateOverrides(t *testing.T) {
 		t.Fatalf("takeaway_rate_overrides not written: %v", err)
 	}
 	var overrides map[string]int
-	if err := json.Unmarshal([]byte(raw), &overrides); err != nil {
+	if err := json.Unmarshal([]byte(data.DecodeMapSettingValue(raw)), &overrides); err != nil {
 		t.Fatalf("overrides not valid JSON %q: %v", raw, err)
 	}
 	if len(overrides) != 1 || overrides[latteCode] != 700 {
@@ -1104,7 +1104,7 @@ func TestImport_TaxOverridesMergePreservesExistingEntries(t *testing.T) {
 		t.Fatal(err)
 	}
 	var overrides map[string]int
-	if err := json.Unmarshal([]byte(raw), &overrides); err != nil {
+	if err := json.Unmarshal([]byte(data.DecodeMapSettingValue(raw)), &overrides); err != nil {
 		t.Fatalf("overrides not valid JSON %q: %v", raw, err)
 	}
 	if overrides[existingCode] != 550 {
@@ -1334,7 +1334,7 @@ BEGIN SELECT RAISE(ABORT, 'simulated item insert failure'); END;`); err != nil {
 	}
 	if raw.Valid && raw.String != "" {
 		var overrides map[string]int
-		if err := json.Unmarshal([]byte(raw.String), &overrides); err != nil {
+		if err := json.Unmarshal([]byte(data.DecodeMapSettingValue(raw.String)), &overrides); err != nil {
 			t.Fatalf("overrides not valid JSON %q: %v", raw.String, err)
 		}
 		if len(overrides) != 0 {
