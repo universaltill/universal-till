@@ -1325,6 +1325,70 @@ func (r *CatalogRepo) EnsureDefaultThumbnail(ctx context.Context, itemID, path s
 	return nil
 }
 
+// ItemThumbnails returns every item's thumbnail path (item_images,
+// role=thumbnail), keyed by item id — the whole-catalog counterpart to
+// ItemBarcodes/ItemVariants above, for the catalog list's initial render
+// (ut-docs#1842). An item with no thumbnail row simply has no entry; the
+// caller decides what an absent entry means (nothing to show).
+func (r *CatalogRepo) ItemThumbnails(ctx context.Context) (map[string]string, error) {
+	rows, err := r.db.QueryContext(ctx, `SELECT item_id, path FROM item_images WHERE role = 'thumbnail'`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := map[string]string{}
+	for rows.Next() {
+		var id, path string
+		if err := rows.Scan(&id, &path); err != nil {
+			return nil, err
+		}
+		out[id] = path
+	}
+	return out, rows.Err()
+}
+
+// ItemThumbnailFor returns one item's thumbnail path (item_images,
+// role=thumbnail), or "" if it has none — the single-item counterpart to
+// ItemThumbnails above, mirroring ItemBarcodesFor/ItemVariantsFor for a
+// row-level OOB mutation response (ut-docs#1842) that doesn't need the
+// whole-table map.
+func (r *CatalogRepo) ItemThumbnailFor(ctx context.Context, itemID string) (string, error) {
+	var path string
+	err := r.db.QueryRowContext(ctx,
+		`SELECT path FROM item_images WHERE item_id = ? AND role = 'thumbnail' LIMIT 1`, itemID,
+	).Scan(&path)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	return path, nil
+}
+
+// HasAnyThumbnail reports whether any currently-ACTIVE item has a
+// thumbnail (item_images, role=thumbnail). This is the catalog list's
+// column-collapse decision (ut-docs#1842 AC2): the thumbnail column only
+// exists when it has something to show somewhere in the listing — a
+// thumbnail belonging only to a deactivated (no longer listed) item must
+// not keep the column alive. Re-checked fresh on every row-level OOB
+// mutation too, so a mutation response agrees with whatever the initial
+// render (which asks the same question) currently shows.
+func (r *CatalogRepo) HasAnyThumbnail(ctx context.Context) (bool, error) {
+	var exists int
+	err := r.db.QueryRowContext(ctx,
+		`SELECT 1 FROM item_images ii JOIN items i ON i.id = ii.item_id
+		 WHERE ii.role = 'thumbnail' AND i.is_active = 1 LIMIT 1`,
+	).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
 // SetItemThumbnail unconditionally sets an item's thumbnail (item_images,
 // role=thumbnail) to path — updating an existing row if one exists,
 // inserting one if not. Unlike EnsureDefaultThumbnail above, this DOES

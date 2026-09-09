@@ -12,7 +12,7 @@
               data-brand="{{ with .Item.BrandID }}{{ . }}{{ end }}"
               data-price="{{ .Item.BasePrice }}"
               data-tax="{{ with .Item.TaxCodeID }}{{ . }}{{ end }}">
-            <td class="catalog-thumb-cell">{{ $thumb := printf "/public/assets/items/%s/thumb.png" .Item.ID }}{{ if imgExists $thumb }}<img class="thumb small" src="{{ imgv $thumb }}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">{{ else }}<div class="thumb small" aria-hidden="true"></div>{{ end }}</td>
+            {{ if .ShowThumbColumn }}<td class="catalog-thumb-cell">{{ if .ImageURL }}<img class="thumb small" src="{{ imgv .ImageURL }}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">{{ else }}<div class="thumb small" aria-hidden="true"></div>{{ end }}</td>{{ end }}
             <td class="catalog-name">{{ .Item.Name }}{{ if .Item.IsSampleData }} <span class="sample-badge">{{ T "catalog.sample_badge" }}</span>{{ end }}
               {{ with .Barcodes }}<div class="muted" style="font-size:.8em">{{ T "catalog.barcodes" }}: {{ range $i, $b := . }}{{ if $i }}, {{ end }}{{ $b }}{{ end }}</div>{{ end }}
               {{ with .Variants }}<div class="muted" style="font-size:.8em">{{ T "catalog.variants" }}: {{ range $i, $v := . }}{{ if $i }}, {{ end }}{{ $v.Name }}{{ if $v.Barcode }} [{{ $v.Barcode }}]{{ end }}{{ end }}</div>{{ end }}
@@ -35,7 +35,11 @@
 
 {{/* The "no items yet" placeholder row, shared by the table's else-branch
      and the OOB append fragment below. */}}
-{{ define "catalog_empty_row" }}<tr id="catalog-empty-row"><td colspan="8" class="empty">{{ T "basket.empty" }}</td></tr>{{ end }}
+{{/* Dot: the current colspan (7 without the thumbnail column, 8 with it
+     — ut-docs#1842) — computed Go-side (emptyRowColspan) so this stays
+     consistent with whether the thumbnail <th>/<td>s are showing right
+     now, rather than a value hardcoded here going stale silently. */}}
+{{ define "catalog_empty_row" }}<tr id="catalog-empty-row"><td colspan="{{ . }}" class="empty">{{ T "basket.empty" }}</td></tr>{{ end }}
 
 {{/* ------------------------------------------------------------------
      Out-of-band fragments. Two constraints of the vendored htmx 1.9.12
@@ -75,7 +79,9 @@
 {{ define "catalog_row_delete" }}<table hidden class="ut-oob-carrier" hx-swap-oob="none:#catalog-tbody"><tbody><tr id="catalog-row-{{ . }}" hx-swap-oob="delete"></tr></tbody></table>{{ end }}
 
 {{/* Bring the empty-state placeholder back (last item deactivated). */}}
-{{ define "catalog_empty_row_append_oob" }}<table hidden class="ut-oob-carrier" hx-swap-oob="none:#catalog-tbody"><tbody hx-swap-oob="beforeend:#catalog-tbody">{{ template "catalog_empty_row" }}</tbody></table>{{ end }}
+{{/* Dot: the current colspan (see catalog_empty_row above), passed
+     through unchanged. */}}
+{{ define "catalog_empty_row_append_oob" }}<table hidden class="ut-oob-carrier" hx-swap-oob="none:#catalog-tbody"><tbody hx-swap-oob="beforeend:#catalog-tbody">{{ template "catalog_empty_row" . }}</tbody></table>{{ end }}
 
 {{/* Clear the empty-state placeholder (first item created). */}}
 {{ define "catalog_empty_row_delete" }}<table hidden class="ut-oob-carrier" hx-swap-oob="none:#catalog-tbody"><tbody><tr id="catalog-empty-row" hx-swap-oob="delete"></tr></tbody></table>{{ end }}
