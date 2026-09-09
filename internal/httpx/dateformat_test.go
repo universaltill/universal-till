@@ -48,3 +48,38 @@ func TestFormatDateLatin(t *testing.T) {
 		t.Errorf("FormatDateLatin fa = %q, want Latin digits", got)
 	}
 }
+
+// ut-docs#1632: FormatDateTime is FormatDate plus a 24-hour clock, for a
+// per-event timestamp (journal/audit/my-reports rows) where the time of
+// day matters and multiple rows can share a calendar date — as opposed to
+// FormatDate's date-only rendering (an invoice's issue date). Same
+// date-order table and digit-shape substitution as FormatDate, applied to
+// the whole "date time" string so the clock digits localize too.
+func TestFormatDateTime(t *testing.T) {
+	d := time.Date(2026, 9, 6, 14, 5, 0, 0, time.UTC)
+	cases := []struct{ locale, want string }{
+		{"de-DE", "06.09.2026 14:05"},
+		{"en-GB", "06/09/2026 14:05"},
+		{"en-US", "09/06/2026 14:05"},
+	}
+	for _, c := range cases {
+		if got := FormatDateTime(d, c.locale); got != c.want {
+			t.Errorf("FormatDateTime(%s) = %q, want %q", c.locale, got, c.want)
+		}
+	}
+	// Digit shape follows locale for the whole string, clock included —
+	// same as FormatDate's own fa case.
+	if got := FormatDateTime(d, "fa"); got != "۰۶/۰۹/۲۰۲۶ ۱۴:۰۵" {
+		t.Errorf("FormatDateTime fa = %q, want Persian digits throughout", got)
+	}
+}
+
+func TestFormatDateTimeLatin(t *testing.T) {
+	d := time.Date(2026, 9, 6, 14, 5, 0, 0, time.UTC)
+	if got := FormatDateTimeLatin(d, "de-DE"); got != "06.09.2026 14:05" {
+		t.Errorf("FormatDateTimeLatin de-DE = %q", got)
+	}
+	if got := FormatDateTimeLatin(d, "fa"); got != "06/09/2026 14:05" {
+		t.Errorf("FormatDateTimeLatin fa = %q, want Latin digits", got)
+	}
+}

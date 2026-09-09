@@ -623,6 +623,35 @@ func FuncsFor(locale string) template.FuncMap {
 		}
 		return FormatDate(parsed, locale)
 	}
+	// {{ datetime .CreatedAt }}: FormatDateTime — `date`'s date-ordering/
+	// digit-shape convention plus a 24-hour clock, in LOCAL time, for a
+	// per-event timestamp where the time of day matters (a journal row, an
+	// audit entry) — as opposed to `date`'s date-only rendering (ut-docs#1632).
+	// Same accepted-value contract and same-string-back-on-parse-failure
+	// behavior as `date` above.
+	funcs["datetime"] = func(v any) string {
+		switch t := v.(type) {
+		case time.Time:
+			return FormatDateTime(t.Local(), locale)
+		case string:
+			parsed, err := time.Parse(time.RFC3339, t)
+			if err != nil {
+				return t
+			}
+			return FormatDateTime(parsed.Local(), locale)
+		default:
+			return ""
+		}
+	}
+	// {{ datetimeUTC .CreatedAt }}: `datetime`'s convention WITHOUT the
+	// Local() conversion — same reasoning as `dateUTC` above.
+	funcs["datetimeUTC"] = func(v string) string {
+		parsed, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return v
+		}
+		return FormatDateTime(parsed, locale)
+	}
 	// {{ thousandssep }} / {{ decimalsep }}: the same grouping/decimal
 	// convention `money` above follows server-side, exposed for
 	// window.utCurrency's client-side money formatting (web/public/app.js)

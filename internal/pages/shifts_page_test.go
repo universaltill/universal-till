@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -117,6 +118,46 @@ func TestShiftsPage_OpenShiftShowsCurrentAndHistory(t *testing.T) {
 	// FormatMoney hugs the symbol to the number, so GBP renders this "£-3.00".
 	if !strings.Contains(body, "£-3.00") {
 		t.Fatalf("expected the closed shift's variance in history, got: %s", body)
+	}
+}
+
+// ut-docs#1632: the open-shift banner/card and the history table's
+// opened_at/closed_at now render through the locale-aware `datetime`
+// template func instead of the raw RFC3339 string. time.Local pinned to
+// UTC for determinism, same convention as httpx.TestFuncsForExposesDate.
+func TestShiftsPage_RendersLocaleFormattedTimestamps(t *testing.T) {
+	orig := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = orig })
+
+	mux, dp := newShiftsPageTestDeps(t)
+	ctx := t.Context()
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO registers(id,name,is_active) VALUES('reg1','Front Till',1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO shifts(id,register_id,cashier_id,opened_at,opening_cash) VALUES('shift1','reg1','user1','2026-01-01T09:15:00Z',5000)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO shifts(id,register_id,cashier_id,opened_at,closed_at,opening_cash,closing_cash,expected_cash) VALUES('shift0','reg1','user1','2026-01-01T00:30:00Z','2026-01-01T08:45:00Z',1000,1200,1500)`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/shifts?lang=de-DE", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, raw := range []string{"2026-01-01T09:15:00Z", "2026-01-01T00:30:00Z", "2026-01-01T08:45:00Z"} {
+		if strings.Contains(body, raw) {
+			t.Fatalf("shifts page must not show the raw RFC3339 timestamp %q: %s", raw, body)
+		}
+	}
+	for _, want := range []string{"01.01.2026 09:15", "01.01.2026 00:30", "01.01.2026 08:45"} {
+		if !strings.Contains(body, want) {
+			t.Fatalf("shifts page must show the de-DE-formatted date+time %q: %s", want, body)
+		}
 	}
 }
 

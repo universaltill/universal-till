@@ -80,6 +80,55 @@ func TestAuditPage_ManagerOnlyAndRendersRealData(t *testing.T) {
 	}
 }
 
+// ut-docs#1632: the audit trail's CreatedAt column now renders through the
+// locale-aware `datetime` template func instead of the raw RFC3339 string.
+// time.Local pinned to UTC for determinism, same convention as
+// httpx.TestFuncsForExposesDate.
+func TestAuditPage_RendersLocaleFormattedCreatedAt(t *testing.T) {
+	orig := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = orig })
+
+	chdirRoot(t)
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+
+	if _, err := db.Exec(`INSERT INTO users(id, username, display_name, pin_hash, role) VALUES ('mgr-1','manager1','Manager One','x','manager')`); err != nil {
+		t.Fatalf("seed manager user: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO audit_log(id, actor_id, entity_type, entity_id, action, data_json, created_at) VALUES ('a1','mgr-1','plugin','com.x.faq','plugin_install','{"version":"1.0.0"}','2026-01-02T10:15:00Z')`); err != nil {
+		t.Fatalf("seed audit entry: %v", err)
+	}
+
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+
+	cfg := &config.Config{Theme: "default"}
+	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
+	dp := &common.Deps{Cfg: cfg, Db: db, State: state,
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(db), AuthSvc: auth.NewService(db)}
+	mux := http.NewServeMux()
+	registerAuditPage(mux, dp)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/audit?lang=de-DE", nil), auth.User{ID: "mgr-1", Role: "manager"})
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manager = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "2026-01-02T10:15:00Z") {
+		t.Fatalf("audit row must not show the raw RFC3339 timestamp: %s", body)
+	}
+	if !strings.Contains(body, "02.01.2026 10:15") {
+		t.Fatalf("audit row must show the de-DE-formatted date+time: %s", body)
+	}
+}
+
 // A repo failure on GET /audit must never leak the raw Go/SQL error to the
 // operator (ut-docs#893, the wider sweep #316 deferred) — it goes through
 // httpx.RenderError (ut-docs#1663), same as catalog/handlers.go's sites.

@@ -195,6 +195,47 @@ func groupThousands(s string, sep byte) string {
 	return b.String()
 }
 
+// indianGrouping reports whether locale uses the Indian numbering
+// convention — the last 3 digits as one group, then every 2 digits
+// leftward ("123456789" -> "12,34,56,789") — instead of groupThousands'
+// uniform 3-digit grouping (ut-docs#1632). en-IN/ur-PK are this product's
+// only locales that need it (internal/data.BuiltinCountryDefaults'
+// IN->en-IN, PK->ur-PK); checked as a full lowercased tag, same style as
+// dateLayout's "en-us" special case, since this is a REGION distinction
+// within "en", not a base-language one.
+func indianGrouping(locale string) bool {
+	lang := strings.ToLower(locale)
+	return lang == "en-in" || lang == "ur-pk"
+}
+
+// groupIndianStyle inserts sep into an unsigned integer string using the
+// Indian numbering convention: the last 3 digits form one group, then
+// every 2 digits leftward ("123456789" -> "12,34,56,789",
+// "123456" -> "1,23,456").
+func groupIndianStyle(s string, sep byte) string {
+	n := len(s)
+	if n <= 3 {
+		return s
+	}
+	rest, last3 := s[:n-3], s[n-3:]
+	var b strings.Builder
+	head := len(rest) % 2
+	if head > 0 {
+		b.WriteString(rest[:head])
+	}
+	for i := head; i < len(rest); i += 2 {
+		if b.Len() > 0 {
+			b.WriteByte(sep)
+		}
+		b.WriteString(rest[i : i+2])
+	}
+	if b.Len() > 0 {
+		b.WriteByte(sep)
+	}
+	b.WriteString(last3)
+	return b.String()
+}
+
 // numberSeparators returns the thousands and decimal separator bytes for
 // locale's Latin-digit grouping convention (ut-docs#1130) — applied to a
 // plain "1234.56"-shaped string BEFORE any digit-shape substitution
@@ -249,7 +290,12 @@ func formatGrouped(v, locale string) string {
 	}
 	thousands, decimal := numberSeparators(locale)
 	intPart, fracPart, hasFrac := strings.Cut(v, ".")
-	out := groupThousands(intPart, thousands)
+	var out string
+	if indianGrouping(locale) {
+		out = groupIndianStyle(intPart, thousands)
+	} else {
+		out = groupThousands(intPart, thousands)
+	}
 	if hasFrac {
 		out += string(decimal) + fracPart
 	}

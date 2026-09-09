@@ -1,7 +1,7 @@
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "shifts.title" }}</h1>
-  {{ if .HasOpen }}<span class="tag" style="background:rgba(22,163,74,.12); color:var(--success)">{{ T "shifts.open_since" }} {{ .Current.OpenedAt }}</span>
+  {{ if .HasOpen }}<span class="tag" style="background:rgba(22,163,74,.12); color:var(--success)">{{ T "shifts.open_since" }} {{ datetime .Current.OpenedAt }}</span>
   {{ else }}<span class="tag">{{ T "shifts.none_open" }}</span>{{ end }}
 </div>
 
@@ -14,7 +14,7 @@
         <tbody>
           <tr><td>{{ T "shifts.register" }}</td><td>{{ .Current.RegisterID }}</td></tr>
           <tr><td>{{ T "shifts.cashier" }}</td><td>{{ .Current.CashierID }}</td></tr>
-          <tr><td>{{ T "shifts.opened_at" }}</td><td>{{ .Current.OpenedAt }}</td></tr>
+          <tr><td>{{ T "shifts.opened_at" }}</td><td>{{ datetime .Current.OpenedAt }}</td></tr>
           <tr><td>{{ T "shifts.opening_cash" }}</td><td>{{ money .Current.OpeningCash }}</td></tr>
         </tbody>
       </table>
@@ -29,8 +29,8 @@
           {{ if .History }}
             {{ range .History }}
             <tr>
-              <td>{{ .OpenedAt }}</td>
-              <td>{{ if .Open }}<span class="tag" style="color:var(--success)">{{ T "shifts.open" }}</span>{{ else }}{{ .ClosedAt }}{{ end }}</td>
+              <td>{{ datetime .OpenedAt }}</td>
+              <td>{{ if .Open }}<span class="tag" style="color:var(--success)">{{ T "shifts.open" }}</span>{{ else }}{{ datetime .ClosedAt }}{{ end }}</td>
               <td>{{ money .OpeningCash }}</td>
               <td>{{ if .Open }}—{{ else }}{{ money .ClosingCash }}{{ end }}</td>
               <td>{{ if .Open }}—{{ else }}{{ money .Expected }}{{ end }}</td>
