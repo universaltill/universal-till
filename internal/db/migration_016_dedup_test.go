@@ -10,10 +10,10 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-// TestMigration015DedupsBeforeUniqueIndex is the ut-docs#1871 independent
+// TestMigration016DedupsBeforeUniqueIndex is the ut-docs#1871 independent
 // review finding: CREATE UNIQUE INDEX IF NOT EXISTS only guards against
 // the index itself already existing, not against pre-existing data that
-// violates it. Migration 015 exists specifically because the race it
+// violates it. Migration 016 exists specifically because the race it
 // closes (SetItemThumbnail's old non-atomic UPDATE-then-INSERT) may
 // already have produced duplicate item_images rows on a live till, so an
 // unguarded CREATE UNIQUE INDEX against such a database would fail the
@@ -23,10 +23,10 @@ import (
 // role='thumbnail' rows for one item), runs the real migration file
 // verbatim (not a re-typed copy), and asserts it both succeeds and
 // actually enforces uniqueness afterward.
-func TestMigration015DedupsBeforeUniqueIndex(t *testing.T) {
-	sqlBytes, err := os.ReadFile(filepath.Join("migrations", "015_item_images_thumbnail_unique.sql"))
+func TestMigration016DedupsBeforeUniqueIndex(t *testing.T) {
+	sqlBytes, err := os.ReadFile(filepath.Join("migrations", "016_item_images_thumbnail_unique.sql"))
 	if err != nil {
-		t.Fatalf("read migration 015: %v", err)
+		t.Fatalf("read migration 016: %v", err)
 	}
 
 	dbh, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "dedup.db"))
@@ -57,7 +57,7 @@ func TestMigration015DedupsBeforeUniqueIndex(t *testing.T) {
 			continue
 		}
 		if _, err := dbh.Exec(stmt); err != nil {
-			t.Fatalf("migration 015 statement %q failed against a database with a pre-existing duplicate: %v", stmt, err)
+			t.Fatalf("migration 016 statement %q failed against a database with a pre-existing duplicate: %v", stmt, err)
 		}
 	}
 
@@ -89,13 +89,13 @@ func TestMigration015DedupsBeforeUniqueIndex(t *testing.T) {
 	}
 }
 
-// TestMigration015NoOpOnCleanData proves the common, expected case (no
+// TestMigration016NoOpOnCleanData proves the common, expected case (no
 // pre-existing duplicates — every fresh or already-healthy database)
 // deletes nothing.
-func TestMigration015NoOpOnCleanData(t *testing.T) {
-	sqlBytes, err := os.ReadFile(filepath.Join("migrations", "015_item_images_thumbnail_unique.sql"))
+func TestMigration016NoOpOnCleanData(t *testing.T) {
+	sqlBytes, err := os.ReadFile(filepath.Join("migrations", "016_item_images_thumbnail_unique.sql"))
 	if err != nil {
-		t.Fatalf("read migration 015: %v", err)
+		t.Fatalf("read migration 016: %v", err)
 	}
 
 	dbh, err := sql.Open("sqlite", filepath.Join(t.TempDir(), "clean.db"))
@@ -119,7 +119,7 @@ func TestMigration015NoOpOnCleanData(t *testing.T) {
 			continue
 		}
 		if _, err := dbh.Exec(stmt); err != nil {
-			t.Fatalf("migration 015 statement %q failed: %v", stmt, err)
+			t.Fatalf("migration 016 statement %q failed: %v", stmt, err)
 		}
 	}
 

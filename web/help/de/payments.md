@@ -44,3 +44,7 @@ Was schiefgehen kann:
 - **Verkauf abschließen**, während die ausstehenden Zahlungen den Gesamtbetrag noch nicht decken, wird mit einer Meldung abgelehnt, dass der erhaltene Betrag den Verkaufsgesamtbetrag nicht deckt — fügen Sie den Rest hinzu (oder verwenden Sie **Rest auffüllen**), bevor Sie es erneut versuchen.
 - **Rest auffüllen** selbst wird abgelehnt, wenn die ausstehenden Zahlungen den Gesamtbetrag bereits decken (es gibt nichts mehr aufzufüllen) oder wenn der Warenkorb gerade nicht in einem Zustand ist, eine Zahlung anzunehmen.
 - Die Felder „Betrag“ und „Wechselgeld“ hier nehmen einen normalen Währungsbetrag an (z. B. `2.50`) — anders als das kleine Rabattfeld pro Zeile im Warenkorb selbst, das die kleinste Währungseinheit erwartet (siehe den Abschnitt „Rabatte“ unter „Verkaufen & Kassieren“) — übertragen Sie diese Gewohnheit also nicht zwischen den beiden.
+
+## Gutscheine
+
+Um einen Gutschein zu verkaufen oder einen von der Kasse ausgegebenen Gutschein als Zahlung anzunehmen, verwenden Sie ebenfalls den Reiter **Aufteilen** — siehe [Gutscheine](/help/vouchers).

@@ -21,7 +21,7 @@ func NewCatalogTestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE item_barcodes (barcode TEXT PRIMARY KEY, item_id TEXT NOT NULL, barcode_type TEXT, is_primary INTEGER NOT NULL DEFAULT 0);`,
 		`CREATE TABLE variant_barcodes (barcode TEXT PRIMARY KEY, variant_id TEXT NOT NULL, barcode_type TEXT, is_primary INTEGER NOT NULL DEFAULT 0);`,
 		`CREATE TABLE item_images (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, path TEXT NOT NULL, role TEXT DEFAULT 'thumbnail', sort_order INTEGER NOT NULL DEFAULT 0);`,
-		// Mirrors migration 015 (ux_item_images_thumbnail_once, ut-docs#1871):
+		// Mirrors migration 016 (ux_item_images_thumbnail_once, ut-docs#1871):
 		// SetItemThumbnail/EnsureDefaultThumbnail's ON CONFLICT(item_id, role)
 		// upserts need this constraint to actually exist, or SQLite rejects
 		// the ON CONFLICT clause outright ("does not match any PRIMARY KEY

@@ -262,11 +262,49 @@ func TestClassifyTenderError_VoucherSentinelsSurviveWrapping(t *testing.T) {
 		{fmt.Errorf("outer: %w", fmt.Errorf("inner: %w", data.ErrVoucherNotFound)), "pos.toast.voucher_invalid"},
 		{fmt.Errorf("reworded: %w", data.ErrVoucherNotActive), "pos.toast.voucher_invalid"},
 		{fmt.Errorf("payment 1 (amount 5000, outstanding 1000): %w", pos.ErrVoucherOvertender), "pos.toast.voucher_overtender"},
+		// ut-docs#1832: with a cashier UI, a preprinted-card code that is
+		// already in use (a typo, or a card sold twice) is a REAL operator
+		// path now, not an API-client edge — it needs its own wording, not
+		// the generic "could not be completed".
+		{fmt.Errorf("create voucher %q: %w", "GS-DUP", data.ErrVoucherIDExists), "pos.toast.voucher_code_exists"},
 		{errors.New("something else"), "pos.toast.tender_failed"},
 	}
 	for _, tc := range cases {
 		if got := classifyTenderError(tc.err); got != tc.want {
 			t.Errorf("classifyTenderError(%v) = %q, want %q", tc.err, got, tc.want)
 		}
+	}
+}
+
+// ut-docs#1832: the receipt the tender handler renders lists the code of
+// every voucher the sale issued — including a code the SERVER generated
+// because the operator left it blank (pos.CompleteSale assigns a uuid into
+// the same VoucherIssues backing array the handler passed, so the handler's
+// slice holds the final codes by the time it renders). Driven through the
+// real handler + CompleteSale, then cross-checked against the vouchers row
+// that actually landed.
+func TestPOSTender_ReceiptShowsIssuedVoucherCodes(t *testing.T) {
+	mux, dp := newVoucherTenderDeps(t)
+
+	rec := postTenderJSON(t, mux, `{"payments":[{"method":"cash","amount":2500}],"issue_vouchers":[{"amount":1500,"code":"GS-R1"},{"amount":1000}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("voucher-issuing tender failed: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "GS-R1") {
+		t.Fatalf("receipt does not show the preprinted voucher code GS-R1: %s", body)
+	}
+	var generated string
+	if err := dp.Db.QueryRow(`SELECT id FROM vouchers WHERE id != 'GS-R1'`).Scan(&generated); err != nil {
+		t.Fatalf("generated voucher row: %v", err)
+	}
+	if generated == "" {
+		t.Fatalf("blank code should have been replaced by a generated one")
+	}
+	if !strings.Contains(body, generated) {
+		t.Fatalf("receipt does not show the server-generated voucher code %q: %s", generated, body)
+	}
+	if !strings.Contains(body, "Vouchers issued") {
+		t.Fatalf("receipt lacks the issued-vouchers heading: %s", body)
 	}
 }
