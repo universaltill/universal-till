@@ -75,10 +75,26 @@ var DemoCustomersPromosIDsSQL string
 // row (see the file's header for the safety rule — different from the
 // catalogue's, since this schema can't track promo-code redemption) and
 // drops the TEMP ID tables again. Must run on the same connection as
-// DemoCustomersPromosIDsSQL, after it.
+// DemoCustomersPromosIDsSQL, after it. This is the STRICT variant (requires
+// a promo's fields to still be pristine) — DemoSeedRepo.
+// RemoveDemoCustomersPromos picks this one when the till has real trading
+// history; see RemoveDemoCustomersPromosRelaxedSQL for the other case.
 //
 //go:embed remove_demo_customers_promos.sql
 var RemoveDemoCustomersPromosSQL string
+
+// RemoveDemoCustomersPromosRelaxedSQL is RemoveDemoCustomersPromosSQL minus
+// the promotion's pristine field match (ut-docs#1858) — every reference-based
+// safety clause (customer_id IS NULL, no sale/held/targeting reference) is
+// identical, and the customer section is unchanged (customers never had a
+// pristine-match rule). DemoSeedRepo.RemoveDemoCustomersPromos picks this
+// variant only when the till as a whole has no non-sample trading history,
+// so a merely-deactivated (or otherwise edited) demo promo is removable too —
+// mirrors RemoveDemoRelaxedSQL's relationship to RemoveDemoSQL exactly. Must
+// run on the same connection as DemoCustomersPromosIDsSQL, after it.
+//
+//go:embed remove_demo_customers_promos_relaxed.sql
+var RemoveDemoCustomersPromosRelaxedSQL string
 
 // ItemIDs / CategoryIDs / BrandIDs / VariantIDs mirror the SQL assets for
 // Go-side callers and cross-checking tests.

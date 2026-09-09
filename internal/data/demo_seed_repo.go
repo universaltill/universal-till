@@ -67,9 +67,10 @@ type KeptDemoItem struct {
 }
 
 const (
-	KeptReasonEdited  = "edited"
-	KeptReasonHistory = "history"
-	KeptReasonHeld    = "held"
+	KeptReasonEdited   = "edited"
+	KeptReasonHistory  = "history"
+	KeptReasonHeld     = "held"
+	KeptReasonTargeted = "targeted"
 )
 
 // demoTillHasNoRealHistorySQL is ut-docs#1840 AC1's till-level gate,
@@ -349,37 +350,267 @@ func (r *DemoSeedRepo) SeedDemoCustomersPromos(ctx context.Context) error {
 	return tx.Commit()
 }
 
-// RemoveDemoCustomersPromos deletes every UNTOUCHED demo customer and promo
-// code (plus reports how many it removed and how many it had to keep) using
-// the shared seeddata removal script — the exact rule migration 038
-// applies on upgrade. See that script's header for why the promotion safety
-// rule differs from the customer/item one (no durable redemption link to
-// recover from this schema).
-func (r *DemoSeedRepo) RemoveDemoCustomersPromos(ctx context.Context) (removed, kept int, err error) {
+// KeptDemoCustomer is one demo customer RemoveDemoCustomersPromos could not
+// remove, plus WHY (ut-docs#1858, mirroring KeptDemoItem for the customer
+// side). Unlike an item, a demo customer has no "edited" reason at all —
+// its fields are never pristine-checked (see
+// remove_demo_customers_promos.sql's own header) — so every reason here is
+// a genuine, unresolvable live reference: ReasonHistory (sold to, live or
+// archived), ReasonHeld (referenced by a parked sale, live or archived), or
+// ReasonTargeted (a promotion's customer_id points at them). None of these
+// is ever offered a per-record "remove anyway"/"keep as mine" resolution —
+// unlike a demo item or promo, there is nothing here relaxable by mode.
+type KeptDemoCustomer struct {
+	ID     string
+	Name   string
+	Reason string
+}
+
+// KeptDemoPromo is one demo promo code RemoveDemoCustomersPromos could not
+// remove, plus WHY (ut-docs#1858, mirroring KeptDemoItem for the promo
+// side).
+//   - ReasonTargeted: customer_id is set — a real, durable reference this
+//     schema can track for a promo. Never relaxed by mode, same as an
+//     item's ReasonHistory/ReasonHeld. Not offered "remove anyway".
+//   - ReasonEdited: type/value/description/is_active/starts_at/ends_at no
+//     longer match the seeded values, but the code is untargeted. Only
+//     reachable in STRICT mode (the till has real trading history
+//     elsewhere) — in relaxed mode a promo blocked only by this predicate
+//     is removed, not kept, exactly like an edited demo item. Safe to
+//     remove on request (RemoveDemoPromo) or keep permanently as the
+//     operator's own (KeepDemoPromoAsOwn).
+type KeptDemoPromo struct {
+	Code        string
+	Description string
+	Reason      string
+}
+
+// demoCustomerReasonCaseSQL mirrors demoItemReasonCaseSQL's pattern for
+// demo customers: `c` is the customers row alias the caller's FROM/WHERE
+// supplies. Priority order matches remove_demo_customers_promos.sql's own
+// safety predicate: held (parked sale) outranks history (sold) outranks
+// targeted (referenced by a promotion) — none of the three is ever relaxed
+// by mode, so the order only affects which single reason a customer
+// blocked by more than one signal is reported under.
+const demoCustomerReasonCaseSQL = `
+CASE
+	WHEN EXISTS (SELECT 1 FROM held_sales h WHERE h.payload LIKE '%"customer_id":"' || c.id || '"%')
+	  OR EXISTS (SELECT 1 FROM held_sales_archive h WHERE h.payload LIKE '%"customer_id":"' || c.id || '"%')
+	THEN 'held'
+	WHEN EXISTS (SELECT 1 FROM sales s WHERE s.customer_id = c.id)
+	  OR EXISTS (SELECT 1 FROM sales_archive s WHERE s.customer_id = c.id)
+	THEN 'history'
+	ELSE 'targeted'
+END`
+
+// demoPromoReasonCaseSQL mirrors demoItemReasonCaseSQL's pattern for demo
+// promo codes: `p` is the promotions row alias the caller's FROM/WHERE
+// supplies. Only two reasons exist for a promo (unlike an item's three) —
+// targeted is the hard blocker, never relaxed by mode; edited is the soft
+// one, reachable only in strict mode (RemoveDemoCustomersPromos's relaxed
+// variant never leaves a promo blocked by field mismatch alone for this to
+// report).
+const demoPromoReasonCaseSQL = `
+CASE
+	WHEN p.customer_id IS NOT NULL THEN 'targeted'
+	ELSE 'edited'
+END`
+
+// keptDemoCustomers reports every remaining is_sample_data=1 customer, with
+// why it wasn't removed. Called AFTER the removal script has run, mirroring
+// keptDemoItems exactly — see that function's own doc comment for why this
+// needs no separate id list and deliberately doesn't join
+// demo_seed_customers.
+func keptDemoCustomers(ctx context.Context, tx *sql.Tx) ([]KeptDemoCustomer, error) {
+	rows, err := tx.QueryContext(ctx, `
+SELECT c.id, c.name, `+demoCustomerReasonCaseSQL+`
+FROM customers c
+WHERE c.is_sample_data = 1
+ORDER BY c.name`)
+	if err != nil {
+		return nil, fmt.Errorf("list kept demo customers: %w", err)
+	}
+	defer rows.Close()
+	var out []KeptDemoCustomer
+	for rows.Next() {
+		var c KeptDemoCustomer
+		if err := rows.Scan(&c.ID, &c.Name, &c.Reason); err != nil {
+			return nil, err
+		}
+		out = append(out, c)
+	}
+	return out, rows.Err()
+}
+
+// keptDemoPromos reports every remaining is_sample_data=1 promo code, with
+// why it wasn't removed. Mirrors keptDemoCustomers/keptDemoItems.
+func keptDemoPromos(ctx context.Context, tx *sql.Tx) ([]KeptDemoPromo, error) {
+	rows, err := tx.QueryContext(ctx, `
+SELECT p.code, COALESCE(p.description, ''), `+demoPromoReasonCaseSQL+`
+FROM promotions p
+WHERE p.is_sample_data = 1
+ORDER BY p.code`)
+	if err != nil {
+		return nil, fmt.Errorf("list kept demo promos: %w", err)
+	}
+	defer rows.Close()
+	var out []KeptDemoPromo
+	for rows.Next() {
+		var p KeptDemoPromo
+		if err := rows.Scan(&p.Code, &p.Description, &p.Reason); err != nil {
+			return nil, err
+		}
+		out = append(out, p)
+	}
+	return out, rows.Err()
+}
+
+// RemoveDemoCustomersPromos deletes every demo customer/promo code the
+// chosen removal script allows (see seeddata.RemoveDemoCustomersPromosSQL/
+// RemoveDemoCustomersPromosRelaxedSQL for the exact rule), and reports how
+// many it removed and which ones it had to keep, and why (ut-docs#1858,
+// mirroring RemoveDemoCatalogue's own AC1/AC2 exactly).
+//
+// Which script runs is decided once per call, by the SAME till-wide
+// demoTillHasNoRealHistorySQL gate RemoveDemoCatalogue uses: a till that
+// has never traded for real gets the relaxed variant (an edited demo promo
+// is removable too); a till with real trading history anywhere gets the
+// strict variant, unchanged from before this card (an edited demo promo is
+// kept, offered "remove anyway"/"keep as my own" via RemoveDemoPromo/
+// KeepDemoPromoAsOwn instead). Demo customers are unaffected by either
+// variant — they have no "edited" rule at all, only genuine reference
+// checks, which are identical in both scripts.
+//
+// The whole operation runs in one transaction, same reasoning as
+// RemoveDemoCatalogue: the TEMP ID tables are per-connection, and a
+// transaction pins database/sql to a single connection between the script
+// executions.
+func (r *DemoSeedRepo) RemoveDemoCustomersPromos(ctx context.Context) (removed int, keptCustomers []KeptDemoCustomer, keptPromos []KeptDemoPromo, err error) {
 	tx, err := r.db.BeginTx(ctx, nil)
 	if err != nil {
-		return 0, 0, fmt.Errorf("begin demo customers/promos removal: %w", err)
+		return 0, nil, nil, fmt.Errorf("begin demo customers/promos removal: %w", err)
 	}
 	defer tx.Rollback()
 
 	before, err := sampleCustomerPromoCount(ctx, tx)
 	if err != nil {
-		return 0, 0, err
+		return 0, nil, nil, err
 	}
+
+	var relaxed bool
+	if err := tx.QueryRowContext(ctx, demoTillHasNoRealHistorySQL).Scan(&relaxed); err != nil {
+		return 0, nil, nil, fmt.Errorf("check till trading history: %w", err)
+	}
+
 	if _, err := tx.ExecContext(ctx, seeddata.DemoCustomersPromosIDsSQL); err != nil {
-		return 0, 0, fmt.Errorf("load demo customer/promo id lists: %w", err)
+		return 0, nil, nil, fmt.Errorf("load demo customer/promo id lists: %w", err)
 	}
-	if _, err := tx.ExecContext(ctx, seeddata.RemoveDemoCustomersPromosSQL); err != nil {
-		return 0, 0, fmt.Errorf("remove demo customers/promos: %w", err)
+	removeSQL := seeddata.RemoveDemoCustomersPromosSQL
+	if relaxed {
+		removeSQL = seeddata.RemoveDemoCustomersPromosRelaxedSQL
 	}
-	after, err := sampleCustomerPromoCount(ctx, tx)
+	if _, err := tx.ExecContext(ctx, removeSQL); err != nil {
+		return 0, nil, nil, fmt.Errorf("remove demo customers/promos: %w", err)
+	}
+
+	keptCustomers, err = keptDemoCustomers(ctx, tx)
 	if err != nil {
-		return 0, 0, err
+		return 0, nil, nil, err
+	}
+	keptPromos, err = keptDemoPromos(ctx, tx)
+	if err != nil {
+		return 0, nil, nil, err
 	}
 	if err := tx.Commit(); err != nil {
-		return 0, 0, err
+		return 0, nil, nil, err
 	}
-	return before - after, after, nil
+	return before - len(keptCustomers) - len(keptPromos), keptCustomers, keptPromos, nil
+}
+
+// ErrDemoPromoNotFound: RemoveDemoPromo/KeepDemoPromoAsOwn's target code
+// doesn't exist, or isn't (or is no longer) a sample-data promo — nothing
+// to act on. Mirrors ErrDemoItemNotFound for the promo side.
+var ErrDemoPromoNotFound = errors.New("demo promo not found")
+
+// ErrDemoPromoTargeted: RemoveDemoPromo was asked to remove a promo this
+// package would never remove regardless of mode — its customer_id is set,
+// a real, durable reference this schema can track. Mirrors
+// ErrDemoItemHasHistory for the promo side (a promo has only the one
+// unconditional blocker, unlike an item's two).
+var ErrDemoPromoTargeted = errors.New("demo promo is targeted at a customer")
+
+// RemoveDemoPromo removes exactly one demo promo code on request —
+// ut-docs#1858's "remove anyway" action for a promo whose ONLY reason for
+// being kept is KeptReasonEdited (always safe: that reason means the
+// targeting check already passed). Re-checks server-side rather than
+// trusting the client's last-seen reason — the promo could have been
+// targeted at a customer since the page last rendered — and refuses
+// (ErrDemoPromoTargeted) if the live reason is now "targeted". Not offered
+// at all for a code that was never sample data. Mirrors RemoveDemoItem.
+func (r *DemoSeedRepo) RemoveDemoPromo(ctx context.Context, code string) error {
+	tx, err := r.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin demo promo removal: %w", err)
+	}
+	defer tx.Rollback()
+
+	var reason string
+	err = tx.QueryRowContext(ctx, `
+SELECT `+demoPromoReasonCaseSQL+`
+FROM promotions p
+WHERE p.code = ? AND p.is_sample_data = 1`, code).Scan(&reason)
+	if errors.Is(err, sql.ErrNoRows) {
+		return ErrDemoPromoNotFound
+	}
+	if err != nil {
+		return fmt.Errorf("check demo promo %s: %w", code, err)
+	}
+	if reason == KeptReasonTargeted {
+		return fmt.Errorf("%w: %s", ErrDemoPromoTargeted, code)
+	}
+
+	// Unlike an item, a promo has no dependent rows to clean up first —
+	// sale_discounts records only the resulting discount amount, never
+	// which code produced it (remove_demo_customers_promos.sql's own
+	// header), so there is nothing here for a plain DELETE to orphan.
+	res, err := tx.ExecContext(ctx, `DELETE FROM promotions WHERE code = ? AND is_sample_data = 1`, code)
+	if err != nil {
+		return fmt.Errorf("remove demo promo %s: %w", code, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrDemoPromoNotFound
+	}
+	return tx.Commit()
+}
+
+// KeepDemoPromoAsOwn clears one demo promo code's is_sample_data flag —
+// ut-docs#1858's "keep as my own" resolution for a promo kept only because
+// it was edited. The promo becomes a normal, permanent code: it stops
+// counting toward SampleCustomerPromoCount, stops appearing in the Settings
+// "kept" list, and a later "Remove sample data" run never touches it again.
+// Mirrors KeepDemoItemAsOwn.
+func (r *DemoSeedRepo) KeepDemoPromoAsOwn(ctx context.Context, code string) error {
+	res, err := r.db.ExecContext(ctx, `UPDATE promotions SET is_sample_data = 0 WHERE code = ? AND is_sample_data = 1`, code)
+	if err != nil {
+		return fmt.Errorf("keep demo promo %s as own: %w", code, err)
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return ErrDemoPromoNotFound
+	}
+	return nil
+}
+
+// IsSamplePromo reports whether code currently names an is_sample_data=1
+// promo — the cheap, no-mutation existence check RemoveDemoPromo/
+// KeepDemoPromoAsOwn's HTTP handlers run BEFORE checkOrElevate, mirroring
+// IsSampleItem exactly (ut-docs#1840 review finding F3's convention).
+func (r *DemoSeedRepo) IsSamplePromo(ctx context.Context, code string) (bool, error) {
+	var n int
+	err := r.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM promotions WHERE code = ? AND is_sample_data = 1`, code).Scan(&n)
+	if err != nil {
+		return false, fmt.Errorf("check sample promo %s: %w", code, err)
+	}
+	return n > 0, nil
 }
 
 // SampleCustomerPromoCount reports how many sample-data customers + promo
