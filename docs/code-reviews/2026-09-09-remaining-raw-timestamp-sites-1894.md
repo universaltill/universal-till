@@ -99,3 +99,50 @@ retroactively since no damage resulted here.
 - ut-docs#1936 (settings `.backups` Date field) and ut-docs#1938
   (`fiscal_device.html`) are both filed but not fixed — deliberately, to
   keep this diff at its own stated 6-site scope rather than widen it.
+
+## Addendum (stale-PR sweep, same day) — a real gap in this review's own coverage
+
+A later cycle's PR-sweep (`PR-SWEEP.md` step 0c) found this PR sitting
+unmerged with CI having never triggered on its pushes (a session/token-side
+platform issue, tracked separately on ut-docs#1886 — not this PR's own
+defect). While bringing the branch back up to date with `main` (which by
+then included `universal-till#992`) to get a fresh push and re-trigger CI,
+the sweep ran `go test ./...` across the **whole repo**, not just
+`internal/pages` — the first time this PR's own diff was checked against
+that wider scope — and found `internal/ui.TestJournalView_
+ShowFiltersGatesCrossTillUI` failing, reproducibly, even on this PR's
+**original, unmerged branch tip** (i.e. not something the sweep's own
+merge introduced).
+
+**Root cause: the exact same defect class this review already found and
+fixed once, in a different test file.** That test asserted the literal raw
+RFC3339 string `2026-08-15T08:00:00Z` was present in
+`internal/ui`'s own rendered journal view — a second, independent
+hardcoded-raw-timestamp assertion this card's diff broke, in a package
+this review's "verified beyond automated tests" section never actually
+ran. (`internal/ui`'s own tests run with no real translator wired — see
+`buttons_search_visibility_test.go`'s comment — so the `T` template func
+call in the affected line always returns its raw key untranslated
+regardless of this PR's change; that pre-existing quirk is what made the
+test's own raw-string assertion coincidentally keep passing on `main`
+today, while genuinely breaking once `.LastSeenAt` became `(datetime
+.LastSeenAt)` in `web/ui/partials/journal.html`.)
+
+Fixed by the sweep, same treatment as the original review's own
+`TestJournalUIFilters_TillAndDay` case in `internal/pages` (a sibling test
+asserting the same raw string, fixed separately in this cycle): the
+assertion now checks the raw RFC3339 string is **absent**, without
+asserting an exact locale-formatted replacement (this test doesn't pin
+`time.Local`, unlike this PR's own new regression tests, so a
+timezone-dependent exact-string assertion would be flaky here).
+Re-verified: `go test ./internal/ui/...` full package suite green, and a
+full `go test ./...` across the whole repo — zero failures anywhere, run
+in full this time, not scoped to one package.
+
+**Process lesson, not just a one-off miss:** this PR's own "Verified beyond
+automated tests" section (both drafts) only ever names `go test
+./internal/pages/...`. A "full test suite green" claim on a change to a
+shared partial (`journal.html` is rendered by both the web `internal/pages`
+handler and the native `internal/ui.JournalView`) needs the actual
+whole-repo `go test ./...`, not a scope assumed from which package's
+source file was edited.
