@@ -1,0 +1,25 @@
+-- ut-docs#1664 (follow-up to ut-docs#1342/migration 007): a plain index on
+-- sales.local_date alone, for ListSalesJournal's Day filter.
+--
+-- Migration 007 added idx_sales_status_local_date (status, local_date), which
+-- already covers every other query this card converts (DepartmentsForDay,
+-- ArticleGroupsForDay, ArticleSalesForDay, OperatorSalesForDay,
+-- OrderTypeSalesForDay, SalesForTaxBands, DayTotal — all filter on
+-- status = 'completed' first). ListSalesJournal is the one exception: it has
+-- no status predicate at all (the sales journal intentionally shows every
+-- status, not just completed sales), so a composite index that leads with
+-- status can't be used to satisfy its Day filter. A plain single-column index
+-- on local_date serves that query directly.
+--
+-- IF NOT EXISTS (unlike migration 007's own indexes, which don't use it):
+-- this repo's fiscal_signing_keys_{rename,split}_test.go rewinds the
+-- schema_migrations ledger past a version boundary below this one and
+-- re-Opens the same already-fully-migrated DB file to exercise the real
+-- migration runner a second time (openAtPreMigrationSchema) — the schema
+-- objects from every migration above that boundary, this one included,
+-- already physically exist on disk from the first Open, so a bare
+-- CREATE INDEX fails "index already exists" on the replay. SQLite has no
+-- ADD COLUMN IF NOT EXISTS (the reason db.go's own onSkippedAddColumn shim
+-- exists for those, ut-docs#1412), but CREATE INDEX IF NOT EXISTS is native
+-- and makes this migration idempotent the same way.
+CREATE INDEX IF NOT EXISTS idx_sales_local_date ON sales (local_date);

@@ -894,7 +894,7 @@ JOIN sales s ON s.id = sl.sale_id
 LEFT JOIN item_variants iv ON iv.id = sl.variant_id
 LEFT JOIN items it ON it.id = COALESCE(sl.item_id, iv.item_id)
 LEFT JOIN dept_roots dr ON dr.id = it.category_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.local_date = date(?)
 GROUP BY department
 ORDER BY revenue DESC`, day)
 	if err != nil {
@@ -981,7 +981,7 @@ JOIN sales s ON s.id = sl.sale_id
 LEFT JOIN item_variants iv ON iv.id = sl.variant_id
 LEFT JOIN items it ON it.id = COALESCE(sl.item_id, iv.item_id)
 LEFT JOIN categories c ON c.id = it.category_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.local_date = date(?)
 GROUP BY article_group
 ORDER BY gross DESC`, day)
 	if err != nil {
@@ -1069,7 +1069,7 @@ SELECT sl.name_snapshot,
        COALESCE(SUM(sl.total_after_tax), 0) AS gross
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.local_date = date(?)
 GROUP BY sl.name_snapshot
 ORDER BY gross DESC`, day)
 	if err != nil {
@@ -1167,7 +1167,7 @@ SELECT CASE WHEN sl.order_type = 'takeaway' THEN 'takeaway' ELSE '' END AS order
        COALESCE(SUM(sl.total_after_tax), 0) AS gross
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.local_date = date(?)
 GROUP BY 1
 ORDER BY 1 ASC`, day)
 	if err != nil {
@@ -1272,7 +1272,7 @@ SELECT COALESCE(s.cashier_id, '') AS cashier_id,
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
 LEFT JOIN users u ON u.id = s.cashier_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.local_date = date(?)
 GROUP BY COALESCE(s.cashier_id, '')
 ORDER BY gross DESC`, day)
 	if err != nil {
@@ -1667,7 +1667,13 @@ ORDER BY (revenue - cost) DESC LIMIT ?`, fromStr, toStr, limit)
 }
 
 // DayTotal returns one calendar day's completed-sale revenue (local time),
-// offset days back from ref (1 = the day before ref).
+// offset days back from ref (1 = the day before ref). Filters on the
+// precomputed local_date column (sargable via idx_sales_status_local_date,
+// ut-docs#1664) rather than date(created_at, 'localtime') — this is plain
+// calendar-midnight arithmetic on ref (daysAgo whole days back), NOT the
+// ADR-0057 business-day-start shift busyBuckets/SalesByDay apply directly to
+// created_at, so the local_date column (itself calendar-midnight, not
+// business-day-shifted) is the correct fit here.
 //
 // ref is a caller-supplied instant, not SQLite's own 'now' — a caller doing
 // several DayTotal reads to compare days against each other (e.g. "yesterday"
@@ -1685,7 +1691,7 @@ func (r *POSRepo) DayTotal(ctx context.Context, daysAgo int, ref time.Time) (int
 	err := r.db.QueryRowContext(ctx, `
 SELECT COALESCE(SUM(total), 0), COUNT(*) FROM sales
 WHERE status = 'completed' AND sale_type = 'sale'
-  AND date(created_at, 'localtime') = date(?, 'localtime', ?)`,
+  AND local_date = date(?, 'localtime', ?)`,
 		ref.UTC().Format(time.RFC3339), fmt.Sprintf("-%d days", daysAgo)).Scan(&total, &count)
 	if err != nil {
 		return 0, 0, fmt.Errorf("day total: %w", err)
@@ -3039,12 +3045,13 @@ type EODTaxBandPayment struct {
 }
 
 // SalesForTaxBands loads every completed sale (and return) in the SAME
-// local-calendar-day window dateRangeSummary aggregates — date(created_at,
-// 'localtime') BETWEEN date(from) AND date(to), ut-docs#869 — with the
-// per-line figures the day-close VAT banding needs. The caller
-// (internal/pages' attachEODTaxBands) runs each sale through the shared
-// pos.VATBandsForSale; the math cannot live here because internal/data
-// cannot import internal/pos (see dateRangeSummary's inline note).
+// local-calendar-day window dateRangeSummary aggregates — local_date BETWEEN
+// date(from) AND date(to) (ut-docs#869, sargable per ut-docs#1664 — see
+// migration 007's local_date column, ut-docs#1342) — with the per-line
+// figures the day-close VAT banding needs. The caller (internal/pages'
+// attachEODTaxBands) runs each sale through the shared pos.VATBandsForSale;
+// the math cannot live here because internal/data cannot import internal/pos
+// (see dateRangeSummary's inline note).
 //
 // Zero-value "note" lines (total_before_tax = total_after_tax = 0,
 // arbitrary tax_rate_bp) are excluded at the query so they can't invent a
@@ -3057,7 +3064,7 @@ func (r *POSRepo) SalesForTaxBands(ctx context.Context, from, to string) ([]EODT
 SELECT id, sale_type, subtotal, discount_total, tax_total, total,
        service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total
 FROM sales
-WHERE status = 'completed' AND date(created_at, 'localtime') BETWEEN date(?) AND date(?)
+WHERE status = 'completed' AND local_date BETWEEN date(?) AND date(?)
 ORDER BY created_at, id`, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("eod band sales: %w", err)
@@ -3082,7 +3089,7 @@ ORDER BY created_at, id`, from, to)
 SELECT sl.sale_id, COALESCE(sl.tax_rate_bp, 0), sl.tax_amount, sl.total_after_tax
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
-WHERE s.status = 'completed' AND date(s.created_at, 'localtime') BETWEEN date(?) AND date(?)
+WHERE s.status = 'completed' AND s.local_date BETWEEN date(?) AND date(?)
   AND (sl.total_before_tax != 0 OR sl.total_after_tax != 0)
 ORDER BY sl.sale_id, sl.line_no`, from, to)
 	if err != nil {
@@ -3113,7 +3120,7 @@ ORDER BY sl.sale_id, sl.line_no`, from, to)
 SELECT p.sale_id, p.method_id, COALESCE(SUM(p.amount - p.change_given - p.tip_amount), 0)
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
-WHERE s.status = 'completed' AND date(s.created_at, 'localtime') BETWEEN date(?) AND date(?)
+WHERE s.status = 'completed' AND s.local_date BETWEEN date(?) AND date(?)
 GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("eod band payments: %w", err)
@@ -6858,9 +6865,10 @@ func (r *POSRepo) ListRecentSales(ctx context.Context, limit int) ([]SaleJournal
 // The bool return is ut-docs#774: true when more rows exist for this filter
 // than limit — detected by asking for one extra row rather than paying for a
 // separate COUNT(*). Day, when set, matches the shop's LOCAL calendar day
-// (date(s.created_at, 'localtime'), same convention DayTotal already uses)
-// rather than the raw stored UTC date, since Day comes from a browser date
-// picker in the operator's own local time.
+// (s.local_date, same convention DayTotal already uses — sargable via
+// idx_sales_local_date, ut-docs#1664; before that, date(s.created_at,
+// 'localtime')) rather than the raw stored UTC date, since Day comes from a
+// browser date picker in the operator's own local time.
 func (r *POSRepo) ListSalesJournal(ctx context.Context, f SalesJournalFilter) ([]SaleJournalEntry, bool, error) {
 	limit := f.Limit
 	if limit <= 0 {
@@ -6878,7 +6886,7 @@ WHERE 1=1
 		args = append(args, f.TillID)
 	}
 	if f.Day != "" {
-		query += ` AND date(s.created_at, 'localtime') = date(?)`
+		query += ` AND s.local_date = date(?)`
 		args = append(args, f.Day)
 	}
 	query += ` ORDER BY s.created_at DESC LIMIT ?`
