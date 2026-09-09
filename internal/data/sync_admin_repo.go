@@ -87,7 +87,14 @@ var adminTables = []adminTable{
 	// UNIQUE column doubles as its display name, instead of only mangling
 	// name and leaving nothing that marks the row as retired.
 	{name: "brands", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}},
-	{name: "categories", pk: []string{"id"}},
+	// ut-docs#1898/#1610: categories gained is_active in migration 017 so an
+	// FK-blocked prune retires the row (is_active = 0) instead of leaving it
+	// permanently active with no signal it was ever pruned. No `unique` entry
+	// here (unlike brands/tax_codes/users/stock_locations/registers): unlike
+	// those five, categories.name carries no DB UNIQUE constraint, so the
+	// mangle step deleteMissing runs for `unique` columns would have nothing
+	// to free and nothing to protect — only the is_active flag applies.
+	{name: "categories", pk: []string{"id"}, hasIsActive: true},
 	{name: "customers", pk: []string{"id"}, unique: []string{"loyalty_no"}},
 	// plugin_id is till-local derived state (which plugin installed on THIS
 	// till owns the method) — importing it re-hijacks a repaired built-in

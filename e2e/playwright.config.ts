@@ -60,6 +60,13 @@ const AUTH_ONLY_SPECS = /(login|nav-rail-lock-reachable-1346|nav-rail-svg-icons-
 // project's till.
 const AI_IDENTIFY_ONLY_SPECS = /camera-error-branching-ai-identify-1559\.spec\.ts$/;
 
+// ut-docs#1904 / ADR-0088: the layout-plugin spec drives a till with the
+// real plugins/layout-salon installed, which HIDES /tables and
+// /kitchen-stations and re-labels /items. Installing that into the shared
+// default till would move the ground under every other menu/nav assertion
+// in the suite, so it gets its own server + project.
+const LAYOUT_ONLY_SPECS = /layout-plugin-menu-1904\.spec\.ts$/;
+
 export default defineConfig({
   testDir: './tests',
   timeout: 30_000,
@@ -89,11 +96,17 @@ export default defineConfig({
       timeout: 120_000,
       reuseExistingServer: !process.env.CI,
     },
+    {
+      command: 'bash ./run-till-layout.sh',
+      url: 'http://127.0.0.1:8094/healthz',
+      timeout: 120_000,
+      reuseExistingServer: !process.env.CI,
+    },
   ],
   projects: [
     {
       name: 'default',
-      testIgnore: [AUTH_ONLY_SPECS, AI_IDENTIFY_ONLY_SPECS],
+      testIgnore: [AUTH_ONLY_SPECS, AI_IDENTIFY_ONLY_SPECS, LAYOUT_ONLY_SPECS],
       use: {
         baseURL: 'http://127.0.0.1:8091',
         trace: 'retain-on-failure',
@@ -116,6 +129,16 @@ export default defineConfig({
       testMatch: AI_IDENTIFY_ONLY_SPECS,
       use: {
         baseURL: 'http://127.0.0.1:8093',
+        trace: 'retain-on-failure',
+        screenshot: 'only-on-failure',
+        launchOptions,
+      },
+    },
+    {
+      name: 'layout',
+      testMatch: LAYOUT_ONLY_SPECS,
+      use: {
+        baseURL: 'http://127.0.0.1:8094',
         trace: 'retain-on-failure',
         screenshot: 'only-on-failure',
         launchOptions,
