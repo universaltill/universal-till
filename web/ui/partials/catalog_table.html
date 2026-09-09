@@ -1,17 +1,27 @@
 {{ define "catalog_table" }}
-{{/* Rendered as a whole ONLY on the initial /catalog page load (dot
-     carries .Rows, []catalogRowVM built Go-side). Every mutation since
-     ut-docs#1363 answers with row-level out-of-band fragments instead —
-     see catalog_row.html — anchored on #catalog-row-<id>, #catalog-tbody
-     (beforeend inserts) and #catalog-empty-row. */}}
-<div class="card" id="catalog-table">
+{{/* Normally rendered as a whole ONLY on the initial /catalog page load
+     (dot carries .Rows, []catalogRowVM built Go-side). Every mutation
+     since ut-docs#1363 answers with row-level out-of-band fragments
+     instead — see catalog_row.html — anchored on #catalog-row-<id>,
+     #catalog-tbody (beforeend inserts) and #catalog-empty-row.
+
+     The ONE exception (ut-docs#1842 review F1/F2): a row fragment can't
+     add/remove the thumbnail <th>/<td>s everywhere they'd need to change
+     — it only ever touches the one row it's about. So the rare mutation
+     that flips whether ANY active item has a thumbnail (the first photo
+     ever added to an all-text catalog, or deactivating the last imaged
+     item) re-renders this whole table as one OOB swap instead — see
+     writeWholeTableOOB in row_oob.go. .OOBSwap carries that: true only
+     for that swap-the-whole-table response, absent/false for the normal
+     initial page render. */}}
+<div class="card" id="catalog-table"{{ if .OOBSwap }} hx-swap-oob="true"{{ end }}>
   <table class="table">
-    <thead><tr><th></th><th>{{ T "catalog.col.name" }}</th><th>{{ T "catalog.col.sku" }}</th><th>{{ T "catalog.col.price" }}</th><th>{{ T "catalog.col.unit" }}</th><th>{{ T "catalog.col.tax" }}</th><th>{{ T "catalog.col.category" }}</th><th></th></tr></thead>
+    <thead><tr>{{ if .HasThumbnails }}<th></th>{{ end }}<th>{{ T "catalog.col.name" }}</th><th>{{ T "catalog.col.sku" }}</th><th>{{ T "catalog.col.price" }}</th><th>{{ T "catalog.col.unit" }}</th><th>{{ T "catalog.col.tax" }}</th><th>{{ T "catalog.col.category" }}</th><th></th></tr></thead>
     <tbody id="catalog-tbody">
       {{ if .Rows }}
         {{ range .Rows }}{{ template "catalog_row" . }}{{ end }}
       {{ else }}
-        {{ template "catalog_empty_row" }}
+        {{ template "catalog_empty_row" .EmptyColspan }}
       {{ end }}
     </tbody>
   </table>
