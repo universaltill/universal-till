@@ -693,6 +693,33 @@ func TestPluginSettingsPage_GET_UnparseableStoredValueFallsBackToRawInput(t *tes
 // plugins.error.server key) so it stays defensively correct if
 // parseTaxOverrides is ever changed to return a different error type.
 
+// ut-docs#1945: the GET handler's plain-setting unwrap used to be its own
+// inline json.Unmarshal-into-string, a fourth copy of the logic
+// unwrapSettingValue/data.DecodeMapSettingValue (ut-docs#1269) unifies
+// elsewhere. It disagreed with the shared seam on a bare stored `null`:
+// json.Unmarshal(`null`, &v) is a documented no-op leaving v == "", while
+// DecodeMapSettingValue's leading-quote check leaves a non-string-JSON
+// value (null included) untouched. Now routed through unwrapSettingValue,
+// so a bare `null` renders as the literal text "null", not silently as "".
+func TestPluginSettingsPage_GET_BareNullStoredValueMatchesSharedDecodeSeam(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newPluginSettingsTestDeps(t)
+	if err := data.NewPluginRepo(dp.Db).UpsertPluginSettingScoped(context.Background(), "p1", "endpoint_url", "null", "global", false); err != nil {
+		t.Fatalf("seed bare-null plugin setting: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/plugins/p1/settings", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET: code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `value="null"`) {
+		t.Fatalf("expected the bare-null stored value to render as literal \"null\" (matching data.DecodeMapSettingValue), got:\n%s", body)
+	}
+}
+
 func TestPluginSettingsPage_GET_ListFailureIsLocalized(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newPluginSettingsTestDeps(t)
