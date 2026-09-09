@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, openNewItemForm } from './helpers';
 
 // ut-docs#1367: the item-edit form's "Active" checkbox had no paired hidden
 // isActive=0 fallback (unlike the variant/modifier-group forms, which
@@ -17,10 +17,19 @@ test('unchecking Active on an existing item and saving actually deactivates it',
   await page.goto('/catalog');
 
   const name = 'Active Checkbox Probe ' + Date.now();
+  await openNewItemForm(page);
   await page.locator('#item-name').fill(name);
   await page.locator('#item-price').fill('2.00');
   await page.locator('#item-form-submit').click();
   await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
+  // ut-docs#1901: close the create dialog explicitly. Not about inertness
+  // — the dialog is opened NON-modally (.show(), ut-docs#1385's OSK fix),
+  // so nothing outside it is inert — but about plain stacking: it's a
+  // large `position: fixed` box (z-index 500) covering most of the
+  // viewport, so it intercepts the pointer for the row click below.
+  // Relying on the save-success auto-close timer instead would make this
+  // test's timing depend on an implementation detail it isn't testing.
+  await page.locator('#item-form-close-btn').click();
 
   const row = page.locator('.catalog-row', { hasText: name });
   await expect(row).toBeVisible();

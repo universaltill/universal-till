@@ -68,7 +68,7 @@ ON CONFLICT(id) DO UPDATE SET
     is_active = 1,
     trust_level = 'trusted',
     updated_at = excluded.updated_at
-`, time.Now(), time.Now(), id)
+`, time.Now().UTC().Format(time.RFC3339), time.Now().UTC().Format(time.RFC3339), id)
 	if err != nil {
 		return pluginObs.wrapf("install_plugin", "install plugin %s", err, id)
 	}
@@ -2370,6 +2370,79 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 		var row ThemeRow
 		if err := rows.Scan(&row.PluginID, &row.PluginVersion, &row.EntryKey, &row.Label, &row.ConfigJSON); err != nil {
 			return nil, pluginObs.wrap("list_theme_entries", err)
+		}
+		res = append(res, row)
+	}
+	return res, rows.Err()
+}
+
+// LayoutEntryRow is one type:"layout" plugin entry (ADR-0088): the
+// amendment document over a UI slot lives in ConfigJSON, parsed by
+// internal/uislot.ParseMenuAmendmentsJSON. Never read per render — the
+// plugin manager loads these once per lifecycle change (Decision I).
+type LayoutEntryRow struct {
+	PluginID   string
+	PluginName string
+	EntryKey   string
+	ConfigJSON string
+}
+
+// ListLayoutEntries returns the active layout entries of active plugins —
+// the amendments that actually apply to the till's UI right now.
+func (r *PluginRepo) ListLayoutEntries(ctx context.Context) ([]LayoutEntryRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT
+    p.id,
+    p.name,
+    pe.key,
+    COALESCE(pe.config_json, '')
+FROM plugin_entries pe
+JOIN plugins p ON p.id = pe.plugin_id
+WHERE pe.type = 'layout' AND pe.is_active = 1 AND p.is_active = 1
+ORDER BY pe.sort_order, pe.plugin_id, pe.key
+`)
+	if err != nil {
+		return nil, pluginObs.wrap("list_layout_entries", err)
+	}
+	defer rows.Close()
+	var res []LayoutEntryRow
+	for rows.Next() {
+		var row LayoutEntryRow
+		if err := rows.Scan(&row.PluginID, &row.PluginName, &row.EntryKey, &row.ConfigJSON); err != nil {
+			return nil, pluginObs.wrap("list_layout_entries", err)
+		}
+		res = append(res, row)
+	}
+	return res, rows.Err()
+}
+
+// ListLayoutEntriesExcept returns every OTHER installed plugin's layout
+// entries, active or not — the install-time conflict check's view
+// (ADR-0088 Decision F). Same ownership rule as FindPageKeyConflicts: an
+// installed-but-disabled plugin still owns the keys it restructures until
+// it is uninstalled, so disabling one never lets a second plugin quietly
+// take a key over. The plugin's own rows are excluded so reinstall /
+// upgrade never self-conflict.
+func (r *PluginRepo) ListLayoutEntriesExcept(ctx context.Context, tx *sql.Tx, pluginID string) ([]LayoutEntryRow, error) {
+	exec := r.executor(tx)
+	rows, err := exec.QueryContext(ctx, `
+SELECT
+    pe.plugin_id,
+    pe.key,
+    COALESCE(pe.config_json, '')
+FROM plugin_entries pe
+WHERE pe.type = 'layout' AND pe.plugin_id != ?
+ORDER BY pe.plugin_id, pe.key
+`, pluginID)
+	if err != nil {
+		return nil, pluginObs.wrap("list_layout_entries_except", err)
+	}
+	defer rows.Close()
+	var res []LayoutEntryRow
+	for rows.Next() {
+		var row LayoutEntryRow
+		if err := rows.Scan(&row.PluginID, &row.EntryKey, &row.ConfigJSON); err != nil {
+			return nil, pluginObs.wrap("list_layout_entries_except", err)
 		}
 		res = append(res, row)
 	}

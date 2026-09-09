@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, setOskMode } from './helpers';
+import { watchConsole, setOskMode, openNewItemForm, closeItemForm } from './helpers';
 
 // ut-docs#1284: found by independent review of ut-docs#1275, out of that
 // card's explicitly-scoped five admin-screen files. Same root cause as
@@ -162,6 +162,7 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     const assertClean = watchConsole(page);
     await setOskMode(page, 'on');
     await page.goto('/catalog');
+    await openNewItemForm(page);
 
     const price = page.locator('#item-price');
     await price.click();
@@ -179,6 +180,7 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
   // observed flake source in this file, unlike every scan elsewhere in
   // this suite which already waits on its own request).
   async function createProbeItemAndOpenVariants(page: import('@playwright/test').Page, name: string) {
+    await openNewItemForm(page);
     await page.locator('#item-name').fill(name);
     await page.locator('#item-price').fill('1.00');
     await Promise.all([
@@ -190,6 +192,15 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     const row = page.locator('.catalog-row', { hasText: name });
     await row.locator('td').first().click();
     await expect(page.locator('#catalog-variants')).toBeVisible();
+    // ut-docs#1901: the row click above opens the edit dialog too — close
+    // it before touching the variants panel below. Not about inertness
+    // (the dialog is non-modal now, ut-docs#1385's fix) but plain
+    // stacking: the dialog is a large `position: fixed` box near the top
+    // of the viewport and can simply sit ON TOP of wherever the variants
+    // panel renders, intercepting pointer events the same way any
+    // overlapping fixed element would. ut-docs#1929: via closeItemForm,
+    // race-tolerant of the save-success auto-close timer.
+    await closeItemForm(page);
   }
 
   // The field ut-docs#1284's own issue body actually names at this line

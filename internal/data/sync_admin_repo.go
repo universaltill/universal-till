@@ -87,7 +87,14 @@ var adminTables = []adminTable{
 	// UNIQUE column doubles as its display name, instead of only mangling
 	// name and leaving nothing that marks the row as retired.
 	{name: "brands", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}},
-	{name: "categories", pk: []string{"id"}},
+	// ut-docs#1898/#1610: categories gained is_active in migration 017 so an
+	// FK-blocked prune retires the row (is_active = 0) instead of leaving it
+	// permanently active with no signal it was ever pruned. No `unique` entry
+	// here (unlike brands/tax_codes/users/stock_locations/registers): unlike
+	// those five, categories.name carries no DB UNIQUE constraint, so the
+	// mangle step deleteMissing runs for `unique` columns would have nothing
+	// to free and nothing to protect — only the is_active flag applies.
+	{name: "categories", pk: []string{"id"}, hasIsActive: true},
 	{name: "customers", pk: []string{"id"}, unique: []string{"loyalty_no"}},
 	// plugin_id is till-local derived state (which plugin installed on THIS
 	// till owns the method) — importing it re-hijacks a repaired built-in
@@ -125,6 +132,25 @@ var adminTables = []adminTable{
 	{name: "item_barcodes", pk: []string{"barcode"}},
 	{name: "item_variants", pk: []string{"id"}, hasIsActive: true, unique: []string{"sku"}},
 	{name: "variant_barcodes", pk: []string{"barcode"}},
+	// ut-docs#1900: reusable option sets (migration 017) are catalog
+	// structure of exactly the same shop-wide kind as item_modifier_groups
+	// below — the generated variants themselves already travel as
+	// item_variants rows above, and a satellite that had the rows but not
+	// the sets/links they came from would show the item's range with no
+	// record of what it was generated from. Mutation is primary-only
+	// (catalog/handlers.go's requirePrimary on every option-set route),
+	// which is what makes syncing safe, same as #1667's reasoning for the
+	// modifier tables. Ordered for their FKs: option_set_values ->
+	// option_sets; item_option_sets -> items + option_sets;
+	// item_variant_options -> item_variants + option_set_values (all
+	// applied after items/item_variants above). option_sets has a real
+	// is_active plus UNIQUE(name), so it retires like items on an FK-blocked
+	// prune; option_set_values' UNIQUE is (option_set_id, value), and
+	// mangling `value` alone keeps that pair unique too.
+	{name: "option_sets", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}},
+	{name: "option_set_values", pk: []string{"id"}, unique: []string{"value"}},
+	{name: "item_option_sets", pk: []string{"item_id", "option_set_id"}},
+	{name: "item_variant_options", pk: []string{"variant_id", "option_set_value_id"}},
 	{name: "related_items", pk: []string{"item_id", "related_item_id"}},
 	// ut-docs#1667: same shape as #1546 (tables/kitchen_stations) — catalog
 	// structure that reads shop-wide but was missing from this list

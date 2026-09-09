@@ -1,0 +1,34 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "items.title" }}</h1>
+</div>
+
+<!-- ut-docs#1897, independent-review finding: a single vertical stack, not
+     .settings-grid's multi-column reflow (SumUp's own section list is one
+     column; a 2-column reflow at till width makes the row order
+     non-obvious). -->
+<div style="display:flex; flex-direction:column; gap:.75rem; max-width:36rem">
+{{ range .Sections }}
+  {{ if .Href }}
+  <a class="card" href="{{ .Href }}" style="display:block; text-decoration:none; color:inherit">
+    <h3 style="margin:.2rem 0">{{ T .NameKey }}</h3>
+    <p class="muted">{{ T .SubtitleKey }}</p>
+  </a>
+  {{ else }}
+  <!-- Not a real form control, so aria-disabled has nothing to attach to —
+       the "Coming soon" tag (real text, announced normally) is what
+       actually carries the disabled meaning to assistive tech. No opacity
+       on the text itself (independent-review finding: opacity stacked on
+       .muted already-reduced-contrast text risked WCAG AA on a daylight
+       till) — the tag alone is enough to read as not-yet-available. -->
+  <div class="card" aria-disabled="true">
+    <div style="display:flex; justify-content:space-between; align-items:baseline; gap:.5rem">
+      <h3 style="margin:.2rem 0">{{ T .NameKey }}</h3>
+      <span class="tag">{{ T "items.coming_soon" }}</span>
+    </div>
+    <p class="muted">{{ T .SubtitleKey }}</p>
+  </div>
+  {{ end }}
+{{ end }}
+</div>
+{{ end }}

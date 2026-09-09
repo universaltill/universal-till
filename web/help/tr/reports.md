@@ -47,6 +47,26 @@ Bir çekin satıldığı satış iptal edilirse, çek henüz hiç kullanılmamı
 harcanamaz. Çekin herhangi bir kısmı zaten harcanmışsa kasa o satışın
 iptalini reddeder: önce bekleyen çeki müşteriyle çözüme kavuşturun.
 
+## İptaller ve kapanışı kim yaptı
+
+Basılı gün sonu (Z) raporu, en az bir satışın iptal edildiği her günde,
+İadeler'den ayrı bir **STORNOS** (iptaller) bölümü gösterir: buradaki bir
+iptal, sonradan iptal edilen/geri alınan tamamlanmış bir satış anlamına
+gelir (örn. aynı gün yapılan bir düzeltme), oysa iade sonradan işlenen
+resmi bir geri ödemedir. Bu ikisi bir denetçi için farklı şeyler ifade
+eder, bu yüzden asla tek bir rakamda birleştirilmezler — bir satışı iptal
+etmek zaten hiçbir hasılat taşımaz ve günün Net tutarını hiçbir zaman
+değiştirmez. Hiç iptal olmayan bir günde bölüm tamamen bulunmaz.
+
+Rapor ayrıca her zaman **Erstellt von** (kapanışı kim yaptı) satırını
+yazdırır — kişinin görünen adı, ya da otomatik zamanlanmış kapanış için
+"System" — böylece Denetim sayfasını açmadan bile günü kimin kapattığının
+bir kaydı olur. Şu anda isteğe bir `annotation` değeri gönderen herhangi
+bir şey, kapanışa isteğe bağlı bir not ekleyebilir; bunun için henüz
+ekranda bir alan yok, bu yüzden bu esas olarak bir entegrasyon veya
+gelecekteki bir kasa güncellemesi için yararlıdır — mevcut olduğunda
+Erstellt von'un hemen altında **Anmerkung** (not) olarak yazdırılır.
+
 ## Ürün grubu, ürün ve kasiyer bazında dökümler
 
 Gün sonu raporunu tek bir gün için (tarih aralığı değil) çalıştırmak,
@@ -71,6 +91,19 @@ ilk N'i yazdır** (varsayılan — ilk 30 ürünü, ya da belirlediğiniz
 sayıyı, daha fazlası varsa bir "+N more" satırıyla birlikte yazdırır),
 **Her ürünü yazdır** (önceki davranış, sınırsız) ya da **Yazdırma** (bu
 bölümü yalnızca basılı rapordan kaldırır, ekrandaki rapordan değil).
+
+## Sipariş türüne göre döküm
+
+Tek bir gün için Gün sonu işlemini çalıştırmak, hem basılı raporda hem de
+arşivlenmiş rapor listesinde ekranda bir **BY ORDER TYPE** (sipariş
+türüne göre) dökümü de ekler: hasılat ve adet, satış ekranının kendi
+burada/paket anahtarındaki etiketlerle eşleşen **Dine in** (Burada) ve
+**Takeaway** (Paket) arasında bölünür. Her ikisini de içeren bir satış
+(bazı ürünler burada, bazıları paket) üçüncü bir "karma" satıra ihtiyaç
+duymadan kendi ürünlerine göre iki satıra doğru şekilde bölünür. Yukarıdaki
+ürün grubu/ürün/kasiyer dökümleri gibi, bir satır yalnızca o modda en az
+bir satış olduğunda görünür — tamamen burada geçen bir gün yalnızca Dine
+in satırını gösterir, boş bir Takeaway satırı göstermez.
 
 ## Gün sonu (Z) raporunda ödeme yöntemi ve KDV oranı bir arada
 
@@ -280,4 +313,16 @@ etmez veya taşımaz.
   olduğuna bakmaksızın bahşişli her ödemeyi sayar; "Alınan" ise yalnızca
   çalışana kaydedilen bahşişleri sayar (varsayılan) — bir bahşiş
   işletmeye kaydedildiğinde ikisinin farklı çıkması beklenir.
+
+## Kart ödemesi mutabakatı (fiş detayı)
+
+İşlem geçmişinden bir fişi açmak tam ödeme detayını gösterir — bir kart
+ödemesinin satıştan günler sonra sonradan mutabakatının yapıldığı yer
+burasıdır. Bir ödeme kart okutmalı bir terminalde alındığında, ödeme
+satırı maskelenmiş kart numarasını ve onay kodunu (basılı fişin tahsilat
+anında gösterdiği aynı mutabakat satırı) gösterir, ayrıca terminalin
+kendi mutabakat raporuyla eşleştirmek için terminal ve işlem numarasını
+da gösterir. Bu alanlar yalnızca bir ödeme yöntemi bunları gerçekten
+kaydettiğinde görünür — bugünkü yerleşik ödeme yöntemleri (nakit, Stripe,
+SumUp, QR ödeme) kaydetmiyor, bu yüzden mevcut fişler bundan etkilenmez.
 

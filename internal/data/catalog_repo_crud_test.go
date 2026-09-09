@@ -356,12 +356,26 @@ func TestReadLookup(t *testing.T) {
 	testsupport.SeedCategory(t, db, "c1", "Drinks", true)
 	testsupport.SeedCategory(t, db, "c2", "Retired Category", false)
 
+	// categories is in lookupUnfilteredByActive (ut-docs#1898 review finding
+	// F2, mirroring the pre-existing brands carve-out ut-docs#1610
+	// established): ReadLookup must return BOTH rows here, active and
+	// retired alike. A still-referenced-but-deactivated category has to
+	// keep showing in /catalog's item-edit Category <select>, or the next
+	// save of an item still assigned to it would silently null its
+	// category_id (the <select> can no longer offer the value) — see
+	// ListActiveCategories' own doc comment for the full mechanism, and
+	// TestAdminApply_CategoryRetiredInPlace for the regression test that
+	// drives this through the real admin-sync retire path.
 	out, err := repo.ReadLookup(ctx, "categories")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(out) != 1 || out[0].Name != "Drinks" {
-		t.Fatalf("expected only the active category, got %+v", out)
+	if len(out) != 2 {
+		t.Fatalf("expected both categories (categories is unfiltered by active, like brands), got %+v", out)
+	}
+	names := map[string]bool{out[0].Name: true, out[1].Name: true}
+	if !names["Drinks"] || !names["Retired Category"] {
+		t.Fatalf("expected both %q and %q, got %+v", "Drinks", "Retired Category", out)
 	}
 }
 

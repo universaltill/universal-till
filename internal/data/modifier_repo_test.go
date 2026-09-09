@@ -130,3 +130,159 @@ func TestModifierRepo_CreateOption_RejectsNegativeDelta(t *testing.T) {
 		t.Fatal("expected negative price_delta_minor to be rejected (additive-only in v1)")
 	}
 }
+
+// ListShopModifierGroups (ut-docs#1899) is the shop-wide browse query behind
+// the new /modifiers screen — today a modifier group can only be seen by
+// opening the one item it belongs to; this is what lets a merchant see every
+// group across the whole catalog in one place.
+func TestModifierRepo_ListShopModifierGroups_ReturnsEveryItemsActiveGroups(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	if _, err := d.DB.ExecContext(ctx, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES
+		('itm1','SKU1','Flat White',320,1), ('itm2','SKU2','Latte',350,1)`); err != nil {
+		t.Fatal(err)
+	}
+	repo := data.NewModifierRepo(d.DB)
+
+	gid1, err := repo.CreateGroup(ctx, "g1", "itm1", "Extras", true, 1, 2, 1)
+	if err != nil {
+		t.Fatalf("CreateGroup itm1: %v", err)
+	}
+	if _, err := repo.CreateOption(ctx, "o1", gid1, "Extra shot", 50, 1); err != nil {
+		t.Fatal(err)
+	}
+	gid2, err := repo.CreateGroup(ctx, "g2", "itm2", "Milk", false, 0, 1, 1)
+	if err != nil {
+		t.Fatalf("CreateGroup itm2: %v", err)
+	}
+	if _, err := repo.CreateOption(ctx, "o2", gid2, "Oat milk", 40, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	groups, err := repo.ListShopModifierGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListShopModifierGroups: %v", err)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("expected 2 groups across the shop, got %d: %+v", len(groups), groups)
+	}
+	// Ordered by item name (Flat White before Latte).
+	if groups[0].ItemName != "Flat White" || groups[0].Name != "Extras" {
+		t.Fatalf("unexpected first group: %+v", groups[0])
+	}
+	if !groups[0].Required || groups[0].MinSelect != 1 {
+		t.Fatalf("expected group[0] required flags to survive the join: %+v", groups[0])
+	}
+	if len(groups[0].Options) != 1 || groups[0].Options[0].Name != "Extra shot" {
+		t.Fatalf("expected group[0] to carry its option: %+v", groups[0].Options)
+	}
+	if groups[1].ItemName != "Latte" || groups[1].Name != "Milk" {
+		t.Fatalf("unexpected second group: %+v", groups[1])
+	}
+}
+
+// A deactivated group must not appear on the shop-wide browse screen either
+// — same visibility contract as the sale-time ListGroupsForItem.
+func TestModifierRepo_ListShopModifierGroups_SkipsInactiveGroupsAndOptions(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	if _, err := d.DB.ExecContext(ctx, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm1','SKU1','Flat White',320,1)`); err != nil {
+		t.Fatal(err)
+	}
+	repo := data.NewModifierRepo(d.DB)
+
+	gidActive, err := repo.CreateGroup(ctx, "g1", "itm1", "Extras", false, 0, 2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateOption(ctx, "o1", gidActive, "Extra shot", 50, 1); err != nil {
+		t.Fatal(err)
+	}
+	inactiveOptID, err := repo.CreateOption(ctx, "o2", gidActive, "Discontinued syrup", 30, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateOption(ctx, inactiveOptID, "Discontinued syrup", 30, 2, false); err != nil {
+		t.Fatal(err)
+	}
+
+	gidInactive, err := repo.CreateGroup(ctx, "g2", "itm1", "Retired", false, 0, 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateGroup(ctx, gidInactive, "Retired", false, 0, 1, 2, false); err != nil {
+		t.Fatal(err)
+	}
+
+	groups, err := repo.ListShopModifierGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListShopModifierGroups: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("expected only the active group, got %d: %+v", len(groups), groups)
+	}
+	if groups[0].Name != "Extras" {
+		t.Fatalf("unexpected group: %+v", groups[0])
+	}
+	if len(groups[0].Options) != 1 || groups[0].Options[0].Name != "Extra shot" {
+		t.Fatalf("expected only the active option, got: %+v", groups[0].Options)
+	}
+}
+
+// A deactivated ITEM's groups must not appear either — independent review,
+// ut-docs#1899. DeactivateItem never touches item_modifier_groups.is_active,
+// and ListItems already filters deactivated items off /catalog (the only
+// place a group can be edited or deactivated), so without this check a
+// deactivated item's groups would render on /modifiers forever, labelled
+// with a name the merchant can no longer find or act on.
+func TestModifierRepo_ListShopModifierGroups_SkipsGroupsOfDeactivatedItem(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	if _, err := d.DB.ExecContext(ctx, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES
+		('itm1','SKU1','Flat White',320,1), ('itm2','SKU2','Latte',350,1)`); err != nil {
+		t.Fatal(err)
+	}
+	repo := data.NewModifierRepo(d.DB)
+
+	gid1, err := repo.CreateGroup(ctx, "g1", "itm1", "Extras", false, 0, 1, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateOption(ctx, "o1", gid1, "Extra shot", 50, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateGroup(ctx, "g2", "itm2", "Milk", false, 0, 1, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	// Deactivate itm1 the same way DeactivateItem does — it never touches
+	// item_modifier_groups.is_active, which is exactly the gap this test
+	// guards.
+	if _, err := d.DB.ExecContext(ctx, `UPDATE items SET is_active = 0 WHERE id = 'itm1'`); err != nil {
+		t.Fatal(err)
+	}
+
+	groups, err := repo.ListShopModifierGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListShopModifierGroups: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("expected only itm2's group (itm1 is deactivated), got %d: %+v", len(groups), groups)
+	}
+	if groups[0].ItemName != "Latte" || groups[0].Name != "Milk" {
+		t.Fatalf("unexpected group: %+v", groups[0])
+	}
+}
+
+func TestModifierRepo_ListShopModifierGroups_EmptyShopReturnsNilNotError(t *testing.T) {
+	d := openModifierTestDB(t)
+	repo := data.NewModifierRepo(d.DB)
+
+	groups, err := repo.ListShopModifierGroups(context.Background())
+	if err != nil {
+		t.Fatalf("ListShopModifierGroups: %v", err)
+	}
+	if len(groups) != 0 {
+		t.Fatalf("expected no groups in an empty shop, got %+v", groups)
+	}
+}

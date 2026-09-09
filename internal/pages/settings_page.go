@@ -608,7 +608,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// bypass.
 			"androidUpdateSessionAuth": androidUpdateSessionAuthorizes(d, r),
 			"printer":                  printerConfig(r.Context(), d),
-			"backups":                  listBackupsForUI(d),
+			// ADR-0089 Decision 3: the interim Germany carve-out locks the
+			// receipt-policy control to "always" — read from the same
+			// settings row the save handler and printerConfig key off, not
+			// CurrentState, so a country changed via /api/settings/upsert in
+			// this same session renders consistently with what the save
+			// handler will actually accept.
+			"receiptPolicyLocked": receiptPolicyLockedForCountry(all[common.KeyCountry]),
+			"backups":             listBackupsForUI(d),
 			// ut-docs#1613: a restore staged in an earlier visit (or before
 			// a page reload) must still offer its restart trigger here —
 			// otherwise the operator who reloads mid-flow lands back on the
@@ -2199,11 +2206,24 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// country's default isn't safe yet, locale is left exactly as
 			// it was — a partial, not full, answer to "never mismatched,"
 			// but the safe one.
+			//
+			// ut-docs#1074: also never re-derive once the operator has
+			// EXPLICITLY chosen a locale via Settings' Language card
+			// (common.KeyLocaleConfirmed) — a country change is not that
+			// choice, and silently overriding it here would be the exact
+			// clobber this same card exists to prevent, just from a
+			// different call site.
 			if strings.TrimSpace(r.Form.Get("locale")) == "" {
-				if cs, ok, csErr := data.NewCountrySettingsRepo(d.Db).Get(r.Context(), v); csErr == nil && ok &&
-					cs.DefaultLocale != st.Locale && localeSafeToPreset(cs.DefaultLocale) {
-					st.Locale = cs.DefaultLocale
-					auditPayload["locale"] = cs.DefaultLocale
+				localeConfirmed, _, lcErr := d.Settings.Get(r.Context(), common.KeyLocaleConfirmed)
+				if lcErr != nil {
+					logging.L().Warnf("settings: read %s: %v", common.KeyLocaleConfirmed, lcErr)
+				}
+				if localeConfirmed != "true" {
+					if cs, ok, csErr := data.NewCountrySettingsRepo(d.Db).Get(r.Context(), v); csErr == nil && ok &&
+						cs.DefaultLocale != st.Locale && localeSafeToPreset(cs.DefaultLocale) {
+						st.Locale = cs.DefaultLocale
+						auditPayload["locale"] = cs.DefaultLocale
+					}
 				}
 			}
 		}
@@ -2224,6 +2244,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			if slices.Contains(httpx.AvailableLocales(), v) {
 				st.Locale = v
 				auditPayload["locale"] = v
+				// ut-docs#1074: this form field is the one genuine
+				// operator-explicit locale choice (Settings' Language
+				// card) — mark it confirmed so no later derivation
+				// (ut-docs#1027's country-change re-derive, or this
+				// card's own base-plugin-install catch-up) ever
+				// silently overrides it.
+				if err := d.Settings.Set(r.Context(), common.KeyLocaleConfirmed, "true"); err != nil {
+					logging.L().Errorf("settings: mark locale confirmed: %v", err)
+				}
 			}
 		}
 		// TaxInclusive/AllowNegativeInventory are deliberately NOT set here:
@@ -2464,8 +2493,17 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// under the state write lock.
 		var derivedLocale string
 		if key == common.KeyCountry {
-			if cs, ok, csErr := data.NewCountrySettingsRepo(d.Db).Get(r.Context(), value); csErr == nil && ok && localeSafeToPreset(cs.DefaultLocale) {
-				derivedLocale = cs.DefaultLocale
+			// ut-docs#1074: never re-derive once the operator has explicitly
+			// chosen a locale via Settings' Language card — same guard as
+			// the /api/settings/save country handler just above.
+			localeConfirmed, _, lcErr := d.Settings.Get(r.Context(), common.KeyLocaleConfirmed)
+			if lcErr != nil {
+				logging.L().Warnf("settings: read %s: %v", common.KeyLocaleConfirmed, lcErr)
+			}
+			if localeConfirmed != "true" {
+				if cs, ok, csErr := data.NewCountrySettingsRepo(d.Db).Get(r.Context(), value); csErr == nil && ok && localeSafeToPreset(cs.DefaultLocale) {
+					derivedLocale = cs.DefaultLocale
+				}
 			}
 		}
 		st := d.UpdateState(func(s *common.RuntimeState) {

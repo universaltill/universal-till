@@ -1,11 +1,18 @@
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "nav.menu" }}</h1>
-  <a class="btn primary btn-touch" href="/">← {{ T "menu.back_to_sale" }}</a>
+  <!-- ut-docs#1896: the plain "←" text arrow is replaced by the same
+       shopping-cart glyph the nav rail's own sale entry point now uses
+       (nav.html), so every route back to selling reads consistently. -->
+  <a class="btn primary btn-touch" href="/"><span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span> {{ T "menu.back_to_sale" }}</a>
 </div>
 
 <div class="menu-grid">
   {{ range .Tiles }}
+  {{/* ADR-0088: a `layout` plugin may group tiles; the heading spans the
+       grid row and appears only where the group changes, so a till with
+       no grouped amendment renders exactly what it always did. */}}
+  {{ if .GroupHeading }}<h2 class="menu-group">{{ T .GroupHeading }}</h2>{{ end }}
   <a class="menu-tile" href="{{ .Href }}">
     <span class="menu-ico" aria-hidden="true">{{ .IconSVG }}</span>
     <span class="menu-label">{{ T .Label }}</span>

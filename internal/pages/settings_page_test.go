@@ -1319,6 +1319,27 @@ func TestSaveSettings_Locale(t *testing.T) {
 	}
 }
 
+// TestSaveSettings_LocaleMarksConfirmed (ut-docs#1074): this handler is the
+// one genuine operator-explicit locale choice, so it must mark
+// common.KeyLocaleConfirmed — the signal that stops a later derivation
+// (ut-docs#1027's country-change re-derive, or a base-plugin-install
+// catch-up) from silently overriding it.
+func TestSaveSettings_LocaleMarksConfirmed(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	if v, ok, _ := d.Settings.Get(t.Context(), common.KeyLocaleConfirmed); ok && v == "true" {
+		t.Fatal("locale-confirmed already true before any Settings save — test fixture is not proving anything")
+	}
+
+	rec := postForm(mux, "/api/settings/save", url.Values{"locale": {"ar"}}, &mgrUser)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("save = %d", rec.Code)
+	}
+	if v, ok, err := d.Settings.Get(t.Context(), common.KeyLocaleConfirmed); err != nil || !ok || v != "true" {
+		t.Fatalf("stored %s = (%q, %v, %v), want (true, true, nil)", common.KeyLocaleConfirmed, v, ok, err)
+	}
+}
+
 // TestSaveSettings_LocaleRejectsUnknownValue: an unrecognized locale is
 // silently skipped (same lenient contract this handler already applies to
 // every other field — see the handler's own "no rejecting validation"

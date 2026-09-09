@@ -14,15 +14,22 @@ import (
 	"github.com/universaltill/universal-till/internal/config"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/paths"
+	"github.com/universaltill/universal-till/internal/uislot"
 )
 
 type Manager struct {
 	MenuPlugins map[string]MenuPlugin // key = plugin entry key
-	Installed   map[string]Plugin     // key = plugin id
-	Catalog     map[string]CatalogEntry
-	db          *sql.DB
-	Wasm        *WasmRuntime // in-process runtime for runtime:"wasm" plugins
-	localizer   Localizer    // receives language-pack translations
+	// LayoutAmendments are the Menu-slot amendments of every ACTIVE
+	// `layout` plugin (ADR-0088), loaded once per lifecycle change beside
+	// MenuPlugins — the render path never queries for them (Decision I).
+	// Reassigned inside Reload's critical section: read it only under
+	// common.Deps.PluginMu (Deps.LayoutAmendmentsSnapshot), like MenuPlugins.
+	LayoutAmendments []uislot.Amendment
+	Installed        map[string]Plugin // key = plugin id
+	Catalog          map[string]CatalogEntry
+	db               *sql.DB
+	Wasm             *WasmRuntime // in-process runtime for runtime:"wasm" plugins
+	localizer        Localizer    // receives language-pack translations
 }
 
 // Localizer is where plugin-shipped locale files land (the config.I18n).
@@ -157,6 +164,9 @@ func Init(ctx context.Context, cfg *config.Config, db *sql.DB) (*Manager, error)
 	if err := m.loadMenuEntries(ctx, repo); err != nil {
 		return nil, err
 	}
+	if err := m.loadLayoutEntries(ctx, repo); err != nil {
+		return nil, err
+	}
 	if err := repo.SyncPluginPaymentMethods(ctx); err != nil {
 		return nil, err
 	}
@@ -231,11 +241,15 @@ func (m *Manager) Close(ctx context.Context) {
 func (m *Manager) Reload(ctx context.Context) error {
 	m.Installed = make(map[string]Plugin)
 	m.MenuPlugins = make(map[string]MenuPlugin)
+	m.LayoutAmendments = nil
 	repo := data.NewPluginRepo(m.db)
 	if err := m.loadInstalled(ctx, repo); err != nil {
 		return err
 	}
 	if err := m.loadMenuEntries(ctx, repo); err != nil {
+		return err
+	}
+	if err := m.loadLayoutEntries(ctx, repo); err != nil {
 		return err
 	}
 	// Payment methods are derived state: every lifecycle change funnels
@@ -326,6 +340,30 @@ func (m *Manager) loadMenuEntries(ctx context.Context, repo *data.PluginRepo) er
 		}
 		m.MenuPlugins[mp.Key] = mp
 	}
+	return nil
+}
+
+// loadLayoutEntries reads every active layout plugin's Menu-slot amendment
+// document into LayoutAmendments (ADR-0088). A row that no longer parses
+// (validateLayoutEntries accepted it at install; only a change to core's
+// own key set can invalidate it afterwards) is logged and skipped rather
+// than failing the reload — a stale amendment must never take the whole
+// plugin manager down with it.
+func (m *Manager) loadLayoutEntries(ctx context.Context, repo *data.PluginRepo) error {
+	rows, err := repo.ListLayoutEntries(ctx)
+	if err != nil {
+		return fmt.Errorf("load plugin layout entries: %w", err)
+	}
+	var out []uislot.Amendment
+	for _, row := range rows {
+		amendments, err := uislot.ParseMenuAmendmentsJSON(row.PluginID, row.ConfigJSON)
+		if err != nil {
+			log.Printf("plugin %s: layout entry %q no longer parses and is ignored: %v", row.PluginID, row.EntryKey, err)
+			continue
+		}
+		out = append(out, amendments...)
+	}
+	m.LayoutAmendments = out
 	return nil
 }
 

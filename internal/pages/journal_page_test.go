@@ -6,6 +6,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
@@ -640,6 +641,51 @@ func TestJournalUIFilters_ReplicaCrossTillNotice(t *testing.T) {
 	body = rec.Body.String()
 	if strings.Contains(body, "Cross-till sales are only available") {
 		t.Fatalf("explicit 'This till' on a replica must not show the cross-till notice: %s", body)
+	}
+}
+
+// ut-docs#1632: the journal list row and the receipt detail page now
+// render created_at through the locale-aware `datetime` template func
+// instead of the raw RFC3339 string — de-DE picked because its rendering
+// ("15.08.2026 09:30") is unambiguously distinct from the raw stored
+// value, unlike en's day/month/year default. time.Local is pinned so this
+// doesn't depend on the test runner's own timezone (same convention as
+// httpx.TestFuncsForExposesDate).
+func TestJournalUIAndDetail_RenderLocaleFormattedCreatedAt(t *testing.T) {
+	orig := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = orig })
+
+	mux, d := newJournalMux(t)
+	if _, err := d.Db.Exec(`INSERT INTO sales(id, receipt_no, status, sale_type, tender_type, offline, sync_status, currency, subtotal, discount_total, tax_total, total, created_at)
+		VALUES ('sale-dt', 'R-DT', 'completed', 'sale', 'cash', 0, 'synced', 'GBP', 100, 0, 20, 120, '2026-08-15T09:30:00Z')`); err != nil {
+		t.Fatalf("seed sale: %v", err)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/ui/journal?limit=full&lang=de-DE", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/ui/journal = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "2026-08-15T09:30:00Z") {
+		t.Fatalf("journal row must not show the raw RFC3339 timestamp: %s", body)
+	}
+	if !strings.Contains(body, "15.08.2026 09:30") {
+		t.Fatalf("journal row must show the de-DE-formatted date+time: %s", body)
+	}
+
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/journal/R-DT?lang=de-DE", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("/journal/R-DT = %d", rec.Code)
+	}
+	body = rec.Body.String()
+	if strings.Contains(body, "2026-08-15T09:30:00Z") {
+		t.Fatalf("journal detail must not show the raw RFC3339 timestamp: %s", body)
+	}
+	if !strings.Contains(body, "15.08.2026 09:30") {
+		t.Fatalf("journal detail must show the de-DE-formatted date+time: %s", body)
 	}
 }
 

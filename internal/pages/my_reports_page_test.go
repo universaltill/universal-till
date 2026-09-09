@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
@@ -127,6 +128,37 @@ func TestMyReportsPage_RowsWithTranslatedStatuses(t *testing.T) {
 	// Newest-captured first.
 	if strings.Index(body, "rep-filed") > strings.Index(body, "rep-sent") {
 		t.Fatalf("expected newest-first ordering, got: %s", body)
+	}
+}
+
+// ut-docs#1632: CapturedAt now renders through httpx.FormatDateTime (locale
+// + 24h clock, Local time) instead of a hardcoded ".UTC().Format("2006-01-02
+// 15:04")" — covers both the sent-report and still-pending-bundle code
+// paths, which populate this field independently. time.Local pinned to UTC
+// for determinism, same convention as httpx.TestFuncsForExposesDate.
+func TestMyReportsPage_RendersLocaleFormattedCapturedAt(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	orig := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = orig })
+
+	mux, db := newMyReportsTestMux(t)
+	if _, err := db.Exec(`INSERT INTO issue_reports_sent (id, note, captured_at, status) VALUES ('rep-1','n','2026-08-07T10:15:00Z','sent')`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/my-reports?lang=de-DE", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "2026-08-07 10:15") {
+		t.Fatalf("must not show the old hardcoded UTC format: %s", body)
+	}
+	if !strings.Contains(body, "07.08.2026 10:15") {
+		t.Fatalf("expected the de-DE-formatted date+time, got: %s", body)
 	}
 }
 

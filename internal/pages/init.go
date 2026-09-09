@@ -26,6 +26,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
+	"github.com/universaltill/universal-till/internal/uislot"
 	"github.com/universaltill/universal-till/web/locales"
 )
 
@@ -33,16 +34,25 @@ import (
 // entry -- the menu screen's own back_to_sale button, "← Back to sale", is
 // the only way back to selling; a redundant "Home"/"Start" tile that led to
 // the same screen read as meaningless and named it a third, inconsistent way).
-var baseMenu = []common.MenuItem{
-	{Href: "/designer", Label: "nav.designer"},
-	{Href: "/inventory", Label: "nav.inventory"},
-	{Href: "/shifts", Label: "nav.shifts"},
-	{Href: "/journal", Label: "nav.journal"},
-	{Href: "/orders", Label: "nav.orders"},
-	{Href: "/reports", Label: "nav.reports"},
-	{Href: "/settings", Label: "nav.settings"},
-	{Href: "/plugins", Label: "nav.plugins"},
-	{Href: "/catalog", Label: "nav.catalog"},
+// ut-docs#1897: "Catalog" and "Inventory" folded into one "Items" tile
+// opening a section list (Library/Categories/Inventory/Modifiers/Option
+// sets) — SumUp's Items area, on the pilot merchant's own comparison
+// (ut-docs#1830). /catalog and /inventory are unchanged routes, still
+// directly reachable as sections from /items.
+var baseMenu = coreNavMenu()
+
+// coreNavMenu derives the nav item list from the declared Menu slot
+// (ADR-0088 Decision C): the InNav entries of uislot.CoreMenu, in their
+// declared order. One table feeds both the compact nav and the launcher,
+// so a core tile is amendable by a layout plugin from the day it is added.
+func coreNavMenu() []common.MenuItem {
+	var items []common.MenuItem
+	for _, e := range uislot.CoreMenu {
+		if e.InNav {
+			items = append(items, common.MenuItem{Href: e.Href, Label: e.LabelKey})
+		}
+	}
+	return items
 }
 
 // Init builds the page mux and returns the *common.Deps instance it wired
@@ -252,18 +262,21 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	windowCtl := newWindowController(shellChannel, piKioskServiceInstalled(), runtime.GOOS)
 
 	dp := &common.Deps{
-		Cfg:         cfg,
-		Pm:          pm,
-		Db:          db,
-		Settings:    setStore,
-		State:       state,
-		BaseMenu:    baseMenu,
-		Menu:        common.BuildMenu(baseMenu, pm),
-		Engine:      engine,
-		KioskEngine: kioskEngine,
-		BtnStore:    btnStore,
-		CatalogRepo: catalogRepo,
-		AuthSvc:     authSvc,
+		Cfg:      cfg,
+		Pm:       pm,
+		Db:       db,
+		Settings: setStore,
+		State:    state,
+		BaseMenu: baseMenu,
+		Menu:     common.BuildMenu(baseMenu, pm),
+		// ADR-0088: the layout amendments in force, read once here and
+		// again on every ReloadPlugins — never per render.
+		MenuAmendments: common.BuildMenuAmendments(pm, common.RestoredMenuKeys(ctx, setStore)),
+		Engine:         engine,
+		KioskEngine:    kioskEngine,
+		BtnStore:       btnStore,
+		CatalogRepo:    catalogRepo,
+		AuthSvc:        authSvc,
 		// Order-status pub/sub (ut-docs#526): one instance for the process —
 		// the one-tap endpoint publishes, future KDS/pager surfaces subscribe.
 		OrderStatus: pos.NewOrderStatusBroadcaster(),
@@ -387,14 +400,15 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerSyncQuarantinePage(mux, dp) // ut-docs#1133: quarantined LAN-sync journal entries, primary-only admin panel (ADR-0065 follow-up)
 	StartSyncPush(bgCtx, dp, wg)        // replica journal loop (ADR-0011 D3); joined by app.Run's drain
 	rederiveSettings := newRederiveSettings(dp, authDisabled, i18n)
-	StartSyncPull(bgCtx, dp, rederiveSettings, wg)  // joined by app.Run's drain
-	StartHeldOrderClaimReaffirm(bgCtx, dp, wg)      // periodic held-order table-claim re-affirm (ut-docs#1724); joined by app.Run's drain
-	StartCloudSync(bgCtx, dp, rederiveSettings, wg) // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain
-	StartEODScheduler(bgCtx, dp, wg)                // background Z-report (docs: G30); joined by app.Run's drain
-	StartAutoUpdateScheduler(bgCtx, dp, wg)         // background unattended update (ut-docs#79); joined by app.Run's drain
-	StartBasePluginRetry(bgCtx, dp, wg)             // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
-	StartTSEProvisionRetry(bgCtx, dp, wg)           // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain
-	StartOrderStatusStreamBridge(bgCtx, dp, wg)     // replica: hold the primary's order-status SSE stream open and republish locally (ADR-0079, ut-docs#1571); joined by app.Run's drain
+	StartSyncPull(bgCtx, dp, rederiveSettings, wg)          // joined by app.Run's drain
+	StartHeldOrderClaimReaffirm(bgCtx, dp, wg)              // periodic held-order table-claim re-affirm (ut-docs#1724); joined by app.Run's drain
+	StartCloudSync(bgCtx, dp, rederiveSettings, wg)         // ADR-0018 cloud heartbeat + directives; joined by app.Run's drain
+	StartEODScheduler(bgCtx, dp, wg)                        // background Z-report (docs: G30); joined by app.Run's drain
+	StartAutoUpdateScheduler(bgCtx, dp, wg)                 // background unattended update (ut-docs#79); joined by app.Run's drain
+	backfillLocaleConfirmedForDivergedPendingTills(ctx, dp) // ut-docs#1892: one-time backfill before any pending language install can silently override a pre-#1074 manual locale choice
+	StartBasePluginRetry(bgCtx, dp, wg)                     // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
+	StartTSEProvisionRetry(bgCtx, dp, wg)                   // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain
+	StartOrderStatusStreamBridge(bgCtx, dp, wg)             // replica: hold the primary's order-status SSE stream open and republish locally (ADR-0079, ut-docs#1571); joined by app.Run's drain
 	// ADR-0079: release every open order-status SSE stream (browser
 	// EventSources, and on a primary the replicas' bridges) the instant
 	// shutdown begins — server.Start's own Shutdown fires on this same
@@ -413,6 +427,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerTablePicker(mux, dp) // basket table-assignment picker (ut-docs#820, ADR-0054)
 	registerInventoryAPI(mux, dp)
 	registerInventoryPage(mux, dp)
+	registerItemsPage(mux, dp) // Items section list (ut-docs#1897): the new top-level "Items" nav tile's destination
 	registerShiftsAPI(mux, dp)
 	registerShiftsPage(mux, dp)
 	registerReportsPage(mux, dp)
@@ -425,6 +440,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerHelp(mux, dp)
 	registerUpdateAPI(mux, dp)
 	registerMenu(mux, dp)
+	registerMenuLayoutSettings(mux, dp) // ADR-0088 Decision D: the hidden-tiles findability surface
 	catalog.Register(mux, dp)
 	registerBasket(mux, dp)
 	registerJournal(mux, dp)
@@ -451,6 +467,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerKitchenDisplay(mux, dp)   // per-station kitchen display screen, HDMI-local (ut-docs#544)
 	registerBluetoothDevices(mux, dp) // in-POS Bluetooth HID pairing panel (ut-docs#76, ADR-0078)
 	registerTables(mux, dp)           // table floor plan (ut-docs#814, ADR-0054)
+	registerCategories(mux, dp)       // categories admin (ut-docs#1898)
 	registerCountrySettings(mux, dp)  // per-country defaults (ut-docs#659)
 	registerTranslations(mux, dp, i18n)
 	registerSetup(mux, dp, authSvc)

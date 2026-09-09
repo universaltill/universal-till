@@ -182,6 +182,43 @@ func TestFuncsForExposesDate(t *testing.T) {
 	}
 }
 
+// ut-docs#1632: datetime/datetimeUTC mirror date/dateUTC exactly (same
+// accepted-value contract, same Local-vs-UTC split, same degrade-to-self
+// on an unparseable string) plus a 24-hour clock via FormatDateTime.
+func TestFuncsForExposesDateTime(t *testing.T) {
+	InitI18n(realI18n(t), "en")
+	funcs := FuncsFor("de-DE")
+	dtFn, ok := funcs["datetime"].(func(any) string)
+	if !ok {
+		t.Fatalf("datetime helper not found")
+	}
+	dtUTCFn, ok := funcs["datetimeUTC"].(func(string) string)
+	if !ok {
+		t.Fatalf("datetimeUTC helper not found")
+	}
+
+	orig := time.Local
+	time.Local = time.FixedZone("UTC+3", 3*60*60)
+	t.Cleanup(func() { time.Local = orig })
+
+	// 23:30 UTC on the 5th is 02:30 local on the 6th — datetime (Local)
+	// must cross the day boundary; datetimeUTC must not.
+	const ts = "2026-09-05T23:30:00Z"
+	if got := dtFn(ts); got != "06.09.2026 02:30" {
+		t.Errorf("datetime(%s) = %q, want 06.09.2026 02:30 (local)", ts, got)
+	}
+	if got := dtUTCFn(ts); got != "05.09.2026 23:30" {
+		t.Errorf("datetimeUTC(%s) = %q, want 05.09.2026 23:30 (UTC)", ts, got)
+	}
+
+	if got := dtFn("2026-09-05"); got != "2026-09-05" {
+		t.Errorf("datetime(non-RFC3339) = %q, want the raw string back", got)
+	}
+	if got := dtUTCFn("2026-09-05"); got != "2026-09-05" {
+		t.Errorf("datetimeUTC(non-RFC3339) = %q, want the raw string back", got)
+	}
+}
+
 // ut-docs#1130: thousandssep/decimalsep expose the same grouping
 // convention FormatMoney uses server-side, for window.utCurrency's
 // client-side formatter (web/public/app.js) to match it.

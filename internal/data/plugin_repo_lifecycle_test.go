@@ -257,6 +257,43 @@ func TestGetPluginVersionAt(t *testing.T) {
 	}
 }
 
+// TestGetPluginVersionAt_SameDayBoundary is a narrower regression test than
+// TestGetPluginVersionAt's above: a 24h-in-the-past "before" query also
+// differs in its RFC3339 *date* component, which happens to compare
+// correctly by pure luck even when updated_at is stored malformed (see
+// ut-docs#1880) — a same-day, minutes-scale boundary does not get that
+// accidental cover and catches the real defect: InstallPlugin previously
+// bound a bare Local-zone time.Now() (e.g. "2026-09-09 03:30:51.9 -0700
+// PDT m=+0.07...") while GetPluginVersionAt queries with
+// at.UTC().Format(time.RFC3339) (e.g. "2026-09-09T10:30:51Z"). SQLite
+// compares TEXT lexicographically, and the space at byte 11 of the stored
+// value sorts below the query string's 'T' at the same position for ANY
+// same-or-later UTC instant on the same calendar day, so `updated_at <=
+// ?` was satisfied even for a query timestamp *before* the actual install.
+func TestGetPluginVersionAt_SameDayBoundary(t *testing.T) {
+	d, repo := newPluginLifecycleTestDB(t)
+	ctx := context.Background()
+
+	seedCatalogEntry(t, d, "com.example.faq", "1.0.0")
+	beforeInstall := time.Now().Add(-1 * time.Minute)
+	if err := repo.InstallPlugin(ctx, nil, "com.example.faq"); err != nil {
+		t.Fatal(err)
+	}
+
+	// A point one minute before install, same calendar day: must report no
+	// version yet.
+	if _, ok, err := repo.GetPluginVersionAt(ctx, "com.example.faq", beforeInstall); err != nil || ok {
+		t.Fatalf("expected no version active one minute before install (same day), got ok=%v err=%v", ok, err)
+	}
+
+	// A point one minute after install, same calendar day: must report it.
+	afterInstall := time.Now().Add(1 * time.Minute)
+	version, ok, err := repo.GetPluginVersionAt(ctx, "com.example.faq", afterInstall)
+	if err != nil || !ok || version != "1.0.0" {
+		t.Fatalf("expected version 1.0.0 active one minute after install (same day), got version=%q ok=%v err=%v", version, ok, err)
+	}
+}
+
 func TestListPluginSettings(t *testing.T) {
 	d, repo := newPluginLifecycleTestDB(t)
 	ctx := context.Background()

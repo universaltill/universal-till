@@ -422,7 +422,7 @@ func TestMenuPage_NoRetiredTileEmoji(t *testing.T) {
 // icon name in Go, from a map. This is that guard for this call path.
 func TestMenuPage_EveryDrawnTileIconNameResolves(t *testing.T) {
 	if len(iconSVGFor) == 0 {
-		t.Fatal("iconSVGFor is empty — the Bluetooth tile (ut-docs#1720) should be in it")
+		t.Fatal("iconSVGFor is empty — the residual non-core routes (/inventory, /catalog, …) should be in it; core keys live in uislot.CoreMenu since ADR-0088")
 	}
 	for href, name := range iconSVGFor {
 		if httpx.Icon(name) == "" {
@@ -431,5 +431,65 @@ func TestMenuPage_EveryDrawnTileIconNameResolves(t *testing.T) {
 	}
 	if httpx.Icon(genericFallbackIcon) == "" {
 		t.Errorf("genericFallbackIcon %q is not a known icon (known: %v)", genericFallbackIcon, httpx.IconNames())
+	}
+}
+
+// The two fiscal tiles are nested INSIDE the manager gate, and always have
+// been: on main that nesting was structural (`if canPerform { … if DE {
+// add } }`), so it could not be dropped by accident. ADR-0088 turned it
+// into a composable expression — `v.visible("settings") && …` inside the
+// predicate — which made the nesting a one-token deletion, at exactly the
+// moment nothing covered it: every other fiscal-tile test above sets
+// UT_AUTH=off, so all of them pass with the manager gate removed
+// (independent review of ut-docs#1904, F3).
+//
+// These two pin the cashier case. A cashier on a fully-configured German
+// or Turkish till must not see a tile whose page would only bounce them,
+// and — more to the point — a §146a/YN ÖKC surface must not become
+// visible to an unprivileged operator because a refactor lost a
+// conjunct.
+func TestMenuPage_FiscalRegisterTileStaysManagerGatedForCashier(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, nil)
+	// Deliberately NO t.Setenv("UT_AUTH", "off") — this is the cashier
+	// path (no session user attached), which is the half every other
+	// fiscal-register test skips.
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "DE" })
+	seedActiveTaxDePlugin(t, dp.Db)
+
+	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `href="/fiscal-register"`) {
+		t.Fatalf("a cashier must not see the fiscal-register tile even on a DE till with the German tax plugin active, got: %s", body)
+	}
+	// Guard against the test passing for the wrong reason: the page must
+	// have rendered a real menu, just without this tile.
+	if !strings.Contains(body, `href="/help"`) {
+		t.Fatalf("expected a rendered menu with the help tile, got: %s", body)
+	}
+}
+
+func TestMenuPage_FiscalDeviceTileStaysManagerGatedForCashier(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, nil)
+	// No UT_AUTH=off — the cashier path, as above.
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "TR" })
+	seedActiveTaxTrPlugin(t, dp.Db, true)
+
+	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `href="/fiscal-device"`) {
+		t.Fatalf("a cashier must not see the fiscal-device tile even on a TR till with the Turkish fiscal-device plugin active, got: %s", body)
+	}
+	if !strings.Contains(body, `href="/help"`) {
+		t.Fatalf("expected a rendered menu with the help tile, got: %s", body)
 	}
 }

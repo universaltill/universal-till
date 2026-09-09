@@ -473,6 +473,19 @@ func ResolveLocale(w http.ResponseWriter, r *http.Request) string {
 		})
 		return lang
 	}
+	return RequestLocale(r)
+}
+
+// RequestLocale is ResolveLocale without the side effect: the same
+// query-param → cookie → default resolution, but it never writes the
+// ut_lang cookie. For a handler that needs the locale BEFORE it calls
+// Render (which resolves again, and would otherwise emit a second
+// Set-Cookie for the same ?lang= — menu_page.go's label fallback,
+// ADR-0088 Decision G).
+func RequestLocale(r *http.Request) string {
+	if lang := r.URL.Query().Get("lang"); lang != "" {
+		return lang
+	}
 	// cookie
 	if c, err := r.Cookie("ut_lang"); err == nil && c.Value != "" {
 		return c.Value
@@ -622,6 +635,35 @@ func FuncsFor(locale string) template.FuncMap {
 			return v
 		}
 		return FormatDate(parsed, locale)
+	}
+	// {{ datetime .CreatedAt }}: FormatDateTime — `date`'s date-ordering/
+	// digit-shape convention plus a 24-hour clock, in LOCAL time, for a
+	// per-event timestamp where the time of day matters (a journal row, an
+	// audit entry) — as opposed to `date`'s date-only rendering (ut-docs#1632).
+	// Same accepted-value contract and same-string-back-on-parse-failure
+	// behavior as `date` above.
+	funcs["datetime"] = func(v any) string {
+		switch t := v.(type) {
+		case time.Time:
+			return FormatDateTime(t.Local(), locale)
+		case string:
+			parsed, err := time.Parse(time.RFC3339, t)
+			if err != nil {
+				return t
+			}
+			return FormatDateTime(parsed.Local(), locale)
+		default:
+			return ""
+		}
+	}
+	// {{ datetimeUTC .CreatedAt }}: `datetime`'s convention WITHOUT the
+	// Local() conversion — same reasoning as `dateUTC` above.
+	funcs["datetimeUTC"] = func(v string) string {
+		parsed, err := time.Parse(time.RFC3339, v)
+		if err != nil {
+			return v
+		}
+		return FormatDateTime(parsed, locale)
 	}
 	// {{ thousandssep }} / {{ decimalsep }}: the same grouping/decimal
 	// convention `money` above follows server-side, exposed for

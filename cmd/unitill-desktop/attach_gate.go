@@ -1,6 +1,10 @@
 package main
 
-import "time"
+import (
+	"fmt"
+	"os"
+	"time"
+)
 
 // attachPollInterval paces retries of the attach probe against a
 // slow-to-bind systemd service (ut-docs#1199): small relative to the up to
@@ -45,14 +49,59 @@ const attachPollInterval = 500 * time.Millisecond
 // install, or a .deb whose service is down). That is inherent rather than
 // an oversight: spawning speculatively in parallel with the retry is
 // precisely the second-server split-brain this exists to prevent.
+//
+// ut-docs#1279 (review follow-up): this decision used to be entirely
+// silent — a field engineer reading journal output on an affected till saw
+// up to ~53s of nothing before the shell either attached or gave up and
+// spawned, with no indication which branch it took or why. waitForAttach
+// now logs exactly one line to stderr right before it returns, via
+// attachDecisionLine, mirroring waitForSafeStartup's own single stderr
+// line (startup_gate_linux.go) rather than logging per-probe and spamming
+// a retry window.
 func waitForAttach(deadline time.Time, probe func() bool, sleep func(time.Duration), now func() time.Time) bool {
+	start := now()
+	retryWindow := start.Before(deadline)
+	attempts := 0
 	for {
+		attempts++
 		if probe() {
+			fmt.Fprint(os.Stderr, attachDecisionLine(retryWindow, attempts, now().Sub(start), true))
 			return true
 		}
 		if !now().Before(deadline) {
+			fmt.Fprint(os.Stderr, attachDecisionLine(retryWindow, attempts, now().Sub(start), false))
 			return false
 		}
 		sleep(attachPollInterval)
 	}
+}
+
+// attachDecisionLine renders the operator-facing stderr line waitForAttach
+// logs once it has decided how to proceed (ut-docs#1279). Split out as a
+// pure string builder — no clock, no I/O — so the message content is
+// directly testable, same "pure logic tested, Fprintf itself isn't" split
+// startup_gate.go already uses for waitForSafeStartup/holdFor.
+//
+// retryWindow reports whether the deadline gave the probe any chance to
+// retry at all: false covers a disabled/unreadable startup gate, a
+// platform with no gate (attach_gate_other.go), or a warm/manual launch
+// already past the gate window — all of which decide from a single probe
+// exactly as before ut-docs#1199. attempts is how many times probe() was
+// called; elapsed is roughly how long the whole decision took (near-zero
+// for a single immediate probe); attached is the outcome.
+func attachDecisionLine(retryWindow bool, attempts int, elapsed time.Duration, attached bool) string {
+	window := "no retry window (decided immediately)"
+	if retryWindow {
+		window = "retry window open"
+	}
+	outcome := "no existing server — spawning our own"
+	if attached {
+		outcome = "attached to an existing server"
+	}
+	plural := "s"
+	if attempts == 1 {
+		plural = ""
+	}
+	return fmt.Sprintf("attach gate: %s, %s after %d probe%s over %s (ut-docs#1199)\n",
+		window, outcome, attempts, plural, elapsed)
 }
