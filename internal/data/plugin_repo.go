@@ -900,28 +900,17 @@ LIMIT 1`,
 		err = pluginObs.wrap("merge_additive_json_map_setting", scanErr)
 		return 0, err
 	case scanErr == nil && strings.TrimSpace(raw) != "":
-		if jsonErr := json.Unmarshal([]byte(raw), &existing); jsonErr != nil {
-			// ut-docs#1255: a plugin manifest that declares a map-typed
-			// setting's default_value as the JSON STRING "{}" (rather than
-			// the JSON OBJECT {}) gets it double-encoded by
-			// internal/plugins/manifest.go's install seeding
-			// (json.Marshal of the Go string "{}" produces the JSON string
-			// "{}", not the raw object) — every fresh install of such a
-			// plugin then permanently fails this unmarshal, forever, with
-			// no way to ever populate the setting. That specific shape —
-			// a JSON string whose own content parses as the target map
-			// type — is never a plausible deliberate hand-edit (nobody
-			// hand-sets their real overrides to a string containing "{}"),
-			// so self-heal it transparently instead of refusing forever.
-			// Anything else (a genuine hand-edit gone wrong, or a
-			// string-wrapped value whose content ALSO isn't valid JSON)
-			// still falls through to the original refuse-to-clobber error.
-			var unwrapped string
-			if strErr := json.Unmarshal([]byte(raw), &unwrapped); strErr != nil ||
-				json.Unmarshal([]byte(unwrapped), &existing) != nil {
-				err = fmt.Errorf("existing value for %s/%s is not valid JSON: %w", pluginID, key, jsonErr)
-				return 0, err
-			}
+		// DecodeMapSettingValue (ut-docs#1269) is the shared read-side seam:
+		// it unwraps a string-wrapped value one level (the ut-docs#1255
+		// self-heal case — a manifest default double-encoded at install
+		// time — and any value written via the now-canonical
+		// EncodeMapSettingValue write side below), or passes a raw
+		// object/array/bare-null value through unchanged. Either way, a
+		// value whose content still isn't valid JSON falls through to the
+		// same refuse-to-clobber error as before.
+		if jsonErr := json.Unmarshal([]byte(DecodeMapSettingValue(raw)), &existing); jsonErr != nil {
+			err = fmt.Errorf("existing value for %s/%s is not valid JSON: %w", pluginID, key, jsonErr)
+			return 0, err
 		}
 	}
 	// A stored JSON `null` (bare, or string-wrapped as `"null"` and unwrapped
@@ -948,21 +937,23 @@ LIMIT 1`,
 		return 0, nil
 	}
 
-	merged, marshalErr := json.Marshal(existing)
+	// EncodeMapSettingValue (ut-docs#1269) is the shared write-side seam:
+	// marshal the merged map, then JSON-string-wrap it, matching the
+	// canonical shape every other setting type already has on disk.
+	merged, marshalErr := EncodeMapSettingValue(existing)
 	if marshalErr != nil {
 		err = fmt.Errorf("marshal merged value for %s/%s: %w", pluginID, key, marshalErr)
 		return 0, err
 	}
-	toStore, sealErr := sealSettingValue(ctx, key, string(merged), false)
+	toStore, sealErr := sealSettingValue(ctx, key, merged, false)
 	if sealErr != nil {
 		err = sealErr
 		return 0, err
 	}
-	merged = []byte(toStore)
 
 	res, execErr := tx.ExecContext(ctx, `
 UPDATE plugin_settings SET value_json = ?, updated_at = datetime('now')
-WHERE plugin_id = ? AND key = ? AND scope = 'global'`, string(merged), pluginID, key)
+WHERE plugin_id = ? AND key = ? AND scope = 'global'`, toStore, pluginID, key)
 	if execErr != nil {
 		err = pluginObs.wrap("merge_additive_json_map_setting", execErr)
 		return 0, err
@@ -970,7 +961,7 @@ WHERE plugin_id = ? AND key = ? AND scope = 'global'`, string(merged), pluginID,
 	if n, _ := res.RowsAffected(); n == 0 {
 		if _, insErr := tx.ExecContext(ctx, `
 INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope)
-VALUES (?, ?, ?, ?, 'global')`, uuid.NewString(), pluginID, key, string(merged)); insErr != nil {
+VALUES (?, ?, ?, ?, 'global')`, uuid.NewString(), pluginID, key, toStore); insErr != nil {
 			err = pluginObs.wrap("merge_additive_json_map_setting", insErr)
 			return 0, err
 		}
