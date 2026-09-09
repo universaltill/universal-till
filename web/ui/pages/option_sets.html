@@ -1,0 +1,47 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "catalog.option_sets.title" }}</h1>
+  <a class="btn secondary" href="/catalog">{{ T "nav.catalog" }}</a>
+</div>
+
+<p class="muted">{{ T "catalog.option_sets.subtitle" }}</p>
+
+{{ template "option_sets_list" . }}
+{{ end }}
+
+{{/* ut-docs#1900: the list is its own template so every mutation on this
+     screen (add set, add value) answers with just this fragment
+     (#option-sets-list, outerHTML swap) — same shape as the item panel's
+     #catalog-variants re-render. Same plain stack as modifiers.html rather
+     than .catalog-layout's list+editor split (that review's finding: an
+     always-empty 360px column at kiosk width). */}}
+{{ define "option_sets_list" }}
+<div id="option-sets-list" class="option-sets-list">
+  {{ if not .Sets }}
+  <div class="card">
+    <p class="muted" style="margin:0">{{ T "catalog.option_sets.none" }}</p>
+  </div>
+  {{ else }}
+  {{ range .Sets }}
+  <div class="card option-set-card{{ if not .IsActive }} vg-inactive{{ end }}">
+    <h3 style="margin:.2rem 0">{{ .Name }}</h3>
+    <div class="muted catalog-detail-label">{{ T "catalog.option_sets.values" }}</div>
+    {{ if not .Values }}<p class="muted" style="margin:.2rem 0">{{ T "catalog.option_sets.no_values" }}</p>{{ end }}
+    <div class="chip-row">
+      {{ range .Values }}<span class="chip option-set-chip">{{ .Value }}</span>{{ end }}
+    </div>
+    <form class="chip-add" hx-post="/api/catalog/option-set-value" hx-target="#option-sets-list" hx-swap="outerHTML">
+      <input type="hidden" name="optionSetId" value="{{ .ID }}">
+      <input type="text" name="value" required placeholder="{{ T "catalog.option_sets.value_example" }}">
+      <button class="btn secondary" type="submit">{{ T "catalog.option_sets.add_value" }}</button>
+    </form>
+  </div>
+  {{ end }}
+  {{ end }}
+
+  <form class="card option-set-new chip-add" hx-post="/api/catalog/option-set" hx-target="#option-sets-list" hx-swap="outerHTML">
+    <input type="text" name="name" required placeholder="{{ T "catalog.option_sets.name" }} — {{ T "catalog.option_sets.name_example" }}">
+    <button class="btn" type="submit">{{ T "catalog.option_sets.add" }}</button>
+  </form>
+</div>
+{{ end }}
