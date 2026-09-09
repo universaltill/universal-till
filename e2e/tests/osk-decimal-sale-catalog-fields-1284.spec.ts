@@ -192,6 +192,14 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     const row = page.locator('.catalog-row', { hasText: name });
     await row.locator('td').first().click();
     await expect(page.locator('#catalog-variants')).toBeVisible();
+    // ut-docs#1901: the row click above opens the edit dialog too — close
+    // it before touching the variants panel below. Not about inertness
+    // (the dialog is non-modal now, ut-docs#1385's fix) but plain
+    // stacking: the dialog is a large `position: fixed` box near the top
+    // of the viewport and can simply sit ON TOP of wherever the variants
+    // panel renders, intercepting pointer events the same way any
+    // overlapping fixed element would.
+    await page.locator('#item-form-close-btn').click();
   }
 
   // The field ut-docs#1284's own issue body actually names at this line
