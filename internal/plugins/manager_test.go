@@ -333,6 +333,66 @@ func TestSetLocalizerSyncsPluginLocales(t *testing.T) {
 	}
 }
 
+// ut-docs#1881: two different active plugins that ship the same overlay key
+// for the same locale used to clobber each other silently and
+// non-deterministically (m.Installed is a Go map, so iteration order isn't
+// stable across runs) — same class of silent-drop as
+// TestLoadMenuEntries_LogsShadowedPageKeyCollision above, applied to locale
+// overlays instead of menu entries. Both must now be true: the winner is
+// deterministic (stable sorted-by-plugin-id order, later wins — mirroring
+// loadMenuEntries' own tie-break), and the collision is logged naming both
+// plugin IDs, the locale, and the key.
+func TestSyncLocales_LogsShadowedKeyCollisionDeterministically(t *testing.T) {
+	dataDir := t.TempDir()
+	prev := paths.DataDir()
+	paths.Init(dataDir)
+	t.Cleanup(func() { paths.Init(prev) })
+
+	db := managerTestDB(t)
+	ctx := context.Background()
+	// Seeded out of alphabetical order on purpose: if syncLocales ever
+	// regresses to iterating the bare m.Installed map, this ordering
+	// wouldn't matter (map iteration is unordered either way) — seeding it
+	// out of order just documents that the fix doesn't depend on insertion
+	// order, only on the plugin id sort.
+	seedInstalledPlugin(t, db, "com.test.zzz", "Zzz", "1.0.0", "none", true)
+	seedInstalledPlugin(t, db, "com.test.aaa", "Aaa", "1.0.0", "none", true)
+
+	for _, id := range []string{"com.test.zzz", "com.test.aaa"} {
+		dir := filepath.Join(dataDir, "plugins", id, "1.0.0", "locales")
+		if err := os.MkdirAll(dir, 0o755); err != nil {
+			t.Fatalf("mkdir: %v", err)
+		}
+		if err := os.WriteFile(filepath.Join(dir, "de.json"), []byte(`{"greeting":"`+id+`"}`), 0o644); err != nil {
+			t.Fatalf("write: %v", err)
+		}
+	}
+
+	var logBuf bytes.Buffer
+	oldOut := log.Writer()
+	log.SetOutput(&logBuf)
+	t.Cleanup(func() { log.SetOutput(oldOut) })
+
+	m, err := Init(ctx, &config.Config{Env: "test"}, db)
+	if err != nil {
+		t.Fatalf("Init: %v", err)
+	}
+	loc := &captureLocalizer{}
+	m.SetLocalizer(loc)
+
+	// Sorted-by-id order (InstalledIDs) processes com.test.aaa then
+	// com.test.zzz, so the later plugin — com.test.zzz — wins deterministically.
+	if got := loc.overlays["de"]["greeting"]; got != "com.test.zzz" {
+		t.Fatalf("winner not deterministic: got %q, want the alphabetically-last plugin id to win", got)
+	}
+
+	logged := logBuf.String()
+	if !strings.Contains(logged, "com.test.aaa") || !strings.Contains(logged, "com.test.zzz") ||
+		!strings.Contains(logged, `"greeting"`) || !strings.Contains(logged, `"de"`) {
+		t.Fatalf("shadowed locale-key collision must name both plugins, the locale and the key, got log: %s", logged)
+	}
+}
+
 // ut-docs#16: an orphan-owned payment_methods row (plugin_id pointing at a
 // plugin that isn't installed) must produce a startup warning, not fail
 // Init — this is a log-only surface, not a hard error.

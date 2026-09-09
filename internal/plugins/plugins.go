@@ -39,13 +39,26 @@ func (m *Manager) SetLocalizer(l Localizer) {
 // syncLocales merges locales/*.json from every ACTIVE installed plugin into
 // the translator as overlays (base files win on conflict). Language packs are
 // asset-only plugins (runtime "none", canonical_type "language") but any
-// active plugin may ship translations for its own strings.
+// active plugin may ship translations for its own strings (ADR-0010) — see
+// docs/architecture/plugin-architecture.md's "Plugin i18n" section for the
+// convention plugin authors should follow to avoid the collision this
+// function detects below.
+//
+// Plugins are processed in a stable sorted-by-id order (InstalledIDs, not the
+// bare m.Installed map) so that if two different plugins ever ship the same
+// overlay key for the same locale, which one wins is deterministic across
+// restarts rather than depending on Go's randomized map iteration — and the
+// collision is logged, naming both plugins, so it doesn't vanish silently
+// (same class of shadowed-key logging as loadMenuEntries' page-key collision,
+// ut-docs#472).
 func (m *Manager) syncLocales() {
 	if m.localizer == nil {
 		return
 	}
 	overlays := map[string]map[string]string{}
-	for id, p := range m.Installed {
+	source := map[string]map[string]string{} // locale -> key -> plugin id that supplied the current value
+	for _, id := range m.InstalledIDs() {
+		p := m.Installed[id]
 		dir := filepath.Join(paths.Plugins(), id, p.Version, "locales")
 		entries, err := os.ReadDir(dir)
 		if err != nil {
@@ -67,9 +80,14 @@ func (m *Manager) syncLocales() {
 			locale := strings.TrimSuffix(e.Name(), ".json")
 			if overlays[locale] == nil {
 				overlays[locale] = map[string]string{}
+				source[locale] = map[string]string{}
 			}
 			for k, v := range msgs {
+				if prevID, ok := source[locale][k]; ok && prevID != id {
+					log.Printf("plugin %s's locale key %q for %q is shadowed by plugin %s's overlay of the same key — only %s's translation is used; pick a non-colliding key name (see docs/architecture/plugin-architecture.md's Plugin i18n section)", prevID, k, locale, id, id)
+				}
 				overlays[locale][k] = v
+				source[locale][k] = id
 			}
 		}
 	}
