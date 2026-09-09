@@ -38,10 +38,24 @@ var DemoIDsSQL string
 
 // RemoveDemoSQL deletes every UNTOUCHED demo row (see the file's header for
 // the exact safety rule) and drops the TEMP ID tables again. Must run on the
-// same connection as DemoIDsSQL, after it.
+// same connection as DemoIDsSQL, after it. This is the STRICT variant
+// (requires sku/name/base_price still pristine) — DemoSeedRepo.
+// RemoveDemoCatalogue picks this one when the till has real (non-sample)
+// trading history; see RemoveDemoRelaxedSQL for the other case.
 //
 //go:embed remove_demo.sql
 var RemoveDemoSQL string
+
+// RemoveDemoRelaxedSQL is RemoveDemoSQL minus the pristine sku/name/
+// base_price match (ut-docs#1840) — every trading-history/held-basket
+// safety clause is identical. DemoSeedRepo.RemoveDemoCatalogue picks this
+// variant only when the till as a whole has no non-sample trading history,
+// so an edited-but-otherwise-untouched demo item is removable too. Must
+// run on the same connection as DemoIDsSQL, after it, exactly like
+// RemoveDemoSQL. See the file's own header for the full reasoning.
+//
+//go:embed remove_demo_relaxed.sql
+var RemoveDemoRelaxedSQL string
 
 // DemoCustomersPromosSQL (re)inserts the 3 demo customers + 3 demo promo
 // codes (ut-docs#567), every row flagged is_sample_data = 1. The opt-in
