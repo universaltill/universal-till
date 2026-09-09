@@ -686,18 +686,21 @@
 {{ if or .isManager (gt .sampleCount 0) .pendingBasePlugins .restorePromptDeferred }}
 <div class="card">
   <h2>🧹 {{ T "settings.data.title" }} {{ helpLink "display" }}</h2>
-  <!-- ut-docs#867: only the three elevation-wired actions in this card
+  <!-- ut-docs#867: the three elevation-wired actions in this card
        (remove-demo-catalogue, dismiss-restore-prompt,
        dismiss-pending-base-plugin) render unconditionally, each behind its
-       own DATA guard exactly as before. The destructive/PII tools —
-       reset-transactions, archive restore/purge, GDPR search/erase, catalog
-       cleanup, export — are flat-denied raw fetch() flows with no elevation
-       path, so they stay manager-only. -->
+       own DATA guard exactly as before. ut-docs#1841 (ADR-0087) moved the
+       remaining destructive/PII tools — reset-transactions, archive
+       restore/purge, catalog cleanup — off their old flat typed-word
+       confirmation onto the SAME step-up elevation path (checkStepUp,
+       window.utPostWithElevation below): a manager PIN is required at the
+       moment of the irreversible act, not just a typed word. GDPR
+       search/erase and export are unchanged for now and stay manager-only
+       raw fetch() flows with no elevation path. -->
   {{ if .isManager }}
   <p class="muted">{{ T "settings.data.help" }}</p>
   <p class="muted" style="color:#b45309">{{ T "settings.data.warn" }}</p>
   <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
-    <input type="text" id="data-reset-confirm" placeholder="{{ T "settings.data.confirm_ph" }}" style="width:9rem">
     <button class="btn secondary" id="data-reset-btn" data-testid="data-reset">{{ T "settings.data.reset_btn" }}</button>
     <div id="data-reset-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
   </div>
@@ -715,16 +718,14 @@
           <td>{{ .CreatedAt }}</td>
           <td>{{ .SalesCount }}</td>
           <td style="display:flex; gap:.3rem; flex-wrap:wrap; align-items:center">
-            <input type="text" class="restore-confirm" placeholder="{{ T "settings.data.archives_restore_confirm_ph" }}" style="width:9rem">
             <button class="btn secondary" data-restore-batch="{{ .ID }}" data-testid="archive-restore">{{ T "settings.data.archives_restore_btn" }}</button>
             {{ if .Purgeable }}
-            <input type="text" class="purge-confirm" placeholder="{{ T "settings.data.archives_purge_confirm_ph" }}" style="width:9rem">
             <button class="btn secondary" data-purge-batch="{{ .ID }}" data-testid="archive-purge">{{ T "settings.data.archives_purge_btn" }}</button>
             {{ else }}
             <!-- ut-docs#698: still inside its retention window -- the
-                 confirm flow is hidden rather than merely disabled, so an
-                 operator can't type PURGE, confirm the "cannot be undone"
-                 dialog, and only then get refused. -->
+                 button is hidden rather than merely disabled, so an
+                 operator can't step through the PIN prompt and only then
+                 get refused. -->
             <span class="muted" data-testid="archive-purge-retained">{{ printf (T "settings.data.archives_retained_until_row") .RetainedUntilDisplay }}</span>
             {{ end }}
           </td>
@@ -753,7 +754,6 @@
   <p class="muted">{{ T "settings.data.catalog_help" }}</p>
   <div style="display:flex; gap:.4rem; align-items:center; flex-wrap:wrap">
     <button class="btn secondary" id="cat-preview-btn">{{ T "settings.data.catalog_preview_btn" }}</button>
-    <input type="text" id="cat-confirm" placeholder="{{ T "settings.data.catalog_confirm_ph" }}" style="width:9rem">
     <button class="btn secondary" id="cat-cleanup-btn" data-testid="data-cleanup" disabled>{{ T "settings.data.catalog_cleanup_btn" }}</button>
     <div id="cat-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
   </div>
@@ -920,29 +920,33 @@
   var btn = document.getElementById('data-reset-btn');
   if (!btn) return;
   var msg = document.getElementById('data-reset-msg');
-  var inp = document.getElementById('data-reset-confirm');
   var T = {
-    confirmRequired: "{{ T "settings.data.reset_confirm_required" }}",
-    clearing: "{{ T "settings.data.reset_clearing" }}",
-    confirmDialog: "{{ T "settings.data.reset_confirm_dialog" }}"
+    clearing: "{{ T "settings.data.reset_clearing" }}"
   };
   btn.addEventListener('click', function () {
-    if (inp.value.trim() !== 'RESET') { renderNotice(msg, 'error', T.confirmRequired); return; }
-    if (!confirm(T.confirmDialog)) return;
-    // Not renderNotice: a .pos-notice auto-expires after 2.5s
-    // (scheduleToastDismiss) even for a slow operation still in flight —
-    // ut-docs#918 review finding 2. Plain text persists until the
-    // renderNotice() success/error call below replaces it.
+    // ut-docs#1841 (ADR-0087): step-up re-authentication (a manager PIN,
+    // required at the moment of the act) replaces the old typed-word
+    // confirmation. window.utPostWithElevation (app.js) shows the PIN
+    // dialog — carrying this action's own translated summary — and only
+    // calls onDone once a real terminal response comes back; onCancel
+    // restores this button if the operator dismisses the dialog instead.
+    // Not renderNotice for the in-flight text: a .pos-notice auto-expires
+    // after 2.5s (scheduleToastDismiss) even for a slow operation still in
+    // flight (ut-docs#918 review finding 2) — plain text persists until
+    // the renderNotice() success/error call below replaces it.
     btn.disabled = true; msg.textContent = T.clearing;
-    fetch('/api/data/reset-transactions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ confirm: inp.value.trim() }).toString()
-    }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
-      btn.disabled = false;
-      renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
-      if (r.ok) inp.value = '';
-    }); }).catch(function (e) { btn.disabled = false; renderNotice(msg, 'error', e); });
+    window.utPostWithElevation('/api/data/reset-transactions', {}, function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        btn.disabled = false;
+        renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
+      });
+    }, function () { btn.disabled = false; msg.textContent = ''; })
+    // ut-docs#1841 review finding 1: utPostWithElevation only guards the
+    // RETRY leg internally, so an unguarded first send leaves a destructive
+    // button disabled forever on a network drop -- on an offline-first
+    // product, the likeliest failure of all. Same tail as this file's other
+    // utPostWithElevation caller (the report-archive export below).
+      .catch(function (e) { btn.disabled = false; renderNotice(msg, 'error', e); });
   });
 })();
 (function () {
@@ -950,15 +954,11 @@
   if (!box) return;
   var msg = document.getElementById('archives-msg');
   var T = {
-    confirmRequired: "{{ T "settings.data.archives_restore_confirm_required" }}",
     restoring: "{{ T "settings.data.archives_restoring" }}",
-    confirmDialog: "{{ T "settings.data.archives_restore_confirm_dialog" }}",
     conflict: "{{ T "settings.data.archives_restore_conflict" }}",
     referencesRemoved: "{{ T "settings.data.archives_restore_references_removed" }}",
     empty: "{{ T "settings.data.archives_empty" }}",
-    purgeConfirmRequired: "{{ T "settings.data.archives_purge_confirm_required" }}",
-    purging: "{{ T "settings.data.archives_purge_purging" }}",
-    purgeConfirmDialog: "{{ T "settings.data.archives_purge_confirm_dialog" }}"
+    purging: "{{ T "settings.data.archives_purge_purging" }}"
   };
   function removeRowIfEmpty(row) {
     row.remove();
@@ -970,48 +970,47 @@
       box.innerHTML = '<p class="muted">' + T.empty + '</p>';
     }
   }
+  // ut-docs#1841 (ADR-0087): both restore and purge moved off their typed
+  // RESTORE/PURGE words onto step-up re-authentication — see the
+  // data-reset-btn handler above for the shared utPostWithElevation shape.
+  // The batch id round-trips via the URL path (registerDataAPI's own
+  // {id} route param), so no hidden form field is needed here.
   box.addEventListener('click', function (ev) {
     var restoreBtn = ev.target.closest('[data-restore-batch]');
     if (restoreBtn) {
       var row = restoreBtn.closest('tr');
-      var inp = row.querySelector('input.restore-confirm');
-      if (inp.value.trim() !== 'RESTORE') { renderNotice(msg, 'error', T.confirmRequired); return; }
-      if (!confirm(T.confirmDialog)) return;
-      // Not renderNotice — see the data-reset progress comment above.
       restoreBtn.disabled = true; msg.textContent = T.restoring;
-      fetch('/api/data/reset-archives/' + encodeURIComponent(restoreBtn.getAttribute('data-restore-batch')) + '/restore', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ confirm: inp.value.trim() }).toString()
-      }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
-        restoreBtn.disabled = false;
-        if (r.status === 409) { renderNotice(msg, 'error', T.conflict); return; }
-        if (r.status === 422) { renderNotice(msg, 'error', T.referencesRemoved); return; }
-        renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
-        if (r.ok) removeRowIfEmpty(row);
-      }); }).catch(function (e) { restoreBtn.disabled = false; renderNotice(msg, 'error', e); });
+      window.utPostWithElevation(
+        '/api/data/reset-archives/' + encodeURIComponent(restoreBtn.getAttribute('data-restore-batch')) + '/restore',
+        {},
+        function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
+          restoreBtn.disabled = false;
+          if (r.status === 409) { renderNotice(msg, 'error', T.conflict); return; }
+          if (r.status === 422) { renderNotice(msg, 'error', T.referencesRemoved); return; }
+          renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
+          if (r.ok) removeRowIfEmpty(row);
+        }); },
+        function () { restoreBtn.disabled = false; msg.textContent = ''; }
+      ).catch(function (e) { restoreBtn.disabled = false; renderNotice(msg, 'error', e); });
       return;
     }
     var purgeBtn = ev.target.closest('[data-purge-batch]');
     if (purgeBtn) {
       var prow = purgeBtn.closest('tr');
-      var pinp = prow.querySelector('input.purge-confirm');
-      if (pinp.value.trim() !== 'PURGE') { renderNotice(msg, 'error', T.purgeConfirmRequired); return; }
-      if (!confirm(T.purgeConfirmDialog)) return;
-      // Not renderNotice — see the data-reset progress comment above.
       purgeBtn.disabled = true; msg.textContent = T.purging;
-      fetch('/api/data/reset-archives/' + encodeURIComponent(purgeBtn.getAttribute('data-purge-batch')) + '/purge', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-        body: new URLSearchParams({ confirm: pinp.value.trim() }).toString()
-      }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
-        purgeBtn.disabled = false;
-        // 409 here means "still within the retention window" -- the
-        // server's own message (data.error) already names the date, so
-        // show it directly rather than a fixed string that can't.
-        renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
-        if (r.ok) removeRowIfEmpty(prow);
-      }); }).catch(function (e) { purgeBtn.disabled = false; renderNotice(msg, 'error', e); });
+      window.utPostWithElevation(
+        '/api/data/reset-archives/' + encodeURIComponent(purgeBtn.getAttribute('data-purge-batch')) + '/purge',
+        {},
+        function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
+          purgeBtn.disabled = false;
+          // 409 here means "still within the retention window" -- the
+          // server's own message (data.error) already names the date, so
+          // show it directly rather than a fixed string that can't.
+          renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
+          if (r.ok) removeRowIfEmpty(prow);
+        }); },
+        function () { purgeBtn.disabled = false; msg.textContent = ''; }
+      ).catch(function (e) { purgeBtn.disabled = false; renderNotice(msg, 'error', e); });
     }
   });
 })();
@@ -1057,7 +1056,6 @@
   var pv = document.getElementById('cat-preview-btn');
   if (!pv) return;
   var run = document.getElementById('cat-cleanup-btn');
-  var conf = document.getElementById('cat-confirm');
   var out = document.getElementById('cat-results');
   var msg = document.getElementById('cat-msg');
   function esc(s) { var d = document.createElement('div'); d.textContent = s || ''; return d.innerHTML; }
@@ -1077,17 +1075,19 @@
       }).catch(function (e) { renderNotice(msg, 'error', e); });
   });
   run.addEventListener('click', function () {
-    if (conf.value.trim() !== 'CLEANUP') { renderNotice(msg, 'error', 'type CLEANUP to confirm'); return; } // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
-    if (!confirm('Permanently delete these inactive, never-sold products? This cannot be undone.')) return;
+    // ut-docs#1841 (ADR-0087): step-up re-authentication replaces the old
+    // typed CLEANUP word AND the plain window.confirm() dialog — the
+    // elevation dialog itself states the count and requires a real
+    // manager PIN, a strictly stronger confirmation than either did alone.
     run.disabled = true; msg.textContent = 'removing…'; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205); not renderNotice — persists past the 2.5s auto-expire (ut-docs#918 review finding 2)
-    fetch('/api/data/cleanup-catalog', {
-      method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ confirm: conf.value.trim() }).toString()
-    }).then(function (r) { return r.json().catch(function () { return {}; }).then(function (j) {
-      renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
-      if (r.ok) { conf.value = ''; out.innerHTML = ''; run.disabled = true; }
-      else { run.disabled = false; }
-    }); }).catch(function (e) { run.disabled = false; renderNotice(msg, 'error', e); });
+    window.utPostWithElevation('/api/data/cleanup-catalog', {}, function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        renderNotice(msg, r.ok ? 'success' : 'error', (r.ok ? (j.data && j.data.message) : j.error) || ('HTTP ' + r.status));
+        if (r.ok) { out.innerHTML = ''; run.disabled = true; }
+        else { run.disabled = false; }
+      });
+    }, function () { run.disabled = false; msg.textContent = ''; })
+      .catch(function (e) { run.disabled = false; renderNotice(msg, 'error', e); });
   });
 })();
 (function () {
