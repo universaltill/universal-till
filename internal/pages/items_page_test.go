@@ -40,7 +40,7 @@ func TestItemsPage_RendersFiveSectionsWithNameAndSubtitle(t *testing.T) {
 	}
 }
 
-func TestItemsPage_LibraryAndInventoryAndOptionSetsAreLiveLinks(t *testing.T) {
+func TestItemsPage_LibraryAndInventoryAndOptionSetsAndModifiersAreLiveLinks(t *testing.T) {
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 	registerItemsPage(mux, dp)
 
@@ -62,9 +62,23 @@ func TestItemsPage_LibraryAndInventoryAndOptionSetsAreLiveLinks(t *testing.T) {
 	if !strings.Contains(body, `href="/categories"`) {
 		t.Errorf("expected a link to /categories, got body: %s", body)
 	}
+	// ut-docs#1899: wired up in the same merge that landed /modifiers —
+	// this row was disabled only because the screen didn't exist yet.
+	if !strings.Contains(body, `href="/modifiers"`) {
+		t.Errorf("expected a link to /modifiers, got body: %s", body)
+	}
 }
 
-func TestItemsPage_ModifiersIsDisabledNotADeadLink(t *testing.T) {
+// TestItemsPage_NoSectionIsDisabled supersedes the two now-stale tests this
+// replaced (TestItemsPage_ModifiersIsDisabledNotADeadLink and
+// TestItemsPage_OnlyCategoriesIsDisabledNotDeadLink) — each was pinned to a
+// transient state where exactly one section still lacked its own screen.
+// ut-docs#1898 (categories) and ut-docs#1899 (modifiers) merged the same
+// day and both wired up their Href, so all five sections are live links
+// now; the disabled/"coming soon" rendering path itself stays in
+// itemsSection/registerItemsPage for whenever the next section lands
+// ahead of its own screen, it's just untested by name until that happens.
+func TestItemsPage_NoSectionIsDisabled(t *testing.T) {
 	mux, dp := newMenuPageTestDeps(t, baseMenu)
 	registerItemsPage(mux, dp)
 
@@ -73,13 +87,11 @@ func TestItemsPage_ModifiersIsDisabledNotADeadLink(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
 
-	// One disabled section left: Modifiers (ut-docs#1899, not yet built).
-	// Categories was the other until ut-docs#1898 shipped /categories.
-	if strings.Count(body, `aria-disabled="true"`) != 1 {
-		t.Errorf("expected exactly 1 disabled section (Modifiers), got body: %s", body)
+	if strings.Count(body, `aria-disabled="true"`) != 0 {
+		t.Errorf("expected no disabled sections, got body: %s", body)
 	}
-	if !strings.Contains(body, "Coming soon") {
-		t.Errorf("expected a coming-soon marker on the disabled section, got body: %s", body)
+	if strings.Contains(body, "Coming soon") {
+		t.Errorf("expected no coming-soon marker, got body: %s", body)
 	}
 }
 

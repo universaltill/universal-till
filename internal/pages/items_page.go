@@ -10,10 +10,12 @@ import (
 // itemsSection is one row of the /items section list — the "Items" area's
 // SumUp-style landing page (ut-docs#1897): a section list where each entry
 // is a bold name plus a one-line subtitle, replacing the flat "Catalog"
-// nav tile. Href empty means the section has no screen yet (Modifiers —
-// ut-docs#1899, tracked separately) and renders as a disabled "coming
-// soon" row instead of a dead link. Categories was one of those until
-// ut-docs#1898 shipped /categories; it now links there.
+// nav tile. Href empty means the section has no screen yet and renders as
+// a disabled "coming soon" row instead of a dead link — Categories
+// (ut-docs#1898) and Modifiers (ut-docs#1899) both started out that way
+// and were wired up once their own screens shipped; no row is currently
+// disabled, but the mechanism stays for the next section that lands
+// before its own screen does.
 type itemsSection struct {
 	NameKey, SubtitleKey string
 	Href                 string // empty = not yet available
@@ -26,17 +28,18 @@ type itemsSection struct {
 // this card exists to fix. Option sets links to /catalog today (the
 // per-item variants panel lives there) because the reusable, named-set
 // generator itself (ut-docs#1900) hasn't shipped — it is a real, reachable
-// feature today, unlike Modifiers, so it is NOT disabled; its subtitle
-// says so honestly rather than implying a dedicated screen that doesn't
-// exist yet. Categories links to /categories as of ut-docs#1898 — this
-// section list is the ONLY navigation to that page (it gets no top-level
-// nav tile of its own, same as /catalog), so leaving it disabled here
-// would make the new screen reachable by typed URL only.
+// feature today, so it is NOT disabled; its subtitle says so honestly
+// rather than implying a dedicated screen that doesn't exist yet.
+// Categories links to /categories as of ut-docs#1898 — this section list
+// is the ONLY navigation to that page (it gets no top-level nav tile of
+// its own, same as /catalog), so leaving it disabled here would make the
+// screen reachable by typed URL only. Modifiers links to /modifiers as of
+// ut-docs#1899, wired up the same way once that screen shipped.
 var itemsSections = []itemsSection{
 	{NameKey: "nav.catalog", SubtitleKey: "items.library.subtitle", Href: "/catalog"},
 	{NameKey: "items.categories.name", SubtitleKey: "items.categories.subtitle", Href: "/categories"},
 	{NameKey: "items.inventory.name", SubtitleKey: "items.inventory.subtitle", Href: "/inventory"},
-	{NameKey: "items.modifiers.name", SubtitleKey: "items.modifiers.subtitle", Href: ""},
+	{NameKey: "items.modifiers.name", SubtitleKey: "items.modifiers.subtitle", Href: "/modifiers"},
 	{NameKey: "items.option_sets.name", SubtitleKey: "items.option_sets.subtitle", Href: "/catalog"},
 }
 

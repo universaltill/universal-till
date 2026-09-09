@@ -331,6 +331,24 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		), funcs)("base", data)(w, r)
 	})
 
+	// The shop-wide modifiers browse screen (ut-docs#1899) — the per-item
+	// admin panel above (catalog_variants.html) has existed since 2026-07-24,
+	// but there was never a way to see every modifier group across the whole
+	// catalog without opening each item's detail panel one at a time.
+	mux.HandleFunc("/modifiers", func(w http.ResponseWriter, r *http.Request) {
+		groups, err := data.NewModifierRepo(d.Db).ListShopModifierGroups(r.Context())
+		if err != nil {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "modifiers.error.server", err)
+			return
+		}
+		httpx.Render("ui/pages/modifiers.html", map[string]any{
+			"title":     "Customization options",
+			"menuItems": d.MenuSnapshot(),
+			"theme":     d.CurrentState().Theme,
+			"Groups":    groups,
+		})(w, r)
+	})
+
 	mux.HandleFunc("/api/catalog/item", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
