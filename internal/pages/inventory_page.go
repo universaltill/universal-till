@@ -89,6 +89,13 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 		}
 		picker := make([]pickerItem, 0, len(items))
 		for _, it := range items {
+			// ut-docs#1850: an item flagged stock_untracked never carries an
+			// inventory row, so offering it in the goods-in/adjustment
+			// picker would let a manager record a movement (and thereby
+			// create the very row this flag exists to prevent).
+			if it.StockUntracked {
+				continue
+			}
 			picker = append(picker, pickerItem{ID: it.ID, Name: it.Name, SKU: it.SKU})
 		}
 		pickerJSON, _ := json.Marshal(picker)
