@@ -9,6 +9,7 @@ import (
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fiscal"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
@@ -102,7 +103,7 @@ func requireFiscalAuthorityForCountryChange(w http.ResponseWriter, r *http.Reque
 	if canPerform(d, r, "fiscal_tse_override") {
 		return true
 	}
-	http.Error(w, "owner (admin) required to change country while a fiscal signing device is confirmed", http.StatusForbidden)
+	httpx.RenderError(w, r, http.StatusForbidden, "fiscaldevice.error.owner_required_country_change", nil)
 	return false
 }
 

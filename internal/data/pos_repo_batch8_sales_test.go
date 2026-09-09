@@ -846,12 +846,17 @@ VALUES (?, ?, 'completed', 'sale', 'cash', 'synced', 'GBP', ?, ?, ?)`,
 
 // seedJournalSale inserts a bare sales row for ListSalesJournal tests —
 // lighter than seedBatch8Sale (no lines/payments needed, ListSalesJournal
-// only reads sales+tills columns).
+// only reads sales+tills columns). local_date is set via date(?, 'localtime')
+// on the same createdAt literal, exactly as InsertSale does in production
+// (ut-docs#1342) and b8Sale already does for this file's other helper —
+// ListSalesJournal's Day filter now reads local_date directly (ut-docs#1664),
+// so a fixture that left it at the column default (”) would silently never
+// match any Day filter.
 func seedJournalSale(t *testing.T, d *db.DB, id, receiptNo, tillID, createdAt string, total int64) {
 	t.Helper()
-	mustExec(t, d, `INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, sync_status, currency, subtotal, total, created_at, till_id)
-VALUES (?, ?, 'completed', 'sale', 'cash', 'synced', 'GBP', ?, ?, ?, ?)`,
-		id, receiptNo, total, total, createdAt, tillID)
+	mustExec(t, d, `INSERT INTO sales (id, receipt_no, status, sale_type, tender_type, sync_status, currency, subtotal, total, created_at, local_date, till_id)
+VALUES (?, ?, 'completed', 'sale', 'cash', 'synced', 'GBP', ?, ?, ?, date(?, 'localtime'), ?)`,
+		id, receiptNo, total, total, createdAt, createdAt, tillID)
 }
 
 // TestPOSRepo_ListSalesJournal_TillFilter covers ut-docs#550: an operator

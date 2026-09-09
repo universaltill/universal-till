@@ -33,9 +33,12 @@ import android.webkit.PermissionRequest
 import android.webkit.URLUtil
 import android.webkit.ValueCallback
 import android.webkit.WebChromeClient
+import android.webkit.WebResourceError
 import android.webkit.WebResourceRequest
+import android.webkit.WebResourceResponse
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Button
 import android.widget.TextView
 import android.widget.Toast
 import androidx.activity.OnBackPressedCallback
@@ -70,6 +73,7 @@ class MainActivity : AppCompatActivity() {
     private lateinit var webView: WebView
     private lateinit var statusView: TextView
     private lateinit var pinWarning: TextView
+    private lateinit var errorBar: View
 
     private var till: TillService? = null
 
@@ -1157,6 +1161,36 @@ class MainActivity : AppCompatActivity() {
         pinWarning.visibility = View.GONE
     }
 
+    // ut-docs#1457: the message text is static (set once in
+    // activity_main.xml, not per-error) -- unlike pinWarning above, no
+    // caller needs a different string, so there's nothing to gate on
+    // "already showing" the way showPinWarning does. Re-setting VISIBLE on
+    // an already-visible bar is a cheap no-op either way.
+    private fun showErrorBar() {
+        errorBar.visibility = View.VISIBLE
+    }
+
+    private fun hideErrorBar() {
+        errorBar.visibility = View.GONE
+    }
+
+    /**
+     * ut-docs#1457: the error bar's "Back to till" action. Unlike the
+     * Bluetooth launchers' plain [WebView.reload] above, a main-frame load
+     * that failed may have left the WebView showing nothing reloadable at
+     * all, so this loads the till's own root explicitly.
+     */
+    private fun backToTill() {
+        // allowedHost isn't known until TillService's listener has reported
+        // a real address at least once (see the class-level KDoc on
+        // [allowedHost]) -- nothing to load yet in that window, but that is
+        // also the window before the till has ever come up, where the debug
+        // status bar (or, on a real device, nothing yet) is the honest
+        // state; TillService's own listener loads the real address itself
+        // the moment it's known, same as a normal cold start.
+        allowedHost?.let { webView.loadUrl("http://$it/") }
+    }
+
     /**
      * ut-docs#1639, independent review: **Android exposes no Activity-level
      * lock-task callback.** `android.app.Activity` has `startLockTask()` /
@@ -1246,6 +1280,18 @@ class MainActivity : AppCompatActivity() {
         webView = findViewById(R.id.webview)
         statusView = findViewById(R.id.status)
         pinWarning = findViewById(R.id.pin_warning)
+        errorBar = findViewById(R.id.error_bar)
+        // ut-docs#1457: the bar's own tap target. Deliberately does NOT
+        // hideErrorBar() here (independent review caught the original
+        // draft doing so unconditionally) -- backToTill() is a no-op
+        // while allowedHost is still unknown, and hiding the bar on a tap
+        // that did nothing would look identical to "fixed" with nothing
+        // actually recovered, the same silent-no-op shape ut-docs#1647
+        // was filed for. onPageStarted (below) is what actually hides it,
+        // and only fires when backToTill() genuinely started a navigation.
+        findViewById<Button>(R.id.error_bar_action).setOnClickListener {
+            backToTill()
+        }
         // ut-docs#412: this bar (including the loopback address it shows)
         // is a debug convenience for developers running the wrapper off a
         // USB-attached device, not something a shop worker has any use
@@ -1446,6 +1492,82 @@ class MainActivity : AppCompatActivity() {
                             }
                         }
                     }
+                }
+
+                // ut-docs#1457: any new top-level navigation — including
+                // the error bar's own "Back to till" retry — clears a
+                // stale error bar from a previous failed load. If THIS
+                // navigation fails too, onReceivedHttpError/onReceivedError
+                // below fire shortly after and put it straight back up.
+                override fun onPageStarted(
+                    view: WebView?,
+                    url: String?,
+                    favicon: Bitmap?,
+                ) {
+                    super.onPageStarted(view, url, favicon)
+                    hideErrorBar()
+                }
+
+                /**
+                 * ut-docs#1457 (split from #1455 item 4): #1455's
+                 * httpx.RenderError renders a translated, full-layout error
+                 * page for every failure OUR OWN Go server answers — but a
+                 * main-frame navigation can fail before it ever reaches
+                 * that handler (the embedded server not up yet, a network
+                 * blip mid-navigation) or with a raw HTTP error status that
+                 * never becomes an HTML body at all. Neither case has
+                 * anything for RenderError's mechanism to render into, so
+                 * this is a NATIVE fallback, materially separate from it —
+                 * same split #1455's own card text draws.
+                 *
+                 * Main frame only (request.isForMainFrame) — a failed
+                 * sub-resource (a missing icon/asset) must not pop this bar
+                 * over an otherwise-working page, same MAIN FRAME ONLY
+                 * distinction shouldOverrideUrlLoading's own comment above
+                 * draws for a different callback.
+                 *
+                 * **Skips HTML responses.** onReceivedHttpError fires for
+                 * ANY status >= 400 on the main frame, including the exact
+                 * translated, full-layout error page #1455's own
+                 * guard-page-http-error.sh now guarantees for every page
+                 * route (rail + "Back to sale" already on screen). Popping
+                 * this bar on top of that would be a redundant second
+                 * "you're stuck" UI over a page that already told the
+                 * operator what happened and how to get back. The mime
+                 * type is the honest discriminator: a non-HTML error body
+                 * (an unmatched route, or a future regression that
+                 * bypasses RenderError) is exactly the "non-HTML failure"
+                 * case item 4 of #1455's own card text calls out, and gets
+                 * the native bar since nothing else will.
+                 */
+                override fun onReceivedHttpError(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                    errorResponse: WebResourceResponse?,
+                ) {
+                    super.onReceivedHttpError(view, request, errorResponse)
+                    if (request?.isForMainFrame != true) return
+                    if (errorResponse?.mimeType?.startsWith("text/html") == true) return
+                    Log.w(
+                        TAG,
+                        "main-frame HTTP error ${errorResponse?.statusCode} loading ${request.url}",
+                    )
+                    showErrorBar()
+                }
+
+                /** The transport-level sibling of [onReceivedHttpError] above — same guard, same bar. */
+                override fun onReceivedError(
+                    view: WebView?,
+                    request: WebResourceRequest?,
+                    error: WebResourceError?,
+                ) {
+                    super.onReceivedError(view, request, error)
+                    if (request?.isForMainFrame != true) return
+                    Log.w(
+                        TAG,
+                        "main-frame load error ${error?.errorCode} (${error?.description}) loading ${request.url}",
+                    )
+                    showErrorBar()
                 }
             }
         webView.webChromeClient =

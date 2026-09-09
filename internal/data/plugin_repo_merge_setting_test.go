@@ -7,6 +7,12 @@ import (
 	"testing"
 )
 
+// ut-docs#1269: MergeAdditiveJSONMapSetting's write side now stores the
+// canonical JSON-string-wrapped shape (see plugin_setting_value.go), so
+// every test below that reads value_json directly off the row decodes it
+// with DecodeMapSettingValue before asserting on content — these tests
+// check merge *correctness*, not the specific on-disk byte format.
+
 // ut-docs#532: mergeTakeawayOverrides used to do an unguarded
 // Get-then-Upsert read-modify-write on a plugin setting — two near-
 // simultaneous callers could both read the same starting JSON, both compute
@@ -51,7 +57,7 @@ func TestMergeAdditiveJSONMapSetting_ConcurrentCallersBothLand(t *testing.T) {
 		t.Fatalf("read merged value: %v", err)
 	}
 	var got map[string]int
-	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+	if err := json.Unmarshal([]byte(DecodeMapSettingValue(raw)), &got); err != nil {
 		t.Fatalf("merged value not valid JSON %q: %v", raw, err)
 	}
 	if len(got) != n {
@@ -94,7 +100,7 @@ func TestMergeAdditiveJSONMapSetting_PreservesExistingEntry(t *testing.T) {
 		t.Fatal(err)
 	}
 	var got map[string]int
-	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+	if err := json.Unmarshal([]byte(DecodeMapSettingValue(raw)), &got); err != nil {
 		t.Fatal(err)
 	}
 	if got["a"] != 100 {
@@ -147,7 +153,7 @@ func TestMergeAdditiveJSONMapSetting_IgnoresRegisterScopedRow(t *testing.T) {
 		t.Fatal(err)
 	}
 	var gotGlobal map[string]int
-	if err := json.Unmarshal([]byte(globalRaw), &gotGlobal); err != nil {
+	if err := json.Unmarshal([]byte(DecodeMapSettingValue(globalRaw)), &gotGlobal); err != nil {
 		t.Fatal(err)
 	}
 	if gotGlobal["a"] != 100 || gotGlobal["b"] != 200 || gotGlobal["reg_only"] != 999 {
@@ -211,7 +217,7 @@ func TestMergeAdditiveJSONMapSetting_SelfHealsDoubleEncodedManifestDefault(t *te
 		t.Fatal(err)
 	}
 	var got map[string]int
-	if err := json.Unmarshal([]byte(raw), &got); err != nil {
+	if err := json.Unmarshal([]byte(DecodeMapSettingValue(raw)), &got); err != nil {
 		t.Fatalf("healed value must be a real JSON object, got %q: %v", raw, err)
 	}
 	if got["a"] != 700 {
@@ -261,7 +267,7 @@ func TestMergeAdditiveJSONMapSetting_NullExistingValueDoesNotPanic(t *testing.T)
 				t.Fatal(err)
 			}
 			var got map[string]int
-			if err := json.Unmarshal([]byte(raw), &got); err != nil {
+			if err := json.Unmarshal([]byte(DecodeMapSettingValue(raw)), &got); err != nil {
 				t.Fatalf("merged value not valid JSON %q: %v", raw, err)
 			}
 			if got["z"] != 700 {
@@ -299,6 +305,134 @@ func TestMergeAdditiveJSONMapSetting_DoubleEncodedButStillInvalidLeftUntouched(t
 	}
 	if raw != `"not json at all"` {
 		t.Fatalf("must be left untouched, got %q", raw)
+	}
+}
+
+// ut-docs#1269: MergeAdditiveJSONMapSetting used to write the merged map as
+// a raw JSON object, while the tax-override editor's writeTaxOverrides
+// (internal/pages/plugin_settings_page.go) JSON-string-wraps on every save —
+// the same setting's on-disk shape silently flipped depending on which path
+// wrote it last. The merge's write side must now also store the
+// JSON-string-wrapped shape (EncodeMapSettingValue), matching every
+// other setting type's convention.
+func TestMergeAdditiveJSONMapSetting_WritesStringWrappedShape(t *testing.T) {
+	d, repo := newPluginLifecycleTestDB(t)
+	ctx := context.Background()
+
+	seedCatalogEntry(t, d, "com.example.tax", "1.0.0")
+	if err := repo.InstallPlugin(ctx, nil, "com.example.tax"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.MergeAdditiveJSONMapSetting(ctx, "com.example.tax", "takeaway_rate_overrides", map[string]int{"a": 700}); err != nil {
+		t.Fatal(err)
+	}
+
+	var raw string
+	if err := d.DB.QueryRowContext(ctx,
+		`SELECT value_json FROM plugin_settings WHERE plugin_id = 'com.example.tax' AND key = 'takeaway_rate_overrides'`).
+		Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	// A raw object shape (`{"a":700}`) starts with '{'; the canonical
+	// string-wrapped shape starts with '"' — its content, once unwrapped,
+	// is the map's own JSON.
+	if len(raw) == 0 || raw[0] != '"' {
+		t.Fatalf("stored value_json = %q, want a JSON-string-wrapped shape (leading '\"')", raw)
+	}
+	var unwrapped string
+	if err := json.Unmarshal([]byte(raw), &unwrapped); err != nil {
+		t.Fatalf("stored value_json %q must unwrap to valid JSON: %v", raw, err)
+	}
+	var got map[string]int
+	if err := json.Unmarshal([]byte(unwrapped), &got); err != nil {
+		t.Fatalf("unwrapped content %q must be the merged map: %v", unwrapped, err)
+	}
+	if got["a"] != 700 {
+		t.Fatalf("unwrapped content = %v, want a=700", got)
+	}
+}
+
+// ut-docs#1269 backward-compat: a row already stored as a raw JSON object
+// (written by the pre-fix merge, or by any other direct writer that never
+// wraps) must still read and merge correctly — DecodeMapSettingValue passes
+// a non-string-JSON value through unchanged rather than requiring every
+// existing row to be migrated.
+func TestMergeAdditiveJSONMapSetting_ReadsPreExistingRawObjectRow(t *testing.T) {
+	d, repo := newPluginLifecycleTestDB(t)
+	ctx := context.Background()
+
+	seedCatalogEntry(t, d, "com.example.tax", "1.0.0")
+	if err := repo.InstallPlugin(ctx, nil, "com.example.tax"); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpsertPluginSetting(ctx, "com.example.tax", "takeaway_rate_overrides", `{"a":100}`); err != nil {
+		t.Fatal(err)
+	}
+
+	added, err := repo.MergeAdditiveJSONMapSetting(ctx, "com.example.tax", "takeaway_rate_overrides", map[string]int{"a": 999, "b": 200})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if added != 1 {
+		t.Fatalf("added = %d, want 1 (only %q is new)", added, "b")
+	}
+
+	var raw string
+	if err := d.DB.QueryRowContext(ctx,
+		`SELECT value_json FROM plugin_settings WHERE plugin_id = 'com.example.tax' AND key = 'takeaway_rate_overrides'`).
+		Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	got := map[string]int{}
+	if err := json.Unmarshal([]byte(DecodeMapSettingValue(raw)), &got); err != nil {
+		t.Fatalf("re-merged value not valid JSON %q: %v", raw, err)
+	}
+	if got["a"] != 100 || got["b"] != 200 {
+		t.Fatalf("merged value = %v, want a=100 b=200", got)
+	}
+}
+
+// ut-docs#1269 cross-path agreement: writing via MergeAdditiveJSONMapSetting
+// and reading via the tax-override editor's own decode path (unwrapSettingValue,
+// exercised here through DecodeMapSettingValue directly since that's what
+// it now delegates to) must agree on content — the whole point of unifying on
+// one shared encode/decode pair.
+func TestMergeAdditiveJSONMapSetting_AgreesWithSharedDecodeHelper(t *testing.T) {
+	d, repo := newPluginLifecycleTestDB(t)
+	ctx := context.Background()
+
+	seedCatalogEntry(t, d, "com.example.tax", "1.0.0")
+	if err := repo.InstallPlugin(ctx, nil, "com.example.tax"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.MergeAdditiveJSONMapSetting(ctx, "com.example.tax", "takeaway_rate_overrides", map[string]int{"a": 700}); err != nil {
+		t.Fatal(err)
+	}
+
+	var raw string
+	if err := d.DB.QueryRowContext(ctx,
+		`SELECT value_json FROM plugin_settings WHERE plugin_id = 'com.example.tax' AND key = 'takeaway_rate_overrides'`).
+		Scan(&raw); err != nil {
+		t.Fatal(err)
+	}
+	decoded := DecodeMapSettingValue(raw)
+	var got map[string]int
+	if err := json.Unmarshal([]byte(decoded), &got); err != nil {
+		t.Fatalf("decoded value %q must be the merged map: %v", decoded, err)
+	}
+	if got["a"] != 700 {
+		t.Fatalf("decoded value = %v, want a=700", got)
+	}
+
+	// The encode/decode pair must round-trip: re-encoding what
+	// EncodeMapSettingValue itself would have produced for the same map
+	// must equal what's actually stored.
+	reEncoded, err := EncodeMapSettingValue(got)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if reEncoded != raw {
+		t.Fatalf("EncodeMapSettingValue(got) = %q, want it to equal the stored value %q", reEncoded, raw)
 	}
 }
 

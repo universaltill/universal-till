@@ -504,6 +504,7 @@
   "fiscaldevice.driver.note": "Only the bridge driver is complete today (it talks to a bridge program or the test simulator). A maker driver that is not finished refuses every tender rather than pretending.",
   "fiscaldevice.error.not_found": "Not found",
   "fiscaldevice.error.owner_required": "Owner (admin) required",
+  "fiscaldevice.error.owner_required_country_change": "Owner (admin) required to change country while a fiscal signing device is confirmed",
   "fiscaldevice.error.server": "Couldn't load the fiscal device page. Try again, or use the menu to keep working.",
   "fiscaldevice.intro": "The certified cash register (YN ÖKC) takes the money and prints the legal receipt; the till records the device's receipt number on every sale. This page shows the device from the till's side — it never talks to the tax office.",
   "fiscaldevice.last.issued_at": "Issued at",

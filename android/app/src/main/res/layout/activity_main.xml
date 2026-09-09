@@ -34,4 +34,39 @@
         android:layout_height="0dp"
         android:layout_weight="1" />
 
+    <!-- ut-docs#1457 (split from #1455 item 4): a main-frame load that
+         fails before it ever reaches our own server (or that our server
+         answers with a raw HTTP error) has no HTML body for
+         httpx.RenderError to render translated text into — this native
+         bar is the fallback for exactly that case. Status banner, not a
+         modal, same "never a modal blocker" posture as pin_warning above;
+         MainActivity.showErrorBar/hideErrorBar drive its visibility. -->
+    <LinearLayout
+        android:id="@+id/error_bar"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:background="#323232"
+        android:gravity="center_vertical"
+        android:padding="12dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/error_bar_message"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:textColor="#FFFFFF"
+            android:textSize="14sp"
+            android:text="@string/error_bar_message" />
+
+        <Button
+            android:id="@+id/error_bar_action"
+            style="?attr/borderlessButtonStyle"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:textColor="#8AB4F8"
+            android:text="@string/error_bar_action" />
+    </LinearLayout>
+
 </LinearLayout>
