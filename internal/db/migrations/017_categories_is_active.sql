@@ -1,0 +1,31 @@
+-- 017_categories_is_active.sql — ut-docs#1898 (categories admin screen),
+-- same mechanism as ut-docs#1610 (004_brands_is_active.sql).
+--
+-- Adds is_active to categories — the last of the six admin-synced tables
+-- carrying a UNIQUE-or-display name column (tax_codes, payment_methods,
+-- users, stock_locations, registers and brands all already have one) to
+-- still be missing it. categories.name has no UNIQUE constraint (so
+-- deleteMissing's mangle step never applies here), but the retire-in-place
+-- FLAG itself is the same story as brands: without this column, an
+-- FK-blocked categories prune had nothing to mark the row as retired
+-- with — deleteMissing's hasIsActive branch never ran (categories'
+-- adminTables entry carried no hasIsActive at all), so a category a
+-- satellite-local item still points at just silently stayed in the table
+-- forever, active and indistinguishable from a real one, whenever the
+-- primary genuinely deleted it.
+--
+-- Why: internal/data/sync_admin_repo.go's deleteMissing prunes rows the
+-- primary no longer has. When the hard DELETE is FK-blocked (a satellite-
+-- local item still points at the category), it now retires the row in
+-- place — is_active = 0 — same as every other adminTables entry with
+-- hasIsActive: true. This card also adds the first real category admin
+-- screen (create/rename/deactivate/reorder), which is what makes an
+-- is_active column worth reading from a UI, not just a sync-internal flag.
+--
+-- Shipped as an ADDITIVE migration rather than an edit to 001_init.sql:
+-- editing 001_init.sql changes its checksum, and internal/db/db.go's
+-- verifyAppliedMigrations hard-fails an already-migrated database on any
+-- checksum drift (idempotentRerunVersions is empty; version 1 is not
+-- allowlisted) — bricking every device that already migrated, including
+-- the pilot install. 004_brands_is_active.sql documents this same trap.
+ALTER TABLE categories ADD COLUMN is_active INTEGER NOT NULL DEFAULT 1;
