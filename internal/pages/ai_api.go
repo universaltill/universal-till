@@ -129,6 +129,13 @@ func registerAIAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
+		// ut-docs#1875: item_images (role='thumbnail') is the source of
+		// truth for a servable thumbnail path, whether it's a built-in
+		// category icon or an uploaded photo — the os.Stat-on-thumb.png
+		// check this replaced only ever saw the latter. Same
+		// best-effort batch lookup as self_order_shop.go/row_oob.go.
+		thumbnails, _ := catRepo.ItemThumbnails(r.Context())
+
 		locale := httpx.ResolveLocale(w, r)
 		type matchOut struct {
 			ItemID       string `json:"item_id"`
@@ -154,9 +161,7 @@ func registerAIAPI(mux *http.ServeMux, d *common.Deps) {
 				PriceDisplay: httpx.FormatMoney(price, locale),
 				Confidence:   m.Confidence,
 			}
-			if _, err := os.Stat(filepath.Join(itemAssetDir(), m.ItemID, "thumb.png")); err == nil {
-				out.ThumbURL = "/public/assets/items/" + m.ItemID + "/thumb.png"
-			}
+			out.ThumbURL = thumbnails[m.ItemID]
 			matches = append(matches, out)
 		}
 
