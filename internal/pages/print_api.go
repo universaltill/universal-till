@@ -120,7 +120,7 @@ func printerConfigChecked(ctx context.Context, d *common.Deps) (print.Config, er
 	// once the settings read itself is known broken — the caller only wants
 	// the definite error then, and the bus would have to hit the same DB.
 	if firstErr == nil {
-		if allowed, ok := askReceiptPolicy(ctx, d.Db); ok {
+		if allowed, ok := receiptPolicyAskerFor(d.Db).AskReceiptPolicy(ctx); ok {
 			cfg.ReceiptPolicy = clampReceiptPolicy(cfg.ReceiptPolicy, allowed)
 		}
 	}
@@ -569,7 +569,7 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		// ADR-0089 Decision 2: a choice the installed country plugin forbids
 		// is rejected here, not stored-then-clamped — the merchant should
 		// see the refusal, not a silently different effective setting.
-		if allowed, ok := askReceiptPolicy(r.Context(), d.Db); !receiptPolicyPermitted(receiptPolicy, allowed, ok) {
+		if allowed, ok := receiptPolicyAskerFor(d.Db).AskReceiptPolicy(r.Context()); !receiptPolicyPermitted(receiptPolicy, allowed, ok) {
 			http.Error(w, "receiptPolicy is not permitted by the installed country plugin (allowed: "+strings.Join(allowed, ", ")+")", http.StatusBadRequest)
 			return
 		}

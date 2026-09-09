@@ -249,7 +249,7 @@ func TestPrinterConfig_ReceiptPolicy_NonGermanyKeepsStoredValue(t *testing.T) {
 	}
 }
 
-// --- askReceiptPolicy: the hook itself, at the untrusted-input boundary ---
+// --- pluginReceiptPolicyAsker: the hook itself, at the untrusted-input boundary ---
 
 func TestAskReceiptPolicy_NoSubscribers(t *testing.T) {
 	db := openPagesTestDB(t)
@@ -257,7 +257,8 @@ func TestAskReceiptPolicy_NoSubscribers(t *testing.T) {
 	seedForPages(t, db)
 	plugins.SharedBus(db).ResetSubscribers()
 
-	if allowed, ok := askReceiptPolicy(context.Background(), db); ok {
+	asker := &pluginReceiptPolicyAsker{db: db}
+	if allowed, ok := asker.AskReceiptPolicy(context.Background()); ok {
 		t.Fatalf("expected no answer with no subscribers, got %v", allowed)
 	}
 }
@@ -268,7 +269,8 @@ func TestAskReceiptPolicy_ValidAnswerParsed(t *testing.T) {
 	seedForPages(t, db)
 	subscribeReceiptPolicy(t, db, `{"allowed_policies":["always","never"]}`, nil)
 
-	allowed, ok := askReceiptPolicy(context.Background(), db)
+	asker := &pluginReceiptPolicyAsker{db: db}
+	allowed, ok := asker.AskReceiptPolicy(context.Background())
 	if !ok {
 		t.Fatal("expected an answer")
 	}
@@ -286,7 +288,8 @@ func TestAskReceiptPolicy_ValidatesPluginInput(t *testing.T) {
 	seedForPages(t, db)
 	subscribeReceiptPolicy(t, db, `{"allowed_policies":["digital"," Always ","ask","ASK","always","maybe"]}`, nil)
 
-	allowed, ok := askReceiptPolicy(context.Background(), db)
+	asker := &pluginReceiptPolicyAsker{db: db}
+	allowed, ok := asker.AskReceiptPolicy(context.Background())
 	if !ok {
 		t.Fatal("expected an answer")
 	}
@@ -313,10 +316,170 @@ func TestAskReceiptPolicy_GarbageErrorAndEmptyDecline(t *testing.T) {
 			defer db.Close()
 			seedForPages(t, db)
 			subscribeReceiptPolicy(t, db, tc.answer, tc.err)
-			if allowed, ok := askReceiptPolicy(context.Background(), db); ok {
+			asker := &pluginReceiptPolicyAsker{db: db}
+			if allowed, ok := asker.AskReceiptPolicy(context.Background()); ok {
 				t.Fatalf("%s: expected a clean decline, got %v", tc.name, allowed)
 			}
 		})
+	}
+}
+
+// --- pluginReceiptPolicyAsker: per-generation memoization (ut-docs#1924) ---
+
+// An answer is parsed and cached for the bus generation — this hook is
+// asked from 12 printerConfig/printerConfigChecked call sites including the
+// checkout/tender handler, so a repeat ask within the same generation must
+// be a cache hit, not a fresh wasm dispatch.
+func TestAskReceiptPolicy_AnswerCachedPerGeneration(t *testing.T) {
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+	seedReceiptPolicyPlugin(t, db)
+
+	bus := plugins.SharedBus(db)
+	t.Cleanup(bus.ResetSubscribers)
+	bus.ResetSubscribers()
+
+	calls := 0
+	bus.SetEventMode(receiptPolicyAskEvent, plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-xx",
+		[]string{receiptPolicyAskEvent},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			calls++
+			return json.RawMessage(`{"allowed_policies":["always","ask"]}`), nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	asker := &pluginReceiptPolicyAsker{db: db}
+	for i := 0; i < 3; i++ {
+		allowed, ok := asker.AskReceiptPolicy(context.Background())
+		if !ok || strings.Join(allowed, ",") != "always,ask" {
+			t.Fatalf("ask %d: got (%v, %v), want ([always ask], true)", i, allowed, ok)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("asked 3x: plugin ran %d times, want 1 (cached per generation)", calls)
+	}
+}
+
+// A clean no-opinion (nothing recognized survives validation) IS cacheable —
+// it costs the same module boot as a real answer, and it's a deterministic
+// result for as long as the plugin/generation don't change.
+func TestAskReceiptPolicy_NoOpinionIsCachedToo(t *testing.T) {
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+	seedReceiptPolicyPlugin(t, db)
+
+	bus := plugins.SharedBus(db)
+	t.Cleanup(bus.ResetSubscribers)
+	bus.ResetSubscribers()
+
+	calls := 0
+	bus.SetEventMode(receiptPolicyAskEvent, plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-xx",
+		[]string{receiptPolicyAskEvent},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			calls++
+			return json.RawMessage(`{"allowed_policies":["digital","maybe"]}`), nil
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	asker := &pluginReceiptPolicyAsker{db: db}
+	for i := 0; i < 3; i++ {
+		if _, ok := asker.AskReceiptPolicy(context.Background()); ok {
+			t.Fatalf("ask %d: expected no-opinion (ok=false)", i)
+		}
+	}
+	if calls != 1 {
+		t.Fatalf("declined 3x: plugin ran %d times, want 1 (no-opinion cached)", calls)
+	}
+}
+
+// A transient handler error, or an answered-but-unparseable response, must
+// decline THIS call without being pinned in the cache — the next call
+// retries the plugin (same discipline as pluginChargePolicyAsker).
+func TestAskReceiptPolicy_ErrorsAndGarbageAreNotCached(t *testing.T) {
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+	seedReceiptPolicyPlugin(t, db)
+
+	bus := plugins.SharedBus(db)
+	t.Cleanup(bus.ResetSubscribers)
+	bus.ResetSubscribers()
+
+	mode := "error"
+	calls := 0
+	bus.SetEventMode(receiptPolicyAskEvent, plugins.Blocking)
+	if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-xx",
+		[]string{receiptPolicyAskEvent},
+		func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+			calls++
+			switch mode {
+			case "error":
+				return nil, errors.New("wasm handler: transient crash")
+			case "garbage":
+				return json.RawMessage(`not json`), nil
+			default:
+				return json.RawMessage(`{"allowed_policies":["never"]}`), nil
+			}
+		}); err != nil {
+		t.Fatalf("subscribe: %v", err)
+	}
+
+	asker := &pluginReceiptPolicyAsker{db: db}
+	if _, ok := asker.AskReceiptPolicy(context.Background()); ok {
+		t.Fatal("errored ask should decline")
+	}
+	mode = "garbage"
+	if _, ok := asker.AskReceiptPolicy(context.Background()); ok {
+		t.Fatal("garbage answer should decline")
+	}
+	mode = "good"
+	if allowed, ok := asker.AskReceiptPolicy(context.Background()); !ok || strings.Join(allowed, ",") != "never" {
+		t.Fatalf("recovered ask: got (%v, %v), want ([never], true) (failures were pinned?)", allowed, ok)
+	}
+	if calls != 3 {
+		t.Fatalf("plugin ran %d times, want 3 (neither failure cached)", calls)
+	}
+}
+
+// A plugin reload (Manager.Reload -> ResetSubscribers, which bumps the bus
+// generation) must invalidate the cached answer — a plugin update or
+// settings change can legitimately change the policy.
+func TestAskReceiptPolicy_ReloadInvalidatesCache(t *testing.T) {
+	db := openPagesTestDB(t)
+	defer db.Close()
+	seedForPages(t, db)
+	seedReceiptPolicyPlugin(t, db)
+
+	bus := plugins.SharedBus(db)
+	t.Cleanup(bus.ResetSubscribers)
+	bus.ResetSubscribers()
+
+	subscribe := func(policies string) {
+		bus.SetEventMode(receiptPolicyAskEvent, plugins.Blocking)
+		if _, err := bus.SubscribeWithHandler(context.Background(), "com.universaltill.tax-xx",
+			[]string{receiptPolicyAskEvent},
+			func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+				return json.RawMessage(`{"allowed_policies":[` + policies + `]}`), nil
+			}); err != nil {
+			t.Fatalf("subscribe: %v", err)
+		}
+	}
+
+	asker := &pluginReceiptPolicyAsker{db: db}
+	subscribe(`"always"`)
+	if allowed, ok := asker.AskReceiptPolicy(context.Background()); !ok || strings.Join(allowed, ",") != "always" {
+		t.Fatalf("v1 answer: got (%v, %v), want ([always], true)", allowed, ok)
+	}
+	bus.ResetSubscribers()
+	subscribe(`"never"`)
+	if allowed, ok := asker.AskReceiptPolicy(context.Background()); !ok || strings.Join(allowed, ",") != "never" {
+		t.Fatalf("post-reload answer: got (%v, %v), want ([never], true) (stale cache?)", allowed, ok)
 	}
 }
 
