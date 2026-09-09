@@ -1,0 +1,134 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "categories.title" }} {{ helpLink "categories" }}</h1>
+</div>
+
+{{ if .errKey }}
+<p class="login-error">
+  {{ if eq .errKey "categories.error.deactivate_blocked" }}
+  {{ printf (T .errKey) .errCount }}
+  {{ else }}
+  {{ T .errKey }}
+  {{ end }}
+</p>
+{{ end }}
+
+<div class="users-layout">
+  <div class="card users-list">
+    {{ if not .categories }}
+    <p class="muted">{{ T "categories.empty" }}</p>
+    {{ else }}
+    <table class="table" id="categories-table">
+      <thead>
+        <tr>
+          <th>{{ T "categories.col.name" }}</th>
+          <th>{{ T "categories.col.items" }}</th>
+          <th>{{ T "categories.col.status" }}</th>
+          <th></th>
+        </tr>
+      </thead>
+      <tbody>
+        {{ range .categories }}
+        <tr class="category-row" data-id="{{ .ID }}">
+          <td>{{ .Name }}</td>
+          <td>{{ printf (T "categories.item_count") .ItemCount }}</td>
+          <td>{{ if .IsActive }}{{ T "categories.active" }}{{ else }}<span class="muted">{{ T "categories.inactive" }}</span>{{ end }}</td>
+          <td class="users-actions">
+            <button type="button" class="btn secondary move-up" data-move="-1"
+                    aria-label="{{ T "categories.move_up" }}">▲</button>
+            <button type="button" class="btn secondary move-down" data-move="1"
+                    aria-label="{{ T "categories.move_down" }}">▼</button>
+            <form method="post" action="/api/categories/{{ .ID }}" class="users-inline">
+              <input type="text" name="name" value="{{ .Name }}" required class="rename-input" />
+              <button type="submit" class="btn secondary">{{ T "categories.rename" }}</button>
+            </form>
+            <form method="post" action="/api/categories/{{ .ID }}/active" class="users-inline">
+              <input type="hidden" name="active" value="{{ if .IsActive }}0{{ else }}1{{ end }}" />
+              <button type="submit" class="btn secondary">
+                {{ if .IsActive }}{{ T "categories.deactivate" }}{{ else }}{{ T "categories.activate" }}{{ end }}
+              </button>
+            </form>
+          </td>
+        </tr>
+        {{ end }}
+      </tbody>
+    </table>
+    {{ end }}
+  </div>
+
+  <div class="card users-form">
+    <h3>{{ T "categories.create" }}</h3>
+    <form method="post" action="/api/categories" autocomplete="off">
+      <label>{{ T "categories.col.name" }}
+        <input type="text" name="name" required placeholder="{{ T "categories.create_placeholder" }}" />
+      </label>
+      <button type="submit" class="btn primary" style="inline-size:100%">{{ T "categories.create" }}</button>
+    </form>
+  </div>
+</div>
+
+<script>
+(function () {
+  'use strict';
+  // Move-up/move-down reorder (ut-docs#1221's pattern, same reasoning as
+  // buttons_admin.html's reorder grid: explicit buttons work by tap, click
+  // AND keyboard with no gesture-detection code, unlike drag-and-drop which
+  // has no touch path on the till's own touchscreen browser).
+  var table = document.getElementById('categories-table');
+  if (!table) return;
+  var body = table.querySelector('tbody');
+
+  function rows() {
+    return body.querySelectorAll('.category-row');
+  }
+
+  function refreshEdgeStates() {
+    var all = rows();
+    Array.prototype.forEach.call(all, function (row, i) {
+      var up = row.querySelector('.move-up');
+      var down = row.querySelector('.move-down');
+      if (up) up.disabled = (i === 0);
+      if (down) down.disabled = (i === all.length - 1);
+    });
+  }
+
+  // Chain sends onto one running promise (same fix as buttons_admin.html's
+  // persistOrder) so a fast run of taps can never have an earlier save
+  // overtake a later one on the wire.
+  var pending = Promise.resolve();
+
+  function persistOrder() {
+    var ids = Array.prototype.map.call(rows(), function (r) { return r.dataset.id; });
+    pending = pending.then(function () {
+      var fd = new FormData();
+      ids.forEach(function (id) { fd.append('ids', id); });
+      return fetch('/api/categories/reorder', { method: 'POST', body: fd }).then(function (res) {
+        if (!res.ok) location.reload();
+      });
+    }).catch(function () {
+      // A rejected fetch must not permanently break later moves — same
+      // recovery as buttons_admin.html's persistOrder.
+    });
+  }
+
+  body.addEventListener('click', function (ev) {
+    var btn = ev.target.closest ? ev.target.closest('[data-move]') : null;
+    if (!btn) return;
+    var row = btn.closest('.category-row');
+    if (!row) return;
+    var sibling = (btn.dataset.move === '-1') ? row.previousElementSibling : row.nextElementSibling;
+    if (!sibling || !sibling.classList.contains('category-row')) return;
+    if (btn.dataset.move === '-1') {
+      body.insertBefore(row, sibling);
+    } else {
+      body.insertBefore(sibling, row);
+    }
+    refreshEdgeStates();
+    (btn.disabled ? row.querySelector(btn.dataset.move === '-1' ? '.move-down' : '.move-up') : btn).focus();
+    persistOrder();
+  });
+
+  refreshEdgeStates();
+})();
+</script>
+{{ end }}
