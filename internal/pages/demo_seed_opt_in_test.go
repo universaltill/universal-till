@@ -285,15 +285,15 @@ func TestSettingsRemoveDemoCatalogueEndpointCoversCustomersPromos(t *testing.T) 
 	body := rec.Body.String()
 	// Catalogue (0 seeded here, so 0/0) + customers/promos (5 removed, 1
 	// kept: cust-001 survives, cust-002/cust-003/PROMO50/PROMO500/DISC10 go).
-	// ut-docs#1840: the customer/promo tail message is unchanged in shape
-	// (still a bare count — that side of the card is out of scope), just
-	// reworded to say "customer/promo record(s)" now that catalogue items
-	// get their own named-and-reasoned list instead of sharing this line.
+	// ut-docs#1858: the old blanket "N customer/promo record(s) could not be
+	// removed (already in use)" line is gone — cust-001 now gets its own
+	// named-and-reasoned row, same treatment catalogue items already got
+	// from #1840.
 	if !strings.Contains(body, "Removed 5 sample record") {
 		t.Errorf("removal response %q does not report removed=5", body)
 	}
-	if !strings.Contains(body, "1 sample customer/promo record(s) could not be removed") {
-		t.Errorf("removal response %q does not report kept=1 customer/promo record", body)
+	if !strings.Contains(body, "Alice Carter") || !strings.Contains(body, "sales on record") {
+		t.Errorf("removal response %q does not name+reason the kept customer", body)
 	}
 	if n, _ := repo.SampleCustomerPromoCount(t.Context()); n != 1 {
 		t.Fatalf("sample customers/promos after removal = %d, want 1 (the sold-to customer)", n)
@@ -654,6 +654,8 @@ func TestSettingsDemoItemEndpoints_UnknownIDNeverElevates(t *testing.T) {
 	for _, path := range []string{
 		"/api/settings/demo-item/does-not-exist/remove",
 		"/api/settings/demo-item/does-not-exist/keep",
+		"/api/settings/demo-promo/DOES-NOT-EXIST/remove",
+		"/api/settings/demo-promo/DOES-NOT-EXIST/keep",
 	} {
 		rec := postForm(mux, path, url.Values{}, &cashUser)
 		if rec.Code != http.StatusOK || strings.Contains(rec.Body.String(), "elevation-dialog") {
@@ -689,5 +691,145 @@ func TestSettingsRemoveDemoItemEndpoint_ElevatedSuccessDoesNotSetReloadHeader(t 
 	}
 	if rec.Header().Get("X-UT-Response") != "" {
 		t.Fatalf("elevated keep-as-own set X-UT-Response = %q, want unset (would reload and wipe the rest of the kept list)", rec.Header().Get("X-UT-Response"))
+	}
+}
+
+// ut-docs#1858: RemoveDemoPromo's own endpoint, mirroring
+// TestSettingsRemoveDemoItemEndpoint exactly for the promo side.
+func TestSettingsRemoveDemoPromoEndpoint(t *testing.T) {
+	mux, d := newRealDBDeps(t)
+	repo := data.NewDemoSeedRepo(d.Db)
+	if err := repo.SeedDemoCustomersPromos(t.Context()); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.Db.Exec(`UPDATE promotions SET is_active = 0 WHERE code = 'PROMO500'`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Cashier: forbidden, promo still there.
+	postForm(mux, "/api/settings/demo-promo/PROMO500/remove", url.Values{}, &cashUser)
+	var n int
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM promotions WHERE code = 'PROMO500'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("cashier's request removed PROMO500")
+	}
+
+	// Manager: removed, and the response confirms it.
+	rec := postForm(mux, "/api/settings/demo-promo/PROMO500/remove", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Removed") {
+		t.Fatalf("manager remove-anyway: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM promotions WHERE code = 'PROMO500'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 0 {
+		t.Fatal("PROMO500 survived the manager's remove-anyway request")
+	}
+}
+
+// The server-side re-check refuses a promo that is actually targeted at a
+// customer, regardless of what the client believed when it rendered the
+// button — mirrors TestSettingsRemoveDemoItemEndpoint_RefusesItemWithHistory.
+func TestSettingsRemoveDemoPromoEndpoint_RefusesTargetedPromo(t *testing.T) {
+	mux, d := newRealDBDeps(t)
+	repo := data.NewDemoSeedRepo(d.Db)
+	if err := repo.SeedDemoCustomersPromos(t.Context()); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.Db.Exec(`UPDATE promotions SET customer_id = 'cust-001' WHERE code = 'PROMO50'`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postForm(mux, "/api/settings/demo-promo/PROMO50/remove", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "error") {
+		t.Fatalf("remove-anyway on a targeted promo: code=%d body=%s, want a refusal", rec.Code, rec.Body.String())
+	}
+	var n int
+	if err := d.Db.QueryRow(`SELECT COUNT(*) FROM promotions WHERE code = 'PROMO50'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatal("PROMO50 was removed despite being targeted at a customer")
+	}
+}
+
+// ut-docs#1858's other resolution: "keep as my own" — mirrors
+// TestSettingsKeepDemoItemEndpoint.
+func TestSettingsKeepDemoPromoEndpoint(t *testing.T) {
+	mux, d := newRealDBDeps(t)
+	repo := data.NewDemoSeedRepo(d.Db)
+	if err := repo.SeedDemoCustomersPromos(t.Context()); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	if _, err := d.Db.Exec(`UPDATE promotions SET is_active = 0 WHERE code = 'PROMO500'`); err != nil {
+		t.Fatal(err)
+	}
+
+	// Cashier: forbidden, still flagged sample.
+	postForm(mux, "/api/settings/demo-promo/PROMO500/keep", url.Values{}, &cashUser)
+	var flagged int
+	if err := d.Db.QueryRow(`SELECT is_sample_data FROM promotions WHERE code = 'PROMO500'`).Scan(&flagged); err != nil {
+		t.Fatal(err)
+	}
+	if flagged != 1 {
+		t.Fatal("cashier's request cleared is_sample_data")
+	}
+
+	rec := postForm(mux, "/api/settings/demo-promo/PROMO500/keep", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "Kept") {
+		t.Fatalf("manager keep-as-own: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if err := d.Db.QueryRow(`SELECT is_sample_data FROM promotions WHERE code = 'PROMO500'`).Scan(&flagged); err != nil {
+		t.Fatal(err)
+	}
+	if flagged != 0 {
+		t.Fatal("PROMO500 still flagged is_sample_data after keep-as-own")
+	}
+}
+
+// ut-docs#1858, mirroring TestSettingsRemoveDemoCatalogueEndpoint_EditedItemRowHasBothButtons:
+// the KeptReasonEdited branch of the promo kept list — its two buttons,
+// their hx-post URLs, and the shared message span id — must actually be
+// present, not just claimed by a code comment.
+func TestSettingsRemoveDemoCatalogueEndpoint_EditedPromoRowHasBothButtons(t *testing.T) {
+	mux, d := newRealDBDeps(t)
+	repo := data.NewDemoSeedRepo(d.Db)
+	if err := repo.SeedDemoCustomersPromos(t.Context()); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	// Real trading history elsewhere forces strict mode, so the edited promo
+	// is KEPT (not removed outright) and shows up in the rendered list.
+	if _, err := d.Db.Exec(`INSERT INTO items (id, name, base_price) VALUES ('own-1', 'My Own Item', 250)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO sales (id, receipt_no, subtotal, total) VALUES ('s-1', 'R-1', 250, 250)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO sale_lines
+		(id, sale_id, line_no, item_id, name_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+		VALUES ('sl-1', 's-1', 1, 'own-1', 'My Own Item', 1, 250, 0, 0, 250, 250)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Db.Exec(`UPDATE promotions SET is_active = 0 WHERE code = 'PROMO500'`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := postForm(mux, "/api/settings/remove-demo-catalogue", url.Values{}, &mgrUser)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("manager remove: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	for _, want := range []string{
+		`hx-post="/api/settings/demo-promo/PROMO500/remove"`,
+		`hx-post="/api/settings/demo-promo/PROMO500/keep"`,
+		`hx-target="[id=&#34;demo-promo-msg-PROMO500&#34;]"`,
+		`id="demo-promo-msg-PROMO500"`,
+		"PROMO500",
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("edited-promo row missing %q\nbody=%s", want, body)
+		}
 	}
 }

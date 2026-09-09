@@ -5,6 +5,12 @@
 -- ADR-0074 migration squash, ut-docs#1425, this was also shared verbatim
 -- by migration 038_demo_customers_promos_opt_in.sql, now deleted).
 --
+-- This is the STRICT variant (requires a promo's type/value/description/
+-- is_active/starts_at/ends_at to still be pristine) — RemoveDemoCustomersPromos
+-- picks this one when the till has real (non-sample) trading history; see
+-- remove_demo_customers_promos_relaxed.sql (ut-docs#1858) for the other
+-- case, mirroring RemoveDemoCatalogue's own strict/relaxed split exactly.
+--
 -- "Untouched" safety rule — deliberately not the same shape as the
 -- catalogue's (demo_ids.sql/remove_demo.sql), because this schema can't
 -- support the same check:
@@ -30,10 +36,15 @@
 --    seed default exactly (type/value/description/is_active/starts_at/
 --    ends_at). Unlike an item, a promo code's redemption at the till
 --    leaves no durable link back to this table — sale_discounts records
---    only the resulting discount amount, not which code produced it (and
---    the product has no promotions management UI at all yet, so
---    customer_id is the ONLY way a promo could ever be deliberately
---    targeted) — so "untouched" is judged by whether the row still reads
+--    only the resulting discount amount, not which code produced it, and
+--    nothing anywhere in the schema references promotions.code — so
+--    customer_id is the only DURABLE reference this table can be judged
+--    by (a promotions management UI does exist, at /promotions:
+--    internal/pages/promotions_page.go, and it can edit a promo's
+--    value/description/dates/customer target and deactivate it — an
+--    earlier version of this comment claimed there was no such UI, which
+--    was stale; ut-docs#1858 review) — so "untouched" is judged by
+--    whether the row still reads
 --    exactly as seeded, the closest available proxy for "the shop hasn't
 --    relied on or customized this," not by redemption history, which this
 --    schema has no way to recover.

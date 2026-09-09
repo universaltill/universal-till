@@ -274,17 +274,93 @@ func demoItemMsgSelector(itemID string) string {
 	return fmt.Sprintf(`[id="%s"]`, demoItemMsgID(itemID))
 }
 
-// disableDemoItemRowButtonsScript is appended to a successful remove/keep
+// demoPromoMsgID/demoPromoMsgSelector mirror demoItemMsgID/
+// demoItemMsgSelector exactly (ut-docs#1858), for the promo code's own
+// per-record endpoints (RemoveDemoPromo/KeepDemoPromoAsOwn) — a promo code
+// is not validated against CSS identifier syntax either, so the same
+// attribute-selector escaping applies.
+func demoPromoMsgID(code string) string { return "demo-promo-msg-" + code }
+
+func demoPromoMsgSelector(code string) string {
+	return fmt.Sprintf(`[id="%s"]`, demoPromoMsgID(code))
+}
+
+// writeKeptDemoCustomersHTML renders the "kept" list for demo customers
+// (ut-docs#1858, mirroring writeKeptDemoItemsHTML) — named + reasoned, never
+// a blanket count. No row here ever gets resolution buttons: every
+// KeptDemoCustomer reason is a genuine, unresolvable live reference (see
+// that type's own doc comment), unlike an item or promo's ReasonEdited.
+func writeKeptDemoCustomersHTML(b *strings.Builder, locale string, customers []data.KeptDemoCustomer) {
+	if len(customers) == 0 {
+		return
+	}
+	fmt.Fprintf(b, `<p class="muted">%s</p><ul class="demo-kept-list">`, html.EscapeString(httpx.T(locale, "settings.data.demo_kept_customers_intro")))
+	for _, c := range customers {
+		fmt.Fprintf(b, `<li class="demo-kept-customer" data-testid="demo-kept-customer" data-customer-id="%s">`, html.EscapeString(c.ID))
+		fmt.Fprintf(b, `<strong>%s</strong> — `, html.EscapeString(c.Name))
+		var reasonKey string
+		switch c.Reason {
+		case data.KeptReasonHeld:
+			reasonKey = "settings.data.demo_kept_reason_customer_held"
+		case data.KeptReasonTargeted:
+			reasonKey = "settings.data.demo_kept_reason_customer_targeted"
+		default: // data.KeptReasonHistory
+			reasonKey = "settings.data.demo_kept_reason_customer_sold"
+		}
+		fmt.Fprintf(b, `<span>%s</span></li>`, html.EscapeString(httpx.T(locale, reasonKey)))
+	}
+	b.WriteString(`</ul>`)
+}
+
+// writeKeptDemoPromosHTML renders the "kept" list for demo promo codes
+// (ut-docs#1858, mirroring writeKeptDemoItemsHTML) — named + reasoned,
+// with the same "remove anyway"/"keep as my own" resolution items got,
+// offered only for ReasonEdited (ReasonTargeted, like an item's
+// ReasonHistory/ReasonHeld, is never resolvable — it's a real reference).
+func writeKeptDemoPromosHTML(b *strings.Builder, locale string, promos []data.KeptDemoPromo) {
+	if len(promos) == 0 {
+		return
+	}
+	fmt.Fprintf(b, `<p class="muted">%s</p><ul class="demo-kept-list">`, html.EscapeString(httpx.T(locale, "settings.data.demo_kept_promos_intro")))
+	for _, p := range promos {
+		code := html.EscapeString(p.Code)
+		fmt.Fprintf(b, `<li class="demo-kept-promo" data-testid="demo-kept-promo" data-promo-code="%s">`, code)
+		fmt.Fprintf(b, `<strong>%s</strong> <span class="muted">(%s)</span> — `,
+			code, html.EscapeString(p.Description))
+		switch p.Reason {
+		case data.KeptReasonEdited:
+			fmt.Fprintf(b, `<span>%s</span> `, html.EscapeString(httpx.T(locale, "settings.data.demo_kept_reason_promo_edited")))
+			fmt.Fprintf(b, `<button class="btn secondary" data-testid="demo-promo-remove-anyway" `+
+				`hx-post="/api/settings/demo-promo/%s/remove" hx-confirm="%s" `+
+				`hx-target="%s" hx-swap="innerHTML" hx-disabled-elt="this">%s</button> `,
+				code, html.EscapeString(httpx.T(locale, "settings.data.demo_promo_remove_anyway_confirm")),
+				html.EscapeString(demoPromoMsgSelector(p.Code)), html.EscapeString(httpx.T(locale, "settings.data.demo_promo_remove_anyway_btn")))
+			fmt.Fprintf(b, `<button class="btn secondary" data-testid="demo-promo-keep-own" `+
+				`hx-post="/api/settings/demo-promo/%s/keep" `+
+				`hx-target="%s" hx-swap="innerHTML" hx-disabled-elt="this">%s</button>`,
+				code, html.EscapeString(demoPromoMsgSelector(p.Code)), html.EscapeString(httpx.T(locale, "settings.data.demo_promo_keep_own_btn")))
+		default: // data.KeptReasonTargeted
+			fmt.Fprintf(b, `<span>%s</span>`, html.EscapeString(httpx.T(locale, "settings.data.demo_kept_reason_promo_targeted")))
+		}
+		fmt.Fprintf(b, ` <span id="%s" class="muted" aria-live="polite"></span></li>`, html.EscapeString(demoPromoMsgID(p.Code)))
+	}
+	b.WriteString(`</ul>`)
+}
+
+// disableDemoRowButtonsScript is appended to a successful remove/keep
 // response (ut-docs#1840 review finding F9): without it, the row's OTHER
 // button stays clickable after one resolves the item, and clicking it next
 // returns a confusing "already gone" for an item just deliberately kept (or
 // vice versa). Same allowScriptTags convention this codebase already uses
 // for self-contained post-swap behavior (see elevation_prompt.html's own
 // dialog.show() and GetLowStock's low-stock badge script) — the script tag
-// lands inside the row's own #demo-item-msg-<id> span (this handler's only
-// swap target), so `.closest` reaches the row without needing an id.
-func disableDemoItemRowButtonsScript() string {
-	return `<script>(function(s){var li=s.closest('.demo-kept-item');if(li){li.querySelectorAll('button').forEach(function(b){b.disabled=true;});}})(document.currentScript)</script>`
+// lands inside the row's own message span (this handler's only swap
+// target), so `.closest` reaches the row without needing an id. rowClass
+// (ut-docs#1858: generalized from a hardcoded ".demo-kept-item" so the
+// promo rows below can share this instead of duplicating it) is the row
+// li's own class — ".demo-kept-item" or ".demo-kept-promo".
+func disableDemoRowButtonsScript(rowClass string) string {
+	return `<script>(function(s){var li=s.closest('` + rowClass + `');if(li){li.querySelectorAll('button').forEach(function(b){b.disabled=true;});}})(document.currentScript)</script>`
 }
 
 func registerSettings(mux *http.ServeMux, d *common.Deps) {
@@ -1563,7 +1639,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
 			return
 		}
-		removedCustPromo, keptCustPromo, err := seedRepo.RemoveDemoCustomersPromos(r.Context())
+		removedCustPromo, keptCustomers, keptPromos, err := seedRepo.RemoveDemoCustomersPromos(r.Context())
 		if err != nil {
 			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
 			return
@@ -1572,27 +1648,37 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// The single highest-value audit site in ut-docs#796 slice 1 — an
 		// irreversible bulk deletion — so the payload records both the
 		// per-category and the combined removed/kept counts the response
-		// itself reports. ut-docs#1840: kept ITEMS are now individually
-		// named+reasoned (keptItems), so the audit payload logs their ids
-		// and reasons too, not just a count.
+		// itself reports. ut-docs#1840: kept ITEMS are individually
+		// named+reasoned (keptItems). ut-docs#1858: kept CUSTOMERS/PROMOS now
+		// are too (keptCustomers/keptPromos), instead of a bare combined
+		// count — the same audit-trail improvement, extended to the other
+		// two kept lists.
 		keptItemPayload := make([]map[string]any, len(keptItems))
 		for i, it := range keptItems {
 			keptItemPayload[i] = map[string]any{"id": it.ID, "reason": it.Reason}
 		}
+		keptCustomerPayload := make([]map[string]any, len(keptCustomers))
+		for i, c := range keptCustomers {
+			keptCustomerPayload[i] = map[string]any{"id": c.ID, "reason": c.Reason}
+		}
+		keptPromoPayload := make([]map[string]any, len(keptPromos))
+		for i, p := range keptPromos {
+			keptPromoPayload[i] = map[string]any{"code": p.Code, "reason": p.Reason}
+		}
 		settingsAudit(r, posRepo, elev, "demo_data", "-", "demo_data_removed", map[string]any{
 			"removed":                  removed,
-			"kept":                     len(keptItems) + keptCustPromo,
+			"kept":                     len(keptItems) + len(keptCustomers) + len(keptPromos),
 			"removed_items":            removedItems,
 			"kept_items":               keptItemPayload,
 			"removed_customers_promos": removedCustPromo,
-			"kept_customers_promos":    keptCustPromo,
+			"kept_customers":           keptCustomerPayload,
+			"kept_promos":              keptPromoPayload,
 		})
 		var b strings.Builder
 		fmt.Fprintf(&b, `<span>✓ %s</span>`, html.EscapeString(fmt.Sprintf(httpx.T(locale, "settings.data.demo_removed"), removed)))
 		writeKeptDemoItemsHTML(&b, locale, keptItems)
-		if keptCustPromo > 0 {
-			fmt.Fprintf(&b, `<p class="muted">%s</p>`, html.EscapeString(fmt.Sprintf(httpx.T(locale, "settings.data.demo_kept"), keptCustPromo)))
-		}
+		writeKeptDemoCustomersHTML(&b, locale, keptCustomers)
+		writeKeptDemoPromosHTML(&b, locale, keptPromos)
 		w.Write([]byte(b.String()))
 	})
 
@@ -1656,7 +1742,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		settingsAudit(r, posRepo, elev, "demo_data", id, "demo_item_removed", nil)
-		fmt.Fprintf(w, `<span>✓ %s</span>%s`, httpx.T(locale, "settings.data.demo_item_removed"), disableDemoItemRowButtonsScript())
+		fmt.Fprintf(w, `<span>✓ %s</span>%s`, httpx.T(locale, "settings.data.demo_item_removed"), disableDemoRowButtonsScript(".demo-kept-item"))
 	})
 
 	// ut-docs#1840 AC3's other resolution: "keep as my own item" — clears
@@ -1695,7 +1781,92 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		settingsAudit(r, posRepo, elev, "demo_data", id, "demo_item_kept_as_own", nil)
-		fmt.Fprintf(w, `<span>✓ %s</span>%s`, httpx.T(locale, "settings.data.demo_item_kept"), disableDemoItemRowButtonsScript())
+		fmt.Fprintf(w, `<span>✓ %s</span>%s`, httpx.T(locale, "settings.data.demo_item_kept"), disableDemoRowButtonsScript(".demo-kept-item"))
+	})
+
+	// ut-docs#1858: per-promo resolution mirroring the per-item one above
+	// exactly — "remove anyway" for a demo promo kept only because it was
+	// edited (data.KeptReasonEdited). Safe by construction (that reason
+	// means the targeting check already passed), but RemoveDemoPromo
+	// re-checks server-side rather than trusting the client's last-rendered
+	// reason, since the promo could have been targeted at a customer since
+	// the page last rendered. Same elevation/audit pattern, same F2/F3-style
+	// fixes (pre-elevation existence check, attribute-selector hxTarget, no
+	// X-UT-Response: ok on the elevated path — see the item handler's own
+	// comment for why).
+	mux.HandleFunc("POST /api/settings/demo-promo/{code}/remove", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		code := r.PathValue("code")
+		isSample, err := data.NewDemoSeedRepo(d.Db).IsSamplePromo(r.Context(), code)
+		if err != nil {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			return
+		}
+		if !isSample {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, httpx.T(locale, "settings.data.demo_promo_not_found"))
+			return
+		}
+		_ = r.ParseForm()
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/demo-promo/"+code+"/remove",
+				demoPromoMsgSelector(code),
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.remove_demo_promo"), code), nil, elev)
+			return
+		}
+		if err := data.NewDemoSeedRepo(d.Db).RemoveDemoPromo(r.Context(), code); err != nil {
+			switch {
+			case errors.Is(err, data.ErrDemoPromoNotFound):
+				fmt.Fprintf(w, `<span class="error">✗ %s</span>`, httpx.T(locale, "settings.data.demo_promo_not_found"))
+			case errors.Is(err, data.ErrDemoPromoTargeted):
+				fmt.Fprintf(w, `<span class="error">✗ %s</span>`, httpx.T(locale, "settings.data.demo_promo_targeted"))
+			default:
+				fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			}
+			return
+		}
+		settingsAudit(r, posRepo, elev, "demo_data", code, "demo_promo_removed", nil)
+		fmt.Fprintf(w, `<span>✓ %s</span>%s`, httpx.T(locale, "settings.data.demo_promo_removed"), disableDemoRowButtonsScript(".demo-kept-promo"))
+	})
+
+	// ut-docs#1858's other resolution: "keep as my own" — clears
+	// is_sample_data so this promo becomes a permanent code, never offered
+	// for removal again. No targeting re-check needed (this action doesn't
+	// delete anything), but still elevation/audit-gated like every other
+	// mutating Settings→Data action on this page. Mirrors KeepDemoItemAsOwn's
+	// handler exactly.
+	mux.HandleFunc("POST /api/settings/demo-promo/{code}/keep", func(w http.ResponseWriter, r *http.Request) {
+		locale := httpx.ResolveLocale(w, r)
+		w.Header().Set("Content-Type", "text/html; charset=utf-8")
+		code := r.PathValue("code")
+		isSample, err := data.NewDemoSeedRepo(d.Db).IsSamplePromo(r.Context(), code)
+		if err != nil {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			return
+		}
+		if !isSample {
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, httpx.T(locale, "settings.data.demo_promo_not_found"))
+			return
+		}
+		_ = r.ParseForm()
+		elev := checkOrElevate(d, r, "settings", r.Form.Get("override_pin"))
+		if elev.Outcome == needsElevation {
+			renderElevationPrompt(w, r, "/api/settings/demo-promo/"+code+"/keep",
+				demoPromoMsgSelector(code),
+				fmt.Sprintf(httpx.T(locale, "elevation.summary.keep_demo_promo"), code), nil, elev)
+			return
+		}
+		if err := data.NewDemoSeedRepo(d.Db).KeepDemoPromoAsOwn(r.Context(), code); err != nil {
+			if errors.Is(err, data.ErrDemoPromoNotFound) {
+				fmt.Fprintf(w, `<span class="error">✗ %s</span>`, httpx.T(locale, "settings.data.demo_promo_not_found"))
+				return
+			}
+			fmt.Fprintf(w, `<span class="error">✗ %s</span>`, html.EscapeString(err.Error()))
+			return
+		}
+		settingsAudit(r, posRepo, elev, "demo_data", code, "demo_promo_kept_as_own", nil)
+		fmt.Fprintf(w, `<span>✓ %s</span>%s`, httpx.T(locale, "settings.data.demo_promo_kept"), disableDemoRowButtonsScript(".demo-kept-promo"))
 	})
 
 	// Dismiss the "restore from another POS?" resume prompt (ut-docs#617)
