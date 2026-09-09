@@ -13,7 +13,7 @@ import (
 )
 
 // OptionSetView is one reusable, named variant axis ("Size") with its
-// ordered values ("S", "M", "L") — ut-docs#1900, migration 019. Shop-wide,
+// ordered values ("S", "M", "L") — ut-docs#1900, migration 020. Shop-wide,
 // not per-item: the same set generates the range on any number of items.
 type OptionSetView struct {
 	ID       string
@@ -52,7 +52,7 @@ var ErrNoOptionSetsApplied = errors.New("no option sets applied to this item")
 const maxOptionSetAxes = 2
 
 // OptionSetRepo owns the option_sets / option_set_values / item_option_sets /
-// item_variant_options tables (migration 019). Instantiated ad hoc per
+// item_variant_options tables (migration 020). Instantiated ad hoc per
 // handler call, exactly like ModifierRepo — this codebase doesn't wire
 // repos into common.Deps.
 type OptionSetRepo struct {
