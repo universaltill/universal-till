@@ -760,7 +760,8 @@ func TestEraseCustomer_RequiresIDAndReportsNotFound(t *testing.T) {
 
 	// A real PIN, since the id is what's under test here, not the
 	// elevation gate itself (that's TestEraseCustomer_NoPIN_NeedsElevation_NoMutation
-	// and TestEraseCustomer_ElevatedByApprover_ErasesAndRecordsApprover below).
+	// and TestDataManagementEndpoints_ValidPIN_AuditRecordsApprover's own
+	// "customer-erase" case below).
 	req := httptest.NewRequest(http.MethodPost, "/api/data/customers/erase", strings.NewReader("id=does-not-exist&override_pin="+dataAPITestManagerPIN))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 	rec = httptest.NewRecorder()

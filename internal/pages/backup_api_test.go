@@ -294,6 +294,30 @@ func TestSaveCopy_InvalidNameAndRealCopyToDownloads(t *testing.T) {
 	}
 }
 
+// ut-docs#1860 review finding N3: a path-traversal/malformed name is
+// rejected BEFORE the elevation prompt, not after -- an approver must never
+// be asked to burn a PIN approving a restore that was always going to fail
+// db.ValidBackupName's own check, matching download/save-copy's own
+// precedent in this same file.
+func TestRestoreBackup_InvalidNameRejectedBeforeElevation(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _, dbPath := newBackupTestDeps(t)
+
+	rec := httptest.NewRecorder()
+	req := httptest.NewRequest(http.MethodPost, "/api/backup/restore", strings.NewReader("name=..%2F..%2Fetc%2Fpasswd"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for a malformed name, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("expected no elevation prompt for a name that was always going to fail, got: %s", rec.Body.String())
+	}
+	if db.PendingRestore(dbPath) {
+		t.Fatalf("expected no restore staged for a malformed name")
+	}
+}
+
 // ut-docs#1860 (ADR-0087): the typed RESTORE word is gone — no override_pin
 // at all must get the elevation prompt (referencing the backup by name,
 // which already carries its date), not a 400, and must stage nothing.

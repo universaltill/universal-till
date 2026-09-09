@@ -215,6 +215,10 @@ func registerBackupAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		_ = r.ParseForm()
 		name := strings.TrimSpace(r.Form.Get("name"))
+		if !db.ValidBackupName(name) {
+			http.Error(w, "invalid backup name", http.StatusBadRequest)
+			return
+		}
 		locale := httpx.ResolveLocale(w, r)
 		// ut-docs#1860 (ADR-0087): step-up re-authentication replaces the old
 		// typed RESTORE word. This is plausibly the single most destructive
