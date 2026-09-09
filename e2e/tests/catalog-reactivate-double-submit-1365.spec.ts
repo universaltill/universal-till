@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, openNewItemForm } from './helpers';
 
 // ut-docs#1365: the item-form submit button was never disabled while a
 // save request was in flight — harmless before ut-docs#1363 (every
@@ -18,25 +18,45 @@ test.describe('catalog item-form double-submit (ut-docs#1365)', () => {
     await page.goto('/catalog');
 
     const name = 'Reactivate Double Submit ' + Date.now();
+    await openNewItemForm(page);
     await page.locator('#item-name').fill(name);
     await page.locator('#item-price').fill('1.00');
     await page.locator('#item-form-submit').click();
     await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
+    // ut-docs#1901: close explicitly — the row click below (outside the
+    // dialog) is inert while a showModal() dialog is still open.
+    await page.locator('#item-form-close-btn').click();
 
     const row = page.locator('.catalog-row', { hasText: name });
     await expect(row).toBeVisible();
 
-    // Load it into the edit form, then deactivate it via its own row
-    // button WITHOUT touching the form — reproduces the exact precondition
-    // handlers.go's update handler calls out: "deactivate a row while the
-    // edit form still holds that item, then save."
+    // Load it into the edit form (opens the dialog).
     await row.locator('td').first().click();
-    await expect(page.locator('#item-id')).not.toHaveValue('');
+    const itemId = await page.locator('#item-id').inputValue();
+    expect(itemId).not.toBe('');
     await expect(page.locator('#item-active')).toBeChecked();
 
-    page.once('dialog', (d) => d.accept());
-    await row.locator('button.danger').click();
-    await expect(row).toHaveCount(0);
+    // ut-docs#1901: deactivate it WITHOUT touching the (now-modal) edit
+    // form — reproduces the exact precondition handlers.go's update
+    // handler calls out: "deactivate a row while the edit form still
+    // holds that item, then save." Pre-#1901 this was a second UI
+    // element (the row's own danger button) reachable on the same page
+    // alongside the always-visible side panel; now that the editor is a
+    // showModal() dialog, everything outside it (that button included) is
+    // inert while it's open — so this drives the same server-side race
+    // via a direct request instead, which is arguably the MORE realistic
+    // reproduction anyway (a second tab/operator deactivating the item
+    // while this one still has it open for editing, not two controls on
+    // one screen that a real user could never both reach at once).
+    const deactivateResp = await page.request.post('/api/catalog/item/deactivate', {
+      form: { id: itemId },
+    });
+    expect(deactivateResp.ok()).toBeTruthy();
+    // Note: this went via a raw request, not a page click, so htmx never
+    // processed the response's row-removal OOB fragment — `row` stays in
+    // the DOM (stale) until the next real htmx swap touches it. That's
+    // expected and not what this test is checking; the reactivation
+    // itself (below) does trigger a real swap and IS checked.
 
     // The form still holds the now-inactive item, Active still checked —
     // saving from here is a reactivation. Hold the update response so both
@@ -88,6 +108,7 @@ test.describe('catalog item-form double-submit (ut-docs#1365)', () => {
     });
 
     const name = 'Submit Disabled Probe ' + Date.now();
+    await openNewItemForm(page);
     await page.locator('#item-name').fill(name);
     await page.locator('#item-price').fill('1.00');
     await page.locator('#item-form-submit').click();

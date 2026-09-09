@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, openNewItemForm } from './helpers';
 
 // ut-docs#917: the item form's "Saved" notice was rendered and then wiped in
 // the same synchronous tick on the NEW-item path, so the operator never saw
@@ -32,6 +32,7 @@ test.describe('catalog item-form save notice (ut-docs#917)', () => {
     await expect(msg).toBeEmpty();
 
     const name = 'Notice Probe ' + Date.now();
+    await openNewItemForm(page);
     await fillNewItem(page, name);
     await page.locator('#item-form-submit').click();
 
@@ -66,9 +67,13 @@ test.describe('catalog item-form save notice (ut-docs#917)', () => {
     // Create one, then edit it — the edit path never called clearForm(), so it
     // was unaffected by the bug; this guards against the fix regressing it.
     const name = 'Notice Probe Edit ' + Date.now();
+    await openNewItemForm(page);
     await fillNewItem(page, name);
     await page.locator('#item-form-submit').click();
     await expect(page.locator(msgSel).locator('.pos-notice.success')).toBeVisible();
+    // ut-docs#1901: close explicitly — the row click below (outside the
+    // dialog) is inert while a showModal() dialog is still open.
+    await page.locator('#item-form-close-btn').click();
 
     // Click a plain cell, not the row's centre — the row-click handler
     // deliberately ignores clicks that land on a `.btn` inside it.
@@ -113,6 +118,7 @@ test.describe('catalog item-form save notice (ut-docs#917)', () => {
 
     const sku = 'DUP-' + Date.now();
     const first = 'Notice Probe Dup A ' + Date.now();
+    await openNewItemForm(page);
     await fillNewItem(page, first);
     await page.locator('#item-sku').fill(sku);
     await page.locator('#item-form-submit').click();

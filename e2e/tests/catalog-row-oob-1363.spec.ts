@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, openNewItemForm } from './helpers';
 
 // ut-docs#1363: catalog mutations answer with row-level HTMX out-of-band
 // fragments — one row inserted/updated/removed — instead of re-rendering
@@ -20,10 +20,17 @@ import { watchConsole } from './helpers';
 // what pin insert/update/delete correctness).
 test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
   async function createItem(page: import('@playwright/test').Page, name: string) {
+    await openNewItemForm(page);
     await page.locator('#item-name').fill(name);
     await page.locator('#item-price').fill('1.00');
     await page.locator('#item-form-submit').click();
     await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
+    // ut-docs#1901: close explicitly — nearly every caller of this helper
+    // goes on to click something OUTSIDE the dialog (a row, the search
+    // box, a danger button), which is inert while a showModal() dialog is
+    // still open. The two callers that only ever read afterward are
+    // unaffected by closing early.
+    await page.locator('#item-form-close-btn').click();
     await expect(page.locator(`.catalog-row[data-name="${name}"]`)).toBeVisible();
   }
 
@@ -161,10 +168,14 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
     // the htmx:oobAfterSwap re-trigger must hide the new row immediately.
     await page.locator('#catalog-search').fill('zzz-no-such-item');
     const name = 'Row OOB Filtered ' + Date.now();
+    await openNewItemForm(page);
     await page.locator('#item-name').fill(name);
     await page.locator('#item-price').fill('1.00');
     await page.locator('#item-form-submit').click();
     await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
+    // ut-docs#1901: close explicitly — the search box below is outside
+    // the dialog, inert while it's still open.
+    await page.locator('#item-form-close-btn').click();
 
     const newRow = page.locator(`.catalog-row[data-name="${name}"]`);
     await expect(newRow).toHaveCount(1);
@@ -189,9 +200,16 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
     const name = 'Row OOB Panel ' + Date.now();
     await createItem(page, name);
 
-    // Open the item's variants panel, then hide the row with a filter.
+    // Open the item's variants panel (a row click opens the edit dialog
+    // AND loads the variants panel, which lives OUTSIDE the dialog —
+    // catalog_variants renders as its own always-visible section below
+    // .catalog-layout, not inside #item-form-modal).
     await page.locator(`.catalog-row[data-name="${name}"]`).locator('td').nth(1).click();
     await expect(page.locator('#vf-new')).toBeAttached();
+    // ut-docs#1901: close the edit dialog the row click just opened — the
+    // variants panel and search box below are both outside it, inert
+    // while it's still open.
+    await page.locator('#item-form-close-btn').click();
     const row = page.locator(`.catalog-row[data-name="${name}"]`);
     await page.locator('#catalog-search').fill('zzz-no-such-item');
     await expect(row).toBeHidden();

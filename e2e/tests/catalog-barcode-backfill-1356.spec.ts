@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, openNewItemForm } from './helpers';
 
 // ut-docs#1356: bulk "backfill barcodes from SKU" on the Catalog page —
 // preview-before-apply, reusing #1224's exact SKU→barcode derivation. This
@@ -16,11 +16,18 @@ test('backfilling barcodes from SKU previews then assigns a derived barcode to a
   const stamp = Date.now();
   const name = 'Backfill Probe ' + stamp;
   const sku = 'E2EBF' + stamp;
+  await openNewItemForm(page);
   await page.locator('#item-name').fill(name);
   await page.locator('#item-sku').fill(sku);
   await page.locator('#item-price').fill('3.00');
   await page.locator('#item-form-submit').click();
   await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
+  // ut-docs#1901: the item form is a showModal() <dialog> now — everything
+  // outside it (including the page-head backfill button below) is inert
+  // while it's open. Close it explicitly rather than relying on the
+  // save-success auto-close timer, which would make this test's timing
+  // depend on an implementation detail it isn't testing.
+  await page.locator('#item-form-close-btn').click();
 
   const row = page.locator('.catalog-row', { hasText: name });
   await expect(row).toBeVisible();

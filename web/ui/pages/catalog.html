@@ -266,16 +266,39 @@
   // for a new item, a catalog row click for edit) rather than always
   // being on screen.
   var modal = document.getElementById('item-form-modal');
-  // ut-docs#1901 UX fix: bumped every time the dialog is (re)opened for a
-  // NEW editing session (either trigger below) — the delayed auto-close
-  // after a successful save (search "auto-close" below) only fires if
-  // this is still the same session that saved, so a cashier who saves
-  // item A and immediately reopens the dialog for item B inside the
-  // close-delay window doesn't get B's still-open form yanked shut under
-  // them. A plain item-id comparison can't tell two different NEW-item
-  // sessions apart (both have id ''), which is why this is a separate
-  // counter rather than reusing #item-id.
+  // ut-docs#1901 UX fix: bumped whenever the CURRENT dialog session
+  // changes — opened fresh (either trigger below) OR the operator touches
+  // any field after a save (the 'input' listener below). The delayed
+  // auto-close after a successful save (search "auto-close" below) only
+  // fires if this is still the same, untouched session that saved, so
+  // neither of two real flows gets the form yanked shut on them: (1) a
+  // cashier who saves item A and immediately reopens the dialog for item
+  // B inside the close-delay window, and (2) a cashier who saves item A
+  // and — WITHOUT closing — starts typing item B straight into the same
+  // still-open, auto-cleared dialog (the create path's own clearForm()
+  // leaves it open and ready for exactly this). A plain item-id
+  // comparison can't tell two different NEW-item sessions apart (both
+  // have id ''), which is why this is a separate counter rather than
+  // reusing #item-id.
   var formSession = 0;
+  // ut-docs#1901: native <dialog>.showModal() THROWS (InvalidStateError)
+  // if called while the dialog is already open — a real, reachable case
+  // now that a successful save auto-closes the dialog on a delay (search
+  // "auto-close" below): an operator (or a fast test) can click a
+  // DIFFERENT row to edit, or "+ Add item" again, before that delay
+  // fires, while this dialog is still open from the save they just made.
+  // Both open call sites route through this instead of a bare
+  // modal.showModal() call.
+  function openModal() {
+    if (!modal.open) modal.showModal();
+  }
+  // ut-docs#1901 UX fix: any field the operator touches after a save
+  // invalidates that save's pending auto-close (search "auto-close"
+  // below) — covers typing straight into the same still-open, auto-
+  // cleared dialog to create a SECOND item without ever closing between
+  // the two (formSession alone doesn't change on its own for that case,
+  // since the dialog was never re-opened).
+  form.addEventListener('input', function () { formSession++; });
 
   // ut-docs#238: item-form-msg/autofill-msg/keypad-log migrate off ad-hoc
   // .textContent status strings onto the documented .pos-notice pattern
@@ -370,7 +393,7 @@
     addBtn.addEventListener('click', function () {
       clearForm();
       formSession++;
-      modal.showModal();
+      openModal();
     });
   }
 
@@ -395,6 +418,10 @@
       var hex = btn.dataset.color || '';
       colorInput.value = hex;
       setColorTiles(hex);
+      // ut-docs#1901 UX fix: a swatch tile is a <button>, not a native
+      // form control that fires 'input' — the form-level listener above
+      // wouldn't otherwise see this as "the operator touched the form".
+      formSession++;
     });
   }
 
@@ -484,7 +511,7 @@
     formSession++;
     // ut-docs#1901: the form is now a dialog — a row click must actually
     // open it, or there is no way to reach the edit form at all.
-    modal.showModal();
+    openModal();
     document.querySelectorAll('.pick-item').forEach(function (el) { el.value = row.dataset.id; });
     // Load the item's variants/barcodes editor panel (full-width, below the
     // list) and bring it into view.
