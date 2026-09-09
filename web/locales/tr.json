@@ -1604,6 +1604,7 @@
   "settings.printer.charset_cp858": "Batı Avrupa (CP858 — €/£)",
   "settings.printer.charset_win1250": "Orta Avrupa (Windows-1250 — €/č/ž)",
   "settings.printer.charset_win1253": "Yunanca (Windows-1253 — €/α/β)",
+  "settings.printer.charset_win1254": "Türkçe (Windows-1254 — €/ş/ı)",
   "settings.printer.charset_win1257": "Baltık (Windows-1257 — €/ā/š)",
   "settings.printer.device": "Cihaz yolu",
   "settings.printer.discover.error": "Bu ağda yazıcı aranamadı.",

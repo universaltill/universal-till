@@ -23,11 +23,17 @@ func TestDefaultCharset(t *testing.T) {
 		// A '$' is plain ASCII — nothing is broken, so nothing changes.
 		{"us dollar store keeps the pass-through", "USD", "en-US", "utf8"},
 		// CP858 has neither 'ı' nor 'ş': switching Turkish would replace a
-		// possibly-fine receipt with one full of '?'. Turkish is deliberately
-		// left out of ut-docs#1733's fix (own market:tr track) even though
-		// Windows-1254 would cover it — not this card's scope.
-		{"turkish store is not switched", "TRY", "tr-TR", "utf8"},
-		{"turkish store on euro is still not switched", "EUR", "tr-TR", "utf8"},
+		// possibly-fine receipt with one full of '?'. Turkish was deliberately
+		// left out of ut-docs#1733's fix (own market:tr track) — closed by
+		// #1775 below via win1254, not cp858.
+		//
+		// ut-docs#1775: Windows-1254 covers the Turkish alphabet plus both '€'
+		// and '£' (verified), but NOT '₺' — so TRY itself stays out of the
+		// currency gate (see DefaultCharset's own doc comment) and a TRY store
+		// keeps the utf8 pass-through exactly as before.
+		{"turkish store (TRY) keeps the pass-through — win1254 has no ₺", "TRY", "tr-TR", "utf8"},
+		{"turkish euro store gets win1254", "EUR", "tr-TR", "win1254"},
+		{"turkish sterling store gets win1254 (has £)", "GBP", "tr-TR", "win1254"},
 		// ut-docs#1733: eight eurozone locales CP858 cannot reach without
 		// losing their own alphabet, resolved via the Windows-125x pages the
 		// same printers already support.
@@ -92,10 +98,12 @@ func TestRender_DefaultCharsetForEuroStore_EmitsCP858EuroAndSelectsCodePage(t *t
 	}
 }
 
-// ut-docs#1733: the Windows-125x pages must round-trip the same way CP858
+// ut-docs#1733 (win1250/1257/1253) and #1775 (win1254, added later for
+// Turkish — NOT a eurozone locale, hence this test's name no longer says
+// "eurozone"): the Windows-125x pages must round-trip the same way CP858
 // does — the currency symbol single-byte-encoded, and the ESC t selection
 // command for that specific page in the stream.
-func TestRender_DefaultCharsetForNewEurozoneLocales_EmitsCorrectPageAndCommand(t *testing.T) {
+func TestRender_DefaultCharsetForNewSingleBytePageLocales_EmitsCorrectPageAndCommand(t *testing.T) {
 	cases := []struct {
 		name           string
 		locale         string
@@ -105,6 +113,7 @@ func TestRender_DefaultCharsetForNewEurozoneLocales_EmitsCorrectPageAndCommand(t
 		{"croatian (win1250)", "hr-HR", charmap.Windows1250, 45},
 		{"estonian (win1257)", "et-EE", charmap.Windows1257, 51},
 		{"greek (win1253)", "el-GR", charmap.Windows1253, 47},
+		{"turkish (win1254)", "tr-TR", charmap.Windows1254, 48},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
@@ -133,8 +142,12 @@ func TestRender_DefaultCharsetForNewEurozoneLocales_EmitsCorrectPageAndCommand(t
 	}
 }
 
-// The counterpart: a Turkish store must keep sending UTF-8 rather than being
-// silently downgraded to '?' by a blanket CP858 default.
+// The counterpart: a TRY Turkish store must keep sending UTF-8 rather than
+// being silently downgraded to '?' — win1254 doesn't help here since it has
+// no '₺' (ut-docs#1775, see DefaultCharset's own doc comment); a EUR/GBP
+// Turkish store DOES move to win1254, covered by
+// TestRender_DefaultCharsetForNewSingleBytePageLocales_EmitsCorrectPageAndCommand
+// above.
 func TestRender_DefaultCharsetForTurkishStore_KeepsPassThrough(t *testing.T) {
 	doc := Doc{
 		StoreName: "Sipariş",
@@ -201,8 +214,10 @@ func TestEncodable(t *testing.T) {
 		{"Σουβλάκι", "win1253", true},  // Greek — natively in Windows-1253
 		{"日本", "cp858", false},         // unrenderable under any single-byte page
 		{"日本", "win1253", false},
-		{"مرحبا", "win1250", false}, // Arabic — not in Windows-1250
-		{"Café", "utf8", true},      // utf8 passes everything through
+		{"مرحبا", "win1250", false},       // Arabic — not in Windows-1250
+		{"Café", "utf8", true},            // utf8 passes everything through
+		{"Sipariş İçin", "win1254", true}, // Turkish — natively in Windows-1254
+		{"مرحبا", "win1254", false},       // Arabic — not in Windows-1254 either
 	}
 	for _, tc := range cases {
 		if got := Encodable(tc.s, tc.charset); got != tc.want {
@@ -223,6 +238,7 @@ func TestEncodable_LiteralQuestionMarkInSourceIsNotADegradedRune(t *testing.T) {
 		{"Čevapi?", "win1250"},   // Č native to Windows-1250, plus a literal '?'
 		{"Šalica?", "win1257"},   // Š native to Windows-1257, plus a literal '?'
 		{"Σουβλάκι?", "win1253"}, // Greek natively, plus a literal '?'
+		{"Sipariş?", "win1254"},  // ş native to Windows-1254, plus a literal '?'
 	}
 	for _, tc := range cases {
 		if !Encodable(tc.s, tc.charset) {
@@ -235,7 +251,9 @@ func TestEncodable_LiteralQuestionMarkInSourceIsNotADegradedRune(t *testing.T) {
 // unlike Windows-1257/1253 which both carry it (same as CP858). This pins
 // the actual gap DefaultCharset's currency==EUR-only gate on win1250 exists
 // to route around — if this test ever starts failing because win1250 grew a
-// '£', the gate in DefaultCharset should be relaxed to match.
+// '£', the gate in DefaultCharset should be relaxed to match. win1254
+// (ut-docs#1775) also carries '£', which is exactly why its own gate in
+// DefaultCharset admits both EUR and GBP, unlike win1250's EUR-only gate.
 func TestPoundSign_MissingFromWin1250OnlyAmongTheNewPages(t *testing.T) {
 	cases := []struct {
 		charset string
@@ -244,6 +262,7 @@ func TestPoundSign_MissingFromWin1250OnlyAmongTheNewPages(t *testing.T) {
 		{"win1250", false},
 		{"win1257", true},
 		{"win1253", true},
+		{"win1254", true},
 	}
 	for _, tc := range cases {
 		if got := Encodable("£2.50", tc.charset); got != tc.want {
@@ -252,11 +271,31 @@ func TestPoundSign_MissingFromWin1250OnlyAmongTheNewPages(t *testing.T) {
 	}
 }
 
+// ut-docs#1775: the flip side of the pound-sign test above — win1254 covers
+// both '€' and '£' but NOT '₺' (verified against
+// charmap.Windows1254.EncodeRune). This pins the actual gap that keeps TRY
+// out of DefaultCharset's currency gate (see its own doc comment): if this
+// test ever starts failing because win1254 grew a '₺', that gate should be
+// revisited too.
+func TestLiraSign_MissingFromWin1254_WhyTRYStaysOnThePassThrough(t *testing.T) {
+	if Encodable("₺2.50", "win1254") {
+		t.Fatal("Encodable(₺2.50, win1254) = true, want false — if this changed, DefaultCharset's TRY exclusion should be revisited")
+	}
+}
+
 // ut-docs#1733: the same fold-before-'?' guarantee, generalized to the three
 // new pages. Unlike CP858, these already natively encode dashes/quotes/
 // bullet/ellipsis, so only the œ/Œ decomposition step is actually exercised
 // here — still worth asserting, since it is shared code (foldToCharmap) and
 // a regression there would silently reintroduce '?' for everyday content.
+//
+// win1254 (ut-docs#1775) is deliberately NOT in this table: unlike
+// win1250/1257/1253, Windows-1254 natively encodes 'œ' at 0x9C (verified —
+// it's built on the same Western European base as Windows-1252, just with a
+// handful of Turkish letters swapped in), so "Bœuf" never reaches the fold
+// path at all under win1254. TestEncodeText_Win1254_NativelyEncodesEverydayTypography
+// below covers that case instead of forcing it through this table's
+// fold-specific assertion.
 func TestEncodeText_NewCharmaps_FoldAndFallBackToQuestionMark(t *testing.T) {
 	for _, charset := range []string{"win1250", "win1257", "win1253"} {
 		t.Run(charset, func(t *testing.T) {
@@ -270,11 +309,31 @@ func TestEncodeText_NewCharmaps_FoldAndFallBackToQuestionMark(t *testing.T) {
 	}
 }
 
+// win1254 (ut-docs#1775) is built on the same Western European base as
+// Windows-1252, unlike win1250/1257/1253 above — it natively encodes the
+// Word/Excel typography (œ/Œ, en dash, curly quotes, ellipsis, bullet) that
+// those three needed foldToCharmap's punctuation table for (verified against
+// charmap.Windows1254.EncodeRune). Still degrades to '?' for a script it
+// genuinely can't represent.
+func TestEncodeText_Win1254_NativelyEncodesEverydayTypography(t *testing.T) {
+	oe, ok := charmap.Windows1254.EncodeRune('œ')
+	if !ok {
+		t.Fatal("Windows1254 must be able to encode 'œ' natively")
+	}
+	if got := string(encodeText("Bœuf", "win1254")); got != "B"+string([]byte{oe})+"uf" {
+		t.Errorf("encodeText(Bœuf, win1254) = %q, want the native single-byte œ, not a fold", got)
+	}
+	if got := string(encodeText("日本", "win1254")); got != "??" {
+		t.Errorf("encodeText(日本, win1254) = %q, want %q", got, "??")
+	}
+}
+
 // The comment on the new *Languages maps asserts each enumerated language's
 // everyday shop text survives its page without degrading to '?' — the same
 // check TestCP858Languages_... does for the original set, and for the same
-// reason: nothing else would catch a wrong or incomplete map entry.
-func TestNewEurozoneLanguages_EverydayTextSurvivesWithoutDegrading(t *testing.T) {
+// reason: nothing else would catch a wrong or incomplete map entry. Named
+// for the pages, not "eurozone" — Turkish (win1254, ut-docs#1775) isn't one.
+func TestNewSingleBytePageLanguages_EverydayTextSurvivesWithoutDegrading(t *testing.T) {
 	cases := []struct {
 		lang, charset, sample string
 	}{
@@ -285,6 +344,7 @@ func TestNewEurozoneLanguages_EverydayTextSurvivesWithoutDegrading(t *testing.T)
 		{"lv", "win1257", "Rasols, Šņabis, Zaķis, Ūdens, Ķīselis, Ņipris, Ēdiens, Āboliņš"},
 		{"lt", "win1257", "Šaltibarščiai, Žąsis, Ėriena, Kūčiukai, Įdaras, Ąžuolas"},
 		{"el", "win1253", "Σουβλάκι, Τζατζίκι, Μουσακάς"},
+		{"tr", "win1254", "Şiş Kebap, İskender, Çorba, Güveç, Ayran"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.lang, func(t *testing.T) {

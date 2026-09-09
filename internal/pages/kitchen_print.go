@@ -68,9 +68,10 @@ func kitchenLineModeLabel(locale, charset, saleOrderType, lineOrderType string) 
 }
 
 // kitchenTicketText translates key for locale, with a printer-safe fallback
-// (review finding, ut-docs#261; extended to cp858 in ut-docs#1243, and to
-// win1250/win1257/win1253 in ut-docs#1733): "ascii" and every single-byte
-// code page can't render every script — encodeText (internal/print) maps
+// (review finding, ut-docs#261; extended to cp858 in ut-docs#1243, to
+// win1250/win1257/win1253 in ut-docs#1733, and to win1254 in ut-docs#1775):
+// "ascii" and every single-byte code page can't render every script —
+// encodeText (internal/print) maps
 // every unmappable rune to "?" under any of them, so e.g. an ar/fa
 // translation would print as a run of question marks on a cp858 printer.
 // Before ut-docs#261, kitchen tickets were hardcoded English and never hit
@@ -87,7 +88,8 @@ func kitchenLineModeLabel(locale, charset, saleOrderType, lineOrderType string) 
 func kitchenTicketText(locale, charset, key string) string {
 	v := httpx.T(locale, key)
 	restricted := charset == "ascii" || charset == "cp858" ||
-		charset == "win1250" || charset == "win1257" || charset == "win1253"
+		charset == "win1250" || charset == "win1257" || charset == "win1253" ||
+		charset == "win1254"
 	if !restricted || isASCII(v) || print.Encodable(v, charset) {
 		return v
 	}
