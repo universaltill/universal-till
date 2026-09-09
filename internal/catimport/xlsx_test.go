@@ -398,6 +398,107 @@ func TestParseXLSX_MergedCells(t *testing.T) {
 	}
 }
 
+// TestParseXLSX_MergeInsideDataRowStillRejects: AC4/ut-docs#1853 — the
+// narrowed rectangle check must still catch a merge that isn't in the
+// header row itself, as long as it's inside a recognised data column of
+// the contiguous data block. Same "silently shift a real value" risk
+// TestParseXLSX_MergedCells covers for the header row, one row down.
+func TestParseXLSX_MergeInsideDataRowStillRejects(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+	for cell, v := range map[string]string{
+		"A1": "Name", "B1": "Price", "C1": "Category",
+		"A2": "Widget", "B2": "2.00", "C2": "Misc",
+	} {
+		if err := f.SetCellStr("Sheet1", cell, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.MergeCell("Sheet1", "B2", "C2"); err != nil { // Price+Category merged on the data row
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if _, err := f.WriteTo(&buf); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ParseXLSX(bytes.NewReader(buf.Bytes()), int64(buf.Len()), 2, testEnabledIDs, false)
+	if !errors.Is(err, ErrXLSXMergedCells) {
+		t.Errorf("err = %v, want ErrXLSXMergedCells (merge overlaps a recognised column on a data row, not just the header)", err)
+	}
+}
+
+// TestParseXLSX_DecorativeMergeOutsideDataColumnsImportsSuccessfully:
+// ut-docs#1853 — a merge sharing the header row but sitting in a column
+// headerIndex never recognised (a company-logo cell off to the side of
+// the real "name"/"price" columns) cannot shift a value ParseXLSX ever
+// reads, so it must not block the import.
+func TestParseXLSX_DecorativeMergeOutsideDataColumnsImportsSuccessfully(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+	for cell, v := range map[string]string{
+		"A1": "Name", "B1": "Price", "D1": "Acme Wholesale Ltd",
+		"A2": "Widget", "B2": "2.00",
+	} {
+		if err := f.SetCellStr("Sheet1", cell, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.MergeCell("Sheet1", "D1", "F1"); err != nil { // decorative, columns D-F: outside name(A)/price(B)
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if _, err := f.WriteTo(&buf); err != nil {
+		t.Fatal(err)
+	}
+	res, err := ParseXLSX(bytes.NewReader(buf.Bytes()), int64(buf.Len()), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseXLSX: %v, want success (merge is outside the recognised name/price columns)", err)
+	}
+	if len(res.Items) != 1 || res.Items[0].Name != "Widget" || res.Items[0].PriceMinor != 200 {
+		t.Fatalf("got %+v, want just Widget @ 200", res.Items)
+	}
+}
+
+// TestParseXLSX_MergedNoteFarBelowDataImportsSuccessfully: ut-docs#1853 —
+// a merged note or trailing-annotation row separated from the real data
+// by a blank gap is outside the contiguous block ParseXLSX's loop treats
+// as data, so it gets the same "report, don't reject" handling any
+// malformed trailing CSV row would (TestParseXLSX_TrailingTotalsRow),
+// not a whole-file rejection.
+func TestParseXLSX_MergedNoteFarBelowDataImportsSuccessfully(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+	for cell, v := range map[string]string{
+		"A1": "Name", "B1": "Price",
+		"A2": "Widget", "B2": "2.00",
+		"A40": "Reconciled against supplier invoice #4471 — see binder", // the note, 38 rows below
+	} {
+		if err := f.SetCellStr("Sheet1", cell, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.MergeCell("Sheet1", "A40", "F40"); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if _, err := f.WriteTo(&buf); err != nil {
+		t.Fatal(err)
+	}
+	res, err := ParseXLSX(bytes.NewReader(buf.Bytes()), int64(buf.Len()), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseXLSX: %v, want success (the merge is far below the real data, separated by a blank gap)", err)
+	}
+	found := false
+	for _, it := range res.Items {
+		if it.Name == "Widget" && it.PriceMinor == 200 {
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("got %+v, want the real Widget row imported (the far-below note row may also appear, flagged, same as any trailing CSV row)", res.Items)
+	}
+}
+
 // TestParseXLSX_LeadingTitleRow: a title row that doesn't match any known
 // header synonym rejects the whole file with ErrNoNameColumn — same
 // "reject, never guess" outcome a malformed CSV header gets (AC4).
