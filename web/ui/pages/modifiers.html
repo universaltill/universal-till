@@ -18,7 +18,13 @@
 <div style="display:flex; flex-direction:column; gap:.75rem; max-width:36rem">
   {{ range .Groups }}
   <div class="card">
-    <h3 style="margin:.2rem 0">{{ .Name }} <span class="muted" style="font-weight:normal">— {{ .ItemName }}</span></h3>
+    <!-- ut-docs#1914: link the item name back to /catalog with its detail
+         panel pre-opened (openCatalogRow's ?item= deep link) instead of
+         leaving it as text the merchant has to go find by hand. Plain
+         accent-coloured <a>, matching orders_list.html's own inline-link
+         convention rather than the muted dash beside it, so it reads as
+         clickable and gets a native keyboard/focus path for free. -->
+    <h3 style="margin:.2rem 0">{{ .Name }} <span class="muted" style="font-weight:normal">— <a href="/catalog?item={{ .ItemID }}">{{ .ItemName }}</a></span></h3>
     <p class="muted" style="margin:.2rem 0">
       {{ if .Required }}{{ T "catalog.modifiers.required" }}{{ else }}{{ T "modifiers.optional" }}{{ end }}
       · {{ T "catalog.modifiers.min" }} {{ .MinSelect }} · {{ T "catalog.modifiers.max" }} {{ .MaxSelect }}

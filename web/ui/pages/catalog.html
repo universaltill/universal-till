@@ -506,12 +506,10 @@
     if (ev.key === 'Enter') { ev.preventDefault(); runAutofill(); }
   });
 
-  // Row click fills the form; the table partial is re-rendered by the server
-  // after every mutation, so delegate from the document.
-  document.addEventListener('click', function (ev) {
-    var row = ev.target.closest('.catalog-row');
-    if (!row) return;
-    if (ev.target.closest('.btn') && !ev.target.classList.contains('catalog-edit')) return;
+  // Opens a catalog row into the edit form/detail panel — the row click
+  // handler below, and the ut-docs#1914 ?item= deep link from /modifiers,
+  // both funnel through here so the two entry points can never drift.
+  function openCatalogRow(row) {
     document.getElementById('item-id').value = row.dataset.id;
     document.getElementById('item-barcode').value = '';
     document.getElementById('item-image-url').value = '';
@@ -573,6 +571,34 @@
           });
         }).catch(function () {});
     }
+  }
+
+  // Row click fills the form; the table partial is re-rendered by the server
+  // after every mutation, so delegate from the document.
+  document.addEventListener('click', function (ev) {
+    var row = ev.target.closest('.catalog-row');
+    if (!row) return;
+    if (ev.target.closest('.btn') && !ev.target.classList.contains('catalog-edit')) return;
+    openCatalogRow(row);
+  });
+
+  // ut-docs#1914: /modifiers links an item name back here as
+  // /catalog?item=<id> so a merchant doesn't have to find the row by hand.
+  // Falls back to a plain, unopened /catalog view (no crash, no error
+  // state) if the id is missing or the item was deactivated/deleted since
+  // the link was shown — catalog_row.html only renders active items, so a
+  // stale id simply matches nothing here.
+  // Deferred to DOMContentLoaded: this inline block runs at parse time,
+  // before app.js's own `defer`red load — openCatalogRow reaches into
+  // window.utCurrency, which app.js doesn't define until then, so running
+  // this any earlier throws mid-way through and leaves the dialog closed.
+  document.addEventListener('DOMContentLoaded', function () {
+    var deepLinkID = new URLSearchParams(location.search).get('item');
+    if (!deepLinkID) return;
+    var deepLinkRow = document.getElementById('catalog-row-' + deepLinkID);
+    if (!deepLinkRow) return;
+    openCatalogRow(deepLinkRow);
+    deepLinkRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   });
 
   form.addEventListener('submit', function (ev) {
