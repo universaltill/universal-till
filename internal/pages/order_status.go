@@ -263,6 +263,48 @@ func fetchOrdersFromPrimary(ctx context.Context, d *common.Deps, client *http.Cl
 	return entries, true
 }
 
+// latestOrderStatusForReceipt is ut-docs#1818's replica-safe single-order
+// status read, used by the scan router (pos_api.go) and the order view
+// above. order_status_events is deliberately NOT part of the LAN-sync
+// journal -- sync_admin_repo.go's exclusion list calls it a "live KDS
+// status-change event stream" and says a periodic snapshot of it "would
+// actively misbehave" -- and ADR-0079's SSE bridge only tells a replica to
+// re-poll the primary, it never writes the replica's own tables. So a pure
+// local repo.LatestOrderStatus call would silently report "never tracked"
+// for every order on a replica, regardless of its real status -- exactly
+// the wrong answer for a feature whose whole point is not dropping the
+// operator onto the refund screen for a still-active order (an earlier
+// draft of this function claimed local-only was fine here; it wasn't --
+// review finding, ut-docs#1818).
+//
+// Mirrors fetchOrdersFromPrimary's own proxy-then-local-fallback shape: on
+// a reachable replica, search the primary's active-orders list (the same
+// bounded, non-terminal list /ui/orders and the sync bridge already use)
+// for this receipt. A hit there is unambiguous -- an active order can only
+// be new/preparing/ready. A miss is NOT proof the order was never tracked
+// (a collected/cancelled order also leaves that list immediately,
+// ut-docs#1389, and an old-enough order can fall off the bound), so a miss
+// falls through to the local read exactly as the primary/standalone path
+// always has. Known, accepted gap: a replica cannot distinguish
+// collected/cancelled/never-tracked/too-old for an order that isn't
+// currently active -- all four already resolve to "refund" (today's
+// unchanged behaviour) or an empty local read, so this can never make a
+// scan LESS safe than before ut-docs#1818, only fail to improve that
+// already-narrow edge case.
+func latestOrderStatusForReceipt(ctx context.Context, d *common.Deps, repo *data.POSRepo, receiptNo string) (status string, tracked bool) {
+	if entries, ok := fetchOrdersFromPrimary(ctx, d, orderProxyClient); ok {
+		for _, e := range entries {
+			if e.ReceiptNo == receiptNo && e.Status != "" {
+				return e.Status, true
+			}
+		}
+	}
+	if ev, ok, err := repo.LatestOrderStatus(ctx, receiptNo); err == nil && ok {
+		return ev.Status, true
+	}
+	return "", false
+}
+
 // applyOrderStatusOnPrimary tries POST /api/sync/orders/{receipt_no}/status
 // on the primary. ok=false on ANY failure — including the primary answering
 // 404 (a sale that exists here but hasn't journaled there yet) or 400 — and
@@ -468,6 +510,49 @@ func registerOrderStatus(mux *http.ServeMux, d *common.Deps) {
 			"title":     "Orders",
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
+		})(w, r)
+	})
+
+	// Single-order view (ut-docs#1818): the destination for a scanned
+	// receipt whose order isn't collected yet (see resolveReceiptScanDestination
+	// in pos_api.go) -- lines, total and status, with a one-tap Collect
+	// action that posts through the SAME /api/orders/{receipt_no}/status
+	// endpoint and OrderStatusAllowed guard the /orders board already uses
+	// (no new mutation path). Not-found vs. not-completed mirrors
+	// /refund/{receipt}'s own split (refund_page.go): an unknown receipt
+	// goes to the /journal LIST (nothing to link to), a real but
+	// non-completed sale goes to /journal/{receipt} (a real page there).
+	mux.HandleFunc("GET /orders/{receipt}", func(w http.ResponseWriter, r *http.Request) {
+		receipt := strings.TrimSpace(r.PathValue("receipt"))
+		repo := data.NewPOSRepo(d.Db)
+		detail, found, err := repo.GetSaleDetail(r.Context(), receipt)
+		if err != nil || !found {
+			http.Redirect(w, r, "/journal", http.StatusSeeOther)
+			return
+		}
+		if detail.SaleType != "sale" || detail.Status != "completed" {
+			http.Redirect(w, r, "/journal/"+url.PathEscape(receipt), http.StatusSeeOther)
+			return
+		}
+		status, _ := latestOrderStatusForReceipt(r.Context(), d, repo, receipt)
+		switch status {
+		case pos.OrderStatusCollected:
+			// Nothing left to collect -- the scan router already sends a
+			// collected order straight to refund; a direct/stale hit on
+			// this URL (e.g. a reload after tapping Collect) follows suit.
+			http.Redirect(w, r, "/refund/"+url.PathEscape(receipt), http.StatusSeeOther)
+			return
+		case pos.OrderStatusCancelled:
+			http.Redirect(w, r, "/orders", http.StatusSeeOther)
+			return
+		}
+		httpx.Render("ui/pages/order_view.html", map[string]any{
+			"title":     "Order",
+			"theme":     d.CurrentState().Theme,
+			"menuItems": d.MenuSnapshot(),
+			"Sale":      detail,
+			"Status":    status,
+			"StatusKey": orderStatusLabelKey(status),
 		})(w, r)
 	})
 

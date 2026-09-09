@@ -4,7 +4,7 @@ title: Sipariş durumu (mutfak ilerlemesi)
 section: Günlük satış
 order: 45
 summary: "Her siparişin ilerlemesini — hazırlanıyor, hazır, teslim edildi — tek dokunuşla işaretleyin; herkes siparişin nerede olduğunu görsün."
-routes: [/orders]
+routes: [/orders, /orders/{receipt}]
 ---
 
 # Sipariş durumu (mutfak ilerlemesi)
@@ -14,11 +14,12 @@ Her siparişin ilerlemesini — hazırlanıyor, hazır, teslim edildi — tek do
 ## Nasıl kullanılır
 
 1. **Siparişler**'i açın — satış ekranındaki raftaki 🛎️ simgesinden, ya da ☰ menüden. Son satışlar en yenisi başta olacak şekilde, her biri güncel durumuyla listelenir.
-2. Mutfak siparişe başladığında **Hazırlanıyor**'a, sipariş alınabilir olduğunda **Hazır**'a, müşteri aldığında **Teslim edildi**'ye dokunun. Bunu her kasiyer yapabilir — yönetici PIN'i gerekmez.
-3. Her değişiklik, kimin ne zaman yaptığını durumun yanına kaydeder. Gösterilen numara, müşterinize verilen kısa sipariş numarasıdır (aşağıya bakın) — üzerine dokunmak İşlem geçmişindeki tam fişi açar, başka bir kasada alındığı için burada listelenen bir sipariş hariç (aşağıdaki nota bakın): bu kasa o fişi kendi kaydında tutmadığından numara görünür ama bağlantı değildir.
-4. **Siparişi iptal et** siparişi iptal eder. Teslim edilene kadar her aşamada çalışır; teslim edilmiş bir sipariş iptal edilemez.
-5. Sipariş durumu yalnızca ileri gider. Yanlışlıkla önceki bir adıma dokunmak (ya da çevrimdışı kalmış ikinci bir kasanın eski bir durumu bildirmesi) hiçbir şeyi değiştirmez — kasa daha yeni durumu göstermeye devam eder. Bu bilinçli bir davranıştır, arıza değildir.
-6. Bu özellikten önce yapılmış (ya da henüz kimsenin dokunmadığı) satışların siparişleri **Başlamadı** olarak görünür — biri bir duruma dokunana kadar onlar için hiçbir şey değişmez.
+2. Satış ekranında bir müşterinin fiş barkodunu okutmak, henüz teslim edilmemişse siparişini doğrudan da açar — aynı tek dokunuşluk **Teslim edildi** düğmesiyle ve gerçekten gerekiyorsa iadeye giden bir bağlantıyla birlikte. Zaten teslim edilmiş ya da hiç takip edilmemiş bir fiş, tıpkı başka bitmiş bir fişi okutmakta olduğu gibi doğrudan iadeyi açar; iptal edilmiş bir sipariş ya da hiç tamamlanmamış bir satış ise bunun yerine satış ekranında sadece bunu bildirir.
+3. Mutfak siparişe başladığında **Hazırlanıyor**'a, sipariş alınabilir olduğunda **Hazır**'a, müşteri aldığında **Teslim edildi**'ye dokunun. Bunu her kasiyer yapabilir — yönetici PIN'i gerekmez.
+4. Her değişiklik, kimin ne zaman yaptığını durumun yanına kaydeder. Gösterilen numara, müşterinize verilen kısa sipariş numarasıdır (aşağıya bakın) — üzerine dokunmak İşlem geçmişindeki tam fişi açar, başka bir kasada alındığı için burada listelenen bir sipariş hariç (aşağıdaki nota bakın): bu kasa o fişi kendi kaydında tutmadığından numara görünür ama bağlantı değildir.
+5. **Siparişi iptal et** siparişi iptal eder. Teslim edilene kadar her aşamada çalışır; teslim edilmiş bir sipariş iptal edilemez.
+6. Sipariş durumu yalnızca ileri gider. Yanlışlıkla önceki bir adıma dokunmak (ya da çevrimdışı kalmış ikinci bir kasanın eski bir durumu bildirmesi) hiçbir şeyi değiştirmez — kasa daha yeni durumu göstermeye devam eder. Bu bilinçli bir davranıştır, arıza değildir.
+7. Bu özellikten önce yapılmış (ya da henüz kimsenin dokunmadığı) satışların siparişleri **Başlamadı** olarak görünür — biri bir duruma dokunana kadar onlar için hiçbir şey değişmez.
 
 ## Notlar
 
