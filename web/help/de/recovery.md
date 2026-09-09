@@ -40,3 +40,18 @@ Referenzcode. Je nach Ursache kann die Lösung ein weiteres Software-Update
 oder das Wiederherstellen der letzten automatischen Sicherung der Kasse sein
 (siehe das Thema „Datensicherungen“) — der Support teilt Ihnen mit, welches
 davon.
+
+## Auf einer Android-Kasse: eine einzelne Seite lädt nicht
+
+Das ist etwas anderes als der Wiederherstellungsbildschirm oben, bei dem
+die **gesamte Kasse** nicht startet. Hier läuft die Kasse normal, aber
+eine Seite konnte kurz nicht geladen werden — das Netzwerk hatte einen
+Aussetzer mitten in der Navigation, oder der eigene Dienst der Kasse war
+noch nicht bereit. Unten am Bildschirm erscheint ein grauer Balken mit
+„Diese Seite konnte nicht geladen werden“ und einer Schaltfläche
+**Zurück zur Kasse**; tippen Sie darauf, um zum Verkaufsbildschirm
+zurückzukehren. Der Bildschirm über dem Balken kann kurz eine technische
+Meldung auf Englisch zeigen, unabhängig von der Sprache Ihrer Kasse — das
+ist normal, verwenden Sie einfach die Schaltfläche darunter. Tritt dies
+wiederholt auf, kontaktieren Sie den Support und nennen Sie, welche Seite
+Sie öffnen wollten.
