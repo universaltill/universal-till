@@ -499,6 +499,258 @@ func TestParseXLSX_MergedNoteFarBelowDataImportsSuccessfully(t *testing.T) {
 	}
 }
 
+// TestParseXLSX_MergeAfterBlankSeparatorRowStillRejects: ut-docs#1853,
+// review finding 1 — the blocker a first draft of this fix shipped. A
+// blank separator row (TestParseXLSX_BlankSeparatorRowSkipped) does not
+// end the "real data" block: the import loop only `continue`s on it, it
+// keeps scanning every row after. A merge on a clean row past the gap
+// must still reject — otherwise it silently blanks a field (here, the
+// tax rate — no Issue is raised for a blanked tax cell, unlike a blanked
+// name/price) with the whole import reporting success.
+func TestParseXLSX_MergeAfterBlankSeparatorRowStillRejects(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+	for cell, v := range map[string]string{
+		"A1": "Name", "B1": "Price", "C1": "Tax rate",
+		"A2": "Cola", "B2": "1.40", "C2": "19%",
+		// row 3 left entirely blank — a section separator
+		"A4": "Bananas", "B4": "0.89", "C4": "7%",
+		"A5": "Bread", "B5": "1.20", "C5": "7%",
+	} {
+		if err := f.SetCellStr("Sheet1", cell, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.MergeCell("Sheet1", "B5", "C5"); err != nil { // Price+Tax merged on a clean row past the gap
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if _, err := f.WriteTo(&buf); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ParseXLSX(bytes.NewReader(buf.Bytes()), int64(buf.Len()), 2, testEnabledIDs, false)
+	if !errors.Is(err, ErrXLSXMergedCells) {
+		t.Errorf("err = %v, want ErrXLSXMergedCells (merge is on a real item row resumed after a blank separator, not on a trailing note)", err)
+	}
+}
+
+// TestParseXLSX_MergeOnLastCleanDataRowRejects: boundary case for
+// dataRectangleLastRow — a merge on exactly the last row that parses as
+// a clean item (not one row before, not one row after) must still
+// reject. Pins the off-by-one this helper could easily regress into.
+// Deliberately merges Price+Tax rather than Name+Price: Excel keeps a
+// merge's value only in its top-left cell and blanks the rest, so a
+// merge starting AT the price cell (B, top-left here) leaves the row's
+// own name/price intact — it's the row's Tax cell (C, not top-left)
+// that goes silently blank, which is the actual risk this guard exists
+// for. A Name+Price merge would instead blank the price and make the
+// row fail its own "clean item" check — a different, already-accepted
+// case (see the doc comment on dataRectangleLastRow), not this boundary.
+func TestParseXLSX_MergeOnLastCleanDataRowRejects(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+	for cell, v := range map[string]string{
+		"A1": "Name", "B1": "Price", "C1": "Tax rate",
+		"A2": "Widget", "B2": "2.00", "C2": "19%",
+		"A3": "Gadget", "B3": "3.00", "C3": "19%", // the last clean row
+	} {
+		if err := f.SetCellStr("Sheet1", cell, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.MergeCell("Sheet1", "B3", "C3"); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if _, err := f.WriteTo(&buf); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ParseXLSX(bytes.NewReader(buf.Bytes()), int64(buf.Len()), 2, testEnabledIDs, false)
+	if !errors.Is(err, ErrXLSXMergedCells) {
+		t.Errorf("err = %v, want ErrXLSXMergedCells (merge is on the LAST clean data row, still inside the rectangle)", err)
+	}
+}
+
+// TestParseXLSX_OnlyOneOfSeveralMergesOverlappingStillRejects: several
+// merges, only one of which actually overlaps the rectangle — the loop
+// in rejectMergedCells must not stop checking (or short-circuit wrongly)
+// just because an earlier, harmless merge didn't overlap. Same
+// Price+Category (not Name+Price) construction as the boundary test
+// above, and for the same reason: the corrupting merge must not blank
+// the row's own name/price, or the row stops counting as "clean" and
+// this test would accidentally exercise the self-referential case
+// instead of the multi-merge one it's named for.
+func TestParseXLSX_OnlyOneOfSeveralMergesOverlappingStillRejects(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+	for cell, v := range map[string]string{
+		"A1": "Name", "B1": "Price", "C1": "Category", "E1": "Acme Wholesale Ltd",
+		"A2": "Widget", "B2": "2.00", "C2": "Drinks",
+	} {
+		if err := f.SetCellStr("Sheet1", cell, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.MergeCell("Sheet1", "E1", "F1"); err != nil { // harmless decorative merge, outside every recognised column
+		t.Fatal(err)
+	}
+	if err := f.MergeCell("Sheet1", "B2", "C2"); err != nil { // Price (top-left, survives) + Category (blanked) on the one data row
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if _, err := f.WriteTo(&buf); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ParseXLSX(bytes.NewReader(buf.Bytes()), int64(buf.Len()), 2, testEnabledIDs, false)
+	if !errors.Is(err, ErrXLSXMergedCells) {
+		t.Errorf("err = %v, want ErrXLSXMergedCells (a harmless first merge must not mask a real one)", err)
+	}
+}
+
+// TestParseXLSX_PartiallyOverlappingColumnMergeRejects: a merge that
+// starts inside the recognised column span and ends outside it still
+// overlaps the rectangle and must reject — the column check is a range
+// overlap, not "fully contained" (ut-docs#1853 review finding 4: the
+// span is deliberately not a precise column set, so a merge into an
+// unused neighbouring column is still treated as unsafe). The merge
+// starts AT the recognised "price" column (its top-left, so the header
+// text survives) and extends into an unused column to its right —
+// starting the other way around (an unrecognised column merged into
+// "name") would blank the name header's own text instead and fail
+// header recognition entirely, a different case already covered by
+// TestParseXLSX_MergedTitleRowAsHeaderStillReportsNoNameColumn.
+func TestParseXLSX_PartiallyOverlappingColumnMergeRejects(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+	for cell, v := range map[string]string{
+		"B1": "Name", "C1": "Price", // recognised columns are B (2) and C (3); D is unused
+		"B2": "Widget", "C2": "2.00",
+	} {
+		if err := f.SetCellStr("Sheet1", cell, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.MergeCell("Sheet1", "C1", "D1"); err != nil { // C ("price", top-left) straddles into unused D
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if _, err := f.WriteTo(&buf); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ParseXLSX(bytes.NewReader(buf.Bytes()), int64(buf.Len()), 2, testEnabledIDs, false)
+	if !errors.Is(err, ErrXLSXMergedCells) {
+		t.Errorf("err = %v, want ErrXLSXMergedCells (merge straddles from the recognised \"price\" column into an unused one, not fully outside the span)", err)
+	}
+}
+
+// TestParseXLSX_MergedTitleRowAsHeaderStillReportsNoNameColumn: a merged
+// title banner standing in for the header row behaves exactly like the
+// unmerged case in TestParseXLSX_LeadingTitleRow — ErrNoNameColumn,
+// never ErrXLSXMergedCells. Pins the precedence choice: header
+// recognition is checked before the merge rectangle even has an idx to
+// be built from, and that's the *more* consistent outcome (a title row
+// standing in for the header fails the same way whether or not the
+// title happens to be merged), not a regression — see rejectMergedCells'
+// own doc comment.
+func TestParseXLSX_MergedTitleRowAsHeaderStillReportsNoNameColumn(t *testing.T) {
+	f := excelize.NewFile()
+	defer f.Close()
+	for cell, v := range map[string]string{
+		"A1": "Catalog Export - Cafe Example - 2026-09-08",
+		"A2": "Name", "B2": "Price",
+		"A3": "Widget", "B3": "2.00",
+	} {
+		if err := f.SetCellStr("Sheet1", cell, v); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := f.MergeCell("Sheet1", "A1", "F1"); err != nil {
+		t.Fatal(err)
+	}
+	var buf bytes.Buffer
+	if _, err := f.WriteTo(&buf); err != nil {
+		t.Fatal(err)
+	}
+	_, err := ParseXLSX(bytes.NewReader(buf.Bytes()), int64(buf.Len()), 2, testEnabledIDs, false)
+	if !errors.Is(err, ErrNoNameColumn) {
+		t.Errorf("err = %v, want ErrNoNameColumn (a merged title-row-as-header must fail the same way an unmerged one does)", err)
+	}
+}
+
+// TestMergeOverlapsRectangle: a small table test pinning the pure
+// row/column overlap arithmetic directly, independent of ParseXLSX's
+// higher-level behaviour — the boundaries here are exactly what an
+// off-by-one would silently break.
+func TestMergeOverlapsRectangle(t *testing.T) {
+	tests := []struct {
+		name           string
+		start, end     string
+		maxRow         int
+		minCol, maxCol int
+		wantOverlap    bool
+	}{
+		{"inside both ranges", "A1", "B1", 3, 1, 2, true},
+		{"row exactly at maxRow", "A3", "A3", 3, 1, 2, true},
+		{"row one past maxRow", "A4", "A4", 3, 1, 2, false},
+		{"column exactly at maxCol", "B1", "B1", 3, 1, 2, true},
+		{"column one past maxCol", "C1", "C1", 3, 1, 2, false},
+		{"straddles left column edge", "A1", "B1", 3, 2, 3, true},
+		{"straddles right column edge", "C1", "D1", 3, 2, 3, true},
+		{"reversed range (end before start)", "B3", "A1", 3, 1, 2, true},
+		{"fully outside both", "D5", "E6", 3, 1, 2, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			m := excelize.MergeCell{tt.start + ":" + tt.end, ""}
+			got, err := mergeOverlapsRectangle(m, tt.maxRow, tt.minCol, tt.maxCol)
+			if err != nil {
+				t.Fatalf("mergeOverlapsRectangle: %v", err)
+			}
+			if got != tt.wantOverlap {
+				t.Errorf("mergeOverlapsRectangle(%s:%s, maxRow=%d, cols=[%d,%d]) = %v, want %v", tt.start, tt.end, tt.maxRow, tt.minCol, tt.maxCol, got, tt.wantOverlap)
+			}
+		})
+	}
+}
+
+// TestDataRectangleLastRow: a small table test pinning
+// dataRectangleLastRow directly — the header-only default, a gap
+// resuming with more clean rows, and a trailing row that fails each of
+// the two "clean item" conditions in turn.
+func TestDataRectangleLastRow(t *testing.T) {
+	idx := map[string]int{"name": 0, "price": 1}
+	tests := []struct {
+		name string
+		rows [][]string
+		want int
+	}{
+		{"header only, no data rows at all", [][]string{{"Name", "Price"}}, 1},
+		{"single clean row", [][]string{{"Name", "Price"}, {"Widget", "2.00"}}, 2},
+		{
+			"gap resumes with more clean rows",
+			[][]string{{"Name", "Price"}, {"Widget", "2.00"}, nil, {"Gadget", "3.00"}},
+			4,
+		},
+		{
+			"trailing row has no name — doesn't extend the bound",
+			[][]string{{"Name", "Price"}, {"Widget", "2.00"}, nil, {"", "127.50"}},
+			2,
+		},
+		{
+			"trailing row has a name but unparseable price — doesn't extend the bound",
+			[][]string{{"Name", "Price"}, {"Widget", "2.00"}, nil, {"Note: reconciled", ""}},
+			2,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := dataRectangleLastRow(tt.rows, idx, 2); got != tt.want {
+				t.Errorf("dataRectangleLastRow(%v) = %d, want %d", tt.rows, got, tt.want)
+			}
+		})
+	}
+}
+
 // TestParseXLSX_LeadingTitleRow: a title row that doesn't match any known
 // header synonym rejects the whole file with ErrNoNameColumn — same
 // "reject, never guess" outcome a malformed CSV header gets (AC4).

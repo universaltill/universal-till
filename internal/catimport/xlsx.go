@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"math"
 	"strconv"
 	"strings"
 
@@ -30,14 +31,15 @@ var (
 	// silently shift or blank out neighbouring columns depending on where
 	// the merge sits. Rather than reason about which merges are safely
 	// decorative and which aren't, any merge that overlaps the header row
-	// or the recognised data columns rejects the whole file with a
-	// specific message telling the operator to remove merges or export
-	// CSV instead — conservative, but never silently wrong. A merge
-	// entirely outside that rectangle (ut-docs#1853) — a decorative
-	// banner sharing the header row in an unrecognised column, or a
-	// trailing note many rows below the real data — does not block the
-	// import: see rejectMergedCells' own doc comment for exactly where
-	// the line is drawn and why.
+	// or a recognised data column on a row that would otherwise import as
+	// a real catalog item rejects the whole file with a specific message
+	// telling the operator to remove merges or export CSV instead —
+	// conservative, but never silently wrong. A merge entirely outside
+	// that rectangle (ut-docs#1853) — a decorative banner sharing the
+	// header row in an unrecognised column, or a trailing note whose row
+	// never parses as real item data — does not block the import: see
+	// rejectMergedCells' own doc comment for exactly where the line is
+	// drawn and why.
 	ErrXLSXMergedCells = errors.New("this workbook uses merged cells, which cannot be read reliably")
 )
 
@@ -88,36 +90,50 @@ func isBlankRow(rec []string) bool {
 // (ut-docs#1853, narrowing #1837's original whole-sheet check). A merge
 // only corrupts an import if it overlaps a cell ParseXLSX's own loop
 // below actually reads: the header row (which headerIndex resolved idx
-// from), or a recognised data column within the contiguous block of rows
-// starting right after the header. Two real merchant-export shapes
+// from), or a recognised data column on a row that would otherwise
+// import as a real catalog item. Two real merchant-export shapes
 // motivated this:
 //
-//   - A decorative merge sharing the header row (or an early data row)
-//     but sitting in a column headerIndex didn't recognise — e.g. a
+//   - A decorative merge sharing the header row (or a data row) but
+//     sitting in a column headerIndex didn't recognise — e.g. a
 //     company-logo cell merged off to the side of the real "name"/"price"
 //     columns. It can't shift a value ParseXLSX ever reads, because
 //     nothing in idx points at that column.
-//   - A merged note or trailing-totals annotation many rows below the
-//     real data, separated from it by at least one wholly blank row. It
+//   - A merged note or trailing-totals annotation whose own row never
+//     parses as a clean item (no name, or no readable price) — it
 //     already gets the same "report, don't reject" treatment any
 //     malformed trailing CSV row would (IssueMissingName/IssueBadPrice on
 //     just that row — see the loop below and TestParseXLSX_TrailingTotalsRow),
 //     so there is nothing left for a whole-file rejection to protect.
 //
-// A merge inside the rectangle — overlapping BOTH the header-or-contiguous-
-// data rows AND a recognised column — still rejects: that is exactly the
-// "silently shifts a real value" case #1837 built this guard for
+// A merge inside the rectangle — overlapping BOTH a real-item row AND a
+// recognised column — still rejects: that is exactly the "silently
+// shifts a real value" case #1837 built this guard for
 // (TestParseXLSX_MergedCells).
 //
-// Not handled, and deliberately unchanged from #1837: a title row that
-// stands in for the header itself always fails via ErrNoNameColumn
-// (TestParseXLSX_LeadingTitleRow) — this function only runs once idx
-// already has a recognised "name" column, so that case never reaches it.
-func rejectMergedCells(merged []excelize.MergeCell, rows [][]string, idx map[string]int) error {
+// A first draft of this bounded the row range at the first wholly blank
+// row after the header, treating everything past it as "not really
+// data". That is wrong: the import loop below only `continue`s on a
+// blank row, it does not stop — a blank separator row (see
+// TestParseXLSX_BlankSeparatorRowSkipped) legitimately resumes with more
+// real items afterwards, and a merge on one of those later rows escaped
+// this check entirely, silently blanking fields (tax rate, category,
+// barcode, stock — none of which raise an Issue the way a blanked
+// name/price would) with the whole import still reporting success. See
+// dataRectangleLastRow for the fix: the bound tracks the last row that
+// actually parses as a clean item, wherever it falls, not the first gap.
+//
+// Not handled, and consistent with #1837: a title row that stands in for
+// the header itself always fails via ErrNoNameColumn
+// (TestParseXLSX_LeadingTitleRow), whether or not it happens to be
+// merged (TestParseXLSX_MergedTitleRowAsHeaderStillReportsNoNameColumn)
+// — this function only runs once idx already has a recognised "name"
+// column, so that case never reaches it.
+func rejectMergedCells(merged []excelize.MergeCell, rows [][]string, idx map[string]int, currencyDecimals int) error {
 	if len(merged) == 0 {
 		return nil
 	}
-	maxRow := dataRectangleLastRow(rows)
+	maxRow := dataRectangleLastRow(rows, idx, currencyDecimals)
 	minCol, maxCol := dataRectangleColumns(idx)
 	for _, m := range merged {
 		overlaps, err := mergeOverlapsRectangle(m, maxRow, minCol, maxCol)
@@ -131,16 +147,43 @@ func rejectMergedCells(merged []excelize.MergeCell, rows [][]string, idx map[str
 	return nil
 }
 
-// dataRectangleLastRow returns the last 1-based Excel row number in the
-// contiguous, no-gap block ParseXLSX's loop treats as real data: the
-// header row (1) plus every row immediately following it up to (but not
-// including) the first wholly blank one. rows is 0-indexed (rows[0] is
-// the header), so row i+1 in Excel terms is rows[i].
-func dataRectangleLastRow(rows [][]string) int {
-	last := 1
+// dataRectangleLastRow returns the last 1-based Excel row number that
+// would import as a clean catalog item — non-blank name AND a readable
+// price — anywhere in the sheet, not just up to the first blank row.
+// That is deliberate, not an approximation: the import loop below scans
+// every row regardless of blank gaps in between (isBlankRow only
+// `continue`s it, never stops the loop), so a real second block of items
+// resuming after a blank separator row is still live data the merge
+// check must protect. A trailing note or totals row past the real data
+// is excluded because it does NOT parse as a clean item (a blank name,
+// per TestParseXLSX_TrailingTotalsRow, or — for
+// TestParseXLSX_MergedNoteFarBelowDataImportsSuccessfully's shape — a
+// name with no price in the same row) — precisely the rows that already
+// get their own reported Issue instead of a silent problem, so there is
+// nothing left here for a whole-file rejection to protect.
+//
+// rows is 0-indexed (rows[0] is the header), so row i+1 in Excel terms
+// is rows[i]. Uses the same formatted-text price parse the main loop's
+// non-raw pass would; it only needs a yes/no signal for "does this row
+// look like real item data", not the exact imported value, so it
+// doesn't need the raw-cell pass getNum applies for the actual import.
+func dataRectangleLastRow(rows [][]string, idx map[string]int, currencyDecimals int) int {
+	nameCol, hasName := idx["name"]
+	priceCol, hasPrice := idx["price"]
+	last := 1 // the header row is always protected, even with zero clean data rows
 	for i := 1; i < len(rows); i++ {
-		if isBlankRow(rows[i]) {
-			break
+		rec := rows[i]
+		if isBlankRow(rec) {
+			continue // a gap does not end the block — see the doc comment above
+		}
+		if !hasName || nameCol >= len(rec) || strings.TrimSpace(rec[nameCol]) == "" {
+			continue // not a clean item row (would surface as IssueMissingName)
+		}
+		if !hasPrice || priceCol >= len(rec) {
+			continue // no price column at all to satisfy "readable price"
+		}
+		if _, perr := ParsePrice(strings.TrimSpace(rec[priceCol]), currencyDecimals); perr != nil {
+			continue // not a clean item row (would surface as IssueBadPrice)
 		}
 		last = i + 1
 	}
@@ -150,19 +193,24 @@ func dataRectangleLastRow(rows [][]string) int {
 // dataRectangleColumns returns the 1-based [min,max] Excel column span
 // headerIndex actually recognised — the columns get/getNum can read —
 // not every column the sheet happens to use. Callers must only pass an
-// idx that already resolved a "name" column, so it is never empty.
-func dataRectangleColumns(idx map[string]int) (min, max int) {
-	min, max = -1, -1
+// idx that already resolved a "name" column, so the empty-idx branch
+// below is a fail-closed belt-and-braces default (protect every column),
+// never expected to actually trigger.
+func dataRectangleColumns(idx map[string]int) (minCol, maxCol int) {
+	if len(idx) == 0 {
+		return 1, math.MaxInt
+	}
+	minCol, maxCol = math.MaxInt, 0
 	for _, c := range idx {
 		col := c + 1 // idx is 0-based; Excel columns are 1-based
-		if minVal := col; min == -1 || minVal < min {
-			min = minVal
+		if col < minCol {
+			minCol = col
 		}
-		if col > max {
-			max = col
+		if col > maxCol {
+			maxCol = col
 		}
 	}
-	return min, max
+	return minCol, maxCol
 }
 
 // mergeOverlapsRectangle reports whether a merge cell range (as returned
@@ -302,7 +350,7 @@ func ParseXLSX(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbology
 		return Result{}, ErrNoNameColumn
 	}
 
-	if err := rejectMergedCells(merged, rows, idx); err != nil {
+	if err := rejectMergedCells(merged, rows, idx, currencyDecimals); err != nil {
 		return Result{}, err
 	}
 
