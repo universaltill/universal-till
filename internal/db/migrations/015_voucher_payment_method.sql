@@ -1,8 +1,9 @@
--- 014_voucher_payment_method.sql — ut-docs#1832 (vouchers have no user
--- interface). Renumbered from 013 to 014 to avoid a version collision
--- with main's concurrently-merged 013_items_stock_untracked.sql
--- (ut-docs#1850) — guard-migration-version-collision.sh and
--- internal/db.checkNoDuplicateVersions both pass.
+-- 015_voucher_payment_method.sql — ut-docs#1832 (vouchers have no user
+-- interface). Renumbered 013 -> 014 -> 015: main concurrently merged
+-- both 013_items_stock_untracked.sql (ut-docs#1850) and, after this
+-- branch's first renumber, 014_sale_display_no.sql (ut-docs#1817) —
+-- guard-migration-version-collision.sh and
+-- internal/db.checkNoDuplicateVersions both pass at 015.
 --
 -- Seeds the built-in 'voucher' payment method that the tracked-voucher
 -- tender path has required since ut-docs#1008 but which no migration ever
