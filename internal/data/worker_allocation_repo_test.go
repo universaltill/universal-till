@@ -143,14 +143,23 @@ func TestWorkerAllocationsSummary_Tip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa1", "tip", "pay1", "user1", 500, "2026-08-25T18:00:00Z", "shift-end payout"); err != nil {
+	// 10:00Z, not the original 18:00Z: at TZ=Pacific/Auckland (NZST +12 in
+	// August), 18:00Z rolls over to the *next* local day, so the hardcoded
+	// "2026-08-25" query bound below silently missed this row — the same
+	// bug class as ut-docs#1869's other 4 tests. 10:00Z stays inside
+	// 2026-08-25 under every offset this suite runs under (-8..+13).
+	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa1", "tip", "pay1", "user1", 500, "2026-08-25T10:00:00Z", "shift-end payout"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 
-	summary, err := dbx.repo.WorkerAllocationsSummary(ctx, "2026-08-25", "2026-08-25", "user1", "tip")
+	// Derived via SQLite's own date(...,'localtime') (ut-docs#1869), not the
+	// Go-side literal "2026-08-25" this test hardcoded before — it happened
+	// to match host-local UTC/BST but not TZ=Pacific/Auckland.
+	day := b8ExpectedDay(t, dbx.d, mustParseRFC3339(t, "2026-08-25T09:00:00Z"), 0, 0)
+	summary, err := dbx.repo.WorkerAllocationsSummary(ctx, day, day, "user1", "tip")
 	if err != nil {
 		t.Fatalf("WorkerAllocationsSummary: %v", err)
 	}
@@ -178,15 +187,18 @@ func TestWorkerAllocationsSummary_YuzdeUsuluPool(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// 10:00Z, not the original 20:00Z (ut-docs#1869: 20:00Z rolls into the
+	// next local day at TZ=Pacific/Auckland's +12 offset, silently missing
+	// the hardcoded "2026-08-25" query bound below).
 	// One pool payout batch split between two workers.
-	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa1", "yuzde_usulu_pool", "pool-batch-1", "user1", 300, "2026-08-25T20:00:00Z", "kitchen 30%"); err != nil {
+	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa1", "yuzde_usulu_pool", "pool-batch-1", "user1", 300, "2026-08-25T10:00:00Z", "kitchen 30%"); err != nil {
 		t.Fatal(err)
 	}
-	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa2", "yuzde_usulu_pool", "pool-batch-1", "user2", 700, "2026-08-25T20:00:00Z", "floor 70%"); err != nil {
+	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa2", "yuzde_usulu_pool", "pool-batch-1", "user2", 700, "2026-08-25T10:00:00Z", "floor 70%"); err != nil {
 		t.Fatal(err)
 	}
 	// A same-day 'tip' allocation — must not leak into the pool's totals.
-	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa3", "tip", "pay-other", "user1", 999999, "2026-08-25T20:00:00Z", "unrelated tip"); err != nil {
+	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa3", "tip", "pay-other", "user1", 999999, "2026-08-25T10:00:00Z", "unrelated tip"); err != nil {
 		t.Fatal(err)
 	}
 	// A pool allocation outside the requested date range — must be excluded.
@@ -197,8 +209,12 @@ func TestWorkerAllocationsSummary_YuzdeUsuluPool(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Derived via SQLite's own date(...,'localtime') (ut-docs#1869), not a
+	// hardcoded Go-side literal.
+	day := b8ExpectedDay(t, dbx.d, mustParseRFC3339(t, "2026-08-25T09:00:00Z"), 0, 0)
+
 	// Unscoped by cashier: whole-pool totals, 'tip' and out-of-range excluded.
-	summary, err := dbx.repo.WorkerAllocationsSummary(ctx, "2026-08-25", "2026-08-25", "", "yuzde_usulu_pool")
+	summary, err := dbx.repo.WorkerAllocationsSummary(ctx, day, day, "", "yuzde_usulu_pool")
 	if err != nil {
 		t.Fatalf("WorkerAllocationsSummary: %v", err)
 	}
@@ -207,7 +223,7 @@ func TestWorkerAllocationsSummary_YuzdeUsuluPool(t *testing.T) {
 	}
 
 	// Scoped to one cashier: allocated narrows, received (whole-pool) does not.
-	scoped, err := dbx.repo.WorkerAllocationsSummary(ctx, "2026-08-25", "2026-08-25", "user1", "yuzde_usulu_pool")
+	scoped, err := dbx.repo.WorkerAllocationsSummary(ctx, day, day, "user1", "yuzde_usulu_pool")
 	if err != nil {
 		t.Fatalf("WorkerAllocationsSummary scoped: %v", err)
 	}
@@ -263,14 +279,20 @@ func TestListWorkerAllocations_RoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa1", "tip", "pay1", "user1", 500, "2026-08-25T18:00:00Z", "shift-end payout"); err != nil {
+	// 10:00Z, not the original 18:00Z (ut-docs#1869: 18:00Z rolls into the
+	// next local day at TZ=Pacific/Auckland's +12 offset, silently missing
+	// the hardcoded "2026-08-25" query bound below).
+	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa1", "tip", "pay1", "user1", 500, "2026-08-25T10:00:00Z", "shift-end payout"); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 
-	rows, err := dbx.repo.ListWorkerAllocations(ctx, "2026-08-25", "2026-08-25", "", "tip")
+	// Derived via SQLite's own date(...,'localtime') (ut-docs#1869), not a
+	// hardcoded Go-side literal.
+	day := b8ExpectedDay(t, dbx.d, mustParseRFC3339(t, "2026-08-25T09:00:00Z"), 0, 0)
+	rows, err := dbx.repo.ListWorkerAllocations(ctx, day, day, "", "tip")
 	if err != nil {
 		t.Fatalf("ListWorkerAllocations: %v", err)
 	}
@@ -279,7 +301,7 @@ func TestListWorkerAllocations_RoundTrip(t *testing.T) {
 	}
 	got := rows[0]
 	if got.ID != "wa1" || got.SourceType != "tip" || got.SourceID != "pay1" || got.CashierID != "user1" ||
-		got.AmountMinor != 500 || got.AllocatedAt != "2026-08-25T18:00:00Z" || got.Note != "shift-end payout" {
+		got.AmountMinor != 500 || got.AllocatedAt != "2026-08-25T10:00:00Z" || got.Note != "shift-end payout" {
 		t.Fatalf("unexpected row: %+v", got)
 	}
 }
@@ -295,7 +317,10 @@ func TestListWorkerAllocations_DateRangeFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa1", "tip", "pay1", "user1", 500, "2026-08-25T18:00:00Z", "in range"); err != nil {
+	// 10:00Z, not the original 18:00Z (ut-docs#1869: 18:00Z rolls into the
+	// next local day at TZ=Pacific/Auckland's +12 offset, silently missing
+	// the hardcoded "2026-08-25" query bound below).
+	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa1", "tip", "pay1", "user1", 500, "2026-08-25T10:00:00Z", "in range"); err != nil {
 		t.Fatal(err)
 	}
 	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa2", "tip", "pay2", "user1", 999, "2026-01-01T18:00:00Z", "out of range"); err != nil {
@@ -305,7 +330,10 @@ func TestListWorkerAllocations_DateRangeFiltering(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	rows, err := dbx.repo.ListWorkerAllocations(ctx, "2026-08-25", "2026-08-25", "", "tip")
+	// Derived via SQLite's own date(...,'localtime') (ut-docs#1869), not a
+	// hardcoded Go-side literal.
+	day := b8ExpectedDay(t, dbx.d, mustParseRFC3339(t, "2026-08-25T09:00:00Z"), 0, 0)
+	rows, err := dbx.repo.ListWorkerAllocations(ctx, day, day, "", "tip")
 	if err != nil {
 		t.Fatalf("ListWorkerAllocations: %v", err)
 	}
@@ -324,17 +352,23 @@ func TestListWorkerAllocations_CashierFiltering(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa1", "tip", "pay1", "user1", 500, "2026-08-25T18:00:00Z", ""); err != nil {
+	// 10:00Z/10:05Z, not the original 18:00Z/18:05Z (ut-docs#1869: 18:00Z
+	// rolls into the next local day at TZ=Pacific/Auckland's +12 offset,
+	// silently missing the hardcoded "2026-08-25" query bound below).
+	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa1", "tip", "pay1", "user1", 500, "2026-08-25T10:00:00Z", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa2", "tip", "pay2", "user2", 700, "2026-08-25T18:05:00Z", ""); err != nil {
+	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa2", "tip", "pay2", "user2", 700, "2026-08-25T10:05:00Z", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 
-	scoped, err := dbx.repo.ListWorkerAllocations(ctx, "2026-08-25", "2026-08-25", "user1", "tip")
+	// Derived via SQLite's own date(...,'localtime') (ut-docs#1869), not a
+	// hardcoded Go-side literal.
+	day := b8ExpectedDay(t, dbx.d, mustParseRFC3339(t, "2026-08-25T09:00:00Z"), 0, 0)
+	scoped, err := dbx.repo.ListWorkerAllocations(ctx, day, day, "user1", "tip")
 	if err != nil {
 		t.Fatalf("ListWorkerAllocations scoped: %v", err)
 	}
@@ -342,7 +376,7 @@ func TestListWorkerAllocations_CashierFiltering(t *testing.T) {
 		t.Fatalf("expected only user1's row, got %+v", scoped)
 	}
 
-	all, err := dbx.repo.ListWorkerAllocations(ctx, "2026-08-25", "2026-08-25", "", "tip")
+	all, err := dbx.repo.ListWorkerAllocations(ctx, day, day, "", "tip")
 	if err != nil {
 		t.Fatalf("ListWorkerAllocations all: %v", err)
 	}
@@ -361,17 +395,25 @@ func TestListWorkerAllocations_OrderedByAllocatedAtDesc(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	// wa-late at 10:30Z, not the original 20:00Z (ut-docs#1869: 20:00Z rolls
+	// into the next local day at TZ=Pacific/Auckland's +12 offset, silently
+	// missing the hardcoded "2026-08-25" query bound below) — still later
+	// than wa-early's 09:00Z under every offset this suite runs under, so
+	// the DESC-order assertion still holds.
 	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa-early", "tip", "pay1", "user1", 100, "2026-08-25T09:00:00Z", ""); err != nil {
 		t.Fatal(err)
 	}
-	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa-late", "tip", "pay2", "user1", 200, "2026-08-25T20:00:00Z", ""); err != nil {
+	if err := dbx.repo.InsertWorkerAllocation(ctx, tx, "wa-late", "tip", "pay2", "user1", 200, "2026-08-25T10:30:00Z", ""); err != nil {
 		t.Fatal(err)
 	}
 	if err := tx.Commit(); err != nil {
 		t.Fatal(err)
 	}
 
-	rows, err := dbx.repo.ListWorkerAllocations(ctx, "2026-08-25", "2026-08-25", "", "tip")
+	// Derived via SQLite's own date(...,'localtime') (ut-docs#1869), not a
+	// hardcoded Go-side literal.
+	day := b8ExpectedDay(t, dbx.d, mustParseRFC3339(t, "2026-08-25T09:00:00Z"), 0, 0)
+	rows, err := dbx.repo.ListWorkerAllocations(ctx, day, day, "", "tip")
 	if err != nil {
 		t.Fatalf("ListWorkerAllocations: %v", err)
 	}
