@@ -22,6 +22,10 @@ type ModifierGroup struct {
 	SortOrder int
 	IsActive  bool
 	Options   []ModifierOption
+	// ItemName is only populated by ListShopModifierGroups (ut-docs#1899) —
+	// every other query already scopes to one caller-known item, so it
+	// would just be redundant there. Left "" by every other query.
+	ItemName string
 }
 
 // ModifierOption is one selectable choice within a ModifierGroup. Price
@@ -124,6 +128,87 @@ WHERE g.item_id = ?`
 	}
 	if err := optRows.Err(); err != nil {
 		return nil, fmt.Errorf("list modifier options: %w", err)
+	}
+	return groups, nil
+}
+
+// ListShopModifierGroups returns every ACTIVE modifier group belonging to an
+// ACTIVE item in the shop, across every item, with active options nested —
+// the query behind the /modifiers browse screen (ut-docs#1899). Every
+// existing query here is scoped to one item because every existing caller
+// already knows which item it's editing (the catalog admin panel) or
+// selling (the sale-time picker); this is the first caller that needs to
+// see the whole shop at once, so it also carries the item's name (ItemName)
+// since nothing else identifies which item a row belongs to once groups
+// from many items are mixed together. The i.is_active filter matters here
+// specifically (independent review, ut-docs#1899): DeactivateItem never
+// touches item_modifier_groups.is_active, and ListItems already filters
+// deactivated items off /catalog — the only place a group can be edited or
+// deactivated — so without this filter a deactivated item's groups would
+// render on this screen forever, labelled with a name the merchant can no
+// longer find or act on. Same convention as the repo's other item-joining
+// browse queries (ListItems, ItemsWithoutBarcode, ListActiveVariants).
+// Ordered by item name, then item id (a tie-break so two items sharing a
+// name don't interleave their groups), then group sort_order/name, matching
+// the per-item queries' own group ordering.
+func (r *ModifierRepo) ListShopModifierGroups(ctx context.Context) ([]ModifierGroup, error) {
+	groupRows, err := r.db.QueryContext(ctx, `
+SELECT g.id, g.item_id, i.name, g.name, g.required, g.min_select, g.max_select, g.sort_order, g.is_active
+FROM item_modifier_groups g
+JOIN items i ON i.id = g.item_id
+WHERE g.is_active = 1 AND i.is_active = 1
+ORDER BY i.name, g.item_id, g.sort_order, g.name`)
+	if err != nil {
+		return nil, fmt.Errorf("list shop modifier groups: %w", err)
+	}
+	defer groupRows.Close()
+
+	var groups []ModifierGroup
+	byID := map[string]*ModifierGroup{}
+	for groupRows.Next() {
+		var g ModifierGroup
+		var required, active int
+		if err := groupRows.Scan(&g.ID, &g.ItemID, &g.ItemName, &g.Name, &required, &g.MinSelect, &g.MaxSelect, &g.SortOrder, &active); err != nil {
+			return nil, fmt.Errorf("scan shop modifier group: %w", err)
+		}
+		g.Required = required == 1
+		g.IsActive = active == 1
+		groups = append(groups, g)
+	}
+	if err := groupRows.Err(); err != nil {
+		return nil, fmt.Errorf("list shop modifier groups: %w", err)
+	}
+	if len(groups) == 0 {
+		return nil, nil
+	}
+	for i := range groups {
+		byID[groups[i].ID] = &groups[i]
+	}
+
+	optRows, err := r.db.QueryContext(ctx, `
+SELECT o.id, o.group_id, o.name, o.price_delta_minor, o.sort_order, o.is_active
+FROM item_modifier_options o
+JOIN item_modifier_groups g ON g.id = o.group_id
+JOIN items i ON i.id = g.item_id
+WHERE g.is_active = 1 AND o.is_active = 1 AND i.is_active = 1
+ORDER BY o.sort_order, o.name`)
+	if err != nil {
+		return nil, fmt.Errorf("list shop modifier options: %w", err)
+	}
+	defer optRows.Close()
+	for optRows.Next() {
+		var o ModifierOption
+		var active int
+		if err := optRows.Scan(&o.ID, &o.GroupID, &o.Name, &o.PriceDeltaMinor, &o.SortOrder, &active); err != nil {
+			return nil, fmt.Errorf("scan shop modifier option: %w", err)
+		}
+		o.IsActive = active == 1
+		if g, ok := byID[o.GroupID]; ok {
+			g.Options = append(g.Options, o)
+		}
+	}
+	if err := optRows.Err(); err != nil {
+		return nil, fmt.Errorf("list shop modifier options: %w", err)
 	}
 	return groups, nil
 }

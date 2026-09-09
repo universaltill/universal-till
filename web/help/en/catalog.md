@@ -4,7 +4,7 @@ title: Catalog, variants & barcodes
 section: Setting up your shop
 order: 110
 summary: "Your products: names, prices, departments, item variants (size, flavour…) and any number of barcodes per item or per variant."
-routes: [/catalog, /import]
+routes: [/catalog, /import, /modifiers]
 keywords: [items, prices, barcode, variants, modifiers, import, export]
 ---
 
@@ -36,5 +36,6 @@ Your products: names, prices, departments, item variants (size, flavour…) and 
 
 ## Good to know
 
+- **Customization options** (modifier groups like "Toppings" or "Size") are created and edited from an item's own detail panel, as above — but the **Customization options** button on the Catalog page lets you browse every group across your whole catalog on one screen, without opening each item individually.
 - An item's own details (name, price, cost, lead time), its variants, its barcodes, and its customization options (modifier groups like "Toppings" or "Size", and their options like "Extra cheese") are all shop-wide and always managed from the **main till**: on a joined till, creating or editing any of these shows a message pointing you back to the main till, rather than accepting a change that would only apply locally.
 - Importing a catalog is also shop-wide (it creates items, barcodes, categories and tax codes) and is only done from the **main till**: pressing Import on a joined till shows a message pointing you back to the main till instead of importing locally. Preview still works everywhere, since it doesn't save anything.

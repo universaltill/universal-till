@@ -4,7 +4,7 @@ title: Katalog, varyantlar ve barkodlar
 section: Dükkanı kurma
 order: 110
 summary: "Ürünleriniz: adlar, fiyatlar, reyonlar, ürün varyantları (beden, aroma…) ve ürün ya da varyant başına istediğiniz kadar barkod."
-routes: [/catalog, /import]
+routes: [/catalog, /import, /modifiers]
 ---
 
 # Katalog, varyantlar ve barkodlar
@@ -33,5 +33,6 @@ routes: [/catalog, /import]
 
 ## Bilmekte fayda var
 
+- **Özelleştirme seçenekleri** (yukarıda bahsedilen "Ekstralar" veya "Boyut" gibi gruplar) her ürünün kendi ayrıntılar panelinden oluşturulur ve düzenlenir — ama Katalog sayfasındaki **Özelleştirme seçenekleri** düğmesi, her ürünü tek tek açmadan tüm kataloğunuzdaki özelleştirme gruplarını tek bir ekranda görmenizi sağlar.
 - Bir ürünün kendi bilgileri (ad, fiyat, maliyet fiyatı, tedarik süresi), varyantları, barkodları ve özelleştirme seçenekleri ("Ekstralar" veya "Boyut" gibi değiştirici grupları ve "Ekstra peynir" gibi seçenekleri) hepsi mağaza geneli öğelerdir ve her zaman **ana kasadan** yönetilir: katılmış bir kasada bunlardan birini oluşturmak veya düzenlemek, uygulanmak yerine sizi ana kasaya yönlendiren bir mesaj gösterir.
 - Katalog içe aktarma da mağaza geneli bir işlemdir (ürünler, barkodlar, kategoriler ve vergi kodları oluşturur) ve yalnızca **ana kasadan** yapılır: katılmış bir kasada İçe aktar'a basmak, yerel olarak içe aktarmak yerine sizi ana kasaya yönlendiren bir mesaj gösterir. Önizleme her yerde çalışmaya devam eder, çünkü hiçbir şey kaydetmez.
