@@ -19,7 +19,7 @@ Kasada bir sorun mu var? Her ekrandan 🐞 düğmesiyle bir rapor gönderin — 
 3. "Raporu kaydet"e basın. Rapor anında bu kasaya kaydedilir — internet olmasa bile — ve mağaza bağlandığında otomatik olarak yüklenir.
 4. Not: Başka bir sayfaya geçerseniz kayıt durur; bu yüzden ayrılmadan önce raporunuzu gönderin.
 
-Panele ☰ Menü'deki 🐞 "Sorun bildir" kutucuğundan da ulaşabilirsiniz.
+Panele ☰ Menü'deki "Sorun bildir" kutucuğundan da ulaşabilirsiniz.
 
 Android kasa uygulamasında, "📷 Ekran görüntüsü al" uygulamanın gösterdiğini doğrudan yakalar — izin istemez. Sesli not da çalışır: ilk kez kaydettiğinizde Android mikrofon erişimi ister; bir kez izin verin, sonraki kayıtlar hemen başlar (izin vermediyseniz, telefonun Ayarlar → Uygulamalar → Universal Till → İzinler bölümünden tekrar açabilirsiniz). Ekran kaydı ve kamerayla fotoğraf çekme, Android uygulamasında henüz kullanılamıyor.
 

@@ -1232,6 +1232,10 @@ func parseItemInput(r *http.Request) (pos.ItemInput, error) {
 		Description: strings.TrimSpace(r.Form.Get("description")),
 		Unit:        strings.TrimSpace(r.Form.Get("unit")),
 		IsWeighed:   r.Form.Get("isWeighed") == "1" || strings.ToLower(r.Form.Get("isWeighed")) == "on",
+		// ut-docs#1850: unchecked (missing from the form) correctly reads
+		// as false/tracked — no hidden-fallback trick needed, unlike
+		// isActive below (that one defaults CHECKED, this one doesn't).
+		StockUntracked: r.Form.Get("stockUntracked") == "1" || strings.ToLower(r.Form.Get("stockUntracked")) == "on",
 		// formCheckboxActive, not a bare Form.Get: the item form now pairs
 		// its Active checkbox with a hidden isActive=0 fallback
 		// (ut-docs#1367), same convention as the variant/modifier-group

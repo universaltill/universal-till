@@ -352,12 +352,11 @@ body.menu-screen .session-admin-link { display: none; }
   color: var(--text); text-decoration: none; text-align: center;
   /* ut-docs#1334 (review): .menu-tile is now used on a <button> (the deposit-
      refund tile) as well as on <a>. A <button> does NOT inherit body's font,
-     so without this it rendered its label AND its ♻️ .menu-ico in the UA
-     default (measured: font-family "Arial", vs the app stack every sibling
-     tile gets) — which also drops body's explicit colour-emoji fallback
-     chain ("Noto Color Emoji" …, the one scripts/ci/guard-emoji-font.sh
-     exists to keep), leaving that one glyph to implicit fontconfig
-     substitution on the Pi kiosk. Same normalisation .btn-tile/.nav-toggle
+     so without this it rendered its label in the UA default (measured:
+     font-family "Arial", vs the app stack every sibling tile gets). Every
+     .menu-ico is a drawn SVG glyph now (ut-docs#1845 removed the last
+     emoji fallback here), so this no longer matters for the icon itself,
+     but the label font still needs it. Same normalisation .btn-tile/.nav-toggle
      already apply for the same reason; a no-op for the <a> tiles, which
      inherit these values already. */
   font: inherit; cursor: pointer;
@@ -365,21 +364,35 @@ body.menu-screen .session-admin-link { display: none; }
 }
 .menu-tile:hover, .menu-tile:active { border-color: var(--brand); transform: translateY(-2px); }
 .menu-ico { font-size: 2.9rem; line-height: 1; }
-/* ut-docs#1720: a tile whose icon is a drawn glyph rather than an emoji
-   (menu_page.go's iconSVGFor). Sized in absolute units to the emoji tiles'
-   rendered height rather than in em, for the same reason ut-docs#1423 moved
-   the rail off emoji at all: an emoji's drawn size inside its em-square
-   differs per platform font, so matching it via font-size would drift
-   between the tablet and desktop Chromium exactly as the old per-glyph
-   size tuning did. .menu-tile already centres its children. */
+/* ut-docs#1720/#1845: every tile icon is a drawn glyph now (menu_page.go's
+   iconSVGFor), never an emoji. Sized in absolute units rather than in em,
+   for the same reason ut-docs#1423 moved the rail off emoji at all: an
+   emoji's drawn size inside its em-square differs per platform font, so
+   matching it via font-size would drift between the tablet and desktop
+   Chromium exactly as the old per-glyph size tuning did. .menu-tile already
+   centres its children. */
 .menu-ico svg { inline-size: 2.9rem; block-size: 2.9rem; display: block; }
 .menu-label { font-size: 1.2rem; font-weight: 600; }
 .btn-touch { min-height: 46px; display: inline-flex; align-items: center; }
 
+/* Small inline icon inside a text button/link (ut-docs#1845) — the phone-
+   width sale-screen shortcuts (index.html's .kiosk-actions) that duplicate
+   nav.html's rail actions, sized to the surrounding text via em rather than
+   .menu-ico's fixed box (there's no separate label span to anchor to here,
+   the icon sits inline with its own text). */
+/* No vertical-align here (a flex item ignores it, and every .btn/.a.btn is
+   display:inline-flex already — this class only needs to size its own
+   svg child); the flex gap on .btn/.menu-lang-label supplies the spacing
+   next to the label text once the whitespace text node between the spans
+   collapses. */
+.btn-ico { display: inline-flex; }
+.btn-ico svg { inline-size: 1em; block-size: 1em; display: block; }
+
 /* Language switcher on the touch menu page — big, obvious buttons so a
    Turkish/Persian operator can find their language at a glance. */
 .menu-lang { margin-top: 1.6rem; display: flex; flex-wrap: wrap; align-items: center; gap: .75rem; }
-.menu-lang-label { font-weight: 600; color: var(--muted); }
+.menu-lang-label { font-weight: 600; color: var(--muted); display: inline-flex; align-items: center; gap: .35rem; }
+.menu-lang-ico svg { inline-size: 1.1em; block-size: 1.1em; display: block; }
 .menu-lang-btns { display: flex; flex-wrap: wrap; gap: .5rem; }
 /* ut-docs#1125: no text-transform/letter-spacing here. Both were written for
    the old two-letter code labels ("EN", "FA"); now that the label is the

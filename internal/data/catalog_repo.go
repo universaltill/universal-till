@@ -220,7 +220,7 @@ func (r *CatalogRepo) ListItems(ctx context.Context) ([]catalogtypes.ItemInput, 
 	// COALESCE(sku, '') — ut-docs#1176: sku is nullable (no real SKU stores
 	// NULL, not a UUID), and itm.SKU below is a plain string, so scanning a
 	// NULL directly would error on every item that has no real SKU.
-	rows, err := r.db.QueryContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data FROM items WHERE is_active = 1 ORDER BY name`)
+	rows, err := r.db.QueryContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data, stock_untracked FROM items WHERE is_active = 1 ORDER BY name`)
 	if err != nil {
 		return nil, err
 	}
@@ -229,7 +229,7 @@ func (r *CatalogRepo) ListItems(ctx context.Context) ([]catalogtypes.ItemInput, 
 	for rows.Next() {
 		var itm catalogtypes.ItemInput
 		var tax, cat, brand, desc sql.NullString
-		if err := rows.Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData); err != nil {
+		if err := rows.Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData, &itm.StockUntracked); err != nil {
 			return nil, err
 		}
 		if desc.Valid {
@@ -321,8 +321,8 @@ func (r *CatalogRepo) GetItem(ctx context.Context, itemID string) (catalogtypes.
 func getItemExec(ctx context.Context, ex execer, itemID string) (catalogtypes.ItemInput, bool, error) {
 	var itm catalogtypes.ItemInput
 	var tax, cat, brand, desc sql.NullString
-	err := ex.QueryRowContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data FROM items WHERE id = ?`, itemID).
-		Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData)
+	err := ex.QueryRowContext(ctx, `SELECT id, COALESCE(sku, ''), name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, is_sample_data, stock_untracked FROM items WHERE id = ?`, itemID).
+		Scan(&itm.ID, &itm.SKU, &itm.Name, &desc, &cat, &brand, &itm.Unit, &itm.BasePrice, &tax, &itm.IsActive, &itm.IsWeighed, &itm.IsSampleData, &itm.StockUntracked)
 	if errors.Is(err, sql.ErrNoRows) {
 		return catalogtypes.ItemInput{}, false, nil
 	}
@@ -1162,9 +1162,9 @@ func (r *CatalogRepo) CreateItem(ctx context.Context, in catalogtypes.ItemInput)
 		active = 0
 	}
 	_, err := r.db.ExecContext(ctx, `
-INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, in.ID, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed))
+INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, stock_untracked)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, in.ID, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked))
 	if err != nil {
 		if isUniqueViolation(err) {
 			return "", ErrSKUExists
@@ -1181,8 +1181,13 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	// row (stock tracking is opt-in), so a failure here — e.g. no
 	// stock_locations table at all, a legitimately stockless deployment —
 	// must never fail item creation itself, only get logged.
-	if err := r.ensureInventoryRow(ctx, in.ID, ""); err != nil {
-		logging.L().Warnf("catalog: create item %s: inventory row not created: %v", in.ID, err)
+	// ut-docs#1850: an item created stock_untracked gets NO inventory row
+	// at all, not even the usual zero-quantity placeholder — the whole
+	// point of the flag is that this item never appears in Inventory.
+	if !in.StockUntracked {
+		if err := r.ensureInventoryRow(ctx, in.ID, ""); err != nil {
+			logging.L().Warnf("catalog: create item %s: inventory row not created: %v", in.ID, err)
+		}
 	}
 	return in.ID, nil
 }
@@ -1199,6 +1204,21 @@ func (r *CatalogRepo) ensureInventoryRow(ctx context.Context, itemID, variantID 
 // caller-supplied *sql.Tx (CreateItemTx) — both satisfy database/sql's
 // ExecContext/QueryRowContext, so a plain execer interface covers both
 // without duplicating the statements.
+//
+// ut-docs#1850 (review): the insert is guarded by its own NOT EXISTS, not by
+// INSERT OR IGNORE against ux_inventory_item. That index is
+// UNIQUE(item_id, variant_id, location_id) and SQLite treats NULLs as
+// DISTINCT in a unique index — every row this helper writes has exactly one
+// of item_id/variant_id NULL by the table's own CHECK constraint, so the
+// index NEVER fires for it and OR IGNORE silently ignored nothing. The
+// "if one doesn't already exist" in the doc comment above was therefore not
+// true: a second call for the same item duplicated the row (and with it the
+// item's on-hand quantity, which ListStockLevels/DeadStock/StockForExport
+// all SUM). Harmless while the only caller was create-once, but this card
+// added a second caller (updateItemExec, restoring the row for an item
+// switched back to tracked) that calls it repeatedly. `IS` rather than `=`
+// so the NULL half of the key compares NULL-safely; one statement rather
+// than SELECT-then-INSERT so there is no check-then-act window.
 func ensureInventoryRowExec(ctx context.Context, ex execer, itemID, variantID string) error {
 	var locationID string
 	err := ex.QueryRowContext(ctx, `SELECT id FROM stock_locations WHERE name = 'Main' OR id = 'loc_main' ORDER BY id LIMIT 1`).Scan(&locationID)
@@ -1211,9 +1231,14 @@ func ensureInventoryRowExec(ctx context.Context, ex execer, itemID, variantID st
 		return fmt.Errorf("find default location: %w", err)
 	}
 	_, err = ex.ExecContext(ctx, `
-INSERT OR IGNORE INTO inventory (id, item_id, variant_id, location_id, quantity)
-VALUES (?, ?, ?, ?, 0)
-`, uuid.NewString(), nullIfEmpty(itemID), nullIfEmpty(variantID), locationID)
+INSERT INTO inventory (id, item_id, variant_id, location_id, quantity)
+SELECT ?, ?, ?, ?, 0
+WHERE NOT EXISTS (
+    SELECT 1 FROM inventory
+    WHERE item_id IS ? AND variant_id IS ? AND location_id = ?
+)
+`, uuid.NewString(), nullIfEmpty(itemID), nullIfEmpty(variantID), locationID,
+		nullIfEmpty(itemID), nullIfEmpty(variantID), locationID)
 	if err != nil {
 		return fmt.Errorf("insert inventory row: %w", err)
 	}
@@ -1258,9 +1283,9 @@ func (r *CatalogRepo) CreateItemTx(ctx context.Context, tx *sql.Tx, in catalogty
 		active = 0
 	}
 	_, err := tx.ExecContext(ctx, `
-INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-`, in.ID, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed))
+INSERT INTO items (id, sku, name, description, category_id, brand_id, unit, base_price, tax_code_id, is_active, is_weighed, stock_untracked)
+VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+`, in.ID, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked))
 	if err != nil {
 		// ut-docs#1510: unlike CreateItem, this branch never translated a
 		// UNIQUE(sku) violation into the distinguishable ErrSKUExists — a
@@ -1276,9 +1301,12 @@ VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 	}
 	// Same reasoning as CreateItem: the item is already valid and sellable
 	// without a stock row (stock tracking is opt-in), so this must never
-	// fail — or roll back — item creation, only get logged.
-	if err := ensureInventoryRowExec(ctx, tx, in.ID, ""); err != nil {
-		logging.L().Warnf("catalog: create item %s: inventory row not created: %v", in.ID, err)
+	// fail — or roll back — item creation, only get logged. ut-docs#1850:
+	// stock_untracked skips the row entirely, same as CreateItem.
+	if !in.StockUntracked {
+		if err := ensureInventoryRowExec(ctx, tx, in.ID, ""); err != nil {
+			logging.L().Warnf("catalog: create item %s: inventory row not created: %v", in.ID, err)
+		}
 	}
 	return in.ID, nil
 }
@@ -1631,14 +1659,29 @@ SET sku = COALESCE(NULLIF(?, ''), sku),
     base_price = ?,
     tax_code_id = ?,
     is_active = ?,
-    is_weighed = ?
+    is_weighed = ?,
+    stock_untracked = ?
 WHERE id = ?
-`, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), in.ID)
+`, nullableString(in.SKU), in.Name, in.Description, nullable(in.CategoryID), nullable(in.BrandID), in.Unit, in.BasePrice, nullable(in.TaxCodeID), active, boolToInt(in.IsWeighed), boolToInt(in.StockUntracked), in.ID)
 	if err != nil {
 		if isUniqueViolation(err) {
 			return ErrSKUExists
 		}
 		return fmt.Errorf("update item: %w", err)
+	}
+	// ut-docs#1850 (review): switching an item back to tracked has to be able
+	// to give it the inventory row CreateItem skipped while it was untracked
+	// — without this the item is missing from the Inventory screen entirely
+	// (ListStockLevels JOINs inventory), not even listed at zero like every
+	// other tracked item, until someone happens to record a goods-in for it.
+	// INSERT OR IGNORE against ux_inventory_item, so re-saving an item that
+	// already has a row is a no-op rather than a duplicate. Best-effort and
+	// logged, exactly like CreateItem's own call: a stockless deployment (no
+	// stock_locations table at all) must still be able to edit its catalog.
+	if !in.StockUntracked {
+		if err := ensureInventoryRowExec(ctx, ex, in.ID, ""); err != nil {
+			logging.L().Warnf("catalog: update item %s: inventory row not created: %v", in.ID, err)
+		}
 	}
 	return nil
 }
@@ -1670,8 +1713,30 @@ VALUES (?, ?, ?, ?, ?, ?, ?)
 	// Same reasoning as CreateItem: without this a new variant has no
 	// inventory row and is invisible on the Inventory page. Best-effort,
 	// same as CreateItem — never fails variant creation itself.
-	if err := r.ensureInventoryRow(ctx, "", in.ID); err != nil {
-		logging.L().Warnf("catalog: create variant %s: inventory row not created: %v", in.ID, err)
+	//
+	// ut-docs#1850 (review): except when the PARENT item is stock_untracked.
+	// The flag lives on the item, not the variant — CompleteSale already
+	// resolves a variant line's tracked status through item_variants.item_id
+	// (UntrackedByKey) — so a variant of an untracked item must not carry an
+	// inventory row either. Without this check CreateItem correctly skips the
+	// item's own row while every variant added afterwards quietly re-creates
+	// exactly the rows the flag exists to prevent, and leaks them to
+	// export/report plugins through StockForExport's variant half.
+	//
+	// Fail-safe in the same direction as sales.go's isUntracked: an
+	// unreadable or missing parent flag is treated as TRACKED, so a lookup
+	// problem can never silently stop tracking a variant's stock.
+	parentUntracked := false
+	if err := r.db.QueryRowContext(ctx, `SELECT stock_untracked FROM items WHERE id = ?`, in.ItemID).Scan(&parentUntracked); err != nil {
+		parentUntracked = false
+		if !errors.Is(err, sql.ErrNoRows) {
+			logging.L().Warnf("catalog: create variant %s: parent stock-tracking flag unreadable, assuming tracked: %v", in.ID, err)
+		}
+	}
+	if !parentUntracked {
+		if err := r.ensureInventoryRow(ctx, "", in.ID); err != nil {
+			logging.L().Warnf("catalog: create variant %s: inventory row not created: %v", in.ID, err)
+		}
 	}
 	return in.ID, nil
 }

@@ -5,7 +5,7 @@ section: Den Betrieb führen
 order: 210
 summary: Umsatzsummen nach Tag, Abteilung und Zahlungsart; Bestseller und Ladenhüter; tote Ware; umsatzstärkste Tage und Stunden; Margen; Steuerübersicht; Jahresvergleich — plus der Tagesabschlussbericht (Z) zum Kassieren.
 routes: [/reports, /journal, /journal/{receipt}, /shifts, /audit]
-keywords: [z-bericht, tagesabschluss, tageseinnahmen, journal, schicht, prüfprotokoll, trinkgeld, tronc, servicegebühr, mitarbeiterzuweisung]
+keywords: [z-bericht, tagesabschluss, tageseinnahmen, journal, kassenjournal, schicht, prüfprotokoll, trinkgeld, tronc, servicegebühr, mitarbeiterzuweisung]
 ---
 
 # Berichte & Tagesabschluss
@@ -285,9 +285,9 @@ Sie eine Zahl wie „insgesamt ausgezahlte Pfandbeträge diese Woche“ sehen
 können, ohne die Prüfprotokoll-Seite zu öffnen. Sie erscheint erst, sobald es
 mindestens eine Anpassung im Zeitraum gibt.
 
-## Verkäufe aller Kassen sehen (Journal)
+## Verkäufe aller Kassen sehen (Kassenjournal)
 
-Die Journal-Seite (die Beleg-/Sync-Liste außerhalb des Verkaufsbildschirms)
+Die Kassenjournal-Seite (die Beleg-/Sync-Liste außerhalb des Verkaufsbildschirms)
 zeigt standardmäßig die Verkäufe aller Kassen, neueste zuerst, mit der Kasse,
 die jede Bestellung aufgenommen hat, in ihrer eigenen Spalte — sodass eine
 Maschine die gesamten Einnahmen des Geschäfts überblicken kann, ohne zu jedem
@@ -315,7 +315,7 @@ Eine Kasse zeigt hier „—“, wenn sie nie in Kontakt stand, oder (bei einer
 Replika) weil ihre Kontaktzeit nicht von der Primärkasse heruntergegeben wird.
 
 Nur die Primärkasse eines Geschäfts sammelt die Verkäufe anderer Kassen — eine
-Replika-Kasse hat für das Journal immer nur ihre eigenen lokalen Verkäufe,
+Replika-Kasse hat für das Kassenjournal immer nur ihre eigenen lokalen Verkäufe,
 unabhängig vom gewählten Kassenfilter, da eine Replika ihre eigenen Verkäufe
 immer nur einseitig nach oben zur Primärkasse überträgt und niemals die
 Verkäufe der Geschwister zurückerhält. Die Wahl von „Alle Kassen“ oder einer
@@ -372,7 +372,7 @@ Software erkennt oder bewegt kein Geld von sich aus.
 
 ## Eine Kartenzahlung abgleichen (Belegdetail)
 
-Das Öffnen eines Belegs aus dem Journal zeigt sein vollständiges
+Das Öffnen eines Belegs aus dem Kassenjournal zeigt sein vollständiges
 Zahlungsdetail — hier wird eine Kartenzahlung im Nachhinein abgeglichen,
 Tage nach dem Verkauf. Wurde eine Zahlung an einem Präsenz-Kartenterminal
 entgegengenommen, zeigt ihre Zahlungszeile die maskierte Kartennummer und den

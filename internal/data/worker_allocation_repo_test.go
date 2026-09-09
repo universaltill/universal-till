@@ -74,7 +74,7 @@ func TestWorkerAllocationsArchiveRoundTrip(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	count, batchID, err := dbx.repo.ResetTransactionHistory(ctx, "user1")
+	count, batchID, err := dbx.repo.ResetTransactionHistory(ctx, "user1", "")
 	if err != nil {
 		t.Fatalf("ResetTransactionHistory: %v", err)
 	}
@@ -96,7 +96,7 @@ func TestWorkerAllocationsArchiveRoundTrip(t *testing.T) {
 		t.Fatalf("expected 1 archived worker_allocations row, got %d", archiveCount)
 	}
 
-	if _, err := dbx.repo.RestoreResetBatch(ctx, batchID, "user1"); err != nil {
+	if _, err := dbx.repo.RestoreResetBatch(ctx, batchID, "user1", ""); err != nil {
 		t.Fatalf("RestoreResetBatch: %v", err)
 	}
 	if err := dbx.d.DB.QueryRowContext(ctx, `SELECT count(*) FROM worker_allocations`).Scan(&liveCount); err != nil {
