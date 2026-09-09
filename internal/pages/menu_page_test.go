@@ -422,7 +422,7 @@ func TestMenuPage_NoRetiredTileEmoji(t *testing.T) {
 // icon name in Go, from a map. This is that guard for this call path.
 func TestMenuPage_EveryDrawnTileIconNameResolves(t *testing.T) {
 	if len(iconSVGFor) == 0 {
-		t.Fatal("iconSVGFor is empty — the Bluetooth tile (ut-docs#1720) should be in it")
+		t.Fatal("iconSVGFor is empty — the residual non-core routes (/inventory, /catalog, …) should be in it; core keys live in uislot.CoreMenu since ADR-0088")
 	}
 	for href, name := range iconSVGFor {
 		if httpx.Icon(name) == "" {

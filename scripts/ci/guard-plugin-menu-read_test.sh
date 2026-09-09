@@ -94,6 +94,24 @@ func zzGuardTestHandler(d *common.Deps) []common.MenuItem {
 expect_fail "unlocked d.Menu read"
 clear_fixture "UnlockedMenu"
 
+# ADR-0088 added two more fields reassigned in the same critical section:
+# Deps.MenuAmendments (beside Menu) and Pm.LayoutAmendments (in Reload).
+plant "UnlockedMenuAmendments" 'package pages
+
+func zzGuardTestHandler(d *common.Deps) []uislot.Amendment {
+	return d.MenuAmendments
+}'
+expect_fail "unlocked d.MenuAmendments read"
+clear_fixture "UnlockedMenuAmendments"
+
+plant "UnlockedLayoutAmendments" 'package pages
+
+func zzGuardTestHandler(dp *common.Deps) []uislot.Amendment {
+	return dp.Pm.LayoutAmendments
+}'
+expect_fail "unlocked dp.Pm.LayoutAmendments read"
+clear_fixture "UnlockedLayoutAmendments"
+
 # A different *common.Deps receiver variable name — registerShiftsAPI/
 # registerInventoryAPI/registerPluginStore use "dp"/"deps" elsewhere in this
 # package, so the guard must not be fooled by those names either.
@@ -125,8 +143,10 @@ func zzGuardTestHandler(d *common.Deps, id, key string) {
 	_ = d.MenuSnapshot()
 	_, _ = d.InstalledPlugin(id)
 	_, _ = d.MenuPluginByKey(key)
+	_ = d.MenuAmendmentsSnapshot()
+	_ = d.LayoutAmendmentsSnapshot()
 }'
-expect_pass "the locked MenuSnapshot/InstalledPlugin/MenuPluginByKey accessors"
+expect_pass "the locked MenuSnapshot/InstalledPlugin/MenuPluginByKey/MenuAmendmentsSnapshot/LayoutAmendmentsSnapshot accessors"
 clear_fixture "LockedAccessorsUsed"
 
 # Test files exercise the locked accessors under controlled goroutine

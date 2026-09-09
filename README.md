@@ -348,7 +348,7 @@ Want to extend Universal Till? Plugins run **in-process as WASM modules**
 (`GOOS=wasip1 GOARCH=wasm`), Rust, TinyGo, or anything else that compiles to
 WASM. One architecture-independent `.wasm` artifact per plugin, Ed25519-signed
 and capability-gated (a module gets nothing until the manifest grants it).
-Asset-only plugins (themes, language packs) use `runtime: "none"` instead —
+Asset-only plugins (themes, language packs, layouts) use `runtime: "none"` instead —
 no code, just files. Hardware/device plugins needing raw OS access (USB,
 serial) run as a supervised process (`runtime: "go"`), the minority case.
 
@@ -484,7 +484,9 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 - [x] Core POS functionality, offline-first checkout (ADR-0003)
 - [x] SQLite database support
 - [x] Plugin system architecture — in-process WASM runtime (wazero),
-      Ed25519-signed manifests, 20-type plugin taxonomy (ADR-0001, ADR-0002)
+      Ed25519-signed manifests, 22-type plugin taxonomy (ADR-0001, ADR-0002;
+      `language` and `layout` — ADR-0088's declarative UI slot registry, a
+      plugin can hide/reorder/re-label core Menu tiles — added since)
 - [x] Plugin marketplace with one-click install (`ut-cloud`, ADR-0018) — live at [cloud.universaltill.com](https://cloud.universaltill.com)
 - [x] Payment plugins: Stripe, QR Pay, demo card terminal, SumUp (reader-driven)
 - [x] Language plugins: German, Spanish (core ships en/ar/fa/tr)

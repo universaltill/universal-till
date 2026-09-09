@@ -15,6 +15,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/logging"
+	"github.com/universaltill/universal-till/internal/uislot"
 )
 
 // Manifest represents the plugin.json schema
@@ -439,6 +440,65 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 	return fmt.Errorf("page entry route %q is already provided by plugin %s — pick a different route", c.Route, c.Owner)
 }
 
+// validateLayoutEntries is ADR-0088's install-time half for every path that
+// writes plugin_entries type='layout' (PersistManifest AND Rollback, the
+// same two sites as validatePageEntryKeys). Each layout entry's config is
+// an amendment document over the Menu slot (internal/uislot): it must
+// parse (a typo'd field or an unknown key is refused, never a silent
+// render-time no-op), it may not hide a protected destination (Decision
+// E — the error names the key), and it may not restructure — reorder,
+// re-label, re-group, re-icon — a key ANOTHER installed plugin already
+// restructures (Decision F — the error names the incumbent and the key).
+// Two plugins hiding the same key is idempotent and accepted. The Menu
+// slot is `shared` in ADR-0041's vocabulary; this is that ADR's Decision
+// B refusal shape, deliberately not a "first registration wins".
+func validateLayoutEntries(ctx context.Context, repo *data.PluginRepo, tx *sql.Tx, pluginID string, entries []ManifestEntry) error {
+	var candidate []uislot.Amendment
+	seenKeys := map[string]string{} // slot key -> entry key that amended it
+	for _, e := range entries {
+		if e.Type != "layout" {
+			continue
+		}
+		// Validate the PERSISTED form (entryConfigJSON), not e.Config: it is
+		// the exact bytes Manager.loadLayoutEntries parses back at reload, so
+		// nothing can pass here and then be skipped there.
+		amendments, err := uislot.ParseMenuAmendmentsJSON(pluginID, entryConfigJSON(e))
+		if err != nil {
+			return fmt.Errorf("layout entry %q: %w", e.Key, err)
+		}
+		for _, a := range amendments {
+			if prev, dup := seenKeys[a.Key]; dup {
+				return fmt.Errorf("layout entry %q amends menu key %q, which layout entry %q of this manifest already amends — amend each key once", e.Key, a.Key, prev)
+			}
+			seenKeys[a.Key] = e.Key
+		}
+		candidate = append(candidate, amendments...)
+	}
+	if len(candidate) == 0 {
+		return nil
+	}
+	others, err := repo.ListLayoutEntriesExcept(ctx, tx, pluginID)
+	if err != nil {
+		return fmt.Errorf("check layout conflicts: %w", err)
+	}
+	var installed []uislot.Amendment
+	for _, row := range others {
+		amendments, err := uislot.ParseMenuAmendmentsJSON(row.PluginID, row.ConfigJSON)
+		if err != nil {
+			// A row that passed this same validation at its own install
+			// cannot normally be malformed; if core's key set changed
+			// underneath it, it amends nothing and cannot hold a key.
+			logging.L().Warnf("plugin %s: layout entry %q no longer parses (%v) — ignored for conflict checking", row.PluginID, row.EntryKey, err)
+			continue
+		}
+		installed = append(installed, amendments...)
+	}
+	if c, ok := uislot.FindConflict(candidate, installed); ok {
+		return fmt.Errorf("layout amendment of menu key %q conflicts with plugin %s, which already restructures that destination — uninstall it first or amend a different key", c.Key, c.Incumbent)
+	}
+	return nil
+}
+
 // validateSettingKeys enforces the within-manifest half of ut-docs#808:
 // PersistManifest had no in-manifest duplicate-key check for type:"settings"
 // entries at all, unlike the equivalent payment/page entry checks above.
@@ -587,6 +647,14 @@ func PersistManifest(ctx context.Context, db *sql.DB, m *Manifest, opts InstallO
 	// it through would mint a second active answerer with no /enable ever
 	// involved (review of ut-docs#675, B2).
 	if err := validateExclusiveHookOwnership(ctx, repo, tx, m.ID, m.Hooks); err != nil {
+		return err
+	}
+
+	// 0f. Layout amendments (ADR-0088): a protected destination can never
+	// be hidden, and two plugins restructuring the same menu key is a
+	// conflict — both refused here, naming the key (and incumbent), never
+	// resolved silently at render time.
+	if err := validateLayoutEntries(ctx, repo, tx, m.ID, m.Entries); err != nil {
 		return err
 	}
 

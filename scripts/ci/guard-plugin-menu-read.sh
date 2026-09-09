@@ -36,7 +36,13 @@ EXCLUDE_FILE="internal/pages/common/deps.go"
 #   <ident>.Menu              — Menu itself (word-boundaried, so MenuSnapshot/
 #                                BaseMenu/MenuItem never match — no literal
 #                                ".Menu" substring precedes those names)
-pattern='[A-Za-z_][A-Za-z0-9_]*\.Pm\.Installed\[|[A-Za-z_][A-Za-z0-9_]*\.Pm\.MenuPlugins\[|[A-Za-z_][A-Za-z0-9_]*\.Menu\b'
+#   <ident>.MenuAmendments    — the ADR-0088 layout amendments in force
+#                                (reassigned beside Menu; MenuAmendmentsSnapshot
+#                                is the accessor — no boundary after "…Amendments"
+#                                there, so it never matches)
+#   <ident>.Pm.LayoutAmendments — the manager's loaded rows (reassigned in
+#                                Reload; LayoutAmendmentsSnapshot is the accessor)
+pattern='[A-Za-z_][A-Za-z0-9_]*\.Pm\.Installed\[|[A-Za-z_][A-Za-z0-9_]*\.Pm\.MenuPlugins\[|[A-Za-z_][A-Za-z0-9_]*\.Menu\b|[A-Za-z_][A-Za-z0-9_]*\.MenuAmendments\b|[A-Za-z_][A-Za-z0-9_]*\.Pm\.LayoutAmendments\b'
 
 files="$(grep -rlE "${pattern}" --include='*.go' "${SEARCH_DIR}" 2>/dev/null \
   | grep -v '_test\.go$' \
@@ -54,12 +60,13 @@ for f in ${files}; do
 done
 
 if [[ -n "${violations}" ]]; then
-  echo "❌ plugin-menu-read guard: unlocked read of Pm.Installed / Pm.MenuPlugins / Menu under internal/pages" >&2
+  echo "❌ plugin-menu-read guard: unlocked read of Pm.Installed / Pm.MenuPlugins / Menu / MenuAmendments / Pm.LayoutAmendments under internal/pages" >&2
   echo "   (Manager.Reload reassigns these inside PluginMu's critical section — an unlocked concurrent" >&2
   echo "   read is a fatal crash, not just stale data. Use Deps.MenuSnapshot() / InstalledPlugin(id) /" >&2
-  echo "   MenuPluginByKey(key) instead — see internal/pages/common/deps.go, ut-docs#478/#489.)" >&2
+  echo "   MenuPluginByKey(key) / MenuAmendmentsSnapshot() / LayoutAmendmentsSnapshot() instead —" >&2
+  echo "   see internal/pages/common/deps.go, ut-docs#478/#489, ADR-0088.)" >&2
   echo "${violations}" >&2
   exit 1
 fi
 
-echo "✓ plugin-menu-read guard: no unlocked read of Pm.Installed / Pm.MenuPlugins / Menu under internal/pages"
+echo "✓ plugin-menu-read guard: no unlocked read of Pm.Installed / Pm.MenuPlugins / Menu / MenuAmendments / Pm.LayoutAmendments under internal/pages"
