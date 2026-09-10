@@ -62,17 +62,51 @@ check_hash "$light" "$LIGHT_SHA256" "light"
 # failed to find a match that was right there (caught testing this exact
 # guard change). The bare marker has no such trap and reads identically in
 # either file kind, since only the ".svg"/"\.svg" tail differs between them.
+# must_not_contain <label> <pattern> <path...> -- fails loudly if
+# <pattern> is found. NOT written as a bare `! grep ...`: under `set -e`,
+# the exit status of a command negated with `!` is explicitly exempted from
+# triggering errexit (bash(1), "set -e"), so a bare `! grep -Fq PATTERN
+# FILE` silently does nothing when PATTERN *is* present -- exactly the
+# violation this guard exists to catch. Caught by adding shellcheck to CI
+# (SC2251, ut-docs#1943): the three checks below always exited 0 regardless
+# of whether the forbidden marker was actually present.
+#
+# Takes plain paths only -- files or directories, no grep flags. `-R` goes
+# BEFORE the pattern, never after it: only GNU grep permutes options that
+# follow an operand, so `grep -Fq PATTERN -R DIR` reads "-R" as a *filename*
+# on BSD/macOS grep (this script already carries a macOS shasum fallback, so
+# it does run there) and on GNU grep under POSIXLY_CORRECT. grep then exits
+# 2, and treating that as "no match" would silently pass a real violation --
+# the same fail-open shape this helper exists to remove. `-R` on a plain
+# file just reads that file, so one form covers both call shapes.
+must_not_contain() {
+  local label="$1" pattern="$2"
+  shift 2
+  local status=0
+  grep -RFq -e "$pattern" "$@" || status=$?
+  if [ "$status" -eq 0 ]; then
+    echo "$label: forbidden marker '$pattern' found in: $*" >&2
+    exit 1
+  fi
+  # 0 = found, 1 = cleanly absent, anything else = grep itself failed
+  # (missing path, unreadable file). Never read an error as "clean".
+  if [ "$status" -ne 1 ]; then
+    echo "$label: grep failed (exit $status) while scanning: $*" >&2
+    exit 1
+  fi
+}
+
 grep -Fq 'unitill-logo-light' "$root/web/ui/partials/nav.html"
 for template in \
   "$root/web/ui/pages/login.html" \
   "$root/web/ui/pages/setup.html" \
   "$root/web/ui/pages/self_order.html"; do
   grep -Fq 'unitill-logo.svg' "$template"
-  ! grep -Fq 'unitill-logo-light' "$template"
+  must_not_contain "login/setup/self-order must stay on the dark mark" 'unitill-logo-light' "$template"
 done
 grep -Fq 'unitill-logo-light' "$root/tests/e2e/tests/pos_ui_mvp.spec.ts"
-! grep -RFq 'ut-logo-name-light.svg' "$root/web/ui"
-! grep -RFq 'ut-logo-name.svg' "$root/web/ui"
+must_not_contain "old wordmark asset must not be referenced" 'ut-logo-name-light.svg' "$root/web/ui"
+must_not_contain "old wordmark asset must not be referenced" 'ut-logo-name.svg' "$root/web/ui"
 
 # Scoped to the actual .login-logo, .selforder-logo rule (not `grep -Eq
 # 'background: transparent'` over the whole file, which half a dozen
