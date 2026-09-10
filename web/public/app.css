@@ -2685,6 +2685,16 @@ body.login-screen {
   margin-inline-start: .5rem;
 }
 .statusbar a.sb-power:hover { filter: brightness(0.92); }
+/* Installed-plugin update chip (ut-docs#1953) — same green "there's
+   something new" pill as sb-update above (not sb-power's amber: a pending
+   plugin update is a notice, not a hardware-degrading warning), just its
+   own class so it can be targeted/tested independently. */
+.statusbar .sb-plugin-update {
+  color: #052e16; background: #4ade80; text-decoration: none;
+  padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar a.sb-plugin-update:hover { background: #22c55e; }
 /* ut-docs#413: confirmed live at 360px — `.statusbar`'s row (conn chip +
    the optional enrol/update pills + the version, none of it wrapping)
    needs more width than a phone viewport has. Wrapping the bar itself
@@ -2706,7 +2716,8 @@ body.login-screen {
   .statusbar { flex-wrap: wrap; row-gap: .2rem; }
   .statusbar .sb-update,
   .statusbar .sb-enrol,
-  .statusbar .sb-power {
+  .statusbar .sb-power,
+  .statusbar .sb-plugin-update {
     overflow: hidden; text-overflow: ellipsis; max-inline-size: 70vw;
   }
 }
