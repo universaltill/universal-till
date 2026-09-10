@@ -1314,3 +1314,118 @@ func seedArchivedSaleLine(t *testing.T, d *db.DB, batchID, itemID, variantID str
 		t.Fatal(err)
 	}
 }
+
+// ADR-0090 §2 (ut-docs#2013): the per-item demo delete is one of the hard
+// DELETE FROM items paths — a modifier group anchored to the demo item but
+// shared (linked) with a surviving item must be re-anchored to that item
+// inside the same transaction, not cascade-deleted out from under it.
+func TestRemoveDemoItemReanchorsSharedModifierGroup(t *testing.T) {
+	d := openDemoSeedTestDB(t)
+	ctx := context.Background()
+	repo := NewDemoSeedRepo(d.DB)
+	if err := repo.SeedDemoCatalogue(ctx); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	seedRealSale(t, d, "own-1", "s-1")
+	if _, err := d.DB.Exec(`UPDATE items SET name = 'Flat White' WHERE id = 'itm001'`); err != nil {
+		t.Fatal(err)
+	}
+	mod := NewModifierRepo(d.DB)
+	if _, err := mod.CreateGroup(ctx, "g-milk", "itm001", "Milk", true, 1, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := mod.CreateOption(ctx, "o-oat", "g-milk", "Oat", 40, 1); err != nil {
+		t.Fatal(err)
+	}
+	if err := mod.LinkGroupToItem(ctx, "own-1", "g-milk", 3); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := repo.RemoveDemoItem(ctx, "itm001"); err != nil {
+		t.Fatalf("RemoveDemoItem: %v", err)
+	}
+	var n int
+	if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm001'`).Scan(&n); err != nil || n != 0 {
+		t.Fatalf("itm001 survived RemoveDemoItem (n=%d err=%v)", n, err)
+	}
+	var anchor string
+	if err := d.DB.QueryRow(`SELECT item_id FROM item_modifier_groups WHERE id = 'g-milk'`).Scan(&anchor); err != nil {
+		t.Fatalf("shared group cascade-deleted with the demo item: %v", err)
+	}
+	if anchor != "own-1" {
+		t.Fatalf("anchor = %q, want own-1", anchor)
+	}
+	groups, err := mod.ListGroupsForItem(ctx, "own-1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 1 || groups[0].ID != "g-milk" || groups[0].SortOrder != 3 || len(groups[0].Options) != 1 {
+		t.Fatalf("own-1 must still list the shared group with its option, got %+v", groups)
+	}
+}
+
+// Same guarantee for the bulk "Remove sample data" scripts
+// (remove_demo.sql / remove_demo_relaxed.sql) — the third hard DELETE FROM
+// items path, executed verbatim inside RemoveDemoCatalogue's transaction.
+// Both variants are exercised: relaxed (till has never traded for real) and
+// strict (a real sale exists elsewhere, the pristine demo item is still
+// removable).
+func TestRemoveDemoCatalogueReanchorsSharedModifierGroup(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		realSale bool
+	}{{"relaxed", false}, {"strict", true}} {
+		t.Run(tc.name, func(t *testing.T) {
+			d := openDemoSeedTestDB(t)
+			ctx := context.Background()
+			repo := NewDemoSeedRepo(d.DB)
+			if err := repo.SeedDemoCatalogue(ctx); err != nil {
+				t.Fatalf("seed: %v", err)
+			}
+			if tc.realSale {
+				seedRealSale(t, d, "own-1", "s-1")
+			} else if _, err := d.DB.Exec(`INSERT INTO items (id, name, base_price) VALUES ('own-1', 'My Own Item', 250)`); err != nil {
+				t.Fatal(err)
+			}
+			mod := NewModifierRepo(d.DB)
+			if _, err := mod.CreateGroup(ctx, "g-milk", "itm001", "Milk", true, 1, 1, 0); err != nil {
+				t.Fatal(err)
+			}
+			if _, err := mod.CreateOption(ctx, "o-oat", "g-milk", "Oat", 40, 1); err != nil {
+				t.Fatal(err)
+			}
+			if err := mod.LinkGroupToItem(ctx, "own-1", "g-milk", 3); err != nil {
+				t.Fatal(err)
+			}
+			// A demo-only group on another demo item must still cascade away.
+			if _, err := mod.CreateGroup(ctx, "g-demo-only", "itm002", "Demo Only", false, 0, 1, 0); err != nil {
+				t.Fatal(err)
+			}
+
+			if _, _, err := repo.RemoveDemoCatalogue(ctx); err != nil {
+				t.Fatalf("RemoveDemoCatalogue: %v", err)
+			}
+			var n int
+			if err := d.DB.QueryRow(`SELECT COUNT(*) FROM items WHERE id = 'itm001'`).Scan(&n); err != nil || n != 0 {
+				t.Fatalf("itm001 survived RemoveDemoCatalogue (n=%d err=%v)", n, err)
+			}
+			var anchor string
+			if err := d.DB.QueryRow(`SELECT item_id FROM item_modifier_groups WHERE id = 'g-milk'`).Scan(&anchor); err != nil {
+				t.Fatalf("shared group cascade-deleted with the demo item: %v", err)
+			}
+			if anchor != "own-1" {
+				t.Fatalf("anchor = %q, want own-1", anchor)
+			}
+			if err := d.DB.QueryRow(`SELECT COUNT(*) FROM item_modifier_groups WHERE id = 'g-demo-only'`).Scan(&n); err != nil || n != 0 {
+				t.Fatalf("demo-only group must cascade away (n=%d err=%v)", n, err)
+			}
+			groups, err := mod.ListGroupsForItem(ctx, "own-1")
+			if err != nil {
+				t.Fatal(err)
+			}
+			if len(groups) != 1 || groups[0].ID != "g-milk" || len(groups[0].Options) != 1 {
+				t.Fatalf("own-1 must still list the shared group, got %+v", groups)
+			}
+		})
+	}
+}

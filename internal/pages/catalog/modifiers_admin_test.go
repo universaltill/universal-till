@@ -243,9 +243,7 @@ func TestCatalogModifiersPanel_ShowsDeactivatedGroupsForReactivation(t *testing.
 	db := setupCatalogPageDB(t)
 	defer db.Close()
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "COFFEE", Name: "Flat White", BasePrice: 320, IsActive: true})
-	if _, err := db.Exec(`INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active) VALUES ('g1','itm1','Retired',0,0,1,1,0)`); err != nil {
-		t.Fatal(err)
-	}
+	testsupport.SeedModifierGroup(t, db, "g1", "itm1", "Retired", false, 0, 1, 1, false)
 
 	mux := http.NewServeMux()
 	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
@@ -330,9 +328,7 @@ func TestCatalogModifiersPanel_MutationsRefusedOnReplica(t *testing.T) {
 	// action (editing an already-synced modifier), and the exact gap a
 	// future "editing an existing row is fine" refactor could reopen
 	// silently if only create were covered.
-	if _, err := db.Exec(`INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active) VALUES ('grp-existing','itm1','Extras',0,0,2,0,1)`); err != nil {
-		t.Fatalf("seed existing group: %v", err)
-	}
+	testsupport.SeedModifierGroup(t, db, "grp-existing", "itm1", "Extras", false, 0, 2, 0, true)
 	if _, err := db.Exec(`INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order, is_active) VALUES ('opt-existing','grp-existing','Extra shot',50,0,1)`); err != nil {
 		t.Fatalf("seed existing option: %v", err)
 	}
