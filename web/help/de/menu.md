@@ -12,6 +12,10 @@ keywords: [menü, navigation, kacheln]
 
 Tippen Sie auf **☰ Menü** auf dem Verkaufsbildschirm, um eine Seite mit großen Touch-Kacheln zu öffnen — eine für jeden Bereich der Kasse. Tippen Sie auf eine Kachel, um dorthin zu gelangen; tippen Sie oben auf der Seite auf **← Zurück zum Verkauf** — oder auf jeder Seite auf **Kasse** in der Navigationsleiste —, um zum Verkaufen zurückzukehren. Die Pfandrückgabe öffnet sich an Ort und Stelle als kleines Formular, statt wegzunavigieren.
 
+## Administration
+
+Einrichtungs-Kacheln, die Sie einmal berühren und danach selten wieder aufrufen — Ländereinstellungen, Übersetzungen, die Fiskalregister-/Fiskalgerät-Seite, Standorte und Kassen — sind zusammen unter einer Überschrift **Administration** unterhalb der alltäglichen Kacheln zusammengefasst. Benutzer, Küchenstationen und Bluetooth-Geräte bleiben außerhalb dieser Gruppe: Diese verwalten Sie häufiger als eine einmalige Einrichtung.
+
 ## Von einem Layout-Plugin ausgeblendete Kacheln
 
 Ein **Layout**-Plugin (zum Beispiel ein Salon-Layout) kann Kacheln ausblenden, die ein Geschäft nicht braucht — etwa Tische oder Küchenstationen — und andere umbenennen oder umsortieren. Es ändert nur, was das Menü zeigt: Jede Seite bleibt unter ihrer eigenen Adresse erreichbar. Was ausgeblendet ist, sehen Sie unter **Einstellungen → Ausgeblendete Menü-Kacheln**; dort holen Sie eine Kachel auch zurück. Jeder Eintrag nennt das Plugin, das ihn ausgeblendet hat, und hat eine Schaltfläche **Kachel wiederherstellen**; **Erneut ausblenden** macht das rückgängig. Die Kacheln für Fiskales, Journal, Einstellungen, Plugins, Hilfe und Problem melden kann kein Plugin ausblenden.

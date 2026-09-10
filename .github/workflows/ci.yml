@@ -121,6 +121,11 @@ jobs:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
         run: bash scripts/ci/guard-help-topics.sh
+      - name: Help-topic translation-drift guard
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: bash scripts/ci/guard-help-drift.sh
       - name: Linux desktop webkit2gtk version guard
         run: bash scripts/ci/guard-webkit-version.sh
       - name: Linux desktop webkit2gtk version guard regression test

@@ -1,0 +1,973 @@
+{
+  "entries": [
+    {
+      "locale": "ar",
+      "topic": "bluetooth-devices",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 4,
+        "sub_bullets": 3,
+        "top_bullets": 7,
+        "bold_leadins": 2
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 4,
+        "sub_bullets": 3,
+        "top_bullets": 7,
+        "bold_leadins": 3
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "ar",
+      "topic": "categories",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 2
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "ar",
+      "topic": "country-settings",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 6,
+        "bold_leadins": 3
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 7,
+        "bold_leadins": 3
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "ar",
+      "topic": "kitchen-stations",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 8,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 8,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "ar",
+      "topic": "multitill",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 12,
+        "sub_bullets": 1,
+        "top_bullets": 4,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 12,
+        "sub_bullets": 3,
+        "top_bullets": 4,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "ar",
+      "topic": "order-status",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 7,
+        "sub_bullets": 0,
+        "top_bullets": 5,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 8,
+        "sub_bullets": 0,
+        "top_bullets": 5,
+        "bold_leadins": 1
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "ar",
+      "topic": "payments",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 5,
+        "numbered_steps": 12,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "ar",
+      "topic": "plugins",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 8,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 2,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "ar",
+      "topic": "recovery",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 0,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 0,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 3
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "ar",
+      "topic": "reports",
+      "signature": {
+        "headings": 16,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 15,
+        "bold_leadins": 15
+      },
+      "english": {
+        "headings": 16,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 15,
+        "bold_leadins": 16
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "ar",
+      "topic": "sell",
+      "signature": {
+        "headings": 16,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 16,
+        "bold_leadins": 6
+      },
+      "english": {
+        "headings": 17,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 20,
+        "bold_leadins": 10
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "ar",
+      "topic": "vouchers",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 8,
+        "bold_leadins": 4
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 8,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "de",
+      "topic": "reports",
+      "signature": {
+        "headings": 16,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 15,
+        "bold_leadins": 15
+      },
+      "english": {
+        "headings": 16,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 15,
+        "bold_leadins": 16
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "de",
+      "topic": "sell",
+      "signature": {
+        "headings": 16,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 16,
+        "bold_leadins": 6
+      },
+      "english": {
+        "headings": 17,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 20,
+        "bold_leadins": 10
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "fa",
+      "topic": "categories",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 2
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "fa",
+      "topic": "country-settings",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 0,
+        "sub_bullets": 0,
+        "top_bullets": 6,
+        "bold_leadins": 2
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 7,
+        "bold_leadins": 3
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "fa",
+      "topic": "fiscal-device",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 0,
+        "sub_bullets": 0,
+        "top_bullets": 7,
+        "bold_leadins": 2
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 7,
+        "bold_leadins": 2
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "fa",
+      "topic": "fiscal-register",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "fa",
+      "topic": "kitchen-stations",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 8,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 8,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "fa",
+      "topic": "multitill",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 12,
+        "sub_bullets": 1,
+        "top_bullets": 4,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 12,
+        "sub_bullets": 3,
+        "top_bullets": 4,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "fa",
+      "topic": "option-sets",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "fa",
+      "topic": "order-status",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 7,
+        "sub_bullets": 0,
+        "top_bullets": 5,
+        "bold_leadins": 2
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 8,
+        "sub_bullets": 0,
+        "top_bullets": 5,
+        "bold_leadins": 1
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "fa",
+      "topic": "payments",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 5,
+        "numbered_steps": 12,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "fa",
+      "topic": "plugins",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 8,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 2,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "fa",
+      "topic": "quickstart",
+      "signature": {
+        "headings": 10,
+        "numbered_steps": 22,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 10,
+        "numbered_steps": 22,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "fa",
+      "topic": "recovery",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 0,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 0,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 3
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "fa",
+      "topic": "sell",
+      "signature": {
+        "headings": 16,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 16,
+        "bold_leadins": 6
+      },
+      "english": {
+        "headings": 17,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 20,
+        "bold_leadins": 10
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "fa",
+      "topic": "tax-codes",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 2,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "fa",
+      "topic": "till-designer",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 2,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "fa",
+      "topic": "updates",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 8,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "fa",
+      "topic": "vouchers",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 8,
+        "bold_leadins": 6
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 8,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "alerts",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 2,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "categories",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 2
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "country-settings",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 6,
+        "bold_leadins": 3
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 7,
+        "bold_leadins": 3
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "fiscal-device",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 7,
+        "bold_leadins": 4
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 7,
+        "bold_leadins": 2
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "fiscal-register",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "kitchen-stations",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 8,
+        "bold_leadins": 2
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 8,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "multitill",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 12,
+        "sub_bullets": 1,
+        "top_bullets": 4,
+        "bold_leadins": 5
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 12,
+        "sub_bullets": 3,
+        "top_bullets": 4,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "option-sets",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 5,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "order-status",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 7,
+        "sub_bullets": 0,
+        "top_bullets": 5,
+        "bold_leadins": 2
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 8,
+        "sub_bullets": 0,
+        "top_bullets": 5,
+        "bold_leadins": 1
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "payments",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 5,
+        "numbered_steps": 12,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "plugins",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 8,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 2,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "quickstart",
+      "signature": {
+        "headings": 10,
+        "numbered_steps": 22,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 10,
+        "numbered_steps": 22,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "recovery",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 0,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 0,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 3
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "reports",
+      "signature": {
+        "headings": 16,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 15,
+        "bold_leadins": 17
+      },
+      "english": {
+        "headings": 16,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 15,
+        "bold_leadins": 16
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "sell",
+      "signature": {
+        "headings": 16,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 16,
+        "bold_leadins": 6
+      },
+      "english": {
+        "headings": 17,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 20,
+        "bold_leadins": 10
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "tables",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 7,
+        "bold_leadins": 2
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 7,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "tax-codes",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 2,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "till-designer",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 2,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "translations",
+      "signature": {
+        "headings": 1,
+        "numbered_steps": 0,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 1,
+        "numbered_steps": 0,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "tr",
+      "topic": "vouchers",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 8,
+        "bold_leadins": 6
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 8,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    }
+  ]
+}
