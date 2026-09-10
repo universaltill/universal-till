@@ -216,6 +216,7 @@ func init() {
 //     the flat grid (resolved Group no longer matches registerMenu's skip)
 //     AND still inside /admin (raw CoreMenu's original Group still matched
 //     here).
+//
 // Reading the identical resolved list registerMenu builds is what keeps
 // "which surface renders this entry" agreeing in both directions.
 //
