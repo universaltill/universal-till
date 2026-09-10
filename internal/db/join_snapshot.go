@@ -90,7 +90,13 @@ func RedactedJoinSnapshot(db *sql.DB, dbPath string) (string, func(), error) {
 	// invariant (ut-docs#1239) — its current statements need no temp
 	// b-tree, but Android has no writable temp dir to fall back on if
 	// that ever changes.
-	cdb, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=secure_delete(1)&_pragma=temp_store(2)", copyPath))
+	// escapeSQLiteURIPath (db.go, ut-docs#2030): copyPath inherits the data
+	// dir verbatim via BackupDir, so it carries the same '#'/'?'/'%'
+	// exposure Open()/OpenReadOnly() had. Unescaped, this isn't just a
+	// wrong-file risk — a truncated DSN drops the query string entirely,
+	// silently disabling secure_delete(1) above, which is exactly the
+	// pragma this whole function exists to guarantee.
+	cdb, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=secure_delete(1)&_pragma=temp_store(2)", escapeSQLiteURIPath(copyPath)))
 	if err != nil {
 		cleanup()
 		return "", nil, fmt.Errorf("open join snapshot copy: %w", err)
