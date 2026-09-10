@@ -1365,6 +1365,7 @@
   "reports.days": "روز",
   "reports.dead_stock": "موجودی راکد",
   "reports.dead_stock_hint": "در انبار هست اما در این بازه حتی یک بار هم فروخته نشده — پولِ خوابیده در قفسه.",
+  "reports.discounts": "تخفیف‌ها",
   "reports.eod.article_print.help": "فقط بخش «بر اساس کالا» در گزارش پایان روز چاپی را کنترل می‌کند — گزارش روی صفحه همیشه همهٔ کالاها را نشان می‌دهد.",
   "reports.eod.article_print.label": "فهرست کالاهای چاپی",
   "reports.eod.article_print_cap.label": "N برتر",
