@@ -37,6 +37,11 @@
          design (login.html/setup.html/self_order*.html are a documented
          gap, not an oversight). -->
     <script defer src="/public/input-heartbeat.js?v={{ assetv "public/input-heartbeat.js" }}"></script>
+    <!-- ut-docs#2010: the app-wide list/edit standard's behaviour (record
+         dialog open/close/Escape/discard guard + list-header search filter),
+         attribute-driven and a no-op on any page without that markup — see
+         web/public/record-dialog.js's own header. -->
+    <script defer src="/public/record-dialog.js?v={{ assetv "public/record-dialog.js" }}"></script>
   </head>
   <body class="{{ if kiosk }}kiosk{{ end }}{{ if .saleScreen }} sale-screen{{ end }}{{ if .menuScreen }} menu-screen{{ end }}"
         data-currency="{{ currency.Code }}" data-currency-decimals="{{ currency.Decimals }}"
