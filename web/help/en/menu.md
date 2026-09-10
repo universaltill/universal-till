@@ -4,8 +4,8 @@ title: The Menu screen
 section: Everyday selling
 order: 30
 summary: One screen of big touch tiles that takes you to every part of the till.
-routes: [/menu, /settings/menu]
-keywords: [menu, navigation, tiles]
+routes: [/menu, /settings/menu, /admin]
+keywords: [menu, navigation, tiles, administration]
 ---
 
 # The Menu screen
@@ -14,7 +14,7 @@ Tap **☰ Menu** on the sale screen to open a page of big touch tiles — one fo
 
 ## Administration
 
-Set-up tiles you touch once and rarely return to — Country settings, Translations, the fiscal register/device page, Locations and Registers — sit together under an **Administration** heading, below the everyday tiles. Users, Kitchen stations and Bluetooth devices stay outside this group: you manage those more often than a one-time setup.
+Set-up tiles you touch once and rarely return to — Country settings, Translations, the fiscal register/device page, Locations and Registers — sit behind one **Administration** tile, below the everyday tiles. Tap it to open a page listing them in three groups: Fiscal, Locations, Localization. Users, Kitchen stations and Bluetooth devices stay outside this tile: you manage those more often than a one-time setup.
 
 ## Tiles a layout plugin has hidden
 

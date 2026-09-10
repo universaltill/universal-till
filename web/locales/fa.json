@@ -1,4 +1,8 @@
 {
+  "admin.group.fiscal": "مالیات",
+  "admin.group.localization": "بومی‌سازی",
+  "admin.group.locations": "مکان‌ها",
+  "admin.group.other": "سایر",
   "ai.identify.button": "شناسایی با دوربین",
   "ai.identify.camera_busy": "دوربین در حال استفاده توسط برنامه‌ای دیگر است. برنامه دیگر را ببندید و دوباره تلاش کنید.",
   "ai.identify.camera_error": "دوربین در دسترس نیست",

@@ -897,6 +897,10 @@ var renderFiles = []string{
 	// winner) — a page that uses it must define both, see the partial.
 	"ui/partials/list_header.html",
 	"ui/partials/record_dialog.html",
+	// ut-docs#2008: web/ui/pages/admin.html includes this by its
+	// {{ define "admin_tree" }} name — same riding-along mechanism as
+	// items_rail.html above, and the only call site today.
+	"ui/partials/admin_tree.html",
 }
 
 // Render full page with layout + page + common partials
