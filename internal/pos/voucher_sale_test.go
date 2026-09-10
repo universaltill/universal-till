@@ -274,6 +274,154 @@ func TestCompleteSale_VoucherFullyRedeemed(t *testing.T) {
 	}
 }
 
+// ut-docs#1851: a voucher whose balance is LESS than the sale total must be
+// combinable with a second payment method for the remainder, in the same
+// sale — the split-tender panel (ut-docs#1832, web/public/app.js
+// addPayment()) already lets an operator queue a voucher leg and a cash/card
+// leg before submitting one combined `payments` array, and netPayments
+// (sales.go) already has running-sum-aware over-tender protection built for
+// exactly this ("outstanding := total.Sub(sum)" uses only the payments
+// before the voucher leg). Nothing exercised that combination end to end
+// before this test — every other voucher test in this file pays with the
+// voucher alone or with cash alone, never both in one sale.
+func TestCompleteSale_VoucherPlusCashSplitTender(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupVoucherDB(t)
+
+	if _, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		VoucherIssues: []VoucherIssueInput{{VoucherID: "GS-SPLIT1", Amount: money.FromMinor(600)}},
+		Payments:      []PaymentInput{{MethodID: "cash", Amount: money.FromMinor(600)}},
+	}); err != nil {
+		t.Fatalf("issue sale: %v", err)
+	}
+
+	// articleLine() totals 1000 (tax-inclusive). The voucher covers 600 of
+	// it; cash covers the remaining 400 in the same sale, same tender call.
+	saleID, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		Lines: []SaleLineInput{articleLine()},
+		Payments: []PaymentInput{
+			{MethodID: "voucher", VoucherID: "GS-SPLIT1", Amount: money.FromMinor(600)},
+			{MethodID: "cash", Amount: money.FromMinor(400)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("split voucher+cash sale: %v", err)
+	}
+
+	_, _, total := saleRow(t, sqlDB, saleID)
+	if total != 1000 {
+		t.Fatalf("sale total = %d, want 1000", total)
+	}
+
+	var balance int64
+	var status string
+	if err := sqlDB.QueryRow(`SELECT balance, status FROM vouchers WHERE id = 'GS-SPLIT1'`).Scan(&balance, &status); err != nil {
+		t.Fatalf("read voucher: %v", err)
+	}
+	if balance != 0 || status != "redeemed" {
+		t.Fatalf("voucher after full draw-down via split tender: balance=%d status=%q, want 0/'redeemed'", balance, status)
+	}
+
+	var redAmount int64
+	if err := sqlDB.QueryRow(`SELECT amount FROM voucher_transactions WHERE voucher_id = 'GS-SPLIT1' AND type = 'redemption' AND sale_id = ?`, saleID).Scan(&redAmount); err != nil {
+		t.Fatalf("redemption tx row: %v", err)
+	}
+	if redAmount != 600 {
+		t.Fatalf("redemption tx amount = %d, want 600 (only the voucher's own leg, not the combined total)", redAmount)
+	}
+
+	// Row count first, and independently of the map below -- a duplicate
+	// INSERT of the same method_id would overwrite in the map and still
+	// read back as "2 distinct methods" even though 3 rows were persisted.
+	var rowCount int
+	if err := sqlDB.QueryRow(`SELECT COUNT(*) FROM payments WHERE sale_id = ?`, saleID).Scan(&rowCount); err != nil {
+		t.Fatalf("count payment rows: %v", err)
+	}
+	if rowCount != 2 {
+		t.Fatalf("persisted %d payment rows, want exactly 2 (voucher leg + cash leg)", rowCount)
+	}
+
+	rows, err := sqlDB.Query(`SELECT method_id, amount, COALESCE(voucher_id, '') FROM payments WHERE sale_id = ? ORDER BY method_id`, saleID)
+	if err != nil {
+		t.Fatalf("read payments: %v", err)
+	}
+	defer rows.Close()
+	got := map[string]struct {
+		amount int64
+		vid    string
+	}{}
+	for rows.Next() {
+		var method, vid string
+		var amount int64
+		if err := rows.Scan(&method, &amount, &vid); err != nil {
+			t.Fatalf("scan payment row: %v", err)
+		}
+		got[method] = struct {
+			amount int64
+			vid    string
+		}{amount, vid}
+	}
+	if len(got) != 2 {
+		t.Fatalf("persisted rows cover %d distinct methods, want 2 (voucher leg + cash leg)", len(got))
+	}
+	if got["cash"].amount != 400 || got["cash"].vid != "" {
+		t.Fatalf("cash leg = %+v, want amount 400 and no voucher_id", got["cash"])
+	}
+	if got["voucher"].amount != 600 || got["voucher"].vid != "GS-SPLIT1" {
+		t.Fatalf("voucher leg = %+v, want amount 600 and voucher_id GS-SPLIT1", got["voucher"])
+	}
+}
+
+// Independent review of ut-docs#1851: the test above always places the
+// voucher leg where the running sum is still zero, which can't distinguish
+// netPayments' actual running-sum-aware over-tender cap (outstanding :=
+// total.Sub(sum), sales.go) from a naive cap against the whole sale total --
+// both would refuse to look wrong there. Placing the voucher leg SECOND,
+// behind a cash leg that already covers part of the total, is the only
+// shape that tells them apart: with total 1000 and a 400 cash leg already
+// applied, only 600 is still outstanding, so a 700 voucher leg must be
+// refused (ErrVoucherOvertender) even though 700 alone is well within the
+// voucher's own 700 balance and even within the sale's own 1000 total. A
+// naive `total` cap would wrongly allow it, silently confiscating 100 minor
+// units from the voucher for nothing the sale needed.
+func TestCompleteSale_VoucherOvertenderIsRunningSumAware(t *testing.T) {
+	ctx := context.Background()
+	sqlDB := setupVoucherDB(t)
+
+	if _, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		VoucherIssues: []VoucherIssueInput{{VoucherID: "GS-SPLIT2", Amount: money.FromMinor(700)}},
+		Payments:      []PaymentInput{{MethodID: "cash", Amount: money.FromMinor(700)}},
+	}); err != nil {
+		t.Fatalf("issue sale: %v", err)
+	}
+
+	_, err := CompleteSale(ctx, sqlDB, SaleInput{
+		SaleType: "sale", Currency: "EUR", TaxInclusive: true,
+		Lines: []SaleLineInput{articleLine()},
+		Payments: []PaymentInput{
+			{MethodID: "cash", Amount: money.FromMinor(400)},
+			{MethodID: "voucher", VoucherID: "GS-SPLIT2", Amount: money.FromMinor(700)},
+		},
+	})
+	if !errors.Is(err, ErrVoucherOvertender) {
+		t.Fatalf("split sale with a voucher leg exceeding what's still outstanding = %v, want %v", err, ErrVoucherOvertender)
+	}
+
+	// The whole sale must roll back -- the voucher must still hold its
+	// original, undebited balance, not a partial or confiscated one.
+	var balance int64
+	var status string
+	if err := sqlDB.QueryRow(`SELECT balance, status FROM vouchers WHERE id = 'GS-SPLIT2'`).Scan(&balance, &status); err != nil {
+		t.Fatalf("read voucher: %v", err)
+	}
+	if balance != 700 || status != "active" {
+		t.Fatalf("voucher after rejected overtender: balance=%d status=%q, want 700/'active' (untouched)", balance, status)
+	}
+}
+
 // Overspend is rejected outright (no partial split logic in this card) and
 // the whole sale rolls back — no sale row, no debit.
 func TestCompleteSale_VoucherRedemptionRejectsOverspend(t *testing.T) {
