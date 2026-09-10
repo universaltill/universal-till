@@ -13,7 +13,12 @@
 {{ end }}
 
 {{ if .rows }}
-<div class="card users-list">
+{{/* menulayout-hidden-section: distinguishes this table from the amended
+     one below for e2e selectors — both are `table.table`, and a plugin
+     can legitimately populate both at once (a hide here, an unrelated
+     relabel there), so a bare `table.table` locator is ambiguous on this
+     page (ut-docs#1921 review of the e2e suite after this section shipped). */}}
+<div class="card users-list menulayout-hidden-section">
   <table class="table">
     <thead>
       <tr>
@@ -70,7 +75,7 @@
      behaviour. */}}
 <h2>{{ T "menulayout.amended.title" }}</h2>
 <p class="muted">{{ T "menulayout.amended.intro" }}</p>
-<div class="card users-list">
+<div class="card users-list menulayout-amended-section">
   <table class="table">
     <thead>
       <tr>

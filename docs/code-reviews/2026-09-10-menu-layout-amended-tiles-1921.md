@@ -74,6 +74,29 @@ action to find). It only earns its keep alongside the other new tests
 that require the section to actually render; left as-is rather than
 strengthening it, since the combination already covers the real claim.
 
+### 4. CI red after opening the PR: real e2e regression, FIXED
+The `UI E2E` check failed on push — `e2e/tests/layout-plugin-menu-1904.spec.ts`
+drives the real `plugins/layout-salon` fixture plugin against `/settings/menu`,
+and that plugin's own amendments both hide two tiles AND relabel `/items`
+to "Services". So in this exact, already-existing test scenario, the new
+amended-tiles table legitimately renders too — and two pre-existing
+assertions used a bare `table.table`/`table.table tbody tr` locator that
+implicitly assumed only one `table.table` existed on the page:
+- `a merchant can find what the plugin hid...` expected exactly 2 rows;
+  got 3 (2 hides + the /items relabel row).
+- `the hidden-tiles surface survives RTL...` hit a Playwright strict-mode
+  violation (`table.table` resolved to 2 elements).
+
+Fixed by adding `.menulayout-hidden-section`/`.menulayout-amended-section`
+wrapper classes to each table's container and scoping both tests' locators
+to the hides section specifically (the RTL test's whole-page horizontal-
+overflow assertion stays unscoped — deliberately, since the amended
+section is part of the same page and must not reintroduce scroll either).
+Reproduced locally first (`npx playwright test
+tests/layout-plugin-menu-1904.spec.ts --project=layout` — 2 of 5 failed,
+matching CI exactly), then confirmed the fix (5/5 pass), then re-ran the
+whole `layout` project (still 5/5 — no other spec touches this page).
+
 ### Checked clean
 - No filesystem writes anywhere in this diff (grepped, not assumed) — the
   "missing `os.MkdirAll`"/"cwd-relative path vs `paths.Data`" bug classes
