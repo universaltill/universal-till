@@ -14,7 +14,7 @@ Umsatzsummen nach Tag, Abteilung und Zahlungsart; Bestseller und Ladenhüter; to
 
 ## Verwendung
 
-1. Öffnen Sie „Berichte“: Die Zeile oben zeigt immer Ihre Kennzahlen für den gewählten Zeitraum (Umsatz, Verkäufe, Steuer, Rückerstattungen, Netto, Vorjahr) und eine Warnung bei niedrigem Bestand.
+1. Öffnen Sie „Berichte“: Die Zeile oben zeigt immer Ihre Kennzahlen für den gewählten Zeitraum (Umsatz, Verkäufe, Durchschnittsverkauf, Steuer, Rückerstattungen, Netto, Vorjahr) und eine Warnung bei niedrigem Bestand.
 2. Wählen Sie darunter einen Reiter — Umsatztrend, Artikel, Steuer, Prognose, Zahlungen & Kanäle, Trinkgeld oder Tagesabschluss (EOD) — und dieser Bericht lädt beim Öffnen.
 3. Führen Sie Tagesabschluss (im Reiter „Tagesabschluss“) beim Schließen aus: Er summiert alles **seit Ihrem letzten Abschluss** — nicht den Kalendertag — und kann für Ihre Unterlagen gedruckt werden. Ein Café, das gestern um 19:19 Uhr geschlossen hat und heute um 19:19 Uhr schließt, erhält jeden Verkauf dazwischen im heutigen Bericht, einschließlich der Verkäufe von gestern Nacht nach 19:19 Uhr, die ein Kalendertag-Bericht sonst gestrandet hätte; alles, was nach dem heutigen Abschluss gebucht wird, gehört zum nächsten. Jeder Abschluss zeichnet den genauen Zeitpunkt auf, von dem bis zu dem er reicht, sodass Sie immer genau sehen können, was ein Bericht abdeckt: Der gedruckte Bericht trägt eine **Zeitraum**-Zeile, und die Archivliste zeigt dieselben beiden Zeitstempel nebeneinander (`2026-08-23T19:10:00+02:00 – 2026-08-24T19:19:00+02:00`), in Ihrer eigenen Ortszeit. Ihr allererster Abschluss hat keinen früheren Abschluss, von dem aus er startet, und deckt daher alles bis zum Moment des Abschlusses ab und zeigt nur diesen einen Endzeitstempel.
 
