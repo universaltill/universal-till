@@ -43,6 +43,11 @@ func NewCatalogTestDB(t *testing.T) *sql.DB {
 		`CREATE TABLE tax_codes (id TEXT PRIMARY KEY, name TEXT NOT NULL, rate_basis_points INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1, takeaway_rate_basis_points INTEGER);`,
 		`CREATE TABLE item_modifier_groups (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, name TEXT NOT NULL, required INTEGER NOT NULL DEFAULT 0, min_select INTEGER NOT NULL DEFAULT 0, max_select INTEGER NOT NULL DEFAULT 1, sort_order INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE item_modifier_options (id TEXT PRIMARY KEY, group_id TEXT NOT NULL, name TEXT NOT NULL, price_delta_minor INTEGER NOT NULL DEFAULT 0, sort_order INTEGER NOT NULL DEFAULT 0, is_active INTEGER NOT NULL DEFAULT 1);`,
+		// Mirrors migration 025 (ADR-0090, ut-docs#2013): which items use a
+		// modifier group — ModifierRepo reads membership through this table,
+		// so a fixture that inserts a group row directly must add its link
+		// row too (SeedModifierGroup does both).
+		`CREATE TABLE item_modifier_group_links (item_id TEXT NOT NULL, group_id TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, FOREIGN KEY (item_id) REFERENCES items (id) ON DELETE CASCADE, FOREIGN KEY (group_id) REFERENCES item_modifier_groups (id) ON DELETE CASCADE, PRIMARY KEY (item_id, group_id));`,
 		// Mirrors migration 017 (ut-docs#1900): reusable option sets and the
 		// links that make the variant generator idempotent.
 		`CREATE TABLE option_sets (id TEXT PRIMARY KEY, name TEXT NOT NULL UNIQUE, is_active INTEGER NOT NULL DEFAULT 1);`,
@@ -88,6 +93,29 @@ func SeedItem(t *testing.T, db *sql.DB, seed ItemSeed) {
 	if _, err := db.Exec(`INSERT INTO items(id, sku, name, base_price, tax_code_id, is_active) VALUES(?,?,?,?,?,?)`,
 		seed.ID, seed.SKU, seed.Name, seed.BasePrice, seed.TaxCodeID, active); err != nil {
 		t.Fatalf("seed item: %v", err)
+	}
+}
+
+// SeedModifierGroup inserts a modifier group row the way a pre-ADR-0090
+// fixture used to (directly into item_modifier_groups) PLUS the
+// item_modifier_group_links row migration 025 backfills for it — the shape
+// every ModifierRepo read path now expects (membership is read through the
+// link table, sort_order off the link row).
+func SeedModifierGroup(t *testing.T, db *sql.DB, id, itemID, name string, required bool, minSelect, maxSelect, sortOrder int, active bool) {
+	t.Helper()
+	req, act := 0, 0
+	if required {
+		req = 1
+	}
+	if active {
+		act = 1
+	}
+	if _, err := db.Exec(`INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active) VALUES (?,?,?,?,?,?,?,?)`,
+		id, itemID, name, req, minSelect, maxSelect, sortOrder, act); err != nil {
+		t.Fatalf("seed modifier group: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO item_modifier_group_links (item_id, group_id, sort_order) VALUES (?,?,?)`, itemID, id, sortOrder); err != nil {
+		t.Fatalf("seed modifier group link: %v", err)
 	}
 }
 

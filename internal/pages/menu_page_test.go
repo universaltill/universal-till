@@ -167,76 +167,45 @@ func TestMenuPage_ManagerOnlyTilesGatedByRole(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec2.Code, rec2.Body.String())
 	}
 	body := rec2.Body.String()
-	if !strings.Contains(body, `href="/users"`) || !strings.Contains(body, `href="/translations"`) {
-		t.Fatalf("expected the manager-only tiles with UT_AUTH=off, got: %s", body)
+	if !strings.Contains(body, `href="/users"`) {
+		t.Fatalf("expected the manager-only /users tile with UT_AUTH=off, got: %s", body)
 	}
 	if !strings.Contains(body, `href="/report-issue"`) || !strings.Contains(body, `data-icon="bug"`) {
 		t.Fatalf("expected the report-issue tile with its icon, reachable from the menu with UT_AUTH=off, got: %s", body)
 	}
-	if !strings.Contains(body, `href="/locations"`) || !strings.Contains(body, `data-icon="map-pin"`) {
-		t.Fatalf("expected the locations tile with its icon, reachable from the menu with UT_AUTH=off, got: %s", body)
+	// ut-docs#2008: /translations and /locations (Group:
+	// "menu.group.administration" in uislot.CoreMenu) no longer get their
+	// own tiles on /menu at all, manager or not — they now live inside
+	// /admin, reached through the single gated "/admin" tile below.
+	if strings.Contains(body, `href="/translations"`) {
+		t.Fatalf("expected no direct /translations tile on /menu any more (ut-docs#2008: it now lives inside /admin), got: %s", body)
 	}
-	if strings.Contains(rec.Body.String(), `href="/locations"`) {
-		t.Fatalf("expected no /locations tile for a non-manager request, got: %s", rec.Body.String())
+	if strings.Contains(body, `href="/locations"`) {
+		t.Fatalf("expected no direct /locations tile on /menu any more (ut-docs#2008: it now lives inside /admin), got: %s", body)
+	}
+	if !strings.Contains(body, `href="/admin"`) || !strings.Contains(body, `data-icon="lock"`) {
+		t.Fatalf("expected the /admin tile with its icon, reachable from the menu with UT_AUTH=off, got: %s", body)
+	}
+	if strings.Contains(rec.Body.String(), `href="/admin"`) {
+		t.Fatalf("expected no /admin tile for a non-manager request, got: %s", rec.Body.String())
 	}
 }
 
-// ut-docs#1084: the fiscal-register tile requires BOTH country=DE and the
-// German tax plugin installed+active -- country alone (ut-docs#1026's
-// objection) must no longer be sufficient.
-func TestMenuPage_FiscalRegisterTileRequiresPluginNotJustCountry(t *testing.T) {
+// ut-docs#2008: fiscal-register/fiscal-device (like the other four Group:
+// "menu.group.administration" entries) no longer get their own tile on
+// /menu in ANY state -- even DE + the German tax plugin active, which used
+// to be exactly the state that unlocked this tile directly (ut-docs#1084).
+// The full DE/TR + plugin-state visibility matrix that used to live here as
+// four separate tests (TestMenuPage_FiscalRegisterTileRequiresPluginNot-
+// JustCountry/...HiddenWhenPluginDisabled/...HiddenOutsideGermanyEvenWith-
+// Plugin/...HiddenForTurkeyEvenWithGermanPluginActive) moved to
+// admin_page_test.go, which is the surface that matrix actually governs
+// now (GET /admin's Fiscal cluster) -- this is the regression check that
+// the old surface stays empty.
+func TestMenuPage_FiscalTilesNeverRenderDirectlyOnMenu(t *testing.T) {
 	mux, dp := newMenuPageTestDeps(t, nil)
 	t.Setenv("UT_AUTH", "off")
 	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "DE" })
-
-	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if strings.Contains(rec.Body.String(), `href="/fiscal-register"`) {
-		t.Fatalf("expected no fiscal-register tile for DE with no plugin installed, got: %s", rec.Body.String())
-	}
-
-	seedActiveTaxDePlugin(t, dp.Db)
-	rec2 := httptest.NewRecorder()
-	mux.ServeHTTP(rec2, req)
-	if rec2.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec2.Code, rec2.Body.String())
-	}
-	body := rec2.Body.String()
-	if !strings.Contains(body, `href="/fiscal-register"`) || !strings.Contains(body, `data-icon="clipboard-list"`) {
-		t.Fatalf("expected the fiscal-register tile once DE + plugin active, got: %s", body)
-	}
-}
-
-// The gate checks is_active, not merely row existence -- a plugin that's
-// installed but disabled (ut-docs#531's precedent: a merchant who imports
-// before enabling it) must be treated the same as not installed at all.
-func TestMenuPage_FiscalRegisterTileHiddenWhenPluginDisabled(t *testing.T) {
-	mux, dp := newMenuPageTestDeps(t, nil)
-	t.Setenv("UT_AUTH", "off")
-	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "DE" })
-	seedDisabledTaxDePlugin(t, dp.Db)
-
-	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if strings.Contains(rec.Body.String(), `href="/fiscal-register"`) {
-		t.Fatalf("expected no fiscal-register tile for DE with the plugin installed but disabled, got: %s", rec.Body.String())
-	}
-}
-
-// A non-DE shop must never see the tile even with the plugin installed --
-// country stays a necessary pre-filter, it just isn't sufficient alone
-// any more.
-func TestMenuPage_FiscalRegisterTileHiddenOutsideGermanyEvenWithPlugin(t *testing.T) {
-	mux, dp := newMenuPageTestDeps(t, nil)
-	t.Setenv("UT_AUTH", "off")
 	seedActiveTaxDePlugin(t, dp.Db)
 
 	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
@@ -245,33 +214,15 @@ func TestMenuPage_FiscalRegisterTileHiddenOutsideGermanyEvenWithPlugin(t *testin
 	if rec.Code != http.StatusOK {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), `href="/fiscal-register"`) {
-		t.Fatalf("expected no fiscal-register tile outside Germany even with the plugin active, got: %s", rec.Body.String())
+	body := rec.Body.String()
+	if strings.Contains(body, `href="/fiscal-register"`) {
+		t.Fatalf("expected no direct /fiscal-register tile on /menu even with DE + plugin active (ut-docs#2008: it now lives inside /admin), got: %s", body)
 	}
-}
-
-// ut-docs#1208 widened fiscal.RequiresHardGate to also cover Turkey (an
-// unrelated YN ÖKC obligation, not §146a Abs. 4 AO) -- this tile's gate must
-// stay an explicit country=="DE" check, not fiscal.RequiresHardGate, or a TR
-// shop would wrongly start seeing Germany's fiscal-register tile the moment
-// it happened to have the (unrelated) German tax plugin active.
-func TestMenuPage_FiscalRegisterTileHiddenForTurkeyEvenWithGermanPluginActive(t *testing.T) {
-	mux, dp := newMenuPageTestDeps(t, nil)
-	t.Setenv("UT_AUTH", "off")
-	seedActiveTaxDePlugin(t, dp.Db)
-	if err := settings.NewStore(dp.Db).Set(t.Context(), "store.country", "TR"); err != nil {
-		t.Fatalf("set store.country: %v", err)
-	}
-	dp.State = common.LoadState(t.Context(), settings.NewStore(dp.Db), dp.Cfg)
-
-	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	if strings.Contains(rec.Body.String(), `href="/fiscal-register"`) {
-		t.Fatalf("expected no fiscal-register tile for TR even with the German plugin active, got: %s", rec.Body.String())
+	// Guard against the test passing for the wrong reason: the /admin tile
+	// itself must still be visible, since at least one admin destination
+	// (fiscal-register, here) is.
+	if !strings.Contains(body, `href="/admin"`) {
+		t.Fatalf("expected the /admin tile once at least one admin destination is visible, got: %s", body)
 	}
 }
 
@@ -523,5 +474,28 @@ func TestMenuPage_FiscalDeviceTileStaysManagerGatedForCashier(t *testing.T) {
 	}
 	if !strings.Contains(body, `href="/help"`) {
 		t.Fatalf("expected a rendered menu with the help tile, got: %s", body)
+	}
+}
+
+// Found in second-round review, ut-docs#2008 (see ADR-0088 Decision E's
+// 2026-09-10 amendment): /admin is Protected and stays re-groupable by
+// design (only hide/relabel/re-icon are refused on a protected key), so a
+// `layout` plugin amendment regrouping /admin INTO
+// "menu.group.administration" -- the very group it exists to replace on
+// this flat grid -- installs cleanly. Without registerMenu's own
+// Key!="/admin" exemption on its group-skip, that amendment would make
+// /admin's own resolved entry satisfy the same skip that removes the six
+// destinations it leads to, vanishing the ONLY menu path to
+// /fiscal-register and /fiscal-device with no hide amendment involved at
+// all -- reproducing the exact unreachability Decision E exists to refuse,
+// through regroup instead of hide.
+func TestMenuPage_AdminTileRendersRegardlessOfGroupAmendment(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, nil)
+	t.Setenv("UT_AUTH", "off")
+	installLayoutAmendments(t, dp, map[string]any{"key": "/admin", "group": "menu.group.administration"})
+
+	body := getMenu(t, mux)
+	if !strings.Contains(body, `href="/admin"`) {
+		t.Fatalf("expected /admin to still render on /menu even when regrouped into its own group, got: %s", body)
 	}
 }

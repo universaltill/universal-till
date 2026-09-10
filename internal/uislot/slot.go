@@ -96,7 +96,21 @@ func (a Amendment) Restructures() bool {
 // journal, settings, plugins, help and issue reporting. Reorder / re-label
 // / re-group / re-icon remain allowed on them — they keep the destination
 // visible, which is the whole point of protecting it.
+//
+// ut-docs#2008: "/admin" joined this list because it is now the ONLY
+// launcher path to /fiscal-register and /fiscal-device (menu_page.go's
+// registerMenu unconditionally drops both from the flat /menu grid — see
+// its own Group=="menu.group.administration" skip). Before this card, a
+// plugin hiding one admin-group tile still left the other five, including
+// both statutory pages, individually reachable; now hiding (or relabelling
+// to something unfindable) the single /admin tile would make BOTH statutory
+// pages unreachable from any UI surface at all — exactly what Decision E
+// was tightened to prevent (see its own doc comment above). Note this does
+// NOT stop /admin being re-grouped — protected keys stay re-groupable by
+// design — see visibleAdminEntries' own explicit Key=="/admin" guard
+// (menu_page.go) for why that specific amendment needs its own defence.
 var ProtectedMenuKeys = []string{
+	"/admin",
 	"/fiscal-register",
 	"/fiscal-device",
 	"/journal",
@@ -124,8 +138,9 @@ func IsProtectedMenuKey(key string) bool {
 //
 // Order bands (documented so a `layout` author knows what a reorder value
 // lands against): 100–800 the InNav entries, PluginPagesOrder (1000)+ the
-// plugin `page` tiles, 1900 open orders, 2000 help, 2100–2500 the manager-gated destinations
-// with no Group, 2600–3100 the same gated band but grouped under
+// plugin `page` tiles, 1900 open orders, 2000 help, 2100–2550 the
+// manager-gated destinations with no Group (2550 is /admin, see below),
+// 2600–3100 the same gated band but still grouped under
 // "menu.group.administration" (ut-docs#1959) — set-once/onboarding
 // destinations (country, translations, the two statutory fiscal-device
 // pages, stock locations/registers). Kept contiguous deliberately: Resolve
@@ -133,6 +148,24 @@ func IsProtectedMenuKey(key string) bool {
 // I), so with no plugin installed the renderer walks CoreMenu as declared —
 // an ungrouped entry landing between two same-Group entries here would
 // split one heading into two identical ones.
+//
+// ut-docs#2008: the six Group: "menu.group.administration" entries no
+// longer render as tiles on the flat /menu grid at all (menu_page.go's
+// registerMenu skips any entry whose Group is this value when building
+// .Tiles) — #1959's group-heading-on-a-flat-grid is replaced by a single
+// gated "/admin" tile (Order 2550 — TestCoreMenu_IsWellFormed requires this
+// table strictly ascending, so it can't also be 2600; still the slot the
+// group heading itself used to occupy, immediately ahead of the grouped
+// entries it now stands in for) that opens /admin, a dedicated tree page
+// grouping those same six destinations into domain clusters
+// (internal/pages/admin_page.go). The
+// six entries themselves, and their Group field, are UNCHANGED here — the
+// same Group value is what internal/pages.visibleAdminEntries filters on
+// to build both the tile's own "administration" VisibleIf predicate and
+// the tree page's content, so removing Group from them would break both.
+// /admin itself deliberately has NO Group — giving it
+// "menu.group.administration" would make menu_page.go's own skip filter
+// hide the tile that is supposed to replace the heading.
 //
 // VisibleIf names are defined in menu_page.go's menuPredicates and pinned
 // by TestMenuPage_EveryCoreVisibleIfPredicateIsRegistered; the WHY behind
@@ -168,6 +201,24 @@ var CoreMenu = []Entry{
 	// group's members stay contiguous in this declaration — see the
 	// package doc comment above for why that matters.
 	{Key: "/report-issue", Href: "/report-issue", LabelKey: "issuereport.title", Icon: "bug", Order: 2500, VisibleIf: "settings"},
+	// ut-docs#2008: the single gated "Administration" tile that replaces
+	// #1959's group heading below — opens /admin, a tree page listing
+	// whichever of the six grouped destinations below the viewer can see.
+	// Reuses "menu.group.administration" as its own label (already
+	// translated in all four locales, so this needs no new key) — same
+	// text a merchant already associates with this set of destinations.
+	// "administration" (menu_page.go's menuPredicates) is true only when
+	// visibleAdminEntries(d, r) is non-empty, so the tile itself disappears
+	// rather than opening onto a page with nothing on it.
+	//
+	// Order 2550, not 2600: TestCoreMenu_IsWellFormed requires this table
+	// declared in STRICTLY ascending Order (ties included — the zero-
+	// amendment path never sorts, Decision I, so Order here IS the render
+	// order), and 2600 is already /country-settings' own value below. 2550
+	// is still "the slot the removed group heading vacated" in every way
+	// that matters: strictly between /report-issue (2500) and the group's
+	// own band (2600+), i.e. immediately ahead of it.
+	{Key: "/admin", Href: "/admin", LabelKey: "menu.group.administration", Icon: "lock", Order: 2550, VisibleIf: "administration"},
 	// ut-docs#1959: "Administration" — setup/onboarding destinations a
 	// merchant touches once and rarely returns to, grouped per the product
 	// owner's 2026-09-10 feedback. /users, /kitchen-stations and

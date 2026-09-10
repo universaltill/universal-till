@@ -167,6 +167,111 @@ func TestCategoriesPage_DeactivateBlockedWhenCategoryHasItems(t *testing.T) {
 	}
 }
 
+// postFormHtmx is postForm's htmx-boosted counterpart (ut-docs#2020): sets
+// HX-Request the same way the dialog's own hx-boosted forms
+// (categories.html's record_dialog_fields/record_dialog_destructive) do,
+// exercising renderCategoryDialogError/redirectCategories's htmx branch
+// instead of their non-htmx fallback.
+func postFormHtmx(mux *http.ServeMux, path string, form url.Values, user *auth.User) *httptest.ResponseRecorder {
+	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(form.Encode()))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("HX-Request", "true")
+	if user != nil {
+		req = auth.WithUser(req, *user)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	return rec
+}
+
+// The same refusal as TestCategoriesPage_DeactivateBlockedWhenCategoryHasItems
+// above, but from the dialog's own hx-boosted form (ut-docs#2020): the
+// response must be an in-dialog message fragment, not a redirect, so the
+// dialog stays open with the operator's edits intact — the browser/e2e side
+// of "stays open, values intact" is asserted in
+// e2e/tests/categories-record-dialog-2010.spec.ts; this pins the Go side
+// (status, content type, that the response can't possibly touch the form or
+// dialog it must leave alone, and that the row itself is untouched, same as
+// the non-htmx case above).
+func TestCategoriesPage_DeactivateBlockedRendersInDialogMessageForHtmxRequest(t *testing.T) {
+	mux, d := newCategoriesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	rec := postForm(mux, "/api/categories", url.Values{"name": {"Drinks"}}, &manager)
+	if rec.Code != http.StatusSeeOther {
+		t.Fatalf("create: code=%d", rec.Code)
+	}
+	var catID string
+	if err := d.Db.QueryRow(`SELECT id FROM categories WHERE name = 'Drinks'`).Scan(&catID); err != nil {
+		t.Fatalf("lookup: %v", err)
+	}
+	if _, err := d.Db.Exec(`INSERT INTO items (id, sku, name, base_price, is_active, category_id) VALUES ('i2', 'S2', 'Cola', 100, 1, ?)`, catID); err != nil {
+		t.Fatalf("seed item: %v", err)
+	}
+
+	rec = postFormHtmx(mux, "/api/categories/"+catID+"/active", url.Values{"active": {"0"}}, &manager)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("htmx blocked deactivate: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if rec.Header().Get("Location") != "" {
+		t.Errorf("htmx refusal must not redirect — a redirect is exactly what closed the dialog before ut-docs#2020")
+	}
+	if ct := rec.Header().Get("Content-Type"); !strings.HasPrefix(ct, "text/html") {
+		t.Errorf("Content-Type = %q, want text/html (app.js's htmx:beforeSwap only force-swaps a non-2xx text/html body)", ct)
+	}
+	body := rec.Body.String()
+	// httpx.T's translator is a package-level global, so whether it's wired
+	// here depends on whether an earlier test in this same binary run
+	// called InitI18n first — this fixture itself does not. Assert on what
+	// holds either way: the %d placeholder was substituted cleanly (no
+	// fmt.Sprintf "%!" error marker from a mismatched verb) and the active
+	// count (1) actually appears, rather than assuming one translation
+	// state over the other.
+	if strings.Contains(body, "%!") {
+		t.Errorf("deactivate_blocked's %%d placeholder did not interpolate cleanly: %s", body)
+	}
+	if !strings.Contains(body, "1") {
+		t.Errorf("body missing the active item count (1): %s", body)
+	}
+	// The response is hx-swap="innerHTML" into "#category-dialog-msg" — the
+	// aria-live region ITSELF, which must never be re-rendered (a live
+	// region generally must stay the same node across a content change for
+	// assistive tech to announce it). So the body carries ONLY the message
+	// text, no id/wrapper/form/dialog markup at all — an id or a <form>/
+	// <dialog> tag here would mean either the wrong element got swapped, or
+	// this swap could reach (and so potentially touch) what the operator
+	// typed, which the whole design exists to prevent.
+	if strings.Contains(body, "id=") || strings.Contains(body, "<form") || strings.Contains(body, "<dialog") {
+		t.Errorf("response must be ONLY the message text — no wrapper, form or dialog markup: %s", body)
+	}
+	var active int
+	if err := d.Db.QueryRow(`SELECT is_active FROM categories WHERE id = ?`, catID).Scan(&active); err != nil || active != 1 {
+		t.Fatalf("category must remain active: active=%d err=%v", active, err)
+	}
+}
+
+// ut-docs#2020: a SUCCESSFUL htmx-boosted mutation answers with HX-Redirect
+// (a real browser navigation) rather than a bare 303 — a boosted form
+// submits via fetch/XHR, which follows a bare 303 *itself* and would hand
+// the whole /categories page's HTML to whatever hx-target the form
+// declares (see redirectCategories's own doc comment for the full
+// reasoning).
+func TestCategoriesPage_HtmxSuccessAnswersWithHXRedirectNotBareRedirect(t *testing.T) {
+	mux, _ := newCategoriesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	rec := postFormHtmx(mux, "/api/categories", url.Values{"name": {"Snacks"}}, &manager)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx create success: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if got := rec.Header().Get("HX-Redirect"); got != "/categories" {
+		t.Fatalf("HX-Redirect = %q, want /categories", got)
+	}
+	if rec.Header().Get("Location") != "" {
+		t.Errorf("a bare Location alongside HX-Redirect would be followed by the boosted form's own fetch/XHR layer and land the wrong content in the dialog's message target — must not be set")
+	}
+}
+
 // ut-docs#1585 family: categories syncs shop-wide as an admin table, so a
 // satellite-created/edited row would silently vanish on the next admin
 // pull -- every mutation route must refuse on a replica instead.

@@ -457,6 +457,43 @@
   // for a new item, a catalog row click for edit) rather than always
   // being on screen.
   var modal = document.getElementById('item-form-modal');
+  // ut-docs#2024: the ≤700px tab strip (app.css) becomes a single
+  // horizontally-scrollable row with no visual hint that more tabs sit
+  // off-screen. tabBarFade() (below) drives app.css's
+  // .tab-bar--fade-start/-end classes; this listener keeps it live while
+  // scrolling/swiping (passive: this never calls preventDefault, so it
+  // can't block the scroll itself). The initial post-open check is wired
+  // into openModal()'s existing afterTabPaint callback, further down.
+  var tabBar = modal.querySelector('.catalog-form-head .tab-bar');
+  if (tabBar) {
+    tabBar.addEventListener('scroll', function () { tabBarFade(tabBar); }, { passive: true });
+  }
+  // ut-docs#2032: scroll alone misses a viewport resize/rotation that
+  // crosses the ≤700px breakpoint (app.css) while the dialog stays open —
+  // no scroll ever fires, so the fade classes go stale until the next
+  // scroll or reopen.
+  //
+  // This whole IIFE re-runs on every htmx fragment swap that re-renders
+  // this "content" block (internal/pages/catalog/handlers.go, e.g. the
+  // Catalog/Modifiers/Option-sets rail in items_rail.html swapping
+  // #items-panel) — a plain `window.addEventListener` right here, once per
+  // swap, would leak: `window` outlives the swapped-out DOM, so every
+  // revisit pins one more permanent listener closing over that render's
+  // now-detached `modal`/`tabBar`. A one-time global guard (registered at
+  // most once for the page's whole lifetime, never per swap) plus
+  // resolving the CURRENT live modal/tab-bar from the document at event
+  // time — never closing over this render's `modal`/`tabBar` — fixes both
+  // the leak and the staleness a swap would otherwise leave behind.
+  if (!window.__catalogTabBarFadeResizeWired) {
+    window.__catalogTabBarFadeResizeWired = true;
+    var recomputeLiveTabBarFade = function () {
+      var liveModal = document.getElementById('item-form-modal');
+      if (!liveModal || !liveModal.open) return;
+      tabBarFade(liveModal.querySelector('.catalog-form-head .tab-bar'));
+    };
+    window.addEventListener('resize', recomputeLiveTabBarFade);
+    window.addEventListener('orientationchange', recomputeLiveTabBarFade);
+  }
   // ut-docs#1901 UX fix: bumped whenever the CURRENT dialog session
   // changes — opened fresh (either trigger below) OR the operator touches
   // any field after a save (the 'input' listener below). The delayed
@@ -495,6 +532,28 @@
       return;
     }
     requestAnimationFrame(function () { requestAnimationFrame(fn); });
+  }
+  // ut-docs#2024: toggles the two fade classes app.css's ::before/::after
+  // pseudo-elements key off. Math.abs() on scrollLeft (rather than
+  // comparing against 0/scrollWidth directly) is what makes this correct
+  // for BOTH scroll-origin conventions at once — Chromium/Firefox/Safari
+  // all use "0 at the reading start, growing toward the reading end" for
+  // LTR and the mirrored "0 at the reading start, going NEGATIVE toward
+  // the reading end" for RTL (verified live, 360px, `dir="fa"`: `el.
+  // scrollLeft` ranges from 0 to -(scrollWidth-clientWidth), never
+  // positive) — so a plain `scrollLeft > 0` check silently never fires
+  // for RTL. No overflow at all (fits within its box) clears both
+  // classes rather than leaving a stale fade from a wider viewport.
+  function tabBarFade(el) {
+    if (!el) return;
+    var max = el.scrollWidth - el.clientWidth;
+    if (max <= 1) {
+      el.classList.remove('tab-bar--fade-start', 'tab-bar--fade-end');
+      return;
+    }
+    var pos = Math.abs(el.scrollLeft);
+    el.classList.toggle('tab-bar--fade-start', pos > 1);
+    el.classList.toggle('tab-bar--fade-end', pos < max - 1);
   }
   // ut-docs#1901: opened via .show(), NOT showModal() — same reasoning
   // (and same established fix, ut-docs#1385) as #hold-modal/#pfand-modal/
@@ -544,6 +603,10 @@
                       document.activeElement === deleteBtn)) {
         barcode.focus();
       }
+      // ut-docs#2024: the dialog is display:none until .show() runs, so
+      // scrollWidth/clientWidth read 0 any earlier than this — same
+      // "wait for real layout" reasoning as the barcode focus above.
+      tabBarFade(tabBar);
     });
   }
   // ut-docs#1957: the nested "Manage customization groups" dialog can add,

@@ -382,9 +382,7 @@ func TestVariantDeactivate_PanelAndValidation(t *testing.T) {
 func TestModifierGroup_UpdateRenameAndDeactivate(t *testing.T) {
 	mux, db := newCatalogMux(t)
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "S1", Name: "Coffee", BasePrice: 300, IsActive: true})
-	if _, err := db.Exec(`INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active) VALUES ('g1','itm1','Extras',0,0,2,1,1)`); err != nil {
-		t.Fatal(err)
-	}
+	testsupport.SeedModifierGroup(t, db, "g1", "itm1", "Extras", false, 0, 2, 1, true)
 
 	// Rename + deactivate in one update (unchecked box: only the hidden 0).
 	rec := postForm(t, mux, "/api/catalog/modifier-group", "panelItem=itm1&itemId=itm1&id=g1&name=Add-ons&minSelect=0&maxSelect=2&isActive=0")
@@ -430,9 +428,7 @@ func TestModifierGroup_Validation(t *testing.T) {
 func TestModifierOption_Validation(t *testing.T) {
 	mux, db := newCatalogMux(t)
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "S1", Name: "Coffee", BasePrice: 300, IsActive: true})
-	if _, err := db.Exec(`INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active) VALUES ('g1','itm1','Extras',0,0,2,1,1)`); err != nil {
-		t.Fatal(err)
-	}
+	testsupport.SeedModifierGroup(t, db, "g1", "itm1", "Extras", false, 0, 2, 1, true)
 
 	for _, tc := range []struct{ name, form string }{
 		{"missing name", "groupId=g1&itemId=itm1"},

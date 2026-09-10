@@ -43,17 +43,17 @@ func getMenu(t *testing.T, mux *http.ServeMux) string {
 // derived from CoreMenu, so this refactor and any future one is proven not
 // to move a single tile (ADR-0088 Decision I's behavioural guarantee).
 //
-// ut-docs#1959 moved /report-issue ahead of /country-settings (was between
-// /translations and the — here invisible, DE/TR-gated — fiscal tiles) so
-// the new "Administration" group (/country-settings, /translations, and,
-// when visible, /fiscal-register, /fiscal-device, /locations, /registers)
-// stays contiguous; the fiscal pair never renders here, outside DE/TR.
+// ut-docs#2008: /country-settings, /translations, /locations and /registers
+// (and, when visible, the two DE/TR fiscal tiles) no longer render as tiles
+// on this flat grid at all — #1959's "Administration" GROUP (a heading
+// plus six tiles) is replaced by a single gated "/admin" TILE in the same
+// slot (Order 2550, right after /report-issue), which opens a dedicated
+// tree page listing those same six destinations instead.
 var goldenManagerTiles = []string{
 	"/designer", "/shifts", "/journal", "/orders", "/reports", "/settings", "/plugins", "/items",
 	"/open-orders",
 	"/help",
-	"/users", "/kitchen-stations", "/bluetooth-devices", "/tables", "/report-issue", "/country-settings", "/translations",
-	"/locations", "/registers",
+	"/users", "/kitchen-stations", "/bluetooth-devices", "/tables", "/report-issue", "/admin",
 }
 
 func TestMenuPage_GoldenZeroPluginTileOrder(t *testing.T) {
@@ -61,14 +61,17 @@ func TestMenuPage_GoldenZeroPluginTileOrder(t *testing.T) {
 	mux, _ := newMenuPageTestDeps(t, baseMenu)
 
 	// No session, UT_AUTH unset: a cashier sees the nav tiles, Open orders
-	// (ut-docs#1918 -- an ungated cashier surface) and Help only.
+	// (ut-docs#1918 -- an ungated cashier surface) and Help only — no
+	// /admin either, since visibleAdminEntries is empty for a cashier
+	// (every one of the six it gates behind is itself settings/fiscal/
+	// stock_location_management-gated).
 	cashier := menuTileHrefs(getMenu(t, mux))
 	wantCashier := goldenManagerTiles[:10]
 	if strings.Join(cashier, " ") != strings.Join(wantCashier, " ") {
 		t.Fatalf("zero-plugin cashier tiles drifted:\n got %v\nwant %v", cashier, wantCashier)
 	}
 	if strings.Contains(getMenu(t, mux), "menu-group") {
-		t.Fatalf("a cashier (no settings access) must not see the Administration group heading")
+		t.Fatalf("a cashier (no settings access) must not see any group heading")
 	}
 
 	t.Setenv("UT_AUTH", "off")
@@ -77,17 +80,20 @@ func TestMenuPage_GoldenZeroPluginTileOrder(t *testing.T) {
 	if strings.Join(manager, " ") != strings.Join(goldenManagerTiles, " ") {
 		t.Fatalf("zero-plugin manager tiles drifted:\n got %v\nwant %v", manager, goldenManagerTiles)
 	}
-	// ut-docs#1959: core itself now declares one group ("Administration"),
-	// so a zero-*plugin* till is no longer a zero-*group* till — but it must
-	// still be exactly one heading, positioned before the group's first
-	// member, never duplicated by the two DE/TR-only tiles sandwiched (in
-	// Order, not in this render) between the visible ones.
-	heading := `<h2 class="menu-group">` + httpx.T("en", "menu.group.administration") + `</h2>`
-	if strings.Count(body, heading) != 1 {
-		t.Fatalf("expected exactly one Administration group heading, got: %s", body)
+	// ut-docs#2008: the six Group: "menu.group.administration" entries
+	// never reach .Tiles any more, so #1959's own group heading (drawn only
+	// when a tile's Group changes) can never render on /menu either —
+	// there is nothing left, at this slot or any other, to draw one for.
+	if strings.Contains(body, "menu-group") {
+		t.Fatalf("expected no group heading anywhere on /menu (ut-docs#2008 replaced it with the /admin tile), got: %s", body)
 	}
-	if strings.Index(body, heading) > strings.Index(body, `href="/country-settings"`) {
-		t.Fatalf("group heading must precede its first tile, got: %s", body)
+	if !strings.Contains(body, `href="/admin"`) {
+		t.Fatalf("expected the /admin tile for a manager, got: %s", body)
+	}
+	for _, hidden := range []string{"/country-settings", "/translations", "/locations", "/registers"} {
+		if strings.Contains(body, `href="`+hidden+`"`) {
+			t.Fatalf("expected no direct %s tile on /menu any more (ut-docs#2008: it now lives inside /admin), got: %s", hidden, body)
+		}
 	}
 }
 

@@ -181,33 +181,29 @@ func TestFiscalDevicePage_ConfirmAndUnpairFlipTheGateFlagWithAudit(t *testing.T)
 	}
 }
 
-// The Turkish fiscal-device tile follows the German one's rule: country
-// AND plugin installed+active, never country alone.
-func TestMenuPage_FiscalDeviceTileRequiresTurkeyAndPlugin(t *testing.T) {
+// ut-docs#2008: fiscal-device (Group: "menu.group.administration", like
+// fiscal-register) no longer gets its own /menu tile in any state -- even
+// TR + the Turkish fiscal-device plugin active, which used to be exactly
+// the state that unlocked this tile directly. The full TR + plugin-state
+// visibility matrix this test used to check moved to admin_page_test.go
+// (GET /admin's Fiscal cluster, TestAdminPage_FiscalClusterRequiresTurkey-
+// AndPlugin) -- this is the regression check that /menu itself stays empty
+// of it, in every state including the one that used to unlock it.
+func TestMenuPage_FiscalDeviceTileNeverRendersDirectlyOnMenu(t *testing.T) {
 	mux, dp := newMenuPageTestDeps(t, nil)
 	t.Setenv("UT_AUTH", "off")
 	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "TR" })
+	seedActiveTaxTrPlugin(t, dp.Db, true)
 
 	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if strings.Contains(rec.Body.String(), `href="/fiscal-device"`) {
-		t.Fatalf("expected no fiscal-device tile for TR with no plugin, got: %s", rec.Body.String())
-	}
-
-	seedActiveTaxTrPlugin(t, dp.Db, true)
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
 	body := rec.Body.String()
-	if !strings.Contains(body, `href="/fiscal-device"`) || !strings.Contains(body, `data-icon="receipt"`) {
-		t.Fatalf("expected the fiscal-device tile once TR + plugin active, got: %s", body)
+	if strings.Contains(body, `href="/fiscal-device"`) {
+		t.Fatalf("expected no direct /fiscal-device tile on /menu even with TR + plugin active (ut-docs#2008: it now lives inside /admin), got: %s", body)
 	}
-
-	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "DE" })
-	rec = httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if strings.Contains(rec.Body.String(), `href="/fiscal-device"`) {
-		t.Fatal("fiscal-device tile must be Turkey-only")
+	if !strings.Contains(body, `href="/admin"`) {
+		t.Fatalf("expected the /admin tile once at least one admin destination is visible, got: %s", body)
 	}
 }
 
