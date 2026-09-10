@@ -11,10 +11,14 @@ import (
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
 
-// GET /modifiers (ut-docs#1899) is the shop-wide browse screen the item
-// detail panel's per-item modifier admin has no equivalent of today — this
-// is the first place a merchant can see every modifier group across the
-// whole catalog without opening each item one at a time.
+// GET /modifiers is now the full CRUD home for modifier groups (moved out
+// of the per-item catalog panel, ut-docs#1957 — originally a read-only
+// browse screen, ut-docs#1899) — this is the first place a merchant can
+// manage every modifier group across the whole catalog without opening
+// each item one at a time. The price is now a form field (converted to
+// major units client-side by JS that doesn't run under go test), not
+// server-rendered text, so this checks its minor-unit data attribute
+// instead of a formatted "£0.50" string.
 func TestModifiersPage_ListsGroupsAcrossItemsWithItemName(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
@@ -41,10 +45,15 @@ func TestModifiersPage_ListsGroupsAcrossItemsWithItemName(t *testing.T) {
 		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	for _, want := range []string{"Flat White", "Extras", "Extra shot", "£0.50"} {
+	for _, want := range []string{"Flat White", "Extras", "Extra shot", `data-minor="50"`, `id="modifiers-list"`} {
 		if !strings.Contains(body, want) {
 			t.Errorf("expected body to contain %q, got: %s", want, body)
 		}
+	}
+	// The CRUD forms (not just names) must actually be present — this is
+	// the whole point of #1957's move.
+	if !strings.Contains(body, `name="minSelect"`) || !strings.Contains(body, "/api/catalog/modifier-option") {
+		t.Errorf("expected the group/option CRUD forms to render on /modifiers, got: %s", body)
 	}
 }
 
@@ -100,9 +109,14 @@ func TestModifiersPage_EmptyShopShowsEmptyState(t *testing.T) {
 	}
 }
 
-// A deactivated group must not show up on the shop-wide browse screen
-// either — same visibility contract as everywhere else modifiers render.
-func TestModifiersPage_SkipsInactiveGroups(t *testing.T) {
+// A deactivated group MUST show up on /modifiers now that it's the full
+// CRUD home (ut-docs#1957) — the opposite of the old read-only browse
+// screen's contract (ut-docs#1899), which this test used to guard: hiding
+// it here would leave no way to ever reactivate it, the same reason the
+// per-item panel always used ListAllGroupsForItem instead of
+// ListGroupsForItem. It must render marked inactive (vg-inactive), not
+// indistinguishable from an active one.
+func TestModifiersPage_ShowsInactiveGroupsForReactivation(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
 	defer db.Close()
@@ -123,7 +137,14 @@ func TestModifiersPage_SkipsInactiveGroups(t *testing.T) {
 	req := httptest.NewRequest(http.MethodGet, "/modifiers", nil)
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
-	if strings.Contains(rec.Body.String(), "Retired") {
-		t.Errorf("expected the deactivated group to be absent, got: %s", rec.Body.String())
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Retired") {
+		t.Fatal("expected the deactivated group to still be visible, so it can be reactivated")
+	}
+	if !strings.Contains(body, "vg-inactive") {
+		t.Fatal("expected the deactivated group to be visually marked inactive")
 	}
 }
