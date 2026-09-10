@@ -110,4 +110,108 @@ test.describe('catalog item form tab strip scroll-shadow (ut-docs#2024)', () => 
 
     assertClean();
   });
+
+  // ut-docs#2032: tabBarFade() used to only run on the tab bar's own
+  // 'scroll' event plus once on open — a resize/rotation that crosses the
+  // 700px breakpoint while the dialog stays open never touched either, so
+  // the fade classes went stale until the next scroll or reopen. Fix wires
+  // the same tabBarFade() to 'resize'/'orientationchange', guarded by
+  // modal.open.
+  test('resize while the dialog stays open recomputes the fade across the 700px breakpoint', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.setViewportSize({ width: 1024, height: 600 });
+    await page.goto('/catalog');
+    await openNewItemForm(page);
+
+    const bar = page.locator('.catalog-form-head .tab-bar');
+    await expect(bar).toBeVisible();
+
+    // Kiosk floor: no fade class yet (same baseline as the test above).
+    let classes = await bar.evaluate((el) => el.className);
+    expect(classes, 'no fade class at the kiosk floor').not.toMatch(/tab-bar--fade-/);
+
+    // Shrink below the breakpoint WITHOUT closing/reopening the dialog —
+    // no scroll ever happens here, so only the new resize listener can be
+    // what puts the end-fade back.
+    await page.setViewportSize({ width: 360, height: 740 });
+    await expectFade(bar, 'end', true, 'resize alone (no scroll, no reopen) should recompute the end-fade');
+    await expectFade(bar, 'start', false, 'no fade at the true start after a resize');
+
+    // Grow back past the breakpoint: the strip no longer overflows, so
+    // both fade classes should clear again, still without a scroll/reopen.
+    await page.setViewportSize({ width: 1024, height: 600 });
+    classes = await bar.evaluate((el) => el.className);
+    expect(classes, 'fade classes should clear once the strip stops overflowing').not.toMatch(/tab-bar--fade-/);
+
+    assertClean();
+  });
+
+  // ut-docs#2032, independent review finding: the resize/orientationchange
+  // fix above re-runs its whole containing <script> IIFE on every htmx
+  // fragment swap of this "content" block (internal/pages/catalog/
+  // handlers.go), which is exactly what the /items rail
+  // (web/ui/partials/items_rail.html, hx-get hx-target="#items-panel", at
+  // >=52rem viewport per app.css's .items-layout breakpoint) does on every
+  // Catalog/Modifiers/etc. click — a naive `window.addEventListener` here
+  // would register one more permanent listener per swap, since `window`
+  // (unlike the tab-bar-scoped `scroll` listener) outlives the swapped-out
+  // DOM. The real fix registers at most once per page load, guarded, and
+  // resolves the live modal/tab-bar at event time rather than closing over
+  // a specific render's detached elements.
+  test('repeated htmx panel swaps via the /items rail never register more than one resize/orientationchange listener', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.addInitScript(() => {
+      (window as any).__resizeListenerAdds = 0;
+      (window as any).__orientListenerAdds = 0;
+      const orig = window.addEventListener.bind(window);
+      window.addEventListener = ((type: string, ...rest: any[]) => {
+        if (type === 'resize') (window as any).__resizeListenerAdds++;
+        if (type === 'orientationchange') (window as any).__orientListenerAdds++;
+        return (orig as any)(type, ...rest);
+      }) as typeof window.addEventListener;
+    });
+    // >=52rem (832px) so the rail swaps #items-panel in place via hx-get
+    // rather than falling back to a full page navigation below that width.
+    await page.setViewportSize({ width: 1024, height: 700 });
+    await page.goto('/items');
+
+    const counts = () => page.evaluate(() => ({
+      resize: (window as any).__resizeListenerAdds,
+      orient: (window as any).__orientListenerAdds,
+    }));
+
+    // Land on Catalog once and let the count settle (the /items page's own
+    // initial render plus this first in-place click may each run the
+    // catalog script's IIFE — what matters is that it stops growing from
+    // here, not the exact starting number).
+    await page.locator('.items-rail-list a[href="/catalog"]').click();
+    await expect(page.locator('#item-form-add-btn')).toBeVisible();
+    const baseline = await counts();
+    expect(baseline.resize, 'at least one resize listener registered by now').toBeGreaterThanOrEqual(1);
+    expect(baseline.orient, 'at least one orientationchange listener registered by now').toBeGreaterThanOrEqual(1);
+
+    // Swap away and back three times via the rail (htmx fragment swaps,
+    // never a full page reload) — the count must NOT grow further: each
+    // additional swap re-runs the IIFE, and the leaking version would add
+    // one more resize + one more orientationchange listener per round trip.
+    for (let i = 0; i < 3; i++) {
+      await page.locator('.items-rail-list a[href="/modifiers"]').click();
+      await expect(page.locator('.items-rail-list a[href="/catalog"]')).toBeVisible();
+      await page.locator('.items-rail-list a[href="/catalog"]').click();
+      await expect(page.locator('#item-form-add-btn')).toBeVisible();
+    }
+    const afterRoundTrips = await counts();
+    expect(afterRoundTrips.resize, 'resize listener count must not grow after repeated rail swaps').toBe(baseline.resize);
+    expect(afterRoundTrips.orient, 'orientationchange listener count must not grow after repeated rail swaps').toBe(baseline.orient);
+
+    // And the fix still actually works after all those swaps: open the
+    // form, shrink below the breakpoint, confirm the fade still recomputes
+    // live off the CURRENT (not some stale detached) modal/tab-bar.
+    await openNewItemForm(page);
+    const bar = page.locator('.catalog-form-head .tab-bar');
+    await page.setViewportSize({ width: 360, height: 740 });
+    await expectFade(bar, 'end', true, 'fade still recomputes correctly after repeated swaps');
+
+    assertClean();
+  });
 });

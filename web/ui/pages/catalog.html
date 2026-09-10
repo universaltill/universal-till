@@ -468,6 +468,32 @@
   if (tabBar) {
     tabBar.addEventListener('scroll', function () { tabBarFade(tabBar); }, { passive: true });
   }
+  // ut-docs#2032: scroll alone misses a viewport resize/rotation that
+  // crosses the ≤700px breakpoint (app.css) while the dialog stays open —
+  // no scroll ever fires, so the fade classes go stale until the next
+  // scroll or reopen.
+  //
+  // This whole IIFE re-runs on every htmx fragment swap that re-renders
+  // this "content" block (internal/pages/catalog/handlers.go, e.g. the
+  // Catalog/Modifiers/Option-sets rail in items_rail.html swapping
+  // #items-panel) — a plain `window.addEventListener` right here, once per
+  // swap, would leak: `window` outlives the swapped-out DOM, so every
+  // revisit pins one more permanent listener closing over that render's
+  // now-detached `modal`/`tabBar`. A one-time global guard (registered at
+  // most once for the page's whole lifetime, never per swap) plus
+  // resolving the CURRENT live modal/tab-bar from the document at event
+  // time — never closing over this render's `modal`/`tabBar` — fixes both
+  // the leak and the staleness a swap would otherwise leave behind.
+  if (!window.__catalogTabBarFadeResizeWired) {
+    window.__catalogTabBarFadeResizeWired = true;
+    var recomputeLiveTabBarFade = function () {
+      var liveModal = document.getElementById('item-form-modal');
+      if (!liveModal || !liveModal.open) return;
+      tabBarFade(liveModal.querySelector('.catalog-form-head .tab-bar'));
+    };
+    window.addEventListener('resize', recomputeLiveTabBarFade);
+    window.addEventListener('orientationchange', recomputeLiveTabBarFade);
+  }
   // ut-docs#1901 UX fix: bumped whenever the CURRENT dialog session
   // changes — opened fresh (either trigger below) OR the operator touches
   // any field after a save (the 'input' listener below). The delayed
