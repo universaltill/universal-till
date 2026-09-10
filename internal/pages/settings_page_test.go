@@ -20,6 +20,7 @@ import (
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -2746,5 +2747,55 @@ func TestSettingsPage_ExportEntryLabel_MultiEntry_ResolvesPluginOverlayAndFallsB
 	}
 	if !strings.Contains(body, "testplugin.export_label_b") {
 		t.Fatalf("expected entry B's untranslated key to fall back to the literal key, got:\n%s", body)
+	}
+}
+
+// ut-docs#1902: POST /api/settings/shop-type is the SAME handler production
+// wires builtinlayouts.Sync into — this drives it through the real mux (not
+// just the unit-tested Sync function directly) to prove the wiring itself
+// works, not only the function it calls. newFullAuthDeps doesn't wire a
+// plugin manager by default (several older tests assert Pm==nil fallbacks),
+// so this test wires one itself, exactly as pages.Init does in production.
+func TestShopTypeEndpoint_ServiceActivatesSalonLayout_SwitchAwayRemovesIt(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	ctx := t.Context()
+
+	pm, err := plugins.Init(ctx, d.Cfg, d.Db)
+	if err != nil {
+		t.Fatalf("plugins.Init: %v", err)
+	}
+	d.Pm = pm
+
+	hasSalonAmendment := func() bool {
+		for _, a := range d.Pm.LayoutAmendments {
+			if a.PluginID == "com.universaltill.layout-salon" && a.Key == "/tables" && a.Hide {
+				return true
+			}
+		}
+		return false
+	}
+
+	if hasSalonAmendment() {
+		t.Fatal("salon layout must not be active before shop_type is ever set")
+	}
+
+	// Manager role saves shop_type=service (mgrUser self-approves, no PIN
+	// elevation — same as every other manager-role case in this file).
+	rec := postForm(mux, "/api/settings/shop-type", url.Values{"shop_type": {"service"}}, &mgrUser)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("save shop_type=service: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !hasSalonAmendment() {
+		t.Fatalf("saving shop_type=service through the real handler must activate the salon layout (hide /tables), got amendments %+v", d.Pm.LayoutAmendments)
+	}
+
+	// Switching to a different shop type must remove it again — no
+	// orphaned hidden tile survives the switch.
+	rec = postForm(mux, "/api/settings/shop-type", url.Values{"shop_type": {"cafe"}}, &mgrUser)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("save shop_type=cafe: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if hasSalonAmendment() {
+		t.Fatalf("switching to shop_type=cafe must deactivate the salon layout, still present: %+v", d.Pm.LayoutAmendments)
 	}
 }

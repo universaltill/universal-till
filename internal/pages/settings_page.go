@@ -26,6 +26,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -1587,6 +1588,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if err := d.Settings.Set(r.Context(), common.KeyShopType, v); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
+		}
+		// ut-docs#1902: shop_type=service activates the builtin Salon layout
+		// (ADR-0088); any other value (including clearing it back to "")
+		// deactivates it if it was active. Best-effort — a failure here must
+		// never block a shop-type save over a cosmetic menu personalization.
+		if err := builtinlayouts.Sync(r.Context(), d.Db, v); err != nil {
+			logging.L().Warnf("settings: could not sync builtin layout for shop_type %q: %v", v, err)
+		} else if err := d.ReloadPlugins(r.Context()); err != nil {
+			logging.L().Warnf("settings: could not reload plugins after shop_type layout sync: %v", err)
 		}
 		settingsAudit(r, posRepo, elev, "settings", common.KeyShopType, "shop_type_changed",
 			map[string]any{"shop_type": v})
