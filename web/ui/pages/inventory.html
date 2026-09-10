@@ -2,6 +2,13 @@
 <div class="page-head">
   <h1>{{ T "nav.inventory" }}</h1>
   <input type="search" id="stock-search" placeholder="{{ T "inventory.search_placeholder" }}" autocomplete="off">
+  {{/* ut-docs#2011: opens #stock-dialog blank -- the entry point for
+       adjusting an item that isn't in the visible stock/low-stock lists
+       (the free-text item search inside the dialog handles that case). */}}
+  <button type="button" class="btn primary btn-icon" id="stock-dialog-open"
+          aria-label="{{ T "inventory.add_stock" }}" title="{{ T "inventory.add_stock" }}">
+    <span class="btn-ico" aria-hidden="true">{{ icon "plus" }}</span>
+  </button>
 </div>
 
 {{ if .SyncPrimary }}
@@ -24,7 +31,7 @@
         <tbody>
           {{ if .StockLevels }}
             {{ range .StockLevels }}
-              <tr class="stock-row" data-item="{{ .ItemID }}" data-name="{{ .Name }}" data-sku="{{ .SKU }}" data-location="{{ .LocationID }}">
+              <tr class="stock-row" data-item="{{ .ItemID }}" data-name="{{ .Name }}" data-sku="{{ .SKU }}" data-location="{{ .LocationID }}" data-location-name="{{ .LocationName }}">
                 <td class="catalog-name">{{ .Name }}</td>
                 <td class="muted">{{ .SKU }}</td>
                 <td>{{ .LocationName }}</td>
@@ -52,48 +59,6 @@
   </div>
 
   <div class="card catalog-form">
-    <h3>{{ T "inventory.receive_adjust" }}</h3>
-    <form id="stock-form" hx-post="/api/inventory/receipt" hx-swap="innerHTML" hx-target="#result">
-      <label>{{ T "inventory.type" }}
-        <select name="type" required>
-          <option value="receive">{{ T "inventory.type_receipt" }}</option>
-          <option value="adjust">{{ T "inventory.type_adjustment" }}</option>
-        </select>
-      </label>
-      <label>{{ T "basket.col.item" }}
-        <input type="text" id="stock-item-search" list="items-list" placeholder="{{ T "inventory.item_placeholder" }}" required>
-        <input type="hidden" name="item_id" id="stock-item-id">
-      </label>
-      <div class="field-pair">
-        <label>{{ T "inventory.location" }}
-          <select name="location_id" id="stock-location" required>
-            {{ range .Locations }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
-          </select>
-        </label>
-        <!-- ut-docs#1275: type="number" silently resets .value to "" on a
-             momentarily-invalid decimal string while osk.js types it in
-             (same root cause as ut-docs#1249/#1272) --
-             text+inputmode="decimal" avoids that. -->
-        <!-- pattern allows a leading '-': type="number" here had no min=,
-             and Quantity is "positive for receive, +/- for adjust"
-             (internal/pages/inventory_api.go) -- must not regress that. -->
-        <label>{{ T "inventory.quantity" }} <input type="text" inputmode="decimal" name="quantity" pattern="-?[0-9]+(\.[0-9]{1,2})?" required placeholder="{{ T "inventory.qty_placeholder" }}"></label>
-      </div>
-      <div class="field-pair">
-        <!-- ut-docs#1282 review nit: hand-rolled decimals ternary replaced
-             with the shared moneypattern helper (ut-docs#1274,
-             internal/httpx/currency.go) -- same convention as
-             shifts.html/menu.html/catalog_variants.html's money fields, so
-             a future 3-decimal currency (KWD/BHD/OMR) doesn't need this
-             call site updated in lockstep with the others. -->
-        <label>{{ T "inventory.cost_optional" }} <input type="text" inputmode="decimal" id="stock-cost" {{ moneypattern currency.Decimals false }}></label>
-        <input type="hidden" name="cost_price" id="stock-cost-minor">
-      </div>
-      <label>{{ T "inventory.reason" }} <input type="text" name="reason" placeholder="{{ T "inventory.reason_placeholder" }}"></label>
-      <button type="submit" class="btn primary" style="width:100%">{{ T "common.submit" }}</button>
-      <div id="result" class="muted" style="min-height:1.3rem; margin-top:.4rem"></div>
-    </form>
-
     <details class="catalog-extra">
       <summary>{{ T "inventory.override_title" }}</summary>
       <form id="override-form" hx-post="/api/inventory/override" hx-swap="innerHTML" hx-target="#override-result">
@@ -137,10 +102,104 @@
   </div>
 </div>
 
+{{/* ut-docs#2011: the full-screen receive/adjust popup, opened by tapping a
+     stock/low-stock row (prefilled) or the page-head "Add stock" button
+     (blank). Reuses the ut-docs#2010 .record-dialog CSS shell for visual
+     consistency, but is NOT wired through the shared record_dialog
+     partial/record-dialog.js engine -- that engine assumes a plain
+     POST -> 303 -> full navigation per mutation, whereas
+     /api/inventory/receipt is an htmx swap-in-place endpoint (hx-post,
+     hx-target=#result, HX-Trigger: stock-updated, no redirect) and this
+     card's AC requires no full page reload. So open/close/Escape/prefill
+     are handled by this page's own small script below, not the generic
+     engine. Opened with .show(), NEVER .showModal() -- the till's
+     on-screen keyboard (#osk, osk.js) is appended to <body> and
+     showModal()'s top-layer/inert-outside behaviour makes it unreachable
+     while typing (ut-docs#1385), same reasoning as record_dialog.html's
+     own header comment. The head is deliberately ONE row (title + close
+     only, no Save button here) so it never eats a 360px screen the way
+     ut-docs#2000 found the catalog dialog's head doing -- Save stays on
+     the form itself, inside the body. */}}
+<dialog id="stock-dialog" class="record-dialog" aria-labelledby="stock-dialog-title">
+  <div class="record-dialog-inner">
+    <div class="record-dialog-head">
+      <div class="record-dialog-head-row">
+        <div class="record-dialog-head-title">
+          <h3 id="stock-dialog-title">{{ T "inventory.receive_adjust" }}</h3>
+        </div>
+        <div class="record-dialog-head-actions">
+          <button type="button" class="btn secondary btn-icon" id="stock-dialog-close"
+                  aria-label="{{ T "common.close" }}" title="{{ T "common.close" }}">
+            <span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span>
+          </button>
+        </div>
+      </div>
+    </div>
+    <div class="record-dialog-body">
+      {{/* Plain-language confirmation of which item/location is about to
+           change (ut-docs#2011 AC: prefill must not make it easy to adjust
+           the wrong item) -- hidden until a row tap fills it in; the
+           "Add stock" blank-open path leaves it hidden since there is
+           nothing to confirm yet. */}}
+      <p id="stock-dialog-context" class="muted" hidden></p>
+      <form id="stock-form" hx-post="/api/inventory/receipt" hx-swap="innerHTML" hx-target="#result">
+        <label>{{ T "inventory.type" }}
+          <select name="type" required>
+            <option value="receive">{{ T "inventory.type_receipt" }}</option>
+            <option value="adjust">{{ T "inventory.type_adjustment" }}</option>
+          </select>
+        </label>
+        <label>{{ T "basket.col.item" }}
+          <input type="text" id="stock-item-search" list="items-list" placeholder="{{ T "inventory.item_placeholder" }}" required>
+          <input type="hidden" name="item_id" id="stock-item-id">
+        </label>
+        <div class="field-pair">
+          <label>{{ T "inventory.location" }}
+            <select name="location_id" id="stock-location" required>
+              {{ range .Locations }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}
+            </select>
+          </label>
+          <!-- ut-docs#1275: type="number" silently resets .value to "" on a
+               momentarily-invalid decimal string while osk.js types it in
+               (same root cause as ut-docs#1249/#1272) --
+               text+inputmode="decimal" avoids that. -->
+          <!-- pattern allows a leading '-': type="number" here had no min=,
+               and Quantity is "positive for receive, +/- for adjust"
+               (internal/pages/inventory_api.go) -- must not regress that.
+               Never prefilled by row-tap (ut-docs#2011 AC): stays blank and
+               required, so a bare Save tap on a freshly-opened dialog
+               cannot submit a change. -->
+          <label>{{ T "inventory.quantity" }} <input type="text" inputmode="decimal" name="quantity" pattern="-?[0-9]+(\.[0-9]{1,2})?" required placeholder="{{ T "inventory.qty_placeholder" }}"></label>
+        </div>
+        <div class="field-pair">
+          <!-- ut-docs#1282 review nit: hand-rolled decimals ternary replaced
+               with the shared moneypattern helper (ut-docs#1274,
+               internal/httpx/currency.go) -- same convention as
+               shifts.html/menu.html/catalog_variants.html's money fields, so
+               a future 3-decimal currency (KWD/BHD/OMR) doesn't need this
+               call site updated in lockstep with the others. -->
+          <label>{{ T "inventory.cost_optional" }} <input type="text" inputmode="decimal" id="stock-cost" {{ moneypattern currency.Decimals false }}></label>
+          <input type="hidden" name="cost_price" id="stock-cost-minor">
+        </div>
+        <label>{{ T "inventory.reason" }} <input type="text" name="reason" placeholder="{{ T "inventory.reason_placeholder" }}"></label>
+        <button type="submit" class="btn primary" style="width:100%">{{ T "common.submit" }}</button>
+        <div id="result" class="muted" style="min-height:1.3rem; margin-top:.4rem"></div>
+      </form>
+    </div>
+  </div>
+</dialog>
+
 <datalist id="items-list"></datalist>
 <script id="inventory-items" type="application/json">{{ .ItemsJSON }}</script>
 <script>
 (function () {
+  // ut-docs#2011: the dialog's confirmation line is set from JS
+  // (.textContent), so per universal-till/CLAUDE.md's i18n rule it goes
+  // through a template-populated lookup object, same pattern as
+  // bugreport_panel.html / settings.html's data-reset-btn handler, rather
+  // than a hardcoded literal.
+  var T = { dialog_context: "{{ T "inventory.dialog_context" }}" };
+
   var items = JSON.parse(document.getElementById('inventory-items').textContent || '[]');
   var byLabel = {};
   var dl = document.getElementById('items-list');
@@ -165,18 +224,94 @@
   var os = document.querySelector('.override-item-search');
   if (os) bindPicker(os, document.querySelector('.override-item-id'));
 
-  // Row click fills the receive form.
+  // ut-docs#2011: row tap (main stock table AND the low-stock fragment,
+  // both share class=stock-row) opens the full-screen receive/adjust
+  // dialog prefilled with that row's item + location, instead of just
+  // scrolling-and-filling a form further down the page.
+  var stockDialog = document.getElementById('stock-dialog');
+  var stockDialogContext = document.getElementById('stock-dialog-context');
+  var stockItemSearch = document.getElementById('stock-item-search');
+  var stockItemId = document.getElementById('stock-item-id');
+  var stockLocation = document.getElementById('stock-location');
+
+  function resetStockForm() {
+    var form = document.getElementById('stock-form');
+    form.reset();
+    stockItemId.value = '';
+    stockItemSearch.setCustomValidity('');
+    stockDialogContext.hidden = true;
+    stockDialogContext.textContent = '';
+    document.getElementById('stock-cost-minor').value = '';
+    // #result is NOT a form field, so form.reset() never touches it. It has
+    // to be cleared here explicitly (review, ut-docs#2011): the success
+    // line is deliberately left on screen after a submit (see the
+    // no-auto-close note below), but this dialog is now opened and closed
+    // repeatedly, so without this a merchant who saves against item A,
+    // closes, then taps item B is greeted by "Stock movement created: …"
+    // from A sitting under B's still-blank form -- reading as if B's
+    // adjustment had already been applied. Confirmed live before the fix.
+    document.getElementById('result').textContent = '';
+  }
+
+  function fillStockForm(row) {
+    // Reset FIRST: a quantity/cost/reason left over from a previous,
+    // never-submitted open of this same dialog must never carry into a
+    // freshly row-tapped item -- that would silently reintroduce the
+    // "prefill makes it easy to apply a change to the wrong item" risk
+    // the AC calls out, even though quantity itself is never prefilled
+    // directly.
+    resetStockForm();
+    var label = row.dataset.name + (row.dataset.sku ? ' (' + row.dataset.sku + ')' : '');
+    stockItemSearch.value = label;
+    stockItemId.value = row.dataset.item;
+    stockItemSearch.setCustomValidity('');
+    if (row.dataset.location) stockLocation.value = row.dataset.location;
+    // One pass, with a FUNCTION replacement, not two chained string
+    // replacements (review, ut-docs#2011). A string replacement expands
+    // "$&"/"$`"/"$'"/"$$" inside the replacement text, and item names and
+    // SKUs are merchant-typed free text, so a name containing "$&" would
+    // render mangled; chaining also means an item name that itself
+    // contained the literal "{location}" would get substituted by the
+    // second call. A function replacement is taken literally and one pass
+    // never re-scans what it just inserted.
+    var fields = { '{item}': label, '{location}': row.dataset.locationName || '' };
+    stockDialogContext.textContent = T.dialog_context.replace(
+      /\{item\}|\{location\}/g, function (m) { return fields[m]; });
+    stockDialogContext.hidden = false;
+  }
+
   document.addEventListener('click', function (ev) {
     var row = ev.target.closest('.stock-row');
     if (!row) return;
-    var label = row.dataset.name + (row.dataset.sku ? ' (' + row.dataset.sku + ')' : '');
-    var searchEl = document.getElementById('stock-item-search');
-    searchEl.value = label;
-    document.getElementById('stock-item-id').value = row.dataset.item;
-    searchEl.setCustomValidity('');
-    var loc = document.getElementById('stock-location');
-    if (row.dataset.location) loc.value = row.dataset.location;
+    fillStockForm(row);
+    stockDialog.show();
   });
+
+  document.getElementById('stock-dialog-open').addEventListener('click', function () {
+    resetStockForm();
+    stockDialog.show();
+  });
+
+  document.getElementById('stock-dialog-close').addEventListener('click', function () {
+    stockDialog.close();
+  });
+
+  // .show() (deliberately not .showModal() -- see the dialog's own
+  // template comment, ut-docs#1385) gives no native Escape-to-close, so
+  // it's wired by hand, same as record-dialog.js does for the shared
+  // dialog engine.
+  document.addEventListener('keydown', function (ev) {
+    if (ev.key === 'Escape' && stockDialog.open) stockDialog.close();
+  });
+
+  // Deliberately NOT auto-closed on a successful submit: #result's success
+  // message renders INSIDE the dialog (unchanged from before this card),
+  // and closing on success would hide it before the merchant ever saw it
+  // confirmed -- same reason a repeat receipt/adjustment for the same
+  // item can be typed again without reopening. The stock table refreshes
+  // itself regardless, via the existing stock-updated HX-Trigger listener
+  // on #stock-levels-card; the merchant closes the dialog explicitly
+  // (Close/Escape) when done.
 
   // Cost, major units → minor units (ut-docs#1282: was a hardcoded * 100,
   // wrong by 100x on a 0-decimal currency like IRR/JPY -- window.utCurrency
@@ -203,10 +338,16 @@
   // (fresh rows, filter attribute lost) on every stock-updated event — see
   // #stock-levels-card's hx-trigger — so the filter must re-apply after that
   // swap, not just on the input event, or a save clears an active search.
+  // Scoped to #stock-table specifically (not a bare .stock-row selector):
+  // since ut-docs#2011 gave the low-stock fragment's rows the same
+  // .stock-row class (so they share the tap-to-open-dialog listener
+  // above), an unscoped selector here would also start hiding low-stock
+  // rows out of sync with their own "N running out" badge -- a regression
+  // this card never asked for.
   var search = document.getElementById('stock-search');
   function applyStockFilter() {
     var q = search.value.toLowerCase();
-    document.querySelectorAll('.stock-row').forEach(function (row) {
+    document.querySelectorAll('#stock-table .stock-row').forEach(function (row) {
       var hay = (row.dataset.name + ' ' + row.dataset.sku).toLowerCase();
       row.hidden = q !== '' && hay.indexOf(q) === -1;
     });

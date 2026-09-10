@@ -815,8 +815,12 @@ func TestGetLowStock_HTMLTableEscapesItemFields(t *testing.T) {
 	if strings.Contains(body, payload) {
 		t.Fatalf("item/SKU/location name was interpolated into the HTML table unescaped: %s", body)
 	}
-	if got := strings.Count(body, "&lt;script&gt;"); got != 3 {
-		t.Fatalf("expected the item name, SKU and location name (3 occurrences) to be HTML-escaped, got %d in: %s", got, body)
+	// ut-docs#2011: each row now also carries the item name/SKU/location
+	// name a second time, as data-* attributes (so the row can open the
+	// receive/adjust dialog prefilled) -- so the payload legitimately
+	// appears escaped 6 times now (3 fields × 2 render sites), not 3.
+	if got := strings.Count(body, "&lt;script&gt;"); got != 6 {
+		t.Fatalf("expected the item name, SKU and location name to be HTML-escaped in both the row's data-* attributes and its visible cells (6 occurrences), got %d in: %s", got, body)
 	}
 }
 
