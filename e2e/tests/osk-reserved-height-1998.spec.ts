@@ -93,8 +93,25 @@ test.describe('OSK reserved height tracks the keyboard\'s real height (ut-docs#1
       await page.locator('#item-description').click();
       await expect(page.locator('#osk.osk-open')).toBeVisible();
 
+      // osk.js's show() schedules its OWN scrollIntoView({block:'center'})
+      // on the just-focused field via `setTimeout(..., 60)` (see show()'s
+      // own comment: keeps the field visible above the keyboard). If that
+      // timer is still pending when the manual scroll-to-bottom below runs,
+      // it can fire afterward and silently re-center the panel back on
+      // #item-description, moving #item-active out from under the hit-test
+      // point this spec checks — observed for real in CI (a slower runner
+      // widens the window this race needs). A poll-based
+      // waitForStableLayout can't reliably catch this: #item-description
+      // hasn't moved YET at the moment we'd start polling (the timer just
+      // hasn't fired), so it can read as "already stable" and return before
+      // the 60ms mark. Waiting past the literal, fixed 60ms this app's own
+      // source code schedules is the precise fix for a fixed-delay hazard,
+      // not a blind guess at "long enough" for an open-ended animation.
+      await page.waitForTimeout(150);
+
       // Scroll the Details panel all the way down — the exact position the
-      // original bug report measured the overlap at.
+      // original bug report measured the overlap at. Runs AFTER the wait
+      // above, so the deferred auto-scroll can no longer land afterward.
       const body = page.locator('.catalog-form-body');
       await body.evaluate((el) => { el.scrollTop = el.scrollHeight; });
 
