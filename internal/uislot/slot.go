@@ -124,8 +124,15 @@ func IsProtectedMenuKey(key string) bool {
 //
 // Order bands (documented so a `layout` author knows what a reorder value
 // lands against): 100–800 the InNav entries, PluginPagesOrder (1000)+ the
-// plugin `page` tiles, 2000 help, 2100–2900 the manager-gated
-// destinations, 3000+ the stock-location ones.
+// plugin `page` tiles, 2000 help, 2100–2500 the manager-gated destinations
+// with no Group, 2600–3100 the same gated band but grouped under
+// "menu.group.administration" (ut-docs#1959) — set-once/onboarding
+// destinations (country, translations, the two statutory fiscal-device
+// pages, stock locations/registers). Kept contiguous deliberately: Resolve
+// only re-runs groupTogether when an AMENDMENT regroups something (Decision
+// I), so with no plugin installed the renderer walks CoreMenu as declared —
+// an ungrouped entry landing between two same-Group entries here would
+// split one heading into two identical ones.
 //
 // VisibleIf names are defined in menu_page.go's menuPredicates and pinned
 // by TestMenuPage_EveryCoreVisibleIfPredicateIsRegistered; the WHY behind
@@ -150,13 +157,29 @@ var CoreMenu = []Entry{
 	// keep the two in sync (ut-docs#1582 independent-review finding).
 	{Key: "/bluetooth-devices", Href: "/bluetooth-devices", LabelKey: "bluetoothdevices.title", Icon: "bluetooth", Order: 2300, VisibleIf: "settings"}, // ut-docs#76
 	{Key: "/tables", Href: "/tables", LabelKey: "tables.title", Icon: "utensils-crossed", Order: 2400, VisibleIf: "settings"},
-	{Key: "/country-settings", Href: "/country-settings", LabelKey: "countrysettings.title", Icon: "flag", Order: 2500, VisibleIf: "settings"},
-	{Key: "/translations", Href: "/translations", LabelKey: "translations.title", Icon: "globe", Order: 2600, VisibleIf: "settings"},
-	{Key: "/report-issue", Href: "/report-issue", LabelKey: "issuereport.title", Icon: "bug", Order: 2700, VisibleIf: "settings"},
-	{Key: "/fiscal-register", Href: "/fiscal-register", LabelKey: "fiscalregister.title", Icon: "clipboard-list", Order: 2800, VisibleIf: "fiscal_register_de"},
-	{Key: "/fiscal-device", Href: "/fiscal-device", LabelKey: "fiscaldevice.title", Icon: "receipt", Order: 2900, VisibleIf: "fiscal_device_tr"},
-	{Key: "/locations", Href: "/locations", LabelKey: "locations.title", Icon: "map-pin", Order: 3000, VisibleIf: "stock_location_management"},
-	{Key: "/registers", Href: "/registers", LabelKey: "registers.title", Icon: "calculator", Order: 3100, VisibleIf: "stock_location_management"},
+	// ut-docs#1959: moved ahead of the Administration group below (was
+	// Order 2700, between /translations and /fiscal-register) so the
+	// group's members stay contiguous in this declaration — see the
+	// package doc comment above for why that matters.
+	{Key: "/report-issue", Href: "/report-issue", LabelKey: "issuereport.title", Icon: "bug", Order: 2500, VisibleIf: "settings"},
+	// ut-docs#1959: "Administration" — setup/onboarding destinations a
+	// merchant touches once and rarely returns to, grouped per the product
+	// owner's 2026-09-10 feedback. /users, /kitchen-stations and
+	// /bluetooth-devices were considered and deliberately left OUT: Users
+	// is day-to-day staff management (the product owner's own call),
+	// Kitchen Stations and Bluetooth Devices are reconfigured as often as
+	// the floor/hardware changes, not one-time setup like the entries
+	// below.
+	{Key: "/country-settings", Href: "/country-settings", LabelKey: "countrysettings.title", Icon: "flag", Order: 2600, VisibleIf: "settings", Group: "menu.group.administration"},
+	{Key: "/translations", Href: "/translations", LabelKey: "translations.title", Icon: "globe", Order: 2700, VisibleIf: "settings", Group: "menu.group.administration"},
+	// Fiscal register (DE) and Fiscal device (TR) are the two statutory
+	// hardware/registration pages: connected once during setup, same as
+	// Locations/Registers below — structurally the twin of the entry the
+	// product owner named explicitly, so grouped alongside it.
+	{Key: "/fiscal-register", Href: "/fiscal-register", LabelKey: "fiscalregister.title", Icon: "clipboard-list", Order: 2800, VisibleIf: "fiscal_register_de", Group: "menu.group.administration"},
+	{Key: "/fiscal-device", Href: "/fiscal-device", LabelKey: "fiscaldevice.title", Icon: "receipt", Order: 2900, VisibleIf: "fiscal_device_tr", Group: "menu.group.administration"},
+	{Key: "/locations", Href: "/locations", LabelKey: "locations.title", Icon: "map-pin", Order: 3000, VisibleIf: "stock_location_management", Group: "menu.group.administration"},
+	{Key: "/registers", Href: "/registers", LabelKey: "registers.title", Icon: "calculator", Order: 3100, VisibleIf: "stock_location_management", Group: "menu.group.administration"},
 }
 
 var coreMenuIndex = func() map[string]int {

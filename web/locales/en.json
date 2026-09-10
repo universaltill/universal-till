@@ -912,6 +912,7 @@
   "locations.rename": "Rename",
   "locations.title": "Locations",
   "menu.back_to_sale": "Back to sale",
+  "menu.group.administration": "Administration",
   "menulayout.title": "Hidden menu tiles",
   "menulayout.intro": "Tiles a layout plugin has removed from the Menu screen. Every one of them is still reachable at its own address — restore a tile here to show it on the Menu again without uninstalling the plugin.",
   "menulayout.settings_intro": "See which Menu tiles a layout plugin has hidden, and bring any of them back.",

@@ -42,10 +42,16 @@ func getMenu(t *testing.T, mux *http.ServeMux) string {
 // renders for a manager (UT_AUTH=off), outside DE/TR. Pinned verbatim, not
 // derived from CoreMenu, so this refactor and any future one is proven not
 // to move a single tile (ADR-0088 Decision I's behavioural guarantee).
+//
+// ut-docs#1959 moved /report-issue ahead of /country-settings (was between
+// /translations and the — here invisible, DE/TR-gated — fiscal tiles) so
+// the new "Administration" group (/country-settings, /translations, and,
+// when visible, /fiscal-register, /fiscal-device, /locations, /registers)
+// stays contiguous; the fiscal pair never renders here, outside DE/TR.
 var goldenManagerTiles = []string{
 	"/designer", "/shifts", "/journal", "/orders", "/reports", "/settings", "/plugins", "/items",
 	"/help",
-	"/users", "/kitchen-stations", "/bluetooth-devices", "/tables", "/country-settings", "/translations", "/report-issue",
+	"/users", "/kitchen-stations", "/bluetooth-devices", "/tables", "/report-issue", "/country-settings", "/translations",
 	"/locations", "/registers",
 }
 
@@ -59,6 +65,9 @@ func TestMenuPage_GoldenZeroPluginTileOrder(t *testing.T) {
 	if strings.Join(cashier, " ") != strings.Join(wantCashier, " ") {
 		t.Fatalf("zero-plugin cashier tiles drifted:\n got %v\nwant %v", cashier, wantCashier)
 	}
+	if strings.Contains(getMenu(t, mux), "menu-group") {
+		t.Fatalf("a cashier (no settings access) must not see the Administration group heading")
+	}
 
 	t.Setenv("UT_AUTH", "off")
 	body := getMenu(t, mux)
@@ -66,8 +75,17 @@ func TestMenuPage_GoldenZeroPluginTileOrder(t *testing.T) {
 	if strings.Join(manager, " ") != strings.Join(goldenManagerTiles, " ") {
 		t.Fatalf("zero-plugin manager tiles drifted:\n got %v\nwant %v", manager, goldenManagerTiles)
 	}
-	if strings.Contains(body, "menu-group") {
-		t.Fatalf("a zero-plugin till has no group headings, got: %s", body)
+	// ut-docs#1959: core itself now declares one group ("Administration"),
+	// so a zero-*plugin* till is no longer a zero-*group* till — but it must
+	// still be exactly one heading, positioned before the group's first
+	// member, never duplicated by the two DE/TR-only tiles sandwiched (in
+	// Order, not in this render) between the visible ones.
+	heading := `<h2 class="menu-group">` + httpx.T("en", "menu.group.administration") + `</h2>`
+	if strings.Count(body, heading) != 1 {
+		t.Fatalf("expected exactly one Administration group heading, got: %s", body)
+	}
+	if strings.Index(body, heading) > strings.Index(body, `href="/country-settings"`) {
+		t.Fatalf("group heading must precede its first tile, got: %s", body)
 	}
 }
 
