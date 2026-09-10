@@ -451,6 +451,28 @@ SELECT version FROM plugins WHERE id = ? AND is_active = 1 LIMIT 1
 	return version, true, nil
 }
 
+// GetInstalledPluginVersion fetches a plugin's row version regardless of its
+// is_active flag — unlike GetActivePluginVersion, this also finds a plugin an
+// operator has manually DISABLED. A caller deciding whether to uninstall a
+// plugin that should no longer apply (e.g. builtinlayouts.Sync reacting to a
+// shop_type change) must key off "is this plugin installed at all", not "is
+// it currently active" — a disabled-but-still-installed plugin would
+// otherwise never be cleaned up, and a later re-enable would resurrect
+// behavior a shop already moved away from.
+func (r *PluginRepo) GetInstalledPluginVersion(ctx context.Context, pluginID string) (string, bool, error) {
+	var version string
+	err := r.db.QueryRowContext(ctx, `
+SELECT version FROM plugins WHERE id = ? LIMIT 1
+`, pluginID).Scan(&version)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, pluginObs.wrap("get_installed_version", err)
+	}
+	return version, true, nil
+}
+
 // UpdatePluginInstallState flips ONLY the install lifecycle state of one
 // plugin (is_active and version are untouched, unlike SetPluginState).
 // WasmRuntime.Sync uses it to mark a registered-but-unloadable plugin

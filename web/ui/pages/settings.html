@@ -1713,6 +1713,11 @@
 <div class="card" id="settings-shop-type">
   <h2>{{ T "settings.shop_type.title" }}</h2>
   <p class="muted">{{ T "settings.shop_type.help" }}</p>
+  <!-- ut-docs#1902: says what will change BEFORE it applies (only "Service
+       trade" today drives anything — the builtin Salon layout, ADR-0088;
+       every other shop type keeps the byte-identical, everything-visible
+       menu, so the note only needs to name the one that isn't a no-op). -->
+  <p class="muted">{{ T "settings.shop_type.service_layout_note" }}</p>
   <form hx-post="/api/settings/shop-type" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}">
     {{ $stype := .shopType }}
     <select name="shop_type">

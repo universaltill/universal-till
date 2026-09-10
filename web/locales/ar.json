@@ -1751,6 +1751,7 @@
   "settings.service_charge.invalid_rate": "أدخل رسوم الخدمة كنسبة مئوية تساوي صفرًا أو أكثر، مثل 12.5.",
   "settings.service_charge.tr_forbidden": "يحظر القانون التركي فرض رسوم الخدمة أو رسوم الطاولة أو الكوفير على الفاتورة (لائحة بطاقة الأسعار، سارية منذ 30 يناير 2026). أضف هذا المبلغ إلى أسعار قائمة الطعام بدلاً من ذلك.",
   "settings.shop_type.help": "نوع النشاط التجاري الذي تخدمه هذه النقطة — يُختار عند الإعداد ويمكن تغييره هنا.",
+  "settings.shop_type.service_layout_note": "Choosing Service trade also enables the Salon menu layout: it hides Tables and Kitchen stations and relabels Items to Services. Find hidden tiles again under Settings → Hidden menu tiles. Switching away removes the layout completely.",
   "settings.shop_type.title": "نوع المتجر",
   "settings.stock_tracking.hint": "شغّل هذا الخيار إذا كنت لا تحصي المخزون. عندئذٍ تُباع الأصناف حتى لو لم يكن لدى الصندوق سجل مخزون لها، ولن يُرفض أي بيع بسبب نفاد الكمية. اتركه مغلقًا إذا أردت أن يوقف الصندوق البيع عند نفاد الصنف.",
   "settings.stock_tracking.label": "بيع الأصناف دون تتبع المخزون",
