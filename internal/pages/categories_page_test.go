@@ -1,6 +1,9 @@
 package pages
 
 import (
+	"bytes"
+	"io"
+	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -406,5 +409,205 @@ func TestCategoriesPage_NewCategoryAppearsInCatalogSelectAndSaleScreenTab(t *tes
 	mux.ServeHTTP(rec, req)
 	if !strings.Contains(rec.Body.String(), wantOption) {
 		t.Fatalf("deactivated-but-still-referenced category must still appear in the catalog item-edit <select>:\n%s", rec.Body.String())
+	}
+}
+
+// ut-docs#2010: /categories is the reference implementation of the app-wide
+// list/edit standard (ut-docs/reference/list-and-dialog-pattern.md). The
+// shared record_dialog partial ships NO default for its two slots — a page
+// that forgets to {{ define "record_dialog_fields" }} would parse fine and
+// only fail at execute time, so this pins that the rendered page really
+// carries the dialog, the list header, AND a name field inside the dialog
+// body (a silently-empty dialog is the exact failure mode the slot contract
+// exists to prevent). The old two-column .users-form card must be gone: the
+// list is the page and creation happens in the dialog.
+func TestCategoriesPage_RendersRecordDialogWithFieldsSlot(t *testing.T) {
+	mux, _ := newCategoriesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	postForm(mux, "/api/categories", url.Values{"name": {"Drinks"}}, &manager)
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/categories", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /categories: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	// The list header: a search box wired to the rows, and an icon-only New
+	// button wired to the dialog, each with an accessible name.
+	if !strings.Contains(body, `class="list-header"`) {
+		t.Errorf("page has no .list-header")
+	}
+	if !strings.Contains(body, `data-list-filter="#categories-table .category-row"`) {
+		t.Errorf("search box is not wired to the category rows")
+	}
+	if !strings.Contains(body, `data-record-dialog-open="category-dialog"`) {
+		t.Errorf("New button is not wired to the dialog")
+	}
+
+	// The dialog itself, and the slot contract: the body holds the form
+	// with the name field.
+	dlgStart := strings.Index(body, `<dialog id="category-dialog"`)
+	if dlgStart < 0 {
+		t.Fatalf("page has no #category-dialog:\n%s", body)
+	}
+	dlgEnd := strings.Index(body[dlgStart:], `</dialog>`)
+	if dlgEnd < 0 {
+		t.Fatalf("dialog is not closed")
+	}
+	dlg := body[dlgStart : dlgStart+dlgEnd]
+	bodyStart := strings.Index(dlg, `class="record-dialog-body"`)
+	if bodyStart < 0 {
+		t.Fatalf("dialog has no .record-dialog-body:\n%s", dlg)
+	}
+	dlgBody := dlg[bodyStart:]
+	if !strings.Contains(dlgBody, `id="category-form"`) || !strings.Contains(dlgBody, `name="name"`) {
+		t.Errorf("record_dialog_fields slot did not render the name field inside the dialog body:\n%s", dlgBody)
+	}
+	if !strings.Contains(dlg, `data-record-dialog-destructive`) {
+		t.Errorf("record_dialog_destructive slot did not render inside the dialog head:\n%s", dlg)
+	}
+	// Save reaches the form via the HTML5 form="…" association, not by
+	// being inside it.
+	if !strings.Contains(dlg, `form="category-form"`) {
+		t.Errorf("Save button is not associated with #category-form")
+	}
+	for _, attr := range []string{`data-create-action="/api/categories"`, `data-discard-confirm="`, `data-title-create="`, `data-title-edit="`} {
+		if !strings.Contains(dlg, attr) {
+			t.Errorf("dialog is missing %s", attr)
+		}
+	}
+
+	// A row is tap-to-edit: it carries the prefill attributes and its own
+	// action, plus a real focusable edit control as the keyboard path.
+	if !strings.Contains(body, `data-record-open`) || !strings.Contains(body, `data-field-name="Drinks"`) {
+		t.Errorf("category row is not a tap-to-edit row with prefill data")
+	}
+	if !strings.Contains(body, `data-record-edit`) {
+		t.Errorf("category row has no explicit (keyboard-reachable) edit control")
+	}
+
+	// The old side-by-side create card and the per-row inline rename input
+	// are gone.
+	for _, gone := range []string{`users-form`, `users-layout`, `rename-input`, `▲`, `▼`} {
+		if strings.Contains(body, gone) {
+			t.Errorf("page still renders the old %q pattern", gone)
+		}
+	}
+	// The reorder pair draws icons now, still with their accessible names.
+	if !strings.Contains(body, `data-icon="chevron-up"`) || !strings.Contains(body, `data-icon="chevron-down"`) {
+		t.Errorf("reorder buttons do not draw chevron icons")
+	}
+}
+
+// The no-results row for the client-side filter is server-rendered
+// (translated) and hidden until the filter empties the list.
+func TestCategoriesPage_RendersHiddenNoResultsRow(t *testing.T) {
+	mux, _ := newCategoriesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	postForm(mux, "/api/categories", url.Values{"name": {"Drinks"}}, &manager)
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/categories", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	body := rec.Body.String()
+	i := strings.Index(body, `id="categories-no-results"`)
+	if i < 0 {
+		t.Fatalf("no #categories-no-results row")
+	}
+	tag := body[strings.LastIndex(body[:i], "<"):]
+	tag = tag[:strings.Index(tag, ">")+1]
+	if !strings.Contains(tag, "hidden") {
+		t.Errorf("no-results row must start hidden: %s", tag)
+	}
+}
+
+// ut-docs#2018 (pulled into ut-docs#2010): categories.html's reorder script
+// posts `new FormData()` — a MULTIPART body — and the handler called only
+// r.ParseForm(), which ignores multipart, so every real-browser reorder
+// answered `400 ids required` while the urlencoded Go test above passed.
+// buttons_api.go already guards this exact trap. All three body shapes the
+// endpoint documents are driven here; the multipart one is what the
+// browser actually sends.
+func TestCategoriesPageReorder_AcceptsMultipartUrlencodedAndCommaJoined(t *testing.T) {
+	mux, d := newCategoriesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	ids := map[string]string{}
+	for _, name := range []string{"Drinks", "Snacks", "Bakery"} {
+		postForm(mux, "/api/categories", url.Values{"name": {name}}, &manager)
+		var id string
+		if err := d.Db.QueryRow(`SELECT id FROM categories WHERE name = ?`, name).Scan(&id); err != nil {
+			t.Fatal(err)
+		}
+		ids[name] = id
+	}
+	readOrder := func() []string {
+		rows, err := d.Db.Query(`SELECT name FROM categories ORDER BY sort_order, name`)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer rows.Close()
+		var out []string
+		for rows.Next() {
+			var n string
+			if err := rows.Scan(&n); err != nil {
+				t.Fatal(err)
+			}
+			out = append(out, n)
+		}
+		return out
+	}
+	post := func(body io.Reader, contentType string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, "/api/categories/reorder", body)
+		req.Header.Set("Content-Type", contentType)
+		req = auth.WithUser(req, manager)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+
+	cases := []struct {
+		label string
+		want  []string
+		body  func(want []string) (io.Reader, string)
+	}{
+		{"multipart (what the browser's FormData sends)", []string{"Snacks", "Bakery", "Drinks"}, func(want []string) (io.Reader, string) {
+			var buf bytes.Buffer
+			mw := multipart.NewWriter(&buf)
+			for _, n := range want {
+				if err := mw.WriteField("ids", ids[n]); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if err := mw.Close(); err != nil {
+				t.Fatal(err)
+			}
+			return &buf, mw.FormDataContentType()
+		}},
+		{"urlencoded, repeated ids", []string{"Bakery", "Drinks", "Snacks"}, func(want []string) (io.Reader, string) {
+			v := url.Values{}
+			for _, n := range want {
+				v.Add("ids", ids[n])
+			}
+			return strings.NewReader(v.Encode()), "application/x-www-form-urlencoded"
+		}},
+		{"urlencoded, one comma-joined field", []string{"Drinks", "Snacks", "Bakery"}, func(want []string) (io.Reader, string) {
+			joined := make([]string, 0, len(want))
+			for _, n := range want {
+				joined = append(joined, ids[n])
+			}
+			return strings.NewReader(url.Values{"ids": {strings.Join(joined, ",")}}.Encode()), "application/x-www-form-urlencoded"
+		}},
+	}
+	for _, c := range cases {
+		body, ct := c.body(c.want)
+		rec := post(body, ct)
+		if rec.Code != http.StatusNoContent {
+			t.Errorf("%s: code=%d body=%q, want 204", c.label, rec.Code, rec.Body.String())
+			continue
+		}
+		if got := readOrder(); strings.Join(got, ",") != strings.Join(c.want, ",") {
+			t.Errorf("%s: order after reorder = %v, want %v", c.label, got, c.want)
+		}
 	}
 }

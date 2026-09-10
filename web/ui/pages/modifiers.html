@@ -1,6 +1,14 @@
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "modifiers.title" }}</h1>
+  <!-- ut-docs#2009: /modifiers was the one catalog sub-page (of Import,
+       Tax codes, Option sets, Modifiers) whose only way back to /catalog
+       lived inside the empty-state card below, shown only when the shop
+       has zero modifier groups — gone the instant it has any, which is
+       the normal state. A persistent link in the head, matching
+       tax_codes.html/import.html's own convention, so this is never a
+       dead end on a kiosk with no browser chrome and no hardware Back. -->
+  <a class="btn secondary" href="/catalog">← {{ T "nav.catalog" }}</a>
 </div>
 
 <p class="muted">{{ T "modifiers.subtitle" }}</p>
