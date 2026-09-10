@@ -1,0 +1,29 @@
+{{ define "content" }}
+<!--
+  /admin (ut-docs#2008): the tree page the Menu launcher's single gated
+  "Administration" tile opens. Replaces #1959's group heading on the flat
+  /menu grid -- the six set-once/onboarding destinations it used to head
+  (country settings, translations, the two statutory fiscal-device pages,
+  stock locations/registers) now live here instead, grouped into three
+  domain clusters (internal/pages/admin_page.go's adminGroupOrder) rather
+  than one flat list.
+
+  Server-side gated independently of the tile that leads here
+  (registerAdmin's own visibleAdminEntries check, 403 via httpx.RenderError
+  when it comes back empty) -- reaching /admin directly by URL with no
+  visible destination refuses the same as every other admin page in this
+  product, not just a hidden tile.
+-->
+<div class="page-head">
+  <h1>{{ T "menu.group.administration" }} {{ helpLink "menu" }}</h1>
+  <!-- Real, touch-sized back-to-menu affordance (>=46px, .btn-touch) --
+       same "icon + label" button shape menu.html's own "Back to sale"
+       button and error_page.html's 403 fallback use, just pointed at
+       .BackHref (always "/menu" today) instead of "/". The nav rail's own
+       "Menu" icon (nav.html, every page) already reaches /menu too; this
+       is the in-content affordance the AC calls for in addition to it. -->
+  <a class="btn primary btn-touch" href="{{ .BackHref }}"><span class="btn-ico" aria-hidden="true">{{ icon "menu" }}</span> {{ T "nav.menu" }}</a>
+</div>
+
+{{ template "admin_tree" . }}
+{{ end }}

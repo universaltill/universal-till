@@ -2178,6 +2178,13 @@ type ButtonEntryRow struct {
 	PluginVersion string
 	PluginName    string
 	EntryKey      string
+	// Label is rendered through T at render time (ut-docs#2015,
+	// web/ui/partials/plugin_buttons.html): a translator key resolved via
+	// the owning plugin's own locales/ overlay (ADR-0010, "any active plugin
+	// may also ship locales/*.json to translate its own strings"; the
+	// entry-label contract itself is reference/plugin-manifest.md's entries
+	// table, `label` row), same convention as a page/export/report entry's
+	// label.
 	Label         string
 	IconPath      string
 	ParentPageKey string

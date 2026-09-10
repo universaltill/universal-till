@@ -1388,6 +1388,35 @@ WHERE status = 'completed' AND sale_type = 'return'
 	return total, count, nil
 }
 
+// DiscountsByWindow (ut-docs#1975) sums every discount applied to a
+// completed sale over [from, to) — both the whole-sale discount
+// (sales.discount_total, reason "sale_discount" in sale_discounts) AND
+// each line's own discount (sale_lines.line_discount, reason
+// "line_discount"). sale_discounts is the canonical ledger for both
+// (InsertSaleDiscountsBatch, internal/pos/sales.go) with no overlap
+// between the two reasons, so a plain SUM over it — joined to sales for
+// the status/type/window filter, mirroring RefundsByWindow immediately
+// above — is correct without double-counting and without the fan-out risk
+// a per-line JOIN inside SalesByDay's own GROUP BY would carry into
+// Count/Total/TaxTotal. Deliberately a separate query, not a column added
+// to SalesByDay: sale_discounts has no day column of its own to group by
+// cheaply, and this mirrors RefundsByWindow's own existing shape for a
+// different table over the same window.
+func (r *POSRepo) DiscountsByWindow(ctx context.Context, from, to time.Time) (total int64, err error) {
+	fromStr, toStr := windowArgs(from, to)
+	err = r.db.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(sd.amount), 0)
+FROM sale_discounts sd
+JOIN sales s ON s.id = sd.sale_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale'
+  AND datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) < datetime(?)`,
+		fromStr, toStr).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("discounts by window: %w", err)
+	}
+	return total, nil
+}
+
 // TopItems returns the best sellers by revenue over [from, to).
 func (r *POSRepo) TopItems(ctx context.Context, from, to time.Time, limit int) ([]TopItem, error) {
 	fromStr, toStr := windowArgs(from, to)
@@ -6987,7 +7016,19 @@ ORDER BY id
 
 // PaymentMethod is an active tender method offered on the Pay tab.
 type PaymentMethod struct {
-	ID   string
+	ID string
+	// Name is rendered through T at render time (ut-docs#2015): a plugin
+	// payment entry's label is copied into payment_methods.name verbatim at
+	// sync time (SyncPluginPaymentMethods) as a translator key, resolved via
+	// the owning plugin's own locales/ overlay (ADR-0010; the entry-label
+	// contract itself is reference/plugin-manifest.md's entries table,
+	// `label` row) — same render-time mechanism a page/export/report entry's
+	// label already uses. The three built-ins ('cash'/'card'/'gift') follow
+	// the same convention as of ut-docs#2021: 022_builtin_payment_method_
+	// i18n_keys.sql repoints their Name at "tender.cash"/"tender.card"/
+	// "tender.gift_card" (web/locales/*.json) instead of the plain-text
+	// literals 001_init.sql originally seeded, so they now translate on a
+	// non-English till instead of passing through T unchanged.
 	Name string
 	// Type is the payment_methods.type column ('cash', 'card', 'voucher',
 	// …). ut-docs#1832: the sale screen keeps a 'voucher' type out of the
