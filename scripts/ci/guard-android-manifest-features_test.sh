@@ -116,9 +116,14 @@ assert_passes "INTERNET (no implied feature) with no uses-feature element"
 
 # 7. The real, current manifest must itself pass -- proves the guard is
 #    actually wired to today's fix, not just to synthetic fixtures.
-bash "${GUARD}" "android/app/src/main/AndroidManifest.xml" >/tmp/guard-out.$$ 2>&1 \
-  && { echo "PASS (correctly accepted): real android/app/src/main/AndroidManifest.xml"; rm -f /tmp/guard-out.$$; } \
-  || { echo "FAIL: real AndroidManifest.xml was rejected"; cat /tmp/guard-out.$$; rm -f /tmp/guard-out.$$; FAIL_COUNT=$((FAIL_COUNT + 1)); }
+if bash "${GUARD}" "android/app/src/main/AndroidManifest.xml" >/tmp/guard-out.$$ 2>&1; then
+  echo "PASS (correctly accepted): real android/app/src/main/AndroidManifest.xml"
+else
+  echo "FAIL: real AndroidManifest.xml was rejected"
+  cat /tmp/guard-out.$$
+  FAIL_COUNT=$((FAIL_COUNT + 1))
+fi
+rm -f /tmp/guard-out.$$
 
 if [ "${FAIL_COUNT}" -ne 0 ]; then
   echo "guard-android-manifest-features_test: ${FAIL_COUNT} assertion(s) failed" >&2

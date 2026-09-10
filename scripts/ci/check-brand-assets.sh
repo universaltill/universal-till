@@ -62,17 +62,34 @@ check_hash "$light" "$LIGHT_SHA256" "light"
 # failed to find a match that was right there (caught testing this exact
 # guard change). The bare marker has no such trap and reads identically in
 # either file kind, since only the ".svg"/"\.svg" tail differs between them.
+# must_not_contain <label> <pattern> <grep-arg...> -- fails loudly if
+# <pattern> is found. NOT written as a bare `! grep ...`: under `set -e`,
+# the exit status of a command negated with `!` is explicitly exempted from
+# triggering errexit (bash(1), "set -e"), so a bare `! grep -Fq PATTERN
+# FILE` silently does nothing when PATTERN *is* present -- exactly the
+# violation this guard exists to catch. Caught by adding shellcheck to CI
+# (SC2251, ut-docs#1943): the three checks below always exited 0 regardless
+# of whether the forbidden marker was actually present.
+must_not_contain() {
+  local label="$1" pattern="$2"
+  shift 2
+  if grep -Fq "$pattern" "$@"; then
+    echo "$label: forbidden marker '$pattern' found in: $*" >&2
+    exit 1
+  fi
+}
+
 grep -Fq 'unitill-logo-light' "$root/web/ui/partials/nav.html"
 for template in \
   "$root/web/ui/pages/login.html" \
   "$root/web/ui/pages/setup.html" \
   "$root/web/ui/pages/self_order.html"; do
   grep -Fq 'unitill-logo.svg' "$template"
-  ! grep -Fq 'unitill-logo-light' "$template"
+  must_not_contain "login/setup/self-order must stay on the dark mark" 'unitill-logo-light' "$template"
 done
 grep -Fq 'unitill-logo-light' "$root/tests/e2e/tests/pos_ui_mvp.spec.ts"
-! grep -RFq 'ut-logo-name-light.svg' "$root/web/ui"
-! grep -RFq 'ut-logo-name.svg' "$root/web/ui"
+must_not_contain "old wordmark asset must not be referenced" 'ut-logo-name-light.svg' -R "$root/web/ui"
+must_not_contain "old wordmark asset must not be referenced" 'ut-logo-name.svg' -R "$root/web/ui"
 
 # Scoped to the actual .login-logo, .selforder-logo rule (not `grep -Eq
 # 'background: transparent'` over the whole file, which half a dozen

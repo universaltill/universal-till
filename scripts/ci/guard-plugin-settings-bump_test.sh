@@ -29,6 +29,8 @@ GUARD="scripts/ci/guard-plugin-settings-bump.sh"
 FAIL_COUNT=0
 
 fixtures=()
+# Invoked indirectly via `trap ... EXIT`, not a direct call -- shellcheck cannot see that (SC2317 false positive).
+# shellcheck disable=SC2317
 cleanup() {
   local status=$?
   if [[ ${#fixtures[@]} -gt 0 ]]; then
@@ -99,6 +101,11 @@ expect_pass() {
 
 # A real production caller that writes a plugin setting but never
 # references BumpGeneration anywhere in the same file must be rejected.
+# The embedded `+"`"+` sequences below are literal Go backticks (this
+# fixture's Go source needs a raw-string-quoted value); double-quoting
+# this block instead, as shellcheck suggests, would make bash try to
+# command-substitute them.
+# shellcheck disable=SC2016
 plant "internal/pages" "pages" "MissingBump" 'import (
 	"context"
 
@@ -114,6 +121,8 @@ clear_fixtures
 
 # The same call, but the file also references BumpGeneration somewhere in
 # it (the actual convention this guard enforces) must pass.
+# Literal Go backticks, see the MissingBump case above for why.
+# shellcheck disable=SC2016
 plant "internal/pages" "pages" "HasBump" 'import (
 	"context"
 
@@ -139,6 +148,8 @@ clear_fixtures
 # An inline plugin-settings-bump:allow escape hatch on the SAME LINE as
 # the writer call must silence an otherwise-real finding, same same-line
 # convention as guard-kiosk-engine.sh's kiosk-engine-guard:allow.
+# Literal Go backticks, see the MissingBump case above for why.
+# shellcheck disable=SC2016
 plant "internal/pages" "pages" "AllowedException" 'import (
 	"context"
 
@@ -156,6 +167,8 @@ clear_fixtures
 # writer-call line in the same file (with no BumpGeneration() reference
 # either) must still be rejected, even though the file also contains an
 # allowed line. A file-scoped escape hatch would silently disarm this.
+# Literal Go backticks, see the MissingBump case above for why.
+# shellcheck disable=SC2016
 plant "internal/pages" "pages" "PartialAllowInSameFile" 'import (
 	"context"
 

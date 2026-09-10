@@ -39,14 +39,16 @@ REAL_SCRIPT="$(pwd)/scripts/ci/check-lang-pack-drift.sh"
 # once, not N times.
 pack_script_source() {
     local repo="$1"
-    local cache_var="PACK_SCRIPT_CACHE_$(echo "$repo" | tr 'a-z-' 'A-Z_')"
+    local cache_var
+    cache_var="PACK_SCRIPT_CACHE_$(echo "$repo" | tr 'a-z-' 'A-Z_')"
     local cached="${!cache_var:-}"
     if [ -n "$cached" ] && [ -f "$cached" ]; then
         echo "$cached"
         return 0
     fi
 
-    local override_var="UT_TEST_PACK_SCRIPT_$(echo "$repo" | tr 'a-z-' 'A-Z_')"
+    local override_var
+    override_var="UT_TEST_PACK_SCRIPT_$(echo "$repo" | tr 'a-z-' 'A-Z_')"
     local override="${!override_var:-}"
     if [ -n "$override" ] && [ -f "$override" ]; then
         printf -v "$cache_var" '%s' "$override"

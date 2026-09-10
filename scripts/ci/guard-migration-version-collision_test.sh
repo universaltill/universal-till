@@ -20,6 +20,8 @@ FAIL_COUNT=0
 # guard script's own comment on the high-watermark applier). A mktemp -d
 # means a stray leftover is inert either way.
 FIXTURE_DIR="$(mktemp -d)"
+# Invoked indirectly via `trap ... EXIT`, not a direct call -- shellcheck cannot see that (SC2317 false positive).
+# shellcheck disable=SC2317
 cleanup() {
   local status=$?
   rm -rf "${FIXTURE_DIR}"
