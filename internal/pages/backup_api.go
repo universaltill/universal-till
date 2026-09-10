@@ -36,8 +36,11 @@ type backupUIRow struct {
 	Date string
 }
 
-// listBackupsForUI formats the snapshot list for the settings card.
-func listBackupsForUI(d *common.Deps) []backupUIRow {
+// listBackupsForUI formats the snapshot list for the settings card. Date is
+// locale-aware (ut-docs#1936) via httpx.FormatDateTime, the same func the
+// Data card's reset-batches list next to it already used before this fix —
+// this table had been the one site #1894 missed.
+func listBackupsForUI(d *common.Deps, locale string) []backupUIRow {
 	list, err := db.ListBackups(d.Cfg.DBPath)
 	if err != nil {
 		return nil
@@ -47,7 +50,7 @@ func listBackupsForUI(d *common.Deps) []backupUIRow {
 		out = append(out, backupUIRow{
 			Name: b.Name,
 			Size: fmt.Sprintf("%.1f MB", float64(b.Size)/(1<<20)),
-			Date: b.ModTime.Format("2006-01-02 15:04"),
+			Date: httpx.FormatDateTime(b.ModTime.Local(), locale),
 		})
 	}
 	return out
