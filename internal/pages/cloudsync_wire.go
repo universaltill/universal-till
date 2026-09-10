@@ -157,12 +157,13 @@ func StartCloudSync(ctx context.Context, d *common.Deps, rederive func(context.C
 		},
 		// The cloud's Design picker offers exactly what this till could pick
 		// locally (built-in + plugin-contributed themes); applying one comes
-		// back as a plain `set_setting theme` directive.
+		// back as a plain `set_setting theme` directive. cloudThemeOptions
+		// resolves each label through the translator the same way the local
+		// Settings <select> does (ut-docs#2015 review) — a plugin theme's
+		// label is a translator key, so sending it raw would list
+		// "theme.midnight.label" in the portal.
 		DeviceExtra: func(ctx context.Context) map[string]any {
-			themes := []map[string]string{}
-			for _, opt := range availableThemes(ctx, d) {
-				themes = append(themes, map[string]string{"key": opt.Key, "label": opt.Label})
-			}
+			themes := cloudThemeOptions(ctx, d)
 			return map[string]any{
 				"theme":    d.CurrentState().Theme,
 				"themes":   themes,
