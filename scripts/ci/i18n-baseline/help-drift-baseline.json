@@ -21,25 +21,6 @@
     },
     {
       "locale": "ar",
-      "topic": "categories",
-      "signature": {
-        "headings": 3,
-        "numbered_steps": 5,
-        "sub_bullets": 0,
-        "top_bullets": 4,
-        "bold_leadins": 1
-      },
-      "english": {
-        "headings": 3,
-        "numbered_steps": 5,
-        "sub_bullets": 0,
-        "top_bullets": 4,
-        "bold_leadins": 2
-      },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
-    },
-    {
-      "locale": "ar",
       "topic": "country-settings",
       "signature": {
         "headings": 3,
@@ -263,25 +244,6 @@
         "sub_bullets": 0,
         "top_bullets": 20,
         "bold_leadins": 10
-      },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
-    },
-    {
-      "locale": "fa",
-      "topic": "categories",
-      "signature": {
-        "headings": 3,
-        "numbered_steps": 5,
-        "sub_bullets": 0,
-        "top_bullets": 4,
-        "bold_leadins": 1
-      },
-      "english": {
-        "headings": 3,
-        "numbered_steps": 5,
-        "sub_bullets": 0,
-        "top_bullets": 4,
-        "bold_leadins": 2
       },
       "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
     },
@@ -605,25 +567,6 @@
         "sub_bullets": 0,
         "top_bullets": 0,
         "bold_leadins": 0
-      },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
-    },
-    {
-      "locale": "tr",
-      "topic": "categories",
-      "signature": {
-        "headings": 3,
-        "numbered_steps": 5,
-        "sub_bullets": 0,
-        "top_bullets": 4,
-        "bold_leadins": 1
-      },
-      "english": {
-        "headings": 3,
-        "numbered_steps": 5,
-        "sub_bullets": 0,
-        "top_bullets": 4,
-        "bold_leadins": 2
       },
       "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
     },
