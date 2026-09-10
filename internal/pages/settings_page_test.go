@@ -1,6 +1,7 @@
 package pages
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -8,6 +9,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -20,8 +22,10 @@ import (
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
+	layoutsalon "github.com/universaltill/universal-till/plugins/layout-salon"
 )
 
 func TestShortDeviceID(t *testing.T) {
@@ -2797,5 +2801,78 @@ func TestShopTypeEndpoint_ServiceActivatesSalonLayout_SwitchAwayRemovesIt(t *tes
 	}
 	if hasSalonAmendment() {
 		t.Fatalf("switching to shop_type=cafe must deactivate the salon layout, still present: %+v", d.Pm.LayoutAmendments)
+	}
+}
+
+// ut-docs#2006 gap 2, at the real handler level: a version-bump reinstall
+// whose installSalon half fails must still trigger ReloadPlugins — proven
+// here by d.Pm actually reflecting the post-removal DB state (no orphaned
+// amendment) even though builtinlayouts.Sync returned an error. Before this
+// card's fix, the handler's `if err := Sync(...); err != nil { warn } else
+// if ... ReloadPlugins ...` skipped the reload on any Sync error, so a
+// caller's in-memory Pm would have kept serving the stale, now-uninstalled
+// plugin's amendments until some unrelated later reload.
+func TestShopTypeEndpoint_FailedReinstall_StillReloadsPlugins(t *testing.T) {
+	origDataDir := paths.DataDir()
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init(origDataDir) })
+
+	mux, _, d := newFullAuthDeps(t)
+	ctx := t.Context()
+
+	pm, err := plugins.Init(ctx, d.Cfg, d.Db)
+	if err != nil {
+		t.Fatalf("plugins.Init: %v", err)
+	}
+	d.Pm = pm
+
+	hasSalonAmendment := func() bool {
+		for _, a := range d.Pm.LayoutAmendments {
+			if a.PluginID == "com.universaltill.layout-salon" && a.Key == "/tables" && a.Hide {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Simulate a pre-existing install of a STALE embedded-manifest version
+	// (same setup builtinlayouts' own
+	// TestSync_StaleInstalledVersion_ReplacedWithCurrentOnResync uses) —
+	// DB row only, no on-disk plugin files, exactly what a real prior till
+	// self-update would leave if it never re-synced.
+	staleManifest, err := plugins.ParseManifest(bytes.NewReader(layoutsalon.ManifestJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleManifest.Version = "0.0.1-stale"
+	if err := plugins.PersistManifest(ctx, d.Db, staleManifest, plugins.InstallOptions{TrustLevel: "system"}); err != nil {
+		t.Fatalf("install fabricated stale version: %v", err)
+	}
+	if err := d.ReloadPlugins(ctx); err != nil {
+		t.Fatalf("reload after seeding stale version: %v", err)
+	}
+	if !hasSalonAmendment() {
+		t.Fatal("the stale-but-installed salon layout must already be active before the reinstall attempt")
+	}
+
+	// Block installSalon's os.MkdirAll deterministically, same
+	// failure-injection as builtinlayouts_test.go's
+	// TestSync_ReinstallFailure_StillReturnsError: a regular file where a
+	// directory needs to be created, placed at the plugins ROOT (not under
+	// the plugin's own id directory) so removeSalon's os.RemoveAll doesn't
+	// wipe it before installSalon ever runs.
+	if err := os.WriteFile(paths.Plugins(), []byte("blocking file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-saving shop_type=service now hits the version-mismatch reinstall
+	// path: removeSalon succeeds (DB says uninstalled), installSalon fails
+	// (blocked MkdirAll). The handler must treat this as "reload anyway."
+	rec := postForm(mux, "/api/settings/shop-type", url.Values{"shop_type": {"service"}}, &mgrUser)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("save shop_type=service over a stale version: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if hasSalonAmendment() {
+		t.Fatal("a failed reinstall must still trigger ReloadPlugins — d.Pm kept serving the stale (now-uninstalled) plugin's amendment instead of reflecting the DB's real post-removal state")
 	}
 }
