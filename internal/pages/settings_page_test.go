@@ -2,11 +2,13 @@ package pages
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -2642,5 +2644,107 @@ func TestSettingsUpsert_OwnerRequiredGatesAreTranslatedFullLayout(t *testing.T) 
 				t.Fatalf("expected the translated owner_required message %q, got: %s", want, body)
 			}
 		})
+	}
+}
+
+// ut-docs#1883 / architecture/plugin-architecture.md §7: an export/report
+// entry's Label is a plugin-overlay-resolvable locale key ("plain-text
+// labels pass through T unchanged", same convention plugin_page.go already
+// uses for page-type entries), not a literal string — but the Data-export
+// picker in settings.html previously rendered `.Label` raw, with no `T`
+// call, so a plugin author's translation was never actually applied here
+// even when the plugin correctly shipped `locales/<code>.json`. These two
+// tests pin the fix for both the single-entry and multi-entry render
+// branches, and confirm an entry whose Label has no matching overlay key
+// still falls back to rendering the literal string unchanged (config.I18n.T
+// returns the key itself on a miss) rather than breaking a plugin that
+// hasn't adopted the key convention yet.
+// seedTestExportPlugin inserts a minimal active plugin row, satisfying the
+// plugin_catalog (id, version) FK plugins itself requires (ut-docs#1677) —
+// same shape as pos_api_test.go's TestTenderHandler_AppliesPluginReportedTipFromAuthorizeResponse.
+func seedTestExportPlugin(t *testing.T, db *sql.DB, id string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES (?, '1.0.0', 'Test Plugin', 'test', 'wasm', 'plugin.wasm', 'https://example.test/plugin.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`, id); err != nil {
+		t.Fatalf("seed plugin_catalog: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES (?, 'Test Plugin', '1.0.0', 'plugin.wasm', 'wasm', 1)`, id); err != nil {
+		t.Fatalf("seed plugins: %v", err)
+	}
+}
+
+func TestSettingsPage_ExportEntryLabel_SingleEntry_ResolvesPluginOverlay(t *testing.T) {
+	mux, _, dp := newFullAuthDeps(t)
+
+	// Mimic plugins.Manager.syncLocales() merging an installed plugin's
+	// locales/en.json overlay into the translator.
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	i18n.SetOverlays(map[string]map[string]string{
+		"en": {"testplugin.export_label": "Test Plugin Export"},
+	})
+	httpx.InitI18n(i18n, "en")
+	t.Cleanup(func() { initAuthTestI18n(t) }) // restore the plain (no-overlay) global i18n for later tests
+
+	seedTestExportPlugin(t, dp.Db, "com.universaltill.testplugin")
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, is_active, sort_order)
+	          VALUES ('e1', 'com.universaltill.testplugin', 'test-export', 'testplugin.export_label', 'export', 1, 5)`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req = auth.WithUser(req, mgrUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Test Plugin Export") {
+		t.Fatalf("expected the export entry label translated via the plugin overlay, got:\n%s", body)
+	}
+	if strings.Contains(body, "testplugin.export_label") {
+		t.Fatalf("raw locale key leaked into the page instead of its translation:\n%s", body)
+	}
+}
+
+func TestSettingsPage_ExportEntryLabel_MultiEntry_ResolvesPluginOverlayAndFallsBackOnMiss(t *testing.T) {
+	mux, _, dp := newFullAuthDeps(t)
+
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	i18n.SetOverlays(map[string]map[string]string{
+		"en": {"testplugin.export_label_a": "Test Plugin Export A"},
+		// deliberately no overlay entry for testplugin.export_label_b, to
+		// pin the fallback-to-literal behaviour for an entry whose plugin
+		// hasn't shipped a translation for this key/locale.
+	})
+	httpx.InitI18n(i18n, "en")
+	t.Cleanup(func() { initAuthTestI18n(t) }) // restore the plain (no-overlay) global i18n for later tests
+
+	seedTestExportPlugin(t, dp.Db, "com.universaltill.testplugin")
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, is_active, sort_order)
+	          VALUES ('e1', 'com.universaltill.testplugin', 'test-export-a', 'testplugin.export_label_a', 'export', 1, 5),
+	                 ('e2', 'com.universaltill.testplugin', 'test-export-b', 'testplugin.export_label_b', 'export', 1, 10)`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req = auth.WithUser(req, mgrUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Test Plugin Export A") {
+		t.Fatalf("expected entry A's label translated via the plugin overlay, got:\n%s", body)
+	}
+	if !strings.Contains(body, "testplugin.export_label_b") {
+		t.Fatalf("expected entry B's untranslated key to fall back to the literal key, got:\n%s", body)
 	}
 }
