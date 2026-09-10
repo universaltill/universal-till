@@ -44,8 +44,23 @@
 {{/* The "no items yet" placeholder card, shared by the grid's else-branch
      and the OOB append fragment below. Spans every column (.catalog-empty,
      app.css) so it reads as one message, not a lone grid cell the width of
-     a single card. */}}
-{{ define "catalog_empty_row" }}<div id="catalog-empty-row" class="empty catalog-empty">{{ T "catalog.empty" }}</div>{{ end }}
+     a single card.
+
+     Review follow-up (ut-docs#1951): this key was a hand-translated
+     (model-invented) ar/fa/tr string, which violates this repo's
+     self-hosted-only translation rule (reference/translation.md — never
+     Claude's own inference, only the homelab NAS Ollama endpoint). That
+     endpoint is unreachable from this cloud sandbox (confirmed again
+     just now: connection timed out — the same wall PRs #982/#1010 hit).
+     Left as a plain, non-templated, English-only literal instead
+     (blocked:env) rather than ship a guessed translation or strand 3
+     locales in silent English. Do NOT write the real localization
+     helper call inside this comment as an example — guard-i18n.sh
+     regex-scans raw file text, comments included, and a literal call
+     here would itself fail CI. Whoever fixes this forward: add
+     catalog.empty (all locales, real NAS translation) and swap this
+     back to a real templated call. */}}
+{{ define "catalog_empty_row" }}<div id="catalog-empty-row" class="empty catalog-empty">No items yet — tap <strong>Add item</strong> to create one.</div>{{ end }}
 
 {{/* ------------------------------------------------------------------
      Out-of-band fragments. ut-docs#1951 simplification: the pre-card

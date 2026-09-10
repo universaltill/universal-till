@@ -360,7 +360,20 @@
     itemFormSaveChangesBtn: "{{ T "catalog.save_changes" }}",
     // ut-docs#1951: the card grid dropped its per-card deactivate button —
     // this is that action's new (and only) home, inside the item dialog.
-    itemDeactivateConfirm: "{{ T "catalog.item_deactivate_confirm" }}"
+    // Review follow-up (ut-docs#1951): the original key here was a
+    // hand-translated (model-invented) ar/fa/tr string, which violates
+    // this repo's self-hosted-only translation rule (reference/
+    // translation.md — never Claude's own inference, only the homelab
+    // NAS Ollama endpoint). That endpoint is unreachable from this cloud
+    // sandbox (confirmed again just now: connection timed out — the same
+    // wall PRs #982/#1010 hit). Left as a plain, non-templated,
+    // English-only literal instead (blocked:env) rather than ship a
+    // guessed translation or strand 3 locales in silent English — same
+    // fallback pattern already used for catalog.empty just below. Do NOT
+    // write the real localization helper call inside this comment as an
+    // example — guard-i18n.sh regex-scans raw file text, comments
+    // included, and a literal call here would itself fail CI.
+    itemDeactivateConfirm: "Deactivate this item?"
   };
 
   // Builds the .pos-notice markup into `el` (empty text clears the slot
