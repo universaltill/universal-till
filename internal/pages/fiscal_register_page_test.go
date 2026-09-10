@@ -27,8 +27,9 @@ func seedTaxDeCatalogRow(t *testing.T, db *sql.DB) {
 	}
 }
 
-// seedActiveTaxDePlugin inserts a minimal com.universaltill.tax-de row
-// into `plugins` (used by menu_page_test.go's tile-gate tests, ut-docs#1084).
+// seedActiveTaxDePlugin inserts a minimal com.universaltill.tax-de row into
+// `plugins` (used by menu_page_test.go's and admin_page_test.go's tile/
+// cluster-gate tests, ut-docs#1084 and ut-docs#2008).
 func seedActiveTaxDePlugin(t *testing.T, db *sql.DB) {
 	t.Helper()
 	seedTaxDeCatalogRow(t, db)
@@ -39,8 +40,9 @@ func seedActiveTaxDePlugin(t *testing.T, db *sql.DB) {
 
 // seedDisabledTaxDePlugin is seedActiveTaxDePlugin's installed-but-disabled
 // counterpart (ut-docs#531's precedent, import_page_test.go's
-// installTaxDePluginDisabled) -- used by menu_page_test.go to prove the
-// tile gate actually checks is_active, not merely row existence.
+// installTaxDePluginDisabled) -- used by admin_page_test.go to prove the
+// fiscal_register_de predicate (and so the /admin Fiscal cluster) actually
+// checks is_active, not merely row existence.
 func seedDisabledTaxDePlugin(t *testing.T, db *sql.DB) {
 	t.Helper()
 	seedTaxDeCatalogRow(t, db)

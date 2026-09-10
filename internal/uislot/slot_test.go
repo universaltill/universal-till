@@ -9,8 +9,12 @@ import (
 // away by third-party code. One subtest per protected key, so a key dropped
 // from ProtectedMenuKeys fails by name.
 func TestParseMenuAmendments_ProtectedKeyCannotBeHidden(t *testing.T) {
-	if len(ProtectedMenuKeys) != 7 {
-		t.Fatalf("ADR-0088 names 7 protected keys, got %d: %v", len(ProtectedMenuKeys), ProtectedMenuKeys)
+	// ut-docs#2008 added "/admin": it's now the ONLY launcher path to both
+	// statutory fiscal pages (registerMenu drops them from the flat /menu
+	// grid unconditionally), so hiding it would make both unreachable from
+	// any UI surface -- exactly what Decision E exists to prevent.
+	if len(ProtectedMenuKeys) != 8 {
+		t.Fatalf("ADR-0088 names 8 protected keys, got %d: %v", len(ProtectedMenuKeys), ProtectedMenuKeys)
 	}
 	for _, key := range ProtectedMenuKeys {
 		t.Run(key, func(t *testing.T) {

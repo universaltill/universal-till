@@ -1,4 +1,8 @@
 {
+  "admin.group.fiscal": "Mali",
+  "admin.group.localization": "Yerelleştirme",
+  "admin.group.locations": "Konumlar",
+  "admin.group.other": "Diğer",
   "ai.identify.button": "Kamerayla tanı",
   "ai.identify.camera_busy": "Kamera başka bir uygulama tarafından kullanılıyor. Diğer uygulamayı kapatın ve tekrar deneyin.",
   "ai.identify.camera_error": "Kamera kullanılamıyor",

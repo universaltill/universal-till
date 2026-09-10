@@ -1,0 +1,38 @@
+{{/*
+  /admin tree (ut-docs#2008): the destination list the Menu launcher's single
+  gated "Administration" tile opens, replacing #1959's group heading on the
+  flat /menu grid. Deliberately NOT items_rail.html's two-pane master-detail
+  (hx-get/hx-target panel swap) -- each of these six destinations is already
+  its own full standalone page, so a row here is plain navigation: a real
+  <a href>, no htmx. Row markup/classes are still items_rail.html's own
+  (.items-row/.items-text/.items-name, app.css) -- same RTL-safe logical
+  properties, same touch-target floor (raised to the product's documented
+  46px floor in app.css's own .admin-tree override, since these rows are
+  name-only where
+  items_rail.html's own rows lean on a second subtitle line for that floor).
+
+  .Groups is []adminGroup (internal/pages/admin_page.go): only the domain
+  clusters that ended up with at least one visible entry after
+  visibleAdminEntries' own gating -- an empty cluster never reaches this
+  template, so no "no entries" branch is needed here.
+*/}}
+{{ define "admin_tree" }}
+<div class="admin-tree">
+  {{ range .Groups }}
+  <section class="admin-group">
+    <h2>{{ T .HeadingKey }}</h2>
+    <ul class="admin-tree-list">
+      {{ range .Entries }}
+      <li>
+        <a class="items-row" href="{{ .Href }}">
+          <span class="items-text">
+            <span class="items-name">{{ T .LabelKey }}</span>
+          </span>
+        </a>
+      </li>
+      {{ end }}
+    </ul>
+  </section>
+  {{ end }}
+</div>
+{{ end }}

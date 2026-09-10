@@ -1,4 +1,8 @@
 {
+  "admin.group.fiscal": "Fiscal",
+  "admin.group.localization": "Localization",
+  "admin.group.locations": "Locations",
+  "admin.group.other": "Other",
   "ai.identify.button": "Identify by camera",
   "ai.identify.camera_busy": "Camera is in use by another app. Close the other app and try again.",
   "ai.identify.camera_error": "Camera unavailable",
