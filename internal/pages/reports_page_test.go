@@ -207,6 +207,31 @@ func TestReportsPage_RefundsAndNetKPIs(t *testing.T) {
 	}
 }
 
+func TestReportsPage_DiscountsKPI(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+	// Two completed sales in the default 14-day window with discounts of
+	// £0.50 and £1.00: the Discounts KPI must show their sum, £1.50 — a
+	// value no other KPI on this page renders (Revenue £4.80, Tax £0.80,
+	// Avg sale £2.40, Refunds £0.00, Net £4.80).
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',400,50,60,360,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s2','R002','completed','sale','GBP',200,100,20,120,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsPage(t, mux, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "£1.50") {
+		t.Fatalf("expected discounts total £1.50 (0.50+1.00), got: %s", body)
+	}
+}
+
 func TestReportsPage_NetGoesNegativeWhenRefundsExceedSales(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newReportsPageTestDeps(t)

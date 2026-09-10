@@ -1361,6 +1361,7 @@
   "reports.days": "gün",
   "reports.dead_stock": "Ölü stok",
   "reports.dead_stock_hint": "Stokta ama bu dönemde hiç satılmadı — rafta bekleyen para.",
+  "reports.discounts": "İndirimler",
   "reports.eod.article_print.help": "Yalnızca basılı gün sonu raporunun \"ÜRÜNE GÖRE\" bölümünü kontrol eder — ekrandaki rapor her zaman tüm ürünleri listeler.",
   "reports.eod.article_print.label": "Basılı ürün listesi",
   "reports.eod.article_print_cap.label": "İlk N",

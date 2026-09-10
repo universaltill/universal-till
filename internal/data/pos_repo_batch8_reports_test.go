@@ -63,6 +63,16 @@ func b8Sale(t *testing.T, d *db.DB, id, createdAt, status, saleType string, taxT
 VALUES (?, ?, ?, ?, 'GBP', ?, 0, ?, ?, ?, date(?, 'localtime'))`, id, "R-"+id, status, saleType, total, taxTotal, total, createdAt, createdAt)
 }
 
+// b8SaleWithDiscount is b8Sale plus an explicit discount_total — b8Sale
+// itself hardcodes discount_total=0 for its ~47 existing callers where the
+// discount figure is irrelevant, so this is a separate helper rather than a
+// signature change to that one.
+func b8SaleWithDiscount(t *testing.T, d *db.DB, id, createdAt, status, saleType string, discountTotal, taxTotal, total int64) {
+	t.Helper()
+	mustExec(t, d, `INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, local_date)
+VALUES (?, ?, ?, ?, 'GBP', ?, ?, ?, ?, ?, date(?, 'localtime'))`, id, "R-"+id, status, saleType, total, discountTotal, taxTotal, total, createdAt, createdAt)
+}
+
 // b8Line inserts a sale line. Exactly one of itemID/variantID must be
 // non-empty (schema CHECK); the empty one persists as NULL.
 func b8Line(t *testing.T, d *db.DB, saleID string, lineNo int, itemID, variantID, name string, qty float64, rateBP, taxAmt, before, after int64) {
@@ -127,6 +137,33 @@ func TestPOSRepo_SalesByDay_AggregatesFiltersOrders(t *testing.T) {
 	}
 	if rows[1].Count != 1 || rows[1].Total != 700 || rows[1].TaxTotal != 70 {
 		t.Fatalf("old day = %+v, want count 1 total 700 tax 70", rows[1])
+	}
+}
+
+// TestPOSRepo_SalesByDay_SumsDiscountTotal (ut-docs#1975) — DiscountTotal
+// must aggregate the same completed/sale-only rows Total/TaxTotal already
+// do: summed across same-day sales, excluding voided.
+func TestPOSRepo_SalesByDay_SumsDiscountTotal(t *testing.T) {
+	d := b8OpenDB(t, "salesbyday_discount.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	tNew := time.Now().Add(-2 * time.Hour)
+
+	b8SaleWithDiscount(t, d, "s1", b8At(tNew), "completed", "sale", 150, 100, 1000)
+	b8SaleWithDiscount(t, d, "s2", b8At(tNew), "completed", "sale", 50, 25, 250)
+	// Voided: must not count, same as Total/TaxTotal.
+	b8SaleWithDiscount(t, d, "s3", b8At(tNew), "voided", "sale", 999, 999, 9999)
+
+	rows, err := repo.SalesByDay(ctx, winFrom(7), winTo(), 0, 0)
+	if err != nil {
+		t.Fatalf("SalesByDay: %v", err)
+	}
+	if len(rows) != 1 {
+		t.Fatalf("expected 1 day bucket, got %d: %+v", len(rows), rows)
+	}
+	if rows[0].DiscountTotal != 200 {
+		t.Fatalf("discount total = %d, want 200 (150+50)", rows[0].DiscountTotal)
 	}
 }
 

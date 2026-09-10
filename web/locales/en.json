@@ -1361,6 +1361,7 @@
   "reports.days": "days",
   "reports.dead_stock": "Dead stock",
   "reports.dead_stock_hint": "In stock but not a single sale in this period — money sitting on the shelf.",
+  "reports.discounts": "Discounts",
   "reports.eod.article_print.help": "Controls only the printed Z-report's BY ARTICLE section — the on-screen report below always lists every article.",
   "reports.eod.article_print.label": "Printed article list",
   "reports.eod.article_print_cap.label": "Top N",

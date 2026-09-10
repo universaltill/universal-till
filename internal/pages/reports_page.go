@@ -206,11 +206,12 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
-		var grandTotal, grandTax int64
+		var grandTotal, grandTax, grandDiscount int64
 		var grandCount int
 		for _, dd := range daily {
 			grandTotal += dd.Total
 			grandTax += dd.TaxTotal
+			grandDiscount += dd.DiscountTotal
 			grandCount += dd.Count
 		}
 		grandRefunds, _, _ := repo.RefundsByWindow(r.Context(), window.From, window.To)
@@ -225,26 +226,27 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		}
 
 		httpx.Render("ui/pages/reports.html", map[string]any{
-			"title":        "Reports",
-			"theme":        d.CurrentState().Theme,
-			"menuItems":    d.MenuSnapshot(),
-			"CanAsk":       aiService(r.Context(), d).CanAsk() && canPerform(d, r, "reports"),
-			"IsManager":    canPerform(d, r, "reports"),
-			"Days":         days,
-			"Period":       reportPeriodParam(r),
-			"Anchor":       window.Anchor,
-			"PeriodLabel":  window.Label,
-			"YoYHas":       lastYear.Count > 0,
-			"YoYNow":       curPeriod.Total,
-			"YoYThen":      lastYear.Total,
-			"YoYPct":       yoyPct,
-			"RunningOut":   runningOut,
-			"GrandTotal":   grandTotal,
-			"GrandTax":     grandTax,
-			"GrandCount":   grandCount,
-			"GrandAvg":     grandAvg,
-			"GrandRefunds": grandRefunds,
-			"GrandNet":     grandNet,
+			"title":         "Reports",
+			"theme":         d.CurrentState().Theme,
+			"menuItems":     d.MenuSnapshot(),
+			"CanAsk":        aiService(r.Context(), d).CanAsk() && canPerform(d, r, "reports"),
+			"IsManager":     canPerform(d, r, "reports"),
+			"Days":          days,
+			"Period":        reportPeriodParam(r),
+			"Anchor":        window.Anchor,
+			"PeriodLabel":   window.Label,
+			"YoYHas":        lastYear.Count > 0,
+			"YoYNow":        curPeriod.Total,
+			"YoYThen":       lastYear.Total,
+			"YoYPct":        yoyPct,
+			"RunningOut":    runningOut,
+			"GrandTotal":    grandTotal,
+			"GrandTax":      grandTax,
+			"GrandDiscount": grandDiscount,
+			"GrandCount":    grandCount,
+			"GrandAvg":      grandAvg,
+			"GrandRefunds":  grandRefunds,
+			"GrandNet":      grandNet,
 		})(w, r)
 	})
 
