@@ -2674,6 +2674,22 @@ body.login-screen {
 .items-row.is-disabled { color: var(--muted); justify-content: space-between; }
 .items-panel { min-inline-size: 0; }
 
+/* /admin tree (ut-docs#2008): reuses .items-row/.items-text/.items-name
+   verbatim (web/ui/partials/admin_tree.html) -- same RTL-safe logical
+   properties, same hover/focus treatment. Each row here is name-only (no
+   subtitle -- see this card's scope), so the two-line block-size the
+   comment above .items-row explains does not apply; min-block-size holds
+   the row at the product's own documented touch-target floor (.btn-touch,
+   above: "the product's own 46px touch-target floor") -- these are
+   primary navigation rows on a touchscreen till, not a secondary control,
+   so they get the full floor, not a smaller one (found in review: this
+   was 44px, 2px under spec). */
+.admin-tree .items-row { min-block-size: 46px; }
+.admin-group { margin-block-start: 1.4rem; }
+.admin-group:first-child { margin-block-start: 0; }
+.admin-group h2 { font-size: 1rem; font-weight: 600; color: var(--muted); margin-block-end: .3rem; }
+.admin-tree-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .2rem; }
+
 /* Contextual "?" — sits next to a page heading and opens that page's topic.
    Deliberately small and low-contrast: it must be findable when wanted and
    invisible when not, and never a mis-tap target during a sale. */

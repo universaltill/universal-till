@@ -182,7 +182,79 @@ func init() {
 		"fiscal_device_tr": func(v *menuVisibility) bool {
 			return v.visible("settings") && strings.EqualFold(strings.TrimSpace(v.d.CurrentState().Country), "TR") && fiscalDevicePluginActive(v.r.Context(), v.d)
 		},
+		// ut-docs#2008: gates the /admin tile itself -- visible only when the
+		// viewer can see at least one of the six destinations /admin would
+		// list, so the tile is never shown-then-refused (the same shape every
+		// other gate here already follows).
+		"administration": func(v *menuVisibility) bool {
+			return len(visibleAdminEntries(v.d, v.r)) > 0
+		},
 	}
+}
+
+// visibleAdminEntries is the Group: "menu.group.administration" entries
+// this viewer is actually allowed to see, filtered through the SAME
+// menuVisibility.visible(e.VisibleIf) check used to build menu.html's own
+// .Tiles -- shared by registerMenu (gating the /admin tile itself, via the
+// "administration" predicate above) and registerAdmin (admin_page.go: both
+// the page's own 403 gate and what it renders), so there is exactly one
+// place that decides which of these a given request can reach.
+//
+// Resolves the SAME uislot.Resolve(menuSlotEntries(...), amendments) list
+// registerMenu itself builds -- NOT raw uislot.CoreMenu (found in review,
+// ut-docs#2008): reading CoreMenu directly silently broke three amendment
+// cases a `layout` plugin already relies on --
+//   - hiding one of the six became a no-op (registerMenu's own /menu skip
+//     already dropped it from the flat grid, but the raw-CoreMenu read
+//     here still listed it inside /admin);
+//   - regrouping some OTHER core entry INTO "menu.group.administration"
+//     (a supported, validated amendment -- ADR-0088 Decision F) vanished
+//     from BOTH surfaces: registerMenu's skip keys on the RESOLVED Group
+//     so it left .Tiles, but this function's raw-CoreMenu read never saw
+//     the amended Group so it never entered the tree either;
+//   - regrouping one of the six OUT of that group duplicated it: back on
+//     the flat grid (resolved Group no longer matches registerMenu's skip)
+//     AND still inside /admin (raw CoreMenu's original Group still matched
+//     here).
+// Reading the identical resolved list registerMenu builds is what keeps
+// "which surface renders this entry" agreeing in both directions.
+//
+// Explicitly excludes Key=="/admin" regardless of its (amended) Group:
+// /admin is uislot.ProtectedMenuKeys, and protected keys stay re-groupable
+// by design (only hide/relabel/re-icon are refused) -- so a plugin
+// amendment `{"key":"/admin","group":"menu.group.administration"}` is
+// otherwise valid and would make /admin a member of its own tree. Since
+// the "administration" VisibleIf predicate (menuPredicates above) computes
+// itself as len(visibleAdminEntries(...))>0, /admin appearing in its own
+// result would recompute that same predicate for itself on every call --
+// unbounded recursion, a stack-overflow crash on every /menu and /admin
+// request, not merely a display glitch. TestVisibleAdminEntries_ExcludesAdminItselfEvenIfRegroupedIntoItsOwnGroup
+// pins this directly.
+func visibleAdminEntries(d *common.Deps, r *http.Request) []uislot.Entry {
+	resolved := uislot.Resolve(menuSlotEntries(d.MenuSnapshot()), d.MenuAmendmentsSnapshot())
+	vis := &menuVisibility{d: d, r: r}
+	var out []uislot.Entry
+	for _, e := range resolved {
+		// Both conditions guard the same recursion (found in review,
+		// ut-docs#2008): Key=="/admin" is the identity check for the one
+		// key this can happen to today; VisibleIf=="administration" is the
+		// actual recursive trigger (vis.visible on THIS predicate is what
+		// calls back into visibleAdminEntries) and stays the guard even
+		// against a hypothetical future core entry that reused this
+		// VisibleIf under some other Key — not plugin-reachable (Amendment
+		// has no VisibleIf field), but a core-declared one wouldn't need to
+		// be.
+		if e.Key == "/admin" || e.VisibleIf == "administration" {
+			continue
+		}
+		if e.Group != "menu.group.administration" {
+			continue
+		}
+		if vis.visible(e.VisibleIf) {
+			out = append(out, e)
+		}
+	}
+	return out
 }
 
 // menuSlotEntries assembles the Menu slot for one render: the nav
@@ -254,6 +326,31 @@ func registerMenu(mux *http.ServeMux, d *common.Deps) {
 		tiles := make([]menuTile, 0, len(resolved))
 		prevGroup := ""
 		for _, e := range resolved {
+			// ut-docs#2008: the six Group: "menu.group.administration"
+			// entries no longer get their own tiles (or #1959's group
+			// heading) on this flat grid -- they render inside /admin
+			// instead, reached through the single "/admin" tile above them
+			// (also declared in uislot.CoreMenu, gated by its own
+			// "administration" VisibleIf so it hides when this viewer can
+			// see none of them -- see visibleAdminEntries).
+			//
+			// Key != "/admin" is deliberate and load-bearing (found in
+			// second-round review, ut-docs#2008 -- see ADR-0088 Decision
+			// E's 2026-09-10 amendment): /admin is itself Protected and
+			// stays re-groupable by design, so a `layout` plugin amendment
+			// {"key":"/admin","group":"menu.group.administration"} installs
+			// cleanly under that permission. Without this exemption, /admin's
+			// OWN resolved entry would then satisfy this same skip -- making
+			// the tile that is the ONLY path to /fiscal-register and
+			// /fiscal-device vanish from the flat grid via the ordinary
+			// group-skip mechanism, with no hide amendment involved at all.
+			// visibleAdminEntries carries the mirror-image guard (excluding
+			// Key=="/admin" from its own tree) for the same reason from the
+			// other direction. TestMenuPage_AdminTileRendersRegardlessOfGroupAmendment
+			// pins this directly.
+			if e.Group == "menu.group.administration" && e.Key != "/admin" {
+				continue
+			}
 			if !vis.visible(e.VisibleIf) {
 				continue
 			}
