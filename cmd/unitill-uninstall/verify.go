@@ -15,9 +15,29 @@ import (
 	"database/sql"
 	"fmt"
 	"os"
+	"strings"
 
 	_ "modernc.org/sqlite" // same pure-Go driver internal/db uses
 )
+
+// sqliteURIPathEscaper percent-encodes the three characters significant to
+// SQLite's own "file:" URI filename parsing (ut-docs#2033, mirroring
+// ut-docs#2030's internal/db.escapeSQLiteURIPath): '#', '?' and '%'
+// itself. Unescaped, a data dir containing one of these silently
+// truncates the DSN path AND drops any query string after it — here that
+// would fail closed (verifyBackup errors, aborting the uninstall rather
+// than deleting the wrong/no data), so this fixes wrong behaviour rather
+// than a dangerous one.
+//
+// This is a local copy rather than an import of internal/db's own helper:
+// at the time this fix was written, internal/db's version (ut-docs#2030)
+// was still in an open, unmerged PR and unexported besides. A follow-up
+// should consolidate the two into one exported helper once that PR lands.
+var sqliteURIPathEscaper = strings.NewReplacer("%", "%25", "#", "%23", "?", "%3f")
+
+func escapeSQLiteURIPath(path string) string {
+	return sqliteURIPathEscaper.Replace(path)
+}
 
 func verifyBackup(path string) error {
 	fi, err := os.Stat(path)
@@ -27,7 +47,7 @@ func verifyBackup(path string) error {
 	if fi.Size() == 0 {
 		return fmt.Errorf("backup %s is empty", path)
 	}
-	sqlDB, err := sql.Open("sqlite", "file:"+path+"?mode=ro")
+	sqlDB, err := sql.Open("sqlite", fmt.Sprintf("file:%s?mode=ro", escapeSQLiteURIPath(path)))
 	if err != nil {
 		return fmt.Errorf("re-open backup: %w", err)
 	}
