@@ -787,6 +787,7 @@
   "issuereport.voice_stop": "■ Stop",
   "issuereport.voice_unsupported": "This browser can't record audio.",
   "items.title": "Items",
+  "items.rail.label": "Item sections",
   "items.coming_soon": "Coming soon",
   "items.library.subtitle": "Your products and services",
   "items.categories.name": "Categories",

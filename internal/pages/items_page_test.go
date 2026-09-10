@@ -5,6 +5,9 @@ import (
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/universaltill/universal-till/internal/pages/catalog"
+	"github.com/universaltill/universal-till/internal/pages/itemsnav"
 )
 
 func TestItemsPage_RendersFiveSectionsWithNameAndSubtitle(t *testing.T) {
@@ -128,5 +131,131 @@ func TestMenuPage_TopLevelTileIsItemsNotCatalogOrInventory(t *testing.T) {
 	}
 	if strings.Contains(grid, `href="/inventory"`) {
 		t.Errorf("did not expect a standalone Inventory tile in the menu grid, got: %s", grid)
+	}
+}
+
+// ut-docs#1950 AC #1/#4: the rail must be a narrow column of compact,
+// single-line rows (.items-row), not the old large card tiles (.card).
+func TestItemsPage_RailRowsAreCompactNotCardTiles(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, baseMenu)
+	registerItemsPage(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/items", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="items-rail"`) {
+		t.Fatalf("expected the compact rail, got: %s", body)
+	}
+	if strings.Count(body, `class="items-row`) < 5 {
+		t.Errorf("expected 5 compact .items-row rows, got body: %s", body)
+	}
+	// The old layout's large tiles must be gone from the rail.
+	railStart := strings.Index(body, `id="items-rail"`)
+	railEnd := strings.Index(body[railStart:], "</nav>") + railStart
+	rail := body[railStart:railEnd]
+	if strings.Contains(rail, `class="card"`) {
+		t.Errorf("rail still renders large card tiles, got: %s", rail)
+	}
+}
+
+// ut-docs#1950 AC #3: a bare /items load must not leave the right panel
+// empty — the first section (Library/Catalog) renders inline.
+func TestItemsPage_DefaultLoadEmbedsFirstSectionInPanel(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, baseMenu)
+	catalog.Register(mux, dp)
+	registerItemsPage(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/items", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	panelStart := strings.Index(body, `id="items-panel"`)
+	if panelStart < 0 {
+		t.Fatalf("expected #items-panel, got: %s", body)
+	}
+	panel := body[panelStart:]
+	// The catalog page's own table markup (catalog_table.html) must be
+	// present inline — not just an empty placeholder waiting on JS.
+	if !strings.Contains(panel, "catalog") && !strings.Contains(panel, "Catalog") {
+		t.Errorf("expected /catalog's own content embedded in the panel, got: %s", panel)
+	}
+	// The catalog fragment must not drag its own full-page chrome in with
+	// it (that would double up nav/status bar inside /items' own page).
+	if strings.Count(body, `class="nav"`) != 1 {
+		t.Errorf("expected exactly one nav rail (the /items page's own), got body: %s", body)
+	}
+	// AC #2: the rail shows which section is selected.
+	railStart := strings.Index(body, `id="items-rail"`)
+	rail := body[railStart:]
+	if !strings.Contains(rail[:strings.Index(rail, "</nav>")], `href="/catalog"`) {
+		t.Fatalf("rail missing the /catalog row: %s", rail)
+	}
+	catalogLinkIdx := strings.Index(rail, `href="/catalog"`)
+	tagStart := strings.LastIndex(rail[:catalogLinkIdx], "<a ")
+	tagEnd := strings.Index(rail[tagStart:], ">") + tagStart
+	if !strings.Contains(rail[tagStart:tagEnd], "is-current") {
+		t.Errorf("expected the /catalog rail row to be marked is-current on default load: %s", rail[tagStart:tagEnd])
+	}
+}
+
+// Review of ut-docs#1950: the embedded default panel must NOT bring the
+// section handler's own out-of-band rail copy along with it. /items already
+// draws the rail immediately above the panel, so a second one is a
+// duplicate DOM id AND paints the whole section list a second time inside
+// the right panel — a bare GET /items rendered 2 rails and 10 rows instead
+// of 1 and 5. The embed sub-request signals this with itemsnav.EmbedHeader;
+// itemsnav.WriteRailOOB skips the OOB copy when it is set.
+func TestItemsPage_DefaultLoadRendersExactlyOneRail(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, baseMenu)
+	catalog.Register(mux, dp)
+	registerItemsPage(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/items", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	if n := strings.Count(body, `id="items-rail"`); n != 1 {
+		t.Errorf(`expected exactly 1 id="items-rail" on a bare /items load, got %d`, n)
+	}
+	if n := strings.Count(body, `class="items-row`); n != len(itemsnav.Sections) {
+		t.Errorf("expected exactly %d .items-row rows, got %d", len(itemsnav.Sections), n)
+	}
+	// An hx-swap-oob element sitting in the INITIAL page markup is always a
+	// mistake: it is meaningful only in a swapped htmx response.
+	if strings.Contains(body, `hx-swap-oob`) {
+		t.Errorf("bare /items page must not contain an hx-swap-oob element, got: %s", body)
+	}
+	// ...and specifically not inside the panel.
+	panel := body[strings.Index(body, `id="items-panel"`):]
+	if strings.Contains(panel, `id="items-rail"`) {
+		t.Errorf("the embedded panel must not contain a second copy of the rail: %s", panel)
+	}
+}
+
+// A REAL htmx panel swap (no embed header) must still get the out-of-band
+// rail — the fix above must not disable the mechanism it exists for.
+func TestItemsSection_RealHTMXSwapStillGetsOOBRail(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, baseMenu)
+	catalog.Register(mux, dp)
+	registerItemsPage(mux, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/catalog", nil)
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx GET /catalog: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="items-rail"`) || !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Errorf("a real htmx swap must still carry the OOB rail, got: %s", body)
 	}
 }

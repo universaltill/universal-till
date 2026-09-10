@@ -2444,6 +2444,52 @@ body.login-screen {
 .manual-result-list li { margin-block-end: 1rem; }
 .manual-snippet { color: var(--muted); margin-block: .2rem 0; }
 
+/* /items (ut-docs#1950): a narrow left rail of compact section rows, the
+   selected section's own content on the other side — same grid/breakpoint
+   shape as .manual above (14-18rem rail, the rest to the panel), reused
+   deliberately rather than re-derived. Logical properties only, so RTL
+   locales mirror for free.
+   Below the breakpoint the two panes stack AND a rail tap falls back to a
+   real navigation instead of the wide layout's in-panel htmx swap — a
+   deliberate, stated difference from .manual (whose stacked layout keeps
+   swapping in place): see items.html's own script for how that fallback is
+   implemented, and its comment for why this exact 52rem value is reused
+   rather than a new one. */
+.items-layout { display: grid; grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+                gap: 1.2rem; align-items: start; }
+@media (max-width: 52rem) { .items-layout { grid-template-columns: 1fr; } }
+
+.items-rail-wrap { position: sticky; inset-block-start: .5rem; }
+.items-rail-list { display: flex; flex-direction: column; gap: .2rem; }
+/* Compact row target block-size: ~3.4rem (two text lines + padding) — still
+   well under the old card tiles' ~6rem+, and keeps a >=44px touch target
+   (reference/ux-guidelines.md's touch-ergonomics rule; #144's fluid-scale
+   fix, not any single other rule's declared min-height) even with no
+   explicit min-block-size below: its own two lines of content plus
+   padding-block already clear 44px at every viewport in the fluid-scale
+   range. The subtitle is a REAL second line (independent-review fix,
+   ut-docs#1950: an earlier draft hid it in a title="" tooltip, which
+   ux-guidelines.md rules out — no mouse on a touchscreen till). Each line
+   ellipses independently instead of wrapping, via min-inline-size: 0 on the
+   flex text column (a flex item's automatic min-inline-size is its
+   min-content otherwise, which defeats text-overflow: ellipsis on a nowrap
+   child — same class of bug ut-docs#1900 already found on the catalog
+   variants grid). */
+.items-row { display: flex; align-items: center; gap: .5rem;
+             padding-block: .4rem; padding-inline: .7rem; border-radius: var(--radius);
+             text-decoration: none; color: inherit; }
+.items-text { display: flex; flex-direction: column; min-inline-size: 0; flex: 1 1 auto; }
+.items-name, .items-subtitle {
+  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.items-name { line-height: 1.3; }
+.items-subtitle { font-size: .82rem; color: var(--muted); line-height: 1.25; }
+.items-row.is-current .items-subtitle { color: inherit; opacity: .85; }
+.items-row:hover { background: var(--surface-2); }
+.items-row.is-current { background: var(--accent); color: var(--accent-contrast); font-weight: 600; }
+.items-row.is-disabled { color: var(--muted); justify-content: space-between; }
+.items-panel { min-inline-size: 0; }
+
 /* Contextual "?" — sits next to a page heading and opens that page's topic.
    Deliberately small and low-contrast: it must be findable when wanted and
    invisible when not, and never a mis-tap target during a sale. */
