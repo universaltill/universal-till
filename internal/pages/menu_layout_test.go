@@ -50,6 +50,7 @@ func getMenu(t *testing.T, mux *http.ServeMux) string {
 // stays contiguous; the fiscal pair never renders here, outside DE/TR.
 var goldenManagerTiles = []string{
 	"/designer", "/shifts", "/journal", "/orders", "/reports", "/settings", "/plugins", "/items",
+	"/open-orders",
 	"/help",
 	"/users", "/kitchen-stations", "/bluetooth-devices", "/tables", "/report-issue", "/country-settings", "/translations",
 	"/locations", "/registers",
@@ -59,9 +60,10 @@ func TestMenuPage_GoldenZeroPluginTileOrder(t *testing.T) {
 	// baseMenu is production's boot-time list (init.go), not a fixture.
 	mux, _ := newMenuPageTestDeps(t, baseMenu)
 
-	// No session, UT_AUTH unset: a cashier sees the nav tiles and Help only.
+	// No session, UT_AUTH unset: a cashier sees the nav tiles, Open orders
+	// (ut-docs#1918 -- an ungated cashier surface) and Help only.
 	cashier := menuTileHrefs(getMenu(t, mux))
-	wantCashier := goldenManagerTiles[:9]
+	wantCashier := goldenManagerTiles[:10]
 	if strings.Join(cashier, " ") != strings.Join(wantCashier, " ") {
 		t.Fatalf("zero-plugin cashier tiles drifted:\n got %v\nwant %v", cashier, wantCashier)
 	}
