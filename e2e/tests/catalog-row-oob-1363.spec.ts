@@ -150,11 +150,11 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
     });
 
     // ut-docs#1951: deactivate moved from a per-card button into the item
-    // dialog — open it, then delete from there. The confirm is a plain
-    // window.confirm() now (not hx-confirm), same dialog event either way.
+    // dialog — open it, then delete from there. Still asks via hx-confirm,
+    // same native dialog event as before.
     page.once('dialog', (d) => d.accept());
     await page.locator(`.catalog-row[data-name="${doomed}"]`).click();
-    await page.locator('#item-form-delete-btn').click();
+    await page.locator('#item-form-delete').click();
 
     // The doomed row is gone (OOB delete fragment)…
     await expect(page.locator(`.catalog-row[data-name="${doomed}"]`)).toHaveCount(0);
