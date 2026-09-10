@@ -63,6 +63,21 @@ func b8Sale(t *testing.T, d *db.DB, id, createdAt, status, saleType string, taxT
 VALUES (?, ?, ?, ?, 'GBP', ?, 0, ?, ?, ?, date(?, 'localtime'))`, id, "R-"+id, status, saleType, total, taxTotal, total, createdAt, createdAt)
 }
 
+// b8Discount inserts a sale_discounts row — the canonical discount ledger
+// (both the whole-sale discount, reason "sale_discount", lineID "", and a
+// per-line discount, reason "line_discount", lineID set — InsertSaleDiscountsBatch,
+// internal/pos/sales.go). type/value are irrelevant to DiscountsByWindow
+// (which sums amount only) so both are fixed at a representative "fixed".
+func b8Discount(t *testing.T, d *db.DB, id, saleID, lineID, reason string, amount int64) {
+	t.Helper()
+	var lid any
+	if lineID != "" {
+		lid = lineID
+	}
+	mustExec(t, d, `INSERT INTO sale_discounts (id, sale_id, line_id, type, value, amount, reason) VALUES (?, ?, ?, 'fixed', ?, ?, ?)`,
+		id, saleID, lid, amount, amount, reason)
+}
+
 // b8Line inserts a sale line. Exactly one of itemID/variantID must be
 // non-empty (schema CHECK); the empty one persists as NULL.
 func b8Line(t *testing.T, d *db.DB, saleID string, lineNo int, itemID, variantID, name string, qty float64, rateBP, taxAmt, before, after int64) {
@@ -127,6 +142,57 @@ func TestPOSRepo_SalesByDay_AggregatesFiltersOrders(t *testing.T) {
 	}
 	if rows[1].Count != 1 || rows[1].Total != 700 || rows[1].TaxTotal != 70 {
 		t.Fatalf("old day = %+v, want count 1 total 700 tax 70", rows[1])
+	}
+}
+
+// TestPOSRepo_DiscountsByWindow_SumsSaleAndLineDiscountsFiltersOthers
+// (ut-docs#1975) — the whole-sale discount alone (sales.discount_total)
+// under-reports: a shop that discounts individual basket lines instead of
+// the whole sale never writes discount_total at all (internal/pos/sales.go).
+// sale_discounts is the complete ledger — a "sale_discount" row for the
+// whole-sale case, a "line_discount" row per discounted line — so
+// DiscountsByWindow must sum both kinds together, filtered by the sale's own
+// status/type/window exactly like RefundsByWindow filters sales directly.
+func TestPOSRepo_DiscountsByWindow_SumsSaleAndLineDiscountsFiltersOthers(t *testing.T) {
+	d := b8OpenDB(t, "discountsbywindow.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	now := b8At(time.Now().Add(-2 * time.Hour))
+	old := b8At(time.Now().Add(-9 * 24 * time.Hour))
+
+	// s1: a whole-sale discount only.
+	b8Sale(t, d, "s1", now, "completed", "sale", 0, 1000)
+	b8Discount(t, d, "d1", "s1", "", "sale_discount", 150)
+
+	// s2: two line-level discounts, no whole-sale discount — the case
+	// sales.discount_total alone would silently miss entirely.
+	b8Item(t, d, "itm", 100, nil, 1)
+	b8Sale(t, d, "s2", now, "completed", "sale", 0, 250)
+	b8Line(t, d, "s2", 1, "itm", "", "Widget", 1, 0, 0, 100, 100)
+	b8Line(t, d, "s2", 2, "itm", "", "Gadget", 1, 0, 0, 150, 150)
+	b8Discount(t, d, "d2", "s2", "s2-l1", "line_discount", 30)
+	b8Discount(t, d, "d3", "s2", "s2-l2", "line_discount", 20)
+
+	// s3: voided — its discount must not count, matching RefundsByWindow's
+	// own status filter.
+	b8Sale(t, d, "s3", now, "voided", "sale", 0, 9999)
+	b8Discount(t, d, "d4", "s3", "", "sale_discount", 8888)
+
+	// s4: a completed return, not a sale — must not count.
+	b8Sale(t, d, "s4", now, "completed", "return", 0, 7777)
+	b8Discount(t, d, "d5", "s4", "", "sale_discount", 6666)
+
+	// s5: a completed sale outside the 7-day window — must not count.
+	b8Sale(t, d, "s5", old, "completed", "sale", 0, 5555)
+	b8Discount(t, d, "d6", "s5", "", "sale_discount", 4444)
+
+	total, err := repo.DiscountsByWindow(ctx, winFrom(7), winTo())
+	if err != nil {
+		t.Fatalf("DiscountsByWindow: %v", err)
+	}
+	if total != 200 {
+		t.Fatalf("DiscountsByWindow = %d, want 200 (150 sale-level + 30 + 20 line-level)", total)
 	}
 }
 
