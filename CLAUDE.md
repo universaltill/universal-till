@@ -123,8 +123,10 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   `cmd/unitill-desktop` is excluded there until a `-tags=desktop` pass with
   real GTK/WebKit headers lands, ut-docs#1581), `shellcheck scripts/ci/*.sh`
   (0 issues — ut-docs#1943; a pre-existing warning is either fixed or gets
-  a targeted, same-line `# shellcheck disable=SCxxxx` with a reason, never
-  a blanket suppression), and every
+  a targeted `# shellcheck disable=SCxxxx` directive with a reason on the
+  preceding comment line (a shellcheck directive comment must carry only
+  `key=value` pairs — trailing prose on the same line fails to parse,
+  SC1072/SC1073), never a blanket suppression), and every
   CI-blocking guard in `.github/workflows/ci.yml`'s `build` job — currently:
   `guard-data-access.sh`, `guard-kiosk-engine.sh`, `guard-plugin-menu-read.sh`,
   `guard-page-http-error.sh`,

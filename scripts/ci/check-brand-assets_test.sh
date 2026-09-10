@@ -56,6 +56,22 @@ expect_fail() {
   rm -f /tmp/guard_brand_assets_test_out.$$
 }
 
+# As expect_fail, but with POSIXLY_CORRECT set, which stops GNU grep
+# permuting options that appear after an operand -- the argument-order
+# behaviour BSD/macOS grep has by default. Lets this Linux-only CI run
+# cover the portability trap without a mac in the loop.
+expect_fail_posix() {
+  local label="$1"
+  if POSIXLY_CORRECT=1 bash "${GUARD}" >/tmp/guard_brand_assets_test_out.$$ 2>&1; then
+    echo "❌ FAIL: expected guard to reject ${label}, but it passed" >&2
+    cat /tmp/guard_brand_assets_test_out.$$ >&2
+    FAIL_COUNT=$((FAIL_COUNT + 1))
+  else
+    echo "✓ guard correctly rejected ${label}"
+  fi
+  rm -f /tmp/guard_brand_assets_test_out.$$
+}
+
 expect_pass() {
   local label="$1"
   if bash "${GUARD}" >/tmp/guard_brand_assets_test_out.$$ 2>&1; then
@@ -80,6 +96,23 @@ expect_fail "unitill-logo-light planted in login.html"
 # that this script believes it removed it.
 cp "${BACKUP}" "${LOGIN_HTML}"
 expect_pass "login.html after the fixture is removed"
+
+# The other must_not_contain call shape: a RECURSIVE scan of web/ui for the
+# retired wordmark asset. Covered separately because it reaches the helper
+# with a directory rather than a file, and that shape is where an earlier
+# revision of this fix silently regressed (a trailing `-R` after the
+# pattern, which only GNU grep tolerates).
+echo '<!-- ut-logo-name.svg (guard test fixture) -->' >>"${LOGIN_HTML}"
+expect_fail "retired wordmark ut-logo-name.svg planted under web/ui"
+
+# Same violation, with getopt argument permutation disabled -- the
+# behaviour BSD/macOS grep has natively. Pins the fix: if the recursive
+# flag ever moves back after the pattern, grep exits 2 here ("-R: No such
+# file or directory") and the guard would wave the violation through.
+expect_fail_posix "retired wordmark, with POSIXLY_CORRECT=1 (BSD-grep argument order)"
+
+cp "${BACKUP}" "${LOGIN_HTML}"
+expect_pass "web/ui after the wordmark fixture is removed"
 
 if [[ "${FAIL_COUNT}" -gt 0 ]]; then
   echo "❌ check-brand-assets_test.sh: ${FAIL_COUNT} case(s) failed" >&2
