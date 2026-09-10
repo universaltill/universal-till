@@ -644,6 +644,27 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 @media (max-width: 1300px) {
   .variant-grid { overflow-x: auto; }
   .vg-cols { min-inline-size: 54rem; }
+  /* ut-docs#1967: the commit action (Save / Save Variant) is .vg-cols' own
+     rightmost column — inside the horizontal scroller armed just above, so
+     it can sit off-screen while the *page* has no overflow at all (only the
+     grid does), which is exactly why this survived a page-level overflow
+     assertion. Stick that one column to the scroll container's trailing
+     edge instead of trying to fit the whole row: reachable without ever
+     scrolling, and — inset-inline-end being logical — correct under RTL
+     too, where it resolves to left:0 and pins to the visual trailing edge.
+     Deliberately scoped to the same breakpoint that arms the scroller:
+     above it there is no overflow to stick against and nothing to cover,
+     so no rule should apply at all.
+     Only the header's trailing cell takes a background — it is an empty
+     <div>, so without one the columns scrolling beneath it show through.
+     The other two rows' trailing cell IS the .btn itself, which already
+     paints its own opaque background over exactly that same box; setting
+     `background` on them instead *overrides* .btn's accent fill (this
+     selector outranks a bare `.btn`) and leaves white label text on a
+     near-white button — which is how the add-variant row's "Save Variant"
+     was rendered illegible before review. */
+  .vg-cols > :last-child { position: sticky; inset-inline-end: 0; z-index: 1; }
+  .vg-head > :last-child { background: var(--surface); }
 }
 
 .catalog-form label { display: flex; flex-direction: column; gap: .2rem;
