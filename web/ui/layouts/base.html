@@ -147,6 +147,15 @@
            has to be the way in (independent review finding). -->
       <a class="sb-item sb-power" href="/help/power-supply" title="{{ T "status.psu_underpowered_hint" }}">⚡&nbsp;{{ T "status.psu_underpowered" }}</a>
       {{ end }}
+      {{ if pluginupdatesavailable }}
+      <!-- ut-docs#1953: StartPluginUpdateScheduler already auto-applies
+           every language-pack update silently — this chip is only what it
+           deliberately left pending (anything that isn't "content, not
+           code"). Persistent, non-dismissible, same treatment as sb-update/
+           sb-power above — a real link to /plugins, never a modal, so it
+           never blocks the kiosk sale flow. -->
+      <a class="sb-item sb-plugin-update" href="/plugins" data-testid="sb-plugin-update">⬆&nbsp;{{ T "status.plugin_updates_available" }}&nbsp;({{ pluginupdatescount }})</a>
+      {{ end }}
       <span class="sb-item sb-ver" title="Universal Till">Universal&nbsp;Till&nbsp;v{{ appversion }}</span>
     </footer>
     <script>
