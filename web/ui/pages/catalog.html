@@ -128,9 +128,31 @@
           </button>
         </div>
         <div class="catalog-form-head-actions">
-          <button class="btn secondary" type="button" id="item-form-reset" hidden>{{ T "catalog.plus_new" }}</button>
-          <button class="btn secondary" type="button" id="item-form-close-btn" onclick="document.getElementById('item-form-modal').close()">{{ T "common.close" }}</button>
-          <button class="btn primary" type="submit" form="item-form" id="item-form-submit">{{ T "catalog.create_item" }}</button>
+          <!-- ut-docs#2000: Close/Save (below) go icon+label, same shape as
+               the delete button above — at phone width (app.css) the label
+               is visually hidden and only the icon shows. +New stays
+               text-only: its own label already bakes in a "+" glyph in
+               every shipped locale (catalog.plus_new: "+ New"/"+ Yeni"/…),
+               so pairing it with a separate plus icon doubled the symbol
+               (independent review finding F2) — and unlike Close/Save it
+               is short enough not to need collapsing. aria-label/title
+               stay on the button itself (not just the visible span, for
+               Close/Save) so the accessible name survives the label being
+               hidden. setMode() below keeps all three text sources (label
+               span, aria-label, title) for Save in sync when it toggles
+               create/edit wording. -->
+          <button class="btn secondary" type="button" id="item-form-reset" hidden
+                  aria-label="{{ T "catalog.plus_new" }}" title="{{ T "catalog.plus_new" }}">{{ T "catalog.plus_new" }}</button>
+          <button class="btn secondary" type="button" id="item-form-close-btn" onclick="document.getElementById('item-form-modal').close()"
+                  aria-label="{{ T "common.close" }}" title="{{ T "common.close" }}">
+            <span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span>
+            <span class="btn-label">{{ T "common.close" }}</span>
+          </button>
+          <button class="btn primary" type="submit" form="item-form" id="item-form-submit"
+                  aria-label="{{ T "catalog.create_item" }}" title="{{ T "catalog.create_item" }}">
+            <span class="btn-ico" aria-hidden="true">{{ icon "check" }}</span>
+            <span class="btn-label">{{ T "catalog.create_item" }}</span>
+          </button>
         </div>
       </div>
       <!-- In the pinned head (not at the bottom of the form) so a save or
@@ -369,6 +391,12 @@
   var form = document.getElementById('item-form');
   var title = document.getElementById('item-form-title');
   var submit = document.getElementById('item-form-submit');
+  // ut-docs#2000: submit's visible text now lives in a child span (icon-only
+  // at phone width, app.css) — textContent on the button itself would wipe
+  // out the icon span alongside the label, so setMode() below writes the
+  // label span AND the button's own aria-label/title (the accessible name
+  // once the label span is visually hidden).
+  var submitLabel = submit.querySelector('.btn-label');
   var resetBtn = document.getElementById('item-form-reset');
   var msg = document.getElementById('item-form-msg');
   // ut-docs#1956: the dialog's Alpine tab scope (.catalog-form) and the
@@ -550,7 +578,10 @@
 
   function setMode(editing, name) {
     title.textContent = editing ? NOTICE_MSG.itemFormEditPrefix + name : NOTICE_MSG.itemFormNewTitle;
-    submit.textContent = editing ? NOTICE_MSG.itemFormSaveChangesBtn : NOTICE_MSG.itemFormCreateBtn;
+    var submitText = editing ? NOTICE_MSG.itemFormSaveChangesBtn : NOTICE_MSG.itemFormCreateBtn;
+    submitLabel.textContent = submitText;
+    submit.setAttribute('aria-label', submitText);
+    submit.setAttribute('title', submitText);
     resetBtn.hidden = !editing;
     // ut-docs#1956: delete only exists for an item that exists; .is-create
     // swaps every item-bound tab panel (variants/image/labels/keypad) to

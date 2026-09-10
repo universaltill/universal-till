@@ -1,3 +1,16 @@
+{{/* ut-docs#2010: the REFERENCE implementation of the app-wide list/edit
+     standard (ut-docs/reference/list-and-dialog-pattern.md) — the nine
+     other admin lists (ut-docs#2012) copy this file's shape:
+       - the list is the page; no side-by-side create card;
+       - {{ template "list_header" }} above the table: search + icon-only New;
+       - every row is tap-to-edit (data-record-open + data-field-* prefill,
+         its own data-record-action) with a real focusable pencil button as
+         the keyboard path (ut-docs#826);
+       - row actions are icon-only, aria-label + title always paired;
+       - one full-screen {{ template "record_dialog" }} per page, and the
+         page owes it the two {{ define }} slots at the bottom of this file.
+     All behaviour is web/public/record-dialog.js reading data-* attributes;
+     the only inline script is the pre-existing reorder (ut-docs#1221). */}}
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "categories.title" }} {{ helpLink "categories" }}</h1>
@@ -13,59 +26,78 @@
 </p>
 {{ end }}
 
-<div class="users-layout">
-  <div class="card users-list">
-    {{ if not .categories }}
-    <p class="muted">{{ T "categories.empty" }}</p>
-    {{ else }}
-    <table class="table" id="categories-table">
-      <thead>
-        <tr>
-          <th>{{ T "categories.col.name" }}</th>
-          <th>{{ T "categories.col.items" }}</th>
-          <th>{{ T "categories.col.status" }}</th>
-          <th></th>
-        </tr>
-      </thead>
-      <tbody>
-        {{ range .categories }}
-        <tr class="category-row" data-id="{{ .ID }}">
-          <td>{{ .Name }}</td>
-          <td>{{ printf (T "categories.item_count") .ItemCount }}</td>
-          <td>{{ if .IsActive }}{{ T "categories.active" }}{{ else }}<span class="muted">{{ T "categories.inactive" }}</span>{{ end }}</td>
-          <td class="users-actions">
-            <button type="button" class="btn secondary move-up" data-move="-1"
-                    aria-label="{{ T "categories.move_up" }}">▲</button>
-            <button type="button" class="btn secondary move-down" data-move="1"
-                    aria-label="{{ T "categories.move_down" }}">▼</button>
-            <form method="post" action="/api/categories/{{ .ID }}" class="users-inline">
-              <input type="text" name="name" value="{{ .Name }}" required class="rename-input" />
-              <button type="submit" class="btn secondary">{{ T "categories.rename" }}</button>
-            </form>
-            <form method="post" action="/api/categories/{{ .ID }}/active" class="users-inline">
-              <input type="hidden" name="active" value="{{ if .IsActive }}0{{ else }}1{{ end }}" />
-              <button type="submit" class="btn secondary">
-                {{ if .IsActive }}{{ T "categories.deactivate" }}{{ else }}{{ T "categories.activate" }}{{ end }}
-              </button>
-            </form>
-          </td>
-        </tr>
-        {{ end }}
-      </tbody>
-    </table>
-    {{ end }}
-  </div>
+{{ template "list_header" (dict
+     "searchID"       "categories-search"
+     "searchLabelKey" "categories.search_placeholder"
+     "filterTarget"   "#categories-table .category-row"
+     "emptyTarget"    "#categories-no-results"
+     "newID"          "categories-new"
+     "newLabelKey"    "categories.new"
+     "dialogID"       "category-dialog") }}
 
-  <div class="card users-form">
-    <h3>{{ T "categories.create" }}</h3>
-    <form method="post" action="/api/categories" autocomplete="off">
-      <label>{{ T "categories.col.name" }}
-        <input type="text" name="name" required placeholder="{{ T "categories.create_placeholder" }}" />
-      </label>
-      <button type="submit" class="btn primary" style="inline-size:100%">{{ T "categories.create" }}</button>
-    </form>
+<div class="card list-card">
+  {{ if not .categories }}
+  <p class="muted">{{ T "categories.empty" }}</p>
+  {{ else }}
+  <div class="list-scroll">
+  <table class="table" id="categories-table">
+    <thead>
+      <tr>
+        <th>{{ T "categories.col.name" }}</th>
+        <th>{{ T "categories.col.items" }}</th>
+        <th>{{ T "categories.col.status" }}</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .categories }}
+      <tr class="category-row" data-id="{{ .ID }}"
+          data-record-open="category-dialog"
+          data-record-action="/api/categories/{{ .ID }}"
+          data-record-destructive-action="/api/categories/{{ .ID }}/active"
+          data-field-name="{{ .Name }}"
+          data-field-active="{{ if .IsActive }}1{{ else }}0{{ end }}">
+        <td>{{ .Name }}</td>
+        <td>{{ printf (T "categories.item_count") .ItemCount }}</td>
+        <td>{{ if .IsActive }}{{ T "categories.active" }}{{ else }}<span class="muted">{{ T "categories.inactive" }}</span>{{ end }}</td>
+        <td class="list-actions">
+          <button type="button" class="btn secondary btn-icon move-up" data-move="-1"
+                  aria-label="{{ T "categories.move_up" }}" title="{{ T "categories.move_up" }}">
+            <span class="btn-ico" aria-hidden="true">{{ icon "chevron-up" }}</span>
+          </button>
+          <button type="button" class="btn secondary btn-icon move-down" data-move="1"
+                  aria-label="{{ T "categories.move_down" }}" title="{{ T "categories.move_down" }}">
+            <span class="btn-ico" aria-hidden="true">{{ icon "chevron-down" }}</span>
+          </button>
+          <button type="button" class="btn secondary btn-icon" data-record-edit
+                  aria-label="{{ T "common.edit" }}" title="{{ T "common.edit" }}">
+            <span class="btn-ico" aria-hidden="true">{{ icon "pencil" }}</span>
+          </button>
+        </td>
+      </tr>
+      {{ end }}
+      <tr id="categories-no-results" class="list-empty-row" hidden>
+        <td colspan="4">{{ T "common.no_results" }}</td>
+      </tr>
+    </tbody>
+  </table>
   </div>
+  {{ end }}
 </div>
+
+{{/* "root" . hands the page's own data to the two slots below: inside a
+     {{ define }} `$` is the dict, not the page, so `.root.<x>` is a slot's
+     only route to it. /categories' single text input needs nothing from
+     it; a screen with a <select> (roles, locations) ranges over
+     .root.<list> in its fields slot. Passed here so copying this call site
+     copies the idiom. */}}
+{{ template "record_dialog" (dict
+     "id"             "category-dialog"
+     "formID"         "category-form"
+     "createTitleKey" "categories.create"
+     "editTitleKey"   "categories.edit"
+     "createAction"   "/api/categories"
+     "root"           .) }}
 
 <script>
 (function () {
@@ -131,4 +163,35 @@
   refreshEdgeStates();
 })();
 </script>
+{{ end }}
+
+{{/* The two slots record_dialog.html owes to this page — see that partial's
+     header for the contract. */}}
+{{ define "record_dialog_fields" }}
+<form id="category-form" method="post" action="/api/categories" autocomplete="off">
+  <label>{{ T "categories.col.name" }}
+    <input type="text" name="name" required placeholder="{{ T "categories.create_placeholder" }}" />
+  </label>
+</form>
+{{ end }}
+
+{{/* Deactivate, never erase (#1956's settled semantics): the trash icon
+     posts active=0. For a category that is ALREADY inactive the same slot
+     offers Activate instead — record-dialog.js shows whichever
+     data-record-when="active=…" matches the row it opened, so a delete
+     icon can never quietly reactivate. Both forms take their action from
+     the row's data-record-destructive-action. */}}
+{{ define "record_dialog_destructive" }}
+<form method="post" data-record-destructive-form data-record-when="active=1"
+      data-record-confirm="{{ T "categories.deactivate_confirm" }}">
+  <input type="hidden" name="active" value="0" />
+  <button type="submit" class="btn secondary btn-icon btn-icon-danger"
+          aria-label="{{ T "categories.deactivate" }}" title="{{ T "categories.deactivate" }}">
+    <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
+  </button>
+</form>
+<form method="post" data-record-destructive-form data-record-when="active=0">
+  <input type="hidden" name="active" value="1" />
+  <button type="submit" class="btn secondary">{{ T "categories.activate" }}</button>
+</form>
 {{ end }}
