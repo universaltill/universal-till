@@ -119,7 +119,7 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 		// exact same full standalone page as before this card.
 		if httpx.IsFragmentSwap(r) {
 			httpx.RenderContentFragment("ui/pages/inventory.html", data)(w, r)
-			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/inventory")
+			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/inventory", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return
 		}
 		httpx.Render("ui/pages/inventory.html", data)(w, r)

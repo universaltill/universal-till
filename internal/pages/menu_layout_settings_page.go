@@ -38,6 +38,17 @@ func hiddenMenuRows(r *http.Request, d *common.Deps) []hiddenMenuRow {
 	var rows []hiddenMenuRow
 	index := map[string]int{}
 	for _, a := range d.LayoutAmendmentsSnapshot() {
+		// LayoutAmendmentsSnapshot is every active plugin's amendments of
+		// EVERY registered slot (ut-docs#1911), not Menu-only any more —
+		// this page is the Menu slot's own findability surface, so it must
+		// filter to its own slot the same way common.BuildMenuAmendments
+		// does. Currently unreachable in practice (the Items slot refuses
+		// `hide` outright — see uislot's itemsSpec), but that's the OTHER
+		// half of the guarantee, not a reason to skip this one (independent
+		// review of ut-docs#1911, finding 3).
+		if a.Slot != uislot.MenuSlot {
+			continue
+		}
 		if !a.Hide {
 			continue
 		}
@@ -97,6 +108,12 @@ func registerMenuLayoutSettings(mux *http.ServeMux, d *common.Deps) {
 			key := strings.TrimSpace(r.FormValue("key"))
 			hidden := false
 			for _, a := range d.LayoutAmendmentsSnapshot() {
+				// Same Menu-slot filter as hiddenMenuRows above, and for
+				// the same reason: this page/form only ever means the Menu
+				// slot, and the amendment pool is no longer Menu-only.
+				if a.Slot != uislot.MenuSlot {
+					continue
+				}
 				if a.Hide && a.Key == key {
 					hidden = true
 					break

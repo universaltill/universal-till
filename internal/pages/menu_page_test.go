@@ -32,6 +32,13 @@ func newMenuPageTestDeps(t *testing.T, menu []common.MenuItem) (*http.ServeMux, 
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
 	}
+	// Mirrors internal/pages/init.go's real wiring: without this, a test
+	// that installs a plugin shipping its own locale overlay (a `layout` or
+	// `language` plugin's re-label) can never observe it resolve — T would
+	// silently keep returning the raw key forever, no matter what the
+	// plugin's manifest/locale files declare. A no-op for every existing
+	// test here, since none has plugin locale files on disk to sync.
+	pm.SetLocalizer(i18n)
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
 	dp := &common.Deps{
 		Cfg:      cfg,

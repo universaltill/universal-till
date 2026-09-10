@@ -369,7 +369,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// gets the exact same full standalone page as before this card.
 		if httpx.IsFragmentSwap(r) {
 			httpx.RenderWith(catalogFiles, funcs)("content", data)(w, r)
-			itemsnav.WriteRailOOB(w, r, funcs, "/catalog")
+			itemsnav.WriteRailOOB(w, r, funcs, "/catalog", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return
 		}
 		httpx.RenderWith(catalogFiles, funcs)("base", data)(w, r)
@@ -394,7 +394,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#1950: same /items rail embedding as /catalog above.
 		if httpx.IsFragmentSwap(r) {
 			httpx.RenderContentFragment("ui/pages/modifiers.html", modifiersData)(w, r)
-			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/modifiers")
+			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/modifiers", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return
 		}
 		httpx.Render("ui/pages/modifiers.html", modifiersData)(w, r)
@@ -421,7 +421,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#1950: same /items rail embedding as /catalog above.
 		if httpx.IsFragmentSwap(r) {
 			httpx.RenderContentFragment("ui/pages/option_sets.html", optionSetsData)(w, r)
-			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/catalog/option-sets")
+			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/catalog/option-sets", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return
 		}
 		httpx.Render("ui/pages/option_sets.html", optionSetsData)(w, r)

@@ -485,17 +485,48 @@ func SaveRestoredMenuKeys(ctx context.Context, s *settings.Store, keys map[strin
 }
 
 // BuildMenuAmendments is BuildMenu's sibling for ADR-0088: the amendments
-// the Menu renders with — every active layout plugin's, minus the hides the
-// merchant restored. Returns nil when nothing applies, so the zero-plugin
-// render path stays uislot.Resolve's length-check fast path. Nil-safe on
-// pm. Read pm.LayoutAmendments only under PluginMu (both callers do).
+// the Menu renders with — every active layout plugin's MENU-SLOT amendments
+// (ut-docs#1911: pm.LayoutAmendments is now a flat pool spanning every
+// registered slot, so this filters to its own before applying restores —
+// an Items-slot amendment restoring nothing here, but also never wrongly
+// reaching Menu's Resolve call), minus the hides the merchant restored.
+// Returns nil when nothing applies, so the zero-plugin render path stays
+// uislot.Resolve's length-check fast path. Nil-safe on pm. Read
+// pm.LayoutAmendments only under PluginMu (both callers do).
 func BuildMenuAmendments(pm *plugins.Manager, restored map[string]bool) []uislot.Amendment {
 	if pm == nil || len(pm.LayoutAmendments) == 0 {
 		return nil
 	}
 	out := make([]uislot.Amendment, 0, len(pm.LayoutAmendments))
 	for _, a := range pm.LayoutAmendments {
+		if a.Slot != uislot.MenuSlot {
+			continue
+		}
 		if a.Hide && restored[a.Key] {
+			continue
+		}
+		out = append(out, a)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// BuildItemsAmendments is BuildMenuAmendments' twin for the Items slot
+// (ut-docs#1911) — every active layout plugin's ITEMS-SLOT amendments, out
+// of the same flat pm.LayoutAmendments pool. No restored-hides parameter:
+// unlike Menu, the Items slot has no "Settings → Hidden ... rows" restore
+// surface yet (see Deps.ItemsAmendments' own doc comment for why that's a
+// deliberate, flagged gap rather than an oversight), so every active hide
+// simply applies. Nil-safe on pm, same zero-plugin fast path as its twin.
+func BuildItemsAmendments(pm *plugins.Manager) []uislot.Amendment {
+	if pm == nil || len(pm.LayoutAmendments) == 0 {
+		return nil
+	}
+	out := make([]uislot.Amendment, 0, len(pm.LayoutAmendments))
+	for _, a := range pm.LayoutAmendments {
+		if a.Slot != uislot.ItemsSlot {
 			continue
 		}
 		out = append(out, a)

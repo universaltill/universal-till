@@ -19,11 +19,14 @@ import (
 
 type Manager struct {
 	MenuPlugins map[string]MenuPlugin // key = plugin entry key
-	// LayoutAmendments are the Menu-slot amendments of every ACTIVE
-	// `layout` plugin (ADR-0088), loaded once per lifecycle change beside
-	// MenuPlugins — the render path never queries for them (Decision I).
-	// Reassigned inside Reload's critical section: read it only under
-	// common.Deps.PluginMu (Deps.LayoutAmendmentsSnapshot), like MenuPlugins.
+	// LayoutAmendments are every ACTIVE `layout` plugin's amendments, of
+	// EVERY registered slot (ADR-0088; ut-docs#1911 widened this from
+	// Menu-only to a flat pool spanning Menu + Items — filter by
+	// Amendment.Slot, as common.BuildMenuAmendments/BuildItemsAmendments
+	// do), loaded once per lifecycle change beside MenuPlugins — the
+	// render path never queries for them (Decision I). Reassigned inside
+	// Reload's critical section: read it only under common.Deps.PluginMu
+	// (Deps.LayoutAmendmentsSnapshot), like MenuPlugins.
 	LayoutAmendments []uislot.Amendment
 	Installed        map[string]Plugin // key = plugin id
 	Catalog          map[string]CatalogEntry
@@ -343,12 +346,14 @@ func (m *Manager) loadMenuEntries(ctx context.Context, repo *data.PluginRepo) er
 	return nil
 }
 
-// loadLayoutEntries reads every active layout plugin's Menu-slot amendment
-// document into LayoutAmendments (ADR-0088). A row that no longer parses
-// (validateLayoutEntries accepted it at install; only a change to core's
-// own key set can invalidate it afterwards) is logged and skipped rather
-// than failing the reload — a stale amendment must never take the whole
-// plugin manager down with it.
+// loadLayoutEntries reads every active layout plugin's amendment document,
+// of EVERY registered slot (ADR-0088; ut-docs#1911 generalized this beyond
+// Menu-only), into LayoutAmendments — one flat pool a caller filters by
+// Amendment.Slot (common.BuildMenuAmendments / BuildItemsAmendments). A row
+// that no longer parses (validateLayoutEntries accepted it at install; only
+// a change to core's own key set can invalidate it afterwards) is logged
+// and skipped rather than failing the reload — a stale amendment must never
+// take the whole plugin manager down with it.
 func (m *Manager) loadLayoutEntries(ctx context.Context, repo *data.PluginRepo) error {
 	rows, err := repo.ListLayoutEntries(ctx)
 	if err != nil {
@@ -356,7 +361,7 @@ func (m *Manager) loadLayoutEntries(ctx context.Context, repo *data.PluginRepo) 
 	}
 	var out []uislot.Amendment
 	for _, row := range rows {
-		amendments, err := uislot.ParseMenuAmendmentsJSON(row.PluginID, row.ConfigJSON)
+		amendments, err := uislot.ParseAmendmentsJSON(row.PluginID, row.ConfigJSON)
 		if err != nil {
 			log.Printf("plugin %s: layout entry %q no longer parses and is ignored: %v", row.PluginID, row.EntryKey, err)
 			continue

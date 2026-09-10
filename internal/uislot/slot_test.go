@@ -402,3 +402,186 @@ func TestResolve_NoGroupAmendmentLeavesOrderUntouched(t *testing.T) {
 		t.Fatalf("a label-only amendment must not reorder anything, got %+v", got)
 	}
 }
+
+// ut-docs#1911: the Items slot's own core table, generalized from the
+// same shape TestCoreMenu_IsWellFormed pins for the Menu slot — every key
+// equals its href, is unique, declared in ascending Order, carries no
+// pre-declared fallback, and every row also carries a SubtitleKey (the one
+// field the Menu slot never uses).
+func TestCoreItems_IsWellFormed(t *testing.T) {
+	seen := map[string]bool{}
+	prev := -1
+	for _, e := range CoreItems {
+		if e.Key == "" || e.Key != e.Href {
+			t.Errorf("core entry key must equal its href: %+v", e)
+		}
+		if seen[e.Key] {
+			t.Errorf("duplicate core key %q", e.Key)
+		}
+		seen[e.Key] = true
+		if e.LabelKey == "" || e.SubtitleKey == "" {
+			t.Errorf("core Items entry %q needs a name and subtitle locale key", e.Key)
+		}
+		if e.Icon != "" {
+			t.Errorf("Items slot rows carry no icon (items_rail.html draws none): %+v", e)
+		}
+		if e.Order <= prev {
+			t.Errorf("core table must be declared in ascending Order (zero-plugin path never sorts): %q has %d after %d", e.Key, e.Order, prev)
+		}
+		prev = e.Order
+		if e.LabelFallback != "" || e.IconFallback != "" {
+			t.Errorf("fallbacks are set by Resolve, never declared: %+v", e)
+		}
+	}
+	if len(ProtectedItemsKeys) != 0 {
+		t.Fatalf("ADR-0088 names zero protected Items-slot keys today, got %v", ProtectedItemsKeys)
+	}
+	if IsProtectedItemsKey("/catalog") {
+		t.Error("no Items-slot key is protected today")
+	}
+	if _, ok := CoreItemsEntry("/catalog"); !ok {
+		t.Error("CoreItemsEntry must find a declared key")
+	}
+	if _, ok := CoreItemsEntry("/tables"); ok {
+		t.Error("CoreItemsEntry must not find a Menu-slot key")
+	}
+}
+
+// A layout plugin amending the Items slot follows the same schema and
+// refusal shapes ParseMenuAmendments already has for order/label_key — this
+// pins that the generalization (parseSlotAmendments) didn't silently break
+// what the shipped plugins/layout-salon demo actually needs. (The Items
+// slot's capability set is deliberately NARROWER than Menu's — see
+// TestParseItemsAmendments_RefusesHideIconGroup below.)
+func TestParseItemsAmendments_RelabelAndReorder(t *testing.T) {
+	got, err := ParseItemsAmendments("com.example.layout", map[string]any{
+		"slot": "items",
+		"amendments": []any{
+			map[string]any{"key": "/catalog", "label_key": "layout.salon.services", "order": float64(1)},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected refusal: %v", err)
+	}
+	if len(got) != 1 || got[0].Slot != ItemsSlot || got[0].Key != "/catalog" || got[0].LabelKey != "layout.salon.services" || *got[0].Order != 1 {
+		t.Fatalf("parsed amendment mismatch: %+v", got)
+	}
+}
+
+// A Menu-slot key is not a declared Items-slot destination, and vice versa
+// — the two core tables must not leak into each other's validation.
+func TestParseItemsAmendments_RefusesAMenuOnlyKey(t *testing.T) {
+	_, err := ParseItemsAmendments("com.example.layout", map[string]any{
+		"amendments": []any{map[string]any{"key": "/tables", "hide": true}},
+	})
+	if err == nil || !strings.Contains(err.Error(), "/tables") {
+		t.Fatalf("expected a refusal naming /tables, got %v", err)
+	}
+}
+
+// ut-docs#1911 independent review, blockers 1+2 and finding 5: the Items
+// slot has no findability/restore surface (Decision D) and its renderer
+// draws no icon or group heading, so hide/icon/group must be refused at
+// install — accepting-then-silently-ignoring is exactly the failure mode
+// ADR-0088 exists to prevent, and hide specifically would let a plugin
+// empty the whole rail (uislot.CoreItems has zero protected keys), which
+// crashes the /items handler's sections[0] lookup.
+func TestParseItemsAmendments_RefusesHideIconGroup(t *testing.T) {
+	cases := []struct {
+		name   string
+		amend  map[string]any
+		wantIn string
+	}{
+		{"hide", map[string]any{"key": "/catalog", "hide": true}, "hide"},
+		{"icon", map[string]any{"key": "/catalog", "icon": "scissors"}, "icon"},
+		{"group", map[string]any{"key": "/catalog", "group": "g.k"}, "group"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseItemsAmendments("com.example.layout", map[string]any{
+				"amendments": []any{tc.amend},
+			})
+			if err == nil {
+				t.Fatalf("%s must be refused on the items slot", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantIn) || !strings.Contains(err.Error(), "/catalog") {
+				t.Fatalf("error should name %q and the key, got: %v", tc.wantIn, err)
+			}
+		})
+	}
+}
+
+// The narrower Items capability set must not have narrowed the Menu slot
+// too — hide/icon/group all still work exactly as before this card.
+func TestParseMenuAmendments_StillAllowsHideIconGroup(t *testing.T) {
+	got, err := ParseMenuAmendments("com.example.layout", map[string]any{
+		"amendments": []any{
+			map[string]any{"key": "/tables", "hide": true},
+			map[string]any{"key": "/items", "icon": "scissors", "group": "g.k"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Menu slot must still allow hide/icon/group: %v", err)
+	}
+	if len(got) != 2 || !got[0].Hide || got[1].Icon != "scissors" || got[1].Group != "g.k" {
+		t.Fatalf("parsed amendments mismatch: %+v", got)
+	}
+}
+
+// An empty-after-hide Items rail would crash items_page.go's sections[0] —
+// this pins that the refusal above is what actually prevents it: hiding
+// every declared Items-slot key one amendment at a time is refused on the
+// FIRST one, not accepted until the rail is empty.
+func TestParseItemsAmendments_CannotHideEvenASingleUnprotectedRow(t *testing.T) {
+	if len(ProtectedItemsKeys) != 0 {
+		t.Fatalf("this test's premise (zero protected Items keys) has changed — update it")
+	}
+	for _, e := range CoreItems {
+		_, err := ParseItemsAmendments("p", map[string]any{
+			"amendments": []any{map[string]any{"key": e.Key, "hide": true}},
+		})
+		if err == nil {
+			t.Fatalf("hiding %q must be refused — the Items slot allows no hide at all", e.Key)
+		}
+	}
+}
+
+func TestParseAmendmentsJSON_DispatchesOnDeclaredSlot(t *testing.T) {
+	menu, err := ParseAmendmentsJSON("p", `{"slot":"menu","amendments":[{"key":"/tables","hide":true}]}`)
+	if err != nil || len(menu) != 1 || menu[0].Slot != MenuSlot {
+		t.Fatalf("menu dispatch: got %+v, %v", menu, err)
+	}
+	items, err := ParseAmendmentsJSON("p", `{"slot":"items","amendments":[{"key":"/catalog","order":1}]}`)
+	if err != nil || len(items) != 1 || items[0].Slot != ItemsSlot {
+		t.Fatalf("items dispatch: got %+v, %v", items, err)
+	}
+	// No "slot" field at all — every manifest written before this card —
+	// must still default to the Menu slot, unchanged.
+	implicit, err := ParseAmendmentsJSON("p", `{"amendments":[{"key":"/tables","hide":true}]}`)
+	if err != nil || len(implicit) != 1 || implicit[0].Slot != MenuSlot {
+		t.Fatalf("no-slot default: got %+v, %v", implicit, err)
+	}
+	empty, err := ParseAmendmentsJSON("p", "")
+	if err != nil || len(empty) != 0 {
+		t.Fatalf("empty config_json: got %v, %v", empty, err)
+	}
+}
+
+// Decision F's conflict check is scoped per slot (ut-docs#1911): two
+// plugins restructuring the SAME STRING key in DIFFERENT slots must not
+// conflict — only same-slot restructures of the same key do. Before the
+// Slot field, FindConflict compared Key alone across the whole flat
+// LayoutAmendments pool, which would have wrongly refused this pairing were
+// a Menu key and an Items key ever to collide as strings.
+func TestFindConflict_ScopedPerSlot(t *testing.T) {
+	ten := 10
+	menuAmendment := Amendment{PluginID: "com.a", Slot: MenuSlot, Key: "/shared", Order: &ten}
+	itemsAmendment := Amendment{PluginID: "com.b", Slot: ItemsSlot, Key: "/shared", Order: &ten}
+	if _, ok := FindConflict([]Amendment{itemsAmendment}, []Amendment{menuAmendment}); ok {
+		t.Fatal("same key string in a DIFFERENT slot must not conflict")
+	}
+	sameSlotOther := Amendment{PluginID: "com.c", Slot: ItemsSlot, Key: "/shared", Order: &ten}
+	if _, ok := FindConflict([]Amendment{itemsAmendment}, []Amendment{sameSlotOther}); !ok {
+		t.Fatal("same key AND same slot from a different plugin must still conflict")
+	}
+}

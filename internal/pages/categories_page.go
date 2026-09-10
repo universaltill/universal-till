@@ -134,7 +134,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		// page as before this card.
 		if httpx.IsFragmentSwap(r) {
 			httpx.RenderContentFragment("ui/pages/categories.html", categoriesData)(w, r)
-			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/categories")
+			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/categories", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return
 		}
 		httpx.Render("ui/pages/categories.html", categoriesData)(w, r)
