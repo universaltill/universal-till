@@ -2060,6 +2060,7 @@
   "tender.change": "Change",
   "tender.complete_sale": "Complete Sale",
   "tender.fill_remaining": "Fill Remaining",
+  "tender.gift_card": "Gift Card",
   "tender.issue_voucher.add": "Add Voucher",
   "tender.issue_voucher.amount": "Voucher amount",
   "tender.issue_voucher.auto_code": "Code generated at checkout",

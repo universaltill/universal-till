@@ -6994,10 +6994,12 @@ type PaymentMethod struct {
 	// the owning plugin's own locales/ overlay (ADR-0010; the entry-label
 	// contract itself is reference/plugin-manifest.md's entries table,
 	// `label` row) — same render-time mechanism a page/export/report entry's
-	// label already uses. A built-in's plain-text Name ("Cash", "Card", …)
-	// passes through T unchanged, so the seeded built-ins stay untranslated
-	// on a non-English till — a separate gap, not this one (ut-docs#2015
-	// review).
+	// label already uses. The three built-ins ('cash'/'card'/'gift') follow
+	// the same convention as of ut-docs#2021: 022_builtin_payment_method_
+	// i18n_keys.sql repoints their Name at "tender.cash"/"tender.card"/
+	// "tender.gift_card" (web/locales/*.json) instead of the plain-text
+	// literals 001_init.sql originally seeded, so they now translate on a
+	// non-English till instead of passing through T unchanged.
 	Name string
 	// Type is the payment_methods.type column ('cash', 'card', 'voucher',
 	// …). ut-docs#1832: the sale screen keeps a 'voucher' type out of the

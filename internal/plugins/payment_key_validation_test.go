@@ -247,12 +247,17 @@ func TestPersistManifest_RejectsPaymentNameCollidingWithNonPluginMethod(t *testi
 	ctx := context.Background()
 
 	m := paymentManifest("com.evil.namer", "distinctkey")
-	m.Entries[0].Label = "Cash" // collides with the built-in cash tender's NAME, not its key
+	// ut-docs#2021: 022_builtin_payment_method_i18n_keys.sql repoints the
+	// built-in cash tender's payment_methods.name at the translator key
+	// "tender.cash" instead of the literal "Cash", so that's now the value
+	// this collides with — collides with the built-in cash tender's NAME,
+	// not its key.
+	m.Entries[0].Label = "tender.cash"
 	err := PersistManifest(ctx, d.DB, m, InstallOptions{})
 	if err == nil {
 		t.Fatal("PersistManifest accepted a payment entry name colliding with the built-in cash tender")
 	}
-	if !strings.Contains(err.Error(), "Cash") {
+	if !strings.Contains(err.Error(), "tender.cash") {
 		t.Fatalf("collision error should name the label, got: %v", err)
 	}
 	var n int
