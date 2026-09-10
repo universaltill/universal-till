@@ -194,6 +194,8 @@ clear_fixtures
 # unguarded. One planted violation per newly-covered directory, each in a
 # real existing package so `go vet`/gofmt-adjacent tooling would still see
 # valid Go if it ever ran over these fixtures.
+# Literal Go backticks, see the MissingBump case above for why.
+# shellcheck disable=SC2016
 plant "cmd/unitill-uninstall" "main" "CmdMissingBump" 'import (
 	"context"
 
@@ -207,6 +209,8 @@ expect_fail "a plugin-settings writer call under cmd/ with no BumpGeneration ref
   "zz_guard_test_CmdMissingBump.go"
 clear_fixtures
 
+# Literal Go backticks, see the MissingBump case above for why.
+# shellcheck disable=SC2016
 plant "scripts/e2e_seed" "main" "ScriptsMissingBump" 'import (
 	"context"
 
@@ -220,6 +224,8 @@ expect_fail "a plugin-settings writer call under scripts/ with no BumpGeneration
   "zz_guard_test_ScriptsMissingBump.go"
 clear_fixtures
 
+# Literal Go backticks, see the MissingBump case above for why.
+# shellcheck disable=SC2016
 plant "e2e/seed_demo" "main" "E2eMissingBump" 'import (
 	"context"
 
