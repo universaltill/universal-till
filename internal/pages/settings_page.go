@@ -482,11 +482,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if resetBatchesErr != nil {
 			logging.L().Errorf("list reset batches: %v", resetBatchesErr)
 		}
-		// Locale-aware date format (ut-docs#1130/#1632/#1894) — NOT the same
-		// as the .backups table above, which turned out on inspection to
-		// still be a hardcoded "2006-01-02 15:04" (listBackupsForUI in
-		// backup_api.go); that's a separate, still-open gap (ut-docs#1936),
-		// deliberately not folded into this card's fixed scope.
+		// Locale-aware date format (ut-docs#1130/#1632/#1894). The .backups
+		// table below used to be a separate gap (ut-docs#1936 — it was
+		// still a hardcoded "2006-01-02 15:04" in listBackupsForUI,
+		// backup_api.go) but now goes through the same httpx.FormatDateTime
+		// call as everything else on this page.
 		// Purgeable/RetainedUntilDisplay (ut-docs#698) let the template show
 		// per-row purge eligibility instead of every row offering a
 		// Delete-permanently control that a gated batch will just refuse.
@@ -618,7 +618,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// this same session renders consistently with what the save
 			// handler will actually accept.
 			"receiptPolicyLocked": receiptPolicyLockedForCountry(all[common.KeyCountry]),
-			"backups":             listBackupsForUI(d),
+			"backups":             listBackupsForUI(d, locale),
 			// ut-docs#1613: a restore staged in an earlier visit (or before
 			// a page reload) must still offer its restart trigger here —
 			// otherwise the operator who reloads mid-flow lands back on the
