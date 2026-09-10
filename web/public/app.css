@@ -876,6 +876,55 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
   .catalog-form-head .tab-bar .tab:focus-visible {
     outline: 2px solid var(--focus, var(--accent)); outline-offset: -2px;
   }
+  /* ut-docs#2024: at 360px the five tabs need ~540px of min-content in
+     ~328px available, so one or two sit entirely off-screen with nothing
+     visible saying they're there (independent review of #2000, finding
+     F5). A pure-CSS `background-attachment: local`/`scroll` "scroll
+     shadow" (the classic no-JS technique) was tried first and rejected —
+     empirically verified backwards for this element under `dir="rtl"`
+     (the fade showed at the wrong scroll position entirely, not merely
+     on the unmirrored side): `local` attachment's 0%/100% positions tie
+     to the scrollable content's own coordinate origin, and that origin
+     sits at a different physical edge than the visible "nothing more to
+     scroll" edge once `direction: rtl` flips which edge is the reading
+     start. So instead: catalog.html's `tabBarFade()` does the show/hide
+     with real `scrollLeft`/`scrollWidth` arithmetic (`Math.abs()`, so it
+     is correct for both the LTR 0→+max and the RTL 0→−max scroll-origin
+     conventions without a sign-specific branch) and toggles two classes
+     below; only the fade's own cosmetic gradient *direction* — not
+     whether/when it shows — needs a `dir="rtl"` override, since
+     `background-image` gradients have no reliable logical direction
+     keyword across engines. `position: sticky` pseudo-elements, flex
+     children of .tab-bar itself (the scrolling element), are what keep
+     each fade pinned to its edge through the scroll without an extra
+     wrapper element; `inset-inline-start`/`-end` place them so the
+     browser's own bidi resolution decides which physical edge each one
+     is on, matching the show/hide classes' left work above without this
+     file needing to reason about it too. */
+  .catalog-form-head .tab-bar::before,
+  .catalog-form-head .tab-bar::after {
+    content: ""; position: sticky; flex: none; pointer-events: none;
+    inline-size: 1.1rem; block-size: 100%; opacity: 0;
+    transition: opacity .15s ease;
+  }
+  .catalog-form-head .tab-bar::before {
+    order: -1; inset-inline-start: 0;
+    background: linear-gradient(to right, var(--surface), transparent);
+  }
+  .catalog-form-head .tab-bar::after {
+    order: 999; inset-inline-end: 0;
+    background: linear-gradient(to left, var(--surface), transparent);
+  }
+  html[dir="rtl"] .catalog-form-head .tab-bar::before {
+    background: linear-gradient(to left, var(--surface), transparent);
+  }
+  html[dir="rtl"] .catalog-form-head .tab-bar::after {
+    background: linear-gradient(to right, var(--surface), transparent);
+  }
+  .catalog-form-head .tab-bar.tab-bar--fade-start::before,
+  .catalog-form-head .tab-bar.tab-bar--fade-end::after {
+    opacity: 1;
+  }
 }
 /* ut-docs#1901, same fix as body.osk-padded .payment-overlay above: the
    OSK is `position: fixed` + `z-index: 1000`, spanning the bottom of the
