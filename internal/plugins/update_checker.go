@@ -23,6 +23,12 @@ type UpdateInfo struct {
 	ArtifactHash     string
 	DeviceArch       string
 	TrustTier        string
+	// CanonicalType is the marketplace listing's plugin type (ADR-0002's
+	// 20-type taxonomy, e.g. "language", "theme") — carried through so a
+	// caller (StartPluginUpdateScheduler, ut-docs#1953) can decide whether
+	// this update is safe to auto-apply without a merchant's say-so. Not
+	// persisted anywhere locally; it comes from the catalog snapshot only.
+	CanonicalType string
 }
 
 // UpdateChecker detects available plugin updates from marketplace
@@ -61,31 +67,65 @@ func (uc *UpdateChecker) CheckForUpdates(ctx context.Context) ([]UpdateInfo, err
 		return nil, fmt.Errorf("failed to get catalog: %w", err)
 	}
 
-	// Build map of marketplace plugins by ID
-	catalogMap := make(map[string]marketplace.PluginSummary)
+	// Index the catalog two ways.
+	//
+	// byListing is the authoritative one: a marketplace install records the
+	// listing↔plugin mapping in the install-status store, which is exactly
+	// what /plugins' "Update available" badge (plugins_page.go) and the
+	// install itself (applyPluginUpdate) already resolve through.
+	//
+	// byAuthorName is the historical heuristic — installed manifest
+	// author+name against catalog developer_id+listing name. Nothing
+	// guarantees those agree: the installed plugin's Author/Name come from
+	// the plugin's own manifest.json (installer_marketplace.go persists
+	// manifest.Author verbatim), while DeveloperID falls back to the
+	// listing's vendor display string. It is kept only as a fallback for
+	// plugins with no install-status record (ut-docs#1953 review).
+	byListing := make(map[string]marketplace.PluginSummary)
+	byAuthorName := make(map[string]marketplace.PluginSummary)
+	keepHighest := func(m map[string]marketplace.PluginSummary, key string, p marketplace.PluginSummary) {
+		if key == "" {
+			return
+		}
+		if existing, ok := m[key]; ok && compareVersions(p.Version, existing.Version) <= 0 {
+			return
+		}
+		m[key] = p
+	}
 	for _, p := range snapshot.Plugins {
-		// Use the plugin's canonical ID (derived from listing)
-		// For now, we'll use developer_id + name as a simple key
-		// In production, you'd want a proper plugin ID mapping
-		key := p.DeveloperID + "/" + p.Name
+		listingID := p.ListingID
+		if listingID == "" {
+			listingID = p.ID
+		}
+		keepHighest(byListing, listingID, p)
+		keepHighest(byAuthorName, p.DeveloperID+"/"+p.Name, p)
+	}
 
-		// Keep the highest version for each plugin
-		if existing, ok := catalogMap[key]; ok {
-			if compareVersions(p.Version, existing.Version) > 0 {
-				catalogMap[key] = p
+	// Installed plugin id → the listing it was installed from.
+	listingByPlugin := make(map[string]string)
+	if records, err := NewInstallStatusStore(uc.db).List(ctx); err != nil {
+		// Non-fatal: fall back to the author+name heuristic for everything.
+		log.Warnf("[UpdateChecker] install-status listing map unavailable, falling back to author/name matching: %v", err)
+	} else {
+		for listingID, record := range records {
+			if record.PluginID != "" {
+				listingByPlugin[record.PluginID] = listingID
 			}
-		} else {
-			catalogMap[key] = p
 		}
 	}
 
 	// Find updates
 	var updates []UpdateInfo
 	for _, inst := range installed {
-		// Try to find in catalog
-		key := inst.Author + "/" + inst.Name
+		catalogPlugin, ok := marketplace.PluginSummary{}, false
+		if listingID, mapped := listingByPlugin[inst.ID]; mapped {
+			catalogPlugin, ok = byListing[listingID]
+		}
+		if !ok {
+			catalogPlugin, ok = byAuthorName[inst.Author+"/"+inst.Name]
+		}
 
-		if catalogPlugin, ok := catalogMap[key]; ok {
+		if ok {
 			// Compare versions
 			if compareVersions(catalogPlugin.Version, inst.Version) > 0 {
 				update := UpdateInfo{
@@ -98,6 +138,7 @@ func (uc *UpdateChecker) CheckForUpdates(ctx context.Context) ([]UpdateInfo, err
 					ArtifactHash:     strings.TrimPrefix(catalogPlugin.ArtifactHash, "sha256:"),
 					DeviceArch:       catalogPlugin.DeviceArch,
 					TrustTier:        catalogPlugin.TrustTier,
+					CanonicalType:    catalogPlugin.CanonicalType,
 				}
 				updates = append(updates, update)
 
