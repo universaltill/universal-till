@@ -7016,7 +7016,17 @@ ORDER BY id
 
 // PaymentMethod is an active tender method offered on the Pay tab.
 type PaymentMethod struct {
-	ID   string
+	ID string
+	// Name is rendered through T at render time (ut-docs#2015): a plugin
+	// payment entry's label is copied into payment_methods.name verbatim at
+	// sync time (SyncPluginPaymentMethods) as a translator key, resolved via
+	// the owning plugin's own locales/ overlay (ADR-0010; the entry-label
+	// contract itself is reference/plugin-manifest.md's entries table,
+	// `label` row) — same render-time mechanism a page/export/report entry's
+	// label already uses. A built-in's plain-text Name ("Cash", "Card", …)
+	// passes through T unchanged, so the seeded built-ins stay untranslated
+	// on a non-English till — a separate gap, not this one (ut-docs#2015
+	// review).
 	Name string
 	// Type is the payment_methods.type column ('cash', 'card', 'voucher',
 	// …). ut-docs#1832: the sale screen keeps a 'voucher' type out of the

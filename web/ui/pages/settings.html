@@ -261,7 +261,7 @@
     <select name="theme">
       {{ $current := .theme }}
       {{ range .themes }}
-      <option value="{{ .Key }}" {{ if eq .Key $current }}selected{{ end }}>{{ .Label }}{{ if ne .Source "built-in" }} ({{ .Source }}){{ end }}</option>
+      <option value="{{ .Key }}" {{ if eq .Key $current }}selected{{ end }}>{{ T .Label }}{{ if ne .Source "built-in" }} ({{ .Source }}){{ end }}</option>
       {{ end }}
     </select>
     <button class="btn" type="submit">{{ T "settings.theme.apply" }}</button>
@@ -507,7 +507,7 @@
         <option value="">—</option>
         {{ $def := .payDefault }}
         {{ range .payMethods }}
-        <option value="{{ .ID }}" {{ if eq .ID $def }}selected{{ end }}>{{ .Name }}</option>
+        <option value="{{ .ID }}" {{ if eq .ID $def }}selected{{ end }}>{{ T .Name }}</option>
         {{ end }}
       </select>
       <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
@@ -519,7 +519,7 @@
   <form hx-post="/api/settings/payments-fee" hx-target="#fee-msg-{{ .ID }}" hx-swap="innerHTML"
         class="fee-row">
     <input type="hidden" name="method" value="{{ .ID }}">
-    <span class="fee-name">{{ .Name }}</span>
+    <span class="fee-name">{{ T .Name }}</span>
     <!-- ut-docs#1275: type="number" silently resets .value to "" on a
          momentarily-invalid decimal string while osk.js types it in (same
          root cause as ut-docs#1249/#1272) -- text+inputmode="decimal" avoids
