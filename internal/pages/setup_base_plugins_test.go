@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"path/filepath"
 	"slices"
 	"strings"
 	"sync"
@@ -357,6 +358,22 @@ func newHermeticEnOnlyI18n(t *testing.T, dp *common.Deps) *config.I18n {
 	}
 	httpx.InitI18n(i18n, "en")
 	dp.Pm.SetLocalizer(i18n)
+	// httpx.InitI18n is process-global with no getter, so this hermetic
+	// overlay-only fixture would otherwise stay installed for every test the
+	// Go test runner schedules later in this binary — invisible at this
+	// test's own call site, and dependent on file/test ordering (ut-docs#2022;
+	// ut-docs#2015 hit the identical hazard for real in its own, separate
+	// test helper). Best-effort by design, same as that fix's
+	// restoreRealI18n: a test that somehow isn't chdir'd to the repo root
+	// can't find web/locales, and leaving the translator alone is strictly
+	// better than failing inside cleanup.
+	t.Cleanup(func() {
+		real, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+		if err != nil {
+			return
+		}
+		httpx.InitI18n(real, "en")
+	})
 	return i18n
 }
 
