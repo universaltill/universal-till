@@ -133,6 +133,50 @@ func TestReportsPage_GrandTotalsSumDailySales(t *testing.T) {
 	}
 }
 
+func TestReportsPage_AvgSaleKPI(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+	// Two completed sales within the default 14-day window: £3.60 + £2.40 =
+	// £6.00 total across 2 sales, so Avg sale = £3.00.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',300,0,60,360,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s2','R002','completed','sale','GBP',200,0,40,240,datetime('now','-1 day'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsPage(t, mux, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "£3.00") {
+		t.Fatalf("expected the avg sale KPI £3.00 (360+240=600 / 2 sales), got: %s", body)
+	}
+	if !strings.Contains(body, `kpi-label">Avg sale`) {
+		t.Fatalf("expected an 'Avg sale' KPI tile label, got: %s", body)
+	}
+}
+
+func TestReportsPage_AvgSaleKPIZeroSafeWithNoSales(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newReportsPageTestDeps(t)
+	// No sales at all in the window: the avg-sale KPI must render £0.00,
+	// not divide by zero (panic) or omit the tile.
+	rec := getReportsPage(t, mux, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `kpi-label">Avg sale`) {
+		t.Fatalf("expected an 'Avg sale' KPI tile even with zero sales, got: %s", body)
+	}
+	if !strings.Contains(body, "£0.00") {
+		t.Fatalf("expected the avg sale KPI to be zero-safe (£0.00) with no sales, got: %s", body)
+	}
+}
+
 func TestReportsPage_RefundsAndNetKPIs(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newReportsPageTestDeps(t)
