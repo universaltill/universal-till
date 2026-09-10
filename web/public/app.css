@@ -2693,6 +2693,18 @@ body.login-screen {
 .translations-ref { color: var(--muted); max-inline-size: 18rem; }
 .translations-edit { display: flex; gap: .4rem; }
 .translations-edit input[type="text"] { min-inline-size: 16rem; }
+/* ut-docs#2014: the infinite-scroll sentinel's loading text and its
+   terminal end-of-list replacement, both on the colspan <td> (not the
+   <tr> — padding on a table-row box is ignored by every browser, and
+   text-align/font-style would inherit down but the padding wouldn't, so
+   both classes have to live on the cell itself). .muted (color only) sets
+   no alignment of its own; text-align: center here is what actually
+   centers these two rows — deliberately NOT applied to the plain
+   "no matching texts" empty-state row above, which stays start-aligned
+   like a normal data row (review finding, ut-docs#2014: an earlier draft
+   of this comment claimed the opposite of what the rule below does). */
+.translations-loading,
+.translations-end { text-align: center; padding-block: .6rem; font-style: italic; }
 
 /* First-boot setup wizard */
 .setup-card {
