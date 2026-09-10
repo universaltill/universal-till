@@ -27,6 +27,12 @@
 # every OTHER writer call in the same file too, including ones added
 # later with no review at all).
 #
+# ut-docs#1942: the scan covers internal/, cmd/, scripts/, and e2e/ — not
+# just internal/. At the time this was widened, zero real call sites
+# existed outside internal/, but nothing stops a future seed/smoke tool
+# under cmd/, scripts/, or e2e/ from writing a plugin setting an
+# .ask-hook asker reads, unguarded.
+#
 # A file under internal/data itself can never satisfy the BumpGeneration
 # check (that import cycle is this guard's whole premise) — its only
 # legitimate way to pass is the inline allow comment on the writer line.
@@ -57,11 +63,18 @@ WRITER_RE="${WRITER_RE:-\.(UpsertPluginSetting|UpsertPluginSettingScoped|MergeAd
 DEFINITION_FILE="internal/data/plugin_repo.go"
 ALLOW_COMMENT="plugin-settings-bump:allow"
 
-if [[ ! -d internal ]]; then
-  echo "❌ plugin-settings-bump guard: internal/ does not exist — can't scan for writer call sites" >&2
-  echo "   (repo layout changed? fix this guard's SEARCH_DIR rather than let it silently no-op)" >&2
-  exit 1
-fi
+# ut-docs#1942: internal/ is where every known call site lives today, but
+# cmd/, scripts/, and e2e/ can just as easily grow a seed/smoke tool that
+# writes a plugin setting — scan all four, same exclusions throughout.
+SEARCH_DIRS=(internal cmd scripts e2e)
+
+for dir in "${SEARCH_DIRS[@]}"; do
+  if [[ ! -d "${dir}" ]]; then
+    echo "❌ plugin-settings-bump guard: ${dir}/ does not exist — can't scan for writer call sites" >&2
+    echo "   (repo layout changed? fix this guard's SEARCH_DIRS rather than let it silently no-op)" >&2
+    exit 1
+  fi
+done
 
 if [[ ! -f "${DEFINITION_FILE}" ]]; then
   echo "❌ plugin-settings-bump guard: ${DEFINITION_FILE} does not exist (renamed or moved?)" >&2
@@ -92,11 +105,12 @@ while IFS= read -r -d '' file; do
   grep -q 'BumpGeneration()' "${file}" && continue
 
   violations+=("${file}")
-done < <(find internal -name '*.go' ! -name '*_test.go' ! -path '*/testdata/*' -print0)
+done < <(find "${SEARCH_DIRS[@]}" -name '*.go' ! -name '*_test.go' ! -path '*/testdata/*' -print0)
 
 if [[ "${matched_any_file}" -eq 0 ]]; then
   echo "❌ plugin-settings-bump guard: found no production caller of UpsertPluginSetting/" >&2
-  echo "   UpsertPluginSettingScoped/MergeAdditiveJSONMapSetting anywhere under internal/." >&2
+  echo "   UpsertPluginSettingScoped/MergeAdditiveJSONMapSetting anywhere under" >&2
+  echo "   ${SEARCH_DIRS[*]}." >&2
   echo "   That's suspicious — these are real, used writers. If they were renamed, update" >&2
   echo "   WRITER_RE in this guard rather than let it silently stop checking anything." >&2
   exit 1

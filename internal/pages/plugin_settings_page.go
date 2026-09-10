@@ -288,10 +288,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		isSecret, _, _ := secretSettingCheck(r.Context(), d, pluginID)
 		var views []settingView
 		for _, row := range rows {
-			var v string
-			if json.Unmarshal([]byte(row.ValueJSON), &v) != nil {
-				v = row.ValueJSON // non-string JSON edits raw
-			}
+			v := unwrapSettingValue(row.ValueJSON)
 			sv := settingView{Key: row.Key, Value: v, Secret: isSecret(row.Key), PerTill: row.Scope == "register", Notice: settingNoticeKey(pluginID, row.Key)}
 			if sv.Secret {
 				sv.IsSet = v != ""
