@@ -286,3 +286,112 @@ func TestModifierRepo_ListShopModifierGroups_EmptyShopReturnsNilNotError(t *test
 		t.Fatalf("expected no groups in an empty shop, got %+v", groups)
 	}
 }
+
+// ListAllShopModifierGroups (ut-docs#1957) is the admin-equivalent of
+// ListShopModifierGroups: /modifiers became the full CRUD home for modifier
+// groups, and an admin managing them shop-wide must still see a deactivated
+// group/option so it can be reactivated — same reason ListAllGroupsForItem
+// exists beside ListGroupsForItem for the per-item case. The read-only
+// browse query (ListShopModifierGroups) keeps hiding inactive rows; this is
+// a separate method, not a behavior change to that one.
+func TestModifierRepo_ListAllShopModifierGroups_IncludesInactiveGroupsAndOptions(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	if _, err := d.DB.ExecContext(ctx, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm1','SKU1','Flat White',320,1)`); err != nil {
+		t.Fatal(err)
+	}
+	repo := data.NewModifierRepo(d.DB)
+
+	gidActive, err := repo.CreateGroup(ctx, "g1", "itm1", "Extras", false, 0, 2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateOption(ctx, "o1", gidActive, "Extra shot", 50, 1); err != nil {
+		t.Fatal(err)
+	}
+	inactiveOptID, err := repo.CreateOption(ctx, "o2", gidActive, "Discontinued syrup", 30, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateOption(ctx, inactiveOptID, "Discontinued syrup", 30, 2, false); err != nil {
+		t.Fatal(err)
+	}
+
+	gidInactive, err := repo.CreateGroup(ctx, "g2", "itm1", "Retired", false, 0, 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateGroup(ctx, gidInactive, "Retired", false, 0, 1, 2, false); err != nil {
+		t.Fatal(err)
+	}
+
+	groups, err := repo.ListAllShopModifierGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListAllShopModifierGroups: %v", err)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("expected both the active AND the deactivated group, got %d: %+v", len(groups), groups)
+	}
+	var extras, retired *data.ModifierGroup
+	for i := range groups {
+		switch groups[i].Name {
+		case "Extras":
+			extras = &groups[i]
+		case "Retired":
+			retired = &groups[i]
+		}
+	}
+	if extras == nil || retired == nil {
+		t.Fatalf("expected both Extras and Retired groups, got: %+v", groups)
+	}
+	if retired.IsActive {
+		t.Fatalf("expected Retired group to be reported inactive: %+v", retired)
+	}
+	if len(extras.Options) != 2 {
+		t.Fatalf("expected Extras to carry BOTH its active and inactive option, got: %+v", extras.Options)
+	}
+	foundInactiveOpt := false
+	for _, o := range extras.Options {
+		if o.Name == "Discontinued syrup" && !o.IsActive {
+			foundInactiveOpt = true
+		}
+	}
+	if !foundInactiveOpt {
+		t.Fatalf("expected the deactivated option to be present and marked inactive: %+v", extras.Options)
+	}
+}
+
+// A deactivated item's groups must still be excluded even from the admin
+// variant — same reasoning as ListShopModifierGroups's own equivalent test:
+// there is nowhere left to reach/manage that item's groups once the item
+// itself is gone from /catalog.
+func TestModifierRepo_ListAllShopModifierGroups_SkipsGroupsOfDeactivatedItem(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	if _, err := d.DB.ExecContext(ctx, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES
+		('itm1','SKU1','Flat White',320,1), ('itm2','SKU2','Latte',350,1)`); err != nil {
+		t.Fatal(err)
+	}
+	repo := data.NewModifierRepo(d.DB)
+
+	if _, err := repo.CreateGroup(ctx, "g1", "itm1", "Extras", false, 0, 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateGroup(ctx, "g2", "itm2", "Milk", false, 0, 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.ExecContext(ctx, `UPDATE items SET is_active = 0 WHERE id = 'itm1'`); err != nil {
+		t.Fatal(err)
+	}
+
+	groups, err := repo.ListAllShopModifierGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListAllShopModifierGroups: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("expected only itm2's group (itm1 is deactivated), got %d: %+v", len(groups), groups)
+	}
+	if groups[0].ItemName != "Latte" || groups[0].Name != "Milk" {
+		t.Fatalf("unexpected group: %+v", groups[0])
+	}
+}

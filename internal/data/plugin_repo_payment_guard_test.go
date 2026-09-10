@@ -77,8 +77,11 @@ func TestSyncPluginPaymentMethods_CannotHijackBuiltins(t *testing.T) {
 	if !ok {
 		t.Fatal("built-in cash row vanished")
 	}
-	if got.PluginID != "" || got.Name != "Cash" || got.Active != 1 {
-		t.Fatalf("built-in cash captured by plugin: %+v (want plugin_id '', name Cash, active)", got)
+	// ut-docs#2021: the built-in's Name is the translator key "tender.cash"
+	// as of 022_builtin_payment_method_i18n_keys.sql, not the literal
+	// "Cash".
+	if got.PluginID != "" || got.Name != "tender.cash" || got.Active != 1 {
+		t.Fatalf("built-in cash captured by plugin: %+v (want plugin_id '', name tender.cash, active)", got)
 	}
 
 	// The historically fatal half: plugin goes away, deactivate step runs.
@@ -278,14 +281,17 @@ func TestSyncPluginPaymentMethods_LegacyNameCollisionDoesNotAbortSync(t *testing
 	ctx := context.Background()
 	repo := NewPluginRepo(d.DB)
 
+	// ut-docs#2021: the built-in cash tender's name is now the translator
+	// key "tender.cash" (022_builtin_payment_method_i18n_keys.sql), so
+	// that's the literal a colliding plugin label has to match.
 	pgPlugin(t, d, "com.namecollide.pay", 1)
-	pgEntry(t, d, "pe-namecollide", "com.namecollide.pay", "namecollide", "Cash")
+	pgEntry(t, d, "pe-namecollide", "com.namecollide.pay", "namecollide", "tender.cash")
 
 	if err := repo.SyncPluginPaymentMethods(ctx); err != nil {
 		t.Fatalf("sync must not abort on a legacy name collision, got: %v", err)
 	}
 	got, ok := pgMethod(t, d, "cash")
-	if !ok || got.Name != "Cash" || got.PluginID != "" {
+	if !ok || got.Name != "tender.cash" || got.PluginID != "" {
 		t.Fatalf("built-in cash must be unaffected by a colliding plugin name: %+v ok=%v", got, ok)
 	}
 	if _, ok := pgMethod(t, d, "namecollide"); ok {
@@ -342,9 +348,11 @@ func TestFindSuppressedPaymentNameEntries(t *testing.T) {
 	repo := NewPluginRepo(d.DB)
 
 	// A brand-new entry whose label is already taken by the built-in cash
-	// tender — can never materialize.
+	// tender — can never materialize. ut-docs#2021: that name is now the
+	// translator key "tender.cash" (022_builtin_payment_method_i18n_keys.sql),
+	// not the literal "Cash".
 	pgPlugin(t, d, "com.blocked.pay", 1)
-	pgEntry(t, d, "pe-blocked", "com.blocked.pay", "blockedkey", "Cash")
+	pgEntry(t, d, "pe-blocked", "com.blocked.pay", "blockedkey", "tender.cash")
 	if err := repo.SyncPluginPaymentMethods(ctx); err != nil {
 		t.Fatalf("sync: %v", err)
 	}
@@ -364,7 +372,7 @@ func TestFindSuppressedPaymentNameEntries(t *testing.T) {
 		t.Fatalf("expected exactly 1 suppressed entry, got %d: %+v", len(suppressed), suppressed)
 	}
 	got := suppressed[0]
-	if got.PluginID != "com.blocked.pay" || got.Key != "blockedkey" || got.Label != "Cash" || got.BlockingID != "cash" {
+	if got.PluginID != "com.blocked.pay" || got.Key != "blockedkey" || got.Label != "tender.cash" || got.BlockingID != "cash" {
 		t.Fatalf("unexpected suppressed entry: %+v", got)
 	}
 }

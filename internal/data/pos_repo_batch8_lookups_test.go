@@ -410,13 +410,111 @@ func TestPOSRepo_ListActivePaymentMethods_SeededVoucherMethod(t *testing.T) {
 	if !ok {
 		t.Fatalf("001_init 'gift' row must stay exactly as shipped: %#v", got)
 	}
-	if gift.Type != "voucher" || gift.Name != "Gift Card" {
-		t.Fatalf("gift method = %+v, want the unchanged 001_init row (Type 'voucher', Name 'Gift Card')", gift)
+	// ut-docs#2021: 022_builtin_payment_method_i18n_keys.sql repoints the
+	// built-in 'gift' row's Name at the "tender.gift_card" translator key
+	// (id/type are untouched — only how the name resolves for display
+	// changed) so it renders correctly through T on a non-English till.
+	if gift.Type != "voucher" || gift.Name != "tender.gift_card" {
+		t.Fatalf("gift method = %+v, want Type 'voucher', Name 'tender.gift_card' (ut-docs#2021)", gift)
 	}
 	// Seeded after the three 001_init rows (sort_order 4), so the existing
 	// Pay-grid head-of-list (cash/card) is untouched by the new row.
 	if got[len(got)-1].ID != "voucher" {
 		t.Fatalf("voucher method should sort last among built-ins, got order %#v", got)
+	}
+}
+
+// ut-docs#2021: a freshly migrated database's three built-in payment
+// methods (cash/card/gift) must carry translator-key names, not literal
+// English text, so PaymentMethod.Name resolves correctly through T on a
+// non-English till (the same render-time mechanism ut-docs#2015 already
+// wired up for plugin-contributed entries). 022_builtin_payment_method_
+// i18n_keys.sql is the fix; this asserts its effect directly rather than
+// only through the SeededVoucherMethod test's incidental 'gift' check.
+func TestPOSRepo_BuiltinPaymentMethods_HaveI18nKeyNames(t *testing.T) {
+	dbo := newBatch8DB(t, "builtin-i18n.db")
+	repo := NewPOSRepo(dbo.DB)
+
+	got, err := repo.ListActivePaymentMethods(context.Background())
+	if err != nil {
+		t.Fatalf("ListActivePaymentMethods: %v", err)
+	}
+	want := map[string]string{
+		"cash": "tender.cash",
+		"card": "tender.card",
+		"gift": "tender.gift_card",
+	}
+	byID := map[string]PaymentMethod{}
+	for _, m := range got {
+		byID[m.ID] = m
+	}
+	for id, wantName := range want {
+		m, ok := byID[id]
+		if !ok {
+			t.Fatalf("built-in payment method %q missing from a freshly migrated database: %#v", id, got)
+		}
+		if m.Name != wantName {
+			t.Fatalf("built-in %q: Name = %q, want translator key %q", id, m.Name, wantName)
+		}
+	}
+}
+
+// ut-docs#2021: 022_builtin_payment_method_i18n_keys.sql's UPDATE matches
+// only the exact literal text 001_init.sql shipped, so it must (a) leave a
+// row alone once it no longer carries that literal (the ordinary "already
+// migrated" case, and belt-and-braces against a future rename feature),
+// and (b) be a true no-op the second time it runs — the same idempotency
+// 015_voucher_payment_method.sql's own INSERT OR IGNORE documents for a
+// different statement shape. Runs the migration's own UPDATE directly
+// against a hand-seeded table, since re-running a single already-applied
+// migration through db.migrate() isn't how the runner works (it tracks
+// applied versions in schema_migrations).
+func TestPOSRepo_BuiltinPaymentMethodI18nMigration_Idempotent(t *testing.T) {
+	dbo := newBatch8DB(t, "builtin-i18n-idempotent.db")
+
+	mustExec(t, dbo, `DELETE FROM payment_methods`)
+	mustExec(t, dbo, `INSERT INTO payment_methods (id, name, type, is_active, sort_order, plugin_id) VALUES
+('cash', 'Cash', 'cash', 1, 1, NULL),
+('card', 'Custom Card Name', 'card', 1, 2, NULL)`)
+
+	runMigrationUpdate := func() {
+		mustExec(t, dbo, `UPDATE payment_methods SET name = 'tender.cash' WHERE id = 'cash' AND plugin_id IS NULL AND name = 'Cash'`)
+		mustExec(t, dbo, `UPDATE payment_methods SET name = 'tender.card' WHERE id = 'card' AND plugin_id IS NULL AND name = 'Card'`)
+	}
+	runMigrationUpdate()
+
+	repo := NewPOSRepo(dbo.DB)
+	got, err := repo.ListActivePaymentMethods(context.Background())
+	if err != nil {
+		t.Fatalf("ListActivePaymentMethods: %v", err)
+	}
+	byID := map[string]PaymentMethod{}
+	for _, m := range got {
+		byID[m.ID] = m
+	}
+	if byID["cash"].Name != "tender.cash" {
+		t.Fatalf("built-in cash row not updated: %+v", byID["cash"])
+	}
+	// 'card' never carried the literal 'Card' in this fixture, so the exact-
+	// literal WHERE clause must leave it exactly as seeded.
+	if byID["card"].Name != "Custom Card Name" {
+		t.Fatalf("row not matching the exact shipped literal must be untouched: %+v", byID["card"])
+	}
+
+	// Second run: 'cash' no longer matches the literal 'Cash' WHERE clause,
+	// so this must be a true no-op, not an error or a second change.
+	runMigrationUpdate()
+	got2, err := repo.ListActivePaymentMethods(context.Background())
+	if err != nil {
+		t.Fatalf("ListActivePaymentMethods (2nd): %v", err)
+	}
+	for _, m := range got2 {
+		if m.ID == "cash" && m.Name != "tender.cash" {
+			t.Fatalf("re-running the migration's UPDATE changed an already-migrated row: %+v", m)
+		}
+		if m.ID == "card" && m.Name != "Custom Card Name" {
+			t.Fatalf("re-running the migration's UPDATE changed a non-matching row: %+v", m)
+		}
 	}
 }
 
