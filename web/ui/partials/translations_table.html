@@ -55,7 +55,7 @@
   {{ if not $.rowOnly }}
     {{ if $.hasMore }}
     <tr id="translations-sentinel"
-        hx-get="/ui/translations-table?edit_locale={{ $.editLocaleEscaped }}&amp;q={{ $.qEscaped }}&amp;offset={{ $.nextOffset }}&amp;limit={{ $.limit }}"
+        hx-get="/ui/translations-table?edit_locale={{ $.editLocaleEscaped }}&amp;q={{ $.qEscaped }}&amp;after={{ $.nextAfterEscaped }}&amp;limit={{ $.limit }}"
         hx-trigger="revealed"
         hx-target="this"
         hx-swap="outerHTML">
