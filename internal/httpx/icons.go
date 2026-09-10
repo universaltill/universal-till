@@ -129,6 +129,11 @@ var railIcons = map[string]string{
 	// sale" buttons (menu.html, error_page.html) since ut-docs#1896 — every
 	// entry point back to selling now draws the same cart glyph.
 	"shopping-cart": `<path d="m2.05 2.05 1.099-.028a1 1 0 0 1 1.008.815l2.69 14.347A1 1 0 0 0 7.83 18H18"/><path d="M4.563 5h16.435a1 1 0 0 1 .981 1.204l-1.026 6.226A2 2 0 0 1 18.962 14H6.25"/><circle cx="18" cy="20" r="2"/><circle cx="8" cy="20" r="2"/>`,
+	// Delete/deactivate (catalog.delete, ut-docs#1956) — the item form's
+	// icon-only delete in its pinned action bar. Lucide's "trash-2" path,
+	// unmodified. The action behind it is a soft deactivate (the row's own
+	// ✕ endpoint), so the glyph says "remove from here", not "destroy".
+	"trash-2": `<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.
