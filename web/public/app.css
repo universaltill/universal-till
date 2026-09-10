@@ -500,8 +500,21 @@ body.sale-screen .session-admin-link { display: none; }
 .reorderable-tile .btn-actions { gap: .5rem; }
 .journal-row { cursor: pointer; }
 .journal-row:hover td { background: var(--surface-2); }
+/* flex-wrap + min-width:0 (independent-review fix, ut-docs#1951): this row is
+   a title plus a button group, and ut-docs#1951 added a THIRD button
+   (Deactivate) to that group. At phone width (400px) the row then overflowed
+   its container in every locale — measured .catalog-form-head scrollWidth
+   383-432 vs clientWidth 307, with the Close button's box landing outside the
+   viewport (en 388..476, fa -79..0) and document.elementFromPoint at its
+   centre not returning it. This dialog is opened non-modally and has no
+   Escape-to-close (see catalog.html), so Close running off the edge is the
+   one affordance that must not. Wrapping engages only when the row would
+   otherwise overflow, so the till (1024x600), small till (800x480) and tablet
+   portrait (768) — all measured at 0px overflow — render exactly as before.
+   min-width:0 lets the <h3> title shrink instead of forcing the row wide. */
 .catalog-form-head { display: flex; justify-content: space-between; align-items: center;
-                     margin-bottom: .5rem; }
+                     flex-wrap: wrap; gap: .4rem; margin-bottom: .5rem; }
+.catalog-form-head > h3 { min-width: 0; }
 
 /* Store claim code (Settings): big, readable off the till screen. */
 .claim-code-box { display: flex; flex-direction: column; gap: .3rem; }
@@ -1243,6 +1256,14 @@ a.btn, a.btn:hover { text-decoration: none; }
   transition: border-color .12s ease, box-shadow .12s ease, transform .05s ease;
   user-select: none; touch-action: manipulation;
 }
+/* Same [hidden]-override precedent as .btn/.field-pair/.field-checks/label
+   above: this class's own `display: flex` always beats the UA
+   `[hidden]{display:none}` rule regardless of specificity, so a
+   `hidden`-attributed .btn-tile (ut-docs#1951: the catalog grid's own
+   client-side search, filterRows(), sets .catalog-row.hidden to filter
+   cards) stayed visibly flex-displayed — found live running the e2e suite
+   against a real browser, not just template assertions. */
+.btn-tile[hidden] { display: none; }
 /* Category-color accent (ut-docs#1325), same var(--cat-color, var(--accent))
    fallback pattern .category-header/.tab already use — --cat-color inherits
    from whichever ancestor sets it (.category-group, or the tab-panel wrapper
@@ -1268,8 +1289,17 @@ a.btn, a.btn:hover { text-decoration: none; }
    contrast logic — same reasoning as .picker-tile[aria-pressed] not
    needing one either. */
 .btn-tile.tile-colored { background: var(--tile-color); }
+/* .muted joins the white foreground (independent-review fix, ut-docs#1951):
+   the catalog card grid puts a .muted barcodes/variants caption INSIDE the
+   tile, where the sale-screen tile only ever had a name and a price. Left on
+   var(--muted) (#64748b) it sits mid-grey on the tile colour — measured live
+   at 1.06:1 against amber (#b45309) and 1.60:1 against stone (#57534e), i.e.
+   effectively invisible, against WCAG AA's 4.5:1 for 13px text. #fff is the
+   same single fixed foreground the name/price already rely on, and clears
+   4.5:1 on every swatch in the palette (amber, the lightest, is 5.05:1). */
 .btn-tile.tile-colored .tile-name,
-.btn-tile.tile-colored .tile-price { color: #fff; }
+.btn-tile.tile-colored .tile-price,
+.btn-tile.tile-colored .muted { color: #fff; }
 .tile-name {
   font-weight: 600; font-size: .9rem; line-height: 1.2; white-space: normal;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
@@ -2577,11 +2607,24 @@ body.login-screen {
 .item-color-tile { flex-direction: column; gap: .3rem; min-block-size: 3.6rem; padding: .5rem .4rem; font-size: .78rem; font-weight: 500; }
 .swatch-dot { display: block; inline-size: 1.15rem; block-size: 1.15rem; border-radius: 50%;
               background: var(--swatch, transparent); border: 1px solid rgba(15, 23, 42, .18); }
-/* Catalog list (ut-docs#1901, cheap nice-to-have): a small dot next to the
-   item name so a color is visible in the list too, not only on the
-   sale-screen tile. */
-.color-dot { display: inline-block; inline-size: .65rem; block-size: .65rem; border-radius: 50%;
-             margin-inline-end: .4rem; vertical-align: middle; border: 1px solid rgba(15, 23, 42, .18); }
+/* Catalog card grid (ut-docs#1951): the empty-state placeholder lives
+   inside the same .grid as the cards (so a beforeend OOB insert has one
+   stable parent whether the catalog is empty or not — see
+   catalog_row.html) and must span every column, not sit as a single
+   card-width cell. */
+.catalog-empty { grid-column: 1 / -1; }
+/* Independent-review fix: unlike the sale-screen's product tiles
+   (buttons.html), a catalog card can carry a Barcodes and/or Variants
+   caption (.muted) between the name and the price, so its content height
+   varies card to card. Without this, .tile-price sits directly under
+   whatever text came before it, so a card with a caption shows its price
+   lower than a caption-less neighbour in the same grid row — visible in
+   the shipped screenshot's second row. margin-block-start:auto on a
+   .btn-tile flex child (column direction) pushes it, and it alone, to the
+   bottom, so every card's price lines up regardless of caption length.
+   Scoped to .catalog-row only — the sale-screen grid has no such
+   variable-height content and doesn't need this. */
+.catalog-row .tile-price { margin-block-start: auto; }
 
 /* Bottom status bar: always-visible version + live connectivity. Bookends the
    dark top nav; part of the body flex column so it sits at the bottom. */

@@ -106,30 +106,11 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// The mutation itself has already committed by the time this runs, so a
 	// render/query failure here is logged rather than surfaced as an error
 	// status the client would misread as "the save failed".
-	// hadThumbColumn is a snapshot the CALLER takes before its own mutation
-	// runs (ut-docs#1842 review F1/F2) — writeCatalogRowOOB compares it
-	// against the fresh post-mutation answer to decide whether a plain row
-	// fragment is still safe, or whether the thumbnail column's presence
-	// just flipped and the whole table needs re-rendering instead. Taking
-	// it here, after the mutation, would be too late — the "before"
-	// answer would already be gone.
-	writeRowOOB := func(w http.ResponseWriter, r *http.Request, itemID string, insert bool, hadThumbColumn bool) {
+	writeRowOOB := func(w http.ResponseWriter, r *http.Request, itemID string, insert bool) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		if err := writeCatalogRowOOB(w, r, repo, funcs, itemID, insert, hadThumbColumn); err != nil {
+		if err := writeCatalogRowOOB(w, r, repo, funcs, itemID, insert); err != nil {
 			log.Printf("[catalog] row oob for item %s: %v", itemID, err)
 		}
-	}
-	// snapshotThumbColumn is the "before" half of the above — call it as
-	// the FIRST thing a mutation handler does, before touching the DB.
-	// Cheap (one indexed EXISTS query); a read failure here degrades to
-	// "assume unchanged" (false either way — see the mismatched comment
-	// below) rather than blocking the mutation on a diagnostic query.
-	snapshotThumbColumn := func(r *http.Request) bool {
-		has, err := repo.HasAnyThumbnail(r.Context())
-		if err != nil {
-			log.Printf("[catalog] snapshot thumb column: %v", err)
-		}
-		return has
 	}
 
 	// renderVariantsPanel answers with the per-item variants/barcodes editor.
@@ -198,7 +179,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			filepath.Join("web", "ui", "partials", "catalog_variants.html"),
 		), funcs)("catalog_variants", pdata)(w, r)
 		if withTable {
-			writeRowOOB(w, r, itemID, false, snapshotThumbColumn(r))
+			writeRowOOB(w, r, itemID, false)
 		}
 	}
 	renderVariantsPanel := func(w http.ResponseWriter, r *http.Request, itemID string, withTable bool) {
@@ -321,35 +302,20 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
 			return
 		}
-		funcs["taxCodeName"] = taxCodeNameFunc(taxCodes)
-		funcs["categoryName"] = lookupNameFunc(cats)
-		funcs["brandName"] = lookupNameFunc(brands)
 		barcodes, _ := repo.ItemBarcodes(r.Context())
 		variants, _ := repo.ItemVariants(r.Context())
 		thumbnails, _ := repo.ItemThumbnails(r.Context())
-		// The thumbnail column exists at all only when some listed item
-		// actually has one (ut-docs#1842 AC2) — never an empty 40px cell
-		// on every row of a catalog nobody has put images into.
-		hasThumbnails := false
-		for _, itm := range items {
-			if thumbnails[itm.ID] != "" {
-				hasThumbnails = true
-				break
-			}
-		}
 		data := map[string]any{
-			"title":         "Catalog",
-			"menuItems":     d.MenuSnapshot(),
-			"theme":         d.CurrentState().Theme,
-			"Rows":          buildCatalogRows(items, barcodes, variants, thumbnails, hasThumbnails),
-			"Categories":    cats,
-			"Brands":        brands,
-			"TaxCodes":      taxCodes,
-			"SyncPrimary":   d.SyncPrimaryURL(r.Context()),
-			"HasThumbnails": hasThumbnails,
-			"EmptyColspan":  emptyRowColspan(hasThumbnails),
-			"BuiltinIcons":  catimport.BuiltinIcons(),
-			"ItemColors":    catalogtypes.ItemColors(),
+			"title":        "Catalog",
+			"menuItems":    d.MenuSnapshot(),
+			"theme":        d.CurrentState().Theme,
+			"Rows":         buildCatalogRows(items, barcodes, variants, thumbnails),
+			"Categories":   cats,
+			"Brands":       brands,
+			"TaxCodes":     taxCodes,
+			"SyncPrimary":  d.SyncPrimaryURL(r.Context()),
+			"BuiltinIcons": catimport.BuiltinIcons(),
+			"ItemColors":   catalogtypes.ItemColors(),
 		}
 		httpx.RenderWith(files(
 			filepath.Join("web", "ui", "layouts", "base.html"),
@@ -529,11 +495,6 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
-		// Before anything: a new item can get a thumbnail below (the
-		// barcode-lookup auto-fill photo), which can flip whether the
-		// column exists at all — snapshot now, while "before" still means
-		// something (ut-docs#1842 review F1).
-		hadThumbColumn := snapshotThumbColumn(r)
 		_ = r.ParseForm()
 		itemInput, err := parseItemInput(r)
 		if err != nil {
@@ -585,7 +546,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				log.Printf("[catalog] record item_images thumbnail for %s: %v", itemID, err)
 			}
 		}
-		writeRowOOB(w, r, itemID, true, hadThumbColumn)
+		writeRowOOB(w, r, itemID, true)
 	})
 
 	// Update item
@@ -597,11 +558,6 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
-		// This save can also (de)activate the item (the isActive field),
-		// which can flip whether the column exists — same reasoning as
-		// item creation above (ut-docs#1842 review F1/F2). Snapshot before
-		// the write, not after.
-		hadThumbColumn := snapshotThumbColumn(r)
 		_ = r.ParseForm()
 		itemInput, err := parseItemInput(r)
 		if err != nil {
@@ -629,7 +585,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			skuAwareError(w, r, http.StatusBadRequest, err)
 			return
 		}
-		writeRowOOB(w, r, itemInput.ID, !wasActive, hadThumbColumn)
+		writeRowOOB(w, r, itemInput.ID, !wasActive)
 	})
 
 	// Deactivate item
@@ -641,9 +597,6 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
-		// Deactivating the last active item with a thumbnail collapses the
-		// column — snapshot before the write (ut-docs#1842 review F2).
-		hadThumbColumn := snapshotThumbColumn(r)
 		_ = r.ParseForm()
 		itemID := strings.TrimSpace(r.Form.Get("id"))
 		if itemID == "" {
@@ -654,7 +607,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 			return
 		}
-		writeRowOOB(w, r, itemID, false, hadThumbColumn)
+		writeRowOOB(w, r, itemID, false)
 	})
 
 	// Create or update variant (if id present => update)
@@ -724,7 +677,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			renderVariantsPanel(w, r, panelItem, true)
 			return
 		}
-		writeRowOOB(w, r, itemID, false, snapshotThumbColumn(r))
+		writeRowOOB(w, r, itemID, false)
 	})
 
 	// Create or update a modifier group (ADR-0020) — id present = update,
@@ -857,7 +810,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// (soft-deactivated rows still resolve). A lookup failure only
 		// costs the row refresh — the deactivation itself already landed.
 		if itemID, ok, err := repo.ItemIDForVariant(r.Context(), variantID); err == nil && ok {
-			writeRowOOB(w, r, itemID, false, snapshotThumbColumn(r))
+			writeRowOOB(w, r, itemID, false)
 		} else if err != nil {
 			log.Printf("[catalog] resolve item for variant %s: %v", variantID, err)
 		}
@@ -873,10 +826,6 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// the next admin pull — unlike items/item_variants/item_barcodes/
 	// variant_barcodes below, which are.
 	mux.HandleFunc("POST /api/catalog/item/image", func(w http.ResponseWriter, r *http.Request) {
-		// The exact flow ut-docs#1842 is about: this can be the FIRST
-		// thumbnail the whole catalog ever gets. Snapshot before the
-		// write, not after (review F1).
-		hadThumbColumn := snapshotThumbColumn(r)
 		if err := r.ParseMultipartForm(10 << 20); err != nil {
 			common.LocalizedError(w, r, http.StatusBadRequest, "common.error.invalid_upload")
 			return
@@ -937,7 +886,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if err := repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png"); err != nil {
 			log.Printf("[catalog] record item_images thumbnail for %s: %v", itemID, err)
 		}
-		writeRowOOB(w, r, itemID, false, hadThumbColumn)
+		writeRowOOB(w, r, itemID, false)
 	})
 
 	// Built-in icon picker (ut-docs#1844): a bundled category icon
@@ -1006,13 +955,6 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// item_images, which sync_admin_repo.go's adminTables explicitly
 	// excludes (files/icon choices don't travel over the sync bundle).
 	mux.HandleFunc("POST /api/catalog/item/icon", func(w http.ResponseWriter, r *http.Request) {
-		// Choosing or clearing a built-in icon writes/removes an
-		// item_images/thumbnail row exactly like the upload handler below
-		// — it can just as easily be the catalog's first-ever thumbnail,
-		// or clear its last one, so it needs the same before-the-mutation
-		// snapshot for the OOB response to stay consistent with the
-		// <thead> (ut-docs#1842 review F1/F2).
-		hadThumbColumn := snapshotThumbColumn(r)
 		_ = r.ParseForm()
 		itemID := strings.TrimSpace(r.Form.Get("item_id"))
 		// Review finding F1 (ut-docs#1844): this handler now also removes
@@ -1035,7 +977,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			removeUploadedThumbnail(itemID)
-			writeRowOOB(w, r, itemID, false, hadThumbColumn)
+			writeRowOOB(w, r, itemID, false)
 			return
 		}
 		path, ok := catimport.IconPath(icon)
@@ -1048,7 +990,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		removeUploadedThumbnail(itemID)
-		writeRowOOB(w, r, itemID, false, hadThumbColumn)
+		writeRowOOB(w, r, itemID, false)
 	})
 
 	// Variant image upload → assets/items/<itemID>/variants/<variantID>/thumb.png
@@ -1186,7 +1128,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		if rowItemID != "" {
-			writeRowOOB(w, r, rowItemID, false, snapshotThumbColumn(r))
+			writeRowOOB(w, r, rowItemID, false)
 		}
 	})
 
@@ -1217,7 +1159,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if ownerOK {
-			writeRowOOB(w, r, ownerID, false, snapshotThumbColumn(r))
+			writeRowOOB(w, r, ownerID, false)
 		}
 	})
 
@@ -1599,54 +1541,6 @@ func convertLookups(in []data.Lookup) []lookup {
 		out = append(out, lookup{ID: l.ID, Name: l.Name})
 	}
 	return out
-}
-
-// taxCodeNameFunc returns a "taxCodeName" template func that resolves a
-// stored tax_code_id to its display name (ut-docs#1178) instead of letting
-// the raw id render — used by both the full /catalog page and the
-// catalog_row.html fragment re-rendered after a mutation (ut-docs#1363).
-//
-// Takes *string, not string: Item.TaxCodeID is a *string (nil when the item
-// has no tax code, the common case), and while html/template auto-derefs a
-// *non-nil* *string when it flows straight into a func(string) parameter, a
-// *nil* one panics the whole render with "dereference of nil pointer" — and
-// map `index` rejects a *string key outright, nil or not. Handling the nil
-// case here, once, is simpler than requiring every call site to guard it.
-//
-// Built from taxCodes' full set (active AND inactive, ut-docs#1178 review
-// finding F1) so a retired tax code still resolves to its real name instead
-// of falling back to "—" — see the matching note on the item-edit <select>
-// in catalog.html for why inactive codes can't just be dropped here.
-func taxCodeNameFunc(taxCodes []data.TaxCodeView) func(id *string) string {
-	names := make(map[string]string, len(taxCodes))
-	for _, tc := range taxCodes {
-		names[tc.ID] = tc.Name
-	}
-	return func(id *string) string {
-		if id == nil {
-			return ""
-		}
-		return names[*id]
-	}
-}
-
-// lookupNameFunc returns a template func resolving a stored lookup id
-// (category/brand) to its display name (ut-docs#1430) instead of letting
-// the raw id render -- same shape and *string-nil handling as
-// taxCodeNameFunc above, generalized since categories and brands are both
-// plain id/name lookup tables. Built from the already-fetched cats/brands
-// list at the /catalog route, so this costs no extra query.
-func lookupNameFunc(lookups []lookup) func(id *string) string {
-	names := make(map[string]string, len(lookups))
-	for _, l := range lookups {
-		names[l.ID] = l.Name
-	}
-	return func(id *string) string {
-		if id == nil {
-			return ""
-		}
-		return names[*id]
-	}
 }
 
 func validateLookups(ctx context.Context, repo *data.CatalogRepo, in pos.ItemInput) error {

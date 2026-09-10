@@ -75,6 +75,12 @@
     <div class="catalog-form-head">
       <h3 id="item-form-title">{{ T "catalog.new_item" }}</h3>
       <div style="display:flex; gap:.5rem; align-items:center">
+        <!-- ut-docs#1951: the catalog grid dropped its per-card edit/delete
+             buttons (selecting a card opens this dialog instead), so
+             deactivate needs a home here now — same endpoint the old row
+             button posted to. Hidden for a NEW item (nothing to delete
+             yet), shown once editing, same toggle as item-form-reset. -->
+        <button class="btn danger" type="button" id="item-form-delete-btn" hidden>{{ T "catalog.deactivate" }}</button>
         <button class="btn secondary" type="button" id="item-form-reset" hidden>{{ T "catalog.plus_new" }}</button>
         <button class="btn secondary" type="button" id="item-form-close-btn" onclick="document.getElementById('item-form-modal').close()">{{ T "common.close" }}</button>
       </div>
@@ -277,6 +283,7 @@
   var title = document.getElementById('item-form-title');
   var submit = document.getElementById('item-form-submit');
   var resetBtn = document.getElementById('item-form-reset');
+  var deleteBtn = document.getElementById('item-form-delete-btn');
   var msg = document.getElementById('item-form-msg');
   // ut-docs#1901: the form is now a near-full-screen <dialog> instead of
   // an always-visible side panel — opened explicitly (item-form-add-btn
@@ -350,7 +357,10 @@
     itemFormNewTitle: "{{ T "catalog.new_item" }}",
     itemFormEditPrefix: "{{ T "catalog.edit_item_prefix" }}",
     itemFormCreateBtn: "{{ T "catalog.create_item" }}",
-    itemFormSaveChangesBtn: "{{ T "catalog.save_changes" }}"
+    itemFormSaveChangesBtn: "{{ T "catalog.save_changes" }}",
+    // ut-docs#1951: the card grid dropped its per-card deactivate button —
+    // this is that action's new (and only) home, inside the item dialog.
+    itemDeactivateConfirm: "{{ T "catalog.item_deactivate_confirm" }}"
   };
 
   // Builds the .pos-notice markup into `el` (empty text clears the slot
@@ -396,6 +406,8 @@
     title.textContent = editing ? NOTICE_MSG.itemFormEditPrefix + name : NOTICE_MSG.itemFormNewTitle;
     submit.textContent = editing ? NOTICE_MSG.itemFormSaveChangesBtn : NOTICE_MSG.itemFormCreateBtn;
     resetBtn.hidden = !editing;
+    // Nothing to delete for a NEW item — same visibility rule as resetBtn.
+    deleteBtn.hidden = !editing;
   }
 
   function clearForm() {
@@ -414,6 +426,29 @@
   // "auto-close" below) can fire on a FRESH form the operator just reset
   // to, mid-typing, exactly the race this counter exists to prevent.
   resetBtn.addEventListener('click', function () { clearForm(); formSession++; });
+
+  // ut-docs#1951: the card grid's per-card delete button moved in here —
+  // "select the catalog and in the opening page delete or edit it" was the
+  // product owner's own framing. Same /api/catalog/item/deactivate the old
+  // row button posted to; the response's OOB fragments update the grid
+  // exactly as they already do for every other mutation, so the only new
+  // work here is closing the dialog once the request completes.
+  deleteBtn.addEventListener('click', function () {
+    var id = document.getElementById('item-id').value;
+    if (!id) return;
+    if (!window.confirm(NOTICE_MSG.itemDeactivateConfirm)) return;
+    htmx.ajax('POST', '/api/catalog/item/deactivate', { values: { id: id }, target: '#catalog-table', swap: 'none' })
+      .then(function () {
+        modal.close();
+        // The variants/barcodes panel below the grid is still showing the
+        // item this just deactivated — a row click used to be the ONLY way
+        // to open both the dialog and the panel together, so deactivating
+        // via the old per-row button never left the panel stranded on a
+        // gone item. Reset it to its empty-selection state (item_id=''),
+        // the same state the initial page load itself uses.
+        htmx.ajax('GET', '/api/catalog/item-variants', { target: '#catalog-variants', swap: 'outerHTML' });
+      });
+  });
 
   // ut-docs#1901: opens the dialog fresh, ready to create a NEW item — the
   // only way to reach the create-item form now the panel isn't always on
@@ -581,12 +616,14 @@
     }
   }
 
-  // Row click fills the form; the table partial is re-rendered by the server
-  // after every mutation, so delegate from the document.
+  // Card click fills the form; the grid partial is re-rendered by the
+  // server after every mutation, so delegate from the document. ut-docs#1951:
+  // a card carries no buttons of its own any more (edit/delete both moved
+  // into the dialog this opens), so unlike the old table row there is
+  // nothing inside it to exclude a click from.
   document.addEventListener('click', function (ev) {
     var row = ev.target.closest('.catalog-row');
     if (!row) return;
-    if (ev.target.closest('.btn') && !ev.target.classList.contains('catalog-edit')) return;
     openCatalogRow(row);
   });
 

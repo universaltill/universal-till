@@ -1,29 +1,23 @@
 {{ define "catalog_table" }}
-{{/* Normally rendered as a whole ONLY on the initial /catalog page load
-     (dot carries .Rows, []catalogRowVM built Go-side). Every mutation
-     since ut-docs#1363 answers with row-level out-of-band fragments
-     instead — see catalog_row.html — anchored on #catalog-row-<id>,
-     #catalog-tbody (beforeend inserts) and #catalog-empty-row.
-
-     The ONE exception (ut-docs#1842 review F1/F2): a row fragment can't
-     add/remove the thumbnail <th>/<td>s everywhere they'd need to change
-     — it only ever touches the one row it's about. So the rare mutation
-     that flips whether ANY active item has a thumbnail (the first photo
-     ever added to an all-text catalog, or deactivating the last imaged
-     item) re-renders this whole table as one OOB swap instead — see
-     writeWholeTableOOB in row_oob.go. .OOBSwap carries that: true only
-     for that swap-the-whole-table response, absent/false for the normal
-     initial page render. */}}
-<div class="card" id="catalog-table"{{ if .OOBSwap }} hx-swap-oob="true"{{ end }}>
-  <table class="table">
-    <thead><tr>{{ if .HasThumbnails }}<th></th>{{ end }}<th>{{ T "catalog.col.name" }}</th><th>{{ T "catalog.col.sku" }}</th><th>{{ T "catalog.col.price" }}</th><th>{{ T "catalog.col.unit" }}</th><th>{{ T "catalog.col.tax" }}</th><th>{{ T "catalog.col.category" }}</th><th></th></tr></thead>
-    <tbody id="catalog-tbody">
-      {{ if .Rows }}
-        {{ range .Rows }}{{ template "catalog_row" . }}{{ end }}
-      {{ else }}
-        {{ template "catalog_empty_row" .EmptyColspan }}
-      {{ end }}
-    </tbody>
-  </table>
+{{/* ut-docs#1951: the catalog list is a card grid (SumUp Library shape),
+     not a table — reuses the sale-screen's own .grid/.btn-tile pattern
+     (buttons.html) rather than inventing a new one. Normally rendered as a
+     whole ONLY on the initial /catalog page load (dot carries .Rows,
+     []catalogRowVM built Go-side); every mutation since ut-docs#1363
+     answers with card-level out-of-band fragments instead — see
+     catalog_row.html — anchored on #catalog-row-<id>, #catalog-tbody
+     (beforeend inserts) and #catalog-empty-row. The #catalog-table/
+     #catalog-tbody ids are kept from the pre-card <table>/<tbody> markup
+     on purpose — every OOB target selector, the JS click delegate and the
+     e2e suite already address the grid by these ids, and an id outliving
+     its original tag is cheaper than a rename sweep across all three. */}}
+<div class="card" id="catalog-table">
+  <div class="grid" id="catalog-tbody">
+    {{ if .Rows }}
+      {{ range .Rows }}{{ template "catalog_row" . }}{{ end }}
+    {{ else }}
+      {{ template "catalog_empty_row" }}
+    {{ end }}
+  </div>
 </div>
 {{ end }}

@@ -1270,14 +1270,15 @@ func (r *CatalogRepo) SetCategorySortOrder(ctx context.Context, orderedIDs []str
 // lookupUnfilteredByActive names the lookup tables ReadLookup returns in
 // full regardless of is_active. brands (ut-docs#1610): migration 004 added
 // the column so a retired brand is flagged like the other five UNIQUE-
-// display tables, but /catalog feeds BOTH its item-edit brand <select> and
-// its brandName row resolver from this reader — so a retired-but-still-
-// referenced brand must keep appearing under its real name exactly as it
-// did before the column existed. Hiding it would blank the row's brand and
-// let the next save of that item silently clear its brand_id (the <select>
-// can no longer offer the value), the same failure ListAllTaxCodes exists
-// to prevent for the tax-code <select> — see taxCodeNameFunc in
-// internal/pages/catalog.
+// display tables, but /catalog feeds its item-edit brand <select> from this
+// reader — so a retired-but-still-referenced brand must keep appearing
+// under its real name exactly as it did before the column existed. Hiding
+// it would let the next save of that item silently clear its brand_id (the
+// <select> can no longer offer the value), the same failure ListAllTaxCodes
+// exists to prevent for the tax-code <select>. (Prior to ut-docs#1951 this
+// also fed the catalog list's own brand-name display; that display is gone
+// with the table, but the <select>'s own need for the full set is
+// unchanged.)
 //
 // categories (ut-docs#1898 review finding F2): same failure, two writers
 // this time — SetCategoryActive's own item-count guard keeps a *manually*
@@ -1611,29 +1612,6 @@ func (r *CatalogRepo) ItemThumbnailFor(ctx context.Context, itemID string) (stri
 		return "", err
 	}
 	return path, nil
-}
-
-// HasAnyThumbnail reports whether any currently-ACTIVE item has a
-// thumbnail (item_images, role=thumbnail). This is the catalog list's
-// column-collapse decision (ut-docs#1842 AC2): the thumbnail column only
-// exists when it has something to show somewhere in the listing — a
-// thumbnail belonging only to a deactivated (no longer listed) item must
-// not keep the column alive. Re-checked fresh on every row-level OOB
-// mutation too, so a mutation response agrees with whatever the initial
-// render (which asks the same question) currently shows.
-func (r *CatalogRepo) HasAnyThumbnail(ctx context.Context) (bool, error) {
-	var exists int
-	err := r.db.QueryRowContext(ctx,
-		`SELECT 1 FROM item_images ii JOIN items i ON i.id = ii.item_id
-		 WHERE ii.role = 'thumbnail' AND i.is_active = 1 LIMIT 1`,
-	).Scan(&exists)
-	if errors.Is(err, sql.ErrNoRows) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	return true, nil
 }
 
 // SetItemThumbnail unconditionally sets an item's thumbnail (item_images,

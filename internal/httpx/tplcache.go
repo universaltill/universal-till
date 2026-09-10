@@ -39,9 +39,8 @@ var (
 // rather than the loud parse-time "function not defined" error the old
 // per-call ParseFS gave). In practice this always holds today: FuncsFor
 // returns a complete, identical key set for every locale, and every call
-// site either passes its FuncsFor(...) result unmodified or only
-// overrides an existing key's value (e.g. catalog/handlers.go's per-request
-// taxCodeName).
+// site either passes its FuncsFor(...) result unmodified or only overrides
+// an existing key's value, never adds or removes one.
 //
 // The funcs passed here are used ONLY to satisfy html/template's parse-time
 // "every function referenced by name must exist" check. html/template's

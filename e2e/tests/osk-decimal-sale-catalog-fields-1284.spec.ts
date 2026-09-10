@@ -190,7 +190,7 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
 
     const row = page.locator('.catalog-row', { hasText: name });
-    await row.locator('td').first().click();
+    await row.click();
     await expect(page.locator('#catalog-variants')).toBeVisible();
     // ut-docs#1901: the row click above opens the edit dialog too — close
     // it before touching the variants panel below. Not about inertness

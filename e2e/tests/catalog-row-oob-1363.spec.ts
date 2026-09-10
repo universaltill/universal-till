@@ -113,8 +113,9 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
       (document.getElementById('catalog-table') as HTMLElement).setAttribute('data-e2e-identity', 'original-table');
     });
 
-    // Click a plain cell (not a .btn) to load the item into the edit form.
-    await page.locator(`.catalog-row[data-name="${name}"]`).locator('td').nth(1).click();
+    // ut-docs#1951: the row is a card now, not a table with cells — click
+    // it directly to load the item into the edit form.
+    await page.locator(`.catalog-row[data-name="${name}"]`).click();
     await expect(page.locator('#item-id')).not.toHaveValue('');
     await page.locator('#item-description').fill('edited via row OOB');
     await page.locator('#item-form-submit').click();
@@ -148,9 +149,12 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
       (document.getElementById('catalog-table') as HTMLElement).setAttribute('data-e2e-identity', 'original-table');
     });
 
-    // The deactivate button asks via hx-confirm — accept it.
+    // ut-docs#1951: deactivate moved from a per-card button into the item
+    // dialog — open it, then delete from there. The confirm is a plain
+    // window.confirm() now (not hx-confirm), same dialog event either way.
     page.once('dialog', (d) => d.accept());
-    await page.locator(`.catalog-row[data-name="${doomed}"]`).locator('button.danger').click();
+    await page.locator(`.catalog-row[data-name="${doomed}"]`).click();
+    await page.locator('#item-form-delete-btn').click();
 
     // The doomed row is gone (OOB delete fragment)…
     await expect(page.locator(`.catalog-row[data-name="${doomed}"]`)).toHaveCount(0);
@@ -206,11 +210,12 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
     const name = 'Row OOB Panel ' + Date.now();
     await createItem(page, name);
 
-    // Open the item's variants panel (a row click opens the edit dialog
+    // Open the item's variants panel (a card click opens the edit dialog
     // AND loads the variants panel, which lives OUTSIDE the dialog —
     // catalog_variants renders as its own always-visible section below
-    // .catalog-layout, not inside #item-form-modal).
-    await page.locator(`.catalog-row[data-name="${name}"]`).locator('td').nth(1).click();
+    // .catalog-layout, not inside #item-form-modal). ut-docs#1951: the
+    // card is a single clickable element now, not a table row of cells.
+    await page.locator(`.catalog-row[data-name="${name}"]`).click();
     await expect(page.locator('#vf-new')).toBeAttached();
     // ut-docs#1901: close the edit dialog the row click just opened — the
     // variants panel and search box below are both outside it, and the

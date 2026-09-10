@@ -51,10 +51,13 @@ test.describe('catalog thumbnails: no request for a missing photo (ut-docs#319)'
     createdId = await row.getAttribute('data-id');
     expect(createdId).toBeTruthy();
 
-    // No image element at all for this row — a CSS-only placeholder box
-    // instead, so there was never a src for the browser to fetch.
+    // No image element at all for this row — there was never a src for
+    // the browser to fetch. ut-docs#1951: the card grid has no dedicated
+    // placeholder box for "no photo" any more (that only ever existed to
+    // keep a table's thumbnail COLUMN aligned across every row); a
+    // photo-less, colorless card here is just its plain default tile,
+    // same as the sale-screen's own equivalent tiles.
     await expect(row.locator('img')).toHaveCount(0);
-    await expect(row.locator('.catalog-thumb-cell .thumb')).toBeVisible();
 
     expect(
       thumbRequests.some((u) => u.includes(createdId!)),

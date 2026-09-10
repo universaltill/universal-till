@@ -26,25 +26,21 @@ package catalog
 // old whole-table re-render self-healed this as a side effect, this
 // protocol doesn't.
 //
-// The thumbnail column (ut-docs#1842) is NOT given the same treatment,
-// deliberately — review found that a per-ROW fragment genuinely cannot
-// carry the fix: adding/removing a <td> only ever touches the one row a
-// mutation is about, but the column's <th> lives in a <thead> no row
-// fragment can reach, and every OTHER row in the table would silently
-// disagree with it. So a mutation that flips whether ANY active item has
-// a thumbnail — the first photo ever added to an all-text catalog, or
-// deactivating the last imaged item — re-renders the WHOLE table as one
-// OOB swap instead of a row fragment; see writeWholeTableOOB below and
-// its caller in handlers.go, which snapshots the answer BEFORE the
-// mutation runs so it has something to compare the fresh, post-mutation
-// answer against.
+// ut-docs#1951: the list moved from a <table> to a card grid (one
+// independent .btn-tile per item, no shared <thead>/column across rows),
+// which retires the one case that used to need a whole-table re-render
+// instead of a row fragment (ut-docs#1842's thumbnail-column toggle — see
+// that card's own history for why it existed). Every card already renders
+// its own thumbnail-or-color-or-blank slot unconditionally, the same way
+// the sale-screen's product tiles (buttons.html) always have, so there is
+// no shared header cell left for any mutation to need to add or remove.
+// writeWholeTableOOB and the ShowThumbColumn/HasThumbnails/OOBSwap/
+// colspan plumbing that only ever existed to drive it are gone with it.
 
 import (
 	"bytes"
-	"errors"
 	"html/template"
 	"io"
-	"maps"
 	"net/http"
 	"path/filepath"
 
@@ -53,11 +49,11 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 )
 
-// catalogRowVM is one items-table row's view model (catalog_row.html's
-// dot). OOB false renders a plain row (the initial /catalog table, and
-// the insert fragment whose wrapper tbody carries the swap directive);
-// OOB true adds hx-swap-oob="true" for an in-place replacement of the
-// existing #catalog-row-<id> element.
+// catalogRowVM is one catalog card's view model (catalog_row.html's dot).
+// OOB false renders a plain card (the initial /catalog grid, and the
+// insert fragment whose wrapper carries the swap directive); OOB true adds
+// hx-swap-oob="true" for an in-place replacement of the existing
+// #catalog-row-<id> element.
 type catalogRowVM struct {
 	Item     catalogtypes.ItemInput
 	Barcodes []string
@@ -65,30 +61,20 @@ type catalogRowVM struct {
 	OOB      bool
 	// ImageURL is this item's real thumbnail path (item_images,
 	// role=thumbnail), resolved by the caller — never guessed from the
-	// item id (ut-docs#1842). Empty when the item has no thumbnail.
+	// item id (ut-docs#1842). Empty when the item has no thumbnail, in
+	// which case the card falls back to its color tile, if any.
 	ImageURL string
-	// ShowThumbColumn is a page-level decision (HasAnyThumbnail: does ANY
-	// currently-active item have a thumbnail), carried on every row so
-	// the row-level OOB templates need no separate argument. writeCatalogRowOOB
-	// only ever emits a row fragment carrying this when it's UNCHANGED
-	// from before the mutation — see that function's transition check —
-	// so by the time a row fragment reaches the client, ShowThumbColumn
-	// always agrees with the <thead> that's already in the DOM.
-	ShowThumbColumn bool
 }
 
-// buildCatalogRows assembles the initial table's row view models from the
+// buildCatalogRows assembles the initial grid's card view models from the
 // whole-catalog listing maps — the one remaining place a full-list render
-// is correct (the /catalog page's first paint). showThumbColumn is the
-// same page-level HasAnyThumbnail decision the caller uses for the
-// table's own <th>, threaded onto every row so catalog_row.html renders
-// the header and every cell off one consistent fact.
-func buildCatalogRows(items []catalogtypes.ItemInput, barcodes map[string][]string, variants map[string][]data.VariantView, thumbnails map[string]string, showThumbColumn bool) []catalogRowVM {
+// is correct (the /catalog page's first paint).
+func buildCatalogRows(items []catalogtypes.ItemInput, barcodes map[string][]string, variants map[string][]data.VariantView, thumbnails map[string]string) []catalogRowVM {
 	rows := make([]catalogRowVM, 0, len(items))
 	for _, itm := range items {
 		rows = append(rows, catalogRowVM{
 			Item: itm, Barcodes: barcodes[itm.ID], Variants: variants[itm.ID],
-			ImageURL: thumbnails[itm.ID], ShowThumbColumn: showThumbColumn,
+			ImageURL: thumbnails[itm.ID],
 		})
 	}
 	return rows
@@ -107,16 +93,16 @@ func renderRowFragment(w io.Writer, r *http.Request, funcs template.FuncMap, nam
 }
 
 // writeCatalogRowOOB writes the OOB fragment(s) needed after a mutation on
-// itemID: an updated/inserted row, and — only when the empty-state
-// placeholder needs to appear or disappear — that row too. Callers that
+// itemID: an updated/inserted card, and — only when the empty-state
+// placeholder needs to appear or disappear — that card too. Callers that
 // also render another primary response body (the variants panel) write
 // this as an additional fragment alongside their own content; callers with
 // no other primary content write ONLY this as the entire response body.
 //
 // insert selects the append mode for a newly created item; everything else
 // is an in-place update. An item that is missing or inactive is answered
-// with a row DELETE fragment instead (deactivation is how rows leave the
-// table), plus the empty-state placeholder append when no active item
+// with a card DELETE fragment instead (deactivation is how cards leave the
+// grid), plus the empty-state placeholder append when no active item
 // remains.
 //
 // NOTE on when a fragment is emitted at all: this is about matching each
@@ -133,33 +119,15 @@ func renderRowFragment(w io.Writer, r *http.Request, funcs template.FuncMap, nam
 // server can tell the placeholder is/isn't actually showing (no other
 // active item exists / did exist), which is also just correct regardless
 // of htmx's error behavior.
-//
-// hadThumbColumn is the caller's pre-mutation snapshot of HasAnyThumbnail
-// (ut-docs#1842 review F1/F2) — captured before the mutation ran, so it's
-// comparable against the fresh post-mutation answer computed below. When
-// they disagree, no row fragment is emitted at all: this function instead
-// delegates to writeWholeTableOOB, which re-renders the entire table
-// (correcting the <thead> and every sibling row, not just itemID's own)
-// as a single OOB swap. That's deliberately the ONLY path that can change
-// whether the thumbnail column exists — every other response in this file
-// keeps ShowThumbColumn equal to what the caller already had, so a plain
-// row fragment can never disagree with the <thead> already in the DOM.
-func writeCatalogRowOOB(w io.Writer, r *http.Request, repo *data.CatalogRepo, funcs template.FuncMap, itemID string, insert bool, hadThumbColumn bool) error {
+func writeCatalogRowOOB(w io.Writer, r *http.Request, repo *data.CatalogRepo, funcs template.FuncMap, itemID string, insert bool) error {
 	ctx := r.Context()
 	itm, ok, err := repo.GetItem(ctx, itemID)
 	if err != nil {
 		return err
 	}
-	showThumbColumn, err := repo.HasAnyThumbnail(ctx)
-	if err != nil {
-		return err
-	}
-	if showThumbColumn != hadThumbColumn {
-		return writeWholeTableOOB(w, r, repo, funcs)
-	}
 	if !ok || !itm.IsActive {
 		if insert {
-			// A brand-new item created inactive was never in the table:
+			// A brand-new item created inactive was never in the grid:
 			// nothing to delete, nothing to update.
 			return nil
 		}
@@ -169,7 +137,7 @@ func writeCatalogRowOOB(w io.Writer, r *http.Request, repo *data.CatalogRepo, fu
 			return err
 		}
 		if !hasActive {
-			renderRowFragment(w, r, funcs, "catalog_empty_row_append_oob", emptyRowColspan(showThumbColumn))
+			renderRowFragment(w, r, funcs, "catalog_empty_row_append_oob", nil)
 		}
 		return nil
 	}
@@ -185,44 +153,13 @@ func writeCatalogRowOOB(w io.Writer, r *http.Request, repo *data.CatalogRepo, fu
 	if err != nil {
 		return err
 	}
-	// A single-row render only ever needs ONE tax code's name — unlike the
-	// full table (ListAllTaxCodes, a whole-table read), resolve just this
-	// item's via the existing single-row lookup (ut-docs#1363 review: this
-	// was the last of the original finding's 4 whole-catalog queries still
-	// running on every mutation). Same semantics as taxCodeNameFunc: no tax
-	// code (nil/empty TaxCodeID) or an unresolvable one both render "".
-	taxName := ""
-	if itm.TaxCodeID != nil && *itm.TaxCodeID != "" {
-		if tc, err := repo.GetTaxCode(ctx, *itm.TaxCodeID); err == nil {
-			taxName = tc.Name
-		} else if !errors.Is(err, data.ErrTaxCodeNotFound) {
-			return err
-		}
-	}
-	// Same single-row rationale as taxName above (ut-docs#1430): the items
-	// table's category column needs just this one item's category name, not
-	// a whole-table lookup read.
-	categoryName := ""
-	if itm.CategoryID != nil && *itm.CategoryID != "" {
-		if l, err := repo.GetLookup(ctx, "categories", *itm.CategoryID); err == nil {
-			categoryName = l.Name
-		} else if !errors.Is(err, data.ErrLookupNotFound) {
-			return err
-		}
-	}
-	// Copy before adding taxCodeName/categoryName — funcs may be shared
-	// with the caller's own panel render.
-	rowFuncs := make(template.FuncMap, len(funcs)+2)
-	maps.Copy(rowFuncs, funcs)
-	rowFuncs["taxCodeName"] = func(*string) string { return taxName }
-	rowFuncs["categoryName"] = func(*string) string { return categoryName }
 	name := "catalog_row_update_oob"
 	if insert {
 		name = "catalog_row_insert_oob"
 	}
-	renderRowFragment(w, r, rowFuncs, name, catalogRowVM{
+	renderRowFragment(w, r, funcs, name, catalogRowVM{
 		Item: itm, Barcodes: barcodes, Variants: variants, OOB: !insert,
-		ImageURL: thumbURL, ShowThumbColumn: showThumbColumn,
+		ImageURL: thumbURL,
 	})
 	if insert {
 		otherActive, err := repo.HasOtherActiveItems(ctx, itemID)
@@ -230,88 +167,9 @@ func writeCatalogRowOOB(w io.Writer, r *http.Request, repo *data.CatalogRepo, fu
 			return err
 		}
 		if !otherActive {
-			// First active item: the placeholder row is showing — clear it.
-			renderRowFragment(w, r, rowFuncs, "catalog_empty_row_delete", nil)
+			// First active item: the placeholder card is showing — clear it.
+			renderRowFragment(w, r, funcs, "catalog_empty_row_delete", nil)
 		}
 	}
 	return nil
-}
-
-// catalogBaseCols is the items table's column count with the thumbnail
-// column removed (name, sku, price, unit, tax, category, actions) — the
-// empty-state placeholder's colspan must track whichever count is
-// actually true this request (ut-docs#1842), or it silently mis-spans.
-const catalogBaseCols = 7
-
-// emptyRowColspan is catalog_empty_row's dot: the placeholder row's
-// colspan, matching whether the thumbnail column currently exists.
-func emptyRowColspan(showThumbColumn bool) int {
-	if showThumbColumn {
-		return catalogBaseCols + 1
-	}
-	return catalogBaseCols
-}
-
-// writeWholeTableOOB re-renders the ENTIRE items table as one
-// hx-swap-oob="true" swap of #catalog-table (ut-docs#1842 review F1/F2) —
-// the rare fallback writeCatalogRowOOB reaches for only when a mutation
-// flips whether the thumbnail column exists at all, which a single row's
-// fragment cannot express (the <thead>'s <th> and every OTHER row are
-// out of reach from there). Same data-gathering shape as the /catalog GET
-// handler's initial render (handlers.go) — kept independent rather than
-// factored together, since the GET handler also needs page chrome (nav,
-// menu snapshot, theme) this fragment-only response has no use for.
-func writeWholeTableOOB(w io.Writer, r *http.Request, repo *data.CatalogRepo, funcs template.FuncMap) error {
-	ctx := r.Context()
-	items, err := repo.ListItems(ctx)
-	if err != nil {
-		return err
-	}
-	cats, brands, err := listLookups(ctx, repo)
-	if err != nil {
-		return err
-	}
-	taxCodes, err := repo.ListAllTaxCodes(ctx)
-	if err != nil {
-		return err
-	}
-	barcodes, err := repo.ItemBarcodes(ctx)
-	if err != nil {
-		return err
-	}
-	variants, err := repo.ItemVariants(ctx)
-	if err != nil {
-		return err
-	}
-	thumbnails, err := repo.ItemThumbnails(ctx)
-	if err != nil {
-		return err
-	}
-	hasThumbnails := false
-	for _, itm := range items {
-		if thumbnails[itm.ID] != "" {
-			hasThumbnails = true
-			break
-		}
-	}
-	// Copy before adding the whole-table lookups — funcs may be shared
-	// with the caller's own panel render, same reasoning as rowFuncs above.
-	tableFuncs := make(template.FuncMap, len(funcs)+3)
-	maps.Copy(tableFuncs, funcs)
-	tableFuncs["taxCodeName"] = taxCodeNameFunc(taxCodes)
-	tableFuncs["categoryName"] = lookupNameFunc(cats)
-	tableFuncs["brandName"] = lookupNameFunc(brands)
-	var buf bytes.Buffer
-	bw := newBufResponseWriter(&buf)
-	httpx.RenderWith(files(
-		filepath.Join("web", "ui", "partials", "catalog_table.html"),
-		filepath.Join("web", "ui", "partials", "catalog_row.html"),
-	), tableFuncs)("catalog_table", map[string]any{
-		"Rows":          buildCatalogRows(items, barcodes, variants, thumbnails, hasThumbnails),
-		"HasThumbnails": hasThumbnails,
-		"EmptyColspan":  emptyRowColspan(hasThumbnails),
-		"OOBSwap":       true,
-	})(bw, r)
-	_, err = w.Write(buf.Bytes())
-	return err
 }
