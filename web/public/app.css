@@ -3329,6 +3329,29 @@ body.login-screen {
 .record-dialog-body { flex: 1 1 auto; min-block-size: 0; overflow-y: auto;
                       padding: 1rem 1.5rem 1.5rem; }
 .record-dialog-body form { display: flex; flex-direction: column; gap: .7rem; max-inline-size: 40rem; }
+/* The same ut-docs#1956 zero-minimum fix .catalog-form already carries for
+   its own .field-pair inputs (see that rule's comment above), extended to a
+   .field-pair form that sits inside a dialog body instead: ut-docs#2011
+   moved inventory.html's receive/adjust form in here, and it is not inside
+   a .catalog-form, so that rule's selector never reaches it.
+
+   DEFENSIVE ONLY — read this before "fixing" a phantom bug on top of it.
+   Corrected during ut-docs#2011's review: this rule changes nothing in the
+   markup shipped today, and its removal was measured (360x740, live, full
+   e2e till) to leave every box in the dialog byte-identical in geometry.
+   Today's fields all wrap their control in a <label>, which ut-docs#300's
+   global `label:has(> input)` rule already makes a column flex container --
+   and a flex item's automatic minimum size applies in the MAIN axis only,
+   so in a column container `min-width: auto` is already 0 and the input
+   already shrinks with its grid track. What this rule covers is the case
+   that rule does not: a control placed directly in a .field-pair (or in a
+   non-label wrapper), where the grid item keeps a min-content minimum and
+   a text input's ~20ch intrinsic width would hold the column open past a
+   360px dialog's edge. Kept as a guard-rail, not as a live fix; the
+   viewport assertion in inventory-stock-dialog-2011.spec.ts measures the
+   dialog body's real overflow and would catch that case if it appeared. */
+.record-dialog-body .field-pair input,
+.record-dialog-body .field-pair select { min-inline-size: 0; }
 @media (max-width: 700px) {
   .record-dialog-head { padding-inline: 1rem; }
   .record-dialog-body { padding-inline: 1rem; }

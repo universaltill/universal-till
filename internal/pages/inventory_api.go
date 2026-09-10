@@ -741,7 +741,16 @@ func GetLowStock(dp *common.Deps) http.HandlerFunc {
 			// request-echo -- stored-XSS-shaped, so they must be escaped here
 			// same as every other interpolated value in this file (errorHTML,
 			// ut-docs#1000). ut-docs#1019.
-			tableHTML += fmt.Sprintf("<tr><td>%s</td><td>%s</td><td>%s</td><td class='low-stock'>%.2f</td><td>%d</td></tr>",
+			//
+			// ut-docs#2011: class='stock-row' + the data-* attributes mirror
+			// the main stock table's own row markup (web/ui/pages/inventory.html,
+			// web/ui/partials/stock_table.html) so the SAME page-local click
+			// listener that opens the receive/adjust dialog covers a low-stock
+			// row too, with no separate JS. ItemID/LocationID are internal
+			// identifiers, not user text, but escaped anyway for the same
+			// defense-in-depth reason as Name/SKU/LocationName above.
+			tableHTML += fmt.Sprintf("<tr class='stock-row' data-item='%s' data-name='%s' data-sku='%s' data-location='%s' data-location-name='%s'><td>%s</td><td>%s</td><td>%s</td><td class='low-stock'>%.2f</td><td>%d</td></tr>",
+				html.EscapeString(item.ItemID), html.EscapeString(item.Name), html.EscapeString(item.SKU), html.EscapeString(item.LocationID), html.EscapeString(item.LocationName),
 				html.EscapeString(item.Name), html.EscapeString(item.SKU), html.EscapeString(item.LocationName), item.CurrentQty, item.ReorderLevel)
 		}
 		tableHTML += "</tbody></table>"
