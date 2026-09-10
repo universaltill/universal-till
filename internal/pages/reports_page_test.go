@@ -133,6 +133,50 @@ func TestReportsPage_GrandTotalsSumDailySales(t *testing.T) {
 	}
 }
 
+func TestReportsPage_AvgSaleKPI(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+	// Two completed sales within the default 14-day window: £3.60 + £2.40 =
+	// £6.00 total across 2 sales, so Avg sale = £3.00.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',300,0,60,360,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s2','R002','completed','sale','GBP',200,0,40,240,datetime('now','-1 day'))`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsPage(t, mux, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "£3.00") {
+		t.Fatalf("expected the avg sale KPI £3.00 (360+240=600 / 2 sales), got: %s", body)
+	}
+	if !strings.Contains(body, `kpi-label">Avg sale`) {
+		t.Fatalf("expected an 'Avg sale' KPI tile label, got: %s", body)
+	}
+}
+
+func TestReportsPage_AvgSaleKPIZeroSafeWithNoSales(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, _ := newReportsPageTestDeps(t)
+	// No sales at all in the window: the avg-sale KPI must render £0.00,
+	// not divide by zero (panic) or omit the tile.
+	rec := getReportsPage(t, mux, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `kpi-label">Avg sale`) {
+		t.Fatalf("expected an 'Avg sale' KPI tile even with zero sales, got: %s", body)
+	}
+	if !strings.Contains(body, "£0.00") {
+		t.Fatalf("expected the avg sale KPI to be zero-safe (£0.00) with no sales, got: %s", body)
+	}
+}
+
 func TestReportsPage_RefundsAndNetKPIs(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newReportsPageTestDeps(t)
@@ -160,6 +204,42 @@ func TestReportsPage_RefundsAndNetKPIs(t *testing.T) {
 	// Net = 360 - 100 = 260 minor units = £2.60.
 	if !strings.Contains(body, "£2.60") {
 		t.Fatalf("expected net £2.60 (360 - 100), got: %s", body)
+	}
+}
+
+func TestReportsPage_DiscountsKPI(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+	// s1: a whole-sale discount (£0.50) — the sales.discount_total case.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',400,50,60,360,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_discounts(id,sale_id,line_id,type,value,amount,reason) VALUES('d1','s1',NULL,'fixed',50,50,'sale_discount')`); err != nil {
+		t.Fatal(err)
+	}
+	// s2: a per-line discount (£1.00) with sales.discount_total left at its
+	// default 0 — the case a whole-sale-only aggregate would miss entirely
+	// (ut-docs#1975 review finding). itm1 comes from seedForPages.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s2','R002','completed','sale','GBP',200,0,20,120,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id,sale_id,line_no,item_id,name_snapshot,quantity,unit_price,line_discount,tax_rate_bp,tax_amount,total_before_tax,total_after_tax) VALUES('s2-l1','s2',1,'itm1','Apple',1,100,100,2000,20,100,120)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_discounts(id,sale_id,line_id,type,value,amount,reason) VALUES('d2','s2','s2-l1','fixed',100,100,'line_discount')`); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsPage(t, mux, "")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	// £1.50 = £0.50 (sale-level) + £1.00 (line-level) — a value no other
+	// KPI on this page renders.
+	if !strings.Contains(body, "£1.50") {
+		t.Fatalf("expected discounts total £1.50 (0.50 sale-level + 1.00 line-level), got: %s", body)
 	}
 }
 
@@ -975,6 +1055,45 @@ func TestReportsPage_TipsTabShowsReceivedVsAllocated(t *testing.T) {
 	}
 	if !strings.Contains(body, "£3.00") {
 		t.Fatalf("expected tip allocated (£3.00) rendered, got: %s", body)
+	}
+}
+
+// ut-docs#1894: the tips tab's allocation-detail AllocatedAt column now
+// renders through the locale-aware `datetime` template func instead of the
+// raw RFC3339 string, same pattern as journal's #1632 fix.
+func TestReportsPage_TipsTabRendersLocaleFormattedAllocatedAt(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	orig := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = orig })
+
+	mux, dp := newReportsPageTestDeps(t)
+	ctx := t.Context()
+
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO users(id,username,display_name,role,is_active) VALUES('worker1','worker1','Worker One','cashier',1)`); err != nil {
+		t.Fatal(err)
+	}
+	// Within the tab's default 14-day window (relative to "now") rather
+	// than a fixed calendar date, so this test doesn't go stale.
+	allocatedAt := time.Now().UTC().Add(-24 * time.Hour).Truncate(time.Minute)
+	localDate := allocatedAt.Format("2006-01-02")
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO worker_allocations(id,source_type,source_id,cashier_id,amount_minor,allocated_at,note,local_date) VALUES('wa1','tip','','worker1',300,?,'shift payout',?)`,
+		allocatedAt.Format(time.RFC3339), localDate); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := getReportsTab(t, mux, "tips", "?days=14&lang=de-DE")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	rawTimestamp := allocatedAt.Format(time.RFC3339)
+	if strings.Contains(body, rawTimestamp) {
+		t.Fatalf("tips tab must not show the raw RFC3339 timestamp: %s", body)
+	}
+	wantFormatted := allocatedAt.Format("02.01.2006 15:04")
+	if !strings.Contains(body, wantFormatted) {
+		t.Fatalf("tips tab must show the de-DE-formatted AllocatedAt (%s): %s", wantFormatted, body)
 	}
 }
 

@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/config"
@@ -515,5 +516,40 @@ func TestFiscalDevicePage_EveryErrorRendersFullLayout(t *testing.T) {
 				t.Fatalf("expected the translated not_found message, got: %s", rec.Body.String())
 			}
 		})
+	}
+}
+
+// ut-docs#1938: the last-receipt IssuedAt/CreatedAt cell used to render the
+// raw RFC3339 string unwrapped, instead of going through the locale-aware
+// `datetime` template func (ut-docs#1130/#1632), same gap #1894 fixed at
+// six other sites but missed here. time.Local pinned to UTC for
+// determinism, same convention as TestAuditPage_RendersLocaleFormattedCreatedAt.
+func TestFiscalDevicePage_RendersLocaleFormattedIssuedAt(t *testing.T) {
+	orig := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = orig })
+
+	mux, d := newFiscalDeviceTestMux(t)
+	t.Setenv("UT_AUTH", "off")
+	seedActiveTaxTrPlugin(t, d.Db, true)
+	setCountry(t, d, "TR")
+	repo := data.NewPOSRepo(d.Db)
+	const rawIssuedAt = "2026-09-03T10:00:00+03:00"
+	if err := repo.RecordFiscalDeviceReceipt(t.Context(), data.FiscalDeviceReceipt{SaleID: "s1", Maker: "beko", Serial: "AV777", ReceiptNo: "0000042", ZNo: 9, IssuedAt: rawIssuedAt}); err != nil {
+		t.Fatal(err)
+	}
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/fiscal-device?lang=de-DE", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, rawIssuedAt) {
+		t.Fatalf("last-receipt row must not show the raw RFC3339 timestamp: %s", body)
+	}
+	// 2026-09-03T10:00:00+03:00 in UTC (time.Local above) is 07:00.
+	if !strings.Contains(body, "03.09.2026 07:00") {
+		t.Fatalf("last-receipt row must show the de-DE-formatted date+time: %s", body)
 	}
 }

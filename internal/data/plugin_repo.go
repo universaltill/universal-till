@@ -451,6 +451,28 @@ SELECT version FROM plugins WHERE id = ? AND is_active = 1 LIMIT 1
 	return version, true, nil
 }
 
+// GetInstalledPluginVersion fetches a plugin's row version regardless of its
+// is_active flag — unlike GetActivePluginVersion, this also finds a plugin an
+// operator has manually DISABLED. A caller deciding whether to uninstall a
+// plugin that should no longer apply (e.g. builtinlayouts.Sync reacting to a
+// shop_type change) must key off "is this plugin installed at all", not "is
+// it currently active" — a disabled-but-still-installed plugin would
+// otherwise never be cleaned up, and a later re-enable would resurrect
+// behavior a shop already moved away from.
+func (r *PluginRepo) GetInstalledPluginVersion(ctx context.Context, pluginID string) (string, bool, error) {
+	var version string
+	err := r.db.QueryRowContext(ctx, `
+SELECT version FROM plugins WHERE id = ? LIMIT 1
+`, pluginID).Scan(&version)
+	if err == sql.ErrNoRows {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, pluginObs.wrap("get_installed_version", err)
+	}
+	return version, true, nil
+}
+
 // UpdatePluginInstallState flips ONLY the install lifecycle state of one
 // plugin (is_active and version are untouched, unlike SetPluginState).
 // WasmRuntime.Sync uses it to mark a registered-but-unloadable plugin
@@ -900,28 +922,17 @@ LIMIT 1`,
 		err = pluginObs.wrap("merge_additive_json_map_setting", scanErr)
 		return 0, err
 	case scanErr == nil && strings.TrimSpace(raw) != "":
-		if jsonErr := json.Unmarshal([]byte(raw), &existing); jsonErr != nil {
-			// ut-docs#1255: a plugin manifest that declares a map-typed
-			// setting's default_value as the JSON STRING "{}" (rather than
-			// the JSON OBJECT {}) gets it double-encoded by
-			// internal/plugins/manifest.go's install seeding
-			// (json.Marshal of the Go string "{}" produces the JSON string
-			// "{}", not the raw object) — every fresh install of such a
-			// plugin then permanently fails this unmarshal, forever, with
-			// no way to ever populate the setting. That specific shape —
-			// a JSON string whose own content parses as the target map
-			// type — is never a plausible deliberate hand-edit (nobody
-			// hand-sets their real overrides to a string containing "{}"),
-			// so self-heal it transparently instead of refusing forever.
-			// Anything else (a genuine hand-edit gone wrong, or a
-			// string-wrapped value whose content ALSO isn't valid JSON)
-			// still falls through to the original refuse-to-clobber error.
-			var unwrapped string
-			if strErr := json.Unmarshal([]byte(raw), &unwrapped); strErr != nil ||
-				json.Unmarshal([]byte(unwrapped), &existing) != nil {
-				err = fmt.Errorf("existing value for %s/%s is not valid JSON: %w", pluginID, key, jsonErr)
-				return 0, err
-			}
+		// DecodeMapSettingValue (ut-docs#1269) is the shared read-side seam:
+		// it unwraps a string-wrapped value one level (the ut-docs#1255
+		// self-heal case — a manifest default double-encoded at install
+		// time — and any value written via the now-canonical
+		// EncodeMapSettingValue write side below), or passes a raw
+		// object/array/bare-null value through unchanged. Either way, a
+		// value whose content still isn't valid JSON falls through to the
+		// same refuse-to-clobber error as before.
+		if jsonErr := json.Unmarshal([]byte(DecodeMapSettingValue(raw)), &existing); jsonErr != nil {
+			err = fmt.Errorf("existing value for %s/%s is not valid JSON: %w", pluginID, key, jsonErr)
+			return 0, err
 		}
 	}
 	// A stored JSON `null` (bare, or string-wrapped as `"null"` and unwrapped
@@ -948,21 +959,23 @@ LIMIT 1`,
 		return 0, nil
 	}
 
-	merged, marshalErr := json.Marshal(existing)
+	// EncodeMapSettingValue (ut-docs#1269) is the shared write-side seam:
+	// marshal the merged map, then JSON-string-wrap it, matching the
+	// canonical shape every other setting type already has on disk.
+	merged, marshalErr := EncodeMapSettingValue(existing)
 	if marshalErr != nil {
 		err = fmt.Errorf("marshal merged value for %s/%s: %w", pluginID, key, marshalErr)
 		return 0, err
 	}
-	toStore, sealErr := sealSettingValue(ctx, key, string(merged), false)
+	toStore, sealErr := sealSettingValue(ctx, key, merged, false)
 	if sealErr != nil {
 		err = sealErr
 		return 0, err
 	}
-	merged = []byte(toStore)
 
 	res, execErr := tx.ExecContext(ctx, `
 UPDATE plugin_settings SET value_json = ?, updated_at = datetime('now')
-WHERE plugin_id = ? AND key = ? AND scope = 'global'`, string(merged), pluginID, key)
+WHERE plugin_id = ? AND key = ? AND scope = 'global'`, toStore, pluginID, key)
 	if execErr != nil {
 		err = pluginObs.wrap("merge_additive_json_map_setting", execErr)
 		return 0, err
@@ -970,7 +983,7 @@ WHERE plugin_id = ? AND key = ? AND scope = 'global'`, string(merged), pluginID,
 	if n, _ := res.RowsAffected(); n == 0 {
 		if _, insErr := tx.ExecContext(ctx, `
 INSERT INTO plugin_settings (id, plugin_id, key, value_json, scope)
-VALUES (?, ?, ?, ?, 'global')`, uuid.NewString(), pluginID, key, string(merged)); insErr != nil {
+VALUES (?, ?, ?, ?, 'global')`, uuid.NewString(), pluginID, key, toStore); insErr != nil {
 			err = pluginObs.wrap("merge_additive_json_map_setting", insErr)
 			return 0, err
 		}
@@ -2165,6 +2178,13 @@ type ButtonEntryRow struct {
 	PluginVersion string
 	PluginName    string
 	EntryKey      string
+	// Label is rendered through T at render time (ut-docs#2015,
+	// web/ui/partials/plugin_buttons.html): a translator key resolved via
+	// the owning plugin's own locales/ overlay (ADR-0010, "any active plugin
+	// may also ship locales/*.json to translate its own strings"; the
+	// entry-label contract itself is reference/plugin-manifest.md's entries
+	// table, `label` row), same convention as a page/export/report entry's
+	// label.
 	Label         string
 	IconPath      string
 	ParentPageKey string
@@ -2370,6 +2390,79 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 		var row ThemeRow
 		if err := rows.Scan(&row.PluginID, &row.PluginVersion, &row.EntryKey, &row.Label, &row.ConfigJSON); err != nil {
 			return nil, pluginObs.wrap("list_theme_entries", err)
+		}
+		res = append(res, row)
+	}
+	return res, rows.Err()
+}
+
+// LayoutEntryRow is one type:"layout" plugin entry (ADR-0088): the
+// amendment document over a UI slot lives in ConfigJSON, parsed by
+// internal/uislot.ParseMenuAmendmentsJSON. Never read per render — the
+// plugin manager loads these once per lifecycle change (Decision I).
+type LayoutEntryRow struct {
+	PluginID   string
+	PluginName string
+	EntryKey   string
+	ConfigJSON string
+}
+
+// ListLayoutEntries returns the active layout entries of active plugins —
+// the amendments that actually apply to the till's UI right now.
+func (r *PluginRepo) ListLayoutEntries(ctx context.Context) ([]LayoutEntryRow, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT
+    p.id,
+    p.name,
+    pe.key,
+    COALESCE(pe.config_json, '')
+FROM plugin_entries pe
+JOIN plugins p ON p.id = pe.plugin_id
+WHERE pe.type = 'layout' AND pe.is_active = 1 AND p.is_active = 1
+ORDER BY pe.sort_order, pe.plugin_id, pe.key
+`)
+	if err != nil {
+		return nil, pluginObs.wrap("list_layout_entries", err)
+	}
+	defer rows.Close()
+	var res []LayoutEntryRow
+	for rows.Next() {
+		var row LayoutEntryRow
+		if err := rows.Scan(&row.PluginID, &row.PluginName, &row.EntryKey, &row.ConfigJSON); err != nil {
+			return nil, pluginObs.wrap("list_layout_entries", err)
+		}
+		res = append(res, row)
+	}
+	return res, rows.Err()
+}
+
+// ListLayoutEntriesExcept returns every OTHER installed plugin's layout
+// entries, active or not — the install-time conflict check's view
+// (ADR-0088 Decision F). Same ownership rule as FindPageKeyConflicts: an
+// installed-but-disabled plugin still owns the keys it restructures until
+// it is uninstalled, so disabling one never lets a second plugin quietly
+// take a key over. The plugin's own rows are excluded so reinstall /
+// upgrade never self-conflict.
+func (r *PluginRepo) ListLayoutEntriesExcept(ctx context.Context, tx *sql.Tx, pluginID string) ([]LayoutEntryRow, error) {
+	exec := r.executor(tx)
+	rows, err := exec.QueryContext(ctx, `
+SELECT
+    pe.plugin_id,
+    pe.key,
+    COALESCE(pe.config_json, '')
+FROM plugin_entries pe
+WHERE pe.type = 'layout' AND pe.plugin_id != ?
+ORDER BY pe.plugin_id, pe.key
+`, pluginID)
+	if err != nil {
+		return nil, pluginObs.wrap("list_layout_entries_except", err)
+	}
+	defer rows.Close()
+	var res []LayoutEntryRow
+	for rows.Next() {
+		var row LayoutEntryRow
+		if err := rows.Scan(&row.PluginID, &row.EntryKey, &row.ConfigJSON); err != nil {
+			return nil, pluginObs.wrap("list_layout_entries_except", err)
 		}
 		res = append(res, row)
 	}

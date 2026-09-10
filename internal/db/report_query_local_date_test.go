@@ -32,12 +32,22 @@ func ctrlDay(t *testing.T, d *DB, timestamp string) string {
 // refuses to let a non-deterministic expression back a persisted index. The
 // columns are populated at write time (internal/data's InsertSale,
 // InsertPayment, InsertWorkerAllocation, UpdateSaleStatus) rather than via a
-// trigger: internal/db's own migration runner does not split CREATE
-// TRIGGER ... BEGIN ... END blocks correctly (splitStatements' own doc
-// comment: "No migration uses triggers or BEGIN…END blocks ... if one ever
-// does, this splitter must learn them first") — verified empirically while
-// drafting this migration, so the write-time-column approach was chosen
-// instead of teaching the splitter a new construct for one card.
+// trigger: at the time, internal/db's own migration runner did not split
+// CREATE TRIGGER ... BEGIN ... END blocks correctly (splitStatements' doc
+// comment then read "No migration uses triggers or BEGIN…END blocks ... if
+// one ever does, this splitter must learn them first") — verified
+// empirically while drafting this migration, so the write-time-column
+// approach was chosen instead of teaching the splitter a new construct for
+// one card.
+//
+// Historical note, not a live constraint (ut-docs#1368, review): the
+// splitter HAS since learnt the construct — splitStatements/triggerBlockOpen
+// keep a trigger body whole, pinned by split_trigger_test.go, and migration
+// 022 ships 102 real triggers. Migration 007's own header still records the
+// old limitation as of its writing; the write-time columns stay as they are
+// (migrations are append-only, ADR-0074, and the columns are also the
+// sargable shape the card wanted), but a NEW card is no longer blocked from
+// using a trigger for want of splitter support.
 
 func TestReportQueryLocalDate_SalesAndWorkerAllocationRangesAreSargable(t *testing.T) {
 	d, err := Open(filepath.Join(t.TempDir(), "m007-plan.db"))

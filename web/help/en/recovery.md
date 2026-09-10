@@ -38,3 +38,16 @@ Contact support with the reference code shown on screen. Depending on the
 cause, the fix may be a further software update, or restoring the till's
 last automatic backup (see the Backups topic) — support will tell you
 which.
+
+## On an Android till: a single page fails to load
+
+This is different from the recovery screen above, which is about the
+**whole till** failing to start. Here the till is running fine, but one
+page briefly couldn't load — the network blipped mid-navigation, or the
+till's own service was still coming up. A grey bar reading "This page
+couldn't load" appears at the bottom of the screen with a **Back to
+till** button; tap it to return to the sale screen. The screen above the
+bar may briefly show a technical message in English regardless of your
+till's language — that's normal, just use the button below it. If it
+keeps happening, contact support with which screen you were trying to
+open.

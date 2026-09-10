@@ -134,7 +134,9 @@ func registerKitchenStations(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
-		categories, err := catRepo.ListCategories(ctx)
+		// ListActiveCategories, not ListCategories (ut-docs#1898): a
+		// deactivated category must not offer itself as a routing row here.
+		categories, err := catRepo.ListActiveCategories(ctx)
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return

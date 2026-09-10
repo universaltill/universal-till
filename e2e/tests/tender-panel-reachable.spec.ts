@@ -82,7 +82,7 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     // (up to 2.0x, ADR-untouched, pre-existing feature) stacking on top
     // of the automatic viewport fit.
     await page.setViewportSize({ width: 1920, height: 800 });
-    await page.goto('/settings');
+    await page.goto('/settings#settings-display'); // ut-docs#1960: Settings is two-pane now — deep-link to the section this drives
     const scaleSelect = page.locator('form[hx-post="/api/settings/ui-scale"] select');
     await scaleSelect.selectOption('2');
     await Promise.all([
@@ -95,6 +95,12 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     await page.waitForSelector('.pos-container');
 
     // ut-docs#1252: same overlay-open precondition as the test above.
+    // ut-docs#1984: the Payment button is now genuinely disabled on an
+    // empty basket, so it must be scanned into non-empty first — same
+    // scan-then-open sequence as the test above.
+    await page.getByRole('textbox').first().fill('5000000000012');
+    await page.locator('.scan-row button[type=submit]').click();
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
     await page.getByTestId('payment-open').click();
     await expect(page.locator('#payment-overlay')).toBeVisible();
 
@@ -120,7 +126,7 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     expect(footerHit, 'New Customer (tender-footer, outside .tab-panel) must also be reachable').toBe(true);
 
     // Restore default scale so later specs sharing this server aren't affected.
-    await page.goto('/settings');
+    await page.goto('/settings#settings-display');
     const restore = page.locator('form[hx-post="/api/settings/ui-scale"] select');
     await restore.selectOption('1');
     await Promise.all([
@@ -128,6 +134,10 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
       restore.locator('..').locator('button[type=submit]').click(),
     ]);
     await page.waitForEvent('load');
+    // e2e/README: a spec that adds basket items must complete its sale or
+    // explicitly clear it — this test only hit-tests, never taps Cash, so
+    // ut-docs#1984's scan-first item above must be cleared explicitly.
+    await page.request.post('/api/pos/reset');
     assertClean();
   });
 

@@ -344,6 +344,12 @@ body.menu-screen .session-admin-link { display: none; }
   display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr));
   gap: 1.1rem; margin-top: 1rem;
 }
+/* ADR-0088: a layout plugin's group heading — spans the whole grid row
+   (grid-column, not a left/right offset, so RTL needs nothing extra). */
+.menu-group {
+  grid-column: 1 / -1; margin: .4rem 0 -.5rem; font-size: 1rem; font-weight: 600;
+  color: var(--muted); text-align: start;
+}
 .menu-tile {
   display: flex; flex-direction: column; align-items: center; justify-content: center;
   gap: .7rem; min-height: 160px; padding: 1.4rem;
@@ -433,9 +439,12 @@ body.sale-screen .session-admin-link { display: none; }
 /* ---------- Plugin content pages (FAQ etc.) ---------- */
 .plugin-content-search { display: block; min-width: 260px; max-width: 100%;
                           margin: 0 0 1rem; }
-.catalog-layout { display: grid; grid-template-columns: minmax(0, 1fr) 360px;
+/* ut-docs#1901: the add/edit-item form moved into a full-screen <dialog>
+   (#item-form-modal below), so the list no longer shares this row with a
+   permanent 360px side panel — single column at every width now, not just
+   under the old 900px breakpoint. */
+.catalog-layout { display: grid; grid-template-columns: minmax(0, 1fr);
                   gap: 1rem; align-items: start; }
-@media (max-width: 900px) { .catalog-layout { grid-template-columns: 1fr; } }
 /* The items list scrolls INSIDE its card (sticky header) instead of making
    the page kilometres tall — the detail panel below stays one glance away. */
 .catalog-list #catalog-table { max-block-size: min(34rem, 62vh); overflow-y: auto; }
@@ -491,8 +500,8 @@ body.sale-screen .session-admin-link { display: none; }
 .reorderable-tile .btn-actions { gap: .5rem; }
 .journal-row { cursor: pointer; }
 .journal-row:hover td { background: var(--surface-2); }
-.catalog-form-head { display: flex; justify-content: space-between; align-items: center;
-                     margin-bottom: .5rem; }
+/* .catalog-form-head: see the .item-form-modal block below (ut-docs#1956
+   made it the dialog's pinned action bar). */
 
 /* Store claim code (Settings): big, readable off the till screen. */
 .claim-code-box { display: flex; flex-direction: column; gap: .3rem; }
@@ -506,7 +515,17 @@ body.sale-screen .session-admin-link { display: none; }
        background: var(--surface-2); border-block-start: 1px solid var(--border);
        box-shadow: 0 -4px 16px rgba(0,0,0,.12); user-select: none; touch-action: manipulation; }
 #osk.osk-open { display: block; }
-body.osk-padded { padding-block-end: 15.5rem; }
+/* ut-docs#1998: the reserved space used to be a hardcoded 15.5rem, which
+   drifted ~1.45rem short of #osk's real rendered height (measured 288px at
+   this build's 17px root font-size) — silently masked by an unrelated
+   container's own bottom padding rather than actually correct. `--osk-
+   reserved-height` is written by osk.js's show() from #osk's OWN
+   getBoundingClientRect().height every time it opens, so this tracks the
+   real keyboard regardless of root font-size, safe-area-inset, or any
+   future change to the keyboard's own layout — a hardcoded number (even a
+   corrected one) would just drift again the next time any of those change.
+   The static fallback below only matters if JS somehow never ran. */
+body.osk-padded { padding-block-end: var(--osk-reserved-height, 17rem); }
 .osk-row { display: flex; justify-content: center; gap: .3rem; margin-block-end: .3rem; }
 .osk-key { flex: 1 1 0; max-inline-size: 4.2rem; min-block-size: 2.9rem;
            font-size: 1.15rem; border: 1px solid var(--border); border-radius: .5rem;
@@ -536,10 +555,26 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 
 /* Catalog detail panel: full-width under the list — item info + barcode
    chips on one side, the variants list (editable grid) as the main area. */
-.catalog-detail { margin-block-start: 1rem; }
+/* ut-docs#1956: no top margin — it now sits inside the item form's
+   Variants tab panel (.catalog-form-body carries the padding), not as a
+   page-level card under the list. */
+.catalog-detail { margin-block-start: 0; }
 .catalog-detail-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr);
                        gap: 1.25rem; align-items: start; }
-@media (max-width: 900px) { .catalog-detail-grid { grid-template-columns: 1fr; } }
+@media (max-width: 900px) { .catalog-detail-grid { grid-template-columns: minmax(0, 1fr); } }
+/* ut-docs#1900 (found on the option-set panel's 360px driven run): the
+   variants column is a grid item, and a grid item's automatic minimum size
+   is its min-content — which .vg-cols' min-inline-size: 54rem sets at
+   ~918px. So the column ignored its minmax(0, 1fr) track and overflowed
+   the card at every viewport below that (the COST column clipped even at
+   the 1024 kiosk width), and .variant-grid's own overflow-x: auto never
+   got to scroll because its parent was already wide enough. min-inline-
+   size: 0 lets the column shrink to its track; the grid then scrolls
+   inside it as that rule intended, and everything above the grid (the
+   apply/generate block) wraps at the real viewport width. The 1fr track
+   in the ≤900px rule above is minmax(0, 1fr) for the same reason (plain
+   1fr means minmax(auto, 1fr), which re-grows the track to min-content). */
+.catalog-detail-variants { min-inline-size: 0; }
 .catalog-detail-title { display: flex; align-items: center; gap: .6rem; margin-block-end: .6rem; }
 .catalog-detail-title h3 { margin: 0; }
 .catalog-detail-title .thumb { inline-size: 44px; block-size: 44px; object-fit: cover;
@@ -549,6 +584,16 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 
 /* ---------- Item customization admin (ADR-0020) ---------- */
 .catalog-detail-modifiers { margin-block-start: 1rem; }
+/* ut-docs#1957 (independent review): the item-detail panel's block kept
+   this spacing while it held the full CRUD under the class above; the
+   compact summary that replaced it was given a NEW class with no rule at
+   all, so it lost the 1rem and butted straight against the variants grid.
+   Same margin, restated for the summary's own class rather than widening
+   the selector above — that one still styles the real CRUD block, which
+   now renders from modifier_group_admin.html on /modifiers and in the
+   nested dialog. */
+.catalog-detail-modifiers-summary { margin-block-start: 1rem; }
+.catalog-modifiers-summary-line { margin-block: .2rem; }
 .modifier-admin-group { border: 1px solid var(--border); border-radius: var(--radius);
                          padding: .6rem .75rem; margin-block-end: .6rem; }
 .modifier-admin-group.vg-inactive { opacity: .55; }
@@ -567,6 +612,30 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 .modifier-admin-options { margin-block-start: .35rem; }
 .modifier-admin-group-new { border: 1px dashed var(--border); border-radius: var(--radius);
                              padding: .6rem .75rem; }
+/* ---------- Option sets (ut-docs#1900) ---------- */
+/* The item panel's apply/generate block, above the variant grid. Flex-wrap
+   so the checkbox row folds cleanly at 360px; logical properties only. */
+.option-set-pick { border: 1px dashed var(--border); border-radius: var(--radius);
+                   padding: .6rem .75rem; margin-block-end: .6rem; }
+.option-set-pick-row { display: flex; flex-wrap: wrap; gap: .5rem .75rem; align-items: center;
+                       margin-block-end: .35rem; }
+.option-set-pick-row:last-child { margin-block-end: 0; }
+.option-set-pick-label { font-size: .75rem; font-weight: 600; text-transform: uppercase;
+                         letter-spacing: .04em; color: var(--muted); }
+/* Same reason as .modifier-admin-group-row label: the global label rule
+   stacks label text above its control; these wrap a checkbox inline. */
+.option-set-pick-box { display: inline-flex; flex-direction: row; align-items: center; gap: .3rem; }
+.option-set-pick-box:has(input:disabled) { opacity: .5; }
+.option-set-pick-hint { font-size: .8rem; flex: 1 1 14rem; min-inline-size: 0; }
+.option-set-pick-msg { margin: .35rem 0 0; font-size: .9rem; font-weight: 600; }
+/* The shop-wide screen: a plain stack, like /modifiers. */
+.option-sets-list { display: flex; flex-direction: column; gap: .75rem; max-inline-size: 36rem; }
+.option-set-card .chip-add { margin-block-start: .45rem; }
+/* Values are words ("Small"), not codes — override .chip's monospace. */
+.option-set-chip { font-family: inherit; font-size: .85rem; }
+.option-set-new { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center; margin-block-start: 0; }
+.option-set-new input[type="text"] { flex: 1 1 12rem; inline-size: auto; }
+
 .chip-row { display: flex; flex-wrap: wrap; gap: .35rem; align-items: center; min-block-size: 1.6rem; }
 .chip { display: inline-flex; align-items: center; gap: .35rem; padding: .12rem .55rem;
         border: 1px solid var(--border); border-radius: 999px; background: var(--surface-2);
@@ -598,11 +667,67 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 @media (max-width: 1300px) {
   .variant-grid { overflow-x: auto; }
   .vg-cols { min-inline-size: 54rem; }
+  /* ut-docs#1967: the commit action (Save / Save Variant) is .vg-cols' own
+     rightmost column — inside the horizontal scroller armed just above, so
+     it can sit off-screen while the *page* has no overflow at all (only the
+     grid does), which is exactly why this survived a page-level overflow
+     assertion. Stick that one column to the scroll container's trailing
+     edge instead of trying to fit the whole row: reachable without ever
+     scrolling, and — inset-inline-end being logical — correct under RTL
+     too, where it resolves to left:0 and pins to the visual trailing edge.
+     Deliberately scoped to the same breakpoint that arms the scroller:
+     above it there is no overflow to stick against and nothing to cover,
+     so no rule should apply at all.
+     Only the header's trailing cell takes a background — it is an empty
+     <div>, so without one the columns scrolling beneath it show through.
+     The other two rows' trailing cell IS the .btn itself, which already
+     paints its own opaque background over exactly that same box; setting
+     `background` on them instead *overrides* .btn's accent fill (this
+     selector outranks a bare `.btn`) and leaves white label text on a
+     near-white button — which is how the add-variant row's "Save Variant"
+     was rendered illegible before review. */
+  .vg-cols > :last-child { position: sticky; inset-inline-end: 0; z-index: 1; }
+  .vg-head > :last-child { background: var(--surface); }
 }
 
-.catalog-form label { display: flex; flex-direction: column; gap: .2rem;
-                      font-size: .82rem; margin-bottom: .55rem; }
-.field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+/* ut-docs#1956 (independent review, F4): scoped to :not(.catalog-detail *).
+   This rule predates #1956 and was correct while .catalog-form contained
+   only the item's own fields — but #1956 moved catalog_variants.html INSIDE
+   .catalog-form (it used to render at page level, under the list), and this
+   selector's 0,1,1 specificity then beat .chip-add-primary's 0,1,0 and every
+   bare <label> in that panel. Measured effect: every checkbox in the
+   variants/modifiers panel put its box on the line ABOVE its own text and
+   doubled in height (21px -> 44px) — "Primary", "Plain code", and each
+   modifier group's Required/Active. The exclusion, not a narrower positive
+   selector, because the panel arrives by htmx outerHTML swap and its inner
+   structure is not this file's to track.
+   ut-docs#1997: also excludes .field-checks and .field-checks label — same
+   cascade collision, one level down. :not(.catalog-detail label)'s own
+   specificity (0,1,1) makes the WHOLE selector (0,2,2), which beats
+   .field-checks label's plain (0,1,1) below regardless of source order —
+   so every checkbox this rule reaches (both a <label class="field-checks">
+   itself, e.g. "Plain code"/"Set as primary", AND a bare <label> nested
+   inside a <div class="field-checks"> container, e.g. isWeighed/
+   stockUntracked/isActive on this same Details tab) was rendering box-
+   above-text, not just the two most visually dramatic cases the bug report
+   measured. Confirmed live: label:has(#item-active)'s computed
+   flex-direction was "column" before this fix. */
+.catalog-form label:not(.catalog-detail label):not(.field-checks):not(.field-checks label) {
+  display: flex; flex-direction: column; gap: .2rem;
+  font-size: .82rem; margin-bottom: .55rem;
+}
+/* Same ut-docs#1956 fix from the flex side: a flex item's min-width is
+   `auto` (its content size) too, so the stretched control inside each
+   column-flex label also needs an explicit zero minimum to follow its
+   .field-pair column down at phone width. */
+.catalog-form label:not(.catalog-detail label):not(.field-checks):not(.field-checks label) > input,
+.catalog-form label:not(.catalog-detail label):not(.field-checks):not(.field-checks label) > select { min-inline-size: 0; }
+/* minmax(0, 1fr), not bare 1fr (ut-docs#1956): 1fr is minmax(auto, 1fr),
+   and a text <input>'s `auto` minimum is its intrinsic ~20ch width — at
+   360px that held the SKU column open 18px past the full-screen item
+   form's body. Zero minimum lets a column shrink below an input's default
+   width; nothing that already fit changes. */
+.field-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .5rem; }
 /* Same [hidden]-override precedent as .field-checks below (and .btn/
    .suggest-strip/.pos-notice elsewhere): an author rule's own `display`
    always beats the UA `[hidden]` style regardless of specificity, so a
@@ -612,17 +737,189 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
    edit that puts `hidden` directly on a .field-pair doesn't fail silently. */
 .field-pair[hidden] { display: none; }
 .field-checks { display: flex; gap: 1rem; margin: .3rem 0 .7rem; }
-.field-checks label { flex-direction: row; align-items: center; gap: .4rem; margin: 0; }
+/* ut-docs#1997: `.field-checks` is used two ways in this codebase — a
+   <div> wrapping several plain <label> children (the rule above; the
+   descendant selector here), AND a class on a single standalone <label>
+   itself (catalog.html's "Plain code"/"Set as primary" — .field-checks
+   label's own descendant selector never matched those, since the label
+   IS .field-checks, not inside it). Both need the same row layout, so
+   `label.field-checks` gets its own `display: flex` here rather than
+   relying on the shrink-to-fit inline default it would otherwise fall
+   back to once excluded from the blanket column rule above. Kept as a
+   separate rule from `.field-checks label` (not folded into one
+   selector list) only for `margin`: a descendant label sits inside the
+   .field-checks DIV's own `.3rem 0 .7rem` margin above, so margin: 0
+   there is correct, but a standalone label.field-checks has no such
+   wrapper — same bottom spacing every other .catalog-form field gets. */
+.field-checks label { display: flex; flex-direction: row; align-items: center; gap: .4rem; margin: 0; }
+label.field-checks { display: flex; flex-direction: row; align-items: center; gap: .4rem; margin: 0 0 .55rem; }
 /* Same [hidden]-override precedent as .btn/.suggest-strip/.pos-notice above:
    a class selector's own `display` always beats the UA `[hidden]` style, so
    without this a `hidden`-attributed .field-checks (tax_codes.html's
    isActive checkbox, meant to show only in edit mode) stays visibly
    flex-displayed on page load. Found live while testing ut-docs#259. */
 .field-checks[hidden] { display: none; }
-/* The catalog's right panel must never tower over the page: it sticks and
-   scrolls inside itself (Farshid: "right panel is too long"). */
-.catalog-form { position: sticky; inset-block-start: .8rem;
-                max-block-size: calc(100vh - 9rem); overflow-y: auto; }
+/* ut-docs#1901: the add/edit-item form is a <dialog> (#item-form-modal,
+   opened via .show() from catalog.html) instead of a permanently-visible
+   360px sticky side panel. Opened via .show(), NOT showModal() — same fix,
+   same reasoning (ut-docs#1385) as #hold-modal/#pfand-modal/
+   #elevation-modal/#table-add-modal/.payment-overlay above: showModal()'s
+   top-layer/inert-outside behaviour makes the custom on-screen keyboard
+   (#osk, appended to <body>, never re-parented into whichever dialog is
+   open) completely unreachable, and this form has more OSK-triggering
+   fields (barcode, name, price, SKU, description...) than any of those
+   five. `position: fixed` replaces the native top-layer positioning
+   .show() no longer provides; `z-index: 500` matches the same five for the
+   identical reason, staying below #osk's `z-index: 1000` so the keyboard
+   still renders on top of whichever field it's typing into here. No
+   ::backdrop rule — a .show() dialog never paints one.
+
+   ut-docs#1956 (product owner: "the forms are so confusing"): genuinely
+   FULL-SCREEN now — `inset: 0`, no max-size, no border/radius — not the
+   previous 94vw × 92vh floating card. Laid out as a flex column so the
+   action bar is pinned WITHOUT position: sticky (sticky inside an
+   overflow:auto dialog is exactly the arrangement that used to let the
+   head scroll away):
+     .item-form-modal        fixed, full-bleed, flex column, overflow hidden
+       .catalog-form         flex: 1, min-block-size: 0, flex column
+         .catalog-form-head  flex: none — title + delete | + New / Close /
+                             Save, the notice row, then the tab strip
+         .catalog-form-body  flex: 1, min-block-size: 0, overflow-y: auto —
+                             the ONE scroll container, holding the panels
+   All padding lives on the head and body, none on the dialog itself, so
+   the pinned head's bottom rule runs edge to edge.
+   `background` is explicit (independent review of #1901, N1) — same as
+   .payment-overlay — rather than relying on the UA's dialog `canvas`
+   default showing through. */
+.item-form-modal { position: fixed; inset: 0; margin: 0; z-index: 500;
+                    inline-size: 100%; max-inline-size: none;
+                    block-size: 100%; max-block-size: none;
+                    border: 0; border-radius: 0; box-shadow: none; padding: 0;
+                    display: flex; flex-direction: column; overflow: hidden;
+                    background: var(--surface); color: var(--text); }
+/* Out-specifies the display:flex above (0,2,0 vs 0,1,0), so a closed
+   dialog still renders nothing — verified, not assumed (the UA's own
+   dialog:not([open]) rule would otherwise lose to the author rule). */
+.item-form-modal:not([open]) { display: none; }
+.item-form-modal .catalog-form { flex: 1 1 auto; min-block-size: 0; display: flex; flex-direction: column; }
+.catalog-form-head { flex: none; display: flex; flex-direction: column; gap: .4rem;
+                     padding: .6rem 1.5rem 0; border-block-end: 1px solid var(--border);
+                     background: var(--surface); }
+/* Same properties as .catalog-form-head above, own class name so the two
+   never collide under a strict-mode locator when both dialogs are open at
+   once (ut-docs#1957, 2026-09-10 PR-sweep rebase fix — see catalog.html). */
+.modifier-groups-head { flex: none; display: flex; flex-direction: column; gap: .4rem;
+                        padding: .6rem 1.5rem 0; border-block-end: 1px solid var(--border);
+                        background: var(--surface); }
+/* One row at 1024×600 (the kiosk floor), wrapping into two at phone width:
+   the title+delete group and the action group each keep their own
+   children on one line; only the two GROUPS wrap relative to each other. */
+.catalog-form-head-row { display: flex; flex-wrap: wrap; align-items: center;
+                         justify-content: space-between; gap: .5rem .75rem; }
+.catalog-form-head-title { display: flex; align-items: center; gap: .5rem;
+                           flex: 1 1 12rem; min-inline-size: 0; }
+.catalog-form-head-title h3 { margin: 0; min-inline-size: 0; overflow: hidden;
+                              text-overflow: ellipsis; white-space: nowrap; }
+.catalog-form-head-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
+                             margin-inline-start: auto; }
+/* Icon-only delete (catalog.delete): a .btn.secondary in the danger colour,
+   square, same 3rem touch floor as its neighbours; the Lucide glyph is
+   sized by .btn-ico (above). Visible focus ring, since the label is
+   aria-label/title only. */
+.catalog-form-delete { flex: none; color: var(--danger); min-inline-size: 3rem; padding-inline: .65rem; }
+.catalog-form-delete:hover { color: var(--danger); }
+.catalog-form-delete:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px; }
+.catalog-form-delete .btn-ico svg { inline-size: 1.3rem; block-size: 1.3rem; }
+/* The notice row keeps its height when empty so a notice appearing never
+   shoves the tab strip (and the whole body) down a line. */
+.catalog-form-head #item-form-msg { min-block-size: 1.3rem; }
+.catalog-form-head .tab-bar { border-block-end: 0; }
+.catalog-form-body { flex: 1 1 auto; min-block-size: 0; overflow-y: auto; overflow-x: hidden;
+                     padding: 1rem 1.5rem 1.5rem; }
+/* The generic .tab-panel (below) is its own flex scroll box for the tender;
+   here the BODY is the one scroll container, so panels are plain blocks —
+   one scrollbar, never two nested ones. */
+.catalog-form-body .tab-panel { display: block; min-block-size: 0; overflow: visible; flex: none; }
+.catalog-form-body .tab-panel .item-form-needs-save { margin: 0; }
+/* Create mode (the item does not exist yet, so nothing item-bound can
+   work): each panel shows its "save this item first" hint and hides its
+   controls. Edit mode: the reverse. Toggled by setMode() in catalog.html. */
+.catalog-form.is-create .item-form-needs-item { display: none; }
+.catalog-form:not(.is-create) .item-form-needs-save { display: none; }
+@media (max-width: 700px) {
+  .catalog-form-head { padding-inline: 1rem; }
+  .catalog-form-body { padding-inline: 1rem; }
+  /* ut-docs#2000: at 360px the pinned head was measured at 42% of the
+     viewport (312px of 740) — three button rows (title+delete, then
+     +New/Close/Save wrapping across two) plus a two-row tab strip. Two
+     independent collapses bring that down without touching the kiosk-floor
+     (1024x600) layout, which stays outside this query entirely:
+     1. Close/Save go icon-only, same visual language as the delete
+        button beside them (.catalog-form-delete, above) — the .btn-label
+        span is visually hidden (same technique as the global
+        .visually-hidden utility; not that class itself, since it must
+        apply only under this query) while the button's own aria-label/
+        title (always present, see catalog.html) still carry the
+        accessible name. (+New stays text-only at every width — its own
+        label already bakes in a "+", so it needs no icon and no
+        collapsing; independent review finding F2.)
+     2. The tab strip stops wrapping and becomes a single horizontally
+        scrollable row instead — scoped to THIS tab-bar only
+        (.catalog-form-head .tab-bar), not the generic .tab-bar component
+        tills.html/index.html also use, which keep their own wrap
+        behaviour. The roving-tabindex arrow-key handler (catalog.html)
+        already moves focus tab-to-tab; browsers scroll a focused element
+        into view automatically, so keyboard reachability is unaffected.
+     Independent review (F3/F4) also found two focus-visibility gaps this
+     query introduces and this block now closes: .catalog-form-delete
+     already has its own :focus-visible ring (above) because its label is
+     aria-label/title only, same as Close/Save become right here — but
+     nothing gave THEM the matching ring; and .tab-bar's new
+     overflow-y: hidden (needed so a horizontal scrollbar doesn't add
+     height) was clipping the active tab's border-bottom indicator and
+     the roving-tabindex focus ring both top and bottom, since .tab uses
+     a negative margin-bottom to overlap the bar's own border. */
+  .catalog-form-head-actions .btn .btn-label {
+    position: absolute; inline-size: 1px; block-size: 1px; margin: -1px;
+    padding: 0; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0;
+  }
+  .catalog-form-head-actions .btn { min-inline-size: 3rem; padding-inline: .65rem; }
+  .catalog-form-head-actions .btn .btn-ico svg { inline-size: 1.3rem; block-size: 1.3rem; }
+  .catalog-form-head-actions .btn:focus-visible {
+    outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px;
+  }
+  .catalog-form-head .tab-bar { flex-wrap: nowrap; overflow-x: auto; overflow-y: hidden; padding-block: 2px; }
+  .catalog-form-head .tab-bar .tab:focus-visible {
+    outline: 2px solid var(--focus, var(--accent)); outline-offset: -2px;
+  }
+}
+/* ut-docs#1901, same fix as body.osk-padded .payment-overlay above: the
+   OSK is `position: fixed` + `z-index: 1000`, spanning the bottom of the
+   viewport regardless of this dialog's own box — without this, whichever
+   field/button sits in that band is genuinely covered, not merely close to
+   an edge, the exact failure #1385 found for the payment overlay. ut-docs#1956:
+   the dialog is full-bleed and anchored to the top edge (inset-block-start:
+   0 wins the over-constrained vertical box), so shortening its block-size
+   keeps the whole form — pinned head and scrolling body alike — clear of
+   the keyboard. ut-docs#1998: reads `--osk-reserved-height` (see the
+   body.osk-padded rule above) instead of the old hardcoded 15.5rem, which
+   had drifted short of the keyboard's real height. */
+body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-height, 17rem)); }
+/* ut-docs#1957: the "Manage customization groups" nested dialog — same
+   .show()/no-backdrop/fixed-position treatment as .item-form-modal above
+   and for the identical reason (OSK reachability for the group/option name
+   fields inside it), but its own smaller, narrower box and a HIGHER
+   z-index (520, still below #osk's 1000) so it visually stacks on top of
+   the still-open #item-form-modal underneath rather than beside or below
+   it — the whole point of the product-owner-reviewed nested-dialog design,
+   which must never navigate away from the item form. */
+.modifier-groups-modal { z-index: 520; width: 94vw; max-width: 40rem; max-height: 86vh;
+                          inset-block-start: 8vh; /* below item-form-modal's own 4vh, same
+                                                      convention as #hold-modal/#pfand-modal/
+                                                      #elevation-modal/#table-add-modal, which
+                                                      all layer above their own base too */ }
+.modifier-groups-modal:not([open]) { display: none; }
+body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reserved-height, 17rem)); }
 .catalog-extra { margin-top: .9rem; border-top: 1px solid var(--border); padding-top: .6rem; }
 .catalog-extra summary { font-weight: 600; cursor: pointer; color: var(--muted);
                          font-size: .85rem; }
@@ -755,7 +1052,8 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
      A flexible tender row does mean its rendered height now tracks
      `.pos-container`'s own available height (plain `auto` never did),
      which moves the scan-row/"Add"-button boundary whenever that height
-     changes — most visibly `body.osk-padded`'s 15.5rem reservation while
+     changes — most visibly `body.osk-padded`'s reservation (ut-docs#1998:
+     now `--osk-reserved-height`, previously a hardcoded 15.5rem) while
      the on-screen keyboard opens/closes. That surfaced a real, PRE-
      EXISTING race in osk.js: closing the keyboard (focusin's hide())
      reflows the page synchronously, and a reflow landing between a
@@ -1173,6 +1471,16 @@ a.btn, a.btn:hover { text-decoration: none; }
 .btn-tile { border-inline-start: 4px solid var(--cat-color, var(--accent)); padding-inline-start: calc(.4rem - 3px); }
 .btn-tile:hover { border-color: #cbd5e1; box-shadow: 0 3px 8px rgba(15, 23, 42, .12); }
 .btn-tile:active { transform: scale(.97); }
+/* ut-docs#1901: solid tile-color background for a photo-less item — set
+   via --tile-color (product-tile, buttons.html), inline per tile, only
+   when the item has no image AND a color. Every catalogtypes.ItemColors()
+   swatch is a deliberately dark/muted tone (the "Slate" direction), so a
+   single fixed white foreground reads on all of them without per-swatch
+   contrast logic — same reasoning as .picker-tile[aria-pressed] not
+   needing one either. */
+.btn-tile.tile-colored { background: var(--tile-color); }
+.btn-tile.tile-colored .tile-name,
+.btn-tile.tile-colored .tile-price { color: #fff; }
 .tile-name {
   font-weight: 600; font-size: .9rem; line-height: 1.2; white-space: normal;
   display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical;
@@ -1274,7 +1582,8 @@ a.btn, a.btn:hover { text-decoration: none; }
    including the custom on-screen keyboard (#osk, appended to <body>, not
    inside the dialog) that kiosk Pis depend on -- there's no OS keyboard to
    fall back to there. Anchored near the top rather than vertically
-   centered so it never sits under the OSK's fixed 15.5rem bottom panel
+   centered so it never sits under the OSK's fixed bottom panel (ut-docs#1998:
+   height now tracks `--osk-reserved-height`, previously a hardcoded 15.5rem)
    while it's open. */
 /* ut-docs#1542: #hold-modal can now open WHILE #payment-overlay is also
    open (the overlay's own in-body Hold Sale duplicate, index.html, added
@@ -1888,9 +2197,9 @@ a.btn, a.btn:hover { text-decoration: none; }
   box-shadow: 0 0 24px rgba(0, 0, 0, .25);
   background: var(--surface);
 }
-/* ut-docs#1385 (independent review): body.osk-padded reserves 15.5rem at
-   the bottom of <body> for the on-screen keyboard (line ~441 above), but
-   that's a BODY padding -- it does nothing for .payment-overlay, which is
+/* ut-docs#1385 (independent review): body.osk-padded reserves space at the
+   bottom of <body> for the on-screen keyboard (line ~511 above), but that's
+   a BODY padding -- it does nothing for .payment-overlay, which is
    position: fixed and sized/positioned relative to the viewport, not to
    body's padding box. Without this, the OSK (z-index 1000) simply draws
    on top of whatever the overlay's own fixed 100dvh height put underneath
@@ -1906,10 +2215,13 @@ a.btn, a.btn:hover { text-decoration: none; }
    its content now genuinely overflows, so the panel scrolls internally to
    reach Complete/Clear -- the same mechanism .tab-panel's own 6rem-floor
    comment already relies on, just newly triggered because there is
-   finally a reason to. */
+   finally a reason to. ut-docs#1998: reads `--osk-reserved-height` (same
+   custom property as body.osk-padded above, written by osk.js's show()
+   from #osk's own measured height) instead of a hardcoded 15.5rem that had
+   drifted ~1.45rem short of the keyboard's real rendered height. */
 body.osk-padded .payment-overlay {
-  height: calc(100dvh - 15.5rem);
-  max-height: calc(100dvh - 15.5rem);
+  height: calc(100dvh - var(--osk-reserved-height, 17rem));
+  max-height: calc(100dvh - var(--osk-reserved-height, 17rem));
 }
 .payment-overlay-body {
   display: flex; flex-direction: column; height: 100%; min-height: 0;
@@ -2347,6 +2659,52 @@ body.login-screen {
 .manual-result-list li { margin-block-end: 1rem; }
 .manual-snippet { color: var(--muted); margin-block: .2rem 0; }
 
+/* /items (ut-docs#1950): a narrow left rail of compact section rows, the
+   selected section's own content on the other side — same grid/breakpoint
+   shape as .manual above (14-18rem rail, the rest to the panel), reused
+   deliberately rather than re-derived. Logical properties only, so RTL
+   locales mirror for free.
+   Below the breakpoint the two panes stack AND a rail tap falls back to a
+   real navigation instead of the wide layout's in-panel htmx swap — a
+   deliberate, stated difference from .manual (whose stacked layout keeps
+   swapping in place): see items.html's own script for how that fallback is
+   implemented, and its comment for why this exact 52rem value is reused
+   rather than a new one. */
+.items-layout { display: grid; grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+                gap: 1.2rem; align-items: start; }
+@media (max-width: 52rem) { .items-layout { grid-template-columns: 1fr; } }
+
+.items-rail-wrap { position: sticky; inset-block-start: .5rem; }
+.items-rail-list { display: flex; flex-direction: column; gap: .2rem; }
+/* Compact row target block-size: ~3.4rem (two text lines + padding) — still
+   well under the old card tiles' ~6rem+, and keeps a >=44px touch target
+   (reference/ux-guidelines.md's touch-ergonomics rule; #144's fluid-scale
+   fix, not any single other rule's declared min-height) even with no
+   explicit min-block-size below: its own two lines of content plus
+   padding-block already clear 44px at every viewport in the fluid-scale
+   range. The subtitle is a REAL second line (independent-review fix,
+   ut-docs#1950: an earlier draft hid it in a title="" tooltip, which
+   ux-guidelines.md rules out — no mouse on a touchscreen till). Each line
+   ellipses independently instead of wrapping, via min-inline-size: 0 on the
+   flex text column (a flex item's automatic min-inline-size is its
+   min-content otherwise, which defeats text-overflow: ellipsis on a nowrap
+   child — same class of bug ut-docs#1900 already found on the catalog
+   variants grid). */
+.items-row { display: flex; align-items: center; gap: .5rem;
+             padding-block: .4rem; padding-inline: .7rem; border-radius: var(--radius);
+             text-decoration: none; color: inherit; }
+.items-text { display: flex; flex-direction: column; min-inline-size: 0; flex: 1 1 auto; }
+.items-name, .items-subtitle {
+  display: block; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.items-name { line-height: 1.3; }
+.items-subtitle { font-size: .82rem; color: var(--muted); line-height: 1.25; }
+.items-row.is-current .items-subtitle { color: inherit; opacity: .85; }
+.items-row:hover { background: var(--surface-2); }
+.items-row.is-current { background: var(--accent); color: var(--accent-contrast); font-weight: 600; }
+.items-row.is-disabled { color: var(--muted); justify-content: space-between; }
+.items-panel { min-inline-size: 0; }
+
 /* Contextual "?" — sits next to a page heading and opens that page's topic.
    Deliberately small and low-contrast: it must be findable when wanted and
    invisible when not, and never a mis-tap target during a sale. */
@@ -2366,6 +2724,18 @@ body.login-screen {
 .translations-ref { color: var(--muted); max-inline-size: 18rem; }
 .translations-edit { display: flex; gap: .4rem; }
 .translations-edit input[type="text"] { min-inline-size: 16rem; }
+/* ut-docs#2014: the infinite-scroll sentinel's loading text and its
+   terminal end-of-list replacement, both on the colspan <td> (not the
+   <tr> — padding on a table-row box is ignored by every browser, and
+   text-align/font-style would inherit down but the padding wouldn't, so
+   both classes have to live on the cell itself). .muted (color only) sets
+   no alignment of its own; text-align: center here is what actually
+   centers these two rows — deliberately NOT applied to the plain
+   "no matching texts" empty-state row above, which stays start-aligned
+   like a normal data row (review finding, ut-docs#2014: an earlier draft
+   of this comment claimed the opposite of what the rule below does). */
+.translations-loading,
+.translations-end { text-align: center; padding-block: .6rem; font-style: italic; }
 
 /* First-boot setup wizard */
 .setup-card {
@@ -2469,6 +2839,23 @@ body.login-screen {
    :focus-visible's own outline. */
 .builtin-icon-tile.builtin-icon-suggested { box-shadow: 0 0 0 2px var(--surface), 0 0 0 4px var(--accent); border-style: dashed; }
 
+/* Item color swatch picker (ut-docs#1901): same .picker-grid/.picker-tile
+   pattern and aria-pressed convention as the built-in icon grid just
+   above, one small dot + translated name per tile rather than an image.
+   --swatch (set inline per tile, catalog.html) feeds .swatch-dot's
+   background — the one place a raw hex from catalogtypes.ItemColors()
+   reaches CSS on the PICKER side; the tile's own selected/pressed state
+   still comes from .picker-tile[aria-pressed="true"], unchanged. */
+.item-color-grid { grid-template-columns: repeat(auto-fill, minmax(6rem, 1fr)); }
+.item-color-tile { flex-direction: column; gap: .3rem; min-block-size: 3.6rem; padding: .5rem .4rem; font-size: .78rem; font-weight: 500; }
+.swatch-dot { display: block; inline-size: 1.15rem; block-size: 1.15rem; border-radius: 50%;
+              background: var(--swatch, transparent); border: 1px solid rgba(15, 23, 42, .18); }
+/* Catalog list (ut-docs#1901, cheap nice-to-have): a small dot next to the
+   item name so a color is visible in the list too, not only on the
+   sale-screen tile. */
+.color-dot { display: inline-block; inline-size: .65rem; block-size: .65rem; border-radius: 50%;
+             margin-inline-end: .4rem; vertical-align: middle; border: 1px solid rgba(15, 23, 42, .18); }
+
 /* Bottom status bar: always-visible version + live connectivity. Bookends the
    dark top nav; part of the body flex column so it sits at the bottom. */
 .statusbar {
@@ -2525,6 +2912,16 @@ body.login-screen {
   margin-inline-start: .5rem;
 }
 .statusbar a.sb-power:hover { filter: brightness(0.92); }
+/* Installed-plugin update chip (ut-docs#1953) — same green "there's
+   something new" pill as sb-update above (not sb-power's amber: a pending
+   plugin update is a notice, not a hardware-degrading warning), just its
+   own class so it can be targeted/tested independently. */
+.statusbar .sb-plugin-update {
+  color: #052e16; background: #4ade80; text-decoration: none;
+  padding: .05rem .5rem; border-radius: 999px; font-weight: 700;
+  margin-inline-start: .5rem;
+}
+.statusbar a.sb-plugin-update:hover { background: #22c55e; }
 /* ut-docs#413: confirmed live at 360px — `.statusbar`'s row (conn chip +
    the optional enrol/update pills + the version, none of it wrapping)
    needs more width than a phone viewport has. Wrapping the bar itself
@@ -2546,7 +2943,8 @@ body.login-screen {
   .statusbar { flex-wrap: wrap; row-gap: .2rem; }
   .statusbar .sb-update,
   .statusbar .sb-enrol,
-  .statusbar .sb-power {
+  .statusbar .sb-power,
+  .statusbar .sb-plugin-update {
     overflow: hidden; text-overflow: ellipsis; max-inline-size: 70vw;
   }
 }
@@ -2611,6 +3009,66 @@ body.login-screen {
    native way to do this; switching .settings-grid itself to CSS Grid would
    undo the masonry packing every other card relies on. */
 .settings-grid .card.settings-wide { column-span: all; }
+
+/* ut-docs#1960: Settings as a two-pane master-detail — the section list (+ a
+   search box over individual settings) on the inline-start side, the selected
+   section's card on the other. Same grid technique as .manual above (help):
+   grid-template-columns with logical properties only, so RTL locales (fa/ar)
+   mirror the whole shell with zero extra rules. The cards themselves are
+   untouched server-rendered .card blocks; settings.html's own script shows
+   one and adds .settings-section-hidden to the rest. */
+.settings-shell { display: grid; grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+                  gap: 1.2rem; align-items: start; }
+.settings-nav { position: sticky; inset-block-start: .5rem; max-block-size: calc(100vh - 5rem);
+                overflow-y: auto; padding-inline-end: .4rem; }
+.settings-search { margin-block-end: .6rem; }
+.settings-search input { inline-size: 100%; padding: .55rem .7rem; font-size: 1rem;
+                         min-block-size: 44px; border: 1px solid var(--control-border);
+                         border-radius: var(--radius); background: var(--surface); color: inherit; }
+.settings-tree { list-style: none; margin: 0; padding: 0; }
+.settings-tree li { margin-block-end: .15rem; }
+/* Same shape as .manual-link: a full-width, touch-floor-height row. */
+.settings-tree-link { display: block; padding: .5rem .6rem; border-radius: .45rem;
+                      text-decoration: none; color: inherit; line-height: 1.35;
+                      min-block-size: 44px; }
+.settings-tree-link:hover, .settings-tree-link:focus-visible { background: var(--surface-2); }
+.settings-tree-link.is-current { background: var(--accent); color: var(--accent-contrast);
+                                 font-weight: 600; }
+/* A search hit: the control's own label, then the section it lives in. */
+.settings-hit-text, .settings-hit-section { display: block; }
+.settings-hit-section { font-size: .8rem; color: var(--muted); margin-block-start: .1rem; }
+.settings-tree-link.is-current .settings-hit-section { color: inherit; opacity: .85; }
+.settings-noresults { margin: 0; padding: .5rem .6rem; }
+.settings-panel { min-inline-size: 0; }
+/* One card at a time: the masonry columns .settings-grid uses for the
+   all-at-once layout would squeeze the lone visible card into a 24rem
+   column — inside the shell it flows as a single column instead. A narrow
+   card stays a comfortable reading width (same 48rem cap as .manual-topic);
+   the inherently wide ones (backup table, raw settings table) keep the
+   full panel. */
+.settings-shell .settings-grid { columns: auto; }
+.settings-shell .settings-grid .card { max-inline-size: 48rem; }
+.settings-shell .settings-grid .card.settings-wide { max-inline-size: none; }
+.settings-section-hidden { display: none; }
+/* The matched control after picking a search result — a brief ring in the
+   accent colour so the eye lands on it. settings.html's revealHit() removes
+   this class after ~1.8s (a timed removal, not a CSS-driven fade — outline
+   isn't a smoothly animatable shorthand, so it disappears outright). */
+.settings-hit-target { outline: 3px solid var(--accent); outline-offset: 3px;
+                       border-radius: .3rem; }
+/* Phone width (the same 40rem breakpoint .settings-grid collapses at, below):
+   list-first. Without a selection only the section list shows; a tap (or a
+   real deep link, which settings.html's script treats as a selection) swaps
+   in the panel with a back control. Above this width .has-selection has no
+   effect at all — both panes are always side by side. */
+.settings-back { display: none; margin-block-end: .8rem; }
+@media (max-width: 40rem) {
+  .settings-shell { grid-template-columns: 1fr; }
+  .settings-nav { position: static; max-block-size: none; padding-inline-end: 0; }
+  #settings-shell:not(.has-selection) .settings-panel { display: none; }
+  #settings-shell.has-selection .settings-nav { display: none; }
+  #settings-shell.has-selection .settings-back { display: inline-flex; }
+}
 .settings-grid h2 { margin-block: 0 .6rem; font-size: 1.05rem; }
 .settings-grid form select, .settings-grid form input[type="text"],
 .settings-grid form input[type="number"], .settings-grid form input[type="password"] {
@@ -2792,3 +3250,149 @@ body.login-screen {
   inline-size: 1.3rem; block-size: 1.3rem; border-radius: 50%; border: 1px solid var(--border, #e2e8f0);
   background: var(--surface, #fff); color: inherit; cursor: pointer; font-size: .7rem; line-height: 1; padding: 0; }
 .bugreport-thumb-remove:hover, .bugreport-thumb-remove:focus-visible { background: var(--surface-2, #f8fafc); }
+
+/* ADR-0088 / ut-docs#1904: the "Open" link on the Hidden menu tiles page.
+   It sits on its own line under the destination name — inline, it read as
+   part of the label ("Tables & floor plan Open"), the two-labels-in-one-row
+   defect ut-docs#300 shipped once already. Block + margin-block-start, not
+   a float or a left/right margin, so RTL needs no separate rule. */
+.menulayout-dest { display: block; }
+.menulayout-goto { display: inline-block; margin-block-start: 0.25rem; font-size: 0.875rem; }
+
+/* ==========================================================================
+   ut-docs#2010 — app-wide list/edit standard: list header + record dialog.
+   Reference: ut-docs/reference/list-and-dialog-pattern.md; reference
+   implementation web/ui/pages/categories.html; behaviour
+   web/public/record-dialog.js. Generalises the .item-form-modal /
+   .catalog-form* rules above (ut-docs#1901/#1956) into page-agnostic class
+   names. Those older rules are deliberately left untouched — catalog.html
+   adopts these in a follow-up, not here. This is the THEME SEAM: a
+   ut-plugin-theme-* re-skins the whole pattern by overriding :root tokens
+   and these class names; replacing the structure is an ADR-0088 layout
+   plugin's job. Tokens and rem only; logical properties only (RTL is a real
+   target). Additive block, appended at the end of the file on purpose.
+   ========================================================================== */
+
+/* --- List header: search grows, the icon-only New button keeps its square
+   at the end of the row; wraps at phone width. --- */
+.list-header { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem;
+               margin-block-end: .75rem; }
+.list-header-search { position: relative; flex: 1 1 12rem; min-inline-size: 0;
+                      display: flex; align-items: center; }
+.list-header-ico { position: absolute; inset-inline-start: .75rem; display: inline-flex;
+                   color: var(--muted); pointer-events: none; }
+.list-header-ico svg { inline-size: 1.1rem; block-size: 1.1rem; }
+.list-header-search input[type="search"] { inline-size: 100%; min-inline-size: 0;
+                                           padding-inline-start: 2.4rem; min-block-size: 3rem; }
+
+/* --- Icon-only button (New / Close / Edit / reorder / deactivate): square,
+   the same 3rem touch floor as every .btn, the Lucide glyph sized up from
+   .btn-ico's 1em, and an explicit focus ring because the accessible name is
+   aria-label/title only (WCAG 1.4.11 — --focus-border is >=3:1 against
+   --surface in every curated theme, see :root). --- */
+.btn-icon { flex: none; min-inline-size: 3rem; padding-inline: .65rem; }
+.btn-icon .btn-ico svg { inline-size: 1.3rem; block-size: 1.3rem; }
+.btn-icon:focus-visible { outline: 2px solid var(--focus-border, var(--accent)); outline-offset: 2px; }
+.btn-icon-danger, .btn-icon-danger:hover { color: var(--danger); }
+
+/* --- The list: a card whose wide table scrolls inside it (same escape
+   hatch as .users-list / .settings-grid .card .table) and tap-to-edit rows
+   that read as tappable. Attribute selectors, so no page has to carry an
+   extra class for the behaviour it already declares. --- */
+.list-card { min-inline-size: 0; }
+/* The sideways scroll lives on a WRAPPER, not on the table (ut-docs#2010,
+   Tester pass on the pilot tablet). `.users-list .table`'s older
+   `display: block` trick above turns the <table> into a block box: the box
+   obeys `table.table`'s `width: 100%`, but the internal table boxes still
+   shrink-to-fit and sit at the start edge, so the rows painted to 495px
+   inside a 1155px card and the merchant saw a half-empty card. Keeping the
+   element a real table and moving overflow onto .list-scroll fills the card
+   and still scrolls sideways when the columns genuinely do not fit (360px).
+   Pinned by the (f) case in e2e/tests/categories-record-dialog-2010.spec.ts. */
+.list-card .list-scroll { overflow-x: auto; }
+/* nowrap on purpose: at 360px a wrapping actions cell stacked its three icon
+   buttons vertically, tripling the row height and clipping them at the card
+   edge (seen in this card's own 360px screenshot). One row, and the table
+   scrolls sideways inside the card instead. */
+.list-actions { display: flex; gap: .5rem; flex-wrap: nowrap; justify-content: flex-end; }
+.list-empty-row td { text-align: center; color: var(--muted); }
+[data-record-open] { cursor: pointer; }
+[data-record-open]:hover > td { background: var(--surface-2); }
+
+/* --- Record dialog: full-bleed, .show()n (never showModal — the OSK
+   reason, see .item-form-modal above), a flex column of exactly two parts:
+   a pinned head (ONE row of chrome, nothing more — ut-docs#2000 found
+   catalog's taller head eating 42% of a 360px screen; no message line is
+   reserved, errors surface as the page banner after the redirect) and the
+   ONE scroll container. `position: fixed` replaces the top-layer
+   positioning .show() does not give; z-index 500 stays under #osk's 1000.
+   No ::backdrop rule — a .show() dialog never paints one. --- */
+.record-dialog { position: fixed; inset: 0; margin: 0; z-index: 500;
+                 inline-size: 100%; max-inline-size: none;
+                 block-size: 100%; max-block-size: none;
+                 border: 0; border-radius: 0; box-shadow: none; padding: 0;
+                 display: flex; flex-direction: column; overflow: hidden;
+                 background: var(--surface); color: var(--text); }
+/* Out-specifies the display:flex above so a closed dialog renders nothing. */
+.record-dialog:not([open]) { display: none; }
+.record-dialog-inner { flex: 1 1 auto; min-block-size: 0; display: flex; flex-direction: column; }
+.record-dialog-head { flex: none; padding: .6rem 1.5rem .5rem;
+                      border-block-end: 1px solid var(--border); background: var(--surface); }
+/* One row at the 1024×600 kiosk floor; the title group and the action group
+   each keep their own children on one line and only the two GROUPS wrap
+   relative to each other at phone width. */
+.record-dialog-head-row { display: flex; flex-wrap: wrap; align-items: center;
+                          justify-content: space-between; gap: .5rem .75rem; }
+.record-dialog-head-title { display: flex; align-items: center; gap: .5rem;
+                            flex: 1 1 12rem; min-inline-size: 0; }
+.record-dialog-head-title h3 { margin: 0; min-inline-size: 0; overflow: hidden;
+                               text-overflow: ellipsis; white-space: nowrap; }
+.record-dialog-destructive { display: flex; align-items: center; gap: .5rem; }
+.record-dialog-destructive form { margin: 0; display: inline-flex; }
+/* The display rules above would defeat the hidden attribute's UA rule (same
+   trap .btn[hidden] guards against): record-dialog.js hides the whole slot
+   in create mode and each data-record-when form that does not match the
+   opened row — caught by the e2e spec's first run, not assumed. */
+.record-dialog-destructive[hidden], .record-dialog-destructive form[hidden],
+.record-dialog [data-record-when][hidden] { display: none; }
+.record-dialog-head-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
+                              margin-inline-start: auto; }
+.record-dialog-body { flex: 1 1 auto; min-block-size: 0; overflow-y: auto;
+                      padding: 1rem 1.5rem 1.5rem; }
+.record-dialog-body form { display: flex; flex-direction: column; gap: .7rem; max-inline-size: 40rem; }
+/* The same ut-docs#1956 zero-minimum fix .catalog-form already carries for
+   its own .field-pair inputs (see that rule's comment above), extended to a
+   .field-pair form that sits inside a dialog body instead: ut-docs#2011
+   moved inventory.html's receive/adjust form in here, and it is not inside
+   a .catalog-form, so that rule's selector never reaches it.
+
+   DEFENSIVE ONLY — read this before "fixing" a phantom bug on top of it.
+   Corrected during ut-docs#2011's review: this rule changes nothing in the
+   markup shipped today, and its removal was measured (360x740, live, full
+   e2e till) to leave every box in the dialog byte-identical in geometry.
+   Today's fields all wrap their control in a <label>, which ut-docs#300's
+   global `label:has(> input)` rule already makes a column flex container --
+   and a flex item's automatic minimum size applies in the MAIN axis only,
+   so in a column container `min-width: auto` is already 0 and the input
+   already shrinks with its grid track. What this rule covers is the case
+   that rule does not: a control placed directly in a .field-pair (or in a
+   non-label wrapper), where the grid item keeps a min-content minimum and
+   a text input's ~20ch intrinsic width would hold the column open past a
+   360px dialog's edge. Kept as a guard-rail, not as a live fix; the
+   viewport assertion in inventory-stock-dialog-2011.spec.ts measures the
+   dialog body's real overflow and would catch that case if it appeared. */
+.record-dialog-body .field-pair input,
+.record-dialog-body .field-pair select { min-inline-size: 0; }
+@media (max-width: 700px) {
+  .record-dialog-head { padding-inline: 1rem; }
+  .record-dialog-body { padding-inline: 1rem; }
+}
+/* OSK reservation, same fix as body.osk-padded .item-form-modal above: the
+   keyboard is fixed at the bottom of the viewport regardless of this
+   dialog's box, so the dialog shortens to stay clear of it. osk.js sets
+   --osk-reserved-height from the keyboard's real height (universal-till#1027
+   / ut-docs#1998); the fallback is live whenever that measures <= 0
+   (pre-layout) and MUST track whatever the other reservations use —
+   body.osk-padded, .item-form-modal and .payment-overlay are all 17rem
+   since #1027 (15.5rem under-reserved, which is the bug #1998 fixed). */
+body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-height, 17rem)); }

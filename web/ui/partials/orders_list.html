@@ -46,10 +46,10 @@
              the visible TEXT is DisplayNo, already resolved to ReceiptNo
              when the sale has none. */}}
         <td>{{ if .JournalLinkable }}<a href="/journal/{{ .ReceiptNo }}">{{ .DisplayNo }}</a>{{ else }}{{ .DisplayNo }}{{ end }}{{ if eq .OrderType "takeaway" }} <span class="muted">{{ T "basket.order_type.takeaway" }}</span>{{ else if eq .OrderType "mixed" }} <span class="muted">{{ T "basket.order_type.mixed" }}</span>{{ end }}</td>
-        <td>{{ .CreatedAt }}</td>
+        <td>{{ datetime .CreatedAt }}</td>
         <td id="order-status-{{ .ReceiptNo }}">
           <span class="order-status" data-status="{{ .Status }}">{{ T .StatusKey }}</span>
-          {{ if .StatusUpdatedAt }}<span class="muted">{{ .StatusUpdatedAt }}</span>{{ end }}
+          {{ if .StatusUpdatedAt }}<span class="muted">{{ datetime .StatusUpdatedAt }}</span>{{ end }}
         </td>
         {{/* One warning per LINE (div, not adjacent spans): a sale can carry
              both, and inline they run together into a single unreadable
@@ -59,13 +59,24 @@
           {{ if .ReceiptPrintFailed }}<div class="muted" title="{{ T "orders.print.receipt_failed" }}">⚠ {{ T "orders.print.receipt_failed" }}</div>{{ end }}
         </td>
         <td>
-          {{/* One-tap buttons. A tap that would move the status backward is a
-               silent no-op by the conflict rule — the swapped-in fragment just
-               re-shows the current state, so stale buttons are harmless. */}}
-          <button class="btn" hx-post="/api/orders/{{ .ReceiptNo }}/status" hx-vals='{"status":"preparing"}' hx-target="#order-status-{{ .ReceiptNo }}" hx-swap="innerHTML">{{ T "orders.status.preparing" }}</button>
-          <button class="btn" hx-post="/api/orders/{{ .ReceiptNo }}/status" hx-vals='{"status":"ready"}' hx-target="#order-status-{{ .ReceiptNo }}" hx-swap="innerHTML">{{ T "orders.status.ready" }}</button>
-          <button class="btn" hx-post="/api/orders/{{ .ReceiptNo }}/status" hx-vals='{"status":"collected"}' hx-target="#order-status-{{ .ReceiptNo }}" hx-swap="innerHTML">{{ T "orders.status.collected" }}</button>
-          <button class="btn danger" hx-post="/api/orders/{{ .ReceiptNo }}/status" hx-vals='{"status":"cancelled"}' hx-target="#order-status-{{ .ReceiptNo }}" hx-swap="innerHTML">{{ T "orders.btn.cancel" }}</button>
+          {{/* ut-docs#1964: only the moves actually available from the
+               row's CURRENT status are offered (Go-side allowedOrderActions,
+               reusing pos.OrderStatusAllowed — never re-derived here) — a
+               tap that applied makes its own button gone, not just stale-
+               but-harmless. writeOrderStatusFragment's OOB actions swap
+               (order_status.go) re-renders this SAME div after a tap, and
+               a full re-fetch of this whole fragment (15s poll / SSE push,
+               orders.html) naturally re-computes it fresh for a change
+               pushed from another till. .btn-actions is the existing
+               compact row-action style (already used identically in
+               catalog_row.html/tax_codes_table.html) — sized for a list
+               row, not a page-level primary action. */}}
+          {{ $receiptNo := .ReceiptNo }}
+          <div id="order-actions-{{ $receiptNo }}" class="btn-actions">
+            {{ range .Actions }}
+            <button class="btn{{ if .Danger }} danger{{ end }}" hx-post="/api/orders/{{ $receiptNo }}/status" hx-vals='{{ jsonVals "status" .TargetStatus }}' hx-target="#order-status-{{ $receiptNo }}" hx-swap="innerHTML">{{ T .Key }}</button>
+            {{ end }}
+          </div>
         </td>
       </tr>
       {{ end }}

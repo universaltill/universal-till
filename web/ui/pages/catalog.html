@@ -1,13 +1,29 @@
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "nav.catalog" }}</h1>
-  <div style="display:flex; gap:.5rem; align-items:center">
+  <!-- flex-wrap (ut-docs#1900): with the Option sets button (and #1901's
+       new Add-item button) this row no longer fits 1024px in one line —
+       it wraps instead of pushing the search box off-screen. -->
+  <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center">
+    <!-- ut-docs#1901: the add/edit-item form is now a full-screen
+         <dialog> (#item-form-modal, below) instead of an always-visible
+         360px side panel, so creating a NEW item needs an explicit
+         trigger — clearForm() resets it to create-mode before opening. -->
+    <button id="item-form-add-btn" class="btn primary" type="button">{{ T "catalog.add_item_btn" }}</button>
     <a class="btn secondary" href="/import">{{ T "import.title" }}</a>
     <a class="btn secondary" href="/catalog/tax-codes">{{ T "taxcodes.title" }}</a>
-    <!-- ut-docs#1899: the per-item modifier editor lives in the item detail
-         panel below (catalog_variants.html); this is the shop-wide browse
-         screen for seeing every group across every item at once. -->
+    <!-- ut-docs#1899/#1957: /modifiers is the shop-wide, full-CRUD home for
+         modifier groups — the item detail panel below (catalog_variants.html)
+         only shows a compact read-only summary plus its own "Manage
+         customization groups" control (opens #modifier-groups-modal,
+         below), which is the in-context shortcut to the very same CRUD
+         without leaving this page. -->
     <a class="btn secondary" href="/modifiers">{{ T "modifiers.title" }}</a>
+    <!-- ut-docs#1900: reusable option sets ("Size: S / M / L") are defined
+         once on their own screen and applied per item from the detail
+         panel below — a sibling of the Modifiers button, same placement
+         the #1899 review settled on, not a new top-level nav tile. -->
+    <a class="btn secondary" href="/catalog/option-sets">{{ T "catalog.option_sets.button" }}</a>
     <button id="catalog-export-btn" class="btn secondary" hx-post="/api/catalog/export-save" hx-target="#export-msg" hx-swap="innerHTML">{{ T "import.export_btn" }}</button>
     <div id="export-msg" class="muted" aria-live="polite"></div>
     <!-- ut-docs#1356: bulk backfill, preview-before-apply — same
@@ -24,6 +40,52 @@
 
 <dialog id="barcode-backfill-modal" class="modifier-modal barcode-backfill-modal" aria-labelledby="catalog-barcode-backfill-btn"></dialog>
 
+<!-- ut-docs#1957: the "Manage customization groups" nested dialog, opened
+     from the compact summary button inside catalog_variants.html (below).
+     UX-mandated correction — do NOT replace this with target="_blank" or
+     any window.open/location navigation: the kiosk build runs fully
+     chromeless (WebKitGTK under Wayland/labwc — see base.html ~line 131),
+     so a new tab/window has nowhere to land and either silently no-ops or
+     navigates in place, losing the item-form dialog's own unsaved edits
+     underneath. This is a SECOND, independent <dialog> — its own static
+     wrapper lives here (never swapped), while its content (#modifier-
+     groups-modal-list) is fetched/re-rendered by htmx from
+     GET /api/catalog/modifier-groups-panel and the same modifier-group/
+     option mutation endpoints catalog_variants.html's OLD embedded forms
+     used, now re-targeted here — see handlers.go's
+     renderModifierMutationResult. Kept entirely OUTSIDE #catalog-variants'
+     own outerHTML swap boundary on purpose: an unrelated variants-panel
+     mutation (a barcode, a cost price, a variant save) re-renders
+     #catalog-variants while this dialog might still be open, and a
+     swapped-in fresh copy of a <dialog> the browser had open would lose
+     that open state — same reason #item-form-modal itself is a top-level
+     sibling, not embedded in a template that mutates independently.
+     Opened via .show(), NOT showModal() — same established fix
+     (ut-docs#1385) as #item-form-modal/#hold-modal/#pfand-modal/
+     #elevation-modal/#table-add-modal/.payment-overlay: showModal()'s
+     top-layer/inert-outside behaviour would make the custom on-screen
+     keyboard (#osk, appended to <body>) unreachable while typing a group
+     or option name here. app.css stacks it ABOVE #item-form-modal
+     (z-index 520 vs 500) so it visually sits on top of that still-open,
+     untouched dialog underneath, exactly like the product-owner-reviewed
+     design calls for. -->
+<dialog id="modifier-groups-modal" class="item-form-modal modifier-groups-modal" aria-labelledby="manage-modifiers-btn">
+  <div class="card catalog-form">
+    <!-- Deliberately NOT .catalog-form-head (2026-09-10, PR-sweep rebase
+         fix): that class is styled identically here (see app.css), but
+         reusing the same class name breaks every e2e assertion written
+         against "the one .catalog-form-head on the page" (ut-docs#1956/
+         #2000's specs) once this modal is open at the same time as the
+         item-form dialog underneath it — Playwright's strict-mode locator
+         then resolves two elements instead of one. -->
+    <div class="modifier-groups-head">
+      <h3>{{ T "catalog.modifiers.manage" }}</h3>
+      <button class="btn secondary" type="button" id="modifier-groups-modal-close-btn" onclick="document.getElementById('modifier-groups-modal').close()">{{ T "common.close" }}</button>
+    </div>
+    <div id="modifier-groups-modal-list"></div>
+  </div>
+</dialog>
+
 {{ if .SyncPrimary }}
 <div class="sync-banner">⚠ {{ T "sync.banner_replica" }}
   {{ if crossdevicelinkactionable }}
@@ -38,190 +100,476 @@
   <div class="catalog-list">
     {{ template "catalog_table" . }}
   </div>
-
-  <div class="card catalog-form">
-    <div class="catalog-form-head">
-      <h3 id="item-form-title">{{ T "catalog.new_item" }}</h3>
-      <button class="btn secondary" type="button" id="item-form-reset" hidden>{{ T "catalog.plus_new" }}</button>
-    </div>
-    <form id="item-form" autocomplete="off">
-      <input type="hidden" name="id" id="item-id">
-      <input type="hidden" name="price" id="item-price-minor">
-      <input type="hidden" name="imageUrl" id="item-image-url">
-      <div class="field-pair">
-        <label>{{ T "catalog.barcode" }} <input type="text" name="barcode" id="item-barcode" inputmode="numeric" placeholder="{{ T "catalog.autofill_placeholder" }}"></label>
-        <button class="btn secondary" type="button" id="autofill-btn" style="align-self:end">{{ T "catalog.autofill" }}</button>
-      </div>
-      <label class="field-checks"><input type="checkbox" name="forcePlainBarcode" value="1"> {{ T "catalog.barcode.force_plain" }}</label>
-      <div class="muted" style="margin-block-start:.15rem">{{ T "catalog.barcode.force_plain_hint" }}</div>
-      <div id="autofill-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
-      <label>{{ T "catalog.col.name" }} <input type="text" name="name" id="item-name" required></label>
-      <div class="field-pair">
-        <!-- ut-docs#1284: type="number" corrupts a decimal typed via the
-             kiosk OSK (see index.html's split-tender amount field for the
-             full explanation). The submit handler below already reads
-             item-price's raw .value and converts via
-             window.utCurrency.toMinor() into the hidden item-price-minor
-             field, so no JS change is needed. -->
-        <label>{{ T "catalog.col.price" }} ({{ currency.Display }}) <input type="text" inputmode="decimal" id="item-price" {{ moneypattern currency.Decimals false }} {{ moneyplaceholder currency.Decimals 0 }} required></label>
-        <label>{{ T "catalog.col.sku" }} <input type="text" name="sku" id="item-sku" placeholder="{{ T "catalog.auto_if_blank" }}"></label>
-      </div>
-      <label>{{ T "catalog.description" }} <input type="text" name="description" id="item-description"></label>
-      <div class="field-pair">
-        <label>{{ T "catalog.col.unit" }} <input type="text" name="unit" id="item-unit" value="each"></label>
-        <!-- .TaxCodes carries ALL tax codes here, active and inactive alike
-             (ut-docs#1178 review finding F1) — unlike a text input, a
-             <select> reset to unselected (selectedIndex -1) contributes
-             NOTHING to the submitted form, so if this list only offered
-             active codes, saving any other field on an item still assigned
-             a since-deactivated code would silently null out its tax_code_id.
-             Inactive codes are kept selectable, just labeled. -->
-        <label>{{ T "catalog.tax_code" }} <select name="taxCode" id="item-tax"><option value="">{{ T "catalog.tax_code.none" }}</option>{{ range .TaxCodes }}<option value="{{ .ID }}">{{ .Name }}{{ if not .IsActive }} ({{ T "catalog.tax_code.inactive" }}){{ end }}</option>{{ end }}</select></label>
-      </div>
-      <div class="field-pair">
-        <label>{{ T "catalog.category" }} <select name="categoryId" id="item-category"><option value="">{{ T "catalog.category.none" }}</option>{{ range .Categories }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}</select></label>
-        <label>{{ T "catalog.brand" }} <select name="brandId" id="item-brand"><option value="">{{ T "catalog.brand.none" }}</option>{{ range .Brands }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}</select></label>
-      </div>
-      <div class="field-checks">
-        <label><input type="checkbox" name="isWeighed" id="item-weighed" value="1"> {{ T "catalog.sold_by_weight" }}</label>
-        <label><input type="checkbox" name="stockUntracked" id="item-stock-untracked" value="1"> {{ T "catalog.stock_untracked" }}</label>
-        <!-- Checkbox semantics: an unchecked box submits nothing, so this
-             pairs it with a hidden isActive=0 (same convention as the
-             variant/modifier-group forms in catalog_variants.html) —
-             without it, unchecking "Active" and saving silently did
-             nothing (ut-docs#1367). -->
-        <input type="hidden" name="isActive" value="0">
-        <label><input type="checkbox" name="isActive" id="item-active" value="1" checked> {{ T "catalog.active" }}</label>
-      </div>
-      <button class="btn primary" type="submit" id="item-form-submit" style="width:100%">{{ T "catalog.create_item" }}</button>
-      <div id="item-form-msg" class="muted" aria-live="polite" style="min-height:1.3rem; margin-top:.4rem"></div>
-    </form>
-
-    <details class="catalog-extra">
-      <summary>{{ T "catalog.item_image" }}</summary>
-      <form id="image-form" enctype="multipart/form-data">
-        <label>{{ T "basket.col.item" }} <input type="text" class="pick-item" id="image-item-label" readonly placeholder="{{ T "catalog.pick_row" }}"></label>
-        <input type="hidden" name="item_id" id="image-item-id">
-        <div class="muted">{{ T "catalog.image_types" }}</div>
-        <div class="field-pair">
-          <button type="button" class="btn secondary" id="image-camera-btn">{{ T "catalog.take_photo" }}</button>
-          <button type="button" class="btn secondary" id="image-choose-btn">{{ T "catalog.choose_file" }}</button>
-        </div>
-        <!-- ut-docs#1472: live in-page viewfinder, preferred over the OS
-             camera round-trip (image-file-camera below) when the platform
-             actually supports getUserMedia — see the script below for the
-             feature-detect + fallback. Hidden until image-camera-btn opens
-             it; canvas is never shown, it only exists to grab a still frame. -->
-        <!-- The `hidden` toggle lives on this outer, otherwise-unstyled div
-             on purpose: cascade ORIGIN is resolved before specificity, so an
-             author-stylesheet rule (.field-pair's `display: grid`, app.css)
-             always beats the UA stylesheet's `[hidden] { display: none }`
-             regardless of specificity — a `hidden` div that was ALSO
-             `.field-pair` never actually hid. Layout lives on the inner
-             div instead, which is never hidden. -->
-        <div id="image-viewfinder" hidden>
-          <!-- .camera-overlay-video (app.css) is the sizing/aspect-ratio
-               class shared by the AI-identify and #548 barcode-scan camera
-               previews — without it the video renders at its raw
-               intrinsic width, overflowing this 360px-ish sticky panel. -->
-          <video id="image-viewfinder-video" class="camera-overlay-video" autoplay playsinline muted></video>
-          <div class="field-pair">
-            <button type="button" class="btn secondary" id="image-viewfinder-capture-btn">{{ T "catalog.viewfinder.capture" }}</button>
-            <button type="button" class="btn secondary" id="image-viewfinder-cancel-btn">{{ T "common.cancel" }}</button>
-          </div>
-          <div id="image-viewfinder-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
-        </div>
-        <canvas id="image-viewfinder-canvas" hidden></canvas>
-        <!-- Two triggers, one canonical submitted field: real <button>
-             elements (not a bare <label for>, which review found is NOT
-             keyboard-Tab-reachable and has no default Enter/Space
-             activation — a hidden input drops out of tab order regardless
-             of its own tabindex) calling .click() on their hidden file
-             input — this gets native button focus/keyboard-activation
-             semantics for free, same as clicking a visible file input
-             directly. The camera input's picked file is copied into
-             #image-file via DataTransfer (see the script below) so the
-             multipart form only ever sends one "image" part, and the
-             existing upload/validation JS keeps reading #image-file
-             unchanged. required dropped from both inputs — a hidden
-             required input blocks native submit with no focusable target;
-             the submit handler already does its own "choose an image" check. -->
-        <input type="file" id="image-file-camera" accept="image/*" capture="environment" hidden>
-        <input type="file" name="image" id="image-file" accept="image/png,image/jpeg" hidden>
-        <div id="image-file-name" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
-        <button class="btn" type="submit">{{ T "catalog.upload_image" }}</button>
-        <div id="image-msg" class="muted" style="min-height:1.2rem"></div>
-      </form>
-
-      <!-- ut-docs#1844: the bundled built-in icons (the same set
-           catimport.PlaceholderIcon already picks from for imageless
-           imports) as an alternative to an upload, above. Reuses
-           .picker-grid/.picker-tile (app.css) — the same touch-first
-           tile picker as the setup wizard's country/shop-type choosers —
-           rather than inventing a second grid pattern. Shares
-           #image-item-id/#image-item-label with the upload form above:
-           this section only works for an already-selected existing item,
-           same restriction the upload form already has (there's nowhere
-           to store an image against an item that doesn't exist yet). -->
-      <div class="builtin-icon-section">
-        <div class="muted">{{ T "catalog.builtin_icon.hint" }}</div>
-        <div id="builtin-icon-grid" class="picker-grid" role="group" aria-label="{{ T "catalog.builtin_icon.hint" }}">
-          {{ range .BuiltinIcons }}
-          <!-- Review finding F6 (ut-docs#1844): the label is visible text,
-               not a hover-only title — this is a touchscreen till
-               (reference/ux-guidelines.md), nothing here can depend on
-               hover to be understood. `title` stays as a bonus tooltip for
-               a mouse/desktop session; the alt text and this span carry
-               the same identical string so neither is the "real" one. -->
-          <button type="button" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" aria-pressed="false" title="{{ T .I18nKey }}">
-            <img src="{{ .Path }}" alt="" width="28" height="28">
-            <span>{{ T .I18nKey }}</span>
-          </button>
-          {{ end }}
-          <button type="button" class="picker-tile builtin-icon-tile" data-icon="none" aria-pressed="false">{{ T "catalog.builtin_icon.none" }}</button>
-        </div>
-        <div id="builtin-icon-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
-      </div>
-    </details>
-
-    <details class="catalog-extra">
-      <summary>{{ T "catalog.labels" }}</summary>
-      <form hx-post="/api/print/labels" hx-target="#labels-msg" hx-swap="innerHTML">
-        <label>{{ T "basket.col.item" }} <input type="text" class="pick-item" id="labels-item-label" readonly placeholder="{{ T "catalog.pick_row" }}"></label>
-        <input type="hidden" name="item_id" id="labels-item-id">
-        <label>{{ T "catalog.labels.variant" }}
-          <select name="variant_id" id="labels-variant"><option value="">{{ T "catalog.labels.whole_item" }}</option></select>
-        </label>
-        <label>{{ T "catalog.labels.copies" }} <input type="number" name="copies" value="1" min="1" max="50"></label>
-        <button class="btn" type="submit">{{ T "catalog.labels.print" }}</button>
-        <div id="labels-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
-      </form>
-    </details>
-
-    <details class="catalog-extra" id="keypad-mapper">
-      <summary>{{ T "catalog.keypad.title" }}</summary>
-      <p class="muted">{{ T "catalog.keypad.hint" }}</p>
-      <label>{{ T "basket.col.item" }} <input type="text" class="pick-item" id="keypad-item-label" readonly placeholder="{{ T "catalog.pick_row" }}"></label>
-      <input type="hidden" id="keypad-item-id">
-      <label>{{ T "catalog.keypad.capture_label" }}
-        <input type="text" id="keypad-capture" autocomplete="off" placeholder="{{ T "catalog.keypad.capture_placeholder" }}">
-      </label>
-      <label class="field-checks"><input type="checkbox" id="keypad-primary"> {{ T "catalog.keypad.set_primary" }}</label>
-      <div id="keypad-log" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
-    </details>
-
-  </div>
 </div>
 
-{{ template "catalog_variants" . }}
+<!-- ut-docs#1901: the add/edit-item form is a <dialog> with its OWN class
+     (.item-form-modal, app.css) rather than .modifier-modal, which stays
+     capped at 28rem for its other, genuinely compact callers. Opened via
+     .show(), NOT showModal() — see app.css's own comment on
+     .item-form-modal for why (the on-screen keyboard, appended to <body>,
+     would otherwise be unreachable on kiosk hardware — the same fix
+     (ut-docs#1385) already applied to #hold-modal/#pfand-modal/
+     #elevation-modal/#table-add-modal/.payment-overlay). That means no
+     native ::backdrop and, unlike a showModal() dialog, no automatic
+     Escape-to-close — closed via item-form-close-btn only. Opened via
+     item-form-add-btn (new item) or a catalog row click (edit — see the
+     script below).
+
+     ut-docs#1956 (product-owner feedback: "the forms are so confusing"):
+     the dialog is now genuinely full-screen, a flex column of two parts —
+       .catalog-form-head  a pinned action bar that never scrolls away:
+                           title + icon-only Delete at one end, + New /
+                           Close / Save at the other, the save/error notice
+                           beneath them, then the tab strip;
+       .catalog-form-body  the ONE scroll container, holding the tab panels.
+     The three former <details> accordions (item image, print labels,
+     keypad mapper) and the variants/barcodes panel — which used to render
+     at PAGE level, under the list, so editing an item meant a full-screen
+     dialog for its fields and a separate card somewhere below for its
+     variants — are now five tabs inside the form. Same
+     .tab-bar/.tab/.tab-panel + Alpine roving-tabindex pattern as
+     tills.html's join tabs and index.html's tender tabs.
+
+     <form id="item-form"> stays a SIBLING of the other panels' forms
+     (image upload, label print, every catalog_variants.html form) — never
+     their parent: nested <form>s are invalid HTML and the browser silently
+     drops the inner one. The Save button lives in the head and reaches
+     the form through the HTML5 form="item-form" attribute, the same
+     association catalog_variants.html's grid inputs already rely on.
+
+     .is-create (toggled by setMode below): the item does not exist yet,
+     so every item-bound panel (variants, image, labels, keypad) shows its
+     .item-form-needs-save hint and hides its .item-form-needs-item
+     controls instead of offering forms that cannot work. -->
+<dialog id="item-form-modal" class="item-form-modal" aria-labelledby="item-form-title">
+  <div class="catalog-form is-create" id="item-form-root" x-data="{
+    tab: 'details',
+    select(t) {
+      var prev = this.tab;
+      this.tab = t;
+      if (prev !== t) this.$dispatch('item-form-tab', { tab: t, prev: prev });
+    },
+    focusTab(dir) {
+      const tabs = Array.from(this.$el.querySelectorAll('[role=tab]'));
+      if (!tabs.length) return;
+      const i = Math.max(0, tabs.indexOf(document.activeElement));
+      const next = tabs[(i + dir + tabs.length) % tabs.length];
+      next.click(); next.focus();
+    }
+  }" @item-form-show-details="select('details')">
+    <div class="catalog-form-head">
+      <div class="catalog-form-head-row">
+        <div class="catalog-form-head-title">
+          <h3 id="item-form-title">{{ T "catalog.new_item" }}</h3>
+          <!-- ut-docs#1956: icon-only delete, at the OPPOSITE end of the bar
+               from Save/Close so it cannot be hit by accident; hidden in
+               create mode (setMode). Deactivate, not erase — same endpoint
+               and same OOB row-removal response as the list row's own ✕
+               (catalog_row.html): an item with trading history is
+               preserved and can be reactivated. hx-include pulls the id
+               from the form's own hidden #item-id; hx-confirm is rewritten
+               by setMode with the item's name (catalog.delete_confirm_named). -->
+          <button type="button" class="btn secondary catalog-form-delete" id="item-form-delete" hidden
+                  aria-label="{{ T "catalog.delete" }}" title="{{ T "catalog.delete" }}"
+                  hx-post="/api/catalog/item/deactivate" hx-include="#item-id"
+                  hx-confirm="{{ T "catalog.delete" }}" hx-target="this" hx-swap="none">
+            <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
+          </button>
+        </div>
+        <div class="catalog-form-head-actions">
+          <!-- ut-docs#2000: Close/Save (below) go icon+label, same shape as
+               the delete button above — at phone width (app.css) the label
+               is visually hidden and only the icon shows. +New stays
+               text-only: its own label already bakes in a "+" glyph in
+               every shipped locale (catalog.plus_new: "+ New"/"+ Yeni"/…),
+               so pairing it with a separate plus icon doubled the symbol
+               (independent review finding F2) — and unlike Close/Save it
+               is short enough not to need collapsing. aria-label/title
+               stay on the button itself (not just the visible span, for
+               Close/Save) so the accessible name survives the label being
+               hidden. setMode() below keeps all three text sources (label
+               span, aria-label, title) for Save in sync when it toggles
+               create/edit wording. -->
+          <button class="btn secondary" type="button" id="item-form-reset" hidden
+                  aria-label="{{ T "catalog.plus_new" }}" title="{{ T "catalog.plus_new" }}">{{ T "catalog.plus_new" }}</button>
+          <button class="btn secondary" type="button" id="item-form-close-btn" onclick="document.getElementById('item-form-modal').close()"
+                  aria-label="{{ T "common.close" }}" title="{{ T "common.close" }}">
+            <span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span>
+            <span class="btn-label">{{ T "common.close" }}</span>
+          </button>
+          <button class="btn primary" type="submit" form="item-form" id="item-form-submit"
+                  aria-label="{{ T "catalog.create_item" }}" title="{{ T "catalog.create_item" }}">
+            <span class="btn-ico" aria-hidden="true">{{ icon "check" }}</span>
+            <span class="btn-label">{{ T "catalog.create_item" }}</span>
+          </button>
+        </div>
+      </div>
+      <!-- In the pinned head (not at the bottom of the form) so a save or
+           error notice is visible at any scroll position. -->
+      <div id="item-form-msg" class="muted" aria-live="polite"></div>
+      <div class="tab-bar" role="tablist" @keydown.right.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? -1 : 1)" @keydown.left.prevent="focusTab(getComputedStyle($el).direction === 'rtl' ? 1 : -1)">
+        <button type="button" id="item-form-tab-details" class="tab" role="tab" :class="tab === 'details' && 'active'" :aria-selected="tab === 'details'" :tabindex="tab === 'details' ? 0 : -1" aria-controls="item-form-panel-details" @click="select('details')">{{ T "catalog.tab.details" }}</button>
+        <button type="button" id="item-form-tab-variants" class="tab" role="tab" :class="tab === 'variants' && 'active'" :aria-selected="tab === 'variants'" :tabindex="tab === 'variants' ? 0 : -1" aria-controls="item-form-panel-variants" @click="select('variants')">{{ T "catalog.variants" }}</button>
+        <button type="button" id="item-form-tab-image" class="tab" role="tab" :class="tab === 'image' && 'active'" :aria-selected="tab === 'image'" :tabindex="tab === 'image' ? 0 : -1" aria-controls="item-form-panel-image" @click="select('image')">{{ T "catalog.item_image" }}</button>
+        <button type="button" id="item-form-tab-labels" class="tab" role="tab" :class="tab === 'labels' && 'active'" :aria-selected="tab === 'labels'" :tabindex="tab === 'labels' ? 0 : -1" aria-controls="item-form-panel-labels" @click="select('labels')">{{ T "catalog.labels" }}</button>
+        <button type="button" id="item-form-tab-keypad" class="tab" role="tab" :class="tab === 'keypad' && 'active'" :aria-selected="tab === 'keypad'" :tabindex="tab === 'keypad' ? 0 : -1" aria-controls="item-form-panel-keypad" @click="select('keypad')">{{ T "catalog.keypad.title" }}</button>
+      </div>
+    </div>
+
+    <div class="catalog-form-body">
+      <div class="tab-panel" id="item-form-panel-details" role="tabpanel" aria-labelledby="item-form-tab-details" x-show="tab === 'details'">
+        <form id="item-form" autocomplete="off">
+          <input type="hidden" name="id" id="item-id">
+          <input type="hidden" name="price" id="item-price-minor">
+          <input type="hidden" name="imageUrl" id="item-image-url">
+          <div class="field-pair">
+            <!-- autofocus (ut-docs#1956): dialog.show() focuses the dialog's
+                 focus delegate — the autofocus element if there is one, else
+                 the first focusable descendant. That "first" used to be this
+                 very field; with the pinned bar it is now the icon-only
+                 Delete, the one control an operator must never land on by
+                 default. This keeps the barcode field (scanner-ready) as the
+                 landing spot. Not a page-load focus steal: a closed dialog
+                 is display:none, so the autofocus candidate is discarded
+                 at load and only ever honoured by show(). -->
+            <label>{{ T "catalog.barcode" }} <input type="text" name="barcode" id="item-barcode" inputmode="numeric" placeholder="{{ T "catalog.autofill_placeholder" }}" autofocus></label>
+            <button class="btn secondary" type="button" id="autofill-btn" style="align-self:end">{{ T "catalog.autofill" }}</button>
+          </div>
+          <label class="field-checks"><input type="checkbox" name="forcePlainBarcode" value="1"> {{ T "catalog.barcode.force_plain" }}</label>
+          <div class="muted" style="margin-block-start:.15rem">{{ T "catalog.barcode.force_plain_hint" }}</div>
+          <div id="autofill-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+          <label>{{ T "catalog.col.name" }} <input type="text" name="name" id="item-name" required></label>
+          <div class="field-pair">
+            <!-- ut-docs#1284: type="number" corrupts a decimal typed via the
+                 kiosk OSK (see index.html's split-tender amount field for the
+                 full explanation). The submit handler below already reads
+                 item-price's raw .value and converts via
+                 window.utCurrency.toMinor() into the hidden item-price-minor
+                 field, so no JS change is needed. -->
+            <label>{{ T "catalog.col.price" }} ({{ currency.Display }}) <input type="text" inputmode="decimal" id="item-price" {{ moneypattern currency.Decimals false }} {{ moneyplaceholder currency.Decimals 0 }} required></label>
+            <label>{{ T "catalog.col.sku" }} <input type="text" name="sku" id="item-sku" placeholder="{{ T "catalog.auto_if_blank" }}"></label>
+          </div>
+          <label>{{ T "catalog.description" }} <input type="text" name="description" id="item-description"></label>
+          <div class="field-pair">
+            <label>{{ T "catalog.col.unit" }} <input type="text" name="unit" id="item-unit" value="each"></label>
+            <!-- .TaxCodes carries ALL tax codes here, active and inactive alike
+                 (ut-docs#1178 review finding F1) — unlike a text input, a
+                 <select> reset to unselected (selectedIndex -1) contributes
+                 NOTHING to the submitted form, so if this list only offered
+                 active codes, saving any other field on an item still assigned
+                 a since-deactivated code would silently null out its tax_code_id.
+                 Inactive codes are kept selectable, just labeled. -->
+            <label>{{ T "catalog.tax_code" }} <select name="taxCode" id="item-tax"><option value="">{{ T "catalog.tax_code.none" }}</option>{{ range .TaxCodes }}<option value="{{ .ID }}">{{ .Name }}{{ if not .IsActive }} ({{ T "catalog.tax_code.inactive" }}){{ end }}</option>{{ end }}</select></label>
+          </div>
+          <div class="field-pair">
+            <label>{{ T "catalog.category" }} <select name="categoryId" id="item-category"><option value="">{{ T "catalog.category.none" }}</option>{{ range .Categories }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}</select></label>
+            <label>{{ T "catalog.brand" }} <select name="brandId" id="item-brand"><option value="">{{ T "catalog.brand.none" }}</option>{{ range .Brands }}<option value="{{ .ID }}">{{ .Name }}</option>{{ end }}</select></label>
+          </div>
+          <!-- ut-docs#1901: fixed swatch palette for a photo-less item's
+               sale-screen tile color — SAME .picker-grid/.picker-tile pattern
+               and aria-pressed toggle convention as #builtin-icon-grid below,
+               not a free color picker (validated server-side against
+               catalogtypes.ItemColors() in validateLookups; a raw value would
+               otherwise flow straight into a CSS custom property). #item-color
+               is the single hidden field actually submitted; the "none" tile
+               clears it (stored empty). -->
+          <div style="margin-bottom:.55rem">
+            <div style="font-size:.82rem; margin-bottom:.25rem">{{ T "catalog.color" }}</div>
+            <div id="item-color-grid" class="picker-grid item-color-grid" role="group" aria-label="{{ T "catalog.color" }}">
+              {{ range .ItemColors }}
+              <button type="button" class="picker-tile item-color-tile" data-color="{{ .Hex }}" aria-pressed="false" title="{{ T .I18nKey }}" style="--swatch: {{ .Hex }}">
+                <span class="swatch-dot" aria-hidden="true"></span>
+                <span>{{ T .I18nKey }}</span>
+              </button>
+              {{ end }}
+              <button type="button" class="picker-tile item-color-tile" data-color="" aria-pressed="true">{{ T "catalog.color.none" }}</button>
+            </div>
+            <input type="hidden" name="color" id="item-color">
+          </div>
+          <div class="field-checks">
+            <label><input type="checkbox" name="isWeighed" id="item-weighed" value="1"> {{ T "catalog.sold_by_weight" }}</label>
+            <label><input type="checkbox" name="stockUntracked" id="item-stock-untracked" value="1"> {{ T "catalog.stock_untracked" }}</label>
+            <!-- Checkbox semantics: an unchecked box submits nothing, so this
+                 pairs it with a hidden isActive=0 (same convention as the
+                 variant/modifier-group forms in catalog_variants.html) —
+                 without it, unchecking "Active" and saving silently did
+                 nothing (ut-docs#1367). -->
+            <input type="hidden" name="isActive" value="0">
+            <label><input type="checkbox" name="isActive" id="item-active" value="1" checked> {{ T "catalog.active" }}</label>
+          </div>
+        </form>
+      </div>
+
+      <!-- ut-docs#1956: the variants/barcodes/cost/modifiers panel
+           (web/ui/partials/catalog_variants.html), previously rendered at
+           page level under the list. Every form inside it targets
+           #catalog-variants with hx-swap="outerHTML", so moving the element
+           here changes nothing about how it refreshes itself. openCatalogRow
+           (below) loads the clicked item into it. -->
+      <div class="tab-panel" id="item-form-panel-variants" role="tabpanel" aria-labelledby="item-form-tab-variants" x-show="tab === 'variants'" x-cloak>
+        <p class="muted item-form-needs-save">{{ T "catalog.variants.pick_hint" }}</p>
+        <div class="item-form-needs-item">
+          {{ template "catalog_variants" . }}
+        </div>
+      </div>
+
+      <div class="tab-panel" id="item-form-panel-image" role="tabpanel" aria-labelledby="item-form-tab-image" x-show="tab === 'image'" x-cloak>
+        <p class="muted item-form-needs-save">{{ T "catalog.save_first_hint" }}</p>
+        <div class="item-form-needs-item">
+          <form id="image-form" enctype="multipart/form-data">
+            <label>{{ T "basket.col.item" }} <input type="text" class="pick-item" id="image-item-label" readonly placeholder="{{ T "catalog.pick_row" }}"></label>
+            <input type="hidden" name="item_id" id="image-item-id">
+            <div class="muted">{{ T "catalog.image_types" }}</div>
+            <div class="field-pair">
+              <button type="button" class="btn secondary" id="image-camera-btn">{{ T "catalog.take_photo" }}</button>
+              <button type="button" class="btn secondary" id="image-choose-btn">{{ T "catalog.choose_file" }}</button>
+            </div>
+            <!-- ut-docs#1472: live in-page viewfinder, preferred over the OS
+                 camera round-trip (image-file-camera below) when the platform
+                 actually supports getUserMedia — see the script below for the
+                 feature-detect + fallback. Hidden until image-camera-btn opens
+                 it; canvas is never shown, it only exists to grab a still frame. -->
+            <!-- The `hidden` toggle lives on this outer, otherwise-unstyled div
+                 on purpose: cascade ORIGIN is resolved before specificity, so an
+                 author-stylesheet rule (.field-pair's `display: grid`, app.css)
+                 always beats the UA stylesheet's `[hidden] { display: none }`
+                 regardless of specificity — a `hidden` div that was ALSO
+                 `.field-pair` never actually hid. Layout lives on the inner
+                 div instead, which is never hidden. -->
+            <div id="image-viewfinder" hidden>
+              <!-- .camera-overlay-video (app.css) is the sizing/aspect-ratio
+                   class shared by the AI-identify and #548 barcode-scan camera
+                   previews — without it the video renders at its raw
+                   intrinsic width, overflowing this 360px-ish sticky panel. -->
+              <video id="image-viewfinder-video" class="camera-overlay-video" autoplay playsinline muted></video>
+              <div class="field-pair">
+                <button type="button" class="btn secondary" id="image-viewfinder-capture-btn">{{ T "catalog.viewfinder.capture" }}</button>
+                <button type="button" class="btn secondary" id="image-viewfinder-cancel-btn">{{ T "common.cancel" }}</button>
+              </div>
+              <div id="image-viewfinder-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+            </div>
+            <canvas id="image-viewfinder-canvas" hidden></canvas>
+            <!-- Two triggers, one canonical submitted field: real <button>
+                 elements (not a bare <label for>, which review found is NOT
+                 keyboard-Tab-reachable and has no default Enter/Space
+                 activation — a hidden input drops out of tab order regardless
+                 of its own tabindex) calling .click() on their hidden file
+                 input — this gets native button focus/keyboard-activation
+                 semantics for free, same as clicking a visible file input
+                 directly. The camera input's picked file is copied into
+                 #image-file via DataTransfer (see the script below) so the
+                 multipart form only ever sends one "image" part, and the
+                 existing upload/validation JS keeps reading #image-file
+                 unchanged. required dropped from both inputs — a hidden
+                 required input blocks native submit with no focusable target;
+                 the submit handler already does its own "choose an image" check. -->
+            <input type="file" id="image-file-camera" accept="image/*" capture="environment" hidden>
+            <input type="file" name="image" id="image-file" accept="image/png,image/jpeg" hidden>
+            <div id="image-file-name" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+            <button class="btn" type="submit">{{ T "catalog.upload_image" }}</button>
+            <div id="image-msg" class="muted" style="min-height:1.2rem"></div>
+          </form>
+
+          <!-- ut-docs#1844: the bundled built-in icons (the same set
+               catimport.PlaceholderIcon already picks from for imageless
+               imports) as an alternative to an upload, above. Reuses
+               .picker-grid/.picker-tile (app.css) — the same touch-first
+               tile picker as the setup wizard's country/shop-type choosers —
+               rather than inventing a second grid pattern. Shares
+               #image-item-id/#image-item-label with the upload form above:
+               this section only works for an already-selected existing item,
+               same restriction the upload form already has (there's nowhere
+               to store an image against an item that doesn't exist yet). -->
+          <div class="builtin-icon-section">
+            <div class="muted">{{ T "catalog.builtin_icon.hint" }}</div>
+            <div id="builtin-icon-grid" class="picker-grid" role="group" aria-label="{{ T "catalog.builtin_icon.hint" }}">
+              {{ range .BuiltinIcons }}
+              <!-- Review finding F6 (ut-docs#1844): the label is visible text,
+                   not a hover-only title — this is a touchscreen till
+                   (reference/ux-guidelines.md), nothing here can depend on
+                   hover to be understood. `title` stays as a bonus tooltip for
+                   a mouse/desktop session; the alt text and this span carry
+                   the same identical string so neither is the "real" one. -->
+              <button type="button" class="picker-tile builtin-icon-tile" data-icon="{{ .Key }}" aria-pressed="false" title="{{ T .I18nKey }}">
+                <img src="{{ .Path }}" alt="" width="28" height="28">
+                <span>{{ T .I18nKey }}</span>
+              </button>
+              {{ end }}
+              <button type="button" class="picker-tile builtin-icon-tile" data-icon="none" aria-pressed="false">{{ T "catalog.builtin_icon.none" }}</button>
+            </div>
+            <div id="builtin-icon-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+          </div>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="item-form-panel-labels" role="tabpanel" aria-labelledby="item-form-tab-labels" x-show="tab === 'labels'" x-cloak>
+        <p class="muted item-form-needs-save">{{ T "catalog.save_first_hint" }}</p>
+        <div class="item-form-needs-item">
+          <form hx-post="/api/print/labels" hx-target="#labels-msg" hx-swap="innerHTML">
+            <label>{{ T "basket.col.item" }} <input type="text" class="pick-item" id="labels-item-label" readonly placeholder="{{ T "catalog.pick_row" }}"></label>
+            <input type="hidden" name="item_id" id="labels-item-id">
+            <label>{{ T "catalog.labels.variant" }}
+              <select name="variant_id" id="labels-variant"><option value="">{{ T "catalog.labels.whole_item" }}</option></select>
+            </label>
+            <label>{{ T "catalog.labels.copies" }} <input type="number" name="copies" value="1" min="1" max="50"></label>
+            <button class="btn" type="submit">{{ T "catalog.labels.print" }}</button>
+            <div id="labels-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
+          </form>
+        </div>
+      </div>
+
+      <div class="tab-panel" id="item-form-panel-keypad" role="tabpanel" aria-labelledby="item-form-tab-keypad" x-show="tab === 'keypad'" x-cloak>
+        <p class="muted item-form-needs-save">{{ T "catalog.save_first_hint" }}</p>
+        <div class="item-form-needs-item">
+          <p class="muted">{{ T "catalog.keypad.hint" }}</p>
+          <label>{{ T "basket.col.item" }} <input type="text" class="pick-item" id="keypad-item-label" readonly placeholder="{{ T "catalog.pick_row" }}"></label>
+          <input type="hidden" id="keypad-item-id">
+          <label>{{ T "catalog.keypad.capture_label" }}
+            <input type="text" id="keypad-capture" autocomplete="off" placeholder="{{ T "catalog.keypad.capture_placeholder" }}">
+          </label>
+          <label class="field-checks"><input type="checkbox" id="keypad-primary"> {{ T "catalog.keypad.set_primary" }}</label>
+          <div id="keypad-log" aria-live="polite" class="muted" style="min-height:1.2rem"></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</dialog>
 
 <script>
 (function () {
   var form = document.getElementById('item-form');
   var title = document.getElementById('item-form-title');
   var submit = document.getElementById('item-form-submit');
+  // ut-docs#2000: submit's visible text now lives in a child span (icon-only
+  // at phone width, app.css) — textContent on the button itself would wipe
+  // out the icon span alongside the label, so setMode() below writes the
+  // label span AND the button's own aria-label/title (the accessible name
+  // once the label span is visually hidden).
+  var submitLabel = submit.querySelector('.btn-label');
   var resetBtn = document.getElementById('item-form-reset');
   var msg = document.getElementById('item-form-msg');
+  // ut-docs#1956: the dialog's Alpine tab scope (.catalog-form) and the
+  // pinned bar's icon-only delete.
+  var formRoot = document.getElementById('item-form-root');
+  var deleteBtn = document.getElementById('item-form-delete');
+  // ut-docs#1901: the form is now a near-full-screen <dialog> instead of
+  // an always-visible side panel — opened explicitly (item-form-add-btn
+  // for a new item, a catalog row click for edit) rather than always
+  // being on screen.
+  var modal = document.getElementById('item-form-modal');
+  // ut-docs#1901 UX fix: bumped whenever the CURRENT dialog session
+  // changes — opened fresh (either trigger below) OR the operator touches
+  // any field after a save (the 'input' listener below). The delayed
+  // auto-close after a successful save (search "auto-close" below) only
+  // fires if this is still the same, untouched session that saved, so
+  // neither of two real flows gets the form yanked shut on them: (1) a
+  // cashier who saves item A and immediately reopens the dialog for item
+  // B inside the close-delay window, and (2) a cashier who saves item A
+  // and — WITHOUT closing — starts typing item B straight into the same
+  // still-open, auto-cleared dialog (the create path's own clearForm()
+  // leaves it open and ready for exactly this). A plain item-id
+  // comparison can't tell two different NEW-item sessions apart (both
+  // have id ''), which is why this is a separate counter rather than
+  // reusing #item-id.
+  var formSession = 0;
+  // ut-docs#1956 (independent review, root cause behind F1/F2/F3): Alpine's
+  // x-show DOM write is NOT synchronous, and it is not on the microtask
+  // queue or the first animation frame either — it lands on the SECOND.
+  // Measured live with the Labels tab active and Save clicked:
+  //
+  //   sync after click : display=none      microtask : display=none
+  //   rAF              : display=none      rAF#2     : display=block
+  //
+  // Three call sites here act on a tab panel the instant after selecting
+  // it, and a display:none element can neither take focus nor be reported
+  // by constraint validation — so all three silently did nothing. Anything
+  // that must touch a freshly-selected panel goes through this.
+  //
+  // Alpine.nextTick is the precise hook, but it is only present once Alpine
+  // has booted (its script is deferred, and the ?item= deep-link path can
+  // run before that — see openModal's own note), so fall back to the
+  // double-rAF that empirically matches it.
+  function afterTabPaint(fn) {
+    if (window.Alpine && typeof window.Alpine.nextTick === 'function') {
+      window.Alpine.nextTick(fn);
+      return;
+    }
+    requestAnimationFrame(function () { requestAnimationFrame(fn); });
+  }
+  // ut-docs#1901: opened via .show(), NOT showModal() — same reasoning
+  // (and same established fix, ut-docs#1385) as #hold-modal/#pfand-modal/
+  // #elevation-modal/#table-add-modal/.payment-overlay elsewhere in this
+  // codebase: showModal()'s top-layer/inert-outside-the-dialog behaviour
+  // makes the custom on-screen keyboard (#osk, appended to <body>, never
+  // re-parented into whichever dialog is open) completely unreachable —
+  // there is no OS keyboard to fall back to on kiosk hardware. This form
+  // has MORE OSK-triggering fields than any of those five (barcode, name,
+  // price, SKU, description...), so it would have been the worst instance
+  // of this bug in the app, not a minor one. Both open call sites route
+  // through this rather than a bare modal.show() call — kept as its own
+  // function for a consistent name with the .close() call sites, and
+  // because (unlike showModal()) .show() is a documented no-op when
+  // already open, so this also stays safe against the same
+  // already-open-dialog case showModal() would have thrown on.
+  function openModal() {
+    // ut-docs#1956: every open lands on the Details tab, whichever tab the
+    // previous session left selected — a merchant never opens item B onto
+    // item A's "Print labels" tab. The Alpine scope on #item-form-root
+    // listens for this (@item-form-show-details) rather than this script
+    // reaching into Alpine.$data: on the ?item= deep-link path this runs
+    // from a DOMContentLoaded listener registered BEFORE Alpine's deferred
+    // script registered its own, so Alpine may not have started yet — an
+    // event is simply dropped then, and the scope's default tab is
+    // 'details' anyway.
+    formRoot.dispatchEvent(new CustomEvent('item-form-show-details'));
+    modal.show();
+    // ut-docs#1956 (independent review, F2): modal.show() runs the dialog's
+    // focusing steps SYNCHRONOUSLY, and afterTabPaint's own comment explains
+    // why the Details panel is still display:none at that instant. A
+    // display:none element is not a valid autofocus candidate, so
+    // #item-barcode's autofocus is skipped and focus falls to the dialog's
+    // first focusable descendant instead — which, in edit mode, is the
+    // icon-only DELETE button. Measured: leave the Keypad tab selected,
+    // close, click another row, press Enter (exactly what a barcode scanner
+    // sends to end a scan, and this form is deliberately scanner-first) and
+    // the deactivate confirm opens for an item the operator never chose.
+    // So focus is set here explicitly, once the panel is actually painted,
+    // rather than left to autofocus + whatever the DOM order happens to be.
+    afterTabPaint(function () {
+      var barcode = document.getElementById('item-barcode');
+      // Don't yank focus back if the operator has already started typing
+      // somewhere in the form during those two frames.
+      if (barcode && (!modal.contains(document.activeElement) ||
+                      document.activeElement === document.body ||
+                      document.activeElement === deleteBtn)) {
+        barcode.focus();
+      }
+    });
+  }
+  // ut-docs#1957: the nested "Manage customization groups" dialog can add,
+  // rename or (de)activate a group without the item-form dialog above ever
+  // closing — refresh the item-detail panel's own compact group-name
+  // summary once it closes, so it doesn't sit stale behind it. This ONLY
+  // re-fetches #catalog-variants (a plain htmx GET, same as openCatalogRow
+  // uses below) — it never touches #item-form-modal's own fields, so the
+  // "item-form dialog stays untouched" requirement holds regardless.
+  var modifierGroupsModal = document.getElementById('modifier-groups-modal');
+  if (modifierGroupsModal) {
+    modifierGroupsModal.addEventListener('close', function () {
+      var itemId = document.getElementById('item-id').value;
+      if (itemId) {
+        htmx.ajax('GET', '/api/catalog/item-variants?item_id=' + encodeURIComponent(itemId),
+          { target: '#catalog-variants', swap: 'outerHTML' });
+      }
+    });
+  }
+  // ut-docs#1901 UX fix: any field the operator touches after a save
+  // invalidates that save's pending auto-close (search "auto-close"
+  // below) — covers typing straight into the same still-open, auto-
+  // cleared dialog to create a SECOND item without ever closing between
+  // the two (formSession alone doesn't change on its own for that case,
+  // since the dialog was never re-opened).
+  form.addEventListener('input', function () { formSession++; });
 
   // ut-docs#238: item-form-msg/autofill-msg/keypad-log migrate off ad-hoc
   // .textContent status strings onto the documented .pos-notice pattern
@@ -240,7 +588,19 @@
     builtinIconUpdated: "{{ T "catalog.builtin_icon.updated" }}",
     builtinIconErrorGeneric: "{{ T "catalog.error.server" }}",
     builtinIconSuggestedTitleSuffix: "{{ T "catalog.builtin_icon.suggested_hint" }}",
-    builtinIconCustomActive: "{{ T "catalog.builtin_icon.custom_active" }}"
+    builtinIconCustomActive: "{{ T "catalog.builtin_icon.custom_active" }}",
+    // ut-docs#1901: setMode's title/submit-label text used to be two bare
+    // English literals ('New Item'/'Edit: ' + name, 'Create Item'/'Save
+    // Changes') — moved onto this page-local i18n object, same pattern as
+    // every other string here (CLAUDE.md: this includes inline <script>
+    // blocks, not just template markup).
+    itemFormNewTitle: "{{ T "catalog.new_item" }}",
+    itemFormEditPrefix: "{{ T "catalog.edit_item_prefix" }}",
+    itemFormCreateBtn: "{{ T "catalog.create_item" }}",
+    itemFormSaveChangesBtn: "{{ T "catalog.save_changes" }}",
+    // ut-docs#1956: %s is the item name; same key catalog_row.html's own
+    // ✕ renders server-side via printf. Deactivate-not-erase wording.
+    deleteConfirmNamed: "{{ T "catalog.delete_confirm_named" }}"
   };
 
   // Builds the .pos-notice markup into `el` (empty text clears the slot
@@ -283,20 +643,130 @@
   }
 
   function setMode(editing, name) {
-    title.textContent = editing ? 'Edit: ' + name : 'New Item';
-    submit.textContent = editing ? 'Save Changes' : 'Create Item';
+    title.textContent = editing ? NOTICE_MSG.itemFormEditPrefix + name : NOTICE_MSG.itemFormNewTitle;
+    var submitText = editing ? NOTICE_MSG.itemFormSaveChangesBtn : NOTICE_MSG.itemFormCreateBtn;
+    submitLabel.textContent = submitText;
+    submit.setAttribute('aria-label', submitText);
+    submit.setAttribute('title', submitText);
     resetBtn.hidden = !editing;
+    // ut-docs#1956: delete only exists for an item that exists; .is-create
+    // swaps every item-bound tab panel (variants/image/labels/keypad) to
+    // its "save this item first" hint (app.css). The confirm is rebuilt
+    // per item with a FUNCTION replacement, never a string one — a name
+    // containing `$&`/`$'` would otherwise be re-interpreted as a
+    // String.replace substitution pattern (same trap renderNotice's own
+    // comment above records).
+    deleteBtn.hidden = !editing;
+    formRoot.classList.toggle('is-create', !editing);
+    if (editing) {
+      deleteBtn.setAttribute('hx-confirm', NOTICE_MSG.deleteConfirmNamed.replace('%s', function () { return name; }));
+    }
   }
 
   function clearForm() {
     form.reset();
     document.getElementById('item-id').value = '';
     document.getElementById('item-image-url').value = '';
+    setColorTiles('');
     setMode(false);
     msg.textContent = '';
     document.getElementById('autofill-msg').textContent = '';
+    // ut-docs#1956: the item-bound panels now live INSIDE this dialog, so
+    // "+ New" after editing item A must not leave A's variants grid, A's
+    // id in the image/labels/keypad forms, or A's pressed icon tile behind
+    // (hidden by .is-create, but still the wrong item's state). Emptying
+    // #catalog-variants keeps the element (and its id) in place for the
+    // next row click's outerHTML swap.
+    var variantsPanel = document.getElementById('catalog-variants');
+    if (variantsPanel) variantsPanel.innerHTML = '';
+    document.querySelectorAll('.pick-item').forEach(function (el) { el.value = ''; });
+    ['image-item-id', 'labels-item-id', 'keypad-item-id'].forEach(function (id) {
+      var el = document.getElementById(id);
+      if (el) el.value = '';
+    });
+    refreshBuiltinIconState('');
   }
-  resetBtn.addEventListener('click', clearForm);
+  // ut-docs#1901 UX fix (independent review finding): resetBtn ("＋ New")
+  // is a session-changing entry point same as the add-button/row-click/
+  // color-swatch sites above — without bumping formSession here too, a
+  // still-open edit dialog's pending auto-close timer (search
+  // "auto-close" below) can fire on a FRESH form the operator just reset
+  // to, mid-typing, exactly the race this counter exists to prevent.
+  resetBtn.addEventListener('click', function () { clearForm(); formSession++; });
+
+  // ut-docs#1956: Save sits in the pinned head and submits #item-form via
+  // its form= attribute, so it can be pressed while a DIFFERENT tab is
+  // showing. Native validation then finds the empty required field
+  // (name/price) inside a display:none panel, cannot focus it, and refuses
+  // to submit with nothing visible to the operator but a console line
+  // ("An invalid form control ... is not focusable"). Switch back to
+  // Details first, then let the browser report the field normally.
+  submit.addEventListener('click', function (ev) {
+    if (form.checkValidity()) return;
+    ev.preventDefault();
+    formRoot.dispatchEvent(new CustomEvent('item-form-show-details'));
+    // ut-docs#1956 (independent review, F1): a single requestAnimationFrame
+    // ran one frame too early — see afterTabPaint. reportValidity() then
+    // fired while the Details panel was still display:none, so the browser
+    // refused to report the field and the operator got NOTHING: no bubble,
+    // no notice, no focus move, just a console line. That is the exact
+    // silent failure this guard exists to prevent.
+    afterTabPaint(function () { form.reportValidity(); });
+  });
+
+  // ut-docs#1956: the bar's icon-only delete. The server answers with the
+  // same OOB row-delete fragment the list row's ✕ gets (the row disappears
+  // from #catalog-tbody on its own); all that is left is to close the
+  // dialog, since the item it was editing is no longer in the catalog. A
+  // failed request (e.g. catalog.error.item_replica_use_primary on a
+  // joined till) is painted into the head's #item-form-msg by the
+  // page-global htmx:responseError listener below — and the dialog stays
+  // open, so the operator sees why.
+  deleteBtn.addEventListener('htmx:afterRequest', function (ev) {
+    if (!ev.detail || !ev.detail.successful) return;
+    formSession++;
+    modal.close();
+  });
+
+  // ut-docs#1901: opens the dialog fresh, ready to create a NEW item — the
+  // only way to reach the create-item form now the panel isn't always on
+  // screen.
+  var addBtn = document.getElementById('item-form-add-btn');
+  if (addBtn) {
+    addBtn.addEventListener('click', function () {
+      clearForm();
+      formSession++;
+      openModal();
+    });
+  }
+
+  // Fixed swatch palette (ut-docs#1901) — same .picker-grid/aria-pressed
+  // toggle convention as the built-in icon grid below. #item-color is the
+  // one hidden field actually submitted; clicking a tile (including the
+  // "none" tile, whose data-color is "") sets it and repaints which tile
+  // reads pressed.
+  var colorGrid = document.getElementById('item-color-grid');
+  var colorInput = document.getElementById('item-color');
+  function setColorTiles(hex) {
+    if (!colorGrid) return;
+    colorGrid.querySelectorAll('.item-color-tile').forEach(function (btn) {
+      var pressed = (btn.dataset.color || '') === (hex || '');
+      btn.setAttribute('aria-pressed', pressed ? 'true' : 'false');
+    });
+  }
+  if (colorGrid) {
+    colorGrid.addEventListener('click', function (ev) {
+      var btn = ev.target.closest('.item-color-tile');
+      if (!btn) return;
+      var hex = btn.dataset.color || '';
+      colorInput.value = hex;
+      setColorTiles(hex);
+      // ut-docs#1901 UX fix: a swatch tile is a <button>, not a native
+      // form control that fires 'input' — the form-level listener above
+      // wouldn't otherwise see this as "the operator touched the form".
+      formSession++;
+    });
+  }
 
   // Barcode auto-fill from open product databases (G15 increment 1).
   var autofillMsg = document.getElementById('autofill-msg');
@@ -357,12 +827,10 @@
     if (ev.key === 'Enter') { ev.preventDefault(); runAutofill(); }
   });
 
-  // Row click fills the form; the table partial is re-rendered by the server
-  // after every mutation, so delegate from the document.
-  document.addEventListener('click', function (ev) {
-    var row = ev.target.closest('.catalog-row');
-    if (!row) return;
-    if (ev.target.closest('.btn') && !ev.target.classList.contains('catalog-edit')) return;
+  // Opens a catalog row into the edit form/detail panel — the row click
+  // handler below, and the ut-docs#1914 ?item= deep link from /modifiers,
+  // both funnel through here so the two entry points can never drift.
+  function openCatalogRow(row) {
     document.getElementById('item-id').value = row.dataset.id;
     document.getElementById('item-barcode').value = '';
     document.getElementById('item-image-url').value = '';
@@ -378,15 +846,19 @@
     document.getElementById('item-stock-untracked').checked = row.dataset.stockUntracked === '1';
     document.getElementById('item-active').checked = true;
     document.getElementById('item-price').value = window.utCurrency.toMajor(parseInt(row.dataset.price || '0', 10));
+    document.getElementById('item-color').value = row.dataset.color || '';
+    setColorTiles(row.dataset.color || '');
     setMode(true, row.dataset.name);
+    formSession++;
+    // ut-docs#1901: the form is now a dialog — a row click must actually
+    // open it, or there is no way to reach the edit form at all.
+    openModal();
     document.querySelectorAll('.pick-item').forEach(function (el) { el.value = row.dataset.id; });
-    // Load the item's variants/barcodes editor panel (full-width, below the
-    // list) and bring it into view.
+    // Load the item's variants/barcodes editor panel — since ut-docs#1956
+    // the Variants tab of this same dialog, so there is nothing to scroll
+    // into view any more.
     htmx.ajax('GET', '/api/catalog/item-variants?item_id=' + encodeURIComponent(row.dataset.id),
-      { target: '#catalog-variants', swap: 'outerHTML' }).then(function () {
-        var p = document.getElementById('catalog-variants');
-        if (p) p.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-      });
+      { target: '#catalog-variants', swap: 'outerHTML' });
     var imgLabel = document.getElementById('image-item-label');
     if (imgLabel) { imgLabel.value = row.dataset.name; document.getElementById('image-item-id').value = row.dataset.id; }
     refreshBuiltinIconState(row.dataset.id);
@@ -396,14 +868,10 @@
     if (kpLabel) {
       kpLabel.value = row.dataset.name;
       document.getElementById('keypad-item-id').value = row.dataset.id;
-      // Selecting a row is the natural "now press the physical key for
-      // this item" moment — focus the capture field only if the panel
-      // is already open, so opening <details> elsewhere on the page
-      // doesn't unexpectedly steal focus from whatever the operator was
-      // doing.
-      var kpDetails = document.getElementById('keypad-mapper');
-      var kpCapture = document.getElementById('keypad-capture');
-      if (kpDetails && kpDetails.open && kpCapture) kpCapture.focus();
+      // ut-docs#1956: no focus here. The dialog always opens on Details,
+      // and the UX rule is that nothing steals focus on open — the capture
+      // field is focused only when the operator actively opens the Keypad
+      // tab (the item-form-tab listener in the keypad block below).
     }
     // Labels: variant picker — a label for a variant carries ITS barcode+price.
     var vSel = document.getElementById('labels-variant');
@@ -418,6 +886,34 @@
           });
         }).catch(function () {});
     }
+  }
+
+  // Row click fills the form; the table partial is re-rendered by the server
+  // after every mutation, so delegate from the document.
+  document.addEventListener('click', function (ev) {
+    var row = ev.target.closest('.catalog-row');
+    if (!row) return;
+    if (ev.target.closest('.btn') && !ev.target.classList.contains('catalog-edit')) return;
+    openCatalogRow(row);
+  });
+
+  // ut-docs#1914: /modifiers links an item name back here as
+  // /catalog?item=<id> so a merchant doesn't have to find the row by hand.
+  // Falls back to a plain, unopened /catalog view (no crash, no error
+  // state) if the id is missing or the item was deactivated/deleted since
+  // the link was shown — catalog_row.html only renders active items, so a
+  // stale id simply matches nothing here.
+  // Deferred to DOMContentLoaded: this inline block runs at parse time,
+  // before app.js's own `defer`red load — openCatalogRow reaches into
+  // window.utCurrency, which app.js doesn't define until then, so running
+  // this any earlier throws mid-way through and leaves the dialog closed.
+  document.addEventListener('DOMContentLoaded', function () {
+    var deepLinkID = new URLSearchParams(location.search).get('item');
+    if (!deepLinkID) return;
+    var deepLinkRow = document.getElementById('catalog-row-' + deepLinkID);
+    if (!deepLinkRow) return;
+    openCatalogRow(deepLinkRow);
+    deepLinkRow.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
   });
 
   form.addEventListener('submit', function (ev) {
@@ -458,6 +954,10 @@
     var failed = false;
     function markFailed() { failed = true; }
     document.body.addEventListener('htmx:responseError', markFailed, { once: true });
+    // ut-docs#1901 UX fix: captured BEFORE clearForm() may blank #item-id,
+    // so the delayed auto-close below (search "auto-close") can tell
+    // whether this is still the same dialog session that just saved.
+    var savingSession = formSession;
     htmx.ajax('POST', url, { source: '#item-form', target: '#catalog-table', swap: 'none' })
       .then(function () {
         submit.disabled = false;
@@ -473,6 +973,24 @@
         if (!editing) clearForm();
         renderNotice(msg, 'success', NOTICE_MSG.itemFormSaved);
         filterRows();
+        // ut-docs#1901 UX fix: the form is now a full-screen dialog, not
+        // an always-visible side panel — leaving it open after a
+        // successful save strands the operator behind a full-screen
+        // dialog with no obvious next step (found live: a Playwright-
+        // driven save left the dialog open over the "Saved" toast in
+        // every locale tested). Auto-close after 1.5s — comfortably long
+        // enough to read "Saved" (confirmed live), deliberately shorter
+        // than the toast's own ~2.5s auto-expire (scheduleToastDismiss,
+        // app.js) rather than matching it, since the toast itself stays
+        // visible a moment longer than the dialog needs to — and only if
+        // this dialog is still showing the SAME session that saved — not
+        // reopened for a different item (edit), a fresh create, or reset
+        // via "＋ New" in the meantime.
+        setTimeout(function () {
+          if (!modal.open) return;
+          if (formSession !== savingSession) return;
+          modal.close();
+        }, 1500);
       })
       // Only a network-level failure (see the ut-docs#917 note above)
       // rejects instead of resolving — without this the button would stay
@@ -568,12 +1086,16 @@
   }
 
   // ut-docs#1472 review: the stream must also be released if the operator
-  // collapses the "Item image" <details> panel while it's open — otherwise
-  // the camera (and its OS-level recording indicator) stays live with the
-  // panel that showed it no longer even visible.
-  cameraBtn.closest('details').addEventListener('toggle', function (ev) {
-    if (!ev.target.open) stopViewfinder();
+  // leaves the "Item image" panel while it's open — otherwise the camera
+  // (and its OS-level recording indicator) stays live with the panel that
+  // showed it no longer even visible. ut-docs#1956: the panel is a tab
+  // now, not a <details>, so "leaving" is switching to another tab (the
+  // Alpine scope's select() dispatches item-form-tab with the previous
+  // tab) — or closing the whole dialog.
+  formRoot.addEventListener('item-form-tab', function (ev) {
+    if (ev.detail && ev.detail.prev === 'image') stopViewfinder();
   });
+  modal.addEventListener('close', stopViewfinder);
 
   function openViewfinder() {
     viewfinderBusy = true;
@@ -811,6 +1333,20 @@
     var log = document.getElementById('keypad-log');
     var primary = document.getElementById('keypad-primary');
     if (!capture) return;
+    // ut-docs#1956: opening the Keypad tab IS the "now press the physical
+    // key for this item" moment (the old code focused on row-select when
+    // the <details> happened to be open). Only for an existing item —
+    // in create mode the panel shows its save-first hint instead.
+    // ut-docs#1956 (independent review, F3): focusing here directly hit the
+    // same one-frame race as F1/F2 — the Keypad panel is still display:none
+    // when this event fires, so capture.focus() was a no-op and the operator
+    // pressed the physical key into nothing. That is a regression against
+    // the pre-#1956 behaviour, which did focus correctly.
+    formRoot.addEventListener('item-form-tab', function (ev) {
+      if (!ev.detail || ev.detail.tab !== 'keypad') return;
+      if (!document.getElementById('keypad-item-id').value) return;
+      afterTabPaint(function () { capture.focus(); });
+    });
     capture.addEventListener('keydown', function (ev) {
       if (ev.key !== 'Enter') return;
       ev.preventDefault();

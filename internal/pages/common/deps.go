@@ -14,6 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/settings"
 	"github.com/universaltill/universal-till/internal/ui"
+	"github.com/universaltill/universal-till/internal/uislot"
 )
 
 // StateMu guards Deps.State: settings handlers replace fields while every
@@ -47,7 +48,14 @@ type Deps struct {
 	State    RuntimeState
 	BaseMenu []MenuItem
 	Menu     []MenuItem
-	Engine   *pos.Service
+	// MenuAmendments are the Menu-slot amendments in force (ADR-0088):
+	// every active `layout` plugin's, minus the entries the merchant
+	// restored from Settings → Hidden menu tiles. Rebuilt beside Menu in
+	// ReloadPlugins (and by ReloadMenuAmendments after a restore) under
+	// PluginMu — read it only through MenuAmendmentsSnapshot
+	// (guard-plugin-menu-read.sh enforces this, like Menu).
+	MenuAmendments []uislot.Amendment
+	Engine         *pos.Service
 	// KioskEngine is the self-order kiosk's own basket engine — deliberately
 	// a SEPARATE instance from Engine (ut-docs#449): the kiosk surface is
 	// auth-exempt and reachable by any LAN client, so it must never be able
@@ -290,7 +298,42 @@ func (d *Deps) ReloadPlugins(ctx context.Context) error {
 	defer d.PluginMu.Unlock()
 	err := d.Pm.Reload(ctx)
 	d.Menu = BuildMenu(d.BaseMenu, d.Pm)
+	d.MenuAmendments = BuildMenuAmendments(d.Pm, RestoredMenuKeys(ctx, d.Settings))
 	return err
+}
+
+// ReloadMenuAmendments recomputes MenuAmendments from the plugin manager's
+// already-loaded layout rows and the persisted restore set, under PluginMu
+// — the cheap refresh a restore / re-hide from Settings needs (no plugin
+// reload, nothing re-read from plugin_entries).
+func (d *Deps) ReloadMenuAmendments(ctx context.Context) {
+	d.PluginMu.Lock()
+	defer d.PluginMu.Unlock()
+	d.MenuAmendments = BuildMenuAmendments(d.Pm, RestoredMenuKeys(ctx, d.Settings))
+}
+
+// MenuAmendmentsSnapshot returns the Menu-slot amendments in force under
+// PluginMu's read lock — the render path's only way to read them
+// (ADR-0088 Decision I: no query per render; the rows were read at the
+// last plugin lifecycle change).
+func (d *Deps) MenuAmendmentsSnapshot() []uislot.Amendment {
+	d.PluginMu.RLock()
+	defer d.PluginMu.RUnlock()
+	return d.MenuAmendments
+}
+
+// LayoutAmendmentsSnapshot returns every active layout plugin's amendments
+// as loaded — restores NOT applied — under PluginMu's read lock. This is
+// what Settings → Hidden menu tiles lists: a restored hide is still a hide
+// the plugin declares, shown as "restored" with the way back. Nil-safe on
+// Pm like InstalledPlugin.
+func (d *Deps) LayoutAmendmentsSnapshot() []uislot.Amendment {
+	if d.Pm == nil {
+		return nil
+	}
+	d.PluginMu.RLock()
+	defer d.PluginMu.RUnlock()
+	return d.Pm.LayoutAmendments
 }
 
 // MenuSnapshot returns the current nav menu under PluginMu's read lock — the

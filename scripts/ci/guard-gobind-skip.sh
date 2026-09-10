@@ -130,6 +130,8 @@ if ! command -v gobind >/dev/null 2>&1; then
 fi
 
 OUTDIR="$(mktemp -d)"
+# Invoked indirectly via `trap ... EXIT`, not a direct call -- shellcheck cannot see that (SC2317 false positive).
+# shellcheck disable=SC2317
 cleanup() {
   rm -rf "$OUTDIR"
 }

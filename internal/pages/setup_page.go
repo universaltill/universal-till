@@ -15,6 +15,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -626,6 +627,25 @@ func registerSetup(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			if err := d.Settings.Set(r.Context(), common.KeyShopType, v); err != nil {
 				http.Error(w, "setup failed", http.StatusInternalServerError)
 				return
+			}
+			// ut-docs#1902: shop_type=service activates the builtin Salon
+			// layout (ADR-0088) — hides Tables/Kitchen stations, relabels
+			// Items to Services. Best-effort: a failure here must never
+			// block finishing setup over a cosmetic menu personalization —
+			// the shop still works, just with the generic everything-visible
+			// menu until a later Settings save retries it.
+			// ut-docs#2006: reload unless it's a genuine no-op (no error,
+			// nothing changed) — an error still reloads, since a failed
+			// reinstall can leave the DB changed (removeSalon succeeded)
+			// even though Sync itself returned an error.
+			changed, err := builtinlayouts.Sync(r.Context(), d.Db, v)
+			if err != nil {
+				logging.L().Warnf("setup: could not sync builtin layout for shop_type %q: %v", v, err)
+			}
+			if err != nil || changed {
+				if err := d.ReloadPlugins(r.Context()); err != nil {
+					logging.L().Warnf("setup: could not reload plugins after shop_type layout sync: %v", err)
+				}
 			}
 		}
 		if err := d.Settings.Set(r.Context(), "setup.completed", "true"); err != nil {

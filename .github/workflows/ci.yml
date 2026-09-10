@@ -53,6 +53,24 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.5.0
+      - name: Shellcheck version guard
+        run: bash scripts/ci/guard-shellcheck-version.sh
+      - name: Shellcheck version guard regression test
+        run: bash scripts/ci/guard-shellcheck-version_test.sh
+      - name: Shellcheck (scripts/ci/*.sh)
+        # ut-docs#1943: no shell linting existed anywhere in this pipeline
+        # despite the build job running 55+ shell scripts (the guard-*.sh
+        # CI guards and their own _test.sh regression suites) — shellcheck
+        # would have caught a real bug for free during ut-docs#1357's own
+        # review (a `while read ... done < <(find ...)` that failed open
+        # when `find` errored, since `set -e` doesn't cover a failure
+        # inside process substitution) and did catch one for real rolling
+        # this step out (check-brand-assets.sh's negated `! grep` checks
+        # silently skipped errexit on the exact violation they existed to
+        # catch, SC2251). ubuntu-latest ships shellcheck preinstalled, so
+        # no separate install step — its version is pinned/guarded by the
+        # "Shellcheck version guard" step above (ut-docs#1955), not here.
+        run: shellcheck scripts/ci/*.sh
       - name: Data-access policy guard
         run: bash scripts/ci/guard-data-access.sh
       - name: Data-access policy guard regression test
@@ -77,6 +95,10 @@ jobs:
         run: bash scripts/ci/guard-page-http-error_test.sh
       - name: Plugin-menu locked-read guard regression test
         run: bash scripts/ci/guard-plugin-menu-read_test.sh
+      - name: Plugin-settings BumpGeneration guard
+        run: bash scripts/ci/guard-plugin-settings-bump.sh
+      - name: Plugin-settings BumpGeneration guard regression test
+        run: bash scripts/ci/guard-plugin-settings-bump_test.sh
       - name: i18n coverage guard
         run: bash scripts/ci/guard-i18n.sh
       - name: i18n coverage guard regression test
@@ -104,6 +126,11 @@ jobs:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
         run: bash scripts/ci/guard-help-topics.sh
+      - name: Help-topic translation-drift guard
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: bash scripts/ci/guard-help-drift.sh
       - name: Linux desktop webkit2gtk version guard
         run: bash scripts/ci/guard-webkit-version.sh
       - name: Linux desktop webkit2gtk version guard regression test
@@ -149,6 +176,8 @@ jobs:
         run: bash scripts/ci/guard-e2e-fixtures-import_test.sh
       - name: Brand asset guard
         run: bash scripts/ci/check-brand-assets.sh
+      - name: Brand asset guard regression test
+        run: bash scripts/ci/check-brand-assets_test.sh
       - name: Stale-worktree prune script regression test
         # scripts/prune-stale-worktrees.sh itself is a manual maintenance
         # tool (run via `make prune-worktrees`, not part of this build),
@@ -158,6 +187,15 @@ jobs:
         # ut-docs#1567's locked-worktree finding) would go undetected
         # indefinitely.
         run: bash scripts/prune-stale-worktrees_test.sh
+      - name: Retry-with-backoff script regression test
+        # scripts/ci/retry-with-backoff.sh itself is invoked directly by the
+        # desktop-shell and e2e jobs below (ut-docs#1933), not by this build
+        # job — but its test is fully hermetic (own mktemp -d scratch dir,
+        # fake commands, no real apt/network/sudo) so nothing stops it
+        # running here, same reasoning as the stale-worktree test just
+        # above. Without this, a regression in the retry/backoff logic
+        # would go undetected until the next real apt-repo outage.
+        run: bash scripts/ci/retry-with-backoff_test.sh
       - name: Makefile version-stamp guard
         env:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
@@ -175,8 +213,10 @@ jobs:
         # Excludes internal/plugins itself (own step below, ut-docs#643) and
         # its oauth/marketplace subpackages (own step below, ut-docs#1630) —
         # both run with -v there so a t.Skip is visible; this step stays
-        # plain, so don't run either a second time here.
-        run: go test $(go list ./... | grep -vE '/internal/plugins$|/internal/plugins/(oauth|marketplace)$')
+        # plain, so don't run either a second time here. Also excludes
+        # internal/pages itself (own step below, ut-docs#1992) for the same
+        # margin reason as internal/plugins — see that step's comment.
+        run: go test $(go list ./... | grep -vE '/internal/plugins$|/internal/plugins/(oauth|marketplace)$|/internal/pages$')
       - name: Test (internal/plugins/oauth and /marketplace — ut-docs#1630)
         # Same gap #1626 fixed for internal/plugins itself: the main Test
         # step above runs plain (no -v), so a t.Skip in these subpackages
@@ -228,6 +268,47 @@ jobs:
           GOMODCACHE: ${{ runner.temp }}/gomodcache
           GOCACHE: ${{ runner.temp }}/gobuildcache
         run: go test -timeout 20m -v ./internal/plugins
+      - name: Test (internal/pages — wider timeout, ut-docs#1992)
+        # internal/pages hit the same plain (no -race) default 600s
+        # per-package `go test` timeout as internal/plugins did (ut-docs#643/
+        # #753/#776, comment above) — this time for real in CI on
+        # universal-till PR #1018, "FAIL ... internal/pages 600.022s"
+        # (goroutine dump caught inside InstallStatusRepo.Upsert's WAL
+        # commit-unlock path, an ordinary in-flight fcntl syscall, not a
+        # wait). Independently re-investigated for ut-docs#1992: this
+        # package's own plain local runtime is ~210-237s against the 600s
+        # budget, and sibling packages in the SAME incident's CI job
+        # measured 7.7-8.8x slower than their own local baseline under
+        # runner contention (internal/pos 8.8x, internal/settings 8.1x,
+        # internal/pages/common 7.7x) — that alone is enough to cross 600s
+        # without any hang, exactly ut-docs#648's already-documented
+        # "goroutine dump ≠ real hang" shape for this same package.
+        # Confirmed no actual deadlock/leak candidate in the path:
+        # `internal/db.Open`'s DSN already sets `busy_timeout(5000)` (rules
+        # out a SQLite lock explaining a 600s block) and an unbounded
+        # connection pool (rules out a `database/sql` pool-exhaustion
+        # wait); the specific test named in the incident
+        # (TestResolveAndInstallBasePlugin_PicksHighestSemverVersion) passed
+        # 40/40 local reruns with -race across two independent runs, ~1.9s/
+        # iteration. The real cost driver is fixture cost (~2200 tests each
+        # opening a fresh on-disk SQLite file and replaying all
+        # migrations), not a specific slow test, so shrinking one test's
+        # workload (ut-docs#648's own fix, applicable when one outlier test
+        # owns the margin) doesn't apply here. **The bigger effect is
+        # isolation, not the timeout itself**: run alone (as the two
+        # locale-specific reruns below already do) the package lands at
+        # ~204-214s — it's competing with ~70 sibling test binaries inside
+        # the blanket step that pushes it over 600s. This step's own
+        # `-timeout 20m` is belt-and-braces on top of that isolation, same
+        # as internal/plugins already does. Scoped to the exact package (no
+        # trailing /...) so the two OS-locale-specific internal/pages/...
+        # reruns below — already their own steps — don't run a third time
+        # here; they get their own `-timeout` below instead, for the same
+        # margin reason under whatever locale-specific contention they hit.
+        env:
+          GOMODCACHE: ${{ runner.temp }}/gomodcache
+          GOCACHE: ${{ runner.temp }}/gobuildcache
+        run: go test -timeout 20m ./internal/pages
       - name: Test (with OS locale set — ut-docs#662)
         # This runner's own container has no LANG, which is exactly what let
         # ut-docs#662's OS-locale-detection redirect (ut-docs#590) hide 4
@@ -262,7 +343,10 @@ jobs:
           GOCACHE: ${{ runner.temp }}/gobuildcache
           LANG: en_GB.UTF-8
           LC_ALL: en_GB.UTF-8
-        run: go test ./internal/pages/...
+        # -timeout 20m (ut-docs#1992): same margin fix as the plain
+        # internal/pages step above — this rerun carries the identical
+        # fixture cost under whatever locale-specific contention it hits.
+        run: go test -timeout 20m ./internal/pages/...
       - name: Test (with unavailable-language OS locale set — ut-docs#672)
         # The en_GB run above only ever detects an AVAILABLE language ("en"
         # is always in httpx.AvailableLocales()), so /setup's other
@@ -279,7 +363,9 @@ jobs:
           GOCACHE: ${{ runner.temp }}/gobuildcache
           LANG: de_DE.UTF-8
           LC_ALL: de_DE.UTF-8
-        run: go test ./internal/pages/...
+        # -timeout 20m (ut-docs#1992): same margin fix as the plain
+        # internal/pages step above.
+        run: go test -timeout 20m ./internal/pages/...
 
   desktop-shell:
     # ut-docs#1071: cmd/unitill-desktop's `desktop && linux` build tag (cgo +
@@ -306,8 +392,15 @@ jobs:
       - uses: actions/setup-go@v5
         with: { go-version: '1.25' }
       - name: Install GTK/WebKit dev headers
+        # ut-docs#1933: apt-get update against this runner image's
+        # pre-configured Google Chrome repo intermittently fails with a
+        # "Hash Sum mismatch" -- a known, recurring, external CDN-edge
+        # issue on GitHub-hosted Ubuntu runners, not anything in this
+        # repo. Retry with backoff, clearing the local apt index cache
+        # between attempts so a retry can't just re-serve the same stale
+        # index (scripts/ci/retry-with-backoff.sh).
         run: |
-          sudo apt-get update
+          bash scripts/ci/retry-with-backoff.sh 3 5 --clear-apt-lists -- sudo apt-get update
           sudo apt-get install -y libgtk-3-dev libwebkit2gtk-4.1-dev
       - name: Build unitill-desktop (desktop build tag)
         env:
@@ -390,9 +483,15 @@ jobs:
           exit 1
       - name: Install E2E dependencies
         working-directory: tests/e2e
+        # ut-docs#1933: `playwright install --with-deps` shells out to
+        # apt-get, which hits the same intermittent "Hash Sum mismatch"
+        # against this runner image's pre-configured Google Chrome repo as
+        # the desktop-shell job's own apt-get update above -- see that
+        # step's comment. Retry the whole install with backoff, clearing
+        # the local apt index cache between attempts.
         run: |
           npm install
-          npx playwright install --with-deps chromium
+          bash ../../scripts/ci/retry-with-backoff.sh 3 5 --clear-apt-lists -- npx playwright install --with-deps chromium
       - name: Run Playwright tests
         working-directory: tests/e2e
         env:

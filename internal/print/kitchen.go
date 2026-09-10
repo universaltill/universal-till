@@ -37,7 +37,7 @@ type KitchenTicket struct {
 	// Timestamp is the pre-formatted time the order was placed.
 	Timestamp string
 	Items     []KitchenItem
-	Charset   string // "utf8" (default), "ascii", "cp858", "win1250", "win1257", or "win1253", as Doc.Charset
+	Charset   string // "utf8" (default), "ascii", "cp858", "win1250", "win1257", "win1253", or "win1254", as Doc.Charset
 }
 
 // KitchenItem is one line of the order: a quantity, a name, and any

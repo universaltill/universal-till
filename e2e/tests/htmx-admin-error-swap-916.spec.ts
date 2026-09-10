@@ -19,7 +19,7 @@ test.describe('admin htmx error fragments are shown, not silently dropped (ut-do
     // "Failed to load resource: … 502" browser-level console error — expected
     // noise, not a JS bug (see helpers.ts's watchConsole doc comment).
     const assertClean = watchConsole(page, /^Failed to load resource:.*502/);
-    await page.goto('/settings');
+    await page.goto('/settings#settings-printer'); // ut-docs#1960: Settings is two-pane now — deep-link to the section this drives
     // No printer is configured in the e2e fixture (printer.mode defaults to
     // "off"), so this deterministically hits print_api.go's BadGateway path.
     const msg = page.locator('#print-test-msg');
@@ -33,8 +33,15 @@ test.describe('admin htmx error fragments are shown, not silently dropped (ut-do
   test('print/labels failure (404, unknown item) shows a visible error on catalog.html', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/catalog');
-    // The labels form lives inside a collapsed <details>.
-    await page.locator('.catalog-extra:has(#labels-item-id) summary').click();
+    // ut-docs#1901: the labels form moved inside the item-form dialog,
+    // which starts closed. ut-docs#1956: it is the dialog's "Print labels"
+    // tab now (no more <details>), and in create mode that tab shows a
+    // save-first hint with the form hidden — open an existing item
+    // instead so the form is really on screen.
+    await page.locator('.catalog-row', { hasText: 'Sugar 1kg' }).locator('td').first().click();
+    await expect(page.locator('#item-form-modal')).toBeVisible();
+    await page.locator('#item-form-tab-labels').click();
+    await expect(page.locator('#labels-item-id')).toHaveValue(/.+/);
     // Bypass the picker UI and drive the hidden field directly — the bug
     // is in the client-side swap handling, not the picker.
     await page.locator('#labels-item-id').evaluate((el: HTMLInputElement) => {
@@ -74,6 +81,8 @@ test.describe('admin htmx error fragments are shown, not silently dropped (ut-do
     const assertClean = watchConsole(page, /^Failed to load resource:.*400|^Response Status Error Code 400/);
     await page.goto('/catalog');
     await page.locator('.catalog-row', { hasText: 'Sugar 1kg' }).click();
+    // ut-docs#1956: the panel is the item dialog's Variants tab now.
+    await page.locator('#item-form-tab-variants').click();
     const panel = page.locator('#catalog-variants');
     await expect(panel.locator('.catalog-detail-grid')).toBeVisible();
     const before = await panel.innerHTML();

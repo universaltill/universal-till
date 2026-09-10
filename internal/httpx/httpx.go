@@ -24,6 +24,7 @@ import (
 	moneypkg "github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/pihealth"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/selfupdate"
 	"github.com/universaltill/universal-till/internal/updates"
 	uiassets "github.com/universaltill/universal-till/web"
@@ -117,7 +118,16 @@ var baseFuncs = template.FuncMap{
 	// bar's persistent chip surfaces internal/pihealth's local, offline
 	// check. Always false on non-Pi platforms.
 	"psuunderpowered": func() bool { return pihealth.Current().Underpowered },
-	"jsonVals":        jsonVals,
+	// pluginupdatesavailable/pluginupdatescount: StartPluginUpdateScheduler
+	// (ut-docs#1953) publishes the count of installed-plugin updates still
+	// waiting on a merchant decision — everything it didn't auto-apply
+	// itself (a language pack auto-applies silently; anything else needs a
+	// human). Same always-cheap, no-DB-query, offline-safe status-bar chip
+	// pattern as updateavailable/latestversion above, just for plugins
+	// instead of the core app.
+	"pluginupdatesavailable": func() bool { return plugins.CurrentPendingUpdates().Count > 0 },
+	"pluginupdatescount":     func() int { return plugins.CurrentPendingUpdates().Count },
+	"jsonVals":               jsonVals,
 	// Default target for the nav's contextual "?" — the manual's index.
 	// Render() overrides this per request with the topic documenting the page
 	// actually being rendered; fragment renderers that also parse nav.html
@@ -130,6 +140,60 @@ var baseFuncs = template.FuncMap{
 	"helpLink": func(id string) template.HTML { return helpLinkHTML(id, DefaultLocale()) },
 	// {{ icon "lock" }} — inline SVG rail icons (icons.go, ut-docs#1423).
 	"icon": iconHTML,
+	// {{ dict "k" v ... }} — per-call parameters for a shared partial
+	// (list_header.html / record_dialog.html, ut-docs#2010), so a page
+	// adopts the list/edit standard with a template-only change.
+	"dict": dict,
+	// {{ $_ := req . "id" "formID" }} — the FIRST line of a shared partial:
+	// an execute-time error naming the key when a required dict key is
+	// absent or empty. Without it a misspelled key renders as "" at HTTP
+	// 200 (Save bound to form="", a New button targeting no dialog) — see
+	// req below.
+	"req": req,
+}
+
+// dict builds a map for {{ template "x" (dict "k" v ...) }}. An odd-length
+// argument list or a non-string key is an execute-time error rather than a
+// half-built map. That is the ONLY loud failure dict gives: a key that is
+// merely missing at the call site is NOT an error — html/template renders
+// a missing map key as the empty string — which is why every partial that
+// takes a dict guards its required keys with req on its first line
+// (ut-docs#2010 review, B2).
+func dict(kv ...any) (map[string]any, error) {
+	if len(kv)%2 != 0 {
+		return nil, fmt.Errorf("dict: want key/value pairs, got %d arguments", len(kv))
+	}
+	out := make(map[string]any, len(kv)/2)
+	for i := 0; i < len(kv); i += 2 {
+		k, ok := kv[i].(string)
+		if !ok {
+			return nil, fmt.Errorf("dict: key %d is %T, want string", i/2, kv[i])
+		}
+		out[k] = kv[i+1]
+	}
+	return out, nil
+}
+
+// req is the required-key guard a dict-taking partial runs first:
+// {{ $_ := req . "id" "formID" }}. It returns an error naming the first
+// required key that is absent, nil, or an empty string, so a misspelled
+// or forgotten key at a call site fails the render instead of shipping a
+// partial that looks fine and does nothing (ut-docs#2010 review, B2: a
+// missing formID rendered Save with form="" → getElementById("") → null →
+// Save did nothing and the discard guard silently disabled, at HTTP 200).
+// A nil dict (the partial called with no argument) fails on the first key.
+// The empty string it returns is so a bare {{ req . "k" }} prints nothing.
+func req(m map[string]any, keys ...string) (string, error) {
+	for _, k := range keys {
+		v, ok := m[k]
+		if !ok || v == nil {
+			return "", fmt.Errorf("req: required key %q is missing from the dict", k)
+		}
+		if s, isStr := v.(string); isStr && s == "" {
+			return "", fmt.Errorf("req: required key %q is empty", k)
+		}
+	}
+	return "", nil
 }
 
 // helpLinkHTML renders the same .help-hint markup nav.html's automatic "?"
@@ -473,6 +537,19 @@ func ResolveLocale(w http.ResponseWriter, r *http.Request) string {
 		})
 		return lang
 	}
+	return RequestLocale(r)
+}
+
+// RequestLocale is ResolveLocale without the side effect: the same
+// query-param → cookie → default resolution, but it never writes the
+// ut_lang cookie. For a handler that needs the locale BEFORE it calls
+// Render (which resolves again, and would otherwise emit a second
+// Set-Cookie for the same ?lang= — menu_page.go's label fallback,
+// ADR-0088 Decision G).
+func RequestLocale(r *http.Request) string {
+	if lang := r.URL.Query().Get("lang"); lang != "" {
+		return lang
+	}
 	// cookie
 	if c, err := r.Cookie("ut_lang"); err == nil && c.Value != "" {
 		return c.Value
@@ -796,6 +873,30 @@ var renderFiles = []string{
 	// own htmx poll response AND settings.html's page render both need this
 	// exact markup, so it's a partial riding along here too.
 	"ui/partials/window_mode_status.html",
+	// ut-docs#1950: items.html's own content template includes this by its
+	// {{ define "items_rail" }} name (same as help_topic.html/help_nav.html
+	// above) — riding along here is what lets that work through the plain
+	// httpx.Render("ui/pages/items.html", ...) call site, with no bespoke
+	// RenderWith file set of its own.
+	"ui/partials/items_rail.html",
+	// ut-docs#1957: modifiers.html's own "content"/"modifiers_list" templates
+	// call {{ template "modifier_group_admin" ... }} — riding along here is
+	// what lets that resolve through the plain httpx.Render("ui/pages/
+	// modifiers.html", ...)/RenderContentFragment call sites, same as
+	// items_rail.html above.
+	"ui/partials/modifier_group_admin.html",
+	// ut-docs#2010: the app-wide list/edit standard's two partials
+	// (ut-docs/reference/list-and-dialog-pattern.md). Same mechanism as
+	// items_rail.html above — a page includes them by their {{ define }}
+	// names through the plain Render/RenderContentFragment call sites. Note
+	// the slot contract this depends on: this set is fixed and only the
+	// PAGE varies per call, so every page is parsed into its own template
+	// set, and two pages may each {{ define "record_dialog_fields" }} with
+	// no collision. record_dialog.html therefore ships NO default for its
+	// slots (definition order across ParseFiles would silently pick a
+	// winner) — a page that uses it must define both, see the partial.
+	"ui/partials/list_header.html",
+	"ui/partials/record_dialog.html",
 }
 
 // Render full page with layout + page + common partials
@@ -823,6 +924,57 @@ func RenderPartial(tplPath string, data any) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
+}
+
+// RenderContentFragment renders just the "content" define block of a full
+// page template — base.html + page + the same shared partial set Render(...)
+// uses — without base.html's surrounding chrome (no nav, no status bar). For
+// a route that is ALSO a full standalone page (so a deep link still works,
+// unchanged) and additionally needs to answer an htmx fragment request from
+// inside ANOTHER page's own panel (ut-docs#1950: /items' five section
+// destinations, embedded in its right-hand panel). Deliberately reuses the
+// exact same file set/cache key as Render rather than a separate hand-
+// written partial template — a forked copy of a page's markup would drift
+// from the real page the moment either one changed and the other didn't;
+// this can't drift because it IS the same parsed template, just entered at
+// "content" instead of "base". See httpx.IsFragmentSwap for the header
+// check a caller uses to decide which of Render/RenderContentFragment a
+// given request gets (mirrors renderHelpPage's original, older version of
+// that same check for /help/{topic}).
+func RenderContentFragment(tplPath string, data any) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		page := stripWebPrefix(tplPath)
+
+		locale := ResolveLocale(w, r)
+		files := append([]string{renderFiles[0], page}, renderFiles[1:]...)
+		t := template.Must(ClonedTemplate("httpx.Render:"+page, "base.html", withHelpHref(FuncsFor(locale), r), files...))
+		if err := t.ExecuteTemplate(w, "content", data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// IsFragmentSwap reports whether r is an ordinary in-page htmx navigation —
+// "HX-Request: true" and NOT ALSO "HX-History-Restore-Request: true".
+//
+// The second header matters: htmx caps its client-side history cache at 10
+// snapshots, so restoring an older bfcache'd URL makes htmx re-request it
+// itself with BOTH headers set, expecting the FULL page back (to replace
+// the whole tracked history element) rather than a bare swappable fragment
+// — checking HX-Request alone sent the fragment there too and left the
+// restored page broken (see renderHelpPage's original instance of this
+// exact check, ut-docs#433, for the full story). Shared here so every
+// handler that serves both a full standalone page and an htmx fragment of
+// the same content at the same route applies the identical rule — /items'
+// five section destinations (ut-docs#1950) need it five times over;
+// renderHelpPage itself keeps its own inline copy rather than being
+// refactored onto this helper, so as not to touch its own already-covered
+// behavior as a side effect of this card.
+func IsFragmentSwap(r *http.Request) bool {
+	if strings.EqualFold(r.Header.Get("HX-History-Restore-Request"), "true") {
+		return false
+	}
+	return strings.EqualFold(r.Header.Get("HX-Request"), "true")
 }
 
 func JSON[In any, Out any](fn func(In) (Out, error)) http.HandlerFunc {

@@ -37,3 +37,15 @@ Ekranda gösterilen referans koduyla destek ile iletişime geçin. Nedene
 bağlı olarak çözüm başka bir yazılım güncellemesi ya da kasanın son otomatik
 yedeğinin geri yüklenmesi olabilir (Yedekler konusuna bakın) — hangisi
 olduğunu destek size söyleyecektir.
+
+## Android kasada: tek bir sayfa yüklenmiyor
+
+Bu, yukarıdaki **tüm kasanın** başlamamasıyla ilgili kurtarma ekranından
+farklıdır. Burada kasa normal çalışıyor, ama bir sayfa kısa süreliğine
+yüklenemedi — ağ gezinme sırasında kesildi ya da kasanın kendi servisi
+henüz hazır değildi. Ekranın altında "Bu sayfa yüklenemedi" yazan gri bir
+çubuk ve bir **Kasaya dön** düğmesi görünür; satış ekranına dönmek için
+buna dokunun. Çubuğun üzerindeki ekran, kasanızın dili ne olursa olsun
+kısa süreliğine İngilizce teknik bir mesaj gösterebilir — bu normaldir,
+yalnızca altındaki düğmeyi kullanın. Bu tekrar tekrar olursa, hangi
+sayfayı açmaya çalıştığınızı belirterek destek ile iletişime geçin.

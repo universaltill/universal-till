@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, setOskMode } from './helpers';
+import { watchConsole, setOskMode, openNewItemForm, closeItemForm } from './helpers';
 
 // ut-docs#1284: found by independent review of ut-docs#1275, out of that
 // card's explicitly-scoped five admin-screen files. Same root cause as
@@ -162,6 +162,7 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     const assertClean = watchConsole(page);
     await setOskMode(page, 'on');
     await page.goto('/catalog');
+    await openNewItemForm(page);
 
     const price = page.locator('#item-price');
     await price.click();
@@ -179,6 +180,7 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
   // observed flake source in this file, unlike every scan elsewhere in
   // this suite which already waits on its own request).
   async function createProbeItemAndOpenVariants(page: import('@playwright/test').Page, name: string) {
+    await openNewItemForm(page);
     await page.locator('#item-name').fill(name);
     await page.locator('#item-price').fill('1.00');
     await Promise.all([
@@ -187,8 +189,16 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     ]);
     await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
 
+    // ut-docs#1956: the dialog is FULL-screen now, so the row underneath
+    // cannot be clicked until the create dialog is gone — close it
+    // explicitly (closeItemForm, ut-docs#1929: race-tolerant of the
+    // save-success auto-close timer) rather than waiting on that timer.
+    await closeItemForm(page);
     const row = page.locator('.catalog-row', { hasText: name });
     await row.locator('td').first().click();
+    // …and the variants panel is the reopened dialog's Variants tab, not a
+    // page-level section any more — so the dialog STAYS open here.
+    await page.locator('#item-form-tab-variants').click();
     await expect(page.locator('#catalog-variants')).toBeVisible();
   }
 
@@ -269,6 +279,17 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     await page.goto('/catalog');
     await createProbeItemAndOpenVariants(page, 'OSK Existing Option Probe ' + Date.now());
 
+    // ut-docs#1957: modifier-group/option CRUD moved out of this panel into
+    // the nested #modifier-groups-modal dialog, opened via its own button
+    // (lazy-loaded by GET /api/catalog/modifier-groups-panel) -- open it
+    // before looking for the "add group" form the old inline panel used to
+    // render directly.
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/catalog/modifier-groups-panel')),
+      page.locator('#manage-modifiers-btn').click(),
+    ]);
+    await expect(page.locator('#modifier-groups-modal')).toBeVisible();
+
     const groupName = 'Milk';
     await page.locator('.modifier-admin-group-new input[name="name"]').fill(groupName);
     await Promise.all([
@@ -318,6 +339,14 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     await expect(page.locator('#osk.osk-open')).toBeVisible();
     await typeViaOsk(page, '1.65');
     await expect(variantCost).toHaveValue('1.65');
+
+    // ut-docs#1957: same relocation as the sibling test above -- open the
+    // nested modifier-groups dialog before looking for its "add group" form.
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/catalog/modifier-groups-panel')),
+      page.locator('#manage-modifiers-btn').click(),
+    ]);
+    await expect(page.locator('#modifier-groups-modal')).toBeVisible();
 
     const groupName = 'OSK New-Row Modifier ' + Date.now();
     await page.locator('.modifier-admin-group-new input[name="name"]').fill(groupName);

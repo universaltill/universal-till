@@ -26,6 +26,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -482,8 +483,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if resetBatchesErr != nil {
 			logging.L().Errorf("list reset batches: %v", resetBatchesErr)
 		}
-		// Same human-friendly date format the backups table already uses
-		// (backup_api.go's listBackupsForUI) rather than a raw RFC3339 string.
+		// Locale-aware date format (ut-docs#1130/#1632/#1894). The .backups
+		// table below used to be a separate gap (ut-docs#1936 — it was
+		// still a hardcoded "2006-01-02 15:04" in listBackupsForUI,
+		// backup_api.go) but now goes through the same httpx.FormatDateTime
+		// call as everything else on this page.
 		// Purgeable/RetainedUntilDisplay (ut-docs#698) let the template show
 		// per-row purge eligibility instead of every row offering a
 		// Delete-permanently control that a gated batch will just refuse.
@@ -498,11 +502,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		for _, b := range resetBatchesRaw {
 			display := b.CreatedAt
 			if t, err := time.Parse(time.RFC3339, b.CreatedAt); err == nil {
-				display = t.Format("2006-01-02 15:04")
+				display = httpx.FormatDateTime(t.Local(), locale)
 			}
 			view := resetBatchView{ID: b.ID, CreatedAt: display, SalesCount: b.SalesCount, Purgeable: b.Purgeable}
 			if !b.RetainedUntil.IsZero() {
-				view.RetainedUntilDisplay = b.RetainedUntil.Format("2006-01-02")
+				view.RetainedUntilDisplay = httpx.FormatDate(b.RetainedUntil.Local(), locale)
 			}
 			resetBatches = append(resetBatches, view)
 		}
@@ -608,7 +612,14 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// bypass.
 			"androidUpdateSessionAuth": androidUpdateSessionAuthorizes(d, r),
 			"printer":                  printerConfig(r.Context(), d),
-			"backups":                  listBackupsForUI(d),
+			// ADR-0089 Decision 3: the interim Germany carve-out locks the
+			// receipt-policy control to "always" — read from the same
+			// settings row the save handler and printerConfig key off, not
+			// CurrentState, so a country changed via /api/settings/upsert in
+			// this same session renders consistently with what the save
+			// handler will actually accept.
+			"receiptPolicyLocked": receiptPolicyLockedForCountry(all[common.KeyCountry]),
+			"backups":             listBackupsForUI(d, locale),
 			// ut-docs#1613: a restore staged in an earlier visit (or before
 			// a page reload) must still offer its restart trigger here —
 			// otherwise the operator who reloads mid-flow lands back on the
@@ -1578,6 +1589,23 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
+		// ut-docs#1902: shop_type=service activates the builtin Salon layout
+		// (ADR-0088); any other value (including clearing it back to "")
+		// deactivates it if it was active. Best-effort — a failure here must
+		// never block a shop-type save over a cosmetic menu personalization.
+		// ut-docs#2006: reload unless it's a genuine no-op (no error,
+		// nothing changed) — an error still reloads, since a failed
+		// reinstall can leave the DB changed (removeSalon succeeded) even
+		// though Sync itself returned an error.
+		changed, syncErr := builtinlayouts.Sync(r.Context(), d.Db, v)
+		if syncErr != nil {
+			logging.L().Warnf("settings: could not sync builtin layout for shop_type %q: %v", v, syncErr)
+		}
+		if syncErr != nil || changed {
+			if err := d.ReloadPlugins(r.Context()); err != nil {
+				logging.L().Warnf("settings: could not reload plugins after shop_type layout sync: %v", err)
+			}
+		}
 		settingsAudit(r, posRepo, elev, "settings", common.KeyShopType, "shop_type_changed",
 			map[string]any{"shop_type": v})
 		settingsRespondSaved(w, r, elev)
@@ -2401,12 +2429,12 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		switch logicalKey {
 		case fiscal.KeyOverrideUntil, fiscal.KeyOverrideReason, fiscal.KeyOverrideActor:
 			if !canPerform(d, r, "fiscal_tse_override") {
-				http.Error(w, "owner (admin) required", http.StatusForbidden)
+				httpx.RenderError(w, r, http.StatusForbidden, "fiscaldevice.error.owner_required", nil)
 				return
 			}
 		case fiscal.KeySystemOfRecord, wireKeySigningDeviceConfigured:
 			if !canPerform(d, r, "fiscal_tse_override") {
-				http.Error(w, "owner (admin) required", http.StatusForbidden)
+				httpx.RenderError(w, r, http.StatusForbidden, "fiscaldevice.error.owner_required", nil)
 				return
 			}
 		}

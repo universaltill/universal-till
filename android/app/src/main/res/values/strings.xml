@@ -22,4 +22,11 @@
          page's "Open Bluetooth settings" button would be a silent no-op —
          precisely the dead end this card exists to remove. -->
     <string name="bluetooth_settings_blocked_in_lockdown">Exit lockdown first — Android’s Bluetooth settings can’t open while the till is locked.</string>
+    <!-- ut-docs#1457 (split from #1455 item 4): shown by MainActivity's
+         error_bar when a main-frame WebView load fails before it ever
+         reaches httpx.RenderError's translated error page (server not up
+         yet, a network blip mid-navigation) — so this can't reuse that
+         page's own strings and needs its own. -->
+    <string name="error_bar_message">This page couldn’t load.</string>
+    <string name="error_bar_action">Back to till</string>
 </resources>

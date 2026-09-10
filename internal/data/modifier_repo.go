@@ -152,12 +152,42 @@ WHERE g.item_id = ?`
 // name don't interleave their groups), then group sort_order/name, matching
 // the per-item queries' own group ordering.
 func (r *ModifierRepo) ListShopModifierGroups(ctx context.Context) ([]ModifierGroup, error) {
-	groupRows, err := r.db.QueryContext(ctx, `
+	return r.listShopModifierGroups(ctx, false)
+}
+
+// ListAllShopModifierGroups is the admin equivalent of ListShopModifierGroups
+// — it returns EVERY modifier group and option shop-wide, active or not
+// (ut-docs#1957): once /modifiers became the full CRUD home for modifier
+// groups (moved out of the per-item catalog panel), the admin page needs to
+// show a deactivated group/option too so a manager can reactivate it, same
+// reason ListAllGroupsForItem exists beside the per-item ListGroupsForItem.
+// The read-only browse behavior of ListShopModifierGroups above is
+// unchanged — this is a separate method, not a widened filter on that one.
+func (r *ModifierRepo) ListAllShopModifierGroups(ctx context.Context) ([]ModifierGroup, error) {
+	return r.listShopModifierGroups(ctx, true)
+}
+
+// listShopModifierGroups is shared by both exported shop-wide queries above.
+// i.is_active is ALWAYS required (independent review, ut-docs#1899): once an
+// item is deactivated, ListItems already hides it from /catalog — the only
+// place its groups could be reached or edited — so without this a
+// deactivated item's groups would linger on a shop-wide screen forever,
+// labelled with a name the merchant can no longer find or act on. That
+// holds for the admin variant too, since a deactivated item's detail panel
+// is unreachable there just the same. includeInactive only ever widens the
+// GROUP/OPTION is_active filter, never the item one.
+func (r *ModifierRepo) listShopModifierGroups(ctx context.Context, includeInactive bool) ([]ModifierGroup, error) {
+	groupQuery := `
 SELECT g.id, g.item_id, i.name, g.name, g.required, g.min_select, g.max_select, g.sort_order, g.is_active
 FROM item_modifier_groups g
 JOIN items i ON i.id = g.item_id
-WHERE g.is_active = 1 AND i.is_active = 1
-ORDER BY i.name, g.item_id, g.sort_order, g.name`)
+WHERE i.is_active = 1`
+	if !includeInactive {
+		groupQuery += ` AND g.is_active = 1`
+	}
+	groupQuery += ` ORDER BY i.name, g.item_id, g.sort_order, g.name`
+
+	groupRows, err := r.db.QueryContext(ctx, groupQuery)
 	if err != nil {
 		return nil, fmt.Errorf("list shop modifier groups: %w", err)
 	}
@@ -185,13 +215,18 @@ ORDER BY i.name, g.item_id, g.sort_order, g.name`)
 		byID[groups[i].ID] = &groups[i]
 	}
 
-	optRows, err := r.db.QueryContext(ctx, `
+	optQuery := `
 SELECT o.id, o.group_id, o.name, o.price_delta_minor, o.sort_order, o.is_active
 FROM item_modifier_options o
 JOIN item_modifier_groups g ON g.id = o.group_id
 JOIN items i ON i.id = g.item_id
-WHERE g.is_active = 1 AND o.is_active = 1 AND i.is_active = 1
-ORDER BY o.sort_order, o.name`)
+WHERE i.is_active = 1`
+	if !includeInactive {
+		optQuery += ` AND g.is_active = 1 AND o.is_active = 1`
+	}
+	optQuery += ` ORDER BY o.sort_order, o.name`
+
+	optRows, err := r.db.QueryContext(ctx, optQuery)
 	if err != nil {
 		return nil, fmt.Errorf("list shop modifier options: %w", err)
 	}

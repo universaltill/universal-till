@@ -292,6 +292,149 @@ func TestOrdersListFragment_ShowsStatusAndButtons(t *testing.T) {
 	}
 }
 
+// ut-docs#1964: the actions cell must offer only the moves actually
+// available from the CURRENT status, not all four unconditionally — a
+// row already moved to "preparing" must not still offer "Preparing".
+func TestOrdersListFragment_ActionsMatchCurrentStatus(t *testing.T) {
+	mux, _, dbase := newOrderStatusTestDeps(t)
+	seedOrderStatusTestSale(t, dbase, "sale-1", "R-0020")
+	if rec := postOrderStatus(mux, "R-0020", "preparing"); rec.Code != http.StatusOK {
+		t.Fatalf("setup move: %d", rec.Code)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/orders", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	// Matched by rendered button LABEL, not the hx-vals JSON string: the
+	// template path renders hx-vals via {{ jsonVals "status" .TargetStatus }},
+	// which html/template HTML-escapes (&#34; for the quotes) — a raw
+	// `"status":"ready"` substring match would be coupled to that escaping
+	// detail. The label is a stable, unique proxy for which action a button
+	// offers (orderActionCandidates pairs each TargetStatus with one Key).
+	div := extractByID(t, rec.Body.String(), "order-actions-R-0020")
+	if strings.Contains(div, ">Preparing<") {
+		t.Fatalf("already-preparing row must not still offer Preparing, got %q", div)
+	}
+	for _, label := range []string{">Ready<", ">Collected<", ">Cancel order<"} {
+		if !strings.Contains(div, label) {
+			t.Fatalf("preparing row must still offer %s, got %q", label, div)
+		}
+	}
+}
+
+// extractByID pulls the substring of body from the opening tag carrying
+// id="wantID" through its balanced closing tag, for asserting on ONE
+// element without being tripped up by siblings. Tag-name-agnostic (works
+// for both the actions cell's <div> and order_view's <span>); assumes no
+// same-named nested element (true of the OOB fragments this test exercises).
+func extractByID(t *testing.T, body, wantID string) string {
+	t.Helper()
+	marker := `id="` + wantID + `"`
+	start := strings.Index(body, marker)
+	if start < 0 {
+		t.Fatalf("no element with %s in %q", marker, body)
+	}
+	open := strings.LastIndex(body[:start], "<")
+	if open < 0 {
+		t.Fatalf("no enclosing opening tag for %s in %q", marker, body)
+	}
+	tagEnd := open + 1
+	for tagEnd < len(body) && body[tagEnd] != ' ' && body[tagEnd] != '>' {
+		tagEnd++
+	}
+	tag := body[open+1 : tagEnd]
+	closeTag := "</" + tag + ">"
+	closeIdx := strings.Index(body[start:], closeTag)
+	if closeIdx < 0 {
+		t.Fatalf("no closing %s for %s in %q", closeTag, marker, body)
+	}
+	return body[open : start+closeIdx+len(closeTag)]
+}
+
+// ut-docs#1964: the one-tap POST response itself must carry a second OOB
+// fragment for the actions cell (not just the status cell) — a tap that
+// applies must make its own button disappear in the SAME response, not
+// wait for the next 15s poll/SSE push.
+func TestOrderStatusPost_ActionsFragmentOOB_HidesAppliedButton(t *testing.T) {
+	mux, _, dbase := newOrderStatusTestDeps(t)
+	seedOrderStatusTestSale(t, dbase, "sale-1", "R-0021")
+
+	rec := postOrderStatus(mux, "R-0021", "preparing")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	wantDiv := `id="order-actions-R-0021"`
+	if !strings.Contains(body, wantDiv) {
+		t.Fatalf("fragment must carry an OOB actions div, want %q in %q", wantDiv, body)
+	}
+	if !strings.Contains(body, `id="order-actions-R-0021" class="btn-actions" hx-swap-oob="outerHTML"`) {
+		t.Fatalf("actions OOB div must swap outerHTML, got %q", body)
+	}
+	div := extractByID(t, body, "order-actions-R-0021")
+	if strings.Contains(div, `"status":"preparing"`) {
+		t.Fatalf("the just-applied Preparing button must be gone from the OOB fragment, got %q", div)
+	}
+	if !strings.Contains(div, `"status":"ready"`) || !strings.Contains(div, `"status":"collected"`) || !strings.Contains(div, `"status":"cancelled"`) {
+		t.Fatalf("remaining valid moves must still be offered, got %q", div)
+	}
+}
+
+// A terminal write's OOB actions fragment renders with zero buttons — the
+// row is separately OOB-deleted in the same response anyway, but a client
+// that hasn't yet processed the delete must not be left with a live button
+// for a status nothing can move on from.
+func TestOrderStatusPost_ActionsFragmentOOB_EmptyWhenTerminal(t *testing.T) {
+	mux, _, dbase := newOrderStatusTestDeps(t)
+	seedOrderStatusTestSale(t, dbase, "sale-1", "R-0022")
+
+	rec := postOrderStatus(mux, "R-0022", "collected")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	div := extractByID(t, rec.Body.String(), "order-actions-R-0022")
+	if strings.Contains(div, "<button") {
+		t.Fatalf("a terminal (collected) status must offer zero action buttons, got %q", div)
+	}
+}
+
+// ut-docs#1894: the orders list's CreatedAt and StatusUpdatedAt columns now
+// render through the locale-aware `datetime` template func instead of the
+// raw RFC3339 string (same pattern as journal's #1632 fix). Seeds fixed
+// timestamps directly on the sales row rather than via postOrderStatus,
+// which stamps order_status_updated_at with the current time.
+func TestOrdersListFragment_RendersLocaleFormattedTimestamps(t *testing.T) {
+	orig := time.Local
+	time.Local = time.UTC
+	t.Cleanup(func() { time.Local = orig })
+
+	mux, _, dbase := newOrderStatusTestDeps(t)
+	if _, err := dbase.DB.Exec(`INSERT INTO sales (id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, order_status, order_status_updated_at)
+		VALUES ('sale-dt', 'R-DT', 'completed', 'sale', 'GBP', 370, 0, 0, 370, '2026-08-15T09:30:00Z', 'preparing', '2026-08-15T10:15:00Z')`); err != nil {
+		t.Fatalf("seed sale: %v", err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/orders?lang=de-DE", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "2026-08-15T09:30:00Z") || strings.Contains(body, "2026-08-15T10:15:00Z") {
+		t.Fatalf("orders list must not show a raw RFC3339 timestamp: %s", body)
+	}
+	if !strings.Contains(body, "15.08.2026 09:30") {
+		t.Fatalf("orders list must show the de-DE-formatted CreatedAt: %s", body)
+	}
+	if !strings.Contains(body, "15.08.2026 10:15") {
+		t.Fatalf("orders list must show the de-DE-formatted StatusUpdatedAt: %s", body)
+	}
+}
+
 // ut-docs#517a: a sale whose latest kitchen/receipt print attempt failed
 // must carry a visible warning in the orders list — a paid kiosk order must
 // never be silently lost to an out-of-paper printer.

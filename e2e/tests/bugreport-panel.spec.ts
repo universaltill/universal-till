@@ -109,13 +109,18 @@ for (const [w, h] of [[1280, 720], [1024, 600], [1280, 800]] as const) {
 
 test('scrollable underneath: a long page still scrolls with the panel open', async ({ page }) => {
   const assertClean = watchConsole(page);
-  await page.goto('/settings');
+  // ut-docs#1960: Settings is two-pane now and shows ONE section at a
+  // time, so a bare /settings (the short registration card) is no longer
+  // a long page — deep-link to the All settings table, which is.
+  await page.goto('/settings#settings-all');
   await page.getByTestId('bugreport-toggle').click();
   await expect(page.getByTestId('bugreport-panel')).toBeVisible();
 
-  // A real wheel gesture over the page body (not over the panel).
+  // A real wheel gesture over the page body (not over the panel). Over the
+  // settings PANEL side, not x=200: that column is now the sticky section
+  // list, which scrolls internally and would swallow the wheel (ut-docs#1960).
   const before = await page.evaluate(() => window.scrollY);
-  await page.mouse.move(200, 400);
+  await page.mouse.move(700, 400);
   await page.mouse.wheel(0, 600);
   await expect
     .poll(() => page.evaluate(() => window.scrollY))

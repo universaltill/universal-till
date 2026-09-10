@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/universaltill/universal-till/internal/logging"
 )
@@ -16,7 +17,22 @@ import (
 // its admin-managed state (catalog, users, settings, translations) as one
 // bundle; a replica applies it wholesale — primary wins. A whole-bundle
 // fingerprint replaces per-table cursors so deletes propagate too.
-type SyncAdminRepo struct{ db *sql.DB }
+type SyncAdminRepo struct {
+	db *sql.DB
+
+	// ut-docs#1368: DumpAdmin's last result, keyed on the
+	// sync_admin_version.generation it was scanned under (migration 022's
+	// triggers bump that counter on every write to any adminTables entry).
+	// An unchanged-poll from a replica then costs one single-row SELECT
+	// instead of the full 34-table scan + marshal + hash. Per process and
+	// per repo instance; the counter itself lives in the DB, so a second
+	// instance (or a restart) just starts cold and converges.
+	mu         sync.Mutex
+	cacheGen   int64
+	cache      AdminBundle
+	cacheFP    string
+	cacheValid bool
+}
 
 func NewSyncAdminRepo(db *sql.DB) *SyncAdminRepo { return &SyncAdminRepo{db: db} }
 
@@ -87,7 +103,14 @@ var adminTables = []adminTable{
 	// UNIQUE column doubles as its display name, instead of only mangling
 	// name and leaving nothing that marks the row as retired.
 	{name: "brands", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}},
-	{name: "categories", pk: []string{"id"}},
+	// ut-docs#1898/#1610: categories gained is_active in migration 017 so an
+	// FK-blocked prune retires the row (is_active = 0) instead of leaving it
+	// permanently active with no signal it was ever pruned. No `unique` entry
+	// here (unlike brands/tax_codes/users/stock_locations/registers): unlike
+	// those five, categories.name carries no DB UNIQUE constraint, so the
+	// mangle step deleteMissing runs for `unique` columns would have nothing
+	// to free and nothing to protect — only the is_active flag applies.
+	{name: "categories", pk: []string{"id"}, hasIsActive: true},
 	{name: "customers", pk: []string{"id"}, unique: []string{"loyalty_no"}},
 	// plugin_id is till-local derived state (which plugin installed on THIS
 	// till owns the method) — importing it re-hijacks a repaired built-in
@@ -125,6 +148,25 @@ var adminTables = []adminTable{
 	{name: "item_barcodes", pk: []string{"barcode"}},
 	{name: "item_variants", pk: []string{"id"}, hasIsActive: true, unique: []string{"sku"}},
 	{name: "variant_barcodes", pk: []string{"barcode"}},
+	// ut-docs#1900: reusable option sets (migration 017) are catalog
+	// structure of exactly the same shop-wide kind as item_modifier_groups
+	// below — the generated variants themselves already travel as
+	// item_variants rows above, and a satellite that had the rows but not
+	// the sets/links they came from would show the item's range with no
+	// record of what it was generated from. Mutation is primary-only
+	// (catalog/handlers.go's requirePrimary on every option-set route),
+	// which is what makes syncing safe, same as #1667's reasoning for the
+	// modifier tables. Ordered for their FKs: option_set_values ->
+	// option_sets; item_option_sets -> items + option_sets;
+	// item_variant_options -> item_variants + option_set_values (all
+	// applied after items/item_variants above). option_sets has a real
+	// is_active plus UNIQUE(name), so it retires like items on an FK-blocked
+	// prune; option_set_values' UNIQUE is (option_set_id, value), and
+	// mangling `value` alone keeps that pair unique too.
+	{name: "option_sets", pk: []string{"id"}, hasIsActive: true, unique: []string{"name"}},
+	{name: "option_set_values", pk: []string{"id"}, unique: []string{"value"}},
+	{name: "item_option_sets", pk: []string{"item_id", "option_set_id"}},
+	{name: "item_variant_options", pk: []string{"variant_id", "option_set_value_id"}},
 	{name: "related_items", pk: []string{"item_id", "related_item_id"}},
 	// ut-docs#1667: same shape as #1546 (tables/kitchen_stations) — catalog
 	// structure that reads shop-wide but was missing from this list
@@ -268,6 +310,13 @@ var nonAdminTables = map[string]string{
 	// to THIS till's database. Syncing it would be circular in the same way
 	// as sync_journal_quarantine/schema_lineage below.
 	"schema_migrations": "this till's own applied-migrations record — migration-runner-internal, not app data",
+	// ut-docs#1368: the one-row generation counter migration 022's triggers
+	// bump on every write to an adminTables entry, read by DumpAdmin to
+	// decide whether its cached bundle is still current. Sync-internal by
+	// construction (it describes THIS database's admin state), and syncing
+	// it would be circular: applying it on a replica would fire nothing
+	// useful and its own value is meaningless off the till that counted it.
+	"sync_admin_version": "DumpAdmin's cache-invalidation counter for this till's own admin tables — sync-internal, per-database",
 
 	// Inventory/stock: D3's own additive-movement sync (ADR-0011), a
 	// separate mechanism from this bundle — already named above.
@@ -432,7 +481,106 @@ func (b AdminBundle) Fingerprint() string {
 }
 
 // DumpAdmin reads every synced table (per-till settings filtered out).
+//
+// ut-docs#1368: the scan only runs when sync_admin_version.generation has
+// moved since the cached bundle was built — otherwise the cached bundle is
+// returned as-is, and none of the admin tables are touched. See ensureCached
+// for the generation-ordering and mutex reasoning shared with AdminFingerprint.
+//
+// Callers get the cached bundle's row maps, not copies — the handler only
+// encodes it. The outer Tables map is a fresh shallow copy so a caller that
+// adds/removes a table entry can't corrupt what the next poll is served.
 func (r *SyncAdminRepo) DumpAdmin(ctx context.Context) (AdminBundle, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	_, bundle, err := r.ensureCached(ctx)
+	if err != nil {
+		return AdminBundle{}, err
+	}
+	return bundle.shallowCopy(), nil
+}
+
+// AdminFingerprint is the cheap half of an admin-sync poll (ut-docs#1368
+// follow-up): on a cache hit it costs one single-row SELECT and a field
+// read — no table scan, no JSON marshal, no SHA-256. Before this method
+// existed, the HTTP handler always called DumpAdmin (cheap after the
+// generation-cache fix) and THEN bundle.Fingerprint() unconditionally on
+// the result — which still re-marshaled and re-hashed the whole bundle on
+// every single poll, measured at ~25ms against a ~25ms pre-fix scan: the
+// generation cache alone only removed the DB-scan half of the per-poll
+// cost, not the marshal+hash half the card also asked for. The handler now
+// calls this FIRST; DumpAdmin is only called when the caller's `?have=`
+// doesn't match this value, and that second call then hits the same cache
+// this call just populated (or served from), so it never re-scans either.
+func (r *SyncAdminRepo) AdminFingerprint(ctx context.Context) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	fp, _, err := r.ensureCached(ctx)
+	return fp, err
+}
+
+// ensureCached is the shared core of DumpAdmin and AdminFingerprint. Caller
+// must hold r.mu. Returns the bundle's fingerprint and content for the
+// CURRENT generation, computing and caching both together on a miss so a
+// fingerprint-only caller and a bundle caller converge on one scan instead
+// of each hashing or scanning independently.
+//
+// The generation is read BEFORE the scan, never after: a write committing
+// between the two then leaves the cache keyed on the OLDER generation (one
+// redundant rescan next poll), whereas reading it after could key a
+// pre-write scan on the post-write generation and serve stale rows until
+// the next unrelated change. The mutex is held across the scan on purpose:
+// concurrent replica polls on a cache miss share one scan instead of each
+// running their own.
+func (r *SyncAdminRepo) ensureCached(ctx context.Context) (fp string, bundle AdminBundle, err error) {
+	gen, tracked := r.adminGeneration(ctx)
+	if tracked && r.cacheValid && r.cacheGen == gen {
+		return r.cacheFP, r.cache, nil
+	}
+	bundle, err = r.scanAdmin(ctx)
+	if err != nil {
+		return "", AdminBundle{}, err
+	}
+	fp = bundle.Fingerprint()
+	if tracked {
+		r.cache, r.cacheGen, r.cacheFP, r.cacheValid = bundle, gen, fp, true
+	} else {
+		// No counter row to key on (a hand-edited DB — migrations always
+		// seed it): never cache, or a later call would hit on the same
+		// "no row" reading and serve stale content forever.
+		r.cacheValid = false
+	}
+	return fp, bundle, nil
+}
+
+// adminGeneration reads the cheap change marker. tracked is false when the
+// row is missing, which callers treat as "always rescan" — never an error,
+// so a damaged counter can't take the whole sync path down.
+func (r *SyncAdminRepo) adminGeneration(ctx context.Context) (gen int64, tracked bool) {
+	err := r.db.QueryRowContext(ctx, `SELECT generation FROM sync_admin_version WHERE id = 1`).Scan(&gen)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			logging.L().Warnf("sync admin: read sync_admin_version failed, falling back to a full scan: %v", err)
+		}
+		return 0, false
+	}
+	return gen, true
+}
+
+func (b AdminBundle) shallowCopy() AdminBundle {
+	out := AdminBundle{Tables: make(map[string][]map[string]any, len(b.Tables))}
+	for k, v := range b.Tables {
+		out.Tables[k] = v
+	}
+	return out
+}
+
+// scanAdmin is the full read DumpAdmin caches: every synced table, in
+// adminTables order, per-till/plugin-local rows filtered and skip/redact
+// columns dropped.
+func (r *SyncAdminRepo) scanAdmin(ctx context.Context) (AdminBundle, error) {
 	bundle := AdminBundle{Tables: map[string][]map[string]any{}}
 	for _, t := range adminTables {
 		rows, err := r.db.QueryContext(ctx,

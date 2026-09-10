@@ -65,6 +65,89 @@ func orderStatusLabelKey(status string) string {
 	return "orders.status." + status
 }
 
+// orderAction is one candidate action button an orders-board row may offer.
+// orderActionCandidates below is the FIXED list, in display order — never
+// duplicated as a second source of truth; allowedOrderActions is the one
+// place that decides which of them apply to a given current status.
+type orderAction struct {
+	TargetStatus string
+	Key          string // i18n key, present in every web/locales/*.json file
+	Danger       bool
+}
+
+var orderActionCandidates = []orderAction{
+	{pos.OrderStatusPreparing, "orders.status.preparing", false},
+	{pos.OrderStatusReady, "orders.status.ready", false},
+	{pos.OrderStatusCollected, "orders.status.collected", false},
+	{pos.OrderStatusCancelled, "orders.btn.cancel", true},
+}
+
+// allowedOrderActions returns, in display order, the subset of
+// orderActionCandidates that pos.OrderStatusAllowed(current, _) actually
+// permits (ut-docs#1964) — reusing the SAME conflict-rule predicate the
+// write path already enforces, so a row can never offer a button its own
+// tap would silently no-op. Shared by the full-list render (orderRowsFor)
+// and the post-write OOB actions fragment (writeOrderStatusFragment) below,
+// so the two can never drift on which buttons a given status shows.
+func allowedOrderActions(current string) []orderAction {
+	out := make([]orderAction, 0, len(orderActionCandidates))
+	for _, a := range orderActionCandidates {
+		if pos.OrderStatusAllowed(current, a.TargetStatus) {
+			out = append(out, a)
+		}
+	}
+	return out
+}
+
+// renderOrderActionsButtons writes just the <button> markup for actions,
+// shared between the actions-cell OOB fragment below and (indirectly, via
+// the same allowedOrderActions call) the full-list template's own render —
+// the template renders its own copy from orderRow.Actions using {{ T }},
+// so this Go-side copy exists only for the OOB fragment write path, which
+// isn't going through html/template.
+func renderOrderActionsButtons(w http.ResponseWriter, locale, receiptNo string, actions []orderAction) {
+	for _, a := range actions {
+		class := "btn"
+		if a.Danger {
+			class += " danger"
+		}
+		fmt.Fprintf(w, `<button class="%s" hx-post="/api/orders/%s/status" hx-vals='{"status":"%s"}' hx-target="#order-status-%s" hx-swap="innerHTML">%s</button>`,
+			class, url.PathEscape(receiptNo), a.TargetStatus,
+			template.HTMLEscapeString(receiptNo), template.HTMLEscapeString(httpx.T(locale, a.Key)))
+	}
+}
+
+// writeOrderActionsFragment renders the OOB actions-cell swap
+// (order-actions-{receiptNo}, the list/kitchen-display board's own id) —
+// a <div>, never <tr>/<td>, for the same standalone-parsing reasoning
+// writeOrderStatusFragment's row-delete marker below documents. Safe to
+// always emit regardless of which page posted: htmx no-ops on a missing
+// target, and this id only exists on orders_list.html's rendering (shared
+// by /orders and /kitchen-display/{station}) — order_view.html uses its
+// own separate id (writeOrderCollectFragment) precisely so it never
+// inherits this page's full Preparing/Ready/Cancel button set.
+func writeOrderActionsFragment(w http.ResponseWriter, locale, receiptNo, status string) {
+	fmt.Fprintf(w, `<div id="order-actions-%s" class="btn-actions" hx-swap-oob="outerHTML">`,
+		template.HTMLEscapeString(receiptNo))
+	renderOrderActionsButtons(w, locale, receiptNo, allowedOrderActions(status))
+	fmt.Fprint(w, `</div>`)
+}
+
+// writeOrderCollectFragment renders order_view.html's OWN, narrower OOB
+// swap (order-collect-{receiptNo}) — that page deliberately offers only a
+// Collect button, never the full ladder, so it cannot reuse
+// writeOrderActionsFragment's id/content (ut-docs#1964). Safe to always
+// emit alongside it, same no-op-on-missing-target reasoning.
+func writeOrderCollectFragment(w http.ResponseWriter, locale, receiptNo, status string) {
+	fmt.Fprintf(w, `<span id="order-collect-%s" hx-swap-oob="outerHTML">`,
+		template.HTMLEscapeString(receiptNo))
+	if pos.OrderStatusAllowed(status, pos.OrderStatusCollected) {
+		fmt.Fprintf(w, `<button class="btn" hx-post="/api/orders/%s/status" hx-vals='{"status":"collected"}' hx-target="#order-status-line" hx-swap="innerHTML" data-testid="collect-btn">%s</button>`,
+			url.PathEscape(receiptNo), template.HTMLEscapeString(httpx.T(locale, "orders.status.collected")))
+	}
+	fmt.Fprint(w, `</span>`)
+}
+
 // writeOrderStatusFragment renders the current-state fragment the one-tap
 // endpoint swaps into the status cell: status label + who/when. It renders
 // the POST-write truth whether the write applied or was dropped as stale —
@@ -104,6 +187,17 @@ func writeOrderStatusFragment(w http.ResponseWriter, locale, receiptNo, status, 
 		fmt.Fprintf(w, `<div id="order-row-%s" hx-swap-oob="delete"></div>`,
 			template.HTMLEscapeString(receiptNo))
 	}
+	// ut-docs#1964: always carry BOTH pages' own actions-cell OOB swap in
+	// the same response as the status cell — a tap that applies must make
+	// its own (now-invalid) button disappear immediately, not wait for the
+	// next 15s poll/SSE push. Each targets a different id
+	// (order-actions-{receiptNo} for the list/kitchen-display board,
+	// order-collect-{receiptNo} for order_view.html's own narrower
+	// Collect-only scope) and htmx no-ops on whichever id the current page
+	// didn't render, so it's safe to always emit both regardless of which
+	// page's tap this was.
+	writeOrderActionsFragment(w, locale, receiptNo, status)
+	writeOrderCollectFragment(w, locale, receiptNo, status)
 }
 
 // orderStatusOutcome is the structured result of one guarded status write —
@@ -467,6 +561,11 @@ type orderRow struct {
 	// is reachable (caught by review: the help docs would then be
 	// describing behavior the code didn't actually have).
 	JournalLinkable bool
+	// Actions (ut-docs#1964) is the subset of orderActionCandidates this
+	// row's current Status actually allows next, in display order —
+	// computed once here via allowedOrderActions so the template never
+	// re-derives the rule itself.
+	Actions []orderAction
 }
 
 // orderRowsFor maps repo entries to rendered rows. fromPrimary=true runs the
@@ -497,6 +596,7 @@ func orderRowsFor(ctx context.Context, repo *data.POSRepo, entries []data.OrderL
 			KitchenPrintFailed: e.KitchenPrintFailedAt != "",
 			ReceiptPrintFailed: e.ReceiptPrintFailedAt != "",
 			JournalLinkable:    linkable,
+			Actions:            allowedOrderActions(e.Status),
 		})
 	}
 	return rows

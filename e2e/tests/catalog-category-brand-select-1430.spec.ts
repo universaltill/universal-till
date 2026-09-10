@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
 
 // ut-docs#1430: the catalog item-edit form's category and brand fields were
 // free-text inputs backed by a <datalist> whose OPTION VALUE was the raw
@@ -21,6 +21,7 @@ test.describe('catalog category/brand select (ut-docs#1430)', () => {
     const assertClean = watchConsole(page);
     await page.goto('/catalog');
 
+    await openNewItemForm(page);
     // The picker is a real <select>: the category id is never user-visible
     // anywhere in its markup once selected by label.
     const categorySelect = page.locator('#item-category');
@@ -32,6 +33,12 @@ test.describe('catalog category/brand select (ut-docs#1430)', () => {
     await page.locator('#item-price').fill('3.50');
     await page.locator('#item-form-submit').click();
     await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
+    // ut-docs#1901: close it — the dialog is non-modal (.show(),
+    // ut-docs#1385's OSK fix), so nothing outside it is inert, but its
+    // large `position: fixed` box covers and intercepts the row click
+    // below. ut-docs#1929: via closeItemForm, race-tolerant of the
+    // save-success auto-close timer.
+    await closeItemForm(page);
 
     // The new row's own category cell shows "Food" by name (AC: items
     // table shows the category name column).
@@ -62,6 +69,7 @@ test.describe('catalog category/brand select (ut-docs#1430)', () => {
     await page.goto('/catalog');
 
     const name = 'No Category Probe ' + Date.now();
+    await openNewItemForm(page);
     await page.locator('#item-name').fill(name);
     await page.locator('#item-price').fill('1.00');
     // Leave #item-category on its default "none" option.
@@ -102,6 +110,7 @@ test.describe('catalog category/brand select (ut-docs#1430)', () => {
       }),
     );
 
+    await openNewItemForm(page);
     await page.locator('#item-barcode').fill('5000112548167');
     await page.locator('#autofill-btn').click();
     await expect(page.locator('#autofill-msg')).toContainText('Found');

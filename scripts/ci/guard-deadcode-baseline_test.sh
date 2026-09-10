@@ -21,6 +21,8 @@ GUARD="scripts/ci/guard-deadcode-baseline.sh"
 FIXTURE="cmd/unitill-desktop/zzz_guard_test_fixture.go"
 FAIL_COUNT=0
 
+# Invoked indirectly via `trap ... EXIT`, not a direct call -- shellcheck cannot see that (SC2317 false positive).
+# shellcheck disable=SC2317
 cleanup() {
   local status=$?
   rm -f "${FIXTURE}"

@@ -30,8 +30,15 @@
        width class already had its own hard-fought wrapping behavior
        (ut-docs#413) not worth re-litigating here. -->
   <div class="nav-primary">
+    <!-- ut-docs#1896 (product owner, comparing against the SumUp Business
+         app on the pilot tablet): SumUp's rail leads with a shopping-trolley
+         icon that means "sell" -- a place-name tile ("Till"/receipt glyph)
+         told the operator where they'd land, not what tapping it does.
+         Reuses the "shopping-cart" glyph #1845 already vendored for the
+         self-order kiosk's checkout button (index.html), and "nav.till"'s
+         own value is now the action ("Sell"), not the place. -->
     <a href="/" class="nav-toggle" data-testid="nav-till">
-      <span class="nav-toggle-ico" aria-hidden="true">{{ icon "receipt" }}</span>
+      <span class="nav-toggle-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span>
       <span class="nav-toggle-label">{{ T "nav.till" }}</span>
     </a>
     <a href="/menu" class="nav-toggle" data-testid="nav-menu">

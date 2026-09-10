@@ -17,6 +17,8 @@ FIXTURE_DIR="internal/pages"
 FAIL_COUNT=0
 
 fixtures=()
+# Invoked indirectly via `trap ... EXIT`, not a direct call -- shellcheck cannot see that (SC2317 false positive).
+# shellcheck disable=SC2317
 cleanup() {
   local status=$?
   if [[ ${#fixtures[@]} -gt 0 ]]; then
@@ -94,6 +96,24 @@ func zzGuardTestHandler(d *common.Deps) []common.MenuItem {
 expect_fail "unlocked d.Menu read"
 clear_fixture "UnlockedMenu"
 
+# ADR-0088 added two more fields reassigned in the same critical section:
+# Deps.MenuAmendments (beside Menu) and Pm.LayoutAmendments (in Reload).
+plant "UnlockedMenuAmendments" 'package pages
+
+func zzGuardTestHandler(d *common.Deps) []uislot.Amendment {
+	return d.MenuAmendments
+}'
+expect_fail "unlocked d.MenuAmendments read"
+clear_fixture "UnlockedMenuAmendments"
+
+plant "UnlockedLayoutAmendments" 'package pages
+
+func zzGuardTestHandler(dp *common.Deps) []uislot.Amendment {
+	return dp.Pm.LayoutAmendments
+}'
+expect_fail "unlocked dp.Pm.LayoutAmendments read"
+clear_fixture "UnlockedLayoutAmendments"
+
 # A different *common.Deps receiver variable name — registerShiftsAPI/
 # registerInventoryAPI/registerPluginStore use "dp"/"deps" elsewhere in this
 # package, so the guard must not be fooled by those names either.
@@ -125,8 +145,10 @@ func zzGuardTestHandler(d *common.Deps, id, key string) {
 	_ = d.MenuSnapshot()
 	_, _ = d.InstalledPlugin(id)
 	_, _ = d.MenuPluginByKey(key)
+	_ = d.MenuAmendmentsSnapshot()
+	_ = d.LayoutAmendmentsSnapshot()
 }'
-expect_pass "the locked MenuSnapshot/InstalledPlugin/MenuPluginByKey accessors"
+expect_pass "the locked MenuSnapshot/InstalledPlugin/MenuPluginByKey/MenuAmendmentsSnapshot/LayoutAmendmentsSnapshot accessors"
 clear_fixture "LockedAccessorsUsed"
 
 # Test files exercise the locked accessors under controlled goroutine
@@ -139,6 +161,22 @@ func TestZzGuardFixture(t *testing.T) {
 }' "_test.go"
 expect_pass "an unlocked read inside a _test.go file"
 clear_fixture "TestFileExempt" "_test.go"
+
+# A NEW call site of BuildMenuAmendments (independent review of
+# ut-docs#1904, F4). The field pattern cannot see this — the function reads
+# pm.LayoutAmendments off a *plugins.Manager PARAMETER, not through a
+# *common.Deps — so the call-site allowlist is what actually guards it. A
+# fourth caller must fail until whoever adds it states which lock it holds.
+plant "RogueBuildMenuAmendmentsCaller" 'package pages
+
+func zzGuardTestHandler(pm *plugins.Manager) []uislot.Amendment {
+	return common.BuildMenuAmendments(pm, nil)
+}'
+expect_fail "a new, non-allowlisted BuildMenuAmendments call site"
+clear_fixture "RogueBuildMenuAmendmentsCaller"
+
+# ...while the three allowlisted call sites (deps.go, state.go, init.go)
+# keep the clean codebase passing — asserted by the baseline check below.
 
 # Baseline: the guard must still pass on the real, unmodified codebase.
 if ! bash "${GUARD}" >/tmp/guard_plugin_menu_test_out.$$ 2>&1; then

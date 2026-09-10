@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole } from './helpers';
+import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
 
 // ut-docs#1363: catalog mutations answer with row-level HTMX out-of-band
 // fragments — one row inserted/updated/removed — instead of re-rendering
@@ -20,10 +20,20 @@ import { watchConsole } from './helpers';
 // what pin insert/update/delete correctness).
 test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
   async function createItem(page: import('@playwright/test').Page, name: string) {
+    await openNewItemForm(page);
     await page.locator('#item-name').fill(name);
     await page.locator('#item-price').fill('1.00');
     await page.locator('#item-form-submit').click();
     await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
+    // ut-docs#1901: close explicitly — nearly every caller of this helper
+    // goes on to click something OUTSIDE the dialog (a row, the search
+    // box, a danger button). The dialog is non-modal (.show(),
+    // ut-docs#1385's OSK fix) so nothing is inert, but its large
+    // `position: fixed` box covers those targets and intercepts the
+    // click. The two callers that only ever read afterward are unaffected
+    // by closing early. ut-docs#1929: via closeItemForm, race-tolerant of
+    // the save-success auto-close timer.
+    await closeItemForm(page);
     await expect(page.locator(`.catalog-row[data-name="${name}"]`)).toBeVisible();
   }
 
@@ -161,10 +171,17 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
     // the htmx:oobAfterSwap re-trigger must hide the new row immediately.
     await page.locator('#catalog-search').fill('zzz-no-such-item');
     const name = 'Row OOB Filtered ' + Date.now();
+    await openNewItemForm(page);
     await page.locator('#item-name').fill(name);
     await page.locator('#item-price').fill('1.00');
     await page.locator('#item-form-submit').click();
     await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
+    // ut-docs#1901: close it — the search box below sits under the
+    // dialog's large `position: fixed` box, which intercepts its click
+    // (the dialog is non-modal, so this is stacking, not inertness).
+    // ut-docs#1929: via closeItemForm, race-tolerant of the save-success
+    // auto-close timer.
+    await closeItemForm(page);
 
     const newRow = page.locator(`.catalog-row[data-name="${name}"]`);
     await expect(newRow).toHaveCount(1);
@@ -189,10 +206,18 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
     const name = 'Row OOB Panel ' + Date.now();
     await createItem(page, name);
 
-    // Open the item's variants panel, then hide the row with a filter.
+    // Open the item's variants panel: a row click opens the edit dialog and
+    // loads the variants panel into it — since ut-docs#1956 the panel is the
+    // dialog's Variants tab, no longer a page-level section under the list.
     await page.locator(`.catalog-row[data-name="${name}"]`).locator('td').nth(1).click();
+    await page.locator('#item-form-tab-variants').click();
     await expect(page.locator('#vf-new')).toBeAttached();
     const row = page.locator(`.catalog-row[data-name="${name}"]`);
+    // The search box sits on the page BEHIND the full-screen (non-modal,
+    // .show()) dialog. fill() only needs visible/enabled/editable — not a
+    // pointer hit-test — so it still drives the real input and its real
+    // 'input' listener without closing the dialog (which would leave no
+    // visible row to reopen once the filter hides it).
     await page.locator('#catalog-search').fill('zzz-no-such-item');
     await expect(row).toBeHidden();
 

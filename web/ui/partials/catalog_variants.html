@@ -1,5 +1,10 @@
 {{ define "catalog_variants" }}
-<div class="card catalog-detail" id="catalog-variants">
+{{/* ut-docs#1956: rendered INSIDE the item form dialog's Variants tab
+     (web/ui/pages/catalog.html), no longer as a page-level card under the
+     list — so no .card chrome (a bordered box inside a full-screen form
+     read as a box-in-a-box). Every form here still targets #catalog-variants
+     with outerHTML, unchanged. */}}
+<div class="catalog-detail" id="catalog-variants">
   {{ if not .ItemID }}
   <p class="muted" style="margin:0">{{ T "catalog.variants.pick_hint" }}</p>
   {{ else }}
@@ -9,7 +14,11 @@
       <div class="catalog-detail-title">
         {{ $itemThumb := printf "/public/assets/items/%s/thumb.png" .ItemID }}
         {{ if imgExists $itemThumb }}<img class="thumb" src="{{ imgv $itemThumb }}" alt="" onerror="this.style.display='none'">{{ else }}<div class="thumb" aria-hidden="true"></div>{{ end }}
-        <h3>{{ .ItemName }}</h3>
+        {{/* ut-docs#1956: the dialog's own #item-form-title already shows
+             the item name; a second visible heading right under it was
+             redundant. Kept for assistive tech (and for the thumb's
+             context) via .visually-hidden, not removed. */}}
+        <h3 class="visually-hidden">{{ .ItemName }}</h3>
       </div>
       <div class="muted catalog-detail-label">{{ T "catalog.barcodes" }} — {{ T "catalog.whole_item" }}</div>
       <div class="chip-row">
@@ -55,6 +64,35 @@
 
     <div class="catalog-detail-variants">
       <div class="muted catalog-detail-label">{{ T "catalog.variants" }}</div>
+
+      <!-- ut-docs#1900: reusable option sets. Pick up to two of the shop's
+           sets (defined once on /catalog/option-sets) and generate this
+           item's range as real item_variants rows in one step. Purely
+           additive: the manual per-variant grid below is untouched, and
+           re-generating only ever adds the combinations that don't exist
+           yet (item_variant_options is the idempotency key). -->
+      <div class="option-set-pick">
+        {{ if not .OptionSets }}
+        <p class="muted" style="margin:0">{{ T "catalog.variants.no_option_sets" }} <a href="/catalog/option-sets">{{ T "catalog.option_sets.title" }}</a></p>
+        {{ else }}
+        <form hx-post="/api/catalog/item/option-sets" hx-target="#catalog-variants" hx-swap="outerHTML" class="option-set-pick-row">
+          <input type="hidden" name="panelItem" value="{{ .ItemID }}">
+          <span class="option-set-pick-label">{{ T "catalog.variants.apply_option_sets" }}</span>
+          {{ range .OptionSets }}
+          <label class="option-set-pick-box"><input type="checkbox" name="optionSetIds" value="{{ .ID }}"{{ if index $.AppliedSetIDs .ID }} checked{{ end }}> {{ .Name }}</label>
+          {{ end }}
+          <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+        </form>
+        <form hx-post="/api/catalog/item/generate-variants" hx-target="#catalog-variants" hx-swap="outerHTML" class="option-set-pick-row">
+          <input type="hidden" name="panelItem" value="{{ .ItemID }}">
+          <button class="btn" type="submit">{{ T "catalog.variants.generate" }}</button>
+          <span class="muted option-set-pick-hint">{{ T "catalog.variants.generate_hint" }}</span>
+        </form>
+        {{ end }}
+        {{ if .GenerateNoSets }}<p class="option-set-pick-msg" role="status">{{ T "catalog.variants.generate_none_applied" }}</p>{{ end }}
+        {{ if .Generated }}<p class="option-set-pick-msg" role="status">{{ printf (T "catalog.variants.generated_count") .GeneratedCount }}</p>{{ end }}
+      </div>
+
       {{ if not .Variants }}<p class="muted">{{ T "catalog.variants.none" }}</p>{{ end }}
 
       {{ range .Variants }}
@@ -153,74 +191,33 @@
 
   <!-- Item customization (ADR-0020): modifier groups (e.g. "Extras") and
        their options (e.g. "Extra shot", +price), shown by the cashier and
-       kiosk picker. Soft-deactivate only, same convention as items/
-       variants above — a group/option is never hard-deleted so historical
-       sale_line_modifiers snapshots stay intact regardless of later edits. -->
-  <div class="catalog-detail-modifiers">
+       kiosk picker. ut-docs#1957: the create/edit CRUD used to be embedded
+       directly in this panel (a full modifier-group/option admin sitting
+       right under the variants grid), which a product-owner review found
+       confusing — "I saw the customization groups under the variants".
+       That CRUD now lives on /modifiers (the shop-wide home, grouped per
+       item) and, for a quick in-context edit, in the nested
+       #modifier-groups-modal dialog opened by the button below — see
+       catalog.html for that dialog's static markup and
+       modifier_group_admin.html for the reused form partial. This panel
+       keeps only a compact, read-only summary: it must NEVER regain a
+       target="_blank"/window.open/location navigation here — the kiosk
+       build runs fully chromeless (see base.html ~line 131), so a new
+       tab/window has nowhere to land and would either no-op or navigate in
+       place, losing this dialog's own unsaved item-form edits underneath. -->
+  <div class="catalog-detail-modifiers-summary">
     <div class="muted catalog-detail-label">{{ T "catalog.modifiers.title" }}</div>
-    {{ if not .ModifierGroups }}<p class="muted">{{ T "catalog.modifiers.none" }}</p>{{ end }}
-
-    {{ range .ModifierGroups }}
-    {{ $group := . }}
-    <div class="modifier-admin-group{{ if not .IsActive }} vg-inactive{{ end }}">
-      <form hx-post="/api/catalog/modifier-group" hx-target="#catalog-variants" hx-swap="outerHTML" class="modifier-admin-group-row">
-        <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
-        <input type="hidden" name="itemId" value="{{ $.ItemID }}">
-        <input type="hidden" name="id" value="{{ .ID }}">
-        <input type="text" name="name" value="{{ .Name }}" required placeholder="{{ T "catalog.modifiers.group_name" }}">
-        <label><input type="checkbox" name="required" value="1" {{ if .Required }}checked{{ end }}> {{ T "catalog.modifiers.required" }}</label>
-        <label>{{ T "catalog.modifiers.min" }} <input type="number" name="minSelect" value="{{ .MinSelect }}" min="0" style="max-inline-size:4rem"></label>
-        <label>{{ T "catalog.modifiers.max" }} <input type="number" name="maxSelect" value="{{ .MaxSelect }}" min="1" style="max-inline-size:4rem"></label>
-        <!-- Checkbox semantics: an unchecked box submits nothing, so this
-             pairs it with a hidden isActive=0 (same convention as the
-             variant form above) — without it, unchecking "Active" and
-             saving would silently do nothing. -->
-        <input type="hidden" name="isActive" value="0">
-        <label><input type="checkbox" name="isActive" value="1" {{ if .IsActive }}checked{{ end }}> {{ T "catalog.active" }}</label>
-        <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
-      </form>
-
-      <div class="modifier-admin-options">
-        {{ range .Options }}
-        <form hx-post="/api/catalog/modifier-option" hx-target="#catalog-variants" hx-swap="outerHTML" class="modifier-admin-option-row{{ if not .IsActive }} vg-inactive{{ end }}">
-          <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
-          <input type="hidden" name="itemId" value="{{ $.ItemID }}">
-          <input type="hidden" name="groupId" value="{{ $group.ID }}">
-          <input type="hidden" name="id" value="{{ .ID }}">
-          <input type="text" name="name" value="{{ .Name }}" required placeholder="{{ T "catalog.modifiers.option_name" }}">
-          <!-- ut-docs#1284: type="number" corrupts a decimal typed via the
-               kiosk OSK (see index.html's split-tender amount field). The
-               /api/catalog/modifier-option handler already parses this raw
-               string server-side, so no JS change is needed. -->
-          <input type="text" inputmode="decimal" name="priceDeltaMajor" class="modifier-price-major" data-minor="{{ .PriceDeltaMinor }}" {{ moneypattern currency.Decimals false }} title="{{ T "catalog.modifiers.price_delta" }}">
-          <input type="hidden" name="isActive" value="0">
-          <label><input type="checkbox" name="isActive" value="1" {{ if .IsActive }}checked{{ end }}> {{ T "catalog.active" }}</label>
-          <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
-        </form>
-        {{ end }}
-        <form hx-post="/api/catalog/modifier-option" hx-target="#catalog-variants" hx-swap="outerHTML" class="modifier-admin-option-row">
-          <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
-          <input type="hidden" name="itemId" value="{{ $.ItemID }}">
-          <input type="hidden" name="groupId" value="{{ $group.ID }}">
-          <input type="hidden" name="isActive" value="1">
-          <input type="text" name="name" required placeholder="{{ T "catalog.modifiers.option_name" }} — {{ T "catalog.modifiers.option_example" }}">
-          <input type="text" inputmode="decimal" name="priceDeltaMajor" {{ moneypattern currency.Decimals false }} placeholder="0.00">
-          <button class="btn" type="submit">{{ T "catalog.modifiers.add_option" }}</button>
-        </form>
-      </div>
-    </div>
+    {{ if .ModifierGroupNames }}
+    <p class="catalog-modifiers-summary-line">{{ .ModifierGroupNames }}</p>
+    {{ else }}
+    <p class="muted">{{ T "catalog.modifiers.summary_none" }}</p>
     {{ end }}
-
-    <form hx-post="/api/catalog/modifier-group" hx-target="#catalog-variants" hx-swap="outerHTML" class="modifier-admin-group-row modifier-admin-group-new">
-      <input type="hidden" name="panelItem" value="{{ .ItemID }}">
-      <input type="hidden" name="itemId" value="{{ .ItemID }}">
-      <input type="hidden" name="isActive" value="1">
-      <input type="text" name="name" required placeholder="{{ T "catalog.modifiers.add_group" }} — {{ T "catalog.modifiers.group_example" }}">
-      <label><input type="checkbox" name="required" value="1"> {{ T "catalog.modifiers.required" }}</label>
-      <label>{{ T "catalog.modifiers.min" }} <input type="number" name="minSelect" value="0" min="0" style="max-inline-size:4rem"></label>
-      <label>{{ T "catalog.modifiers.max" }} <input type="number" name="maxSelect" value="1" min="1" style="max-inline-size:4rem"></label>
-      <button class="btn" type="submit">{{ T "catalog.modifiers.add_group" }}</button>
-    </form>
+    <button type="button" class="btn secondary" id="manage-modifiers-btn" data-item-id="{{ .ItemID }}"
+            hx-get="/api/catalog/modifier-groups-panel?item_id={{ .ItemID }}"
+            hx-target="#modifier-groups-modal-list" hx-swap="outerHTML"
+            hx-on::after-request="if (event.detail.successful) { document.getElementById('modifier-groups-modal').show(); }">
+      {{ T "catalog.modifiers.manage" }}
+    </button>
   </div>
 
   <script>
@@ -236,12 +233,21 @@
           el.value = window.utCurrency.toMajor(minor);
         }
       });
-      document.querySelectorAll('#catalog-variants .modifier-price-major').forEach(function (el) {
-        var minor = parseInt(el.dataset.minor || '0', 10);
-        if (minor > 0 && window.utCurrency) {
-          el.value = window.utCurrency.toMajor(minor);
-        }
-      });
+      // ut-docs#1957: .modifier-price-major fields no longer live in this
+      // panel — they moved to modifier_group_admin.html, which carries its
+      // own identical, self-scoped currency-conversion script.
+      // ut-docs#1900: at most two option sets per item. The repo enforces
+      // this for real (ApplyOptionSetsToItem); this only greys out the
+      // remaining boxes once two are ticked so the limit is visible before
+      // Save, not just as an error after it.
+      var setBoxes = document.querySelectorAll('#catalog-variants .option-set-pick input[name="optionSetIds"]');
+      function syncOptionSetLimit() {
+        var checked = 0;
+        setBoxes.forEach(function (b) { if (b.checked) checked++; });
+        setBoxes.forEach(function (b) { b.disabled = !b.checked && checked >= 2; });
+      }
+      setBoxes.forEach(function (b) { b.addEventListener('change', syncOptionSetLimit); });
+      syncOptionSetLimit();
     })();
   </script>
   {{ end }}

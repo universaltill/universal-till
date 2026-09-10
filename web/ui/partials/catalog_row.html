@@ -12,9 +12,10 @@
               data-category="{{ with .Item.CategoryID }}{{ . }}{{ end }}"
               data-brand="{{ with .Item.BrandID }}{{ . }}{{ end }}"
               data-price="{{ .Item.BasePrice }}"
-              data-tax="{{ with .Item.TaxCodeID }}{{ . }}{{ end }}">
+              data-tax="{{ with .Item.TaxCodeID }}{{ . }}{{ end }}"
+              data-color="{{ .Item.Color }}">
             {{ if .ShowThumbColumn }}<td class="catalog-thumb-cell">{{ if .ImageURL }}<img class="thumb small" src="{{ imgv .ImageURL }}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">{{ else }}<div class="thumb small" aria-hidden="true"></div>{{ end }}</td>{{ end }}
-            <td class="catalog-name">{{ .Item.Name }}{{ if .Item.IsSampleData }} <span class="sample-badge">{{ T "catalog.sample_badge" }}</span>{{ end }}
+            <td class="catalog-name">{{ if .Item.Color }}<span class="color-dot" aria-hidden="true" style="background: {{ .Item.Color }}"></span>{{ end }}{{ .Item.Name }}{{ if .Item.IsSampleData }} <span class="sample-badge">{{ T "catalog.sample_badge" }}</span>{{ end }}
               {{ with .Barcodes }}<div class="muted" style="font-size:.8em">{{ T "catalog.barcodes" }}: {{ range $i, $b := . }}{{ if $i }}, {{ end }}{{ $b }}{{ end }}</div>{{ end }}
               {{ with .Variants }}<div class="muted" style="font-size:.8em">{{ T "catalog.variants" }}: {{ range $i, $v := . }}{{ if $i }}, {{ end }}{{ $v.Name }}{{ if $v.Barcode }} [{{ $v.Barcode }}]{{ end }}{{ end }}</div>{{ end }}
             </td>
@@ -28,7 +29,11 @@
               <button class="btn danger" type="button"
                       hx-post="/api/catalog/item/deactivate"
                       hx-vals='{{ jsonVals "id" .Item.ID }}'
-                      hx-confirm="Deactivate {{ .Item.Name }}?"
+                      {{/* ut-docs#1956: was a hardcoded English "Deactivate
+                           <name>?" — the one untranslated string on this
+                           row. Same key (and same deactivate-not-erase
+                           wording) as the item form's own delete button. */}}
+                      hx-confirm="{{ printf (T "catalog.delete_confirm_named") .Item.Name }}"
                       hx-target="this" hx-swap="none">✕</button>
             </td>
           </tr>

@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -24,8 +25,17 @@ var (
 // ThemeOption is one selectable UI theme: either a built-in CSS file under
 // web/public/themes or a theme entry contributed by an installed plugin.
 type ThemeOption struct {
-	Key    string // value stored in the "theme" setting; also /themes/{key}.css
-	Label  string
+	Key   string // value stored in the "theme" setting; also /themes/{key}.css
+	Label string // rendered through T (ut-docs#2015): a plugin theme's Label
+	// is a translator key, resolved via the plugin's own locales/ overlay
+	// (ADR-0010; the entry-label contract itself is reference/
+	// plugin-manifest.md's entries table, `label` row), same convention as a
+	// page/export/report entry's label; a built-in's plain-text Label
+	// (titleCase of the CSS filename) passes through T unchanged.
+	//
+	// EVERY consumer must resolve it, not just the Settings picker: the
+	// cloud Design picker's copy goes through httpx.T in cloudThemeOptions
+	// (ut-docs#2015 review) because it has no request locale of its own.
 	Source string // "built-in" | plugin ID
 }
 
@@ -70,6 +80,24 @@ func availableThemes(ctx context.Context, d *common.Deps) []ThemeOption {
 		}
 	}
 	return options
+}
+
+// cloudThemeOptions is availableThemes shaped for the cloud's Design picker
+// (cloudsync_wire.go's DeviceExtra hook): {"key","label"} pairs where the key
+// is the raw entry key the cloud sends back as a `set_setting theme`
+// directive, and the label is the DISPLAY name — so it goes through the
+// translator exactly as the Settings <select> does (ut-docs#2015 review;
+// ThemeOption.Label is a translator key for a plugin theme). This hook runs
+// on cloudsync's background goroutine with no request locale, so it resolves
+// at the shop's configured default locale, the same choice print_api.go /
+// kitchen_print.go / alerts.go make for their own non-request-bound surfaces.
+func cloudThemeOptions(ctx context.Context, d *common.Deps) []map[string]string {
+	locale := httpx.DefaultLocale()
+	out := []map[string]string{}
+	for _, opt := range availableThemes(ctx, d) {
+		out = append(out, map[string]string{"key": opt.Key, "label": httpx.T(locale, opt.Label)})
+	}
+	return out
 }
 
 // resolvePluginThemeCSS maps a theme key to the stylesheet file of the plugin

@@ -20,15 +20,32 @@ import (
 	"github.com/google/uuid"
 	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/barcode"
+	"github.com/universaltill/universal-till/internal/catalogtypes"
 	"github.com/universaltill/universal-till/internal/catimport"
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/imaging"
 	productlookup "github.com/universaltill/universal-till/internal/lookup"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pages/itemsnav"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/pos"
 )
+
+// modifierAdminItem is the template data shape modifier_group_admin.html
+// (ut-docs#1957) expects for one item's worth of modifier-group CRUD: its
+// groups (active or not — ListAllGroupsForItem's shape, so a deactivated
+// one stays visible for reactivation) plus Target, the container id
+// (without a leading #) every one of the rendered forms' hx-target/hx-swap
+// points back at. The same struct backs both call shapes: a single
+// instance for the item-scoped nested dialog, and a slice (one per item)
+// for the shop-wide /modifiers page — see groupModifierAdminByItem.
+type modifierAdminItem struct {
+	ItemID         string
+	ItemName       string
+	ModifierGroups []data.ModifierGroup
+	Target         string
+}
 
 // newLookupClient is a test seam: production resolves barcodes against the
 // real Open*Facts product databases; tests swap in a client pointed at
@@ -136,7 +153,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// barcode summaries), so the affected item's ROW rides along as an HTMX
 	// out-of-band fragment when withTable is set (ut-docs#1363 — previously
 	// this injected the entire re-rendered table).
-	renderVariantsPanel := func(w http.ResponseWriter, r *http.Request, itemID string, withTable bool) {
+	//
+	// extra is merged into the panel's template data on top of the standard
+	// fields — the option-set generator's one-shot confirmation line
+	// (ut-docs#1900: "N variant(s) created" / "apply a set first") rides
+	// along this way rather than through a second render path.
+	renderVariantsPanelWith := func(w http.ResponseWriter, r *http.Request, itemID string, withTable bool, extra map[string]any) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		pdata := map[string]any{"ItemID": "", "ItemName": ""}
 		if itemID != "" {
@@ -156,14 +178,51 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				// ADR-0020: shows deactivated groups/options too (unlike the
 				// sale-time ListGroupsForItem) so a manager can reactivate one.
 				modGroups, _ := data.NewModifierRepo(d.Db).ListAllGroupsForItem(r.Context(), itemID)
+				// ut-docs#1957: this panel only shows a compact, read-only
+				// summary of the item's ACTIVE group names now — the CRUD
+				// itself moved to /modifiers and the nested "Manage
+				// customization groups" dialog (renderItemModifierGroupsPanel
+				// below). A deactivated group is deliberately left out of
+				// this summary (it isn't offered at sale time either); it's
+				// still reachable for reactivation from the two admin
+				// surfaces above, both driven by modGroups' full ListAll
+				// fetch, unchanged.
+				var activeModGroupNames []string
+				for _, g := range modGroups {
+					if g.IsActive {
+						activeModGroupNames = append(activeModGroupNames, g.Name)
+					}
+				}
+				// ut-docs#1900: the shop's option sets (active only — the
+				// checkbox row offers what can be applied now) and which of
+				// them this item's range is generated from.
+				optRepo := data.NewOptionSetRepo(d.Db)
+				allSets, _ := optRepo.ListOptionSets(r.Context())
+				optionSets := make([]data.OptionSetView, 0, len(allSets))
+				for _, s := range allSets {
+					if s.IsActive {
+						optionSets = append(optionSets, s)
+					}
+				}
+				applied, _ := optRepo.ItemOptionSets(r.Context(), itemID)
+				appliedIDs := make(map[string]bool, len(applied))
+				for _, s := range applied {
+					appliedIDs[s.ID] = true
+				}
 				pdata = map[string]any{
-					"ItemID":         itemID,
-					"ItemName":       label.Name,
-					"Variants":       variants,
-					"ItemBarcodes":   itemBCs,
-					"CostMajor":      costMajor,
-					"LeadTimeDays":   leadTimeDays,
-					"ModifierGroups": modGroups,
+					"ItemID":             itemID,
+					"ItemName":           label.Name,
+					"Variants":           variants,
+					"ItemBarcodes":       itemBCs,
+					"CostMajor":          costMajor,
+					"LeadTimeDays":       leadTimeDays,
+					"ModifierGroups":     modGroups,
+					"ModifierGroupNames": strings.Join(activeModGroupNames, ", "),
+					"OptionSets":         optionSets,
+					"AppliedSetIDs":      appliedIDs,
+				}
+				for k, v := range extra {
+					pdata[k] = v
 				}
 			}
 		}
@@ -174,6 +233,115 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			writeRowOOB(w, r, itemID, false, snapshotThumbColumn(r))
 		}
 	}
+	renderVariantsPanel := func(w http.ResponseWriter, r *http.Request, itemID string, withTable bool) {
+		renderVariantsPanelWith(w, r, itemID, withTable, nil)
+	}
+
+	// modifierGroupAdminFiles is the file set every modifier-group-admin
+	// render below shares — the reusable modifier_group_admin.html partial
+	// (ut-docs#1957) plus whichever wrapper template names its own
+	// container ("modifiers_list" from modifiers.html, or
+	// "modifier_groups_item_panel" from modifier_group_admin.html itself).
+	modifierGroupAdminFiles := files(
+		filepath.Join("web", "ui", "pages", "modifiers.html"),
+		filepath.Join("web", "ui", "partials", "modifier_group_admin.html"),
+	)
+
+	// groupModifierAdminByItem folds a flat, ItemName/ItemID-carrying
+	// modifier-group slice (ListAllShopModifierGroups' own shape) into one
+	// entry per item, preserving the query's own item ordering — the shape
+	// modifier_group_admin.html's per-item instantiation and this file's
+	// own modifiers_list wrapper both expect. target is stamped onto every
+	// entry: the single container id every one of that item's forms will
+	// hx-target/hx-swap back at after a mutation.
+	groupModifierAdminByItem := func(groups []data.ModifierGroup, target string) []modifierAdminItem {
+		var result []modifierAdminItem
+		idx := map[string]int{}
+		for _, g := range groups {
+			i, ok := idx[g.ItemID]
+			if !ok {
+				i = len(result)
+				idx[g.ItemID] = i
+				result = append(result, modifierAdminItem{ItemID: g.ItemID, ItemName: g.ItemName, Target: target})
+			}
+			result[i].ModifierGroups = append(result[i].ModifierGroups, g)
+		}
+		return result
+	}
+
+	// renderModifiersList answers with the /modifiers page's own shop-wide
+	// re-render target (#modifiers-list, outerHTML swap) — every modifier
+	// group across the shop, grouped per item, active or not (ut-docs#1957:
+	// unlike the read-only ListShopModifierGroups the old browse screen
+	// used, this admin page must still show a deactivated group so it can
+	// be reactivated). Used both for the page's own initial load and for a
+	// mutation whose originating form targets #modifiers-list (see
+	// renderModifierMutationResult below).
+	renderModifiersList := func(w http.ResponseWriter, r *http.Request) {
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		groups, err := data.NewModifierRepo(d.Db).ListAllShopModifierGroups(r.Context())
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
+			return
+		}
+		httpx.RenderWith(modifierGroupAdminFiles, funcs)("modifiers_list", map[string]any{
+			"Groups": groupModifierAdminByItem(groups, "modifiers-list"),
+		})(w, r)
+	}
+
+	// renderItemModifierGroupsPanel answers with the nested "Manage
+	// customization groups" dialog's own re-render target
+	// (#modifier-groups-modal-list, outerHTML swap) — ONE item's groups,
+	// active or not, same ListAllGroupsForItem shape the panel above has
+	// always used. Used both by the dialog's own lazy-load GET (opened from
+	// catalog_variants.html) and for a mutation whose originating form
+	// targets #modifier-groups-modal-list.
+	renderItemModifierGroupsPanel := func(w http.ResponseWriter, r *http.Request, itemID string) {
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		groups, err := data.NewModifierRepo(d.Db).ListAllGroupsForItem(r.Context(), itemID)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
+			return
+		}
+		httpx.RenderWith(modifierGroupAdminFiles, funcs)("modifier_groups_item_panel", modifierAdminItem{
+			ItemID:         itemID,
+			ModifierGroups: groups,
+			Target:         "modifier-groups-modal-list",
+		})(w, r)
+	}
+
+	// renderModifierMutationResult is the context-aware re-render dispatch
+	// (ut-docs#1957) both /api/catalog/modifier-group and
+	// /api/catalog/modifier-option end on: the create/update LOGIC (repo
+	// calls, validation) is unchanged and shared either way — only WHICH
+	// fragment answers the request varies, by reading back the exact same
+	// Hx-Target header the request's own originating form set as its
+	// hx-target (see modifier_group_admin.html's forms and this file's
+	// modifierGroupAdminFiles-based renderers above). A request carrying
+	// neither of the two new container ids — including every pre-existing
+	// caller that predates this card, and any non-htmx caller — falls back
+	// to the original #catalog-variants re-render, unchanged.
+	renderModifierMutationResult := func(w http.ResponseWriter, r *http.Request, itemID string) {
+		switch strings.TrimSpace(r.Header.Get("Hx-Target")) {
+		case "modifiers-list":
+			renderModifiersList(w, r)
+		case "modifier-groups-modal-list":
+			renderItemModifierGroupsPanel(w, r, itemID)
+		default:
+			renderVariantsPanel(w, r, itemID, false)
+		}
+	}
+
+	// The nested "Manage customization groups" dialog's own lazy-load GET
+	// (ut-docs#1957) — opened from the compact summary button in
+	// catalog_variants.html, kept as a real, bookmarkable-by-nothing GET
+	// fragment endpoint rather than piggy-backing on item-variants, since
+	// its container/shape is its own (#modifier-groups-modal-list, not
+	// #catalog-variants).
+	mux.HandleFunc("GET /api/catalog/modifier-groups-panel", func(w http.ResponseWriter, r *http.Request) {
+		itemID := strings.TrimSpace(r.URL.Query().Get("item_id"))
+		renderItemModifierGroupsPanel(w, r, itemID)
+	})
 
 	// Variant options as JSON — the labels form's variant picker.
 	mux.HandleFunc("GET /api/catalog/variant-options", func(w http.ResponseWriter, r *http.Request) {
@@ -319,8 +487,9 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"HasThumbnails": hasThumbnails,
 			"EmptyColspan":  emptyRowColspan(hasThumbnails),
 			"BuiltinIcons":  catimport.BuiltinIcons(),
+			"ItemColors":    catalogtypes.ItemColors(),
 		}
-		httpx.RenderWith(files(
+		catalogFiles := files(
 			filepath.Join("web", "ui", "layouts", "base.html"),
 			filepath.Join("web", "ui", "pages", "catalog.html"),
 			filepath.Join("web", "ui", "partials", "nav.html"),
@@ -328,25 +497,196 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
 			filepath.Join("web", "ui", "partials", "catalog_row.html"),
 			filepath.Join("web", "ui", "partials", "catalog_variants.html"),
-		), funcs)("base", data)(w, r)
+		)
+		// ut-docs#1950: /catalog is also the /items rail's default ("Library")
+		// section — an htmx request from that panel (NOT a stale history
+		// restore, see httpx.IsFragmentSwap) gets just the "content" block
+		// plus an out-of-band refresh of the rail itself, so its is-current
+		// highlight follows the click; a plain browser GET (deep link) still
+		// gets the exact same full standalone page as before this card.
+		if httpx.IsFragmentSwap(r) {
+			httpx.RenderWith(catalogFiles, funcs)("content", data)(w, r)
+			itemsnav.WriteRailOOB(w, r, funcs, "/catalog")
+			return
+		}
+		httpx.RenderWith(catalogFiles, funcs)("base", data)(w, r)
 	})
 
-	// The shop-wide modifiers browse screen (ut-docs#1899) — the per-item
-	// admin panel above (catalog_variants.html) has existed since 2026-07-24,
-	// but there was never a way to see every modifier group across the whole
-	// catalog without opening each item's detail panel one at a time.
+	// The shop-wide modifiers screen — originally read-only browse
+	// (ut-docs#1899); ut-docs#1957 made it the full CRUD home for modifier
+	// groups, moved out of the per-item admin panel (catalog_variants.html)
+	// after a product-owner review found the old placement confusing ("I
+	// saw the customization groups under the variants"). ListAllShopModifier
+	// Groups (unlike the old ListShopModifierGroups) includes a deactivated
+	// group/option too, so a manager can reactivate one from here — the
+	// same reason the per-item panel always used ListAllGroupsForItem.
 	mux.HandleFunc("/modifiers", func(w http.ResponseWriter, r *http.Request) {
-		groups, err := data.NewModifierRepo(d.Db).ListShopModifierGroups(r.Context())
+		groups, err := data.NewModifierRepo(d.Db).ListAllShopModifierGroups(r.Context())
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "modifiers.error.server", err)
 			return
 		}
-		httpx.Render("ui/pages/modifiers.html", map[string]any{
+		modifiersData := map[string]any{
 			"title":     "Customization options",
 			"menuItems": d.MenuSnapshot(),
 			"theme":     d.CurrentState().Theme,
-			"Groups":    groups,
-		})(w, r)
+			"Groups":    groupModifierAdminByItem(groups, "modifiers-list"),
+		}
+		// ut-docs#1950: same /items rail embedding as /catalog above.
+		if httpx.IsFragmentSwap(r) {
+			httpx.RenderContentFragment("ui/pages/modifiers.html", modifiersData)(w, r)
+			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/modifiers")
+			return
+		}
+		httpx.Render("ui/pages/modifiers.html", modifiersData)(w, r)
+	})
+
+	// Reusable option sets (ut-docs#1900): a shop-wide screen where a
+	// merchant defines a named, ordered axis once ("Size: S / M / L") and
+	// the per-item panel (catalog_variants.html) applies up to two of them
+	// to generate the item's real item_variants range in one step. Kept
+	// separate from checkout-time modifiers (/modifiers, ADR-0020), which
+	// change nothing here.
+	mux.HandleFunc("GET /catalog/option-sets", func(w http.ResponseWriter, r *http.Request) {
+		sets, err := data.NewOptionSetRepo(d.Db).ListOptionSets(r.Context())
+		if err != nil {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
+			return
+		}
+		optionSetsData := map[string]any{
+			"title":     "Option sets",
+			"menuItems": d.MenuSnapshot(),
+			"theme":     d.CurrentState().Theme,
+			"Sets":      sets,
+		}
+		// ut-docs#1950: same /items rail embedding as /catalog above.
+		if httpx.IsFragmentSwap(r) {
+			httpx.RenderContentFragment("ui/pages/option_sets.html", optionSetsData)(w, r)
+			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/catalog/option-sets")
+			return
+		}
+		httpx.Render("ui/pages/option_sets.html", optionSetsData)(w, r)
+	})
+
+	// renderOptionSetsList answers a mutation on the option-sets screen with
+	// its re-rendered list fragment (#option-sets-list, outerHTML swap).
+	renderOptionSetsList := func(w http.ResponseWriter, r *http.Request) {
+		sets, err := data.NewOptionSetRepo(d.Db).ListOptionSets(r.Context())
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+			return
+		}
+		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
+		httpx.RenderWith(files(
+			filepath.Join("web", "ui", "pages", "option_sets.html"),
+		), funcs)("option_sets_list", map[string]any{"Sets": sets})(w, r)
+	}
+
+	// Create a shop-wide option set. Not item-scoped: called from the
+	// option-sets screen (re-renders its list); a panelItem, if one ever
+	// arrives, re-renders that item's panel instead so the new set shows up
+	// in its checkbox row immediately.
+	mux.HandleFunc("POST /api/catalog/option-set", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
+		_ = r.ParseForm()
+		name := strings.TrimSpace(r.Form.Get("name"))
+		if name == "" {
+			http.Error(w, "name required", http.StatusBadRequest)
+			return
+		}
+		if _, err := data.NewOptionSetRepo(d.Db).CreateOptionSet(r.Context(), name); err != nil {
+			optionSetAwareError(w, r, http.StatusBadRequest, err)
+			return
+		}
+		if panelItem := strings.TrimSpace(r.Form.Get("panelItem")); panelItem != "" {
+			renderVariantsPanel(w, r, panelItem, false)
+			return
+		}
+		renderOptionSetsList(w, r)
+	})
+
+	// Append a value to an option set (sort_order = max + 1).
+	mux.HandleFunc("POST /api/catalog/option-set-value", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
+		_ = r.ParseForm()
+		setID := strings.TrimSpace(r.Form.Get("optionSetId"))
+		value := strings.TrimSpace(r.Form.Get("value"))
+		if setID == "" || value == "" {
+			http.Error(w, "optionSetId and value required", http.StatusBadRequest)
+			return
+		}
+		if _, err := data.NewOptionSetRepo(d.Db).AddOptionSetValue(r.Context(), setID, value); err != nil {
+			optionSetAwareError(w, r, http.StatusBadRequest, err)
+			return
+		}
+		if panelItem := strings.TrimSpace(r.Form.Get("panelItem")); panelItem != "" {
+			renderVariantsPanel(w, r, panelItem, false)
+			return
+		}
+		renderOptionSetsList(w, r)
+	})
+
+	// Apply the checked option sets (repeated optionSetIds, checkbox DOM
+	// order = axis order) to the panel's item. The repo enforces the
+	// at-most-two rule as a real constraint; the panel's checkbox row also
+	// disables a third box client-side, but that is a convenience, not the
+	// guard.
+	mux.HandleFunc("POST /api/catalog/item/option-sets", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
+		_ = r.ParseForm()
+		itemID := strings.TrimSpace(r.Form.Get("panelItem"))
+		if itemID == "" {
+			http.Error(w, "panelItem required", http.StatusBadRequest)
+			return
+		}
+		var ids []string
+		for _, id := range r.Form["optionSetIds"] {
+			if id = strings.TrimSpace(id); id != "" {
+				ids = append(ids, id)
+			}
+		}
+		if err := data.NewOptionSetRepo(d.Db).ApplyOptionSetsToItem(r.Context(), itemID, ids); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
+			return
+		}
+		renderVariantsPanel(w, r, itemID, false)
+	})
+
+	// Run the generator: one item_variants row per missing combination of
+	// the item's applied sets' values, never duplicating or removing an
+	// existing one (safe to re-run after adding a value — the
+	// ut-docs#1839 re-import-duplication class of bug is exactly what the
+	// item_variant_options link table exists to prevent). Answers with the
+	// panel plus a "N variant(s) created" line; the item's table row rides
+	// along OOB since its variant summary just changed.
+	mux.HandleFunc("POST /api/catalog/item/generate-variants", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
+		_ = r.ParseForm()
+		itemID := strings.TrimSpace(r.Form.Get("panelItem"))
+		if itemID == "" {
+			http.Error(w, "panelItem required", http.StatusBadRequest)
+			return
+		}
+		created, err := data.NewOptionSetRepo(d.Db).GenerateVariants(r.Context(), itemID)
+		if errors.Is(err, data.ErrNoOptionSetsApplied) {
+			// Not a failure — the operator just pressed Generate before
+			// Apply. Say so in the panel rather than with an error toast.
+			renderVariantsPanelWith(w, r, itemID, false, map[string]any{"GenerateNoSets": true})
+			return
+		}
+		if err != nil {
+			skuAwareError(w, r, http.StatusBadRequest, err)
+			return
+		}
+		renderVariantsPanelWith(w, r, itemID, true, map[string]any{"Generated": true, "GeneratedCount": created})
 	})
 
 	mux.HandleFunc("/api/catalog/item", func(w http.ResponseWriter, r *http.Request) {
@@ -599,7 +939,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
-		renderVariantsPanel(w, r, itemID, false)
+		renderModifierMutationResult(w, r, itemID)
 	})
 
 	// Create or update a modifier option (ADR-0020). majorPrice is entered
@@ -654,7 +994,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
-		renderVariantsPanel(w, r, itemID, false)
+		renderModifierMutationResult(w, r, itemID)
 	})
 
 	// Deactivate variant
@@ -1386,7 +1726,11 @@ func parseItemInput(r *http.Request) (pos.ItemInput, error) {
 		BrandID:     brand,
 		Description: strings.TrimSpace(r.Form.Get("description")),
 		Unit:        strings.TrimSpace(r.Form.Get("unit")),
-		IsWeighed:   r.Form.Get("isWeighed") == "1" || strings.ToLower(r.Form.Get("isWeighed")) == "on",
+		// ut-docs#1901: "" is a real, valid value here (the "no color"
+		// swatch tile) — validated against the fixed palette allowlist by
+		// validateLookups below, same convention as category/brand/tax.
+		Color:     strings.TrimSpace(r.Form.Get("color")),
+		IsWeighed: r.Form.Get("isWeighed") == "1" || strings.ToLower(r.Form.Get("isWeighed")) == "on",
 		// ut-docs#1850: unchecked (missing from the form) correctly reads
 		// as false/tracked — no hidden-fallback trick needed, unlike
 		// isActive below (that one defaults CHECKED, this one doesn't).
@@ -1489,6 +1833,16 @@ func validateLookups(ctx context.Context, repo *data.CatalogRepo, in pos.ItemInp
 			return err
 		}
 	}
+	// ut-docs#1901: color has no lookup table (it's a fixed, curated
+	// palette, not an admin-editable list), so this checks it against
+	// catalogtypes.ItemColors() directly rather than calling
+	// repo.ValidateLookup — same "clean, bounded, hand-written" error
+	// convention the caller's own comment already documents for this
+	// function's other checks (never raw SQL/driver text), since a raw,
+	// unvalidated value here would otherwise reach a CSS custom property.
+	if !catalogtypes.ValidItemColor(in.Color) {
+		return errors.New("invalid color")
+	}
 	return nil
 }
 func files(paths ...string) []string { return paths }
@@ -1503,6 +1857,18 @@ func files(paths ...string) []string { return paths }
 func skuAwareError(w http.ResponseWriter, r *http.Request, status int, err error) {
 	if errors.Is(err, data.ErrSKUExists) {
 		common.LocalizedError(w, r, http.StatusBadRequest, "catalog.error.sku_exists")
+		return
+	}
+	common.LogAndLocalizedError(w, r, status, "catalog.error.invalid_request", "catalog", err)
+}
+
+// optionSetAwareError is skuAwareError's twin for the option-set routes
+// (ut-docs#1900): a duplicate set name or a duplicate value within a set is
+// the one mistake an operator actually makes here, so it gets its own
+// actionable message; anything else takes the generic translated+logged path.
+func optionSetAwareError(w http.ResponseWriter, r *http.Request, status int, err error) {
+	if errors.Is(err, data.ErrOptionSetExists) || errors.Is(err, data.ErrOptionSetValueExists) {
+		common.LocalizedError(w, r, status, "catalog.option_sets.exists")
 		return
 	}
 	common.LogAndLocalizedError(w, r, status, "catalog.error.invalid_request", "catalog", err)

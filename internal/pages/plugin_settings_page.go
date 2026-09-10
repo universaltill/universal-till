@@ -102,14 +102,16 @@ type taxOverrideRow struct {
 }
 
 // unwrapSettingValue unwraps a plugin_settings.value_json's JSON-string
-// encoding to its plain text (same unwrap hostSettingsGet performs), so
-// callers work with what the plugin itself would see.
+// encoding to its plain text, so callers work with what the plugin itself
+// would see. Delegates to data.DecodeMapSettingValue (ut-docs#1269), the
+// shared decode seam also used by MergeAdditiveJSONMapSetting's read side.
+// NOT the same unwrap hostSettingsGet performs (internal/plugins/
+// wasm_hostfns.go) — that one unwraps unconditionally, so a stored bare
+// `null` yields "" there vs. "null" here; deliberately left as its own
+// independent seam by this card (ut-docs#1269 non-goal), harmless today
+// because the one caller here (line ~360) only ranges over the result.
 func unwrapSettingValue(valueJSON string) string {
-	var v string
-	if json.Unmarshal([]byte(valueJSON), &v) != nil {
-		return valueJSON // non-string JSON: pass through raw
-	}
-	return v
+	return data.DecodeMapSettingValue(valueJSON)
 }
 
 // buildTaxOverrideRows assembles the typed editor's rows from the current
@@ -231,23 +233,21 @@ func parseTaxOverrides(form map[string][]string, current map[string]int, taxCode
 
 // writeTaxOverrides persists an already-validated overrides map using the
 // exact same JSON-string encoding the generic settings path uses (so
-// settings_get/hostSettingsGet's unwrap keeps working unchanged). Returns
-// the number of settings changed (0 or 1).
+// settings_get/hostSettingsGet's unwrap keeps working unchanged) — via
+// data.EncodeMapSettingValue (ut-docs#1269), the shared encode seam also
+// used by MergeAdditiveJSONMapSetting's write side. Returns the number of
+// settings changed (0 or 1).
 func writeTaxOverrides(ctx context.Context, repo *data.PluginRepo, pluginID string, row data.PluginSettingRow, overrides map[string]int) (int, error) {
-	marshaled, err := json.Marshal(overrides)
+	raw, err := data.EncodeMapSettingValue(overrides)
 	if err != nil {
 		return 0, err
 	}
-	raw, err := json.Marshal(string(marshaled))
-	if err != nil {
-		return 0, err
-	}
-	if string(raw) == row.ValueJSON {
+	if raw == row.ValueJSON {
 		return 0, nil
 	}
 	// A rate-override map is never a manifest-declared secret (declaredSecret
 	// false); the repository's key-name heuristic still applies regardless.
-	if err := repo.UpsertPluginSettingScoped(ctx, pluginID, row.Key, string(raw), row.Scope, false); err != nil {
+	if err := repo.UpsertPluginSettingScoped(ctx, pluginID, row.Key, raw, row.Scope, false); err != nil {
 		return 0, err
 	}
 	return 1, nil
@@ -288,10 +288,7 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 		isSecret, _, _ := secretSettingCheck(r.Context(), d, pluginID)
 		var views []settingView
 		for _, row := range rows {
-			var v string
-			if json.Unmarshal([]byte(row.ValueJSON), &v) != nil {
-				v = row.ValueJSON // non-string JSON edits raw
-			}
+			v := unwrapSettingValue(row.ValueJSON)
 			sv := settingView{Key: row.Key, Value: v, Secret: isSecret(row.Key), PerTill: row.Scope == "register", Notice: settingNoticeKey(pluginID, row.Key)}
 			if sv.Secret {
 				sv.IsSet = v != ""

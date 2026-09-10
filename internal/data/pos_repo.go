@@ -894,7 +894,7 @@ JOIN sales s ON s.id = sl.sale_id
 LEFT JOIN item_variants iv ON iv.id = sl.variant_id
 LEFT JOIN items it ON it.id = COALESCE(sl.item_id, iv.item_id)
 LEFT JOIN dept_roots dr ON dr.id = it.category_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.local_date = date(?)
 GROUP BY department
 ORDER BY revenue DESC`, day)
 	if err != nil {
@@ -981,7 +981,7 @@ JOIN sales s ON s.id = sl.sale_id
 LEFT JOIN item_variants iv ON iv.id = sl.variant_id
 LEFT JOIN items it ON it.id = COALESCE(sl.item_id, iv.item_id)
 LEFT JOIN categories c ON c.id = it.category_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.local_date = date(?)
 GROUP BY article_group
 ORDER BY gross DESC`, day)
 	if err != nil {
@@ -1069,7 +1069,7 @@ SELECT sl.name_snapshot,
        COALESCE(SUM(sl.total_after_tax), 0) AS gross
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.local_date = date(?)
 GROUP BY sl.name_snapshot
 ORDER BY gross DESC`, day)
 	if err != nil {
@@ -1167,7 +1167,7 @@ SELECT CASE WHEN sl.order_type = 'takeaway' THEN 'takeaway' ELSE '' END AS order
        COALESCE(SUM(sl.total_after_tax), 0) AS gross
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.local_date = date(?)
 GROUP BY 1
 ORDER BY 1 ASC`, day)
 	if err != nil {
@@ -1272,7 +1272,7 @@ SELECT COALESCE(s.cashier_id, '') AS cashier_id,
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
 LEFT JOIN users u ON u.id = s.cashier_id
-WHERE s.status = 'completed' AND s.sale_type = 'sale' AND date(s.created_at, 'localtime') = date(?)
+WHERE s.status = 'completed' AND s.sale_type = 'sale' AND s.local_date = date(?)
 GROUP BY COALESCE(s.cashier_id, '')
 ORDER BY gross DESC`, day)
 	if err != nil {
@@ -1386,6 +1386,35 @@ WHERE status = 'completed' AND sale_type = 'return'
 		return 0, 0, fmt.Errorf("refunds by window: %w", err)
 	}
 	return total, count, nil
+}
+
+// DiscountsByWindow (ut-docs#1975) sums every discount applied to a
+// completed sale over [from, to) — both the whole-sale discount
+// (sales.discount_total, reason "sale_discount" in sale_discounts) AND
+// each line's own discount (sale_lines.line_discount, reason
+// "line_discount"). sale_discounts is the canonical ledger for both
+// (InsertSaleDiscountsBatch, internal/pos/sales.go) with no overlap
+// between the two reasons, so a plain SUM over it — joined to sales for
+// the status/type/window filter, mirroring RefundsByWindow immediately
+// above — is correct without double-counting and without the fan-out risk
+// a per-line JOIN inside SalesByDay's own GROUP BY would carry into
+// Count/Total/TaxTotal. Deliberately a separate query, not a column added
+// to SalesByDay: sale_discounts has no day column of its own to group by
+// cheaply, and this mirrors RefundsByWindow's own existing shape for a
+// different table over the same window.
+func (r *POSRepo) DiscountsByWindow(ctx context.Context, from, to time.Time) (total int64, err error) {
+	fromStr, toStr := windowArgs(from, to)
+	err = r.db.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(sd.amount), 0)
+FROM sale_discounts sd
+JOIN sales s ON s.id = sd.sale_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale'
+  AND datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) < datetime(?)`,
+		fromStr, toStr).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("discounts by window: %w", err)
+	}
+	return total, nil
 }
 
 // TopItems returns the best sellers by revenue over [from, to).
@@ -1667,7 +1696,13 @@ ORDER BY (revenue - cost) DESC LIMIT ?`, fromStr, toStr, limit)
 }
 
 // DayTotal returns one calendar day's completed-sale revenue (local time),
-// offset days back from ref (1 = the day before ref).
+// offset days back from ref (1 = the day before ref). Filters on the
+// precomputed local_date column (sargable via idx_sales_status_local_date,
+// ut-docs#1664) rather than date(created_at, 'localtime') — this is plain
+// calendar-midnight arithmetic on ref (daysAgo whole days back), NOT the
+// ADR-0057 business-day-start shift busyBuckets/SalesByDay apply directly to
+// created_at, so the local_date column (itself calendar-midnight, not
+// business-day-shifted) is the correct fit here.
 //
 // ref is a caller-supplied instant, not SQLite's own 'now' — a caller doing
 // several DayTotal reads to compare days against each other (e.g. "yesterday"
@@ -1685,7 +1720,7 @@ func (r *POSRepo) DayTotal(ctx context.Context, daysAgo int, ref time.Time) (int
 	err := r.db.QueryRowContext(ctx, `
 SELECT COALESCE(SUM(total), 0), COUNT(*) FROM sales
 WHERE status = 'completed' AND sale_type = 'sale'
-  AND date(created_at, 'localtime') = date(?, 'localtime', ?)`,
+  AND local_date = date(?, 'localtime', ?)`,
 		ref.UTC().Format(time.RFC3339), fmt.Sprintf("-%d days", daysAgo)).Scan(&total, &count)
 	if err != nil {
 		return 0, 0, fmt.Errorf("day total: %w", err)
@@ -3039,12 +3074,13 @@ type EODTaxBandPayment struct {
 }
 
 // SalesForTaxBands loads every completed sale (and return) in the SAME
-// local-calendar-day window dateRangeSummary aggregates — date(created_at,
-// 'localtime') BETWEEN date(from) AND date(to), ut-docs#869 — with the
-// per-line figures the day-close VAT banding needs. The caller
-// (internal/pages' attachEODTaxBands) runs each sale through the shared
-// pos.VATBandsForSale; the math cannot live here because internal/data
-// cannot import internal/pos (see dateRangeSummary's inline note).
+// local-calendar-day window dateRangeSummary aggregates — local_date BETWEEN
+// date(from) AND date(to) (ut-docs#869, sargable per ut-docs#1664 — see
+// migration 007's local_date column, ut-docs#1342) — with the per-line
+// figures the day-close VAT banding needs. The caller (internal/pages'
+// attachEODTaxBands) runs each sale through the shared pos.VATBandsForSale;
+// the math cannot live here because internal/data cannot import internal/pos
+// (see dateRangeSummary's inline note).
 //
 // Zero-value "note" lines (total_before_tax = total_after_tax = 0,
 // arbitrary tax_rate_bp) are excluded at the query so they can't invent a
@@ -3057,7 +3093,7 @@ func (r *POSRepo) SalesForTaxBands(ctx context.Context, from, to string) ([]EODT
 SELECT id, sale_type, subtotal, discount_total, tax_total, total,
        service_charge_amount, service_charge_tax_basis_bp, voucher_issue_total
 FROM sales
-WHERE status = 'completed' AND date(created_at, 'localtime') BETWEEN date(?) AND date(?)
+WHERE status = 'completed' AND local_date BETWEEN date(?) AND date(?)
 ORDER BY created_at, id`, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("eod band sales: %w", err)
@@ -3082,7 +3118,7 @@ ORDER BY created_at, id`, from, to)
 SELECT sl.sale_id, COALESCE(sl.tax_rate_bp, 0), sl.tax_amount, sl.total_after_tax
 FROM sale_lines sl
 JOIN sales s ON s.id = sl.sale_id
-WHERE s.status = 'completed' AND date(s.created_at, 'localtime') BETWEEN date(?) AND date(?)
+WHERE s.status = 'completed' AND s.local_date BETWEEN date(?) AND date(?)
   AND (sl.total_before_tax != 0 OR sl.total_after_tax != 0)
 ORDER BY sl.sale_id, sl.line_no`, from, to)
 	if err != nil {
@@ -3113,7 +3149,7 @@ ORDER BY sl.sale_id, sl.line_no`, from, to)
 SELECT p.sale_id, p.method_id, COALESCE(SUM(p.amount - p.change_given - p.tip_amount), 0)
 FROM payments p
 JOIN sales s ON s.id = p.sale_id
-WHERE s.status = 'completed' AND date(s.created_at, 'localtime') BETWEEN date(?) AND date(?)
+WHERE s.status = 'completed' AND s.local_date BETWEEN date(?) AND date(?)
 GROUP BY p.sale_id, p.method_id ORDER BY p.sale_id, p.method_id`, from, to)
 	if err != nil {
 		return nil, fmt.Errorf("eod band payments: %w", err)
@@ -6858,9 +6894,10 @@ func (r *POSRepo) ListRecentSales(ctx context.Context, limit int) ([]SaleJournal
 // The bool return is ut-docs#774: true when more rows exist for this filter
 // than limit — detected by asking for one extra row rather than paying for a
 // separate COUNT(*). Day, when set, matches the shop's LOCAL calendar day
-// (date(s.created_at, 'localtime'), same convention DayTotal already uses)
-// rather than the raw stored UTC date, since Day comes from a browser date
-// picker in the operator's own local time.
+// (s.local_date, same convention DayTotal already uses — sargable via
+// idx_sales_local_date, ut-docs#1664; before that, date(s.created_at,
+// 'localtime')) rather than the raw stored UTC date, since Day comes from a
+// browser date picker in the operator's own local time.
 func (r *POSRepo) ListSalesJournal(ctx context.Context, f SalesJournalFilter) ([]SaleJournalEntry, bool, error) {
 	limit := f.Limit
 	if limit <= 0 {
@@ -6878,7 +6915,7 @@ WHERE 1=1
 		args = append(args, f.TillID)
 	}
 	if f.Day != "" {
-		query += ` AND date(s.created_at, 'localtime') = date(?)`
+		query += ` AND s.local_date = date(?)`
 		args = append(args, f.Day)
 	}
 	query += ` ORDER BY s.created_at DESC LIMIT ?`
@@ -6979,7 +7016,19 @@ ORDER BY id
 
 // PaymentMethod is an active tender method offered on the Pay tab.
 type PaymentMethod struct {
-	ID   string
+	ID string
+	// Name is rendered through T at render time (ut-docs#2015): a plugin
+	// payment entry's label is copied into payment_methods.name verbatim at
+	// sync time (SyncPluginPaymentMethods) as a translator key, resolved via
+	// the owning plugin's own locales/ overlay (ADR-0010; the entry-label
+	// contract itself is reference/plugin-manifest.md's entries table,
+	// `label` row) — same render-time mechanism a page/export/report entry's
+	// label already uses. The three built-ins ('cash'/'card'/'gift') follow
+	// the same convention as of ut-docs#2021: 022_builtin_payment_method_
+	// i18n_keys.sql repoints their Name at "tender.cash"/"tender.card"/
+	// "tender.gift_card" (web/locales/*.json) instead of the plain-text
+	// literals 001_init.sql originally seeded, so they now translate on a
+	// non-English till instead of passing through T unchanged.
 	Name string
 	// Type is the payment_methods.type column ('cash', 'card', 'voucher',
 	// …). ut-docs#1832: the sale screen keeps a 'voucher' type out of the
