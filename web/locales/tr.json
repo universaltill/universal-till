@@ -1349,6 +1349,7 @@
   "reports.ask.placeholder": "örn. Bu hafta en çok ne satıldı?",
   "reports.ask.thinking": "Düşünülüyor…",
   "reports.ask.title": "Kasanıza sorun",
+  "reports.avg_sale": "Ortalama satış",
   "reports.business_day_start.help": "Raporlarda ve gün/hafta/ay/yıl dönem seçicisinde bir işletme gününün bittiği ve bir sonrakinin başladığı saat — gece yarısından sonra da satış yapıyorsanız (bir bar veya geç saatlere kadar açık bir mutfak gibi) bir gecelik hasılatın iki rapor gününe bölünmemesi için bunu gece yarısından daha geç bir saate ayarlayın.",
   "reports.business_day_start.label": "İşletme günü şu saatte başlar",
   "reports.busy_days": "En yoğun günler",
