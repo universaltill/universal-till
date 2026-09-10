@@ -81,7 +81,10 @@ async function stubFallbackCounter(page: import('@playwright/test').Page) {
 async function openItemImagePanel(page: import('@playwright/test').Page) {
   await page.goto('/catalog');
   await page.locator('.catalog-row', { hasText: 'Butter 250g' }).click();
-  await page.locator('details.catalog-extra', { hasText: 'Item image' }).locator('summary').click();
+  // ut-docs#1956: the "Item image" section is a tab in the dialog, not a
+  // <details> accordion.
+  await page.locator('#item-form-tab-image').click();
+  await expect(page.locator('#item-form-panel-image')).toBeVisible();
 }
 
 test.describe('catalog camera viewfinder (ut-docs#1472)', () => {
@@ -267,7 +270,7 @@ test.describe('catalog camera viewfinder (ut-docs#1472)', () => {
   // panel while the viewfinder is open must release the camera — otherwise
   // the stream (and the OS's own recording indicator) stays live with no
   // visible UI anywhere pointing at it.
-  test('collapsing the Item image panel while the viewfinder is open releases the camera', async ({ page }) => {
+  test('leaving the Item image tab while the viewfinder is open releases the camera', async ({ page }) => {
     const assertClean = watchConsole(page);
     await stubCamera(page);
     await openItemImagePanel(page);
@@ -276,8 +279,9 @@ test.describe('catalog camera viewfinder (ut-docs#1472)', () => {
     await expect(page.locator('#image-viewfinder')).toBeVisible();
     expect(await page.evaluate(() => (window as any).__stopCalls)).toBe(0);
 
-    // Click the SAME summary that opened the panel, collapsing it.
-    await page.locator('details.catalog-extra', { hasText: 'Item image' }).locator('summary').click();
+    // Switch to another tab — the panel that showed the feed is no longer
+    // visible (ut-docs#1956: the <details> collapse became a tab switch).
+    await page.locator('#item-form-tab-details').click();
     await expect.poll(() => page.evaluate(() => (window as any).__stopCalls)).toBe(1);
 
     assertClean();
@@ -301,8 +305,10 @@ test.describe('catalog camera viewfinder (ut-docs#1472)', () => {
     await expect(page.locator('#image-file-name')).toHaveText('');
     expect(await page.evaluate(() => (window as any).__stopCalls)).toBe(0); // camera still running
 
-    // Cleans up: closing the panel still releases the camera afterwards.
-    await page.locator('details.catalog-extra', { hasText: 'Item image' }).locator('summary').click();
+    // Cleans up: closing the whole dialog also releases the camera
+    // (ut-docs#1956 — the tab can't be "collapsed", but the dialog's own
+    // close event is the other way the panel stops being visible).
+    await page.locator('#item-form-close-btn').click();
     await expect.poll(() => page.evaluate(() => (window as any).__stopCalls)).toBe(1);
 
     assertClean();

@@ -206,20 +206,18 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
     const name = 'Row OOB Panel ' + Date.now();
     await createItem(page, name);
 
-    // Open the item's variants panel (a row click opens the edit dialog
-    // AND loads the variants panel, which lives OUTSIDE the dialog —
-    // catalog_variants renders as its own always-visible section below
-    // .catalog-layout, not inside #item-form-modal).
+    // Open the item's variants panel: a row click opens the edit dialog and
+    // loads the variants panel into it — since ut-docs#1956 the panel is the
+    // dialog's Variants tab, no longer a page-level section under the list.
     await page.locator(`.catalog-row[data-name="${name}"]`).locator('td').nth(1).click();
+    await page.locator('#item-form-tab-variants').click();
     await expect(page.locator('#vf-new')).toBeAttached();
-    // ut-docs#1901: close the edit dialog the row click just opened — the
-    // variants panel and search box below are both outside it, and the
-    // dialog's large `position: fixed` box sits over them and intercepts
-    // their clicks (stacking, not inertness — the dialog is non-modal).
-    // ut-docs#1929: via closeItemForm, race-tolerant of the save-success
-    // auto-close timer.
-    await closeItemForm(page);
     const row = page.locator(`.catalog-row[data-name="${name}"]`);
+    // The search box sits on the page BEHIND the full-screen (non-modal,
+    // .show()) dialog. fill() only needs visible/enabled/editable — not a
+    // pointer hit-test — so it still drives the real input and its real
+    // 'input' listener without closing the dialog (which would leave no
+    // visible row to reopen once the filter hides it).
     await page.locator('#catalog-search').fill('zzz-no-such-item');
     await expect(row).toBeHidden();
 

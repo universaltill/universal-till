@@ -18,7 +18,7 @@ Every generated variant is an ordinary variant: it has its own SKU, price, stock
 
 1. Open Catalog and press **Option sets** (next to the Customization options button). Type a name — *Size*, say — and press **Add option set**.
 2. On the set's card, add its values one at a time with **Add value** — *S*, then *M*, then *L*. Values keep the order you add them in; that is the order the variants are generated in.
-3. Back on the Catalog page, click an item to open its editor panel. Above the variants grid, tick the option set(s) you want — **up to two** (for example Size and Colour) — and press **Save**.
+3. Back on the Catalog page, click an item to open its editor and switch to the **Variants** tab. Above the variants grid, tick the option set(s) you want — **up to two** (for example Size and Colour) — and press **Save**.
 4. Press **Generate variants**. One variant is created for every combination (three for Size alone; Size × Colour with three colours gives nine), named like *S* or *S / Red* (values are joined in the order the sets are listed on this page — the order you created them in), each with a generated SKU and the item's current price. Edit any name, SKU or price in the grid afterwards, add barcodes, and set stock as usual.
 5. Added a value later — an *XL*? Press **Generate variants** again on each item that uses the set. Only the missing combinations are created; existing variants are never duplicated, renamed or removed, so it is always safe to run it again.
 

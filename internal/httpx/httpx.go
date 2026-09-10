@@ -140,6 +140,60 @@ var baseFuncs = template.FuncMap{
 	"helpLink": func(id string) template.HTML { return helpLinkHTML(id, DefaultLocale()) },
 	// {{ icon "lock" }} — inline SVG rail icons (icons.go, ut-docs#1423).
 	"icon": iconHTML,
+	// {{ dict "k" v ... }} — per-call parameters for a shared partial
+	// (list_header.html / record_dialog.html, ut-docs#2010), so a page
+	// adopts the list/edit standard with a template-only change.
+	"dict": dict,
+	// {{ $_ := req . "id" "formID" }} — the FIRST line of a shared partial:
+	// an execute-time error naming the key when a required dict key is
+	// absent or empty. Without it a misspelled key renders as "" at HTTP
+	// 200 (Save bound to form="", a New button targeting no dialog) — see
+	// req below.
+	"req": req,
+}
+
+// dict builds a map for {{ template "x" (dict "k" v ...) }}. An odd-length
+// argument list or a non-string key is an execute-time error rather than a
+// half-built map. That is the ONLY loud failure dict gives: a key that is
+// merely missing at the call site is NOT an error — html/template renders
+// a missing map key as the empty string — which is why every partial that
+// takes a dict guards its required keys with req on its first line
+// (ut-docs#2010 review, B2).
+func dict(kv ...any) (map[string]any, error) {
+	if len(kv)%2 != 0 {
+		return nil, fmt.Errorf("dict: want key/value pairs, got %d arguments", len(kv))
+	}
+	out := make(map[string]any, len(kv)/2)
+	for i := 0; i < len(kv); i += 2 {
+		k, ok := kv[i].(string)
+		if !ok {
+			return nil, fmt.Errorf("dict: key %d is %T, want string", i/2, kv[i])
+		}
+		out[k] = kv[i+1]
+	}
+	return out, nil
+}
+
+// req is the required-key guard a dict-taking partial runs first:
+// {{ $_ := req . "id" "formID" }}. It returns an error naming the first
+// required key that is absent, nil, or an empty string, so a misspelled
+// or forgotten key at a call site fails the render instead of shipping a
+// partial that looks fine and does nothing (ut-docs#2010 review, B2: a
+// missing formID rendered Save with form="" → getElementById("") → null →
+// Save did nothing and the discard guard silently disabled, at HTTP 200).
+// A nil dict (the partial called with no argument) fails on the first key.
+// The empty string it returns is so a bare {{ req . "k" }} prints nothing.
+func req(m map[string]any, keys ...string) (string, error) {
+	for _, k := range keys {
+		v, ok := m[k]
+		if !ok || v == nil {
+			return "", fmt.Errorf("req: required key %q is missing from the dict", k)
+		}
+		if s, isStr := v.(string); isStr && s == "" {
+			return "", fmt.Errorf("req: required key %q is empty", k)
+		}
+	}
+	return "", nil
 }
 
 // helpLinkHTML renders the same .help-hint markup nav.html's automatic "?"
@@ -831,6 +885,18 @@ var renderFiles = []string{
 	// modifiers.html", ...)/RenderContentFragment call sites, same as
 	// items_rail.html above.
 	"ui/partials/modifier_group_admin.html",
+	// ut-docs#2010: the app-wide list/edit standard's two partials
+	// (ut-docs/reference/list-and-dialog-pattern.md). Same mechanism as
+	// items_rail.html above — a page includes them by their {{ define }}
+	// names through the plain Render/RenderContentFragment call sites. Note
+	// the slot contract this depends on: this set is fixed and only the
+	// PAGE varies per call, so every page is parsed into its own template
+	// set, and two pages may each {{ define "record_dialog_fields" }} with
+	// no collision. record_dialog.html therefore ships NO default for its
+	// slots (definition order across ParseFiles would silently pick a
+	// winner) — a page that uses it must define both, see the partial.
+	"ui/partials/list_header.html",
+	"ui/partials/record_dialog.html",
 }
 
 // Render full page with layout + page + common partials

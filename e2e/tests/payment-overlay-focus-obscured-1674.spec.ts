@@ -24,6 +24,12 @@ test.describe('remaining covered controls drop out of tab order while the paymen
     await page.setViewportSize({ width: 1024, height: 600 });
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    // ut-docs#1984: Payment is now disabled on an empty basket (the server-
+    // global engine, reset above) — scan once; it stays non-empty across
+    // this test's later page.goto() calls (client-side nav only).
+    await page.getByRole('textbox').first().fill('5000000000012');
+    await page.locator('.scan-row button[type=submit]').click();
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
     const quickPay = page.getByTestId('quick-pay');
     await expect(quickPay).not.toHaveAttribute('tabindex', '-1');
@@ -61,6 +67,10 @@ test.describe('remaining covered controls drop out of tab order while the paymen
     await page.setViewportSize({ width: 1024, height: 600 });
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    // ut-docs#1984: scan first — Payment is disabled on an empty basket.
+    await page.getByRole('textbox').first().fill('5000000000012');
+    await page.locator('.scan-row button[type=submit]').click();
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
     const paymentOpen = page.getByTestId('payment-open');
     await expect(paymentOpen).not.toHaveAttribute('tabindex', '-1');
@@ -97,6 +107,10 @@ test.describe('remaining covered controls drop out of tab order while the paymen
     await page.setViewportSize({ width: 375, height: 667 });
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    // ut-docs#1984: scan first — Payment is disabled on an empty basket.
+    await page.getByRole('textbox').first().fill('5000000000012');
+    await page.locator('.scan-row button[type=submit]').click();
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
     const phoneNewSale = page.getByTestId('kiosk-checkout-start-phone');
     await expect(phoneNewSale).toBeVisible();

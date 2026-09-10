@@ -1,12 +1,16 @@
 package pages
 
 import (
+	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"os"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"testing"
@@ -18,7 +22,10 @@ import (
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/pos"
+	layoutsalon "github.com/universaltill/universal-till/plugins/layout-salon"
 )
 
 func TestShortDeviceID(t *testing.T) {
@@ -2642,5 +2649,230 @@ func TestSettingsUpsert_OwnerRequiredGatesAreTranslatedFullLayout(t *testing.T) 
 				t.Fatalf("expected the translated owner_required message %q, got: %s", want, body)
 			}
 		})
+	}
+}
+
+// ut-docs#1883 / architecture/plugin-architecture.md §7: an export/report
+// entry's Label is a plugin-overlay-resolvable locale key ("plain-text
+// labels pass through T unchanged", same convention plugin_page.go already
+// uses for page-type entries), not a literal string — but the Data-export
+// picker in settings.html previously rendered `.Label` raw, with no `T`
+// call, so a plugin author's translation was never actually applied here
+// even when the plugin correctly shipped `locales/<code>.json`. These two
+// tests pin the fix for both the single-entry and multi-entry render
+// branches, and confirm an entry whose Label has no matching overlay key
+// still falls back to rendering the literal string unchanged (config.I18n.T
+// returns the key itself on a miss) rather than breaking a plugin that
+// hasn't adopted the key convention yet.
+// seedTestExportPlugin inserts a minimal active plugin row, satisfying the
+// plugin_catalog (id, version) FK plugins itself requires (ut-docs#1677) —
+// same shape as pos_api_test.go's TestTenderHandler_AppliesPluginReportedTipFromAuthorizeResponse.
+func seedTestExportPlugin(t *testing.T, db *sql.DB, id string) {
+	t.Helper()
+	if _, err := db.Exec(`INSERT INTO plugin_catalog (id, version, name, description, runtime, entrypoint, package_url, sha256, author, website, tags_json, is_deprecated, min_pos_version, api_version, published_at)
+	          VALUES (?, '1.0.0', 'Test Plugin', 'test', 'wasm', 'plugin.wasm', 'https://example.test/plugin.wasm', 'deadbeef', 'auth', 'site', '[]', 0, '0.0.0', '1', datetime('now'))`, id); err != nil {
+		t.Fatalf("seed plugin_catalog: %v", err)
+	}
+	if _, err := db.Exec(`INSERT INTO plugins (id, name, version, entrypoint, runtime, is_active) VALUES (?, 'Test Plugin', '1.0.0', 'plugin.wasm', 'wasm', 1)`, id); err != nil {
+		t.Fatalf("seed plugins: %v", err)
+	}
+}
+
+func TestSettingsPage_ExportEntryLabel_SingleEntry_ResolvesPluginOverlay(t *testing.T) {
+	mux, _, dp := newFullAuthDeps(t)
+
+	// Mimic plugins.Manager.syncLocales() merging an installed plugin's
+	// locales/en.json overlay into the translator.
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	i18n.SetOverlays(map[string]map[string]string{
+		"en": {"testplugin.export_label": "Test Plugin Export"},
+	})
+	httpx.InitI18n(i18n, "en")
+	t.Cleanup(func() { initAuthTestI18n(t) }) // restore the plain (no-overlay) global i18n for later tests
+
+	seedTestExportPlugin(t, dp.Db, "com.universaltill.testplugin")
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, is_active, sort_order)
+	          VALUES ('e1', 'com.universaltill.testplugin', 'test-export', 'testplugin.export_label', 'export', 1, 5)`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req = auth.WithUser(req, mgrUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Test Plugin Export") {
+		t.Fatalf("expected the export entry label translated via the plugin overlay, got:\n%s", body)
+	}
+	if strings.Contains(body, "testplugin.export_label") {
+		t.Fatalf("raw locale key leaked into the page instead of its translation:\n%s", body)
+	}
+}
+
+func TestSettingsPage_ExportEntryLabel_MultiEntry_ResolvesPluginOverlayAndFallsBackOnMiss(t *testing.T) {
+	mux, _, dp := newFullAuthDeps(t)
+
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	i18n.SetOverlays(map[string]map[string]string{
+		"en": {"testplugin.export_label_a": "Test Plugin Export A"},
+		// deliberately no overlay entry for testplugin.export_label_b, to
+		// pin the fallback-to-literal behaviour for an entry whose plugin
+		// hasn't shipped a translation for this key/locale.
+	})
+	httpx.InitI18n(i18n, "en")
+	t.Cleanup(func() { initAuthTestI18n(t) }) // restore the plain (no-overlay) global i18n for later tests
+
+	seedTestExportPlugin(t, dp.Db, "com.universaltill.testplugin")
+	if _, err := dp.Db.Exec(`INSERT INTO plugin_entries (id, plugin_id, key, label, type, is_active, sort_order)
+	          VALUES ('e1', 'com.universaltill.testplugin', 'test-export-a', 'testplugin.export_label_a', 'export', 1, 5),
+	                 ('e2', 'com.universaltill.testplugin', 'test-export-b', 'testplugin.export_label_b', 'export', 1, 10)`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/settings", nil)
+	req = auth.WithUser(req, mgrUser)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /settings = %d", rec.Code)
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Test Plugin Export A") {
+		t.Fatalf("expected entry A's label translated via the plugin overlay, got:\n%s", body)
+	}
+	if !strings.Contains(body, "testplugin.export_label_b") {
+		t.Fatalf("expected entry B's untranslated key to fall back to the literal key, got:\n%s", body)
+	}
+}
+
+// ut-docs#1902: POST /api/settings/shop-type is the SAME handler production
+// wires builtinlayouts.Sync into — this drives it through the real mux (not
+// just the unit-tested Sync function directly) to prove the wiring itself
+// works, not only the function it calls. newFullAuthDeps doesn't wire a
+// plugin manager by default (several older tests assert Pm==nil fallbacks),
+// so this test wires one itself, exactly as pages.Init does in production.
+func TestShopTypeEndpoint_ServiceActivatesSalonLayout_SwitchAwayRemovesIt(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+	ctx := t.Context()
+
+	pm, err := plugins.Init(ctx, d.Cfg, d.Db)
+	if err != nil {
+		t.Fatalf("plugins.Init: %v", err)
+	}
+	d.Pm = pm
+
+	hasSalonAmendment := func() bool {
+		for _, a := range d.Pm.LayoutAmendments {
+			if a.PluginID == "com.universaltill.layout-salon" && a.Key == "/tables" && a.Hide {
+				return true
+			}
+		}
+		return false
+	}
+
+	if hasSalonAmendment() {
+		t.Fatal("salon layout must not be active before shop_type is ever set")
+	}
+
+	// Manager role saves shop_type=service (mgrUser self-approves, no PIN
+	// elevation — same as every other manager-role case in this file).
+	rec := postForm(mux, "/api/settings/shop-type", url.Values{"shop_type": {"service"}}, &mgrUser)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("save shop_type=service: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if !hasSalonAmendment() {
+		t.Fatalf("saving shop_type=service through the real handler must activate the salon layout (hide /tables), got amendments %+v", d.Pm.LayoutAmendments)
+	}
+
+	// Switching to a different shop type must remove it again — no
+	// orphaned hidden tile survives the switch.
+	rec = postForm(mux, "/api/settings/shop-type", url.Values{"shop_type": {"cafe"}}, &mgrUser)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("save shop_type=cafe: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if hasSalonAmendment() {
+		t.Fatalf("switching to shop_type=cafe must deactivate the salon layout, still present: %+v", d.Pm.LayoutAmendments)
+	}
+}
+
+// ut-docs#2006 gap 2, at the real handler level: a version-bump reinstall
+// whose installSalon half fails must still trigger ReloadPlugins — proven
+// here by d.Pm actually reflecting the post-removal DB state (no orphaned
+// amendment) even though builtinlayouts.Sync returned an error. Before this
+// card's fix, the handler's `if err := Sync(...); err != nil { warn } else
+// if ... ReloadPlugins ...` skipped the reload on any Sync error, so a
+// caller's in-memory Pm would have kept serving the stale, now-uninstalled
+// plugin's amendments until some unrelated later reload.
+func TestShopTypeEndpoint_FailedReinstall_StillReloadsPlugins(t *testing.T) {
+	origDataDir := paths.DataDir()
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init(origDataDir) })
+
+	mux, _, d := newFullAuthDeps(t)
+	ctx := t.Context()
+
+	pm, err := plugins.Init(ctx, d.Cfg, d.Db)
+	if err != nil {
+		t.Fatalf("plugins.Init: %v", err)
+	}
+	d.Pm = pm
+
+	hasSalonAmendment := func() bool {
+		for _, a := range d.Pm.LayoutAmendments {
+			if a.PluginID == "com.universaltill.layout-salon" && a.Key == "/tables" && a.Hide {
+				return true
+			}
+		}
+		return false
+	}
+
+	// Simulate a pre-existing install of a STALE embedded-manifest version
+	// (same setup builtinlayouts' own
+	// TestSync_StaleInstalledVersion_ReplacedWithCurrentOnResync uses) —
+	// DB row only, no on-disk plugin files, exactly what a real prior till
+	// self-update would leave if it never re-synced.
+	staleManifest, err := plugins.ParseManifest(bytes.NewReader(layoutsalon.ManifestJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleManifest.Version = "0.0.1-stale"
+	if err := plugins.PersistManifest(ctx, d.Db, staleManifest, plugins.InstallOptions{TrustLevel: "system"}); err != nil {
+		t.Fatalf("install fabricated stale version: %v", err)
+	}
+	if err := d.ReloadPlugins(ctx); err != nil {
+		t.Fatalf("reload after seeding stale version: %v", err)
+	}
+	if !hasSalonAmendment() {
+		t.Fatal("the stale-but-installed salon layout must already be active before the reinstall attempt")
+	}
+
+	// Block installSalon's os.MkdirAll deterministically, same
+	// failure-injection as builtinlayouts_test.go's
+	// TestSync_ReinstallFailure_StillReturnsError: a regular file where a
+	// directory needs to be created, placed at the plugins ROOT (not under
+	// the plugin's own id directory) so removeSalon's os.RemoveAll doesn't
+	// wipe it before installSalon ever runs.
+	if err := os.WriteFile(paths.Plugins(), []byte("blocking file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	// Re-saving shop_type=service now hits the version-mismatch reinstall
+	// path: removeSalon succeeds (DB says uninstalled), installSalon fails
+	// (blocked MkdirAll). The handler must treat this as "reload anyway."
+	rec := postForm(mux, "/api/settings/shop-type", url.Values{"shop_type": {"service"}}, &mgrUser)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("save shop_type=service over a stale version: code=%d body=%s", rec.Code, rec.Body.String())
+	}
+	if hasSalonAmendment() {
+		t.Fatal("a failed reinstall must still trigger ReloadPlugins — d.Pm kept serving the stale (now-uninstalled) plugin's amendment instead of reflecting the DB's real post-removal state")
 	}
 }

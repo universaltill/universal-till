@@ -1,5 +1,10 @@
 {{ define "catalog_variants" }}
-<div class="card catalog-detail" id="catalog-variants">
+{{/* ut-docs#1956: rendered INSIDE the item form dialog's Variants tab
+     (web/ui/pages/catalog.html), no longer as a page-level card under the
+     list — so no .card chrome (a bordered box inside a full-screen form
+     read as a box-in-a-box). Every form here still targets #catalog-variants
+     with outerHTML, unchanged. */}}
+<div class="catalog-detail" id="catalog-variants">
   {{ if not .ItemID }}
   <p class="muted" style="margin:0">{{ T "catalog.variants.pick_hint" }}</p>
   {{ else }}
@@ -9,7 +14,11 @@
       <div class="catalog-detail-title">
         {{ $itemThumb := printf "/public/assets/items/%s/thumb.png" .ItemID }}
         {{ if imgExists $itemThumb }}<img class="thumb" src="{{ imgv $itemThumb }}" alt="" onerror="this.style.display='none'">{{ else }}<div class="thumb" aria-hidden="true"></div>{{ end }}
-        <h3>{{ .ItemName }}</h3>
+        {{/* ut-docs#1956: the dialog's own #item-form-title already shows
+             the item name; a second visible heading right under it was
+             redundant. Kept for assistive tech (and for the thumb's
+             context) via .visually-hidden, not removed. */}}
+        <h3 class="visually-hidden">{{ .ItemName }}</h3>
       </div>
       <div class="muted catalog-detail-label">{{ T "catalog.barcodes" }} — {{ T "catalog.whole_item" }}</div>
       <div class="chip-row">
