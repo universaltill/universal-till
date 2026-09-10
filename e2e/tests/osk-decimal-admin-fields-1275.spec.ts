@@ -60,13 +60,13 @@ test.describe('admin-screen decimal fields survive typing via the on-screen keyb
       // .fee-row repeats per payment method (Cash/Card/Gift Card on the
       // seeded e2e till) -- the loop below always takes .first().
       name: 'settings.html Payments fee percent',
-      goto: '/settings',
+      goto: '/settings#settings-payments', // ut-docs#1960: Settings is two-pane now — deep-link to the section this drives
       selector: '.fee-row input[name="percent"]',
       text: '12.50',
     },
     {
       name: 'settings.html Payments fee fixed',
-      goto: '/settings',
+      goto: '/settings#settings-payments',
       selector: '.fee-row input[name="fixed"]',
       text: '3.40',
     },

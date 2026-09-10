@@ -11,6 +11,8 @@ routes: [/settings]
 
 Kasa baştan sona English, Türkçe, فارسی ve العربية konuşur — sağdan sola düzen dâhil — ve ekran klavyesiyle, ayarlanabilir yazı boyutuyla dokunmatik ekranlara uyum sağlar.
 
+Ayarlar, bölümlerinin listesini bir yanda, baktığınız bölümü diğer yanda gösterir; listenin üstündeki arama kutusu, yalnızca bir bölüm başlığını değil, belirli bir ayarı adıyla bulur — bu kadar çok bölümü olan bir sayfada işe yarar. Bir sonucu seçtiğinizde kasa o bölümü açar ve sizi doğrudan ayara götürür. Telefon boyutundaki bir ekranda önce liste gelir; bir bölümü açmak için dokunun, geri dönmek için **Bölümlere dön**'ü kullanın.
+
 ## Nasıl kullanılır
 
 1. Dili menüden değiştirin; her kullanıcı kendi dilini seçebilir — bu tarayıcıya özel bir seçimdir, bu yüzden yönetici PIN'i gerektirmez.

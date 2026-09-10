@@ -1,7 +1,28 @@
 {{ define "content" }}
 <h1>{{ T "settings.title" }}</h1>
 <p id="settings-save-error" class="login-error" role="alert" hidden>{{ T "settings.error.save_failed" }}</p>
-<div class="settings-grid">
+<!-- ut-docs#1960: two-pane master-detail — the section list (+ a search box
+     that finds individual settings) on the inline-start side, the selected
+     section's card on the other. Same visual shell as the manual (help.html
+     / .manual in app.css) but deliberately NOT its per-topic server
+     round-trip: every card below is still rendered by this template on the
+     one initial request, in the request's locale, exactly as before — the
+     script at the bottom of this file only shows/hides the already-rendered
+     cards (a progressive-disclosure affordance over server-rendered content,
+     like <details>/<summary>), so this is not a client-side router and does
+     not contradict ADR-0008. See that script's header for the rationale. -->
+<div class="settings-shell" id="settings-shell">
+  <aside class="settings-nav" id="settings-nav" aria-label="{{ T "settings.nav.label" }}">
+    <form class="settings-search" role="search" onsubmit="return false">
+      <label class="visually-hidden" for="settings-q">{{ T "settings.search.label" }}</label>
+      <input id="settings-q" type="search" autocomplete="off" placeholder="{{ T "settings.search.placeholder" }}">
+    </form>
+    <ul class="settings-tree" id="settings-tree"></ul>
+    <p class="settings-noresults muted" id="settings-noresults" hidden>{{ T "settings.search.none" }}</p>
+  </aside>
+  <div class="settings-panel" id="settings-panel">
+    <button type="button" class="btn secondary settings-back" id="settings-back">← {{ T "settings.nav.back" }}</button>
+<div class="settings-grid" id="settings-grid">
 <div class="card" id="registration">
   <h2>{{ T "settings.enrol.title" }} {{ helpLink "claim" }}</h2>
   {{ if enrolled }}
@@ -45,20 +66,20 @@
   </div>
 </div>
 {{ if .isManager }}
-<div class="card">
+<div class="card" id="settings-issuereport">
   <h2>{{ T "issuereport.title" }}</h2>
   <p class="muted">{{ T "issuereport.intro" }}</p>
   <a class="btn" href="/report-issue">{{ T "issuereport.title" }}</a>
 </div>
 {{ end }}
 {{ if .isManager }}
-<div class="card">
+<div class="card" id="settings-menulayout">
   <h2>{{ T "menulayout.title" }} {{ helpLink "menu" }}</h2>
   <p class="muted">{{ T "menulayout.settings_intro" }}</p>
   <a class="btn" href="/settings/menu">{{ T "menulayout.title" }}</a>
 </div>
 {{ end }}
-<div class="card">
+<div class="card" id="settings-update">
   <h2>{{ T "settings.update.title" }} {{ helpLink "updates" }}</h2>
   <p class="muted">Universal Till v{{ appversion }}{{ if updateavailable }} &mdash; &#11014;&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}{{ end }}</p>
   {{ if and updateinstallbridge updateavailable }}
@@ -234,7 +255,7 @@
   </form>
   {{ end }}
 </div>
-<div class="card">
+<div class="card" id="settings-theme">
   <h2>{{ T "settings.theme.title" }}</h2>
   <form hx-post="/api/settings/theme" hx-swap="none" hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}">
     <select name="theme">
@@ -246,7 +267,7 @@
     <button class="btn" type="submit">{{ T "settings.theme.apply" }}</button>
   </form>
 </div>
-<div class="card">
+<div class="card" id="settings-display">
   <h2>{{ T "settings.display.title" }}</h2>
   <p class="muted">{{ T "settings.display.help" }}</p>
   <form hx-post="/api/settings/ui-scale" hx-swap="none" hx-on::after-request="if(event.detail.successful){window.location.reload()}else{document.getElementById('settings-save-error').hidden=false}">
@@ -477,7 +498,7 @@
      check — the payments-default/fee endpoints are elevation-wired, so the
      card renders for any session once methods exist. -->
 {{ if .payMethods }}
-<div class="card">
+<div class="card" id="settings-payments">
   <h2>{{ T "settings.payments.title" }} {{ helpLink "payments" }}</h2>
   <p class="muted">{{ T "settings.payments.default_help" }}</p>
   <form hx-post="/api/settings/payments-default" hx-target="#pay-default-msg" hx-swap="innerHTML">
@@ -519,7 +540,7 @@
      there's no "no data yet" state for this one, the setting always
      applies). Elevation-gated + audited, same convention as every other
      settings write on this page (see payments-default just above). -->
-<div class="card">
+<div class="card" id="settings-order-no">
   <h2>{{ T "settings.order_no.title" }} {{ helpLink "order-status" }}</h2>
   <p class="muted">{{ T "settings.order_no.help" }}</p>
   <form hx-post="/api/settings/order-no-scheme" hx-target="#order-no-scheme-msg" hx-swap="innerHTML">
@@ -534,7 +555,7 @@
     </label>
   </form>
 </div>
-<div class="card">
+<div class="card" id="settings-barcode">
   <!-- ADR-0059 Decision §2, ut-docs#935: shop-selectable barcode symbology
        checklist. One checkbox per internal/barcode registry entry, saved
        immediately on change (same per-checkbox hx-post/revert-on-failure
@@ -590,7 +611,7 @@
   });
 })();
 </script>
-<div class="card">
+<div class="card" id="settings-catalog-import-barcode-default">
   <!-- ut-docs#1356: whether a fresh catalog-import preview's "derive a
        barcode from SKU" checkbox (ut-docs#1224) starts pre-ticked for this
        shop — never changes what an import actually does, only that
@@ -635,7 +656,7 @@
      role and the server decides (settings_page.go).
      The label states the CONSEQUENCE, not the mechanism: "negative
      inventory" is our word, not a shop owner's. -->
-<div class="card settings-wide">
+<div class="card settings-wide" id="settings-stock-tracking">
   <h2>{{ T "settings.stock_tracking.title" }} {{ helpLink "inventory" }}</h2>
   <label style="display:block; margin:.35rem 0">
     <input type="checkbox" id="allow-negative-inventory-cb" name="enabled"
@@ -661,7 +682,7 @@
   });
 })();
 </script>
-<div class="card settings-wide">
+<div class="card settings-wide" id="settings-backup">
   <h2>{{ T "settings.backup.title" }} {{ helpLink "backups" }}</h2>
   <p class="muted">{{ T "settings.backup.help" }}</p>
   <!-- ut-docs#867: the Backup-now button is elevation-wired, so it renders for
@@ -721,7 +742,7 @@
      heading — gate the whole card on "isManager OR any of the
      elevation-wired sub-features actually has something to show". -->
 {{ if or .isManager (gt .sampleCount 0) .pendingBasePlugins .restorePromptDeferred }}
-<div class="card">
+<div class="card" id="settings-data">
   <h2>🧹 {{ T "settings.data.title" }} {{ helpLink "display" }}</h2>
   <!-- ut-docs#867: the three elevation-wired actions in this card
        (remove-demo-catalogue, dismiss-restore-prompt,
@@ -1182,7 +1203,7 @@
 })();
 </script>
 {{ end }}
-<div class="card">
+<div class="card" id="settings-retention">
   <h2>🗄️ {{ T "settings.retention.title" }} {{ helpLink "reports" }}</h2>
   <p class="muted">{{ T "settings.retention.help" }}</p>
   <!-- ut-docs#867: the mode form is elevation-wired and renders for every
@@ -1306,7 +1327,7 @@
 {{ end }}
 <!-- ut-docs#866: printer settings are elevation-wired — the card renders for
      every session (server-side checkOrElevate is the real gate). -->
-<div class="card">
+<div class="card" id="settings-printer">
   <h2>{{ T "settings.printer.title" }} {{ helpLink "printing" }}</h2>
   <p class="muted">{{ T "settings.printer.help" }}</p>
   <!-- ut-docs#794 review finding: the elevation prompt is itself a 2xx
@@ -1503,7 +1524,7 @@
 {{ end }}
 <!-- ut-docs#867: till-name and till-register are elevation-wired — the card
      renders for every session (the .IsPrimaryTill data guard is unchanged). -->
-<div class="card">
+<div class="card" id="settings-tills">
   <h2>🔗 {{ T "tills.title" }}</h2>
   {{ if .IsPrimaryTill }}
   <!-- Only the primary has its own name to edit here (ut-docs#396 review):
@@ -1564,7 +1585,7 @@
 <!-- ut-docs#866: invoice seller identity is elevation-wired — the card
      renders for every session (server-side checkOrElevate is the real
      gate). -->
-<div class="card">
+<div class="card" id="settings-invoice">
   <h2>🧾 {{ T "settings.invoice.title" }}</h2>
   <p class="muted">{{ T "settings.invoice.help" }}</p>
   <!-- ut-docs#794 review finding: same Content-Type reload guard as the
@@ -1588,7 +1609,7 @@
 </div>
 <!-- ut-docs#867: idle-lock, kiosk-idle-reset and telemetry below are all
      elevation-wired — their cards render for every session. -->
-<div class="card">
+<div class="card" id="settings-idle-lock">
   <h2>{{ T "settings.idle_lock.title" }} {{ helpLink "users" }}</h2>
   <p class="muted">{{ T "settings.idle_lock.help" }}</p>
   <!-- ut-docs#865: same Content-Type reload guard as till-name/save
@@ -1613,7 +1634,7 @@
     <span id="idle-lock-msg" aria-live="polite"></span>
   </form>
 </div>
-<div class="card">
+<div class="card" id="settings-kiosk-idle-reset">
   <h2>{{ T "settings.kiosk_idle_reset.title" }}</h2>
   <p class="muted">{{ T "settings.kiosk_idle_reset.help" }}</p>
   <form hx-post="/api/settings/kiosk-idle-reset" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}">
@@ -1629,7 +1650,7 @@
     <span id="kiosk-idle-reset-msg" aria-live="polite"></span>
   </form>
 </div>
-<div class="card">
+<div class="card" id="settings-telemetry">
   <h2>{{ T "settings.telemetry.title" }}</h2>
   <p class="muted">{{ T "settings.telemetry.help" }}</p>
   <!-- ut-docs#865: same Content-Type reload guard as idle-lock above — the
@@ -1645,7 +1666,7 @@
 </div>
 <!-- ut-docs#867: currency and shop-type post to elevation-wired endpoints —
      both cards render for every session. -->
-<div class="card">
+<div class="card" id="settings-currency">
   <h2>{{ T "settings.currency.title" }}</h2>
   <p class="muted">{{ T "settings.currency.help" }}</p>
   <!-- ut-docs#796: Content-Type reload guard, same as the report-retention
@@ -1668,7 +1689,7 @@
      own browser might be on. ut-docs#1125: now native names (nativelocalename,
      shared with setup.html's language step) — no flag, same reasoning
      recorded on that ticket. -->
-<div class="card">
+<div class="card" id="settings-language">
   <h2>{{ T "settings.language.title" }}</h2>
   <p class="muted">{{ T "settings.language.help" }}</p>
   <form hx-post="/api/settings/save" hx-swap="none" hx-on::after-request="var ct=(event.detail.xhr.getResponseHeader('Content-Type')||''); if(event.detail.successful){ if(ct.indexOf('text/html')===-1){window.location.reload()} } else {document.getElementById('settings-save-error').hidden=false}">
@@ -1689,7 +1710,7 @@
     <span aria-live="polite"></span>
   </form>
 </div>
-<div class="card">
+<div class="card" id="settings-shop-type">
   <h2>{{ T "settings.shop_type.title" }}</h2>
   <p class="muted">{{ T "settings.shop_type.help" }}</p>
   <form hx-post="/api/settings/shop-type" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}">
@@ -1710,7 +1731,7 @@
      action to elevate, unlike every named form above. Do not "fix" this as a
      missed site. -->
 {{ if .isManager }}
-<div class="card settings-wide">
+<div class="card settings-wide" id="settings-all">
   <h2>{{ T "settings.all" }}</h2>
   <table class="table">
     <thead>
@@ -1770,5 +1791,286 @@
   </script>
 </div>
 {{ end }}
-</div>
+</div><!-- /.settings-grid -->
+  </div><!-- /.settings-panel -->
+</div><!-- /.settings-shell -->
+<script>
+(function () {
+  // ut-docs#1960: the Settings two-pane section switcher + settings search.
+  //
+  // Runs AFTER #settings-grid's closing tag on purpose: it builds the section
+  // list from the cards that actually rendered for THIS session/role/locale
+  // (every isManager / payMethods template gate above has already been
+  // decided server-side), so nothing here is a hardcoded list that can
+  // drift from the template. Section switching is a plain show/hide of cards
+  // that are already in the DOM — no fetch, no client-side routing, no second
+  // render path (ADR-0008 stays intact: the server rendered every card once).
+  //
+  // Why not reuse /help's per-topic HTMX round-trip (help.html): splitting
+  // settings_page.go's registerSettings — 2,270 lines interleaving ~40 POST
+  // handlers' registration with the template's data-gathering — into
+  // per-section GET routes is high-risk for a UI-only ask, and a client-side
+  // reveal over the single existing response is strictly faster (zero network
+  // round-trips) and equally not-an-SPA: there is no navigation between
+  // distinct pages here, only a disclosure affordance within one fully
+  // rendered page.
+  var shell = document.getElementById('settings-shell');
+  var grid = document.getElementById('settings-grid');
+  var tree = document.getElementById('settings-tree');
+  var noResults = document.getElementById('settings-noresults');
+  var search = document.getElementById('settings-q');
+  var back = document.getElementById('settings-back');
+  if (!shell || !grid || !tree) return;
+
+  var cards = Array.prototype.slice.call(grid.querySelectorAll(':scope > .card'));
+  if (!cards.length) return;
+
+  // A card's nav title is its own first heading, minus the contextual "?"
+  // help hint (.help-hint) that some headings carry.
+  function headingText(card) {
+    var h = card.querySelector('h2, h3');
+    if (!h) return '';
+    var clone = h.cloneNode(true);
+    Array.prototype.forEach.call(clone.querySelectorAll('.help-hint'), function (el) { el.remove(); });
+    return (clone.textContent || '').replace(/\s+/g, ' ').trim();
+  }
+
+  // ---- Section nav (one <li> per rendered card, in DOM order) ----
+  var navItems = []; // { id, card, li, a, title }
+  cards.forEach(function (card) {
+    if (!card.id) {
+      // Every card in settings.html carries an id (settings_two_pane_test.go
+      // pins that), so this is belt-and-braces: a card that somehow lacks
+      // one still gets a nav entry instead of becoming unreachable.
+      card.id = 'settings-section-' + (navItems.length + 1);
+    }
+    var li = document.createElement('li');
+    var a = document.createElement('a');
+    a.href = '#' + card.id;
+    a.className = 'settings-tree-link';
+    a.setAttribute('data-section', card.id);
+    a.textContent = headingText(card);
+    li.appendChild(a);
+    tree.appendChild(li);
+    navItems.push({ id: card.id, card: card, li: li, a: a, title: a.textContent });
+  });
+
+  var current = null;
+
+  // showSection: hide every card but the target, mark its nav entry, and
+  // (phone width only, via CSS) swap the visible pane. At tablet+ width the
+  // .has-selection class has no effect — both panes are always side by side.
+  function showSection(id, opts) {
+    opts = opts || {};
+    var target = null;
+    navItems.forEach(function (item) {
+      var on = item.id === id;
+      item.card.classList.toggle('settings-section-hidden', !on);
+      item.a.classList.toggle('is-current', on);
+      if (on) { item.a.setAttribute('aria-current', 'page'); target = item; }
+      else { item.a.removeAttribute('aria-current'); }
+    });
+    if (!target) return null;
+    current = target;
+    if (opts.select !== false) shell.classList.add('has-selection');
+    if (opts.updateHash) {
+      // replaceState, not pushState: a section click must not add a
+      // back-button stop for every card the operator glances at.
+      try { history.replaceState(null, '', '#' + id); } catch (e) { /* file:// etc. */ }
+    }
+    if (opts.focusPanel) {
+      var h = target.card.querySelector('h2, h3');
+      if (h) {
+        if (!h.hasAttribute('tabindex')) h.setAttribute('tabindex', '-1');
+        h.focus();
+      }
+    }
+    return target;
+  }
+
+  // ---- Initial section from the URL fragment ----
+  // Three cases: the hash names a card's own id (e.g. base.html's
+  // /settings#registration); it names an element NESTED inside a card (the
+  // status chip's /settings#android-update, a <span> inside the Software
+  // update card's install form — update_api.go); or it names nothing / is
+  // absent, in which case the first card is shown so the panel is never
+  // empty on arrival.
+  function resolveHash() {
+    var hash = (location.hash || '').slice(1);
+    var nested = null;
+    var id = null;
+    if (hash) {
+      var el = null;
+      try { el = document.getElementById(decodeURIComponent(hash)); } catch (e) { el = null; }
+      if (el) {
+        var card = el.closest('#settings-grid > .card');
+        if (card) {
+          id = card.id;
+          if (card !== el) nested = el;
+        }
+      }
+    }
+    return { id: id, nested: nested, hadHash: !!hash };
+  }
+
+  function applyHash(fromEvent) {
+    var r = resolveHash();
+    var id = r.id || cards[0].id;
+    // Phone width, list-first (CSS keys off .has-selection below 40rem): with
+    // no real deep link, arrive on the section list and wait for a tap. With
+    // a hash the operator explicitly navigated somewhere — show it directly.
+    showSection(id, { select: r.hadHash || fromEvent, focusPanel: !!fromEvent });
+    if (r.nested) {
+      // ut-docs#1534 fixed the #android-update anchor landing short (the
+      // enrol-devices panel swaps in late and reflows the page) by
+      // re-running scrollIntoView from the Software update card's own
+      // script, which has ALREADY executed by the time this one runs.
+      // Hiding every other card just now reflowed the page again, so that
+      // earlier scroll position may no longer point at the anchor — re-apply
+      // it here, after the section is shown (ut-docs#1960). The #1534
+      // script's own afterSettle/800ms re-runs still fire after this and
+      // land correctly, since the card they target stays visible.
+      r.nested.scrollIntoView({ block: 'center' });
+    }
+  }
+
+  applyHash(false);
+
+  // A same-page hash change (e.g. tapping the status bar's #registration
+  // link while already on /settings) is not a reload — follow it.
+  window.addEventListener('hashchange', function () { applyHash(true); });
+
+  // ---- Nav clicks ----
+  tree.addEventListener('click', function (ev) {
+    var a = ev.target.closest('a[data-section]');
+    if (!a) return;
+    ev.preventDefault();
+    var id = a.getAttribute('data-section');
+    showSection(id, { updateHash: true, focusPanel: true });
+    var hitIndex = a.getAttribute('data-hit');
+    if (hitIndex !== null) revealHit(index[Number(hitIndex)]);
+  });
+
+  if (back) {
+    back.addEventListener('click', function () {
+      // Phone-width list-first return; a no-op at tablet+ width where the
+      // CSS ignores .has-selection.
+      shell.classList.remove('has-selection');
+      if (search) search.focus();
+    });
+  }
+
+  // ---- Search over individual settings ----
+  // The index is the rendered DOM — already translated into the active
+  // locale by the server — so a Turkish operator searches Turkish labels.
+  // Built lazily on the first keystroke; every meaningfully-labelled control
+  // is reachable through one of these element kinds without per-control
+  // markup changes.
+  var index = null;
+  function buildIndex() {
+    index = [];
+    navItems.forEach(function (item) {
+      var els = item.card.querySelectorAll('h2, h3, label, legend, button, .btn');
+      Array.prototype.forEach.call(els, function (el) {
+        if (el.closest('.help-hint')) return;
+        // Strip a nested "?" help-hint (see headingText above), and — many
+        // labels on this page wrap their own <select> ("<label>Connection
+        // <select>...</select></label>") — every <option> inside it, so a
+        // search hit reads as the label's own words, not the label glued to
+        // its dropdown's entire option list.
+        var clone = el.cloneNode(true);
+        Array.prototype.forEach.call(clone.querySelectorAll('.help-hint, select, textarea'), function (h) { h.remove(); });
+        var text = (clone.textContent || '').replace(/\s+/g, ' ').trim();
+        if (!text) return;
+        index.push({ section: item, el: el, text: text, lower: text.toLocaleLowerCase() });
+      });
+    });
+  }
+
+  var highlightTimer = null;
+  function revealHit(hit) {
+    if (!hit) return;
+    var el = hit.el;
+    el.scrollIntoView({ block: 'center' });
+    if (highlightTimer) { clearTimeout(highlightTimer); }
+    Array.prototype.forEach.call(grid.querySelectorAll('.settings-hit-target'), function (o) {
+      o.classList.remove('settings-hit-target');
+    });
+    el.classList.add('settings-hit-target');
+    highlightTimer = setTimeout(function () { el.classList.remove('settings-hit-target'); }, 1800);
+  }
+
+  var showingResults = false;
+  function restoreNav() {
+    if (!showingResults) return;
+    showingResults = false;
+    tree.innerHTML = '';
+    navItems.forEach(function (item) { tree.appendChild(item.li); });
+    tree.hidden = false;
+    if (noResults) noResults.hidden = true;
+  }
+
+  function renderResults(q) {
+    if (!index) buildIndex();
+    var needle = q.toLocaleLowerCase();
+    var hits = [];
+    for (var i = 0; i < index.length && hits.length < 80; i++) {
+      var entry = index[i];
+      // A control that is currently hidden (e.g. the Android PIN label
+      // before the server asks for it) cannot be revealed, so skip it.
+      if (entry.el.closest('[hidden]')) continue;
+      if (entry.lower.indexOf(needle) !== -1) hits.push(i);
+    }
+    showingResults = true;
+    tree.innerHTML = '';
+    if (!hits.length) {
+      tree.hidden = true;
+      if (noResults) noResults.hidden = false;
+      return;
+    }
+    tree.hidden = false;
+    if (noResults) noResults.hidden = true;
+    hits.forEach(function (i) {
+      var entry = index[i];
+      var li = document.createElement('li');
+      li.className = 'settings-hit';
+      var a = document.createElement('a');
+      a.href = '#' + entry.section.id;
+      a.className = 'settings-tree-link';
+      a.setAttribute('data-section', entry.section.id);
+      a.setAttribute('data-hit', String(i));
+      var t = document.createElement('span');
+      t.className = 'settings-hit-text';
+      t.textContent = entry.text;
+      var s = document.createElement('span');
+      s.className = 'settings-hit-section';
+      s.textContent = entry.section.title;
+      a.appendChild(t);
+      a.appendChild(s);
+      li.appendChild(a);
+      tree.appendChild(li);
+    });
+  }
+
+  function runSearch() {
+    var q = (search.value || '').trim();
+    if (!q) { restoreNav(); return; }
+    renderResults(q);
+  }
+
+  if (search) {
+    var debounce = null;
+    // 200ms debounce — the manual's own search timing (help.html,
+    // hx-trigger="input changed delay:200ms, search").
+    search.addEventListener('input', function () {
+      if (debounce) clearTimeout(debounce);
+      debounce = setTimeout(runSearch, 200);
+    });
+    search.addEventListener('search', function () {
+      if (debounce) clearTimeout(debounce);
+      runSearch();
+    });
+  }
+})();
+</script>
 {{ end }}

@@ -11,6 +11,8 @@ routes: [/catalog, /import, /items, /modifiers]
 
 Ürünleriniz: adlar, fiyatlar, reyonlar, ürün varyantları (beden, aroma…) ve ürün ya da varyant başına istediğiniz kadar barkod.
 
+Buraya ulaşmak için menüden **Ürünler**'i açın — tablet genişliğinde veya daha geniş bir ekranda bu, iki bölmeli bir ekran olarak açılır: bir tarafta bölümlerin (Katalog, Kategoriler, Envanter, Modifikasyonlar, Seçenek setleri) kompakt bir listesi, diğer tarafta ise seçili bölümün kendisi — böylece aralarında geçiş yapmak sayfadan hiç ayrılmaz. Varsayılan olarak Katalog seçilidir. Telefon genişliğinde bir ekranda iki bölme alt alta gelir ve bir bölüme dokunmak, öncekiyle aynı şekilde onun kendi tam ekranını açar. Her bölümün yine de kendi adresi vardır — /catalog, /categories, /inventory, /modifiers ve /catalog/option-sets, doğrudan gidildiğinde veya yer imine eklendiğinde tamamen eskisi gibi çalışır.
+
 ## Nasıl kullanılır
 
 1. Katalog'u açıp yeni bir ürün oluşturmak için **Ürün ekle**'ye tıklayın, ya da mevcut bir ürünün kartına tıklayarak onu düzenleyin — her ikisi de ürünün alanlarını, reyonunu (kategori), görselini, kutucuk rengini, etiket yazdırmayı ve tuş takımı eşlemesini bir arada gösteren tam ekran bir düzenleyici açar; mevcut bir ürünü düzenlerken bir de **Devre dışı bırak** düğmesi bulunur. Listeye dönmek için kapatın (✕, ya da **Değişiklikleri kaydet**/**Ürün oluştur**). Listenin altında, aynı tıklama ürünün varyantlarını ve barkodlarını da düzenlemek üzere kendi panelinde yükler — tam ekran düzenleyiciden ayrıdır ve onu kapattıktan sonra da görünür kalır. ÖRNEK rozetli ürünler isteğe bağlı başlangıç kataloğundan gelmiştir (Ayarlar → Veriler'den kaldırılabilir).

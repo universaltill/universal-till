@@ -27,6 +27,7 @@ import (
 	"github.com/universaltill/universal-till/internal/imaging"
 	productlookup "github.com/universaltill/universal-till/internal/lookup"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pages/itemsnav"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/pos"
 )
@@ -317,7 +318,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"BuiltinIcons": catimport.BuiltinIcons(),
 			"ItemColors":   catalogtypes.ItemColors(),
 		}
-		httpx.RenderWith(files(
+		catalogFiles := files(
 			filepath.Join("web", "ui", "layouts", "base.html"),
 			filepath.Join("web", "ui", "pages", "catalog.html"),
 			filepath.Join("web", "ui", "partials", "nav.html"),
@@ -325,7 +326,19 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			filepath.Join("web", "ui", "partials", "catalog_table.html"),
 			filepath.Join("web", "ui", "partials", "catalog_row.html"),
 			filepath.Join("web", "ui", "partials", "catalog_variants.html"),
-		), funcs)("base", data)(w, r)
+		)
+		// ut-docs#1950: /catalog is also the /items rail's default ("Library")
+		// section — an htmx request from that panel (NOT a stale history
+		// restore, see httpx.IsFragmentSwap) gets just the "content" block
+		// plus an out-of-band refresh of the rail itself, so its is-current
+		// highlight follows the click; a plain browser GET (deep link) still
+		// gets the exact same full standalone page as before this card.
+		if httpx.IsFragmentSwap(r) {
+			httpx.RenderWith(catalogFiles, funcs)("content", data)(w, r)
+			itemsnav.WriteRailOOB(w, r, funcs, "/catalog")
+			return
+		}
+		httpx.RenderWith(catalogFiles, funcs)("base", data)(w, r)
 	})
 
 	// The shop-wide modifiers browse screen (ut-docs#1899) — the per-item
@@ -338,12 +351,19 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "modifiers.error.server", err)
 			return
 		}
-		httpx.Render("ui/pages/modifiers.html", map[string]any{
+		modifiersData := map[string]any{
 			"title":     "Customization options",
 			"menuItems": d.MenuSnapshot(),
 			"theme":     d.CurrentState().Theme,
 			"Groups":    groups,
-		})(w, r)
+		}
+		// ut-docs#1950: same /items rail embedding as /catalog above.
+		if httpx.IsFragmentSwap(r) {
+			httpx.RenderContentFragment("ui/pages/modifiers.html", modifiersData)(w, r)
+			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/modifiers")
+			return
+		}
+		httpx.Render("ui/pages/modifiers.html", modifiersData)(w, r)
 	})
 
 	// Reusable option sets (ut-docs#1900): a shop-wide screen where a
@@ -358,12 +378,19 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
 			return
 		}
-		httpx.Render("ui/pages/option_sets.html", map[string]any{
+		optionSetsData := map[string]any{
 			"title":     "Option sets",
 			"menuItems": d.MenuSnapshot(),
 			"theme":     d.CurrentState().Theme,
 			"Sets":      sets,
-		})(w, r)
+		}
+		// ut-docs#1950: same /items rail embedding as /catalog above.
+		if httpx.IsFragmentSwap(r) {
+			httpx.RenderContentFragment("ui/pages/option_sets.html", optionSetsData)(w, r)
+			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/catalog/option-sets")
+			return
+		}
+		httpx.Render("ui/pages/option_sets.html", optionSetsData)(w, r)
 	})
 
 	// renderOptionSetsList answers a mutation on the option-sets screen with

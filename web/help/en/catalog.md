@@ -12,6 +12,8 @@ keywords: [items, prices, barcode, variants, modifiers, import, export]
 
 Your products: names, prices, departments, item variants (size, flavour…) and any number of barcodes per item or per variant.
 
+Open **Items** from the menu to get here — on a tablet-width screen or wider it opens as a two-pane screen: a compact list of sections (Catalog, Categories, Inventory, Modifiers, Option sets) down the left, and the selected section's own screen on the right, so switching between them never leaves the page. Catalog is selected by default. On a phone-width screen the two panes stack, and tapping a section opens its own full screen instead, the same as before. Each section is still its own page with its own address — /catalog, /categories, /inventory, /modifiers and /catalog/option-sets all work exactly as before if you go to one directly or bookmark it.
+
 ## How to use it
 
 1. Open Catalog and click **Add item** to create a new item, or click an existing item's card to edit it — either opens a full-screen editor with the item's fields, department (category), image, tile colour, label printing and keypad mapping all together, plus a **Deactivate** button once you're editing an existing item. Close it (✕, or **Save Changes**/**Create Item**) to get back to the list. Below the list, the same click also loads that item's variants and barcodes for editing in their own panel — separate from the full-screen editor, and still visible once you close it. Items with a SAMPLE badge came from the optional starter catalogue (removable from Settings → Data).
