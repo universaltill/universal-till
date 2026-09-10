@@ -1755,6 +1755,7 @@
   "settings.service_charge.invalid_rate": "Enter the service charge as a percentage of zero or more, for example 12.5.",
   "settings.service_charge.tr_forbidden": "Turkish law bans a service charge, table fee or cover on the bill (Fiyat Etiketi Yönetmeliği, in force since 30 Jan 2026). Price it into your menu items instead.",
   "settings.shop_type.help": "The kind of business this till serves — chosen at setup, changeable here.",
+  "settings.shop_type.service_layout_note": "Choosing Service trade also enables the Salon menu layout: it hides Tables and Kitchen stations and relabels Items to Services. Find hidden tiles again under Settings → Hidden menu tiles. Switching away removes the layout completely.",
   "settings.shop_type.title": "Shop type",
   "settings.stock_tracking.hint": "Turn this on if you do not count stock. Items sell even when the till has no stock record for them, and nothing is ever refused for being out of stock. Leave it off if you want the till to stop a sale when an item runs out.",
   "settings.stock_tracking.label": "Sell items without tracking stock",

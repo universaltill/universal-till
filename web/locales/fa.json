@@ -1755,6 +1755,7 @@
   "settings.service_charge.invalid_rate": "هزینه سرویس را به صورت درصدی صفر یا بیشتر وارد کنید، برای مثال ۱۲٫۵.",
   "settings.service_charge.tr_forbidden": "قانون ترکیه افزودن هزینه سرویس، هزینه میز یا کاور به صورت‌حساب را ممنوع کرده است (آیین‌نامه برچسب قیمت، از ۳۰ ژانویه ۲۰۲۶ لازم‌الاجرا). به‌جای آن این مبلغ را در قیمت منو لحاظ کنید.",
   "settings.shop_type.help": "نوع کسب‌وکاری که این صندوق به آن خدمت می‌دهد — در راه‌اندازی انتخاب شده و اینجا قابل تغییر است.",
+  "settings.shop_type.service_layout_note": "Choosing Service trade also enables the Salon menu layout: it hides Tables and Kitchen stations and relabels Items to Services. Find hidden tiles again under Settings → Hidden menu tiles. Switching away removes the layout completely.",
   "settings.shop_type.title": "نوع فروشگاه",
   "settings.stock_tracking.hint": "اگر موجودی را شمارش نمی‌کنید این گزینه را روشن کنید. در این حالت کالاها حتی وقتی صندوق هیچ سابقهٔ موجودی برای آن‌ها ندارد فروخته می‌شوند و هیچ فروشی به دلیل تمام‌شدن موجودی رد نمی‌شود. اگر می‌خواهید صندوق هنگام تمام‌شدن کالا فروش را متوقف کند، آن را خاموش بگذارید.",
   "settings.stock_tracking.label": "فروش کالاها بدون کنترل موجودی",
