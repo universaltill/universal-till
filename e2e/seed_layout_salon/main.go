@@ -84,6 +84,19 @@ func main() {
 	exec(`INSERT OR IGNORE INTO plugins (id, name, version, entrypoint, runtime)
 		VALUES (?,?,?,?,?)`, m.ID, m.Name, m.Version, "", "none")
 
+	// ut-docs#2001: Init() now reconciles builtinlayouts.Sync against
+	// shop_type on every boot, and Sync is keyed on shop_type alone — an
+	// installed-but-not-"service" salon plugin is exactly what it's
+	// designed to remove (see builtinlayouts.Sync's own doc comment: a
+	// plugin left installed after shop_type moves away must not survive a
+	// reload). This seeder installs the plugin directly, bypassing the
+	// shop_type=service flow that's the ONLY real path to it existing at
+	// all — without this, the very first boot after seeding would
+	// immediately uninstall what was just seeded. "shop.type" is
+	// common.KeyShopType's value; not importing internal/pages/common here
+	// to keep this seeder's dependency footprint matching seed_demo's.
+	exec(`INSERT OR IGNORE INTO settings (key, value) VALUES ('shop.type', 'service')`)
+
 	for i, e := range m.Entries {
 		cfg, err := json.Marshal(e.Config)
 		if err != nil {
