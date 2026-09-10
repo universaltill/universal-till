@@ -134,11 +134,27 @@ var railIcons = map[string]string{
 	// unmodified. The action behind it is a soft deactivate (the row's own
 	// ✕ endpoint), so the glyph says "remove from here", not "destroy".
 	"trash-2": `<path d="M3 6h18"/><path d="M19 6v14c0 1-1 2-2 2H7c-1 0-2-1-2-2V6"/><path d="M8 6V4c0-1 1-2 2-2h4c1 0 2 1 2 2v2"/><line x1="10" x2="10" y1="11" y2="17"/><line x1="14" x2="14" y1="11" y2="17"/>`,
-	// ut-docs#2000: the item form's pinned action bar goes icon-only (like
-	// "trash-2" above) at phone width, so Close/Save need a drawn glyph too
-	// (+New stays text-only — its own label already bakes in a "+", see
-	// catalog.html). Lucide's "x"/"check" paths, unmodified.
-	"x":     `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`,
+	// ut-docs#2010 — the app-wide list/edit standard's icon vocabulary
+	// (ut-docs/reference/list-and-dialog-pattern.md). Icon-only by the
+	// product owner's explicit instruction, so every use site pairs the
+	// glyph with aria-label + title. Lucide paths, unmodified.
+	// New / add — the list header's New button (list_header.html).
+	"plus": `<path d="M5 12h14"/><path d="M12 5v14"/>`,
+	// Edit — the explicit per-row edit affordance beside tap-to-edit; the
+	// keyboard path to the dialog (a focusable real control, ut-docs#826).
+	"pencil": `<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>`,
+	// Close — the record dialog's close button (record_dialog.html), and
+	// (ut-docs#2000) the item form's own pinned Close button, which goes
+	// icon-only at phone width same as "trash-2" above.
+	"x": `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`,
+	// Search — the list header's search-field adornment.
+	"search": `<path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/>`,
+	// Reorder move-up / move-down (categories.html; replaces the ▲/▼ text
+	// glyphs, which were emoji-font-metric dependent like ut-docs#1423's).
+	"chevron-up":   `<path d="m18 15-6-6-6 6"/>`,
+	"chevron-down": `<path d="m6 9 6 6 6-6"/>`,
+	// Save — (ut-docs#2000) the item form's pinned Save button, icon-only
+	// at phone width same as Close/Delete. Lucide's "check" path, unmodified.
 	"check": `<path d="M20 6 9 17l-5-5"/>`,
 }
 
