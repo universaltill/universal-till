@@ -8,9 +8,11 @@
 
 <p class="muted">{{ T "menulayout.intro" }}</p>
 
-{{ if not .rows }}
+{{ if and (not .rows) (not .amended) }}
 <p class="muted">{{ T "menulayout.none" }}</p>
-{{ else }}
+{{ end }}
+
+{{ if .rows }}
 <div class="card users-list">
   <table class="table">
     <thead>
@@ -49,6 +51,47 @@
             <button class="btn primary" type="submit">{{ T "menulayout.restore" }}</button>
           </form>
           {{ end }}
+        </td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+</div>
+{{ end }}
+
+{{ if .amended }}
+{{/* ut-docs#1921: the hides table above lists REMOVALS; this lists every
+     other change a layout plugin made to a tile that stays visible —
+     re-label, re-icon, reorder, re-group (ut-docs#1904 review finding F1).
+     Restore is deliberately NOT offered here (acceptance criteria: restore
+     stays a hide-only action) — a re-label/re-icon/reorder/re-group has no
+     "restore" button; a merchant who wants the core default back
+     uninstalls or reconfigures the plugin, same as for any other plugin
+     behaviour. */}}
+<h2>{{ T "menulayout.amended.title" }}</h2>
+<p class="muted">{{ T "menulayout.amended.intro" }}</p>
+<div class="card users-list">
+  <table class="table">
+    <thead>
+      <tr>
+        <th>{{ T "menulayout.col.destination" }}</th>
+        <th>{{ T "menulayout.col.changed_by" }}</th>
+        <th>{{ T "menulayout.col.change" }}</th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .amended }}
+      <tr>
+        <td>
+          <span class="menulayout-dest">{{ T .LabelKey }}</span>
+          <a class="muted menulayout-goto" href="{{ .Href }}">{{ T "menulayout.go_there" }}</a>
+        </td>
+        <td>{{ .Plugin }}</td>
+        <td>
+          {{ if .CoreLabelKey }}<div>{{ T "menulayout.change.relabel" }}: {{ T .CoreLabelKey }} → {{ T .LabelKey }}</div>{{ end }}
+          {{ if .CoreIcon }}<div>{{ T "menulayout.change.reicon" }}</div>{{ end }}
+          {{ if .Reordered }}<div>{{ T "menulayout.change.reorder" }}</div>{{ end }}
+          {{ if .Regrouped }}<div>{{ T "menulayout.change.regroup" }}: {{ if .CoreGroup }}{{ T .CoreGroup }}{{ else }}{{ T "menulayout.change.ungrouped" }}{{ end }} → {{ if .Group }}{{ T .Group }}{{ else }}{{ T "menulayout.change.ungrouped" }}{{ end }}</div>{{ end }}
         </td>
       </tr>
       {{ end }}
