@@ -203,7 +203,9 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   `scripts/ci/guard-help-drift.sh` (ut-docs#1962) closes that gap: it fails
   when a translated topic's structure (heading/step/bullet counts) no
   longer matches English, unless the mismatch is recorded in
-  `web/help/i18n-baseline/help-drift-baseline.json` (same
+  `scripts/ci/i18n-baseline/help-drift-baseline.json` (kept outside
+  `web/help/` deliberately — that tree is `//go:embed`'d into every shipped
+  binary, and this file is CI-only bookkeeping; same
   record-then-burn-down convention as `ut-plugin-language-*`'s own
   `i18n-baseline/` files) — a baseline entry itself fails once the real
   drift no longer matches what it recorded, so a fixed or worsened entry
