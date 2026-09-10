@@ -44,6 +44,26 @@ func installSalonLayout(t *testing.T, dp *common.Deps) {
 	}
 }
 
+// installRestructureLayout installs a `layout` plugin whose Menu-slot
+// amendments never hide anything — only relabel/reicon/reorder/regroup — so
+// tests can drive the amendedMenuRows path (ut-docs#1921) independently of
+// installSalonLayout's hide-only amendments above.
+func installRestructureLayout(t *testing.T, dp *common.Deps, pluginID, name string, amendments []any) {
+	t.Helper()
+	m := &plugins.Manifest{
+		ID: pluginID, Name: name, Version: "1.0.0", Runtime: "none", CanonicalType: "layout",
+		Entries: []plugins.ManifestEntry{{Type: "layout", Key: "menu", Label: name, Config: map[string]any{
+			"slot": "menu", "amendments": amendments,
+		}}},
+	}
+	if err := plugins.PersistManifest(t.Context(), dp.Db, m, plugins.InstallOptions{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := dp.ReloadPlugins(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
 func getPage(t *testing.T, mux *http.ServeMux, path string) *httptest.ResponseRecorder {
 	t.Helper()
 	rec := httptest.NewRecorder()
@@ -170,5 +190,119 @@ func TestMenuLayoutSettings_RequiresManager(t *testing.T) {
 	}
 	if body := getMenu(t, mux); strings.Contains(body, `href="/tables"`) {
 		t.Fatalf("a refused restore must change nothing, got: %s", body)
+	}
+}
+
+// ut-docs#1921 (independent review of ut-docs#1904, finding F1): a layout
+// plugin that re-labels/re-icons a tile without hiding it left NO trace on
+// this page — only hides were listed. This pins the fix: a relabel+reicon
+// amendment names the plugin and shows the CORE default each field
+// replaced (Entry.LabelFallback/IconFallback, produced by uislot.Resolve).
+func TestMenuLayoutSettings_ListsRelabelAndReiconAmendmentNamingCoreDefault(t *testing.T) {
+	mux, dp := newMenuLayoutSettingsDeps(t)
+	t.Setenv("UT_AUTH", "off")
+	installRestructureLayout(t, dp, "com.example.cafe", "Cafe layout", []any{
+		map[string]any{"key": "/reports", "label_key": "layout.cafe.sales_label", "icon": "coffee"},
+	})
+
+	body := getPage(t, mux, "/settings/menu").Body.String()
+	for _, want := range []string{
+		"Cafe layout", // the plugin that made the change, by name
+		template.HTMLEscapeString(httpx.T("en", "nav.reports")), // the core default the relabel replaced
+		"layout.cafe.sales_label",                               // the plugin's own key, unresolved (no locale entry — passes through T unchanged)
+		httpx.T("en", "menulayout.change.reicon"),
+		`href="/reports"`, // still reachable, same as a hidden row's link
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("amended-tiles section missing %q in: %s", want, body)
+		}
+	}
+}
+
+// A plugin that only reorders/regroups (no relabel/reicon) still needs
+// findability: the acceptance criteria calls out reorder and regroup as
+// their own change kinds, not just relabel/reicon.
+func TestMenuLayoutSettings_ListsReorderAndRegroupAmendment(t *testing.T) {
+	mux, dp := newMenuLayoutSettingsDeps(t)
+	t.Setenv("UT_AUTH", "off")
+	installRestructureLayout(t, dp, "com.example.cafe", "Cafe layout", []any{
+		map[string]any{"key": "/users", "order": 150, "group": "layout.cafe.group"},
+	})
+
+	body := getPage(t, mux, "/settings/menu").Body.String()
+	for _, want := range []string{
+		"Cafe layout",
+		httpx.T("en", "menulayout.change.reorder"),
+		httpx.T("en", "menulayout.change.regroup"),
+		httpx.T("en", "menulayout.change.ungrouped"), // /users has no core Group — the "from" side
+		"layout.cafe.group",                          // the "to" side, unresolved plugin key
+	} {
+		if !strings.Contains(body, want) {
+			t.Errorf("amended-tiles section missing %q in: %s", want, body)
+		}
+	}
+}
+
+// The empty-state text claims NOTHING changed — it must not show once a
+// layout plugin has changed something, even if that something is not a
+// hide (ut-docs#1921's acceptance criteria: distinguish "no layout plugin
+// installed" from "installed and changed things, none of them hides").
+func TestMenuLayoutSettings_NonHideAmendmentsSuppressEmptyState(t *testing.T) {
+	mux, dp := newMenuLayoutSettingsDeps(t)
+	t.Setenv("UT_AUTH", "off")
+	installRestructureLayout(t, dp, "com.example.cafe", "Cafe layout", []any{
+		map[string]any{"key": "/reports", "label_key": "layout.cafe.sales_label"},
+	})
+
+	body := getPage(t, mux, "/settings/menu").Body.String()
+	if strings.Contains(body, httpx.T("en", "menulayout.none")) {
+		t.Errorf("empty state must not show once a layout plugin has relabelled a tile, got: %s", body)
+	}
+	if !strings.Contains(body, httpx.T("en", "menulayout.amended.title")) {
+		t.Errorf("expected the amended-tiles section heading, got: %s", body)
+	}
+}
+
+// Two DIFFERENT plugins may amend the same key without a conflict at
+// install time as long as at most one of them restructures it (that
+// validation only checks restructure-vs-restructure) — so a hide by plugin
+// A and a restructure by plugin B on the SAME key is a real, reachable
+// state, not a hypothetical. uislot.Resolve makes the hide win regardless
+// of amendment order, so the key must show as hidden ONLY — never also in
+// the amended section, which would contradict hiddenMenuRows and tell the
+// merchant (via this section's own "these stay on the Menu" copy) that a
+// hidden tile is still visible. Independent review finding, ut-docs#1921.
+func TestMenuLayoutSettings_KeyHiddenByOnePluginAndRestructuredByAnotherShowsHiddenOnly(t *testing.T) {
+	mux, dp := newMenuLayoutSettingsDeps(t)
+	t.Setenv("UT_AUTH", "off")
+	installRestructureLayout(t, dp, "com.example.hider", "Hider plugin", []any{
+		map[string]any{"key": "/tables", "hide": true},
+	})
+	installRestructureLayout(t, dp, "com.example.relabeler", "Relabeler plugin", []any{
+		map[string]any{"key": "/tables", "label_key": "layout.relabeler.tables"},
+	})
+
+	body := getPage(t, mux, "/settings/menu").Body.String()
+	if !strings.Contains(body, "Hider plugin") {
+		t.Errorf("expected /tables listed as hidden by Hider plugin, got: %s", body)
+	}
+	if strings.Contains(body, "Relabeler plugin") {
+		t.Errorf("a key another plugin hides must not also appear in the amended section (hide wins at render), got: %s", body)
+	}
+}
+
+// Restore stays a hide-only action (acceptance criteria) — a relabel/
+// reicon/reorder/regroup amendment must not offer the restore/rehide forms
+// hiddenMenuRows' table offers; there is nothing here to "restore" to.
+func TestMenuLayoutSettings_AmendedRowsOfferNoRestoreAction(t *testing.T) {
+	mux, dp := newMenuLayoutSettingsDeps(t)
+	t.Setenv("UT_AUTH", "off")
+	installRestructureLayout(t, dp, "com.example.cafe", "Cafe layout", []any{
+		map[string]any{"key": "/reports", "label_key": "layout.cafe.sales_label"},
+	})
+
+	body := getPage(t, mux, "/settings/menu").Body.String()
+	if strings.Contains(body, `action="/api/settings/menu/restore"`) || strings.Contains(body, `action="/api/settings/menu/rehide"`) {
+		t.Errorf("a non-hide amendment must not offer a restore/rehide action, got: %s", body)
 	}
 }
