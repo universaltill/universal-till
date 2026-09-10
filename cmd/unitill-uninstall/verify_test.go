@@ -1,6 +1,7 @@
 package main
 
 import (
+	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
@@ -80,5 +81,37 @@ func TestVerifyBackupEmptyFile(t *testing.T) {
 func TestVerifyBackupMissingFile(t *testing.T) {
 	if err := verifyBackup(filepath.Join(t.TempDir(), "nope.db")); err == nil {
 		t.Error("missing backup must fail verification")
+	}
+}
+
+// ut-docs#2033: a backup path containing '#', '?' or '%' must still
+// verify correctly, not fail on a silently truncated/wrong DSN. The
+// backup file here is built directly through the same escaped DSN
+// verifyBackup itself uses — not via db.Open/db.Snapshot, which at the
+// time this test was written still carried the unescaped-DSN bug
+// ut-docs#2030 fixes in a separate, unmerged PR, and would silently
+// create the db at the WRONG (truncated) path, making this test pass for
+// the wrong reason.
+func TestVerifyBackupGoodAtSpecialCharPath(t *testing.T) {
+	base := t.TempDir()
+	dir := filepath.Join(base, "hash#test", "q?mark", "percent%dir")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	path := filepath.Join(dir, "backup.db")
+
+	sqlDB, err := sql.Open("sqlite", "file:"+escapeSQLiteURIPath(path))
+	if err != nil {
+		t.Fatalf("open: %v", err)
+	}
+	if _, err := sqlDB.Exec(`CREATE TABLE t (id INTEGER)`); err != nil {
+		t.Fatalf("create table: %v", err)
+	}
+	if err := sqlDB.Close(); err != nil {
+		t.Fatalf("close: %v", err)
+	}
+
+	if err := verifyBackup(path); err != nil {
+		t.Errorf("a good backup at a special-char path must verify: %v", err)
 	}
 }

@@ -247,7 +247,12 @@ func ParseBkp(r io.ReaderAt, size int64, currencyDecimals int, enabledSymbologyI
 	// no temp b-tree today, but on Android there is no writable temp dir
 	// for SQLite to fall back on (ut-docs#1239) — keep every handle in
 	// this codebase temp-dir-free by construction.
-	sqlDB, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=temp_store(2)", tmpPath))
+	//
+	// escapeSQLiteURIPath (sqlite_dsn.go, ut-docs#2033): tmpPath inherits
+	// its containing directory from os.CreateTemp (TMPDIR), which can
+	// contain '#'/'?'/'%' — unescaped, SQLite's URI-mode parsing silently
+	// truncates the path there and drops the _pragma query string with it.
+	sqlDB, err := sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=temp_store(2)", escapeSQLiteURIPath(tmpPath)))
 	if err != nil {
 		return Result{}, fmt.Errorf("open backup.db: %w", err)
 	}

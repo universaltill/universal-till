@@ -13,6 +13,7 @@ import (
 	"hash/crc32"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -168,6 +169,49 @@ func TestParseBkp_NormalRowImports(t *testing.T) {
 	}
 	if it.Issue != "" {
 		t.Errorf("clean row must carry no issue, got %q", it.Issue)
+	}
+}
+
+// TestParseBkp_TMPDIRWithSpecialCharsStillImports is the integration-level
+// regression test for ut-docs#2033's fix at the real call site,
+// bkp.go's sql.Open("sqlite", fmt.Sprintf("file:%s?_pragma=...",
+// escapeSQLiteURIPath(tmpPath))): os.CreateTemp's backup.db copy inherits
+// its containing directory from TMPDIR, which can contain '#'/'?'/'%'.
+// sqlite_dsn_test.go's TestEscapeSQLiteURIPath_* tests only exercise the
+// escapeSQLiteURIPath helper in isolation against a DSN they build
+// themselves — they never call ParseBkp, so they would keep passing even
+// if bkp.go's own call site were reverted to the unescaped form. This
+// test drives ParseBkp itself with TMPDIR pointed at a special-char
+// directory, so it actually fails against the pre-fix call site.
+func TestParseBkp_TMPDIRWithSpecialCharsStillImports(t *testing.T) {
+	// Build the fixture bytes against the default TMPDIR first: buildBkpDBBytes
+	// opens its own scratch file via a bare (non-"file:"-prefixed) DSN, which
+	// modernc.org/sqlite's mattn-compatible DSN parsing still splits on the
+	// first unescaped '?' regardless of the "file:" prefix — a pre-existing,
+	// wider characteristic of bare-path opens that is not what this test (or
+	// ut-docs#2033) is about. Only ParseBkp's own internal os.CreateTemp call
+	// — the one behind the "file:"-URI call site this test targets — should
+	// see the special-char TMPDIR.
+	dbBytes := buildBkpDBBytes(t, []bkpProductRow{
+		{ProductNumber: "10234", ProductTextShort: "Espresso", SalesPrice: 2.90, ProductGroupText: "Coffee", Status: 1, ProductType: 1},
+	})
+	zipBytes := buildBkpZip(t, map[string][]byte{
+		"backup.db": dbBytes,
+		"meta.inf":  []byte(validMetaInfNoChecksums),
+	})
+
+	specialTMP := filepath.Join(t.TempDir(), "hash#test", "q?mark", "percent%dir")
+	if err := os.MkdirAll(specialTMP, 0o755); err != nil {
+		t.Fatalf("mkdir: %v", err)
+	}
+	t.Setenv("TMPDIR", specialTMP)
+
+	res, err := ParseBkp(bytes.NewReader(zipBytes), int64(len(zipBytes)), 2, testEnabledIDs, false)
+	if err != nil {
+		t.Fatalf("ParseBkp with TMPDIR containing '#'/'?'/'%%' must still succeed: %v", err)
+	}
+	if len(res.Items) != 1 || res.Items[0].Name != "Espresso" {
+		t.Fatalf("unexpected items with special-char TMPDIR: %+v", res.Items)
 	}
 }
 
