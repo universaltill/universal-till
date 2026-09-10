@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole, fieldGeometry, expectStacked } from './helpers';
+import { watchConsole, fieldGeometry, expectStacked, type FieldGeometry } from './helpers';
 
 // ut-docs#300: the deposit-refund (Pfandrückgabe) payout dialog shipped with
 // its two fields running inline into one broken row -- "Manager PIN" sat to
@@ -152,14 +152,21 @@ test.describe('wrapped-control labels stack above their inputs (ut-docs#300)', (
   test('deliberately horizontal Settings rows stay horizontal', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.setViewportSize({ width: 1280, height: 800 });
-    await page.goto('/settings');
-    await page.waitForSelector('.set-row');
+    // ut-docs#1960: Settings is two-pane now and shows ONE section at a
+    // time, so measure each section that carries a .set-row after
+    // deep-linking to it — a hidden card's labels would all measure as
+    // zero-size boxes and fail here for the wrong reason.
+    const rows: FieldGeometry[] = [];
+    for (const section of ['settings-update', 'settings-display', 'settings-payments', 'settings-order-no']) {
+      await page.goto(`/settings#${section}`);
+      await page.waitForSelector(`#${section} .set-row`);
+      rows.push(...(await fieldGeometry(page, `#${section}`)));
+    }
 
     // Select by the LABEL's class, not the control's name: /settings has a
     // fourth `select name="mode"` (the printer mode, settings.html:390) which
     // is a plain label in a .field-pair and SHOULD stack. Filtering by name
     // caught that one too and failed for the right-looking wrong reason.
-    const rows = await fieldGeometry(page, 'body');
     const inline = rows.filter((r) => r.labelClass.split(/\s+/).includes('set-row'));
     expect(inline.length, 'expected the osk / display-mode / payment-default set-rows').toBeGreaterThanOrEqual(3);
     for (const r of inline) {

@@ -2725,6 +2725,66 @@ body.login-screen {
    native way to do this; switching .settings-grid itself to CSS Grid would
    undo the masonry packing every other card relies on. */
 .settings-grid .card.settings-wide { column-span: all; }
+
+/* ut-docs#1960: Settings as a two-pane master-detail — the section list (+ a
+   search box over individual settings) on the inline-start side, the selected
+   section's card on the other. Same grid technique as .manual above (help):
+   grid-template-columns with logical properties only, so RTL locales (fa/ar)
+   mirror the whole shell with zero extra rules. The cards themselves are
+   untouched server-rendered .card blocks; settings.html's own script shows
+   one and adds .settings-section-hidden to the rest. */
+.settings-shell { display: grid; grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+                  gap: 1.2rem; align-items: start; }
+.settings-nav { position: sticky; inset-block-start: .5rem; max-block-size: calc(100vh - 5rem);
+                overflow-y: auto; padding-inline-end: .4rem; }
+.settings-search { margin-block-end: .6rem; }
+.settings-search input { inline-size: 100%; padding: .55rem .7rem; font-size: 1rem;
+                         min-block-size: 44px; border: 1px solid var(--control-border);
+                         border-radius: var(--radius); background: var(--surface); color: inherit; }
+.settings-tree { list-style: none; margin: 0; padding: 0; }
+.settings-tree li { margin-block-end: .15rem; }
+/* Same shape as .manual-link: a full-width, touch-floor-height row. */
+.settings-tree-link { display: block; padding: .5rem .6rem; border-radius: .45rem;
+                      text-decoration: none; color: inherit; line-height: 1.35;
+                      min-block-size: 44px; }
+.settings-tree-link:hover, .settings-tree-link:focus-visible { background: var(--surface-2); }
+.settings-tree-link.is-current { background: var(--accent); color: var(--accent-contrast);
+                                 font-weight: 600; }
+/* A search hit: the control's own label, then the section it lives in. */
+.settings-hit-text, .settings-hit-section { display: block; }
+.settings-hit-section { font-size: .8rem; color: var(--muted); margin-block-start: .1rem; }
+.settings-tree-link.is-current .settings-hit-section { color: inherit; opacity: .85; }
+.settings-noresults { margin: 0; padding: .5rem .6rem; }
+.settings-panel { min-inline-size: 0; }
+/* One card at a time: the masonry columns .settings-grid uses for the
+   all-at-once layout would squeeze the lone visible card into a 24rem
+   column — inside the shell it flows as a single column instead. A narrow
+   card stays a comfortable reading width (same 48rem cap as .manual-topic);
+   the inherently wide ones (backup table, raw settings table) keep the
+   full panel. */
+.settings-shell .settings-grid { columns: auto; }
+.settings-shell .settings-grid .card { max-inline-size: 48rem; }
+.settings-shell .settings-grid .card.settings-wide { max-inline-size: none; }
+.settings-section-hidden { display: none; }
+/* The matched control after picking a search result — a brief ring in the
+   accent colour so the eye lands on it. settings.html's revealHit() removes
+   this class after ~1.8s (a timed removal, not a CSS-driven fade — outline
+   isn't a smoothly animatable shorthand, so it disappears outright). */
+.settings-hit-target { outline: 3px solid var(--accent); outline-offset: 3px;
+                       border-radius: .3rem; }
+/* Phone width (the same 40rem breakpoint .settings-grid collapses at, below):
+   list-first. Without a selection only the section list shows; a tap (or a
+   real deep link, which settings.html's script treats as a selection) swaps
+   in the panel with a back control. Above this width .has-selection has no
+   effect at all — both panes are always side by side. */
+.settings-back { display: none; margin-block-end: .8rem; }
+@media (max-width: 40rem) {
+  .settings-shell { grid-template-columns: 1fr; }
+  .settings-nav { position: static; max-block-size: none; padding-inline-end: 0; }
+  #settings-shell:not(.has-selection) .settings-panel { display: none; }
+  #settings-shell.has-selection .settings-nav { display: none; }
+  #settings-shell.has-selection .settings-back { display: inline-flex; }
+}
 .settings-grid h2 { margin-block: 0 .6rem; font-size: 1.05rem; }
 .settings-grid form select, .settings-grid form input[type="text"],
 .settings-grid form input[type="number"], .settings-grid form input[type="password"] {

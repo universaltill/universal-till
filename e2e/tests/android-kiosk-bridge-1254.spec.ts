@@ -40,7 +40,7 @@ async function callCount(page: import('@playwright/test').Page): Promise<number>
 test.describe('settings.html exit-to-os → window.AndroidKiosk bridge', () => {
   test('204 (real exit) calls AndroidKiosk.exitLockdown exactly once', async ({ page }) => {
     await page.addInitScript(installKioskStub());
-    await page.goto('/settings');
+    await page.goto('/settings#settings-display'); // ut-docs#1960: Settings is two-pane now — deep-link to the section this drives
 
     await page.route('**/api/settings/exit-to-os', async (route) => {
       await route.fulfill({ status: 204 });
@@ -58,7 +58,7 @@ test.describe('settings.html exit-to-os → window.AndroidKiosk bridge', () => {
   test('503 (no window control) does NOT call AndroidKiosk.exitLockdown', async ({ page }) => {
     const assertClean = watchConsole(page, /^Failed to load resource:.*503/);
     await page.addInitScript(installKioskStub());
-    await page.goto('/settings');
+    await page.goto('/settings#settings-display'); // ut-docs#1960: Settings is two-pane now — deep-link to the section this drives
 
     await page.route('**/api/settings/exit-to-os', async (route) => {
       await route.fulfill({ status: 503, contentType: 'text/plain', body: 'window control unavailable: no_shell' });
@@ -77,7 +77,7 @@ test.describe('settings.html exit-to-os → window.AndroidKiosk bridge', () => {
   test('403 (wrong PIN) does NOT call AndroidKiosk.exitLockdown', async ({ page }) => {
     const assertClean = watchConsole(page, /^Failed to load resource:.*403/);
     await page.addInitScript(installKioskStub());
-    await page.goto('/settings');
+    await page.goto('/settings#settings-display'); // ut-docs#1960: Settings is two-pane now — deep-link to the section this drives
 
     await page.route('**/api/settings/exit-to-os', async (route) => {
       await route.fulfill({ status: 403, contentType: 'text/plain', body: 'manager PIN required' });
