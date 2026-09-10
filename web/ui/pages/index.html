@@ -307,7 +307,10 @@
          convention (see the 🛒 New Sale button below, still unconverted —
          ut-docs#1845 only touched this file's phone-width nav-shortcut
          row, .kiosk-actions above, not this tender row); the label itself
-         is live DB data (.Name) or
+         is live DB data (.Name) run through T (ut-docs#2015: a plugin
+         payment entry's label is a translator key, same as a page/export/
+         report entry's — a built-in's plain-text name like "Cash" passes
+         through T unchanged) or
          the same tender.cash fallback the pay-grid's own else-branch uses. -->
     <div class="tender-quickpay">
       {{ if .defaultPayMethod }}
@@ -315,7 +318,7 @@
               hx-post="/api/pos/tender"
               hx-vals='{{ jsonVals "amount" 0 "method" .defaultPayMethod.ID }}' hx-include="#offline-flag"
               hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">⚡ {{ .defaultPayMethod.Name }}</button>
+              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">⚡ {{ T .defaultPayMethod.Name }}</button>
       {{ else }}
       <button class="btn quick-pay-btn" type="button" data-testid="quick-pay" data-method="cash"
               hx-post="/api/pos/tender"
@@ -346,7 +349,7 @@
             <button class="btn pay-btn{{ if .PluginID }} pay-plugin{{ end }}" data-method="{{ .ID }}" hx-post="/api/pos/tender"
                     hx-vals='{{ jsonVals "amount" 0 "method" .ID }}' hx-include="#offline-flag"
                     hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-                    hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ .Name }}<span class="fee-hint" data-fee-for="{{ .ID }}"></span></button>
+                    hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T .Name }}<span class="fee-hint" data-fee-for="{{ .ID }}"></span></button>
             {{ else }}
             <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T "tender.cash" }}</button>
