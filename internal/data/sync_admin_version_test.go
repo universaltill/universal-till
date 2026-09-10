@@ -47,7 +47,7 @@ func TestSyncAdminVersion_EveryAdminTableHasTriggers(t *testing.T) {
 				t.Fatalf("read sqlite_master: %v", err)
 			}
 			if n != 1 {
-				t.Errorf("adminTables entry %q has no %s trigger %q — add it to a migration (see 022_sync_admin_version.sql)", at.name, ev, name)
+				t.Errorf("adminTables entry %q has no %s trigger %q — add it to a migration (see 023_sync_admin_version.sql)", at.name, ev, name)
 			}
 		}
 	}
