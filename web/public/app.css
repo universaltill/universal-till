@@ -584,6 +584,16 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 
 /* ---------- Item customization admin (ADR-0020) ---------- */
 .catalog-detail-modifiers { margin-block-start: 1rem; }
+/* ut-docs#1957 (independent review): the item-detail panel's block kept
+   this spacing while it held the full CRUD under the class above; the
+   compact summary that replaced it was given a NEW class with no rule at
+   all, so it lost the 1rem and butted straight against the variants grid.
+   Same margin, restated for the summary's own class rather than widening
+   the selector above — that one still styles the real CRUD block, which
+   now renders from modifier_group_admin.html on /modifiers and in the
+   nested dialog. */
+.catalog-detail-modifiers-summary { margin-block-start: 1rem; }
+.catalog-modifiers-summary-line { margin-block: .2rem; }
 .modifier-admin-group { border: 1px solid var(--border); border-radius: var(--radius);
                          padding: .6rem .75rem; margin-block-end: .6rem; }
 .modifier-admin-group.vg-inactive { opacity: .55; }
@@ -795,6 +805,12 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
 .catalog-form-head { flex: none; display: flex; flex-direction: column; gap: .4rem;
                      padding: .6rem 1.5rem 0; border-block-end: 1px solid var(--border);
                      background: var(--surface); }
+/* Same properties as .catalog-form-head above, own class name so the two
+   never collide under a strict-mode locator when both dialogs are open at
+   once (ut-docs#1957, 2026-09-10 PR-sweep rebase fix — see catalog.html). */
+.modifier-groups-head { flex: none; display: flex; flex-direction: column; gap: .4rem;
+                        padding: .6rem 1.5rem 0; border-block-end: 1px solid var(--border);
+                        background: var(--surface); }
 /* One row at 1024×600 (the kiosk floor), wrapping into two at phone width:
    the title+delete group and the action group each keep their own
    children on one line; only the two GROUPS wrap relative to each other. */
@@ -889,6 +905,21 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
    body.osk-padded rule above) instead of the old hardcoded 15.5rem, which
    had drifted short of the keyboard's real height. */
 body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-height, 17rem)); }
+/* ut-docs#1957: the "Manage customization groups" nested dialog — same
+   .show()/no-backdrop/fixed-position treatment as .item-form-modal above
+   and for the identical reason (OSK reachability for the group/option name
+   fields inside it), but its own smaller, narrower box and a HIGHER
+   z-index (520, still below #osk's 1000) so it visually stacks on top of
+   the still-open #item-form-modal underneath rather than beside or below
+   it — the whole point of the product-owner-reviewed nested-dialog design,
+   which must never navigate away from the item form. */
+.modifier-groups-modal { z-index: 520; width: 94vw; max-width: 40rem; max-height: 86vh;
+                          inset-block-start: 8vh; /* below item-form-modal's own 4vh, same
+                                                      convention as #hold-modal/#pfand-modal/
+                                                      #elevation-modal/#table-add-modal, which
+                                                      all layer above their own base too */ }
+.modifier-groups-modal:not([open]) { display: none; }
+body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reserved-height, 17rem)); }
 .catalog-extra { margin-top: .9rem; border-top: 1px solid var(--border); padding-top: .6rem; }
 .catalog-extra summary { font-weight: 600; cursor: pointer; color: var(--muted);
                          font-size: .85rem; }

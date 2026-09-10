@@ -879,6 +879,12 @@ var renderFiles = []string{
 	// httpx.Render("ui/pages/items.html", ...) call site, with no bespoke
 	// RenderWith file set of its own.
 	"ui/partials/items_rail.html",
+	// ut-docs#1957: modifiers.html's own "content"/"modifiers_list" templates
+	// call {{ template "modifier_group_admin" ... }} — riding along here is
+	// what lets that resolve through the plain httpx.Render("ui/pages/
+	// modifiers.html", ...)/RenderContentFragment call sites, same as
+	// items_rail.html above.
+	"ui/partials/modifier_group_admin.html",
 	// ut-docs#2010: the app-wide list/edit standard's two partials
 	// (ut-docs/reference/list-and-dialog-pattern.md). Same mechanism as
 	// items_rail.html above — a page includes them by their {{ define }}

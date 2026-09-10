@@ -302,7 +302,10 @@ func TestFindPaymentNameConflicts_BatchedBehaviorAndQueryCount(t *testing.T) {
 	pgPlugin(t, d, "com.entryonly.pay", 1)
 	pgEntry(t, d, "pe-entryonly", "com.entryonly.pay", "entryonlykey", "Entry Only Label")
 
-	names := []string{"Cash", "Other Pay", "Entry Only Label", "Totally Free Label"}
+	// ut-docs#2021: the built-in cash tender's name is now the translator
+	// key "tender.cash" (022_builtin_payment_method_i18n_keys.sql), not the
+	// literal "Cash" — that's what a colliding candidate name has to match.
+	names := []string{"tender.cash", "Other Pay", "Entry Only Label", "Totally Free Label"}
 	counter := new(int64)
 	countingRepo := NewPluginRepo(openCountingConn(t, path, counter))
 	conflicts, err := countingRepo.FindPaymentNameConflicts(ctx, nil, "com.mine.pay", names)
@@ -313,10 +316,10 @@ func TestFindPaymentNameConflicts_BatchedBehaviorAndQueryCount(t *testing.T) {
 		t.Fatalf("expected exactly 2 batched SELECTs for %d names, got %d", len(names), n)
 	}
 	if len(conflicts) != 3 {
-		t.Fatalf("expected 3 conflicts (Cash, Other Pay, Entry Only Label), got %d: %+v", len(conflicts), conflicts)
+		t.Fatalf("expected 3 conflicts (tender.cash, Other Pay, Entry Only Label), got %d: %+v", len(conflicts), conflicts)
 	}
-	if conflicts[0].Key != "Cash" || conflicts[0].Owner != "" {
-		t.Fatalf("expected Cash first with no owner, got %+v", conflicts[0])
+	if conflicts[0].Key != "tender.cash" || conflicts[0].Owner != "" {
+		t.Fatalf("expected tender.cash first with no owner, got %+v", conflicts[0])
 	}
 	if conflicts[1].Key != "Other Pay" || conflicts[1].Owner != "com.other.pay" {
 		t.Fatalf("expected 'Other Pay' owned by com.other.pay, got %+v", conflicts[1])

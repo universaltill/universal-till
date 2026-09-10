@@ -6,7 +6,6 @@ import (
 	"net/http/httptest"
 	"net/url"
 	"path/filepath"
-	"strconv"
 	"strings"
 	"testing"
 
@@ -161,9 +160,9 @@ func TestTranslationsTable_FiltersByQuery(t *testing.T) {
 // count) in one response, and every search keystroke re-rendered the whole
 // set. /ui/translations-table now pages at translationsPageSize and loads
 // more via infinite scroll (a sentinel <tr> the client reveals to fetch the
-// next offset).
+// next page, anchored on the last-seen key — ut-docs#2019).
 func TestTranslationsTable_FirstPageIsBoundedWithSentinel(t *testing.T) {
-	mux, _, _ := newTranslationsTestDeps(t)
+	mux, _, i18n := newTranslationsTestDeps(t)
 	// No query: en.json alone is ~2,258 keys, comfortably more than one
 	// page, so the first page must stop at translationsPageSize and offer
 	// a sentinel for the next one rather than rendering everything.
@@ -176,7 +175,7 @@ func TestTranslationsTable_FirstPageIsBoundedWithSentinel(t *testing.T) {
 	body := rec.Body.String()
 
 	if !strings.Contains(body, `<div id="translations-table">`) {
-		t.Fatalf("first page (offset=0) must render the full table wrapper:\n%s", body)
+		t.Fatalf("first page (after=\"\") must render the full table wrapper:\n%s", body)
 	}
 	if got := strings.Count(body, `<tr id="translations-row-`); got != translationsPageSize {
 		t.Fatalf("expected exactly %d rows on the first page, got %d", translationsPageSize, got)
@@ -184,23 +183,24 @@ func TestTranslationsTable_FirstPageIsBoundedWithSentinel(t *testing.T) {
 	if !strings.Contains(body, `id="translations-sentinel"`) {
 		t.Fatalf("expected a sentinel row when more than one page of results exists:\n%s", body)
 	}
-	wantNext := `offset=` + strconv.Itoa(translationsPageSize)
-	if !strings.Contains(body, wantNext) {
-		t.Fatalf("expected the sentinel's hx-get to request the next offset (%s):\n%s", wantNext, body)
+	wantAfter := `after=` + url.QueryEscape(i18n.Entries("en")[translationsPageSize-1].Key)
+	if !strings.Contains(body, wantAfter) {
+		t.Fatalf("expected the sentinel's hx-get to request after the last row's key (%s):\n%s", wantAfter, body)
 	}
 	if strings.Contains(body, "translations-end") {
 		t.Fatalf("did not expect the end-of-list marker on a page with more results:\n%s", body)
 	}
 }
 
-// The sentinel's own request (offset > 0) must return ONLY the next page's
+// The sentinel's own request (after != "") must return ONLY the next page's
 // rows (plus a new sentinel, or the end marker) — not a second copy of the
 // table wrapper, or htmx's outerHTML swap on the sentinel <tr> would nest a
 // <div>/<table> inside a <tbody>.
 func TestTranslationsTable_AppendPageHasNoOuterWrapper(t *testing.T) {
-	mux, _, _ := newTranslationsTestDeps(t)
+	mux, _, i18n := newTranslationsTestDeps(t)
+	after := i18n.Entries("en")[translationsPageSize-1].Key
 	req := withManager(httptest.NewRequest(http.MethodGet,
-		"/ui/translations-table?edit_locale=en&offset="+strconv.Itoa(translationsPageSize), nil))
+		"/ui/translations-table?edit_locale=en&after="+url.QueryEscape(after), nil))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -283,14 +283,19 @@ func TestTranslationsTable_EmptyResultShowsEmptyMessageNotEndOfList(t *testing.T
 // and the end-of-list marker present.
 func TestTranslationsTable_TrueLastPageEndsCleanly(t *testing.T) {
 	mux, _, i18n := newTranslationsTestDeps(t)
-	total := len(i18n.Entries("en"))
-	lastPageOffset := (total / translationsPageSize) * translationsPageSize
-	if lastPageOffset == total { // total is an exact multiple of the page size
-		lastPageOffset -= translationsPageSize
+	entries := i18n.Entries("en")
+	total := len(entries)
+	lastPageStart := (total / translationsPageSize) * translationsPageSize
+	if lastPageStart == total { // total is an exact multiple of the page size
+		lastPageStart -= translationsPageSize
+	}
+	after := ""
+	if lastPageStart > 0 {
+		after = entries[lastPageStart-1].Key
 	}
 
 	req := withManager(httptest.NewRequest(http.MethodGet,
-		"/ui/translations-table?edit_locale=en&offset="+strconv.Itoa(lastPageOffset), nil))
+		"/ui/translations-table?edit_locale=en&after="+url.QueryEscape(after), nil))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -298,29 +303,33 @@ func TestTranslationsTable_TrueLastPageEndsCleanly(t *testing.T) {
 	}
 	body := rec.Body.String()
 	if strings.Contains(body, `id="translations-sentinel"`) {
-		t.Fatalf("did not expect a sentinel on the true last page (offset=%d of %d total):\n%s", lastPageOffset, total, body)
+		t.Fatalf("did not expect a sentinel on the true last page (after=%q, %d of %d total):\n%s", after, lastPageStart, total, body)
 	}
 	if !strings.Contains(body, "translations-end") {
 		t.Fatalf("expected the end-of-list marker on the true last page:\n%s", body)
 	}
-	if got, want := strings.Count(body, `<tr id="translations-row-`), total-lastPageOffset; got != want {
+	if got, want := strings.Count(body, `<tr id="translations-row-`), total-lastPageStart; got != want {
 		t.Fatalf("expected %d rows on the true last page, got %d", want, got)
 	}
 }
 
-// An ?offset= past the total must clamp to the end (empty page, no
-// sentinel) rather than panic on an out-of-range slice bound — independent
-// review finding, ut-docs#2014: the clamp at translations_page.go is the
-// only thing standing between this request and a 500.
-func TestTranslationsTable_OffsetBeyondTotalClampsInsteadOfPanicking(t *testing.T) {
+// An ?after= past every real key must clamp to the end (empty page, no
+// sentinel) rather than panic on an out-of-range slice bound — same
+// intent as the offset-based clamp this replaces (ut-docs#2014 review),
+// re-proven for the keyset cursor (ut-docs#2019).
+func TestTranslationsTable_AfterBeyondTotalClampsInsteadOfPanicking(t *testing.T) {
 	mux, _, i18n := newTranslationsTestDeps(t)
-	total := len(i18n.Entries("en"))
+	entries := i18n.Entries("en")
+	// Append a character ("￿") that sorts after any real key rather
+	// than assuming a literal string like "zzz..." sorts last — guarantees
+	// this is genuinely past the end regardless of what real keys exist.
+	after := entries[len(entries)-1].Key + "￿"
 	req := withManager(httptest.NewRequest(http.MethodGet,
-		"/ui/translations-table?edit_locale=en&offset="+strconv.Itoa(total+999999), nil))
+		"/ui/translations-table?edit_locale=en&after="+url.QueryEscape(after), nil))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /ui/translations-table (offset far past total): code %d body %s", rec.Code, rec.Body.String())
+		t.Fatalf("GET /ui/translations-table (after past every key): code %d body %s", rec.Code, rec.Body.String())
 	}
 }
 
@@ -333,13 +342,14 @@ func TestTranslationsTable_OffsetBeyondTotalClampsInsteadOfPanicking(t *testing.
 // normal scrolling.
 func TestTranslationsTable_AppendWithNoRowsStillShowsEndOfList(t *testing.T) {
 	mux, _, i18n := newTranslationsTestDeps(t)
-	total := len(i18n.Entries("en"))
-	// offset == total: a real append request (offset > 0) whose page is
-	// empty because there is nothing left, distinct from the "no query
-	// match at all" case (offset 0) which correctly shows the empty-state
-	// message instead.
+	entries := i18n.Entries("en")
+	// after = the real last key: a real append request (after != "") whose
+	// page is empty because there is nothing left, distinct from the "no
+	// query match at all" case (after == "") which correctly shows the
+	// empty-state message instead.
+	after := entries[len(entries)-1].Key
 	req := withManager(httptest.NewRequest(http.MethodGet,
-		"/ui/translations-table?edit_locale=en&offset="+strconv.Itoa(total), nil))
+		"/ui/translations-table?edit_locale=en&after="+url.QueryEscape(after), nil))
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusOK {
@@ -403,12 +413,12 @@ func TestTranslationsTable_SentinelURLEscapesAdversarialQuery(t *testing.T) {
 	if !strings.Contains(body, `id="translations-sentinel"`) {
 		t.Fatalf("expected a sentinel: q=%q (limit=1) should match several real en.json values (\"Help & Support\" etc.) — got:\n%s", matchingAdversarialQ, body)
 	}
-	// The sentinel's hx-get must carry exactly ONE offset param and ONE
+	// The sentinel's hx-get must carry exactly ONE after param and ONE
 	// limit param — if q's own "&" leaked out of its escaped slot, it
 	// would split the query string and a stray/duplicate param would
 	// appear alongside these.
-	if got := strings.Count(body, "offset="); got != 1 {
-		t.Fatalf("expected exactly one offset= in the sentinel URL (q's own \"&\" must not have split the query string), got %d:\n%s", got, body)
+	if got := strings.Count(body, "after="); got != 1 {
+		t.Fatalf("expected exactly one after= in the sentinel URL (q's own \"&\" must not have split the query string), got %d:\n%s", got, body)
 	}
 	if got := strings.Count(body, "limit="); got != 1 {
 		t.Fatalf("expected exactly one limit= in the sentinel URL, got %d:\n%s", got, body)
@@ -431,6 +441,115 @@ func TestTranslationsTable_SentinelURLEscapesAdversarialQuery(t *testing.T) {
 	}
 	if got := parsed.Query().Get("q"); got != matchingAdversarialQ {
 		t.Fatalf("sentinel URL's q did not round-trip: got %q, want %q (raw URL: %s)", got, matchingAdversarialQ, sentinelURL)
+	}
+}
+
+// ut-docs#2019's own acceptance criterion: the set changing between two page
+// fetches must not skip or duplicate a row. Two synthetic overlay keys are
+// installed sorting before every real en.json key (digits sort before
+// lowercase letters in the Key comparison Entries uses), so their exact
+// position in the full set is known and controllable. Page 1 (limit=1) sees
+// only the first ("0000..."); between page 1 and page 2 that key is removed
+// (simulating a plugin uninstalled, or another manager's edit, mid-scroll).
+// This locks in the fixed behaviour against the current (cursor-based) code
+// — reviewed independently and confirmed to fail differently, not on this
+// skip assertion, against the pre-fix offset-based code (the old code and
+// this test's own `after=` param don't speak the same paging protocol at
+// all), so treat this as a regression lock, not as standalone proof the old
+// code skipped; that skip was verified separately with a scratch probe
+// against the actual pre-fix offset semantics during Dev/Review.
+func TestTranslationsTable_ConcurrentRemovalDoesNotSkipNextRow(t *testing.T) {
+	mux, _, i18n := newTranslationsTestDeps(t)
+	const keyA, keyB = "0000.synthetic_removed_mid_scroll", "0001.synthetic_should_still_appear"
+	i18n.SetOverlays(map[string]map[string]string{
+		"en": {keyA: "Synthetic A", keyB: "Synthetic B"},
+	})
+
+	// Page 1: the first row must be keyA (sorts before every real key).
+	req := withManager(httptest.NewRequest(http.MethodGet,
+		"/ui/translations-table?edit_locale=en&limit=1", nil))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /ui/translations-table (page 1): code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="translations-row-`+keyA+`"`) {
+		t.Fatalf("expected page 1's only row to be %s:\n%s", keyA, body)
+	}
+	wantAfter := "after=" + url.QueryEscape(keyA)
+	if !strings.Contains(body, wantAfter) {
+		t.Fatalf("expected the sentinel to cursor from %s (%s):\n%s", keyA, wantAfter, body)
+	}
+
+	// Simulate the concurrent change: keyA's overlay is removed (its plugin
+	// uninstalled) between the sentinel rendering and the client following
+	// it. keyB stays.
+	i18n.SetOverlays(map[string]map[string]string{
+		"en": {keyB: "Synthetic B"},
+	})
+
+	// Page 2: follow the cursor captured from page 1's response.
+	req = withManager(httptest.NewRequest(http.MethodGet,
+		"/ui/translations-table?edit_locale=en&after="+url.QueryEscape(keyA)+"&limit=1", nil))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /ui/translations-table (page 2): code %d body %s", rec.Code, rec.Body.String())
+	}
+	body = rec.Body.String()
+	if strings.Contains(body, `id="translations-row-`+keyA+`"`) {
+		t.Fatalf("did not expect the removed key %s to reappear (duplicate):\n%s", keyA, body)
+	}
+	if !strings.Contains(body, `id="translations-row-`+keyB+`"`) {
+		t.Fatalf("expected %s on page 2 — a numeric offset would have skipped it after %s's removal shifted positions:\n%s", keyB, keyA, body)
+	}
+}
+
+// Independent-review finding (ut-docs#2019): the cursor must be compared
+// byte-for-byte, not strings.TrimSpace'd — it's a machine-generated exact
+// key round-tripped from a prior response's own nextAfterEscaped, not
+// user-typed input. A plugin's locale overlay keys are taken verbatim with
+// no validation (internal/plugins/plugins.go), so a key with trailing
+// whitespace is reachable. Trimming the cursor would make sort.Search find
+// that same padded key as "the first key after the trimmed cursor" forever
+// — nextAfter never advances, and the revealed sentinel re-fires
+// indefinitely, appending a duplicate row each time instead of progressing.
+func TestTranslationsTable_CursorWithTrailingWhitespaceAdvances(t *testing.T) {
+	mux, _, i18n := newTranslationsTestDeps(t)
+	const keyPadded, keyNext = "0000.synthetic_trailing_space ", "0001.synthetic_next_after_padded"
+	i18n.SetOverlays(map[string]map[string]string{
+		"en": {keyPadded: "Synthetic Padded", keyNext: "Synthetic Next"},
+	})
+
+	// Page 1: the only row is the whitespace-suffixed key.
+	req := withManager(httptest.NewRequest(http.MethodGet,
+		"/ui/translations-table?edit_locale=en&limit=1", nil))
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /ui/translations-table (page 1): code %d body %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="translations-row-`+keyPadded+`"`) {
+		t.Fatalf("expected page 1's only row to be %q:\n%s", keyPadded, body)
+	}
+
+	// Page 2: follow the exact cursor page 1 handed back (still carrying
+	// the trailing space — url.QueryEscape preserves it as %20).
+	req = withManager(httptest.NewRequest(http.MethodGet,
+		"/ui/translations-table?edit_locale=en&after="+url.QueryEscape(keyPadded)+"&limit=1", nil))
+	rec = httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /ui/translations-table (page 2): code %d body %s", rec.Code, rec.Body.String())
+	}
+	body = rec.Body.String()
+	if strings.Contains(body, `id="translations-row-`+keyPadded+`"`) {
+		t.Fatalf("cursor did not advance past the whitespace-suffixed key — would loop forever:\n%s", body)
+	}
+	if !strings.Contains(body, `id="translations-row-`+keyNext+`"`) {
+		t.Fatalf("expected %q on page 2, the cursor must advance past the padded key:\n%s", keyNext, body)
 	}
 }
 

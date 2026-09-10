@@ -89,13 +89,18 @@ test('the re-labelled tile shows the plugin string and its icon, and is a real t
 test('a merchant can find what the plugin hid, and restore it, without uninstalling', async ({ page }) => {
   await page.goto('/settings/menu');
 
-  const rows = page.locator('table.table tbody tr');
+  // Scoped to the hides table specifically (ut-docs#1921 added a second
+  // `table.table` on this page, for non-hide amendments — the salon
+  // plugin's own /items relabel now legitimately populates it too, so a
+  // bare `table.table` locator would count both tables' rows together).
+  const hidden = page.locator('.menulayout-hidden-section');
+  const rows = hidden.locator('table.table tbody tr');
   await expect(rows).toHaveCount(2);
 
   // Decision D requires the surface to NAME the plugin responsible — a
   // list of hidden things with no attribution does not tell a merchant
   // what to uninstall.
-  await expect(page.locator('table.table')).toContainText('Salon layout');
+  await expect(hidden.locator('table.table')).toContainText('Salon layout');
 
   const tablesRow = rows.filter({ has: page.locator('input[name="key"][value="/tables"]') });
   await expect(tablesRow).toHaveCount(1);
@@ -157,9 +162,15 @@ test('the Open link is a separate line from the destination name, not run into i
 
 test('the hidden-tiles surface survives RTL without physical-property breakage', async ({ page }) => {
   await page.goto('/settings/menu?lang=fa');
-  await expect(page.locator('table.table')).toBeVisible();
+  // Scoped to the hides table (ut-docs#1921 added a second `table.table`
+  // for non-hide amendments — the salon plugin's /items relabel populates
+  // that one too, so a bare `table.table` locator is now ambiguous).
+  await expect(page.locator('.menulayout-hidden-section table.table')).toBeVisible();
   const dir = await page.evaluate(() => document.documentElement.getAttribute('dir'));
   expect(dir).toBe('rtl');
+  // Whole-page overflow check, deliberately not scoped to one table — the
+  // amended section (ut-docs#1921) is part of the same page and must not
+  // reintroduce horizontal scroll either.
   const overflow = await page.evaluate(() => {
     const el = document.scrollingElement!;
     return el.scrollWidth - el.clientWidth;
