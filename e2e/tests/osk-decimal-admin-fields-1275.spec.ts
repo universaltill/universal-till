@@ -73,12 +73,20 @@ test.describe('admin-screen decimal fields survive typing via the on-screen keyb
     {
       name: 'inventory.html quantity',
       goto: '/inventory',
+      // ut-docs#2011: #stock-form now lives inside the full-screen
+      // receive/adjust dialog, closed by default.
+      before: async (page) => {
+        await page.locator('#stock-dialog-open').click();
+      },
       selector: '#stock-form input[name="quantity"]',
       text: '2.50',
     },
     {
       name: 'inventory.html #stock-cost',
       goto: '/inventory',
+      before: async (page) => {
+        await page.locator('#stock-dialog-open').click();
+      },
       selector: '#stock-cost',
       text: '4.20',
     },
@@ -137,6 +145,9 @@ test.describe('admin-screen decimal fields survive typing via the on-screen keyb
   test('inventory.html #stock-cost: a correctly-typed amount syncs to #stock-cost-minor on submit', async ({ page }) => {
     await setOskMode(page, 'on');
     await page.goto('/inventory');
+    // ut-docs#2011: open the receive/adjust dialog first -- #stock-cost now
+    // lives inside it, closed by default.
+    await page.locator('#stock-dialog-open').click();
     const cost = page.locator('#stock-cost');
     await cost.click();
     await expect(page.locator('#osk.osk-open')).toBeVisible();
@@ -170,6 +181,9 @@ test.describe('admin-screen decimal fields survive typing via the on-screen keyb
   test('inventory.html quantity: a negative adjustment amount can be typed via the on-screen keyboard', async ({ page }) => {
     await setOskMode(page, 'on');
     await page.goto('/inventory');
+    // ut-docs#2011: #stock-form now lives inside the receive/adjust dialog,
+    // closed by default.
+    await page.locator('#stock-dialog-open').click();
     const qty = page.locator('#stock-form input[name="quantity"]');
     await qty.click();
     await expect(page.locator('#osk.osk-open')).toBeVisible();
