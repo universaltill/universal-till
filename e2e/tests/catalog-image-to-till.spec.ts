@@ -18,8 +18,9 @@ test('uploading a catalog item photo makes it appear on the till', async ({ page
   // Select the item (fills the image-upload panel's hidden fields).
   await page.locator('.catalog-row', { hasText: 'Sparkling Water 500ml' }).click();
 
-  // Open the collapsed "Item image" panel and upload a real file.
-  await page.locator('details.catalog-extra', { hasText: 'Item image' }).locator('summary').click();
+  // Open the "Item image" tab (ut-docs#1956: a tab in the dialog, no
+  // longer a collapsed <details>) and upload a real file.
+  await page.locator('#item-form-tab-image').click();
   await page.locator('#image-file').setInputFiles(path.join(__dirname, '../fixtures/test-item-image.png'));
   await page.locator('#image-form button[type=submit]').click();
   await expect(page.locator('#image-msg')).toContainText('updated');
@@ -87,7 +88,7 @@ test('taking a photo (capture input) uploads via the same canonical file field',
   await expect(page.locator('body')).toContainText('Catalog');
 
   await page.locator('.catalog-row', { hasText: 'Apple Juice 1L' }).click();
-  await page.locator('details.catalog-extra', { hasText: 'Item image' }).locator('summary').click();
+  await page.locator('#item-form-tab-image').click(); // ut-docs#1956: Item image is a tab now
 
   // The dedicated "take a photo" input carries capture="environment" so a
   // mobile/tablet browser opens the rear camera directly, not a generic
@@ -133,7 +134,7 @@ test('take-photo/choose-file triggers are real buttons, keyboard-activatable', a
 
   await page.goto('/catalog');
   await page.locator('.catalog-row', { hasText: 'Apple Juice 1L' }).click();
-  await page.locator('details.catalog-extra', { hasText: 'Item image' }).locator('summary').click();
+  await page.locator('#item-form-tab-image').click(); // ut-docs#1956: Item image is a tab now
 
   const cameraBtn = page.locator('#image-camera-btn');
   const chooseBtn = page.locator('#image-choose-btn');

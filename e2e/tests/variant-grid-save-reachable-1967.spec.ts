@@ -1,5 +1,5 @@
 import { test, expect } from './fixtures';
-import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
+import { watchConsole, openNewItemForm } from './helpers';
 
 // ut-docs#1967: the variants grid's own horizontal scroller (armed under
 // 1300px viewport width — app.css's `.vg-cols { min-inline-size: 54rem }`
@@ -30,31 +30,49 @@ async function createProbeItemAndOpenVariants(page: import('@playwright/test').P
 
   const row = page.locator('.catalog-row', { hasText: name });
   await row.locator('td').first().click();
+  // ut-docs#1956: the variants panel is no longer a full-width card BELOW
+  // the item list — it is the item form's own Variants tab, inside the
+  // full-screen dialog the row click opens. So this navigates to the tab
+  // instead of closing the dialog and scrolling the page down to find the
+  // panel. Nothing about what this file MEASURES changes: the assertions
+  // below are the same real-geometry bounding-box + elementFromPoint
+  // hit-tests against the same viewport, and they still fail if the grid's
+  // trailing sticky column (app.css, `.vg-cols > :last-child`) regresses.
+  await expect(page.locator('#item-form-modal')).toBeVisible();
+  await page.locator('#item-form-tab-variants').click();
+  await expect(page.locator('#item-form-panel-variants')).toBeVisible();
   await expect(page.locator('#catalog-variants')).toBeVisible();
-  // ut-docs#1901: the row click above reopens the item-edit dialog too —
-  // close it before measuring the variants panel below. The dialog is a
-  // large `position: fixed` box that can sit on top of wherever the panel
-  // renders, the same reason osk-decimal-sale-catalog-fields-1284.spec.ts's
-  // own createProbeItemAndOpenVariants does this.
-  await closeItemForm(page);
-  // The panel renders full-width BELOW the item list, so it starts below
-  // the fold on any real page load — catalog.html's own row-click handler
-  // already smooth-scrolls it into view, but this test cares about
-  // horizontal reachability specifically, not the ordinary, expected
-  // vertical scroll to see the panel at all. Scroll it into view
-  // deterministically (instant, not racing the app's own smooth-scroll
-  // timing) so every measurement below starts from "the panel is on
-  // screen," and isolates the one axis this card is actually about.
-  await page.locator('#catalog-variants').scrollIntoViewIfNeeded();
+
+  // The panel is taller than the form body at narrow widths, so the
+  // add-variant row starts below the fold — the same "ordinary, expected
+  // vertical scroll" the original page-level version of this helper handled
+  // with scrollIntoViewIfNeeded(). Done by hand, and VERTICALLY ONLY, on
+  // purpose: Playwright's scrollIntoViewIfNeeded() scrolls every ancestor
+  // scroller including the grid's own horizontal one, which would scroll the
+  // Save button into view sideways and mask the exact defect this file
+  // exists to catch. geometry() asserts that horizontal scroller is still at
+  // 0 afterwards, so the measurements below can't be reached by cheating.
+  await page.evaluate(() => {
+    const body = document.querySelector('.catalog-form-body') as HTMLElement | null;
+    const btn = document.querySelector('button[form="vf-new"][type=submit]') as HTMLElement | null;
+    if (!body || !btn) return;
+    const delta = btn.getBoundingClientRect().top - body.getBoundingClientRect().top;
+    body.scrollTop += delta - body.clientHeight / 2;
+  });
 }
 
 async function geometry(page: import('@playwright/test').Page, selector: string) {
   return page.locator(selector).evaluate((el) => {
     const r = el.getBoundingClientRect();
     const at = document.elementFromPoint(r.left + r.width / 2, r.top + r.height / 2);
+    // ut-docs#1956: the grid's own horizontal scroller must still be at its
+    // start — otherwise "reachable" would only mean "reachable after the
+    // sideways drag this card exists to remove."
+    const scroller = el.closest('.variant-grid') as HTMLElement | null;
     return {
       withinViewport: r.width > 0 && r.left >= 0 && r.right <= window.innerWidth,
       hit: !!at && (at === el || el.contains(at)),
+      gridScrollLeft: scroller ? Math.round(Math.abs(scroller.scrollLeft)) : 0,
     };
   });
 }
@@ -81,6 +99,7 @@ test.describe('variants grid Save/Save Variant stays reachable without horizonta
       const result = await geometry(page, 'button[form="vf-new"][type=submit]');
       expect(result.withinViewport, `Save Variant's bounding box must be fully within the ${vp.width}px viewport`).toBe(true);
       expect(result.hit, 'Save Variant must be a real hit-test target, not occluded or off-screen').toBe(true);
+      expect(result.gridScrollLeft, 'reached without scrolling the grid sideways').toBe(0);
 
       assertClean();
     });
@@ -97,6 +116,7 @@ test.describe('variants grid Save/Save Variant stays reachable without horizonta
     const result = await geometry(page, 'button[form="vf-new"][type=submit]');
     expect(result.withinViewport, "Save Variant's bounding box must be within the 360px viewport without scrolling").toBe(true);
     expect(result.hit, 'Save Variant must be a real hit-test target at 360px').toBe(true);
+    expect(result.gridScrollLeft, 'reached without scrolling the grid sideways').toBe(0);
 
     assertClean();
   });
@@ -126,6 +146,7 @@ test.describe('variants grid Save/Save Variant stays reachable without horizonta
     const result = await geometry(page, '.vg-row:not(.vg-new) > button[type=submit]');
     expect(result.withinViewport, "the existing row's Save button must be fully within the viewport").toBe(true);
     expect(result.hit, "the existing row's Save button must be a real hit-test target").toBe(true);
+    expect(result.gridScrollLeft, 'reached without scrolling the grid sideways').toBe(0);
 
     assertClean();
   });
@@ -151,6 +172,7 @@ test.describe('variants grid Save/Save Variant stays reachable without horizonta
     const result = await geometry(page, 'button[form="vf-new"][type=submit]');
     expect(result.withinViewport, "Save Variant's bounding box must be within the viewport under RTL").toBe(true);
     expect(result.hit, 'Save Variant must be a real hit-test target under RTL').toBe(true);
+    expect(result.gridScrollLeft, 'reached without scrolling the grid sideways').toBe(0);
 
     assertClean();
   });

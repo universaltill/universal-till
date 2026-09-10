@@ -29,7 +29,11 @@
               <button class="btn danger" type="button"
                       hx-post="/api/catalog/item/deactivate"
                       hx-vals='{{ jsonVals "id" .Item.ID }}'
-                      hx-confirm="Deactivate {{ .Item.Name }}?"
+                      {{/* ut-docs#1956: was a hardcoded English "Deactivate
+                           <name>?" — the one untranslated string on this
+                           row. Same key (and same deactivate-not-erase
+                           wording) as the item form's own delete button. */}}
+                      hx-confirm="{{ printf (T "catalog.delete_confirm_named") .Item.Name }}"
                       hx-target="this" hx-swap="none">✕</button>
             </td>
           </tr>
