@@ -19,6 +19,35 @@ type DB struct {
 	*sql.DB
 }
 
+// sqliteURIPathEscaper percent-encodes the three characters that are
+// significant to SQLite's own "file:" URI filename parsing (ut-docs#2030):
+// '#', '?' and '%' itself. Both Open and OpenReadOnly build their DSN as
+// "file:" + this path + "?" + query params — SQLite's URI-mode open (used
+// here via SQLITE_OPEN_URI, not this package's own DSN splitting) treats an
+// unescaped '#' or '?' inside the path as ending the path component, so a
+// data directory containing one — plausible on Windows/macOS profile folder
+// names, or a synced/container mount naming scheme — silently truncates the
+// path AND drops every _pragma param that follows it, with no error:
+// verified experimentally (`file:/tmp/hashtest#123/db.sqlite` actually
+// opens `/tmp/hashtest`, a different file, with the rest of the path and
+// every pragma gone). '%' must be escaped too, since it is the escape
+// character itself: left unescaped, a literal '%' followed by two hex
+// digits is silently decoded as part of the path (e.g. "...%41hex" opens
+// as "...Ahex", the wrong file, no error); a literal '%' followed by
+// non-hex digits usually stays literal in SQLite's own parse, but can
+// still break the *Go driver's* separate _pragma query-string parsing
+// if an earlier unescaped '?' in the path drags it into that parser's
+// view of the query remainder (surfaces as "invalid URL escape"). Either
+// way, escaping every raw '%' up front removes the ambiguity regardless of
+// which layer would have mishandled it. strings.Replacer performs one pass
+// over the input without rescanning its own output, so this cannot
+// double-encode a '%' this function itself introduces.
+var sqliteURIPathEscaper = strings.NewReplacer("%", "%25", "#", "%23", "?", "%3f")
+
+func escapeSQLiteURIPath(path string) string {
+	return sqliteURIPathEscaper.Replace(path)
+}
+
 func Open(path string) (*DB, error) {
 	// A fresh install extracts to a folder with no data/ directory, so the
 	// default ./data/unitill-pos.db path can't be opened (SQLite CANTOPEN,
@@ -65,7 +94,7 @@ func Open(path string) (*DB, error) {
 	// first real-device boot died with SQLITE_IOERR_GETTEMPPATH (6410) in
 	// migration 036, the first migration to use a temp table. In-memory
 	// temp storage removes the dependency on a temp dir for every platform.
-	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=temp_store(2)&_txlock=immediate", path)
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=temp_store(2)&_txlock=immediate", escapeSQLiteURIPath(path))
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
@@ -125,7 +154,7 @@ func Open(path string) (*DB, error) {
 // safe mode has nothing to serve without prior successful boots, and must
 // not be confused with a fresh-install first boot.
 func OpenReadOnly(path string) (*DB, error) {
-	dsn := fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(5000)", path)
+	dsn := fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(5000)", escapeSQLiteURIPath(path))
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite (read-only): %w", err)
