@@ -912,6 +912,7 @@
   "locations.rename": "Yeniden adlandır",
   "locations.title": "Konumlar",
   "menu.back_to_sale": "Satışa dön",
+  "menu.group.administration": "Yönetim",
   "menulayout.title": "Gizlenen menü karoları",
   "menulayout.intro": "Bir düzen eklentisinin Menü ekranından kaldırdığı karolar. Her biri kendi adresinden hâlâ erişilebilir — eklentiyi kaldırmadan karoyu Menü'de yeniden göstermek için burada geri getirin.",
   "menulayout.settings_intro": "Bir düzen eklentisinin hangi Menü karolarını gizlediğini görün ve istediğinizi geri getirin.",
