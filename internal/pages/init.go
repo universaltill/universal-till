@@ -22,6 +22,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/plugins/marketplace"
 	"github.com/universaltill/universal-till/internal/pos"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -285,6 +286,25 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		OrderStatus: pos.NewOrderStatusBroadcaster(),
 		WindowCtl:   windowCtl,
 		Shell:       shellChannel,
+	}
+
+	// ut-docs#2001 (follow-up from the ut-docs#1902 independent review,
+	// finding 4): builtinlayouts.Sync was previously only called from the
+	// two write handlers that set common.KeyShopType (setup_page.go,
+	// settings_page.go's shop-type API) — a shop that already had
+	// shop_type=service persisted before this wiring existed (or after a
+	// DB restore, or a manual plugin uninstall) got nothing until an
+	// operator happened to re-save the same dropdown value. Reconcile once
+	// here, on every boot, so an existing shop_type converges without
+	// needing a no-op Settings save. Same best-effort, non-fatal stance as
+	// setup_page.go's call: a boot must never be blocked over a cosmetic
+	// menu personalization.
+	if shopType, _, err := setStore.Get(ctx, common.KeyShopType); err != nil {
+		log.Warnf("boot: could not read shop_type for builtin layout reconciliation: %v", err)
+	} else if err := builtinlayouts.Sync(ctx, db, shopType); err != nil {
+		log.Warnf("boot: could not sync builtin layout for shop_type %q: %v", shopType, err)
+	} else if err := dp.ReloadPlugins(ctx); err != nil {
+		log.Warnf("boot: could not reload plugins after shop_type layout sync: %v", err)
 	}
 
 	// Boot-time release-all (ut-docs#1712), then boot re-claim (ut-docs#1704)
