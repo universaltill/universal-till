@@ -1,0 +1,28 @@
+-- 024_voucher_payment_method_i18n_key.sql — ut-docs#2031 (built-in 'voucher'
+-- payment method name stays untranslated on a non-English till).
+--
+-- ut-docs#2021 (022_builtin_payment_method_i18n_keys.sql) repointed the
+-- three 001_init.sql built-ins (cash/card/gift) at translator keys so
+-- PaymentMethod.Name resolves through T at render time, per ut-docs#2015.
+-- Its own header comment explicitly excluded the 'voucher' row seeded by
+-- 015_voucher_payment_method.sql (ut-docs#1832) — a separate migration,
+-- separate literal ('Voucher'), same bug. This closes that gap the same
+-- way: repoint the name at a new "tender.voucher" key
+-- (web/locales/{en,ar,fa,tr}.json).
+--
+-- Shipped as an ADDITIVE migration rather than an edit to
+-- 015_voucher_payment_method.sql: editing an already-shipped migration
+-- changes its checksum, and internal/db/db.go's verifyAppliedMigrations
+-- hard-fails an already-migrated database on any checksum drift
+-- (idempotentRerunVersions is empty; 015 is not allowlisted) — bricking
+-- every device that already migrated. 004/015/017/022 all document this
+-- same trap.
+--
+-- Scoped to plugin_id IS NULL (built-ins only) and to the exact literal
+-- text 015 shipped, so this is idempotent and never clobbers a row that
+-- isn't the unmodified built-in. Does not touch the row's id/type or the
+-- 'gift' row (a separate, pre-existing, deliberately out-of-scope row —
+-- ut-docs#1832/ut-docs#2021) — only how this one row's name resolves for
+-- display.
+UPDATE payment_methods SET name = 'tender.voucher'
+  WHERE id = 'voucher' AND plugin_id IS NULL AND name = 'Voucher';
