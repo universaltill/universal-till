@@ -143,7 +143,9 @@ var railIcons = map[string]string{
 	// Edit — the explicit per-row edit affordance beside tap-to-edit; the
 	// keyboard path to the dialog (a focusable real control, ut-docs#826).
 	"pencil": `<path d="M21.174 6.812a1 1 0 0 0-3.986-3.987L3.842 16.174a2 2 0 0 0-.5.83l-1.321 4.352a.5.5 0 0 0 .623.622l4.353-1.32a2 2 0 0 0 .83-.497z"/><path d="m15 5 4 4"/>`,
-	// Close — the record dialog's close button (record_dialog.html).
+	// Close — the record dialog's close button (record_dialog.html), and
+	// (ut-docs#2000) the item form's own pinned Close button, which goes
+	// icon-only at phone width same as "trash-2" above.
 	"x": `<path d="M18 6 6 18"/><path d="m6 6 12 12"/>`,
 	// Search — the list header's search-field adornment.
 	"search": `<path d="m21 21-4.34-4.34"/><circle cx="11" cy="11" r="8"/>`,
@@ -151,6 +153,9 @@ var railIcons = map[string]string{
 	// glyphs, which were emoji-font-metric dependent like ut-docs#1423's).
 	"chevron-up":   `<path d="m18 15-6-6-6 6"/>`,
 	"chevron-down": `<path d="m6 9 6 6 6-6"/>`,
+	// Save — (ut-docs#2000) the item form's pinned Save button, icon-only
+	// at phone width same as Close/Delete. Lucide's "check" path, unmodified.
+	"check": `<path d="M20 6 9 17l-5-5"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.
