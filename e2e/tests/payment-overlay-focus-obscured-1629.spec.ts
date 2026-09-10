@@ -29,6 +29,10 @@ test.describe('covered originals drop out of tab order while the payment overlay
     await page.setViewportSize({ width: 1024, height: 600 });
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    // ut-docs#1984: scan first — Payment is disabled on an empty basket.
+    await page.getByRole('textbox').first().fill('5000000000012');
+    await page.locator('.scan-row button[type=submit]').click();
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
     const originalNewSale = page.getByTestId('kiosk-checkout-start');
     const originalHold = page.getByTestId('tender-footer-hold');
@@ -59,6 +63,10 @@ test.describe('covered originals drop out of tab order while the payment overlay
     await page.setViewportSize({ width: 1920, height: 1080 });
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    // ut-docs#1984: scan first — Payment is disabled on an empty basket.
+    await page.getByRole('textbox').first().fill('5000000000012');
+    await page.locator('.scan-row button[type=submit]').click();
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
     const originalNewSale = page.getByTestId('kiosk-checkout-start');
     const originalHold = page.getByTestId('tender-footer-hold');
