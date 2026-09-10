@@ -13,7 +13,7 @@ Gün, reyon ve ödeme türüne göre satış toplamları; en çok/yavaş satanla
 
 ## Nasıl kullanılır
 
-1. Raporlar'ı açın: üstteki satır seçili dönemin ana rakamlarını (ciro, satış, ortalama satış, vergi, iadeler, net, geçen yıl) ve düşük stok uyarısını her zaman gösterir.
+1. Raporlar'ı açın: üstteki satır seçili dönemin ana rakamlarını (ciro, satış, ortalama satış, vergi, indirimler, iadeler, net, geçen yıl) ve düşük stok uyarısını her zaman gösterir.
 2. Altındaki sekmelerden birini seçin — Satış eğilimi, Ürünler, Vergi, Tahmin, Ödemeler ve kanallar, Bahşişler veya Gün sonu (EOD) — o rapor yalnızca sekmeyi açtığınızda çalışır.
 3. Kapanışta Gün sonu'nu (Gün sonu sekmesinde) çalıştırın: günü toplar ve kayıtlarınız için yazdırabilir.
 

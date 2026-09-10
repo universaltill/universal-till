@@ -1363,6 +1363,7 @@
   "reports.days": "أيام",
   "reports.dead_stock": "مخزون راكد",
   "reports.dead_stock_hint": "موجود في المخزون لكنه لم يُبع مرة واحدة في هذه الفترة — مال متوقف على الرف.",
+  "reports.discounts": "الخصومات",
   "reports.eod.article_print.help": "يتحكم فقط في قسم \"حسب الصنف\" في تقرير الإغلاق اليومي المطبوع — التقرير المعروض على الشاشة يسرد دائمًا كل صنف.",
   "reports.eod.article_print.label": "قائمة الأصناف المطبوعة",
   "reports.eod.article_print_cap.label": "أعلى N",
