@@ -71,7 +71,14 @@
      design calls for. -->
 <dialog id="modifier-groups-modal" class="item-form-modal modifier-groups-modal" aria-labelledby="manage-modifiers-btn">
   <div class="card catalog-form">
-    <div class="catalog-form-head">
+    <!-- Deliberately NOT .catalog-form-head (2026-09-10, PR-sweep rebase
+         fix): that class is styled identically here (see app.css), but
+         reusing the same class name breaks every e2e assertion written
+         against "the one .catalog-form-head on the page" (ut-docs#1956/
+         #2000's specs) once this modal is open at the same time as the
+         item-form dialog underneath it — Playwright's strict-mode locator
+         then resolves two elements instead of one. -->
+    <div class="modifier-groups-head">
       <h3>{{ T "catalog.modifiers.manage" }}</h3>
       <button class="btn secondary" type="button" id="modifier-groups-modal-close-btn" onclick="document.getElementById('modifier-groups-modal').close()">{{ T "common.close" }}</button>
     </div>

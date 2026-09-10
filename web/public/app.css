@@ -805,6 +805,12 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
 .catalog-form-head { flex: none; display: flex; flex-direction: column; gap: .4rem;
                      padding: .6rem 1.5rem 0; border-block-end: 1px solid var(--border);
                      background: var(--surface); }
+/* Same properties as .catalog-form-head above, own class name so the two
+   never collide under a strict-mode locator when both dialogs are open at
+   once (ut-docs#1957, 2026-09-10 PR-sweep rebase fix — see catalog.html). */
+.modifier-groups-head { flex: none; display: flex; flex-direction: column; gap: .4rem;
+                        padding: .6rem 1.5rem 0; border-block-end: 1px solid var(--border);
+                        background: var(--surface); }
 /* One row at 1024×600 (the kiosk floor), wrapping into two at phone width:
    the title+delete group and the action group each keep their own
    children on one line; only the two GROUPS wrap relative to each other. */
