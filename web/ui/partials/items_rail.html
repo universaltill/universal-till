@@ -1,0 +1,57 @@
+{{/*
+  The /items left rail (ut-docs#1950) — compact section rows (name + a real,
+  visible subtitle line, both truncated with ellipsis rather than wrapping),
+  replacing the old large card-tile stack. Included directly by the full
+  page (ui/pages/items.html), and sent again as an out-of-band swap
+  alongside EVERY ONE of the rail's five section destinations' own htmx
+  fragment response (/catalog, /categories, /inventory, /modifiers,
+  /catalog/option-sets — via internal/pages/itemsnav.WriteRailOOB, called
+  from each of those five handlers) so the active-row highlight follows the
+  click regardless of which handler answered it — the same mechanism
+  help_nav.html uses for /help/{topic} (ut-docs#351). id="items-rail" is
+  what hx-swap-oob="true" matches against the copy already in the DOM.
+
+  Independent review of an earlier draft: the subtitle was originally
+  dropped into a title="" hover tooltip to keep the row single-line, which
+  reference/ux-guidelines.md rules out directly ("nothing depends on
+  hover-only affordances (tooltips...)" — there is no mouse on a touchscreen
+  till, so a tooltip-only subtitle is simply unreachable there). Fixed: the
+  subtitle is a real second line now; each row is still visibly and
+  considerably smaller than the old card tiles (see app.css's .items-row for
+  the target height), just two compact lines instead of one.
+
+  Each row carries both a real href (no-JS fallback, and the phone-width
+  fallback below the .items-layout breakpoint — see items.html's own
+  script) and hx-get/hx-target/hx-push-url (the wide-screen in-panel swap).
+*/}}
+{{ define "items_rail" }}
+<nav class="items-rail-list" id="items-rail" {{ if .OOB }}hx-swap-oob="true"{{ end }}>
+  {{ range .Sections }}
+    {{ if .Href }}
+    <a class="items-row{{ if eq .Href $.CurrentHref }} is-current{{ end }}"
+       href="{{ .Href }}"
+       hx-get="{{ .Href }}" hx-target="#items-panel" hx-push-url="true"
+       {{ if eq .Href $.CurrentHref }}aria-current="page"{{ end }}>
+      <span class="items-text">
+        <span class="items-name">{{ T .NameKey }}</span>
+        <span class="items-subtitle">{{ T .SubtitleKey }}</span>
+      </span>
+    </a>
+    {{ else }}
+    <!-- Same "coming soon" treatment items.html's old card tiles used: real,
+         announced text carries the disabled meaning (aria-disabled has
+         nothing to attach to on a non-form-control), no opacity on the
+         label itself (independent-review finding on the old layout: opacity
+         stacked on already-reduced-contrast text risked WCAG AA on a
+         daylight till). -->
+    <div class="items-row is-disabled" aria-disabled="true">
+      <span class="items-text">
+        <span class="items-name">{{ T .NameKey }}</span>
+        <span class="items-subtitle">{{ T .SubtitleKey }}</span>
+      </span>
+      <span class="tag">{{ T "items.coming_soon" }}</span>
+    </div>
+    {{ end }}
+  {{ end }}
+</nav>
+{{ end }}

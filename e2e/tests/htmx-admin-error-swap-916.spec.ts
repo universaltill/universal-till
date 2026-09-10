@@ -19,7 +19,7 @@ test.describe('admin htmx error fragments are shown, not silently dropped (ut-do
     // "Failed to load resource: … 502" browser-level console error — expected
     // noise, not a JS bug (see helpers.ts's watchConsole doc comment).
     const assertClean = watchConsole(page, /^Failed to load resource:.*502/);
-    await page.goto('/settings');
+    await page.goto('/settings#settings-printer'); // ut-docs#1960: Settings is two-pane now — deep-link to the section this drives
     // No printer is configured in the e2e fixture (printer.mode defaults to
     // "off"), so this deterministically hits print_api.go's BadGateway path.
     const msg = page.locator('#print-test-msg');

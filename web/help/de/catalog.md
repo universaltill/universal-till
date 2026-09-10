@@ -12,6 +12,8 @@ keywords: [artikel, preise, barcode, varianten, modifikatoren, import, export]
 
 Ihre Produkte: Namen, Preise, Abteilungen, Artikelvarianten (Größe, Geschmack …) und beliebig viele Barcodes pro Artikel oder Variante.
 
+Öffnen Sie **Artikel** im Menü, um hierher zu gelangen — ab Tablet-Breite öffnet sich ein zweigeteilter Bildschirm: links eine kompakte Liste der Bereiche (Katalog, Kategorien, Lagerbestand, Zusatzoptionen, Optionssätze), rechts der ausgewählte Bereich selbst, sodass ein Wechsel nie die Seite verlässt. Katalog ist standardmäßig ausgewählt. Auf einem schmalen Bildschirm (Smartphone-Breite) werden beide Bereiche gestapelt, und ein Tipp auf einen Bereich öffnet ihn wie bisher als eigenen vollständigen Bildschirm. Jeder Bereich hat weiterhin seine eigene Adresse — /catalog, /categories, /inventory, /modifiers und /catalog/option-sets funktionieren unverändert, wenn Sie sie direkt aufrufen oder als Lesezeichen speichern.
+
 ## Verwendung
 
 1. Öffnen Sie den Katalog und klicken Sie auf eine Artikelzeile — das Bearbeitungsfeld darunter zeigt alle Varianten und Barcodes. Artikel mit dem Abzeichen BEISPIEL stammen aus dem optionalen Startkatalog (entfernbar unter Einstellungen → Daten).

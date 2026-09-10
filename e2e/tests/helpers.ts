@@ -194,7 +194,9 @@ export async function setOskMode(page: Page, mode: string) {
   await page.waitForLoadState('load').catch(() => {});
   for (let attempt = 1; ; attempt++) {
     try {
-      await page.goto('/settings');
+      // ut-docs#1960: Settings is two-pane now — the OSK select lives in
+      // the Display section, which the deep link selects on arrival.
+      await page.goto('/settings#settings-display');
       break;
     } catch (err) {
       const message = err instanceof Error ? err.message : String(err);

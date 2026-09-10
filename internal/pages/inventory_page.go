@@ -11,6 +11,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pages/itemsnav"
 )
 
 // stockRow is one rendered row of the /inventory stock-levels table.
@@ -109,6 +110,17 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 			"Locations":   locations,
 			"ItemsJSON":   template.JS(pickerJSON),
 			"SyncPrimary": d.SyncPrimaryURL(r.Context()),
+		}
+		// ut-docs#1950: /inventory is one of the /items rail's five section
+		// destinations — an htmx request from that panel (NOT a stale history
+		// restore, see httpx.IsFragmentSwap) gets just the "content" block
+		// plus an out-of-band refresh of the rail so its is-current highlight
+		// follows the click; a plain browser GET (deep link) still gets the
+		// exact same full standalone page as before this card.
+		if httpx.IsFragmentSwap(r) {
+			httpx.RenderContentFragment("ui/pages/inventory.html", data)(w, r)
+			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/inventory")
+			return
 		}
 		httpx.Render("ui/pages/inventory.html", data)(w, r)
 	})

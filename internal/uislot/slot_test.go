@@ -295,6 +295,17 @@ func TestResolve_RelabelAndReiconKeepCoreFallbacks(t *testing.T) {
 func TestCoreMenu_IsWellFormed(t *testing.T) {
 	seen := map[string]bool{}
 	prev := -1
+	// ut-docs#1959: with zero amendments Resolve() never re-sorts/re-groups
+	// (Decision I, checked above), so groupTogether never runs on the
+	// zero-plugin path — a Group value is only ever rendered correctly if
+	// its members are already CONTIGUOUS in this declared slice. lastGroup
+	// + closedGroups catch the failure mode directly: an entry reopening a
+	// group after a different group (or an ungrouped entry) interrupted it
+	// renders that group's heading a second time (menu_page.go's
+	// GroupHeading logic keys off "did the group change since the last
+	// tile", so a reopened group looks exactly like a brand new one).
+	lastGroup := ""
+	closedGroups := map[string]bool{}
 	for _, e := range CoreMenu {
 		if e.Key == "" || e.Key != e.Href {
 			t.Errorf("core entry key must equal its href (the ADR names protected keys by path): %+v", e)
@@ -313,6 +324,15 @@ func TestCoreMenu_IsWellFormed(t *testing.T) {
 		if e.LabelFallback != "" || e.IconFallback != "" {
 			t.Errorf("fallbacks are set by Resolve, never declared: %+v", e)
 		}
+		if e.Group != lastGroup {
+			if lastGroup != "" {
+				closedGroups[lastGroup] = true
+			}
+			if e.Group != "" && closedGroups[e.Group] {
+				t.Errorf("group %q is not declared contiguously in CoreMenu: %q reopens it after another entry interrupted it — the zero-plugin render path would show its heading twice", e.Group, e.Key)
+			}
+		}
+		lastGroup = e.Group
 	}
 	for _, p := range ProtectedMenuKeys {
 		if !seen[p] {

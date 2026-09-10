@@ -264,6 +264,63 @@ func TestCategoriesPageReorder(t *testing.T) {
 	}
 }
 
+// ut-docs#1950: /categories is one of the /items rail's five section
+// destinations. An htmx request (from that panel) must get just the
+// "content" block, plus an out-of-band refresh of the rail with
+// /categories marked is-current — not the full standalone page's chrome.
+func TestCategoriesPage_HXRequestReturnsContentFragmentWithOOBRail(t *testing.T) {
+	mux, _ := newCategoriesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/categories", nil), manager)
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx GET /categories: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, "<html") || strings.Contains(body, `class="nav"`) {
+		t.Errorf("htmx request re-rendered the whole page shell: %s", body)
+	}
+	railStart := strings.Index(body, `id="items-rail"`)
+	if railStart < 0 || !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Fatalf("fragment missing the OOB items-rail swap: %s", body)
+	}
+	rail := body[railStart:]
+	idx := strings.Index(rail, `href="/categories"`)
+	if idx < 0 {
+		t.Fatalf("OOB rail missing the /categories row: %s", rail)
+	}
+	tagStart := strings.LastIndex(rail[:idx], "<a ")
+	tagEnd := strings.Index(rail[tagStart:], ">") + tagStart
+	if !strings.Contains(rail[tagStart:tagEnd], "is-current") {
+		t.Errorf("the /categories row itself is not marked is-current: %s", rail[tagStart:tagEnd])
+	}
+}
+
+// A plain browser GET (no HX-Request) must still render the exact same full
+// standalone page as before this card.
+func TestCategoriesPage_NonHXRequestStillRendersFullPage(t *testing.T) {
+	mux, _ := newCategoriesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/categories", nil), manager)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /categories: %d %s", rec.Code, rec.Body.String())
+	}
+	if body := rec.Body.String(); !strings.Contains(body, "<html") || !strings.Contains(body, `class="nav"`) {
+		t.Errorf("expected the full standalone page shell, got: %s", body)
+	}
+}
+
+// The card's own flagged edge case, verified rather than assumed: a bare
+// 303 Location redirect does not reliably re-trigger as an in-panel htmx
+// swap in every browser once /categories' own mutation forms can be
+// embedded inside /items' right panel (ut-docs#1950). An htmx request must
+// get "HX-Redirect" instead, which forces a full client-side navigation —
+// an honest fallback, not a seamless swap, but not silently broken either.
 // AC #6: a category created here must (a) appear in the catalog item-edit
 // category <select> (fed by ListActiveCategories via ReadLookup) and (b)
 // appear as a sale-screen category tab (ButtonStore.LoadCategories, via
