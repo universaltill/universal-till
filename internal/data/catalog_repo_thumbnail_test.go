@@ -242,55 +242,6 @@ func TestItemThumbnailFor_EmptyWhenNone(t *testing.T) {
 	}
 }
 
-// TestHasAnyThumbnail_ActiveItemsOnly is the catalog list's column-collapse
-// decision (ut-docs#1842 AC2): the thumbnail column only exists at all
-// when SOME currently-active item has one. A thumbnail belonging only to
-// a deactivated item must not keep the column alive.
-func TestHasAnyThumbnail_ActiveItemsOnly(t *testing.T) {
-	d, err := db.Open(filepath.Join(t.TempDir(), "cat.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	t.Cleanup(func() { _ = d.Close() })
-	ctx := context.Background()
-	repo := data.NewCatalogRepo(d.DB)
-
-	id, err := repo.CreateItem(ctx, catalogtypes.ItemInput{Name: "Water", BasePrice: 150, IsActive: true})
-	if err != nil {
-		t.Fatalf("CreateItem: %v", err)
-	}
-
-	has, err := repo.HasAnyThumbnail(ctx)
-	if err != nil {
-		t.Fatalf("HasAnyThumbnail: %v", err)
-	}
-	if has {
-		t.Fatalf("HasAnyThumbnail = true before any item has an image")
-	}
-
-	if err := repo.SetItemThumbnail(ctx, id, "/public/assets/items/"+id+"/thumb.png"); err != nil {
-		t.Fatalf("SetItemThumbnail: %v", err)
-	}
-	has, err = repo.HasAnyThumbnail(ctx)
-	if err != nil {
-		t.Fatalf("HasAnyThumbnail: %v", err)
-	}
-	if !has {
-		t.Fatalf("HasAnyThumbnail = false after an active item got an image")
-	}
-
-	if err := repo.DeactivateItem(ctx, id); err != nil {
-		t.Fatalf("DeactivateItem: %v", err)
-	}
-	has, err = repo.HasAnyThumbnail(ctx)
-	if err != nil {
-		t.Fatalf("HasAnyThumbnail: %v", err)
-	}
-	if has {
-		t.Fatalf("HasAnyThumbnail = true after the only imaged item was deactivated")
-	}
-}
-
 // TestSetItemThumbnailConcurrentRace is the ut-docs#1871 regression:
 // pre-fix, SetItemThumbnail was a non-atomic UPDATE-then-INSERT, so two
 // concurrent calls for the same item could both see the UPDATE affect 0

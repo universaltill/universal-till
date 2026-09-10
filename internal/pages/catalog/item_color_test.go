@@ -22,6 +22,18 @@ func TestItemCreate_WithValidColor_Succeeds(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `data-color="#0f172a"`) {
 		t.Fatalf("row fragment missing data-color: %s", rec.Body.String())
 	}
+	// ut-docs#1951 (added by independent review): the card itself now
+	// PAINTS the colour — a photo-less coloured item gets .tile-colored plus
+	// the --tile-color custom property, the same pair the sale-screen tile
+	// uses (internal/ui/buttons_tile_color_test.go). Worth pinning here
+	// because html/template's CSS context is what would silently turn the
+	// value into ZgotmplZ, and nothing else in this package covers it.
+	if !strings.Contains(rec.Body.String(), "tile-colored") {
+		t.Fatalf("card fragment missing the tile-colored class: %s", rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "--tile-color: #0f172a") {
+		t.Fatalf("card fragment missing the --tile-color custom property: %s", rec.Body.String())
+	}
 	var color string
 	if err := db.QueryRow(`SELECT color FROM items WHERE name = 'Latte'`).Scan(&color); err != nil {
 		t.Fatalf("query color: %v", err)
@@ -31,8 +43,14 @@ func TestItemCreate_WithValidColor_Succeeds(t *testing.T) {
 	}
 }
 
-// An item with no color set renders no data-color value and no color-dot
-// in the list — never a literal "<nil>"/"null" artifact.
+// An item with no color set renders no data-color value and no coloured
+// tile in the list — never a literal "<nil>"/"null" artifact.
+//
+// ut-docs#1951 (independent review): this used to assert the absence of
+// `class="color-dot"`. That markup was deleted with the table, so the
+// assertion had become vacuous — it could no longer fail for any input.
+// Replaced with the live equivalent: the colourless card must carry
+// neither .tile-colored nor a --tile-color custom property.
 func TestItemCreate_WithoutColor_RowHasEmptyDataColor(t *testing.T) {
 	mux, _ := newCatalogMux(t)
 
@@ -43,8 +61,11 @@ func TestItemCreate_WithoutColor_RowHasEmptyDataColor(t *testing.T) {
 	if !strings.Contains(rec.Body.String(), `data-color=""`) {
 		t.Fatalf("expected an empty data-color attribute, got: %s", rec.Body.String())
 	}
-	if strings.Contains(rec.Body.String(), `class="color-dot"`) {
-		t.Fatalf("expected no color-dot for a colorless item: %s", rec.Body.String())
+	if strings.Contains(rec.Body.String(), "tile-colored") {
+		t.Fatalf("expected no tile-colored class for a colorless item: %s", rec.Body.String())
+	}
+	if strings.Contains(rec.Body.String(), "--tile-color") {
+		t.Fatalf("expected no --tile-color custom property for a colorless item: %s", rec.Body.String())
 	}
 }
 

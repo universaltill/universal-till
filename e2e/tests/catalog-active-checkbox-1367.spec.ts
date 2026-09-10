@@ -34,10 +34,10 @@ test('unchecking Active on an existing item and saving actually deactivates it',
   const row = page.locator('.catalog-row', { hasText: name });
   await expect(row).toBeVisible();
 
-  // Load it into the form (a plain cell, not a .btn, per the row-click
-  // handler's own exclusion) — the Active box starts checked, since only
-  // active items ever have a row to click.
-  await row.locator('td').first().click();
+  // Load it into the form — ut-docs#1951: the row is a single clickable
+  // card now, not a table row of cells. The Active box starts checked,
+  // since only active items ever have a card to click.
+  await row.click();
   await expect(page.locator('#item-id')).not.toHaveValue('');
   await expect(page.locator('#item-active')).toBeChecked();
 

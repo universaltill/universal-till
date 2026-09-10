@@ -61,18 +61,17 @@ func TestCatalogPage_TaxCodeShowsNameNotID(t *testing.T) {
 	if !strings.Contains(body, `<option value="4ca66fd2-8379-4f6b-90a7-63c959d0e44b">Standard 19%</option>`) {
 		t.Fatalf("expected the tax-code <select> to offer the seeded tax code by name; got:\n%s", body)
 	}
-
-	// An item with no tax code at all shows a placeholder, never a blank
-	// cell that could be mistaken for missing data.
-	if !strings.Contains(body, ">—<") {
-		t.Fatalf("expected a placeholder for the item with no tax code; got:\n%s", body)
-	}
 }
 
-// The affected item's row is also re-rendered standalone after every
-// mutation (writeCatalogRowOOB, ut-docs#1363) — that fragment must carry
-// the same fix, not just the full /catalog page load.
-func TestCatalogTablePartial_TaxCodeShowsNameNotID(t *testing.T) {
+// The affected item's card is also re-rendered standalone after every
+// mutation (writeCatalogRowOOB, ut-docs#1363) — ut-docs#1951 dropped the
+// Tax column from the card grid entirely (product-owner direction: cards
+// show name/price/photo only, the tax code lives in the item-edit dialog),
+// so the card fragment no longer carries the tax code's name at all. What
+// still matters, and is still worth pinning: the raw id must never leak
+// into that fragment either, now that there's no display code left to
+// carry the ut-docs#1178 fix forward.
+func TestCatalogTablePartial_UpdateNeverLeaksRawTaxCodeID(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
 	defer db.Close()
@@ -82,20 +81,16 @@ func TestCatalogTablePartial_TaxCodeShowsNameNotID(t *testing.T) {
 	mux := http.NewServeMux()
 	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
 
-	// /api/catalog/item/update answers with the item's row as an
-	// out-of-band fragment (catalog_row.html via writeCatalogRowOOB),
-	// independently of the full /catalog page load above — that render
-	// path needs its own coverage.
 	rec := postForm(t, mux, "/api/catalog/item/update", "id=itm1&name=Tea&price=200&taxCode=4ca66fd2-8379-4f6b-90a7-63c959d0e44b")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Standard 19%") {
-		t.Fatalf("expected tax code name %q in the re-rendered table partial; got:\n%s", "Standard 19%", body)
+	if !strings.Contains(body, `id="catalog-row-itm1"`) {
+		t.Fatalf("expected the item's card fragment; got:\n%s", body)
 	}
 	if uuidLike.MatchString(stripDataAttrs(body)) {
-		t.Fatalf("re-rendered table partial leaked the raw tax_code_id outside data-* attributes:\n%s", body)
+		t.Fatalf("re-rendered card fragment leaked the raw tax_code_id outside data-* attributes:\n%s", body)
 	}
 }
 
@@ -162,9 +157,11 @@ func TestCatalogPage_InactiveTaxCodeSurvivesUnrelatedSave(t *testing.T) {
 		t.Fatalf("tax_code_id after a save that re-submitted the inactive code: got %v, want \"retired-1\" — the item's VAT assignment was silently wiped", got)
 	}
 
-	// The re-rendered table partial must still resolve the retired code's
-	// name too — a "—" here would be indistinguishable from "no tax code".
-	if !strings.Contains(rec.Body.String(), "Old Reduced Rate") {
-		t.Fatalf("expected the retired tax code's name in the re-rendered table; got:\n%s", rec.Body.String())
+	// ut-docs#1951: the card grid no longer displays the tax code name at
+	// all (Architect decision — Tax is edit-dialog-only now), so the DB
+	// check above is what actually proves the fix; the card fragment is
+	// only checked for not leaking the raw id.
+	if uuidLike.MatchString(stripDataAttrs(rec.Body.String())) {
+		t.Fatalf("re-rendered card fragment leaked a raw tax_code_id outside data-* attributes:\n%s", rec.Body.String())
 	}
 }

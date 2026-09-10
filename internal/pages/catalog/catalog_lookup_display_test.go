@@ -67,18 +67,16 @@ func TestCatalogPage_CategoryBrandShowNameNotID(t *testing.T) {
 	if strings.Contains(body, "categories-list") || strings.Contains(body, "brands-list") {
 		t.Fatalf("expected the old <datalist> category/brand pickers to be removed; got:\n%s", body)
 	}
-
-	// An item with no category at all shows a placeholder, never a blank
-	// cell that could be mistaken for missing data.
-	if !strings.Contains(body, ">—<") {
-		t.Fatalf("expected a placeholder for the item with no category; got:\n%s", body)
-	}
 }
 
-// The affected item's row is also re-rendered standalone after every
-// mutation (writeCatalogRowOOB, ut-docs#1363) — that fragment must carry the
-// same fix, not just the full /catalog page load.
-func TestCatalogTablePartial_CategoryShowsNameNotID(t *testing.T) {
+// The affected item's card is also re-rendered standalone after every
+// mutation (writeCatalogRowOOB, ut-docs#1363) — ut-docs#1951 dropped the
+// Category column from the card grid entirely (product-owner direction:
+// cards show name/price/photo only), so the card fragment no longer
+// carries the category's name at all. What still matters, and is still
+// worth pinning: the raw id must never leak into that fragment either, now
+// that there's no display code left to carry the ut-docs#1430 fix forward.
+func TestCatalogTablePartial_UpdateNeverLeaksRawCategoryID(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
 	defer db.Close()
@@ -91,21 +89,16 @@ func TestCatalogTablePartial_CategoryShowsNameNotID(t *testing.T) {
 	mux := http.NewServeMux()
 	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
 
-	// /api/catalog/item/update answers with the item's row as an
-	// out-of-band fragment (catalog_row.html via writeCatalogRowOOB),
-	// independently of the full /catalog page load above — that render
-	// path resolves categoryName via the single-row GetLookup, a separate
-	// code path from the full page's whole-list lookupNameFunc.
 	rec := postForm(t, mux, "/api/catalog/item/update",
 		"id=itm1&name=Crisps&price=150&categoryId=8f14e45f-ceea-467e-a795-84f0e0c73c1b")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("update = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, "Snacks") {
-		t.Fatalf("expected category name %q in the re-rendered table partial; got:\n%s", "Snacks", body)
+	if !strings.Contains(body, `id="catalog-row-itm1"`) {
+		t.Fatalf("expected the item's card fragment; got:\n%s", body)
 	}
 	if uuidLike.MatchString(stripDataAttrs(body)) {
-		t.Fatalf("re-rendered table partial leaked the raw category_id outside data-* attributes:\n%s", body)
+		t.Fatalf("re-rendered card fragment leaked the raw category_id outside data-* attributes:\n%s", body)
 	}
 }

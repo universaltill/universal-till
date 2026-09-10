@@ -17,7 +17,7 @@ test.describe('catalog category/brand select (ut-docs#1430)', () => {
     await page.request.post('/api/pos/reset');
   });
 
-  test('creating an item with a category shows the name, never the id, in the table and the edit form', async ({ page }) => {
+  test('creating an item with a category never leaks the raw id, and the edit form re-selects it by name', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/catalog');
 
@@ -40,12 +40,13 @@ test.describe('catalog category/brand select (ut-docs#1430)', () => {
     // save-success auto-close timer.
     await closeItemForm(page);
 
-    // The new row's own category cell shows "Food" by name (AC: items
-    // table shows the category name column).
+    // ut-docs#1951: the card grid no longer shows Category at all
+    // (product-owner direction — cards are name/price/photo only, the
+    // category lives in the edit dialog). What's still real and worth
+    // pinning here: the raw id must never leak into the card's rendered
+    // text either.
     const row = page.locator('.catalog-row', { hasText: name });
     await expect(row).toBeVisible();
-    await expect(row).toContainText('Food');
-    // Never the raw id anywhere in the row's rendered text.
     const categoryId = await categorySelect.locator('option', { hasText: 'Food' }).getAttribute('value');
     expect(categoryId).toBeTruthy();
     await expect(row).not.toContainText(categoryId as string);
@@ -53,7 +54,7 @@ test.describe('catalog category/brand select (ut-docs#1430)', () => {
     // Loading it back into the edit form selects "Food" by id -- the
     // select's chosen option's visible text is the name, its value is the
     // id (AC's own e2e wording).
-    await row.locator('td').first().click();
+    await row.click();
     await expect(page.locator('#item-id')).not.toHaveValue('');
     await expect(categorySelect).toHaveValue(categoryId as string);
     const selectedText = await categorySelect.evaluate(
@@ -64,7 +65,7 @@ test.describe('catalog category/brand select (ut-docs#1430)', () => {
     assertClean();
   });
 
-  test('an item with no category shows the empty placeholder, not a blank id', async ({ page }) => {
+  test('an item with no category renders a normal card, no blank id anywhere', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/catalog');
 
@@ -76,9 +77,11 @@ test.describe('catalog category/brand select (ut-docs#1430)', () => {
     await page.locator('#item-form-submit').click();
     await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
 
+    // ut-docs#1951: there is no card-level category placeholder to check
+    // any more (that only ever existed as a table column) — the card just
+    // renders normally, name and price, nothing category-shaped at all.
     const row = page.locator('.catalog-row', { hasText: name });
     await expect(row).toBeVisible();
-    await expect(row.locator('td').nth(6)).toHaveText('—');
 
     assertClean();
   });
