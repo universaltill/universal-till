@@ -131,14 +131,21 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   `guard-data-access.sh`, `guard-kiosk-engine.sh`, `guard-plugin-menu-read.sh`,
   `guard-page-http-error.sh`,
   `guard-i18n.sh`, `guard-compliance-claims.sh`, `guard-docs-shots.sh`,
-  `guard-help-topics.sh`, `guard-webkit-version.sh`,
+  `guard-help-topics.sh`, `guard-help-drift.sh`, `guard-webkit-version.sh`,
   `guard-kiosk-launch-flags.sh`, `guard-android-status-address.sh`,
   `guard-android-i18n.sh`, `guard-emoji-font.sh`, `guard-htmx-loaded.sh`,
   `guard-autofill-suppression.sh`, `guard-e2e-fixtures-import.sh`,
-  `check-brand-assets.sh`, and
-  `guard-makefile-version.sh` (all under `scripts/ci/`). This list drifts as
+  `check-brand-assets.sh`, `guard-makefile-version.sh`, and
+  `guard-shellcheck-version.sh` (all under `scripts/ci/`). This list drifts as
   guards are added — check the workflow file's `build` job for the
   authoritative, current one rather than trusting this snapshot.
+  `guard-shellcheck-version.sh` (ut-docs#1955) is the shellcheck-version
+  equivalent of the `golangci-lint-action`'s `version: v2.5.0` pin just
+  above — CI's `shellcheck` comes preinstalled on `ubuntu-latest` rather
+  than through a pinnable action, so this guard instead fails loudly the
+  moment the installed `shellcheck --version` drifts from its own hardcoded
+  baseline, so a runner-image bump can't silently change which findings
+  `scripts/ci/*.sh` gets flagged for.
 - **`android/**` or `mobile/**` changes also gate on
   `.github/workflows/android-ci.yml`** (ut-docs#1658, filter widened to
   include `mobile/**` by ut-docs#1721's review — `mobile` is the
@@ -198,6 +205,18 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   competing `routes:` claim.
   Standing instruction from the product owner, 2026-08-06 (ut-docs#324) —
   the manual is only worth having if it is never behind the product.
+  `guard-help-topics.sh` only checks a translated topic *exists* — it can't
+  see a translation that fell behind English's actual content.
+  `scripts/ci/guard-help-drift.sh` (ut-docs#1962) closes that gap: it fails
+  when a translated topic's structure (heading/step/bullet counts) no
+  longer matches English, unless the mismatch is recorded in
+  `scripts/ci/i18n-baseline/help-drift-baseline.json` (kept outside
+  `web/help/` deliberately — that tree is `//go:embed`'d into every shipped
+  binary, and this file is CI-only bookkeeping; same
+  record-then-burn-down convention as `ut-plugin-language-*`'s own
+  `i18n-baseline/` files) — a baseline entry itself fails once the real
+  drift no longer matches what it recorded, so a fixed or worsened entry
+  can't go unnoticed.
 - **`README.md` is kept up to date every time it goes stale** — any change
   that affects what the README claims (features, setup steps, badges,
   version floors, structure) gets a README edit in the same session, not a

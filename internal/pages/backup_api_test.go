@@ -7,6 +7,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -213,7 +214,7 @@ func TestListBackupsForUI_FormatsRealSnapshots(t *testing.T) {
 	req := httptest.NewRequest(http.MethodPost, "/api/backup/now", nil)
 	mux.ServeHTTP(httptest.NewRecorder(), req)
 
-	rows := listBackupsForUI(dp)
+	rows := listBackupsForUI(dp, "en")
 	if len(rows) != 1 {
 		t.Fatalf("expected one formatted backup row, got %d", len(rows))
 	}
@@ -225,6 +226,62 @@ func TestListBackupsForUI_FormatsRealSnapshots(t *testing.T) {
 	}
 	if rows[0].Date == "" {
 		t.Fatalf("expected a formatted date")
+	}
+}
+
+// TestListBackupsForUI_DateIsLocaleAware guards ut-docs#1936: the .backups
+// list date used to be b.ModTime.Format("2006-01-02 15:04") -- a hardcoded
+// Go layout, ignoring locale entirely. Same pattern as #1894's own
+// regression tests: prove the hardcoded ISO-ish "YYYY-MM-DD" shape is gone
+// and the locale-aware httpx.FormatDateTime shape (dot-separated for de,
+// through the SAME dateLayout table dateformat.go already keys off) is
+// present, by comparing two different locales' output for the identical
+// on-disk snapshot.
+func TestListBackupsForUI_DateIsLocaleAware(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newBackupTestDeps(t)
+	req := httptest.NewRequest(http.MethodPost, "/api/backup/now", nil)
+	mux.ServeHTTP(httptest.NewRecorder(), req)
+
+	list, err := db.ListBackups(dp.Cfg.DBPath)
+	if err != nil || len(list) != 1 {
+		t.Fatalf("expected exactly one real snapshot on disk, got %d (err=%v)", len(list), err)
+	}
+	rowsEN := listBackupsForUI(dp, "en")
+	rowsDE := listBackupsForUI(dp, "de-DE")
+	if len(rowsEN) != 1 || len(rowsDE) != 1 {
+		t.Fatalf("expected one formatted row per locale, got en=%d de-DE=%d", len(rowsEN), len(rowsDE))
+	}
+
+	// The old hardcoded layout ("2006-01-02 15:04") always renders a
+	// dash-separated, year-first date -- that shape must be gone for BOTH
+	// locales now that formatting goes through FormatDateTime.
+	isoLike := regexp.MustCompile(`^\d{4}-\d{2}-\d{2} `)
+	if isoLike.MatchString(rowsEN[0].Date) {
+		t.Fatalf("en date still looks like the old hardcoded ISO-ish layout: %q", rowsEN[0].Date)
+	}
+	if isoLike.MatchString(rowsDE[0].Date) {
+		t.Fatalf("de-DE date still looks like the old hardcoded ISO-ish layout: %q", rowsDE[0].Date)
+	}
+
+	// de-DE's date-ordering convention is dot-separated (dateformat.go's
+	// dateLayout); en's is slash-separated day/month. The two locales must
+	// actually disagree, proving the locale argument is really wired
+	// through to FormatDateTime rather than ignored.
+	if !strings.Contains(rowsDE[0].Date, ".") {
+		t.Fatalf("expected de-DE's dot-separated date convention, got %q", rowsDE[0].Date)
+	}
+	if strings.Contains(rowsEN[0].Date, ".") {
+		t.Fatalf("expected en's slash-separated date convention, got %q", rowsEN[0].Date)
+	}
+
+	wantEN := httpx.FormatDateTime(list[0].ModTime.Local(), "en")
+	if rowsEN[0].Date != wantEN {
+		t.Fatalf("en date = %q, want %q (via httpx.FormatDateTime)", rowsEN[0].Date, wantEN)
+	}
+	wantDE := httpx.FormatDateTime(list[0].ModTime.Local(), "de-DE")
+	if rowsDE[0].Date != wantDE {
+		t.Fatalf("de-DE date = %q, want %q (via httpx.FormatDateTime)", rowsDE[0].Date, wantDE)
 	}
 }
 

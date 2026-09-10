@@ -26,6 +26,7 @@ import (
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/pos"
 )
 
@@ -482,11 +483,11 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if resetBatchesErr != nil {
 			logging.L().Errorf("list reset batches: %v", resetBatchesErr)
 		}
-		// Locale-aware date format (ut-docs#1130/#1632/#1894) — NOT the same
-		// as the .backups table above, which turned out on inspection to
-		// still be a hardcoded "2006-01-02 15:04" (listBackupsForUI in
-		// backup_api.go); that's a separate, still-open gap (ut-docs#1936),
-		// deliberately not folded into this card's fixed scope.
+		// Locale-aware date format (ut-docs#1130/#1632/#1894). The .backups
+		// table below used to be a separate gap (ut-docs#1936 — it was
+		// still a hardcoded "2006-01-02 15:04" in listBackupsForUI,
+		// backup_api.go) but now goes through the same httpx.FormatDateTime
+		// call as everything else on this page.
 		// Purgeable/RetainedUntilDisplay (ut-docs#698) let the template show
 		// per-row purge eligibility instead of every row offering a
 		// Delete-permanently control that a gated batch will just refuse.
@@ -618,7 +619,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// this same session renders consistently with what the save
 			// handler will actually accept.
 			"receiptPolicyLocked": receiptPolicyLockedForCountry(all[common.KeyCountry]),
-			"backups":             listBackupsForUI(d),
+			"backups":             listBackupsForUI(d, locale),
 			// ut-docs#1613: a restore staged in an earlier visit (or before
 			// a page reload) must still offer its restart trigger here —
 			// otherwise the operator who reloads mid-flow lands back on the
@@ -1587,6 +1588,23 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		if err := d.Settings.Set(r.Context(), common.KeyShopType, v); err != nil {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
+		}
+		// ut-docs#1902: shop_type=service activates the builtin Salon layout
+		// (ADR-0088); any other value (including clearing it back to "")
+		// deactivates it if it was active. Best-effort — a failure here must
+		// never block a shop-type save over a cosmetic menu personalization.
+		// ut-docs#2006: reload unless it's a genuine no-op (no error,
+		// nothing changed) — an error still reloads, since a failed
+		// reinstall can leave the DB changed (removeSalon succeeded) even
+		// though Sync itself returned an error.
+		changed, syncErr := builtinlayouts.Sync(r.Context(), d.Db, v)
+		if syncErr != nil {
+			logging.L().Warnf("settings: could not sync builtin layout for shop_type %q: %v", v, syncErr)
+		}
+		if syncErr != nil || changed {
+			if err := d.ReloadPlugins(r.Context()); err != nil {
+				logging.L().Warnf("settings: could not reload plugins after shop_type layout sync: %v", err)
+			}
 		}
 		settingsAudit(r, posRepo, elev, "settings", common.KeyShopType, "shop_type_changed",
 			map[string]any{"shop_type": v})

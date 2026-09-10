@@ -276,9 +276,18 @@
       <button class="btn secondary" type="button" data-testid="tender-footer-hold"
               onclick="document.getElementById('hold-modal').show(); document.getElementById('hold-label-input').focus();">
         {{ T "hold.action" }}</button>
+      <!-- ut-docs#1984: rendered from the CURRENT basket at page-load time
+           (payItemCount/payTotal, index_page.go) so the empty/non-empty
+           label and disabled state are already correct on first paint --
+           no flash from a placeholder to the real state. The refresh()
+           script just below keeps it in sync with #basket after every
+           htmx swap, the same data-attribute-bridge pattern the fee-hint
+           and pay-voucher-btn scripts further down already use for an
+           element that lives outside the swapped #basket fragment. -->
       <button type="button" class="btn primary payment-trigger" data-testid="payment-open"
+              {{ if eq .payItemCount 0 }}disabled{{ end }}
               onclick="document.getElementById('payment-overlay').show()">
-        {{ T "tender.open_payment" }}</button>
+        {{ if eq .payItemCount 0 }}{{ T "tender.pay_empty" }}{{ else }}{{ printf (T "tender.pay_with_total") (money .payTotal) }}{{ end }}</button>
     </div>
 
     <!-- ut-docs#1336: one-tap quick pay — a second, full-width row below
@@ -298,7 +307,10 @@
          convention (see the 🛒 New Sale button below, still unconverted —
          ut-docs#1845 only touched this file's phone-width nav-shortcut
          row, .kiosk-actions above, not this tender row); the label itself
-         is live DB data (.Name) or
+         is live DB data (.Name) run through T (ut-docs#2015: a plugin
+         payment entry's label is a translator key, same as a page/export/
+         report entry's — a built-in's plain-text name like "Cash" passes
+         through T unchanged) or
          the same tender.cash fallback the pay-grid's own else-branch uses. -->
     <div class="tender-quickpay">
       {{ if .defaultPayMethod }}
@@ -306,7 +318,7 @@
               hx-post="/api/pos/tender"
               hx-vals='{{ jsonVals "amount" 0 "method" .defaultPayMethod.ID }}' hx-include="#offline-flag"
               hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">⚡ {{ .defaultPayMethod.Name }}</button>
+              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">⚡ {{ T .defaultPayMethod.Name }}</button>
       {{ else }}
       <button class="btn quick-pay-btn" type="button" data-testid="quick-pay" data-method="cash"
               hx-post="/api/pos/tender"
@@ -337,7 +349,7 @@
             <button class="btn pay-btn{{ if .PluginID }} pay-plugin{{ end }}" data-method="{{ .ID }}" hx-post="/api/pos/tender"
                     hx-vals='{{ jsonVals "amount" 0 "method" .ID }}' hx-include="#offline-flag"
                     hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-                    hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ .Name }}<span class="fee-hint" data-fee-for="{{ .ID }}"></span></button>
+                    hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T .Name }}<span class="fee-hint" data-fee-for="{{ .ID }}"></span></button>
             {{ else }}
             <button class="btn pay-btn" hx-post="/api/pos/tender" hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
                     hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T "tender.cash" }}</button>
@@ -419,6 +431,36 @@
         }
         document.body.addEventListener('htmx:afterSwap', refresh);
         document.addEventListener('DOMContentLoaded', refresh);
+      })();
+      // Payment button empty/non-empty label + disabled state (ut-docs#1984):
+      // the server already renders the correct state at page load
+      // (payItemCount/payTotal above), so this only needs to re-sync after
+      // each #basket swap -- same shape as the two IIFEs just above, reading
+      // the swapped fragment's own .basket-count text and .total data-minor
+      // rather than adding new data attributes to #basket.
+      (function () {
+        var T = { payEmpty: "{{ T "tender.pay_empty" }}", payWithTotal: "{{ T "tender.pay_with_total" }}" };
+        function fmt(template, a) {
+          return String(template || '').replace('%s', a);
+        }
+        function refresh() {
+          var btn = document.querySelector('.payment-trigger');
+          var basket = document.getElementById('basket');
+          if (!btn || !basket) return;
+          var countEl = basket.querySelector('.basket-count');
+          var count = countEl ? parseInt(countEl.textContent || '0', 10) : 0;
+          if (!count) {
+            btn.textContent = T.payEmpty;
+            btn.disabled = true;
+            return;
+          }
+          var totalEl = basket.querySelector('.total');
+          var total = totalEl ? parseInt(totalEl.getAttribute('data-minor') || '0', 10) : 0;
+          var totalLabel = window.utCurrency ? window.utCurrency.format(total) : total;
+          btn.textContent = fmt(T.payWithTotal, totalLabel);
+          btn.disabled = false;
+        }
+        document.body.addEventListener('htmx:afterSwap', refresh);
       })();
     </script>
     <!-- ut-docs#925: the split-tender panel's own status/validation copy is

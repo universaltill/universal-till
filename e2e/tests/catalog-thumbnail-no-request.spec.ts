@@ -78,11 +78,13 @@ test.describe('catalog thumbnails: no request for a missing photo (ut-docs#319)'
     await expect(seededRow.locator('img.thumb')).toHaveJSProperty('complete', true);
     await expect(seededRow.locator('img.thumb')).not.toHaveJSProperty('naturalWidth', 0);
 
-    // The item-detail panel (web/ui/partials/catalog_variants.html) is a
-    // SEPARATE surface on the same /catalog page with its own unconditional
-    // item-thumb <img> — selecting the photo-less row must not fire a
-    // thumbnail request there either.
+    // The item-detail panel (web/ui/partials/catalog_variants.html — the
+    // item dialog's Variants tab since ut-docs#1956) is a SEPARATE surface
+    // with its own unconditional item-thumb <img> — selecting the photo-less
+    // row must not fire a thumbnail request there either.
     await row.click();
+    // ut-docs#1956: the panel is the item dialog's Variants tab now.
+    await page.locator('#item-form-tab-variants').click();
     await expect(page.locator('#catalog-variants')).toContainText(ITEM_NAME);
     await expect(page.locator('.catalog-detail-title img')).toHaveCount(0);
     await expect(page.locator('.catalog-detail-title .thumb')).toBeVisible();

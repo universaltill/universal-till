@@ -9,6 +9,7 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/fiscal"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
@@ -166,6 +167,25 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 				tseRejectedView = tseProvisioningViewFor(st)
 			}
 		}
+		// ut-docs#1984: the Payment button lives outside the #basket fragment
+		// (like the fee-hint/pay-voucher scripts below, it can't otherwise
+		// react to a scan), so its empty-basket label/disabled state needs
+		// the CURRENT basket here at first paint -- rendering it correct from
+		// the start avoids a flash from a stale default to the real state
+		// once htmx's own "load"-triggered /ui/basket fetch lands. A cheap
+		// in-memory read (Engine.Basket(), not Scan), same call update_api.go
+		// already makes for its own empty-basket check. d.Engine is nil in
+		// some test harnesses that only exercise unrelated routes on this
+		// same mux (e.g. TestBackofficeModeRedirectsHome) -- payItemCount=0
+		// there just renders the empty-basket state, matching an actually-
+		// empty basket.
+		var payItemCount int
+		var payTotal money.Money
+		if d.Engine != nil {
+			b := d.Engine.Basket()
+			payItemCount = b.ItemCount()
+			payTotal = b.Total
+		}
 		data := map[string]any{
 			"title":                "Universal Till",
 			"saleScreen":           true,
@@ -181,6 +201,8 @@ func registerIndex(mux *http.ServeMux, d *common.Deps) {
 			"fiscalOverrideActive": fiscalOverrideActive,
 			"fiscalOverrideUntil":  fiscalOverrideUntil,
 			"tseKickoffRejected":   tseRejectedView,
+			"payItemCount":         payItemCount,
+			"payTotal":             payTotal,
 		}
 		httpx.Render("ui/pages/index.html", data)(w, r)
 	})

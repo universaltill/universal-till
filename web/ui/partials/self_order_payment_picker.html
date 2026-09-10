@@ -11,7 +11,7 @@
     <div class="payment-picker-methods">
       {{ range .Methods }}
       <button type="submit" name="method" value="{{ .ID }}" class="btn primary payment-picker-method">
-        {{ .Name }}
+        {{ T .Name }}
       </button>
       {{ end }}
     </div>

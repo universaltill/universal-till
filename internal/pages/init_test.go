@@ -17,6 +17,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/plugins/builtinlayouts"
 	"github.com/universaltill/universal-till/internal/settings"
 )
 
@@ -373,5 +374,90 @@ func TestInit_HeldOrderClaimSurvivesReleaseAllEvenWhenBootReclaimFails(t *testin
 
 	if free, err := primaryRepo.IsTableFree(ctx, tableID, ""); err != nil || free {
 		t.Fatalf("the held order's claim must survive on the primary even though the boot re-claim failed, free=%v err=%v", free, err)
+	}
+}
+
+// TestInit_ReconcilesBuiltinLayoutForPreExistingShopType (ut-docs#2001,
+// follow-up from the ut-docs#1902 independent review, finding 4):
+// builtinlayouts.Sync was only ever called from the two write handlers that
+// set common.KeyShopType (setup_page.go, settings_page.go's shop-type API).
+// shop_type has been capturable since ADR-0026/ut-docs#539, well before
+// #1902 shipped, so a shop that already has shop_type="service" persisted —
+// from before this wiring existed, or restored from a backup, or after a
+// manual plugin uninstall — got nothing until an operator happened to
+// re-save the same dropdown value. This drives a boot against a DB that
+// already carries shop_type="service" written directly to the settings
+// store (never through either handler, simulating exactly that gap) and
+// asserts Init itself reconciles the builtin Salon layout, matching what
+// TestSync_ServiceShopType_InstallsAndActivatesSalonLayout already proves
+// Sync does when a handler calls it directly.
+func TestInit_ReconcilesBuiltinLayoutForPreExistingShopType(t *testing.T) {
+	chdirRoot(t)
+	paths.Init(t.TempDir())
+
+	d, err := db.Open(filepath.Join(t.TempDir(), "preexisting_shop_type.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer d.Close()
+
+	store := settings.NewStore(d.DB)
+	ctx := context.Background()
+	if err := store.Set(ctx, common.KeyShopType, "service"); err != nil {
+		t.Fatalf("seed pre-existing shop_type: %v", err)
+	}
+
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	pctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	pm, err := plugins.Init(pctx, cfg, d.DB)
+	if err != nil {
+		t.Fatalf("plugins.Init: %v", err)
+	}
+	var wg sync.WaitGroup
+	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg) // first boot after the setting was already there
+
+	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, builtinlayouts.SalonPluginID); err != nil || !found {
+		t.Errorf("after boot, %s must be installed for a pre-existing shop_type=service, found=%v err=%v",
+			builtinlayouts.SalonPluginID, found, err)
+	}
+
+	var hidesTables bool
+	for _, a := range pm.LayoutAmendments {
+		if a.PluginID == builtinlayouts.SalonPluginID && a.Key == "/tables" {
+			hidesTables = a.Hide
+		}
+	}
+	if !hidesTables {
+		t.Errorf("after boot, the salon layout must be active (hiding /tables) for a pre-existing shop_type=service, amendments %+v", pm.LayoutAmendments)
+	}
+}
+
+// TestInit_LeavesNonServiceShopTypeAlone confirms the reconciliation above
+// is scoped to shop_type=="service" — an "other"/absent shop_type must
+// never install the salon layout just because Init ran.
+func TestInit_LeavesNonServiceShopTypeAlone(t *testing.T) {
+	chdirRoot(t)
+	paths.Init(t.TempDir())
+
+	d, err := db.Open(filepath.Join(t.TempDir(), "non_service_shop_type.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer d.Close()
+
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+	pctx, cancel := context.WithCancel(t.Context())
+	t.Cleanup(cancel)
+	pm, err := plugins.Init(pctx, cfg, d.DB)
+	if err != nil {
+		t.Fatalf("plugins.Init: %v", err)
+	}
+	var wg sync.WaitGroup
+	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg) // no shop_type ever set
+
+	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(context.Background(), builtinlayouts.SalonPluginID); err != nil || found {
+		t.Errorf("after boot with no shop_type set, %s must NOT be installed, found=%v err=%v",
+			builtinlayouts.SalonPluginID, found, err)
 	}
 }

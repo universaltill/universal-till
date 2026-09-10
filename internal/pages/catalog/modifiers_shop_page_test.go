@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/testsupport"
 )
@@ -97,6 +98,51 @@ func TestModifiersPage_EmptyShopShowsEmptyState(t *testing.T) {
 	}
 	if !strings.Contains(rec.Body.String(), "No customization groups") {
 		t.Errorf("expected an empty-state message, got: %s", rec.Body.String())
+	}
+}
+
+// ut-docs#2009: /modifiers is one of /catalog's four sub-pages (Import,
+// Tax codes, Option sets, Modifiers). The other three already carry a
+// persistent back-to-/catalog link in their page-head; this one only ever
+// had a link inside the empty-state card, which disappears the instant a
+// shop has any modifier group at all — the normal case in production, and
+// exactly the "dead end, no way back except the main menu" the product
+// owner reported. This asserts the persistent link exists regardless of
+// whether the shop has any groups, matching tax_codes.html/option_sets.html's
+// own `<a class="btn secondary" href="/catalog">` convention.
+func TestModifiersPage_HasPersistentBackToCatalogLink(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "COFFEE", Name: "Flat White", BasePrice: 320, IsActive: true})
+	repo := data.NewModifierRepo(db)
+	if _, err := repo.CreateGroup(t.Context(), "g1", "itm1", "Extras", true, 1, 2, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default", Currency: "GBP"}, Menu: []common.MenuItem{}})
+
+	req := httptest.NewRequest(http.MethodGet, "/modifiers", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	headStart := strings.Index(body, `class="page-head"`)
+	head := body[headStart:]
+	// Bound the slice to the page-head <div>'s own close, not the rest of
+	// the document — review finding, ut-docs#2009: an unbounded slice would
+	// still pass today (the empty-state CTA's text differs from this exact
+	// link), but wouldn't actually be checking "in the page-head" as the
+	// test claims to.
+	if end := strings.Index(head, "</div>"); end != -1 {
+		head = head[:end]
+	}
+	backLink := `<a class="btn secondary" href="/catalog">← ` + httpx.T("en", "nav.catalog") + `</a>`
+	if !strings.Contains(head, backLink) {
+		t.Errorf("expected page-head to contain a persistent back-to-catalog link %q, got head region: %s", backLink, head)
 	}
 }
 

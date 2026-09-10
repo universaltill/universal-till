@@ -261,7 +261,7 @@
     <select name="theme">
       {{ $current := .theme }}
       {{ range .themes }}
-      <option value="{{ .Key }}" {{ if eq .Key $current }}selected{{ end }}>{{ .Label }}{{ if ne .Source "built-in" }} ({{ .Source }}){{ end }}</option>
+      <option value="{{ .Key }}" {{ if eq .Key $current }}selected{{ end }}>{{ T .Label }}{{ if ne .Source "built-in" }} ({{ .Source }}){{ end }}</option>
       {{ end }}
     </select>
     <button class="btn" type="submit">{{ T "settings.theme.apply" }}</button>
@@ -507,7 +507,7 @@
         <option value="">—</option>
         {{ $def := .payDefault }}
         {{ range .payMethods }}
-        <option value="{{ .ID }}" {{ if eq .ID $def }}selected{{ end }}>{{ .Name }}</option>
+        <option value="{{ .ID }}" {{ if eq .ID $def }}selected{{ end }}>{{ T .Name }}</option>
         {{ end }}
       </select>
       <button class="btn" type="submit">{{ T "settings.display.apply" }}</button>
@@ -519,7 +519,7 @@
   <form hx-post="/api/settings/payments-fee" hx-target="#fee-msg-{{ .ID }}" hx-swap="innerHTML"
         class="fee-row">
     <input type="hidden" name="method" value="{{ .ID }}">
-    <span class="fee-name">{{ .Name }}</span>
+    <span class="fee-name">{{ T .Name }}</span>
     <!-- ut-docs#1275: type="number" silently resets .value to "" on a
          momentarily-invalid decimal string while osk.js types it in (same
          root cause as ut-docs#1249/#1272) -- text+inputmode="decimal" avoids
@@ -951,12 +951,12 @@
     <label>{{ T "settings.data.export.entry_label" }}
       <select id="export-entry-key">
         {{ range .exportEntries }}
-        <option value="{{ .Key }}">{{ .Label }}</option>
+        <option value="{{ .Key }}">{{ T .Label }}</option>
         {{ end }}
       </select>
     </label>
     {{ else }}
-    <span>{{ (index .exportEntries 0).Label }}</span>
+    <span>{{ T (index .exportEntries 0).Label }}</span>
     <input type="hidden" id="export-entry-key" value="{{ (index .exportEntries 0).Key }}">
     {{ end }}
     <button class="btn secondary" id="export-run-btn" data-testid="data-export">{{ T "settings.data.export.run_btn" }}</button>
@@ -1713,6 +1713,11 @@
 <div class="card" id="settings-shop-type">
   <h2>{{ T "settings.shop_type.title" }}</h2>
   <p class="muted">{{ T "settings.shop_type.help" }}</p>
+  <!-- ut-docs#1902: says what will change BEFORE it applies (only "Service
+       trade" today drives anything — the builtin Salon layout, ADR-0088;
+       every other shop type keeps the byte-identical, everything-visible
+       menu, so the note only needs to name the one that isn't a no-op). -->
+  <p class="muted">{{ T "settings.shop_type.service_layout_note" }}</p>
   <form hx-post="/api/settings/shop-type" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}">
     {{ $stype := .shopType }}
     <select name="shop_type">

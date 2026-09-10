@@ -63,7 +63,7 @@
         <tr><th>{{ T "fiscaldevice.last.kind" }}</th><td>{{ .latest.ReceiptKind }}</td></tr>
         <tr><th>{{ T "fiscaldevice.last.serial" }}</th><td>{{ if .latest.Serial }}{{ .latest.Serial }}{{ else }}—{{ end }}</td></tr>
         <tr><th>{{ T "fiscaldevice.last.z_no" }}</th><td>{{ if .latest.ZNo }}{{ .latest.ZNo }}{{ else }}—{{ end }}</td></tr>
-        <tr><th>{{ T "fiscaldevice.last.issued_at" }}</th><td>{{ if .latest.IssuedAt }}{{ .latest.IssuedAt }}{{ else }}{{ .latest.CreatedAt }}{{ end }}</td></tr>
+        <tr><th>{{ T "fiscaldevice.last.issued_at" }}</th><td>{{ if .latest.IssuedAt }}{{ datetime .latest.IssuedAt }}{{ else }}{{ datetime .latest.CreatedAt }}{{ end }}</td></tr>
       </tbody>
     </table>
     {{ else }}

@@ -127,8 +127,10 @@ func TestCatalogPage_ItemFormDialogClosedByDefault(t *testing.T) {
 		t.Fatalf("item-form dialog must be closed by default (no `open` attribute), got tag: %s", tag)
 	}
 	// Fields that used to live in the sticky side panel must now be
-	// reachable inside the dialog markup.
-	for _, want := range []string{`id="item-name"`, `id="item-price"`, `id="item-category"`, `id="item-color-grid"`, `id="builtin-icon-grid"`, `id="keypad-mapper"`} {
+	// reachable inside the dialog markup. (ut-docs#1956: the keypad mapper
+	// is the dialog's Keypad tab panel now, no longer a <details
+	// id="keypad-mapper">.)
+	for _, want := range []string{`id="item-name"`, `id="item-price"`, `id="item-category"`, `id="item-color-grid"`, `id="builtin-icon-grid"`, `id="item-form-panel-keypad"`} {
 		if !strings.Contains(body, want) {
 			t.Fatalf("expected %s inside the converted dialog:\n%s", want, body)
 		}

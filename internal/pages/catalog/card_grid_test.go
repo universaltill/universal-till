@@ -77,12 +77,18 @@ func TestCatalogPage_ItemDialogHasADeleteButtonHiddenByDefault(t *testing.T) {
 		t.Fatalf("GET /catalog = %d, want 200: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
-	if !strings.Contains(body, `id="item-form-delete-btn"`) {
+	// ut-docs#1956 (independent of #1951's own card-grid work, landed on
+	// main while this branch was open) already added the dialog's own
+	// icon-only delete button — id="item-form-delete" — covering the same
+	// need #1951 had (a home for deactivate once the card grid dropped its
+	// per-card actions), so #1951's rebase took that implementation rather
+	// than shipping a second one.
+	if !strings.Contains(body, `id="item-form-delete"`) {
 		t.Fatalf("expected the item dialog to carry a delete button; got:\n%s", body)
 	}
 	// Hidden on page load (a fresh dialog starts in create mode, same as
 	// item-form-reset) — JS's setMode() reveals it only when editing.
-	if !strings.Contains(body, `id="item-form-delete-btn" hidden`) {
+	if !strings.Contains(body, `id="item-form-delete" hidden`) {
 		t.Fatalf("expected the delete button hidden by default; got:\n%s", body)
 	}
 }

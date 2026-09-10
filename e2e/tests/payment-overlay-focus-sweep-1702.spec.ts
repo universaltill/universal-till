@@ -60,6 +60,13 @@ test.describe('the payment overlay focus sweep covers every focusable control it
     const scanAdd = page.locator('.scan-row button[type="submit"]');
     const controls = [scanInput, addLink, activeTab, firstTile, scanAdd];
 
+    // ut-docs#1984: scan an item first — Payment is disabled on an empty
+    // basket. Doesn't affect the baseline captured below (scanning changes
+    // basket contents, not these controls' tabindex).
+    await scanInput.fill('5000000000012');
+    await scanAdd.click();
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
+
     // Baseline: none pre-emptively disabled before the overlay ever opens.
     // Captured (not just asserted "not -1") so the close-path check below
     // can confirm an EXACT round-trip, not just "isn't -1 anymore" — the
@@ -131,6 +138,12 @@ test.describe('the payment overlay focus sweep covers every focusable control it
     const inactiveTab = page.locator('.products-finder [role="tab"][tabindex="-1"]').first();
     await expect(inactiveTab).toHaveAttribute('tabindex', '-1');
 
+    // ut-docs#1984: scan an item first — Payment is disabled on an empty
+    // basket.
+    await page.locator('.scan-row input[name="code"]').fill('5000000000012');
+    await page.locator('.scan-row button[type="submit"]').click();
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
+
     await page.getByTestId('payment-open').click();
     await expect(page.locator('#payment-overlay')).toBeVisible();
     // Still -1 — but NOT because our sweep touched it (it never carries
@@ -151,6 +164,12 @@ test.describe('the payment overlay focus sweep covers every focusable control it
 
     const addLink = page.getByTestId('products-add-link');
     const scanAdd = page.locator('.scan-row button[type="submit"]');
+
+    // ut-docs#1984: scan an item first — Payment is disabled on an empty
+    // basket.
+    await page.locator('.scan-row input[name="code"]').fill('5000000000012');
+    await scanAdd.click();
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
     await page.getByTestId('payment-open').click();
     await expect(page.locator('#payment-overlay')).toBeVisible();
@@ -184,6 +203,12 @@ test.describe('the payment overlay focus sweep covers every focusable control it
     const originalHold = page.getByTestId('tender-footer-hold');
     const paymentOpen = page.getByTestId('payment-open');
     const quickPay = page.getByTestId('quick-pay');
+
+    // ut-docs#1984: scan an item first — Payment is disabled on an empty
+    // basket.
+    await page.getByRole('textbox').first().fill('5000000000012');
+    await page.locator('.scan-row button[type="submit"]').click();
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
     await paymentOpen.click();
     await expect(page.locator('#payment-overlay')).toBeVisible();
@@ -239,6 +264,17 @@ test.describe('the payment overlay focus sweep covers every focusable control it
     const heldChip = page.locator('#held-sales .held-chip').first();
     await expect(heldChip).toBeVisible();
     await expect(heldChip).not.toHaveAttribute('tabindex', '-1');
+
+    // ut-docs#1984: holding parked the basket, leaving it empty — Payment
+    // is disabled on an empty basket, so scan a fresh item before opening
+    // it again (this test's own point is the held CHIP's coverage, not
+    // this basket's contents).
+    await page.getByRole('textbox').first().fill('5000000000012');
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/pos/scan')),
+      page.locator('.scan-row button[type="submit"]').click(),
+    ]);
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
     await page.getByTestId('payment-open').click();
     await expect(page.locator('#payment-overlay')).toBeVisible();

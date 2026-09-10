@@ -189,18 +189,17 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     ]);
     await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
 
+    // ut-docs#1956: the dialog is FULL-screen now, so the row underneath
+    // cannot be clicked until the create dialog is gone — close it
+    // explicitly (closeItemForm, ut-docs#1929: race-tolerant of the
+    // save-success auto-close timer) rather than waiting on that timer.
+    await closeItemForm(page);
     const row = page.locator('.catalog-row', { hasText: name });
     await row.click();
+    // …and the variants panel is the reopened dialog's Variants tab, not a
+    // page-level section any more — so the dialog STAYS open here.
+    await page.locator('#item-form-tab-variants').click();
     await expect(page.locator('#catalog-variants')).toBeVisible();
-    // ut-docs#1901: the row click above opens the edit dialog too — close
-    // it before touching the variants panel below. Not about inertness
-    // (the dialog is non-modal now, ut-docs#1385's fix) but plain
-    // stacking: the dialog is a large `position: fixed` box near the top
-    // of the viewport and can simply sit ON TOP of wherever the variants
-    // panel renders, intercepting pointer events the same way any
-    // overlapping fixed element would. ut-docs#1929: via closeItemForm,
-    // race-tolerant of the save-success auto-close timer.
-    await closeItemForm(page);
   }
 
   // The field ut-docs#1284's own issue body actually names at this line
