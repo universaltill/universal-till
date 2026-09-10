@@ -404,7 +404,7 @@ func TestMenuPage_OpenOrdersTileRendered(t *testing.T) {
 	if !strings.Contains(body, `href="/open-orders"`) {
 		t.Fatalf("expected the open-orders tile rendered, got: %s", body)
 	}
-	if !strings.Contains(body, `data-icon="shopping-cart"`) {
+	if !strings.Contains(body, `data-icon="monitor"`) {
 		t.Fatalf("expected the open-orders tile's mapped icon, got: %s", body)
 	}
 	if !strings.Contains(body, httpx.T("en", "open_orders.title")) {

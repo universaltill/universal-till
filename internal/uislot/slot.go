@@ -187,7 +187,7 @@ var CoreMenu = []Entry{
 	// also feeds the top nav rail, where a second orders entry next to the
 	// bell would just be clutter). Not part of d.MenuSnapshot() either, so
 	// it must be declared here to render at all.
-	{Key: "/open-orders", Href: "/open-orders", LabelKey: "open_orders.title", Icon: "shopping-cart", Order: 1900},
+	{Key: "/open-orders", Href: "/open-orders", LabelKey: "open_orders.title", Icon: "monitor", Order: 1900},
 	{Key: "/help", Href: "/help", LabelKey: "nav.help", Icon: "help", Order: 2000},
 	{Key: "/users", Href: "/users", LabelKey: "users.title", Icon: "users", Order: 2100, VisibleIf: "settings"},
 	{Key: "/kitchen-stations", Href: "/kitchen-stations", LabelKey: "kitchenstations.title", Icon: "chef-hat", Order: 2200, VisibleIf: "settings"},
