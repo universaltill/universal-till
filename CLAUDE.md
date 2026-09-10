@@ -131,7 +131,7 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   `guard-data-access.sh`, `guard-kiosk-engine.sh`, `guard-plugin-menu-read.sh`,
   `guard-page-http-error.sh`,
   `guard-i18n.sh`, `guard-compliance-claims.sh`, `guard-docs-shots.sh`,
-  `guard-help-topics.sh`, `guard-webkit-version.sh`,
+  `guard-help-topics.sh`, `guard-help-drift.sh`, `guard-webkit-version.sh`,
   `guard-kiosk-launch-flags.sh`, `guard-android-status-address.sh`,
   `guard-android-i18n.sh`, `guard-emoji-font.sh`, `guard-htmx-loaded.sh`,
   `guard-autofill-suppression.sh`, `guard-e2e-fixtures-import.sh`,
@@ -198,6 +198,18 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   competing `routes:` claim.
   Standing instruction from the product owner, 2026-08-06 (ut-docs#324) —
   the manual is only worth having if it is never behind the product.
+  `guard-help-topics.sh` only checks a translated topic *exists* — it can't
+  see a translation that fell behind English's actual content.
+  `scripts/ci/guard-help-drift.sh` (ut-docs#1962) closes that gap: it fails
+  when a translated topic's structure (heading/step/bullet counts) no
+  longer matches English, unless the mismatch is recorded in
+  `scripts/ci/i18n-baseline/help-drift-baseline.json` (kept outside
+  `web/help/` deliberately — that tree is `//go:embed`'d into every shipped
+  binary, and this file is CI-only bookkeeping; same
+  record-then-burn-down convention as `ut-plugin-language-*`'s own
+  `i18n-baseline/` files) — a baseline entry itself fails once the real
+  drift no longer matches what it recorded, so a fixed or worsened entry
+  can't go unnoticed.
 - **`README.md` is kept up to date every time it goes stale** — any change
   that affects what the README claims (features, setup steps, badges,
   version floors, structure) gets a README edit in the same session, not a
