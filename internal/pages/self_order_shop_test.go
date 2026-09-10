@@ -326,6 +326,10 @@ func TestSelfOrderShop_ModifierFlow(t *testing.T) {
 	if _, err := d.DB.Exec(`INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order) VALUES ('g1','itm-coffee','Extras',0,0,2,1)`); err != nil {
 		t.Fatal(err)
 	}
+	// ADR-0090 / migration 025: membership is read through the link table.
+	if _, err := d.DB.Exec(`INSERT INTO item_modifier_group_links (item_id, group_id, sort_order) VALUES ('itm-coffee','g1',1)`); err != nil {
+		t.Fatal(err)
+	}
 	if _, err := d.DB.Exec(`INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order) VALUES ('o1','g1','Extra shot',50,1)`); err != nil {
 		t.Fatal(err)
 	}

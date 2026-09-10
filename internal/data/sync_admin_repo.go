@@ -184,6 +184,18 @@ var adminTables = []adminTable{
 	// wired to any handler today (grepped) — whoever wires one up must gate
 	// it too, the same as CreateGroup/UpdateGroup/CreateOption/UpdateOption.
 	{name: "item_modifier_groups", pk: []string{"id"}, hasIsActive: true},
+	// ADR-0090 / ut-docs#2013: which items use which modifier group, now
+	// that a group is shareable — catalog structure of exactly the same
+	// shop-wide kind as item_option_sets above, and a satellite that had
+	// the groups but not the links would show every item with no
+	// customization step at all. FKs onto items(id) and
+	// item_modifier_groups(id), both applied above, so it sits here; a pure
+	// link row with a composite PK and no is_active, same as
+	// item_option_sets (an FK-blocked prune can't happen — nothing FKs onto
+	// a link row). Mutation is primary-only via the same requirePrimary
+	// gate already covering item_modifier_groups/options. Its three
+	// sync_admin_version triggers ship in migration 025.
+	{name: "item_modifier_group_links", pk: []string{"item_id", "group_id"}},
 	{name: "item_modifier_options", pk: []string{"id"}, hasIsActive: true},
 	{name: "promotions", pk: []string{"code"}, hasIsActive: true},
 	{name: "shortcut_buttons", pk: []string{"barcode"}},
