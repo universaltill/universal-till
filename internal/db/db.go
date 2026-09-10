@@ -481,9 +481,14 @@ type statement struct {
 // splitStatements splits comment-free SQL on semicolons outside
 // single-quoted literals (” inside a literal is two toggles and stays
 // balanced). A final statement without a trailing semicolon is kept.
-// Blank statements are dropped. No migration uses triggers or BEGIN…END
-// blocks (checked 2026-09-02); if one ever does, this splitter must learn
-// them first.
+// Blank statements are dropped.
+//
+// CREATE TRIGGER … BEGIN … END; is the one construct whose body carries
+// semicolons of its own: a semicolon inside such a block does not end the
+// statement until the block's closing END has been seen (ut-docs#1368,
+// migration 022 — the first migration to ship a trigger; migration 007's
+// header records why none could before). triggerBlockOpen decides, on the
+// masked text so literals can't confuse it.
 func splitStatements(s string) []statement {
 	var out []statement
 	var text, masked strings.Builder
@@ -508,7 +513,9 @@ func splitStatements(s string) []statement {
 		case c == ';':
 			text.WriteByte(c)
 			masked.WriteByte(c)
-			flush()
+			if !triggerBlockOpen(masked.String()) {
+				flush()
+			}
 		default:
 			text.WriteByte(c)
 			masked.WriteByte(c)
@@ -516,6 +523,50 @@ func splitStatements(s string) []statement {
 	}
 	flush()
 	return out
+}
+
+// createTriggerStmt matches the head of a CREATE [TEMP|TEMPORARY] TRIGGER
+// statement in masked (literal-free) text.
+var createTriggerStmt = regexp.MustCompile(`(?is)^\s*CREATE\s+(?:TEMP(?:ORARY)?\s+)?TRIGGER\b`)
+
+// sqlWord tokenises masked SQL into bare keywords/identifiers — enough to
+// track BEGIN/CASE/END nesting; punctuation and literals never matter here.
+var sqlWord = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
+
+// triggerBlockOpen reports whether masked (the statement accumulated so
+// far, ending in the semicolon just read) is a CREATE TRIGGER whose
+// BEGIN … END block has not closed yet. Nesting is tracked by keyword:
+// BEGIN opens the block, CASE opens an expression that closes with its own
+// END (so `SET n = CASE WHEN … END;` inside a body does not end the
+// trigger), and the END that brings the depth back to zero closes the
+// trigger. Before the body's BEGIN (the header's WHEN clause), a semicolon
+// can't legally occur, so depth 0 there is treated as still-open only once
+// BEGIN has been seen — a malformed trigger without BEGIN degrades to the
+// old one-semicolon-per-statement split and fails loudly in SQLite as it
+// always did.
+func triggerBlockOpen(masked string) bool {
+	if !createTriggerStmt.MatchString(masked) {
+		return false
+	}
+	depth, begun := 0, false
+	for _, w := range sqlWord.FindAllString(masked, -1) {
+		switch strings.ToUpper(w) {
+		case "BEGIN":
+			if !begun {
+				begun = true
+				depth++
+			}
+		case "CASE":
+			if begun {
+				depth++
+			}
+		case "END":
+			if begun {
+				depth--
+			}
+		}
+	}
+	return begun && depth > 0
 }
 
 // stripLineComments removes `-- …` comments outside single-quoted strings.
