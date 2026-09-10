@@ -3,6 +3,7 @@ package pages
 import (
 	"net/http"
 	"net/url"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -104,26 +105,46 @@ func registerTranslations(mux *http.ServeMux, d *common.Deps, i18n *config.I18n)
 		return rows
 	}
 
-	// offset-based paging has one known, accepted limitation (ut-docs#2014
-	// review): if the filtered set's LENGTH changes between rendering a
-	// sentinel and the client following it (a key added or removed, or an
-	// edit that makes/unmakes a q match — renderRow deliberately ignores q,
-	// so an in-place edit never does this, but a plugin
-	// install/uninstall or another manager's edit can), the next offset can
-	// skip or repeat one entry. A keyset cursor would be immune; offset
-	// paging accepts this as a rare, low-impact edge case rather than the
-	// added complexity of a cursor for a manager-only settings screen.
+	// Keyset (cursor) paging, anchored on the last key seen on the previous
+	// page (ut-docs#2019 — follow-up from the ut-docs#2014 review, which
+	// shipped offset/limit paging with this as a documented, accepted
+	// limitation). filteredEntries always returns entries sorted ascending
+	// by Key (i18n.Entries' own guarantee — keys come from a map, so no
+	// duplicates), so "the next page" can be expressed as "every entry
+	// whose Key sorts after ?after=" instead of a numeric position. That
+	// makes it immune to the set's LENGTH changing between rendering a
+	// sentinel and the client following it (a plugin install/uninstall, or
+	// a DIFFERENT manager's concurrent edit changing whether a key matches
+	// q — renderRow deliberately ignores q, so an in-place edit by the SAME
+	// manager never causes this): a key inserted or removed elsewhere in
+	// the set shifts everyone's numeric position, but never moves anything
+	// relative to an already-served key, so resuming after that key always
+	// picks up exactly where the client left off — no skip, no duplicate.
 	renderTable := func(w http.ResponseWriter, r *http.Request, editLocale, q string) {
 		q = strings.TrimSpace(q)
 		all := filteredEntries(editLocale, q)
 
-		offset := 0
-		if v, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("offset"))); err == nil && v > 0 {
-			offset = v
-		}
-		if offset > len(all) {
-			offset = len(all)
-		}
+		// Deliberately NOT strings.TrimSpace'd (independent review finding,
+		// ut-docs#2019): unlike q/editLocale, this is a machine-generated
+		// exact key round-tripped from a prior response's own
+		// nextAfterEscaped, not user-typed input to tolerate stray
+		// whitespace in. Trimming it would wedge paging into an infinite
+		// loop for any key that itself has leading/trailing whitespace
+		// (reachable — a plugin's locale overlay keys are taken verbatim
+		// with no validation, internal/plugins/plugins.go): sort.Search
+		// would then always find that same padded key as "the first key
+		// after the trimmed cursor", so nextAfter never advances and the
+		// revealed sentinel re-fires forever, appending a duplicate row
+		// each time.
+		after := r.URL.Query().Get("after")
+		// sort.Search finds the first entry sorting strictly after `after`
+		// — the first row of the next page. An `after` that no longer
+		// exists in the current set (the concurrent-edit case above) still
+		// lands in the right place, since the search is purely by sort
+		// order, not by matching the key itself. `after == ""` searches
+		// trivially to index 0 (every key sorts after ""), same as the old
+		// offset=0 start.
+		start := sort.Search(len(all), func(i int) bool { return all[i].Key > after })
 		limit := translationsPageSize
 		if v, err := strconv.Atoi(strings.TrimSpace(r.URL.Query().Get("limit"))); err == nil && v > 0 {
 			// Clamp rather than ignore: a caller asking for more than the
@@ -136,9 +157,13 @@ func registerTranslations(mux *http.ServeMux, d *common.Deps, i18n *config.I18n)
 			}
 			limit = v
 		}
-		end := offset + limit
+		end := start + limit
 		if end > len(all) {
 			end = len(all)
+		}
+		nextAfter := ""
+		if end > start {
+			nextAfter = all[end-1].Key
 		}
 
 		httpx.RenderPartial("ui/partials/translations_table.html", map[string]any{
@@ -149,20 +174,21 @@ func registerTranslations(mux *http.ServeMux, d *common.Deps, i18n *config.I18n)
 			// params. html/template still HTML-escapes the attribute value
 			// around it; url.QueryEscape's own output (alnum, -_.~%+ only)
 			// has nothing left for that escaping to change, so the two
-			// compose safely.
+			// compose safely. nextAfterEscaped follows the same pattern —
+			// a translator key is not expected to contain "&"/"=", but
+			// nothing enforces that, so it's escaped exactly like q and
+			// editLocale rather than assumed safe.
 			"editLocaleEscaped": url.QueryEscape(editLocale),
 			"q":                 q,
 			"qEscaped":          url.QueryEscape(q),
-			"rows":              all[offset:end],
-			"isAppend":          offset > 0,
+			"rows":              all[start:end],
+			"isAppend":          after != "",
 			"hasMore":           end < len(all),
-			"nextOffset":        end,
+			"nextAfterEscaped":  url.QueryEscape(nextAfter),
 			// Carried into the sentinel's own hx-get so a client-chosen
 			// ?limit= stays consistent across every later page too, rather
 			// than reverting to translationsPageSize from the second page
-			// on (ut-docs#2014 review) — a mismatched limit between pages
-			// is what would make a non-page-aligned offset produce
-			// duplicate/skipped rows.
+			// on (ut-docs#2014 review).
 			"limit": limit,
 		})(w, r)
 	}
