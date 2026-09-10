@@ -14,20 +14,95 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/itemsnav"
 )
 
-// redirectCategories answers a categories mutation with a redirect back to
-// GET /categories (target may carry a ?err=/&count= query the page reads to
-// show an inline message). categories.html's mutation forms are plain
-// `<form method="post">` with no hx-post/hx-boost, so these responses are
-// never seen by htmx today — a bare 303 is correct and unchanged from
-// before ut-docs#1950. (An earlier draft of this card added an
-// "HX-Request"-conditional HX-Redirect header here in anticipation of the
-// forms one day being converted to hx-post; independent review found that
-// reasoning backwards — htmx follows a plain 303 on its own AJAX requests
-// and would swap the result normally, so HX-Redirect would have forced an
-// unnecessary full-page reload instead. Reverted; revisit if/when these
-// forms actually gain hx-post.)
+// isHtmxDialogRequest reports whether r came from the record dialog's own
+// hx-boosted forms (ut-docs#2020) rather than a plain browser submission.
+// Local to this file rather than reused from httpx.IsFragmentSwap: that
+// helper's own doc comment scopes it to GET-navigation fragment swaps
+// (ut-docs#1950's /items rail); the check itself (HX-Request minus a
+// history-restore, which a POST never carries anyway) is identical, but
+// naming this separately keeps a POST-mutation reader from wondering why a
+// GET-fragment-swap helper is here.
+func isHtmxDialogRequest(r *http.Request) bool {
+	return strings.EqualFold(r.Header.Get("HX-Request"), "true")
+}
+
+// redirectCategories answers a categories mutation's SUCCESS with a
+// navigation back to GET /categories.
+//
+// Before ut-docs#2020, every mutation form was a plain `<form
+// method="post">` with no hx-post/hx-boost, so a bare 303 caused a real
+// full-page browser navigation and htmx never touched it (an earlier draft
+// of THIS card once added an "HX-Request"-conditional HX-Redirect here in
+// anticipation of the forms one day going htmx; independent review at the
+// time found that reasoning backwards for a plain form and it was
+// reverted). The forms actually are hx-boosted now — a bare 303 to an
+// hx-boosted submit is followed *transparently by the browser's fetch/XHR
+// layer*, and its final response body (the whole /categories page) would
+// land wherever the form's hx-target points, not as a real navigation.
+// HX-Redirect is htmx's own signal for "do a real browser navigation to
+// this URL" instead: it bypasses swap logic entirely, restoring the exact
+// pre-#2020 UX. A non-htmx caller (should not exist once the templates are
+// converted, but kept as a safety net — same shape as
+// renderCategoryDialogError's fallback below) gets the plain redirect.
 func redirectCategories(w http.ResponseWriter, r *http.Request, target string) {
+	if isHtmxDialogRequest(r) {
+		w.Header().Set("HX-Redirect", target)
+		w.WriteHeader(http.StatusOK)
+		return
+	}
 	http.Redirect(w, r, target, http.StatusSeeOther)
+}
+
+// renderCategoryDialogError answers a REFUSED categories mutation. Before
+// ut-docs#2020 every refusal redirected to /categories?err=... same as a
+// success, and by the time the page re-rendered the dialog was gone —
+// closed by the redirect — and whatever the operator had typed with it.
+//
+// The dialog's forms now hx-boost (ut-docs/reference/
+// list-and-dialog-pattern.md), targeting "#category-dialog-msg" — the
+// dialog's own aria-live region — with hx-swap="innerHTML", so this
+// renders just the translated TEXT that goes inside it
+// (record_dialog_msg.html), never the region element itself (an
+// outerHTML swap would replace that node, and a live region generally
+// must stay the same node across a content change for assistive tech to
+// announce it). The dialog and the form the operator is typing in are
+// never mentioned in this response at all, so an innerHTML swap of the
+// message region cannot touch either. Answered as a non-2xx status
+// specifically because app.js's global htmx:beforeSwap handler
+// force-swaps a non-2xx response when it is real, non-empty text/html —
+// and marks it NOT an error, so the page-wide #pos-alert-style banner does
+// not also fire for the same failure (list-and-dialog-pattern.md's "one
+// error, one place" rule / this card's AC4). A failure this can't answer
+// at all — no response reached the browser, or a plain-text 403/500 that
+// beforeSwap does not force-swap — is record-dialog.js's
+// dialogFailureFallback's job instead, via the SAME element.
+//
+// A non-htmx caller (should not exist once the templates are converted,
+// but a page route must still answer *something* sane to a direct POST —
+// e.g. a bookmarked/curl'd request, or a future regression in the
+// template) falls back to the pre-#2020 redirect-with-query-string shape,
+// unchanged: this is exactly what every existing Go-level test in this
+// file (which posts with no HX-Request header) already exercises.
+func renderCategoryDialogError(w http.ResponseWriter, r *http.Request, errKey string, errCount int) {
+	if !isHtmxDialogRequest(r) {
+		// &count= only when it's the one key that reads it (the %d
+		// placeholder in categories.error.deactivate_blocked) — matches the
+		// exact pre-#2020 query shape byte for byte, which the existing
+		// Go-level tests in this file already pin.
+		target := "/categories?err=" + errKey
+		if errKey == "categories.error.deactivate_blocked" {
+			target = fmt.Sprintf("%s&count=%d", target, errCount)
+		}
+		redirectCategories(w, r, target)
+		return
+	}
+	msg := httpx.T(httpx.RequestLocale(r), errKey)
+	if errKey == "categories.error.deactivate_blocked" {
+		msg = fmt.Sprintf(msg, errCount)
+	}
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusBadRequest)
+	httpx.RenderPartial("ui/partials/record_dialog_msg.html", map[string]any{"msg": msg})(w, r)
 }
 
 // registerCategories wires the categories admin page (ut-docs#1898):
@@ -64,8 +139,13 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 	// route itself, answered as a full RenderError page instead of a bare
 	// LocalizedError body (ut-docs#1455: a page route must not fall back to
 	// a bare, rail-less 403). requireManager stays as-is for the
-	// /api/categories/* mutation routes below, which return a redirect/
-	// status the JS-free forms expect.
+	// /api/categories/* mutation routes below — a bare, plain-text 403
+	// LocalizedError body, which the dialog's own forms being hx-boosted
+	// now (ut-docs#2020) doesn't change: app.js's htmx:beforeSwap only
+	// force-swaps a text/html body, so this one instead reaches
+	// record-dialog.js's dialogFailureFallback and surfaces as the
+	// generic "something went wrong" dialog message, not the specific
+	// translated reason renderCategoryDialogError's own responses carry.
 	requirePageManager := func(w http.ResponseWriter, r *http.Request) (auth.User, bool) {
 		if !canPerform(d, r, "settings") {
 			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
@@ -75,8 +155,9 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		return u, true
 	}
 
-	// requirePrimary gates the plain-form mutations (create/rename/active) on
-	// this till being the primary (ut-docs#1585 family): categories syncs
+	// requirePrimary gates the dialog's own mutations (create/rename/active,
+	// hx-boosted since ut-docs#2020 — not plain forms any more) on this
+	// till being the primary (ut-docs#1585 family): categories syncs
 	// shop-wide as an admin table (adminTables, sync_admin_repo.go) via a
 	// one-way primary-wins pull, so a write accepted on a satellite would
 	// silently vanish on the very next admin pull -- refuse it up front
@@ -84,7 +165,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 	// requirePrimary.
 	requirePrimary := func(w http.ResponseWriter, r *http.Request) bool {
 		if d.SyncPrimaryURL(r.Context()) != "" {
-			redirectCategories(w, r, "/categories?err=categories.error.replica_use_primary")
+			renderCategoryDialogError(w, r, "categories.error.replica_use_primary", 0)
 			return false
 		}
 		return true
@@ -162,7 +243,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		name := strings.TrimSpace(r.PostFormValue("name"))
 		if name == "" {
-			redirectCategories(w, r, "/categories?err=categories.error.name_required")
+			renderCategoryDialogError(w, r, "categories.error.name_required", 0)
 			return
 		}
 		id, err := catRepo.CreateCategory(r.Context(), name)
@@ -171,7 +252,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			if err == data.ErrCategoryNameRequired {
 				key = "categories.error.name_required"
 			}
-			redirectCategories(w, r, "/categories?err="+key)
+			renderCategoryDialogError(w, r, key, 0)
 			return
 		}
 		audit(r, actor.ID, id, "category_create")
@@ -190,7 +271,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		name := strings.TrimSpace(r.PostFormValue("name"))
 		if name == "" {
-			redirectCategories(w, r, "/categories?err=categories.error.name_required")
+			renderCategoryDialogError(w, r, "categories.error.name_required", 0)
 			return
 		}
 		if err := catRepo.RenameCategory(r.Context(), id, name); err != nil {
@@ -198,7 +279,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			if err == data.ErrCategoryNameRequired {
 				key = "categories.error.name_required"
 			}
-			redirectCategories(w, r, "/categories?err="+key)
+			renderCategoryDialogError(w, r, key, 0)
 			return
 		}
 		audit(r, actor.ID, id, "category_rename")
@@ -217,22 +298,21 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		enable := r.PostFormValue("active") == "1"
 		if err := catRepo.SetCategoryActive(r.Context(), id, enable); err != nil {
-			// The blocked-deactivate case carries the active item count as a
-			// separate query param so the page can interpolate it into
+			// The blocked-deactivate case carries the active item count so
+			// renderCategoryDialogError can interpolate it into
 			// categories.error.deactivate_blocked's %d placeholder (same
-			// printf-in-template convention tables.html's
-			// tables.status.open_minutes already uses) — the operator sees
-			// WHY the deactivate was refused, not just "failed", and no row
-			// is changed.
+			// printf convention tables.html's tables.status.open_minutes
+			// already uses) — the operator sees WHY the deactivate was
+			// refused, not just "failed", and no row is changed.
 			if hasItems, ok := err.(*data.ErrCategoryHasItems); ok {
-				redirectCategories(w, r, fmt.Sprintf("/categories?err=categories.error.deactivate_blocked&count=%d", hasItems.Count))
+				renderCategoryDialogError(w, r, "categories.error.deactivate_blocked", hasItems.Count)
 				return
 			}
 			key := "categories.error.update"
 			if err == data.ErrCategoryNotFound {
 				key = "categories.error.not_found"
 			}
-			redirectCategories(w, r, "/categories?err="+key)
+			renderCategoryDialogError(w, r, key, 0)
 			return
 		}
 		action := "category_deactivate"
