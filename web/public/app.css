@@ -2650,6 +2650,18 @@ body.login-screen {
 .translations-ref { color: var(--muted); max-inline-size: 18rem; }
 .translations-edit { display: flex; gap: .4rem; }
 .translations-edit input[type="text"] { min-inline-size: 16rem; }
+/* ut-docs#2014: the infinite-scroll sentinel's loading text and its
+   terminal end-of-list replacement, both on the colspan <td> (not the
+   <tr> — padding on a table-row box is ignored by every browser, and
+   text-align/font-style would inherit down but the padding wouldn't, so
+   both classes have to live on the cell itself). .muted (color only) sets
+   no alignment of its own; text-align: center here is what actually
+   centers these two rows — deliberately NOT applied to the plain
+   "no matching texts" empty-state row above, which stays start-aligned
+   like a normal data row (review finding, ut-docs#2014: an earlier draft
+   of this comment claimed the opposite of what the rule below does). */
+.translations-loading,
+.translations-end { text-align: center; padding-block: .6rem; font-style: italic; }
 
 /* First-boot setup wizard */
 .setup-card {
@@ -3172,3 +3184,118 @@ body.login-screen {
    a float or a left/right margin, so RTL needs no separate rule. */
 .menulayout-dest { display: block; }
 .menulayout-goto { display: inline-block; margin-block-start: 0.25rem; font-size: 0.875rem; }
+
+/* ==========================================================================
+   ut-docs#2010 — app-wide list/edit standard: list header + record dialog.
+   Reference: ut-docs/reference/list-and-dialog-pattern.md; reference
+   implementation web/ui/pages/categories.html; behaviour
+   web/public/record-dialog.js. Generalises the .item-form-modal /
+   .catalog-form* rules above (ut-docs#1901/#1956) into page-agnostic class
+   names. Those older rules are deliberately left untouched — catalog.html
+   adopts these in a follow-up, not here. This is the THEME SEAM: a
+   ut-plugin-theme-* re-skins the whole pattern by overriding :root tokens
+   and these class names; replacing the structure is an ADR-0088 layout
+   plugin's job. Tokens and rem only; logical properties only (RTL is a real
+   target). Additive block, appended at the end of the file on purpose.
+   ========================================================================== */
+
+/* --- List header: search grows, the icon-only New button keeps its square
+   at the end of the row; wraps at phone width. --- */
+.list-header { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem .75rem;
+               margin-block-end: .75rem; }
+.list-header-search { position: relative; flex: 1 1 12rem; min-inline-size: 0;
+                      display: flex; align-items: center; }
+.list-header-ico { position: absolute; inset-inline-start: .75rem; display: inline-flex;
+                   color: var(--muted); pointer-events: none; }
+.list-header-ico svg { inline-size: 1.1rem; block-size: 1.1rem; }
+.list-header-search input[type="search"] { inline-size: 100%; min-inline-size: 0;
+                                           padding-inline-start: 2.4rem; min-block-size: 3rem; }
+
+/* --- Icon-only button (New / Close / Edit / reorder / deactivate): square,
+   the same 3rem touch floor as every .btn, the Lucide glyph sized up from
+   .btn-ico's 1em, and an explicit focus ring because the accessible name is
+   aria-label/title only (WCAG 1.4.11 — --focus-border is >=3:1 against
+   --surface in every curated theme, see :root). --- */
+.btn-icon { flex: none; min-inline-size: 3rem; padding-inline: .65rem; }
+.btn-icon .btn-ico svg { inline-size: 1.3rem; block-size: 1.3rem; }
+.btn-icon:focus-visible { outline: 2px solid var(--focus-border, var(--accent)); outline-offset: 2px; }
+.btn-icon-danger, .btn-icon-danger:hover { color: var(--danger); }
+
+/* --- The list: a card whose wide table scrolls inside it (same escape
+   hatch as .users-list / .settings-grid .card .table) and tap-to-edit rows
+   that read as tappable. Attribute selectors, so no page has to carry an
+   extra class for the behaviour it already declares. --- */
+.list-card { min-inline-size: 0; }
+/* The sideways scroll lives on a WRAPPER, not on the table (ut-docs#2010,
+   Tester pass on the pilot tablet). `.users-list .table`'s older
+   `display: block` trick above turns the <table> into a block box: the box
+   obeys `table.table`'s `width: 100%`, but the internal table boxes still
+   shrink-to-fit and sit at the start edge, so the rows painted to 495px
+   inside a 1155px card and the merchant saw a half-empty card. Keeping the
+   element a real table and moving overflow onto .list-scroll fills the card
+   and still scrolls sideways when the columns genuinely do not fit (360px).
+   Pinned by the (f) case in e2e/tests/categories-record-dialog-2010.spec.ts. */
+.list-card .list-scroll { overflow-x: auto; }
+/* nowrap on purpose: at 360px a wrapping actions cell stacked its three icon
+   buttons vertically, tripling the row height and clipping them at the card
+   edge (seen in this card's own 360px screenshot). One row, and the table
+   scrolls sideways inside the card instead. */
+.list-actions { display: flex; gap: .5rem; flex-wrap: nowrap; justify-content: flex-end; }
+.list-empty-row td { text-align: center; color: var(--muted); }
+[data-record-open] { cursor: pointer; }
+[data-record-open]:hover > td { background: var(--surface-2); }
+
+/* --- Record dialog: full-bleed, .show()n (never showModal — the OSK
+   reason, see .item-form-modal above), a flex column of exactly two parts:
+   a pinned head (ONE row of chrome, nothing more — ut-docs#2000 found
+   catalog's taller head eating 42% of a 360px screen; no message line is
+   reserved, errors surface as the page banner after the redirect) and the
+   ONE scroll container. `position: fixed` replaces the top-layer
+   positioning .show() does not give; z-index 500 stays under #osk's 1000.
+   No ::backdrop rule — a .show() dialog never paints one. --- */
+.record-dialog { position: fixed; inset: 0; margin: 0; z-index: 500;
+                 inline-size: 100%; max-inline-size: none;
+                 block-size: 100%; max-block-size: none;
+                 border: 0; border-radius: 0; box-shadow: none; padding: 0;
+                 display: flex; flex-direction: column; overflow: hidden;
+                 background: var(--surface); color: var(--text); }
+/* Out-specifies the display:flex above so a closed dialog renders nothing. */
+.record-dialog:not([open]) { display: none; }
+.record-dialog-inner { flex: 1 1 auto; min-block-size: 0; display: flex; flex-direction: column; }
+.record-dialog-head { flex: none; padding: .6rem 1.5rem .5rem;
+                      border-block-end: 1px solid var(--border); background: var(--surface); }
+/* One row at the 1024×600 kiosk floor; the title group and the action group
+   each keep their own children on one line and only the two GROUPS wrap
+   relative to each other at phone width. */
+.record-dialog-head-row { display: flex; flex-wrap: wrap; align-items: center;
+                          justify-content: space-between; gap: .5rem .75rem; }
+.record-dialog-head-title { display: flex; align-items: center; gap: .5rem;
+                            flex: 1 1 12rem; min-inline-size: 0; }
+.record-dialog-head-title h3 { margin: 0; min-inline-size: 0; overflow: hidden;
+                               text-overflow: ellipsis; white-space: nowrap; }
+.record-dialog-destructive { display: flex; align-items: center; gap: .5rem; }
+.record-dialog-destructive form { margin: 0; display: inline-flex; }
+/* The display rules above would defeat the hidden attribute's UA rule (same
+   trap .btn[hidden] guards against): record-dialog.js hides the whole slot
+   in create mode and each data-record-when form that does not match the
+   opened row — caught by the e2e spec's first run, not assumed. */
+.record-dialog-destructive[hidden], .record-dialog-destructive form[hidden],
+.record-dialog [data-record-when][hidden] { display: none; }
+.record-dialog-head-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
+                              margin-inline-start: auto; }
+.record-dialog-body { flex: 1 1 auto; min-block-size: 0; overflow-y: auto;
+                      padding: 1rem 1.5rem 1.5rem; }
+.record-dialog-body form { display: flex; flex-direction: column; gap: .7rem; max-inline-size: 40rem; }
+@media (max-width: 700px) {
+  .record-dialog-head { padding-inline: 1rem; }
+  .record-dialog-body { padding-inline: 1rem; }
+}
+/* OSK reservation, same fix as body.osk-padded .item-form-modal above: the
+   keyboard is fixed at the bottom of the viewport regardless of this
+   dialog's box, so the dialog shortens to stay clear of it. osk.js sets
+   --osk-reserved-height from the keyboard's real height (universal-till#1027
+   / ut-docs#1998); the fallback is live whenever that measures <= 0
+   (pre-layout) and MUST track whatever the other reservations use —
+   body.osk-padded, .item-form-modal and .payment-overlay are all 17rem
+   since #1027 (15.5rem under-reserved, which is the bug #1998 fixed). */
+body.osk-padded .record-dialog { block-size: calc(100% - var(--osk-reserved-height, 17rem)); }

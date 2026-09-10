@@ -255,7 +255,15 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		if !requirePrimaryFetch(w, r) {
 			return
 		}
-		_ = r.ParseForm()
+		// categories.html's reorder script posts FormData (multipart) —
+		// ParseForm alone ignores multipart bodies, so every real-browser
+		// reorder answered `400 ids required` while the urlencoded test
+		// passed (ut-docs#2018). Same guard as buttons_api.go's reorder.
+		if strings.HasPrefix(r.Header.Get("Content-Type"), "multipart/form-data") {
+			_ = r.ParseMultipartForm(1 << 20)
+		} else {
+			_ = r.ParseForm()
+		}
 		ids := r.Form["ids"]
 		if len(ids) == 1 && strings.Contains(ids[0], ",") {
 			ids = strings.Split(ids[0], ",")
