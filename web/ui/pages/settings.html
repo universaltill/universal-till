@@ -951,12 +951,12 @@
     <label>{{ T "settings.data.export.entry_label" }}
       <select id="export-entry-key">
         {{ range .exportEntries }}
-        <option value="{{ .Key }}">{{ .Label }}</option>
+        <option value="{{ .Key }}">{{ T .Label }}</option>
         {{ end }}
       </select>
     </label>
     {{ else }}
-    <span>{{ (index .exportEntries 0).Label }}</span>
+    <span>{{ T (index .exportEntries 0).Label }}</span>
     <input type="hidden" id="export-entry-key" value="{{ (index .exportEntries 0).Key }}">
     {{ end }}
     <button class="btn secondary" id="export-run-btn" data-testid="data-export">{{ T "settings.data.export.run_btn" }}</button>
