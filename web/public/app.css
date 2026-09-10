@@ -690,8 +690,19 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
    doubled in height (21px -> 44px) — "Primary", "Plain code", and each
    modifier group's Required/Active. The exclusion, not a narrower positive
    selector, because the panel arrives by htmx outerHTML swap and its inner
-   structure is not this file's to track. */
-.catalog-form label:not(.catalog-detail label) {
+   structure is not this file's to track.
+   ut-docs#1997: also excludes .field-checks and .field-checks label — same
+   cascade collision, one level down. :not(.catalog-detail label)'s own
+   specificity (0,1,1) makes the WHOLE selector (0,2,2), which beats
+   .field-checks label's plain (0,1,1) below regardless of source order —
+   so every checkbox this rule reaches (both a <label class="field-checks">
+   itself, e.g. "Plain code"/"Set as primary", AND a bare <label> nested
+   inside a <div class="field-checks"> container, e.g. isWeighed/
+   stockUntracked/isActive on this same Details tab) was rendering box-
+   above-text, not just the two most visually dramatic cases the bug report
+   measured. Confirmed live: label:has(#item-active)'s computed
+   flex-direction was "column" before this fix. */
+.catalog-form label:not(.catalog-detail label):not(.field-checks):not(.field-checks label) {
   display: flex; flex-direction: column; gap: .2rem;
   font-size: .82rem; margin-bottom: .55rem;
 }
@@ -699,8 +710,8 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
    `auto` (its content size) too, so the stretched control inside each
    column-flex label also needs an explicit zero minimum to follow its
    .field-pair column down at phone width. */
-.catalog-form label:not(.catalog-detail label) > input,
-.catalog-form label:not(.catalog-detail label) > select { min-inline-size: 0; }
+.catalog-form label:not(.catalog-detail label):not(.field-checks):not(.field-checks label) > input,
+.catalog-form label:not(.catalog-detail label):not(.field-checks):not(.field-checks label) > select { min-inline-size: 0; }
 /* minmax(0, 1fr), not bare 1fr (ut-docs#1956): 1fr is minmax(auto, 1fr),
    and a text <input>'s `auto` minimum is its intrinsic ~20ch width — at
    360px that held the SKU column open 18px past the full-screen item
@@ -716,7 +727,22 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
    edit that puts `hidden` directly on a .field-pair doesn't fail silently. */
 .field-pair[hidden] { display: none; }
 .field-checks { display: flex; gap: 1rem; margin: .3rem 0 .7rem; }
-.field-checks label { flex-direction: row; align-items: center; gap: .4rem; margin: 0; }
+/* ut-docs#1997: `.field-checks` is used two ways in this codebase — a
+   <div> wrapping several plain <label> children (the rule above; the
+   descendant selector here), AND a class on a single standalone <label>
+   itself (catalog.html's "Plain code"/"Set as primary" — .field-checks
+   label's own descendant selector never matched those, since the label
+   IS .field-checks, not inside it). Both need the same row layout, so
+   `label.field-checks` gets its own `display: flex` here rather than
+   relying on the shrink-to-fit inline default it would otherwise fall
+   back to once excluded from the blanket column rule above. Kept as a
+   separate rule from `.field-checks label` (not folded into one
+   selector list) only for `margin`: a descendant label sits inside the
+   .field-checks DIV's own `.3rem 0 .7rem` margin above, so margin: 0
+   there is correct, but a standalone label.field-checks has no such
+   wrapper — same bottom spacing every other .catalog-form field gets. */
+.field-checks label { display: flex; flex-direction: row; align-items: center; gap: .4rem; margin: 0; }
+label.field-checks { display: flex; flex-direction: row; align-items: center; gap: .4rem; margin: 0 0 .55rem; }
 /* Same [hidden]-override precedent as .btn/.suggest-strip/.pos-notice above:
    a class selector's own `display` always beats the UA `[hidden]` style, so
    without this a `hidden`-attributed .field-checks (tax_codes.html's
