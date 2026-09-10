@@ -1,0 +1,39 @@
+{{/* ut-docs#2010 — the app-wide list/edit standard's list header
+     (ut-docs/reference/list-and-dialog-pattern.md): one row holding a
+     search field that filters the list client-side and an icon-only New
+     button that opens the page's record dialog in create mode. Parameters
+     arrive as a dict from the call site:
+
+       {{ template "list_header" (dict
+            "searchID"       "categories-search"
+            "searchLabelKey" "categories.search_placeholder"
+            "filterTarget"   "#categories-table .category-row"
+            "emptyTarget"    "#categories-no-results"
+            "newID"          "categories-new"
+            "newLabelKey"    "categories.new"
+            "dialogID"       "category-dialog") }}
+
+     All behaviour lives in web/public/record-dialog.js, driven purely by
+     the data-* attributes below — no inline script, no assumed DOM depth,
+     so a theme plugin can restyle it and an ADR-0088 layout plugin can
+     replace it. Icon-only is the product owner's explicit instruction; the
+     aria-label + title pair is therefore mandatory (an icon with no
+     accessible name is unusable), never optional. The req guard on the
+     first line fails the render, naming the key, when a required dict key
+     is missing or empty; "emptyTarget" is the one optional key. */}}
+{{ define "list_header" }}
+{{ $_ := req . "searchID" "searchLabelKey" "filterTarget" "newID" "newLabelKey" "dialogID" }}
+<div class="list-header">
+  <div class="list-header-search">
+    <span class="list-header-ico" aria-hidden="true">{{ icon "search" }}</span>
+    <input type="search" id="{{ .searchID }}" autocomplete="off"
+           placeholder="{{ T .searchLabelKey }}" aria-label="{{ T .searchLabelKey }}"
+           data-list-filter="{{ .filterTarget }}"{{ if .emptyTarget }} data-list-empty="{{ .emptyTarget }}"{{ end }} />
+  </div>
+  <button type="button" id="{{ .newID }}" class="btn primary btn-icon list-header-new"
+          aria-label="{{ T .newLabelKey }}" title="{{ T .newLabelKey }}"
+          data-record-dialog-open="{{ .dialogID }}">
+    <span class="btn-ico" aria-hidden="true">{{ icon "plus" }}</span>
+  </button>
+</div>
+{{ end }}

@@ -138,3 +138,21 @@ func TestNoTwoNavDestinationsShareAnIcon(t *testing.T) {
 		}
 	}
 }
+
+// ut-docs#2010: the app-wide list/edit standard mandates an icon vocabulary
+// (New, Edit, Close, Search, Move up/down) that the registry did not carry
+// before this card — every list screen that adopts the pattern renders these
+// through {{ icon }}, so a missing name would silently render nothing
+// (iconHTML's unknown-name contract) on every one of them at once.
+func TestRecordDialogIconVocabularyExists(t *testing.T) {
+	for _, name := range []string{"plus", "pencil", "x", "search", "chevron-up", "chevron-down"} {
+		out := string(iconHTML(name))
+		if out == "" {
+			t.Errorf("icon %q is missing from the registry", name)
+			continue
+		}
+		if !strings.Contains(out, `data-icon="`+name+`"`) || !strings.Contains(out, "<path") && !strings.Contains(out, "<line") && !strings.Contains(out, "<circle") {
+			t.Errorf("icon %q renders no drawable body: %s", name, out)
+		}
+	}
+}
