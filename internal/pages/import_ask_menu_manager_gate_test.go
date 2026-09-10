@@ -184,14 +184,23 @@ func TestMenuPage_ManagerOnlyTilesRealSessionGatedByRole(t *testing.T) {
 // this scenario couldn't even be expressed -- the seeded-default case
 // alone (TestMenuPage_ManagerOnlyTilesRealSessionGatedByRole) would not
 // have caught a regression back to one shared action.
+// ut-docs#2008: /locations and /registers no longer render as their own
+// /menu tiles at all (Group: "menu.group.administration" -- they're inside
+// /admin now), so this test's own assertions moved from /menu's tile
+// markup to /admin's rendered clusters -- registerAdmin rides along on the
+// same mux/dp newMenuPageTestDeps already builds. The independent-gating
+// PROOF this test exists for (stock_location_management is checked
+// separately from settings, not folded back into one action) is unchanged;
+// only the surface that now renders the result of that check moved.
 func TestMenuPage_LocationsRegistersTileIndependentOfSettings(t *testing.T) {
 	mux, dp := newMenuPageTestDeps(t, nil)
 	dp.AuthSvc = auth.NewService(dp.Db)
+	registerAdmin(mux, dp)
 	authRepo := data.NewAuthRepo(dp.Db)
 	ctx := t.Context()
 
-	get := func(u auth.User) *httptest.ResponseRecorder {
-		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/menu", nil), u)
+	get := func(path string, u auth.User) *httptest.ResponseRecorder {
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, path, nil), u)
 		rec := httptest.NewRecorder()
 		mux.ServeHTTP(rec, req)
 		return rec
@@ -202,23 +211,47 @@ func TestMenuPage_LocationsRegistersTileIndependentOfSettings(t *testing.T) {
 	if err := authRepo.SetRolePermission(ctx, nil, "manager", "stock_location_management", false); err != nil {
 		t.Fatal(err)
 	}
-	body := get(auth.User{ID: "m1", Role: "manager"}).Body.String()
-	if !strings.Contains(body, `href="/users"`) {
-		t.Fatalf("manager still has settings, should see /users tile, got: %s", body)
+	mgr := auth.User{ID: "m1", Role: "manager"}
+	menuBody := get("/menu", mgr).Body.String()
+	if !strings.Contains(menuBody, `href="/users"`) {
+		t.Fatalf("manager still has settings, should see /users tile, got: %s", menuBody)
 	}
-	if strings.Contains(body, `href="/locations"`) || strings.Contains(body, `href="/registers"`) {
-		t.Fatalf("manager without stock_location_management must not see /locations or /registers, got: %s", body)
+	// Still has settings, so /admin itself stays reachable (country
+	// settings/translations remain visible) -- just without the Locations
+	// cluster.
+	adminRec := get("/admin", mgr)
+	if adminRec.Code != http.StatusOK {
+		t.Fatalf("manager GET /admin = %d, want 200: %s", adminRec.Code, adminRec.Body.String())
+	}
+	adminBody := adminRec.Body.String()
+	if strings.Contains(adminBody, `href="/locations"`) || strings.Contains(adminBody, `href="/registers"`) {
+		t.Fatalf("manager without stock_location_management must not see /locations or /registers on /admin, got: %s", adminBody)
 	}
 
 	// cashier starts with neither -- grant only stock_location_management.
 	if err := authRepo.SetRolePermission(ctx, nil, "cashier", "stock_location_management", true); err != nil {
 		t.Fatal(err)
 	}
-	body = get(auth.User{ID: "c1", Role: "cashier"}).Body.String()
-	if strings.Contains(body, `href="/users"`) {
-		t.Fatalf("cashier still lacks settings, must not see /users tile, got: %s", body)
+	cashier := auth.User{ID: "c1", Role: "cashier"}
+	menuBody = get("/menu", cashier).Body.String()
+	if strings.Contains(menuBody, `href="/users"`) {
+		t.Fatalf("cashier still lacks settings, must not see /users tile, got: %s", menuBody)
 	}
-	if !strings.Contains(body, `href="/locations"`) || !strings.Contains(body, `href="/registers"`) {
-		t.Fatalf("cashier granted stock_location_management should see /locations and /registers tiles, got: %s", body)
+	// Granted stock_location_management alone is enough to make the /admin
+	// tile itself appear (visibleAdminEntries is non-empty) even though
+	// this cashier still lacks "settings" outright.
+	if !strings.Contains(menuBody, `href="/admin"`) {
+		t.Fatalf("cashier granted stock_location_management should see the /admin tile, got: %s", menuBody)
+	}
+	adminRec = get("/admin", cashier)
+	if adminRec.Code != http.StatusOK {
+		t.Fatalf("cashier granted stock_location_management: GET /admin = %d, want 200: %s", adminRec.Code, adminRec.Body.String())
+	}
+	adminBody = adminRec.Body.String()
+	if !strings.Contains(adminBody, `href="/locations"`) || !strings.Contains(adminBody, `href="/registers"`) {
+		t.Fatalf("cashier granted stock_location_management should see /locations and /registers on /admin, got: %s", adminBody)
+	}
+	if strings.Contains(adminBody, `href="/translations"`) || strings.Contains(adminBody, `href="/country-settings"`) {
+		t.Fatalf("cashier still lacks settings, must not see the Localization cluster on /admin, got: %s", adminBody)
 	}
 }

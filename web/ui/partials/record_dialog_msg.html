@@ -1,0 +1,17 @@
+<!-- ut-docs#2020 — a refused categories-dialog mutation's htmx response
+     (categories_page.go's renderCategoryDialogError, via
+     httpx.RenderPartial). Deliberately JUST the translated message text —
+     no wrapper element — because record_dialog.html's own "#<id>-msg" div
+     IS the aria-live="polite" region and the form's hx-swap="innerHTML"
+     targets it directly: this file supplies only what goes INSIDE it. A
+     live region generally must stay the same DOM node across a content
+     change for assistive tech to announce it, so the wrapper is never
+     re-rendered — only its text.
+
+     Param: "msg" — already-resolved, already-translated text (this
+     partial does no T lookup of its own: a caller like
+     categories_page.go's deactivate_blocked needs to interpolate a count
+     into the translated string first). html/template escapes it like any
+     other value, so this is safe against a category name or similar
+     making it into a message untranslated. -->
+{{ .msg }}

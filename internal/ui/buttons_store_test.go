@@ -15,6 +15,9 @@ func setupFullTestDB(t *testing.T) *sql.DB {
 	stmts := []string{
 		`CREATE TABLE item_variants (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, name TEXT, price INTEGER NOT NULL, is_active INTEGER NOT NULL DEFAULT 1);`,
 		`CREATE TABLE item_modifier_groups (id TEXT PRIMARY KEY, item_id TEXT NOT NULL, name TEXT, is_active INTEGER NOT NULL DEFAULT 1);`,
+		// Migration 025 (ADR-0090): ItemIDsWithModifiers reads membership
+		// through the link table, not item_modifier_groups.item_id.
+		`CREATE TABLE item_modifier_group_links (item_id TEXT NOT NULL, group_id TEXT NOT NULL, sort_order INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (item_id, group_id));`,
 	}
 	for _, s := range stmts {
 		if _, err := db.Exec(s); err != nil {
@@ -107,6 +110,7 @@ func TestButtonStoreLoad_ThumbnailFallbackPriceOrderAndModifiers(t *testing.T) {
 	// itm1 is customizable (active modifier group); itm2 has only an INACTIVE group.
 	mustExec(t, db, `INSERT INTO item_modifier_groups(id, item_id, name, is_active) VALUES('g1','itm1','Milk',1)`)
 	mustExec(t, db, `INSERT INTO item_modifier_groups(id, item_id, name, is_active) VALUES('g2','itm2','Old',0)`)
+	mustExec(t, db, `INSERT INTO item_modifier_group_links(item_id, group_id) VALUES('itm1','g1'), ('itm2','g2')`)
 	// Deliberately inserted out of display order: sort_order must win.
 	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,image_path,sort_order) VALUES('T1','Tea Tile','itm2','/public/images/tea-explicit.png',0)`)
 	mustExec(t, db, `INSERT INTO shortcut_buttons(barcode,label,item_id,image_path,sort_order) VALUES('C1','Coffee Tile','itm1',NULL,1)`)

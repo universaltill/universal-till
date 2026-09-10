@@ -132,15 +132,26 @@ func registerSyncAdmin(mux *http.ServeMux, d *common.Deps) {
 			_ = json.NewEncoder(w).Encode(map[string]any{"data": nil, "error": "unauthorized"})
 			return
 		}
-		bundle, err := adminRepo.DumpAdmin(r.Context())
+		// ut-docs#1368: check the fingerprint FIRST — on an unchanged poll
+		// (the common case) this alone answers the request from the
+		// generation cache, with no table scan and no re-marshal/re-hash of
+		// the bundle. Only a real change (or the very first poll) needs
+		// DumpAdmin too, and that call then hits the same cache this one
+		// just populated.
+		fp, err := adminRepo.AdminFingerprint(r.Context())
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_admin", err)
 			return
 		}
-		resp := adminBundleResponse{Version: bundle.Fingerprint()}
-		if r.URL.Query().Get("have") == resp.Version {
+		resp := adminBundleResponse{Version: fp}
+		if r.URL.Query().Get("have") == fp {
 			resp.Unchanged = true
 		} else {
+			bundle, err := adminRepo.DumpAdmin(r.Context())
+			if err != nil {
+				common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "sync.error.server", "sync_admin", err)
+				return
+			}
 			resp.Bundle = bundle
 		}
 		w.Header().Set("Content-Type", "application/json")

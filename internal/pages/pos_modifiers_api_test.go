@@ -25,10 +25,15 @@ func setupModifiersTestDeps(t *testing.T) (*common.Deps, *db.DB) {
 	if _, err := d.DB.Exec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-coffee', 'COFFEE', 'Flat White', 320, 1)`); err != nil {
 		t.Fatal(err)
 	}
+	// Group rows plus their item_modifier_group_links rows (ADR-0090 /
+	// migration 025): membership is read through the link table.
 	if _, err := d.DB.Exec(`
 		INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order)
 		VALUES ('g-extras', 'itm-coffee', 'Extras', 0, 0, 2, 1)
 	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO item_modifier_group_links (item_id, group_id, sort_order) VALUES ('itm-coffee', 'g-extras', 1)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.DB.Exec(`
@@ -41,6 +46,9 @@ func setupModifiersTestDeps(t *testing.T) (*common.Deps, *db.DB) {
 		INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order)
 		VALUES ('g-size', 'itm-coffee', 'Size', 1, 1, 1, 2)
 	`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.Exec(`INSERT INTO item_modifier_group_links (item_id, group_id, sort_order) VALUES ('itm-coffee', 'g-size', 2)`); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := d.DB.Exec(`

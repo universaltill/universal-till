@@ -286,3 +286,386 @@ func TestModifierRepo_ListShopModifierGroups_EmptyShopReturnsNilNotError(t *test
 		t.Fatalf("expected no groups in an empty shop, got %+v", groups)
 	}
 }
+
+// ListAllShopModifierGroups (ut-docs#1957) is the admin-equivalent of
+// ListShopModifierGroups: /modifiers became the full CRUD home for modifier
+// groups, and an admin managing them shop-wide must still see a deactivated
+// group/option so it can be reactivated — same reason ListAllGroupsForItem
+// exists beside ListGroupsForItem for the per-item case. The read-only
+// browse query (ListShopModifierGroups) keeps hiding inactive rows; this is
+// a separate method, not a behavior change to that one.
+func TestModifierRepo_ListAllShopModifierGroups_IncludesInactiveGroupsAndOptions(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	if _, err := d.DB.ExecContext(ctx, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm1','SKU1','Flat White',320,1)`); err != nil {
+		t.Fatal(err)
+	}
+	repo := data.NewModifierRepo(d.DB)
+
+	gidActive, err := repo.CreateGroup(ctx, "g1", "itm1", "Extras", false, 0, 2, 1)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateOption(ctx, "o1", gidActive, "Extra shot", 50, 1); err != nil {
+		t.Fatal(err)
+	}
+	inactiveOptID, err := repo.CreateOption(ctx, "o2", gidActive, "Discontinued syrup", 30, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateOption(ctx, inactiveOptID, "Discontinued syrup", 30, 2, false); err != nil {
+		t.Fatal(err)
+	}
+
+	gidInactive, err := repo.CreateGroup(ctx, "g2", "itm1", "Retired", false, 0, 1, 2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateGroup(ctx, gidInactive, "Retired", false, 0, 1, 2, false); err != nil {
+		t.Fatal(err)
+	}
+
+	groups, err := repo.ListAllShopModifierGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListAllShopModifierGroups: %v", err)
+	}
+	if len(groups) != 2 {
+		t.Fatalf("expected both the active AND the deactivated group, got %d: %+v", len(groups), groups)
+	}
+	var extras, retired *data.ModifierGroup
+	for i := range groups {
+		switch groups[i].Name {
+		case "Extras":
+			extras = &groups[i]
+		case "Retired":
+			retired = &groups[i]
+		}
+	}
+	if extras == nil || retired == nil {
+		t.Fatalf("expected both Extras and Retired groups, got: %+v", groups)
+	}
+	if retired.IsActive {
+		t.Fatalf("expected Retired group to be reported inactive: %+v", retired)
+	}
+	if len(extras.Options) != 2 {
+		t.Fatalf("expected Extras to carry BOTH its active and inactive option, got: %+v", extras.Options)
+	}
+	foundInactiveOpt := false
+	for _, o := range extras.Options {
+		if o.Name == "Discontinued syrup" && !o.IsActive {
+			foundInactiveOpt = true
+		}
+	}
+	if !foundInactiveOpt {
+		t.Fatalf("expected the deactivated option to be present and marked inactive: %+v", extras.Options)
+	}
+}
+
+// A deactivated item's groups must still be excluded even from the admin
+// variant — same reasoning as ListShopModifierGroups's own equivalent test:
+// there is nowhere left to reach/manage that item's groups once the item
+// itself is gone from /catalog.
+func TestModifierRepo_ListAllShopModifierGroups_SkipsGroupsOfDeactivatedItem(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	if _, err := d.DB.ExecContext(ctx, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES
+		('itm1','SKU1','Flat White',320,1), ('itm2','SKU2','Latte',350,1)`); err != nil {
+		t.Fatal(err)
+	}
+	repo := data.NewModifierRepo(d.DB)
+
+	if _, err := repo.CreateGroup(ctx, "g1", "itm1", "Extras", false, 0, 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateGroup(ctx, "g2", "itm2", "Milk", false, 0, 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.DB.ExecContext(ctx, `UPDATE items SET is_active = 0 WHERE id = 'itm1'`); err != nil {
+		t.Fatal(err)
+	}
+
+	groups, err := repo.ListAllShopModifierGroups(ctx)
+	if err != nil {
+		t.Fatalf("ListAllShopModifierGroups: %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("expected only itm2's group (itm1 is deactivated), got %d: %+v", len(groups), groups)
+	}
+	if groups[0].ItemName != "Latte" || groups[0].Name != "Milk" {
+		t.Fatalf("unexpected group: %+v", groups[0])
+	}
+}
+
+// ---------------------------------------------------------------------------
+// ADR-0090 (ut-docs#2013): a modifier group is shareable across items via
+// item_modifier_group_links. The group stays the identity/config record; the
+// link table records which items use it, with a per-link sort_order.
+// ---------------------------------------------------------------------------
+
+// seedSharedGroupFixture creates items A ("Flat White") and B ("Latte"), a
+// "Milk" group created on A with two options, and links it to B with a
+// different per-item sort order (A: 5, B: 2).
+func seedSharedGroupFixture(t *testing.T, ctx context.Context, d *db.DB, repo *data.ModifierRepo) {
+	t.Helper()
+	if _, err := d.DB.ExecContext(ctx, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES
+		('itm-a','SKU-A','Flat White',320,1), ('itm-b','SKU-B','Latte',350,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateGroup(ctx, "g-milk", "itm-a", "Milk", true, 1, 1, 5); err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	if _, err := repo.CreateOption(ctx, "o-oat", "g-milk", "Oat", 40, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateOption(ctx, "o-soy", "g-milk", "Soy", 30, 2); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.LinkGroupToItem(ctx, "itm-b", "g-milk", 2); err != nil {
+		t.Fatalf("LinkGroupToItem: %v", err)
+	}
+}
+
+func TestModifierRepo_CreateGroup_AlsoWritesItsLinkRow(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	if _, err := d.DB.ExecContext(ctx, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm1','SKU1','Flat White',320,1)`); err != nil {
+		t.Fatal(err)
+	}
+	repo := data.NewModifierRepo(d.DB)
+	if _, err := repo.CreateGroup(ctx, "g1", "itm1", "Extras", false, 0, 2, 7); err != nil {
+		t.Fatalf("CreateGroup: %v", err)
+	}
+	var item string
+	var sort int
+	if err := d.DB.QueryRowContext(ctx, `SELECT item_id, sort_order FROM item_modifier_group_links WHERE group_id = 'g1'`).Scan(&item, &sort); err != nil {
+		t.Fatalf("CreateGroup must write the group's first link row too: %v", err)
+	}
+	if item != "itm1" || sort != 7 {
+		t.Fatalf("link row = (%s, %d), want (itm1, 7)", item, sort)
+	}
+	// The legacy anchor column is still populated (NOT NULL, ADR-0090 §2).
+	if err := d.DB.QueryRowContext(ctx, `SELECT item_id FROM item_modifier_groups WHERE id = 'g1'`).Scan(&item); err != nil || item != "itm1" {
+		t.Fatalf("anchor item_id = %q err=%v, want itm1", item, err)
+	}
+}
+
+func TestModifierRepo_LinkGroupToItem_SecondItemSeesGroupWithLinkSortOrder(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	repo := data.NewModifierRepo(d.DB)
+	seedSharedGroupFixture(t, ctx, d, repo)
+
+	groups, err := repo.ListGroupsForItem(ctx, "itm-b")
+	if err != nil {
+		t.Fatalf("ListGroupsForItem(itm-b): %v", err)
+	}
+	if len(groups) != 1 || groups[0].ID != "g-milk" {
+		t.Fatalf("itm-b must see the linked group, got %+v", groups)
+	}
+	g := groups[0]
+	if g.SortOrder != 2 {
+		t.Fatalf("SortOrder = %d, want 2 — must come from the link row, not the group's own column (5)", g.SortOrder)
+	}
+	if g.ItemID != "itm-b" {
+		t.Fatalf("ItemID = %q, want itm-b (the item this listing is for, not the legacy anchor)", g.ItemID)
+	}
+	if !g.Required || g.MinSelect != 1 || g.MaxSelect != 1 || g.Name != "Milk" {
+		t.Fatalf("shared rule set must be the group's own: %+v", g)
+	}
+	if len(g.Options) != 2 || g.Options[0].Name != "Oat" || g.Options[1].Name != "Soy" {
+		t.Fatalf("linked group must carry its full option list: %+v", g.Options)
+	}
+
+	// The original item keeps its own per-link sort order.
+	groupsA, err := repo.ListGroupsForItem(ctx, "itm-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groupsA) != 1 || groupsA[0].SortOrder != 5 || len(groupsA[0].Options) != 2 {
+		t.Fatalf("itm-a's own view changed: %+v", groupsA)
+	}
+
+	// Re-linking upserts the sort order (ON CONFLICT DO UPDATE), never
+	// duplicates the link.
+	if err := repo.LinkGroupToItem(ctx, "itm-b", "g-milk", 9); err != nil {
+		t.Fatalf("re-link: %v", err)
+	}
+	groups, _ = repo.ListGroupsForItem(ctx, "itm-b")
+	if len(groups) != 1 || groups[0].SortOrder != 9 {
+		t.Fatalf("re-link must update sort order in place, got %+v", groups)
+	}
+
+	if err := repo.LinkGroupToItem(ctx, "", "g-milk", 0); err == nil {
+		t.Fatal("empty item id must be rejected")
+	}
+	if err := repo.LinkGroupToItem(ctx, "itm-b", "", 0); err == nil {
+		t.Fatal("empty group id must be rejected")
+	}
+}
+
+// The single most important regression test in ADR-0090's data layer: once
+// a group can appear in MULTIPLE shop-wide rows (one per linked item), an
+// options-attachment index keyed by group id alone (the pre-#2013 byID map)
+// keeps only the LAST row per group and attaches that group's options to
+// that one row only — every earlier item showing the same group would render
+// with an empty option list. Both shop-wide variants must show the full
+// option list under EVERY item the group is linked to.
+func TestModifierRepo_ListShopModifierGroups_SharedGroupCarriesFullOptionsUnderEveryItem(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	repo := data.NewModifierRepo(d.DB)
+	seedSharedGroupFixture(t, ctx, d, repo)
+	// A third item sharing the same group, plus an unshared group of its own
+	// so the shared and unshared rows interleave in the ordered result.
+	if _, err := d.DB.ExecContext(ctx, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-c','SKU-C','Mocha',380,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.LinkGroupToItem(ctx, "itm-c", "g-milk", 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateGroup(ctx, "g-extras", "itm-c", "Extras", false, 0, 2, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateOption(ctx, "o-shot", "g-extras", "Extra shot", 50, 1); err != nil {
+		t.Fatal(err)
+	}
+
+	for name, list := range map[string]func(context.Context) ([]data.ModifierGroup, error){
+		"ListShopModifierGroups":    repo.ListShopModifierGroups,
+		"ListAllShopModifierGroups": repo.ListAllShopModifierGroups,
+	} {
+		t.Run(name, func(t *testing.T) {
+			groups, err := list(ctx)
+			if err != nil {
+				t.Fatalf("%s: %v", name, err)
+			}
+			// Flat White/Milk, Latte/Milk, Mocha/Extras, Mocha/Milk.
+			if len(groups) != 4 {
+				t.Fatalf("want 4 rows (Milk under 3 items + Extras once), got %d: %+v", len(groups), groups)
+			}
+			seenMilkUnder := map[string]int{}
+			for _, g := range groups {
+				if g.ID != "g-milk" {
+					continue
+				}
+				seenMilkUnder[g.ItemID]++
+				if g.ItemName == "" {
+					t.Errorf("Milk row under %s has no ItemName", g.ItemID)
+				}
+				if len(g.Options) != 2 {
+					t.Errorf("Milk under %s (%s) carries %d options, want 2 — options attached to only one of the shared group's rows: %+v", g.ItemID, g.ItemName, len(g.Options), g.Options)
+				}
+			}
+			for _, item := range []string{"itm-a", "itm-b", "itm-c"} {
+				if seenMilkUnder[item] != 1 {
+					t.Errorf("Milk must appear exactly once under %s, seen %d times", item, seenMilkUnder[item])
+				}
+			}
+			// Ordering: item name, then per-link sort_order — Mocha lists
+			// Extras (0) before Milk (1); the Milk row's SortOrder is the
+			// LINK's, not the group's own column (5).
+			if groups[0].ItemName != "Flat White" || groups[0].SortOrder != 5 ||
+				groups[1].ItemName != "Latte" || groups[1].SortOrder != 2 ||
+				groups[2].ItemName != "Mocha" || groups[2].Name != "Extras" ||
+				groups[3].ItemName != "Mocha" || groups[3].Name != "Milk" || groups[3].SortOrder != 1 {
+				t.Fatalf("unexpected order/sort_order: %+v", groups)
+			}
+		})
+	}
+}
+
+// A shared group whose ONE link points at a deactivated item must still be
+// listed under its other, active item — the i.is_active filter is per link
+// row, not per group.
+func TestModifierRepo_ListShopModifierGroups_SharedGroupHidesOnlyDeactivatedItemsRow(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	repo := data.NewModifierRepo(d.DB)
+	seedSharedGroupFixture(t, ctx, d, repo)
+	if _, err := d.DB.ExecContext(ctx, `UPDATE items SET is_active = 0 WHERE id = 'itm-a'`); err != nil {
+		t.Fatal(err)
+	}
+	groups, err := repo.ListShopModifierGroups(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groups) != 1 || groups[0].ItemID != "itm-b" || len(groups[0].Options) != 2 {
+		t.Fatalf("want Milk under Latte only, with both options, got %+v", groups)
+	}
+}
+
+func TestModifierRepo_UnlinkGroupFromItem_RemovesOnlyThatLink(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	repo := data.NewModifierRepo(d.DB)
+	seedSharedGroupFixture(t, ctx, d, repo)
+
+	if err := repo.UnlinkGroupFromItem(ctx, "itm-a", "g-milk"); err != nil {
+		t.Fatalf("UnlinkGroupFromItem: %v", err)
+	}
+	groupsA, err := repo.ListAllGroupsForItem(ctx, "itm-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groupsA) != 0 {
+		t.Fatalf("itm-a must no longer list the group, got %+v", groupsA)
+	}
+	groupsB, err := repo.ListGroupsForItem(ctx, "itm-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(groupsB) != 1 || groupsB[0].ID != "g-milk" || len(groupsB[0].Options) != 2 {
+		t.Fatalf("itm-b's link must be untouched, got %+v", groupsB)
+	}
+	var n int
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_groups WHERE id = 'g-milk'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("group row must survive an unlink (n=%d err=%v)", n, err)
+	}
+
+	// Removing the LAST link still never deletes the group: an orphaned
+	// group stays manageable via /modifiers; DeleteGroup is the explicit
+	// full-delete action.
+	if err := repo.UnlinkGroupFromItem(ctx, "itm-b", "g-milk"); err != nil {
+		t.Fatal(err)
+	}
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_groups WHERE id = 'g-milk'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("group row must survive losing its last link (n=%d err=%v)", n, err)
+	}
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_options WHERE group_id = 'g-milk'`).Scan(&n); err != nil || n != 2 {
+		t.Fatalf("options must survive an unlink (n=%d err=%v)", n, err)
+	}
+	if err := repo.UnlinkGroupFromItem(ctx, "", "g-milk"); err == nil {
+		t.Fatal("empty item id must be rejected")
+	}
+	if err := repo.UnlinkGroupFromItem(ctx, "itm-b", ""); err == nil {
+		t.Fatal("empty group id must be rejected")
+	}
+}
+
+// The button grid's "does tapping this open a picker?" flag must see a
+// group an item only has via a link, and must still ignore an inactive one.
+func TestModifierRepo_ItemIDsWithModifiers_SeesLinkedGroups(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	repo := data.NewModifierRepo(d.DB)
+	seedSharedGroupFixture(t, ctx, d, repo)
+	if _, err := d.DB.ExecContext(ctx, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-c','SKU-C','Mocha',380,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateGroup(ctx, "g-retired", "itm-c", "Retired", false, 0, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateGroup(ctx, "g-retired", "Retired", false, 0, 1, 0, false); err != nil {
+		t.Fatal(err)
+	}
+	got, err := repo.ItemIDsWithModifiers(ctx, []string{"itm-a", "itm-b", "itm-c"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !got["itm-a"] || !got["itm-b"] {
+		t.Fatalf("both linked items must be flagged: %#v", got)
+	}
+	if got["itm-c"] {
+		t.Fatalf("an item whose only group is inactive must not be flagged: %#v", got)
+	}
+}

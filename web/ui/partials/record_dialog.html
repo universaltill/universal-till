@@ -11,11 +11,44 @@
      Exactly two parts: .record-dialog-head is pinned (flex: none) and holds
      ONE row of chrome — nothing more, so it never eats a 360px screen the
      way ut-docs#2000 found catalog's head doing; .record-dialog-body is the
-     one scroll container. There is deliberately NO in-dialog message line:
-     every mutation is a plain form post → 303, so an error surfaces as the
-     page-level banner after the redirect (the dialog is closed by then).
-     An in-dialog error surface is a change of shape (htmx forms) and has
-     its own follow-up card — do not reserve space for it here.
+     one scroll container. Its first child is the in-dialog message region
+     (#<id>-msg below, ut-docs#2020) — genuinely EMPTY by default (no
+     whitespace either — keep it on one line), so app.css's
+     `.record-dialog-msg:empty { display: none }` reserves no space until
+     there is actually something to say (the lesson from this exact
+     head-height finding: an EARLIER version of this region lived in the
+     head and stayed at its reserved height even empty).
+
+     The page's own record_dialog_fields form posts via hx-boost, targeting
+     THIS SAME element with hx-swap="innerHTML": a refusal's response is
+     httpx.RenderPartial("ui/partials/record_dialog_msg.html", …) — just the
+     translated message text, no wrapper (see categories_page.go's
+     renderCategoryDialogError for the server side, and app.js's
+     htmx:beforeSwap for why a non-2xx text/html fragment still swaps in).
+     innerHTML, not outerHTML: this element IS the aria-live="polite"
+     region, and a live region generally must stay the same DOM node across
+     a content change for assistive tech to announce it — replacing the
+     node itself (outerHTML) typically announces nothing. Swapping only its
+     contents also means the dialog and the form itself — and whatever the
+     operator typed into it — are never part of the response, so neither is
+     ever touched by it. A successful mutation instead answers with the
+     HX-Redirect header, a real navigation back to the list
+     (categories_page.go's redirectCategories), which is why "swap on
+     error, redirect on success" needs no further plumbing in this shared
+     partial itself.
+
+     data-error-network / data-error-server (below, on the dialog element
+     itself) back a SEPARATE fallback in record-dialog.js for a failure the
+     server-rendered message above can't cover at all: a request that gets
+     no coded response back (network unreachable — ADR-0003/AC5) or a
+     response app.js's own htmx:beforeSwap does NOT force-swap (a plain-
+     text 403/500, e.g. a permission gate rejecting the request before the
+     mutation handler ever runs). Without it the operator saw NOTHING —
+     #pos-alert, app.js's own fallback banner, exists only on the sale
+     screen (web/ui/pages/index.html), nowhere on this pattern — the exact
+     ut-docs#916 class of bug, just for a dialog instead of a fragment
+     target. Data-* because this file stays locale-free (no hardcoded
+     English), same rule as every other string on this dialog.
 
      Parameters, via dict at the call site — the req guard on the first
      line below fails the render, naming the key, when a required one is
@@ -49,7 +82,9 @@
 <dialog id="{{ .id }}" class="record-dialog" aria-labelledby="{{ .id }}-title"
         data-record-dialog data-record-mode="create"
         data-create-action="{{ .createAction }}"
-        data-discard-confirm="{{ T "common.discard_confirm" }}">
+        data-discard-confirm="{{ T "common.discard_confirm" }}"
+        data-error-network="{{ T "common.error.network" }}"
+        data-error-server="{{ T "common.error.server" }}">
   <div class="record-dialog-inner">
     <div class="record-dialog-head">
       <div class="record-dialog-head-row">
@@ -74,6 +109,7 @@
       </div>
     </div>
     <div class="record-dialog-body">
+      <div id="{{ .id }}-msg" class="record-dialog-msg" data-record-dialog-msg aria-live="polite"></div>
       {{ template "record_dialog_fields" . }}
     </div>
   </div>

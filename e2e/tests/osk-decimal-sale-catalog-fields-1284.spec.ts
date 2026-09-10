@@ -279,6 +279,17 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     await page.goto('/catalog');
     await createProbeItemAndOpenVariants(page, 'OSK Existing Option Probe ' + Date.now());
 
+    // ut-docs#1957: modifier-group/option CRUD moved out of this panel into
+    // the nested #modifier-groups-modal dialog, opened via its own button
+    // (lazy-loaded by GET /api/catalog/modifier-groups-panel) -- open it
+    // before looking for the "add group" form the old inline panel used to
+    // render directly.
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/catalog/modifier-groups-panel')),
+      page.locator('#manage-modifiers-btn').click(),
+    ]);
+    await expect(page.locator('#modifier-groups-modal')).toBeVisible();
+
     const groupName = 'Milk';
     await page.locator('.modifier-admin-group-new input[name="name"]').fill(groupName);
     await Promise.all([
@@ -328,6 +339,14 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     await expect(page.locator('#osk.osk-open')).toBeVisible();
     await typeViaOsk(page, '1.65');
     await expect(variantCost).toHaveValue('1.65');
+
+    // ut-docs#1957: same relocation as the sibling test above -- open the
+    // nested modifier-groups dialog before looking for its "add group" form.
+    await Promise.all([
+      page.waitForResponse((r) => r.url().includes('/api/catalog/modifier-groups-panel')),
+      page.locator('#manage-modifiers-btn').click(),
+    ]);
+    await expect(page.locator('#modifier-groups-modal')).toBeVisible();
 
     const groupName = 'OSK New-Row Modifier ' + Date.now();
     await page.locator('.modifier-admin-group-new input[name="name"]').fill(groupName);

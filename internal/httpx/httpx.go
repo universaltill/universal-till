@@ -867,6 +867,12 @@ var renderFiles = []string{
 	// httpx.Render("ui/pages/items.html", ...) call site, with no bespoke
 	// RenderWith file set of its own.
 	"ui/partials/items_rail.html",
+	// ut-docs#1957: modifiers.html's own "content"/"modifiers_list" templates
+	// call {{ template "modifier_group_admin" ... }} — riding along here is
+	// what lets that resolve through the plain httpx.Render("ui/pages/
+	// modifiers.html", ...)/RenderContentFragment call sites, same as
+	// items_rail.html above.
+	"ui/partials/modifier_group_admin.html",
 	// ut-docs#2010: the app-wide list/edit standard's two partials
 	// (ut-docs/reference/list-and-dialog-pattern.md). Same mechanism as
 	// items_rail.html above — a page includes them by their {{ define }}
@@ -879,7 +885,23 @@ var renderFiles = []string{
 	// winner) — a page that uses it must define both, see the partial.
 	"ui/partials/list_header.html",
 	"ui/partials/record_dialog.html",
+	// ut-docs#2008: web/ui/pages/admin.html includes this by its
+	// {{ define "admin_tree" }} name — same riding-along mechanism as
+	// items_rail.html above, and the only call site today.
+	"ui/partials/admin_tree.html",
 }
+
+// ut-docs#2020: web/ui/partials/record_dialog_msg.html is deliberately NOT
+// in renderFiles above — unlike list_header.html/record_dialog.html, it is
+// never included by name from inside another page's template set (the
+// in-dialog message region's wrapper element lives directly in
+// record_dialog.html now, so the aria-live node itself is never
+// re-rendered — see that partial's own header comment for why). This file
+// exists solely to be parsed and executed on its own, standalone, via
+// httpx.RenderPartial for a refused mutation's htmx response
+// (categories_page.go's renderCategoryDialogError). ClonedTemplate parses
+// exactly the one file RenderPartial names, so it needs no place in this
+// shared set at all.
 
 // Render full page with layout + page + common partials
 func Render(tplPath string, data any) http.HandlerFunc {

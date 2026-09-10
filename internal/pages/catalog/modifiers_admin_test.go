@@ -51,8 +51,11 @@ func TestCatalogModifiersPanel_OptionPrice_RespectsZeroDecimalCurrency(t *testin
 	}
 }
 
-// The item-detail panel shows the modifiers admin section (ADR-0020), and
-// creating a group is reflected both in the panel and directly in the DB.
+// The item-detail panel shows a compact, read-only modifiers summary plus a
+// "Manage customization groups" control (ut-docs#1957 — the CRUD itself
+// moved to /modifiers and the nested dialog that control opens); creating a
+// group elsewhere is still reflected in that summary once the panel
+// re-renders, and directly in the DB either way.
 func TestCatalogModifiersPanel_CreateGroup(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
@@ -62,15 +65,19 @@ func TestCatalogModifiersPanel_CreateGroup(t *testing.T) {
 	mux := http.NewServeMux()
 	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
 
-	// Panel loads with the "no customization options yet" hint and an
-	// add-group form.
+	// Panel loads with the "no customization groups yet" summary and the
+	// "Manage customization groups" button that opens the nested dialog —
+	// NOT the CRUD forms themselves, which moved off this panel entirely.
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/catalog/item-variants?item_id=itm1", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("panel: want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "/api/catalog/modifier-group") {
-		t.Fatal("panel missing the add-group form")
+	if !strings.Contains(rec.Body.String(), `id="manage-modifiers-btn"`) {
+		t.Fatal("panel missing the Manage customization groups button")
+	}
+	if strings.Contains(rec.Body.String(), `name="minSelect"`) {
+		t.Fatal("panel must not embed the group CRUD form directly any more (ut-docs#1957)")
 	}
 
 	form := "panelItem=itm1&itemId=itm1&name=Extras&isActive=1&minSelect=0&maxSelect=2&sortOrder=1"
@@ -146,13 +153,23 @@ func TestCatalogModifiersPanel_CreateAndUpdateOption(t *testing.T) {
 		t.Fatalf("read group id: %v", err)
 	}
 
+	// ut-docs#1957: the real form now sits inside the nested "Manage
+	// customization groups" dialog (or /modifiers), so it submits with
+	// Hx-Target naming ITS OWN container — asserting against that fragment
+	// (not the old #catalog-variants one, which no longer carries option
+	// names at all) is what actually exercises renderModifierMutationResult's
+	// dispatch rather than just its no-header fallback.
 	optForm := "panelItem=itm1&itemId=itm1&groupId=" + groupID + "&name=Extra+shot&priceDeltaMajor=0.50&isActive=1"
 	req2 := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-option", strings.NewReader(optForm))
 	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req2.Header.Set("Hx-Target", "modifier-groups-modal-list")
 	rec2 := httptest.NewRecorder()
 	mux.ServeHTTP(rec2, req2)
 	if rec2.Code != http.StatusOK {
 		t.Fatalf("create option: want 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	if !strings.Contains(rec2.Body.String(), `id="modifier-groups-modal-list"`) {
+		t.Fatal("expected the item-scoped modal fragment, not the old #catalog-variants panel")
 	}
 	if !strings.Contains(rec2.Body.String(), "Extra shot") {
 		t.Fatal("panel response missing the newly created option")
@@ -214,29 +231,45 @@ func TestCatalogModifiersPanel_CreateAndUpdateOption(t *testing.T) {
 	}
 }
 
-// A deactivated group/option must still show in the ADMIN panel (so a
+// A deactivated group/option must still show in the ADMIN surfaces (so a
 // manager can reactivate it) even though it's hidden from the sale-time
 // picker — this is the whole reason ListAllGroupsForItem exists, distinct
-// from ListGroupsForItem.
+// from ListGroupsForItem. ut-docs#1957 moved that admin surface off the
+// item-detail panel (which now only shows a compact ACTIVE-only summary,
+// checked below) onto the nested "Manage customization groups" dialog's own
+// GET /api/catalog/modifier-groups-panel fragment.
 func TestCatalogModifiersPanel_ShowsDeactivatedGroupsForReactivation(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
 	defer db.Close()
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "COFFEE", Name: "Flat White", BasePrice: 320, IsActive: true})
-	if _, err := db.Exec(`INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active) VALUES ('g1','itm1','Retired',0,0,1,1,0)`); err != nil {
-		t.Fatal(err)
-	}
+	testsupport.SeedModifierGroup(t, db, "g1", "itm1", "Retired", false, 0, 1, 1, false)
 
 	mux := http.NewServeMux()
 	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
 
+	// The item-detail panel's compact summary is active-only — a retired
+	// group has no visible way to be reactivated from here any more.
 	rec := httptest.NewRecorder()
 	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/catalog/item-variants?item_id=itm1", nil))
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
 	}
-	if !strings.Contains(rec.Body.String(), "Retired") {
-		t.Fatal("admin panel must show a deactivated group so it can be reactivated")
+	if strings.Contains(rec.Body.String(), "Retired") {
+		t.Fatal("the compact item-detail summary must not list a deactivated group by name")
+	}
+
+	// The nested dialog's own fragment is where reactivation now happens.
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, httptest.NewRequest(http.MethodGet, "/api/catalog/modifier-groups-panel?item_id=itm1", nil))
+	if rec2.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	if !strings.Contains(rec2.Body.String(), "Retired") {
+		t.Fatal("the Manage customization groups panel must show a deactivated group so it can be reactivated")
+	}
+	if !strings.Contains(rec2.Body.String(), `id="modifier-groups-modal-list"`) {
+		t.Fatal("expected the item-scoped modal fragment container")
 	}
 }
 
@@ -295,9 +328,7 @@ func TestCatalogModifiersPanel_MutationsRefusedOnReplica(t *testing.T) {
 	// action (editing an already-synced modifier), and the exact gap a
 	// future "editing an existing row is fine" refactor could reopen
 	// silently if only create were covered.
-	if _, err := db.Exec(`INSERT INTO item_modifier_groups (id, item_id, name, required, min_select, max_select, sort_order, is_active) VALUES ('grp-existing','itm1','Extras',0,0,2,0,1)`); err != nil {
-		t.Fatalf("seed existing group: %v", err)
-	}
+	testsupport.SeedModifierGroup(t, db, "grp-existing", "itm1", "Extras", false, 0, 2, 0, true)
 	if _, err := db.Exec(`INSERT INTO item_modifier_options (id, group_id, name, price_delta_minor, sort_order, is_active) VALUES ('opt-existing','grp-existing','Extra shot',50,0,1)`); err != nil {
 		t.Fatalf("seed existing option: %v", err)
 	}

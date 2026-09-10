@@ -19,6 +19,35 @@ type DB struct {
 	*sql.DB
 }
 
+// sqliteURIPathEscaper percent-encodes the three characters that are
+// significant to SQLite's own "file:" URI filename parsing (ut-docs#2030):
+// '#', '?' and '%' itself. Both Open and OpenReadOnly build their DSN as
+// "file:" + this path + "?" + query params — SQLite's URI-mode open (used
+// here via SQLITE_OPEN_URI, not this package's own DSN splitting) treats an
+// unescaped '#' or '?' inside the path as ending the path component, so a
+// data directory containing one — plausible on Windows/macOS profile folder
+// names, or a synced/container mount naming scheme — silently truncates the
+// path AND drops every _pragma param that follows it, with no error:
+// verified experimentally (`file:/tmp/hashtest#123/db.sqlite` actually
+// opens `/tmp/hashtest`, a different file, with the rest of the path and
+// every pragma gone). '%' must be escaped too, since it is the escape
+// character itself: left unescaped, a literal '%' followed by two hex
+// digits is silently decoded as part of the path (e.g. "...%41hex" opens
+// as "...Ahex", the wrong file, no error); a literal '%' followed by
+// non-hex digits usually stays literal in SQLite's own parse, but can
+// still break the *Go driver's* separate _pragma query-string parsing
+// if an earlier unescaped '?' in the path drags it into that parser's
+// view of the query remainder (surfaces as "invalid URL escape"). Either
+// way, escaping every raw '%' up front removes the ambiguity regardless of
+// which layer would have mishandled it. strings.Replacer performs one pass
+// over the input without rescanning its own output, so this cannot
+// double-encode a '%' this function itself introduces.
+var sqliteURIPathEscaper = strings.NewReplacer("%", "%25", "#", "%23", "?", "%3f")
+
+func escapeSQLiteURIPath(path string) string {
+	return sqliteURIPathEscaper.Replace(path)
+}
+
 func Open(path string) (*DB, error) {
 	// A fresh install extracts to a folder with no data/ directory, so the
 	// default ./data/unitill-pos.db path can't be opened (SQLite CANTOPEN,
@@ -65,7 +94,7 @@ func Open(path string) (*DB, error) {
 	// first real-device boot died with SQLITE_IOERR_GETTEMPPATH (6410) in
 	// migration 036, the first migration to use a temp table. In-memory
 	// temp storage removes the dependency on a temp dir for every platform.
-	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=temp_store(2)&_txlock=immediate", path)
+	dsn := fmt.Sprintf("file:%s?_pragma=foreign_keys(1)&_pragma=busy_timeout(5000)&_pragma=journal_mode(WAL)&_pragma=temp_store(2)&_txlock=immediate", escapeSQLiteURIPath(path))
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite: %w", err)
@@ -125,7 +154,7 @@ func Open(path string) (*DB, error) {
 // safe mode has nothing to serve without prior successful boots, and must
 // not be confused with a fresh-install first boot.
 func OpenReadOnly(path string) (*DB, error) {
-	dsn := fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(5000)", path)
+	dsn := fmt.Sprintf("file:%s?mode=ro&_pragma=busy_timeout(5000)", escapeSQLiteURIPath(path))
 	sqlDB, err := sql.Open("sqlite", dsn)
 	if err != nil {
 		return nil, fmt.Errorf("open sqlite (read-only): %w", err)
@@ -452,9 +481,14 @@ type statement struct {
 // splitStatements splits comment-free SQL on semicolons outside
 // single-quoted literals (” inside a literal is two toggles and stays
 // balanced). A final statement without a trailing semicolon is kept.
-// Blank statements are dropped. No migration uses triggers or BEGIN…END
-// blocks (checked 2026-09-02); if one ever does, this splitter must learn
-// them first.
+// Blank statements are dropped.
+//
+// CREATE TRIGGER … BEGIN … END; is the one construct whose body carries
+// semicolons of its own: a semicolon inside such a block does not end the
+// statement until the block's closing END has been seen (ut-docs#1368,
+// migration 022 — the first migration to ship a trigger; migration 007's
+// header records why none could before). triggerBlockOpen decides, on the
+// masked text so literals can't confuse it.
 func splitStatements(s string) []statement {
 	var out []statement
 	var text, masked strings.Builder
@@ -479,7 +513,9 @@ func splitStatements(s string) []statement {
 		case c == ';':
 			text.WriteByte(c)
 			masked.WriteByte(c)
-			flush()
+			if !triggerBlockOpen(masked.String()) {
+				flush()
+			}
 		default:
 			text.WriteByte(c)
 			masked.WriteByte(c)
@@ -487,6 +523,50 @@ func splitStatements(s string) []statement {
 	}
 	flush()
 	return out
+}
+
+// createTriggerStmt matches the head of a CREATE [TEMP|TEMPORARY] TRIGGER
+// statement in masked (literal-free) text.
+var createTriggerStmt = regexp.MustCompile(`(?is)^\s*CREATE\s+(?:TEMP(?:ORARY)?\s+)?TRIGGER\b`)
+
+// sqlWord tokenises masked SQL into bare keywords/identifiers — enough to
+// track BEGIN/CASE/END nesting; punctuation and literals never matter here.
+var sqlWord = regexp.MustCompile(`[A-Za-z_][A-Za-z0-9_]*`)
+
+// triggerBlockOpen reports whether masked (the statement accumulated so
+// far, ending in the semicolon just read) is a CREATE TRIGGER whose
+// BEGIN … END block has not closed yet. Nesting is tracked by keyword:
+// BEGIN opens the block, CASE opens an expression that closes with its own
+// END (so `SET n = CASE WHEN … END;` inside a body does not end the
+// trigger), and the END that brings the depth back to zero closes the
+// trigger. Before the body's BEGIN (the header's WHEN clause), a semicolon
+// can't legally occur, so depth 0 there is treated as still-open only once
+// BEGIN has been seen — a malformed trigger without BEGIN degrades to the
+// old one-semicolon-per-statement split and fails loudly in SQLite as it
+// always did.
+func triggerBlockOpen(masked string) bool {
+	if !createTriggerStmt.MatchString(masked) {
+		return false
+	}
+	depth, begun := 0, false
+	for _, w := range sqlWord.FindAllString(masked, -1) {
+		switch strings.ToUpper(w) {
+		case "BEGIN":
+			if !begun {
+				begun = true
+				depth++
+			}
+		case "CASE":
+			if begun {
+				depth++
+			}
+		case "END":
+			if begun {
+				depth--
+			}
+		}
+	}
+	return begun && depth > 0
 }
 
 // stripLineComments removes `-- …` comments outside single-quoted strings.

@@ -1,6 +1,6 @@
 import { test, expect } from './fixtures';
 import type { Page } from '@playwright/test';
-import { watchConsole } from './helpers';
+import { watchConsole, openNewItemForm, closeItemForm } from './helpers';
 
 // ut-docs#2010: /categories is the reference implementation of the app-wide
 // list/edit standard (ut-docs/reference/list-and-dialog-pattern.md):
@@ -175,6 +175,152 @@ test.describe('categories list + record dialog (ut-docs#2010)', () => {
     await Promise.all([page.waitForURL(/\/categories$/), activate.click()]);
     await expect(row(page, name)).toContainText(/\bactive\b/);
     await expect(row(page, name)).not.toContainText('inactive');
+    assertClean();
+  });
+
+  // ut-docs#2020: the exact repro from that card's own bug report — type a
+  // rename, then tap the (unrelated) deactivate action, which the server
+  // refuses because the category still has an active item
+  // (data.ErrCategoryHasItems). Before this card, ANY refusal on this page
+  // redirected, which closed the dialog and discarded the pending rename
+  // even though the rename was never itself the thing that failed.
+  test('(g) a refused deactivate keeps the dialog open with an unrelated typed rename intact', async ({ page }) => {
+    // The 400 IS the deliberate response shape (renderCategoryDialogError,
+    // ut-docs#2020) — app.js's htmx:beforeSwap still force-swaps it (a real,
+    // non-empty text/html body) and marks it not-an-error for HTMX'S own
+    // purposes, but Chromium logs a non-2xx resource load to the console
+    // regardless of that, the same way it would for any fetch/XHR. Same
+    // exemption shape as (c3)'s own extraExempt for its deliberate
+    // console.error, and the file-wide 404 exemption watchConsole already
+    // carries for a different deliberate case.
+    const assertClean = watchConsole(page, /Failed to load resource:.*400/);
+    const catName = 'HasItems Probe ' + Date.now();
+    await page.goto('/categories');
+    await createCategory(page, catName);
+
+    // Give the category one active item so the deactivate genuinely
+    // refuses — an empty category always deactivates cleanly (see (b3)).
+    await page.goto('/catalog');
+    await openNewItemForm(page);
+    await page.locator('#item-category').selectOption({ label: catName });
+    await page.locator('#item-name').fill('Item in ' + catName);
+    await page.locator('#item-price').fill('1.00');
+    await page.locator('#item-form-submit').click();
+    await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
+    await closeItemForm(page);
+
+    await page.goto('/categories');
+    await row(page, catName).locator('td').first().click();
+    const dlg = page.locator(DIALOG);
+    await expect(dlg).toBeVisible();
+    const renamedTo = catName + ' renamed but never saved';
+    await page.locator(NAME).fill(renamedTo);
+
+    // The deactivate confirm() (categories.deactivate_confirm) — accept it,
+    // same as (b3)'s clean-deactivate case, so the actual refusal is what's
+    // under test here, not the confirm step.
+    page.once('dialog', (d) => d.accept());
+    await Promise.all([
+      page.waitForResponse((res) => res.url().includes('/active') && res.status() === 400),
+      page.locator(`${DIALOG} form[data-record-when="active=1"] button`).click(),
+    ]);
+
+    // Refused: no navigation happened at all (unlike the success path,
+    // which real dialog.close() would follow via a real page load), the
+    // dialog is still the one the operator was editing, the rename typed
+    // into the UNRELATED field is still there, and the reason renders in
+    // the dialog's own message region — not the page-level banner (AC4:
+    // the two must not both fire for the same failure).
+    await expect(dlg).toBeVisible();
+    await expect(page.locator(NAME)).toHaveValue(renamedTo);
+    const msg = page.locator('#category-dialog-msg');
+    await expect(msg).toBeVisible();
+    await expect(msg).toContainText(/active item/i);
+    await expect(page.locator('.login-error')).toHaveCount(0);
+
+    // The row itself: still active, name unchanged — the refused mutation
+    // truly changed nothing server-side either.
+    await expect(row(page, catName)).toBeVisible();
+    await expect(row(page, catName)).toContainText('active');
+    assertClean();
+  });
+
+  // ut-docs#2020 regression test: hx-boost's own submit listener is bound
+  // directly to the FORM (the event's target), so it fires — and, before
+  // this fix, unconditionally issued its request — before a listener on
+  // `document` ever saw the same event. A custom "confirm() then
+  // preventDefault()" guard there could no longer stop a boosted submit;
+  // the fix moved the confirm to htmx's own native hx-confirm attribute,
+  // which htmx reads and honours from INSIDE the same call that issues the
+  // request. Pins that dismissing it genuinely aborts — no request at all,
+  // dialog stays open, row untouched — not just that a dialog appears.
+  test('(h) dismissing the deactivate confirm sends no request at all', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    const catName = 'Confirm Dismiss Probe ' + Date.now();
+    await page.goto('/categories');
+    await createCategory(page, catName);
+    await row(page, catName).locator('td').first().click();
+    const dlg = page.locator(DIALOG);
+    await expect(dlg).toBeVisible();
+
+    let sawActiveRequest = false;
+    page.on('request', (req) => {
+      if (req.url().includes('/active')) sawActiveRequest = true;
+    });
+    let dialogMsg = '';
+    page.once('dialog', (d) => { dialogMsg = d.message(); d.dismiss(); });
+    await page.locator(`${DIALOG} form[data-record-when="active=1"] button`).click();
+    // No response to wait for (nothing is sent) — settle on next tick
+    // instead of a fixed sleep, then assert the negative directly.
+    await page.waitForTimeout(300);
+
+    expect(dialogMsg).toContain('Deactivate');
+    expect(sawActiveRequest, 'dismissing hx-confirm must not still send the request').toBe(false);
+    await expect(dlg).toBeVisible();
+    await expect(row(page, catName)).toContainText(/\bactive\b/);
+    await expect(row(page, catName)).not.toContainText('inactive');
+    assertClean();
+  });
+
+  // ut-docs#2020 AC5 (offline-first / ADR-0003): a request that never gets
+  // a coded response back at all must still leave the dialog open with
+  // input intact AND tell the operator something failed — before this fix
+  // it did neither on this page (app.js's own #pos-alert fallback exists
+  // only on the sale screen). record-dialog.js's dialogFailureFallback is
+  // what's under test; it fires from the GLOBAL htmx:sendError event, so
+  // aborting the connection (not just answering an error status) is the
+  // real trigger, not a stubbed error response.
+  test('(i) a network failure keeps the dialog open with input intact and shows a generic message', async ({ page }) => {
+    // route.abort() produces a real network failure, which Chromium's
+    // console also logs on its own, and htmx.min.js's own onerror path
+    // additionally self-logs via console.error for exactly this failure
+    // class (its trigger wrapper stamps the event name itself into
+    // detail.error for both htmx:afterRequest and htmx:sendError on this
+    // path). Same exemption shape, same reasoning, as
+    // htmx-senderror-1287.spec.ts's own identical case.
+    const assertClean = watchConsole(page, /^Failed to load resource:.*ERR_FAILED|^htmx:(afterRequest|sendError)$/);
+    const catName = 'Network Probe ' + Date.now();
+    await page.goto('/categories');
+    await createCategory(page, catName);
+    await row(page, catName).locator('td').first().click();
+    const dlg = page.locator(DIALOG);
+    await expect(dlg).toBeVisible();
+    const renamedTo = catName + ' edited offline';
+    await page.locator(NAME).fill(renamedTo);
+
+    await page.route('**/api/categories/**', (route) => route.abort('failed'));
+    await page.locator(`${DIALOG} .record-dialog-save`).click();
+
+    const msg = page.locator('#category-dialog-msg');
+    await expect(msg).toBeVisible();
+    // The GENERIC fallback text (common.error.network), not a specific
+    // server-refusal reason — nothing ever reached a server to refuse.
+    await expect(msg).toHaveText(/connection|network/i);
+    await expect(dlg).toBeVisible();
+    await expect(page.locator(NAME)).toHaveValue(renamedTo);
+    await expect(page.locator('.login-error')).toHaveCount(0);
+
+    await page.unroute('**/api/categories/**');
     assertClean();
   });
 

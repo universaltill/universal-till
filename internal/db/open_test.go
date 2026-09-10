@@ -185,3 +185,46 @@ func TestOpenTempStoreMemory(t *testing.T) {
 		t.Fatalf("temp_store = %d, want 2 (memory)", mode)
 	}
 }
+
+// ut-docs#2030: Open() interpolated the raw filesystem path into a "file:"
+// DSN unescaped. SQLite's own URI-form filename parser treats '#' and '?'
+// as ending the path component, so a data directory containing one of them
+// silently truncated the path AND dropped every _pragma query param after
+// it — including foreign_keys(1), _txlock=immediate (ut-docs#311) and
+// journal_mode(WAL). This proves both halves of that: the database actually
+// lands at the full intended (nested) path rather than being truncated at
+// the special character, and the pragmas a dropped query string would
+// silently disable actually took effect.
+func TestOpenEscapesSpecialCharsInPath(t *testing.T) {
+	base := t.TempDir()
+	// One special character per path segment, so a truncation at any one
+	// of them is independently detectable via "did this exact file exist".
+	dir := filepath.Join(base, "hash#test", "q?mark", "percent%dir")
+	path := filepath.Join(dir, "db.sqlite")
+
+	d, err := Open(path)
+	if err != nil {
+		t.Fatalf("Open on a path containing #/?/%% must succeed, got: %v", err)
+	}
+	defer d.Close()
+
+	if _, err := os.Stat(path); err != nil {
+		t.Fatalf("database file was not created at the full intended path %q (truncated at a special character?): %v", path, err)
+	}
+
+	var journalMode string
+	if err := d.QueryRow(`PRAGMA journal_mode`).Scan(&journalMode); err != nil {
+		t.Fatalf("read journal_mode: %v", err)
+	}
+	if !strings.EqualFold(journalMode, "wal") {
+		t.Fatalf("journal_mode = %q, want wal — the _pragma query string was silently dropped", journalMode)
+	}
+
+	var foreignKeys int
+	if err := d.QueryRow(`PRAGMA foreign_keys`).Scan(&foreignKeys); err != nil {
+		t.Fatalf("read foreign_keys: %v", err)
+	}
+	if foreignKeys != 1 {
+		t.Fatalf("foreign_keys = %d, want 1 — the _pragma query string was silently dropped", foreignKeys)
+	}
+}

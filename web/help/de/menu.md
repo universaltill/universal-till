@@ -4,8 +4,8 @@ title: Der Menü-Bildschirm
 section: Täglicher Verkauf
 order: 30
 summary: Ein Bildschirm mit großen Touch-Kacheln, der Sie zu jedem Bereich der Kasse führt.
-routes: [/menu, /settings/menu]
-keywords: [menü, navigation, kacheln]
+routes: [/menu, /settings/menu, /admin]
+keywords: [menü, navigation, kacheln, administration]
 ---
 
 # Der Menü-Bildschirm
@@ -14,8 +14,8 @@ Tippen Sie auf **☰ Menü** auf dem Verkaufsbildschirm, um eine Seite mit groß
 
 ## Administration
 
-Einrichtungs-Kacheln, die Sie einmal berühren und danach selten wieder aufrufen — Ländereinstellungen, Übersetzungen, die Fiskalregister-/Fiskalgerät-Seite, Standorte und Kassen — sind zusammen unter einer Überschrift **Administration** unterhalb der alltäglichen Kacheln zusammengefasst. Benutzer, Küchenstationen und Bluetooth-Geräte bleiben außerhalb dieser Gruppe: Diese verwalten Sie häufiger als eine einmalige Einrichtung.
+Einrichtungs-Kacheln, die Sie einmal berühren und danach selten wieder aufrufen — Ländereinstellungen, Übersetzungen, die Fiskalregister-/Fiskalgerät-Seite, Standorte und Kassen — liegen hinter einer einzigen Kachel **Administration**, unterhalb der alltäglichen Kacheln. Tippen Sie darauf, um eine Seite zu öffnen, die sie in drei Gruppen auflistet: Fiskales, Standorte, Lokalisierung. Benutzer, Küchenstationen und Bluetooth-Geräte bleiben außerhalb dieser Kachel: Diese verwalten Sie häufiger als eine einmalige Einrichtung.
 
 ## Von einem Layout-Plugin ausgeblendete Kacheln
 
-Ein **Layout**-Plugin (zum Beispiel ein Salon-Layout) kann Kacheln ausblenden, die ein Geschäft nicht braucht — etwa Tische oder Küchenstationen — und andere umbenennen oder umsortieren. Es ändert nur, was das Menü zeigt: Jede Seite bleibt unter ihrer eigenen Adresse erreichbar. Was ausgeblendet ist, sehen Sie unter **Einstellungen → Ausgeblendete Menü-Kacheln**; dort holen Sie eine Kachel auch zurück. Jeder Eintrag nennt das Plugin, das ihn ausgeblendet hat, und hat eine Schaltfläche **Kachel wiederherstellen**; **Erneut ausblenden** macht das rückgängig. Die Kacheln für Fiskales, Journal, Einstellungen, Plugins, Hilfe und Problem melden kann kein Plugin ausblenden.
+Ein **Layout**-Plugin (zum Beispiel ein Salon-Layout) kann Kacheln ausblenden, die ein Geschäft nicht braucht — etwa Tische oder Küchenstationen — und andere umbenennen oder umsortieren. Es ändert nur, was das Menü zeigt: Jede Seite bleibt unter ihrer eigenen Adresse erreichbar. Was ausgeblendet ist, sehen Sie unter **Einstellungen → Ausgeblendete Menü-Kacheln**; dort holen Sie eine Kachel auch zurück. Jeder Eintrag nennt das Plugin, das ihn ausgeblendet hat, und hat eine Schaltfläche **Kachel wiederherstellen**; **Erneut ausblenden** macht das rückgängig. Dieselbe Seite listet auch jede Kachel auf, die ein Plugin umbenannt, mit einem neuen Symbol versehen, verschoben oder umgruppiert hat, ohne sie auszublenden — mit dem Namen des Plugins und dem, was es ersetzt hat. Die Kacheln für Fiskales, Journal, Einstellungen, Plugins, Hilfe und Problem melden kann kein Plugin ausblenden.

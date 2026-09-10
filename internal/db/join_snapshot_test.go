@@ -28,6 +28,30 @@ func countTills(t *testing.T, dbPath string) (total, withHash int) {
 	return total, withHash
 }
 
+// countTillsViaEscapedURI is countTills' sibling for a dbPath that may
+// itself contain '#'/'?' (ut-docs#2030's own test case): countTills' plain
+// sql.Open("sqlite", dbPath) — with no "file:" prefix — hits the identical
+// truncation this whole card is about, just via a different code path (the
+// driver drops everything from the first unescaped '?' onward when the DSN
+// isn't URI-form), which would make a test using such a path fail for the
+// wrong reason. Opens through the same file:+escapeSQLiteURIPath(...) form
+// production code now uses.
+func countTillsViaEscapedURI(t *testing.T, dbPath string) (total, withHash int) {
+	t.Helper()
+	sd, err := sql.Open("sqlite", fmt.Sprintf("file:%s", escapeSQLiteURIPath(dbPath)))
+	if err != nil {
+		t.Fatalf("open %s: %v", dbPath, err)
+	}
+	defer sd.Close()
+	if err := sd.QueryRow(`SELECT COUNT(*) FROM tills`).Scan(&total); err != nil {
+		t.Fatalf("count tills in %s: %v", dbPath, err)
+	}
+	if err := sd.QueryRow(`SELECT COUNT(*) FROM tills WHERE bearer_hash IS NOT NULL`).Scan(&withHash); err != nil {
+		t.Fatalf("count bearer_hash in %s: %v", dbPath, err)
+	}
+	return total, withHash
+}
+
 // ut-docs#426: the copy served to a joining replica must have every till's
 // bearer_hash NULLed, while the REAL backup snapshot and the live DB keep
 // the real secrets (they're genuine disaster-recovery artifacts).
@@ -126,6 +150,44 @@ func TestRedactedJoinSnapshot_RealHashesNotRecoverableInRawBytes(t *testing.T) {
 		if bytes.Contains(raw, []byte(h)) {
 			t.Errorf("real bearer_hash %q recoverable in the served file's raw bytes — a joining replica's copy still physically contains it (ut-docs#426)", h)
 		}
+	}
+}
+
+// ut-docs#2030 (review finding on the original fix): RedactedJoinSnapshot's
+// own sql.Open call built its DSN the same unescaped way db.go's
+// Open/OpenReadOnly did, and copyPath inherits the data dir verbatim via
+// BackupDir — so a data dir containing '#'/'?'/'%' hit the identical
+// truncation bug here too, with a more serious consequence than a wrong
+// file: secure_delete(1) (the whole reason this function sets the pragma
+// via the DSN instead of an Exec'd PRAGMA — see the comment above the
+// sql.Open call) would silently never apply, leaving redacted bearer_hash
+// values physically recoverable in the copy's page slack — the exact leak
+// ut-docs#426 exists to close.
+func TestRedactedJoinSnapshot_HandlesSpecialCharsInDataDir(t *testing.T) {
+	dir := filepath.Join(t.TempDir(), "hash#test", "q?mark")
+	path := filepath.Join(dir, "unitill-pos.db")
+	d := openTest(t, path)
+
+	if _, err := d.Exec(`INSERT INTO tills (id, name, bearer_hash) VALUES ('till-1', 'Till 1', 'secret-hash')`); err != nil {
+		t.Fatalf("seed till: %v", err)
+	}
+
+	copyPath, cleanup, err := RedactedJoinSnapshot(d.DB, path)
+	if err != nil {
+		t.Fatalf("RedactedJoinSnapshot on a data dir containing #/? must succeed, got: %v", err)
+	}
+	defer cleanup()
+
+	if total, withHash := countTillsViaEscapedURI(t, copyPath); total != 1 || withHash != 0 {
+		t.Fatalf("redacted copy at a special-char data dir: got %d rows, %d with bearer_hash; want 1 and 0 (wrong file opened, or the redaction UPDATE silently no-opped against a truncated DSN?)", total, withHash)
+	}
+
+	raw, err := os.ReadFile(copyPath)
+	if err != nil {
+		t.Fatalf("read copy: %v", err)
+	}
+	if bytes.Contains(raw, []byte("secret-hash")) {
+		t.Errorf("real bearer_hash recoverable in raw bytes at a special-char data dir — secure_delete(1) was silently dropped by a truncated DSN")
 	}
 }
 

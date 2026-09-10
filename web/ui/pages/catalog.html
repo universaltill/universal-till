@@ -12,9 +12,12 @@
     <button id="item-form-add-btn" class="btn primary" type="button">{{ T "catalog.add_item_btn" }}</button>
     <a class="btn secondary" href="/import">{{ T "import.title" }}</a>
     <a class="btn secondary" href="/catalog/tax-codes">{{ T "taxcodes.title" }}</a>
-    <!-- ut-docs#1899: the per-item modifier editor lives in the item detail
-         panel below (catalog_variants.html); this is the shop-wide browse
-         screen for seeing every group across every item at once. -->
+    <!-- ut-docs#1899/#1957: /modifiers is the shop-wide, full-CRUD home for
+         modifier groups — the item detail panel below (catalog_variants.html)
+         only shows a compact read-only summary plus its own "Manage
+         customization groups" control (opens #modifier-groups-modal,
+         below), which is the in-context shortcut to the very same CRUD
+         without leaving this page. -->
     <a class="btn secondary" href="/modifiers">{{ T "modifiers.title" }}</a>
     <!-- ut-docs#1900: reusable option sets ("Size: S / M / L") are defined
          once on their own screen and applied per item from the detail
@@ -36,6 +39,52 @@
 </div>
 
 <dialog id="barcode-backfill-modal" class="modifier-modal barcode-backfill-modal" aria-labelledby="catalog-barcode-backfill-btn"></dialog>
+
+<!-- ut-docs#1957: the "Manage customization groups" nested dialog, opened
+     from the compact summary button inside catalog_variants.html (below).
+     UX-mandated correction — do NOT replace this with target="_blank" or
+     any window.open/location navigation: the kiosk build runs fully
+     chromeless (WebKitGTK under Wayland/labwc — see base.html ~line 131),
+     so a new tab/window has nowhere to land and either silently no-ops or
+     navigates in place, losing the item-form dialog's own unsaved edits
+     underneath. This is a SECOND, independent <dialog> — its own static
+     wrapper lives here (never swapped), while its content (#modifier-
+     groups-modal-list) is fetched/re-rendered by htmx from
+     GET /api/catalog/modifier-groups-panel and the same modifier-group/
+     option mutation endpoints catalog_variants.html's OLD embedded forms
+     used, now re-targeted here — see handlers.go's
+     renderModifierMutationResult. Kept entirely OUTSIDE #catalog-variants'
+     own outerHTML swap boundary on purpose: an unrelated variants-panel
+     mutation (a barcode, a cost price, a variant save) re-renders
+     #catalog-variants while this dialog might still be open, and a
+     swapped-in fresh copy of a <dialog> the browser had open would lose
+     that open state — same reason #item-form-modal itself is a top-level
+     sibling, not embedded in a template that mutates independently.
+     Opened via .show(), NOT showModal() — same established fix
+     (ut-docs#1385) as #item-form-modal/#hold-modal/#pfand-modal/
+     #elevation-modal/#table-add-modal/.payment-overlay: showModal()'s
+     top-layer/inert-outside behaviour would make the custom on-screen
+     keyboard (#osk, appended to <body>) unreachable while typing a group
+     or option name here. app.css stacks it ABOVE #item-form-modal
+     (z-index 520 vs 500) so it visually sits on top of that still-open,
+     untouched dialog underneath, exactly like the product-owner-reviewed
+     design calls for. -->
+<dialog id="modifier-groups-modal" class="item-form-modal modifier-groups-modal" aria-labelledby="manage-modifiers-btn">
+  <div class="card catalog-form">
+    <!-- Deliberately NOT .catalog-form-head (2026-09-10, PR-sweep rebase
+         fix): that class is styled identically here (see app.css), but
+         reusing the same class name breaks every e2e assertion written
+         against "the one .catalog-form-head on the page" (ut-docs#1956/
+         #2000's specs) once this modal is open at the same time as the
+         item-form dialog underneath it — Playwright's strict-mode locator
+         then resolves two elements instead of one. -->
+    <div class="modifier-groups-head">
+      <h3>{{ T "catalog.modifiers.manage" }}</h3>
+      <button class="btn secondary" type="button" id="modifier-groups-modal-close-btn" onclick="document.getElementById('modifier-groups-modal').close()">{{ T "common.close" }}</button>
+    </div>
+    <div id="modifier-groups-modal-list"></div>
+  </div>
+</dialog>
 
 {{ if .SyncPrimary }}
 <div class="sync-banner">⚠ {{ T "sync.banner_replica" }}
@@ -408,6 +457,43 @@
   // for a new item, a catalog row click for edit) rather than always
   // being on screen.
   var modal = document.getElementById('item-form-modal');
+  // ut-docs#2024: the ≤700px tab strip (app.css) becomes a single
+  // horizontally-scrollable row with no visual hint that more tabs sit
+  // off-screen. tabBarFade() (below) drives app.css's
+  // .tab-bar--fade-start/-end classes; this listener keeps it live while
+  // scrolling/swiping (passive: this never calls preventDefault, so it
+  // can't block the scroll itself). The initial post-open check is wired
+  // into openModal()'s existing afterTabPaint callback, further down.
+  var tabBar = modal.querySelector('.catalog-form-head .tab-bar');
+  if (tabBar) {
+    tabBar.addEventListener('scroll', function () { tabBarFade(tabBar); }, { passive: true });
+  }
+  // ut-docs#2032: scroll alone misses a viewport resize/rotation that
+  // crosses the ≤700px breakpoint (app.css) while the dialog stays open —
+  // no scroll ever fires, so the fade classes go stale until the next
+  // scroll or reopen.
+  //
+  // This whole IIFE re-runs on every htmx fragment swap that re-renders
+  // this "content" block (internal/pages/catalog/handlers.go, e.g. the
+  // Catalog/Modifiers/Option-sets rail in items_rail.html swapping
+  // #items-panel) — a plain `window.addEventListener` right here, once per
+  // swap, would leak: `window` outlives the swapped-out DOM, so every
+  // revisit pins one more permanent listener closing over that render's
+  // now-detached `modal`/`tabBar`. A one-time global guard (registered at
+  // most once for the page's whole lifetime, never per swap) plus
+  // resolving the CURRENT live modal/tab-bar from the document at event
+  // time — never closing over this render's `modal`/`tabBar` — fixes both
+  // the leak and the staleness a swap would otherwise leave behind.
+  if (!window.__catalogTabBarFadeResizeWired) {
+    window.__catalogTabBarFadeResizeWired = true;
+    var recomputeLiveTabBarFade = function () {
+      var liveModal = document.getElementById('item-form-modal');
+      if (!liveModal || !liveModal.open) return;
+      tabBarFade(liveModal.querySelector('.catalog-form-head .tab-bar'));
+    };
+    window.addEventListener('resize', recomputeLiveTabBarFade);
+    window.addEventListener('orientationchange', recomputeLiveTabBarFade);
+  }
   // ut-docs#1901 UX fix: bumped whenever the CURRENT dialog session
   // changes — opened fresh (either trigger below) OR the operator touches
   // any field after a save (the 'input' listener below). The delayed
@@ -446,6 +532,28 @@
       return;
     }
     requestAnimationFrame(function () { requestAnimationFrame(fn); });
+  }
+  // ut-docs#2024: toggles the two fade classes app.css's ::before/::after
+  // pseudo-elements key off. Math.abs() on scrollLeft (rather than
+  // comparing against 0/scrollWidth directly) is what makes this correct
+  // for BOTH scroll-origin conventions at once — Chromium/Firefox/Safari
+  // all use "0 at the reading start, growing toward the reading end" for
+  // LTR and the mirrored "0 at the reading start, going NEGATIVE toward
+  // the reading end" for RTL (verified live, 360px, `dir="fa"`: `el.
+  // scrollLeft` ranges from 0 to -(scrollWidth-clientWidth), never
+  // positive) — so a plain `scrollLeft > 0` check silently never fires
+  // for RTL. No overflow at all (fits within its box) clears both
+  // classes rather than leaving a stale fade from a wider viewport.
+  function tabBarFade(el) {
+    if (!el) return;
+    var max = el.scrollWidth - el.clientWidth;
+    if (max <= 1) {
+      el.classList.remove('tab-bar--fade-start', 'tab-bar--fade-end');
+      return;
+    }
+    var pos = Math.abs(el.scrollLeft);
+    el.classList.toggle('tab-bar--fade-start', pos > 1);
+    el.classList.toggle('tab-bar--fade-end', pos < max - 1);
   }
   // ut-docs#1901: opened via .show(), NOT showModal() — same reasoning
   // (and same established fix, ut-docs#1385) as #hold-modal/#pfand-modal/
@@ -494,6 +602,27 @@
                       document.activeElement === document.body ||
                       document.activeElement === deleteBtn)) {
         barcode.focus();
+      }
+      // ut-docs#2024: the dialog is display:none until .show() runs, so
+      // scrollWidth/clientWidth read 0 any earlier than this — same
+      // "wait for real layout" reasoning as the barcode focus above.
+      tabBarFade(tabBar);
+    });
+  }
+  // ut-docs#1957: the nested "Manage customization groups" dialog can add,
+  // rename or (de)activate a group without the item-form dialog above ever
+  // closing — refresh the item-detail panel's own compact group-name
+  // summary once it closes, so it doesn't sit stale behind it. This ONLY
+  // re-fetches #catalog-variants (a plain htmx GET, same as openCatalogRow
+  // uses below) — it never touches #item-form-modal's own fields, so the
+  // "item-form dialog stays untouched" requirement holds regardless.
+  var modifierGroupsModal = document.getElementById('modifier-groups-modal');
+  if (modifierGroupsModal) {
+    modifierGroupsModal.addEventListener('close', function () {
+      var itemId = document.getElementById('item-id').value;
+      if (itemId) {
+        htmx.ajax('GET', '/api/catalog/item-variants?item_id=' + encodeURIComponent(itemId),
+          { target: '#catalog-variants', swap: 'outerHTML' });
       }
     });
   }

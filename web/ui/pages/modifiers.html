@@ -13,41 +13,50 @@
 
 <p class="muted">{{ T "modifiers.subtitle" }}</p>
 
-{{ if not .Groups }}
-<div class="card">
-  <p class="muted">{{ T "modifiers.empty" }}</p>
-  <a class="btn secondary" href="/catalog">{{ T "modifiers.empty_cta" }}</a>
-</div>
-{{ else }}
-<!-- ut-docs#1899, independent-review finding: this is a plain browse list
-     with no detail column, unlike .catalog-layout's other users (list +
-     360px editor panel) — using that class here left a permanently empty
-     360px column at kiosk width. A simple stack instead. -->
-<div style="display:flex; flex-direction:column; gap:.75rem; max-width:36rem">
-  {{ range .Groups }}
+{{ template "modifiers_list" . }}
+{{ end }}
+
+<!-- ut-docs#1957: /modifiers became the full CRUD home for modifier groups
+     — this used to be a plain read-only browse list (ut-docs#1899); the
+     create/edit forms that used to be embedded in catalog_variants.html's
+     own detail panel now render here instead, reusing modifier_group_admin
+     (a partial shared with the "Manage customization groups" nested dialog
+     opened from an item's own edit panel — see catalog.html/
+     catalog_variants.html) once per item. #modifiers-list is this page's
+     own htmx re-render target: handlers.go's renderModifierMutationResult
+     picks this template back whenever a mutation's Hx-Request originated
+     from a form whose hx-target is #modifiers-list (see
+     modifier_group_admin.html's own doc comment for the full dispatch
+     story). Server passes .Groups as a []struct{ItemID,ItemName,
+     ModifierGroups,Target} slice, already grouped per item and already
+     carrying every group (active or not — unlike the old read-only browse
+     query, this admin page must still show a deactivated group so it can
+     be reactivated). -->
+{{ define "modifiers_list" }}
+<div id="modifiers-list">
+  {{ if not .Groups }}
   <div class="card">
-    <!-- ut-docs#1914: link the item name back to /catalog with its detail
-         panel pre-opened (openCatalogRow's ?item= deep link) instead of
-         leaving it as text the merchant has to go find by hand. Plain
-         accent-coloured <a>, matching orders_list.html's own inline-link
-         convention rather than the muted dash beside it, so it reads as
-         clickable and gets a native keyboard/focus path for free. -->
-    <h3 style="margin:.2rem 0">{{ .Name }} <span class="muted" style="font-weight:normal">— <a href="/catalog?item={{ .ItemID }}">{{ .ItemName }}</a></span></h3>
-    <p class="muted" style="margin:.2rem 0">
-      {{ if .Required }}{{ T "catalog.modifiers.required" }}{{ else }}{{ T "modifiers.optional" }}{{ end }}
-      · {{ T "catalog.modifiers.min" }} {{ .MinSelect }} · {{ T "catalog.modifiers.max" }} {{ .MaxSelect }}
-    </p>
-    {{ if .Options }}
-    <ul style="margin:.4rem 0; padding-inline-start:1.2rem">
-      {{ range .Options }}
-      <li>{{ .Name }}{{ if .PriceDeltaMinor }} <span class="muted">+{{ money .PriceDeltaMinor }}</span>{{ end }}</li>
-      {{ end }}
-    </ul>
-    {{ else }}
-    <p class="muted">{{ T "modifiers.no_options" }}</p>
+    <p class="muted">{{ T "modifiers.empty" }}</p>
+    <a class="btn secondary" href="/catalog">{{ T "modifiers.empty_cta" }}</a>
+  </div>
+  {{ else }}
+  <!-- ut-docs#1899, independent-review finding: this is a plain browse list
+       with no detail column, unlike .catalog-layout's other users (list +
+       360px editor panel) — using that class here left a permanently empty
+       360px column at kiosk width. A simple stack instead. -->
+  <div style="display:flex; flex-direction:column; gap:.75rem; max-width:44rem">
+    {{ range .Groups }}
+    <div class="card">
+      <!-- ut-docs#1914: link the item name back to /catalog with its detail
+           panel pre-opened (openCatalogRow's ?item= deep link) instead of
+           leaving it as text the merchant has to go find by hand. Plain
+           accent-coloured <a>, matching orders_list.html's own inline-link
+           convention. -->
+      <h3 style="margin:.2rem 0"><a href="/catalog?item={{ .ItemID }}">{{ .ItemName }}</a></h3>
+      {{ template "modifier_group_admin" . }}
+    </div>
     {{ end }}
   </div>
   {{ end }}
 </div>
-{{ end }}
 {{ end }}

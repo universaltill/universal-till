@@ -472,6 +472,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerUpdateAPI(mux, dp)
 	registerMenu(mux, dp)
 	registerMenuLayoutSettings(mux, dp) // ADR-0088 Decision D: the hidden-tiles findability surface
+	registerAdmin(mux, dp)              // /admin tree page the Menu launcher's gated "Administration" tile opens (ut-docs#2008)
 	catalog.Register(mux, dp)
 	registerBasket(mux, dp)
 	registerJournal(mux, dp)

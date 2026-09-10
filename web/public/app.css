@@ -584,6 +584,16 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 
 /* ---------- Item customization admin (ADR-0020) ---------- */
 .catalog-detail-modifiers { margin-block-start: 1rem; }
+/* ut-docs#1957 (independent review): the item-detail panel's block kept
+   this spacing while it held the full CRUD under the class above; the
+   compact summary that replaced it was given a NEW class with no rule at
+   all, so it lost the 1rem and butted straight against the variants grid.
+   Same margin, restated for the summary's own class rather than widening
+   the selector above — that one still styles the real CRUD block, which
+   now renders from modifier_group_admin.html on /modifiers and in the
+   nested dialog. */
+.catalog-detail-modifiers-summary { margin-block-start: 1rem; }
+.catalog-modifiers-summary-line { margin-block: .2rem; }
 .modifier-admin-group { border: 1px solid var(--border); border-radius: var(--radius);
                          padding: .6rem .75rem; margin-block-end: .6rem; }
 .modifier-admin-group.vg-inactive { opacity: .55; }
@@ -795,6 +805,12 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
 .catalog-form-head { flex: none; display: flex; flex-direction: column; gap: .4rem;
                      padding: .6rem 1.5rem 0; border-block-end: 1px solid var(--border);
                      background: var(--surface); }
+/* Same properties as .catalog-form-head above, own class name so the two
+   never collide under a strict-mode locator when both dialogs are open at
+   once (ut-docs#1957, 2026-09-10 PR-sweep rebase fix — see catalog.html). */
+.modifier-groups-head { flex: none; display: flex; flex-direction: column; gap: .4rem;
+                        padding: .6rem 1.5rem 0; border-block-end: 1px solid var(--border);
+                        background: var(--surface); }
 /* One row at 1024×600 (the kiosk floor), wrapping into two at phone width:
    the title+delete group and the action group each keep their own
    children on one line; only the two GROUPS wrap relative to each other. */
@@ -876,6 +892,55 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
   .catalog-form-head .tab-bar .tab:focus-visible {
     outline: 2px solid var(--focus, var(--accent)); outline-offset: -2px;
   }
+  /* ut-docs#2024: at 360px the five tabs need ~540px of min-content in
+     ~328px available, so one or two sit entirely off-screen with nothing
+     visible saying they're there (independent review of #2000, finding
+     F5). A pure-CSS `background-attachment: local`/`scroll` "scroll
+     shadow" (the classic no-JS technique) was tried first and rejected —
+     empirically verified backwards for this element under `dir="rtl"`
+     (the fade showed at the wrong scroll position entirely, not merely
+     on the unmirrored side): `local` attachment's 0%/100% positions tie
+     to the scrollable content's own coordinate origin, and that origin
+     sits at a different physical edge than the visible "nothing more to
+     scroll" edge once `direction: rtl` flips which edge is the reading
+     start. So instead: catalog.html's `tabBarFade()` does the show/hide
+     with real `scrollLeft`/`scrollWidth` arithmetic (`Math.abs()`, so it
+     is correct for both the LTR 0→+max and the RTL 0→−max scroll-origin
+     conventions without a sign-specific branch) and toggles two classes
+     below; only the fade's own cosmetic gradient *direction* — not
+     whether/when it shows — needs a `dir="rtl"` override, since
+     `background-image` gradients have no reliable logical direction
+     keyword across engines. `position: sticky` pseudo-elements, flex
+     children of .tab-bar itself (the scrolling element), are what keep
+     each fade pinned to its edge through the scroll without an extra
+     wrapper element; `inset-inline-start`/`-end` place them so the
+     browser's own bidi resolution decides which physical edge each one
+     is on, matching the show/hide classes' left work above without this
+     file needing to reason about it too. */
+  .catalog-form-head .tab-bar::before,
+  .catalog-form-head .tab-bar::after {
+    content: ""; position: sticky; flex: none; pointer-events: none;
+    inline-size: 1.1rem; block-size: 100%; opacity: 0;
+    transition: opacity .15s ease;
+  }
+  .catalog-form-head .tab-bar::before {
+    order: -1; inset-inline-start: 0;
+    background: linear-gradient(to right, var(--surface), transparent);
+  }
+  .catalog-form-head .tab-bar::after {
+    order: 999; inset-inline-end: 0;
+    background: linear-gradient(to left, var(--surface), transparent);
+  }
+  html[dir="rtl"] .catalog-form-head .tab-bar::before {
+    background: linear-gradient(to left, var(--surface), transparent);
+  }
+  html[dir="rtl"] .catalog-form-head .tab-bar::after {
+    background: linear-gradient(to right, var(--surface), transparent);
+  }
+  .catalog-form-head .tab-bar.tab-bar--fade-start::before,
+  .catalog-form-head .tab-bar.tab-bar--fade-end::after {
+    opacity: 1;
+  }
 }
 /* ut-docs#1901, same fix as body.osk-padded .payment-overlay above: the
    OSK is `position: fixed` + `z-index: 1000`, spanning the bottom of the
@@ -889,6 +954,21 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
    body.osk-padded rule above) instead of the old hardcoded 15.5rem, which
    had drifted short of the keyboard's real height. */
 body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-height, 17rem)); }
+/* ut-docs#1957: the "Manage customization groups" nested dialog — same
+   .show()/no-backdrop/fixed-position treatment as .item-form-modal above
+   and for the identical reason (OSK reachability for the group/option name
+   fields inside it), but its own smaller, narrower box and a HIGHER
+   z-index (520, still below #osk's 1000) so it visually stacks on top of
+   the still-open #item-form-modal underneath rather than beside or below
+   it — the whole point of the product-owner-reviewed nested-dialog design,
+   which must never navigate away from the item form. */
+.modifier-groups-modal { z-index: 520; width: 94vw; max-width: 40rem; max-height: 86vh;
+                          inset-block-start: 8vh; /* below item-form-modal's own 4vh, same
+                                                      convention as #hold-modal/#pfand-modal/
+                                                      #elevation-modal/#table-add-modal, which
+                                                      all layer above their own base too */ }
+.modifier-groups-modal:not([open]) { display: none; }
+body.osk-padded .modifier-groups-modal { block-size: calc(100% - var(--osk-reserved-height, 17rem)); }
 .catalog-extra { margin-top: .9rem; border-top: 1px solid var(--border); padding-top: .6rem; }
 .catalog-extra summary { font-weight: 600; cursor: pointer; color: var(--muted);
                          font-size: .85rem; }
@@ -2691,6 +2771,22 @@ body.login-screen {
 .items-row.is-disabled { color: var(--muted); justify-content: space-between; }
 .items-panel { min-inline-size: 0; }
 
+/* /admin tree (ut-docs#2008): reuses .items-row/.items-text/.items-name
+   verbatim (web/ui/partials/admin_tree.html) -- same RTL-safe logical
+   properties, same hover/focus treatment. Each row here is name-only (no
+   subtitle -- see this card's scope), so the two-line block-size the
+   comment above .items-row explains does not apply; min-block-size holds
+   the row at the product's own documented touch-target floor (.btn-touch,
+   above: "the product's own 46px touch-target floor") -- these are
+   primary navigation rows on a touchscreen till, not a secondary control,
+   so they get the full floor, not a smaller one (found in review: this
+   was 44px, 2px under spec). */
+.admin-tree .items-row { min-block-size: 46px; }
+.admin-group { margin-block-start: 1.4rem; }
+.admin-group:first-child { margin-block-start: 0; }
+.admin-group h2 { font-size: 1rem; font-weight: 600; color: var(--muted); margin-block-end: .3rem; }
+.admin-tree-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .2rem; }
+
 /* Contextual "?" — sits next to a page heading and opens that page's topic.
    Deliberately small and low-contrast: it must be findable when wanted and
    invisible when not, and never a mis-tap target during a sale. */
@@ -3321,11 +3417,14 @@ body.login-screen {
 /* --- Record dialog: full-bleed, .show()n (never showModal — the OSK
    reason, see .item-form-modal above), a flex column of exactly two parts:
    a pinned head (ONE row of chrome, nothing more — ut-docs#2000 found
-   catalog's taller head eating 42% of a 360px screen; no message line is
-   reserved, errors surface as the page banner after the redirect) and the
-   ONE scroll container. `position: fixed` replaces the top-layer
-   positioning .show() does not give; z-index 500 stays under #osk's 1000.
-   No ::backdrop rule — a .show() dialog never paints one. --- */
+   catalog's taller head eating 42% of a 360px screen) and the ONE scroll
+   container, whose first child is the in-dialog message region
+   (ut-docs#2020, .record-dialog-msg below) — collapsed (:empty) and
+   reserving no space until a refused mutation actually has something to
+   say. `position: fixed`
+   replaces the top-layer positioning .show() does not give; z-index 500
+   stays under #osk's 1000. No ::backdrop rule — a .show() dialog never
+   paints one. --- */
 .record-dialog { position: fixed; inset: 0; margin: 0; z-index: 500;
                  inline-size: 100%; max-inline-size: none;
                  block-size: 100%; max-block-size: none;
@@ -3358,6 +3457,20 @@ body.login-screen {
                               margin-inline-start: auto; }
 .record-dialog-body { flex: 1 1 auto; min-block-size: 0; overflow-y: auto;
                       padding: 1rem 1.5rem 1.5rem; }
+/* ut-docs#2020: :empty, not [hidden] — this element is the aria-live
+   region itself (record_dialog.html), and its content is swapped via
+   hx-swap="innerHTML" so the NODE stays put and only its text changes
+   (replacing the node, outerHTML-style, would generally stop assistive
+   tech from announcing it). Genuinely empty (record-dialog.js's open()
+   clears it with textContent = '', and the template renders it with no
+   whitespace) reads as :empty and collapses to nothing; a translated
+   message written into it — by the server's own refusal response, or by
+   record-dialog.js's dialogFailureFallback for a network/plain-text
+   failure the server response never covered — makes it non-empty and
+   this rule takes over. */
+.record-dialog-msg:empty { display: none; }
+.record-dialog-msg { color: var(--danger); font-weight: 600;
+                      margin-block: 0 .7rem; max-inline-size: 40rem; }
 .record-dialog-body form { display: flex; flex-direction: column; gap: .7rem; max-inline-size: 40rem; }
 /* The same ut-docs#1956 zero-minimum fix .catalog-form already carries for
    its own .field-pair inputs (see that rule's comment above), extended to a

@@ -284,6 +284,13 @@ DELETE FROM price_history
     OR variant_id IN (SELECT id FROM item_variants WHERE item_id = ?)`, itemID, itemID); err != nil {
 		return fmt.Errorf("clear price history for demo item %s: %w", itemID, err)
 	}
+	// ADR-0090 §2 (ut-docs#2013): a modifier group anchored to this demo
+	// item but shared with a surviving item is re-pointed at that item
+	// first, so the anchor column's cascade cannot destroy it. Same
+	// transaction as the DELETE below.
+	if err := NewModifierRepo(r.db).ReanchorGroupsBeforeItemDelete(ctx, tx, itemID); err != nil {
+		return err
+	}
 	res, err := tx.ExecContext(ctx, `DELETE FROM items WHERE id = ? AND is_sample_data = 1`, itemID)
 	if err != nil {
 		return fmt.Errorf("remove demo item %s: %w", itemID, err)
