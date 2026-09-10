@@ -424,6 +424,40 @@
     });
   }
 
+  // ut-docs#1998: the CSS reservations (body.osk-padded, .payment-overlay,
+  // .item-form-modal — app.css) used to hardcode 15.5rem, which drifted
+  // ~1.45rem short of the keyboard's real rendered height (288px measured
+  // at this build's 17px root font-size) — masked only by an unrelated
+  // container's own bottom padding absorbing the shortfall. Rather than
+  // hardcode a corrected number (which would just drift again the next
+  // time the root font-size, #osk's own layout, or env(safe-area-inset-
+  // bottom) changes), measure the real thing and let CSS read that.
+  // getBoundingClientRect().height already includes #osk's own padding
+  // (the safe-area-inset-bottom compensation) and border, so this is the
+  // exact space the keyboard occupies, not an approximation of it. Every
+  // layer (LAYOUTS, above) currently renders exactly 5 rows via fixed-height
+  // keys (.osk-key's min-block-size), so the real height doesn't vary
+  // between layers today — but this is still called after every layer
+  // switch (press()'s '?123'/'ABC' cases, below), not just once per show(),
+  // so that invariant is enforced rather than assumed: a future layer
+  // gaining/losing a row re-measures itself automatically instead of
+  // silently under/over-reserving. The `h !== lastReservedHeight` guard
+  // (also what keeps the resize listener below cheap) means this costs
+  // nothing extra when the height hasn't actually changed.
+  var lastReservedHeight = 0;
+  function updateReservedHeight() {
+    if (!osk) return;
+    var h = osk.getBoundingClientRect().height;
+    // A zero/negative reading means #osk isn't actually laid out yet (e.g.
+    // called before osk-open's display:block has taken effect) — leave the
+    // previous value (or CSS's own static fallback) rather than reserving
+    // no space at all for a keyboard that IS about to show.
+    if (h > 0 && h !== lastReservedHeight) {
+      document.documentElement.style.setProperty('--osk-reserved-height', h + 'px');
+      lastReservedHeight = h;
+    }
+  }
+
   function insert(text) {
     if (!current) return;
     if (typeof current.setRangeText === 'function' && current.type !== 'number' && current.type !== 'email') {
@@ -468,8 +502,8 @@
         lastShiftTap = nowTap;
         render();
         return;
-      case '?123': layer = 'sym'; render(); return;
-      case 'ABC': layer = baseLayout(); render(); return;
+      case '?123': layer = 'sym'; render(); updateReservedHeight(); return;
+      case 'ABC': layer = baseLayout(); render(); updateReservedHeight(); return;
       case 'SPACE': insert(' '); return;
       case '↵':
         if (current) {
@@ -502,6 +536,11 @@
     layer = isNumeric(el) ? (isSigned(el) ? 'numSigned' : 'num') : baseLayout();
     render();
     osk.classList.add('osk-open');
+    // Measure AFTER osk-open flips display:none -> block (getBoundingClientRect
+    // reads 0 height while display:none) and BEFORE osk-padded starts relying
+    // on the custom property it writes — same-tick, so there's no frame where
+    // the padding applies against a stale/default reservation.
+    updateReservedHeight();
     document.body.classList.add('osk-padded');
     // Suppress the native/OS on-screen keyboard while ours is up. Without
     // this, a real Android WebView shows BOTH: the page has no way to tell
@@ -715,6 +754,21 @@
   document.addEventListener('focusout', function (ev) {
     // If focus lands on another OSK-able field, its click re-shows it.
     deferHideCheck(50);
+  });
+
+  // ut-docs#1998: re-measure on resize/rotation while the keyboard is open —
+  // a device rotation can change env(safe-area-inset-bottom), and a ui-scale
+  // change (settings) changes the root font-size every rem-sized key/gap in
+  // #osk resolves against. Both change the keyboard's real height without
+  // ever calling show() again, so the reservation set at open-time alone
+  // would go stale exactly the way the original hardcoded constant did.
+  // No extra throttling needed beyond updateReservedHeight()'s own
+  // lastReservedHeight guard (above) — a resize that doesn't actually
+  // change #osk's height is already a cheap no-op there, so a `resize`
+  // storm (window drag, etc.) doesn't turn into a storm of custom-
+  // property writes/restyles.
+  window.addEventListener('resize', function () {
+    if (osk && osk.classList.contains('osk-open')) updateReservedHeight();
   });
 
   // On-demand affordance: reveal any data-osk-toggle buttons (they ship
