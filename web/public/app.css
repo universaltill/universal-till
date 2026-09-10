@@ -3291,11 +3291,14 @@ body.login-screen {
 /* --- Record dialog: full-bleed, .show()n (never showModal — the OSK
    reason, see .item-form-modal above), a flex column of exactly two parts:
    a pinned head (ONE row of chrome, nothing more — ut-docs#2000 found
-   catalog's taller head eating 42% of a 360px screen; no message line is
-   reserved, errors surface as the page banner after the redirect) and the
-   ONE scroll container. `position: fixed` replaces the top-layer
-   positioning .show() does not give; z-index 500 stays under #osk's 1000.
-   No ::backdrop rule — a .show() dialog never paints one. --- */
+   catalog's taller head eating 42% of a 360px screen) and the ONE scroll
+   container, whose first child is the in-dialog message region
+   (ut-docs#2020, .record-dialog-msg below) — collapsed (:empty) and
+   reserving no space until a refused mutation actually has something to
+   say. `position: fixed`
+   replaces the top-layer positioning .show() does not give; z-index 500
+   stays under #osk's 1000. No ::backdrop rule — a .show() dialog never
+   paints one. --- */
 .record-dialog { position: fixed; inset: 0; margin: 0; z-index: 500;
                  inline-size: 100%; max-inline-size: none;
                  block-size: 100%; max-block-size: none;
@@ -3328,6 +3331,20 @@ body.login-screen {
                               margin-inline-start: auto; }
 .record-dialog-body { flex: 1 1 auto; min-block-size: 0; overflow-y: auto;
                       padding: 1rem 1.5rem 1.5rem; }
+/* ut-docs#2020: :empty, not [hidden] — this element is the aria-live
+   region itself (record_dialog.html), and its content is swapped via
+   hx-swap="innerHTML" so the NODE stays put and only its text changes
+   (replacing the node, outerHTML-style, would generally stop assistive
+   tech from announcing it). Genuinely empty (record-dialog.js's open()
+   clears it with textContent = '', and the template renders it with no
+   whitespace) reads as :empty and collapses to nothing; a translated
+   message written into it — by the server's own refusal response, or by
+   record-dialog.js's dialogFailureFallback for a network/plain-text
+   failure the server response never covered — makes it non-empty and
+   this rule takes over. */
+.record-dialog-msg:empty { display: none; }
+.record-dialog-msg { color: var(--danger); font-weight: 600;
+                      margin-block: 0 .7rem; max-inline-size: 40rem; }
 .record-dialog-body form { display: flex; flex-direction: column; gap: .7rem; max-inline-size: 40rem; }
 @media (max-width: 700px) {
   .record-dialog-head { padding-inline: 1rem; }

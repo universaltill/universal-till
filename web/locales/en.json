@@ -349,6 +349,7 @@
   "common.edit": "Edit",
   "common.error.invalid_upload": "Invalid upload",
   "common.error.manager_or_admin_required": "Manager or admin required",
+  "common.error.network": "Connection problem. Check your network and try again.",
   "common.error.server": "Something went wrong. Please try again.",
   "common.loading": "Loading…",
   "common.no_results": "No matches — try a different search.",

@@ -893,6 +893,18 @@ var renderFiles = []string{
 	"ui/partials/record_dialog.html",
 }
 
+// ut-docs#2020: web/ui/partials/record_dialog_msg.html is deliberately NOT
+// in renderFiles above — unlike list_header.html/record_dialog.html, it is
+// never included by name from inside another page's template set (the
+// in-dialog message region's wrapper element lives directly in
+// record_dialog.html now, so the aria-live node itself is never
+// re-rendered — see that partial's own header comment for why). This file
+// exists solely to be parsed and executed on its own, standalone, via
+// httpx.RenderPartial for a refused mutation's htmx response
+// (categories_page.go's renderCategoryDialogError). ClonedTemplate parses
+// exactly the one file RenderPartial names, so it needs no place in this
+// shared set at all.
+
 // Render full page with layout + page + common partials
 func Render(tplPath string, data any) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {

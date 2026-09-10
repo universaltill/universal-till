@@ -349,6 +349,7 @@
   "common.edit": "ویرایش",
   "common.error.invalid_upload": "بارگذاری نامعتبر",
   "common.error.manager_or_admin_required": "نیاز به دسترسی مدیر یا سرپرست",
+  "common.error.network": "مشکل در اتصال. شبکه را بررسی کنید و دوباره تلاش کنید.",
   "common.error.server": "مشکلی پیش آمد. دوباره تلاش کنید.",
   "common.loading": "در حال بارگذاری…",
   "common.no_results": "موردی یافت نشد — عبارت دیگری را جستجو کنید.",

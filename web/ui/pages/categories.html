@@ -167,8 +167,27 @@
 
 {{/* The two slots record_dialog.html owes to this page — see that partial's
      header for the contract. */}}
+{{/* ut-docs#2020: hx-boost turns this plain method=post/action form into an
+     htmx request without changing what drives it — record-dialog.js's
+     open() still sets .action per row exactly as before. UNLIKE a real
+     browser, though, hx-boost reads action/method ONCE, at the moment
+     htmx first processes this element, not fresh on every submit — so
+     open()'s mutation would be invisible to it without record-dialog.js's
+     own reboost() helper (called right after every .setAttribute('action',
+     …) on a boosted form) forcing htmx to recapture the live value. See
+     reboost()'s own comment in record-dialog.js for how this was found
+     (a real, reproduced bug, not a hypothetical) before assuming a future
+     hx-boost/hx-post conversion elsewhere is safe without it.
+     hx-target + hx-swap="innerHTML" name where a REFUSAL lands
+     (categories_page.go's renderCategoryDialogError) — innerHTML, not
+     outerHTML, because #category-dialog-msg IS the aria-live region (see
+     record_dialog.html's own comment for why replacing the node itself
+     would break announcement). A success never reaches swap logic at all
+     (HX-Redirect short-circuits to a real navigation, see
+     record_dialog.html's own comment). */}}
 {{ define "record_dialog_fields" }}
-<form id="category-form" method="post" action="/api/categories" autocomplete="off">
+<form id="category-form" method="post" action="/api/categories" autocomplete="off"
+      hx-boost="true" hx-target="#category-dialog-msg" hx-swap="innerHTML">
   <label>{{ T "categories.col.name" }}
     <input type="text" name="name" required placeholder="{{ T "categories.create_placeholder" }}" />
   </label>
@@ -180,17 +199,31 @@
      offers Activate instead — record-dialog.js shows whichever
      data-record-when="active=…" matches the row it opened, so a delete
      icon can never quietly reactivate. Both forms take their action from
-     the row's data-record-destructive-action. */}}
+     the row's data-record-destructive-action.
+
+     hx-confirm, NOT the record-dialog.js-implemented data-record-confirm
+     ut-docs#2010 shipped (ut-docs#2020): htmx's own confirm handling reads
+     hx-confirm fresh, INSIDE the same call that goes on to issue the
+     request, so cancelling it truly aborts before any request is sent — no
+     separate listener racing it. That race is real, not theoretical:
+     hx-boost's own submit listener is bound directly to the FORM (the
+     event's target), so it runs before any handler registered on
+     `document` ever sees the event, whatever that handler's phase or
+     registration order — a document-level "confirm() then
+     preventDefault()" guard, correct for the plain non-htmx form #2010
+     shipped, could no longer stop it once these forms became boosted. */}}
 {{ define "record_dialog_destructive" }}
 <form method="post" data-record-destructive-form data-record-when="active=1"
-      data-record-confirm="{{ T "categories.deactivate_confirm" }}">
+      hx-confirm="{{ T "categories.deactivate_confirm" }}"
+      hx-boost="true" hx-target="#category-dialog-msg" hx-swap="innerHTML">
   <input type="hidden" name="active" value="0" />
   <button type="submit" class="btn secondary btn-icon btn-icon-danger"
           aria-label="{{ T "categories.deactivate" }}" title="{{ T "categories.deactivate" }}">
     <span class="btn-ico" aria-hidden="true">{{ icon "trash-2" }}</span>
   </button>
 </form>
-<form method="post" data-record-destructive-form data-record-when="active=0">
+<form method="post" data-record-destructive-form data-record-when="active=0"
+      hx-boost="true" hx-target="#category-dialog-msg" hx-swap="innerHTML">
   <input type="hidden" name="active" value="1" />
   <button type="submit" class="btn secondary">{{ T "categories.activate" }}</button>
 </form>

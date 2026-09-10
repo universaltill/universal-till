@@ -27,7 +27,20 @@
 //     the row's data-record-destructive-action
 //   [data-record-when="name=value"]           shown only when the opened row's
 //     data-field-<name> equals value (e.g. deactivate vs activate)
-//   [data-record-confirm="…"]                 a form that asks before submit
+//   [data-record-dialog-msg]                  the in-dialog error/status
+//     region (ut-docs#2020) — the aria-live="polite" node itself, cleared
+//     (emptied, never just hidden — see dialogFailureFallback below and
+//     app.css's ":empty" rule) on every open() so a previous refusal never
+//     appears to describe a new one. A form's own confirm-before-submit is
+//     hx-confirm (a real htmx attribute, not a data-record-* one this file
+//     reads) — see categories.html's record_dialog_destructive slot and
+//     the "no submit-confirm listener here any more" comment further down
+//     for why.
+//   data-error-network / data-error-server (on [data-record-dialog])
+//     back dialogFailureFallback below: translated text for a failure the
+//     server never got to answer meaningfully at all (network
+//     unreachable, or a plain-text 403/500 app.js's own htmx:beforeSwap
+//     does not force-swap) — see that function's own comment.
 //   [data-list-filter="<rows selector>"]      the search input; optional
 //     data-list-empty="<selector>" names the translated no-results row
 //   data-record-default-action                set HERE on the dialog's form
@@ -113,6 +126,27 @@
     return window.confirm(dialog.getAttribute('data-discard-confirm') || '');
   }
 
+  // ut-docs#2020: hx-boost reads a form's method+action ONCE, when htmx
+  // first PROCESSES the element (page load, or the last time something
+  // called htmx.process on it) — verified against the actual shipped
+  // web/public/vendor/htmx.min.js (1.9.12)'s lt()/_t(): the action is
+  // captured into a closure at that moment, not re-read fresh on every
+  // submit the way a native, non-boosted <form> would. Every open() below
+  // rewrites a boosted form's `action` to route it at the right row/create
+  // endpoint — without this, htmx keeps submitting to whatever `action`
+  // was on the form the FIRST time htmx ever saw it (its own static
+  // template default), regardless of which row is actually open.
+  // htmx.process() is htmx's own documented re-scan entry point for
+  // exactly this "I changed an hx-* or boosted attribute by hand" case —
+  // it deinits and reinstalls the element's handlers, recapturing the
+  // live action. A no-op if htmx.min.js hasn't loaded (defer + script
+  // order guarantees it has by the time any dialog can open) or the
+  // element isn't hx-boosted at all (a future record_dialog user with no
+  // htmx forms) — both harmless, so guarded rather than assumed.
+  function reboost(el) {
+    if (el && window.htmx && typeof window.htmx.process === 'function') window.htmx.process(el);
+  }
+
   function open(dialog, row, opener) {
     var action = row ? row.getAttribute('data-record-action') : null;
     if (row && !action) {
@@ -127,18 +161,28 @@
     var destructive = dialog.querySelector('[data-record-dialog-destructive]');
     var mode = row ? 'edit' : 'create';
     if (form) { defaultAction(form); form.reset(); }
+    // ut-docs#2020: a message left over from a previous refused save must
+    // not appear to describe THIS open — every open starts clean. Emptying
+    // the text is enough to hide it too: app.css's
+    // ".record-dialog-msg:empty { display: none }" reacts to that on its
+    // own, so there is no separate "hidden" flag to keep in sync with the
+    // text — the element's own emptiness IS the visibility state.
+    var msg = dialog.querySelector('[data-record-dialog-msg]');
+    if (msg) msg.textContent = '';
 
     if (row) {
       var fields = fieldsOf(row);
       if (form) {
         Object.keys(fields).forEach(function (name) { setField(form, name, fields[name]); });
         form.setAttribute('action', action);
+        reboost(form);
       }
       // Unconditional: a row with no destructive action clears it rather
       // than leaving the previous row's (review B1).
       var dAction = row.getAttribute('data-record-destructive-action');
       Array.prototype.forEach.call(dialog.querySelectorAll('[data-record-destructive-form]'), function (f) {
         if (dAction) f.setAttribute('action', dAction); else f.removeAttribute('action');
+        reboost(f);
       });
       Array.prototype.forEach.call(dialog.querySelectorAll('[data-record-when]'), function (el) {
         var cond = (el.getAttribute('data-record-when') || '').split('=');
@@ -147,7 +191,10 @@
       if (title) title.textContent = title.getAttribute('data-title-edit') || title.textContent;
       if (destructive) destructive.hidden = false;
     } else {
-      if (form) form.setAttribute('action', dialog.getAttribute('data-create-action') || defaultAction(form));
+      if (form) {
+        form.setAttribute('action', dialog.getAttribute('data-create-action') || defaultAction(form));
+        reboost(form);
+      }
       if (title) title.textContent = title.getAttribute('data-title-create') || title.textContent;
       if (destructive) destructive.hidden = true;
     }
@@ -260,13 +307,59 @@
     open(dlg, row, explicit || row.querySelector('[data-record-edit]') || row);
   });
 
-  // A destructive form asks first (the icon-only trash button has no
-  // caption to slow a mis-tap down).
-  document.addEventListener('submit', function (ev) {
-    var f = ev.target;
-    if (!f || !f.getAttribute || !f.hasAttribute('data-record-confirm')) return;
-    if (!window.confirm(f.getAttribute('data-record-confirm') || '')) ev.preventDefault();
-  });
+  // ut-docs#2020: a destructive form asking first (the icon-only trash
+  // button has no caption to slow a mis-tap down) used to be implemented
+  // HERE, via a data-record-confirm attribute + a document-level 'submit'
+  // listener calling window.confirm()/preventDefault(). Once these forms
+  // became hx-boosted, that raced hx-boost's own submit listener — bound
+  // directly to the FORM, the event's target, it always ran (and issued
+  // the request) BEFORE a listener on `document` ever saw the same event,
+  // so cancelling here no longer stopped anything. Replaced by htmx's own
+  // native hx-confirm attribute (see categories.html's
+  // record_dialog_destructive slot), which htmx reads fresh from INSIDE
+  // the same call that goes on to issue the request — no separate listener
+  // to race. No listener implements this any more; kept as a comment, not
+  // dead code, since a future page copying this pattern needs to know
+  // hx-confirm is the mechanism, not a data-record-confirm attribute this
+  // file no longer looks for.
+
+  // ut-docs#2020 (AC5, offline-first / ADR-0003): a request that gets NO
+  // coded response back at all — the network is unreachable — or a
+  // response app.js's own htmx:beforeSwap does NOT force-swap (that
+  // handler only ever swaps a non-2xx response that is real, non-empty
+  // text/html — a plain-text 403/500, e.g. a permission gate rejecting the
+  // request before categories_page.go's own mutation handler ever runs,
+  // falls straight through it) must still leave the operator told
+  // SOMETHING went wrong, same as any other refusal. Before this, neither
+  // case showed anything at all: app.js's own #pos-alert fallback exists
+  // only on the sale screen (web/ui/pages/index.html), nowhere on this
+  // app-wide dialog pattern — the exact ut-docs#916 class of bug, just for
+  // a dialog instead of a fragment target, and exactly the "spinner with
+  // no failure path" AC5 forbids.
+  //
+  // Global listeners (htmx:sendError/htmx:responseError fire on
+  // `document.body`, not a specific element) — MUST check ev.detail.elt is
+  // actually inside the open dialog, not just that a dialog happens to be
+  // open: base.html polls unrelated fragments on every page (e.g.
+  // #pairing-notice, hx-trigger="load, every 30s") whose own failure has
+  // nothing to do with whatever the operator is editing. Without this
+  // check, review found that exact poll failing 30s after opening an
+  // unrelated row stamped "something went wrong" into a dialog the
+  // operator had touched nothing in. Strings come from the dialog's own
+  // data-error-* attributes (record_dialog.html), filled from a locale
+  // key, so this file stays locale-free like everything else here.
+  function dialogFailureFallback(kind, ev) {
+    var dialog = openDialog();
+    if (!dialog) return;
+    var elt = ev && ev.detail && ev.detail.elt;
+    if (!elt || !dialog.contains(elt)) return;
+    var msg = dialog.querySelector('[data-record-dialog-msg]');
+    if (!msg) return;
+    var text = dialog.getAttribute(kind === 'network' ? 'data-error-network' : 'data-error-server');
+    if (text) msg.textContent = text;
+  }
+  document.body.addEventListener('htmx:sendError', function (ev) { dialogFailureFallback('network', ev); });
+  document.body.addEventListener('htmx:responseError', function (ev) { dialogFailureFallback('server', ev); });
 
   // Escape closes and Tab cycles — bound on each dialog element, not on
   // document, so neither can ever swallow a key meant for something else
