@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"strings"
+	"sync"
 
 	"github.com/universaltill/universal-till/internal/logging"
 )
@@ -16,7 +17,21 @@ import (
 // its admin-managed state (catalog, users, settings, translations) as one
 // bundle; a replica applies it wholesale — primary wins. A whole-bundle
 // fingerprint replaces per-table cursors so deletes propagate too.
-type SyncAdminRepo struct{ db *sql.DB }
+type SyncAdminRepo struct {
+	db *sql.DB
+
+	// ut-docs#1368: DumpAdmin's last result, keyed on the
+	// sync_admin_version.generation it was scanned under (migration 022's
+	// triggers bump that counter on every write to any adminTables entry).
+	// An unchanged-poll from a replica then costs one single-row SELECT
+	// instead of the full 34-table scan + marshal + hash. Per process and
+	// per repo instance; the counter itself lives in the DB, so a second
+	// instance (or a restart) just starts cold and converges.
+	mu         sync.Mutex
+	cacheGen   int64
+	cache      AdminBundle
+	cacheValid bool
+}
 
 func NewSyncAdminRepo(db *sql.DB) *SyncAdminRepo { return &SyncAdminRepo{db: db} }
 
@@ -294,6 +309,13 @@ var nonAdminTables = map[string]string{
 	// to THIS till's database. Syncing it would be circular in the same way
 	// as sync_journal_quarantine/schema_lineage below.
 	"schema_migrations": "this till's own applied-migrations record — migration-runner-internal, not app data",
+	// ut-docs#1368: the one-row generation counter migration 022's triggers
+	// bump on every write to an adminTables entry, read by DumpAdmin to
+	// decide whether its cached bundle is still current. Sync-internal by
+	// construction (it describes THIS database's admin state), and syncing
+	// it would be circular: applying it on a replica would fire nothing
+	// useful and its own value is meaningless off the till that counted it.
+	"sync_admin_version": "DumpAdmin's cache-invalidation counter for this till's own admin tables — sync-internal, per-database",
 
 	// Inventory/stock: D3's own additive-movement sync (ADR-0011), a
 	// separate mechanism from this bundle — already named above.
@@ -458,7 +480,69 @@ func (b AdminBundle) Fingerprint() string {
 }
 
 // DumpAdmin reads every synced table (per-till settings filtered out).
+//
+// ut-docs#1368: the scan only runs when sync_admin_version.generation has
+// moved since the cached bundle was built — otherwise the cached bundle is
+// returned as-is, and none of the admin tables are touched. The generation
+// is read BEFORE the scan, never after: a write committing between the two
+// then leaves the cache keyed on the OLDER generation (one redundant rescan
+// next poll), whereas reading it after could key a pre-write scan on the
+// post-write generation and serve stale rows until the next unrelated
+// change. The mutex is held across the scan on purpose: concurrent replica
+// polls on a cache miss share one scan instead of each running their own.
+//
+// Callers get the cached bundle's row maps, not copies — the handler only
+// encodes it. The outer Tables map is a fresh shallow copy so a caller that
+// adds/removes a table entry can't corrupt what the next poll is served.
 func (r *SyncAdminRepo) DumpAdmin(ctx context.Context) (AdminBundle, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	gen, tracked := r.adminGeneration(ctx)
+	if tracked && r.cacheValid && r.cacheGen == gen {
+		return r.cache.shallowCopy(), nil
+	}
+	bundle, err := r.scanAdmin(ctx)
+	if err != nil {
+		return AdminBundle{}, err
+	}
+	if tracked {
+		r.cache, r.cacheGen, r.cacheValid = bundle, gen, true
+	} else {
+		// No counter row to key on (a hand-edited DB — migrations always
+		// seed it): never cache, or a later call would hit on the same
+		// "no row" reading and serve stale content forever.
+		r.cacheValid = false
+	}
+	return bundle.shallowCopy(), nil
+}
+
+// adminGeneration reads the cheap change marker. tracked is false when the
+// row is missing, which callers treat as "always rescan" — never an error,
+// so a damaged counter can't take the whole sync path down.
+func (r *SyncAdminRepo) adminGeneration(ctx context.Context) (gen int64, tracked bool) {
+	err := r.db.QueryRowContext(ctx, `SELECT generation FROM sync_admin_version WHERE id = 1`).Scan(&gen)
+	if err != nil {
+		if err != sql.ErrNoRows {
+			logging.L().Warnf("sync admin: read sync_admin_version failed, falling back to a full scan: %v", err)
+		}
+		return 0, false
+	}
+	return gen, true
+}
+
+func (b AdminBundle) shallowCopy() AdminBundle {
+	out := AdminBundle{Tables: make(map[string][]map[string]any, len(b.Tables))}
+	for k, v := range b.Tables {
+		out.Tables[k] = v
+	}
+	return out
+}
+
+// scanAdmin is the full read DumpAdmin caches: every synced table, in
+// adminTables order, per-till/plugin-local rows filtered and skip/redact
+// columns dropped.
+func (r *SyncAdminRepo) scanAdmin(ctx context.Context) (AdminBundle, error) {
 	bundle := AdminBundle{Tables: map[string][]map[string]any{}}
 	for _, t := range adminTables {
 		rows, err := r.db.QueryContext(ctx,
