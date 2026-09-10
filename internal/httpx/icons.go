@@ -44,8 +44,19 @@ var railIcons = map[string]string{
 	"bug": `<path d="m8 2 1.88 1.88"/><path d="M14.12 3.88 16 2"/><path d="M9 7.13v-1a3.003 3.003 0 1 1 6 0v1"/><path d="M12 20c-3.3 0-6-2.7-6-6v-3a4 4 0 0 1 4-4h4a4 4 0 0 1 4 4v3c0 3.3-2.7 6-6 6"/><path d="M12 20v-9"/><path d="M6.53 9C4.6 8.8 3 7.1 3 5"/><path d="M6 13H2"/><path d="M3 21c0-2.1 1.7-3.9 3.8-4"/><path d="M20.97 5c0 2.1-1.6 3.8-3.5 4"/><path d="M22 13h-4"/><path d="M17.2 17c2.1.1 3.8 1.9 3.8 4"/>`,
 	// Users admin (users.title)
 	"users": `<path d="M16 21v-2a4 4 0 0 0-4-4H6a4 4 0 0 0-4 4v2"/><circle cx="9" cy="7" r="4"/><path d="M22 21v-2a4 4 0 0 0-3-3.87"/><path d="M16 3.13a4 4 0 0 1 0 7.75"/>`,
-	// Promotions (promotions.title)
+	// Items (nav.items, uislot.CoreMenu) — a price-tag glyph for the
+	// catalog/inventory area. This comment used to (wrongly) say
+	// "Promotions" — session_chip.html's Promotions link reused this same
+	// name until ut-docs#1958 found the two destinations rendering an
+	// identical icon, one reachable from the Menu launcher and the other
+	// from the manager session-chip dropdown, both visible on the same
+	// pilot tablet. Promotions now has its own "percent" glyph below.
 	"tag": `<path d="M12.586 2.586A2 2 0 0 0 11.172 2H4a2 2 0 0 0-2 2v7.172a2 2 0 0 0 .586 1.414l8.704 8.704a2.426 2.426 0 0 0 3.42 0l6.58-6.58a2.426 2.426 0 0 0 0-3.42z"/><circle cx="7.5" cy="7.5" r=".5" fill="currentColor"/>`,
+	// Promotions (promotions.title, session_chip.html) — ut-docs#1958: was
+	// "tag" above, which collided with Items' price-tag glyph. A percent
+	// sign is the discount/promo convention this doesn't share with any
+	// other entry. Lucide's "percent" path, unmodified.
+	"percent": `<line x1="19" x2="5" y1="5" y2="19"/><circle cx="6.5" cy="6.5" r="2.5"/><circle cx="17.5" cy="17.5" r="2.5"/>`,
 	// Translations (translations.title)
 	"globe": `<circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/>`,
 	// Operator / change PIN (auth.change_pin)
