@@ -11,7 +11,24 @@ import (
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/pages/itemsnav"
 )
+
+// redirectCategories answers a categories mutation with a redirect back to
+// GET /categories (target may carry a ?err=/&count= query the page reads to
+// show an inline message). categories.html's mutation forms are plain
+// `<form method="post">` with no hx-post/hx-boost, so these responses are
+// never seen by htmx today — a bare 303 is correct and unchanged from
+// before ut-docs#1950. (An earlier draft of this card added an
+// "HX-Request"-conditional HX-Redirect header here in anticipation of the
+// forms one day being converted to hx-post; independent review found that
+// reasoning backwards — htmx follows a plain 303 on its own AJAX requests
+// and would swap the result normally, so HX-Redirect would have forced an
+// unnecessary full-page reload instead. Reverted; revisit if/when these
+// forms actually gain hx-post.)
+func redirectCategories(w http.ResponseWriter, r *http.Request, target string) {
+	http.Redirect(w, r, target, http.StatusSeeOther)
+}
 
 // registerCategories wires the categories admin page (ut-docs#1898):
 // create/rename/deactivate/reorder for the flat category list. Categories
@@ -67,7 +84,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 	// requirePrimary.
 	requirePrimary := func(w http.ResponseWriter, r *http.Request) bool {
 		if d.SyncPrimaryURL(r.Context()) != "" {
-			http.Redirect(w, r, "/categories?err=categories.error.replica_use_primary", http.StatusSeeOther)
+			redirectCategories(w, r, "/categories?err=categories.error.replica_use_primary")
 			return false
 		}
 		return true
@@ -100,14 +117,27 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
-		httpx.Render("ui/pages/categories.html", map[string]any{
+		categoriesData := map[string]any{
 			"title":      "Categories",
 			"theme":      d.CurrentState().Theme,
 			"menuItems":  d.MenuSnapshot(),
 			"categories": rows,
 			"errKey":     errKey,
 			"errCount":   errCount,
-		})(w, r)
+		}
+		// ut-docs#1950: /categories is one of the /items rail's five section
+		// destinations — an htmx request from that panel (NOT a stale history
+		// restore, see httpx.IsFragmentSwap) gets just the "content" block
+		// plus an out-of-band refresh of the rail so its is-current highlight
+		// follows the click; a plain browser GET (deep link, or the redirect
+		// a mutation falls back to) still gets the exact same full standalone
+		// page as before this card.
+		if httpx.IsFragmentSwap(r) {
+			httpx.RenderContentFragment("ui/pages/categories.html", categoriesData)(w, r)
+			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/categories")
+			return
+		}
+		httpx.Render("ui/pages/categories.html", categoriesData)(w, r)
 	}
 
 	mux.HandleFunc("GET /categories", func(w http.ResponseWriter, r *http.Request) {
@@ -132,7 +162,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		name := strings.TrimSpace(r.PostFormValue("name"))
 		if name == "" {
-			http.Redirect(w, r, "/categories?err=categories.error.name_required", http.StatusSeeOther)
+			redirectCategories(w, r, "/categories?err=categories.error.name_required")
 			return
 		}
 		id, err := catRepo.CreateCategory(r.Context(), name)
@@ -141,11 +171,11 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			if err == data.ErrCategoryNameRequired {
 				key = "categories.error.name_required"
 			}
-			http.Redirect(w, r, "/categories?err="+key, http.StatusSeeOther)
+			redirectCategories(w, r, "/categories?err="+key)
 			return
 		}
 		audit(r, actor.ID, id, "category_create")
-		http.Redirect(w, r, "/categories", http.StatusSeeOther)
+		redirectCategories(w, r, "/categories")
 	})
 
 	mux.HandleFunc("POST /api/categories/{id}", func(w http.ResponseWriter, r *http.Request) {
@@ -160,7 +190,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 		_ = r.ParseForm()
 		name := strings.TrimSpace(r.PostFormValue("name"))
 		if name == "" {
-			http.Redirect(w, r, "/categories?err=categories.error.name_required", http.StatusSeeOther)
+			redirectCategories(w, r, "/categories?err=categories.error.name_required")
 			return
 		}
 		if err := catRepo.RenameCategory(r.Context(), id, name); err != nil {
@@ -168,11 +198,11 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			if err == data.ErrCategoryNameRequired {
 				key = "categories.error.name_required"
 			}
-			http.Redirect(w, r, "/categories?err="+key, http.StatusSeeOther)
+			redirectCategories(w, r, "/categories?err="+key)
 			return
 		}
 		audit(r, actor.ID, id, "category_rename")
-		http.Redirect(w, r, "/categories", http.StatusSeeOther)
+		redirectCategories(w, r, "/categories")
 	})
 
 	mux.HandleFunc("POST /api/categories/{id}/active", func(w http.ResponseWriter, r *http.Request) {
@@ -195,14 +225,14 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			// WHY the deactivate was refused, not just "failed", and no row
 			// is changed.
 			if hasItems, ok := err.(*data.ErrCategoryHasItems); ok {
-				http.Redirect(w, r, fmt.Sprintf("/categories?err=categories.error.deactivate_blocked&count=%d", hasItems.Count), http.StatusSeeOther)
+				redirectCategories(w, r, fmt.Sprintf("/categories?err=categories.error.deactivate_blocked&count=%d", hasItems.Count))
 				return
 			}
 			key := "categories.error.update"
 			if err == data.ErrCategoryNotFound {
 				key = "categories.error.not_found"
 			}
-			http.Redirect(w, r, "/categories?err="+key, http.StatusSeeOther)
+			redirectCategories(w, r, "/categories?err="+key)
 			return
 		}
 		action := "category_deactivate"
@@ -210,7 +240,7 @@ func registerCategories(mux *http.ServeMux, d *common.Deps) {
 			action = "category_activate"
 		}
 		audit(r, actor.ID, id, action)
-		http.Redirect(w, r, "/categories", http.StatusSeeOther)
+		redirectCategories(w, r, "/categories")
 	})
 
 	// Reorder from move-up/move-down buttons (ut-docs#1221's pattern, see

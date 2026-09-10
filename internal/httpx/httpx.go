@@ -809,6 +809,12 @@ var renderFiles = []string{
 	// own htmx poll response AND settings.html's page render both need this
 	// exact markup, so it's a partial riding along here too.
 	"ui/partials/window_mode_status.html",
+	// ut-docs#1950: items.html's own content template includes this by its
+	// {{ define "items_rail" }} name (same as help_topic.html/help_nav.html
+	// above) — riding along here is what lets that work through the plain
+	// httpx.Render("ui/pages/items.html", ...) call site, with no bespoke
+	// RenderWith file set of its own.
+	"ui/partials/items_rail.html",
 }
 
 // Render full page with layout + page + common partials
@@ -836,6 +842,57 @@ func RenderPartial(tplPath string, data any) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
+}
+
+// RenderContentFragment renders just the "content" define block of a full
+// page template — base.html + page + the same shared partial set Render(...)
+// uses — without base.html's surrounding chrome (no nav, no status bar). For
+// a route that is ALSO a full standalone page (so a deep link still works,
+// unchanged) and additionally needs to answer an htmx fragment request from
+// inside ANOTHER page's own panel (ut-docs#1950: /items' five section
+// destinations, embedded in its right-hand panel). Deliberately reuses the
+// exact same file set/cache key as Render rather than a separate hand-
+// written partial template — a forked copy of a page's markup would drift
+// from the real page the moment either one changed and the other didn't;
+// this can't drift because it IS the same parsed template, just entered at
+// "content" instead of "base". See httpx.IsFragmentSwap for the header
+// check a caller uses to decide which of Render/RenderContentFragment a
+// given request gets (mirrors renderHelpPage's original, older version of
+// that same check for /help/{topic}).
+func RenderContentFragment(tplPath string, data any) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		page := stripWebPrefix(tplPath)
+
+		locale := ResolveLocale(w, r)
+		files := append([]string{renderFiles[0], page}, renderFiles[1:]...)
+		t := template.Must(ClonedTemplate("httpx.Render:"+page, "base.html", withHelpHref(FuncsFor(locale), r), files...))
+		if err := t.ExecuteTemplate(w, "content", data); err != nil {
+			http.Error(w, err.Error(), http.StatusInternalServerError)
+		}
+	}
+}
+
+// IsFragmentSwap reports whether r is an ordinary in-page htmx navigation —
+// "HX-Request: true" and NOT ALSO "HX-History-Restore-Request: true".
+//
+// The second header matters: htmx caps its client-side history cache at 10
+// snapshots, so restoring an older bfcache'd URL makes htmx re-request it
+// itself with BOTH headers set, expecting the FULL page back (to replace
+// the whole tracked history element) rather than a bare swappable fragment
+// — checking HX-Request alone sent the fragment there too and left the
+// restored page broken (see renderHelpPage's original instance of this
+// exact check, ut-docs#433, for the full story). Shared here so every
+// handler that serves both a full standalone page and an htmx fragment of
+// the same content at the same route applies the identical rule — /items'
+// five section destinations (ut-docs#1950) need it five times over;
+// renderHelpPage itself keeps its own inline copy rather than being
+// refactored onto this helper, so as not to touch its own already-covered
+// behavior as a side effect of this card.
+func IsFragmentSwap(r *http.Request) bool {
+	if strings.EqualFold(r.Header.Get("HX-History-Restore-Request"), "true") {
+		return false
+	}
+	return strings.EqualFold(r.Header.Get("HX-Request"), "true")
 }
 
 func JSON[In any, Out any](fn func(In) (Out, error)) http.HandlerFunc {
