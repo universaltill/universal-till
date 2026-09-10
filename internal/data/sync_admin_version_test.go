@@ -3,6 +3,7 @@ package data
 import (
 	"context"
 	"fmt"
+	"slices"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/db"
@@ -86,6 +87,56 @@ func TestSyncAdminVersion_TriggersBumpGeneration(t *testing.T) {
 // cache would never hit — the "cheap check" would always say "changed".
 // last_seen_at and bearer_hash are both redactCols (never in the dump), so
 // a change to either must NOT move the generation; name/enrolled_at must.
+// TestSyncAdminVersion_TillsColumnSetPinsTheGatedTrigger (added in review,
+// ut-docs#1368): tills' UPDATE trigger is the ONLY gated one in migration
+// 022, and its WHEN clause enumerates the columns that actually travel —
+// name and enrolled_at. That enumeration is complete only while tills has
+// exactly these five columns: id (PK, never UPDATEd anywhere — grepped:
+// tills is only ever INSERTed, DELETEd, last_seen_at-touched by
+// TillByBearerHash, and bearer_hash-NULLed on the join-snapshot COPY),
+// bearer_hash and last_seen_at (both redactCols, never in the dump), plus
+// the two the gate names.
+//
+// A future migration adding a sixth, non-redacted column would put it in
+// the bundle (scanAdmin does SELECT *) while this gate kept ignoring it —
+// every later change to that column would be invisible to the cache, so
+// replicas would serve a stale tills roster until some unrelated admin
+// write happened to bump the generation. Silent, and nothing else catches
+// it: TestSchemaTablesAreClassified guards new TABLES, not new COLUMNS, and
+// TestSyncAdminVersion_EveryAdminTableHasTriggers only checks that the three
+// triggers exist, not what the UPDATE one is gated on.
+//
+// If this test fails because tills gained a column, decide which it is:
+//   - it travels in the bundle -> add it to the WHEN clause, in a NEW
+//     migration (022 is append-only, ADR-0074), and add it here;
+//   - it is till-local/secret -> add it to tills' redactCols in
+//     adminTables, and add it here.
+func TestSyncAdminVersion_TillsColumnSetPinsTheGatedTrigger(t *testing.T) {
+	d := openMigratedDB(t, "tills-columns.db")
+	rows, err := d.Query(`SELECT name FROM pragma_table_info('tills') ORDER BY name`)
+	if err != nil {
+		t.Fatalf("read tills columns: %v", err)
+	}
+	defer rows.Close()
+	var got []string
+	for rows.Next() {
+		var name string
+		if err := rows.Scan(&name); err != nil {
+			t.Fatalf("scan column name: %v", err)
+		}
+		got = append(got, name)
+	}
+	if err := rows.Err(); err != nil {
+		t.Fatalf("iterate tills columns: %v", err)
+	}
+	want := []string{"bearer_hash", "enrolled_at", "id", "last_seen_at", "name"}
+	if !slices.Equal(got, want) {
+		t.Fatalf("tills columns = %v, want %v — migration 022's gated tills UPDATE trigger\n"+
+			"(WHEN NOT (OLD.name IS NEW.name AND OLD.enrolled_at IS NEW.enrolled_at))\n"+
+			"only covers name/enrolled_at; see this test's doc comment for what to do", got, want)
+	}
+}
+
 func TestSyncAdminVersion_TillAuthTouchDoesNotBump(t *testing.T) {
 	ctx := context.Background()
 	d := openMigratedDB(t, "touch.db")
@@ -230,5 +281,74 @@ func TestAdminDumpCache_MissingVersionRowDegradesToRescan(t *testing.T) {
 	}
 	if len(b.Tables["categories"]) != 1 {
 		t.Fatalf("without a version row DumpAdmin must always rescan; got %d categories", len(b.Tables["categories"]))
+	}
+}
+
+// ut-docs#1368 follow-up (review finding): AdminFingerprint must answer
+// from the cache without re-scanning or re-marshaling the bundle — the
+// whole point of splitting it out of DumpAdmin.Fingerprint(). Same
+// rewound-generation proof as TestAdminDumpCache_ServesUntilGenerationMoves:
+// a row written after the cache was primed is invisible to the fingerprint
+// until the generation genuinely moves.
+func TestAdminFingerprint_ServesFromCacheWithoutRescanning(t *testing.T) {
+	ctx := context.Background()
+	d := openMigratedDB(t, "fp-cache.db")
+	mustExec(t, d, `INSERT INTO categories (id, name) VALUES ('cat1', 'Drinks')`)
+	repo := NewSyncAdminRepo(d.DB)
+
+	fp1, err := repo.AdminFingerprint(ctx)
+	if err != nil {
+		t.Fatalf("fingerprint: %v", err)
+	}
+	bundle, err := repo.DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump: %v", err)
+	}
+	if fp1 != bundle.Fingerprint() {
+		t.Fatalf("AdminFingerprint %s != DumpAdmin's own bundle.Fingerprint() %s", fp1, bundle.Fingerprint())
+	}
+
+	// Cache-hit proof: write a row, then rewind the counter to what the
+	// cache saw. AdminFingerprint must return the OLD fingerprint — it
+	// never touched the categories table to notice the new row.
+	gen := syncAdminGeneration(t, d)
+	mustExec(t, d, `INSERT INTO categories (id, name) VALUES ('cat2', 'Snacks')`)
+	mustExec(t, d, `UPDATE sync_admin_version SET generation = ? WHERE id = 1`, gen)
+	fp2, err := repo.AdminFingerprint(ctx)
+	if err != nil {
+		t.Fatalf("fingerprint (rewound): %v", err)
+	}
+	if fp2 != fp1 {
+		t.Fatalf("AdminFingerprint rescanned on an unchanged generation: %s, want cached %s", fp2, fp1)
+	}
+
+	// A DumpAdmin call sharing the same repo/cache must agree with what
+	// AdminFingerprint already served — they must never diverge.
+	stale, err := repo.DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump (rewound): %v", err)
+	}
+	if got := stale.Fingerprint(); got != fp2 {
+		t.Fatalf("DumpAdmin's bundle fingerprint %s != AdminFingerprint's %s — cache diverged", got, fp2)
+	}
+
+	// Now let the real trigger bump it: both methods see the new state.
+	mustExec(t, d, `UPDATE categories SET name = 'Cold Drinks' WHERE id = 'cat1'`)
+	fp3, err := repo.AdminFingerprint(ctx)
+	if err != nil {
+		t.Fatalf("fingerprint (bumped): %v", err)
+	}
+	if fp3 == fp1 {
+		t.Fatal("fingerprint did not move after a real catalog change")
+	}
+	fresh, err := repo.DumpAdmin(ctx)
+	if err != nil {
+		t.Fatalf("dump (bumped): %v", err)
+	}
+	if n := len(fresh.Tables["categories"]); n != 2 {
+		t.Fatalf("fresh bundle has %d categories, want 2", n)
+	}
+	if got := fresh.Fingerprint(); got != fp3 {
+		t.Fatalf("DumpAdmin's fingerprint %s != AdminFingerprint's %s after a real change", got, fp3)
 	}
 }

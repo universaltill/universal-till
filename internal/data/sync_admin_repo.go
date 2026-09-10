@@ -30,6 +30,7 @@ type SyncAdminRepo struct {
 	mu         sync.Mutex
 	cacheGen   int64
 	cache      AdminBundle
+	cacheFP    string
 	cacheValid bool
 }
 
@@ -483,13 +484,8 @@ func (b AdminBundle) Fingerprint() string {
 //
 // ut-docs#1368: the scan only runs when sync_admin_version.generation has
 // moved since the cached bundle was built — otherwise the cached bundle is
-// returned as-is, and none of the admin tables are touched. The generation
-// is read BEFORE the scan, never after: a write committing between the two
-// then leaves the cache keyed on the OLDER generation (one redundant rescan
-// next poll), whereas reading it after could key a pre-write scan on the
-// post-write generation and serve stale rows until the next unrelated
-// change. The mutex is held across the scan on purpose: concurrent replica
-// polls on a cache miss share one scan instead of each running their own.
+// returned as-is, and none of the admin tables are touched. See ensureCached
+// for the generation-ordering and mutex reasoning shared with AdminFingerprint.
 //
 // Callers get the cached bundle's row maps, not copies — the handler only
 // encodes it. The outer Tables map is a fresh shallow copy so a caller that
@@ -498,23 +494,65 @@ func (r *SyncAdminRepo) DumpAdmin(ctx context.Context) (AdminBundle, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 
-	gen, tracked := r.adminGeneration(ctx)
-	if tracked && r.cacheValid && r.cacheGen == gen {
-		return r.cache.shallowCopy(), nil
-	}
-	bundle, err := r.scanAdmin(ctx)
+	_, bundle, err := r.ensureCached(ctx)
 	if err != nil {
 		return AdminBundle{}, err
 	}
+	return bundle.shallowCopy(), nil
+}
+
+// AdminFingerprint is the cheap half of an admin-sync poll (ut-docs#1368
+// follow-up): on a cache hit it costs one single-row SELECT and a field
+// read — no table scan, no JSON marshal, no SHA-256. Before this method
+// existed, the HTTP handler always called DumpAdmin (cheap after the
+// generation-cache fix) and THEN bundle.Fingerprint() unconditionally on
+// the result — which still re-marshaled and re-hashed the whole bundle on
+// every single poll, measured at ~25ms against a ~25ms pre-fix scan: the
+// generation cache alone only removed the DB-scan half of the per-poll
+// cost, not the marshal+hash half the card also asked for. The handler now
+// calls this FIRST; DumpAdmin is only called when the caller's `?have=`
+// doesn't match this value, and that second call then hits the same cache
+// this call just populated (or served from), so it never re-scans either.
+func (r *SyncAdminRepo) AdminFingerprint(ctx context.Context) (string, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+
+	fp, _, err := r.ensureCached(ctx)
+	return fp, err
+}
+
+// ensureCached is the shared core of DumpAdmin and AdminFingerprint. Caller
+// must hold r.mu. Returns the bundle's fingerprint and content for the
+// CURRENT generation, computing and caching both together on a miss so a
+// fingerprint-only caller and a bundle caller converge on one scan instead
+// of each hashing or scanning independently.
+//
+// The generation is read BEFORE the scan, never after: a write committing
+// between the two then leaves the cache keyed on the OLDER generation (one
+// redundant rescan next poll), whereas reading it after could key a
+// pre-write scan on the post-write generation and serve stale rows until
+// the next unrelated change. The mutex is held across the scan on purpose:
+// concurrent replica polls on a cache miss share one scan instead of each
+// running their own.
+func (r *SyncAdminRepo) ensureCached(ctx context.Context) (fp string, bundle AdminBundle, err error) {
+	gen, tracked := r.adminGeneration(ctx)
+	if tracked && r.cacheValid && r.cacheGen == gen {
+		return r.cacheFP, r.cache, nil
+	}
+	bundle, err = r.scanAdmin(ctx)
+	if err != nil {
+		return "", AdminBundle{}, err
+	}
+	fp = bundle.Fingerprint()
 	if tracked {
-		r.cache, r.cacheGen, r.cacheValid = bundle, gen, true
+		r.cache, r.cacheGen, r.cacheFP, r.cacheValid = bundle, gen, fp, true
 	} else {
 		// No counter row to key on (a hand-edited DB — migrations always
 		// seed it): never cache, or a later call would hit on the same
 		// "no row" reading and serve stale content forever.
 		r.cacheValid = false
 	}
-	return bundle.shallowCopy(), nil
+	return fp, bundle, nil
 }
 
 // adminGeneration reads the cheap change marker. tracked is false when the
