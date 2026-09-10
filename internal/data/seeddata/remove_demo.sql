@@ -83,9 +83,29 @@ DELETE FROM price_history
     OR variant_id IN (SELECT v.id FROM item_variants v
                       WHERE v.item_id IN (SELECT id FROM demo_seed_removable));
 
+-- ADR-0090 §2 (ut-docs#2013): item_modifier_groups.item_id is a legacy
+-- "anchor" with its own ON DELETE CASCADE. A group anchored to a demo item
+-- about to go, but still linked (item_modifier_group_links) to an item that
+-- stays, is re-pointed at that surviving item first — otherwise the item
+-- delete below would cascade the shared group (and its options, and the
+-- survivor's link to it) away. A group with no surviving link is left
+-- anchored and cascades with its item, exactly as before. Same statement
+-- as ModifierRepo.ReanchorGroupsBeforeBulkItemDelete, inlined here because
+-- this script is executed verbatim (keep both in sync).
+UPDATE item_modifier_groups
+   SET item_id = (SELECT l.item_id FROM item_modifier_group_links l
+                   WHERE l.group_id = item_modifier_groups.id
+                     AND l.item_id NOT IN (SELECT id FROM demo_seed_removable)
+                   LIMIT 1)
+ WHERE item_id IN (SELECT id FROM demo_seed_removable)
+   AND EXISTS (SELECT 1 FROM item_modifier_group_links l
+                WHERE l.group_id = item_modifier_groups.id
+                  AND l.item_id NOT IN (SELECT id FROM demo_seed_removable));
+
 -- The item delete cascades to item_barcodes, item_images, item_variants
 -- (-> variant_barcodes), shortcut_buttons, related_items, item_modifiers
--- and item_station_routes (all declared ON DELETE CASCADE).
+-- (+ item_modifier_group_links) and item_station_routes (all declared ON
+-- DELETE CASCADE).
 DELETE FROM items WHERE id IN (SELECT id FROM demo_seed_removable);
 
 -- Categories: children before parents (self-referencing parent_id FK has no
