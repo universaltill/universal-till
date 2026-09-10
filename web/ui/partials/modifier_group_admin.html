@@ -1,0 +1,118 @@
+{{/* ut-docs#1957: the modifier-group/option CRUD forms, extracted out of
+     catalog_variants.html's old embedded div.catalog-detail-modifiers so the
+     SAME markup can be reused from both /modifiers (the shop-wide CRUD home,
+     one instance of this partial per item, grouped) and the "Manage
+     customization groups" nested <dialog> opened from an item's own edit
+     panel (one instance, scoped to that single item) — see modifiers.html's
+     "modifiers_list" and this same directory's own "modifier_groups_item_
+     panel" wrapper templates for the two call sites.
+
+     Expects: .ItemID, .ModifierGroups ([]data.ModifierGroup — every group
+     for this item, active or not, same ListAllGroupsForItem shape the old
+     embedded block always used, so a deactivated group/option stays visible
+     here for reactivation), and .Target — the container id (WITHOUT the
+     leading #) every form's hx-target/hx-swap points back at after a
+     mutation. The two real containers are #modifiers-list (the standalone
+     page) and #modifier-groups-modal-list (the nested dialog) — see
+     handlers.go's renderModifierMutationResult, which reads the mutation
+     request's own Hx-Target header right back to decide which of the two
+     to re-render, so this partial and that dispatch can never drift apart. */}}
+{{ define "modifier_group_admin" }}
+<div class="catalog-detail-modifiers">
+  <div class="muted catalog-detail-label">{{ T "catalog.modifiers.title" }}</div>
+  {{ if not .ModifierGroups }}<p class="muted">{{ T "catalog.modifiers.none" }}</p>{{ end }}
+
+  {{ range .ModifierGroups }}
+  {{ $group := . }}
+  <div class="modifier-admin-group{{ if not .IsActive }} vg-inactive{{ end }}">
+    <form hx-post="/api/catalog/modifier-group" hx-target="#{{ $.Target }}" hx-swap="outerHTML" class="modifier-admin-group-row">
+      <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
+      <input type="hidden" name="itemId" value="{{ $.ItemID }}">
+      <input type="hidden" name="id" value="{{ .ID }}">
+      <input type="text" name="name" value="{{ .Name }}" required placeholder="{{ T "catalog.modifiers.group_name" }}">
+      <label><input type="checkbox" name="required" value="1" {{ if .Required }}checked{{ end }}> {{ T "catalog.modifiers.required" }}</label>
+      <label>{{ T "catalog.modifiers.min" }} <input type="number" name="minSelect" value="{{ .MinSelect }}" min="0" style="max-inline-size:4rem"></label>
+      <label>{{ T "catalog.modifiers.max" }} <input type="number" name="maxSelect" value="{{ .MaxSelect }}" min="1" style="max-inline-size:4rem"></label>
+      <!-- Checkbox semantics: an unchecked box submits nothing, so this
+           pairs it with a hidden isActive=0 (same convention as the
+           variant form in catalog_variants.html) — without it, unchecking
+           "Active" and saving would silently do nothing. -->
+      <input type="hidden" name="isActive" value="0">
+      <label><input type="checkbox" name="isActive" value="1" {{ if .IsActive }}checked{{ end }}> {{ T "catalog.active" }}</label>
+      <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+    </form>
+
+    <div class="modifier-admin-options">
+      {{ range .Options }}
+      <form hx-post="/api/catalog/modifier-option" hx-target="#{{ $.Target }}" hx-swap="outerHTML" class="modifier-admin-option-row{{ if not .IsActive }} vg-inactive{{ end }}">
+        <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
+        <input type="hidden" name="itemId" value="{{ $.ItemID }}">
+        <input type="hidden" name="groupId" value="{{ $group.ID }}">
+        <input type="hidden" name="id" value="{{ .ID }}">
+        <input type="text" name="name" value="{{ .Name }}" required placeholder="{{ T "catalog.modifiers.option_name" }}">
+        <!-- ut-docs#1284: type="number" corrupts a decimal typed via the
+             kiosk OSK (see index.html's split-tender amount field). The
+             /api/catalog/modifier-option handler already parses this raw
+             string server-side, so no JS change is needed. -->
+        <input type="text" inputmode="decimal" name="priceDeltaMajor" class="modifier-price-major" data-minor="{{ .PriceDeltaMinor }}" {{ moneypattern currency.Decimals false }} title="{{ T "catalog.modifiers.price_delta" }}">
+        <input type="hidden" name="isActive" value="0">
+        <label><input type="checkbox" name="isActive" value="1" {{ if .IsActive }}checked{{ end }}> {{ T "catalog.active" }}</label>
+        <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+      </form>
+      {{ end }}
+      <form hx-post="/api/catalog/modifier-option" hx-target="#{{ $.Target }}" hx-swap="outerHTML" class="modifier-admin-option-row">
+        <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
+        <input type="hidden" name="itemId" value="{{ $.ItemID }}">
+        <input type="hidden" name="groupId" value="{{ $group.ID }}">
+        <input type="hidden" name="isActive" value="1">
+        <input type="text" name="name" required placeholder="{{ T "catalog.modifiers.option_name" }} — {{ T "catalog.modifiers.option_example" }}">
+        <input type="text" inputmode="decimal" name="priceDeltaMajor" {{ moneypattern currency.Decimals false }} placeholder="0.00">
+        <button class="btn" type="submit">{{ T "catalog.modifiers.add_option" }}</button>
+      </form>
+    </div>
+  </div>
+  {{ end }}
+
+  <form hx-post="/api/catalog/modifier-group" hx-target="#{{ .Target }}" hx-swap="outerHTML" class="modifier-admin-group-row modifier-admin-group-new">
+    <input type="hidden" name="panelItem" value="{{ .ItemID }}">
+    <input type="hidden" name="itemId" value="{{ .ItemID }}">
+    <input type="hidden" name="isActive" value="1">
+    <input type="text" name="name" required placeholder="{{ T "catalog.modifiers.add_group" }} — {{ T "catalog.modifiers.group_example" }}">
+    <label><input type="checkbox" name="required" value="1"> {{ T "catalog.modifiers.required" }}</label>
+    <label>{{ T "catalog.modifiers.min" }} <input type="number" name="minSelect" value="0" min="0" style="max-inline-size:4rem"></label>
+    <label>{{ T "catalog.modifiers.max" }} <input type="number" name="maxSelect" value="1" min="1" style="max-inline-size:4rem"></label>
+    <button class="btn" type="submit">{{ T "catalog.modifiers.add_group" }}</button>
+  </form>
+
+  <script>
+    (function () {
+      // Scoped to THIS invocation only via currentScript — this partial can
+      // render more than once on the same page (one per item on /modifiers),
+      // so a plain document-wide querySelectorAll would re-run the same
+      // conversion redundantly across every other instance's fields too.
+      var root = document.currentScript.closest('.catalog-detail-modifiers');
+      if (!root) return;
+      root.querySelectorAll('.modifier-price-major').forEach(function (el) {
+        var minor = parseInt(el.dataset.minor || '0', 10);
+        if (minor > 0 && window.utCurrency) {
+          el.value = window.utCurrency.toMajor(minor);
+        }
+      });
+    })();
+  </script>
+</div>
+{{ end }}
+
+{{/* Wraps a single item's modifier_group_admin in the nested "Manage
+     customization groups" dialog's own re-render container
+     (#modifier-groups-modal-list) — the item-scoped counterpart of
+     modifiers.html's shop-wide "modifiers_list". Expects the same data
+     shape (.ItemID, .ModifierGroups) with .Target already set to
+     "modifier-groups-modal-list" by the caller (handlers.go's
+     renderItemModifierGroupsPanel), so this template only owns the
+     wrapping id, not the target value itself. */}}
+{{ define "modifier_groups_item_panel" }}
+<div id="modifier-groups-modal-list">
+  {{ template "modifier_group_admin" . }}
+</div>
+{{ end }}
