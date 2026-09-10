@@ -11,7 +11,12 @@
         hx-swap="none"
         title="{{ .PluginName }}">
         {{ if .IconPath }}<img src="/plugin-icons/{{ .PluginID }}/{{ .PluginVersion }}/{{ .IconPath }}" alt="" width="20" height="20" style="vertical-align:middle; margin-inline-end:.4rem" loading="lazy">{{ end }}
-        {{ .Label }}
+        {{/* ut-docs#2015: a button entry's label is a translator key, same
+             as a page/export/report entry's — the owning plugin's own
+             locales/ overlay resolves it here (ADR-0010; the entry-label
+             contract itself is reference/plugin-manifest.md's entries
+             table, `label` row). */}}
+        {{ T .Label }}
       </button>
     </div>
     {{ end }}

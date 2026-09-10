@@ -1356,6 +1356,7 @@
   "reports.ask.placeholder": "e.g. What sold best this week?",
   "reports.ask.thinking": "Thinking…",
   "reports.ask.title": "Ask your till",
+  "reports.avg_sale": "Avg sale",
   "reports.business_day_start.help": "When one trading day ends and the next begins for reports and the day/week/month/year period picker — set this later than midnight if you trade past midnight (e.g. a bar or a late kitchen) so one night's takings aren't split across two report days.",
   "reports.business_day_start.label": "Business day starts at",
   "reports.busy_days": "Busiest days",
