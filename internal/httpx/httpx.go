@@ -24,6 +24,7 @@ import (
 	moneypkg "github.com/universaltill/universal-till/internal/money"
 	"github.com/universaltill/universal-till/internal/paths"
 	"github.com/universaltill/universal-till/internal/pihealth"
+	"github.com/universaltill/universal-till/internal/plugins"
 	"github.com/universaltill/universal-till/internal/selfupdate"
 	"github.com/universaltill/universal-till/internal/updates"
 	uiassets "github.com/universaltill/universal-till/web"
@@ -117,7 +118,16 @@ var baseFuncs = template.FuncMap{
 	// bar's persistent chip surfaces internal/pihealth's local, offline
 	// check. Always false on non-Pi platforms.
 	"psuunderpowered": func() bool { return pihealth.Current().Underpowered },
-	"jsonVals":        jsonVals,
+	// pluginupdatesavailable/pluginupdatescount: StartPluginUpdateScheduler
+	// (ut-docs#1953) publishes the count of installed-plugin updates still
+	// waiting on a merchant decision — everything it didn't auto-apply
+	// itself (a language pack auto-applies silently; anything else needs a
+	// human). Same always-cheap, no-DB-query, offline-safe status-bar chip
+	// pattern as updateavailable/latestversion above, just for plugins
+	// instead of the core app.
+	"pluginupdatesavailable": func() bool { return plugins.CurrentPendingUpdates().Count > 0 },
+	"pluginupdatescount":     func() int { return plugins.CurrentPendingUpdates().Count },
+	"jsonVals":               jsonVals,
 	// Default target for the nav's contextual "?" — the manual's index.
 	// Render() overrides this per request with the topic documenting the page
 	// actually being rendered; fragment renderers that also parse nav.html

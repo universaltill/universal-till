@@ -1,7 +1,9 @@
 package pages
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"html"
 	"io"
@@ -560,119 +562,154 @@ func handleUninstallPlugin(d *common.Deps) http.HandlerFunc {
 	}
 }
 
+// Sentinel errors classifying why applyPluginUpdate could not proceed, so a
+// caller can react without parsing strings — the HTTP handler below maps
+// each to its historical status code/message, and the background scheduler
+// (StartPluginUpdateScheduler, ut-docs#1953) just logs-and-moves-on for all
+// of them (a failed background check must never surface as a merchant-facing
+// error, only as one fewer auto-applied update this tick).
+var (
+	ErrPluginUpdateReplicaGuard  = errors.New("plugin update: replica till must update via primary")
+	ErrPluginUpdateNotInstalled  = errors.New("plugin update: plugin not installed")
+	ErrPluginUpdateNoListing     = errors.New("plugin update: plugin has no marketplace listing (manually imported?)")
+	ErrPluginUpdateNoMarketplace = errors.New("plugin update: marketplace not configured")
+	ErrPluginUpdateInstallFailed = errors.New("plugin update: install failed")
+)
+
+// applyPluginUpdate installs the latest marketplace version of an
+// already-installed plugin, going through the same download-token +
+// Ed25519 verification path as install-from-marketplace
+// (MarketplaceInstaller) — never an unverified extract. Shared by the
+// manual "Update" button (handleUpdatePlugin) and the background scheduler
+// (StartPluginUpdateScheduler, ut-docs#1953) so both apply an update
+// identically: replica guard, rollback snapshot, tax reconciliation and
+// plugin reload included.
+func applyPluginUpdate(ctx context.Context, d *common.Deps, pluginID string) (fromVersion, toVersion string, err error) {
+	// ut-docs#460: version changes are primary-authoritative too — a
+	// replica-local update would put this till on a version the sync pull
+	// then fights (it converges versions to the primary's).
+	if d.SyncPrimaryURL(ctx) != "" {
+		return "", "", ErrPluginUpdateReplicaGuard
+	}
+
+	currentPlugin, exists := d.InstalledPlugin(pluginID)
+	if !exists {
+		return "", "", ErrPluginUpdateNotInstalled
+	}
+
+	// Marketplace installs record the listing↔plugin mapping in the
+	// install-status store; manual imports have no listing and cannot be
+	// updated from the marketplace.
+	statusStore := plugins.NewInstallStatusStore(d.Db)
+	listingID := ""
+	if records, err := statusStore.List(ctx); err == nil {
+		for id, record := range records {
+			if record.PluginID == pluginID {
+				listingID = id
+				break
+			}
+		}
+	}
+	if listingID == "" {
+		return "", "", ErrPluginUpdateNoListing
+	}
+
+	// Keep the current version available for rollback.
+	rollbackMgr := plugins.NewRollbackManager(d.Db, paths.Plugins())
+	sourcePath := filepath.Join(paths.Plugins(), pluginID, currentPlugin.Version)
+	if err := rollbackMgr.StoreVersion(pluginID, currentPlugin.Version, sourcePath); err != nil {
+		log.Printf("Warning: Failed to store version for rollback: %v", err)
+	}
+
+	effCfg := enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)
+	client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
+	installer, err := plugins.NewMarketplaceInstaller(&effCfg, client, d.Db)
+	if err != nil {
+		return "", "", ErrPluginUpdateNoMarketplace
+	}
+	result, err := installer.Install(ctx, plugins.MarketplaceInstallRequest{
+		ListingID:  listingID,
+		MerchantID: effCfg.Marketplace.ClientID,
+		StoreID:    effCfg.Marketplace.StoreID,
+		DeviceID:   marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
+		DeviceArch: fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
+		OnStateChange: func(state plugins.InstallLifecycleState) {
+			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+				ListingID: listingID,
+				PluginID:  pluginID,
+				State:     state,
+			})
+		},
+	})
+	if err != nil {
+		failure := plugins.ClassifyInstallError(err)
+		_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+			ListingID:  listingID,
+			PluginID:   pluginID,
+			State:      plugins.InstallStateFailed,
+			MessageKey: failure.MessageKey,
+			Retryable:  failure.Retryable,
+		})
+		return "", "", fmt.Errorf("%w: %v", ErrPluginUpdateInstallFailed, err)
+	}
+	_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
+		ListingID:      listingID,
+		PluginID:       result.PluginID,
+		PluginName:     result.Name,
+		CurrentVersion: result.Version,
+		State:          plugins.InstallStateActive,
+	})
+
+	// ut-docs#1370: an update re-activates the plugin — on a standalone
+	// till "Update" is the remediation a merchant is most likely to try, so
+	// it must reconcile the catalog's pinned takeaway rates too.
+	reconcileTaxDeTakeawayOverridesIfActivated(ctx, d.Db, result.PluginID)
+
+	if err := d.ReloadPlugins(ctx); err != nil {
+		log.Printf("Warning: failed to reload plugin manager: %v", err)
+	}
+
+	return currentPlugin.Version, result.Version, nil
+}
+
 // handleUpdatePlugin updates an installed plugin to the latest marketplace
-// version. It resolves the plugin's listing ID (install-status records map
-// listing → plugin) and delegates to the same MarketplaceInstaller used by
-// install-from-marketplace, so the update goes through the download-token +
-// Ed25519 verification path — never an unverified extract.
+// version — the manual counterpart to StartPluginUpdateScheduler's
+// background auto-apply (ut-docs#1953); both go through applyPluginUpdate.
 func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 	return func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "plugin_management") {
 			common.LocalizedError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required")
 			return
 		}
-		ctx := r.Context()
-		// ut-docs#460: version changes are primary-authoritative too — a
-		// replica-local update would put this till on a version the sync
-		// pull then fights (it converges versions to the primary's).
-		if d.SyncPrimaryURL(ctx) != "" {
-			writeReplicaGuard(w, "plugins.manage.error.replica_use_primary")
-			return
-		}
 		pluginID := r.PathValue("id")
-
 		if pluginID == "" {
 			http.Error(w, "plugin ID is required", http.StatusBadRequest)
 			return
 		}
 
-		currentPlugin, exists := d.InstalledPlugin(pluginID)
-		if !exists {
-			http.Error(w, "Plugin not installed", http.StatusNotFound)
-			return
-		}
-
-		// Marketplace installs record the listing↔plugin mapping in the
-		// install-status store; manual imports have no listing and cannot be
-		// updated from the marketplace.
-		statusStore := plugins.NewInstallStatusStore(d.Db)
-		listingID := ""
-		if records, err := statusStore.List(ctx); err == nil {
-			for id, record := range records {
-				if record.PluginID == pluginID {
-					listingID = id
-					break
-				}
+		fromVersion, toVersion, err := applyPluginUpdate(r.Context(), d, pluginID)
+		if err != nil {
+			switch {
+			case errors.Is(err, ErrPluginUpdateReplicaGuard):
+				writeReplicaGuard(w, "plugins.manage.error.replica_use_primary")
+			case errors.Is(err, ErrPluginUpdateNotInstalled):
+				http.Error(w, "Plugin not installed", http.StatusNotFound)
+			case errors.Is(err, ErrPluginUpdateNoListing):
+				http.Error(w, "Plugin has no marketplace listing (manually imported?)", http.StatusNotFound)
+			case errors.Is(err, ErrPluginUpdateNoMarketplace):
+				http.Error(w, "Marketplace not configured", http.StatusServiceUnavailable)
+			default:
+				http.Error(w, fmt.Sprintf("Update failed: %v", err), http.StatusBadGateway)
 			}
-		}
-		if listingID == "" {
-			http.Error(w, "Plugin has no marketplace listing (manually imported?)", http.StatusNotFound)
 			return
-		}
-
-		// Keep the current version available for rollback.
-		rollbackMgr := plugins.NewRollbackManager(d.Db, paths.Plugins())
-		sourcePath := filepath.Join(paths.Plugins(), pluginID, currentPlugin.Version)
-		if err := rollbackMgr.StoreVersion(pluginID, currentPlugin.Version, sourcePath); err != nil {
-			log.Printf("Warning: Failed to store version for rollback: %v", err)
-		}
-
-		effCfg := enroll.EnsureRegistered(ctx, d.Cfg, d.Settings)
-		client := marketplace.NewClient(&effCfg.Marketplace, oauth.NewTokenClient(&effCfg.Marketplace))
-		installer, err := plugins.NewMarketplaceInstaller(&effCfg, client, d.Db)
-		if err != nil {
-			http.Error(w, "Marketplace not configured", http.StatusServiceUnavailable)
-			return
-		}
-		result, err := installer.Install(ctx, plugins.MarketplaceInstallRequest{
-			ListingID:  listingID,
-			MerchantID: effCfg.Marketplace.ClientID,
-			StoreID:    effCfg.Marketplace.StoreID,
-			DeviceID:   marketplace.DeviceIDFromConfig(&effCfg.Marketplace),
-			DeviceArch: fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH),
-			OnStateChange: func(state plugins.InstallLifecycleState) {
-				_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
-					ListingID: listingID,
-					PluginID:  pluginID,
-					State:     state,
-				})
-			},
-		})
-		if err != nil {
-			failure := plugins.ClassifyInstallError(err)
-			_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
-				ListingID:  listingID,
-				PluginID:   pluginID,
-				State:      plugins.InstallStateFailed,
-				MessageKey: failure.MessageKey,
-				Retryable:  failure.Retryable,
-			})
-			http.Error(w, fmt.Sprintf("Update failed: %v", err), http.StatusBadGateway)
-			return
-		}
-		_ = statusStore.Save(ctx, plugins.InstallStatusRecord{
-			ListingID:      listingID,
-			PluginID:       result.PluginID,
-			PluginName:     result.Name,
-			CurrentVersion: result.Version,
-			State:          plugins.InstallStateActive,
-		})
-
-		// ut-docs#1370: an update re-activates the plugin — on a standalone
-		// till "Update" is the remediation a merchant is most likely to try,
-		// so it must reconcile the catalog's pinned takeaway rates too.
-		reconcileTaxDeTakeawayOverridesIfActivated(ctx, d.Db, result.PluginID)
-
-		if err := d.ReloadPlugins(ctx); err != nil {
-			log.Printf("Warning: failed to reload plugin manager: %v", err)
 		}
 
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"data": map[string]interface{}{
-				"message":      fmt.Sprintf("Plugin updated from %s to %s", currentPlugin.Version, result.Version),
-				"from_version": currentPlugin.Version,
-				"to_version":   result.Version,
+				"message":      fmt.Sprintf("Plugin updated from %s to %s", fromVersion, toVersion),
+				"from_version": fromVersion,
+				"to_version":   toVersion,
 			},
 			"error": nil,
 		})

@@ -23,6 +23,12 @@ type UpdateInfo struct {
 	ArtifactHash     string
 	DeviceArch       string
 	TrustTier        string
+	// CanonicalType is the marketplace listing's plugin type (ADR-0002's
+	// 20-type taxonomy, e.g. "language", "theme") — carried through so a
+	// caller (StartPluginUpdateScheduler, ut-docs#1953) can decide whether
+	// this update is safe to auto-apply without a merchant's say-so. Not
+	// persisted anywhere locally; it comes from the catalog snapshot only.
+	CanonicalType string
 }
 
 // UpdateChecker detects available plugin updates from marketplace
@@ -98,6 +104,7 @@ func (uc *UpdateChecker) CheckForUpdates(ctx context.Context) ([]UpdateInfo, err
 					ArtifactHash:     strings.TrimPrefix(catalogPlugin.ArtifactHash, "sha256:"),
 					DeviceArch:       catalogPlugin.DeviceArch,
 					TrustTier:        catalogPlugin.TrustTier,
+					CanonicalType:    catalogPlugin.CanonicalType,
 				}
 				updates = append(updates, update)
 

@@ -84,6 +84,39 @@ func TestCheckForUpdatesFindsNewerVersion(t *testing.T) {
 	}
 }
 
+// TestCheckForUpdatesCarriesCanonicalType covers ut-docs#1953:
+// StartPluginUpdateScheduler decides whether to auto-apply an update by the
+// installed plugin's canonical type (language packs only), so UpdateInfo
+// must actually carry it through from the catalog snapshot.
+func TestCheckForUpdatesCarriesCanonicalType(t *testing.T) {
+	db := managerTestDB(t)
+	ctx := context.Background()
+
+	seedInstalledPlugin(t, db, "com.test.lang", "German Pack", "1.0.0", "none", true)
+	if _, err := db.Exec(`UPDATE plugin_catalog SET author = 'ut' WHERE id = 'com.test.lang'`); err != nil {
+		t.Fatalf("set author: %v", err)
+	}
+	if _, err := db.Exec(`UPDATE plugins SET author = 'ut' WHERE id = 'com.test.lang'`); err != nil {
+		t.Fatalf("set author: %v", err)
+	}
+
+	repo := seededCatalogRepo(t, []marketplace.PluginSummary{
+		{DeveloperID: "ut", Name: "German Pack", Version: "1.1.0", CanonicalType: "language"},
+	})
+
+	uc := NewUpdateChecker(db, repo)
+	updates, err := uc.CheckForUpdates(ctx)
+	if err != nil {
+		t.Fatalf("CheckForUpdates: %v", err)
+	}
+	if len(updates) != 1 {
+		t.Fatalf("updates = %+v", updates)
+	}
+	if updates[0].CanonicalType != "language" {
+		t.Fatalf("CanonicalType = %q, want %q", updates[0].CanonicalType, "language")
+	}
+}
+
 func TestCheckForUpdatesNoInstalledOrCurrent(t *testing.T) {
 	db := managerTestDB(t)
 	ctx := context.Background()
