@@ -515,7 +515,17 @@ body.sale-screen .session-admin-link { display: none; }
        background: var(--surface-2); border-block-start: 1px solid var(--border);
        box-shadow: 0 -4px 16px rgba(0,0,0,.12); user-select: none; touch-action: manipulation; }
 #osk.osk-open { display: block; }
-body.osk-padded { padding-block-end: 15.5rem; }
+/* ut-docs#1998: the reserved space used to be a hardcoded 15.5rem, which
+   drifted ~1.45rem short of #osk's real rendered height (measured 288px at
+   this build's 17px root font-size) — silently masked by an unrelated
+   container's own bottom padding rather than actually correct. `--osk-
+   reserved-height` is written by osk.js's show() from #osk's OWN
+   getBoundingClientRect().height every time it opens, so this tracks the
+   real keyboard regardless of root font-size, safe-area-inset, or any
+   future change to the keyboard's own layout — a hardcoded number (even a
+   corrected one) would just drift again the next time any of those change.
+   The static fallback below only matters if JS somehow never ran. */
+body.osk-padded { padding-block-end: var(--osk-reserved-height, 17rem); }
 .osk-row { display: flex; justify-content: center; gap: .3rem; margin-block-end: .3rem; }
 .osk-key { flex: 1 1 0; max-inline-size: 4.2rem; min-block-size: 2.9rem;
            font-size: 1.15rem; border: 1px solid var(--border); border-radius: .5rem;
@@ -825,15 +835,17 @@ label.field-checks { display: flex; flex-direction: row; align-items: center; ga
   .catalog-form-body { padding-inline: 1rem; }
 }
 /* ut-docs#1901, same fix as body.osk-padded .payment-overlay above: the
-   OSK is `position: fixed` + `z-index: 1000`, spanning the bottom 15.5rem
-   of the viewport regardless of this dialog's own box — without this,
-   whichever field/button sits in that band is genuinely covered, not
-   merely close to an edge, the exact failure #1385 found for the payment
-   overlay. ut-docs#1956: the dialog is full-bleed and anchored to the top
-   edge (inset-block-start: 0 wins the over-constrained vertical box), so
-   shortening its block-size keeps the whole form — pinned head and
-   scrolling body alike — clear of the keyboard. */
-body.osk-padded .item-form-modal { block-size: calc(100% - 15.5rem); }
+   OSK is `position: fixed` + `z-index: 1000`, spanning the bottom of the
+   viewport regardless of this dialog's own box — without this, whichever
+   field/button sits in that band is genuinely covered, not merely close to
+   an edge, the exact failure #1385 found for the payment overlay. ut-docs#1956:
+   the dialog is full-bleed and anchored to the top edge (inset-block-start:
+   0 wins the over-constrained vertical box), so shortening its block-size
+   keeps the whole form — pinned head and scrolling body alike — clear of
+   the keyboard. ut-docs#1998: reads `--osk-reserved-height` (see the
+   body.osk-padded rule above) instead of the old hardcoded 15.5rem, which
+   had drifted short of the keyboard's real height. */
+body.osk-padded .item-form-modal { block-size: calc(100% - var(--osk-reserved-height, 17rem)); }
 .catalog-extra { margin-top: .9rem; border-top: 1px solid var(--border); padding-top: .6rem; }
 .catalog-extra summary { font-weight: 600; cursor: pointer; color: var(--muted);
                          font-size: .85rem; }
@@ -966,7 +978,8 @@ body.osk-padded .item-form-modal { block-size: calc(100% - 15.5rem); }
      A flexible tender row does mean its rendered height now tracks
      `.pos-container`'s own available height (plain `auto` never did),
      which moves the scan-row/"Add"-button boundary whenever that height
-     changes — most visibly `body.osk-padded`'s 15.5rem reservation while
+     changes — most visibly `body.osk-padded`'s reservation (ut-docs#1998:
+     now `--osk-reserved-height`, previously a hardcoded 15.5rem) while
      the on-screen keyboard opens/closes. That surfaced a real, PRE-
      EXISTING race in osk.js: closing the keyboard (focusin's hide())
      reflows the page synchronously, and a reflow landing between a
@@ -1495,7 +1508,8 @@ a.btn, a.btn:hover { text-decoration: none; }
    including the custom on-screen keyboard (#osk, appended to <body>, not
    inside the dialog) that kiosk Pis depend on -- there's no OS keyboard to
    fall back to there. Anchored near the top rather than vertically
-   centered so it never sits under the OSK's fixed 15.5rem bottom panel
+   centered so it never sits under the OSK's fixed bottom panel (ut-docs#1998:
+   height now tracks `--osk-reserved-height`, previously a hardcoded 15.5rem)
    while it's open. */
 /* ut-docs#1542: #hold-modal can now open WHILE #payment-overlay is also
    open (the overlay's own in-body Hold Sale duplicate, index.html, added
@@ -2109,9 +2123,9 @@ a.btn, a.btn:hover { text-decoration: none; }
   box-shadow: 0 0 24px rgba(0, 0, 0, .25);
   background: var(--surface);
 }
-/* ut-docs#1385 (independent review): body.osk-padded reserves 15.5rem at
-   the bottom of <body> for the on-screen keyboard (line ~441 above), but
-   that's a BODY padding -- it does nothing for .payment-overlay, which is
+/* ut-docs#1385 (independent review): body.osk-padded reserves space at the
+   bottom of <body> for the on-screen keyboard (line ~511 above), but that's
+   a BODY padding -- it does nothing for .payment-overlay, which is
    position: fixed and sized/positioned relative to the viewport, not to
    body's padding box. Without this, the OSK (z-index 1000) simply draws
    on top of whatever the overlay's own fixed 100dvh height put underneath
@@ -2127,10 +2141,13 @@ a.btn, a.btn:hover { text-decoration: none; }
    its content now genuinely overflows, so the panel scrolls internally to
    reach Complete/Clear -- the same mechanism .tab-panel's own 6rem-floor
    comment already relies on, just newly triggered because there is
-   finally a reason to. */
+   finally a reason to. ut-docs#1998: reads `--osk-reserved-height` (same
+   custom property as body.osk-padded above, written by osk.js's show()
+   from #osk's own measured height) instead of a hardcoded 15.5rem that had
+   drifted ~1.45rem short of the keyboard's real rendered height. */
 body.osk-padded .payment-overlay {
-  height: calc(100dvh - 15.5rem);
-  max-height: calc(100dvh - 15.5rem);
+  height: calc(100dvh - var(--osk-reserved-height, 17rem));
+  max-height: calc(100dvh - var(--osk-reserved-height, 17rem));
 }
 .payment-overlay-body {
   display: flex; flex-direction: column; height: 100%; min-height: 0;
