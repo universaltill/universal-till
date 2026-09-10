@@ -143,7 +143,7 @@ func TestParseMenuAmendments_EmptyConfigIsZeroAmendments(t *testing.T) {
 			t.Fatalf("empty config: got %v, %v", got, err)
 		}
 	}
-	got, err := ParseMenuAmendmentsJSON("p", "")
+	got, err := ParseAmendmentsJSON("p", "")
 	if err != nil || len(got) != 0 {
 		t.Fatalf("empty config_json: got %v, %v", got, err)
 	}
@@ -158,8 +158,8 @@ func TestParseMenuAmendments_AcceptsGoIntOrder(t *testing.T) {
 	}
 }
 
-func TestParseMenuAmendmentsJSON_RoundTripsPersistedConfig(t *testing.T) {
-	got, err := ParseMenuAmendmentsJSON("p", `{"slot":"menu","amendments":[{"key":"/tables","hide":true},{"key":"/items","label_key":"a.b","order":50}]}`)
+func TestParseAmendmentsJSON_RoundTripsPersistedConfig(t *testing.T) {
+	got, err := ParseAmendmentsJSON("p", `{"slot":"menu","amendments":[{"key":"/tables","hide":true},{"key":"/items","label_key":"a.b","order":50}]}`)
 	if err != nil {
 		t.Fatal(err)
 	}

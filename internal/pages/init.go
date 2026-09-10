@@ -299,12 +299,22 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	// needing a no-op Settings save. Same best-effort, non-fatal stance as
 	// setup_page.go's call: a boot must never be blocked over a cosmetic
 	// menu personalization.
+	// ut-docs#2006: reload unless it's a genuine no-op (no error, nothing
+	// changed) — an error still reloads, since a failed reinstall can leave
+	// the DB changed (removeSalon succeeded) even though Sync itself
+	// returned an error.
 	if shopType, _, err := setStore.Get(ctx, common.KeyShopType); err != nil {
 		log.Warnf("boot: could not read shop_type for builtin layout reconciliation: %v", err)
-	} else if err := builtinlayouts.Sync(ctx, db, shopType); err != nil {
-		log.Warnf("boot: could not sync builtin layout for shop_type %q: %v", shopType, err)
-	} else if err := dp.ReloadPlugins(ctx); err != nil {
-		log.Warnf("boot: could not reload plugins after shop_type layout sync: %v", err)
+	} else {
+		changed, syncErr := builtinlayouts.Sync(ctx, db, shopType)
+		if syncErr != nil {
+			log.Warnf("boot: could not sync builtin layout for shop_type %q: %v", shopType, syncErr)
+		}
+		if syncErr != nil || changed {
+			if err := dp.ReloadPlugins(ctx); err != nil {
+				log.Warnf("boot: could not reload plugins after shop_type layout sync: %v", err)
+			}
+		}
 	}
 
 	// Boot-time release-all (ut-docs#1712), then boot re-claim (ut-docs#1704)

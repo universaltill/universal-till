@@ -420,34 +420,14 @@ func FindConflict(candidate, installed []Amendment) (Conflict, bool) {
 	return Conflict{}, false
 }
 
-// ParseMenuAmendmentsJSON parses the config_json persisted for a `layout`
-// plugin entry (internal/data.PluginRepo.ListLayoutEntries). "" is a
-// layout entry that declares nothing.
-func ParseMenuAmendmentsJSON(pluginID, configJSON string) ([]Amendment, error) {
-	cfg, err := unmarshalConfig(configJSON)
-	if err != nil || cfg == nil {
-		return nil, err
-	}
-	return ParseMenuAmendments(pluginID, cfg)
-}
-
-// ParseItemsAmendmentsJSON is ParseMenuAmendmentsJSON's twin for the Items
-// slot (ut-docs#1911).
-func ParseItemsAmendmentsJSON(pluginID, configJSON string) ([]Amendment, error) {
-	cfg, err := unmarshalConfig(configJSON)
-	if err != nil || cfg == nil {
-		return nil, err
-	}
-	return ParseItemsAmendments(pluginID, cfg)
-}
-
-// ParseAmendmentsJSON is the slot-dispatching sibling both Manager.loadLayoutEntries
-// and validateLayoutEntries call (ut-docs#1911): a caller with a layout
-// entry's raw persisted config, that doesn't yet know which slot it
-// targets, parses it once and routes to that slot's own parser/validator.
-// A config with no "slot" field — every manifest written before this
-// card — defaults to MenuSlot, ParseMenuAmendments' own long-standing
-// default, so no existing manifest changes behaviour.
+// ParseAmendmentsJSON parses the config_json persisted for a `layout`
+// plugin entry (internal/data.PluginRepo.ListLayoutEntries) and dispatches
+// on its declared slot (ut-docs#1911: generalized from the original
+// Menu-only ParseMenuAmendmentsJSON, which had no other slot to route to).
+// "" is a layout entry that declares nothing. A config with no "slot"
+// field — every manifest written before this card — defaults to MenuSlot,
+// ParseMenuAmendments' own long-standing default, so no existing manifest
+// changes behaviour.
 func ParseAmendmentsJSON(pluginID, configJSON string) ([]Amendment, error) {
 	cfg, err := unmarshalConfig(configJSON)
 	if err != nil || cfg == nil {

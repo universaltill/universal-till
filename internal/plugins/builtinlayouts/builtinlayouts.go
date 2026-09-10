@@ -67,28 +67,44 @@ func pluginForShopType(shopType string) string {
 // common.Deps.ReloadPlugins(ctx) afterward (the same call every other plugin
 // lifecycle change already makes) or the change won't show up in the menu
 // until the next reload.
-func Sync(ctx context.Context, db *sql.DB, shopType string) error {
+//
+// Sync reports via its changed return whether it actually installed, removed
+// or reinstalled the plugin, so a caller can skip that reload on a genuine
+// no-op (ut-docs#2006) — but changed is never the caller's signal to skip a
+// reload on ERROR: on the reinstall path (a stale version replaced with the
+// current one), removeSalon can succeed before installSalon then fails,
+// leaving the DB saying "uninstalled" while the caller's in-memory state
+// still carries the pre-existing amendments. removeSalon's own doc comment
+// already states file-removal failure is deliberately swallowed specifically
+// so the caller's ReloadPlugins always runs — callers must apply that same
+// intent to ANY error Sync returns, not only removeSalon's, and reload
+// regardless (see setup_page.go/settings_page.go's shop_type handlers for
+// the pattern: reload unless err == nil && !changed).
+func Sync(ctx context.Context, db *sql.DB, shopType string) (changed bool, err error) {
 	want := pluginForShopType(shopType)
 	repo := data.NewPluginRepo(db)
 
 	installedVersion, found, err := repo.GetInstalledPluginVersion(ctx, SalonPluginID)
 	if err != nil {
-		return fmt.Errorf("builtinlayouts: check salon layout installed: %w", err)
+		return false, fmt.Errorf("builtinlayouts: check salon layout installed: %w", err)
 	}
 
 	if want != SalonPluginID {
-		if found {
-			return removeSalon(ctx, db)
+		if !found {
+			return false, nil // already in the shop_type's right state
 		}
-		return nil // already in the shop_type's right state
+		if err := removeSalon(ctx, db); err != nil {
+			return false, err
+		}
+		return true, nil
 	}
 
 	m, err := plugins.ParseManifest(bytes.NewReader(layoutsalon.ManifestJSON))
 	if err != nil {
-		return fmt.Errorf("builtinlayouts: parse embedded salon manifest: %w", err)
+		return false, fmt.Errorf("builtinlayouts: parse embedded salon manifest: %w", err)
 	}
 	if found && installedVersion == m.Version {
-		return nil // already installed at the current embedded version
+		return false, nil // already installed at the current embedded version
 	}
 	if found {
 		// A different version is installed (a stale copy from before a
@@ -96,10 +112,13 @@ func Sync(ctx context.Context, db *sql.DB, shopType string) error {
 		// so installSalon always lands a clean copy, never a mix of two
 		// versions' locale files under paths.Plugins().
 		if err := removeSalon(ctx, db); err != nil {
-			return err
+			return false, err
 		}
 	}
-	return installSalon(ctx, db, m)
+	if err := installSalon(ctx, db, m); err != nil {
+		return false, err
+	}
+	return true, nil
 }
 
 // installSalon writes plugins/layout-salon's embedded locale files to disk

@@ -2391,7 +2391,7 @@ ORDER BY pe.sort_order, pe.plugin_id, pe.key
 
 // LayoutEntryRow is one type:"layout" plugin entry (ADR-0088): the
 // amendment document over a UI slot lives in ConfigJSON, parsed by
-// internal/uislot.ParseMenuAmendmentsJSON. Never read per render — the
+// internal/uislot.ParseAmendmentsJSON. Never read per render — the
 // plugin manager loads these once per lifecycle change (Decision I).
 type LayoutEntryRow struct {
 	PluginID   string
