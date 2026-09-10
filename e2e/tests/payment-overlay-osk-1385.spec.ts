@@ -40,6 +40,10 @@ test.describe('payment overlay: the on-screen keyboard stays tappable while it i
     await setOskMode(page, 'on');
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    // ut-docs#1984: scan first — Payment is disabled on an empty basket.
+    await page.getByRole('textbox').first().fill('5000000000012');
+    await page.locator('.scan-row button[type=submit]').click();
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
     await page.getByTestId('payment-open').click();
     await expect(page.locator('#payment-overlay')).toBeVisible();
@@ -78,6 +82,10 @@ test.describe('payment overlay: the on-screen keyboard stays tappable while it i
     await setOskMode(page, 'on');
     await page.goto('/');
     await page.waitForSelector('.pos-container');
+    // ut-docs#1984: scan first — Payment is disabled on an empty basket.
+    await page.getByRole('textbox').first().fill('5000000000012');
+    await page.locator('.scan-row button[type=submit]').click();
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
     await page.getByTestId('payment-open').click();
     await page.locator('.tender .tab').nth(1).click();

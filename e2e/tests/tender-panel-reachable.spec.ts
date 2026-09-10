@@ -95,6 +95,12 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     await page.waitForSelector('.pos-container');
 
     // ut-docs#1252: same overlay-open precondition as the test above.
+    // ut-docs#1984: the Payment button is now genuinely disabled on an
+    // empty basket, so it must be scanned into non-empty first — same
+    // scan-then-open sequence as the test above.
+    await page.getByRole('textbox').first().fill('5000000000012');
+    await page.locator('.scan-row button[type=submit]').click();
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
     await page.getByTestId('payment-open').click();
     await expect(page.locator('#payment-overlay')).toBeVisible();
 
@@ -128,6 +134,10 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
       restore.locator('..').locator('button[type=submit]').click(),
     ]);
     await page.waitForEvent('load');
+    // e2e/README: a spec that adds basket items must complete its sale or
+    // explicitly clear it — this test only hit-tests, never taps Cash, so
+    // ut-docs#1984's scan-first item above must be cleared explicitly.
+    await page.request.post('/api/pos/reset');
     assertClean();
   });
 

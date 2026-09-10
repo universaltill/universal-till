@@ -191,6 +191,10 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
   test('tender Pay/Split tabs carry the full WAI-ARIA tabs pattern and respond to arrow keys', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/');
+    // ut-docs#1984: scan first — Payment is disabled on an empty basket.
+    await page.getByRole('textbox').first().fill('5000000000012');
+    await page.locator('.scan-row button[type=submit]').click();
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
     // ut-docs#1252: the Pay/Split tab bar now lives inside the
     // #payment-overlay dialog, opened by the .payment-trigger button.
@@ -222,6 +226,10 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
     await expect(payTab).toBeFocused();
 
     assertClean();
+    // e2e/README: a spec that adds basket items must complete its sale or
+    // explicitly clear it — this test (outside the nested describe's own
+    // afterEach) never did either before ut-docs#1984's scan-first change.
+    await page.request.post('/api/pos/reset');
   });
 
   test('arrow keys follow the VISUAL direction under RTL, not raw DOM order', async ({ page }) => {
@@ -233,6 +241,10 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
     const assertClean = watchConsole(page);
     await page.goto('/?lang=fa');
     await expect(page.locator('html')).toHaveAttribute('dir', 'rtl');
+    // ut-docs#1984: scan first — Payment is disabled on an empty basket.
+    await page.getByRole('textbox').first().fill('5000000000012');
+    await page.locator('.scan-row button[type=submit]').click();
+    await expect(page.locator('#basket')).toContainText('Coca-Cola');
 
     // ut-docs#1252: the Pay/Split tab bar now lives inside the
     // #payment-overlay dialog, opened by the .payment-trigger button.
@@ -260,5 +272,8 @@ test.describe('tab-bar overflow + ARIA tabs pattern (ut-docs#424)', () => {
     await expect(domFirst).toHaveAttribute('aria-selected', 'true');
 
     assertClean();
+    // e2e/README: a spec that adds basket items must complete its sale or
+    // explicitly clear it — see the matching note on the test above.
+    await page.request.post('/api/pos/reset');
   });
 });
