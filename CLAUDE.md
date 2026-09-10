@@ -135,10 +135,17 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
   `guard-kiosk-launch-flags.sh`, `guard-android-status-address.sh`,
   `guard-android-i18n.sh`, `guard-emoji-font.sh`, `guard-htmx-loaded.sh`,
   `guard-autofill-suppression.sh`, `guard-e2e-fixtures-import.sh`,
-  `check-brand-assets.sh`, and
-  `guard-makefile-version.sh` (all under `scripts/ci/`). This list drifts as
+  `check-brand-assets.sh`, `guard-makefile-version.sh`, and
+  `guard-shellcheck-version.sh` (all under `scripts/ci/`). This list drifts as
   guards are added — check the workflow file's `build` job for the
   authoritative, current one rather than trusting this snapshot.
+  `guard-shellcheck-version.sh` (ut-docs#1955) is the shellcheck-version
+  equivalent of the `golangci-lint-action`'s `version: v2.5.0` pin just
+  above — CI's `shellcheck` comes preinstalled on `ubuntu-latest` rather
+  than through a pinnable action, so this guard instead fails loudly the
+  moment the installed `shellcheck --version` drifts from its own hardcoded
+  baseline, so a runner-image bump can't silently change which findings
+  `scripts/ci/*.sh` gets flagged for.
 - **`android/**` or `mobile/**` changes also gate on
   `.github/workflows/android-ci.yml`** (ut-docs#1658, filter widened to
   include `mobile/**` by ut-docs#1721's review — `mobile` is the

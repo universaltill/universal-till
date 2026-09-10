@@ -53,6 +53,10 @@ jobs:
         uses: golangci/golangci-lint-action@v8
         with:
           version: v2.5.0
+      - name: Shellcheck version guard
+        run: bash scripts/ci/guard-shellcheck-version.sh
+      - name: Shellcheck version guard regression test
+        run: bash scripts/ci/guard-shellcheck-version_test.sh
       - name: Shellcheck (scripts/ci/*.sh)
         # ut-docs#1943: no shell linting existed anywhere in this pipeline
         # despite the build job running 55+ shell scripts (the guard-*.sh
@@ -64,7 +68,8 @@ jobs:
         # this step out (check-brand-assets.sh's negated `! grep` checks
         # silently skipped errexit on the exact violation they existed to
         # catch, SC2251). ubuntu-latest ships shellcheck preinstalled, so
-        # no separate install step.
+        # no separate install step — its version is pinned/guarded by the
+        # "Shellcheck version guard" step above (ut-docs#1955), not here.
         run: shellcheck scripts/ci/*.sh
       - name: Data-access policy guard
         run: bash scripts/ci/guard-data-access.sh
