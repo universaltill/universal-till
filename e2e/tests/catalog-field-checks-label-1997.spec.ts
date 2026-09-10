@@ -4,10 +4,10 @@ import { openNewItemForm, closeItemForm, watchConsole } from './helpers';
 
 // Same helper as catalog-item-form-1956.spec.ts's own openRow (not exported
 // from helpers.ts, so duplicated here rather than reaching into another
-// spec file) — a plain cell, not the row's centre, since the row-click
-// handler ignores clicks landing on a `.btn`.
+// spec file) — ut-docs#1951's card grid made the whole card the click
+// target (no inner buttons left to avoid landing on).
 async function openRow(page: Page, name: string) {
-  await page.locator('#catalog-table .catalog-row', { hasText: name }).first().locator('td').first().click();
+  await page.locator('#catalog-table .catalog-row', { hasText: name }).first().click();
   await expect(page.locator('#item-form-modal')).toBeVisible();
 }
 

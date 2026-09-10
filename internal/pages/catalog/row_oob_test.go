@@ -197,17 +197,17 @@ func TestItemDeactivate_LastItemBringsBackEmptyState(t *testing.T) {
 		t.Fatalf("expected a row delete fragment:\n%s", body)
 	}
 	// The placeholder rides back in as a beforeend append (the swap
-	// directive sits on the wrapper tbody — htmx inserts its CHILDREN, so
-	// the row itself stays plain) with the same markup the table's own
-	// else-branch renders.
+	// directive sits on the wrapper div — htmx inserts its CHILDREN, so
+	// the placeholder itself stays plain) with the same markup the grid's
+	// own else-branch renders.
 	if !strings.Contains(body, `hx-swap-oob="beforeend:#catalog-tbody"`) {
 		t.Fatalf("expected a beforeend append fragment:\n%s", body)
 	}
 	if !strings.Contains(body, `id="catalog-empty-row"`) {
 		t.Fatalf("expected the empty-state placeholder row:\n%s", body)
 	}
-	if !strings.Contains(body, `class="empty"`) {
-		t.Fatalf("expected the placeholder's empty-cell markup:\n%s", body)
+	if !strings.Contains(body, `class="empty catalog-empty"`) {
+		t.Fatalf("expected the placeholder's empty-state markup:\n%s", body)
 	}
 }
 
@@ -296,15 +296,6 @@ func TestBarcodeDelete_NonPanelResolvesOwningItemRow(t *testing.T) {
 func TestItemImageUpload_RespondsWithRowOOB(t *testing.T) {
 	mux, db := imageUploadTestDeps(t)
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "S1", Name: "Latte", BasePrice: 250, IsActive: true})
-	// A SECOND item already carries a thumbnail, so uploading itm1's photo
-	// below is not the catalog's first image — the thumbnail column is
-	// already showing and this upload can't flip that (ut-docs#1842 review
-	// F1). Without this, uploading the catalog's very first-ever photo is
-	// itself a legitimate exception to "no full table" — see
-	// TestItemImageUpload_FirstEverThumbnailSwapsWholeTable below — and
-	// would make this assertion wrong for the wrong reason.
-	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm2", SKU: "S2", Name: "Existing Imaged Item", BasePrice: 100, IsActive: true})
-	testsupport.SeedImage(t, db, "img-itm2", "itm2", "/public/assets/items/itm2/thumb.png")
 
 	body, ct := multipartUpload(t, map[string]string{"item_id": "itm1"}, "photo.png", validPNG(t))
 	req := httptest.NewRequest(http.MethodPost, "/api/catalog/item/image", body)
@@ -322,54 +313,5 @@ func TestItemImageUpload_RespondsWithRowOOB(t *testing.T) {
 	// The row now resolves the freshly written thumb.
 	if !strings.Contains(got, "/public/assets/items/itm1/thumb.png") {
 		t.Fatalf("expected the row to reference the uploaded thumbnail:\n%s", got)
-	}
-}
-
-// TestItemImageUpload_FirstEverThumbnailSwapsWholeTable is ut-docs#1842
-// review F1's exact scenario: a merchant with an all-text catalog (no
-// thumbnail column, 7 <th>s) uploads their FIRST-ever item photo. A plain
-// row-update fragment can't add the missing <th>/<td>s to the <thead> and
-// every OTHER row — only re-rendering the whole table can — so this is the
-// one deliberate, reviewed exception to TestItemImageUpload_RespondsWithRowOOB's
-// "no full table" guarantee above, not a regression of it.
-func TestItemImageUpload_FirstEverThumbnailSwapsWholeTable(t *testing.T) {
-	mux, db := imageUploadTestDeps(t)
-	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "S1", Name: "Latte", BasePrice: 250, IsActive: true})
-	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm2", SKU: "S2", Name: "Plain Item", BasePrice: 100, IsActive: true})
-	// Confirm the starting state really has no thumbnail column, so the
-	// swap below is provably a transition and not a tautology.
-	initial := httptest.NewRecorder()
-	mux.ServeHTTP(initial, httptest.NewRequest(http.MethodGet, "/catalog", nil))
-	if strings.Contains(initial.Body.String(), "catalog-thumb-cell") {
-		t.Fatalf("test setup invalid: catalog already has a thumbnail column:\n%s", initial.Body.String())
-	}
-
-	body, ct := multipartUpload(t, map[string]string{"item_id": "itm1"}, "photo.png", validPNG(t))
-	req := httptest.NewRequest(http.MethodPost, "/api/catalog/item/image", body)
-	req.Header.Set("Content-Type", ct)
-	rec := httptest.NewRecorder()
-	mux.ServeHTTP(rec, req)
-	if rec.Code != http.StatusOK {
-		t.Fatalf("upload: want 200, got %d: %s", rec.Code, rec.Body.String())
-	}
-	got := rec.Body.String()
-	if !strings.Contains(got, `id="catalog-table" hx-swap-oob="true"`) {
-		t.Fatalf("expected a whole-table OOB swap on the first-ever thumbnail:\n%s", got)
-	}
-	// BOTH rows must now carry the thumbnail cell — itm1 (the one just
-	// imaged) AND itm2 (untouched by this request), proving the whole
-	// table was re-rendered, not just the mutated row.
-	if strings.Count(got, `class="catalog-thumb-cell"`) != 2 {
-		t.Fatalf("expected both rows to carry the thumbnail column after the swap:\n%s", got)
-	}
-	if !strings.Contains(got, "/public/assets/items/itm1/thumb.png") {
-		t.Fatalf("expected the row to reference the uploaded thumbnail:\n%s", got)
-	}
-	// The header must actually carry the new thumbnail <th> too — this is
-	// the whole point of swapping the table instead of just the row: a
-	// row fragment could never have added this.
-	if strings.Count(got, "<th>") != 8 {
-		t.Fatalf("expected 8 header cells (7 base + the new thumbnail column), got %d:\n%s",
-			strings.Count(got, "<th>"), got)
 	}
 }
