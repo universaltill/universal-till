@@ -355,6 +355,7 @@
   "common.edit": "Düzenle",
   "common.error.invalid_upload": "Geçersiz yükleme",
   "common.error.manager_or_admin_required": "Yönetici veya admin gerekli",
+  "common.error.network": "Bağlantı sorunu. Ağınızı kontrol edip tekrar deneyin.",
   "common.error.server": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
   "common.loading": "Yükleniyor…",
   "common.no_results": "Eşleşme yok — farklı bir arama deneyin.",
