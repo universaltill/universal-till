@@ -39,7 +39,15 @@
          OOB row-delete marker safely no-ops here since this page has no
          order-row-{receipt} element. Tapping Collect again afterwards is a
          harmless no-op under OrderStatusAllowed's forward-only rule. */}}
-    <button class="btn" hx-post="/api/orders/{{ .Sale.ReceiptNo }}/status" hx-vals='{"status":"collected"}' hx-target="#order-status-line" hx-swap="innerHTML" data-testid="collect-btn">{{ T "orders.status.collected" }}</button>
+    {{/* ut-docs#1964: wrapped so writeOrderCollectFragment's OOB swap
+         (order_status.go, id="order-collect-{receipt}") can remove the
+         button the instant a tap collects the order — this page's own
+         narrower, Collect-only scope, deliberately NOT the list's
+         order-actions-{receipt} id (which would wrongly grow
+         Preparing/Ready/Cancel buttons this page never offers). */}}
+    <span id="order-collect-{{ .Sale.ReceiptNo }}">
+      <button class="btn" hx-post="/api/orders/{{ .Sale.ReceiptNo }}/status" hx-vals='{"status":"collected"}' hx-target="#order-status-line" hx-swap="innerHTML" data-testid="collect-btn">{{ T "orders.status.collected" }}</button>
+    </span>
     <a class="btn secondary" href="/refund/{{ .Sale.ReceiptNo }}">{{ T "orders.view.refund_link" }}</a>
   </div>
 </div>

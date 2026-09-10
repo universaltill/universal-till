@@ -27,7 +27,10 @@ import { watchConsole } from './helpers';
 // default e2e till; no fixture setup needed.
 
 async function firstFeeRow(page) {
-  await page.goto('/settings');
+  // ut-docs#1960: Settings is two-pane now — the deep link selects the
+  // Payments section on arrival (at 390px that also swaps the section
+  // list out for the panel, since a hash counts as a real selection).
+  await page.goto('/settings#settings-payments');
   const row = page.locator('.fee-row').first();
   await expect(row, 'Payments card must render at least one .fee-row').toBeVisible();
   return row;
@@ -148,14 +151,21 @@ test.describe('settings Payments card .fee-row stays legible and reachable (ut-d
   test('settings-wide cards render without their own internal horizontal scrollbar', async ({ page }) => {
     const assertClean = watchConsole(page);
     await page.goto('/settings');
-    const cards = page.locator('.card.settings-wide');
-    const count = await cards.count();
-    expect(count, 'expected at least one .settings-wide card (Backup / All Settings tables)').toBeGreaterThan(0);
-    for (let i = 0; i < count; i++) {
-      const box = await cards.nth(i).evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }));
+    // ut-docs#1960: Settings is two-pane now and shows ONE section at a
+    // time. A hidden card measures 0/0 and would pass this trivially, so
+    // collect the wide cards' ids, then open and measure each one shown.
+    const ids = await page.locator('.card.settings-wide').evaluateAll((els) => els.map((el) => el.id));
+    expect(ids.length, 'expected at least one .settings-wide card (Backup / All Settings tables)').toBeGreaterThan(0);
+    for (const id of ids) {
+      expect(id, 'every settings-wide card needs an id to be deep-linkable').not.toBe('');
+      await page.goto(`/settings#${id}`);
+      const card = page.locator(`#${id}`);
+      await expect(card).toBeVisible();
+      const box = await card.evaluate((el) => ({ scrollWidth: el.scrollWidth, clientWidth: el.clientWidth }));
+      expect(box.clientWidth, `settings-wide card #${id} must actually be rendered`).toBeGreaterThan(0);
       expect(
         box.scrollWidth,
-        `settings-wide card #${i} must not scroll horizontally itself (scrollWidth ${box.scrollWidth} vs clientWidth ${box.clientWidth})`,
+        `settings-wide card #${id} must not scroll horizontally itself (scrollWidth ${box.scrollWidth} vs clientWidth ${box.clientWidth})`,
       ).toBeLessThanOrEqual(box.clientWidth);
     }
     assertClean();

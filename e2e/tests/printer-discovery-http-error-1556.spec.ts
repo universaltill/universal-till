@@ -16,7 +16,7 @@ import { watchConsole } from './helpers';
 const PAGES = [
   {
     name: 'Settings → Printer',
-    url: '/settings',
+    url: '/settings#settings-printer', // ut-docs#1960: Settings is two-pane now — deep-link to the section this drives
     button: '#printer-discover-btn',
     message: '#printer-discover-msg',
     // settings.printer.discover.error

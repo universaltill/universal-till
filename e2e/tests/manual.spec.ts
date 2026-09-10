@@ -175,10 +175,20 @@ test('the ? on a receipt detail page opens the reports topic', async ({ page }) 
 // settings isn't a tap-critical kiosk surface like the tender panel, so
 // existence + target is the right strength here.
 test('settings sections carry their own ? hints', async ({ page }) => {
-  await page.goto('/settings');
-  for (const topic of ['claim', 'updates', 'payments', 'backups', 'printing']) {
+  // ut-docs#1960: Settings is two-pane now and shows ONE section at a
+  // time, so open each section by its deep link before asserting its own
+  // "?" is visible (every card is still in the DOM; only one is shown).
+  const sections: [string, string][] = [
+    ['claim', 'registration'],
+    ['updates', 'settings-update'],
+    ['payments', 'settings-payments'],
+    ['backups', 'settings-backup'],
+    ['printing', 'settings-printer'],
+  ];
+  for (const [topic, section] of sections) {
+    await page.goto(`/settings#${section}`);
     await expect(
-      page.locator(`a.help-hint[href="/help/${topic}"]`),
+      page.locator(`#${section} a.help-hint[href="/help/${topic}"]`),
       `settings section ? for ${topic}`,
     ).toBeVisible();
   }

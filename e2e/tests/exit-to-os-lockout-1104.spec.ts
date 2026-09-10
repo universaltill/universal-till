@@ -18,7 +18,7 @@ test('exit-to-os 429 (locked out) renders the lockout message, not the generic P
   // own "Failed to load resource: ... 429" console error for it regardless
   // of how the page's own JS handles it (ut-docs#916's watchConsole note).
   const assertClean = watchConsole(page, /^Failed to load resource:.*429/);
-  await page.goto('/settings');
+  await page.goto('/settings#settings-display'); // ut-docs#1960: Settings is two-pane now — deep-link to the section this drives
 
   await page.route('**/api/settings/exit-to-os', async (route) => {
     await route.fulfill({ status: 429, contentType: 'text/plain', body: 'locked out' });
@@ -42,7 +42,7 @@ test('exit-to-os 429 (locked out) renders the lockout message, not the generic P
 // sits next to.
 test('exit-to-os 403 (wrong PIN) still renders the generic PIN error, not the lockout message', async ({ page }) => {
   const assertClean = watchConsole(page, /^Failed to load resource:.*403/);
-  await page.goto('/settings');
+  await page.goto('/settings#settings-display'); // ut-docs#1960: Settings is two-pane now — deep-link to the section this drives
 
   await page.route('**/api/settings/exit-to-os', async (route) => {
     await route.fulfill({ status: 403, contentType: 'text/plain', body: 'manager PIN required' });

@@ -82,7 +82,7 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     // (up to 2.0x, ADR-untouched, pre-existing feature) stacking on top
     // of the automatic viewport fit.
     await page.setViewportSize({ width: 1920, height: 800 });
-    await page.goto('/settings');
+    await page.goto('/settings#settings-display'); // ut-docs#1960: Settings is two-pane now — deep-link to the section this drives
     const scaleSelect = page.locator('form[hx-post="/api/settings/ui-scale"] select');
     await scaleSelect.selectOption('2');
     await Promise.all([
@@ -120,7 +120,7 @@ test.describe('tender panel stays reachable under viewport + UI-scale pressure',
     expect(footerHit, 'New Customer (tender-footer, outside .tab-panel) must also be reachable').toBe(true);
 
     // Restore default scale so later specs sharing this server aren't affected.
-    await page.goto('/settings');
+    await page.goto('/settings#settings-display');
     const restore = page.locator('form[hx-post="/api/settings/ui-scale"] select');
     await restore.selectOption('1');
     await Promise.all([

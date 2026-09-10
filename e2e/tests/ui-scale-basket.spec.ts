@@ -15,7 +15,7 @@ test.use({ viewport: { width: 1920, height: 1200 } });
 
 test('basket stays visible at the maximum ui_scale on a short viewport', async ({ page }) => {
   const assertClean = watchConsole(page);
-  await page.goto('/settings');
+  await page.goto('/settings#settings-display'); // ut-docs#1960: Settings is two-pane now — deep-link to the section this drives
   const scaleSelect = page.locator('form[hx-post="/api/settings/ui-scale"] select');
   await expect(scaleSelect.locator('option[value="2"]')).toHaveCount(1);
   await scaleSelect.selectOption('2');
@@ -44,7 +44,7 @@ test('basket stays visible at the maximum ui_scale on a short viewport', async (
   await expect.poll(async () => (await page.locator('.basket-scroll').boundingBox())?.height ?? 0).toBeGreaterThan(0);
 
   // Restore default so later specs sharing this server aren't affected.
-  await page.goto('/settings');
+  await page.goto('/settings#settings-display');
   const scaleSelect2 = page.locator('form[hx-post="/api/settings/ui-scale"] select');
   await scaleSelect2.selectOption('1');
   await Promise.all([
