@@ -23,7 +23,7 @@
 # so in the commit/PR.
 set -euo pipefail
 
-BASELINE_VERSION="0.10.0"
+BASELINE_VERSION="0.9.0"
 
 if ! command -v shellcheck >/dev/null 2>&1; then
   echo "❌ guard-shellcheck-version: no 'shellcheck' binary found on PATH — expected ${BASELINE_VERSION} (ubuntu-latest preinstalled)" >&2

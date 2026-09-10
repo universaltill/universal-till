@@ -14,7 +14,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 cd "${ROOT_DIR}"
 
 GUARD="scripts/ci/guard-shellcheck-version.sh"
-BASELINE="0.10.0"
+BASELINE="0.9.0"
 FAIL_COUNT=0
 
 FAKE_BIN_DIR="$(mktemp -d)"
@@ -74,7 +74,7 @@ expect_pass "a shellcheck reporting the pinned baseline version" "${FAKE_BIN_DIR
 make_fake_shellcheck "0.11.3"
 expect_fail "a shellcheck reporting a drifted (newer) version" "${FAKE_BIN_DIR}:${PATH}"
 
-make_fake_shellcheck "0.9.0"
+make_fake_shellcheck "0.8.0"
 expect_fail "a shellcheck reporting a drifted (older) version" "${FAKE_BIN_DIR}:${PATH}"
 
 # No shellcheck binary on PATH at all must fail loudly too, rather than the

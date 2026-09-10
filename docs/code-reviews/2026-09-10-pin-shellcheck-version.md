@@ -19,9 +19,8 @@ comparison already solves:
 
 - New `scripts/ci/guard-shellcheck-version.sh`: runs `shellcheck --version`,
   parses the `version:` line, compares it against a hardcoded
-  `BASELINE_VERSION="0.10.0"` (what `ubuntu-latest` shipped at the time this
-  card was filed), and fails loudly with a clear message on any mismatch or
-  if `shellcheck` isn't found on `PATH` at all.
+  `BASELINE_VERSION`, and fails loudly with a clear message on any mismatch
+  or if `shellcheck` isn't found on `PATH` at all.
 - New `scripts/ci/guard-shellcheck-version_test.sh`: regression test using a
   disposable fake `shellcheck` binary placed earlier on `PATH` (so it's
   independent of whatever shellcheck the test runner actually has) —
@@ -90,17 +89,36 @@ cases pass again.
   already-tracked/baselined drift entries per ut-docs#1962/#1973, is
   unrelated to this change).
 - `guard-shellcheck-version.sh` run against this sandbox's actual installed
-  shellcheck (`0.9.0`, via `apt-get install shellcheck` — this sandbox is
-  not the real `ubuntu-latest` GitHub Actions runner) correctly reports the
-  expected mismatch against the `0.10.0` baseline. That is the guard working
-  as designed on a machine with a different shellcheck version than CI's,
-  not a defect — CI's actual `ubuntu-latest` runner ships `0.10.0` per the
-  original card, so the guard is expected to pass there.
+  shellcheck (`0.9.0`, via `apt-get install shellcheck`).
+
+## Post-review correction: baseline was wrong on the first push (CI red)
+
+The first push set `BASELINE_VERSION="0.10.0"`, going by the original
+card's note that `ubuntu-latest` shipped `0.10.0` "at review time" for
+ut-docs#1943. The real `build` job on PR #1019 failed immediately on that
+assumption: this repo's actual current `ubuntu-latest`/`ubuntu-24.04`
+runner image (`20260907.300.1`) ships shellcheck **0.9.0**, not `0.10.0`
+— either the runner image's bundled version moved between then and now, or
+the original note was simply wrong. Root-caused from the live CI log
+(`shellcheck --version` on the runner reported `0.9.0`), not treated as a
+flake (it's this PR's own new guard script, failing deterministically on
+its own logic, not an unrelated service).
+
+**Fix, verified before re-pushing:** `BASELINE_VERSION` corrected to
+`0.9.0` in the guard script, `BASELINE` corrected to match in the test
+script (and its "drifted (older)" fixture moved from `0.9.0` to `0.8.0`
+so it no longer collides with the new real baseline). Confirmed
+`shellcheck scripts/ci/*.sh` is still 0 issues under the actual 0.9.0
+binary (verified locally, same binary version as the CI runner), and
+`guard-shellcheck-version.sh` now passes against this sandbox's real
+0.9.0 install — matching what the live CI runner will see.
 
 ## Safe-to-merge verdict
 
-Safe to merge. No blocking issues remain; the one real finding was fixed
-and independently re-verified.
+Safe to merge. No blocking issues remain; the one real logic finding
+(pipefail silent-failure) was fixed and independently re-verified, and the
+baseline-value mistake surfaced by CI itself was corrected and reconfirmed
+against the same shellcheck version the real runner uses.
 
 ## Explicitly deferred
 
