@@ -1,0 +1,81 @@
+{{/* ut-docs#2010 — the app-wide list/edit standard's full-screen record
+     dialog (ut-docs/reference/list-and-dialog-pattern.md), generalised
+     from catalog.html's #item-form-modal (ut-docs#1901/#1956). Opened by
+     web/public/record-dialog.js with .show(), NEVER .showModal(): the
+     on-screen keyboard (#osk) is appended to <body> and showModal()'s
+     top-layer/inert-outside behaviour makes it unreachable on the till's
+     own touchscreen (ut-docs#1385). Consequences record-dialog.js handles
+     by hand: no native ::backdrop, and Escape is inert unless implemented
+     (which it is — settling ut-docs#1999 for every dialog on this pattern).
+
+     Exactly two parts: .record-dialog-head is pinned (flex: none) and holds
+     ONE row of chrome — nothing more, so it never eats a 360px screen the
+     way ut-docs#2000 found catalog's head doing; .record-dialog-body is the
+     one scroll container. There is deliberately NO in-dialog message line:
+     every mutation is a plain form post → 303, so an error surfaces as the
+     page-level banner after the redirect (the dialog is closed by then).
+     An in-dialog error surface is a change of shape (htmx forms) and has
+     its own follow-up card — do not reserve space for it here.
+
+     Parameters, via dict at the call site — the req guard on the first
+     line below fails the render, naming the key, when a required one is
+     missing or empty (a misspelled key otherwise renders as "" at HTTP 200:
+     Save bound to form="" does nothing, silently):
+       "id"             the dialog's element id (the row/New button target)
+       "formID"         the id of the <form> the page's fields slot renders —
+                        Save reaches it through the HTML5 form="…" attribute,
+                        the button is NOT inside the form
+       "createTitleKey" / "editTitleKey"   locale keys for the two titles
+       "createAction"   the create endpoint the JS sets as form.action
+       "root"           OPTIONAL but pass it: the page's own data (`.` at the
+                        call site). The slots below receive this dict, and
+                        `$` inside a define binds to the same argument, so
+                        `.root` is a slot's ONLY route to page data — a
+                        <select> of locations/roles ranges over
+                        `.root.locations`, not `$.locations` (which is empty).
+
+     THE SLOT CONTRACT. httpx.renderFiles parses this partial into EVERY
+     page's own template set, and each page is its own set — so a page that
+     uses this dialog MUST itself {{ define "record_dialog_fields" }} (the
+     <form id=formID> with its fields) and {{ define "record_dialog_destructive" }}
+     (the icon-only deactivate control, or empty). There are deliberately NO
+     no-op defaults here: with ParseFiles, definition order would silently
+     decide the winner. A page that forgets a slot fails at execute time,
+     not parse time — which is why internal/pages/categories_page_test.go
+     pins the reference page's rendered dialog body actually holds its
+     field. Copy that test when adopting the pattern on another screen. */}}
+{{ define "record_dialog" }}
+{{ $_ := req . "id" "formID" "createTitleKey" "editTitleKey" "createAction" }}
+<dialog id="{{ .id }}" class="record-dialog" aria-labelledby="{{ .id }}-title"
+        data-record-dialog data-record-mode="create"
+        data-create-action="{{ .createAction }}"
+        data-discard-confirm="{{ T "common.discard_confirm" }}">
+  <div class="record-dialog-inner">
+    <div class="record-dialog-head">
+      <div class="record-dialog-head-row">
+        <div class="record-dialog-head-title">
+          <h3 id="{{ .id }}-title" data-record-dialog-title
+              data-title-create="{{ T .createTitleKey }}"
+              data-title-edit="{{ T .editTitleKey }}">{{ T .createTitleKey }}</h3>
+          {{/* At the OPPOSITE end of the bar from Save/Close so it cannot be
+               hit by accident; hidden in create mode (the record does not
+               exist yet). Semantics are deactivate, never erase (#1956). */}}
+          <div class="record-dialog-destructive" data-record-dialog-destructive hidden>
+            {{ template "record_dialog_destructive" . }}
+          </div>
+        </div>
+        <div class="record-dialog-head-actions">
+          <button type="button" class="btn secondary btn-icon record-dialog-close"
+                  aria-label="{{ T "common.close" }}" title="{{ T "common.close" }}">
+            <span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span>
+          </button>
+          <button type="submit" class="btn primary record-dialog-save" form="{{ .formID }}">{{ T "common.save" }}</button>
+        </div>
+      </div>
+    </div>
+    <div class="record-dialog-body">
+      {{ template "record_dialog_fields" . }}
+    </div>
+  </div>
+</dialog>
+{{ end }}
