@@ -771,11 +771,10 @@ func instantWindow(col string, from, to time.Time) (string, []any) {
 }
 
 type DailySales struct {
-	Day           string `json:"day"`
-	Count         int    `json:"count"`
-	Total         int64  `json:"total"`
-	TaxTotal      int64  `json:"tax_total"`
-	DiscountTotal int64  `json:"discount_total"`
+	Day      string `json:"day"`
+	Count    int    `json:"count"`
+	Total    int64  `json:"total"`
+	TaxTotal int64  `json:"tax_total"`
 }
 
 type TopItem struct {
@@ -1346,15 +1345,12 @@ ORDER BY gross DESC`, args...)
 // Returns are excluded, matching DayTotal on the same dashboard (and
 // SlowItems/busyBuckets); the Reports "Tax" tab (computeTaxSummary,
 // ut-docs#1115) is the fiscal view and nets them.
-// DiscountTotal (ut-docs#1975) sums the same completed/sale-only rows'
-// discount_total, added alongside the existing aggregates rather than as
-// a separate query — same table, same WHERE clause, no extra round trip.
 func (r *POSRepo) SalesByDay(ctx context.Context, from, to time.Time, hh, mm int) ([]DailySales, error) {
 	fromStr, toStr := windowArgs(from, to)
 	hourMod := fmt.Sprintf("%d hours", -hh)
 	minMod := fmt.Sprintf("%d minutes", -mm)
 	rows, err := r.db.QueryContext(ctx, `
-SELECT date(created_at, 'localtime', ?, ?) AS day, COUNT(*), COALESCE(SUM(total), 0), COALESCE(SUM(tax_total), 0), COALESCE(SUM(discount_total), 0)
+SELECT date(created_at, 'localtime', ?, ?) AS day, COUNT(*), COALESCE(SUM(total), 0), COALESCE(SUM(tax_total), 0)
 FROM sales
 WHERE status = 'completed' AND sale_type = 'sale'
   AND datetime(created_at) >= datetime(?) AND datetime(created_at) < datetime(?)
@@ -1366,7 +1362,7 @@ GROUP BY day ORDER BY day DESC`, hourMod, minMod, fromStr, toStr)
 	var out []DailySales
 	for rows.Next() {
 		var d DailySales
-		if err := rows.Scan(&d.Day, &d.Count, &d.Total, &d.TaxTotal, &d.DiscountTotal); err != nil {
+		if err := rows.Scan(&d.Day, &d.Count, &d.Total, &d.TaxTotal); err != nil {
 			return nil, fmt.Errorf("scan daily sales: %w", err)
 		}
 		out = append(out, d)
@@ -1390,6 +1386,35 @@ WHERE status = 'completed' AND sale_type = 'return'
 		return 0, 0, fmt.Errorf("refunds by window: %w", err)
 	}
 	return total, count, nil
+}
+
+// DiscountsByWindow (ut-docs#1975) sums every discount applied to a
+// completed sale over [from, to) — both the whole-sale discount
+// (sales.discount_total, reason "sale_discount" in sale_discounts) AND
+// each line's own discount (sale_lines.line_discount, reason
+// "line_discount"). sale_discounts is the canonical ledger for both
+// (InsertSaleDiscountsBatch, internal/pos/sales.go) with no overlap
+// between the two reasons, so a plain SUM over it — joined to sales for
+// the status/type/window filter, mirroring RefundsByWindow immediately
+// above — is correct without double-counting and without the fan-out risk
+// a per-line JOIN inside SalesByDay's own GROUP BY would carry into
+// Count/Total/TaxTotal. Deliberately a separate query, not a column added
+// to SalesByDay: sale_discounts has no day column of its own to group by
+// cheaply, and this mirrors RefundsByWindow's own existing shape for a
+// different table over the same window.
+func (r *POSRepo) DiscountsByWindow(ctx context.Context, from, to time.Time) (total int64, err error) {
+	fromStr, toStr := windowArgs(from, to)
+	err = r.db.QueryRowContext(ctx, `
+SELECT COALESCE(SUM(sd.amount), 0)
+FROM sale_discounts sd
+JOIN sales s ON s.id = sd.sale_id
+WHERE s.status = 'completed' AND s.sale_type = 'sale'
+  AND datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) < datetime(?)`,
+		fromStr, toStr).Scan(&total)
+	if err != nil {
+		return 0, fmt.Errorf("discounts by window: %w", err)
+	}
+	return total, nil
 }
 
 // TopItems returns the best sellers by revenue over [from, to).

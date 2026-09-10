@@ -206,15 +206,15 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 
-		var grandTotal, grandTax, grandDiscount int64
+		var grandTotal, grandTax int64
 		var grandCount int
 		for _, dd := range daily {
 			grandTotal += dd.Total
 			grandTax += dd.TaxTotal
-			grandDiscount += dd.DiscountTotal
 			grandCount += dd.Count
 		}
 		grandRefunds, _, _ := repo.RefundsByWindow(r.Context(), window.From, window.To)
+		grandDiscount, _ := repo.DiscountsByWindow(r.Context(), window.From, window.To)
 		grandNet := grandTotal - grandRefunds
 		// Avg sale (ut-docs#1974, SumUp Insights parity): a derived display
 		// value from the two grand totals already computed above, not a new

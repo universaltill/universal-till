@@ -211,14 +211,23 @@ func TestReportsPage_DiscountsKPI(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	mux, dp := newReportsPageTestDeps(t)
 	ctx := t.Context()
-	// Two completed sales in the default 14-day window with discounts of
-	// £0.50 and £1.00: the Discounts KPI must show their sum, £1.50 — a
-	// value no other KPI on this page renders (Revenue £4.80, Tax £0.80,
-	// Avg sale £2.40, Refunds £0.00, Net £4.80).
+	// s1: a whole-sale discount (£0.50) — the sales.discount_total case.
 	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s1','R001','completed','sale','GBP',400,50,60,360,datetime('now'))`); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s2','R002','completed','sale','GBP',200,100,20,120,datetime('now'))`); err != nil {
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_discounts(id,sale_id,line_id,type,value,amount,reason) VALUES('d1','s1',NULL,'fixed',50,50,'sale_discount')`); err != nil {
+		t.Fatal(err)
+	}
+	// s2: a per-line discount (£1.00) with sales.discount_total left at its
+	// default 0 — the case a whole-sale-only aggregate would miss entirely
+	// (ut-docs#1975 review finding). itm1 comes from seedForPages.
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id,receipt_no,status,sale_type,currency,subtotal,discount_total,tax_total,total,created_at) VALUES('s2','R002','completed','sale','GBP',200,0,20,120,datetime('now'))`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id,sale_id,line_no,item_id,name_snapshot,quantity,unit_price,line_discount,tax_rate_bp,tax_amount,total_before_tax,total_after_tax) VALUES('s2-l1','s2',1,'itm1','Apple',1,100,100,2000,20,100,120)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_discounts(id,sale_id,line_id,type,value,amount,reason) VALUES('d2','s2','s2-l1','fixed',100,100,'line_discount')`); err != nil {
 		t.Fatal(err)
 	}
 
@@ -227,8 +236,10 @@ func TestReportsPage_DiscountsKPI(t *testing.T) {
 		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
 	}
 	body := rec.Body.String()
+	// £1.50 = £0.50 (sale-level) + £1.00 (line-level) — a value no other
+	// KPI on this page renders.
 	if !strings.Contains(body, "£1.50") {
-		t.Fatalf("expected discounts total £1.50 (0.50+1.00), got: %s", body)
+		t.Fatalf("expected discounts total £1.50 (0.50 sale-level + 1.00 line-level), got: %s", body)
 	}
 }
 
