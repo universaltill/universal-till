@@ -15,7 +15,7 @@ import { watchConsole } from './helpers';
 // DOM shape a screen reader would announce.
 test('window-mode save renders a real .pos-notice, not a bare glyph-prefixed text node', async ({ page }) => {
   const assertClean = watchConsole(page);
-  await page.goto('/settings');
+  await page.goto('/settings#settings-display'); // ut-docs#1960: Settings is two-pane now — deep-link to the section this drives
 
   const msg = page.locator('#window-mode-msg');
   await expect(msg).toBeEmpty();
@@ -54,7 +54,7 @@ test('window-mode save renders a real .pos-notice, not a bare glyph-prefixed tex
 // e2e fixture has no way to provide (UT_AUTH=off never needed one before).
 test('data-reset now requires a manager PIN step-up, not a typed word (ut-docs#1841)', async ({ page }) => {
   const assertClean = watchConsole(page);
-  await page.goto('/settings');
+  await page.goto('/settings#settings-data'); // ut-docs#1960: Settings is two-pane now — deep-link to the section this drives
 
   const btn = page.locator('#data-reset-btn');
   await expect(btn).toBeVisible();
@@ -91,7 +91,7 @@ test('data-reset now requires a manager PIN step-up, not a typed word (ut-docs#1
 // mutation) to prove the progress text survives past 2.5s.
 test('customer search progress indicator is plain text and survives past the 2.5s pos-notice auto-expire window', async ({ page }) => {
   const assertClean = watchConsole(page);
-  await page.goto('/settings');
+  await page.goto('/settings#settings-data'); // ut-docs#1960: Settings is two-pane now — deep-link to the section this drives
 
   const msg = page.locator('#cust-msg');
   const q = page.locator('#cust-q');
@@ -110,6 +110,12 @@ test('customer search progress indicator is plain text and survives past the 2.5
   await page.waitForTimeout(2600); // past the 2.5s pos-notice auto-expire window
   await expect(msg).toHaveText('…'); // still there — never became a .pos-notice, so nothing dismissed it
 
+  // Let the stalled (2800ms) handler actually continue the request before
+  // unrouting: unroute does not wait for an in-flight handler, and on a
+  // loaded runner the ~200ms margin above was enough for route.continue()
+  // to land after it and throw "Route is already handled" (seen once while
+  // driving this spec for ut-docs#1960).
+  await page.waitForResponse('**/api/data/customers**');
   await page.unroute('**/api/data/customers**');
   assertClean();
 });

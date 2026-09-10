@@ -12,6 +12,8 @@ keywords: [theme, scale, kiosk, screen, osk, keyboard]
 
 The whole till speaks English, Türkçe, فارسی and العربية — including right-to-left layout — and adapts to touch screens with an on-screen keyboard and adjustable text size.
 
+Settings shows a list of its sections on one side and the section you're looking at on the other, with a search box above the list that finds a specific setting by name (not just a section title) — handy on a page with this many sections. Pick a result and the till opens that section and takes you straight to the setting. On a phone-sized screen the list comes first; tap a section to open it, and use **Back to sections** to return.
+
 ## How to use it
 
 1. Change the language from the menu; each user can pick their own — that's a per-browser choice, so it doesn't need a manager PIN.
