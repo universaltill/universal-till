@@ -22,7 +22,10 @@ test('receive stock on Inventory, then sell that item at the till', async ({ pag
     ? parseFloat((await pepsiRow.locator('td').nth(3).innerText()).trim())
     : 0;
 
-  // Receive 10 units at the Main Store.
+  // Receive 10 units at the Main Store. ut-docs#2011: #stock-form now lives
+  // inside the receive/adjust dialog, opened blank via the header's "Add
+  // stock" button.
+  await page.locator('#stock-dialog-open').click();
   await page.locator('#stock-item-search').fill('Pepsi Can 330ml (SKU-0002)');
   await expect(page.locator('#stock-item-id')).not.toHaveValue('');
   await page.locator('#stock-location').selectOption({ label: 'Main Store' });

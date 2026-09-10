@@ -71,6 +71,9 @@ test.describe('osk.js numeric minus key (ut-docs#1276)', () => {
     // #stock-cost is a plain positive-only numeric field (no leading '-?' in
     // its pattern) — the negative gate must keep it on the plain 'num' layer.
     await page.goto('/inventory');
+    // ut-docs#2011: #stock-cost now lives inside the receive/adjust dialog,
+    // closed by default.
+    await page.locator('#stock-dialog-open').click();
     await page.locator('#stock-cost').click();
     await expect(page.locator('#osk.osk-open')).toBeVisible();
     await expect(page.locator('#osk button[data-k="-"]')).toHaveCount(0);
@@ -81,6 +84,9 @@ test.describe('osk.js numeric minus key (ut-docs#1276)', () => {
     // inventory.html's `quantity` field declares pattern="-?[0-9]+…" —
     // "positive for receive, +/- for adjust" (internal/pages/inventory_api.go).
     await page.goto('/inventory');
+    // ut-docs#2011: #stock-form now lives inside the receive/adjust dialog,
+    // closed by default.
+    await page.locator('#stock-dialog-open').click();
     await page.locator('#stock-form input[name="quantity"]').click();
     await expect(page.locator('#osk.osk-open')).toBeVisible();
     await expect(page.locator('#osk button[data-k="-"]')).toBeVisible();
