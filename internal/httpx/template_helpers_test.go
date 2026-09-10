@@ -12,6 +12,7 @@ import (
 
 	config "github.com/universaltill/universal-till/internal/config"
 	moneypkg "github.com/universaltill/universal-till/internal/money"
+	"github.com/universaltill/universal-till/internal/plugins"
 )
 
 func realI18n(t *testing.T) *config.I18n {
@@ -412,6 +413,80 @@ func TestBaseLayoutPSUChipAbsentWhenHealthy(t *testing.T) {
 	}
 	if body := w.Body.String(); strings.Contains(body, "sb-power") {
 		t.Fatalf("expected no PSU chip when psuunderpowered is false, got %.500s", body)
+	}
+}
+
+// The installed-plugin update chip (ut-docs#1953) gets the same treatment
+// every sibling status chip has: prove it renders as a real <a> to /plugins
+// carrying the translated label and the count, and prove it stays away
+// entirely at zero. Rendering through the REAL plugins.CurrentPendingUpdates
+// state rather than a stubbed func is the point — it is the wiring from the
+// background scheduler's published count to the pixel a merchant sees, and
+// nothing else covers it.
+func TestBaseLayoutPluginUpdateChipRendersWhenPending(t *testing.T) {
+	before := plugins.CurrentPendingUpdates().Count
+	t.Cleanup(func() { plugins.SetPendingUpdates(before) })
+	plugins.SetPendingUpdates(3)
+
+	InitI18n(realI18n(t), "en")
+	r, err := NewRenderer(
+		filepath.Join("web", "ui", "layouts", "base.html"),
+		filepath.Join("web", "ui", "pages", "pin.html"),
+		FuncsFor("en"),
+	)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	w := httptest.NewRecorder()
+	data := map[string]any{"title": "Change PIN", "theme": "", "menuItems": nil, "errKey": ""}
+	if err := r.Render(w, "base", data); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	body := w.Body.String()
+	idx := strings.Index(body, `class="sb-item sb-plugin-update"`)
+	if idx == -1 {
+		t.Fatalf("expected the status-bar plugin-update chip to render, got %.800s", body)
+	}
+	end := strings.Index(body[idx:], "</a>")
+	if end == -1 {
+		t.Fatalf("expected the plugin-update chip to be a link (<a>...</a>), got %.500s", body[idx:])
+	}
+	chip := body[idx : idx+end]
+	if !strings.Contains(chip, `href="/plugins"`) {
+		t.Fatalf("expected the plugin-update chip to link to /plugins, got %q", chip)
+	}
+	if !strings.Contains(chip, "Plugin updates available") {
+		t.Fatalf("expected the translated status.plugin_updates_available label, got %q", chip)
+	}
+	if !strings.Contains(chip, "(3)") {
+		t.Fatalf("expected the pending count in the chip, got %q", chip)
+	}
+}
+
+// The negative control: no chip at all at zero — including on a freshly
+// booted till whose scheduler has not ticked yet, which reads the same
+// zero value.
+func TestBaseLayoutPluginUpdateChipAbsentWhenNonePending(t *testing.T) {
+	before := plugins.CurrentPendingUpdates().Count
+	t.Cleanup(func() { plugins.SetPendingUpdates(before) })
+	plugins.SetPendingUpdates(0)
+
+	InitI18n(realI18n(t), "en")
+	r, err := NewRenderer(
+		filepath.Join("web", "ui", "layouts", "base.html"),
+		filepath.Join("web", "ui", "pages", "pin.html"),
+		FuncsFor("en"),
+	)
+	if err != nil {
+		t.Fatalf("NewRenderer: %v", err)
+	}
+	w := httptest.NewRecorder()
+	data := map[string]any{"title": "Change PIN", "theme": "", "menuItems": nil, "errKey": ""}
+	if err := r.Render(w, "base", data); err != nil {
+		t.Fatalf("Render: %v", err)
+	}
+	if body := w.Body.String(); strings.Contains(body, "sb-plugin-update") {
+		t.Fatalf("expected no plugin-update chip when nothing is pending, got %.800s", body)
 	}
 }
 

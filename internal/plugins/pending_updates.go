@@ -28,5 +28,31 @@ func CurrentPendingUpdates() PendingUpdateStatus {
 // access needed to actually run the check) can publish the result here for
 // the status-chip template funcs to read.
 func SetPendingUpdates(count int) {
+	if count < 0 {
+		count = 0
+	}
 	pendingUpdateState.Store(PendingUpdateStatus{Count: count})
+}
+
+// NotePendingUpdateApplied decrements the published count by one, never
+// below zero. The scheduler only recomputes every 15 minutes, so without
+// this the merchant who taps the chip, lands on /plugins and applies the
+// one pending update keeps being nagged by a green "Plugin updates
+// available (1)" for the rest of that interval — the chip contradicting
+// the thing they just did (ut-docs#1953 review). Compare-and-swap rather
+// than load-modify-store: a scheduler tick may publish a fresh count
+// concurrently, and the loser of that race must not clobber the winner.
+// Worst case this under-counts by one until the next tick corrects it,
+// which is the right direction to be wrong in: a chip that disappears a
+// little early is a far smaller sin on a till than one that won't go away.
+func NotePendingUpdateApplied() {
+	for {
+		current := CurrentPendingUpdates()
+		if current.Count <= 0 {
+			return
+		}
+		if pendingUpdateState.CompareAndSwap(current, PendingUpdateStatus{Count: current.Count - 1}) {
+			return
+		}
+	}
 }

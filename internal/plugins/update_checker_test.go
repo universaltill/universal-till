@@ -117,6 +117,64 @@ func TestCheckForUpdatesCarriesCanonicalType(t *testing.T) {
 	}
 }
 
+// TestCheckForUpdatesMatchesByInstallStatusListing is the ut-docs#1953
+// review's regression test. Matching an installed plugin to its catalog
+// listing by manifest author+name is a heuristic nothing enforces: the
+// installed Author/Name are the plugin's OWN manifest values (persisted
+// verbatim by installer_marketplace.go), while the catalog side is the
+// listing's developer_id (which falls back to the vendor display string)
+// and the listing's name. A real marketplace-installed language pack whose
+// manifest author is a company name and whose listing developer_id is a
+// developer identifier matched nothing at all — so the new background
+// scheduler discovered nothing, auto-applied nothing and showed no chip,
+// i.e. the exact pilot-till symptom the card exists to fix. The
+// install-status store's listing↔plugin record — written by the installer,
+// and already what /plugins' badge and applyPluginUpdate resolve through —
+// is the authoritative mapping and must win.
+func TestCheckForUpdatesMatchesByInstallStatusListing(t *testing.T) {
+	db := managerTestDB(t)
+	ctx := context.Background()
+
+	seedInstalledPlugin(t, db, "com.universaltill.language.de", "German Language Pack", "1.0.0", "none", true)
+	if _, err := db.Exec(`UPDATE plugins SET author = 'Universal Till GmbH' WHERE id = 'com.universaltill.language.de'`); err != nil {
+		t.Fatalf("set author: %v", err)
+	}
+
+	if err := NewInstallStatusStore(db).Save(ctx, InstallStatusRecord{
+		ListingID:      "listing-de-123",
+		PluginID:       "com.universaltill.language.de",
+		PluginName:     "German Language Pack",
+		CurrentVersion: "1.0.0",
+		State:          InstallStateActive,
+	}); err != nil {
+		t.Fatalf("save install status: %v", err)
+	}
+
+	// Neither developer_id nor the listing name matches the installed
+	// manifest's author/name — only the listing id ties them together.
+	repo := seededCatalogRepo(t, []marketplace.PluginSummary{
+		{
+			ID: "listing-de-123", ListingID: "listing-de-123",
+			DeveloperID: "dev-ut-42", Name: "Deutsch (Germany) Language Pack",
+			Version: "1.4.0", CanonicalType: "language",
+		},
+	})
+
+	updates, err := NewUpdateChecker(db, repo).CheckForUpdates(ctx)
+	if err != nil {
+		t.Fatalf("CheckForUpdates: %v", err)
+	}
+	if len(updates) != 1 {
+		t.Fatalf("updates = %+v, want the listing-matched update", updates)
+	}
+	if updates[0].PluginID != "com.universaltill.language.de" || updates[0].AvailableVersion != "1.4.0" {
+		t.Fatalf("unexpected update: %+v", updates[0])
+	}
+	if updates[0].CanonicalType != "language" {
+		t.Fatalf("CanonicalType = %q, want language (the scheduler's auto-apply key)", updates[0].CanonicalType)
+	}
+}
+
 func TestCheckForUpdatesNoInstalledOrCurrent(t *testing.T) {
 	db := managerTestDB(t)
 	ctx := context.Background()

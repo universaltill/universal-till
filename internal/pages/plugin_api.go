@@ -704,6 +704,13 @@ func handleUpdatePlugin(d *common.Deps) http.HandlerFunc {
 			return
 		}
 
+		// The status-bar chip's count is only recomputed by
+		// StartPluginUpdateScheduler's 15-minute tick, so retire this one
+		// immediately — otherwise the merchant who tapped the chip, came
+		// here and applied the update keeps being told an update is
+		// available for the rest of that interval (ut-docs#1953 review).
+		plugins.NotePendingUpdateApplied()
+
 		w.Header().Set("Content-Type", "application/json")
 		json.NewEncoder(w).Encode(map[string]interface{}{
 			"data": map[string]interface{}{

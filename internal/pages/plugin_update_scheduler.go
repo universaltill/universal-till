@@ -74,6 +74,18 @@ func StartPluginUpdateScheduler(ctx context.Context, d *common.Deps, wg *sync.Wa
 // having a say.
 func pluginUpdateCheckTick(ctx context.Context, d *common.Deps) {
 	log := logging.L()
+	// A recover() at the top keeps the offline-first "a background check
+	// never disturbs the sale" promise honest, for the same reason
+	// syncPullPlugins has one: this tick drives the very same
+	// install-and-reload path, and an unrecovered panic in a goroutine
+	// takes down the WHOLE till process — mid-sale, on a merchant's
+	// counter — not just this loop. Log it and let the next tick retry
+	// (ut-docs#1953 review).
+	defer func() {
+		if r := recover(); r != nil {
+			log.Errorf("[PluginUpdateScheduler] recovered from panic (will retry next tick): %v", r)
+		}
+	}()
 	if d.CatalogRepo == nil {
 		return
 	}

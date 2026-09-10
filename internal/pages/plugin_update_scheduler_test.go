@@ -70,7 +70,21 @@ func seededSchedulerCatalogRepo(t *testing.T, summaries []marketplace.PluginSumm
 	return repo
 }
 
+// resetPendingUpdatesAfterTest restores the process-global pending-update
+// count these tests publish into. Without it a test that deliberately parks
+// a non-zero count (the no-op / catalog-error cases below) leaks it into
+// every later test in this package — including anything that renders
+// base.html, which would then grow a phantom "Plugin updates available"
+// status chip and fail for reasons that have nothing to do with what it is
+// testing (ut-docs#1953 review).
+func resetPendingUpdatesAfterTest(t *testing.T) {
+	t.Helper()
+	before := plugins.CurrentPendingUpdates().Count
+	t.Cleanup(func() { plugins.SetPendingUpdates(before) })
+}
+
 func TestPluginUpdateCheckTick_AutoAppliesLanguagePacksOnly(t *testing.T) {
+	resetPendingUpdatesAfterTest(t)
 	db := openRealSchemaPagesDB(t)
 	seedInstalledPluginManifest(t, db, "com.test.lang", "Lang Pack", "dev-1", "1.0.0", "language")
 	seedInstalledPluginManifest(t, db, "com.test.theme", "Theme", "dev-1", "1.0.0", "theme")
@@ -101,6 +115,7 @@ func TestPluginUpdateCheckTick_AutoAppliesLanguagePacksOnly(t *testing.T) {
 }
 
 func TestPluginUpdateCheckTick_ReplicaNeverAutoApplies(t *testing.T) {
+	resetPendingUpdatesAfterTest(t)
 	db := openRealSchemaPagesDB(t)
 	seedInstalledPluginManifest(t, db, "com.test.lang2", "Lang Pack 2", "dev-2", "1.0.0", "language")
 
@@ -133,6 +148,7 @@ func TestPluginUpdateCheckTick_ReplicaNeverAutoApplies(t *testing.T) {
 }
 
 func TestPluginUpdateCheckTick_FailedAutoApplyCountsAsPending(t *testing.T) {
+	resetPendingUpdatesAfterTest(t)
 	db := openRealSchemaPagesDB(t)
 	seedInstalledPluginManifest(t, db, "com.test.lang3", "Lang Pack 3", "dev-3", "1.0.0", "language")
 
@@ -155,6 +171,7 @@ func TestPluginUpdateCheckTick_FailedAutoApplyCountsAsPending(t *testing.T) {
 }
 
 func TestPluginUpdateCheckTick_NoCatalogRepo_NoOp(t *testing.T) {
+	resetPendingUpdatesAfterTest(t)
 	plugins.SetPendingUpdates(99)
 	d := &common.Deps{Db: openRealSchemaPagesDB(t), Settings: settings.NewStore(nil), CatalogRepo: nil}
 
@@ -166,6 +183,7 @@ func TestPluginUpdateCheckTick_NoCatalogRepo_NoOp(t *testing.T) {
 }
 
 func TestPluginUpdateCheckTick_CatalogReadError_LeavesPendingUnchanged(t *testing.T) {
+	resetPendingUpdatesAfterTest(t)
 	plugins.SetPendingUpdates(7)
 	db := openRealSchemaPagesDB(t)
 	// CheckForUpdates short-circuits before ever touching the catalog when
