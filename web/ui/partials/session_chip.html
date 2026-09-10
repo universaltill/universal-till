@@ -4,8 +4,13 @@
     <span class="nav-toggle-ico" aria-hidden="true">{{ icon "users" }}</span>
     <span class="nav-toggle-label">{{ T "users.title" }}</span>
   </a>
+  <!-- ut-docs#1958: was icon "tag" -- the same glyph uislot.CoreMenu
+       declares for /items on the Menu launcher, so a manager taking this
+       dropdown to mean "Items" landed on Promotions instead. "percent" is
+       this app's only other discount-shaped glyph and names no other
+       destination. -->
   <a class="session-admin-link nav-toggle" href="/promotions">
-    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "tag" }}</span>
+    <span class="nav-toggle-ico" aria-hidden="true">{{ icon "percent" }}</span>
     <span class="nav-toggle-label">{{ T "promotions.title" }}</span>
   </a>
   <a class="session-admin-link nav-toggle" href="/translations">
