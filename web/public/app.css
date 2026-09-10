@@ -500,8 +500,8 @@ body.sale-screen .session-admin-link { display: none; }
 .reorderable-tile .btn-actions { gap: .5rem; }
 .journal-row { cursor: pointer; }
 .journal-row:hover td { background: var(--surface-2); }
-.catalog-form-head { display: flex; justify-content: space-between; align-items: center;
-                     margin-bottom: .5rem; }
+/* .catalog-form-head: see the .item-form-modal block below (ut-docs#1956
+   made it the dialog's pinned action bar). */
 
 /* Store claim code (Settings): big, readable off the till screen. */
 .claim-code-box { display: flex; flex-direction: column; gap: .3rem; }
@@ -545,7 +545,10 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
 
 /* Catalog detail panel: full-width under the list — item info + barcode
    chips on one side, the variants list (editable grid) as the main area. */
-.catalog-detail { margin-block-start: 1rem; }
+/* ut-docs#1956: no top margin — it now sits inside the item form's
+   Variants tab panel (.catalog-form-body carries the padding), not as a
+   page-level card under the list. */
+.catalog-detail { margin-block-start: 0; }
 .catalog-detail-grid { display: grid; grid-template-columns: 280px minmax(0, 1fr);
                        gap: 1.25rem; align-items: start; }
 @media (max-width: 900px) { .catalog-detail-grid { grid-template-columns: minmax(0, 1fr); } }
@@ -667,9 +670,33 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
   .vg-head > :last-child { background: var(--surface); }
 }
 
-.catalog-form label { display: flex; flex-direction: column; gap: .2rem;
-                      font-size: .82rem; margin-bottom: .55rem; }
-.field-pair { display: grid; grid-template-columns: 1fr 1fr; gap: .5rem; }
+/* ut-docs#1956 (independent review, F4): scoped to :not(.catalog-detail *).
+   This rule predates #1956 and was correct while .catalog-form contained
+   only the item's own fields — but #1956 moved catalog_variants.html INSIDE
+   .catalog-form (it used to render at page level, under the list), and this
+   selector's 0,1,1 specificity then beat .chip-add-primary's 0,1,0 and every
+   bare <label> in that panel. Measured effect: every checkbox in the
+   variants/modifiers panel put its box on the line ABOVE its own text and
+   doubled in height (21px -> 44px) — "Primary", "Plain code", and each
+   modifier group's Required/Active. The exclusion, not a narrower positive
+   selector, because the panel arrives by htmx outerHTML swap and its inner
+   structure is not this file's to track. */
+.catalog-form label:not(.catalog-detail label) {
+  display: flex; flex-direction: column; gap: .2rem;
+  font-size: .82rem; margin-bottom: .55rem;
+}
+/* Same ut-docs#1956 fix from the flex side: a flex item's min-width is
+   `auto` (its content size) too, so the stretched control inside each
+   column-flex label also needs an explicit zero minimum to follow its
+   .field-pair column down at phone width. */
+.catalog-form label:not(.catalog-detail label) > input,
+.catalog-form label:not(.catalog-detail label) > select { min-inline-size: 0; }
+/* minmax(0, 1fr), not bare 1fr (ut-docs#1956): 1fr is minmax(auto, 1fr),
+   and a text <input>'s `auto` minimum is its intrinsic ~20ch width — at
+   360px that held the SKU column open 18px past the full-screen item
+   form's body. Zero minimum lets a column shrink below an input's default
+   width; nothing that already fit changes. */
+.field-pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: .5rem; }
 /* Same [hidden]-override precedent as .field-checks below (and .btn/
    .suggest-strip/.pos-notice elsewhere): an author rule's own `display`
    always beats the UA `[hidden]` style regardless of specificity, so a
@@ -686,51 +713,101 @@ html.cursor-hidden, html.cursor-hidden * { cursor: none !important; }
    isActive checkbox, meant to show only in edit mode) stays visibly
    flex-displayed on page load. Found live while testing ut-docs#259. */
 .field-checks[hidden] { display: none; }
-/* ut-docs#1901: the add/edit-item form is now a near-full-screen <dialog>
-   (#item-form-modal, opened via .show() from catalog.html) instead of a
-   permanently-visible 360px sticky side panel — the dialog itself scrolls
-   internally (below), so .catalog-form no longer needs its own
-   sticky/max-height treatment; it's now just the fields' layout wrapper.
-   Opened via .show(), NOT showModal() — same fix, same reasoning
-   (ut-docs#1385) as #hold-modal/#pfand-modal/#elevation-modal/
-   #table-add-modal/.payment-overlay above: showModal()'s top-layer/
-   inert-outside behaviour makes the custom on-screen keyboard (#osk,
-   appended to <body>, never re-parented into whichever dialog is open)
-   completely unreachable, and this form has more OSK-triggering fields
-   (barcode, name, price, SKU, description...) than any of those five.
-   `position: fixed` + explicit centering replace the native top-layer
-   centering .show() no longer provides; `z-index: 500` matches the same
-   five for the identical reason (needed now that .show() doesn't get the
-   browser's native stacking), staying below #osk's `z-index: 1000` so the
-   keyboard still renders on top of whichever field it's typing into
-   here. No ::backdrop rule — a .show() dialog never paints one, same as
-   the other five non-modal dialogs, none of which replicate dimming. */
-.item-form-modal { position: fixed; inset-block-start: 4vh; inset-inline: 0; margin-inline: auto;
-                    z-index: 500; width: 94vw; max-width: 60rem; max-height: 92vh; overflow-y: auto;
-                    border: 1px solid var(--border); border-radius: var(--radius);
-                    box-shadow: var(--shadow); padding: 1.25rem 1.5rem;
-                    /* ut-docs#1901 (independent review, N1): explicit,
-                       same as .payment-overlay above — without it this
-                       relies on the UA's own dialog background (`canvas`)
-                       showing through around the child .card, which is
-                       correct today only because no theme plugin yet
-                       overrides that default (see the elevation-modal
-                       block below for the trap this avoids). */
-                    background: var(--surface); }
+/* ut-docs#1901: the add/edit-item form is a <dialog> (#item-form-modal,
+   opened via .show() from catalog.html) instead of a permanently-visible
+   360px sticky side panel. Opened via .show(), NOT showModal() — same fix,
+   same reasoning (ut-docs#1385) as #hold-modal/#pfand-modal/
+   #elevation-modal/#table-add-modal/.payment-overlay above: showModal()'s
+   top-layer/inert-outside behaviour makes the custom on-screen keyboard
+   (#osk, appended to <body>, never re-parented into whichever dialog is
+   open) completely unreachable, and this form has more OSK-triggering
+   fields (barcode, name, price, SKU, description...) than any of those
+   five. `position: fixed` replaces the native top-layer positioning
+   .show() no longer provides; `z-index: 500` matches the same five for the
+   identical reason, staying below #osk's `z-index: 1000` so the keyboard
+   still renders on top of whichever field it's typing into here. No
+   ::backdrop rule — a .show() dialog never paints one.
+
+   ut-docs#1956 (product owner: "the forms are so confusing"): genuinely
+   FULL-SCREEN now — `inset: 0`, no max-size, no border/radius — not the
+   previous 94vw × 92vh floating card. Laid out as a flex column so the
+   action bar is pinned WITHOUT position: sticky (sticky inside an
+   overflow:auto dialog is exactly the arrangement that used to let the
+   head scroll away):
+     .item-form-modal        fixed, full-bleed, flex column, overflow hidden
+       .catalog-form         flex: 1, min-block-size: 0, flex column
+         .catalog-form-head  flex: none — title + delete | + New / Close /
+                             Save, the notice row, then the tab strip
+         .catalog-form-body  flex: 1, min-block-size: 0, overflow-y: auto —
+                             the ONE scroll container, holding the panels
+   All padding lives on the head and body, none on the dialog itself, so
+   the pinned head's bottom rule runs edge to edge.
+   `background` is explicit (independent review of #1901, N1) — same as
+   .payment-overlay — rather than relying on the UA's dialog `canvas`
+   default showing through. */
+.item-form-modal { position: fixed; inset: 0; margin: 0; z-index: 500;
+                    inline-size: 100%; max-inline-size: none;
+                    block-size: 100%; max-block-size: none;
+                    border: 0; border-radius: 0; box-shadow: none; padding: 0;
+                    display: flex; flex-direction: column; overflow: hidden;
+                    background: var(--surface); color: var(--text); }
+/* Out-specifies the display:flex above (0,2,0 vs 0,1,0), so a closed
+   dialog still renders nothing — verified, not assumed (the UA's own
+   dialog:not([open]) rule would otherwise lose to the author rule). */
 .item-form-modal:not([open]) { display: none; }
-/* ut-docs#1901 (independent review, N3): 700px is ALREADY inside the
-   94vw base rule's own applicable range (94vw doesn't change by width),
-   so only `padding` actually differs here — `width: 94vw` is a dead
-   restatement, not a real override. */
-@media (max-width: 700px) { .item-form-modal { padding: 1rem; } }
+.item-form-modal .catalog-form { flex: 1 1 auto; min-block-size: 0; display: flex; flex-direction: column; }
+.catalog-form-head { flex: none; display: flex; flex-direction: column; gap: .4rem;
+                     padding: .6rem 1.5rem 0; border-block-end: 1px solid var(--border);
+                     background: var(--surface); }
+/* One row at 1024×600 (the kiosk floor), wrapping into two at phone width:
+   the title+delete group and the action group each keep their own
+   children on one line; only the two GROUPS wrap relative to each other. */
+.catalog-form-head-row { display: flex; flex-wrap: wrap; align-items: center;
+                         justify-content: space-between; gap: .5rem .75rem; }
+.catalog-form-head-title { display: flex; align-items: center; gap: .5rem;
+                           flex: 1 1 12rem; min-inline-size: 0; }
+.catalog-form-head-title h3 { margin: 0; min-inline-size: 0; overflow: hidden;
+                              text-overflow: ellipsis; white-space: nowrap; }
+.catalog-form-head-actions { display: flex; flex-wrap: wrap; gap: .5rem; align-items: center;
+                             margin-inline-start: auto; }
+/* Icon-only delete (catalog.delete): a .btn.secondary in the danger colour,
+   square, same 3rem touch floor as its neighbours; the Lucide glyph is
+   sized by .btn-ico (above). Visible focus ring, since the label is
+   aria-label/title only. */
+.catalog-form-delete { flex: none; color: var(--danger); min-inline-size: 3rem; padding-inline: .65rem; }
+.catalog-form-delete:hover { color: var(--danger); }
+.catalog-form-delete:focus-visible { outline: 2px solid var(--focus, var(--accent)); outline-offset: 2px; }
+.catalog-form-delete .btn-ico svg { inline-size: 1.3rem; block-size: 1.3rem; }
+/* The notice row keeps its height when empty so a notice appearing never
+   shoves the tab strip (and the whole body) down a line. */
+.catalog-form-head #item-form-msg { min-block-size: 1.3rem; }
+.catalog-form-head .tab-bar { border-block-end: 0; }
+.catalog-form-body { flex: 1 1 auto; min-block-size: 0; overflow-y: auto; overflow-x: hidden;
+                     padding: 1rem 1.5rem 1.5rem; }
+/* The generic .tab-panel (below) is its own flex scroll box for the tender;
+   here the BODY is the one scroll container, so panels are plain blocks —
+   one scrollbar, never two nested ones. */
+.catalog-form-body .tab-panel { display: block; min-block-size: 0; overflow: visible; flex: none; }
+.catalog-form-body .tab-panel .item-form-needs-save { margin: 0; }
+/* Create mode (the item does not exist yet, so nothing item-bound can
+   work): each panel shows its "save this item first" hint and hides its
+   controls. Edit mode: the reverse. Toggled by setMode() in catalog.html. */
+.catalog-form.is-create .item-form-needs-item { display: none; }
+.catalog-form:not(.is-create) .item-form-needs-save { display: none; }
+@media (max-width: 700px) {
+  .catalog-form-head { padding-inline: 1rem; }
+  .catalog-form-body { padding-inline: 1rem; }
+}
 /* ut-docs#1901, same fix as body.osk-padded .payment-overlay above: the
    OSK is `position: fixed` + `z-index: 1000`, spanning the bottom 15.5rem
    of the viewport regardless of this dialog's own box — without this,
-   whichever field/button sits in that band (very likely here: this form
-   is taller than .payment-overlay's, and Create Item/Save Changes is
-   near its own bottom) is genuinely covered, not merely close to an
-   edge, the exact failure #1385 found for the payment overlay. */
-body.osk-padded .item-form-modal { max-height: calc(92vh - 15.5rem); }
+   whichever field/button sits in that band is genuinely covered, not
+   merely close to an edge, the exact failure #1385 found for the payment
+   overlay. ut-docs#1956: the dialog is full-bleed and anchored to the top
+   edge (inset-block-start: 0 wins the over-constrained vertical box), so
+   shortening its block-size keeps the whole form — pinned head and
+   scrolling body alike — clear of the keyboard. */
+body.osk-padded .item-form-modal { block-size: calc(100% - 15.5rem); }
 .catalog-extra { margin-top: .9rem; border-top: 1px solid var(--border); padding-top: .6rem; }
 .catalog-extra summary { font-weight: 600; cursor: pointer; color: var(--muted);
                          font-size: .85rem; }
