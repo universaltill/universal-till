@@ -215,6 +215,14 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		}
 		grandRefunds, _, _ := repo.RefundsByWindow(r.Context(), window.From, window.To)
 		grandNet := grandTotal - grandRefunds
+		// Avg sale (ut-docs#1974, SumUp Insights parity): a derived display
+		// value from the two grand totals already computed above, not a new
+		// query. Zero-sale-safe — an empty window must render £0.00, not
+		// divide by zero.
+		var grandAvg int64
+		if grandCount > 0 {
+			grandAvg = grandTotal / int64(grandCount)
+		}
 
 		httpx.Render("ui/pages/reports.html", map[string]any{
 			"title":        "Reports",
@@ -234,6 +242,7 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 			"GrandTotal":   grandTotal,
 			"GrandTax":     grandTax,
 			"GrandCount":   grandCount,
+			"GrandAvg":     grandAvg,
 			"GrandRefunds": grandRefunds,
 			"GrandNet":     grandNet,
 		})(w, r)
