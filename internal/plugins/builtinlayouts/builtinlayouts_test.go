@@ -41,7 +41,7 @@ func TestSync_ServiceShopType_InstallsAndActivatesSalonLayout(t *testing.T) {
 	d := openTestDB(t)
 	ctx := context.Background()
 
-	if err := Sync(ctx, d.DB, "service"); err != nil {
+	if _, err := Sync(ctx, d.DB, "service"); err != nil {
 		t.Fatalf("Sync: %v", err)
 	}
 
@@ -85,7 +85,7 @@ func TestSync_NonServiceShopTypes_NeverInstallSalonLayout(t *testing.T) {
 		t.Run(st, func(t *testing.T) {
 			d := openTestDB(t)
 			ctx := context.Background()
-			if err := Sync(ctx, d.DB, st); err != nil {
+			if _, err := Sync(ctx, d.DB, st); err != nil {
 				t.Fatalf("Sync(%q): %v", st, err)
 			}
 			active, err := data.NewPluginRepo(d.DB).PluginActive(ctx, SalonPluginID)
@@ -103,10 +103,10 @@ func TestSync_SwitchingAwayFromService_RemovesSalonLayoutCleanly(t *testing.T) {
 	d := openTestDB(t)
 	ctx := context.Background()
 
-	if err := Sync(ctx, d.DB, "service"); err != nil {
+	if _, err := Sync(ctx, d.DB, "service"); err != nil {
 		t.Fatalf("Sync(service): %v", err)
 	}
-	if err := Sync(ctx, d.DB, "cafe"); err != nil {
+	if _, err := Sync(ctx, d.DB, "cafe"); err != nil {
 		t.Fatalf("Sync(cafe): %v", err)
 	}
 
@@ -131,10 +131,10 @@ func TestSync_IsIdempotent(t *testing.T) {
 	d := openTestDB(t)
 	ctx := context.Background()
 
-	if err := Sync(ctx, d.DB, "service"); err != nil {
+	if _, err := Sync(ctx, d.DB, "service"); err != nil {
 		t.Fatalf("first Sync: %v", err)
 	}
-	if err := Sync(ctx, d.DB, "service"); err != nil {
+	if _, err := Sync(ctx, d.DB, "service"); err != nil {
 		t.Fatalf("second Sync (same shop_type again): %v", err)
 	}
 
@@ -154,10 +154,10 @@ func TestSync_IsIdempotent(t *testing.T) {
 
 	// Re-running Sync("cafe") after it's already inactive must also be a
 	// clean no-op, not an error from trying to uninstall something absent.
-	if err := Sync(ctx, d.DB, "cafe"); err != nil {
+	if _, err := Sync(ctx, d.DB, "cafe"); err != nil {
 		t.Fatalf("Sync(cafe) after already-cafe: %v", err)
 	}
-	if err := Sync(ctx, d.DB, "cafe"); err != nil {
+	if _, err := Sync(ctx, d.DB, "cafe"); err != nil {
 		t.Fatalf("second Sync(cafe): %v", err)
 	}
 }
@@ -171,14 +171,14 @@ func TestSync_DisabledSalonLayout_StillRemovedOnSwitchAway(t *testing.T) {
 	d := openTestDB(t)
 	ctx := context.Background()
 
-	if err := Sync(ctx, d.DB, "service"); err != nil {
+	if _, err := Sync(ctx, d.DB, "service"); err != nil {
 		t.Fatalf("Sync(service): %v", err)
 	}
 	if err := data.NewPluginRepo(d.DB).SetPluginActive(ctx, nil, SalonPluginID, false); err != nil {
 		t.Fatalf("simulate manual disable: %v", err)
 	}
 
-	if err := Sync(ctx, d.DB, "cafe"); err != nil {
+	if _, err := Sync(ctx, d.DB, "cafe"); err != nil {
 		t.Fatalf("Sync(cafe) with salon layout disabled-but-installed: %v", err)
 	}
 
@@ -217,7 +217,7 @@ func TestSync_StaleInstalledVersion_ReplacedWithCurrentOnResync(t *testing.T) {
 		t.Fatalf("install fabricated stale version: %v", err)
 	}
 
-	if err := Sync(ctx, d.DB, "service"); err != nil {
+	if _, err := Sync(ctx, d.DB, "service"); err != nil {
 		t.Fatalf("Sync(service) over a stale version: %v", err)
 	}
 
@@ -244,5 +244,120 @@ func TestSync_StaleInstalledVersion_ReplacedWithCurrentOnResync(t *testing.T) {
 	}
 	if n != 1 {
 		t.Fatalf("reinstalling over a stale version must not leave duplicate amendments, got %d", n)
+	}
+}
+
+// ut-docs#2006: Sync's changed return lets a caller skip a redundant
+// ReloadPlugins on a genuine no-op — both "never needed the layout" and
+// "already installed at the current version" must report changed=false.
+func TestSync_ChangedIsFalseOnGenuineNoOp(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	changed, err := Sync(ctx, d.DB, "cafe")
+	if err != nil {
+		t.Fatalf("Sync(cafe) from a fresh DB: %v", err)
+	}
+	if changed {
+		t.Fatal("shop_type never needing the salon layout must report changed=false")
+	}
+
+	changed, err = Sync(ctx, d.DB, "service")
+	if err != nil {
+		t.Fatalf("Sync(service): %v", err)
+	}
+	if !changed {
+		t.Fatal("a fresh install must report changed=true")
+	}
+
+	changed, err = Sync(ctx, d.DB, "service")
+	if err != nil {
+		t.Fatalf("second Sync(service): %v", err)
+	}
+	if changed {
+		t.Fatal("re-syncing the same shop_type at the same installed version must report changed=false")
+	}
+}
+
+// ut-docs#2006: install/remove/reinstall must all report changed=true.
+func TestSync_ChangedIsTrueOnRealChanges(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	if changed, err := Sync(ctx, d.DB, "service"); err != nil {
+		t.Fatalf("Sync(service): %v", err)
+	} else if !changed {
+		t.Fatal("fresh install must report changed=true")
+	}
+
+	if changed, err := Sync(ctx, d.DB, "cafe"); err != nil {
+		t.Fatalf("Sync(cafe): %v", err)
+	} else if !changed {
+		t.Fatal("removal must report changed=true")
+	}
+
+	// Reinstall over a stale version (same scenario as
+	// TestSync_StaleInstalledVersion_ReplacedWithCurrentOnResync).
+	staleManifest, err := plugins.ParseManifest(bytes.NewReader(layoutsalon.ManifestJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleManifest.Version = "0.0.1-stale"
+	if err := plugins.PersistManifest(ctx, d.DB, staleManifest, plugins.InstallOptions{TrustLevel: "system"}); err != nil {
+		t.Fatalf("install fabricated stale version: %v", err)
+	}
+	if changed, err := Sync(ctx, d.DB, "service"); err != nil {
+		t.Fatalf("Sync(service) over a stale version: %v", err)
+	} else if !changed {
+		t.Fatal("a version-bump reinstall must report changed=true")
+	}
+}
+
+// ut-docs#2006 gap 2: a failed reinstall (removeSalon succeeds, installSalon
+// then fails) must still return an error — changed's value on an error path
+// is never load-bearing for the caller (the caller reloads unconditionally
+// on any error, per the call-site contract), but Sync itself must not lose
+// the error or crash.
+func TestSync_ReinstallFailure_StillReturnsError(t *testing.T) {
+	d := openTestDB(t)
+	ctx := context.Background()
+
+	staleManifest, err := plugins.ParseManifest(bytes.NewReader(layoutsalon.ManifestJSON))
+	if err != nil {
+		t.Fatal(err)
+	}
+	staleManifest.Version = "0.0.1-stale"
+	if err := plugins.PersistManifest(ctx, d.DB, staleManifest, plugins.InstallOptions{TrustLevel: "system"}); err != nil {
+		t.Fatalf("install fabricated stale version: %v", err)
+	}
+
+	// Block installSalon's os.MkdirAll(destDir, ...) deterministically: put a
+	// regular file at the plugins ROOT itself (not under paths.Plugins(id) —
+	// removeSalon's own os.RemoveAll(paths.Plugins(id)) runs first on this
+	// path and would silently delete a blocking file placed any deeper,
+	// since PersistManifest above never wrote any real directory for the
+	// stale version). This is a portable failure-injection (unlike
+	// chmod-based approaches, which behave differently when tests run as
+	// root, as they do in this sandbox).
+	pluginsRoot := paths.Plugins()
+	if err := os.MkdirAll(filepath.Dir(pluginsRoot), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(pluginsRoot, []byte("blocking file"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	_, err = Sync(ctx, d.DB, "service")
+	if err == nil {
+		t.Fatal("Sync must return an error when installSalon's MkdirAll is blocked, got nil")
+	}
+
+	// The remove half of the reinstall must still have gone through — this
+	// is the exact residual-state gap ut-docs#2006 describes: the DB says
+	// uninstalled even though Sync errored.
+	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, SalonPluginID); err != nil {
+		t.Fatal(err)
+	} else if found {
+		t.Fatal("removeSalon's half of the reinstall must have succeeded despite installSalon failing")
 	}
 }
