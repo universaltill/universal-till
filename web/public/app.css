@@ -2243,8 +2243,27 @@ a.btn, a.btn:hover { text-decoration: none; }
    scrolls as a last resort, never squeezes this to nothing). Full-width via
    the row's single stretched flex item — direction-agnostic, no
    left/right, nothing to mirror for RTL. */
-.tender-quickpay { display: flex; flex-shrink: 0; }
+.tender-quickpay { display: flex; flex-shrink: 0; gap: .5rem; }
 .tender-quickpay > .btn { flex: 1; font-weight: 700; }
+
+/* ut-docs#2137: the parked-orders trigger shares the quick-pay row with Card
+   (the product owner's placement). It takes the smaller share -- Card
+   completes a charge and stays the dominant target -- but keeps the row's
+   height, so the #1336 short-viewport budget measured just above is
+   unchanged: this adds a sibling, never a third row. */
+.tender-quickpay > .parked-orders-btn { flex: 0 1 38%; font-weight: 600; }
+
+/* The popup body. Scrolls internally rather than growing the dialog past the
+   viewport -- a till with a dozen parked tables must still show its Close
+   button. */
+.parked-orders-modal { min-width: min(30rem, 92vw); }
+.parked-orders-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .5rem; max-height: 60vh; overflow-y: auto; }
+.parked-orders-list > li { display: flex; }
+/* Whole-row target at the product's documented 46px floor (.btn-touch): the
+   cashier taps this with a finger, and the label alone is a few characters
+   wide. text-align/margin-inline keep it correct under RTL. */
+.parked-orders-list > li > .parked-order { flex: 1; min-height: 46px; display: flex; align-items: center; gap: .5rem; text-align: start; }
+.parked-order-meta { margin-inline-start: auto; opacity: .8; white-space: nowrap; }
 
 /* The dialog itself: a slide-in panel anchored to the inline-end edge
    (right in LTR, left in RTL — logical properties per this repo's RTL

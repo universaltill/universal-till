@@ -95,6 +95,23 @@
     </form>
   </dialog>
 
+  <!-- ut-docs#2137: opened non-modally with .show(), same reasoning as
+       #hold-modal and #payment-overlay above -- showModal()'s inert-outside
+       behaviour makes the custom on-screen keyboard untappable, and a kiosk
+       till has no other keyboard. Nothing here needs typing today, but the
+       whole sale screen is consistent on this point and a modal here would
+       also cover the basket the cashier is resuming into. -->
+  <dialog id="parked-orders-modal" class="modifier-modal parked-orders-modal"
+          aria-labelledby="parked-orders-modal-title">
+    <h3 id="parked-orders-modal-title">{{ T "open_orders.title" }}</h3>
+    <div id="parked-orders-body"></div>
+    <div class="modifier-actions">
+      <button type="button" class="btn secondary"
+              onclick="document.getElementById('parked-orders-modal').close();">
+        {{ T "common.close" }}</button>
+    </div>
+  </dialog>
+
   <!-- Client-side slot of the sale screen's single notification surface
        (ut-docs#213, docs/sale-screen-notifications.md): app.js
        fills it on htmx request failures. Server-rendered notices ride the
@@ -319,7 +336,25 @@
          report entry's — a built-in's plain-text name like "Cash" passes
          through T unchanged) or
          the same tender.cash fallback the pay-grid's own else-branch uses. -->
+    <!-- ut-docs#2137: parked orders, beside Card (product owner's own
+         placement). The sale screen already lists held orders in the On hold
+         strip, but that strip is clipped off-screen at 1280x800
+         (ut-docs#2128) and /open-orders was read-only -- so on the pilot
+         tablet a parked order could not be picked back up at all. A popup
+         needs no vertical budget, which is exactly why it is the fix and the
+         strip's CSS work (measurement-tuned across #1313/#1336) is not a
+         prerequisite.
+         Always rendered rather than hidden when nothing is parked: a control
+         that appears and disappears under the cashier's finger is worse than
+         one that opens and says "nothing parked", and it keeps this row's
+         geometry constant (the #1336 height budget measured this row).
+         Body is fetched on open, never rendered with the page, so it cannot
+         offer an order that was paid or resumed since load. -->
     <div class="tender-quickpay">
+      <button type="button" class="btn secondary parked-orders-btn" data-testid="parked-orders-open"
+              hx-get="/ui/parked-orders" hx-target="#parked-orders-body" hx-swap="innerHTML"
+              onclick="document.getElementById('parked-orders-modal').show()">
+        {{ T "open_orders.title" }}</button>
       {{ if .defaultPayMethod }}
       <button class="btn quick-pay-btn" type="button" data-testid="quick-pay" data-method="{{ .defaultPayMethod.ID }}"
               hx-post="/api/pos/tender"

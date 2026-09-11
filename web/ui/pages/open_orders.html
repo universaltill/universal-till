@@ -2,9 +2,15 @@
 {{/* Open orders (ut-docs#1918): every order currently parked on this till,
      as a full list -- the sale screen's "On hold" strip shows the same
      orders as chips but has no room for table / items / total / age side by
-     side. Read-only: resuming happens on the sale screen (the strip's chip),
-     since a resume needs the live basket empty and lands the cashier there
-     anyway -- hence the Back to sale button, not a per-row action. */}}
+     side.
+
+     ut-docs#2137: this page no longer tells the cashier to "tap it on the On
+     hold strip on the sale screen". That strip is clipped off-screen on a
+     1280x800 tablet (ut-docs#2128), so the hint pointed at a control the
+     device does not show -- with this page read-only, a parked order was
+     unreachable. Resuming now lives in the parked-orders popup on the sale
+     screen itself (the button beside Card), which depends on no viewport
+     budget. This page stays the detailed read-only view. */}}
 <div class="page-head">
   <h1>{{ T "open_orders.title" }}</h1>
   <a class="btn primary btn-touch" href="/">← {{ T "menu.back_to_sale" }}</a>
@@ -13,7 +19,6 @@
   {{ if not .orders }}
   <p class="muted" data-testid="open-orders-empty">{{ T "open_orders.empty" }}</p>
   {{ else }}
-  <p class="muted">{{ T "open_orders.hint" }}</p>
   <table class="table">
     <thead>
       <tr>
