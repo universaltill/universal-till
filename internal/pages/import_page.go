@@ -77,13 +77,29 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 			confirmedVal, _, cerr := d.Settings.Get(r.Context(), common.KeyCurrencyConfirmed)
 			currencyUnconfirmed = cerr != nil || confirmedVal != "true"
 		}
-		httpx.Render("ui/pages/import.html", map[string]any{
+		importData := map[string]any{
 			"title":               "Import",
 			"theme":               d.CurrentState().Theme,
 			"menuItems":           d.MenuSnapshot(),
 			"stagedID":            stagedID,
 			"currencyUnconfirmed": currencyUnconfirmed,
-		})(w, r)
+			// ut-docs#2095: /import is NOT an /items rail section (unlike
+			// /catalog, /modifiers, /catalog/option-sets, ut-docs#2090) --
+			// Catalog's Import button opens it as a closable dialog overlay
+			// (#import-modal) floating above the /items shell instead of
+			// swapping #items-panel. InItemsShell here means "am I being
+			// rendered inside that dialog", not "am I the shell's own panel
+			// content" -- so on an htmx fragment request, render just the
+			// content block and do NOT also OOB-swap the rail: the rail
+			// sits behind the dialog, unchanged, for the whole time the
+			// dialog is open.
+			"InItemsShell": httpx.IsFragmentSwap(w, r),
+		}
+		if httpx.IsFragmentSwap(w, r) {
+			httpx.RenderContentFragment("ui/pages/import.html", importData)(w, r)
+			return
+		}
+		httpx.Render("ui/pages/import.html", importData)(w, r)
 	})
 
 	mux.HandleFunc("GET /api/catalog/export", func(w http.ResponseWriter, r *http.Request) {

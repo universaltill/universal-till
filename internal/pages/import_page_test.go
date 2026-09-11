@@ -586,6 +586,68 @@ func TestImport_ManagerGate(t *testing.T) {
 	}
 }
 
+// ut-docs#2095: /import is NOT an /items rail section — Catalog's Import
+// button now opens it as a closable dialog overlay (#import-modal) instead
+// of navigating away from the /items shell. An htmx request from that
+// dialog's hx-get must get just the "content" block, with NO rail OOB swap
+// (unlike the Modifiers/Option-sets rail-section pattern, ut-docs#2090) --
+// the rail behind the dialog is left exactly as it was, never re-rendered.
+func TestImport_HXRequestReturnsContentFragment(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/import", nil)
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("htmx GET /import: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "Import catalog") {
+		t.Errorf("fragment missing import page content: %s", body)
+	}
+	if strings.Contains(body, "<html") || strings.Contains(body, `class="nav"`) {
+		t.Errorf("htmx request re-rendered the whole page shell instead of just the content fragment: %s", body)
+	}
+	// Import is not an /items rail section (unlike Modifiers/Option-sets,
+	// ut-docs#2090) -- this dialog-overlay fragment must never carry a rail
+	// OOB swap.
+	if strings.Contains(body, `id="items-rail"`) {
+		t.Errorf("fragment must not OOB-swap the /items rail (Import is not a rail section): %s", body)
+	}
+	if got := rec.Header().Get("Vary"); got != "HX-Request" {
+		t.Errorf("Vary header = %q, want %q", got, "HX-Request")
+	}
+}
+
+// Regression pin for AC3: a bare GET /import (no HX-Request header, e.g. a
+// direct browser navigation or the standalone back-link from a page added
+// by ut-docs#2090) must still render the exact full standalone page as
+// before this card -- /import stays directly linkable.
+func TestImport_NonHXRequestStillRendersFullPage(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/import", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /import: %d %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, "<html") || !strings.Contains(body, `class="nav"`) {
+		t.Errorf("expected the full standalone page shell, got: %s", body)
+	}
+	if !strings.Contains(body, "Import catalog") {
+		t.Errorf("full page missing import page content: %s", body)
+	}
+}
+
 func TestCatalogExport_RoundTripsHeader(t *testing.T) {
 	t.Setenv("UT_AUTH", "off")
 	dp := newImportTestDeps(t)

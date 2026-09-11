@@ -1643,6 +1643,21 @@ a.btn, a.btn:hover { text-decoration: none; }
    larger cap keep the common case scroll-free; the table wrapper's
    overflow:auto is the remaining safety net for a still-longer row. */
 .barcode-backfill-modal { max-width: 38rem; }
+/* ut-docs#2095: the tax-codes management table (name/rate/takeaway rate/
+   active/edit+deactivate -- 5 columns) clips against .modifier-modal's base
+   28rem max-width when this page is rendered inside its own dialog overlay
+   (#tax-codes-modal, catalog.html) -- confirmed by screenshot at both
+   1024x600 (the Edit/Deactivate column's own text cut off) and 360x800 (the
+   Active column entirely off the right edge). Same shape as
+   .barcode-backfill-modal just above: widen the dialog for the common
+   desktop case, and give the table's own wrapper (#tax-codes-table,
+   tax_codes_table.html) a horizontal scrollbar as the remaining safety net
+   for any viewport still narrower than the table needs -- the standalone
+   /catalog/tax-codes page (outside this dialog) already has the room via
+   .catalog-list and is unaffected either way (overflow-x:auto is a no-op
+   when nothing actually overflows). */
+#tax-codes-modal { max-width: 34rem; }
+#tax-codes-modal #tax-codes-table { overflow-x: auto; }
 /* Hold Sale naming (ut-docs#46) is opened non-modal (dialog.show(), not
    showModal()): a showModal() dialog makes everything outside it inert,
    including the custom on-screen keyboard (#osk, appended to <body>, not

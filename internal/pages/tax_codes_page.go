@@ -208,18 +208,35 @@ func registerTaxCodes(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		httpx.RenderWith([]string{
+		taxCodesData := map[string]any{
+			"title":     "Tax codes",
+			"menuItems": d.MenuSnapshot(),
+			"theme":     d.CurrentState().Theme,
+			"TaxCodes":  buildTaxCodeRows(views),
+			// ut-docs#2095: /catalog/tax-codes is NOT an /items rail section
+			// (unlike /catalog, /modifiers, /catalog/option-sets,
+			// ut-docs#2090) -- Catalog's Tax codes button opens it as a
+			// closable dialog overlay (#tax-codes-modal) floating above the
+			// /items shell instead of swapping #items-panel. InItemsShell
+			// here means "am I being rendered inside that dialog", not "am I
+			// the shell's own panel content" -- so on an htmx fragment
+			// request, render just the content block and do NOT also
+			// OOB-swap the rail: the rail sits behind the dialog, unchanged,
+			// for the whole time the dialog is open.
+			"InItemsShell": httpx.IsFragmentSwap(w, r),
+		}
+		taxCodesFiles := []string{
 			filepath.Join("web", "ui", "layouts", "base.html"),
 			filepath.Join("web", "ui", "pages", "tax_codes.html"),
 			filepath.Join("web", "ui", "partials", "nav.html"),
 			filepath.Join("web", "ui", "partials", "bugreport_panel.html"),
 			filepath.Join("web", "ui", "partials", "tax_codes_table.html"),
-		}, funcs)("base", map[string]any{
-			"title":     "Tax codes",
-			"menuItems": d.MenuSnapshot(),
-			"theme":     d.CurrentState().Theme,
-			"TaxCodes":  buildTaxCodeRows(views),
-		})(w, r)
+		}
+		if httpx.IsFragmentSwap(w, r) {
+			httpx.RenderWith(taxCodesFiles, funcs)("content", taxCodesData)(w, r)
+			return
+		}
+		httpx.RenderWith(taxCodesFiles, funcs)("base", taxCodesData)(w, r)
 	})
 
 	mux.HandleFunc("POST /api/catalog/tax-codes", func(w http.ResponseWriter, r *http.Request) {

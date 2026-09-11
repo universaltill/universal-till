@@ -10,15 +10,19 @@
          360px side panel, so creating a NEW item needs an explicit
          trigger — clearForm() resets it to create-mode before opening. -->
     <button id="item-form-add-btn" class="btn primary" type="button">{{ T "catalog.add_item_btn" }}</button>
-    <!-- ut-docs#2090: Import and Tax codes are not /items rail sections
+    <!-- ut-docs#2095: Import and Tax codes are NOT /items rail sections
          (itemsnav.Resolve's five rows are Catalog/Categories/Inventory/
-         Modifiers/Option sets only) — they stay plain full-page
-         navigation for now. Losing the rail on these two specifically is
-         a smaller, separate follow-up (needs a new "closable full-screen
-         surface" mechanism neither handler has today) tracked as
-         ut-docs#2095, not silently dropped. -->
-    <a class="btn secondary" href="/import">{{ T "import.title" }}</a>
-    <a class="btn secondary" href="/catalog/tax-codes">{{ T "taxcodes.title" }}</a>
+         Modifiers/Option sets only) — the ut-docs#2090 in-panel-swap
+         pattern above (hx-target="#items-panel") is deliberately wrong
+         for these two, since neither handler ever replaces #items-panel.
+         Instead, inside the /items shell (.InItemsShell), they open as a
+         closable full-screen dialog overlay floating ABOVE the shell —
+         same hx-get/hx-target/showModal() pattern as
+         #catalog-barcode-backfill-btn below — so the rail stays visible
+         behind them. Outside the shell (a bare GET /catalog),
+         .InItemsShell is false and these stay plain links, unchanged. -->
+    <a id="catalog-import-btn" class="btn secondary" href="/import"{{ if .InItemsShell }} hx-get="/import" hx-target="#import-modal" hx-swap="innerHTML" hx-on::after-request="document.getElementById('import-modal').showModal()"{{ end }}>{{ T "import.title" }}</a>
+    <a id="catalog-taxcodes-btn" class="btn secondary" href="/catalog/tax-codes"{{ if .InItemsShell }} hx-get="/catalog/tax-codes" hx-target="#tax-codes-modal" hx-swap="innerHTML" hx-on::after-request="document.getElementById('tax-codes-modal').showModal()"{{ end }}>{{ T "taxcodes.title" }}</a>
     <!-- ut-docs#1899/#1957: /modifiers is the shop-wide, full-CRUD home for
          modifier groups — the item detail panel below (catalog_variants.html)
          only shows a compact read-only summary plus its own "Manage
@@ -56,6 +60,12 @@
 </div>
 
 <dialog id="barcode-backfill-modal" class="modifier-modal barcode-backfill-modal" aria-labelledby="catalog-barcode-backfill-btn"></dialog>
+
+<!-- ut-docs#2095: Import and Tax codes floating above the /items shell —
+     see the Import/Tax codes buttons above for the full reasoning. Empty
+     placeholders, filled by the hx-get swap and opened via showModal(). -->
+<dialog id="import-modal" class="modifier-modal" aria-labelledby="catalog-import-btn"></dialog>
+<dialog id="tax-codes-modal" class="modifier-modal" aria-labelledby="catalog-taxcodes-btn"></dialog>
 
 <!-- ut-docs#1957: the "Manage customization groups" nested dialog, opened
      from the compact summary button inside catalog_variants.html (below).
