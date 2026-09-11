@@ -27,7 +27,7 @@
         <td>{{ .DisplayNo }}</td>
         <td>{{ if eq .OrderType "takeaway" }}{{ T "basket.order_type.takeaway" }}{{ else if eq .OrderType "mixed" }}{{ T "basket.order_type.mixed" }}{{ else }}{{ T "selforder.order_type.dine_in" }}{{ end }}</td>
         <td>{{ .Items }}</td>
-        <td>{{ datetime .CreatedAt }}</td>
+        <td>{{ printf (T "tables.status.open_minutes") .AgeMinutes }}</td>
         <td>
           <div class="btn-actions">
             <button class="btn" hx-post="/api/kiosk-counter-orders/{{ .ID }}/collect" hx-swap="none">{{ T "kiosk_counter_orders.mark_collected" }}</button>

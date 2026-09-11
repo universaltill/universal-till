@@ -5,6 +5,7 @@ import (
 	"html/template"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -13,13 +14,18 @@ import (
 
 // counterOrderRow is one row on the staff-facing "pay at counter" board
 // (ut-docs#582) — the subset of data.KioskCounterOrder the template
-// actually renders, Items already joined to one display string.
+// actually renders, Items already joined to one display string. AgeMinutes
+// is how long the order has been waiting (elapsedMinutes, same convention
+// as the tables floor plan's OpenMinutes — tables_page.go /
+// tables.status.open_minutes) — this board's whole point is letting staff
+// spot a stale order at a glance, which an absolute wall-clock timestamp
+// doesn't give them.
 type counterOrderRow struct {
-	ID        string
-	DisplayNo string
-	OrderType string
-	Items     string
-	CreatedAt string
+	ID         string
+	DisplayNo  string
+	OrderType  string
+	Items      string
+	AgeMinutes int
 }
 
 // counterOrderItemsSummary joins a counter order's lines into one
@@ -35,14 +41,15 @@ func counterOrderItemsSummary(lines []data.KioskCounterOrderLine) string {
 }
 
 func counterOrderRowsFor(orders []data.KioskCounterOrder) []counterOrderRow {
+	now := time.Now()
 	rows := make([]counterOrderRow, 0, len(orders))
 	for _, o := range orders {
 		rows = append(rows, counterOrderRow{
-			ID:        o.ID,
-			DisplayNo: o.DisplayNo,
-			OrderType: o.OrderType,
-			Items:     counterOrderItemsSummary(o.Lines),
-			CreatedAt: o.CreatedAt,
+			ID:         o.ID,
+			DisplayNo:  o.DisplayNo,
+			OrderType:  o.OrderType,
+			Items:      counterOrderItemsSummary(o.Lines),
+			AgeMinutes: elapsedMinutes(o.CreatedAt, now),
 		})
 	}
 	return rows
