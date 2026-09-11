@@ -1,23 +1,24 @@
 #!/usr/bin/env bash
 #
-# Regression test for guard-plugin-settings-bump.sh (ut-docs#1357): proves
-# the guard flags a production .go file that calls a plugin-settings writer
-# (UpsertPluginSetting/UpsertPluginSettingScoped/MergeAdditiveJSONMapSetting)
-# without referencing BumpGeneration() anywhere in that same file, proves it
-# does NOT flag a call planted in a _test.go file, proves the writers'
-# own definition file (internal/data/plugin_repo.go) is exempted so the
-# guard isn't tripped by its own internal UpsertPluginSetting ->
-# UpsertPluginSettingScoped delegation, proves the inline
-# `plugin-settings-bump:allow` escape hatch silences a real finding ONLY on
-# the line that carries it (a second, unmarked writer-call line in the same
-# file must still be caught — independent review, ut-docs#1357, found the
-# first draft's file-scoped escape hatch silenced the whole file instead),
-# proves the guard fails closed rather than silently no-ops when its own
-# writer pattern matches nothing, proves the guard still passes on the
-# real, unmodified codebase (every known production call site was already
-# fixed by ut-docs#222/#1351), and (ut-docs#1942) proves the scan also
-# catches a violation planted under cmd/, scripts/, and e2e/ — not just
-# internal/.
+# Regression test for guard-plugin-settings-bump.sh (ut-docs#1357/#1941):
+# proves the guard flags a production .go file that calls a
+# plugin-settings writer (UpsertPluginSetting/UpsertPluginSettingScoped/
+# MergeAdditiveJSONMapSetting) without referencing `OnSettingsChanged(`
+# anywhere in that same file, proves it does NOT flag a call planted in a
+# _test.go file, proves the writers' own definition file
+# (internal/data/plugin_repo.go) is exempted so the guard isn't tripped by
+# its own internal UpsertPluginSetting -> UpsertPluginSettingScoped
+# delegation, proves the inline `plugin-settings-bump:allow` escape hatch
+# silences a real finding ONLY on the line that carries it (a second,
+# unmarked writer-call line in the same file must still be caught —
+# independent review, ut-docs#1357, found the first draft's file-scoped
+# escape hatch silenced the whole file instead), proves the guard fails
+# closed rather than silently no-ops when its own writer pattern matches
+# nothing, proves the guard still passes on the real, unmodified codebase
+# (every known production call site wires the hook per ut-docs#1941, which
+# itself closed the ut-docs#222/#1351 gap), and (ut-docs#1942) proves the
+# scan also catches a violation planted under cmd/, scripts/, and e2e/ —
+# not just internal/.
 #
 # Same fixture-planting convention as guard-price-history-sync_test.sh —
 # scratch files under internal/, cleaned up on exit via a trap, never a
@@ -102,7 +103,7 @@ expect_pass() {
 }
 
 # A real production caller that writes a plugin setting but never
-# references BumpGeneration anywhere in the same file must be rejected.
+# references OnSettingsChanged( anywhere in the same file must be rejected.
 # The embedded `+"`"+` sequences below are literal Go backticks (this
 # fixture's Go source needs a raw-string-quoted value); double-quoting
 # this block instead, as shellcheck suggests, would make bash try to
@@ -117,12 +118,13 @@ plant "internal/pages" "pages" "MissingBump" 'import (
 func zzGuardTestMissingBump(ctx context.Context, db data.DBTX) {
 	_ = data.NewPluginRepo(db).UpsertPluginSetting(ctx, "com.example.tax", "rate", `+"`"+`"700"`+"`"+`)
 }'
-expect_fail "a plugin-settings writer call with no BumpGeneration reference in the same file" \
+expect_fail "a plugin-settings writer call with no OnSettingsChanged( reference in the same file" \
   "zz_guard_test_MissingBump.go"
 clear_fixtures
 
-# The same call, but the file also references BumpGeneration somewhere in
-# it (the actual convention this guard enforces) must pass.
+# The same call, but the repo it's called on is constructed with the
+# `.OnSettingsChanged(...)` hook wired somewhere in the same file (the
+# actual convention this guard enforces, ut-docs#1941) must pass.
 # Literal Go backticks, see the MissingBump case above for why.
 # shellcheck disable=SC2016
 plant "internal/pages" "pages" "HasBump" 'import (
@@ -133,10 +135,10 @@ plant "internal/pages" "pages" "HasBump" 'import (
 )
 
 func zzGuardTestHasBump(ctx context.Context, db data.DBTX) {
-	_ = data.NewPluginRepo(db).UpsertPluginSetting(ctx, "com.example.tax", "rate", `+"`"+`"700"`+"`"+`)
-	plugins.SharedBus(db).BumpGeneration()
+	repo := data.NewPluginRepo(db).OnSettingsChanged(func() { plugins.SharedBus(db).BumpGeneration() })
+	_ = repo.UpsertPluginSetting(ctx, "com.example.tax", "rate", `+"`"+`"700"`+"`"+`)
 }'
-expect_pass "a plugin-settings writer call that also references BumpGeneration in the same file"
+expect_pass "a plugin-settings writer call whose repo has OnSettingsChanged( wired in the same file"
 clear_fixtures
 
 # A call planted in a _test.go file must not trip the guard — tests write
@@ -166,7 +168,7 @@ clear_fixtures
 
 # Independent-review finding (ut-docs#1357, B1): the allow comment must be
 # scoped to its OWN line, not the whole file — a second, unmarked
-# writer-call line in the same file (with no BumpGeneration() reference
+# writer-call line in the same file (with no OnSettingsChanged( reference
 # either) must still be rejected, even though the file also contains an
 # allowed line. A file-scoped escape hatch would silently disarm this.
 # Literal Go backticks, see the MissingBump case above for why.
@@ -205,7 +207,7 @@ plant "cmd/unitill-uninstall" "main" "CmdMissingBump" 'import (
 func zzGuardTestCmdMissingBump(ctx context.Context, db data.DBTX) {
 	_ = data.NewPluginRepo(db).UpsertPluginSetting(ctx, "com.example.tax", "rate", `+"`"+`"700"`+"`"+`)
 }'
-expect_fail "a plugin-settings writer call under cmd/ with no BumpGeneration reference" \
+expect_fail "a plugin-settings writer call under cmd/ with no OnSettingsChanged( reference" \
   "zz_guard_test_CmdMissingBump.go"
 clear_fixtures
 
@@ -220,7 +222,7 @@ plant "scripts/e2e_seed" "main" "ScriptsMissingBump" 'import (
 func zzGuardTestScriptsMissingBump(ctx context.Context, db data.DBTX) {
 	_ = data.NewPluginRepo(db).UpsertPluginSettingScoped(ctx, "com.example.tax", "rate", `+"`"+`"700"`+"`"+`, "global", false)
 }'
-expect_fail "a plugin-settings writer call under scripts/ with no BumpGeneration reference" \
+expect_fail "a plugin-settings writer call under scripts/ with no OnSettingsChanged( reference" \
   "zz_guard_test_ScriptsMissingBump.go"
 clear_fixtures
 
@@ -235,7 +237,7 @@ plant "e2e/seed_demo" "main" "E2eMissingBump" 'import (
 func zzGuardTestE2eMissingBump(ctx context.Context, db data.DBTX) {
 	_ = data.NewPluginRepo(db).MergeAdditiveJSONMapSetting(ctx, "com.example.tax", "rate", `+"`"+`"700"`+"`"+`)
 }'
-expect_fail "a plugin-settings writer call under e2e/ with no BumpGeneration reference" \
+expect_fail "a plugin-settings writer call under e2e/ with no OnSettingsChanged( reference" \
   "zz_guard_test_E2eMissingBump.go"
 clear_fixtures
 
@@ -258,7 +260,8 @@ expect_fail "a WRITER_RE that matches no production file (simulated rename)" \
 
 # Baseline: the guard must still pass on the real, unmodified codebase —
 # every known production call site (import_page.go, plugin_settings_page.go)
-# was already fixed by ut-docs#222/#1351.
+# wires .OnSettingsChanged( per ut-docs#1941 (which itself closed the
+# ut-docs#222/#1351 gap).
 if run_guard >/tmp/guard_plugin_settings_bump_test_out.$$ 2>&1; then
   echo "✓ guard still passes on the clean codebase"
 else

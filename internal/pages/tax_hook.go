@@ -63,8 +63,9 @@ const taxAskCacheMax = 4096
 // without the payload changing: plugin install/update/enable/disable
 // (Manager.Reload → WasmRuntime.Sync → ResetSubscribers), a plugin_settings
 // save (both shipped tax plugins derive their rate from a setting via the
-// settings_get host fn — the settings endpoint and the sync/directive
-// rederive path both call BumpGeneration), and permission grant/revoke.
+// settings_get host fn — every plugin-settings writer bumps structurally
+// via PluginRepo.OnSettingsChanged (ut-docs#1941); the sync/directive
+// rederive path calls BumpGeneration directly), and permission grant/revoke.
 // Inputs that ARE in the payload — the item's tax code and base rate, the
 // basket's order type — miss the cache naturally when they change.
 type pluginTaxRateAsker struct {
