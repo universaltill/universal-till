@@ -255,6 +255,7 @@
   "catalog.labels.no_code": "Bu üründe yazdırılacak barkod veya SKU yok",
   "catalog.labels.no_item": "Önce bir ürün seçin (bir satıra tıklayın)",
   "catalog.labels.print": "Etiket yazdır",
+  "catalog.labels.system_unsupported": "Raf/fiyat etiketleri için Ağ veya USB fiş yazıcısı gerekir — Normal yazıcı (sistem) bağlantısı barkodu yazdıramaz. Bağlantı türünü Ayarlar → Yazıcı'dan değiştirin.",
   "catalog.labels.variant": "Varyant",
   "catalog.labels.whole_item": "Ürünün tamamı",
   "catalog.lead_time_days": "Tedarik süresi (gün)",
