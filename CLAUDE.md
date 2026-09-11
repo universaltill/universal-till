@@ -22,7 +22,16 @@ The offline-first **POS host** (Go, SQLite, HTMX). Full standards: `docs` repo �
 ## Offline-first (non-negotiable)
 - **Checkout must never be blocked by the network.** A full sale completes offline.
 - Surface offline/sync/install state with status chips/banners, never modal
-  blockers in the kiosk flow. Status/lock/exit must always be reachable.
+  blockers in the kiosk flow.
+- **Status, lock and exit-to-OS must always be reachable — on every surface,
+  admin ones included.** The one exception is self-order kiosk mode, where
+  they must be deliberately *unreachable* (customer containment); the rule
+  resumes the moment an admin takes the device out of that mode. The axis is
+  the device's mode, never admin-vs-sale. A full-screen dialog is still fine,
+  but it may not cover the nav rail without carrying a compact persistent
+  affordance for those three. Decided on ut-docs#1999; full text, and the
+  ut-docs#1513 corollary that the way out of kiosk mode cannot live in the
+  web UI it is hiding, in `ut-docs/reference/coding-standards.md` §10.
 
 ## Self-order kiosk isolation (enforced by scripts/ci/guard-kiosk-engine.sh)
 - The self-order kiosk's basket (`common.Deps.KioskEngine`) is a separate
