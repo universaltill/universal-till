@@ -1658,15 +1658,18 @@ a.btn, a.btn:hover { text-decoration: none; }
    there is no dialog width to widen here. What's still needed is a
    horizontal-scroll safety net on the tax-codes table's own wrapper
    (#tax-codes-table, tax_codes_table.html) at narrow viewports -- measured
-   at 360x800 the Active/Edit/Deactivate columns clip without it. NOTE:
-   the standalone /catalog/tax-codes page (outside this dialog) is NOT
-   unaffected -- independent review measured it overflowing WORSE at
-   360px (overflow-x: visible, ~183px of table hanging off the document,
-   the whole page scrolling horizontally to 521px in a 360px viewport) --
-   that's a pre-existing gap this rule doesn't reach (scoped to
-   #tax-codes-modal specifically) and is tracked as its own follow-up
-   rather than widened here. */
-#tax-codes-modal #tax-codes-table { overflow-x: auto; }
+   at 360x800 the Active/Edit/Deactivate columns clip without it.
+   ut-docs#2113 (independent review of this same card flagged the gap,
+   fixed as its own follow-up): the STANDALONE /catalog/tax-codes page
+   renders the identical #tax-codes-table partial outside this dialog
+   entirely, and was measured overflowing WORSE at 360px with no rule
+   reaching it at all (overflow-x: visible, ~183px of table hanging off
+   the document, the whole page scrolling horizontally to 521px in a
+   360px viewport). #tax-codes-table is a single unique id per page render
+   -- whether reached via this dialog or the standalone page -- so
+   unscoping the selector below covers both call sites with one rule
+   instead of duplicating it under `.catalog-list` too. */
+#tax-codes-table { overflow-x: auto; }
 /* Hold Sale naming (ut-docs#46) is opened non-modal (dialog.show(), not
    showModal()): a showModal() dialog makes everything outside it inert,
    including the custom on-screen keyboard (#osk, appended to <body>, not
