@@ -1,8 +1,8 @@
 {
   "id": "com.universaltill.layout-salon",
   "name": "Salon layout",
-  "version": "0.2.0",
-  "description": "A hair salon / barber shop Menu: no Tables, no Kitchen stations, Items shown as Services and listed first — and the Items screen's own Library row reads Services and moves first too. Changes only navigation and labels — the catalog, options and stock underneath are untouched.",
+  "version": "0.3.0",
+  "description": "A hair salon / barber shop Menu: no Tables, no Kitchen stations, Items shown as Services and listed first — the Items screen's own Library row reads Services and moves first too, and the nav rail lists Orders ahead of Inventory. Changes only navigation and labels — the catalog, options and stock underneath are untouched.",
   "author": "Universal Till Contributors",
   "website": "https://universaltill.com",
   "runtime": "none",
@@ -31,6 +31,17 @@
         "slot": "items",
         "amendments": [
           { "key": "/catalog", "label_key": "layout.salon.services", "order": 50 }
+        ]
+      }
+    },
+    {
+      "type": "layout",
+      "key": "rail",
+      "label": "layout.salon.name",
+      "config": {
+        "slot": "rail",
+        "amendments": [
+          { "key": "/orders", "order": 250 }
         ]
       }
     }

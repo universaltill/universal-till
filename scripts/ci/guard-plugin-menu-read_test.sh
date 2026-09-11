@@ -125,6 +125,16 @@ func zzGuardTestHandler(d *common.Deps) []uislot.Amendment {
 expect_fail "unlocked d.ItemsAmendments read"
 clear_fixture "UnlockedItemsAmendments"
 
+# ut-docs#1912: Deps.RailAmendments is the third twin (the nav rail slot),
+# reassigned in the same ReloadPlugins critical section.
+plant "UnlockedRailAmendments" 'package pages
+
+func zzGuardTestHandler(d *common.Deps) []uislot.Amendment {
+	return d.RailAmendments
+}'
+expect_fail "unlocked d.RailAmendments read"
+clear_fixture "UnlockedRailAmendments"
+
 # A different *common.Deps receiver variable name — registerShiftsAPI/
 # registerInventoryAPI/registerPluginStore use "dp"/"deps" elsewhere in this
 # package, so the guard must not be fooled by those names either.
@@ -158,9 +168,10 @@ func zzGuardTestHandler(d *common.Deps, id, key string) {
 	_, _ = d.MenuPluginByKey(key)
 	_ = d.MenuAmendmentsSnapshot()
 	_ = d.ItemsAmendmentsSnapshot()
+	_ = d.RailAmendmentsSnapshot()
 	_ = d.LayoutAmendmentsSnapshot()
 }'
-expect_pass "the locked MenuSnapshot/InstalledPlugin/MenuPluginByKey/MenuAmendmentsSnapshot/ItemsAmendmentsSnapshot/LayoutAmendmentsSnapshot accessors"
+expect_pass "the locked MenuSnapshot/InstalledPlugin/MenuPluginByKey/MenuAmendmentsSnapshot/ItemsAmendmentsSnapshot/RailAmendmentsSnapshot/LayoutAmendmentsSnapshot accessors"
 clear_fixture "LockedAccessorsUsed"
 
 # Test files exercise the locked accessors under controlled goroutine
@@ -197,6 +208,15 @@ func zzGuardTestHandler(pm *plugins.Manager) []uislot.Amendment {
 }'
 expect_fail "a new, non-allowlisted BuildItemsAmendments call site"
 clear_fixture "RogueBuildItemsAmendmentsCaller"
+
+# ut-docs#1912: and BuildRailAmendments, the rail slot's twin, likewise.
+plant "RogueBuildRailAmendmentsCaller" 'package pages
+
+func zzGuardTestHandler(pm *plugins.Manager) []uislot.Amendment {
+	return common.BuildRailAmendments(pm)
+}'
+expect_fail "a new, non-allowlisted BuildRailAmendments call site"
+clear_fixture "RogueBuildRailAmendmentsCaller"
 
 # ...while the allowlisted call sites (deps.go, state.go, init.go)
 # keep the clean codebase passing — asserted by the baseline check below.

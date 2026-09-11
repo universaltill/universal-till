@@ -48,6 +48,12 @@ func newMenuPageTestDeps(t *testing.T, menu []common.MenuItem) (*http.ServeMux, 
 		Pm:       pm,
 		Settings: settings.NewStore(db),
 	}
+	// Mirrors init.go's httpx.InitRailAmendments wiring (ut-docs#1912) so a
+	// test that installs a `layout` plugin amending the rail slot sees
+	// nav.html re-render with it; reset afterwards so the process-global
+	// source never leaks one test's deps into another's.
+	httpx.InitRailAmendments(dp.RailAmendmentsSnapshot)
+	t.Cleanup(func() { httpx.InitRailAmendments(nil) })
 	mux := http.NewServeMux()
 	registerMenu(mux, dp)
 	return mux, dp

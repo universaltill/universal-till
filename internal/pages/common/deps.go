@@ -64,7 +64,16 @@ type Deps struct {
 	// hides). Rebuilt beside MenuAmendments in ReloadPlugins under
 	// PluginMu — read it only through ItemsAmendmentsSnapshot.
 	ItemsAmendments []uislot.Amendment
-	Engine          *pos.Service
+	// RailAmendments are the rail-slot amendments in force (ADR-0088
+	// Decision J, ut-docs#1912) — the third twin, for nav.html's primary
+	// links. Same deferred-restore gap as ItemsAmendments (hide is refused
+	// for this slot at install, so nothing needs restoring yet). Rebuilt
+	// beside the other two in ReloadPlugins under PluginMu — read it only
+	// through RailAmendmentsSnapshot, which pages.Init hands to
+	// httpx.InitRailAmendments so nav.html's railEntries func reads it per
+	// request under the lock.
+	RailAmendments []uislot.Amendment
+	Engine         *pos.Service
 	// KioskEngine is the self-order kiosk's own basket engine — deliberately
 	// a SEPARATE instance from Engine (ut-docs#449): the kiosk surface is
 	// auth-exempt and reachable by any LAN client, so it must never be able
@@ -316,6 +325,7 @@ func (d *Deps) ReloadPlugins(ctx context.Context) error {
 	d.Menu = BuildMenu(d.BaseMenu, d.Pm)
 	d.MenuAmendments = BuildMenuAmendments(d.Pm, RestoredMenuKeys(ctx, d.Settings))
 	d.ItemsAmendments = BuildItemsAmendments(d.Pm)
+	d.RailAmendments = BuildRailAmendments(d.Pm)
 	return err
 }
 
@@ -345,6 +355,17 @@ func (d *Deps) ItemsAmendmentsSnapshot() []uislot.Amendment {
 	d.PluginMu.RLock()
 	defer d.PluginMu.RUnlock()
 	return d.ItemsAmendments
+}
+
+// RailAmendmentsSnapshot is MenuAmendmentsSnapshot's twin for the rail
+// slot (ut-docs#1912) — the render path's only way to read them. Called on
+// EVERY page render (nav.html's railEntries, via httpx.InitRailAmendments):
+// an RLock/RUnlock pair, no allocation, so the zero-plugin path stays
+// Decision I's no-cost one.
+func (d *Deps) RailAmendmentsSnapshot() []uislot.Amendment {
+	d.PluginMu.RLock()
+	defer d.PluginMu.RUnlock()
+	return d.RailAmendments
 }
 
 // LayoutAmendmentsSnapshot returns every active layout plugin's amendments

@@ -13,11 +13,12 @@
 //
 // The first slot was the Menu launcher (MenuSlot); the second is the /items
 // section list (ItemsSlot, ut-docs#1911, generalizing what ut-docs#1897
-// shipped as a hardcoded list). Further slots (#1332 sale rail, settings
-// groups) attach the same way: a new *Slot name, a new declared core table,
-// and a slotSpec passed to the shared parse/validate path below — no
-// redesign of Entry/Amendment/Resolve/FindConflict, which were already
-// slot-agnostic.
+// shipped as a hardcoded list); the third is the nav rail (RailSlot,
+// ut-docs#1912, generalizing what #1332 shipped as hardcoded markup).
+// Further slots (settings groups) attach the same way: a new *Slot name, a
+// new declared core table, and a slotSpec passed to the shared
+// parse/validate path below — no redesign of
+// Entry/Amendment/Resolve/FindConflict, which were already slot-agnostic.
 package uislot
 
 import (
@@ -34,6 +35,11 @@ const MenuSlot = "menu"
 // ItemsSlot is the slot name for the /items left-rail section list
 // (internal/pages/itemsnav, ut-docs#1911).
 const ItemsSlot = "items"
+
+// RailSlot is the slot name for the nav rail (web/ui/partials/nav.html's
+// .nav-primary block, ut-docs#1912) — rendered on every page, not just the
+// sale screen.
+const RailSlot = "rail"
 
 // PluginPagesOrder is the Order at which plugin `page` entries (ADR-0037)
 // are placed when the menu slot is assembled: after every core InNav entry
@@ -310,6 +316,21 @@ func IsProtectedKey(protected []string, key string) bool {
 	return false
 }
 
+// ProtectedRailKeys is the rail slot's ADR-0088 Decision J set — a second
+// protected-key category, structural rather than legal/fiscal. "/" (Sell)
+// and "/menu" (Menu) are the rail's only two entries with no equivalent
+// tile anywhere in CoreMenu: hiding or relabelling either is a dead end
+// (no route back to the sale screen, or no route to anything not on the
+// rail itself), not merely an inconvenience the way losing /inventory or
+// /orders from the rail is (both stay independently reachable — /orders is
+// already a CoreMenu tile, /inventory via the Items slot's own row).
+var ProtectedRailKeys = []string{"/", "/menu"}
+
+// IsProtectedRailKey reports whether key is in ProtectedRailKeys.
+func IsProtectedRailKey(key string) bool {
+	return IsProtectedKey(ProtectedRailKeys, key)
+}
+
 // CoreItems is the /items left-rail's declared section list (ADR-0088
 // Decision C, generalized by ut-docs#1911 from the hardcoded slice
 // internal/pages/itemsnav.Sections used to be): core's own defaults,
@@ -342,6 +363,40 @@ func CoreItemsEntry(key string) (Entry, bool) {
 		return Entry{}, false
 	}
 	return CoreItems[i], true
+}
+
+// CoreRail is the nav rail's declared entry list (ADR-0088 Decision C,
+// generalized by ut-docs#1912 from the hardcoded <a> tags
+// web/ui/partials/nav.html's .nav-primary block used to be): the four
+// entries in their existing DOM order — Sell, Menu, Inventory, Orders.
+// Declared ascending Order so the zero-amendment path never sorts
+// (Decision I) — this table renders on EVERY page, more than CoreMenu or
+// CoreItems combined, so the zero-alloc guarantee matters more here.
+// No Group/SubtitleKey/VisibleIf/InNav: nav.html draws no heading, no
+// subtitle line, and every entry is unconditionally visible.
+var CoreRail = []Entry{
+	{Key: "/", Href: "/", LabelKey: "nav.till", Icon: "shopping-cart", Order: 100},
+	{Key: "/menu", Href: "/menu", LabelKey: "nav.menu", Icon: "menu", Order: 200},
+	{Key: "/inventory", Href: "/inventory", LabelKey: "kiosk.inventory", Icon: "package", Order: 300},
+	{Key: "/orders", Href: "/orders", LabelKey: "nav.orders", Icon: "bell", Order: 400},
+}
+
+var coreRailIndex = func() map[string]int {
+	m := make(map[string]int, len(CoreRail))
+	for i, e := range CoreRail {
+		m[e.Key] = i
+	}
+	return m
+}()
+
+// CoreRailEntry returns the declared core rail entry for key —
+// CoreMenuEntry's twin for RailSlot.
+func CoreRailEntry(key string) (Entry, bool) {
+	i, ok := coreRailIndex[key]
+	if !ok {
+		return Entry{}, false
+	}
+	return CoreRail[i], true
 }
 
 // Resolve applies amendments to entries and returns the slot to render.
@@ -496,16 +551,18 @@ func ParseAmendmentsJSON(pluginID, configJSON string) ([]Amendment, error) {
 	switch slot, _ := cfg["slot"].(string); slot {
 	case ItemsSlot:
 		return ParseItemsAmendments(pluginID, cfg)
+	case RailSlot:
+		return ParseRailAmendments(pluginID, cfg)
 	case "", MenuSlot:
 		return ParseMenuAmendments(pluginID, cfg)
 	default:
-		// A slot name that is neither known one — refuse directly here,
-		// naming BOTH supported slots, rather than falling through to
+		// A slot name that is none of the known ones — refuse directly
+		// here, naming every supported slot, rather than falling through to
 		// ParseMenuAmendments: that would still correctly refuse (its own
 		// slot check doesn't match either), but its error message only
 		// knows about menuSpec's own name, under-reporting what this
 		// dispatcher actually supports (independent review of ut-docs#1911).
-		return nil, fmt.Errorf("layout entry names unsupported slot %q (supported: %s, %s)", slot, MenuSlot, ItemsSlot)
+		return nil, fmt.Errorf("layout entry names unsupported slot %q (supported: %s, %s, %s)", slot, MenuSlot, ItemsSlot, RailSlot)
 	}
 }
 
@@ -529,6 +586,18 @@ var menuSpec = slotSpec{name: MenuSlot, lookup: CoreMenuEntry, protected: IsProt
 // relabel and reorder, exactly what the shipped plugins/layout-salon demo
 // needs. Widen this once the render side and a restore surface exist.
 var itemsSpec = slotSpec{name: ItemsSlot, lookup: CoreItemsEntry, protected: IsProtectedItemsKey}
+
+// railSpec mirrors itemsSpec's capability set exactly (ADR-0088 Decision
+// J): no restore surface exists for a hidden rail entry either, so hide
+// stays refused; nav.html draws no group heading, so group stays refused
+// too. Icon is ALSO refused here even though nav.html DOES draw an icon
+// (unlike items_rail.html), because the render side
+// (internal/httpx/rail.go) resolves it as a fixed core-icon lookup and
+// doesn't yet expose a per-amendment icon override — so allowIcon could be
+// widened later with no render changes needed, once that's built. Only
+// relabel and reorder are accepted, validated against railSpec.protected's
+// allowHide/allowIcon/allowGroup/protected checks the other two slots use.
+var railSpec = slotSpec{name: RailSlot, lookup: CoreRailEntry, protected: IsProtectedRailKey}
 
 // ParseMenuAmendments parses and validates a `layout` entry's config
 // document (the manifest entry's `config`):
@@ -557,6 +626,13 @@ func ParseMenuAmendments(pluginID string, config map[string]any) ([]Amendment, e
 // of CoreMenu / ProtectedMenuKeys.
 func ParseItemsAmendments(pluginID string, config map[string]any) ([]Amendment, error) {
 	return parseSlotAmendments(pluginID, itemsSpec, config)
+}
+
+// ParseRailAmendments is ParseMenuAmendments' twin for the nav rail
+// (ADR-0088, ut-docs#1912): same schema and refusal shapes, validated
+// against uislot.CoreRail / ProtectedRailKeys instead of CoreMenu/CoreItems.
+func ParseRailAmendments(pluginID string, config map[string]any) ([]Amendment, error) {
+	return parseSlotAmendments(pluginID, railSpec, config)
 }
 
 // slotSpec is what parseSlotAmendments needs to validate one slot's
