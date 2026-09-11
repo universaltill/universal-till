@@ -1,10 +1,17 @@
 package pages
 
 import (
+	"bytes"
+	"html/template"
+	"io"
 	"net/http"
+	"net/http/httptest"
 
+	"github.com/universaltill/universal-till/internal/auth"
 	"github.com/universaltill/universal-till/internal/httpx"
+	"github.com/universaltill/universal-till/internal/logging"
 	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/ui"
 	"github.com/universaltill/universal-till/internal/uislot"
 )
 
@@ -89,11 +96,89 @@ func adminGroupsFor(visible []uislot.Entry) []adminGroup {
 	return groups
 }
 
-// registerAdmin wires GET /admin (ut-docs#2008): the tree page the Menu
-// launcher's single "Administration" tile opens, replacing #1959's
-// group-heading-on-the-flat-grid with a dedicated page listing whichever of
-// the six Group: "menu.group.administration" core destinations this viewer
-// can reach, grouped into three domain clusters (adminGroupOrder above).
+// adminEmbedHeader marks a sub-request whose fragment body is about to be
+// INLINED into /admin's own default panel load (embedAdminSection below) —
+// mirrors itemsnav.EmbedHeader/IsEmbed exactly, and for the identical
+// reason: /admin already renders the tree itself immediately above the
+// panel, so the embedded destination's own OOB tree copy (writeAdminTreeOOB)
+// must be suppressed there, or a bare GET /admin would paint the whole tree
+// a second time inside the right panel.
+const adminEmbedHeader = "X-UT-Admin-Embed"
+
+// isAdminEmbed reports whether r is such an inlined sub-request.
+func isAdminEmbed(r *http.Request) bool {
+	return r != nil && r.Header.Get(adminEmbedHeader) != ""
+}
+
+// writeAdminTreeOOB renders web/ui/partials/admin_tree.html as an
+// out-of-band swap (id="admin-tree", hx-swap-oob="true") with currentHref's
+// row marked is-current, and writes it to w — for appending after the htmx
+// fragment response of any of the tree's six destinations, so the tree's
+// active-node highlight follows the click no matter which handler answered
+// it (ut-docs#2116, mirroring itemsnav.WriteRailOOB/ut-docs#1950 exactly).
+// Rendered into a buffer first, not straight to w, so a template error
+// can't reach the client as a truncated hx-swap-oob="true" fragment.
+// Best-effort: silently does nothing on error, same as WriteRailOOB.
+//
+// No-ops for an inlined embed (see adminEmbedHeader) — that caller's page
+// draws the tree itself, so a second copy here would be a duplicate DOM id
+// and a visibly doubled tree.
+func writeAdminTreeOOB(w io.Writer, r *http.Request, funcs template.FuncMap, currentHref string, groups []adminGroup) {
+	if isAdminEmbed(r) {
+		return
+	}
+	view, err := ui.NewAdminTreeView(funcs)
+	if err != nil {
+		return
+	}
+	var buf bytes.Buffer
+	if view.Render(&buf, map[string]any{
+		"Groups":      groups,
+		"CurrentHref": currentHref,
+		"OOB":         true,
+	}) != nil {
+		return
+	}
+	_, _ = w.Write(buf.Bytes())
+}
+
+// embedAdminSection replays r as a GET to href with "HX-Request: true" and
+// adminEmbedHeader set, through the SAME mux this handler is registered on,
+// and returns the htmx fragment body that handler renders — reusing its
+// exact data-fetch and template logic instead of duplicating any of it
+// here. Mirrors embedItemsSection (items_page.go) exactly, including its
+// cookie/auth carry-over and its translated fallback-card behavior on any
+// non-200 response; see that function's own doc comment for the full
+// reasoning.
+func embedAdminSection(mux *http.ServeMux, r *http.Request, href string) template.HTML {
+	sub := httptest.NewRequest(http.MethodGet, href, nil).WithContext(r.Context())
+	sub.Header.Set("HX-Request", "true")
+	sub.Header.Set(adminEmbedHeader, "1")
+	for _, c := range r.Cookies() {
+		sub.AddCookie(c)
+	}
+	if u, ok := auth.FromContext(r.Context()); ok {
+		sub = auth.WithUser(sub, u)
+	}
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, sub)
+	if rec.Code != http.StatusOK {
+		logging.L().Errorf("admin panel: embedding %s failed (code %d): %s", href, rec.Code, rec.Body.String())
+		locale := httpx.RequestLocale(r)
+		msg := template.HTMLEscapeString(httpx.T(locale, "common.error.server"))
+		return template.HTML(`<div class="card" style="color: var(--danger)">` + msg + `</div>`) //nolint:gosec // msg is HTML-escaped above; the surrounding markup is a fixed literal
+	}
+	return template.HTML(rec.Body.String()) //nolint:gosec // rec.Body is this same server's own rendered HTML for an authorized request, not user input
+}
+
+// registerAdmin wires GET /admin (ut-docs#2008, converted to the same
+// two-pane master-detail shell /items uses by ut-docs#2116): the tree page
+// the Menu launcher's single "Administration" tile opens, listing whichever
+// of the six Group: "menu.group.administration" core destinations this
+// viewer can reach, grouped into three domain clusters (adminGroupOrder
+// above), with the first group's first entry's own content embedded into
+// the panel by default — mirrors items_page.go's registerItemsPage exactly
+// ("the right panel is never empty on arrival").
 //
 // Gated the same shape as country_settings_page.go's requireManager: a
 // direct hit on /admin with no session (or a role that unlocks none of the
@@ -112,12 +197,20 @@ func registerAdmin(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
 			return
 		}
+		groups := adminGroupsFor(visible)
+		// groups/Entries are never both empty here — the len(visible)==0
+		// branch above already handles that case, and adminGroupsFor only
+		// ever drops an EMPTY cluster, never leaves a non-empty visible set
+		// with zero groups.
+		current := groups[0].Entries[0].Href
 		httpx.Render("ui/pages/admin.html", map[string]any{
-			"title":     "Administration",
-			"theme":     d.CurrentState().Theme,
-			"menuItems": d.MenuSnapshot(),
-			"Groups":    adminGroupsFor(visible),
-			"BackHref":  "/menu",
+			"title":       "Administration",
+			"theme":       d.CurrentState().Theme,
+			"menuItems":   d.MenuSnapshot(),
+			"Groups":      groups,
+			"CurrentHref": current,
+			"PanelHTML":   embedAdminSection(mux, r, current),
+			"BackHref":    "/menu",
 		})(w, r)
 	})
 }
