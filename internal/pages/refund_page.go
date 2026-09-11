@@ -565,7 +565,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 				methods = append(methods, p.Method)
 			}
 		}
-		// German TSE hard gate (ADR-0048, ut-docs#1001): the refund path is
+		// DE+TR fiscal-signing-device hard gate (ADR-0048, ut-docs#1001, fiscal.RequiresHardGate): the refund path is
 		// gated the same way the sale path is (enforceFiscalGate in the POST
 		// handler below), but until now only the sale screen carried the
 		// persistent override-active banner -- a cashier processing a refund
@@ -674,7 +674,7 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			actorID = approver.ID
 		}
 
-		// German TSE hard gate (ADR-0048, ut-docs#731): a refund moves real
+		// DE+TR fiscal-signing-device hard gate (ADR-0048, ut-docs#731, fiscal.RequiresHardGate): a refund moves real
 		// money and is aufzeichnungspflichtig under KassenSichV the same as
 		// a sale, so it's blocked the same way — checked before any
 		// state-changing work (including the payment-provider refund

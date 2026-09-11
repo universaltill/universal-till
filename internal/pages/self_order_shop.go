@@ -430,7 +430,7 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 				status = http.StatusConflict
 				msgKey = "selforder.checkout.fiscal_device_no_receipt"
 			case errors.As(err, &fiscalNC), errors.As(err, &fiscalTF):
-				// German TSE hard gate (ADR-0048) — same fail-closed rule
+				// DE+TR fiscal-signing-device hard gate (ADR-0048, fiscal.RequiresHardGate) — same fail-closed rule
 				// as the cashier tender path, same shape as the blocked-tax
 				// refusal above: the anonymous customer can't repair
 				// anything, so the message points them to the counter.
