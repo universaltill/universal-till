@@ -14,3 +14,5 @@ Selbstbedienung verwandelt eine Kasse in einen kundenseitigen Bildschirm, auf de
 Kunden finden Artikel, indem sie auf Kategorie-Chips tippen — auf diesem Bildschirm gibt es bewusst kein Suchfeld.
 
 Der Warenkorb trägt denselben Vor-Ort-/Außer-Haus-Schalter wie der Warenkorb des Kassierers, sodass ein Selbstbedienungskunde seine eigene Bestellung als Außer Haus markieren kann (oder zurückwechselt). Dies wird auf Beleg, Kassenjournal und Küchenbon vermerkt; es ändert die berechnete Steuer nur, wenn ein Steuer-Plugin für Ihre Region es verwendet, um einen anderen Satz zu wählen.
+
+Standardmäßig nimmt der Kiosk die Zahlung selbst entgegen (Karte/kontaktlos), bevor die Bestellung an die Küche gesendet wird. Einstellungen → Kiosk-Zahlungsmodus bietet auch **An der Kasse bezahlen**: Der Kiosk sendet jede Bestellung direkt an die Küche, ohne etwas zu berechnen, und der Kunde bezahlt bei der Abholung an der Kasse bei einer Person. Mitarbeiter sehen und verwalten diese Bestellungen auf ihrer eigenen Übersicht — siehe [An der Kasse bezahlen](/help/kiosk-counter-orders).

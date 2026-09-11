@@ -412,6 +412,7 @@ func TestSaveState_RoundTripsThroughLoadState(t *testing.T) {
 		IdleLockMinutes:        20,
 		OSKMode:                "off",
 		KioskIdleResetSeconds:  45,
+		KioskPaymentMode:       "counter",
 		WindowMode:             "fullscreen",
 		LaunchOnStartup:        true,
 	}

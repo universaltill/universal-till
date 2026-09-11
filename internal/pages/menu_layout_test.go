@@ -51,7 +51,7 @@ func getMenu(t *testing.T, mux *http.ServeMux) string {
 // tree page listing those same six destinations instead.
 var goldenManagerTiles = []string{
 	"/designer", "/shifts", "/journal", "/orders", "/reports", "/settings", "/plugins", "/items",
-	"/help",
+	"/help", "/kiosk-counter-orders",
 	"/users", "/kitchen-stations", "/bluetooth-devices", "/tables", "/report-issue", "/admin",
 }
 
@@ -64,7 +64,7 @@ func TestMenuPage_GoldenZeroPluginTileOrder(t *testing.T) {
 	// (every one of the six it gates behind is itself settings/fiscal/
 	// stock_location_management-gated).
 	cashier := menuTileHrefs(getMenu(t, mux))
-	wantCashier := goldenManagerTiles[:9]
+	wantCashier := goldenManagerTiles[:10]
 	if strings.Join(cashier, " ") != strings.Join(wantCashier, " ") {
 		t.Fatalf("zero-plugin cashier tiles drifted:\n got %v\nwant %v", cashier, wantCashier)
 	}

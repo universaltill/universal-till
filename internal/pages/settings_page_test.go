@@ -167,6 +167,29 @@ func TestKioskIdleResetEndpoint(t *testing.T) {
 	}
 }
 
+// The self-order kiosk payment mode (ut-docs#582) is manager-gated,
+// validated against the closed {kiosk, counter} enum, and stored in
+// runtime state.
+func TestKioskPaymentModeEndpoint(t *testing.T) {
+	mux, _, d := newFullAuthDeps(t)
+
+	// ut-docs#865: elevation prompt, not a flat 403 (same as every other
+	// kiosk setting on this page).
+	if rec := postForm(mux, "/api/settings/kiosk-payment-mode", url.Values{"mode": {"counter"}}, &cashUser); rec.Code != http.StatusOK ||
+		!strings.Contains(rec.Body.String(), "elevation-dialog") {
+		t.Fatalf("cashier kiosk-payment-mode = %d body=%s, want 200 with the elevation prompt", rec.Code, rec.Body.String())
+	}
+	if rec := postForm(mux, "/api/settings/kiosk-payment-mode", url.Values{"mode": {"bogus"}}, &mgrUser); rec.Code != http.StatusBadRequest {
+		t.Fatalf("invalid kiosk-payment-mode = %d, want 400", rec.Code)
+	}
+	if rec := postForm(mux, "/api/settings/kiosk-payment-mode", url.Values{"mode": {"counter"}}, &mgrUser); rec.Code != http.StatusNoContent {
+		t.Fatalf("valid kiosk-payment-mode = %d, want 204", rec.Code)
+	}
+	if d.CurrentState().KioskPaymentMode != "counter" {
+		t.Fatalf("kiosk payment mode = %q, want %q", d.CurrentState().KioskPaymentMode, "counter")
+	}
+}
+
 // Window mode (ut-docs#608 scaffold) is manager-gated, validated against the
 // closed enum, and round-trips through runtime state / GET /settings.
 func TestWindowModeEndpoint(t *testing.T) {
@@ -1810,6 +1833,7 @@ func TestSettingsEndpoints_RoleMatrix(t *testing.T) {
 		{"enrol-devices", http.MethodGet, "/api/enrol/devices", nil, gateForbiddenSpan},
 		{"idle-lock", http.MethodPost, "/api/settings/idle-lock", url.Values{"minutes": {"10"}}, gateElevation},
 		{"kiosk-idle-reset", http.MethodPost, "/api/settings/kiosk-idle-reset", url.Values{"seconds": {"30"}}, gateElevation},
+		{"kiosk-payment-mode", http.MethodPost, "/api/settings/kiosk-payment-mode", url.Values{"mode": {"counter"}}, gateElevation},
 		{"window-mode", http.MethodPost, "/api/settings/window-mode", url.Values{"mode": {"kiosk"}}, gateElevation},
 		{"launch-on-startup", http.MethodPost, "/api/settings/launch-on-startup", url.Values{"enabled": {"true"}}, gateElevation},
 		{"telemetry", http.MethodPost, "/api/settings/telemetry", url.Values{"optIn": {"on"}}, gateElevation},
@@ -1950,26 +1974,27 @@ func TestSettingsPage_ElevationWiredFormsVisibleToCashier(t *testing.T) {
 
 	// One marker per elevation-wired site, unique to that form/button.
 	elevationWired := []string{
-		`hx-post="/api/enrol/now"`,                  // enrollment card, unenrolled branch
-		`hx-post="/api/settings/display-mode"`,      // display-advanced: mode form
-		`id="window-mode-form"`,                     // display-advanced: window mode
-		`id="launch-on-startup-cb"`,                 // display-advanced: autostart checkbox
-		`hx-post="/api/settings/payments-default"`,  // payments card (kept {{ if .payMethods }})
-		`hx-post="/api/settings/payments-fee"`,      // payments fee rows
-		`hx-post="/api/backup/now"`,                 // backup card: only the Backup-now button
-		`data-testid="demo-remove"`,                 // data card (kept sampleCount guard)
-		`data-testid="restore-dismiss"`,             // data card (kept restorePromptDeferred guard)
-		`data-testid="pending-base-plugin-dismiss"`, // data card (kept pendingBasePlugins guard)
-		`hx-post="/api/settings/report-retention"`,  // retention card: mode form only
-		`hx-post="/api/settings/till-name"`,         // tills card (kept IsPrimaryTill guard)
-		`hx-post="/api/settings/till-register"`,     // tills card: register picker
-		`hx-post="/api/settings/idle-lock"`,         // idle-lock card
-		`hx-post="/api/settings/kiosk-idle-reset"`,  // kiosk-idle-reset card
-		`hx-post="/api/settings/telemetry"`,         // telemetry card
-		`hx-post="/api/settings/save"`,              // currency card
-		`hx-post="/api/settings/shop-type"`,         // shop-type card
-		`hx-post="/api/settings/printer"`,           // ut-docs#866: printer card
-		`hx-post="/api/settings/invoice"`,           // ut-docs#866: invoice card
+		`hx-post="/api/enrol/now"`,                   // enrollment card, unenrolled branch
+		`hx-post="/api/settings/display-mode"`,       // display-advanced: mode form
+		`id="window-mode-form"`,                      // display-advanced: window mode
+		`id="launch-on-startup-cb"`,                  // display-advanced: autostart checkbox
+		`hx-post="/api/settings/payments-default"`,   // payments card (kept {{ if .payMethods }})
+		`hx-post="/api/settings/payments-fee"`,       // payments fee rows
+		`hx-post="/api/backup/now"`,                  // backup card: only the Backup-now button
+		`data-testid="demo-remove"`,                  // data card (kept sampleCount guard)
+		`data-testid="restore-dismiss"`,              // data card (kept restorePromptDeferred guard)
+		`data-testid="pending-base-plugin-dismiss"`,  // data card (kept pendingBasePlugins guard)
+		`hx-post="/api/settings/report-retention"`,   // retention card: mode form only
+		`hx-post="/api/settings/till-name"`,          // tills card (kept IsPrimaryTill guard)
+		`hx-post="/api/settings/till-register"`,      // tills card: register picker
+		`hx-post="/api/settings/idle-lock"`,          // idle-lock card
+		`hx-post="/api/settings/kiosk-idle-reset"`,   // kiosk-idle-reset card
+		`hx-post="/api/settings/kiosk-payment-mode"`, // kiosk-payment-mode card
+		`hx-post="/api/settings/telemetry"`,          // telemetry card
+		`hx-post="/api/settings/save"`,               // currency card
+		`hx-post="/api/settings/shop-type"`,          // shop-type card
+		`hx-post="/api/settings/printer"`,            // ut-docs#866: printer card
+		`hx-post="/api/settings/invoice"`,            // ut-docs#866: invoice card
 	}
 
 	// Manager-only content — one marker per site that must stay gated. The
