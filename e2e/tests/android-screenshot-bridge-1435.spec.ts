@@ -51,7 +51,7 @@ test.describe('bug-report panel screenshot → window.AndroidKiosk.captureScreen
     // With the bridge present the button is live, never the "not available
     // here" state the card reports.
     await expect(btn).toBeEnabled();
-    await expect(btn).toHaveText('📷 Take screenshot');
+    await expect(btn).toHaveText('Take screenshot');
 
     await btn.click();
     await expect(page.locator('#ir-screenshot-thumbs .bugreport-thumb')).toHaveCount(1);
@@ -120,6 +120,6 @@ test('without the Android bridge the desktop getDisplayMedia path is what the bu
   expect(await page.evaluate(() => typeof (window as any).AndroidKiosk)).toBe('undefined');
   const btn = page.locator('#ir-screenshot-btn');
   await expect(btn).toBeEnabled();
-  await expect(btn).toHaveText('📷 Take screenshot');
+  await expect(btn).toHaveText('Take screenshot');
   assertClean();
 });

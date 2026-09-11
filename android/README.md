@@ -528,7 +528,7 @@ wiring IS driven for real by `e2e/tests/android-screenshot-bridge-1435.spec.ts`
 (a stubbed `window.AndroidKiosk`, both bridge outcomes, and the desktop
 path proven untouched). Manual checklist for the TECLAST P50T:
 
-1. Open 🐞 on the sale screen, press "📷 Take screenshot" — a thumbnail
+1. Open 🐞 on the sale screen, press "Take screenshot" — a thumbnail
    of the sale screen must appear within a second, with no OS prompt.
    Press it several times; remove one with ✕. Save the report and confirm
    the image is attached under My Reports.

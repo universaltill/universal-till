@@ -48,17 +48,18 @@ test.describe('payment overlay duplicate controls have distinguishing accessible
     await expect(page.locator('#payment-overlay')).toBeVisible();
 
     // Exactly one control is named plainly "Hold Sale" (the original,
-    // plain-text label) and exactly one is named plainly "🛒 New Sale" (the
-    // original — its visible 🛒 icon is unwrapped text, not aria-hidden, so
-    // it's part of the computed accessible name too) — the in-overlay
-    // copies must NOT also match these exact accessible names, or a
-    // screen-reader user tabbing through still can't tell the pair apart.
-    // `exact: true` matters: without it Playwright's substring matching
-    // would count the in-overlay copy too (its name still contains "Hold
-    // Sale"/"New Sale" as a substring), defeating the point of this
-    // assertion.
+    // plain-text label) and exactly one is named plainly "New Sale" (the
+    // original — ut-docs#1859 wrapped its 🛒 glyph in an aria-hidden icon
+    // span, so the icon no longer contributes to the computed accessible
+    // name; before that it was unwrapped text and the name was "🛒 New
+    // Sale") — the in-overlay copies must NOT also match these exact
+    // accessible names, or a screen-reader user tabbing through still
+    // can't tell the pair apart. `exact: true` matters: without it
+    // Playwright's substring matching would count the in-overlay copy too
+    // (its name still contains "Hold Sale"/"New Sale" as a substring),
+    // defeating the point of this assertion.
     await expect(page.getByRole('button', { name: 'Hold Sale', exact: true })).toHaveCount(1);
-    await expect(page.getByRole('button', { name: '🛒 New Sale', exact: true })).toHaveCount(1);
+    await expect(page.getByRole('button', { name: 'New Sale', exact: true })).toHaveCount(1);
 
     // The in-overlay copies are real, visible, distinctly-named controls —
     // not just absent from the plain-name query above by accident (e.g. a

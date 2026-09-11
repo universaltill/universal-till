@@ -778,7 +778,7 @@
   "issuereport.screen_record": "● ضبط صفحه‌نمایش",
   "issuereport.screen_stop": "■ توقف",
   "issuereport.screen_unsupported": "ضبط صفحه‌نمایش در اینجا در دسترس نیست.",
-  "issuereport.screenshot_capture": "📷 گرفتن اسکرین‌شات",
+  "issuereport.screenshot_capture": "گرفتن اسکرین‌شات",
   "issuereport.screenshot_error": "گرفتن اسکرین‌شات ممکن نشد.",
   "issuereport.screenshot_label": "اسکرین‌شات (اختیاری)",
   "issuereport.screenshot_remove": "حذف اسکرین‌شات",

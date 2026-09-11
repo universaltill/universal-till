@@ -330,11 +330,16 @@ func TestBaseLayoutUpdateChipHasNoLinkWhenDownloadLinkNotActionable(t *testing.T
 	if idx == -1 {
 		t.Fatalf("expected the status-bar update chip to still render (as plain text), got %.500s", body)
 	}
-	end := strings.Index(body[idx:], "</span>")
+	// ut-docs#1859: the chip's ⬆ emoji became an aria-hidden icon <span>
+	// nested INSIDE the outer .sb-update <span>, so the first "</span>"
+	// after idx now closes the inner icon, not the chip itself — skip past
+	// it to find the chip's own closing tag.
+	afterIcon := idx + strings.Index(body[idx:], "</span>") + len("</span>")
+	end := strings.Index(body[afterIcon:], "</span>")
 	if end == -1 {
 		t.Fatalf("expected the kiosk-dead-end chip to be a plain <span>, not a link, got %.500s", body[idx:])
 	}
-	chip := body[idx : idx+end]
+	chip := body[idx : afterIcon+end]
 	if strings.Contains(chip, "<a ") || strings.Contains(chip, "href=") {
 		t.Fatalf("expected no clickable link in the status bar when a download link isn't actionable on this platform (ut-docs#159 kiosk dead-end), got %q", chip)
 	}
