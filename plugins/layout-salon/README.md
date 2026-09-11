@@ -1,8 +1,8 @@
 # ut-plugin-layout-salon — a hair salon / barber shop Menu
 
 The first `layout` plugin (ADR-0088, ut-docs#1904): it changes **what the
-Menu screen and the /items screen's own section list show**, and nothing
-else. A salon does not seat tables or route tickets to a kitchen, and it
+Menu screen, the /items screen's own section list and the nav rail on
+every page show**, and nothing else. A salon does not seat tables or route tickets to a kitchen, and it
 sells *services* — but a service is still an item, "short/long" is still
 an option set, and a service is a stock-untracked inventory row
 (ut-docs#1843/#1850). **The catalog, variant and inventory concepts do not
@@ -19,8 +19,9 @@ marketplace (ADR-0009 naming).
 
 ## What it does
 
-`plugin.json` carries two `layout` entries — one amendment document per
-slot (ADR-0088; the `items` slot generalized by ut-docs#1911):
+`plugin.json` carries three `layout` entries — one amendment document per
+slot (ADR-0088; the `items` slot generalized by ut-docs#1911, the `rail`
+slot by ut-docs#1912):
 
 **`menu` slot:**
 
@@ -44,6 +45,21 @@ No hide mechanism exists for this slot yet — unlike the Menu, the /items
 rail has no "restore" recovery surface today (ut-docs#1911 flags this as a
 deliberate, deferred gap), so this plugin only relabels/reorders here,
 never hides.
+
+**`rail` slot** (the nav rail's primary links, on every page):
+
+| Rail key | Amendment | Effect |
+|---|---|---|
+| `/orders` | `order` | Orders moves ahead of Inventory (Order 250, between Menu at 200 and Inventory at 300) — a salon lives in its appointment orders, not its stock. No new translation: a pure reorder. |
+
+The rail's capability set is the same as the Items slot's — reorder and
+relabel only. `hide` is refused (no restore surface, and an emptied rail
+would leave a page with no way back to the sale screen), `icon` is refused
+(the rail is icon-only at kiosk width, so the glyph *is* the link's
+identity there), `group` has nothing to draw against. `/` (Sell) and
+`/menu` are protected (ADR-0088 Decision J): they can be reordered but
+never re-labelled — neither has a twin anywhere on the Menu, so
+disguising either would strand the operator.
 
 ## What it cannot do — and why
 

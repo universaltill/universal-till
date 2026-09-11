@@ -269,6 +269,28 @@ func TestLayoutSalonPlugin_InstallsAndDeclaresItsAmendments(t *testing.T) {
 		t.Fatalf("the Menu tile and Items-rail row should reuse the SAME locale key (\"Services\" means the same thing in both places, and reusing it ships zero new translations): menu=%q items=%q", items.LabelKey, catalogRow.LabelKey)
 	}
 
+	// ut-docs#1912: and the RAIL slot (nav.html's primary links on every
+	// page) — a third demonstration on a third slot: Orders reordered
+	// ahead of Inventory. byKey is keyed by bare Key, and "/orders" is ALSO
+	// a CoreMenu key — so this pins that the amendment landed on the RAIL
+	// slot (the manifest's third entry), not as a stray Menu reorder.
+	ordersLink, ok := byKey["/orders"]
+	if !ok || ordersLink.Slot != uislot.RailSlot || ordersLink.Order == nil || ordersLink.LabelKey != "" {
+		t.Fatalf("salon layout must reorder (and only reorder) the Rail-slot /orders link, got %+v", ordersLink)
+	}
+	if _, inventoryCore := uislot.CoreRailEntry("/inventory"); !inventoryCore || *ordersLink.Order >= 300 {
+		t.Fatalf("the reorder should place Orders ahead of Inventory (CoreRail Order 300), got order %d", *ordersLink.Order)
+	}
+	slots := map[string]bool{}
+	for _, a := range pm.LayoutAmendments {
+		slots[a.Slot] = true
+	}
+	for _, want := range []string{uislot.MenuSlot, uislot.ItemsSlot, uislot.RailSlot} {
+		if !slots[want] {
+			t.Errorf("salon layout must amend the %s slot", want)
+		}
+	}
+
 	// Every locale key the plugin introduces ships in its own locale files,
 	// for every core locale (Decision G: the label resolves through the
 	// same overlay mechanism language packs use).

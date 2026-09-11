@@ -104,6 +104,14 @@ func TestNoTwoNavDestinationsShareAnIcon(t *testing.T) {
 	for _, e := range uislot.CoreMenu {
 		record(e.Icon, e.Href, "uislot.CoreMenu")
 	}
+	// ut-docs#1912: nav.html's rail links are data now too ({{ icon .Icon }}
+	// over uislot.CoreRail), so the template scan below can no longer see
+	// them — record the declared table the same way CoreMenu's is. /orders
+	// appears in both tables with the same "bell": one destination,
+	// consistently drawn, not a collision.
+	for _, e := range uislot.CoreRail {
+		record(e.Icon, e.Href, "uislot.CoreRail")
+	}
 
 	root := filepath.Join("..", "..", "web", "ui")
 	anchor := regexp.MustCompile(`(?s)<a\s[^>]*href="(/[^"{}]*)"[^>]*>(.*?)</a>`)

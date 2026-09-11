@@ -589,3 +589,250 @@ func TestFindConflict_ScopedPerSlot(t *testing.T) {
 		t.Fatal("same key AND same slot from a different plugin must still conflict")
 	}
 }
+
+// ut-docs#1912: the Rail slot's core table is CoreMenu's/CoreItems' shape —
+// key==href, unique keys, a label key and an icon on every link (nav.html
+// draws both), strictly ascending Order (the zero-plugin path never sorts,
+// Decision I — and nav renders on every request), no declared fallbacks.
+func TestCoreRail_IsWellFormed(t *testing.T) {
+	seen := map[string]bool{}
+	prev := -1
+	for _, e := range CoreRail {
+		if e.Key == "" || e.Key != e.Href {
+			t.Errorf("core entry key must equal its href: %+v", e)
+		}
+		if seen[e.Key] {
+			t.Errorf("duplicate core key %q", e.Key)
+		}
+		seen[e.Key] = true
+		if e.LabelKey == "" || e.Icon == "" {
+			t.Errorf("core Rail entry %q needs a label locale key and an icon name (nav.html draws both)", e.Key)
+		}
+		if e.Order <= prev {
+			t.Errorf("core table must be declared in ascending Order (zero-plugin path never sorts): %q has %d after %d", e.Key, e.Order, prev)
+		}
+		prev = e.Order
+		if e.LabelFallback != "" || e.IconFallback != "" || e.Group != "" || e.VisibleIf != "" || e.InNav || e.SubtitleKey != "" {
+			t.Errorf("Rail entries carry only key/href/label/icon/order — Menu-only and Items-only fields must stay zero, fallbacks are set by Resolve: %+v", e)
+		}
+	}
+	// The four links nav.html carried hardcoded before this card, in the
+	// order it drew them — pinned verbatim so a future edit that swaps two
+	// or renames a key fails here, by name.
+	wantKeys := []string{"/", "/menu", "/inventory", "/orders"}
+	if len(CoreRail) != len(wantKeys) {
+		t.Fatalf("CoreRail must declare exactly nav.html's four primary links, got %d", len(CoreRail))
+	}
+	for i, k := range wantKeys {
+		if CoreRail[i].Key != k {
+			t.Errorf("CoreRail[%d] = %q, want %q", i, CoreRail[i].Key, k)
+		}
+	}
+	// Decision J: exactly "/" and "/menu" are protected — neither has a
+	// twin anywhere in CoreMenu, so hiding/re-labelling either strands
+	// the operator; /inventory and /orders are reachable from the Menu.
+	for _, k := range []string{"/", "/menu"} {
+		if !IsProtectedRailKey(k) {
+			t.Errorf("%q must be a protected Rail key (ADR-0088 Decision J)", k)
+		}
+		if _, onMenu := CoreMenuEntry(k); onMenu {
+			t.Errorf("%q is protected on the rail BECAUSE it has no CoreMenu twin — it now has one, revisit Decision J", k)
+		}
+	}
+	for _, k := range []string{"/inventory", "/orders"} {
+		if IsProtectedRailKey(k) {
+			t.Errorf("%q must not be protected on the rail — it stays reachable from the Menu", k)
+		}
+	}
+	if _, ok := CoreRailEntry("/menu"); !ok {
+		t.Error("CoreRailEntry must find a declared key")
+	}
+	if _, ok := CoreRailEntry("/tables"); ok {
+		t.Error("CoreRailEntry must not find a Menu-slot key")
+	}
+	if _, ok := CoreRailEntry("/catalog"); ok {
+		t.Error("CoreRailEntry must not find an Items-slot key")
+	}
+}
+
+// Decision I on the slot that renders most often: the zero-amendment path
+// over CoreRail is a length check returning the caller's own slice.
+func TestResolve_ZeroAmendmentsAllocatesNothing_Rail(t *testing.T) {
+	in := CoreRail
+	var sink []Entry
+	allocs := testing.AllocsPerRun(1000, func() { sink = Resolve(in, nil) })
+	if allocs != 0 {
+		t.Fatalf("zero-amendment Resolve over CoreRail allocated %v times per run, want 0 (ADR-0088 Decision I)", allocs)
+	}
+	if len(sink) != len(CoreRail) || &sink[0] != &CoreRail[0] {
+		t.Fatal("zero-amendment Resolve must hand back the caller's own slice, not a copy")
+	}
+}
+
+func BenchmarkResolve_ZeroAmendments_Rail(b *testing.B) {
+	in := CoreRail
+	b.ReportAllocs()
+	for i := 0; i < b.N; i++ {
+		_ = Resolve(in, nil)
+	}
+}
+
+// The capability set the shipped plugins/layout-salon rail entry needs —
+// reorder, and relabel of an unprotected link — parses, stamped RailSlot.
+func TestParseRailAmendments_RelabelAndReorder(t *testing.T) {
+	got, err := ParseRailAmendments("com.example.layout", map[string]any{
+		"slot": "rail",
+		"amendments": []any{
+			map[string]any{"key": "/orders", "order": float64(250)},
+			map[string]any{"key": "/inventory", "label_key": "layout.salon.services"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected refusal: %v", err)
+	}
+	if len(got) != 2 || got[0].Slot != RailSlot || got[0].Key != "/orders" || *got[0].Order != 250 {
+		t.Fatalf("parsed reorder mismatch: %+v", got)
+	}
+	if got[1].Slot != RailSlot || got[1].Key != "/inventory" || got[1].LabelKey != "layout.salon.services" {
+		t.Fatalf("parsed relabel mismatch: %+v", got)
+	}
+}
+
+// A Menu-only or Items-only key is not a declared Rail destination — the
+// three core tables must not leak into each other's validation, even
+// where they share a key STRING (/orders is on Menu and Rail, /inventory
+// on Items and Rail — those are declared in CoreRail too, so they pass).
+func TestParseRailAmendments_RefusesAKeyFromAnotherSlot(t *testing.T) {
+	for _, key := range []string{"/tables", "/catalog", "/items"} {
+		_, err := ParseRailAmendments("com.example.layout", map[string]any{
+			"slot":       "rail",
+			"amendments": []any{map[string]any{"key": key, "order": float64(1)}},
+		})
+		if err == nil || !strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), "rail-slot") {
+			t.Fatalf("expected a refusal naming %s as not a rail-slot destination, got %v", key, err)
+		}
+	}
+}
+
+// ut-docs#1912 mirrors the Items slot's narrower capability set: hide (no
+// restore surface — Decision D; and an emptied rail leaves a page with no
+// way back to the sale screen), icon (the rail is icon-only at kiosk width,
+// so the glyph IS the link's identity there) and group (nothing to draw
+// against) are all refused at parse time — on an UNPROTECTED key too, so
+// this is the capability check, not Decision E/J.
+func TestParseRailAmendments_RefusesHideIconGroup(t *testing.T) {
+	cases := []struct {
+		name   string
+		amend  map[string]any
+		wantIn string
+	}{
+		{"hide", map[string]any{"key": "/inventory", "hide": true}, "hide"},
+		{"icon", map[string]any{"key": "/inventory", "icon": "scissors"}, "icon"},
+		{"group", map[string]any{"key": "/inventory", "group": "g.k"}, "group"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseRailAmendments("com.example.layout", map[string]any{
+				"slot":       "rail",
+				"amendments": []any{tc.amend},
+			})
+			if err == nil {
+				t.Fatalf("%s must be refused on the rail slot", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantIn) || !strings.Contains(err.Error(), "/inventory") {
+				t.Fatalf("error should name %q and the key, got: %v", tc.wantIn, err)
+			}
+		})
+	}
+}
+
+// ADR-0088 Decision J: "/" and "/menu" keep their identity — a relabel is
+// refused as a PROTECTED-key refusal (the shared Decision E path, not the
+// capability check), while a reorder of the same keys is still allowed —
+// a vertical may lead with Orders and still keeps Sell and Menu findable.
+func TestParseRailAmendments_ProtectedKeysCannotBeRelabelledButCanMove(t *testing.T) {
+	for _, key := range ProtectedRailKeys {
+		t.Run(key, func(t *testing.T) {
+			_, err := ParseRailAmendments("com.example.layout", map[string]any{
+				"slot":       "rail",
+				"amendments": []any{map[string]any{"key": key, "label_key": "some.other.key"}},
+			})
+			if err == nil || !strings.Contains(err.Error(), "protected") || !strings.Contains(err.Error(), key) {
+				t.Fatalf("relabelling protected rail key %s must be refused naming it as protected, got %v", key, err)
+			}
+			// hide on a protected key is refused too — by the capability
+			// check first (every rail key), but refused either way.
+			_, err = ParseRailAmendments("com.example.layout", map[string]any{
+				"slot":       "rail",
+				"amendments": []any{map[string]any{"key": key, "hide": true}},
+			})
+			if err == nil || !strings.Contains(err.Error(), key) {
+				t.Fatalf("hiding protected rail key %s must be refused, got %v", key, err)
+			}
+			got, err := ParseRailAmendments("com.example.layout", map[string]any{
+				"slot":       "rail",
+				"amendments": []any{map[string]any{"key": key, "order": float64(900)}},
+			})
+			if err != nil || len(got) != 1 || *got[0].Order != 900 {
+				t.Fatalf("reordering protected rail key %s must stay allowed, got %+v, %v", key, got, err)
+			}
+		})
+	}
+}
+
+// The Rail slot's narrower capability set must not have narrowed Menu's —
+// the same /orders key that is reorder+relabel-only on the rail keeps every
+// capability on the Menu slot.
+func TestParseMenuAmendments_SharedKeyKeepsFullMenuCapabilities(t *testing.T) {
+	got, err := ParseMenuAmendments("com.example.layout", map[string]any{
+		"amendments": []any{map[string]any{"key": "/orders", "icon": "clock", "group": "g.k"}},
+	})
+	if err != nil || len(got) != 1 || got[0].Icon != "clock" || got[0].Group != "g.k" {
+		t.Fatalf("Menu slot must still allow icon/group on /orders: %+v, %v", got, err)
+	}
+}
+
+// The persisted-config dispatcher routes "slot":"rail" to railSpec, and its
+// unsupported-slot refusal names all three slots (independent review of
+// ut-docs#1911, finding 10, extended for the third slot).
+func TestParseAmendmentsJSON_DispatchesRailSlot(t *testing.T) {
+	rail, err := ParseAmendmentsJSON("p", `{"slot":"rail","amendments":[{"key":"/orders","order":250}]}`)
+	if err != nil || len(rail) != 1 || rail[0].Slot != RailSlot || *rail[0].Order != 250 {
+		t.Fatalf("rail dispatch: got %+v, %v", rail, err)
+	}
+	_, err = ParseAmendmentsJSON("p", `{"slot":"footer","amendments":[]}`)
+	if err == nil {
+		t.Fatal("an unknown slot must be refused")
+	}
+	for _, want := range []string{MenuSlot, ItemsSlot, RailSlot} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("unsupported-slot error must name %q, got: %v", want, err)
+		}
+	}
+}
+
+// /orders is a real shared key STRING across CoreMenu and CoreRail (the
+// first such collision in production data, not a synthetic "/shared"): a
+// Menu-slot restructure of /orders by one plugin and a Rail-slot
+// restructure of /orders by another must not conflict (Decision F is
+// slot-scoped), while two Rail-slot restructures of it do.
+func TestFindConflict_OrdersOnMenuAndRailDoNotCollide(t *testing.T) {
+	menuA, err := ParseAmendmentsJSON("com.a", `{"slot":"menu","amendments":[{"key":"/orders","order":10}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	railB, err := ParseAmendmentsJSON("com.b", `{"slot":"rail","amendments":[{"key":"/orders","order":250}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, ok := FindConflict(railB, menuA); ok {
+		t.Fatalf("Menu /orders and Rail /orders are different destinations' slots and must not conflict, got %+v", c)
+	}
+	railC, err := ParseAmendmentsJSON("com.c", `{"slot":"rail","amendments":[{"key":"/orders","order":50}]}`)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if c, ok := FindConflict(railC, railB); !ok || c.Incumbent != "com.b" || c.Key != "/orders" {
+		t.Fatalf("two Rail-slot restructures of /orders from different plugins must conflict naming the incumbent, got %+v, %v", c, ok)
+	}
+}

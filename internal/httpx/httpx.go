@@ -126,6 +126,13 @@ var baseFuncs = template.FuncMap{
 	// claimed by another topic (the settings cards). Locale-less fallback for
 	// the same reason as helpHref above; FuncsFor overrides it locale-bound.
 	"helpLink": func(id string) template.HTML { return helpLinkHTML(id, DefaultLocale()) },
+	// {{ railEntries }} — the nav rail's resolved primary links (rail.go,
+	// ADR-0088 RailSlot, ut-docs#1912). Locale-less fallback for the same
+	// reason as helpHref/helpLink above: fragment renderers that parse
+	// nav.html without ever executing it (internal/ui's basket/buttons
+	// views) still need the name defined at parse time; FuncsFor binds the
+	// request-locale version every whole-page render actually executes.
+	"railEntries": func() []RailEntry { return railEntriesFor(DefaultLocale(), RailAmendmentsProvider()) },
 	// {{ icon "lock" }} — inline SVG rail icons (icons.go, ut-docs#1423).
 	"icon": iconHTML,
 	// {{ dict "k" v ... }} — per-call parameters for a shared partial
@@ -806,6 +813,15 @@ func FuncsFor(locale string) template.FuncMap {
 	// Locale-bound override of the baseFuncs fallback: the section "?" label
 	// translates with the page it sits on.
 	funcs["helpLink"] = func(id string) template.HTML { return helpLinkHTML(id, locale) }
+	// Locale-bound override of the baseFuncs railEntries fallback (rail.go):
+	// ADR-0088 Decision G's label fallback has to be decided against THIS
+	// request's locale, not the shop default. Bound here rather than as a
+	// withHelpHref-style per-call-site wrapper because locale is the only
+	// per-request input the rail needs and FuncsFor already has it — so
+	// this one line covers Render, RenderWith (every caller passes a
+	// FuncsFor result), RenderContentFragment AND RenderError, with no
+	// fourth call site to forget.
+	funcs["railEntries"] = railEntriesFunc(locale)
 	// tenderLabel translates the sentinel values pos.deriveTenderType can
 	// itself produce ("unknown" — no payments at all, e.g. a zero-marginal-
 	// net partial refund, ut-docs#1579; "split" — more than one distinct

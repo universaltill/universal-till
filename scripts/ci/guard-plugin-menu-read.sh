@@ -44,35 +44,43 @@ EXCLUDE_FILE="internal/pages/common/deps.go"
 #                                reassigned in the same ReloadPlugins critical
 #                                section beside MenuAmendments; ItemsAmendmentsSnapshot
 #                                is the accessor
+#   <ident>.RailAmendments    — ut-docs#1912: the Rail-slot twin (nav.html's
+#                                primary links), reassigned in the same critical
+#                                section; RailAmendmentsSnapshot is the accessor
+#                                (also what httpx.RailAmendmentsProvider is wired
+#                                to — that assignment in init.go names the
+#                                PROVIDER, "RailAmendmentsProvider", which the \b
+#                                boundary keeps from matching, deliberately)
 #   <ident>.Pm.LayoutAmendments — the manager's loaded rows (reassigned in
 #                                Reload; LayoutAmendmentsSnapshot is the accessor)
 #
-# NOTE (independent review of ut-docs#1904, F4; extended for ut-docs#1911):
-# the LayoutAmendments pattern only matches a read through a *common.Deps
-# ("d.Pm.LayoutAmendments"). It does NOT match a read off a *plugins.Manager
-# held directly in a variable — common.BuildMenuAmendments/BuildItemsAmendments
-# both take the manager as a parameter and read "pm.LayoutAmendments".
+# NOTE (independent review of ut-docs#1904, F4; extended for ut-docs#1911
+# and #1912): the LayoutAmendments pattern only matches a read through a
+# *common.Deps ("d.Pm.LayoutAmendments"). It does NOT match a read off a
+# *plugins.Manager held directly in a variable —
+# common.BuildMenuAmendments/BuildItemsAmendments/BuildRailAmendments all
+# take the manager as a parameter and read "pm.LayoutAmendments".
 # Widening the pattern to a bare ".LayoutAmendments" would flag those
 # functions' own bodies, whose whole contract is "the caller holds
 # PluginMu", so the field pattern is deliberately left as-is and the risk is
 # guarded where it actually lives instead: at Build*Amendments' CALL SITES,
-# below. A new caller of EITHER function is the regression to catch; the
+# below. A new caller of ANY of the three is the regression to catch; the
 # existing ones were each checked to hold the lock (or to run at boot,
 # before any concurrent reader exists).
-pattern='[A-Za-z_][A-Za-z0-9_]*\.Pm\.Installed\[|[A-Za-z_][A-Za-z0-9_]*\.Pm\.MenuPlugins\[|[A-Za-z_][A-Za-z0-9_]*\.Menu\b|[A-Za-z_][A-Za-z0-9_]*\.MenuAmendments\b|[A-Za-z_][A-Za-z0-9_]*\.ItemsAmendments\b|[A-Za-z_][A-Za-z0-9_]*\.Pm\.LayoutAmendments\b'
+pattern='[A-Za-z_][A-Za-z0-9_]*\.Pm\.Installed\[|[A-Za-z_][A-Za-z0-9_]*\.Pm\.MenuPlugins\[|[A-Za-z_][A-Za-z0-9_]*\.Menu\b|[A-Za-z_][A-Za-z0-9_]*\.MenuAmendments\b|[A-Za-z_][A-Za-z0-9_]*\.ItemsAmendments\b|[A-Za-z_][A-Za-z0-9_]*\.RailAmendments\b|[A-Za-z_][A-Za-z0-9_]*\.Pm\.LayoutAmendments\b'
 
 files="$(grep -rlE "${pattern}" --include='*.go' "${SEARCH_DIR}" 2>/dev/null \
   | grep -v '_test\.go$' \
   | grep -vF "${EXCLUDE_FILE}" || true)"
 
-# BuildMenuAmendments/BuildItemsAmendments both read pm.LayoutAmendments and
-# must only ever be called with PluginMu held (or at boot, before the 30s
-# sync-pull goroutine that ut-docs#460 introduced exists). Their known-safe
-# call sites are allowlisted by file; a NEW one fails this guard, so
-# whoever adds it has to come here and say which lock they hold. This is
-# the check that actually covers the field, since the field pattern above
-# cannot see through a parameter.
-CALL_PATTERN='Build(Menu|Items)Amendments\('
+# BuildMenuAmendments/BuildItemsAmendments/BuildRailAmendments all read
+# pm.LayoutAmendments and must only ever be called with PluginMu held (or at
+# boot, before the 30s sync-pull goroutine that ut-docs#460 introduced
+# exists). Their known-safe call sites are allowlisted by file; a NEW one
+# fails this guard, so whoever adds it has to come here and say which lock
+# they hold. This is the check that actually covers the field, since the
+# field pattern above cannot see through a parameter.
+CALL_PATTERN='Build(Menu|Items|Rail)Amendments\('
 CALL_ALLOWLIST='internal/pages/common/deps.go|internal/pages/common/state.go|internal/pages/init.go'
 
 call_files="$(grep -rlE "${CALL_PATTERN}" --include='*.go' "${SEARCH_DIR}" 2>/dev/null \
@@ -80,11 +88,11 @@ call_files="$(grep -rlE "${CALL_PATTERN}" --include='*.go' "${SEARCH_DIR}" 2>/de
   | grep -vE "^(${CALL_ALLOWLIST})$" || true)"
 
 if [[ -n "${call_files}" ]]; then
-  echo "❌ plugin-menu-read guard: BuildMenuAmendments/BuildItemsAmendments called outside its allowlisted call sites" >&2
+  echo "❌ plugin-menu-read guard: BuildMenuAmendments/BuildItemsAmendments/BuildRailAmendments called outside its allowlisted call sites" >&2
   echo "   (it reads pm.LayoutAmendments, which Manager.Reload reassigns under PluginMu — an" >&2
   echo "   unlocked concurrent read is a fatal crash, not stale data. If the new call site does" >&2
   echo "   hold PluginMu, add its file to CALL_ALLOWLIST in this script and say so in a comment." >&2
-  echo "   See ADR-0088 and ut-docs#478/#489/#1911.)" >&2
+  echo "   See ADR-0088 and ut-docs#478/#489/#1911/#1912.)" >&2
   echo "${call_files}" >&2
   exit 1
 fi
@@ -101,13 +109,13 @@ for f in ${files}; do
 done
 
 if [[ -n "${violations}" ]]; then
-  echo "❌ plugin-menu-read guard: unlocked read of Pm.Installed / Pm.MenuPlugins / Menu / MenuAmendments / ItemsAmendments / Pm.LayoutAmendments under internal/pages" >&2
+  echo "❌ plugin-menu-read guard: unlocked read of Pm.Installed / Pm.MenuPlugins / Menu / MenuAmendments / ItemsAmendments / RailAmendments / Pm.LayoutAmendments under internal/pages" >&2
   echo "   (Manager.Reload reassigns these inside PluginMu's critical section — an unlocked concurrent" >&2
   echo "   read is a fatal crash, not just stale data. Use Deps.MenuSnapshot() / InstalledPlugin(id) /" >&2
-  echo "   MenuPluginByKey(key) / MenuAmendmentsSnapshot() / ItemsAmendmentsSnapshot() /" >&2
-  echo "   LayoutAmendmentsSnapshot() instead — see internal/pages/common/deps.go, ut-docs#478/#489/#1911, ADR-0088.)" >&2
+  echo "   MenuPluginByKey(key) / MenuAmendmentsSnapshot() / ItemsAmendmentsSnapshot() / RailAmendmentsSnapshot() /" >&2
+  echo "   LayoutAmendmentsSnapshot() instead — see internal/pages/common/deps.go, ut-docs#478/#489/#1911/#1912, ADR-0088.)" >&2
   echo "${violations}" >&2
   exit 1
 fi
 
-echo "✓ plugin-menu-read guard: no unlocked read of Pm.Installed / Pm.MenuPlugins / Menu / MenuAmendments / ItemsAmendments / Pm.LayoutAmendments under internal/pages"
+echo "✓ plugin-menu-read guard: no unlocked read of Pm.Installed / Pm.MenuPlugins / Menu / MenuAmendments / ItemsAmendments / RailAmendments / Pm.LayoutAmendments under internal/pages"

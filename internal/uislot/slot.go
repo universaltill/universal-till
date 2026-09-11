@@ -13,11 +13,12 @@
 //
 // The first slot was the Menu launcher (MenuSlot); the second is the /items
 // section list (ItemsSlot, ut-docs#1911, generalizing what ut-docs#1897
-// shipped as a hardcoded list). Further slots (#1332 sale rail, settings
-// groups) attach the same way: a new *Slot name, a new declared core table,
-// and a slotSpec passed to the shared parse/validate path below — no
-// redesign of Entry/Amendment/Resolve/FindConflict, which were already
-// slot-agnostic.
+// shipped as a hardcoded list); the third is the sale-screen nav rail
+// (RailSlot, ut-docs#1912 — nav.html's .nav-primary links, which #1332
+// shipped hardcoded). Further slots (settings groups, ut-docs#1913) attach
+// the same way: a new *Slot name, a new declared core table, and a slotSpec
+// passed to the shared parse/validate path below — no redesign of
+// Entry/Amendment/Resolve/FindConflict, which were already slot-agnostic.
 package uislot
 
 import (
@@ -34,6 +35,11 @@ const MenuSlot = "menu"
 // ItemsSlot is the slot name for the /items left-rail section list
 // (internal/pages/itemsnav, ut-docs#1911).
 const ItemsSlot = "items"
+
+// RailSlot is the slot name for the nav rail's primary links
+// (web/ui/partials/nav.html's .nav-primary block, rendered on every page —
+// resolved by internal/httpx's railEntries template func, ut-docs#1912).
+const RailSlot = "rail"
 
 // PluginPagesOrder is the Order at which plugin `page` entries (ADR-0037)
 // are placed when the menu slot is assembled: after every core InNav entry
@@ -335,6 +341,72 @@ func CoreItemsEntry(key string) (Entry, bool) {
 	return CoreItems[i], true
 }
 
+// ProtectedRailKeys is the Rail slot's ADR-0088 Decision E set (Decision J,
+// ut-docs#1912): "/" (Sell) and "/menu". Neither has an equivalent tile
+// anywhere else — CoreMenu has no "/" or "/menu" entry (the Menu page IS
+// /menu, and "Sell" is the page every launcher opens onto) — so hiding or
+// re-labelling either strands the operator with no way to the sale screen
+// or to the launcher that reaches everything else. /inventory and /orders
+// are NOT protected: both also exist as CoreMenu tiles (/orders directly;
+// /inventory via the /items launcher tile's own rail), so re-labelling
+// them on the rail never removes the destination from the till.
+var ProtectedRailKeys = []string{"/", "/menu"}
+
+// IsProtectedRailKey reports whether key is in ProtectedRailKeys —
+// IsProtectedItemsKey's twin for RailSlot.
+func IsProtectedRailKey(key string) bool {
+	return IsProtectedKey(ProtectedRailKeys, key)
+}
+
+// CoreRail is the nav rail's declared primary-link list (ADR-0088 Decision
+// C, generalized by ut-docs#1912 from the four hardcoded <a> tags
+// web/ui/partials/nav.html's .nav-primary block carried since #1332): the
+// same four destinations, same hrefs, same locale keys and same icon
+// names, now as data that resolves through the same uislot.Resolve path a
+// `layout` plugin's amendment does. Order is declared ascending (100
+// apart, matching CoreMenu's and CoreItems' spacing) so the zero-amendment
+// path never sorts (Decision I) — and nav renders on EVERY request, so
+// that guarantee matters more here than on /menu or /items combined
+// (internal/httpx's TestRailEntries_ZeroAmendmentsAllocateNothing pins the
+// whole render-side path, not just Resolve).
+//
+// Per-entry presentation that is NOT slot data — the data-testid hooks the
+// e2e suites locate these links by, and which links hide at phone width
+// (.nav-rail-only) — lives beside the renderer, keyed by these Keys
+// (internal/httpx/rail.go's railPresentation), not here: an amendment can
+// reorder or re-label a link but never changes which DOM hook or breakpoint
+// class it carries.
+var CoreRail = []Entry{
+	// ut-docs#1896: the shopping-cart glyph and the ACTION label ("Sell",
+	// nav.till) — see nav.html's own comment on why not a place-name.
+	{Key: "/", Href: "/", LabelKey: "nav.till", Icon: "shopping-cart", Order: 100},
+	{Key: "/menu", Href: "/menu", LabelKey: "nav.menu", Icon: "menu", Order: 200},
+	// Moved into the rail from index.html's own header row (ut-docs#1332);
+	// kiosk.inventory, not a nav.* key, for that historical reason.
+	{Key: "/inventory", Href: "/inventory", LabelKey: "kiosk.inventory", Icon: "package", Order: 300},
+	// ut-docs#1349: the one-tap Orders shortcut — same key, label and icon
+	// as CoreMenu's own /orders tile (one destination, consistently drawn).
+	{Key: "/orders", Href: "/orders", LabelKey: "nav.orders", Icon: "bell", Order: 400},
+}
+
+var coreRailIndex = func() map[string]int {
+	m := make(map[string]int, len(CoreRail))
+	for i, e := range CoreRail {
+		m[e.Key] = i
+	}
+	return m
+}()
+
+// CoreRailEntry returns the declared core Rail-slot entry for key —
+// CoreMenuEntry's twin for RailSlot.
+func CoreRailEntry(key string) (Entry, bool) {
+	i, ok := coreRailIndex[key]
+	if !ok {
+		return Entry{}, false
+	}
+	return CoreRail[i], true
+}
+
 // Resolve applies amendments to entries and returns the slot to render.
 //
 // Zero-plugin guarantee (ADR-0088 Decision I): with no amendments this is a
@@ -487,16 +559,18 @@ func ParseAmendmentsJSON(pluginID, configJSON string) ([]Amendment, error) {
 	switch slot, _ := cfg["slot"].(string); slot {
 	case ItemsSlot:
 		return ParseItemsAmendments(pluginID, cfg)
+	case RailSlot:
+		return ParseRailAmendments(pluginID, cfg)
 	case "", MenuSlot:
 		return ParseMenuAmendments(pluginID, cfg)
 	default:
-		// A slot name that is neither known one — refuse directly here,
-		// naming BOTH supported slots, rather than falling through to
+		// A slot name that is none of the known ones — refuse directly
+		// here, naming EVERY supported slot, rather than falling through to
 		// ParseMenuAmendments: that would still correctly refuse (its own
 		// slot check doesn't match either), but its error message only
 		// knows about menuSpec's own name, under-reporting what this
 		// dispatcher actually supports (independent review of ut-docs#1911).
-		return nil, fmt.Errorf("layout entry names unsupported slot %q (supported: %s, %s)", slot, MenuSlot, ItemsSlot)
+		return nil, fmt.Errorf("layout entry names unsupported slot %q (supported: %s, %s, %s)", slot, MenuSlot, ItemsSlot, RailSlot)
 	}
 }
 
@@ -511,8 +585,9 @@ func unmarshalConfig(configJSON string) (map[string]any, error) {
 	return cfg, nil
 }
 
-// menuSpec and itemsSpec are the two slotSpecs parseSlotAmendments resolves
-// against — see that function's doc comment for the shape a new slot needs.
+// menuSpec, itemsSpec and railSpec are the slotSpecs parseSlotAmendments
+// resolves against — see that function's doc comment for the shape a new
+// slot needs.
 var menuSpec = slotSpec{name: MenuSlot, lookup: CoreMenuEntry, protected: IsProtectedMenuKey, allowHide: true, allowIcon: true, allowGroup: true}
 
 // itemsSpec allows neither hide (no restore surface exists for this slot
@@ -520,6 +595,32 @@ var menuSpec = slotSpec{name: MenuSlot, lookup: CoreMenuEntry, protected: IsProt
 // relabel and reorder, exactly what the shipped plugins/layout-salon demo
 // needs. Widen this once the render side and a restore surface exist.
 var itemsSpec = slotSpec{name: ItemsSlot, lookup: CoreItemsEntry, protected: IsProtectedItemsKey}
+
+// railSpec (ut-docs#1912) deliberately mirrors itemsSpec's capability set,
+// not menuSpec's: reorder and relabel only. hide has no restore surface on
+// this slot either (the exact Decision D gap the independent review of
+// ut-docs#1911 caught as blockers #1/#2 — an all-links-hidden rail would
+// leave a page with NO way to the sale screen), and although nav.html DOES
+// draw an icon per link, re-iconing a rail link is refused too: the rail is
+// icon-only at kiosk width (labels visually hidden, see nav.html), so the
+// icon IS the link's identity there in a way it is not on a labelled Menu
+// tile — widening this later is backward-compatible, narrowing it after a
+// third-party plugin ships one is not. group has nothing to draw against
+// (no headings in a four-link rail). Protected keys (ProtectedRailKeys)
+// are enforced by the shared parseAmendment path — no rail-specific
+// refusal logic exists.
+//
+// label_key IS allowed on this slot (independent review, ut-docs#1912),
+// but say what it actually reaches: the rail's labels are visually
+// hidden at kiosk/tablet width, same fact that justifies refusing icon
+// above, so a relabel of /inventory or /orders (the only two amendable
+// keys; / and /menu are protected) changes the link's accessible name
+// for assistive tech at every width, and its VISIBLE text only at the
+// <=480px phone-width fallback, where the rail becomes a horizontal top
+// bar with labels shown. A caller surfacing "what can a rail plugin do"
+// to a shop owner (help text, a future Settings page) must describe it
+// this way, not as a plain visible rename.
+var railSpec = slotSpec{name: RailSlot, lookup: CoreRailEntry, protected: IsProtectedRailKey}
 
 // ParseMenuAmendments parses and validates a `layout` entry's config
 // document (the manifest entry's `config`):
@@ -548,6 +649,14 @@ func ParseMenuAmendments(pluginID string, config map[string]any) ([]Amendment, e
 // of CoreMenu / ProtectedMenuKeys.
 func ParseItemsAmendments(pluginID string, config map[string]any) ([]Amendment, error) {
 	return parseSlotAmendments(pluginID, itemsSpec, config)
+}
+
+// ParseRailAmendments is ParseMenuAmendments' twin for the nav rail's
+// primary links (ADR-0088, ut-docs#1912): same schema and refusal shapes,
+// validated against uislot.CoreRail / ProtectedRailKeys, with railSpec's
+// reorder+relabel-only capability set.
+func ParseRailAmendments(pluginID string, config map[string]any) ([]Amendment, error) {
+	return parseSlotAmendments(pluginID, railSpec, config)
 }
 
 // slotSpec is what parseSlotAmendments needs to validate one slot's

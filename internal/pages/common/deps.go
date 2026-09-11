@@ -64,7 +64,19 @@ type Deps struct {
 	// hides). Rebuilt beside MenuAmendments in ReloadPlugins under
 	// PluginMu — read it only through ItemsAmendmentsSnapshot.
 	ItemsAmendments []uislot.Amendment
-	Engine          *pos.Service
+	// RailAmendments are the Rail-slot amendments in force (ADR-0088,
+	// ut-docs#1912) — the nav rail's primary links (nav.html's
+	// .nav-primary, rendered on every page). Same shape and lifecycle as
+	// ItemsAmendments: no restore surface exists for this slot either, so
+	// the slot refuses hide at install (uislot's railSpec) rather than
+	// applying one there'd be no way back from; reorder and relabel are
+	// all that ever reach here. Rebuilt beside MenuAmendments in
+	// ReloadPlugins under PluginMu — read it only through
+	// RailAmendmentsSnapshot, which is ALSO what httpx.RailAmendmentsProvider
+	// is wired to (pages.Init), since nav.html is a shared partial no page
+	// handler passes its own data to.
+	RailAmendments []uislot.Amendment
+	Engine         *pos.Service
 	// KioskEngine is the self-order kiosk's own basket engine — deliberately
 	// a SEPARATE instance from Engine (ut-docs#449): the kiosk surface is
 	// auth-exempt and reachable by any LAN client, so it must never be able
@@ -309,6 +321,7 @@ func (d *Deps) ReloadPlugins(ctx context.Context) error {
 	d.Menu = BuildMenu(d.BaseMenu, d.Pm)
 	d.MenuAmendments = BuildMenuAmendments(d.Pm, RestoredMenuKeys(ctx, d.Settings))
 	d.ItemsAmendments = BuildItemsAmendments(d.Pm)
+	d.RailAmendments = BuildRailAmendments(d.Pm)
 	return err
 }
 
@@ -338,6 +351,20 @@ func (d *Deps) ItemsAmendmentsSnapshot() []uislot.Amendment {
 	d.PluginMu.RLock()
 	defer d.PluginMu.RUnlock()
 	return d.ItemsAmendments
+}
+
+// RailAmendmentsSnapshot is MenuAmendmentsSnapshot's twin for the Rail
+// slot (ut-docs#1912) — the render path's only way to read them. Nil-safe
+// on the receiver: pages.Init wires this method value into
+// httpx.RailAmendmentsProvider, and internal/httpx renders nav.html on
+// every page, so it must never be the thing that takes a render down.
+func (d *Deps) RailAmendmentsSnapshot() []uislot.Amendment {
+	if d == nil {
+		return nil
+	}
+	d.PluginMu.RLock()
+	defer d.PluginMu.RUnlock()
+	return d.RailAmendments
 }
 
 // LayoutAmendmentsSnapshot returns every active layout plugin's amendments

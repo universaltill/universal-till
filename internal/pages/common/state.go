@@ -536,3 +536,29 @@ func BuildItemsAmendments(pm *plugins.Manager) []uislot.Amendment {
 	}
 	return out
 }
+
+// BuildRailAmendments is BuildItemsAmendments' twin for the Rail slot
+// (ut-docs#1912) — every active layout plugin's RAIL-SLOT amendments, out
+// of the same flat pm.LayoutAmendments pool. No restored-hides parameter
+// for the same reason as Items: the slot has no restore surface, so hide
+// is refused at install (uislot's railSpec) and nothing here ever needs
+// un-hiding. Returning nil (not an empty slice) when nothing applies is
+// what keeps httpx.railEntriesFor on its zero-allocation fast path for
+// the zero-plugin till — nav renders on every request. Nil-safe on pm.
+// Read pm.LayoutAmendments only under PluginMu (both callers do).
+func BuildRailAmendments(pm *plugins.Manager) []uislot.Amendment {
+	if pm == nil || len(pm.LayoutAmendments) == 0 {
+		return nil
+	}
+	out := make([]uislot.Amendment, 0, len(pm.LayoutAmendments))
+	for _, a := range pm.LayoutAmendments {
+		if a.Slot != uislot.RailSlot {
+			continue
+		}
+		out = append(out, a)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}

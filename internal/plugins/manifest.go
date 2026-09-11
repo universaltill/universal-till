@@ -443,8 +443,10 @@ func validatePageEntryRoutes(ctx context.Context, repo *data.PluginRepo, tx *sql
 // validateLayoutEntries is ADR-0088's install-time half for every path that
 // writes plugin_entries type='layout' (PersistManifest AND Rollback, the
 // same two sites as validatePageEntryKeys). Each layout entry's config is
-// an amendment document over ONE slot (internal/uislot — Menu or Items as
-// of ut-docs#1911, generalizing what was Menu-only): it must parse (a
+// an amendment document over ONE slot (internal/uislot — Menu, Items or
+// the nav Rail as of ut-docs#1912; #1911 generalized what was Menu-only,
+// and uislot.ParseAmendmentsJSON dispatches on the document's own "slot"
+// field, so a new slot needs nothing here): it must parse (a
 // typo'd field or an unknown key is refused, never a silent render-time
 // no-op), it may not hide a protected destination (Decision E — the error
 // names the key), and it may not restructure — reorder, re-label,

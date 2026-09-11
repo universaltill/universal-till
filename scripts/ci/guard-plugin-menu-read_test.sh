@@ -125,6 +125,29 @@ func zzGuardTestHandler(d *common.Deps) []uislot.Amendment {
 expect_fail "unlocked d.ItemsAmendments read"
 clear_fixture "UnlockedItemsAmendments"
 
+# ut-docs#1912: Deps.RailAmendments is the Rail-slot twin, reassigned in the
+# same critical section — same treatment (the #1911 review found exactly
+# this gap for Items; don't reproduce it for Rail).
+plant "UnlockedRailAmendments" 'package pages
+
+func zzGuardTestHandler(deps *common.Deps) []uislot.Amendment {
+	return deps.RailAmendments
+}'
+expect_fail "unlocked deps.RailAmendments read"
+clear_fixture "UnlockedRailAmendments"
+
+# ...while the provider WIRING init.go does (httpx.RailAmendmentsProvider =
+# dp.RailAmendmentsSnapshot) names "RailAmendmentsProvider", not the field —
+# the \b boundary must keep that from false-positiving, or the guard would
+# reject the one line that makes the render path read the field locked.
+plant "RailProviderWiring" 'package pages
+
+func zzGuardTestWire(dp *common.Deps) {
+	httpx.RailAmendmentsProvider = dp.RailAmendmentsSnapshot
+}'
+expect_pass "the httpx.RailAmendmentsProvider = dp.RailAmendmentsSnapshot wiring"
+clear_fixture "RailProviderWiring"
+
 # A different *common.Deps receiver variable name — registerShiftsAPI/
 # registerInventoryAPI/registerPluginStore use "dp"/"deps" elsewhere in this
 # package, so the guard must not be fooled by those names either.
@@ -158,9 +181,10 @@ func zzGuardTestHandler(d *common.Deps, id, key string) {
 	_, _ = d.MenuPluginByKey(key)
 	_ = d.MenuAmendmentsSnapshot()
 	_ = d.ItemsAmendmentsSnapshot()
+	_ = d.RailAmendmentsSnapshot()
 	_ = d.LayoutAmendmentsSnapshot()
 }'
-expect_pass "the locked MenuSnapshot/InstalledPlugin/MenuPluginByKey/MenuAmendmentsSnapshot/ItemsAmendmentsSnapshot/LayoutAmendmentsSnapshot accessors"
+expect_pass "the locked MenuSnapshot/InstalledPlugin/MenuPluginByKey/MenuAmendmentsSnapshot/ItemsAmendmentsSnapshot/RailAmendmentsSnapshot/LayoutAmendmentsSnapshot accessors"
 clear_fixture "LockedAccessorsUsed"
 
 # Test files exercise the locked accessors under controlled goroutine
@@ -197,6 +221,15 @@ func zzGuardTestHandler(pm *plugins.Manager) []uislot.Amendment {
 }'
 expect_fail "a new, non-allowlisted BuildItemsAmendments call site"
 clear_fixture "RogueBuildItemsAmendmentsCaller"
+
+# ut-docs#1912: and BuildRailAmendments, the third reader of that field.
+plant "RogueBuildRailAmendmentsCaller" 'package pages
+
+func zzGuardTestHandler(pm *plugins.Manager) []uislot.Amendment {
+	return common.BuildRailAmendments(pm)
+}'
+expect_fail "a new, non-allowlisted BuildRailAmendments call site"
+clear_fixture "RogueBuildRailAmendmentsCaller"
 
 # ...while the allowlisted call sites (deps.go, state.go, init.go)
 # keep the clean codebase passing — asserted by the baseline check below.

@@ -276,17 +276,31 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		// ADR-0088 / ut-docs#1911: the Items-slot twin, same read-once-then-
 		// on-reload lifecycle.
 		ItemsAmendments: common.BuildItemsAmendments(pm),
-		Engine:          engine,
-		KioskEngine:     kioskEngine,
-		BtnStore:        btnStore,
-		CatalogRepo:     catalogRepo,
-		AuthSvc:         authSvc,
+		// ADR-0088 / ut-docs#1912: the Rail-slot twin (nav.html's primary
+		// links), same lifecycle again.
+		RailAmendments: common.BuildRailAmendments(pm),
+		Engine:         engine,
+		KioskEngine:    kioskEngine,
+		BtnStore:       btnStore,
+		CatalogRepo:    catalogRepo,
+		AuthSvc:        authSvc,
 		// Order-status pub/sub (ut-docs#526): one instance for the process —
 		// the one-tap endpoint publishes, future KDS/pager surfaces subscribe.
 		OrderStatus: pos.NewOrderStatusBroadcaster(),
 		WindowCtl:   windowCtl,
 		Shell:       shellChannel,
 	}
+
+	// ut-docs#1912: nav.html's rail is resolved by internal/httpx's
+	// {{ railEntries }} template func (it is a shared partial on every
+	// page — no page handler passes it data), and httpx cannot import this
+	// package's common.Deps (internal/pages/common imports internal/httpx;
+	// the reverse would be a cycle). So httpx exposes a provider seam and
+	// we hand it the PluginMu-locked accessor here, once, before the mux
+	// serves anything — the render path then reads the rail amendments
+	// exactly the way /menu and /items read theirs, never an unlocked
+	// field (guard-plugin-menu-read.sh).
+	httpx.RailAmendmentsProvider = dp.RailAmendmentsSnapshot
 
 	// ut-docs#2001 (follow-up from the ut-docs#1902 independent review,
 	// finding 4): builtinlayouts.Sync was previously only called from the
