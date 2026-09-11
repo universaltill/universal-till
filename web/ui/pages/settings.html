@@ -1723,10 +1723,17 @@
 </div>
 <!-- ut-docs#861: the shop's default locale — used for anything with no
      request to resolve a per-browser preference from (notification email,
-     background jobs). Distinct from the ?lang=/ut_lang cookie a manager's
-     own browser might be on. ut-docs#1125: now native names (nativelocalename,
+     background jobs). ut-docs#1125: now native names (nativelocalename,
      shared with setup.html's language step) — no flag, same reasoning
-     recorded on that ticket. -->
+     recorded on that ticket.
+     ut-docs#2135: this is ALSO the control that changes what the till
+     displays. It used to be merely "distinct from the ?lang=/ut_lang cookie
+     a manager's own browser might be on" — which meant a cookie picked up
+     once (clicking through /setup in the wrong language) silently beat this
+     setting for a year, on every page, with nothing in the UI able to clear
+     it. Applying this form now retires that override on EVERY browser in
+     the shop, not just this one — so a manager can fix a till from their
+     own device, and there is one control and it wins. -->
 <div class="card" id="settings-language">
   <h2>{{ T "settings.language.title" }}</h2>
   <p class="muted">{{ T "settings.language.help" }}</p>

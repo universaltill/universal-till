@@ -2341,6 +2341,10 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			st.Region = v
 			auditPayload["region"] = v
 		}
+		// Whether this request carried an ACCEPTED explicit locale — the
+		// Language card's own field. Drives the ut-docs#2135 cookie clear
+		// below; a rejected value must not clear anything.
+		localeChosen := false
 		if v := strings.TrimSpace(r.Form.Get("locale")); v != "" {
 			// Reject silently rather than 400 (ut-docs#861) — matches this
 			// handler's existing lenient contract (see the comment at its
@@ -2354,6 +2358,7 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			if slices.Contains(httpx.AvailableLocales(), v) {
 				st.Locale = v
 				auditPayload["locale"] = v
+				localeChosen = true
 				// ut-docs#1074: this form field is the one genuine
 				// operator-explicit locale choice (Settings' Language
 				// card) — mark it confirmed so no later derivation
@@ -2392,6 +2397,18 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 		// set (fresh boot, before LoadState's cfg.Locales.Locale fallback
 		// even applies) can't accidentally blank the wired translator.
 		httpx.SetDefaultLocale(st.Locale)
+		if localeChosen {
+			// ut-docs#2135: setting the shop default is not enough — a
+			// ut_lang cookie from an earlier ?lang= link (clicking through
+			// /setup in English is the common way to acquire one) overrides
+			// it on every page, for a year. Retire every such override
+			// shop-wide. This is what makes re-applying the language the
+			// shop is ALREADY set to do something, which is precisely what
+			// an operator does when the screen shows the wrong language and
+			// Settings already says the right one — and what lets that fix
+			// reach a till the manager is not standing at.
+			retireLocaleOverrides(r.Context(), d.Settings)
+		}
 		// In place: replacing the engine would empty a basket in progress.
 		// Both engines: the kiosk's separate instance (ut-docs#449) must see
 		// the same tax config or it would silently charge stale rates.
@@ -2678,6 +2695,15 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			// SetDefaultLocale's own empty-guard makes this safe even when
 			// the switch above left s.Locale untouched (invalid value).
 			httpx.SetDefaultLocale(st.Locale)
+			// Same reasoning as the Language card (ut-docs#2135): editing
+			// store.locale by hand here is just as explicit a shop choice,
+			// so it must not be silently outvoted by a stale per-browser
+			// cookie either. Guarded on the value actually having been
+			// ACCEPTED above — a rejected locale changes nothing, so it
+			// must not throw away anyone's override.
+			if slices.Contains(httpx.AvailableLocales(), value) {
+				retireLocaleOverrides(r.Context(), d.Settings)
+			}
 		case common.KeyTaxInclusive, common.KeyServiceChargeRate, common.KeyCountry:
 			// In place: replacing the engine would empty a basket in progress.
 			// Both engines — see the currency-card handler above (ut-docs#449).

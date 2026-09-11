@@ -171,7 +171,7 @@ func TestOpenShift_HTMLSummaryIsTranslated(t *testing.T) {
 	// pre-fix (see ut-docs#1406's review record).
 	req := httptest.NewRequest(http.MethodPost, "/api/shifts/open", strings.NewReader("register_id=reg1&cashier_id=user1&opening_cash=5000"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: "ut_lang", Value: "fa"})
+	req.AddCookie(&http.Cookie{Name: "ut_lang", Value: httpx.LocaleOverrideValue("fa")})
 	recFa := httptest.NewRecorder()
 	mux.ServeHTTP(recFa, req)
 	if recFa.Code != http.StatusOK {
@@ -339,7 +339,7 @@ func TestCloseShift_HTMLSummaryIsCurrencyAwareAndTranslated(t *testing.T) {
 	shiftID = openAndGetID()
 	req := httptest.NewRequest(http.MethodPost, "/api/shifts/close", strings.NewReader("shift_id="+shiftID+"&closing_cash=4900"))
 	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	req.AddCookie(&http.Cookie{Name: "ut_lang", Value: "fa"})
+	req.AddCookie(&http.Cookie{Name: "ut_lang", Value: httpx.LocaleOverrideValue("fa")})
 	recFa := httptest.NewRecorder()
 	mux.ServeHTTP(recFa, req)
 	if recFa.Code != http.StatusOK {
@@ -822,7 +822,7 @@ func TestRecordCashAdjustment_HTMLSummaryIsTranslated(t *testing.T) {
 	reqFa := httptest.NewRequest(http.MethodPost, "/api/shifts/adjustment",
 		strings.NewReader(`shift_id=`+shiftID+`&type=adjustment&amount=200&reason=float+top-up`))
 	reqFa.Header.Set("Content-Type", "application/x-www-form-urlencoded")
-	reqFa.AddCookie(&http.Cookie{Name: "ut_lang", Value: "fa"})
+	reqFa.AddCookie(&http.Cookie{Name: "ut_lang", Value: httpx.LocaleOverrideValue("fa")})
 	reqFa = auth.WithUser(reqFa, auth.User{ID: "user1"})
 	recFa := httptest.NewRecorder()
 	mux.ServeHTTP(recFa, reqFa)

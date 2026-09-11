@@ -34,7 +34,16 @@ const (
 	// applyDerivedLocaleIfLanguagePackNowAvailable) are themselves DERIVING
 	// a locale, not an operator choosing one, and must never set this — or
 	// a later, better derivation could never correct an earlier guess.
-	KeyLocaleConfirmed   = "store.locale_confirmed"
+	KeyLocaleConfirmed = "store.locale_confirmed"
+	// KeyLocaleGeneration counts the times the shop has EXPLICITLY set its
+	// language (ut-docs#2135). Every per-browser ut_lang override records
+	// the generation it was made under, and is ignored once this moves —
+	// which is what lets one Settings save retire a stale override on
+	// EVERY browser, including a till the save was not made from. Bumped
+	// only where an operator genuinely chooses (Settings' Language card, a
+	// store.locale write from the all-settings table, finishing setup);
+	// never by a derivation, for the same reason KeyLocaleConfirmed isn't.
+	KeyLocaleGeneration  = "store.locale_generation"
 	KeyTaxInclusive      = "store.tax_inclusive"
 	KeyTaxRate           = "store.tax_rate"
 	KeyServiceChargeRate = "store.service_charge_rate_pct"
