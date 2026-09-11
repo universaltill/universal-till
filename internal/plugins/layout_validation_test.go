@@ -253,6 +253,21 @@ func TestLayoutSalonPlugin_InstallsAndDeclaresItsAmendments(t *testing.T) {
 	if !ok || items.LabelKey == "" || items.Order == nil {
 		t.Fatalf("salon layout must re-label and reorder /items, got %+v", items)
 	}
+	if items.Slot != uislot.MenuSlot {
+		t.Fatalf("the /items Menu tile amendment must carry the menu slot, got %q", items.Slot)
+	}
+
+	// ut-docs#1911: the plugin also amends the ITEMS slot (the /items
+	// screen's own section list) — a second, independent demonstration of
+	// the same ADR-0088 mechanism on a second slot, not the Menu tile
+	// amendment above.
+	catalogRow, ok := byKey["/catalog"]
+	if !ok || catalogRow.Slot != uislot.ItemsSlot || catalogRow.LabelKey == "" || catalogRow.Order == nil {
+		t.Fatalf("salon layout must re-label and reorder the Items-slot /catalog row, got %+v", catalogRow)
+	}
+	if catalogRow.LabelKey != items.LabelKey {
+		t.Fatalf("the Menu tile and Items-rail row should reuse the SAME locale key (\"Services\" means the same thing in both places, and reusing it ships zero new translations): menu=%q items=%q", items.LabelKey, catalogRow.LabelKey)
+	}
 
 	// Every locale key the plugin introduces ships in its own locale files,
 	// for every core locale (Decision G: the label resolves through the

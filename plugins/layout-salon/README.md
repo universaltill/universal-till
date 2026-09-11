@@ -1,13 +1,14 @@
 # ut-plugin-layout-salon — a hair salon / barber shop Menu
 
 The first `layout` plugin (ADR-0088, ut-docs#1904): it changes **what the
-Menu screen shows**, and nothing else. A salon does not seat tables or
-route tickets to a kitchen, and it sells *services* — but a service is
-still an item, "short/long" is still an option set, and a service is a
-stock-untracked inventory row (ut-docs#1843/#1850). **The catalog, variant
-and inventory concepts do not change; only the showing method does** — the
-product owner's constraint on ut-docs#1904, and the reason this is a
-presentation manifest rather than a code fork.
+Menu screen and the /items screen's own section list show**, and nothing
+else. A salon does not seat tables or route tickets to a kitchen, and it
+sells *services* — but a service is still an item, "short/long" is still
+an option set, and a service is a stock-untracked inventory row
+(ut-docs#1843/#1850). **The catalog, variant and inventory concepts do not
+change; only the showing method does** — the product owner's constraint on
+ut-docs#1904, and the reason this is a presentation manifest rather than a
+code fork.
 
 It lives in this repository, beside `plugins/tax-tr`, so it is installed
 and exercised in CI against the real till
@@ -18,8 +19,10 @@ marketplace (ADR-0009 naming).
 
 ## What it does
 
-`plugin.json` carries one `layout` entry whose `config` is an amendment
-document over the `menu` slot:
+`plugin.json` carries two `layout` entries — one amendment document per
+slot (ADR-0088; the `items` slot generalized by ut-docs#1911):
+
+**`menu` slot:**
 
 | Menu key | Amendment | Effect |
 |---|---|---|
@@ -30,6 +33,17 @@ document over the `menu` slot:
 Hiding removes the **tile only** (ADR-0088 Decision D). A merchant who
 still needs Tables finds it under *Settings → Hidden menu tiles*, which
 names this plugin and restores the tile without uninstalling anything.
+
+**`items` slot** (the /items screen's own left-rail section list):
+
+| Items-rail key | Amendment | Effect |
+|---|---|---|
+| `/catalog` | `label_key`, `order` | The "Library" row reads **Services** too (reusing the same `layout.salon.services` key the Menu tile uses), listed first. |
+
+No hide mechanism exists for this slot yet — unlike the Menu, the /items
+rail has no "restore" recovery surface today (ut-docs#1911 flags this as a
+deliberate, deferred gap), so this plugin only relabels/reorders here,
+never hides.
 
 ## What it cannot do — and why
 
