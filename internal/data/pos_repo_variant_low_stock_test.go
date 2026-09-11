@@ -85,12 +85,48 @@ func TestGetLowStockItems_VariantTrackedItem(t *testing.T) {
 	}
 }
 
+// TestGetLowStockItems_OnlyVariantInactive covers an independent-review
+// finding on ut-docs#2082: an item with no item-scoped inventory row whose
+// ONLY variant has since been deactivated. variantLowStockItems (correctly)
+// never reports an inactive variant, so without also scoping the item-scoped
+// branch's "does this item have any variant at all" guard to ACTIVE variants
+// specifically, the item would fall through both branches and vanish from
+// the reorder list entirely — a real regression relative to pre-fix
+// behaviour, where a non-variant-aware item like this was always reported.
+func TestGetLowStockItems_OnlyVariantInactive(t *testing.T) {
+	d, repo := openB8InvDB(t)
+	ctx := context.Background()
+
+	seedB8Item(t, d, "b8-vino", "sku-vino", "B8 Variant Inactive Only", 10, 1)
+	mustExec(t, d, `INSERT INTO item_variants (id, item_id, sku, name, price, is_active) VALUES ('b8-vino-v1', 'b8-vino', 'sku-vino-v1', 'Retired', 150, 0)`)
+
+	items, err := repo.GetLowStockItems(ctx, "")
+	if err != nil {
+		t.Fatalf("GetLowStockItems: %v", err)
+	}
+	found := false
+	for _, it := range items {
+		if it.ItemID == "b8-vino" {
+			found = true
+			if it.VariantID != "" || it.CurrentQty != 0 {
+				t.Fatalf("expected the item-scoped phantom-zero row (no variant, qty 0), got %+v", it)
+			}
+		}
+	}
+	if !found {
+		t.Fatalf("item whose only variant is inactive must still be reported (falls back to the item-scoped branch), got %+v", items)
+	}
+}
+
 // TestListStockLevels_VariantTrackedItem_ExcludesUntracked covers the same
 // ut-docs#2082 fix for ListStockLevels' variant-scoped rows, plus that they
 // respect the existing stock_untracked/is_active exclusions (ut-docs#1850)
 // exactly like the item-scoped rows already do — a variant of an untracked
 // or inactive parent item must not leak a leftover inventory row onto the
-// /inventory screen.
+// /inventory screen. Includes a positive control (independent review
+// finding F6, ut-docs#2082): a sibling item's own, properly-tracked variant
+// row must still appear, so a query that accidentally excluded ALL variant
+// rows (not just the untracked one) would also fail this test.
 func TestListStockLevels_VariantTrackedItem_ExcludesUntracked(t *testing.T) {
 	d, repo := openB8InvDB(t)
 	ctx := context.Background()
@@ -100,13 +136,25 @@ func TestListStockLevels_VariantTrackedItem_ExcludesUntracked(t *testing.T) {
 	mustExec(t, d, `INSERT INTO inventory (id, item_id, variant_id, location_id, quantity) VALUES ('inv-b8-vunt-v1', NULL, 'b8-vunt-v1', 'loc_main', 5)`)
 	mustExec(t, d, `UPDATE items SET stock_untracked = 1 WHERE id = 'b8-vunt'`)
 
+	// Positive control: an otherwise-identical, properly-tracked sibling.
+	seedB8Item(t, d, "b8-vtrk", "sku-vtrk", "B8 Variant Tracked", 0, 1)
+	mustExec(t, d, `INSERT INTO item_variants (id, item_id, sku, name, price) VALUES ('b8-vtrk-v1', 'b8-vtrk', 'sku-vtrk-v1', 'OnlySize', 150)`)
+	mustExec(t, d, `INSERT INTO inventory (id, item_id, variant_id, location_id, quantity) VALUES ('inv-b8-vtrk-v1', NULL, 'b8-vtrk-v1', 'loc_main', 5)`)
+
 	levels, err := repo.ListStockLevels(ctx)
 	if err != nil {
 		t.Fatalf("ListStockLevels: %v", err)
 	}
+	sawTracked := false
 	for _, l := range levels {
 		if l.VariantID == "b8-vunt-v1" {
 			t.Fatalf("variant of a stock_untracked parent must not appear: %+v", l)
 		}
+		if l.VariantID == "b8-vtrk-v1" {
+			sawTracked = true
+		}
+	}
+	if !sawTracked {
+		t.Fatalf("a properly-tracked sibling's variant row must still appear, got %+v", levels)
 	}
 }

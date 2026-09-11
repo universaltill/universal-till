@@ -384,18 +384,28 @@ func pushSnapshotIfChanged(ctx context.Context, cfg *config.Config, db *sql.DB) 
 	qty := map[string]float64{}
 	if levels, err := data.NewPOSRepo(db).ListStockLevels(ctx); err == nil {
 		for _, l := range levels {
+			// ut-docs#2082: ListStockLevels now ALSO returns a variant's own
+			// row (same ADR-0043 additive shape as StockForExport), carrying
+			// its PARENT item's ItemID. Skip those here, same guard
+			// StockForExport itself needed for the identical reason — an
+			// unguarded += would fold a variant's stock into its parent's
+			// cloud qty (ADR-0043 Decision 3 forbids exactly this
+			// double-counting), inflating the pushed catalog qty by however
+			// much stock the item's variants hold.
+			if l.VariantID != "" {
+				continue
+			}
 			qty[l.ItemID] += l.CurrentQty
 		}
 	}
 	// Variant rows ride along under their parent: own id/price/barcode, name
 	// composed for the cloud table. No qty on variants here — qty above
-	// (qty[it.ID]) comes solely from ListStockLevels, which is item-scoped
-	// only (its own INNER JOIN items excludes variant-scoped inventory
-	// rows), so a variant's own stock is simply absent from this cloud
-	// snapshot today, a known and accepted gap in THIS surface — putting
-	// the variant's own qty on its own row wouldn't double-count anything
-	// (item- and variant-scoped inventory rows are disjoint per the CHECK
-	// constraint in 001_init.sql); it's just not done here. (Not an
+	// (qty[it.ID]) comes solely from ListStockLevels' item-scoped rows (the
+	// guard above), so a variant's own stock is simply absent from this
+	// cloud snapshot today, a known and accepted gap in THIS surface —
+	// putting the variant's own qty on its own row wouldn't double-count
+	// anything (item- and variant-scoped inventory rows are disjoint per the
+	// CHECK constraint in 001_init.sql); it's just not done here. (Not an
 	// ADR-0011 citation: that ADR is multi-till sync/ownership, not
 	// export/reporting granularity — see ADR-0043, which does surface
 	// variant-scoped stock distinctly, but only in the export payload, a

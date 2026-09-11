@@ -694,9 +694,16 @@ WHERE i.reorder_level > 0
   -- as low (qty 0) at every location, even one where its variants
   -- actually hold plenty of stock. An item that ALSO keeps its own
   -- item-scoped row despite having variants is untouched by this guard
-  -- (inv.item_id IS NOT NULL covers it).
+  -- (inv.item_id IS NOT NULL covers it). The NOT EXISTS is scoped to
+  -- ACTIVE variants only (independent review finding, #2082) — variantLowStockItems
+  -- below only ever reports an active variant (v.is_active = 1), so an item
+  -- whose only variant has since been deactivated has nothing left to
+  -- report it there; without this v.is_active filter here too, this guard
+  -- would still see "a variant exists" and suppress the item-scoped
+  -- phantom-zero branch, silently dropping the item from the reorder list
+  -- entirely instead of falling back to it.
   AND (inv.item_id IS NOT NULL OR NOT EXISTS (
-    SELECT 1 FROM item_variants v WHERE v.item_id = i.id
+    SELECT 1 FROM item_variants v WHERE v.item_id = i.id AND v.is_active = 1
   ))
 `
 	args := []any{}

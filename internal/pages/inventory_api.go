@@ -1039,7 +1039,7 @@ func GetLowStock(dp *common.Deps) http.HandlerFunc {
 				displayName = item.Name + " — " + item.VariantName
 			}
 			tableHTML += fmt.Sprintf("<tr class='stock-row' data-item='%s' data-name='%s' data-sku='%s' data-location='%s' data-location-name='%s' data-variant='%s'><td>%s</td><td>%s</td><td>%s</td><td class='low-stock'>%.2f</td><td>%d</td></tr>",
-				html.EscapeString(item.ItemID), html.EscapeString(item.Name), html.EscapeString(item.SKU), html.EscapeString(item.LocationID), html.EscapeString(item.LocationName), html.EscapeString(item.VariantID),
+				html.EscapeString(item.ItemID), html.EscapeString(displayName), html.EscapeString(item.SKU), html.EscapeString(item.LocationID), html.EscapeString(item.LocationName), html.EscapeString(item.VariantID),
 				html.EscapeString(displayName), html.EscapeString(item.SKU), html.EscapeString(item.LocationName), item.CurrentQty, item.ReorderLevel)
 		}
 		tableHTML += "</tbody></table>"

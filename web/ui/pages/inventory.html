@@ -31,7 +31,7 @@
         <tbody>
           {{ if .StockLevels }}
             {{ range .StockLevels }}
-              <tr class="stock-row" data-item="{{ .ItemID }}" data-name="{{ .Name }}" data-sku="{{ .SKU }}" data-location="{{ .LocationID }}" data-location-name="{{ .LocationName }}" data-variant="{{ .VariantID }}">
+              <tr class="stock-row" data-item="{{ .ItemID }}" data-name="{{ if .VariantName }}{{ printf "%s — %s" .Name .VariantName }}{{ else }}{{ .Name }}{{ end }}" data-sku="{{ .SKU }}" data-location="{{ .LocationID }}" data-location-name="{{ .LocationName }}" data-variant="{{ .VariantID }}">
                 <td class="catalog-name">{{ .Name }}{{ if .VariantName }} <span class="muted">— {{ .VariantName }}</span>{{ end }}</td>
                 <td class="muted">{{ .SKU }}</td>
                 <td>{{ .LocationName }}</td>
@@ -294,6 +294,14 @@
   document.addEventListener('click', function (ev) {
     var row = ev.target.closest('.stock-row');
     if (!row) return;
+    // ut-docs#2082 (independent review, F2): a variant-scoped row's
+    // data-item is its PARENT item's id — this dialog has no variant_id
+    // field at all, so tapping one would silently record a receipt/
+    // adjustment against the wrong thing (the parent's own item-level
+    // stock) while leaving the variant's real shortage untouched. Until
+    // this dialog actually supports receiving against a specific variant,
+    // a variant row is display-only.
+    if (row.dataset.variant) return;
     fillStockForm(row);
     stockDialog.show();
   });
