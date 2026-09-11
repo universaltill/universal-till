@@ -52,7 +52,7 @@ Labels go to whichever printer is set up above (the receipt printer, not the kit
 
 ## Kitchen tickets
 
-A completed sale automatically sends a kitchen ticket the moment the sale finishes — there's nothing to press. If the kitchen printer (or a station's printer) is unreachable, the order still completes, but that order shows a **⚠ Kitchen print failed** warning on the Orders board so it's never silently lost. There is currently no button to resend just that ticket, and — unlike the receipt warning — nothing in the till clears the kitchen warning either: fix the printer, then tell the kitchen about the order yourself; the ⚠ stays on that order's card as a record that it happened. See [Order status (kitchen progress)](/help/order-status) for how the matching **⚠ Receipt print failed** warning works (that one does clear, by reprinting the receipt from the Journal).
+A completed sale automatically sends a kitchen ticket the moment the sale finishes — there's nothing to press. If the kitchen printer (or a station's printer) is unreachable, the order still completes, but that order shows a **⚠ Kitchen print failed** warning on the Orders board so it's never silently lost. Fix the printer, then use the **Resend kitchen ticket** button next to the warning on that order's row to send it again — the same board used to view and update the order. A successful resend clears the ⚠ on the board's next refresh (within 15 seconds); a failed one leaves it in place so you know to check the printer again. See [Order status (kitchen progress)](/help/order-status) for how the matching **⚠ Receipt print failed** warning works (that one clears by reprinting the receipt from the Journal instead).
 
 ## Nothing is printing
 
