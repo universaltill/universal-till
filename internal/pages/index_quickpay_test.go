@@ -93,8 +93,10 @@ func TestIndexQuickPay_LabeledWithFirstActiveMethod(t *testing.T) {
 	if !strings.Contains(btn, `data-method="card"`) {
 		t.Fatalf("quick-pay should tender the first active method (card), tag lacks it: %s", btn)
 	}
-	if !strings.Contains(btn, "⚡ Card") {
-		t.Fatalf("quick-pay label should be the method's live DB name (⚡ Card): %s", btn)
+	// ut-docs#1859: the ⚡ prefix was purely decorative and was dropped
+	// (not replaced with an icon) — the label is just the live DB name.
+	if !strings.Contains(btn, ">Card<") {
+		t.Fatalf("quick-pay label should be the method's live DB name (Card): %s", btn)
 	}
 	if !strings.Contains(btn, `hx-vals='{&#34;amount&#34;:0,&#34;method&#34;:&#34;card&#34;}'`) {
 		t.Fatalf("quick-pay must dispatch the same amount:0/method tender POST as the pay-grid: %s", btn)
@@ -114,13 +116,16 @@ func TestIndexQuickPay_FollowsPreferredMethodSetting(t *testing.T) {
 	if !strings.Contains(btn, `data-method="cash"`) {
 		t.Fatalf("quick-pay should tender the preferred method (cash): %s", btn)
 	}
-	if !strings.Contains(btn, "⚡ Cash") {
-		t.Fatalf("quick-pay label should be the preferred method's name (⚡ Cash): %s", btn)
+	// ut-docs#1859: the ⚡ prefix was purely decorative and was dropped
+	// (not replaced with an icon) — the label is just the preferred
+	// method's name.
+	if !strings.Contains(btn, ">Cash<") {
+		t.Fatalf("quick-pay label should be the preferred method's name (Cash): %s", btn)
 	}
 	// Independent review (ut-docs#1336, F1): the two assertions above alone
 	// are a false-pass test — they can't tell "the preferred-method reorder
 	// wired through" apart from "the hardcoded zero-state fallback
-	// rendered," since both produce data-method="cash"/⚡ Cash. Only the
+	// rendered," since both produce data-method="cash"/label "Cash". Only the
 	// labeled branch's jsonVals action gets html/template-escaped; the
 	// else-branch's static hx-vals text doesn't. Scoping to quick-pay's own
 	// tag (quickPayButtonSnippet) also matters here: the page's separate

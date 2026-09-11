@@ -328,11 +328,14 @@ func TestMenuPage_BluetoothTileUsesTheBluetoothSymbolNotSignalBars(t *testing.T)
 // Named for what it actually checks (independent review, ut-docs#1845):
 // a fixed denylist of the specific glyphs this page used to render, NOT a
 // full-page Unicode emoji scan — this page also renders shared layout
-// chrome (web/ui/layouts/base.html) that carries its own, unrelated
+// chrome (web/ui/layouts/base.html) that carried its own, unrelated
 // glyphs (📷 the bugreport screenshot button, ✦/⬆/✕ the update banner/
-// close controls), which are out of scope for ut-docs#1845 ("no emoji
-// left in menu/nav markup" — that chrome isn't menu/nav) and deliberately
-// not asserted against here.
+// close controls), out of scope for ut-docs#1845 ("no emoji left in
+// menu/nav markup" — that chrome isn't menu/nav) and deliberately not
+// asserted against here. Those were fixed separately by ut-docs#1859
+// (drawn icons, same pattern as this page's own tiles) — this comment
+// stays as history for why THIS test never covered them, not as a
+// still-open list.
 func TestMenuPage_NoRetiredTileEmoji(t *testing.T) {
 	mux, _ := newMenuPageTestDeps(t, []common.MenuItem{
 		{Href: "/", Label: "nav.till"},
