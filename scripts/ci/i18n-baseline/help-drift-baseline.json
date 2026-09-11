@@ -1028,6 +1028,82 @@
     },
     {
       "locale": "ar",
+      "topic": "inventory",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 10,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 2,
+        "bold_leadins": 2
+      },
+      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "de",
+      "topic": "inventory",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 10,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 2,
+        "bold_leadins": 2
+      },
+      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "fa",
+      "topic": "inventory",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 10,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 2,
+        "bold_leadins": 2
+      },
+      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "tr",
+      "topic": "inventory",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 10,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 2,
+        "bold_leadins": 2
+      },
+      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "ar",
       "topic": "designer",
       "signature": {
         "headings": 2,
