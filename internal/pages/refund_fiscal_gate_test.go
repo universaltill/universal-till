@@ -14,7 +14,7 @@ import (
 	"github.com/universaltill/universal-till/internal/pages/common"
 )
 
-// ADR-0048's German TSE hard gate was wired into completeTender (the
+// ADR-0048's DE+TR fiscal-signing-device hard gate (fiscal.RequiresHardGate) was wired into completeTender (the
 // cashier/kiosk sale path) only — a refund moves real money and is
 // aufzeichnungspflichtig under KassenSichV the same as a sale, so it must
 // be blocked the same way (ut-docs#731, decided 2026-08-18). These tests
