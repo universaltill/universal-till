@@ -1,6 +1,7 @@
 package httpx
 
 import (
+	"bytes"
 	"encoding/json"
 	"fmt"
 	"html/template"
@@ -902,9 +903,13 @@ var renderFiles = []string{
 	// winner) — a page that uses it must define both, see the partial.
 	"ui/partials/list_header.html",
 	"ui/partials/record_dialog.html",
-	// ut-docs#2008: web/ui/pages/admin.html includes this by its
+	// ut-docs#2008, converted to a two-pane master-detail shell by
+	// ut-docs#2116: web/ui/pages/admin_shell.html includes this by its
 	// {{ define "admin_tree" }} name — same riding-along mechanism as
-	// items_rail.html above, and the only call site today.
+	// items_rail.html above. Also parsed standalone by
+	// internal/pages/admin_page.go's writeAdminTreeOOB (mirroring
+	// itemsnav.WriteRailOOB), for the out-of-band tree refresh each of the
+	// six destination handlers' own htmx fragment response sends.
 	"ui/partials/admin_tree.html",
 }
 
@@ -973,6 +978,48 @@ func RenderContentFragment(tplPath string, data any) http.HandlerFunc {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	}
+}
+
+// RenderContentFragmentToString renders tplPath's "content" define block
+// (see RenderContentFragment above) into a string instead of writing it to
+// an http.ResponseWriter — for a caller that needs to EMBED one page's own
+// rendered content inside ANOTHER page's data on a bare/direct GET
+// (ut-docs#2116: each of the /admin tree's six destination handlers
+// renders its own content once, then passes the result as
+// admin_shell.html's PanelHTML). Unlike /items' cross-handler "embed" case
+// (internal/pages/itemsnav.EmbedHeader — /items' default panel reaches a
+// DIFFERENT handler's code via an HTTP sub-request), this needs no
+// sub-request: every admin destination handler already IS the code that
+// would render its own content, so it can just render into a buffer
+// directly instead of writing to w.
+//
+// Deliberately reuses RenderContentFragment's own file set and cache key
+// (httpx.Render:+page) — a hand-rolled parallel template set would drift
+// from the real page the moment either changed and the other didn't; this
+// can't drift because it IS the same parsed template, just executed into a
+// buffer instead of w.
+//
+// Takes r (not just a locale) for the same reason RenderContentFragment
+// does: withHelpHref binds the nav's contextual "?" to r.URL.Path. Uses
+// RequestLocale, not ResolveLocale — this is an internal re-render of
+// content the caller has already decided to show, and the caller's own
+// eventual whole-page Render/RenderWith call resolves (and cookies) the
+// locale once; resolving it a second time here would emit a second,
+// redundant Set-Cookie for the same ?lang=.
+func RenderContentFragmentToString(tplPath string, data any, r *http.Request) (template.HTML, error) {
+	page := stripWebPrefix(tplPath)
+
+	locale := RequestLocale(r)
+	files := append([]string{renderFiles[0], page}, renderFiles[1:]...)
+	t, err := ClonedTemplate("httpx.Render:"+page, "base.html", withHelpHref(FuncsFor(locale), r), files...)
+	if err != nil {
+		return "", err
+	}
+	var buf bytes.Buffer
+	if err := t.ExecuteTemplate(&buf, "content", data); err != nil {
+		return "", err
+	}
+	return template.HTML(buf.String()), nil //nolint:gosec // buf is this same template's own escaped output, not raw external input
 }
 
 // IsFragmentSwap reports whether r is an ordinary in-page htmx navigation —

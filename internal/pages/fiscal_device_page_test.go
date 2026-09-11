@@ -109,6 +109,92 @@ func TestFiscalDevicePage_RendersWithoutPlugin(t *testing.T) {
 	}
 }
 
+// ut-docs#2116: GET /fiscal-device now renders inside the /admin two-pane
+// shell, with the /fiscal-device tree row marked selected -- but ONLY once
+// the tree itself actually includes that entry (TR + the plugin active,
+// same fiscalDeviceMarketActive-shaped gate visibleAdminEntries applies).
+// This is the wrinkle worth its own dedicated test: the GET page itself
+// stays reachable on ANY country/plugin state (fiscal_device_page.go's own
+// doc comment -- the docs-shots harness renders it with nothing
+// installed), but the shell must never show it as the CURRENT tree row
+// when the viewer's own tree wouldn't otherwise list it (AC #6) -- proven
+// separately below.
+func TestFiscalDevicePage_BareGETRendersInsideAdminShellWithSelectionMarkedOnceVisible(t *testing.T) {
+	mux, d := newFiscalDeviceTestMux(t)
+	t.Setenv("UT_AUTH", "off")
+	seedActiveTaxTrPlugin(t, d.Db, true)
+	setCountry(t, d, "TR")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/fiscal-device", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /fiscal-device = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="admin-tree"`) || !strings.Contains(body, `id="admin-panel"`) {
+		t.Fatalf("expected the admin shell rendered, got: %s", body)
+	}
+	if !strings.Contains(body, `class="items-row is-current"`) {
+		t.Fatalf("expected the /fiscal-device tree row marked is-current, got: %s", body)
+	}
+	if !strings.Contains(body, `aria-current="page"`) {
+		t.Fatalf("expected aria-current=\"page\" on the selected row, got: %s", body)
+	}
+	// The page's own plugin-settings/plugins-store links stay plain
+	// navigations OUT of the admin area, untouched by the shell wrap.
+	if !strings.Contains(body, `href="/plugins`) {
+		t.Fatalf("expected the plugin-settings link still present and untouched, got: %s", body)
+	}
+}
+
+// AC #6 counterpart to the test above: on a shop where the tree itself
+// would never list /fiscal-device (no TR + active plugin), the bare GET
+// still succeeds (the page's own gate is unchanged) but the shell must not
+// show a phantom selection -- there is no tree row for this route at all
+// to mark current.
+func TestFiscalDevicePage_BareGETShowsNoTreeEntryWhenMarketConditionUnmet(t *testing.T) {
+	mux, _ := newFiscalDeviceTestMux(t)
+	t.Setenv("UT_AUTH", "off")
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/fiscal-device", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /fiscal-device = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `href="/fiscal-device"`) {
+		t.Fatalf("expected no /fiscal-device tree entry when the market condition is unmet, got: %s", body)
+	}
+}
+
+// ut-docs#2116: an htmx panel-swap request gets only the destination's own
+// content plus an out-of-band admin-tree refresh, mirroring
+// TestLocationsPage_FragmentSwapReturnsContentPlusOOBTreeWithSelectionMarked.
+func TestFiscalDevicePage_FragmentSwapReturnsContentPlusOOBTreeWithSelectionMarked(t *testing.T) {
+	mux, d := newFiscalDeviceTestMux(t)
+	t.Setenv("UT_AUTH", "off")
+	seedActiveTaxTrPlugin(t, d.Db, true)
+	setCountry(t, d, "TR")
+
+	req := httptest.NewRequest(http.MethodGet, "/fiscal-device", nil)
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("fragment GET /fiscal-device = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `class="nav"`) {
+		t.Fatalf("expected a content-only fragment with no nav chrome, got: %s", body)
+	}
+	if !strings.Contains(body, `hx-swap-oob="true"`) || !strings.Contains(body, `id="admin-tree"`) {
+		t.Fatalf("expected an out-of-band admin-tree refresh appended, got: %s", body)
+	}
+	if !strings.Contains(body, `class="items-row is-current"`) {
+		t.Fatalf("expected the /fiscal-device row marked is-current in the OOB tree, got: %s", body)
+	}
+}
+
 func TestFiscalDevicePage_ShowsPluginSettingsAndLastReceipt(t *testing.T) {
 	mux, d := newFiscalDeviceTestMux(t)
 	t.Setenv("UT_AUTH", "off")

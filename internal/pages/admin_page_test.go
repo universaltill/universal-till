@@ -397,6 +397,32 @@ func TestAdminPage_TileVisibilityMatchesPageReachabilityForCashier(t *testing.T)
 	}
 }
 
+// ut-docs#2116: /admin itself is now the two-pane shell's empty landing
+// state (no destination selected, PanelHTML nil) rather than its own
+// distinct page -- the tree renders, no row is marked is-current (since
+// /admin is never itself a member of the tree -- visibleAdminEntries
+// excludes it), and the empty-state message key renders through T.
+func TestAdminPage_BareGETIsShellEmptyState(t *testing.T) {
+	mux, dp := newAdminPageTestDeps(t)
+	dp.UpdateState(func(s *common.RuntimeState) { s.Country = "DE" })
+	seedActiveTaxDePlugin(t, dp.Db)
+	mgr := auth.User{ID: "m1", Role: "manager", DisplayName: "Mgr"}
+
+	body := getAdmin(t, mux, &mgr).Body.String()
+	if !strings.Contains(body, `id="admin-tree"`) {
+		t.Fatalf("expected the admin tree rendered, got: %s", body)
+	}
+	if !strings.Contains(body, `id="admin-panel"`) {
+		t.Fatalf("expected the admin panel wrapper, got: %s", body)
+	}
+	if strings.Contains(body, "is-current") {
+		t.Fatalf("expected no tree row marked selected on the bare /admin landing, got: %s", body)
+	}
+	if !strings.Contains(body, httpx.T("en", "admin.select_section")) {
+		t.Fatalf("expected the empty-state message rendered through T, got: %s", body)
+	}
+}
+
 // Unit-level coverage for visibleAdminEntries and the "administration"
 // predicate directly, independent of HTTP rendering.
 func TestVisibleAdminEntries_NoPermissions(t *testing.T) {

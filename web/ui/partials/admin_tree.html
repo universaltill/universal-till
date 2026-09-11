@@ -1,30 +1,55 @@
 {{/*
-  /admin tree (ut-docs#2008): the destination list the Menu launcher's single
-  gated "Administration" tile opens, replacing #1959's group heading on the
-  flat /menu grid. Deliberately NOT items_rail.html's two-pane master-detail
-  (hx-get/hx-target panel swap) -- each of these six destinations is already
-  its own full standalone page, so a row here is plain navigation: a real
-  <a href>, no htmx. Row markup/classes are still items_rail.html's own
-  (.items-row/.items-text/.items-name, app.css) -- same RTL-safe logical
-  properties, same touch-target floor (raised to the product's documented
-  46px floor in app.css's own .admin-tree override, since these rows are
-  name-only where
-  items_rail.html's own rows lean on a second subtitle line for that floor).
+  /admin tree (ut-docs#2008, converted to a two-pane master-detail shell by
+  ut-docs#2116): the destination list the Menu launcher's single gated
+  "Administration" tile opens. ut-docs#2008's own version of this comment
+  said each of these six destinations was already its own full standalone
+  page, so a row here was plain navigation only: a real <a href>, no htmx.
+  That is no longer accurate -- ut-docs#2116 (product-owner feedback: the
+  /items shell (ut-docs#1950) shipped and the Administration tree was the
+  one remaining destination-list surface still doing a hard reload) makes
+  this partial the SAME two-pane master-detail rail items_rail.html is,
+  reversing 2008's "plain navigation" choice on purpose. Each row now also
+  carries hx-get/hx-target="#admin-panel"/hx-push-url -- an htmx tap swaps
+  ONLY the right-hand panel and leaves the tree in place, mirroring
+  items_rail.html's own row markup almost exactly (still items_rail.html's
+  own .items-row/.items-text/.items-name classes, app.css -- same RTL-safe
+  logical properties, same touch-target floor, this card changes none of
+  that). The real href stays (no-JS fallback, and the narrow-viewport
+  fallback below app.css's .admin-layout breakpoint -- see admin_shell.html's
+  own script, mirroring items.html's identical one) so every destination is
+  still directly linkable at its own URL, unchanged.
+  Direct navigation to one of the six is now STRONGER than /items' own
+  precedent, not just a copy of it: a bare GET to any of them renders INSIDE
+  this same shell, with that row already marked current -- see each
+  destination handler's own httpx.IsFragmentSwap branch
+  (internal/pages/admin_page.go's renderAdminDestination) for how.
 
   .Groups is []adminGroup (internal/pages/admin_page.go): only the domain
   clusters that ended up with at least one visible entry after
   visibleAdminEntries' own gating -- an empty cluster never reaches this
   template, so no "no entries" branch is needed here.
+
+  .CurrentHref is the active destination's own route ("" when none is
+  selected -- the /admin landing itself, which is never a member of
+  .Groups). .OOB, set true only by writeAdminTreeOOB's own out-of-band
+  render, adds hx-swap-oob="true" to the outer wrapper so an htmx response
+  from any of the six destinations can resend this tree and have its
+  is-current highlight follow the click, no matter which handler answered
+  it -- items_rail.html/itemsnav.WriteRailOOB's identical mechanism for
+  the /items rail.
 */}}
 {{ define "admin_tree" }}
-<div class="admin-tree">
+<div class="admin-tree" id="admin-tree" {{ if .OOB }}hx-swap-oob="true"{{ end }}>
   {{ range .Groups }}
   <section class="admin-group">
     <h2>{{ T .HeadingKey }}</h2>
     <ul class="admin-tree-list">
       {{ range .Entries }}
       <li>
-        <a class="items-row" href="{{ .Href }}">
+        <a class="items-row{{ if eq .Href $.CurrentHref }} is-current{{ end }}"
+           href="{{ .Href }}"
+           hx-get="{{ .Href }}" hx-target="#admin-panel" hx-push-url="true"
+           {{ if eq .Href $.CurrentHref }}aria-current="page"{{ end }}>
           <span class="items-text">
             <span class="items-name">{{ T .LabelKey }}</span>
           </span>

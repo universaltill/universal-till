@@ -128,7 +128,13 @@ func registerFiscalDeviceTR(mux *http.ServeMux, d *common.Deps) {
 				countToday = n
 			}
 		}
-		httpx.Render("ui/pages/fiscal_device.html", map[string]any{
+		// ut-docs#2116: renders inside the /admin two-pane shell (tree +
+		// panel) rather than as its own standalone page — see
+		// admin_page.go's renderAdminDestination. The plugin-settings
+		// links this page's own template renders (plain <a href="/plugins/
+		// ...">, no hx-target) are navigations OUT of the admin area
+		// entirely and stay untouched by this change.
+		renderAdminDestination(d, "/fiscal-device", "ui/pages/fiscal_device.html", map[string]any{
 			"title":        "Fiscal device",
 			"theme":        d.CurrentState().Theme,
 			"menuItems":    d.MenuSnapshot(),

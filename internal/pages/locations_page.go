@@ -67,7 +67,10 @@ func registerLocations(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
 			return
 		}
-		httpx.Render("ui/pages/locations.html", map[string]any{
+		// ut-docs#2116: renders inside the /admin two-pane shell (tree +
+		// panel) rather than as its own standalone page — see
+		// admin_page.go's renderAdminDestination.
+		renderAdminDestination(d, "/locations", "ui/pages/locations.html", map[string]any{
 			"title":     "Locations",
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),

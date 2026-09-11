@@ -2811,6 +2811,23 @@ body.login-screen {
 .admin-group h2 { font-size: 1rem; font-weight: 600; color: var(--muted); margin-block-end: .3rem; }
 .admin-tree-list { list-style: none; margin: 0; padding: 0; display: flex; flex-direction: column; gap: .2rem; }
 
+/* /admin two-pane shell (ut-docs#2116): the tree above stays put, a
+   destination's own content swaps into .admin-panel — same grid/breakpoint
+   shape as .items-layout above (14-18rem rail, the rest to the panel), a
+   deliberate separate copy rather than a shared class: unifying the two
+   into one component is explicitly out of scope for this card (it would
+   also couple /admin's own touch-target floor, above, to /items' unrelated
+   subtitle-driven row height). Same narrow-viewport behaviour as
+   .items-layout too — the two panes stack, and a tree tap falls back to a
+   real navigation instead of the wide layout's in-panel htmx swap — see
+   admin_shell.html's own script, mirroring items.html's identical one, and
+   its comment for why 52rem is reused rather than a new value. */
+.admin-layout { display: grid; grid-template-columns: minmax(14rem, 18rem) minmax(0, 1fr);
+                gap: 1.2rem; align-items: start; }
+@media (max-width: 52rem) { .admin-layout { grid-template-columns: 1fr; } }
+.admin-tree-wrap { position: sticky; inset-block-start: .5rem; }
+.admin-panel { min-inline-size: 0; }
+
 /* Contextual "?" — sits next to a page heading and opens that page's topic.
    Deliberately small and low-contrast: it must be findable when wanted and
    invisible when not, and never a mis-tap target during a sale. */

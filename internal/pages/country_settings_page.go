@@ -145,7 +145,10 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 				AtFloor:        c.ArchiveMinDays == data.GlobalArchiveMinDays,
 			})
 		}
-		httpx.Render("ui/pages/country_settings.html", map[string]any{
+		// ut-docs#2116: renders inside the /admin two-pane shell (tree +
+		// panel) rather than as its own standalone page — see
+		// admin_page.go's renderAdminDestination.
+		renderAdminDestination(d, "/country-settings", "ui/pages/country_settings.html", map[string]any{
 			"title":          "Country settings",
 			"theme":          st.Theme,
 			"menuItems":      d.MenuSnapshot(),

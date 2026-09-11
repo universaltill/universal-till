@@ -1,6 +1,9 @@
 package pages
 
 import (
+	"bytes"
+	"html/template"
+	"io"
 	"net/http"
 
 	"github.com/universaltill/universal-till/internal/httpx"
@@ -112,7 +115,16 @@ func registerAdmin(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
 			return
 		}
-		httpx.Render("ui/pages/admin.html", map[string]any{
+		// ut-docs#2116: /admin itself is now the two-pane shell's empty
+		// landing state (PanelHTML nil, CurrentHref "" — never a member of
+		// .Groups, so no row shows is-current) rather than its own
+		// distinct page; admin_shell.html folds in the old web/ui/pages/
+		// admin.html's page-head/back-button for exactly this empty case.
+		// No httpx.IsFragmentSwap branch here: nothing inside the shell
+		// ever hx-gets /admin (visibleAdminEntries excludes it from the
+		// tree itself, see that function's own doc comment), so this route
+		// is only ever hit as a bare/direct GET.
+		httpx.Render("ui/pages/admin_shell.html", map[string]any{
 			"title":     "Administration",
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),
@@ -120,4 +132,91 @@ func registerAdmin(mux *http.ServeMux, d *common.Deps) {
 			"BackHref":  "/menu",
 		})(w, r)
 	})
+}
+
+// writeAdminTreeOOB renders the /admin tree partial (web/ui/partials/
+// admin_tree.html) as an out-of-band swap (id="admin-tree",
+// hx-swap-oob="true") with currentHref's row marked is-current, and writes
+// it to w — appended after every one of the six destination handlers' own
+// htmx fragment response (via renderAdminDestination below) so the tree's
+// active-node highlight follows the click no matter which handler answered
+// it (ut-docs#2116). Mirrors internal/pages/itemsnav.WriteRailOOB's
+// identical buffer-first shape: rendered into a buffer first, not straight
+// to w, so a template error can't reach the client as a truncated
+// hx-swap-oob="true" fragment that htmx would still swap into the DOM.
+// Best-effort — silently does nothing on error, same as that helper.
+//
+// Unlike WriteRailOOB this needs no EmbedHeader/IsEmbed check: that exists
+// only for /items' cross-handler HTTP-sub-request embedding (its default
+// panel reaching a DIFFERENT handler's code), which nothing here does —
+// every admin destination handler already IS the code that renders its own
+// content (see renderAdminDestination/httpx.RenderContentFragmentToString).
+func writeAdminTreeOOB(w io.Writer, funcs template.FuncMap, currentHref string, groups []adminGroup) {
+	t, err := httpx.ClonedTemplate("pages.adminTreeOOB", "base.html", funcs, "ui/partials/admin_tree.html")
+	if err != nil {
+		return
+	}
+	var buf bytes.Buffer
+	if t.ExecuteTemplate(&buf, "admin_tree", map[string]any{
+		"Groups":      groups,
+		"CurrentHref": currentHref,
+		"OOB":         true,
+	}) != nil {
+		return
+	}
+	_, _ = w.Write(buf.Bytes())
+}
+
+// renderAdminDestination is the shared GET-response tail for each of the
+// six /admin destination handlers (ut-docs#2116; call sites:
+// locations_page.go, registers_page.go, fiscal_register_page.go,
+// fiscal_device_page.go, translations_page.go, country_settings_page.go).
+// tplPath/data are exactly what a call site would otherwise have handed
+// straight to httpx.Render — this returns the same http.HandlerFunc shape
+// so the call site's own final line stays a one-liner, just naming its own
+// route as currentHref.
+//
+// An htmx panel-swap request (httpx.IsFragmentSwap) gets just the
+// destination's own "content" block plus an out-of-band refresh of the
+// tree (writeAdminTreeOOB), exactly the shape internal/pages/catalog/
+// handlers.go's own /catalog fragment branch already follows for the
+// /items rail. A bare/direct GET instead gets the ENTIRE admin_shell.html
+// page, with this destination's own content rendered once
+// (httpx.RenderContentFragmentToString) and embedded as PanelHTML —
+// deliberately stronger than /items' own precedent (whose five section
+// destinations still render as independent standalone pages on a direct
+// hit, see items.html's own doc comment): every one of these six is a
+// set-once/onboarding admin screen, never a page a shop bookmarks or
+// deep-links from outside the till, so there is no unwrapped-standalone
+// shape left worth preserving (ut-docs#2116 AC #3).
+//
+// groups (and so which rows the reader can even see) is recomputed fresh
+// on every call from visibleAdminEntries/adminGroupsFor — the exact same
+// per-request gating registerAdmin's own /admin handler applies — rather
+// than trusted from any caller-held value, so a destination page can never
+// render inside a shell advertising a tree entry this viewer isn't
+// actually allowed to reach.
+func renderAdminDestination(d *common.Deps, currentHref, tplPath string, data map[string]any) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		funcs := httpx.FuncsFor(httpx.RequestLocale(r))
+		groups := adminGroupsFor(visibleAdminEntries(d, r))
+		if httpx.IsFragmentSwap(w, r) {
+			httpx.RenderContentFragment(tplPath, data)(w, r)
+			writeAdminTreeOOB(w, funcs, currentHref, groups)
+			return
+		}
+		panelHTML, err := httpx.RenderContentFragmentToString(tplPath, data, r)
+		if err != nil {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "common.error.server", err)
+			return
+		}
+		httpx.Render("ui/pages/admin_shell.html", map[string]any{
+			"title":       data["title"],
+			"theme":       d.CurrentState().Theme,
+			"menuItems":   d.MenuSnapshot(),
+			"Groups":      groups,
+			"CurrentHref": currentHref,
+			"PanelHTML":   panelHTML,
+		})(w, r)
+	}
 }

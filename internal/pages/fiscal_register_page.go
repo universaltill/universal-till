@@ -211,7 +211,10 @@ func registerFiscalRegisterDE(mux *http.ServeMux, d *common.Deps) {
 			out[i] = *g
 		}
 
-		httpx.Render("ui/pages/fiscal_register.html", map[string]any{
+		// ut-docs#2116: renders inside the /admin two-pane shell (tree +
+		// panel) rather than as its own standalone page — see
+		// admin_page.go's renderAdminDestination.
+		renderAdminDestination(d, "/fiscal-register", "ui/pages/fiscal_register.html", map[string]any{
 			"title":     "Fiscal register",
 			"theme":     d.CurrentState().Theme,
 			"menuItems": d.MenuSnapshot(),

@@ -3,6 +3,7 @@
   "admin.group.localization": "التوطين",
   "admin.group.locations": "المواقع",
   "admin.group.other": "أخرى",
+  "admin.select_section": "اختر قسمًا لعرض إعداداته.",
   "ai.identify.button": "التعرّف بالكاميرا",
   "ai.identify.camera_busy": "الكاميرا قيد الاستخدام بواسطة تطبيق آخر. أغلق التطبيق الآخر وحاول مرة أخرى.",
   "ai.identify.camera_error": "الكاميرا غير متاحة",

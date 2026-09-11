@@ -1,0 +1,56 @@
+{{ define "content" }}
+{{/*
+  ut-docs#2116: the /admin tree's two-pane master-detail shell, converting
+  the six-destination tree from plain full-page navigation (ut-docs#2008)
+  to the same master-detail pattern /items shipped (ut-docs#1950,
+  items.html) -- left tree stays put, an htmx tap swaps only the right
+  panel, and the tree shows the active node selected. Stronger than
+  items.html's own precedent: EVERY bare/direct GET to one of the six
+  destinations renders wrapped in this shell too (not just an htmx panel
+  swap reached from inside it) -- these six are set-once/onboarding admin
+  screens, not pages a shop bookmarks or deep-links from outside the till,
+  so unlike /items' five section destinations there is no
+  unwrapped-standalone shape left to preserve.
+
+  Needs .Groups/.CurrentHref (admin_tree.html's own data contract) plus
+  .PanelHTML (template.HTML, the selected destination's own rendered
+  "content" block -- see internal/pages/admin_page.go's
+  renderAdminDestination) and .BackHref (only read by the empty-state
+  branch below, when nothing is selected -- /admin's own landing, folded in
+  from the old web/ui/pages/admin.html rather than kept as a second
+  template with the same page-head/back-button markup).
+*/}}
+<div class="admin-layout">
+  <aside class="admin-tree-wrap" aria-label="{{ T "menu.group.administration" }}">{{ template "admin_tree" . }}</aside>
+  <div class="admin-panel" id="admin-panel">
+    {{ if .PanelHTML }}{{ .PanelHTML }}{{ else }}
+    <div class="page-head">
+      <h1>{{ T "menu.group.administration" }} {{ helpLink "menu" }}</h1>
+      <a class="btn primary btn-touch" href="{{ .BackHref }}"><span class="btn-ico" aria-hidden="true">{{ icon "menu" }}</span> {{ T "nav.menu" }}</a>
+    </div>
+    <p class="muted">{{ T "admin.select_section" }}</p>
+    {{ end }}
+  </div>
+</div>
+
+<script>
+(function () {
+  // ut-docs#2116 AC #5, mirroring items.html's identical narrow-viewport
+  // fallback script (see that file's own comment for the full reasoning):
+  // below app.css's .admin-layout breakpoint (52rem -- the same value
+  // .items-layout/.manual both use, reused deliberately, never a new one)
+  // the two panes stack, and a tree tap must fall back to a plain
+  // navigation to that destination's own full URL instead of the
+  // wide-screen in-panel htmx swap. Bound on `document`, not on
+  // #admin-tree itself, for the same reason items.html's script is: every
+  // destination swap replaces the tree out-of-band (hx-swap-oob="true" is
+  // an outerHTML swap), which would throw away a listener attached
+  // directly to that node the first time an operator picks a destination.
+  document.addEventListener('click', function (evt) {
+    if (!window.matchMedia('(max-width: 52rem)').matches) return;
+    var t = evt.target;
+    if (t && t.closest && t.closest('a.items-row, a[hx-target="#admin-panel"]')) evt.stopPropagation();
+  }, true);
+})();
+</script>
+{{ end }}

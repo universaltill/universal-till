@@ -121,7 +121,10 @@ func registerRegisters(mux *http.ServeMux, d *common.Deps) {
 			v.InUse = inUse
 			views = append(views, v)
 		}
-		httpx.Render("ui/pages/registers.html", map[string]any{
+		// ut-docs#2116: renders inside the /admin two-pane shell (tree +
+		// panel) rather than as its own standalone page — see
+		// admin_page.go's renderAdminDestination.
+		renderAdminDestination(d, "/registers", "ui/pages/registers.html", map[string]any{
 			"title":          "Registers",
 			"theme":          d.CurrentState().Theme,
 			"menuItems":      d.MenuSnapshot(),

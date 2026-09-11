@@ -305,6 +305,89 @@ func TestLocationsPage_DeactivatedLocationHiddenFromInventoryPicker(t *testing.T
 	}
 }
 
+// ut-docs#2116: GET /locations now renders inside the /admin two-pane
+// shell (the tree alongside the destination's own panel content) instead
+// of as its own standalone page, with the /locations row marked selected —
+// AC #3, the stronger-than-/items requirement that this holds on a bare
+// direct hit, not only when reached via an htmx tap from inside /admin.
+func TestLocationsPage_BareGETRendersInsideAdminShellWithSelectionMarked(t *testing.T) {
+	mux, _ := newLocationsTestMux(t)
+	t.Setenv("UT_AUTH", "off")
+	req := httptest.NewRequest(http.MethodGet, "/locations", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /locations = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `id="admin-tree"`) {
+		t.Fatalf("expected the admin tree rendered alongside the page, got: %s", body)
+	}
+	if !strings.Contains(body, `id="admin-panel"`) {
+		t.Fatalf("expected the admin panel wrapper, got: %s", body)
+	}
+	if !strings.Contains(body, `class="items-row is-current"`) {
+		t.Fatalf("expected the /locations tree row marked is-current, got: %s", body)
+	}
+	if !strings.Contains(body, `aria-current="page"`) {
+		t.Fatalf("expected aria-current=\"page\" on the selected row, got: %s", body)
+	}
+	// The page's own content (its table of locations) is still there,
+	// embedded as the shell's panel content, not replaced by it.
+	if !strings.Contains(body, `class="nav"`) {
+		t.Fatalf("expected the full page chrome (nav rail) on a bare GET, got: %s", body)
+	}
+}
+
+// ut-docs#2116: an htmx panel-swap request (HX-Request: true) gets only the
+// destination's own content plus an out-of-band refresh of the admin tree
+// (hx-swap-oob="true") — no page chrome — with the tree's /locations row
+// marked selected, mirroring /catalog's own fragment branch for the /items
+// rail (internal/pages/catalog/handlers.go).
+func TestLocationsPage_FragmentSwapReturnsContentPlusOOBTreeWithSelectionMarked(t *testing.T) {
+	mux, _ := newLocationsTestMux(t)
+	t.Setenv("UT_AUTH", "off")
+	req := httptest.NewRequest(http.MethodGet, "/locations", nil)
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("fragment GET /locations = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if strings.Contains(body, `class="nav"`) {
+		t.Fatalf("expected a content-only fragment with no nav chrome, got: %s", body)
+	}
+	if !strings.Contains(body, `hx-swap-oob="true"`) {
+		t.Fatalf("expected an out-of-band admin-tree refresh appended, got: %s", body)
+	}
+	if !strings.Contains(body, `id="admin-tree"`) {
+		t.Fatalf("expected the OOB fragment to carry id=\"admin-tree\", got: %s", body)
+	}
+	if !strings.Contains(body, `class="items-row is-current"`) {
+		t.Fatalf("expected the /locations row marked is-current in the OOB tree, got: %s", body)
+	}
+	if !strings.Contains(body, `aria-current="page"`) {
+		t.Fatalf("expected aria-current=\"page\" on the OOB tree's selected row, got: %s", body)
+	}
+}
+
+// ut-docs#2116 review concern: the shell change must not disturb this
+// page's own pre-existing gating — a cashier still 403s exactly as before
+// (TestLocationsPagePermissions above pins the same thing for the
+// no-fragment case; this proves it identically holds for GET too under the
+// admin-shell code path, not just that a 403 body happens to still render).
+func TestLocationsPage_StillForbiddenForCashierAfterShellConversion(t *testing.T) {
+	mux, _ := newLocationsTestMux(t)
+	cashier := auth.User{ID: "c1", Role: "cashier", DisplayName: "Cash"}
+	req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/locations", nil), cashier)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("cashier GET /locations = %d, want 403: %s", rec.Code, rec.Body.String())
+	}
+}
+
 // ut-docs#903: a manager granted "settings" but NOT the new dedicated
 // "stock_location_management" action must be denied here -- pins that the
 // two actions are genuinely independent now, not just that the seeded

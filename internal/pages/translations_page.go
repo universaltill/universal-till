@@ -237,7 +237,15 @@ func registerTranslations(mux *http.ServeMux, d *common.Deps, i18n *config.I18n)
 		if editLocale == "" {
 			editLocale = httpx.ResolveLocale(w, r)
 		}
-		httpx.Render("ui/pages/translations.html", map[string]any{
+		// ut-docs#2116: renders inside the /admin two-pane shell (tree +
+		// panel) rather than as its own standalone page — see
+		// admin_page.go's renderAdminDestination. Independent of, and
+		// unaffected by, this page's OWN pre-existing hx-get="/ui/
+		// translations-table" fragment mechanism (its search/filter UI,
+		// wired below) — that swap targets an element inside this page's
+		// own content, not #admin-panel, so both keep working side by
+		// side.
+		renderAdminDestination(d, "/translations", "ui/pages/translations.html", map[string]any{
 			"title":      "Translations",
 			"theme":      d.CurrentState().Theme,
 			"menuItems":  d.MenuSnapshot(),
