@@ -32,6 +32,13 @@ func newMenuPageTestDeps(t *testing.T, menu []common.MenuItem) (*http.ServeMux, 
 	if err != nil {
 		t.Fatalf("init plugins: %v", err)
 	}
+	// Mirrors internal/pages/init.go's real wiring: without this, a test
+	// that installs a plugin shipping its own locale overlay (a `layout` or
+	// `language` plugin's re-label) can never observe it resolve — T would
+	// silently keep returning the raw key forever, no matter what the
+	// plugin's manifest/locale files declare. A no-op for every existing
+	// test here, since none has plugin locale files on disk to sync.
+	pm.SetLocalizer(i18n)
 	state := common.LoadState(t.Context(), settings.NewStore(db), cfg)
 	dp := &common.Deps{
 		Cfg:      cfg,
@@ -41,6 +48,12 @@ func newMenuPageTestDeps(t *testing.T, menu []common.MenuItem) (*http.ServeMux, 
 		Pm:       pm,
 		Settings: settings.NewStore(db),
 	}
+	// Mirrors init.go's httpx.InitRailAmendments wiring (ut-docs#1912) so a
+	// test that installs a `layout` plugin amending the rail slot sees
+	// nav.html re-render with it; reset afterwards so the process-global
+	// source never leaks one test's deps into another's.
+	httpx.InitRailAmendments(dp.RailAmendmentsSnapshot)
+	t.Cleanup(func() { httpx.InitRailAmendments(nil) })
 	mux := http.NewServeMux()
 	registerMenu(mux, dp)
 	return mux, dp
@@ -321,11 +334,14 @@ func TestMenuPage_BluetoothTileUsesTheBluetoothSymbolNotSignalBars(t *testing.T)
 // Named for what it actually checks (independent review, ut-docs#1845):
 // a fixed denylist of the specific glyphs this page used to render, NOT a
 // full-page Unicode emoji scan — this page also renders shared layout
-// chrome (web/ui/layouts/base.html) that carries its own, unrelated
+// chrome (web/ui/layouts/base.html) that carried its own, unrelated
 // glyphs (📷 the bugreport screenshot button, ✦/⬆/✕ the update banner/
-// close controls), which are out of scope for ut-docs#1845 ("no emoji
-// left in menu/nav markup" — that chrome isn't menu/nav) and deliberately
-// not asserted against here.
+// close controls), out of scope for ut-docs#1845 ("no emoji left in
+// menu/nav markup" — that chrome isn't menu/nav) and deliberately not
+// asserted against here. Those were fixed separately by ut-docs#1859
+// (drawn icons, same pattern as this page's own tiles) — this comment
+// stays as history for why THIS test never covered them, not as a
+// still-open list.
 func TestMenuPage_NoRetiredTileEmoji(t *testing.T) {
 	mux, _ := newMenuPageTestDeps(t, []common.MenuItem{
 		{Href: "/", Label: "nav.till"},

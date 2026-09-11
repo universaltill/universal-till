@@ -789,6 +789,13 @@
     if (!ev.detail || !ev.detail.successful) return;
     formSession++;
     modal.close();
+    // ut-docs#1951: the variants/barcodes panel below the grid is still
+    // showing the item this just deactivated — a row click used to be the
+    // ONLY way to open both the dialog and the panel together, so
+    // deactivating never left the panel stranded on a gone item. Reset it
+    // to its empty-selection state (item_id=''), the same state the
+    // initial page load itself uses.
+    htmx.ajax('GET', '/api/catalog/item-variants', { target: '#catalog-variants', swap: 'outerHTML' });
   });
 
   // ut-docs#1901: opens the dialog fresh, ready to create a NEW item — the
@@ -951,12 +958,14 @@
     }
   }
 
-  // Row click fills the form; the table partial is re-rendered by the server
-  // after every mutation, so delegate from the document.
+  // Card click fills the form; the grid partial is re-rendered by the
+  // server after every mutation, so delegate from the document. ut-docs#1951:
+  // a card carries no buttons of its own any more (edit/delete both moved
+  // into the dialog this opens), so unlike the old table row there is
+  // nothing inside it to exclude a click from.
   document.addEventListener('click', function (ev) {
     var row = ev.target.closest('.catalog-row');
     if (!row) return;
-    if (ev.target.closest('.btn') && !ev.target.classList.contains('catalog-edit')) return;
     openCatalogRow(row);
   });
 

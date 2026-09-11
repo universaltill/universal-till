@@ -817,6 +817,15 @@
     <div id="cat-msg" class="muted" aria-live="polite" style="min-height:1.2rem"></div>
   </div>
   <div id="cat-results" class="set-gap-s"></div>
+
+  <!-- ut-docs#1834: a migrating merchant's existing voucher balances, as an
+       opening liability -- a separate small CSV import, distinct from the
+       catalog cleanup just above and from /import's catalog importer
+       (different format; gated on "settings", not "import_export"). -->
+  <hr style="margin:1.2rem 0; border:0; border-top:1px solid var(--border)">
+  <h3 style="margin:0 0 .3rem">{{ T "settings.data.vouchers_import_title" }}</h3>
+  <p class="muted">{{ T "settings.data.vouchers_import_help" }}</p>
+  <a class="btn secondary" href="/settings/vouchers/import">{{ T "settings.data.vouchers_import_btn" }}</a>
   {{ end }}
 
   {{ if .restorePromptDeferred }}
@@ -1648,6 +1657,23 @@
     </select>
     <button class="btn" type="submit">{{ T "settings.kiosk_idle_reset.apply" }}</button>
     <span id="kiosk-idle-reset-msg" aria-live="polite"></span>
+  </form>
+</div>
+<!-- ut-docs#582: self-order kiosk checkout mode -- "kiosk" (the existing
+     card/contactless payment picker) or "counter" ("pay at counter": the
+     kiosk sends the order to the kitchen but never charges anything, a
+     human takes payment at the till). Same elevation-wired shape as
+     kiosk-idle-reset above. -->
+<div class="card" id="settings-kiosk-payment-mode">
+  <h2>{{ T "settings.kiosk.payment_mode" }} {{ helpLink "self-order" }}</h2>
+  <form hx-post="/api/settings/kiosk-payment-mode" hx-swap="none" hx-on::after-request="if(!event.detail.successful){document.getElementById('settings-save-error').hidden=false}">
+    {{ $kioskPaymentMode := .settings.KioskPaymentMode }}
+    <select name="mode">
+      <option value="kiosk"   {{ if eq $kioskPaymentMode "kiosk" }}selected{{ end }}>{{ T "settings.kiosk.payment_mode.kiosk" }}</option>
+      <option value="counter" {{ if eq $kioskPaymentMode "counter" }}selected{{ end }}>{{ T "settings.kiosk.payment_mode.counter" }}</option>
+    </select>
+    <button class="btn" type="submit">{{ T "settings.kiosk_idle_reset.apply" }}</button>
+    <span id="kiosk-payment-mode-msg" aria-live="polite"></span>
   </form>
 </div>
 <div class="card" id="settings-telemetry">

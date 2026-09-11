@@ -125,6 +125,72 @@ func TestVoucherRepo_IssuedRedeemedForRange_LocalDayWindow(t *testing.T) {
 	}
 }
 
+// TestVoucherRepo_IssuedRedeemedForRange_SeparatesImportedOpeningBalance
+// (ut-docs#1834): an opening-balance voucher import (internal/pages/
+// import_vouchers_page.go) calls RecordVoucherTransaction(type: "issue")
+// with an EMPTY SaleID — by construction, there is no sale. Without this
+// separate bucket, VouchersIssuedRedeemedForRange (and its InstantWindow
+// sibling) would silently count that row as "Issued today" on whatever
+// calendar day the operator happened to run the import, inflating that
+// day's Z-report and misleading the operator into thinking N vouchers were
+// sold today via a real sale. A normal SALE-issued voucher
+// (RecordVoucherTransaction with a real, non-empty SaleID — the only other
+// in-tree caller of type='issue', internal/pos/sales.go) must still count
+// exactly as before, as Issued, never as Imported.
+func TestVoucherRepo_IssuedRedeemedForRange_SeparatesImportedOpeningBalance(t *testing.T) {
+	d := b8OpenDB(t, "voucher-range-import-exclude.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	vSeedVoucher(t, ctx, repo, "GS-IMP-SOLD", 3000)
+	vSeedVoucher(t, ctx, repo, "GS-IMP-OPENING", 7500)
+
+	now := time.Now()
+	today := time.Date(now.Year(), now.Month(), now.Day(), 12, 0, 0, 0, now.Location())
+
+	// A real sale-issued voucher: non-empty SaleID.
+	if err := repo.RecordVoucherTransaction(ctx, nil, VoucherTransaction{
+		ID: "tx-sold", VoucherID: "GS-IMP-SOLD", SaleID: "sale-real-1", Type: "issue",
+		AmountMinor: 3000, CreatedAt: b8At(today),
+	}); err != nil {
+		t.Fatalf("RecordVoucherTransaction (sale-issued): %v", err)
+	}
+	// An imported opening balance: empty SaleID, exactly as
+	// import_vouchers_page.go's commit path calls it.
+	if err := repo.RecordVoucherTransaction(ctx, nil, VoucherTransaction{
+		ID: "tx-imported", VoucherID: "GS-IMP-OPENING", SaleID: "", Type: "issue",
+		AmountMinor: 7500, CreatedAt: b8At(today),
+	}); err != nil {
+		t.Fatalf("RecordVoucherTransaction (imported opening balance): %v", err)
+	}
+
+	day := b8ExpectedDay(t, d, today, 0, 0)
+	sum, err := repo.VouchersIssuedRedeemedForRange(ctx, day, day)
+	if err != nil {
+		t.Fatalf("VouchersIssuedRedeemedForRange: %v", err)
+	}
+	if sum.IssuedCount != 1 || sum.IssuedMinor != 3000 {
+		t.Fatalf("issued = %d/%d, want 1/3000 (only the sale-issued voucher; the imported opening balance must not count here)", sum.IssuedCount, sum.IssuedMinor)
+	}
+	if sum.ImportedCount != 1 || sum.ImportedMinor != 7500 {
+		t.Fatalf("imported = %d/%d, want 1/7500 (the opening-balance import, bucketed separately from Issued)", sum.ImportedCount, sum.ImportedMinor)
+	}
+
+	// Same separation on the InstantWindow sibling (ADR-0066 Decision 2).
+	from := today.Add(-1 * time.Hour)
+	to := today.Add(1 * time.Hour)
+	sumInstant, err := repo.VouchersIssuedRedeemedForInstantWindow(ctx, from, to)
+	if err != nil {
+		t.Fatalf("VouchersIssuedRedeemedForInstantWindow: %v", err)
+	}
+	if sumInstant.IssuedCount != 1 || sumInstant.IssuedMinor != 3000 {
+		t.Fatalf("instant window issued = %d/%d, want 1/3000 (imported opening balance must not count here)", sumInstant.IssuedCount, sumInstant.IssuedMinor)
+	}
+	if sumInstant.ImportedCount != 1 || sumInstant.ImportedMinor != 7500 {
+		t.Fatalf("instant window imported = %d/%d, want 1/7500", sumInstant.ImportedCount, sumInstant.ImportedMinor)
+	}
+}
+
 // The day-close report carries the voucher flows, folded in distinctly:
 // EODReport gains issued/redeemed count+amount, while Gross/TaxNet keep
 // coming from sales rows only (no double counting from voucher_transactions).

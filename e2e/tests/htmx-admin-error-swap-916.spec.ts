@@ -38,7 +38,7 @@ test.describe('admin htmx error fragments are shown, not silently dropped (ut-do
     // tab now (no more <details>), and in create mode that tab shows a
     // save-first hint with the form hidden — open an existing item
     // instead so the form is really on screen.
-    await page.locator('.catalog-row', { hasText: 'Sugar 1kg' }).locator('td').first().click();
+    await page.locator('.catalog-row', { hasText: 'Sugar 1kg' }).click();
     await expect(page.locator('#item-form-modal')).toBeVisible();
     await page.locator('#item-form-tab-labels').click();
     await expect(page.locator('#labels-item-id')).toHaveValue(/.+/);

@@ -158,14 +158,8 @@ func TestChooseIcon_RejectsUnknownIconKey(t *testing.T) {
 
 // TestChooseIcon_SetsBuiltinThumbnail is the picker's main path: choosing
 // a built-in icon stores it exactly like an upload (item_images/thumbnail,
-// same table/role), and the response is a row OOB fragment, same protocol
-// as every other catalog mutation (ut-docs#1363) — never the whole table.
-//
-// A SECOND item already carries a thumbnail, so this choice isn't the
-// catalog's first-ever image — the thumbnail column is already showing
-// and can't flip (ut-docs#1842 review F1). See
-// TestChooseIcon_FirstEverThumbnailSwapsWholeTable below for the deliberate
-// exception when it IS the first one.
+// same table/role), and the response is a card OOB fragment, same protocol
+// as every other catalog mutation (ut-docs#1363) — never the whole grid.
 func TestChooseIcon_SetsBuiltinThumbnail(t *testing.T) {
 	mux, db := newCatalogMux(t)
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Item", BasePrice: 100, IsActive: true})
@@ -187,12 +181,12 @@ func TestChooseIcon_SetsBuiltinThumbnail(t *testing.T) {
 	}
 }
 
-// TestChooseIcon_FirstEverThumbnailSwapsWholeTable is ut-docs#1842 review
-// F1's scenario applied to the icon picker: choosing a built-in icon for
-// the catalog's first-ever image can't be answered with a plain row
-// fragment either — the <thead> and every sibling row need the new column
-// too, which only a whole-table swap can provide.
-func TestChooseIcon_FirstEverThumbnailSwapsWholeTable(t *testing.T) {
+// TestChooseIcon_FirstEverThumbnailIsStillAPlainRowFragment: ut-docs#1951
+// retired the whole-table-swap special case this test used to pin (a card
+// grid has no shared <thead> column to add) — choosing the catalog's
+// first-ever image is now exactly as unremarkable as any other icon
+// choice, answered with the same plain card fragment.
+func TestChooseIcon_FirstEverThumbnailIsStillAPlainRowFragment(t *testing.T) {
 	mux, db := newCatalogMux(t)
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm1", SKU: "SKU1", Name: "Item", BasePrice: 100, IsActive: true})
 	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm2", SKU: "SKU2", Name: "Plain Item", BasePrice: 100, IsActive: true})
@@ -202,11 +196,12 @@ func TestChooseIcon_FirstEverThumbnailSwapsWholeTable(t *testing.T) {
 		t.Fatalf("choose icon: code %d body %s", rec.Code, rec.Body.String())
 	}
 	got := rec.Body.String()
-	if got == "" || !strings.Contains(got, `id="catalog-table" hx-swap-oob="true"`) {
-		t.Fatalf("expected a whole-table OOB swap on the first-ever thumbnail:\n%s", got)
+	assertNoFullTable(t, got)
+	if !strings.Contains(got, `id="catalog-row-itm1" hx-swap-oob="true"`) {
+		t.Fatalf("expected the in-place card update fragment:\n%s", got)
 	}
-	if !strings.Contains(got, `id="catalog-row-itm2"`) {
-		t.Fatalf("expected the untouched sibling row in the swapped table:\n%s", got)
+	if strings.Contains(got, `id="catalog-row-itm2"`) {
+		t.Fatalf("expected the untouched sibling card NOT to be re-rendered:\n%s", got)
 	}
 }
 

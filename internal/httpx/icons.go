@@ -156,6 +156,19 @@ var railIcons = map[string]string{
 	// Save — (ut-docs#2000) the item form's pinned Save button, icon-only
 	// at phone width same as Close/Delete. Lucide's "check" path, unmodified.
 	"check": `<path d="M20 6 9 17l-5-5"/>`,
+	// Camera (ut-docs#1859) — replaces the 📷 emoji on the sale screen's
+	// AI-identify/barcode-scan-camera button, the catalog variant-image
+	// upload label, and the bug-report panel's screenshot-capture button.
+	// Lucide's "camera" path, unmodified.
+	"camera": `<path d="M13.997 4a2 2 0 0 1 1.76 1.05l.486.9A2 2 0 0 0 18.003 7H20a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V9a2 2 0 0 1 2-2h1.997a2 2 0 0 0 1.759-1.048l.489-.904A2 2 0 0 1 10.004 4z"/><circle cx="12" cy="13" r="3"/>`,
+	// Update available (ut-docs#1859) — replaces the ⬆ emoji on the
+	// statusbar's self-update/plugin-update chips (base.html). Lucide's
+	// "arrow-up" path, unmodified.
+	"arrow-up": `<path d="m5 12 7-7 7 7"/><path d="M12 19V5"/>`,
+	// Register/enrol this till (ut-docs#1859) — replaces the ✦ emoji on the
+	// statusbar's "register this till" chip (base.html .sb-enrol). Lucide's
+	// "sparkles" path, unmodified.
+	"sparkles": `<path d="M11.017 2.814a1 1 0 0 1 1.966 0l1.051 5.558a2 2 0 0 0 1.594 1.594l5.558 1.051a1 1 0 0 1 0 1.966l-5.558 1.051a2 2 0 0 0-1.594 1.594l-1.051 5.558a1 1 0 0 1-1.966 0l-1.051-5.558a2 2 0 0 0-1.594-1.594l-5.558-1.051a1 1 0 0 1 0-1.966l5.558-1.051a2 2 0 0 0 1.594-1.594z"/><path d="M20 2v4"/><path d="M22 4h-4"/><circle cx="4" cy="20" r="2"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.

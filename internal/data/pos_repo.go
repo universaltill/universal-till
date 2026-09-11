@@ -2321,10 +2321,16 @@ type EODReport struct {
 	// sale_lines-derived figure (departments, per-rate VAT bands); a
 	// redemption is a payment method, not revenue. Never sum these into an
 	// Artikelumsatz figure.
-	VouchersIssuedCount   int    `json:"vouchers_issued_count"`
-	VouchersIssued        int64  `json:"vouchers_issued"`
-	VouchersRedeemedCount int    `json:"vouchers_redeemed_count"`
-	VouchersRedeemed      int64  `json:"vouchers_redeemed"`
+	VouchersIssuedCount   int   `json:"vouchers_issued_count"`
+	VouchersIssued        int64 `json:"vouchers_issued"`
+	VouchersRedeemedCount int   `json:"vouchers_redeemed_count"`
+	VouchersRedeemed      int64 `json:"vouchers_redeemed"`
+	// VouchersImported(Count) (ut-docs#1834): opening-balance CSV imports
+	// reported in a bucket of their own, distinct from VouchersIssued — see
+	// VoucherRangeSummary's doc comment (internal/data/voucher_repo.go) for
+	// why an import is never folded into Issued.
+	VouchersImportedCount int    `json:"vouchers_imported_count"`
+	VouchersImported      int64  `json:"vouchers_imported"`
 	FirstReceipt          string `json:"first_receipt"`
 	LastReceipt           string `json:"last_receipt"`
 	GeneratedAt           string `json:"generated_at"`
@@ -2645,6 +2651,8 @@ WHERE status = 'voided' AND (
 	rep.VouchersIssued = vouchers.IssuedMinor
 	rep.VouchersRedeemedCount = vouchers.RedeemedCount
 	rep.VouchersRedeemed = vouchers.RedeemedMinor
+	rep.VouchersImportedCount = vouchers.ImportedCount
+	rep.VouchersImported = vouchers.ImportedMinor
 
 	rows, err := r.db.QueryContext(ctx, `
 SELECT p.method_id,
@@ -2898,6 +2906,8 @@ WHERE status = 'voided' AND `+vwin, vargs...).Scan(&rep.CancelCount, &rep.Cancel
 	rep.VouchersIssued = vouchers.IssuedMinor
 	rep.VouchersRedeemedCount = vouchers.RedeemedCount
 	rep.VouchersRedeemed = vouchers.RedeemedMinor
+	rep.VouchersImportedCount = vouchers.ImportedCount
+	rep.VouchersImported = vouchers.ImportedMinor
 
 	mwin, margs := instantWindow("s.created_at", from, to)
 	rows, err := r.db.QueryContext(ctx, `

@@ -55,6 +55,24 @@ type Deps struct {
 	// PluginMu — read it only through MenuAmendmentsSnapshot
 	// (guard-plugin-menu-read.sh enforces this, like Menu).
 	MenuAmendments []uislot.Amendment
+	// ItemsAmendments are the Items-slot amendments in force (ADR-0088,
+	// ut-docs#1911) — MenuAmendments' twin for the /items rail. No restore
+	// mechanism exists for this slot yet (unlike Menu's Settings → Hidden
+	// menu tiles): a `layout` plugin hiding an Items row has no merchant-
+	// facing way back today short of uninstalling the plugin — a known,
+	// deliberately deferred gap (this card's demo only relabels, never
+	// hides). Rebuilt beside MenuAmendments in ReloadPlugins under
+	// PluginMu — read it only through ItemsAmendmentsSnapshot.
+	ItemsAmendments []uislot.Amendment
+	// RailAmendments are the rail-slot amendments in force (ADR-0088
+	// Decision J, ut-docs#1912) — the third twin, for nav.html's primary
+	// links. Same deferred-restore gap as ItemsAmendments (hide is refused
+	// for this slot at install, so nothing needs restoring yet). Rebuilt
+	// beside the other two in ReloadPlugins under PluginMu — read it only
+	// through RailAmendmentsSnapshot, which pages.Init hands to
+	// httpx.InitRailAmendments so nav.html's railEntries func reads it per
+	// request under the lock.
+	RailAmendments []uislot.Amendment
 	Engine         *pos.Service
 	// KioskEngine is the self-order kiosk's own basket engine — deliberately
 	// a SEPARATE instance from Engine (ut-docs#449): the kiosk surface is
@@ -198,8 +216,15 @@ type RuntimeState struct {
 	IdleLockMinutes              int     // idle auto-lock window in minutes (0 = off)
 	OSKMode                      string  // on-screen keyboard: auto|on|off ("" = auto)
 	KioskIdleResetSeconds        int     // self-order kiosk: reload to start after N idle seconds (ADR-0020); 0 = off
-	WindowMode                   string  // ut-docs#608 scaffold: fullscreen|kiosk|maximized|normal
-	LaunchOnStartup              bool    // ut-docs#608 scaffold: launch this till on OS boot
+	// KioskPaymentMode (ut-docs#582): "kiosk" (default, ADR-0020's own
+	// card/contactless payment picker) or "counter" ("pay at counter" — the
+	// kiosk takes the order, prints a kitchen ticket, and creates NO sale;
+	// the customer pays a human at the till). See
+	// common.KioskPaymentModeKiosk/KioskPaymentModeCounter and
+	// ClampKioskPaymentMode (state.go).
+	KioskPaymentMode string
+	WindowMode       string // ut-docs#608 scaffold: fullscreen|kiosk|maximized|normal
+	LaunchOnStartup  bool   // ut-docs#608 scaffold: launch this till on OS boot
 	// WindowModeChanged/LaunchOnStartupChanged mark that THIS save is
 	// deliberately setting a new WindowMode/LaunchOnStartup value, as
 	// opposed to carrying forward whatever CurrentState() happened to
@@ -299,6 +324,8 @@ func (d *Deps) ReloadPlugins(ctx context.Context) error {
 	err := d.Pm.Reload(ctx)
 	d.Menu = BuildMenu(d.BaseMenu, d.Pm)
 	d.MenuAmendments = BuildMenuAmendments(d.Pm, RestoredMenuKeys(ctx, d.Settings))
+	d.ItemsAmendments = BuildItemsAmendments(d.Pm)
+	d.RailAmendments = BuildRailAmendments(d.Pm)
 	return err
 }
 
@@ -320,6 +347,25 @@ func (d *Deps) MenuAmendmentsSnapshot() []uislot.Amendment {
 	d.PluginMu.RLock()
 	defer d.PluginMu.RUnlock()
 	return d.MenuAmendments
+}
+
+// ItemsAmendmentsSnapshot is MenuAmendmentsSnapshot's twin for the Items
+// slot (ut-docs#1911) — the render path's only way to read them.
+func (d *Deps) ItemsAmendmentsSnapshot() []uislot.Amendment {
+	d.PluginMu.RLock()
+	defer d.PluginMu.RUnlock()
+	return d.ItemsAmendments
+}
+
+// RailAmendmentsSnapshot is MenuAmendmentsSnapshot's twin for the rail
+// slot (ut-docs#1912) — the render path's only way to read them. Called on
+// EVERY page render (nav.html's railEntries, via httpx.InitRailAmendments):
+// an RLock/RUnlock pair, no allocation, so the zero-plugin path stays
+// Decision I's no-cost one.
+func (d *Deps) RailAmendmentsSnapshot() []uislot.Amendment {
+	d.PluginMu.RLock()
+	defer d.PluginMu.RUnlock()
+	return d.RailAmendments
 }
 
 // LayoutAmendmentsSnapshot returns every active layout plugin's amendments

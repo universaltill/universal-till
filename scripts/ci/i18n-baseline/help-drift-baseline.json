@@ -524,13 +524,13 @@
         "bold_leadins": 1
       },
       "english": {
-        "headings": 2,
-        "numbered_steps": 3,
+        "headings": 3,
+        "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 0,
-        "bold_leadins": 0
+        "top_bullets": 4,
+        "bold_leadins": 3
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
     },
     {
       "locale": "fa",
@@ -885,13 +885,13 @@
         "bold_leadins": 1
       },
       "english": {
-        "headings": 2,
-        "numbered_steps": 3,
+        "headings": 3,
+        "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 0,
-        "bold_leadins": 0
+        "top_bullets": 4,
+        "bold_leadins": 3
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
     },
     {
       "locale": "tr",
@@ -930,6 +930,120 @@
         "bold_leadins": 5
       },
       "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+    },
+    {
+      "locale": "ar",
+      "topic": "catalog",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 7,
+        "sub_bullets": 13,
+        "top_bullets": 5,
+        "bold_leadins": 14
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 7,
+        "sub_bullets": 13,
+        "top_bullets": 6,
+        "bold_leadins": 15
+      },
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "de",
+      "topic": "catalog",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 7,
+        "sub_bullets": 13,
+        "top_bullets": 5,
+        "bold_leadins": 14
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 7,
+        "sub_bullets": 13,
+        "top_bullets": 6,
+        "bold_leadins": 15
+      },
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "fa",
+      "topic": "catalog",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 7,
+        "sub_bullets": 13,
+        "top_bullets": 5,
+        "bold_leadins": 14
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 7,
+        "sub_bullets": 13,
+        "top_bullets": 6,
+        "bold_leadins": 15
+      },
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "tr",
+      "topic": "catalog",
+      "signature": {
+        "headings": 3,
+        "numbered_steps": 7,
+        "sub_bullets": 13,
+        "top_bullets": 5,
+        "bold_leadins": 14
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 7,
+        "sub_bullets": 13,
+        "top_bullets": 6,
+        "bold_leadins": 15
+      },
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "ar",
+      "topic": "till-designer",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 3
+      },
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "de",
+      "topic": "till-designer",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 3,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 3
+      },
+      "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
     }
   ]
 }

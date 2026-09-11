@@ -384,6 +384,251 @@ func TestCatalogModifiersPanel_MutationsRefusedOnReplica(t *testing.T) {
 	}
 }
 
+// Attaching an existing group to a second item (ut-docs#2046 / ADR-0090 §5):
+// no new group row is created, LinkGroupToItem's link row is added, and the
+// item-scoped fragment reflects it immediately.
+func TestModifierGroupAttach_LinksExistingGroupToSecondItem(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm-a", SKU: "SKU-A", Name: "Flat White", BasePrice: 320, IsActive: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm-b", SKU: "SKU-B", Name: "Latte", BasePrice: 350, IsActive: true})
+	testsupport.SeedModifierGroup(t, db, "g-milk", "itm-a", "Milk", false, 0, 1, 0, true)
+
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
+
+	form := "panelItem=itm-b&itemId=itm-b&groupId=g-milk"
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group/attach", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Hx-Target", "modifier-groups-modal-list")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if !strings.Contains(rec.Body.String(), "Milk") {
+		t.Fatal("expected itm-b's fragment to now show the attached Milk group")
+	}
+
+	var groupCount int
+	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_groups WHERE id = 'g-milk'`).Scan(&groupCount); err != nil || groupCount != 1 {
+		t.Fatalf("attach must not create a second group row: count=%d err=%v", groupCount, err)
+	}
+	var linkCount int
+	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_group_links WHERE group_id = 'g-milk'`).Scan(&linkCount); err != nil || linkCount != 2 {
+		t.Fatalf("expected 2 links (itm-a original + itm-b attach): count=%d err=%v", linkCount, err)
+	}
+}
+
+func TestModifierGroupAttach_RequiresItemAndGroupID(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
+
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group/attach", strings.NewReader("itemId=itm-b"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("missing groupId: want 400, got %d", rec.Code)
+	}
+}
+
+// Detaching removes only the one item's link — the group and its other
+// links (and options) survive untouched (ut-docs#2046).
+func TestModifierGroupDetach_RemovesOnlyThisItemsLink(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm-a", SKU: "SKU-A", Name: "Flat White", BasePrice: 320, IsActive: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm-b", SKU: "SKU-B", Name: "Latte", BasePrice: 350, IsActive: true})
+	testsupport.SeedModifierGroup(t, db, "g-milk", "itm-a", "Milk", false, 0, 1, 0, true)
+	if _, err := db.Exec(`INSERT INTO item_modifier_group_links (item_id, group_id, sort_order) VALUES ('itm-b','g-milk',0)`); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
+
+	form := "panelItem=itm-b&itemId=itm-b&groupId=g-milk"
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group/detach", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Hx-Target", "modifier-groups-modal-list")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// Milk is no longer one of itm-b's OWN linked/editable groups (those
+	// render as an <input value="...">) — but it legitimately reappears as
+	// an attach-picker <option>, since it's now unlinked from itm-b and
+	// still active elsewhere (itm-a).
+	if strings.Contains(rec.Body.String(), `value="Milk"`) {
+		t.Fatal("itm-b's fragment must no longer show the detached group as one of its own linked groups")
+	}
+	if !strings.Contains(rec.Body.String(), ">Milk<") {
+		t.Fatal("expected the just-detached group to reappear in itm-b's attach picker")
+	}
+
+	var linkCount int
+	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_group_links WHERE group_id = 'g-milk'`).Scan(&linkCount); err != nil || linkCount != 1 {
+		t.Fatalf("expected exactly 1 remaining link (itm-a's), got %d (err=%v)", linkCount, err)
+	}
+	var stillLinkedTo string
+	if err := db.QueryRow(`SELECT item_id FROM item_modifier_group_links WHERE group_id = 'g-milk'`).Scan(&stillLinkedTo); err != nil || stillLinkedTo != "itm-a" {
+		t.Fatalf("itm-a's link must survive: got %q (err=%v)", stillLinkedTo, err)
+	}
+	var groupCount int
+	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_groups WHERE id = 'g-milk'`).Scan(&groupCount); err != nil || groupCount != 1 {
+		t.Fatalf("detach must never delete the group row: count=%d err=%v", groupCount, err)
+	}
+}
+
+// Detaching a group's LAST remaining link is refused (ut-docs#2046
+// architecture decision): UnlinkGroupFromItem would happily orphan it, but
+// an orphaned group is invisible everywhere in the admin UI (both
+// ListShopModifierGroups-family queries only ever surface a group THROUGH a
+// link), so it would become permanently unreachable rather than merely
+// unattached — the merchant's own path for "gone from sale" is the
+// Active checkbox, which stays reachable.
+func TestModifierGroupDetach_RefusesToOrphanTheGroup(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm-a", SKU: "SKU-A", Name: "Flat White", BasePrice: 320, IsActive: true})
+	testsupport.SeedModifierGroup(t, db, "g-milk", "itm-a", "Milk", false, 0, 1, 0, true)
+
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
+
+	form := "panelItem=itm-a&itemId=itm-a&groupId=g-milk"
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group/detach", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Hx-Target", "modifier-groups-modal-list")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("want 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	// Independent-review finding: a plain http.Error/LocalizedError body is
+	// text/plain, which app.js's htmx:beforeSwap never force-swaps into the
+	// DOM — outside the sale screen there is no #pos-alert fallback either,
+	// so the refusal would be a completely silent no-op. The fix answers
+	// through the SAME html fragment the button's own hx-target/hx-swap
+	// already expects, carrying a visible, translated notice.
+	if ct := rec.Header().Get("Content-Type"); !strings.Contains(ct, "text/html") {
+		t.Fatalf("refusal must be text/html so htmx actually swaps it in, got Content-Type %q", ct)
+	}
+	if !strings.Contains(rec.Body.String(), `id="modifier-groups-modal-list"`) {
+		t.Fatal("refusal must still be the item-scoped fragment (so it lands in the button's own hx-target)")
+	}
+	if !strings.Contains(rec.Body.String(), `role="alert"`) || !strings.Contains(rec.Body.String(), "only item using this group") {
+		t.Fatalf("refusal must render a visible, translated notice explaining why, got: %s", rec.Body.String())
+	}
+	var linkCount int
+	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_group_links WHERE group_id = 'g-milk'`).Scan(&linkCount); err != nil || linkCount != 1 {
+		t.Fatalf("the last link must survive a refused detach: count=%d err=%v", linkCount, err)
+	}
+}
+
+// A stale attach-picker — open since before another tab deactivated the
+// group, or attached it to this same item — must not be able to attach an
+// inactive group, or silently re-order an already-linked one via
+// LinkGroupToItem's own ON CONFLICT DO UPDATE (independent-review finding).
+func TestModifierGroupAttach_RefusesStalePickerSubmission(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm-a", SKU: "SKU-A", Name: "Flat White", BasePrice: 320, IsActive: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm-b", SKU: "SKU-B", Name: "Latte", BasePrice: 350, IsActive: true})
+	testsupport.SeedModifierGroup(t, db, "g-retired", "itm-a", "Retired", false, 0, 1, 0, false) // inactive
+
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}})
+
+	form := "panelItem=itm-b&itemId=itm-b&groupId=g-retired"
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group/attach", strings.NewReader(form))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("attaching an inactive group: want 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var linkCount int
+	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_group_links WHERE item_id = 'itm-b'`).Scan(&linkCount); err != nil || linkCount != 0 {
+		t.Fatalf("an inactive group must never be attached, found %d link(s)", linkCount)
+	}
+
+	// Also refuse a group already linked to this item — a resubmit from a
+	// stale picker must not silently re-order the existing link.
+	form2 := "panelItem=itm-a&itemId=itm-a&groupId=g-retired"
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm-c", SKU: "SKU-C", Name: "Mocha", BasePrice: 380, IsActive: true})
+	if _, err := db.Exec(`UPDATE item_modifier_groups SET is_active = 1 WHERE id = 'g-retired'`); err != nil {
+		t.Fatal(err)
+	}
+	req2 := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group/attach", strings.NewReader(form2))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusConflict {
+		t.Fatalf("re-attaching an already-linked group: want 409, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	var sortOrder int
+	if err := db.QueryRow(`SELECT sort_order FROM item_modifier_group_links WHERE item_id = 'itm-a' AND group_id = 'g-retired'`).Scan(&sortOrder); err != nil || sortOrder != 0 {
+		t.Fatalf("the existing link's sort_order must not be silently changed, got %d (err=%v)", sortOrder, err)
+	}
+}
+
+// Attach/detach are catalog mutations synced shop-wide (ut-docs#1667), same
+// as create/update — both must refuse on a replica, same convention as
+// TestCatalogModifiersPanel_MutationsRefusedOnReplica.
+func TestModifierGroupAttachDetach_RefusedOnReplica(t *testing.T) {
+	chdirToRepoRoot(t)
+	db := setupCatalogPageDB(t)
+	defer db.Close()
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm-a", SKU: "SKU-A", Name: "Flat White", BasePrice: 320, IsActive: true})
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "itm-b", SKU: "SKU-B", Name: "Latte", BasePrice: 350, IsActive: true})
+	testsupport.SeedModifierGroup(t, db, "g-milk", "itm-a", "Milk", false, 0, 1, 0, true)
+	if _, err := db.Exec(`CREATE TABLE settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`); err != nil {
+		t.Fatalf("create settings table: %v", err)
+	}
+	st := settings.NewStore(db)
+	if err := st.Set(t.Context(), "sync.primary_url", "http://primary.example"); err != nil {
+		t.Fatalf("set primary_url: %v", err)
+	}
+
+	mux := http.NewServeMux()
+	Register(mux, &common.Deps{Db: db, State: common.RuntimeState{Theme: "default"}, Menu: []common.MenuItem{}, Settings: st})
+
+	attachForm := "panelItem=itm-b&itemId=itm-b&groupId=g-milk"
+	req := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group/attach", strings.NewReader(attachForm))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusConflict {
+		t.Fatalf("attach on replica: want 409, got %d: %s", rec.Code, rec.Body.String())
+	}
+	var linkCount int
+	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_group_links WHERE group_id = 'g-milk'`).Scan(&linkCount); err != nil || linkCount != 1 {
+		t.Fatalf("attach must not link on a replica: count=%d err=%v", linkCount, err)
+	}
+
+	detachForm := "panelItem=itm-a&itemId=itm-a&groupId=g-milk"
+	req2 := httptest.NewRequest(http.MethodPost, "/api/catalog/modifier-group/detach", strings.NewReader(detachForm))
+	req2.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec2 := httptest.NewRecorder()
+	mux.ServeHTTP(rec2, req2)
+	if rec2.Code != http.StatusConflict {
+		t.Fatalf("detach on replica: want 409, got %d: %s", rec2.Code, rec2.Body.String())
+	}
+	if err := db.QueryRow(`SELECT count(*) FROM item_modifier_group_links WHERE group_id = 'g-milk'`).Scan(&linkCount); err != nil || linkCount != 1 {
+		t.Fatalf("detach must not unlink on a replica: count=%d err=%v", linkCount, err)
+	}
+}
+
 // The parsing helper itself, in isolation, against every shape a real
 // browser submission of a hidden-fallback-plus-checkbox pair can take.
 func TestFormCheckboxActive_MatchesRealBrowserSubmission(t *testing.T) {

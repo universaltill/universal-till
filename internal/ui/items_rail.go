@@ -30,9 +30,9 @@ func NewItemsRailView(funcs template.FuncMap) (*ItemsRailView, error) {
 }
 
 // Render executes the rail against data shaped like {"Sections":
-// itemsnav.Sections, "CurrentHref": "/catalog"} — a map, not a typed
-// struct, same reasoning as HelpNavView.Render. Set data["OOB"] = true for
-// the out-of-band swap.
+// itemsnav.Resolve(locale, amendments), "CurrentHref": "/catalog"} — a map,
+// not a typed struct, same reasoning as HelpNavView.Render. Set
+// data["OOB"] = true for the out-of-band swap.
 func (v *ItemsRailView) Render(w io.Writer, data map[string]any) error {
 	return v.Tpl.ExecuteTemplate(w, "items_rail", data)
 }

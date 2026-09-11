@@ -55,6 +55,15 @@ const (
 	KeyOSK            = "display.osk"
 	KeyIdleLock       = "auth.idle_lock_minutes"
 	KeyKioskIdleReset = "kiosk.idle_reset_seconds"
+	// KeyKioskPaymentMode is the self-order kiosk's checkout mode
+	// (universaltill/ut-docs#582): "kiosk" (default — the existing
+	// card/contactless payment-picker flow, ADR-0020) or "counter" (the
+	// kiosk takes the order and prints a kitchen ticket, but never charges
+	// anything — the customer pays a human at the till afterwards, so no
+	// sale/payment row is ever created for a counter-mode checkout). See
+	// internal/data/kiosk_counter_orders_repo.go for the record a
+	// counter-mode checkout creates instead of a sale.
+	KeyKioskPaymentMode = "kiosk.payment_mode"
 	// KeyWindowMode is the till's own window/process display mode (ut-docs#608
 	// scaffold): fullscreen|kiosk|maximized|normal. This card only stores and
 	// surfaces the setting — actually applying it to the OS window is
@@ -195,6 +204,39 @@ func IsChromeHiding(mode string) bool {
 	return mode == "fullscreen" || mode == "kiosk"
 }
 
+// KioskPaymentModeKiosk is the default self-order checkout mode: the
+// existing card/contactless payment-picker flow (ADR-0020). Note this is a
+// different axis from KeyWindowMode's own "kiosk" value above (that one is
+// the till's window/process display mode) — same word, unrelated settings.
+const KioskPaymentModeKiosk = "kiosk"
+
+// KioskPaymentModeCounter is the "pay at counter" self-order checkout mode
+// (ut-docs#582): the kiosk takes the order and sends it to the kitchen but
+// never charges anything.
+const KioskPaymentModeCounter = "counter"
+
+// DefaultKioskPaymentMode is KioskPaymentModeKiosk — an upgraded till with
+// no explicit choice yet must keep behaving exactly as it always has.
+const DefaultKioskPaymentMode = KioskPaymentModeKiosk
+
+// validKioskPaymentModes is the closed enum KeyKioskPaymentMode is allowed
+// to hold — same defensive-clamp shape as validWindowModes above.
+var validKioskPaymentModes = map[string]bool{
+	KioskPaymentModeKiosk:   true,
+	KioskPaymentModeCounter: true,
+}
+
+// ClampKioskPaymentMode returns mode unchanged if it's one of the two valid
+// values, else DefaultKioskPaymentMode — used when loading (defense against
+// corrupt/old stored data) and when saving (defense in depth, mirrors
+// ClampWindowMode).
+func ClampKioskPaymentMode(mode string) string {
+	if validKioskPaymentModes[mode] {
+		return mode
+	}
+	return DefaultKioskPaymentMode
+}
+
 // LoadState pulls settings from the DB-backed settings store with cfg defaults.
 func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) RuntimeState {
 	get := func(key, def string) string {
@@ -255,6 +297,8 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 			st.KioskIdleResetSeconds = n
 		}
 	}
+
+	st.KioskPaymentMode = ClampKioskPaymentMode(get(KeyKioskPaymentMode, DefaultKioskPaymentMode))
 
 	st.WindowMode = ClampWindowMode(get(KeyWindowMode, DefaultWindowMode))
 
@@ -405,6 +449,7 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 		KeyAllowNegativeInventory: strconv.FormatBool(st.AllowNegativeInventory),
 		KeyIdleLock:               strconv.Itoa(st.IdleLockMinutes),
 		KeyKioskIdleReset:         strconv.Itoa(st.KioskIdleResetSeconds),
+		KeyKioskPaymentMode:       ClampKioskPaymentMode(st.KioskPaymentMode),
 	}
 	if writeWindowMode {
 		kv[KeyWindowMode] = ClampWindowMode(st.WindowMode)
@@ -485,17 +530,67 @@ func SaveRestoredMenuKeys(ctx context.Context, s *settings.Store, keys map[strin
 }
 
 // BuildMenuAmendments is BuildMenu's sibling for ADR-0088: the amendments
-// the Menu renders with — every active layout plugin's, minus the hides the
-// merchant restored. Returns nil when nothing applies, so the zero-plugin
-// render path stays uislot.Resolve's length-check fast path. Nil-safe on
-// pm. Read pm.LayoutAmendments only under PluginMu (both callers do).
+// the Menu renders with — every active layout plugin's MENU-SLOT amendments
+// (ut-docs#1911: pm.LayoutAmendments is now a flat pool spanning every
+// registered slot, so this filters to its own before applying restores —
+// an Items-slot amendment restoring nothing here, but also never wrongly
+// reaching Menu's Resolve call), minus the hides the merchant restored.
+// Returns nil when nothing applies, so the zero-plugin render path stays
+// uislot.Resolve's length-check fast path. Nil-safe on pm. Read
+// pm.LayoutAmendments only under PluginMu (both callers do).
 func BuildMenuAmendments(pm *plugins.Manager, restored map[string]bool) []uislot.Amendment {
 	if pm == nil || len(pm.LayoutAmendments) == 0 {
 		return nil
 	}
 	out := make([]uislot.Amendment, 0, len(pm.LayoutAmendments))
 	for _, a := range pm.LayoutAmendments {
+		if a.Slot != uislot.MenuSlot {
+			continue
+		}
 		if a.Hide && restored[a.Key] {
+			continue
+		}
+		out = append(out, a)
+	}
+	if len(out) == 0 {
+		return nil
+	}
+	return out
+}
+
+// BuildItemsAmendments is BuildMenuAmendments' twin for the Items slot
+// (ut-docs#1911) — every active layout plugin's ITEMS-SLOT amendments, out
+// of the same flat pm.LayoutAmendments pool. No restored-hides parameter:
+// unlike Menu, the Items slot has no "Settings → Hidden ... rows" restore
+// surface yet (see Deps.ItemsAmendments' own doc comment for why that's a
+// deliberate, flagged gap rather than an oversight), so every active hide
+// simply applies. Nil-safe on pm, same zero-plugin fast path as its twin.
+func BuildItemsAmendments(pm *plugins.Manager) []uislot.Amendment {
+	return buildSlotAmendments(pm, uislot.ItemsSlot)
+}
+
+// BuildRailAmendments is BuildItemsAmendments' twin for the rail slot
+// (ADR-0088 Decision J, ut-docs#1912): every active layout plugin's
+// RAIL-SLOT amendments out of the same flat pm.LayoutAmendments pool. No
+// restored-hides parameter for the same reason as Items — hide is refused
+// for this slot at install, so there is nothing to restore. Nil-safe on
+// pm, same zero-plugin fast path (nil result → uislot.Resolve's
+// length-check path, and httpx's prebuilt core rail view).
+func BuildRailAmendments(pm *plugins.Manager) []uislot.Amendment {
+	return buildSlotAmendments(pm, uislot.RailSlot)
+}
+
+// buildSlotAmendments is the shared body of the restore-less slot builders
+// (Items, Rail): filter the flat pool to one slot, nil when nothing
+// applies. Read pm.LayoutAmendments only under PluginMu (every caller does
+// — guard-plugin-menu-read.sh allowlists their call sites).
+func buildSlotAmendments(pm *plugins.Manager, slot string) []uislot.Amendment {
+	if pm == nil || len(pm.LayoutAmendments) == 0 {
+		return nil
+	}
+	out := make([]uislot.Amendment, 0, len(pm.LayoutAmendments))
+	for _, a := range pm.LayoutAmendments {
+		if a.Slot != slot {
 			continue
 		}
 		out = append(out, a)

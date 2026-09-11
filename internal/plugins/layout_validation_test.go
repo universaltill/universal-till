@@ -253,6 +253,34 @@ func TestLayoutSalonPlugin_InstallsAndDeclaresItsAmendments(t *testing.T) {
 	if !ok || items.LabelKey == "" || items.Order == nil {
 		t.Fatalf("salon layout must re-label and reorder /items, got %+v", items)
 	}
+	if items.Slot != uislot.MenuSlot {
+		t.Fatalf("the /items Menu tile amendment must carry the menu slot, got %q", items.Slot)
+	}
+
+	// ut-docs#1911: the plugin also amends the ITEMS slot (the /items
+	// screen's own section list) — a second, independent demonstration of
+	// the same ADR-0088 mechanism on a second slot, not the Menu tile
+	// amendment above.
+	catalogRow, ok := byKey["/catalog"]
+	if !ok || catalogRow.Slot != uislot.ItemsSlot || catalogRow.LabelKey == "" || catalogRow.Order == nil {
+		t.Fatalf("salon layout must re-label and reorder the Items-slot /catalog row, got %+v", catalogRow)
+	}
+	if catalogRow.LabelKey != items.LabelKey {
+		t.Fatalf("the Menu tile and Items-rail row should reuse the SAME locale key (\"Services\" means the same thing in both places, and reusing it ships zero new translations): menu=%q items=%q", items.LabelKey, catalogRow.LabelKey)
+	}
+
+	// ut-docs#1912: the plugin also amends the RAIL slot (nav.html's
+	// .nav-primary, rendered on every page) — a third, independent
+	// demonstration of the same mechanism. A reorder only (Orders ahead of
+	// Inventory): it introduces no locale key at all, so there is nothing
+	// to translate, and it stays clear of Decision J's protected pair.
+	ordersRow, ok := byKey["/orders"]
+	if !ok || ordersRow.Slot != uislot.RailSlot || ordersRow.Order == nil || ordersRow.Hide || ordersRow.LabelKey != "" || ordersRow.Icon != "" || ordersRow.Group != "" {
+		t.Fatalf("salon layout must reorder (and only reorder) the rail-slot /orders row, got %+v", ordersRow)
+	}
+	if *ordersRow.Order <= 200 || *ordersRow.Order >= 300 {
+		t.Fatalf("the rail reorder should land /orders between /menu (200) and /inventory (300), got %d", *ordersRow.Order)
+	}
 
 	// Every locale key the plugin introduces ships in its own locale files,
 	// for every core locale (Decision G: the label resolves through the

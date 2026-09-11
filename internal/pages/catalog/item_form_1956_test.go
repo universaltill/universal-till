@@ -123,18 +123,25 @@ func TestItemForm_SubmitLivesInPinnedHead(t *testing.T) {
 	}
 }
 
-func TestCatalogRow_DeleteConfirmIsTranslated(t *testing.T) {
-	mux, _ := newCatalogMux(t)
-	rec := postForm(t, mux, "/api/catalog/item", "name=Confirm+Probe&price=100&sku=CP1&isActive=1")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("create: %d %s", rec.Code, rec.Body.String())
+// ut-docs#1951 moved the per-item delete control off the row (a card has no
+// inline actions) and into the item-form dialog's single, shared delete
+// button. That button's hx-confirm is server-rendered generic (catalog.delete,
+// "Delete item") — setMode() (catalog.html) rewrites it to the per-item
+// catalog.delete_confirm_named text with the item's own name only once a
+// browser opens the dialog for that item, so a plain SSR GET can't see the
+// substituted text. This test pins the static, translated fallback the
+// server actually renders; the real per-item substitution and confirm
+// round-trip are covered live in catalog-item-form-1956.spec.ts.
+func TestItemFormDelete_ConfirmIsTranslated(t *testing.T) {
+	dialog := itemFormDialog(t, catalogPageBody(t))
+	del := regexp.MustCompile(`<button[^>]*id="item-form-delete"[^>]*>`).FindString(dialog)
+	if del == "" {
+		t.Fatalf("#item-form-delete not found in dialog")
 	}
-	body := get(t, mux, "/catalog").Body.String()
-	if strings.Contains(body, `hx-confirm="Deactivate Confirm Probe?"`) {
-		t.Fatalf("catalog_row.html still ships the hardcoded English confirm")
+	if strings.Contains(del, `hx-confirm="Deactivate this item?"`) {
+		t.Fatalf("#item-form-delete still ships the hardcoded English confirm: %s", del)
 	}
-	if !strings.Contains(body, `hx-confirm="Remove Confirm Probe from the catalog?`) {
-		t.Fatalf("row delete confirm should render catalog.delete_confirm_named with the item name; body has: %s",
-			regexp.MustCompile(`hx-confirm="[^"]*"`).FindString(body))
+	if !strings.Contains(del, `hx-confirm="Delete item"`) {
+		t.Fatalf("#item-form-delete should render catalog.delete as its static hx-confirm fallback: %s", del)
 	}
 }

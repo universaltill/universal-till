@@ -42,7 +42,7 @@ Alles, was Sie für einen normalen Tag brauchen, in kleinen Schritten. Sie könn
 
 1. Tippen Sie die ersten Buchstaben des Produktnamens in das Feld oben ein — es wird gefunden.
 2. Oder tippen Sie auf das Produktbild auf dem Bildschirm.
-3. Hat Ihre Kasse die Kameraschaltfläche 📷, tippen Sie darauf, fotografieren Sie das Produkt und wählen Sie die richtige Übereinstimmung.
+3. Hat Ihre Kasse die Kameraschaltfläche, tippen Sie darauf, fotografieren Sie das Produkt und wählen Sie die richtige Übereinstimmung.
 
 ## 7 · Den Tag öffnen und schließen
 

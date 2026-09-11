@@ -197,8 +197,14 @@
         <button class="btn secondary" type="button" id="barcode-scan-open" hidden
                 title="{{ T "scan.camera.button" }}" aria-label="{{ T "scan.camera.button" }}">🔳</button>
         {{ if .aiIdentify }}
+        <!-- ut-docs#1859: was a bare 📷 emoji (platform-color-emoji-font
+             risk, guard-emoji-font.sh's class of problem) -- an explicit
+             aria-label is added here (unlike title alone) to match the
+             sibling barcode-scan-open button above, now that the icon
+             itself is aria-hidden and contributes nothing to the name. -->
         <button class="btn secondary" type="button" id="ai-identify-open" hidden
-                title="{{ T "ai.identify.button" }}">📷</button>
+                title="{{ T "ai.identify.button" }}" aria-label="{{ T "ai.identify.button" }}">
+          <span class="btn-ico" aria-hidden="true">{{ icon "camera" }}</span></button>
         {{ end }}
       </form>
 
@@ -267,7 +273,7 @@
               hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
               onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)"
               hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
-        🛒 {{ T "kiosk.checkout_start" }}</button>
+        <span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span> {{ T "kiosk.checkout_start" }}</button>
       <!-- ut-docs#1629: testid added so the payment-overlay focus guard's
            own e2e spec (payment-overlay-focus-obscured-1629.spec.ts) can
            address this original directly rather than matching on visible
@@ -303,11 +309,12 @@
          open the overlay, but the overlay can legitimately be open (e.g.
          Escape-less kiosks tabbing back), and closing it on success is
          then exactly right; when it's closed the handler is a no-op.
-         ⚡ prefix is decorative, this file's existing unkeyed emoji-prefix
-         convention (see the 🛒 New Sale button below, still unconverted —
-         ut-docs#1845 only touched this file's phone-width nav-shortcut
-         row, .kiosk-actions above, not this tender row); the label itself
-         is live DB data (.Name) run through T (ut-docs#2015: a plugin
+         No icon/prefix here (ut-docs#1859): the ⚡ this row and the New
+         Sale button below both used to carry was purely decorative (no
+         semantic content, unlike 🛒's "this is the sell action" meaning),
+         so it was dropped rather than replaced with a Lucide icon --
+         one less icon to maintain for zero information lost. The label
+         itself is live DB data (.Name) run through T (ut-docs#2015: a plugin
          payment entry's label is a translator key, same as a page/export/
          report entry's — a built-in's plain-text name like "Cash" passes
          through T unchanged) or
@@ -318,13 +325,13 @@
               hx-post="/api/pos/tender"
               hx-vals='{{ jsonVals "amount" 0 "method" .defaultPayMethod.ID }}' hx-include="#offline-flag"
               hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">⚡ {{ T .defaultPayMethod.Name }}</button>
+              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T .defaultPayMethod.Name }}</button>
       {{ else }}
       <button class="btn quick-pay-btn" type="button" data-testid="quick-pay" data-method="cash"
               hx-post="/api/pos/tender"
               hx-vals='{"amount":0,"method":"cash"}' hx-include="#offline-flag"
               hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
-              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">⚡ {{ T "tender.cash" }}</button>
+              hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">{{ T "tender.cash" }}</button>
       {{ end }}
     </div>
 
@@ -657,7 +664,7 @@
               hx-post="/api/pos/reset" hx-target="#basket" hx-swap="outerHTML" hx-sync="#basket:replace"
               onclick="setTimeout(function(){var b=document.querySelector('input[name=code]'); if(b) b.focus();}, 150)"
               hx-on::after-request="if (event.detail.successful) { var t = document.getElementById('toast-message'); if (!(t && t.classList.contains('error'))) { var d = document.getElementById('payment-overlay'); if (d && d.open) d.close(); } }">
-        🛒 {{ T "kiosk.checkout_start" }}</button>
+        <span class="btn-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span> {{ T "kiosk.checkout_start" }}</button>
       <button class="btn secondary" type="button" data-testid="payment-overlay-hold"
               aria-label="{{ T "tender.overlay_hold_action" }}"
               onclick="document.getElementById('hold-modal').show(); document.getElementById('hold-label-input').focus();">

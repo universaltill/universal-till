@@ -113,8 +113,9 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
       (document.getElementById('catalog-table') as HTMLElement).setAttribute('data-e2e-identity', 'original-table');
     });
 
-    // Click a plain cell (not a .btn) to load the item into the edit form.
-    await page.locator(`.catalog-row[data-name="${name}"]`).locator('td').nth(1).click();
+    // ut-docs#1951: the row is a card now, not a table with cells — click
+    // it directly to load the item into the edit form.
+    await page.locator(`.catalog-row[data-name="${name}"]`).click();
     await expect(page.locator('#item-id')).not.toHaveValue('');
     await page.locator('#item-description').fill('edited via row OOB');
     await page.locator('#item-form-submit').click();
@@ -148,9 +149,12 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
       (document.getElementById('catalog-table') as HTMLElement).setAttribute('data-e2e-identity', 'original-table');
     });
 
-    // The deactivate button asks via hx-confirm — accept it.
+    // ut-docs#1951: deactivate moved from a per-card button into the item
+    // dialog — open it, then delete from there. Still asks via hx-confirm,
+    // same native dialog event as before.
     page.once('dialog', (d) => d.accept());
-    await page.locator(`.catalog-row[data-name="${doomed}"]`).locator('button.danger').click();
+    await page.locator(`.catalog-row[data-name="${doomed}"]`).click();
+    await page.locator('#item-form-delete').click();
 
     // The doomed row is gone (OOB delete fragment)…
     await expect(page.locator(`.catalog-row[data-name="${doomed}"]`)).toHaveCount(0);
@@ -206,10 +210,12 @@ test.describe('catalog row-level OOB swaps (ut-docs#1363)', () => {
     const name = 'Row OOB Panel ' + Date.now();
     await createItem(page, name);
 
-    // Open the item's variants panel: a row click opens the edit dialog and
-    // loads the variants panel into it — since ut-docs#1956 the panel is the
-    // dialog's Variants tab, no longer a page-level section under the list.
-    await page.locator(`.catalog-row[data-name="${name}"]`).locator('td').nth(1).click();
+    // Open the item's variants panel: a card click (ut-docs#1951: the card
+    // is a single clickable element now, not a table row of cells) opens
+    // the edit dialog and loads the variants panel into it — since
+    // ut-docs#1956 the panel is the dialog's Variants tab, no longer a
+    // page-level section under the list.
+    await page.locator(`.catalog-row[data-name="${name}"]`).click();
     await page.locator('#item-form-tab-variants').click();
     await expect(page.locator('#vf-new')).toBeAttached();
     const row = page.locator(`.catalog-row[data-name="${name}"]`);

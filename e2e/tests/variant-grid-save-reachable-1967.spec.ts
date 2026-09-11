@@ -29,7 +29,7 @@ async function createProbeItemAndOpenVariants(page: import('@playwright/test').P
   await expect(page.locator('#item-form-msg .pos-notice.success')).toBeVisible();
 
   const row = page.locator('.catalog-row', { hasText: name });
-  await row.locator('td').first().click();
+  await row.click();
   // ut-docs#1956: the variants panel is no longer a full-width card BELOW
   // the item list — it is the item form's own Variants tab, inside the
   // full-screen dialog the row click opens. So this navigates to the tab

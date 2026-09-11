@@ -1,13 +1,23 @@
 package pages
 
 import (
+	"bytes"
+	"io/fs"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path"
+	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/pages/catalog"
-	"github.com/universaltill/universal-till/internal/pages/itemsnav"
+	"github.com/universaltill/universal-till/internal/pages/common"
+	"github.com/universaltill/universal-till/internal/paths"
+	"github.com/universaltill/universal-till/internal/plugins"
+	"github.com/universaltill/universal-till/internal/uislot"
+	layoutsalon "github.com/universaltill/universal-till/plugins/layout-salon"
 )
 
 func TestItemsPage_RendersFiveSectionsWithNameAndSubtitle(t *testing.T) {
@@ -225,8 +235,8 @@ func TestItemsPage_DefaultLoadRendersExactlyOneRail(t *testing.T) {
 	if n := strings.Count(body, `id="items-rail"`); n != 1 {
 		t.Errorf(`expected exactly 1 id="items-rail" on a bare /items load, got %d`, n)
 	}
-	if n := strings.Count(body, `class="items-row`); n != len(itemsnav.Sections) {
-		t.Errorf("expected exactly %d .items-row rows, got %d", len(itemsnav.Sections), n)
+	if n := strings.Count(body, `class="items-row`); n != len(uislot.CoreItems) {
+		t.Errorf("expected exactly %d .items-row rows, got %d", len(uislot.CoreItems), n)
 	}
 	// An hx-swap-oob element sitting in the INITIAL page markup is always a
 	// mistake: it is meaningful only in a swapped htmx response.
@@ -257,5 +267,126 @@ func TestItemsSection_RealHTMXSwapStillGetsOOBRail(t *testing.T) {
 	body := rec.Body.String()
 	if !strings.Contains(body, `id="items-rail"`) || !strings.Contains(body, `hx-swap-oob="true"`) {
 		t.Errorf("a real htmx swap must still carry the OOB rail, got: %s", body)
+	}
+}
+
+// ut-docs#1911's demonstration AC end to end, against the REAL shipped
+// plugin, not a test fixture: installing plugins/layout-salon (the same
+// manifest builtinlayouts.Sync installs for shop_type=service) makes the
+// /items rail's Library row read "Services" and move to the front — the
+// Items slot amended by the same mechanism the Menu tile already was.
+// installShippedSalonLayout installs the REAL shipped plugins/layout-salon manifest
+// (the same one builtinlayouts.Sync installs for shop_type=service) into
+// dp's till and reloads plugin state — shared by every test that proves an
+// ADR-0088 slot end to end against that plugin rather than a fixture
+// (menu_layout_settings_test.go's installSalonLayout is the FIXTURE twin:
+// a hand-built hide-only manifest for the restore-surface tests).
+//
+// syncLocales (internal/plugins.Manager) reads a plugin's locale files back
+// from paths.Plugins() on disk, never from the manifest bytes (Decision G)
+// — so a real overlay needs them written there first, the same step
+// internal/plugins/builtinlayouts.installSalon takes for a real till.
+// Isolated to a temp dir so this test can't touch (or race) another test's
+// plugin files. Call BEFORE newMenuPageTestDeps (which, via its own
+// pm.SetLocalizer call, does a paths.Plugins() read) so that read already
+// sees the isolated dir, not repo-root ./data — same orig/restore shape as
+// sync_assets_test.go's own paths.Init use (independent review of
+// ut-docs#1911, finding 11).
+func isolatePluginDir(t *testing.T) {
+	t.Helper()
+	orig := paths.DataDir()
+	paths.Init(t.TempDir())
+	t.Cleanup(func() { paths.Init(orig) })
+}
+
+func installShippedSalonLayout(t *testing.T, dp *common.Deps) {
+	t.Helper()
+	m, err := plugins.ParseManifest(bytes.NewReader(layoutsalon.ManifestJSON))
+	if err != nil {
+		t.Fatalf("parse plugins/layout-salon/plugin.json: %v", err)
+	}
+	localeEntries, err := fs.ReadDir(layoutsalon.Locales, "locales")
+	if err != nil {
+		t.Fatalf("read embedded salon locales: %v", err)
+	}
+	destDir := paths.Plugins(m.ID, m.Version, "locales")
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	for _, e := range localeEntries {
+		raw, err := fs.ReadFile(layoutsalon.Locales, path.Join("locales", e.Name()))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(filepath.Join(destDir, e.Name()), raw, 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := plugins.PersistManifest(t.Context(), dp.Db, m, plugins.InstallOptions{}); err != nil {
+		t.Fatalf("install salon layout: %v", err)
+	}
+	if err := dp.ReloadPlugins(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestItemsPage_SalonLayoutRelabelsAndReordersLibraryRow(t *testing.T) {
+	isolatePluginDir(t)
+	mux, dp := newMenuPageTestDeps(t, baseMenu)
+	catalog.Register(mux, dp)
+	registerItemsPage(mux, dp)
+	installShippedSalonLayout(t, dp)
+
+	body := getPage(t, mux, "/items").Body.String()
+	if !strings.Contains(body, "Services") {
+		t.Fatalf("expected the relabelled row to render \"Services\", got: %s", body)
+	}
+	// The rail's five rows are all still there — a relabel/reorder amendment
+	// must not drop or duplicate any.
+	if n := strings.Count(body, `class="items-row`); n != len(uislot.CoreItems) {
+		t.Errorf("expected exactly %d .items-row rows after the amendment, got %d", len(uislot.CoreItems), n)
+	}
+	// Reordered to Order 50 (ahead of every other row's 100+), so it must be
+	// the FIRST link in the rail, not merely present.
+	rail := body[strings.Index(body, `id="items-rail"`):]
+	afterAttr := rail[strings.Index(rail, `href="`)+len(`href="`):]
+	firstHref := afterAttr[:strings.Index(afterAttr, `"`)]
+	if firstHref != "/catalog" {
+		t.Errorf("expected /catalog's row to be reordered first, got first href %q", firstHref)
+	}
+}
+
+// ut-docs#1912's demonstration AC end to end, against the REAL shipped
+// plugin: installing plugins/layout-salon moves Orders ahead of Inventory
+// in the nav rail on every page (here: /items, but nav.html is a shared
+// partial, so any whole-page render would do) — the rail amended by the
+// same mechanism the Menu tile and the /items section list already are.
+// Nothing else about the rail changes: the same four anchors, the same
+// data-testids, Sell/Menu still first.
+func TestNavRail_SalonLayoutReordersOrdersAheadOfInventory(t *testing.T) {
+	isolatePluginDir(t)
+	mux, dp := newMenuPageTestDeps(t, baseMenu)
+	catalog.Register(mux, dp)
+	registerItemsPage(mux, dp)
+
+	before := getPage(t, mux, "/items").Body.String()
+	if i, o := strings.Index(before, `data-testid="kiosk-inventory-link"`), strings.Index(before, `data-testid="nav-orders"`); i < 0 || o < 0 || o < i {
+		t.Fatalf("zero-plugin rail must list Inventory before Orders, got inventory@%d orders@%d", i, o)
+	}
+
+	installShippedSalonLayout(t, dp)
+
+	body := getPage(t, mux, "/items").Body.String()
+	rail := body[strings.Index(body, `<div class="nav-primary">`):strings.Index(body, `<div class="nav-right">`)]
+	var testids []string
+	for _, m := range regexp.MustCompile(`data-testid="([^"]+)"`).FindAllStringSubmatch(rail, -1) {
+		testids = append(testids, m[1])
+	}
+	want := []string{"nav-till", "nav-menu", "nav-orders", "kiosk-inventory-link"}
+	if strings.Join(testids, ",") != strings.Join(want, ",") {
+		t.Fatalf("salon layout must reorder the rail to %v, got %v", want, testids)
+	}
+	if !strings.Contains(rail, `href="/orders" class="nav-toggle nav-rail-only" data-testid="nav-orders"`) {
+		t.Fatalf("the moved Orders anchor must keep its classes and testid, got: %s", rail)
 	}
 }

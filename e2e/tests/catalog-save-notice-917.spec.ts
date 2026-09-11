@@ -78,10 +78,9 @@ test.describe('catalog item-form save notice (ut-docs#917)', () => {
     // save-success auto-close timer.
     await closeItemForm(page);
 
-    // Click a plain cell, not the row's centre — the row-click handler
-    // deliberately ignores clicks that land on a `.btn` inside it.
-    await page.locator('#catalog-table .catalog-row', { hasText: name }).first()
-      .locator('td').first().click();
+    // ut-docs#1951: the row is a single clickable card now, not a table
+    // row of cells.
+    await page.locator('#catalog-table .catalog-row', { hasText: name }).first().click();
     await expect(page.locator('#item-id')).not.toHaveValue('');
 
     await page.locator('#item-description').fill('edited');

@@ -1,93 +1,102 @@
-{{/* One catalog items-table row (ut-docs#1363). Dot is a catalogRowVM
-     (internal/pages/catalog): .Item / .Barcodes / .Variants plus .OOB —
-     false renders a plain row (the initial /catalog table and the insert
-     wrapper below), true adds hx-swap-oob="true" so htmx replaces the
-     existing #catalog-row-<id> element in place. */}}
-{{ define "catalog_row" }}
-          <tr class="catalog-row" id="catalog-row-{{ .Item.ID }}"{{ if .OOB }} hx-swap-oob="true"{{ end }}
-              data-id="{{ .Item.ID }}" data-name="{{ .Item.Name }}" data-sku="{{ .Item.SKU }}"
-              data-description="{{ .Item.Description }}" data-unit="{{ .Item.Unit }}"
-              data-weighed="{{ if .Item.IsWeighed }}1{{ else }}0{{ end }}"
-              data-stock-untracked="{{ if .Item.StockUntracked }}1{{ else }}0{{ end }}"
-              data-category="{{ with .Item.CategoryID }}{{ . }}{{ end }}"
-              data-brand="{{ with .Item.BrandID }}{{ . }}{{ end }}"
-              data-price="{{ .Item.BasePrice }}"
-              data-tax="{{ with .Item.TaxCodeID }}{{ . }}{{ end }}"
-              data-color="{{ .Item.Color }}">
-            {{ if .ShowThumbColumn }}<td class="catalog-thumb-cell">{{ if .ImageURL }}<img class="thumb small" src="{{ imgv .ImageURL }}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">{{ else }}<div class="thumb small" aria-hidden="true"></div>{{ end }}</td>{{ end }}
-            <td class="catalog-name">{{ if .Item.Color }}<span class="color-dot" aria-hidden="true" style="background: {{ .Item.Color }}"></span>{{ end }}{{ .Item.Name }}{{ if .Item.IsSampleData }} <span class="sample-badge">{{ T "catalog.sample_badge" }}</span>{{ end }}
-              {{ with .Barcodes }}<div class="muted" style="font-size:.8em">{{ T "catalog.barcodes" }}: {{ range $i, $b := . }}{{ if $i }}, {{ end }}{{ $b }}{{ end }}</div>{{ end }}
-              {{ with .Variants }}<div class="muted" style="font-size:.8em">{{ T "catalog.variants" }}: {{ range $i, $v := . }}{{ if $i }}, {{ end }}{{ $v.Name }}{{ if $v.Barcode }} [{{ $v.Barcode }}]{{ end }}{{ end }}</div>{{ end }}
-            </td>
-            <td class="muted">{{ .Item.SKU }}</td>
-            <td>{{ money .Item.BasePrice }}</td>
-            <td>{{ if .Item.Unit }}{{ .Item.Unit }}{{ else }}each{{ end }}{{ if .Item.IsWeighed }} ⚖{{ end }}</td>
-            <td>{{ $name := taxCodeName .Item.TaxCodeID }}{{ if $name }}{{ $name }}{{ else }}—{{ end }}</td>
-            <td>{{ $cn := categoryName .Item.CategoryID }}{{ if $cn }}{{ $cn }}{{ else }}—{{ end }}</td>
-            <td class="btn-actions">
-              <button class="btn secondary catalog-edit" type="button">{{ T "common.edit" }}</button>
-              <button class="btn danger" type="button"
-                      hx-post="/api/catalog/item/deactivate"
-                      hx-vals='{{ jsonVals "id" .Item.ID }}'
-                      {{/* ut-docs#1956: was a hardcoded English "Deactivate
-                           <name>?" — the one untranslated string on this
-                           row. Same key (and same deactivate-not-erase
-                           wording) as the item form's own delete button. */}}
-                      hx-confirm="{{ printf (T "catalog.delete_confirm_named") .Item.Name }}"
-                      hx-target="this" hx-swap="none">✕</button>
-            </td>
-          </tr>
+{{/* One catalog card (ut-docs#1363, reshaped from a table row to a card by
+     ut-docs#1951). Dot is a catalogRowVM (internal/pages/catalog): .Item /
+     .Barcodes / .Variants plus .OOB — false renders a plain card (the
+     initial /catalog grid and the insert fragment below), true adds
+     hx-swap-oob="true" so htmx replaces the existing #catalog-row-<id>
+     element in place.
+
+     Reuses the sale-screen's own .btn-tile/.tile-colored/.tile-name/
+     .tile-price/.thumb classes (buttons.html, app.css) rather than
+     inventing new card CSS — "SumUp Library-style item cards" is exactly
+     what that pattern already renders (name, price, photo-or-color tile),
+     and the till gains one visual language for a priced item tile, not
+     two. A real <button>, not a <div> — the old <tr> wasn't keyboard-
+     focusable either, but every card is touched by this change anyway, so
+     it's fixed forward: Tab reaches it, Enter/Space activates it, and it
+     gets a focus-visible outline for free, same as the sale-screen tiles.
+
+     SKU/Tax/Unit/Category are deliberately NOT shown here (product-owner
+     direction, ut-docs#1951: cards are name + price + photo-or-color,
+     matching .btn-tile's own shape). The barcodes/variants summary line
+     stays — dropping it too would regress real, tested functionality
+     (an operator glancing at the grid to see what's attached to an item)
+     that nothing asked to remove; .btn-tile's flex-column layout gives it
+     its own line between the name and the price for free. All the rest
+     still reaches the item-edit dialog via the
+     data-* attributes below, which openCatalogRow() (catalog.html) reads
+     to populate the form. Edit/delete are no longer inline actions here —
+     selecting the card opens the dialog, which now carries its own delete
+     button (see catalog.html). */}}
+{{ define "catalog_row" }}<button type="button" class="catalog-row btn-tile{{ if and .Item.Color (not .ImageURL) }} tile-colored{{ end }}"
+    id="catalog-row-{{ .Item.ID }}"{{ if .OOB }} hx-swap-oob="true"{{ end }}
+    data-id="{{ .Item.ID }}" data-name="{{ .Item.Name }}" data-sku="{{ .Item.SKU }}"
+    data-description="{{ .Item.Description }}" data-unit="{{ .Item.Unit }}"
+    data-weighed="{{ if .Item.IsWeighed }}1{{ else }}0{{ end }}"
+    data-stock-untracked="{{ if .Item.StockUntracked }}1{{ else }}0{{ end }}"
+    data-category="{{ with .Item.CategoryID }}{{ . }}{{ end }}"
+    data-brand="{{ with .Item.BrandID }}{{ . }}{{ end }}"
+    data-price="{{ .Item.BasePrice }}"
+    data-tax="{{ with .Item.TaxCodeID }}{{ . }}{{ end }}"
+    data-color="{{ .Item.Color }}"
+    {{ if and .Item.Color (not .ImageURL) }}style="--tile-color: {{ .Item.Color }}"{{ end }}>{{ if .ImageURL }}<img class="thumb" src="{{ imgv .ImageURL }}" alt="" loading="lazy" onerror="this.style.visibility='hidden'">{{ end }}<span class="tile-name">{{ .Item.Name }}{{ if .Item.IsSampleData }} <span class="sample-badge">{{ T "catalog.sample_badge" }}</span>{{ end }}</span>{{ with .Barcodes }}<span class="muted" style="font-size:.75em">{{ T "catalog.barcodes" }}: {{ range $i, $b := . }}{{ if $i }}, {{ end }}{{ $b }}{{ end }}</span>{{ end }}{{ with .Variants }}<span class="muted" style="font-size:.75em">{{ T "catalog.variants" }}: {{ range $i, $v := . }}{{ if $i }}, {{ end }}{{ $v.Name }}{{ if $v.Barcode }} [{{ $v.Barcode }}]{{ end }}{{ end }}</span>{{ end }}<span class="tile-price">{{ money .Item.BasePrice }}</span></button>
 {{ end }}
 
-{{/* The "no items yet" placeholder row, shared by the table's else-branch
-     and the OOB append fragment below. */}}
-{{/* Dot: the current colspan (7 without the thumbnail column, 8 with it
-     — ut-docs#1842) — computed Go-side (emptyRowColspan) so this stays
-     consistent with whether the thumbnail <th>/<td>s are showing right
-     now, rather than a value hardcoded here going stale silently. */}}
-{{ define "catalog_empty_row" }}<tr id="catalog-empty-row"><td colspan="{{ . }}" class="empty">{{ T "basket.empty" }}</td></tr>{{ end }}
+{{/* The "no items yet" placeholder card, shared by the grid's else-branch
+     and the OOB append fragment below. Spans every column (.catalog-empty,
+     app.css) so it reads as one message, not a lone grid cell the width of
+     a single card.
+
+     Review follow-up (ut-docs#1951): this key was a hand-translated
+     (model-invented) ar/fa/tr string, which violates this repo's
+     self-hosted-only translation rule (reference/translation.md — never
+     Claude's own inference, only the homelab NAS Ollama endpoint). That
+     endpoint is unreachable from this cloud sandbox (confirmed again
+     just now: connection timed out — the same wall PRs #982/#1010 hit).
+     Left as a plain, non-templated, English-only literal instead
+     (blocked:env) rather than ship a guessed translation or strand 3
+     locales in silent English. Do NOT write the real localization
+     helper call inside this comment as an example — guard-i18n.sh
+     regex-scans raw file text, comments included, and a literal call
+     here would itself fail CI. Whoever fixes this forward: add
+     catalog.empty (all locales, real NAS translation) and swap this
+     back to a real templated call. */}}
+{{ define "catalog_empty_row" }}<div id="catalog-empty-row" class="empty catalog-empty">No items yet — tap <strong>Add item</strong> to create one.</div>{{ end }}
 
 {{/* ------------------------------------------------------------------
-     Out-of-band fragments. Two constraints of the vendored htmx 1.9.12
-     shape everything here (verified against web/public/vendor/htmx.min.js):
+     Out-of-band fragments. ut-docs#1951 simplification: the pre-card
+     markup wrapped every fragment in a hidden <table><tbody> "carrier"
+     because the vendored htmx 1.9.12's makeFragment parses the WHOLE
+     response from its first tag, and a bare <tr>/<tbody> outside a real
+     <table> is silently discarded by the HTML parser in body context. A
+     <button>/<div> has no such requirement — it parses fine directly in
+     body context regardless of what came before it in the same response
+     — so the carrier is gone. What's left is the same two OOB semantics
+     the carrier used to route through:
 
-     1. PARSING — makeFragment picks its parse context from the FIRST tag
-        of the whole response. A mutation response that leads with the
-        variants panel <div> is parsed in body context, where a bare <tr>
-        or <tbody> is silently discarded by the HTML parser. So every
-        fragment is wrapped in a real, self-contained <table> "carrier",
-        which parses intact anywhere.
-
-     2. OOB SEMANTICS — only hx-swap-oob="true"/"outerHTML" swaps the
-        flagged element itself; any other style (beforeend, none) inserts
-        the flagged element's CHILDREN. Hence inserts put the oob
-        attribute on a wrapper <tbody> whose child is the row, and the
-        carrier <table> flags itself hx-swap-oob="none:#catalog-tbody" —
-        a no-op swap whose one effect is that htmx removes the processed
-        carrier from the response fragment, so a panel response's primary
-        swap never deposits a leftover table skeleton into the page.
-        (Go writes fragments only when their target provably exists in the
-        DOM — not to dodge an htmx error, an over-emitted OOB delete is a
-        silent no-op in this htmx version — but because matching each
-        fragment to DOM reality is simpler to reason about; see
-        writeCatalogRowOOB's own note.)
+     - style "true"/"outerHTML" swaps the flagged element itself — so an
+       in-place update is just the card template with .OOB set; no
+       wrapper needed at all (catalog_row_update_oob below).
+     - any other style (beforeend, delete) swaps/removes based on a
+       SEPARATE selector, and inserts the flagged element's CHILDREN — so
+       an insert needs a thin wrapper carrying that directive, and a
+       delete just needs an element bearing the target id (its own tag
+       doesn't have to match the live element's).
      ------------------------------------------------------------------ */}}
 
-{{/* In-place update of one existing row. Dot: catalogRowVM (OOB true). */}}
-{{ define "catalog_row_update_oob" }}<table hidden class="ut-oob-carrier" hx-swap-oob="none:#catalog-tbody"><tbody>{{ template "catalog_row" . }}</tbody></table>{{ end }}
+{{/* In-place update of one existing card. Dot: catalogRowVM (OOB true) —
+     the card template itself already carries hx-swap-oob="true". */}}
+{{ define "catalog_row_update_oob" }}{{ template "catalog_row" . }}{{ end }}
 
-{{/* Append a newly created row to the table. Dot: catalogRowVM (OOB
-     false — the wrapper tbody carries the swap directive). */}}
-{{ define "catalog_row_insert_oob" }}<table hidden class="ut-oob-carrier" hx-swap-oob="none:#catalog-tbody"><tbody hx-swap-oob="beforeend:#catalog-tbody">{{ template "catalog_row" . }}</tbody></table>{{ end }}
+{{/* Append a newly created card to the grid. Dot: catalogRowVM (OOB
+     false — the wrapper carries the swap directive, the card itself is
+     plain new content). */}}
+{{ define "catalog_row_insert_oob" }}<div hidden hx-swap-oob="beforeend:#catalog-tbody">{{ template "catalog_row" . }}</div>{{ end }}
 
-{{/* Remove one row (deactivated item). Dot: the item id. htmx's delete
-     style removes the matching #catalog-row-<id>; content is ignored. */}}
-{{ define "catalog_row_delete" }}<table hidden class="ut-oob-carrier" hx-swap-oob="none:#catalog-tbody"><tbody><tr id="catalog-row-{{ . }}" hx-swap-oob="delete"></tr></tbody></table>{{ end }}
+{{/* Remove one card (deactivated item). Dot: the item id. */}}
+{{ define "catalog_row_delete" }}<div id="catalog-row-{{ . }}" hx-swap-oob="delete"></div>{{ end }}
 
 {{/* Bring the empty-state placeholder back (last item deactivated). */}}
-{{/* Dot: the current colspan (see catalog_empty_row above), passed
-     through unchanged. */}}
-{{ define "catalog_empty_row_append_oob" }}<table hidden class="ut-oob-carrier" hx-swap-oob="none:#catalog-tbody"><tbody hx-swap-oob="beforeend:#catalog-tbody">{{ template "catalog_empty_row" . }}</tbody></table>{{ end }}
+{{ define "catalog_empty_row_append_oob" }}<div hidden hx-swap-oob="beforeend:#catalog-tbody">{{ template "catalog_empty_row" }}</div>{{ end }}
 
 {{/* Clear the empty-state placeholder (first item created). */}}
-{{ define "catalog_empty_row_delete" }}<table hidden class="ut-oob-carrier" hx-swap-oob="none:#catalog-tbody"><tbody><tr id="catalog-empty-row" hx-swap-oob="delete"></tr></tbody></table>{{ end }}
+{{ define "catalog_empty_row_delete" }}<div id="catalog-empty-row" hx-swap-oob="delete"></div>{{ end }}

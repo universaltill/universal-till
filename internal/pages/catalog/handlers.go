@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 	"time"
@@ -44,7 +45,46 @@ type modifierAdminItem struct {
 	ItemID         string
 	ItemName       string
 	ModifierGroups []data.ModifierGroup
-	Target         string
+	// AttachableGroups is this item's "attach an existing group" picker
+	// options (ut-docs#2046): every other active shop group not already
+	// linked to ItemID. Left nil when there is nothing left to attach.
+	AttachableGroups []data.ModifierGroup
+	Target           string
+	// Notice is an already-translated, already-formatted message to show
+	// inline above this fragment (ut-docs#2046, independent-review finding)
+	// — e.g. the detach-guard's refusal. Plain http.Error/LocalizedError
+	// answers text/plain, which htmx never swaps in (app.js's own
+	// ut-docs#916 comment on this), so a refusal handled that way is a
+	// silent no-op on every admin page without a #pos-alert fallback. This
+	// field is instead rendered INSIDE the normal HTML fragment the mutation
+	// already re-renders, so the existing swap carries the message for free.
+	// Empty on every ordinary (non-error) render.
+	Notice string
+}
+
+// distinctActiveModifierGroups collapses ListAllShopModifierGroups' one-
+// row-per-link shape into one entry per DISTINCT active group id (first
+// occurrence wins — group-level fields are identical across every row for
+// the same id; only ItemID/ItemName/SortOrder/Options vary per link),
+// sorted by name. Backs the shop-wide "attach an existing group" picker
+// (ut-docs#2046) computed once for the whole page instead of once per item
+// — see groupModifierAdminByItem's own comment on why a per-item query here
+// would be an N+1 across /modifiers' entire catalog.
+func distinctActiveModifierGroups(groups []data.ModifierGroup) []data.ModifierGroup {
+	seen := map[string]bool{}
+	var result []data.ModifierGroup
+	for _, g := range groups {
+		if !g.IsActive || seen[g.ID] {
+			continue
+		}
+		seen[g.ID] = true
+		result = append(result, data.ModifierGroup{
+			ID: g.ID, Name: g.Name, Required: g.Required,
+			MinSelect: g.MinSelect, MaxSelect: g.MaxSelect, IsActive: true,
+		})
+	}
+	sort.Slice(result, func(i, j int) bool { return result[i].Name < result[j].Name })
+	return result
 }
 
 // newLookupClient is a test seam: production resolves barcodes against the
@@ -58,6 +98,7 @@ var newLookupClient = func() *productlookup.Client { return productlookup.NewCli
 func Register(mux *http.ServeMux, d *common.Deps) {
 	repo := data.NewCatalogRepo(d.Db)
 	posRepo := data.NewPOSRepo(d.Db)
+	modRepo := data.NewModifierRepo(d.Db)
 	lookupClient := newLookupClient()
 
 	// requirePrimary gates catalog mutation on this till being the primary
@@ -122,30 +163,11 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// The mutation itself has already committed by the time this runs, so a
 	// render/query failure here is logged rather than surfaced as an error
 	// status the client would misread as "the save failed".
-	// hadThumbColumn is a snapshot the CALLER takes before its own mutation
-	// runs (ut-docs#1842 review F1/F2) — writeCatalogRowOOB compares it
-	// against the fresh post-mutation answer to decide whether a plain row
-	// fragment is still safe, or whether the thumbnail column's presence
-	// just flipped and the whole table needs re-rendering instead. Taking
-	// it here, after the mutation, would be too late — the "before"
-	// answer would already be gone.
-	writeRowOOB := func(w http.ResponseWriter, r *http.Request, itemID string, insert bool, hadThumbColumn bool) {
+	writeRowOOB := func(w http.ResponseWriter, r *http.Request, itemID string, insert bool) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		if err := writeCatalogRowOOB(w, r, repo, funcs, itemID, insert, hadThumbColumn); err != nil {
+		if err := writeCatalogRowOOB(w, r, repo, funcs, itemID, insert); err != nil {
 			log.Printf("[catalog] row oob for item %s: %v", itemID, err)
 		}
-	}
-	// snapshotThumbColumn is the "before" half of the above — call it as
-	// the FIRST thing a mutation handler does, before touching the DB.
-	// Cheap (one indexed EXISTS query); a read failure here degrades to
-	// "assume unchanged" (false either way — see the mismatched comment
-	// below) rather than blocking the mutation on a diagnostic query.
-	snapshotThumbColumn := func(r *http.Request) bool {
-		has, err := repo.HasAnyThumbnail(r.Context())
-		if err != nil {
-			log.Printf("[catalog] snapshot thumb column: %v", err)
-		}
-		return has
 	}
 
 	// renderVariantsPanel answers with the per-item variants/barcodes editor.
@@ -230,7 +252,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			filepath.Join("web", "ui", "partials", "catalog_variants.html"),
 		), funcs)("catalog_variants", pdata)(w, r)
 		if withTable {
-			writeRowOOB(w, r, itemID, false, snapshotThumbColumn(r))
+			writeRowOOB(w, r, itemID, false)
 		}
 	}
 	renderVariantsPanel := func(w http.ResponseWriter, r *http.Request, itemID string, withTable bool) {
@@ -255,16 +277,36 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// entry: the single container id every one of that item's forms will
 	// hx-target/hx-swap back at after a mutation.
 	groupModifierAdminByItem := func(groups []data.ModifierGroup, target string) []modifierAdminItem {
+		// Attachable groups for the whole page are computed HERE, once, from
+		// the flat shop-wide slice already in hand — not via a per-item
+		// ListAttachableModifierGroups query (independent review, ut-docs#2046):
+		// that shape is an N+1 across every modifier-bearing item on
+		// /modifiers, unlike the item-scoped dialog below (renderItemModifier
+		// GroupsPanel), which has no shop-wide slice to reuse and so pays one
+		// query for its one item, same as ItemIDsWithModifiers' own
+		// batch-not-N+1 precedent one file over.
+		distinct := distinctActiveModifierGroups(groups)
 		var result []modifierAdminItem
 		idx := map[string]int{}
+		linkedIDs := map[string]map[string]bool{}
 		for _, g := range groups {
 			i, ok := idx[g.ItemID]
 			if !ok {
 				i = len(result)
 				idx[g.ItemID] = i
 				result = append(result, modifierAdminItem{ItemID: g.ItemID, ItemName: g.ItemName, Target: target})
+				linkedIDs[g.ItemID] = map[string]bool{}
 			}
 			result[i].ModifierGroups = append(result[i].ModifierGroups, g)
+			linkedIDs[g.ItemID][g.ID] = true
+		}
+		for i := range result {
+			linked := linkedIDs[result[i].ItemID]
+			for _, dg := range distinct {
+				if !linked[dg.ID] {
+					result[i].AttachableGroups = append(result[i].AttachableGroups, dg)
+				}
+			}
 		}
 		return result
 	}
@@ -277,15 +319,16 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// be reactivated). Used both for the page's own initial load and for a
 	// mutation whose originating form targets #modifiers-list (see
 	// renderModifierMutationResult below).
-	renderModifiersList := func(w http.ResponseWriter, r *http.Request) {
+	renderModifiersList := func(w http.ResponseWriter, r *http.Request, notice string) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		groups, err := data.NewModifierRepo(d.Db).ListAllShopModifierGroups(r.Context())
+		groups, err := modRepo.ListAllShopModifierGroups(r.Context())
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
 			return
 		}
 		httpx.RenderWith(modifierGroupAdminFiles, funcs)("modifiers_list", map[string]any{
 			"Groups": groupModifierAdminByItem(groups, "modifiers-list"),
+			"Notice": notice,
 		})(w, r)
 	}
 
@@ -296,17 +339,23 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// always used. Used both by the dialog's own lazy-load GET (opened from
 	// catalog_variants.html) and for a mutation whose originating form
 	// targets #modifier-groups-modal-list.
-	renderItemModifierGroupsPanel := func(w http.ResponseWriter, r *http.Request, itemID string) {
+	renderItemModifierGroupsPanel := func(w http.ResponseWriter, r *http.Request, itemID string, notice string) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
-		groups, err := data.NewModifierRepo(d.Db).ListAllGroupsForItem(r.Context(), itemID)
+		groups, err := modRepo.ListAllGroupsForItem(r.Context(), itemID)
 		if err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
 			return
 		}
+		attachable, err := modRepo.ListAttachableModifierGroups(r.Context(), itemID)
+		if err != nil {
+			log.Printf("[catalog] attachable modifier groups for item %s: %v", itemID, err)
+		}
 		httpx.RenderWith(modifierGroupAdminFiles, funcs)("modifier_groups_item_panel", modifierAdminItem{
-			ItemID:         itemID,
-			ModifierGroups: groups,
-			Target:         "modifier-groups-modal-list",
+			ItemID:           itemID,
+			ModifierGroups:   groups,
+			AttachableGroups: attachable,
+			Target:           "modifier-groups-modal-list",
+			Notice:           notice,
 		})(w, r)
 	}
 
@@ -321,12 +370,29 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// neither of the two new container ids — including every pre-existing
 	// caller that predates this card, and any non-htmx caller — falls back
 	// to the original #catalog-variants re-render, unchanged.
-	renderModifierMutationResult := func(w http.ResponseWriter, r *http.Request, itemID string) {
+	//
+	// status/notice (ut-docs#2046, independent-review finding): a refused
+	// mutation (e.g. the detach-guard's last-link refusal) must still
+	// surface to the operator. A plain http.Error/LocalizedError body is
+	// text/plain, which app.js's htmx:beforeSwap never force-swaps (see its
+	// own ut-docs#916 comment) — outside the sale screen there is no
+	// #pos-alert fallback either, so that refusal would be a silent no-op.
+	// Answering through this SAME dispatch instead — text/html, the mutated
+	// item's normal fragment, with Notice set — means the existing
+	// hx-target/hx-swap on the very button that failed carries the message
+	// for free, exactly like every ordinary successful mutation already
+	// does. status/notice are the zero values (200, "") on every ordinary
+	// success path, unchanged from before this card.
+	renderModifierMutationResult := func(w http.ResponseWriter, r *http.Request, itemID string, status int, notice string) {
+		if status != http.StatusOK {
+			w.Header().Set("Content-Type", "text/html; charset=utf-8")
+			w.WriteHeader(status)
+		}
 		switch strings.TrimSpace(r.Header.Get("Hx-Target")) {
 		case "modifiers-list":
-			renderModifiersList(w, r)
+			renderModifiersList(w, r, notice)
 		case "modifier-groups-modal-list":
-			renderItemModifierGroupsPanel(w, r, itemID)
+			renderItemModifierGroupsPanel(w, r, itemID, notice)
 		default:
 			renderVariantsPanel(w, r, itemID, false)
 		}
@@ -340,7 +406,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// #catalog-variants).
 	mux.HandleFunc("GET /api/catalog/modifier-groups-panel", func(w http.ResponseWriter, r *http.Request) {
 		itemID := strings.TrimSpace(r.URL.Query().Get("item_id"))
-		renderItemModifierGroupsPanel(w, r, itemID)
+		renderItemModifierGroupsPanel(w, r, itemID, "")
 	})
 
 	// Variant options as JSON — the labels form's variant picker.
@@ -459,35 +525,20 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
 			return
 		}
-		funcs["taxCodeName"] = taxCodeNameFunc(taxCodes)
-		funcs["categoryName"] = lookupNameFunc(cats)
-		funcs["brandName"] = lookupNameFunc(brands)
 		barcodes, _ := repo.ItemBarcodes(r.Context())
 		variants, _ := repo.ItemVariants(r.Context())
 		thumbnails, _ := repo.ItemThumbnails(r.Context())
-		// The thumbnail column exists at all only when some listed item
-		// actually has one (ut-docs#1842 AC2) — never an empty 40px cell
-		// on every row of a catalog nobody has put images into.
-		hasThumbnails := false
-		for _, itm := range items {
-			if thumbnails[itm.ID] != "" {
-				hasThumbnails = true
-				break
-			}
-		}
 		data := map[string]any{
-			"title":         "Catalog",
-			"menuItems":     d.MenuSnapshot(),
-			"theme":         d.CurrentState().Theme,
-			"Rows":          buildCatalogRows(items, barcodes, variants, thumbnails, hasThumbnails),
-			"Categories":    cats,
-			"Brands":        brands,
-			"TaxCodes":      taxCodes,
-			"SyncPrimary":   d.SyncPrimaryURL(r.Context()),
-			"HasThumbnails": hasThumbnails,
-			"EmptyColspan":  emptyRowColspan(hasThumbnails),
-			"BuiltinIcons":  catimport.BuiltinIcons(),
-			"ItemColors":    catalogtypes.ItemColors(),
+			"title":        "Catalog",
+			"menuItems":    d.MenuSnapshot(),
+			"theme":        d.CurrentState().Theme,
+			"Rows":         buildCatalogRows(items, barcodes, variants, thumbnails),
+			"Categories":   cats,
+			"Brands":       brands,
+			"TaxCodes":     taxCodes,
+			"SyncPrimary":  d.SyncPrimaryURL(r.Context()),
+			"BuiltinIcons": catimport.BuiltinIcons(),
+			"ItemColors":   catalogtypes.ItemColors(),
 		}
 		catalogFiles := files(
 			filepath.Join("web", "ui", "layouts", "base.html"),
@@ -506,7 +557,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// gets the exact same full standalone page as before this card.
 		if httpx.IsFragmentSwap(r) {
 			httpx.RenderWith(catalogFiles, funcs)("content", data)(w, r)
-			itemsnav.WriteRailOOB(w, r, funcs, "/catalog")
+			itemsnav.WriteRailOOB(w, r, funcs, "/catalog", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return
 		}
 		httpx.RenderWith(catalogFiles, funcs)("base", data)(w, r)
@@ -521,7 +572,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// group/option too, so a manager can reactivate one from here — the
 	// same reason the per-item panel always used ListAllGroupsForItem.
 	mux.HandleFunc("/modifiers", func(w http.ResponseWriter, r *http.Request) {
-		groups, err := data.NewModifierRepo(d.Db).ListAllShopModifierGroups(r.Context())
+		groups, err := modRepo.ListAllShopModifierGroups(r.Context())
 		if err != nil {
 			httpx.RenderError(w, r, http.StatusInternalServerError, "modifiers.error.server", err)
 			return
@@ -535,7 +586,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#1950: same /items rail embedding as /catalog above.
 		if httpx.IsFragmentSwap(r) {
 			httpx.RenderContentFragment("ui/pages/modifiers.html", modifiersData)(w, r)
-			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/modifiers")
+			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/modifiers", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return
 		}
 		httpx.Render("ui/pages/modifiers.html", modifiersData)(w, r)
@@ -562,7 +613,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// ut-docs#1950: same /items rail embedding as /catalog above.
 		if httpx.IsFragmentSwap(r) {
 			httpx.RenderContentFragment("ui/pages/option_sets.html", optionSetsData)(w, r)
-			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/catalog/option-sets")
+			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/catalog/option-sets", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return
 		}
 		httpx.Render("ui/pages/option_sets.html", optionSetsData)(w, r)
@@ -697,11 +748,6 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
-		// Before anything: a new item can get a thumbnail below (the
-		// barcode-lookup auto-fill photo), which can flip whether the
-		// column exists at all — snapshot now, while "before" still means
-		// something (ut-docs#1842 review F1).
-		hadThumbColumn := snapshotThumbColumn(r)
 		_ = r.ParseForm()
 		itemInput, err := parseItemInput(r)
 		if err != nil {
@@ -753,7 +799,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				log.Printf("[catalog] record item_images thumbnail for %s: %v", itemID, err)
 			}
 		}
-		writeRowOOB(w, r, itemID, true, hadThumbColumn)
+		writeRowOOB(w, r, itemID, true)
 	})
 
 	// Update item
@@ -765,11 +811,6 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
-		// This save can also (de)activate the item (the isActive field),
-		// which can flip whether the column exists — same reasoning as
-		// item creation above (ut-docs#1842 review F1/F2). Snapshot before
-		// the write, not after.
-		hadThumbColumn := snapshotThumbColumn(r)
 		_ = r.ParseForm()
 		itemInput, err := parseItemInput(r)
 		if err != nil {
@@ -797,7 +838,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			skuAwareError(w, r, http.StatusBadRequest, err)
 			return
 		}
-		writeRowOOB(w, r, itemInput.ID, !wasActive, hadThumbColumn)
+		writeRowOOB(w, r, itemInput.ID, !wasActive)
 	})
 
 	// Deactivate item
@@ -809,9 +850,6 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
 			return
 		}
-		// Deactivating the last active item with a thumbnail collapses the
-		// column — snapshot before the write (ut-docs#1842 review F2).
-		hadThumbColumn := snapshotThumbColumn(r)
 		_ = r.ParseForm()
 		itemID := strings.TrimSpace(r.Form.Get("id"))
 		if itemID == "" {
@@ -822,7 +860,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
 			return
 		}
-		writeRowOOB(w, r, itemID, false, hadThumbColumn)
+		writeRowOOB(w, r, itemID, false)
 	})
 
 	// Create or update variant (if id present => update)
@@ -892,7 +930,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			renderVariantsPanel(w, r, panelItem, true)
 			return
 		}
-		writeRowOOB(w, r, itemID, false, snapshotThumbColumn(r))
+		writeRowOOB(w, r, itemID, false)
 	})
 
 	// Create or update a modifier group (ADR-0020) — id present = update,
@@ -939,7 +977,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
-		renderModifierMutationResult(w, r, itemID)
+		renderModifierMutationResult(w, r, itemID, http.StatusOK, "")
 	})
 
 	// Create or update a modifier option (ADR-0020). majorPrice is entered
@@ -994,7 +1032,112 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 		}
-		renderModifierMutationResult(w, r, itemID)
+		renderModifierMutationResult(w, r, itemID, http.StatusOK, "")
+	})
+
+	// Attach an existing modifier group to another item (ut-docs#2046 /
+	// ADR-0090 §5) — the write path for the many-to-many relationship
+	// ADR-0090 laid the schema for.
+	//
+	// Re-validates against ListAttachableModifierGroups server-side
+	// (independent-review finding) rather than trusting the submitted
+	// groupId blindly: a stale picker — open in a browser tab since before
+	// someone else deactivated the group, or attached it to this same item
+	// from another tab — must not be able to attach an inactive group, or
+	// silently re-order an already-attached one via LinkGroupToItem's own
+	// ON CONFLICT DO UPDATE SET sort_order (that clause exists to let a
+	// resubmit settle safely, not to let a stale form move a live link).
+	mux.HandleFunc("/api/catalog/modifier-group/attach", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
+			return
+		}
+		_ = r.ParseForm()
+		itemID := strings.TrimSpace(r.Form.Get("itemId"))
+		groupID := strings.TrimSpace(r.Form.Get("groupId"))
+		if itemID == "" || groupID == "" {
+			http.Error(w, "itemId and groupId required", http.StatusBadRequest)
+			return
+		}
+		attachable, err := modRepo.ListAttachableModifierGroups(r.Context(), itemID)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
+			return
+		}
+		valid := false
+		for _, g := range attachable {
+			if g.ID == groupID {
+				valid = true
+				break
+			}
+		}
+		if !valid {
+			renderModifierMutationResult(w, r, itemID, http.StatusConflict, httpx.T(httpx.RequestLocale(r), "catalog.error.invalid_request"))
+			return
+		}
+		// Appended after itemID's own existing groups (independent-review
+		// finding — see NextGroupSortOrderForItem's own doc comment on why
+		// this must be MAX(sort_order)+1 per item, not a plain count of
+		// either side of the relationship).
+		sortOrder, err := modRepo.NextGroupSortOrderForItem(r.Context(), itemID)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
+			return
+		}
+		if err := modRepo.LinkGroupToItem(r.Context(), itemID, groupID, sortOrder); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusBadRequest, "catalog.error.invalid_request", "catalog", err)
+			return
+		}
+		renderModifierMutationResult(w, r, itemID, http.StatusOK, "")
+	})
+
+	// Detach a modifier group from ONE item, distinct from DeleteGroup
+	// (unwired to any handler, per its own doc comment) which would remove
+	// it from every item using it. Refuses to detach a group's LAST
+	// remaining link (ut-docs#2046 architecture decision, recorded on the
+	// issue): UnlinkGroupFromItem itself would happily leave the group
+	// orphaned — its own doc comment used to say that "stays manageable via
+	// /modifiers", but that page (and the item panel) only ever reach a
+	// group THROUGH a link row, so a zero-link group would actually become
+	// permanently unreachable in the UI, not merely unattached from this
+	// item. A merchant who wants a group gone from sale entirely already has
+	// the "Active" checkbox on the group's own edit form for that.
+	//
+	// The count-then-delete is one atomic conditional statement inside
+	// UnlinkGroupFromItemUnlessLastLink, not a separate GroupLinkCount call
+	// followed by UnlinkGroupFromItem (independent-review finding): two
+	// concurrent detaches against a 2-link group's own two different items
+	// could otherwise both read links==2, both pass the check, and both
+	// delete — leaving zero links, exactly the orphan this guard exists to
+	// prevent.
+	mux.HandleFunc("/api/catalog/modifier-group/detach", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		if !requirePrimary(w, r, "catalog.error.replica_use_primary") {
+			return
+		}
+		_ = r.ParseForm()
+		itemID := strings.TrimSpace(r.Form.Get("itemId"))
+		groupID := strings.TrimSpace(r.Form.Get("groupId"))
+		if itemID == "" || groupID == "" {
+			http.Error(w, "itemId and groupId required", http.StatusBadRequest)
+			return
+		}
+		unlinked, err := modRepo.UnlinkGroupFromItemUnlessLastLink(r.Context(), itemID, groupID)
+		if err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "modifiers.error.server", "catalog", err)
+			return
+		}
+		if !unlinked {
+			renderModifierMutationResult(w, r, itemID, http.StatusConflict, httpx.T(httpx.RequestLocale(r), "catalog.modifiers.detach_last_error"))
+			return
+		}
+		renderModifierMutationResult(w, r, itemID, http.StatusOK, "")
 	})
 
 	// Deactivate variant
@@ -1025,7 +1168,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// (soft-deactivated rows still resolve). A lookup failure only
 		// costs the row refresh — the deactivation itself already landed.
 		if itemID, ok, err := repo.ItemIDForVariant(r.Context(), variantID); err == nil && ok {
-			writeRowOOB(w, r, itemID, false, snapshotThumbColumn(r))
+			writeRowOOB(w, r, itemID, false)
 		} else if err != nil {
 			log.Printf("[catalog] resolve item for variant %s: %v", variantID, err)
 		}
@@ -1041,10 +1184,6 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// the next admin pull — unlike items/item_variants/item_barcodes/
 	// variant_barcodes below, which are.
 	mux.HandleFunc("POST /api/catalog/item/image", func(w http.ResponseWriter, r *http.Request) {
-		// The exact flow ut-docs#1842 is about: this can be the FIRST
-		// thumbnail the whole catalog ever gets. Snapshot before the
-		// write, not after (review F1).
-		hadThumbColumn := snapshotThumbColumn(r)
 		if err := r.ParseMultipartForm(10 << 20); err != nil {
 			common.LocalizedError(w, r, http.StatusBadRequest, "common.error.invalid_upload")
 			return
@@ -1105,7 +1244,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		if err := repo.SetItemThumbnail(r.Context(), itemID, "/public/assets/items/"+itemID+"/thumb.png"); err != nil {
 			log.Printf("[catalog] record item_images thumbnail for %s: %v", itemID, err)
 		}
-		writeRowOOB(w, r, itemID, false, hadThumbColumn)
+		writeRowOOB(w, r, itemID, false)
 	})
 
 	// Built-in icon picker (ut-docs#1844): a bundled category icon
@@ -1174,13 +1313,6 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// item_images, which sync_admin_repo.go's adminTables explicitly
 	// excludes (files/icon choices don't travel over the sync bundle).
 	mux.HandleFunc("POST /api/catalog/item/icon", func(w http.ResponseWriter, r *http.Request) {
-		// Choosing or clearing a built-in icon writes/removes an
-		// item_images/thumbnail row exactly like the upload handler below
-		// — it can just as easily be the catalog's first-ever thumbnail,
-		// or clear its last one, so it needs the same before-the-mutation
-		// snapshot for the OOB response to stay consistent with the
-		// <thead> (ut-docs#1842 review F1/F2).
-		hadThumbColumn := snapshotThumbColumn(r)
 		_ = r.ParseForm()
 		itemID := strings.TrimSpace(r.Form.Get("item_id"))
 		// Review finding F1 (ut-docs#1844): this handler now also removes
@@ -1203,7 +1335,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			removeUploadedThumbnail(itemID)
-			writeRowOOB(w, r, itemID, false, hadThumbColumn)
+			writeRowOOB(w, r, itemID, false)
 			return
 		}
 		path, ok := catimport.IconPath(icon)
@@ -1216,7 +1348,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		removeUploadedThumbnail(itemID)
-		writeRowOOB(w, r, itemID, false, hadThumbColumn)
+		writeRowOOB(w, r, itemID, false)
 	})
 
 	// Variant image upload → assets/items/<itemID>/variants/<variantID>/thumb.png
@@ -1354,7 +1486,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			}
 		}
 		if rowItemID != "" {
-			writeRowOOB(w, r, rowItemID, false, snapshotThumbColumn(r))
+			writeRowOOB(w, r, rowItemID, false)
 		}
 	})
 
@@ -1385,7 +1517,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		if ownerOK {
-			writeRowOOB(w, r, ownerID, false, snapshotThumbColumn(r))
+			writeRowOOB(w, r, ownerID, false)
 		}
 	})
 
@@ -1767,54 +1899,6 @@ func convertLookups(in []data.Lookup) []lookup {
 		out = append(out, lookup{ID: l.ID, Name: l.Name})
 	}
 	return out
-}
-
-// taxCodeNameFunc returns a "taxCodeName" template func that resolves a
-// stored tax_code_id to its display name (ut-docs#1178) instead of letting
-// the raw id render — used by both the full /catalog page and the
-// catalog_row.html fragment re-rendered after a mutation (ut-docs#1363).
-//
-// Takes *string, not string: Item.TaxCodeID is a *string (nil when the item
-// has no tax code, the common case), and while html/template auto-derefs a
-// *non-nil* *string when it flows straight into a func(string) parameter, a
-// *nil* one panics the whole render with "dereference of nil pointer" — and
-// map `index` rejects a *string key outright, nil or not. Handling the nil
-// case here, once, is simpler than requiring every call site to guard it.
-//
-// Built from taxCodes' full set (active AND inactive, ut-docs#1178 review
-// finding F1) so a retired tax code still resolves to its real name instead
-// of falling back to "—" — see the matching note on the item-edit <select>
-// in catalog.html for why inactive codes can't just be dropped here.
-func taxCodeNameFunc(taxCodes []data.TaxCodeView) func(id *string) string {
-	names := make(map[string]string, len(taxCodes))
-	for _, tc := range taxCodes {
-		names[tc.ID] = tc.Name
-	}
-	return func(id *string) string {
-		if id == nil {
-			return ""
-		}
-		return names[*id]
-	}
-}
-
-// lookupNameFunc returns a template func resolving a stored lookup id
-// (category/brand) to its display name (ut-docs#1430) instead of letting
-// the raw id render -- same shape and *string-nil handling as
-// taxCodeNameFunc above, generalized since categories and brands are both
-// plain id/name lookup tables. Built from the already-fetched cats/brands
-// list at the /catalog route, so this costs no extra query.
-func lookupNameFunc(lookups []lookup) func(id *string) string {
-	names := make(map[string]string, len(lookups))
-	for _, l := range lookups {
-		names[l.ID] = l.Name
-	}
-	return func(id *string) string {
-		if id == nil {
-			return ""
-		}
-		return names[*id]
-	}
 }
 
 func validateLookups(ctx context.Context, repo *data.CatalogRepo, in pos.ItemInput) error {

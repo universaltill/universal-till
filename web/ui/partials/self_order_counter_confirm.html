@@ -1,0 +1,26 @@
+<div class="payment-picker">
+  <h3>{{ T "selforder.counter.title" }}</h3>
+  <p class="payment-picker-total">{{ T "basket.total" }}: {{ money .Total }}</p>
+  <p class="muted">{{ T "selforder.counter.hint" }}</p>
+  <!-- ut-docs#582: no payment methods, no text input anywhere on this
+       screen (deliberately -- avoids the two-keyboard bug class) -- one big
+       primary button. Same hx-include (the offline flag) and target/swap
+       as self_order_payment_picker.html's own form, even though the
+       counter-mode handler doesn't need the offline signal itself today --
+       kept for shape-parity with the sibling screen and in case a future
+       counter-mode audit trail wants it. -->
+  <form hx-post="/api/self-order/checkout" hx-target="#selforder-modal" hx-swap="innerHTML" hx-include="#selforder-offline-flag">
+    <button type="submit" class="btn primary payment-picker-method">
+      {{ T "selforder.counter.place_order" }}
+    </button>
+  </form>
+  <button type="button" class="btn secondary"
+          onclick="var m = document.getElementById('selforder-modal'); m.close(); m.innerHTML='';">
+    {{ T "modifiers.cancel" }}
+  </button>
+  <!-- A native <dialog> in its open state makes everything OUTSIDE it
+       inert, so the page-level exit control (self_order_shop.html) is
+       unreachable during checkout — this is its own copy (ut-docs#208
+       review finding), same as self_order_payment_picker.html. -->
+  <a class="selforder-exit" href="/login?next=kiosk" aria-label="{{ T "selforder.exit" }}"><span aria-hidden="true">🔒</span></a>
+</div>

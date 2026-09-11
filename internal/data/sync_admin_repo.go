@@ -398,6 +398,15 @@ var nonAdminTables = map[string]string{
 	"table_claims":        "live table-service lock — ephemeral, re-established on demand, never meant to survive a periodic snapshot",
 	"order_status_events": "live KDS status-change event stream — operational, not admin config",
 	"reset_batches":       "this till's own EOD/Z-report reset marker — sync-adjacent bookkeeping, same family as report_archive",
+	// ut-docs#582: self-order kiosk "pay at counter" orders — per-till
+	// operational state (what THIS till's kiosk is waiting to hand over),
+	// never a sale (no FK to sales, no money columns). Cross-till sync is
+	// an explicit non-goal for v1 (a staff board at each till, same as
+	// order_status_events above), and a primary-wins deleteMissing bundle
+	// would be the wrong shape for it anyway — same held_sales/table_claims
+	// reasoning: a satellite's own in-flight counter order must not be
+	// pruned just because a periodic snapshot from elsewhere didn't carry it.
+	"kiosk_counter_orders": "self-order kiosk pay-at-counter orders — per-till operational state, never a sale, no cross-till sync (v1 non-goal)",
 
 	// Local bookkeeping with no shop-wide meaning.
 	"issue_reports_sent": "dedup record of bug reports already sent FROM this till",

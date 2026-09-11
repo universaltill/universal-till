@@ -195,7 +195,7 @@ test.describe('sale-screen and catalog/variant decimal fields survive typing via
     // save-success auto-close timer) rather than waiting on that timer.
     await closeItemForm(page);
     const row = page.locator('.catalog-row', { hasText: name });
-    await row.locator('td').first().click();
+    await row.click();
     // …and the variants panel is the reopened dialog's Variants tab, not a
     // page-level section any more — so the dialog STAYS open here.
     await page.locator('#item-form-tab-variants').click();

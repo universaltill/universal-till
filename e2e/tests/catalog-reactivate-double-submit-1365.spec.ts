@@ -33,8 +33,9 @@ test.describe('catalog item-form double-submit (ut-docs#1365)', () => {
     const row = page.locator('.catalog-row', { hasText: name });
     await expect(row).toBeVisible();
 
-    // Load it into the edit form (opens the dialog).
-    await row.locator('td').first().click();
+    // Load it into the edit form (opens the dialog). ut-docs#1951: the
+    // row is a single clickable card now, not a table row of cells.
+    await row.click();
     const itemId = await page.locator('#item-id').inputValue();
     expect(itemId).not.toBe('');
     await expect(page.locator('#item-active')).toBeChecked();

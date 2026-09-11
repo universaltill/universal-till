@@ -29,9 +29,10 @@ async function createItem(page: Page, name: string) {
 }
 
 async function openRow(page: Page, name: string) {
-  // A plain cell, not the row's centre — the row-click handler ignores
-  // clicks that land on a `.btn`.
-  await page.locator('#catalog-table .catalog-row', { hasText: name }).first().locator('td').first().click();
+  // ut-docs#1951: the card grid replaced the old <tr>/<td> row with one
+  // clickable .catalog-row.btn-tile <button> — no inner buttons to avoid
+  // landing on any more, so the card itself is the click target now.
+  await page.locator('#catalog-table .catalog-row', { hasText: name }).first().click();
   await expect(page.locator('#item-form-modal')).toBeVisible();
 }
 

@@ -42,10 +42,18 @@ func IsEmbed(r *http.Request) bool {
 // into the DOM, which is worse than just skipping the refresh. Best-effort:
 // silently does nothing on error, same as help_page.go's version.
 //
+// sections is the caller's already-RESOLVED rail (Resolve(locale,
+// amendments), ut-docs#1911) — this package cannot resolve it itself
+// without importing internal/pages/common for the active layout
+// amendments, which internal/pages/catalog (one of this rail's five
+// callers) cannot reach without a cycle; every call site already has both
+// a common.Deps and a request to resolve from, exactly like
+// menu_page.go's own registerMenu does for the Menu slot.
+//
 // No-ops for an inlined embed (see EmbedHeader) — that caller's page draws
 // the rail itself, so a second copy here would be a duplicate DOM id and a
 // visibly doubled section list.
-func WriteRailOOB(w io.Writer, r *http.Request, funcs template.FuncMap, currentHref string) {
+func WriteRailOOB(w io.Writer, r *http.Request, funcs template.FuncMap, currentHref string, sections []Section) {
 	if IsEmbed(r) {
 		return
 	}
@@ -55,7 +63,7 @@ func WriteRailOOB(w io.Writer, r *http.Request, funcs template.FuncMap, currentH
 	}
 	var buf bytes.Buffer
 	if view.Render(&buf, map[string]any{
-		"Sections":    Sections,
+		"Sections":    sections,
 		"CurrentHref": currentHref,
 		"OOB":         true,
 	}) != nil {

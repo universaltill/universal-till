@@ -34,6 +34,14 @@
      be reactivated). -->
 {{ define "modifiers_list" }}
 <div id="modifiers-list">
+  {{/* ut-docs#2046, independent-review finding: a refused mutation (e.g.
+       the detach-guard's last-link refusal) answers through this SAME
+       fragment with .Notice set, rather than a plain http.Error body —
+       app.js's htmx:beforeSwap never force-swaps a non-text/html error
+       response, and there is no #pos-alert fallback outside the sale
+       screen, so that would otherwise be a silent no-op. See
+       handlers.go's renderModifierMutationResult. */}}
+  {{ if .Notice }}<p class="field-error-msg" role="alert">{{ .Notice }}</p>{{ end }}
   {{ if not .Groups }}
   <div class="card">
     <p class="muted">{{ T "modifiers.empty" }}</p>

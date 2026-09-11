@@ -273,6 +273,12 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		// ADR-0088: the layout amendments in force, read once here and
 		// again on every ReloadPlugins — never per render.
 		MenuAmendments: common.BuildMenuAmendments(pm, common.RestoredMenuKeys(ctx, setStore)),
+		// ADR-0088 / ut-docs#1911: the Items-slot twin, same read-once-then-
+		// on-reload lifecycle.
+		ItemsAmendments: common.BuildItemsAmendments(pm),
+		// ADR-0088 Decision J / ut-docs#1912: the rail-slot twin, same
+		// lifecycle; handed to httpx just below so nav.html can read it.
+		RailAmendments: common.BuildRailAmendments(pm),
 		Engine:         engine,
 		KioskEngine:    kioskEngine,
 		BtnStore:       btnStore,
@@ -284,6 +290,12 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		WindowCtl:   windowCtl,
 		Shell:       shellChannel,
 	}
+	// ADR-0088 Decision J / ut-docs#1912: nav.html is a shared partial with
+	// no per-page data of its own, so its railEntries template func reads
+	// the rail-slot amendments through this PluginMu-locked accessor rather
+	// than a page handler threading them in — internal/httpx can't import
+	// common (common imports httpx), so the accessor is handed over here.
+	httpx.InitRailAmendments(dp.RailAmendmentsSnapshot)
 
 	// ut-docs#2001 (follow-up from the ut-docs#1902 independent review,
 	// finding 4): builtinlayouts.Sync was previously only called from the
@@ -412,6 +424,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	registerEODAPI(mux, dp)
 	registerReportArchiveAPI(mux, dp) // ADR-0040 card 1: report retention mode + archive export
 	registerImport(mux, dp)
+	registerVoucherImport(mux, dp) // opening voucher-balance CSV import (ut-docs#1834)
 	registerReceiptDesigner(mux, dp)
 	registerPluginSettings(mux, dp)
 	registerTaxCodes(mux, dp) // ut-docs#259: tax-code management UI
@@ -477,8 +490,9 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	catalog.Register(mux, dp)
 	registerBasket(mux, dp)
 	registerJournal(mux, dp)
-	registerOrderStatus(mux, dp)   // order lifecycle status one-tap surface (ut-docs#526)
-	registerOrderTracking(mux, dp) // anonymous customer tracking page /o/{token}, auth-exempt (ut-docs#527)
+	registerOrderStatus(mux, dp)            // order lifecycle status one-tap surface (ut-docs#526)
+	registerKioskCounterOrdersPage(mux, dp) // staff "pay at counter" board (ut-docs#582), normal authenticated route
+	registerOrderTracking(mux, dp)          // anonymous customer tracking page /o/{token}, auth-exempt (ut-docs#527)
 	registerHealth(mux)
 	registerWindowState(mux, dp) // desktop shell reads this pre-login at launch (ut-docs#611)
 	registerExternalProxy(mux, dp)

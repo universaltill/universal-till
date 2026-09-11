@@ -60,20 +60,8 @@ var UpdateInstallBridge = selfupdate.InstallBridgeAvailableNow
 var UpdateAvailable = func() bool { return updates.Current().Available }
 
 var baseFuncs = template.FuncMap{
-	"div100":    func(cents int64) float64 { return float64(cents) / 100.0 },
-	"bpPercent": func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
-	// taxCodeName / categoryName / brandName: safe defaults so any renderer
-	// that pulls in catalog_table.html/catalog_row.html without caring
-	// about tax codes or lookups (e.g. a test exercising an unrelated part
-	// of the page) still parses — Go's html/template requires every
-	// function a template text references to be registered at Parse time,
-	// whether or not that branch executes. The catalog package's own
-	// render call sites (ut-docs#1178, ut-docs#1430) override these with
-	// the real ID→name lookups via FuncsFor(locale)'s returned map before
-	// rendering.
-	"taxCodeName":     func(*string) string { return "" },
-	"categoryName":    func(*string) string { return "" },
-	"brandName":       func(*string) string { return "" },
+	"div100":          func(cents int64) float64 { return float64(cents) / 100.0 },
+	"bpPercent":       func(bp int64) string { return fmt.Sprintf("%.2f%%", float64(bp)/100.0) },
 	"appversion":      func() string { return buildinfo.Version },
 	"updateavailable": func() bool { return UpdateAvailable() },
 	"latestversion":   func() string { return updates.Current().Latest },
@@ -138,6 +126,12 @@ var baseFuncs = template.FuncMap{
 	// claimed by another topic (the settings cards). Locale-less fallback for
 	// the same reason as helpHref above; FuncsFor overrides it locale-bound.
 	"helpLink": func(id string) template.HTML { return helpLinkHTML(id, DefaultLocale()) },
+	// {{ range railEntries }} — the nav rail's primary links, resolved from
+	// uislot.CoreRail + the active `layout` plugins' rail-slot amendments
+	// (ADR-0088, ut-docs#1912; rail.go). Locale-less fallback for the same
+	// reason as helpHref/helpLink above (fragment renderers parse nav.html
+	// with baseFuncs only); FuncsFor overrides it locale-bound.
+	"railEntries": func() []RailEntry { return railEntriesFor(DefaultLocale()) },
 	// {{ icon "lock" }} — inline SVG rail icons (icons.go, ut-docs#1423).
 	"icon": iconHTML,
 	// {{ dict "k" v ... }} — per-call parameters for a shared partial
@@ -818,6 +812,17 @@ func FuncsFor(locale string) template.FuncMap {
 	// Locale-bound override of the baseFuncs fallback: the section "?" label
 	// translates with the page it sits on.
 	funcs["helpLink"] = func(id string) template.HTML { return helpLinkHTML(id, locale) }
+	// Locale-bound override of the baseFuncs fallback: a `layout` plugin's
+	// re-label falls back to the core label per THIS request's locale
+	// (ADR-0088 Decision G). The rail is the one per-request value
+	// nav.html needs besides helpHref — bound here rather than beside
+	// helpHref in withHelpHref because, unlike the "?" (which needs
+	// r.URL.Path), it depends only on the locale FuncsFor already binds
+	// and on process-wide plugin state (railAmendmentsSource): every
+	// whole-page render path (Render, RenderContentFragment, RenderWith,
+	// RenderError) builds its funcs through FuncsFor, so every page that
+	// renders nav gets it.
+	funcs["railEntries"] = func() []RailEntry { return railEntriesFor(locale) }
 	// tenderLabel translates the sentinel values pos.deriveTenderType can
 	// itself produce ("unknown" — no payments at all, e.g. a zero-marginal-
 	// net partial refund, ut-docs#1579; "split" — more than one distinct
