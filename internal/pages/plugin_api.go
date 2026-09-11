@@ -410,18 +410,21 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 			http.Error(w, "plugin ID is required", http.StatusBadRequest)
 			return
 		}
-		// fiscal.sign.ask is an EXCLUSIVE extension point (ADR-0041
-		// Decision B, ADR-0044; ut-docs#675): only one TSE provider is
-		// meaningfully active on a till at once, so enabling a second
-		// plugin that also declares it while another answerer is active is
-		// refused HERE, at install/enable time, naming the owning plugin —
-		// never at tender time, mid-sale. The same check also runs at
-		// manifest-persist time (plugins.PersistManifest), which install
-		// and update go through — this handler covers re-enabling an
-		// installed-but-disabled plugin. NOTE: tax.rate.ask is equally
-		// `exclusive` per ADR-0041 but has NO equivalent enforcement today;
-		// retrofitting it is deliberately out of this card's scope (it
-		// predates the mechanism) and needs its own card.
+		// The fiscal signing group — fiscal.sign.ask, fiscal.sign.start,
+		// fiscal.sign.reconcile.ask (plugins.FiscalSignExclusiveEvents) —
+		// is ONE EXCLUSIVE extension point (ADR-0041 Decision B, ADR-0044;
+		// ut-docs#675, widened to the three-event group by ADR-0077 D3,
+		// ut-docs#1520): only one TSE provider is meaningfully active on a
+		// till at once, so enabling a second plugin that declares ANY
+		// member while another plugin holds ANY member is refused HERE, at
+		// install/enable time, naming the owning plugin — never at tender
+		// time, mid-sale. The same check also runs at manifest-persist time
+		// (plugins.PersistManifest), which install and update go through —
+		// this handler covers re-enabling an installed-but-disabled plugin.
+		// NOTE: tax.rate.ask is equally `exclusive` per ADR-0041 but has NO
+		// equivalent enforcement today; retrofitting it is deliberately out
+		// of this card's scope (it predates the mechanism) and needs its own
+		// card.
 		//
 		// FAIL CLOSED on a DB error (review of ut-docs#675, B2): on a
 		// compliance-relevant exclusive point, "couldn't verify ownership"
@@ -429,24 +432,31 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 		// skip the check and activate a possibly-second answerer.
 		if active {
 			pluginRepo := data.NewPluginRepo(d.Db)
-			declares, hookErr := pluginRepo.HasActiveHook(ctx, pluginID, fiscalSignAskEvent)
-			if hookErr != nil {
-				w.Header().Set("Content-Type", "application/json")
-				w.WriteHeader(http.StatusInternalServerError)
-				json.NewEncoder(w).Encode(map[string]interface{}{
-					"data":  nil,
-					"error": fmt.Sprintf("cannot enable %s: exclusivity check for %s failed: %v", pluginID, fiscalSignAskEvent, hookErr),
-				})
-				return
+			declared := ""
+			for _, ev := range plugins.FiscalSignExclusiveEvents {
+				declares, hookErr := pluginRepo.HasActiveHook(ctx, pluginID, ev)
+				if hookErr != nil {
+					w.Header().Set("Content-Type", "application/json")
+					w.WriteHeader(http.StatusInternalServerError)
+					json.NewEncoder(w).Encode(map[string]interface{}{
+						"data":  nil,
+						"error": fmt.Sprintf("cannot enable %s: exclusivity check for %s failed: %v", pluginID, ev, hookErr),
+					})
+					return
+				}
+				if declares {
+					declared = ev
+					break
+				}
 			}
-			if declares {
-				ownerID, ownerName, found, ownerErr := pluginRepo.ActiveHookOwner(ctx, nil, fiscalSignAskEvent, pluginID)
+			if declared != "" {
+				ownerID, ownerName, heldEvent, found, ownerErr := plugins.FiscalSignExclusiveOwner(ctx, pluginRepo, nil, pluginID)
 				if ownerErr != nil {
 					w.Header().Set("Content-Type", "application/json")
 					w.WriteHeader(http.StatusInternalServerError)
 					json.NewEncoder(w).Encode(map[string]interface{}{
 						"data":  nil,
-						"error": fmt.Sprintf("cannot enable %s: exclusivity check for %s failed: %v", pluginID, fiscalSignAskEvent, ownerErr),
+						"error": fmt.Sprintf("cannot enable %s: exclusivity check for %s failed: %v", pluginID, declared, ownerErr),
 					})
 					return
 				}
@@ -455,8 +465,8 @@ func setPluginActiveHandler(d *common.Deps, active bool, verb string) http.Handl
 					w.WriteHeader(http.StatusConflict)
 					json.NewEncoder(w).Encode(map[string]interface{}{
 						"data": nil,
-						"error": fmt.Sprintf("cannot enable %s: %s (%s) is already the active fiscal signing provider — %s is an exclusive extension point; disable the active provider first",
-							pluginID, ownerName, ownerID, fiscalSignAskEvent),
+						"error": fmt.Sprintf("cannot enable %s: %s (%s) is already the active fiscal signing provider (holds %s) — %s is an exclusive extension point, one owner across %s; disable the active provider first",
+							pluginID, ownerName, ownerID, heldEvent, declared, strings.Join(plugins.FiscalSignExclusiveEvents, ", ")),
 					})
 					return
 				}
