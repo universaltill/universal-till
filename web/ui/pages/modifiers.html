@@ -54,7 +54,18 @@
   {{ if not .Groups }}
   <div class="card">
     <p class="muted">{{ T "modifiers.empty" }}</p>
-    <a class="btn secondary" href="/catalog">{{ T "modifiers.empty_cta" }}</a>
+    <!-- ut-docs#2090 review finding: this was the SECOND way back to
+         Catalog on this page (see the page-head link's own comment above
+         for the full /catalog-vs-/items reasoning) and got missed in the
+         first pass — for a brand-new shop with zero groups this empty
+         card is the ONLY, most prominent control on the page, so leaving
+         it pointed at bare /catalog reproduced the exact reported bug.
+         .InItemsShell is absent (nil -> false) on the mutation re-render
+         path (handlers.go's renderModifierMutationResult never sets it),
+         which safely degrades to a plain /items link there — never stamp
+         it unconditionally true for that path, see that handler's own
+         comment. -->
+    <a class="btn secondary" href="/items"{{ if .InItemsShell }} hx-get="/catalog" hx-target="#items-panel" hx-push-url="true"{{ end }}>{{ T "modifiers.empty_cta" }}</a>
   </div>
   {{ else }}
   <!-- ut-docs#1899, independent-review finding: this is a plain browse list

@@ -319,6 +319,16 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// be reactivated). Used both for the page's own initial load and for a
 	// mutation whose originating form targets #modifiers-list (see
 	// renderModifierMutationResult below).
+	//
+	// ut-docs#2090 review finding: deliberately NO "InItemsShell" key here.
+	// A mutation POSTed from #modifiers-list always carries HX-Request:true
+	// (it's an htmx form submit), so httpx.IsFragmentSwap(r) would read
+	// true here even on a standalone, non-/items-shell /modifiers page —
+	// the wrong signal, since this response never targets #items-panel,
+	// only #modifiers-list. modifiers.html's own templates read
+	// .InItemsShell on a bare map[string]any as nil -> false when the key
+	// is absent, which is exactly the safe fallback (plain href="/items",
+	// no hx- attributes) — don't "fix" that by adding the key here.
 	renderModifiersList := func(w http.ResponseWriter, r *http.Request, notice string) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		groups, err := modRepo.ListAllShopModifierGroups(r.Context())

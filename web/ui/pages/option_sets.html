@@ -2,8 +2,13 @@
 <div class="page-head">
   <h1>{{ T "catalog.option_sets.title" }}</h1>
   <!-- ut-docs#2090: same /items-not-bare-/catalog back-link fix as
-       modifiers.html — see that file's comment for the full reasoning. -->
-  <a class="btn secondary" href="/items"{{ if .InItemsShell }} hx-get="/catalog" hx-target="#items-panel" hx-push-url="true"{{ end }}>{{ T "nav.catalog" }}</a>
+       modifiers.html — see that file's comment for the full reasoning.
+       Review finding: also added the "←" every other back-link on this
+       row of sibling pages (modifiers.html/tax_codes.html/import.html)
+       already carries — this was the one reading as a forward link
+       instead of a back affordance, pre-existing but on the exact line
+       this diff already touches. -->
+  <a class="btn secondary" href="/items"{{ if .InItemsShell }} hx-get="/catalog" hx-target="#items-panel" hx-push-url="true"{{ end }}>← {{ T "nav.catalog" }}</a>
 </div>
 
 <p class="muted">{{ T "catalog.option_sets.subtitle" }}</p>

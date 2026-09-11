@@ -14,7 +14,7 @@ import { watchConsole } from './helpers';
 // hx-push-url as the rail's own rows, conditioned on being rendered inside
 // the shell (.InItemsShell). Import and Tax codes are NOT rail sections;
 // fixing those to also stay in-panel is a separate, larger follow-up
-// (ut-docs#2092) — out of scope here. This spec locks in what #2090 fixes
+// (ut-docs#2095) — out of scope here. This spec locks in what #2090 fixes
 // now: the rail survives activating Modifiers/Option sets from the /items
 // shell, and each destination's back-link returns to the shell with the
 // rail (and Catalog) visible again, without a full page reload.
@@ -61,7 +61,7 @@ test.describe('/items shell: catalog top actions keep the rail (ut-docs#2090)', 
     await expect(page.locator('#items-rail')).toBeVisible();
     await expect(page.locator('.items-row.is-current')).toHaveAttribute('href', '/catalog/option-sets');
 
-    await page.locator('#items-panel .page-head a').last().click();
+    await page.locator('#items-panel .page-head a', { hasText: '←' }).click();
     await expect(page).toHaveURL(/\/catalog$/);
     await expect(page.locator('#items-rail')).toBeVisible();
     assertClean();
