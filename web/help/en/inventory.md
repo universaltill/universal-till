@@ -3,23 +3,58 @@ id: inventory
 title: Stock & inventory
 section: Setting up your shop
 order: 120
-summary: Tracks on-hand quantities per item and variant.
+summary: Tracks on-hand quantities per item and variant, and what a sale, refund or delivery does to them.
 routes: [/inventory, /locations, /ui/inventory/stock-table]
 # /locations is never screenshotted (docs-shots only captures routes[0]) —
 # accepted gap, see e2e/tests-docs/lib.js's routedTopics() comment (ut-docs#900).
-keywords: [stock, goods, receipt, locations, count]
+keywords: [stock, goods, receipt, delivery, adjustment, override, return, locations, transfer, low stock, reorder, count]
 ---
 
 # Stock & inventory
 
-Tracks on-hand quantities per item and variant. Sales reduce stock automatically; goods-in and adjustments record deliveries and corrections.
+Tracks on-hand quantities per item and variant, at each of your stock locations. Sales reduce stock automatically; goods-in, adjustments and refunds record deliveries, corrections and returns; a low-stock alert flags anything running out.
 
 ## How to use it
 
-1. Open Inventory to see current stock levels.
-2. Tap a stock row — or the **+** button beside the search box — to open the receive/adjust popup, prefilled with that item. Record a delivery with goods-in; use an adjustment for waste, breakage or count corrections — enter a negative quantity to remove stock (on a touch till, tap the on-screen keyboard's "-" key first).
-3. The inventory page predicts how many days of stock remain and suggests how much to order; the reports page carries a low-stock alert chip too.
-4. Stock locations (Locations, manager only) are shop-wide and always managed from the **main till**: on a joined till, creating, renaming or deactivating one shows a message pointing you back to the main till instead.
+1. Open Inventory to see current stock levels — one row per item (or variant) and stock location.
+2. Tap a stock row — or the **+** button beside the search box — to open the receive/adjust popup, prefilled with that row's item and location. Record a delivery with goods-in; use an adjustment for waste, breakage or count corrections — enter a negative quantity to remove stock (on a touch till, tap the on-screen keyboard's "-" key first). Check the **Location** field before saving: it always targets the location shown, not "wherever this item normally sits" — saving against the wrong location creates a brand-new stock row for that item there instead of changing the row you meant, and the two then sit side by side in the table under the same item name.
+3. The inventory page predicts how many days of stock remain and suggests how much to order, from each item's last 28 days of sales — see **Low-stock alerts** below for exactly what this needs to work. The reports page carries the same alert as a chip too.
+4. Stock locations are shop-wide and always managed from the **main till** — see **Stock locations** below for creating, activating/deactivating and moving stock between them.
+
+## Manager override — negative stock
+
+The **Manager override — negative stock** panel is a paper trail, not a stock adjustment. Filling in an item, its location, the quantity you found and the quantity you're authorizing, a reason, and — for a cashier — a manager PIN writes an entry to the audit log recording that a manager approved letting this item run negative here, and why; a manager or admin can authorize their own without a PIN. It does **not** itself change the item's stock number, and it does not unblock a sale that's currently being refused for insufficient stock. To actually change how much stock is on hand, use the receive/adjust popup above instead — an adjustment there needs no manager PIN and is never blocked by low or negative stock. Use this panel afterwards, or alongside it, to put an authorized reason on record.
+
+## Processing a return from here
+
+The **Process a return** panel takes a receipt number and a reason, and is meant to return an entire completed sale. As it stands, though, pressing **Process Return** always refuses with "at least one line required" — the panel doesn't yet let you pick which lines to return, so the request never actually carries anything to return. Until that's finished, use the full **Refund** screen instead (Journal → sale history → Refund) — it lets you pick which lines and how much of each to give back, and puts the stock back correctly; see **Selling & checkout** for the exact steps.
+
+## How a sale and a refund change stock
+
+Completing a sale reduces the stock row for each line's item, at the location the sale was rung up against, by the quantity sold. If that would take an item below zero and neither **Settings → Stock → "Sell items without tracking stock"** nor that item's own **Not stock-tracked** flag is switched on, the sale is refused outright with "Not enough stock to complete this sale" — the basket is left exactly as it was so you can adjust it (remove or reduce the line, or receive more stock first) and try again.
+
+A refund taken from the **Refund** screen (Journal → sale history) adds the returned quantity straight back to the same stock row the original sale took it from, the moment the refund completes — see **Selling & checkout** for the refund steps themselves. Restocking a refund is always allowed, even for an item that's since gone negative.
+
+## Low-stock alerts
+
+Two separate signals warn you about running low, and only one needs any setup:
+
+- **Days left**, in the stock table's own column, and the ⚠ chip in this page's header and on the Reports page — works out of the box, purely from each item's last 28 days of sales against how much is left: a fast seller with little stock warns; an item with no sales history simply shows "—", never a guess. Setting an item's **Lead time (days)** on its Catalog **Variants** tab sharpens both the warning window and the suggested order quantity to how long that item actually takes to restock, instead of a flat default.
+- **Reorder at**, in the stock table, and the **Low Stock** list further down this page — both are driven by a reorder level set per item, which this build has no screen to set from the till yet: on a fresh shop neither one has anything to show ("—" in Reorder at, "No low stock items" in the list) until that's added. Days left above works today regardless.
+
+## Stock locations
+
+Locations (manager only) are the separate physical places you hold stock — a shop floor, a back room, a second unit's warehouse. Every stock number in Inventory belongs to exactly one location, so the same item can show more than one row: its own quantity at each place you stock it.
+
+1. Open **Locations** from the menu (manager only) to see every location and whether it's active.
+2. To add one, type its name under **New location** and press **Create location** — it appears in the list immediately, active by default. A name that's already used is refused.
+3. To rename one, edit the name in its own row and press **Rename**.
+4. To retire one, press **Deactivate** — it drops off the receive/adjust dialog's Location picker so nothing new gets recorded against it, but its history stays intact. A location that has ever had any inventory, stock movement or register is refused rather than deactivated, with no way to clear that history away — which covers almost any location that's actually been used, so deactivate one while it's still new (before receiving or adjusting anything into it) if you think you might want to retire it later. A shop must always keep at least one active location; deactivating the last one is refused the same way. **Activate** brings a retired location back, and it reappears in the receive/adjust picker immediately.
+5. Creating, renaming or deactivating a location only works from the **main till** — on a joined till, any of the three shows a message pointing you back to the main till instead of taking effect locally.
+
+## Moving stock between locations
+
+There's no separate "transfer" button — move stock by recording two ordinary movements against the same item from the receive/adjust popup on this page: an **adjustment** with a negative quantity at the location you're moving stock out of, and a **stock receipt** (or another adjustment) with a positive quantity, same item, at the location you're moving it into. Recording only one side leaves the two locations' totals out of step with what's physically happened, so do both before moving on.
 
 ## If you do not track stock at all
 
