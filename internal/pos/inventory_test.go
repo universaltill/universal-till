@@ -408,6 +408,14 @@ CREATE TABLE stock_locations (
   name TEXT NOT NULL
 );
 
+CREATE TABLE item_variants (
+  id TEXT PRIMARY KEY,
+  item_id TEXT NOT NULL,
+  sku TEXT UNIQUE,
+  name TEXT NOT NULL,
+  is_active INTEGER NOT NULL DEFAULT 1
+);
+
 CREATE TABLE inventory (
   id TEXT PRIMARY KEY,
   item_id TEXT,
