@@ -127,9 +127,12 @@ func renderHelpPage(w http.ResponseWriter, r *http.Request, d *common.Deps, topi
 	// response back so it can replace the whole tracked history element,
 	// not the bare reading-panel fragment an ordinary in-page topic swap
 	// gets. Checking HX-Request alone (ut-docs#433) sent the fragment here
-	// too, leaving the restored page broken.
-	isHistoryRestore := strings.EqualFold(r.Header.Get("HX-History-Restore-Request"), "true")
-	if strings.EqualFold(r.Header.Get("HX-Request"), "true") && !isHistoryRestore {
+	// too, leaving the restored page broken. This used to be its own inline
+	// copy of that check; since ut-docs#2091 it calls httpx.IsFragmentSwap
+	// directly instead — same logic, plus it sets "Vary: HX-Request" on w so
+	// a browser/WebView cache never keys a fragment and the full page under
+	// the same URL (ut-docs#2091's actual reported bug).
+	if httpx.IsFragmentSwap(w, r) {
 		httpx.RenderPartial("ui/partials/help_topic.html", data)(w, r)
 		// Out-of-band swap of the tree alongside the topic panel, so the
 		// active-topic highlight follows this click instead of staying

@@ -976,22 +976,37 @@ func RenderContentFragment(tplPath string, data any) http.HandlerFunc {
 }
 
 // IsFragmentSwap reports whether r is an ordinary in-page htmx navigation —
-// "HX-Request: true" and NOT ALSO "HX-History-Restore-Request: true".
+// "HX-Request: true" and NOT ALSO "HX-History-Restore-Request: true" — and,
+// as a side effect on every call regardless of the result, sets
+// "Vary: HX-Request" on w.
 //
-// The second header matters: htmx caps its client-side history cache at 10
-// snapshots, so restoring an older bfcache'd URL makes htmx re-request it
-// itself with BOTH headers set, expecting the FULL page back (to replace
-// the whole tracked history element) rather than a bare swappable fragment
-// — checking HX-Request alone sent the fragment there too and left the
-// restored page broken (see renderHelpPage's original instance of this
-// exact check, ut-docs#433, for the full story). Shared here so every
-// handler that serves both a full standalone page and an htmx fragment of
-// the same content at the same route applies the identical rule — /items'
-// five section destinations (ut-docs#1950) need it five times over;
-// renderHelpPage itself keeps its own inline copy rather than being
-// refactored onto this helper, so as not to touch its own already-covered
-// behavior as a side effect of this card.
-func IsFragmentSwap(r *http.Request) bool {
+// The Vary header matters because the two branches this decides between
+// return different bodies for the SAME URL: a fragment for an htmx
+// navigation, a complete standalone page otherwise. With no Vary header, a
+// browser/WebView HTTP cache keys purely on the URL and can serve either
+// body to the other kind of request — concretely, a rail swap that fetches
+// a page as a fragment and pushes its URL into history, followed by a
+// plain navigation back to that URL (e.g. the Android hardware Back
+// button), can be served the cached fragment: an unstyled page with no
+// <head> (ut-docs#2091). Setting it here, at the one place every dual-mode
+// handler already calls to make this decision, means a future dual-mode
+// handler inherits the fix automatically instead of having to remember it
+// — which is also why renderHelpPage's own former inline copy of this
+// exact check (ut-docs#433) was retired in favor of calling this helper
+// directly as part of ut-docs#2091, rather than keeping a second place
+// this rule could go stale.
+//
+// The HX-History-Restore-Request exclusion: htmx caps its client-side
+// history cache at 10 snapshots, so restoring an older bfcache'd URL makes
+// htmx re-request it itself with BOTH headers set, expecting the FULL page
+// back (to replace the whole tracked history element) rather than a bare
+// swappable fragment — checking HX-Request alone sent the fragment there
+// too and left the restored page broken. Shared here so every handler that
+// serves both a full standalone page and an htmx fragment of the same
+// content at the same route applies the identical rule — /items' five
+// section destinations (ut-docs#1950) need it five times over.
+func IsFragmentSwap(w http.ResponseWriter, r *http.Request) bool {
+	w.Header().Set("Vary", "HX-Request")
 	if strings.EqualFold(r.Header.Get("HX-History-Restore-Request"), "true") {
 		return false
 	}
