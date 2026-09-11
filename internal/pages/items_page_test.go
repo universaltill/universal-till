@@ -116,6 +116,36 @@ func TestItemsPage_NoSectionIsDisabled(t *testing.T) {
 	}
 }
 
+// ut-docs#2114: on a FIRST-EVER visit to /items?lang=fa (no ut_lang cookie
+// set yet), the rail resolved locale from the query param directly, but the
+// embedded panel is rendered via a sub-request (embedItemsSection) that
+// never saw ?lang= and had no cookie to fall back to either — it silently
+// rendered in the default locale (English) instead of inheriting fa from
+// the outer request's already-resolved locale.
+func TestItemsPage_FirstVisitWithLangQueryRendersPanelInThatLocaleToo(t *testing.T) {
+	mux, dp := newMenuPageTestDeps(t, baseMenu)
+	catalog.Register(mux, dp)
+	registerItemsPage(mux, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/items?lang=fa", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+
+	panel := body[strings.Index(body, `id="items-panel"`):]
+	// catalog.add_item_btn: en="Add item", fa="افزودن کالا" — the panel's
+	// own top-action-row button, embedded via embedItemsSection.
+	if !strings.Contains(panel, "افزودن کالا") {
+		t.Errorf("expected the panel's Add-item button in Persian on a first ?lang=fa visit, got panel: %s", panel)
+	}
+	if strings.Contains(panel, "Add item") {
+		t.Errorf("panel rendered in English despite ?lang=fa on first visit, got panel: %s", panel)
+	}
+}
+
 func TestMenuPage_TopLevelTileIsItemsNotCatalogOrInventory(t *testing.T) {
 	mux, _ := newMenuPageTestDeps(t, baseMenu)
 	req := httptest.NewRequest(http.MethodGet, "/menu", nil)
