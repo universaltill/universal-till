@@ -574,6 +574,25 @@ var kioskMode atomic.Value // bool
 // targets, no text selection). Driven by UT_KIOSK=1.
 func InitKiosk(on bool) { kioskMode.Store(on) }
 
+// selfOrderMode backs the "selforder" template func — mirrors kioskMode
+// above exactly, but for a different axis: the per-till display.mode
+// setting (ADR-0020), not the UT_KIOSK window-chrome flag. ut-docs#2099
+// (the implementation half of ut-docs#1999, coding-standards.md §10) reads
+// it so a shared partial (record_dialog.html) can withhold the status/
+// lock/exit affordance for customer containment while a device is in
+// self-order kiosk mode, without every page threading the flag through its
+// own template dict by hand. Published at boot from the persisted
+// display.mode (pages.Init) and live-updated the moment an operator flips
+// it (settings_page.go's POST /api/settings/display-mode) — same two call
+// sites InitOSKMode/oskModeVal already follow for the on-screen-keyboard
+// mode.
+var selfOrderMode atomic.Value // bool
+
+// InitSelfOrderMode publishes whether this till is currently in self-order
+// kiosk mode (display.mode="self_order") to templates via the "selforder"
+// func below.
+func InitSelfOrderMode(on bool) { selfOrderMode.Store(on) }
+
 // assetVersion returns a cache-busting version for a web asset: the file's
 // mtime, so browsers pick up redesigns without a manual hard refresh.
 // imgVersion appends a cache-busting mtime to a /public/... URL so replacing
@@ -752,6 +771,21 @@ func FuncsFor(locale string) template.FuncMap {
 	funcs["imgExists"] = imgExists
 	funcs["kiosk"] = func() bool {
 		if v := kioskMode.Load(); v != nil {
+			b, _ := v.(bool)
+			return b
+		}
+		return false
+	}
+	// ut-docs#2099: whether THIS device is currently in self-order kiosk
+	// mode (display.mode="self_order", ADR-0020) — the axis record_dialog.html
+	// checks to withhold its status/lock/exit affordance (coding-standards.md
+	// §10: customer containment is the one place those three must NOT be
+	// reachable). Same shape as "kiosk" just above; a different underlying
+	// atomic (selfOrderMode, not kioskMode) since the two are unrelated
+	// settings that happen to share the word "kiosk" — see selfOrderMode's
+	// own doc comment.
+	funcs["selforder"] = func() bool {
+		if v := selfOrderMode.Load(); v != nil {
 			b, _ := v.(bool)
 			return b
 		}

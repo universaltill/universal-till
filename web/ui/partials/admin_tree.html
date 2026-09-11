@@ -1,15 +1,23 @@
 {{/*
-  /admin tree (ut-docs#2008): the destination list the Menu launcher's single
-  gated "Administration" tile opens, replacing #1959's group heading on the
-  flat /menu grid. Deliberately NOT items_rail.html's two-pane master-detail
-  (hx-get/hx-target panel swap) -- each of these six destinations is already
-  its own full standalone page, so a row here is plain navigation: a real
-  <a href>, no htmx. Row markup/classes are still items_rail.html's own
-  (.items-row/.items-text/.items-name, app.css) -- same RTL-safe logical
-  properties, same touch-target floor (raised to the product's documented
-  46px floor in app.css's own .admin-tree override, since these rows are
-  name-only where
-  items_rail.html's own rows lean on a second subtitle line for that floor).
+  /admin tree (ut-docs#2008, converted to the SAME two-pane master-detail
+  shell /items uses by ut-docs#2116 — mirrors items_rail.html exactly):
+  each of the six destinations is still its own full standalone page (direct
+  navigation/bookmarks keep working unchanged), but a wide-enough viewport
+  now swaps the selected destination's own content into #admin-panel via
+  htmx instead of a plain full-page navigation. Row markup/classes are still
+  items_rail.html's own (.items-row/.items-text/.items-name, app.css) —
+  same RTL-safe logical properties, same touch-target floor (raised to the
+  product's documented 46px floor in app.css's own .admin-tree override,
+  since these rows are name-only where items_rail.html's own rows lean on a
+  second subtitle line for that floor).
+
+  id="admin-tree" is what hx-swap-oob="true" matches against the copy
+  already in the DOM — sent again as an out-of-band swap alongside EVERY ONE
+  of the tree's six destinations' own htmx fragment response (internal/
+  pages/admin_page.go's writeAdminTreeOOB, called from each of those six
+  handlers) so the active-node highlight follows the click regardless of
+  which handler answered it, the same mechanism items_rail.html/help_nav.html
+  already use.
 
   .Groups is []adminGroup (internal/pages/admin_page.go): only the domain
   clusters that ended up with at least one visible entry after
@@ -17,14 +25,17 @@
   template, so no "no entries" branch is needed here.
 */}}
 {{ define "admin_tree" }}
-<div class="admin-tree">
+<div class="admin-tree" id="admin-tree" {{ if .OOB }}hx-swap-oob="true"{{ end }}>
   {{ range .Groups }}
   <section class="admin-group">
     <h2>{{ T .HeadingKey }}</h2>
     <ul class="admin-tree-list">
       {{ range .Entries }}
       <li>
-        <a class="items-row" href="{{ .Href }}">
+        <a class="items-row{{ if eq .Href $.CurrentHref }} is-current{{ end }}"
+           href="{{ .Href }}"
+           hx-get="{{ .Href }}" hx-target="#admin-panel" hx-push-url="true"
+           {{ if eq .Href $.CurrentHref }}aria-current="page"{{ end }}>
           <span class="items-text">
             <span class="items-name">{{ T .LabelKey }}</span>
           </span>
