@@ -145,7 +145,7 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 				AtFloor:        c.ArchiveMinDays == data.GlobalArchiveMinDays,
 			})
 		}
-		httpx.Render("ui/pages/country_settings.html", map[string]any{
+		countrySettingsData := map[string]any{
 			"title":          "Country settings",
 			"theme":          st.Theme,
 			"menuItems":      d.MenuSnapshot(),
@@ -154,7 +154,20 @@ func registerCountrySettings(mux *http.ServeMux, d *common.Deps) {
 			"errKey":         errKey,
 			"showAll":        showAll,
 			"countryUnknown": countryUnknown,
-		})(w, r)
+		}
+		// ut-docs#2116: /country-settings is one of the /admin tree's six
+		// destinations -- an htmx request from that panel (NOT a stale
+		// history restore, see httpx.IsFragmentSwap) gets just the
+		// "content" block plus an out-of-band refresh of the tree so its
+		// is-current highlight follows the click; a plain browser GET
+		// (deep link, or the redirect a mutation falls back to) still gets
+		// the exact same full standalone page as before this card.
+		if httpx.IsFragmentSwap(w, r) {
+			httpx.RenderContentFragment("ui/pages/country_settings.html", countrySettingsData)(w, r)
+			writeAdminTreeOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/country-settings", adminGroupsFor(visibleAdminEntries(d, r)))
+			return
+		}
+		httpx.Render("ui/pages/country_settings.html", countrySettingsData)(w, r)
 	}
 
 	mux.HandleFunc("GET /country-settings", func(w http.ResponseWriter, r *http.Request) {

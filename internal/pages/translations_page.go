@@ -237,13 +237,26 @@ func registerTranslations(mux *http.ServeMux, d *common.Deps, i18n *config.I18n)
 		if editLocale == "" {
 			editLocale = httpx.ResolveLocale(w, r)
 		}
-		httpx.Render("ui/pages/translations.html", map[string]any{
+		translationsData := map[string]any{
 			"title":      "Translations",
 			"theme":      d.CurrentState().Theme,
 			"menuItems":  d.MenuSnapshot(),
 			"editLocale": editLocale,
 			"locales":    i18n.Available(),
-		})(w, r)
+		}
+		// ut-docs#2116: /translations is one of the /admin tree's six
+		// destinations -- an htmx request from that panel (NOT a stale
+		// history restore, see httpx.IsFragmentSwap) gets just the
+		// "content" block plus an out-of-band refresh of the tree so its
+		// is-current highlight follows the click; a plain browser GET
+		// (deep link) still gets the exact same full standalone page as
+		// before this card.
+		if httpx.IsFragmentSwap(w, r) {
+			httpx.RenderContentFragment("ui/pages/translations.html", translationsData)(w, r)
+			writeAdminTreeOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/translations", adminGroupsFor(visibleAdminEntries(d, r)))
+			return
+		}
+		httpx.Render("ui/pages/translations.html", translationsData)(w, r)
 	})
 
 	mux.HandleFunc("GET /ui/translations-table", func(w http.ResponseWriter, r *http.Request) {

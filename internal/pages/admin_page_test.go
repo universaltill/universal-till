@@ -98,6 +98,18 @@ func getAdmin(t *testing.T, mux *http.ServeMux, u *auth.User) *httptest.Response
 	return rec
 }
 
+// newAdminPageTestDepsWithLocations is newAdminPageTestDeps plus
+// registerLocations on the SAME mux — needed for the deep-link/arrival test
+// below, which asserts the panel actually embeds a real destination's own
+// content (not just admin_page.go's own fallback error card for an
+// unregistered route).
+func newAdminPageTestDepsWithLocations(t *testing.T) (*http.ServeMux, *common.Deps) {
+	t.Helper()
+	mux, dp := newAdminPageTestDeps(t)
+	registerLocations(mux, dp)
+	return mux, dp
+}
+
 // adminGroupHeading and adminPageTitle wrap the tag around the translated
 // text, not just the bare translated string: a bare
 // strings.Contains(body, httpx.T("en", key)) is a tautology whenever a
@@ -569,5 +581,87 @@ func TestVisibleAdminEntries_ExcludesAdminItselfEvenIfRegroupedIntoItsOwnGroup(t
 	}
 	if len(got) == 0 {
 		t.Fatalf("expected the normal admin entries still visible under UT_AUTH=off, got none")
+	}
+}
+
+// ut-docs#2116: /admin's tree became the same two-pane master-detail shell
+// /items already uses (ut-docs#1950) — a bare (non-htmx) GET /admin must
+// embed the first visible group's first entry's own content into the
+// panel, with the tree showing that SAME entry is-current on the very
+// first load. This is the "deep link/arrival" half of the AC (mirrors
+// items_page.go's own "the right panel is never empty on arrival"
+// guarantee) — the click-driven OOB-swap half is covered by each of the
+// six destination pages' own TestXxxPage_HXRequestReturnsContentFragment-
+// WithOOBAdminTree test.
+//
+// No country configured, so the Fiscal cluster is empty and Locations is
+// the first non-empty cluster (adminGroupOrder) — /locations is registered
+// on this test's own mux (newAdminPageTestDepsWithLocations) specifically
+// so the embed sub-request resolves to real content instead of
+// embedAdminSection's fallback error card.
+func TestAdminPage_BareGetEmbedsFirstVisibleEntryAndMarksItCurrent(t *testing.T) {
+	mux, _ := newAdminPageTestDepsWithLocations(t)
+	t.Setenv("UT_AUTH", "off")
+
+	rec := getAdmin(t, mux, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /admin = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	panelStart := strings.Index(body, `id="admin-panel"`)
+	if panelStart < 0 {
+		t.Fatalf("expected the #admin-panel wrapper, got: %s", body)
+	}
+	panel := body[panelStart:]
+	// The embedded /locations page's own content actually landed in the
+	// panel — its own page title, translated through T — not a fallback
+	// error card (embedAdminSection's non-200 fallback).
+	wantTitle := "<h1>" + httpx.T("en", "locations.title")
+	if !strings.Contains(panel, wantTitle) {
+		t.Fatalf("expected /locations' own content embedded in the panel, got: %s", panel)
+	}
+	// The tree itself marks /locations is-current on arrival, not just
+	// after a click — checked on the tree markup that precedes the panel
+	// in document order.
+	treeStart := strings.Index(body, `class="admin-tree"`)
+	if treeStart < 0 || treeStart > panelStart {
+		t.Fatalf("expected the admin tree to render before the panel: %s", body)
+	}
+	tree := body[treeStart:panelStart]
+	idx := strings.Index(tree, `href="/locations"`)
+	if idx < 0 {
+		t.Fatalf("tree missing the /locations row: %s", tree)
+	}
+	tagStart := strings.LastIndex(tree[:idx], "<a ")
+	tagEnd := strings.Index(tree[tagStart:], ">") + tagStart
+	if !strings.Contains(tree[tagStart:tagEnd], "is-current") {
+		t.Errorf("the /locations row is not marked is-current on arrival: %s", tree[tagStart:tagEnd])
+	}
+}
+
+// Independent review of ut-docs#2116: pins the exact regression the
+// ut-docs#1950 review already found once on /items — the embedded
+// destination's OWN out-of-band tree copy landing inside the panel, so a
+// bare GET /admin emits a duplicate id="admin-tree" and paints the whole
+// tree a second time inside the right pane. admin_page.go's
+// adminEmbedHeader/isAdminEmbed check in writeAdminTreeOOB is what
+// prevents it; nothing pinned that it stays prevented, and the embed
+// header is exactly the kind of plumbing a later refactor drops silently.
+func TestAdminPage_BareGetRendersTheTreeExactlyOnce(t *testing.T) {
+	mux, _ := newAdminPageTestDepsWithLocations(t)
+	t.Setenv("UT_AUTH", "off")
+
+	rec := getAdmin(t, mux, nil)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /admin = %d, want 200: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if n := strings.Count(body, `id="admin-tree"`); n != 1 {
+		t.Errorf(`bare GET /admin rendered id="admin-tree" %d time(s), want exactly 1 — the embedded destination must not append its own OOB tree copy`, n)
+	}
+	// The same thing said the other way round: a full page load has no
+	// element to swap out of band, so it must carry no OOB marker at all.
+	if strings.Contains(body, `hx-swap-oob=`) {
+		t.Errorf("bare GET /admin must not contain an out-of-band swap marker: %s", body)
 	}
 }
