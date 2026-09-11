@@ -97,4 +97,59 @@ test.describe('/items shell: Import and Tax codes open as a dialog, not a rail s
     await expect(page).toHaveURL(/\/items$/);
     assertClean();
   });
+
+  // Independent review findings F1/F2 (fixed in this same commit): both
+  // dialogs are opened via .show(), NOT .showModal() -- a showModal()
+  // dialog enters the browser's top layer and makes everything outside it
+  // (including #osk, the custom on-screen keyboard kiosk hardware depends
+  // on entirely) inert and unreachable, the exact #1385 bug. `:modal` is
+  // the CSS pseudo-class that ONLY matches a showModal()'d dialog -- a
+  // .show()'d one never matches it, regardless of its [open] attribute --
+  // so asserting it's false is a direct, DOM-level pin against a future
+  // regression back to showModal(), not just an indirect behavioural proxy.
+  test('the tax-codes dialog opens non-modal (.show(), not .showModal()) so the on-screen keyboard stays reachable', async ({ page }) => {
+    const assertClean = watchConsole(page);
+    await page.goto('/items');
+    await page.locator('#catalog-taxcodes-btn').click();
+    const dialog = page.locator('#tax-codes-modal');
+    await expect(dialog).toBeVisible();
+    // The direct, DOM-level pin: `:modal` ONLY matches a showModal()'d
+    // dialog, regardless of its [open] attribute -- a .show()'d one never
+    // matches it. This is what a future regression back to showModal()
+    // would flip.
+    const isModal = await dialog.evaluate((el) => (el as HTMLDialogElement).matches(':modal'));
+    expect(isModal).toBe(false);
+    // Behavioural proof, not just the DOM pin above: osk.js shows the
+    // keyboard on a real CLICK of an OSK-able field (not programmatic
+    // focus, see osk.js's own comment on why) -- drive that for real and
+    // confirm a key press actually reaches the field. A showModal() dialog
+    // would make #osk (appended to <body>, never re-parented into the
+    // dialog) inert -- this is the exact #1385 failure mode.
+    const nameInput = dialog.locator('#tax-code-name');
+    await nameInput.click();
+    const osk = page.locator('#osk');
+    await expect(osk).toBeVisible();
+    // Any plain letter key (.osk-key, excluding the wider .osk-fn function
+    // keys like Backspace/Enter/Shift/space) -- don't depend on which
+    // specific character it is, just that a real key press actually
+    // reaches the field instead of landing on an inert page underneath it.
+    await osk.locator('.osk-key:not(.osk-fn)').first().click();
+    await expect(nameInput).not.toHaveValue('');
+    assertClean();
+  });
+
+  // Independent review finding F2: hx-on::after-request must not open the
+  // dialog on a non-2xx response -- an unguarded .show() there would trap
+  // the operator in an empty/erroring modal with no close control reachable
+  // on a touch-only till (CLAUDE.md §10, ut-docs#1999).
+  test('a failed request does not open the tax-codes dialog', async ({ page }) => {
+    const assertClean = watchConsole(page, /boom|500/);
+    await page.goto('/items');
+    await page.route('**/catalog/tax-codes', (route) => route.fulfill({ status: 500, body: 'boom' }));
+    await page.locator('#catalog-taxcodes-btn').click();
+    await page.waitForTimeout(300); // let the (failed) htmx request settle
+    await expect(page.locator('#tax-codes-modal')).toBeHidden();
+    await expect(page.locator('#items-rail')).toBeVisible();
+    assertClean();
+  });
 });

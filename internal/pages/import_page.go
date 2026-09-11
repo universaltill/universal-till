@@ -56,6 +56,32 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 
 	mux.HandleFunc("GET /import", func(w http.ResponseWriter, r *http.Request) {
 		if !canPerform(d, r, "import_export") {
+			// ut-docs#2095 (independent review, F3): from inside the /items
+			// shell this route is now also reached as an htmx fragment
+			// request (the Import dialog's hx-get) -- a same-origin redirect
+			// is followed transparently by htmx AND preserves the
+			// HX-Request header across the hop, so the old unconditional
+			// redirect made a permission-denied cashier's tap resolve to
+			// GET /catalog's own fragment response (content + rail OOB
+			// swap) swapped straight into #import-modal: the ENTIRE Catalog
+			// page, rail button and all, floating inside the dialog,
+			// including a second nested #import-modal (measured: 86KB
+			// swapped in, duplicate ids throughout, tapping the nested
+			// Import button recurses). A real error response here is caught
+			// by the button's own event.detail.successful guard
+			// (catalog.html) instead. httpx.RenderError, not
+			// common.LocalizedError (guard-page-http-error.sh: this IS a
+			// page-route GET handler, unlike every other import_export
+			// check in this file which guards a POST/API endpoint) --
+			// same helper GET /catalog/tax-codes already uses for its own
+			// page-route permission check (tax_codes_page.go). The
+			// standalone (non-fragment) case is UNCHANGED: direct/bare
+			// GET /import still redirects to /catalog, exactly as before
+			// this card.
+			if httpx.IsFragmentSwap(w, r) {
+				httpx.RenderError(w, r, http.StatusForbidden, "common.error.manager_or_admin_required", nil)
+				return
+			}
 			http.Redirect(w, r, "/catalog", http.StatusSeeOther)
 			return
 		}

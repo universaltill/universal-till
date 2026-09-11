@@ -16,13 +16,30 @@
          pattern above (hx-target="#items-panel") is deliberately wrong
          for these two, since neither handler ever replaces #items-panel.
          Instead, inside the /items shell (.InItemsShell), they open as a
-         closable full-screen dialog overlay floating ABOVE the shell —
-         same hx-get/hx-target/showModal() pattern as
-         #catalog-barcode-backfill-btn below — so the rail stays visible
-         behind them. Outside the shell (a bare GET /catalog),
-         .InItemsShell is false and these stay plain links, unchanged. -->
-    <a id="catalog-import-btn" class="btn secondary" href="/import"{{ if .InItemsShell }} hx-get="/import" hx-target="#import-modal" hx-swap="innerHTML" hx-on::after-request="document.getElementById('import-modal').showModal()"{{ end }}>{{ T "import.title" }}</a>
-    <a id="catalog-taxcodes-btn" class="btn secondary" href="/catalog/tax-codes"{{ if .InItemsShell }} hx-get="/catalog/tax-codes" hx-target="#tax-codes-modal" hx-swap="innerHTML" hx-on::after-request="document.getElementById('tax-codes-modal').showModal()"{{ end }}>{{ T "taxcodes.title" }}</a>
+         closable full-screen dialog overlay floating ABOVE the shell.
+
+         Deliberately NOT the #catalog-barcode-backfill-btn/showModal()
+         pattern (independent review, F1): both dialogs contain real
+         text inputs (tax-code name/rate fields; the import file picker),
+         and showModal()'s top-layer/inert-outside behaviour makes the
+         custom on-screen keyboard (#osk, appended to <body>, never
+         re-parented into whichever dialog is open) completely
+         unreachable — the exact #1385 bug, and on kiosk hardware (no OS
+         keyboard at all) this would make a tax code impossible to type.
+         So these two instead reuse the .show()/.item-form-modal
+         treatment #item-form-modal/#modifier-groups-modal already use
+         for the identical reason.
+
+         hx-on::after-request is also guarded on event.detail.successful
+         (independent review, F2) — unguarded, a non-2xx response (e.g.
+         the permission check below denying a cashier) still fired
+         .show(), opening an empty/erroring modal with no close control
+         reachable on a touch-only till (CLAUDE.md §10, ut-docs#1999: an
+         admin surface may never trap the operator with no way out). Same
+         guard idiom already used by catalog_variants.html/
+         self_order_cart.html's own hx-on::after-request calls. -->
+    <a id="catalog-import-btn" class="btn secondary" href="/import"{{ if .InItemsShell }} hx-get="/import" hx-target="#import-modal" hx-swap="innerHTML" hx-on::after-request="if (event.detail.successful) { document.getElementById('import-modal').show(); }"{{ end }}>{{ T "import.title" }}</a>
+    <a id="catalog-taxcodes-btn" class="btn secondary" href="/catalog/tax-codes"{{ if .InItemsShell }} hx-get="/catalog/tax-codes" hx-target="#tax-codes-modal" hx-swap="innerHTML" hx-on::after-request="if (event.detail.successful) { document.getElementById('tax-codes-modal').show(); }"{{ end }}>{{ T "taxcodes.title" }}</a>
     <!-- ut-docs#1899/#1957: /modifiers is the shop-wide, full-CRUD home for
          modifier groups — the item detail panel below (catalog_variants.html)
          only shows a compact read-only summary plus its own "Manage
@@ -63,9 +80,14 @@
 
 <!-- ut-docs#2095: Import and Tax codes floating above the /items shell —
      see the Import/Tax codes buttons above for the full reasoning. Empty
-     placeholders, filled by the hx-get swap and opened via showModal(). -->
-<dialog id="import-modal" class="modifier-modal" aria-labelledby="catalog-import-btn"></dialog>
-<dialog id="tax-codes-modal" class="modifier-modal" aria-labelledby="catalog-taxcodes-btn"></dialog>
+     placeholders, filled by the hx-get swap and opened via .show().
+     .item-form-modal (not .modifier-modal) is deliberate: both contain
+     real text inputs, so they need the same OSK-reachable, full-bleed,
+     no-top-layer treatment as #item-form-modal itself, including its
+     existing `body.osk-padded .item-form-modal` keyboard-clearance rule
+     — reusing the class gets that for free, no new CSS needed. -->
+<dialog id="import-modal" class="item-form-modal" aria-labelledby="catalog-import-btn"></dialog>
+<dialog id="tax-codes-modal" class="item-form-modal" aria-labelledby="catalog-taxcodes-btn"></dialog>
 
 <!-- ut-docs#1957: the "Manage customization groups" nested dialog, opened
      from the compact summary button inside catalog_variants.html (below).

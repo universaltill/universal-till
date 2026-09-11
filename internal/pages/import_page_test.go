@@ -586,6 +586,36 @@ func TestImport_ManagerGate(t *testing.T) {
 	}
 }
 
+// ut-docs#2095 (independent review, finding F3): the STANDALONE redirect
+// above is fine for a real browser navigation, but an htmx fragment request
+// (the Import dialog's own hx-get, catalog.html) follows a same-origin
+// redirect transparently AND preserves the HX-Request header across the
+// hop -- so before this fix, a permission-denied cashier's tap swapped the
+// ENTIRE /catalog fragment (content + rail OOB swap) into #import-modal:
+// the whole Catalog page, including a second nested #import-modal, floating
+// inside the dialog. A fragment request must get a real error status
+// instead, so the button's own event.detail.successful guard
+// (catalog.html) catches it and never opens the dialog at all.
+func TestImport_HXRequestManagerGateReturnsForbiddenNotRedirect(t *testing.T) {
+	t.Setenv("UT_AUTH", "") // auth ON, no session -> non-manager
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/import", nil)
+	req.Header.Set("HX-Request", "true")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusForbidden {
+		t.Fatalf("htmx GET /import non-manager: code %d, want 403 (a redirect here would let the "+
+			"button's after-request handler .show() a stale-permission-denied Catalog fragment inside the dialog)", rec.Code)
+	}
+	if loc := rec.Header().Get("Location"); loc != "" {
+		t.Fatalf("htmx GET /import non-manager set Location=%q, want no redirect at all", loc)
+	}
+}
+
 // ut-docs#2095: /import is NOT an /items rail section — Catalog's Import
 // button now opens it as a closable dialog overlay (#import-modal) instead
 // of navigating away from the /items shell. An htmx request from that
