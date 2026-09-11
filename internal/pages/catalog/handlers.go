@@ -322,7 +322,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	//
 	// ut-docs#2090 review finding: deliberately NO "InItemsShell" key here.
 	// A mutation POSTed from #modifiers-list always carries HX-Request:true
-	// (it's an htmx form submit), so httpx.IsFragmentSwap(r) would read
+	// (it's an htmx form submit), so httpx.IsFragmentSwap(w, r) would read
 	// true here even on a standalone, non-/items-shell /modifiers page —
 	// the wrong signal, since this response never targets #items-panel,
 	// only #modifiers-list. modifiers.html's own templates read
@@ -555,7 +555,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"SyncPrimary":  d.SyncPrimaryURL(r.Context()),
 			"BuiltinIcons": catimport.BuiltinIcons(),
 			"ItemColors":   catalogtypes.ItemColors(),
-			"InItemsShell": httpx.IsFragmentSwap(r),
+			"InItemsShell": httpx.IsFragmentSwap(w, r),
 		}
 		catalogFiles := files(
 			filepath.Join("web", "ui", "layouts", "base.html"),
@@ -599,7 +599,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"menuItems":    d.MenuSnapshot(),
 			"theme":        d.CurrentState().Theme,
 			"Groups":       groupModifierAdminByItem(groups, "modifiers-list"),
-			"InItemsShell": httpx.IsFragmentSwap(r),
+			"InItemsShell": httpx.IsFragmentSwap(w, r),
 		}
 		// ut-docs#1950: same /items rail embedding as /catalog above.
 		if httpx.IsFragmentSwap(w, r) {
@@ -627,7 +627,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"menuItems":    d.MenuSnapshot(),
 			"theme":        d.CurrentState().Theme,
 			"Sets":         sets,
-			"InItemsShell": httpx.IsFragmentSwap(r),
+			"InItemsShell": httpx.IsFragmentSwap(w, r),
 		}
 		// ut-docs#1950: same /items rail embedding as /catalog above.
 		if httpx.IsFragmentSwap(w, r) {
