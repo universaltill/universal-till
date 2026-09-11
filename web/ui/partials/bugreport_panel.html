@@ -12,10 +12,14 @@
          role="region" aria-label="{{ T "issuereport.panel_title" }}">
   <div class="bugreport-head">
     <h2>{{ T "issuereport.panel_title" }}</h2>
+    <!-- ut-docs#1859: was a bare ✕ emoji-adjacent glyph (platform-font
+         metrics risk, guard-emoji-font.sh's class of problem); aria-label
+         already carries the accessible name, so the icon is aria-hidden. -->
     <button type="button" class="bugreport-close" id="bugreport-close"
             data-testid="bugreport-close"
             title="{{ T "issuereport.panel_close" }}"
-            aria-label="{{ T "issuereport.panel_close" }}">✕</button>
+            aria-label="{{ T "issuereport.panel_close" }}">
+      <span class="btn-ico" aria-hidden="true">{{ icon "x" }}</span></button>
   </div>
 
   <!-- Order matters, and it is measured, not guessed (independent review,
@@ -65,7 +69,13 @@
        one more block of height, same as the voice/screen row above it. -->
   <div class="set-gap">
     <p><strong>{{ T "issuereport.screenshot_label" }}</strong></p>
-    <button type="button" class="btn secondary" id="ir-screenshot-btn">{{ T "issuereport.screenshot_capture" }}</button>
+    <!-- ut-docs#1859: the camera glyph used to live inside the locale
+         string itself ("📷 Take screenshot" etc., web/locales/*.json) —
+         moved to a proper aria-hidden icon here, prefix stripped from the
+         translated value in every locale so a translator editing the copy
+         later doesn't have to keep re-typing an emoji. -->
+    <button type="button" class="btn secondary" id="ir-screenshot-btn">
+      <span class="btn-ico" aria-hidden="true">{{ icon "camera" }}</span> {{ T "issuereport.screenshot_capture" }}</button>
     <div id="ir-screenshot-thumbs" class="bugreport-thumbs"></div>
   </div>
 

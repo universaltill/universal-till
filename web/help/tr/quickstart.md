@@ -41,7 +41,7 @@ Normal bir gün için ihtiyacınız olan her şey, küçük adımlarla. Denemekl
 
 1. Üstteki kutuya ürünün adının ilk harflerini yazın — onu bulacaktır.
 2. Veya ekranda ürünün resmine dokunun.
-3. Kasanızda kamera düğmesi 📷 varsa, ona dokunun, ürünün fotoğrafını çekin ve doğru eşleşmeyi seçin.
+3. Kasanızda kamera düğmesi varsa, ona dokunun, ürünün fotoğrafını çekin ve doğru eşleşmeyi seçin.
 
 ## 7 · Günü açma ve kapatma
 

@@ -42,7 +42,7 @@ Everything you need for a normal day, in small steps. You cannot break anything 
 
 1. Type the first letters of the product's name in the box at the top — it will find it.
 2. Or tap the product's picture on the screen.
-3. If your till has the camera button 📷, tap it, take a photo of the product, and pick the right match.
+3. If your till has the camera button, tap it, take a photo of the product, and pick the right match.
 
 ## 7 · Opening and closing the day
 

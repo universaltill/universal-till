@@ -778,7 +778,7 @@
   "issuereport.screen_record": "● تسجيل الشاشة",
   "issuereport.screen_stop": "■ إيقاف",
   "issuereport.screen_unsupported": "تسجيل الشاشة غير متاح هنا.",
-  "issuereport.screenshot_capture": "📷 التقاط لقطة شاشة",
+  "issuereport.screenshot_capture": "التقاط لقطة شاشة",
   "issuereport.screenshot_error": "تعذّر التقاط لقطة الشاشة.",
   "issuereport.screenshot_label": "لقطة الشاشة (اختياري)",
   "issuereport.screenshot_remove": "إزالة لقطة الشاشة",

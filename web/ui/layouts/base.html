@@ -105,12 +105,18 @@
         <span class="sb-conn-text">{{ T "status.online" }}</span>
       </span>
       {{ if not enrolled }}
-        <a class="sb-item sb-enrol" href="/settings#registration">✦&nbsp;{{ T "status.register_till" }}</a>
+        <!-- ut-docs#1859: was a bare ✦ emoji (platform-color-emoji-font
+             risk); .btn-ico's 1em svg sizing already tracks whatever
+             font-size .sb-item renders at, so it's reused as-is here
+             rather than adding a statusbar-specific icon class. -->
+        <a class="sb-item sb-enrol" href="/settings#registration"><span class="btn-ico" aria-hidden="true">{{ icon "sparkles" }}</span> {{ T "status.register_till" }}</a>
       {{ end }}
       {{ if updateavailable }}
         {{ if canselfupdate }}
+        <!-- ut-docs#1859: was a bare ⬆ emoji; same .btn-ico reuse as
+             .sb-enrol above. -->
         <button type="button" class="sb-item sb-update" id="sb-update-btn"
-                data-latest="{{ latestversion }}">⬆&nbsp;{{ T "status.update_now" }}&nbsp;v{{ latestversion }}</button>
+                data-latest="{{ latestversion }}"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.update_now" }}&nbsp;v{{ latestversion }}</button>
         {{ else if updateinstallbridge }}
         <!-- ut-docs#1246: Android. canselfupdate is false because the Go core
              ships inside the APK and only the package installer may replace an
@@ -128,17 +134,17 @@
                 data-locked="{{ T "auth.error.locked" }}"
                 data-nobridge="{{ T "settings.update.android.no_bridge" }}"
                 data-uptodate="{{ T "settings.update.up_to_date" }}"
-        >⬆&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</button>
+        ><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</button>
         {{ else if updatedownloadlink }}
         <a class="sb-item sb-update" href="https://www.universaltill.com/download"
-           rel="noopener" target="_blank">⬆&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</a>
+           rel="noopener" target="_blank"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.download" }}</a>
         {{ else }}
         <!-- ut-docs#159: on a unix kiosk (fullscreen, no browser chrome) a
              website link is a dead end with no way out — state it plainly
              instead, same treatment internal/pages/update_api.go's
              updateUnavailableHTML already gives the Settings page (reusing
              the same settings.update.unavailable_here key for parity). -->
-        <span class="sb-item sb-update">⬆&nbsp;{{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.unavailable_here" }}</span>
+        <span class="sb-item sb-update"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.update_available" }}&nbsp;v{{ latestversion }}&nbsp;—&nbsp;{{ T "settings.update.unavailable_here" }}</span>
         {{ end }}
       {{ end }}
       {{ if psuunderpowered }}
@@ -159,7 +165,7 @@
            code"). Persistent, non-dismissible, same treatment as sb-update/
            sb-power above — a real link to /plugins, never a modal, so it
            never blocks the kiosk sale flow. -->
-      <a class="sb-item sb-plugin-update" href="/plugins" data-testid="sb-plugin-update">⬆&nbsp;{{ T "status.plugin_updates_available" }}&nbsp;({{ pluginupdatescount }})</a>
+      <a class="sb-item sb-plugin-update" href="/plugins" data-testid="sb-plugin-update"><span class="btn-ico" aria-hidden="true">{{ icon "arrow-up" }}</span> {{ T "status.plugin_updates_available" }}&nbsp;({{ pluginupdatescount }})</a>
       {{ end }}
       <span class="sb-item sb-ver" title="Universal Till">Universal&nbsp;Till&nbsp;v{{ appversion }}</span>
     </footer>
@@ -192,12 +198,21 @@
         // them to it.
         var abtn = document.getElementById('sb-android-update-btn');
         if (abtn) {
-          var aLabel = abtn.textContent, aArmed = false, aTimer = null;
+          // ut-docs#1859: was aLabel = abtn.textContent, restored via
+          // .textContent at every reset point below -- since the button's
+          // label is now an icon span plus text (not one plain-text node),
+          // a .textContent restore would permanently wipe the icon the
+          // first time any of these flows ran. innerHTML captures and
+          // restores the icon along with the text; the transient
+          // in-flight states (confirm/downloading/locked/failed/etc.)
+          // stay plain text (no icon), same simplification as dropping
+          // the decorative ⚡ prefix elsewhere in this change.
+          var aLabel = abtn.innerHTML, aArmed = false, aTimer = null;
           abtn.addEventListener('click', function () {
             if (!aArmed) {
               aArmed = true;
-              abtn.textContent = '⬆\u00a0' + abtn.getAttribute('data-confirm');
-              aTimer = setTimeout(function () { aArmed = false; abtn.textContent = aLabel; }, 4000);
+              abtn.textContent = abtn.getAttribute('data-confirm');
+              aTimer = setTimeout(function () { aArmed = false; abtn.innerHTML = aLabel; }, 4000);
               return;
             }
             aArmed = false; clearTimeout(aTimer);
@@ -215,7 +230,7 @@
                   // "success and failure look identical" failure this card
                   // exists to kill (review finding 2).
                   if (window.location.pathname === '/settings') {
-                    abtn.textContent = aLabel;
+                    abtn.innerHTML = aLabel;
                     abtn.disabled = false;
                     var f = document.getElementById('android-update-form');
                     if (f) {
@@ -261,7 +276,7 @@
                     document.addEventListener('visibilitychange', function onBack() {
                       if (document.visibilityState !== 'visible') { return; }
                       document.removeEventListener('visibilitychange', onBack);
-                      abtn.textContent = aLabel;
+                      abtn.innerHTML = aLabel;
                       abtn.disabled = false;
                     });
                     return;
@@ -279,12 +294,20 @@
         if (!btn) return;
         // Two-click confirm — the desktop WebView doesn't support window.confirm.
         var latest = btn.getAttribute('data-latest');
-        var label = btn.textContent, armed = false, armTimer = null;
+        // ut-docs#1859: was label = btn.textContent, restored via
+        // .textContent -- since the button's label is now an icon span
+        // plus text (not one plain-text node), a .textContent restore
+        // would permanently wipe the icon the first time this armed/
+        // confirm flow ran. innerHTML captures and restores the icon
+        // along with the text; the transient armed/downloading states
+        // stay plain text (no icon), same simplification as dropping the
+        // decorative ⚡ prefix elsewhere in this change.
+        var label = btn.innerHTML, armed = false, armTimer = null;
         btn.addEventListener('click', function () {
           if (!armed) {
             armed = true;
-            btn.textContent = '⬆ Confirm update to v' + latest; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
-            armTimer = setTimeout(function () { armed = false; btn.textContent = label; }, 4000);
+            btn.textContent = 'Confirm update to v' + latest; // i18n:ignore — pre-existing, tracked for the repo-wide inline-JS migration follow-up (ut-docs#205)
+            armTimer = setTimeout(function () { armed = false; btn.innerHTML = label; }, 4000);
             return;
           }
           armed = false; clearTimeout(armTimer);

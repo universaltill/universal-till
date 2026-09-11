@@ -140,7 +140,7 @@
                   hx-target="#catalog-variants" hx-swap="outerHTML" class="vg-img-upload">
               <input type="hidden" name="panelItem" value="{{ $.ItemID }}">
               <input type="hidden" name="variant_id" value="{{ .ID }}">
-              <label title="{{ T "catalog.variant_image" }}">📷<input type="file" name="image" accept="image/png,image/jpeg"
+              <label title="{{ T "catalog.variant_image" }}"><span class="btn-ico" aria-hidden="true">{{ icon "camera" }}</span><input type="file" name="image" accept="image/png,image/jpeg"
                      onchange="this.form.requestSubmit()"></label>
             </form>
           </div>
