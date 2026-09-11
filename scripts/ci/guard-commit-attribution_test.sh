@@ -162,7 +162,7 @@ expect_fail "an empty commit range (fails closed, doesn't silently pass)" ""
 # branch" button, which authors a same-branch merge commit that IS inside
 # a PR's range) authors that merge commit with the clicking account's
 # real, verified personal email — on this org that is
-# `farshid3003@gmail.com`, real and GitHub-linked, but not one on
+# the merging account's real, GitHub-linked personal email address (not spelled out here — see ut-docs#1100/#247 for why), but not one on
 # ALLOWED_PLAIN_EMAILS (that leak into public history is ut-docs#1100's
 # own separate, already-tracked problem — not something to paper over by
 # allowlisting it here).
@@ -175,7 +175,7 @@ expect_fail "an empty commit range (fails closed, doesn't silently pass)" ""
 # instantly and permanently make the OLD (assert-pass) version of this
 # check red for every future PR, for a reason with nothing to do with that
 # PR's own diff. Confirmed empirically while reviewing ut-docs#2103: adding
-# one `farshid3003@gmail.com`-authored commit on top was enough to fail
+# one commit authored with that real personal address on top was enough to fail
 # the old assertion.
 if git rev-parse --git-dir >/dev/null 2>&1; then
   tip_sha="$(git log --no-merges --format='%H' -1 2>/dev/null || true)"
