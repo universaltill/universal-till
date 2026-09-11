@@ -1177,6 +1177,82 @@
         "bold_leadins": 8
       },
       "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "ar",
+      "topic": "inventory",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 5,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#2064 (Inventory: line-picker fix for \"Process a return\", one new English-only \"Processing a return from here\" section documenting it) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "de",
+      "topic": "inventory",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 5,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#2064 (Inventory: line-picker fix for \"Process a return\", one new English-only \"Processing a return from here\" section documenting it) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "fa",
+      "topic": "inventory",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 5,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#2064 (Inventory: line-picker fix for \"Process a return\", one new English-only \"Processing a return from here\" section documenting it) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "tr",
+      "topic": "inventory",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 5,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "reason": "ut-docs#2064 (Inventory: line-picker fix for \"Process a return\", one new English-only \"Processing a return from here\" section documenting it) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
     }
   ]
 }

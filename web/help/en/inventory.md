@@ -21,6 +21,10 @@ Tracks on-hand quantities per item and variant. Sales reduce stock automatically
 3. The inventory page predicts how many days of stock remain and suggests how much to order; the reports page carries a low-stock alert chip too.
 4. Stock locations (Locations, manager only) are shop-wide and always managed from the **main till**: on a joined till, creating, renaming or deactivating one shows a message pointing you back to the main till instead.
 
+## Processing a return from here
+
+The **Process a return** panel puts stock back and records a cash return against an original receipt, without going through the full Refund screen. Type the original receipt number and, once the till finds it, pick which lines and how many of each you're taking back — each line shows how many are still returnable, which drops once part of it has already been returned or refunded (through here or through Refund) so you can never take back more than was actually sold. Add a reason and press **Process Return**.
+
 ## If you do not track stock at all
 
 Some shops never count stock — they just want every item to sell, every time. Turn on **Settings → Stock → "Sell items without tracking stock"**. Items then sell even when the till has no stock record for them, and no sale is ever refused for being out of stock.
