@@ -10,6 +10,13 @@
          360px side panel, so creating a NEW item needs an explicit
          trigger — clearForm() resets it to create-mode before opening. -->
     <button id="item-form-add-btn" class="btn primary" type="button">{{ T "catalog.add_item_btn" }}</button>
+    <!-- ut-docs#2090: Import and Tax codes are not /items rail sections
+         (itemsnav.Resolve's five rows are Catalog/Categories/Inventory/
+         Modifiers/Option sets only) — they stay plain full-page
+         navigation for now. Losing the rail on these two specifically is
+         a smaller, separate follow-up (needs a new "closable full-screen
+         surface" mechanism neither handler has today) tracked as
+         ut-docs#2095, not silently dropped. -->
     <a class="btn secondary" href="/import">{{ T "import.title" }}</a>
     <a class="btn secondary" href="/catalog/tax-codes">{{ T "taxcodes.title" }}</a>
     <!-- ut-docs#1899/#1957: /modifiers is the shop-wide, full-CRUD home for
@@ -17,13 +24,23 @@
          only shows a compact read-only summary plus its own "Manage
          customization groups" control (opens #modifier-groups-modal,
          below), which is the in-context shortcut to the very same CRUD
-         without leaving this page. -->
-    <a class="btn secondary" href="/modifiers">{{ T "modifiers.title" }}</a>
+         without leaving this page.
+         ut-docs#2090: /modifiers IS an /items rail section (its handler
+         already answers httpx.IsFragmentSwap with itemsnav.WriteRailOOB,
+         same as /catalog above) — when this button is rendered inside the
+         /items shell (.InItemsShell), swap #items-panel in place instead
+         of a full navigation, exactly like the rail's own row. Outside the
+         shell (a bare GET /catalog), .InItemsShell is false and this stays
+         a plain link, same as before. -->
+    <a id="catalog-modifiers-btn" class="btn secondary" href="/modifiers"{{ if .InItemsShell }} hx-get="/modifiers" hx-target="#items-panel" hx-push-url="true"{{ end }}>{{ T "modifiers.title" }}</a>
     <!-- ut-docs#1900: reusable option sets ("Size: S / M / L") are defined
          once on their own screen and applied per item from the detail
          panel below — a sibling of the Modifiers button, same placement
-         the #1899 review settled on, not a new top-level nav tile. -->
-    <a class="btn secondary" href="/catalog/option-sets">{{ T "catalog.option_sets.button" }}</a>
+         the #1899 review settled on, not a new top-level nav tile.
+         ut-docs#2090: same rail-preserving treatment as Modifiers above —
+         /catalog/option-sets is also a rail section already answering
+         httpx.IsFragmentSwap. -->
+    <a id="catalog-option-sets-btn" class="btn secondary" href="/catalog/option-sets"{{ if .InItemsShell }} hx-get="/catalog/option-sets" hx-target="#items-panel" hx-push-url="true"{{ end }}>{{ T "catalog.option_sets.button" }}</a>
     <button id="catalog-export-btn" class="btn secondary" hx-post="/api/catalog/export-save" hx-target="#export-msg" hx-swap="innerHTML">{{ T "import.export_btn" }}</button>
     <div id="export-msg" class="muted" aria-live="polite"></div>
     <!-- ut-docs#1356: bulk backfill, preview-before-apply — same
