@@ -140,3 +140,128 @@ func TestPersistManifest_FiscalSignAskCheckFailsClosedOnDBError(t *testing.T) {
 		t.Fatalf("expected the exclusivity check's own error (fail closed at the guard, not a later insert), got: %v", err)
 	}
 }
+
+// --- ADR-0077 D3 (ut-docs#1520): the three-event exclusivity GROUP ----------
+//
+// {fiscal.sign.ask, fiscal.sign.start, fiscal.sign.reconcile.ask} is ONE
+// exclusivity group: declaring any one of the three while a DIFFERENT active
+// plugin holds any one of the three is refused at persist time, exactly as
+// the single-event check above already did for fiscal.sign.ask alone. Before
+// this, a second plugin declaring only fiscal.sign.start or only
+// fiscal.sign.reconcile.ask passed unmodified (ADR-0077 D3 calls this out
+// as a real gap found on independent review) — and EventBus.Ask would then
+// have handed it real sale data / accepted its "confirmed" answer.
+
+// fiscalHookManifest is fiscalSignManifest generalized to any one event of
+// the group — literals, not the constants, for the same reason as above.
+func fiscalHookManifest(id, event string) *Manifest {
+	return &Manifest{
+		ID:         id,
+		Name:       "Signer " + id,
+		Version:    "1.0.0",
+		Entrypoint: "./main.wasm",
+		Hooks: []ManifestHook{
+			{Event: event, Action: "fiscal.sign"},
+		},
+	}
+}
+
+var fiscalSignGroupEvents = []string{"fiscal.sign.ask", "fiscal.sign.start", "fiscal.sign.reconcile.ask"}
+
+// Every directional pair across the group (held × declared, 9 combinations
+// including the three same-event ones): a different plugin is refused, the
+// refusal names the owner, and the refused install rolls back entirely.
+func TestPersistManifest_FiscalSignGroupRefusesEveryDirectionalPair(t *testing.T) {
+	for _, held := range fiscalSignGroupEvents {
+		for _, declared := range fiscalSignGroupEvents {
+			t.Run(held+" blocks "+declared, func(t *testing.T) {
+				d := openRealDB(t)
+				ctx := context.Background()
+				if err := PersistManifest(ctx, d.DB, fiscalHookManifest("com.owner.signer", held), InstallOptions{}); err != nil {
+					t.Fatalf("owner must install cleanly: %v", err)
+				}
+				err := PersistManifest(ctx, d.DB, fiscalHookManifest("com.second.signer", declared), InstallOptions{})
+				if err == nil {
+					t.Fatalf("a second plugin declaring %s must be refused while another holds %s (one exclusivity group, ADR-0077 D3)", declared, held)
+				}
+				if !strings.Contains(err.Error(), "com.owner.signer") || !strings.Contains(err.Error(), declared) {
+					t.Fatalf("refusal should name the owning plugin and the declared point, got: %v", err)
+				}
+				var n int
+				if err := d.DB.QueryRow(`SELECT COUNT(*) FROM plugins WHERE id = 'com.second.signer'`).Scan(&n); err != nil {
+					t.Fatal(err)
+				}
+				if n != 0 {
+					t.Fatalf("rejected plugin left %d plugins row(s), want 0", n)
+				}
+			})
+		}
+	}
+}
+
+// A plugin updating ITSELF never conflicts with its own registration — for
+// every event of the group, and for an update that ADDS the other two
+// events to a plugin already holding one (the ut-plugin-tax-de upgrade path:
+// today's ask-only signer gaining start + reconcile in one release).
+func TestPersistManifest_FiscalSignGroupSelfUpdateNotAConflict(t *testing.T) {
+	for _, ev := range fiscalSignGroupEvents {
+		t.Run(ev, func(t *testing.T) {
+			d := openRealDB(t)
+			ctx := context.Background()
+			if err := PersistManifest(ctx, d.DB, fiscalHookManifest("com.self.signer", ev), InstallOptions{}); err != nil {
+				t.Fatalf("install: %v", err)
+			}
+			upgraded := fiscalHookManifest("com.self.signer", ev)
+			upgraded.Version = "1.0.1"
+			if err := PersistManifest(ctx, d.DB, upgraded, InstallOptions{}); err != nil {
+				t.Fatalf("self-update on %s must not conflict with its own registration: %v", ev, err)
+			}
+		})
+	}
+	t.Run("ask-only signer gaining start and reconcile", func(t *testing.T) {
+		d := openRealDB(t)
+		ctx := context.Background()
+		if err := PersistManifest(ctx, d.DB, fiscalHookManifest("com.self.signer", "fiscal.sign.ask"), InstallOptions{}); err != nil {
+			t.Fatalf("install: %v", err)
+		}
+		upgraded := fiscalHookManifest("com.self.signer", "fiscal.sign.ask")
+		upgraded.Version = "2.0.0"
+		upgraded.Hooks = append(upgraded.Hooks,
+			ManifestHook{Event: "fiscal.sign.start", Action: "fiscal.sign"},
+			ManifestHook{Event: "fiscal.sign.reconcile.ask", Action: "fiscal.sign"},
+		)
+		if err := PersistManifest(ctx, d.DB, upgraded, InstallOptions{}); err != nil {
+			t.Fatalf("a signer adding the other two group events to its own registration must not conflict with itself: %v", err)
+		}
+	})
+}
+
+// Fail closed holds for the group too: a DB error while checking a
+// start-only or reconcile-only manifest refuses the persist with the
+// check's own error.
+func TestPersistManifest_FiscalSignGroupFailsClosedOnDBError(t *testing.T) {
+	for _, ev := range []string{"fiscal.sign.start", "fiscal.sign.reconcile.ask"} {
+		t.Run(ev, func(t *testing.T) {
+			d := openRealDB(t)
+			mustExecSQL(t, d, `DROP TABLE plugin_hooks`)
+			err := PersistManifest(context.Background(), d.DB, fiscalHookManifest("com.unlucky.signer", ev), InstallOptions{})
+			if err == nil {
+				t.Fatal("a DB error during the exclusivity check must refuse the persist (fail closed)")
+			}
+			if !strings.Contains(err.Error(), "fiscal signing exclusivity") {
+				t.Fatalf("expected the exclusivity check's own error, got: %v", err)
+			}
+		})
+	}
+}
+
+// The exported group is exactly the three events ADR-0077 D3 names — a
+// fourth event silently added here would widen single-ownership enforcement
+// without an ADR; a dropped one would silently reopen the gap.
+func TestFiscalSignExclusiveEvents_IsExactlyTheADR0077Group(t *testing.T) {
+	got := strings.Join(FiscalSignExclusiveEvents, ",")
+	want := strings.Join(fiscalSignGroupEvents, ",")
+	if got != want {
+		t.Fatalf("FiscalSignExclusiveEvents = %q, want %q", got, want)
+	}
+}

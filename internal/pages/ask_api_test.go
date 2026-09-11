@@ -147,8 +147,11 @@ func TestAskTools_RunFunctionsCallRealRepoMethodsWithParsedArgs(t *testing.T) {
 	if err != nil {
 		t.Fatalf("stock_levels: %v", err)
 	}
+	// ut-docs#2082: ListStockLevels now also returns itm1's variant (var1/
+	// Large) as its own additive row, so the fixture's single item now
+	// surfaces as 2 rows (its own item-scoped row, plus the variant's).
 	levels, ok := stock.([]data.LowStockItem)
-	if !ok || len(levels) != 1 || levels[0].ItemID != "itm1" {
+	if !ok || len(levels) != 2 || levels[0].ItemID != "itm1" || levels[1].ItemID != "itm1" {
 		t.Fatalf("stock_levels: got %+v", stock)
 	}
 
@@ -238,8 +241,10 @@ func TestStockLevelsToolReturnsSnakeCaseJSON(t *testing.T) {
 	if err := json.Unmarshal(raw, &decoded); err != nil {
 		t.Fatalf("unmarshal stock_levels JSON: %v", err)
 	}
-	if len(decoded) != 1 {
-		t.Fatalf("expected 1 stock level row, got %d: %s", len(decoded), raw)
+	// ut-docs#2082: ListStockLevels now also returns itm1's variant (var1/
+	// Large) as its own additive row.
+	if len(decoded) != 2 {
+		t.Fatalf("expected 2 stock level rows, got %d: %s", len(decoded), raw)
 	}
 
 	wantKeys := []string{"item_id", "name", "sku", "location_id", "location_name", "current_qty", "reorder_level", "lead_time_days"}
@@ -254,6 +259,15 @@ func TestStockLevelsToolReturnsSnakeCaseJSON(t *testing.T) {
 		if _, ok := decoded[0][key]; ok {
 			t.Errorf("stock_levels JSON leaked PascalCase key %q against this repo's snake_case convention: %s", key, raw)
 		}
+	}
+
+	// The variant row carries variant_id/variant_name; the item-level row
+	// omits both entirely (omitempty), not just blanks them.
+	if _, ok := decoded[0]["variant_id"]; ok {
+		t.Errorf("item-level row must omit variant_id entirely, got %s", raw)
+	}
+	if decoded[1]["variant_id"] != "var1" || decoded[1]["variant_name"] != "Large" {
+		t.Errorf("expected variant row to carry variant_id=var1/variant_name=Large, got %s", raw)
 	}
 }
 

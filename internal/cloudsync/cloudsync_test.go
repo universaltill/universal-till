@@ -787,6 +787,56 @@ func TestPushSnapshotIfChangedIncludesRealStockQty(t *testing.T) {
 	}
 }
 
+// TestPushSnapshotIfChangedExcludesVariantQtyFromParent covers ut-docs#2082
+// (review finding F1): ListStockLevels now ALSO returns a variant-scoped
+// row, carrying its PARENT item's ItemID (same ADR-0043 additive shape as
+// StockForExport). Without a matching guard here, the qty-building loop's
+// `qty[l.ItemID] += l.CurrentQty` would fold a variant's stock into its
+// parent's pushed cloud qty — exactly the double-counting ADR-0043 Decision
+// 3 forbids — inflating what the marketplace shows for an item that never
+// itself held that much stock.
+func TestPushSnapshotIfChangedExcludesVariantQtyFromParent(t *testing.T) {
+	cloud := &fakeCloud{}
+	srv := httptest.NewServer(cloud.handler())
+	defer srv.Close()
+	d := openMigratedDB(t, "cloudsync_variant.db")
+
+	if _, err := d.Exec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('it-vp','SKU-VP','T-Shirt',100,1)`); err != nil {
+		t.Fatal(err)
+	}
+	// The item's own item-level stock, 5.
+	if _, err := d.Exec(`INSERT INTO inventory (id, item_id, location_id, quantity) VALUES ('inv-vp','it-vp','loc_main', 5)`); err != nil {
+		t.Fatal(err)
+	}
+	testsupport.SeedVariant(t, d.DB, testsupport.VariantSeed{ID: "var-vp", ItemID: "it-vp", SKU: "SKU-VP-L", Name: "Large", Price: 100, IsActive: true})
+	// The variant's own, separate stock, 4 — must NOT be added to it-vp's
+	// pushed qty.
+	if _, err := d.Exec(`INSERT INTO inventory (id, variant_id, location_id, quantity) VALUES ('inv-vp-var','var-vp','loc_main', 4)`); err != nil {
+		t.Fatal(err)
+	}
+
+	if err := Tick(context.Background(), testCfg(srv.URL), d.DB, Hooks{}); err != nil {
+		t.Fatalf("tick: %v", err)
+	}
+	if len(cloud.snapshots) != 1 {
+		t.Fatalf("snapshots = %d, want 1", len(cloud.snapshots))
+	}
+	var row map[string]any
+	for _, r := range cloud.snapshots[0]["items"].([]any) {
+		m := r.(map[string]any)
+		if m["id"] == "it-vp" {
+			row = m
+			break
+		}
+	}
+	if row == nil {
+		t.Fatal("it-vp not present in snapshot")
+	}
+	if row["qty"] != 5.0 {
+		t.Fatalf("qty = %v, want 5 (the item's own stock only, not 5+4=9 folded in from its variant)", row["qty"])
+	}
+}
+
 // --- order-tracking cloud relay push (ADR-0070, ut-docs#907) ---
 
 // seedTrackedSale inserts a completed sale, mints its tracking token and
