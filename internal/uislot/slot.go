@@ -14,11 +14,17 @@
 // The first slot was the Menu launcher (MenuSlot); the second is the /items
 // section list (ItemsSlot, ut-docs#1911, generalizing what ut-docs#1897
 // shipped as a hardcoded list); the third is the nav rail (RailSlot,
-// ut-docs#1912, generalizing what #1332 shipped as hardcoded markup).
-// Further slots (settings groups) attach the same way: a new *Slot name, a
-// new declared core table, and a slotSpec passed to the shared
-// parse/validate path below — no redesign of
+// ut-docs#1912, generalizing what #1332 shipped as hardcoded markup); the
+// fourth is Settings groupings (SettingsSlot, ut-docs#1913) — all four
+// attach the same way: a new *Slot name, a new declared core table, and a
+// slotSpec passed to the shared parse/validate path below — no redesign of
 // Entry/Amendment/Resolve/FindConflict, which were already slot-agnostic.
+// No further slot candidate is identified today: ADR-0091 considered the
+// catalog list's own presentation (table vs. card grid) as a possible
+// fifth entry and declined it — that choice is one view/one axis/one value
+// at a time, not a list of keyed, orderable destinations like the four
+// above, so it stays a core-only default reachable through the theme seam
+// instead.
 package uislot
 
 import (
