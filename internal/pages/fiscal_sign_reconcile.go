@@ -3,6 +3,7 @@ package pages
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"sync"
 	"time"
@@ -114,18 +115,36 @@ var (
 	// to WasmRuntime's own netTimeout, the widest deadline a net-permitted
 	// guest's handler gets anyway.
 	fiscalSignReconcileAskBudget = 10 * time.Second
-	// fiscalSignReconcileBatchLimit caps one tick's candidate set so one pass
-	// stays bounded however long an outage lasted; the rest is picked up by
-	// the following ticks, oldest first.
+	// fiscalSignReconcileBatchLimit is the PAGE size for one query call, not
+	// a per-tick ceiling (review finding ut-docs#1520 #1) — a single tick
+	// pages through this many candidates at a time, advancing the rowid
+	// cursor between pages, until the eligible set is exhausted or a safety
+	// bound below is hit. A fixed-LIMIT-with-no-cursor design always
+	// returns the SAME oldest slice on every tick when the head sales are
+	// never resolved (a genuine not-found never ages anything out), which
+	// can starve every sale past this position for the whole lookback
+	// window during a backlog longer than one page.
 	fiscalSignReconcileBatchLimit = 50
+	// fiscalSignReconcileTickBudget bounds ONE tick's total wall-clock
+	// work, leaving comfortable margin before the next tick fires
+	// (fiscalSignReconcileInterval) so ticks never overlap in practice.
+	// Reached only during a genuinely large backlog; the remaining
+	// candidates are picked up by continuing the walk next tick (a fresh
+	// page-0 scan — no cursor is persisted across ticks).
+	fiscalSignReconcileTickBudget = 4 * time.Minute
+	// fiscalSignReconcileTickMaxCandidates is a second, count-based safety
+	// bound alongside the time budget above (belt and braces: a very fast,
+	// very long backlog could in principle exhaust the time budget slower
+	// than expected if every Ask resolves near-instantly).
+	fiscalSignReconcileTickMaxCandidates = 5000
 )
 
 // fiscalSignReconcileCandidatesFn is data.POSRepo.ListFiscalSignReconcileCandidates,
 // indirected through a var purely so a test can assert it is NEVER reached
 // on a till with no fiscal.sign.reconcile.ask subscriber (the zero-plugin
 // cost guarantee) — same seam shape as pluginApplyUpdateFn.
-var fiscalSignReconcileCandidatesFn = func(ctx context.Context, repo *data.POSRepo, since time.Time, limit int) ([]data.FiscalSignReconcileCandidate, error) {
-	return repo.ListFiscalSignReconcileCandidates(ctx, since, limit)
+var fiscalSignReconcileCandidatesFn = func(ctx context.Context, repo *data.POSRepo, since time.Time, afterRowID int64, limit int) ([]data.FiscalSignReconcileCandidate, error) {
+	return repo.ListFiscalSignReconcileCandidates(ctx, since, afterRowID, limit)
 }
 
 // fiscalSignReconcileAskPayload is the reconcile request — the sale id
@@ -186,10 +205,15 @@ func StartFiscalSignReconcileSweep(ctx context.Context, d *common.Deps, wg *sync
 	}()
 }
 
-// fiscalSignReconcileTick runs one sweep pass: every eligible sale (see
-// data.POSRepo.ListFiscalSignReconcileCandidates) is asked once, oldest
-// first, and each confirmed-and-checked answer is recorded. No state is
-// carried between ticks.
+// fiscalSignReconcileTick runs one sweep pass: it PAGES through the entire
+// eligible set (see data.POSRepo.ListFiscalSignReconcileCandidates), oldest
+// first, advancing an in-memory rowid cursor between pages, until either the
+// set is exhausted or a safety bound is hit — never just the first page
+// (review finding ut-docs#1520 #1: a fixed-size, cursor-less page would
+// return the identical oldest slice on every tick when those sales are
+// never resolved, silently starving everything past it for the whole
+// lookback window). No state is carried between TICKS — the cursor lives
+// only for this call's own loop.
 func fiscalSignReconcileTick(ctx context.Context, d *common.Deps) {
 	// A recover() at the top, for the same reason pluginUpdateCheckTick has
 	// one: an unrecovered panic in a background goroutine takes down the
@@ -211,25 +235,54 @@ func fiscalSignReconcileTick(ctx context.Context, d *common.Deps) {
 	}
 	repo := data.NewPOSRepo(d.Db)
 	since := time.Now().UTC().Add(-fiscalSignReconcileLookback)
-	candidates, err := fiscalSignReconcileCandidatesFn(ctx, repo, since, fiscalSignReconcileBatchLimit)
-	if err != nil {
-		logging.L().Warnf("[FiscalSignReconcile] list candidates: %v", err)
-		return
-	}
-	for _, c := range candidates {
+	deadline := time.Now().Add(fiscalSignReconcileTickBudget)
+	var afterRowID int64
+	processed := 0
+	for {
 		if ctx.Err() != nil {
 			return
 		}
-		if err := reconcileFiscalSignGap(ctx, bus, repo, c); err != nil {
-			// A dispatch-level failure (transport, handler error, a DB read
-			// the check itself needs) says nothing about THIS sale and is
-			// overwhelmingly likely to repeat for the next one in the same
-			// pass — end the pass here rather than burn the budget N times.
-			// Not a Warn: nothing is operator-actionable, and the sale's
-			// own tender-time declaration already raised its alert. The
-			// next tick simply re-considers it.
-			logging.L().Infof("[FiscalSignReconcile] sale %s: %v — leaving the rest of this pass to the next tick", c.SaleID, err)
+		if time.Now().After(deadline) || processed >= fiscalSignReconcileTickMaxCandidates {
+			// A genuinely large backlog — the remaining candidates are
+			// exactly as eligible next tick (nothing here ages them out
+			// early); this bound exists only so one tick can't run long
+			// enough to overlap the next.
 			return
+		}
+		candidates, err := fiscalSignReconcileCandidatesFn(ctx, repo, since, afterRowID, fiscalSignReconcileBatchLimit)
+		if err != nil {
+			logging.L().Warnf("[FiscalSignReconcile] list candidates: %v", err)
+			return
+		}
+		if len(candidates) == 0 {
+			return
+		}
+		for _, c := range candidates {
+			if ctx.Err() != nil {
+				return
+			}
+			abort, err := reconcileFiscalSignGap(ctx, bus, repo, c)
+			afterRowID = c.RowID
+			processed++
+			if err != nil && abort {
+				// A backend-level dispatch failure (the ask's own budget
+				// genuinely expiring) says nothing about THIS sale
+				// specifically and is overwhelmingly likely to repeat for
+				// the next one too — end the pass here rather than burn
+				// the budget on every remaining candidate. Not a Warn:
+				// nothing is operator-actionable, and the sale's own
+				// tender-time declaration already raised its alert. The
+				// next tick simply re-considers everything from here.
+				logging.L().Infof("[FiscalSignReconcile] sale %s: %v — ending this pass, next tick re-considers the rest", c.SaleID, err)
+				return
+			}
+			// A per-sale failure (err != nil, abort == false — a handler/
+			// guest-side error specific to THIS sale's payload, e.g. a
+			// wasm trap) or any other non-writing outcome does NOT stop
+			// the pass (review finding ut-docs#1520 #2: a single poison-
+			// pill sale must never wedge every other sale behind it) —
+			// reconcileFiscalSignGap has already logged its own reason;
+			// the loop simply moves to the next candidate.
 		}
 	}
 }
@@ -239,18 +292,32 @@ func fiscalSignReconcileTick(ctx context.Context, d *common.Deps) {
 // signature, and passes whichever check tier applies. Every other outcome —
 // not-found, no answer, an unusable answer, a failed check — writes NOTHING:
 // the sale stays permanently, silently unsigned on its existing markers,
-// which is the designed outcome, not a failure to log loudly. A non-nil
-// error is returned only for a dispatch-level failure the caller should end
-// the pass on; a per-sale "write nothing" outcome is nil.
-func reconcileFiscalSignGap(ctx context.Context, bus *plugins.EventBus, repo *data.POSRepo, c data.FiscalSignReconcileCandidate) error {
+// which is the designed outcome, not a failure to sign that needs a Warn
+// (review finding ut-docs#1520 #4: every refusal now gets an Info line
+// naming the sale and the reason, so "why was this sale never reconciled"
+// stays answerable after the fact — Info, not Warn, because none of these
+// are operator-actionable and the sale's own tender-time declaration already
+// raised its alert).
+//
+// Returns (abort, err): err is non-nil only when something genuinely failed;
+// abort tells the caller whether that failure is backend-level (the ask's
+// own budget expiring — likely to repeat for every remaining sale in this
+// pass, so the caller ends the pass) or per-sale (a DB read this sale's own
+// check needs, or a handler/guest-side error specific to this sale's
+// payload — the caller logs and moves on to the next candidate, review
+// finding ut-docs#1520 #2: a single poison-pill sale must never wedge every
+// other sale behind it in the ordering).
+func reconcileFiscalSignGap(ctx context.Context, bus *plugins.EventBus, repo *data.POSRepo, c data.FiscalSignReconcileCandidate) (abort bool, err error) {
 	payload := fiscalSignReconcileAskPayload{SaleID: c.SaleID}
 	heldTxID := ""
 	// What core actually holds for this sale (ADR-0077 D1's best-effort
 	// capture). A read failure is NOT degraded to the window tier: "couldn't
 	// read the identifier" must never silently select the weaker check.
+	// Per-sale, not aborted: one sale's own read failing says nothing about
+	// the next sale's.
 	start, ok, err := repo.GetFiscalSignStart(ctx, c.SaleID)
 	if err != nil {
-		return fmt.Errorf("read fiscal.sign.start capture: %w", err)
+		return false, fmt.Errorf("read fiscal.sign.start capture: %w", err)
 	}
 	if ok {
 		heldTxID = start.TxID
@@ -268,38 +335,62 @@ func reconcileFiscalSignGap(ctx context.Context, bus *plugins.EventBus, repo *da
 	defer cancel()
 	resp, answered, err := bus.Ask(askCtx, fiscalSignReconcileAskEvent, payload)
 	if err != nil {
-		return fmt.Errorf("reconcile dispatch failed: %w", err)
+		if errors.Is(askCtx.Err(), context.DeadlineExceeded) {
+			// The budget itself expired — the same backend-level
+			// classification askFiscalSign applies to fiscal.sign.ask's own
+			// timeout. Abort: an unreachable backend is likely to time out
+			// on every remaining sale in this pass too.
+			return true, fmt.Errorf("reconcile dispatch failed (budget exceeded): %w", err)
+		}
+		// A real handler/guest error on THIS sale's specific payload —
+		// per-sale, same reasoning askFiscalSign gives fiscalSignFailedEntry.
+		// Must NOT abort the pass: a poison-pill payload for one sale would
+		// otherwise wedge every sale behind it, forever, in the ordering.
+		logging.L().Infof("[FiscalSignReconcile] sale %s: dispatch failed (%v) — skipping, continuing this pass", c.SaleID, err)
+		return false, nil
 	}
 	if !answered {
-		return nil
+		return false, nil
 	}
 	var parsed fiscalSignReconcileAskResponse
 	if json.Unmarshal(resp, &parsed) != nil {
 		// Answered, unusably. Unlike fiscal.sign.ask there is nothing to
 		// declare here — the sale's gap is already declared — so this is
-		// simply "no confirmation".
-		return nil
+		// simply "no confirmation", logged for diagnosability only.
+		logging.L().Infof("[FiscalSignReconcile] sale %s: signer answered with unparseable JSON — no confirmation", c.SaleID)
+		return false, nil
 	}
 	switch parsed.Status {
 	case fiscalSignReconcileStatusConfirmed:
 		// The one state that can lead to a write — checked further below.
 	case fiscalSignReconcileStatusNotFound:
 		// The signer's own "no such transaction" — nothing changes; the
-		// sale stays permanently unsigned.
-		return nil
+		// sale stays permanently unsigned. This is the expected, common
+		// non-write outcome and deliberately NOT logged at all: logging it
+		// would make "not-found" indistinguishable in intent from the
+		// genuinely exceptional refusals below, and would be the single
+		// noisiest line this sweep could produce.
+		return false, nil
 	default:
 		// Anything else — including an "approved" copied from the finish
 		// contract, which this point deliberately does not recognise.
-		return nil
+		logging.L().Infof("[FiscalSignReconcile] sale %s: signer answered with unrecognised status %q — no confirmation", c.SaleID, parsed.Status)
+		return false, nil
 	}
 	// Baseline (D3): confirmed means nothing without the signature itself
 	// — the same presence test fiscal.sign.ask's evidence uses.
 	if !parsed.TSE.hasSignature() {
-		return nil
+		logging.L().Infof("[FiscalSignReconcile] sale %s: signer answered \"confirmed\" with no usable signature — no confirmation", c.SaleID)
+		return false, nil
 	}
 	tier, ok := fiscalSignReconcileCheck(heldTxID, c.FailedAt, parsed)
 	if !ok {
-		return nil
+		if heldTxID != "" {
+			logging.L().Infof("[FiscalSignReconcile] sale %s: signer's tx_id %q did not match the held identifier — refused", c.SaleID, parsed.TxID)
+		} else {
+			logging.L().Infof("[FiscalSignReconcile] sale %s: no held tx_id and the evidence's timestamp(s) did not fall within the reconcile window of failed_at — refused (degraded tier)", c.SaleID)
+		}
+		return false, nil
 	}
 	// Evidence first, marker second: a marker without evidence would claim
 	// a confirmation the system of record can't show. If the evidence write
@@ -320,7 +411,7 @@ func reconcileFiscalSignGap(ctx context.Context, bus *plugins.EventBus, repo *da
 		SignatureAlgorithm: parsed.TSE.SignatureAlgorithm,
 	}); err != nil {
 		logging.L().Errorf("[FiscalSignReconcile] persist reconciled evidence for sale %s: %v", c.SaleID, err)
-		return nil
+		return false, nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
 	if err := repo.InsertAudit(ctx, nil, fiscalSignReconcileActor, "sale", c.SaleID, fiscalSignGapActionReconciled, map[string]any{
@@ -330,12 +421,12 @@ func reconcileFiscalSignGap(ctx context.Context, bus *plugins.EventBus, repo *da
 		"reconciled_at": now,
 	}, now, ""); err != nil {
 		logging.L().Errorf("[FiscalSignReconcile] %s audit marker for sale %s: %v", fiscalSignGapActionReconciled, c.SaleID, err)
-		return nil
+		return false, nil
 	}
 	// Info, not Warn: good news is not a Problem. The receipt is unchanged
 	// (D4) — this closes the compliance record's gap, nothing customer-facing.
 	logging.L().Infof("[FiscalSignReconcile] sale %s: signer confirmed an existing TSE signature (check tier %s) — recorded for the audit trail; the receipt's tender-time notice is unchanged (ADR-0077 D3/D4)", c.SaleID, tier)
-	return nil
+	return false, nil
 }
 
 // fiscalSignReconcileCheck applies ADR-0077 D3's two-tier check to a

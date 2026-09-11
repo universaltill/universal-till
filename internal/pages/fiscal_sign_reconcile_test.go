@@ -651,7 +651,7 @@ func TestFiscalSignReconcile_NoSubscriberDoesNoDBWork(t *testing.T) {
 	declareFiscalGap(t, dp, "sale-idle", fiscalSignFailedBackend)
 	orig := fiscalSignReconcileCandidatesFn
 	t.Cleanup(func() { fiscalSignReconcileCandidatesFn = orig })
-	fiscalSignReconcileCandidatesFn = func(ctx context.Context, repo *data.POSRepo, since time.Time, limit int) ([]data.FiscalSignReconcileCandidate, error) {
+	fiscalSignReconcileCandidatesFn = func(ctx context.Context, repo *data.POSRepo, since time.Time, afterRowID int64, limit int) ([]data.FiscalSignReconcileCandidate, error) {
 		t.Fatal("a tick with no subscriber must not query the DB")
 		return nil, nil
 	}
@@ -676,7 +676,7 @@ func TestStartFiscalSignReconcileSweep_StopsOnContextCancel(t *testing.T) {
 		return json.RawMessage(`{"status":"not-found"}`), nil
 	})
 	var ticks atomic.Int32
-	fiscalSignReconcileCandidatesFn = func(ctx context.Context, repo *data.POSRepo, since time.Time, limit int) ([]data.FiscalSignReconcileCandidate, error) {
+	fiscalSignReconcileCandidatesFn = func(ctx context.Context, repo *data.POSRepo, since time.Time, afterRowID int64, limit int) ([]data.FiscalSignReconcileCandidate, error) {
 		ticks.Add(1)
 		return nil, nil
 	}
@@ -694,6 +694,88 @@ func TestStartFiscalSignReconcileSweep_StopsOnContextCancel(t *testing.T) {
 	if ticks.Load() != 0 {
 		t.Fatalf("no tick may run before the initial delay elapses, got %d", ticks.Load())
 	}
+}
+
+// Review finding ut-docs#1520 #1 (candidate starvation): a tick must walk
+// PAST a permanently-not-found head, not just fetch the same fixed-size
+// oldest slice forever. Seed more sales than fiscalSignReconcileBatchLimit,
+// every one answering "not-found" (a genuine, permanent non-write outcome
+// per D3) except the LAST one in the ordering, which confirms. Before the
+// pagination fix this test's own production code returned only the first
+// page and the last sale was never even asked; after it, one tick pages
+// through the whole eligible set and reaches it.
+func TestFiscalSignReconcile_TickPagesPastAPermanentlyUnresolvedHead(t *testing.T) {
+	_, dp := newFiscalSignDeps(t)
+	ctx := context.Background()
+	repo := data.NewPOSRepo(dp.Db)
+	total := fiscalSignReconcileBatchLimit + 5
+	var confirmSaleID string
+	for i := 0; i < total; i++ {
+		saleID := fmt.Sprintf("sale-page-%03d", i)
+		declareFiscalGap(t, dp, saleID, fiscalSignFailedBackend)
+		if err := repo.RecordFiscalSignStart(ctx, saleID, fmt.Sprintf("tx-page-%03d", i), 1); err != nil {
+			t.Fatal(err)
+		}
+		if i == total-1 {
+			confirmSaleID = saleID
+		}
+	}
+	var asked []string
+	subscribeFiscalSignReconcileHandler(t, dp, "com.test.reconcile-page", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		var req fiscalSignReconcileAskPayload
+		if err := json.Unmarshal(ev.Payload, &req); err != nil {
+			t.Fatal(err)
+		}
+		asked = append(asked, req.SaleID)
+		if req.SaleID == confirmSaleID {
+			return confirmedReconcileAnswer(req.StartedTxID, time.Now()), nil
+		}
+		return json.RawMessage(`{"status":"not-found"}`), nil
+	})
+	fiscalSignReconcileTick(ctx, dp)
+	if len(asked) != total {
+		t.Fatalf("expected all %d eligible sales asked in one tick, got %d: %v", total, len(asked), asked)
+	}
+	if _, ok, _ := repo.GetFiscalTSEReconciledSignature(ctx, confirmSaleID); !ok {
+		t.Fatalf("the last sale in the ordering (%s) must have been reached and reconciled within the same tick", confirmSaleID)
+	}
+	for i := 0; i < total-1; i++ {
+		assertNothingReconciled(t, dp, fmt.Sprintf("sale-page-%03d", i), "every not-found sale ahead of the confirmed one")
+	}
+}
+
+// Review finding ut-docs#1520 #2 (poison-pill sale): a per-sale handler
+// error (the signer traps on ONE sale's specific payload — not a budget
+// timeout) must not abort the rest of the pass. Seed three eligible sales;
+// the middle one's handler call returns an error, the other two confirm.
+func TestFiscalSignReconcile_PoisonPillSaleDoesNotBlockOthers(t *testing.T) {
+	_, dp := newFiscalSignDeps(t)
+	ctx := context.Background()
+	repo := data.NewPOSRepo(dp.Db)
+	for _, id := range []string{"sale-pp-1", "sale-pp-2-poison", "sale-pp-3"} {
+		declareFiscalGap(t, dp, id, fiscalSignFailedBackend)
+		if err := repo.RecordFiscalSignStart(ctx, id, "tx-"+id, 1); err != nil {
+			t.Fatal(err)
+		}
+	}
+	subscribeFiscalSignReconcileHandler(t, dp, "com.test.reconcile-poison", func(ctx context.Context, ev plugins.Event) (json.RawMessage, error) {
+		var req fiscalSignReconcileAskPayload
+		if err := json.Unmarshal(ev.Payload, &req); err != nil {
+			t.Fatal(err)
+		}
+		if req.SaleID == "sale-pp-2-poison" {
+			return nil, fmt.Errorf("simulated guest trap on this sale's payload")
+		}
+		return confirmedReconcileAnswer(req.StartedTxID, time.Now()), nil
+	})
+	fiscalSignReconcileTick(ctx, dp)
+	if _, ok, _ := repo.GetFiscalTSEReconciledSignature(ctx, "sale-pp-1"); !ok {
+		t.Fatal("sale-pp-1 (before the poison sale) must have been reconciled")
+	}
+	if _, ok, _ := repo.GetFiscalTSEReconciledSignature(ctx, "sale-pp-3"); !ok {
+		t.Fatal("sale-pp-3 (after the poison sale) must still have been reached and reconciled — a per-sale error must not abort the pass")
+	}
+	assertNothingReconciled(t, dp, "sale-pp-2-poison", "the poison sale itself never confirms")
 }
 
 // End-to-end through the REAL wazero runtime: a wasm signer subscribed to

@@ -128,10 +128,13 @@ WHERE sale_id = ?
 // tender time with a backend-level failure, and no reconcile outcome has been
 // recorded for it yet. FailedAt is the RFC3339 timestamp the declare path
 // stamped into the audit payload — the anchor for the degraded time-window
-// check when core holds no fiscal.sign.start identifier for the sale.
+// check when core holds no fiscal.sign.start identifier for the sale. RowID
+// is the audit_log row's own rowid — an in-tick-only pagination cursor (see
+// afterRowID below), never persisted, never a per-sale state marker.
 type FiscalSignReconcileCandidate struct {
 	SaleID   string
 	FailedAt string
+	RowID    int64
 }
 
 // ListFiscalSignReconcileCandidates selects EXACTLY the reconcile-eligible
@@ -157,24 +160,37 @@ type FiscalSignReconcileCandidate struct {
 // boolean JSON false extracts as integer 0. datetime(created_at) matches the
 // existing idx_audit_log_entity_action_created_dt expression index and reads
 // both the RFC3339 form declareUnsignedFiscalSale writes and the
-// datetime('now') form other writers use. Oldest first, capped at limit, so
-// one pass is bounded no matter how long an outage lasted.
-func (r *POSRepo) ListFiscalSignReconcileCandidates(ctx context.Context, since time.Time, limit int) ([]FiscalSignReconcileCandidate, error) {
+// datetime('now') form other writers use.
+//
+// afterRowID pages within one sweep tick (review finding ut-docs#1520 #1):
+// a fixed "oldest LIMIT" with no cursor always returns the SAME head across
+// ticks when the head sales are never resolved (a genuine not-found is a
+// permanent, silent no-write, not a mark that ages anything out) — so a
+// backlog longer than one page could starve every sale past position `limit`
+// for the entire 48h lookback. Pass 0 for the first page of a tick, then the
+// last returned row's RowID for each subsequent page, so one tick can walk
+// the FULL eligible set rather than being wedged on its own oldest slice.
+// This is in-memory, per-tick-call bookkeeping ONLY — nothing is persisted,
+// so ADR-0077 D3's "never a retry loop, never named like one, no per-sale
+// state" holds: a sale not reached before a tick's own safety bound simply
+// starts a fresh page-0 scan next tick, same as before this fix.
+func (r *POSRepo) ListFiscalSignReconcileCandidates(ctx context.Context, since time.Time, afterRowID int64, limit int) ([]FiscalSignReconcileCandidate, error) {
 	rows, err := r.db.QueryContext(ctx, `
-SELECT a.entity_id, COALESCE(json_extract(a.data_json, '$.failed_at'), a.created_at)
+SELECT a.entity_id, COALESCE(json_extract(a.data_json, '$.failed_at'), a.created_at), a.rowid
 FROM audit_log a
 WHERE a.entity_type = 'sale'
   AND a.action = 'unsigned_fiscal_signing'
   AND json_extract(a.data_json, '$.outcome') = 'backend'
   AND COALESCE(json_extract(a.data_json, '$.known_offline'), 0) = 0
   AND datetime(a.created_at) >= datetime(?)
+  AND a.rowid > ?
   AND NOT EXISTS (
     SELECT 1 FROM audit_log r
     WHERE r.entity_type = 'sale' AND r.entity_id = a.entity_id AND r.action = 'fiscal_signing_reconciled'
   )
 ORDER BY datetime(a.created_at) ASC, a.rowid ASC
 LIMIT ?
-`, since.UTC().Format(time.RFC3339), limit)
+`, since.UTC().Format(time.RFC3339), afterRowID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list fiscal sign reconcile candidates: %w", err)
 	}
@@ -182,7 +198,7 @@ LIMIT ?
 	var out []FiscalSignReconcileCandidate
 	for rows.Next() {
 		var c FiscalSignReconcileCandidate
-		if err := rows.Scan(&c.SaleID, &c.FailedAt); err != nil {
+		if err := rows.Scan(&c.SaleID, &c.FailedAt, &c.RowID); err != nil {
 			return nil, fmt.Errorf("scan fiscal sign reconcile candidate: %w", err)
 		}
 		out = append(out, c)
