@@ -1005,6 +1005,7 @@
   "orders.err.server": "حدث خطأ ما. يرجى المحاولة مجددًا.",
   "orders.print.kitchen_failed": "فشلت طباعة تذكرة المطبخ",
   "orders.print.receipt_failed": "فشلت طباعة الإيصال",
+  "orders.print.kitchen_resend": "إعادة إرسال تذكرة المطبخ",
   "orders.status.cancelled": "ملغى",
   "orders.status.collected": "تم الاستلام",
   "orders.status.new": "جديد",

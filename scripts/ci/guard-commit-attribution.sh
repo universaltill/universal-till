@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
 #
 # Guard: every commit AUTHOR must be attributable to a real, known
-# contributor — never an AI-tool identity, an address linked to nobody, or a
+# contributor — never an AI-tool identity, an address linked to nobody, a
 # well-formed users.noreply.github.com address whose numeric ID belongs to a
-# DIFFERENT real GitHub account than the name/username it's paired with.
+# DIFFERENT real GitHub account than the name/username it's paired with, or
+# an ordinary (non-noreply) address that isn't an explicitly known
+# contributor's own.
 #
 # WHY THIS EXISTS, part 1 (AI-tool / unattributable addresses):
 # GitHub's contributor graph counts *commit authors on the default branch*,
@@ -30,6 +32,21 @@
 # is a fixed denylist; this is an allowlist check on top of it, because the
 # bad case here isn't a known-bad string — it's a well-formed one with the
 # wrong ID inside it.
+#
+# WHY THIS EXISTS, part 3 (plain-email default-pass, ut-docs#2103):
+# Branches 1-4 above only ever examine users.noreply.github.com-shaped
+# addresses; any ordinary email address fell through to an unconditional
+# "ok" — a fabricated address verified on no GitHub account passed exactly
+# as cleanly as a real contributor's. That gap was theoretical while every
+# contributor used a noreply address; it stopped being theoretical on
+# 2026-09-11 when the pipeline owner's own sanctioned identity became the
+# plain address `farsid@taskrunnertech.co.uk`, so a legitimate pipeline
+# commit may now hit the one branch that checked nothing (the standing
+# per-cycle identity rule in scrum-master/SKILL.md still sets the
+# noreply-ID form by default — this closes the gap for when a plain
+# address is used instead, deliberately or not). Fixed the same way as
+# parts 1/2: default-deny, with an explicit allowlist (ALLOWED_PLAIN_EMAILS)
+# for addresses actually known to belong to a real contributor.
 #
 # Reads one commit per line from stdin, format 'sha|author email|author
 # name' — the same shape `git log --format='%H|%ae|%an'` produces (see
@@ -71,6 +88,14 @@ ALLOWED_IDS=(
 # periodically — usernames can be renamed away at any time.
 ALLOWED_LEGACY_USERNAMES=()
 
+# Ordinary (non-noreply) addresses explicitly known to belong to a real,
+# active contributor to this repo. Default-deny, same posture as
+# ALLOWED_IDS/ALLOWED_LEGACY_USERNAMES above — an email that merely looks
+# plausible is not credited unless it's on this list. See part 3 above.
+ALLOWED_PLAIN_EMAILS=(
+  farsid@taskrunnertech.co.uk   # farshidmirza (pipeline owner)
+)
+
 # Matched case-insensitively via $email_lc below — GitHub email matching
 # (and the domain/local-part grammar generally) is not case-sensitive, so a
 # denylist or allowlist that only matched exact-case would let
@@ -90,6 +115,12 @@ is_allowed_id() {
 is_allowed_legacy_username() {
   local u="$1" a
   for a in "${ALLOWED_LEGACY_USERNAMES[@]}"; do [ "$u" = "$a" ] && return 0; done
+  return 1
+}
+
+is_allowed_plain_email() {
+  local e="$1" a
+  for a in "${ALLOWED_PLAIN_EMAILS[@]}"; do [ "$e" = "${a,,}" ] && return 0; done
   return 1
 }
 
@@ -129,8 +160,11 @@ while IFS='|' read -r sha email name; do
     # matches one of the two patterns above; anything else is suspect.
     echo "::error::${sha:0:9} is authored by '${name} <${email}>' — unrecognized users.noreply.github.com address shape (matches neither the ID-prefixed nor legacy form)"
     bad=1
-  else
+  elif is_allowed_plain_email "$email_lc"; then
     echo "ok  ${sha:0:9}  ${name} <${email}>"
+  else
+    echo "::error::${sha:0:9} is authored by '${name} <${email}>' — not a users.noreply.github.com address and not a known contributor's own address (see ALLOWED_PLAIN_EMAILS in scripts/ci/guard-commit-attribution.sh)"
+    bad=1
   fi
 done
 
@@ -151,11 +185,17 @@ if [ "$bad" -ne 0 ]; then
 Commit attribution check failed.
 
 At least one commit on this PR is authored by an AI tool identity, by an
-address that is not linked to any GitHub account, or by a
+address that is not linked to any GitHub account, by a
 users.noreply.github.com address whose numeric ID does not match any known
-contributor — meaning it's either a typo/stale copy-paste of someone else's
-ID, or genuinely belongs to a different GitHub account than the name next
-to it.
+contributor (a typo/stale copy-paste of someone else's ID, or genuinely a
+different GitHub account than the name next to it), or by an ordinary
+(non-noreply) address that isn't on this repo's own ALLOWED_PLAIN_EMAILS
+list.
+
+If your address IS already a genuine, GitHub-verified address and this
+guard still rejected it, it's simply not on that allowlist yet — skip the
+identity-fix steps below and jump to the last section of this message
+instead of re-authoring anything.
 
 Fix your git identity, then re-author the commits:
 
@@ -181,6 +221,8 @@ Keep crediting the AI tool — as a trailer, not as the author:
 
 If this IS a new, legitimate contributor's own noreply address, add their
 numeric ID to ALLOWED_IDS in scripts/ci/guard-commit-attribution.sh.
+If this is a new, legitimate contributor's own plain (non-noreply) address,
+add it to ALLOWED_PLAIN_EMAILS in scripts/ci/guard-commit-attribution.sh instead.
 ────────────────────────────────────────────────────────────────
 MSG
   exit 1

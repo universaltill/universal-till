@@ -1005,6 +1005,7 @@
   "orders.err.server": "Bir şeyler ters gitti. Lütfen tekrar deneyin.",
   "orders.print.kitchen_failed": "Mutfak fişi yazdırılamadı",
   "orders.print.receipt_failed": "Fiş yazdırılamadı",
+  "orders.print.kitchen_resend": "Mutfak fişini yeniden gönder",
   "orders.status.cancelled": "İptal edildi",
   "orders.status.collected": "Teslim edildi",
   "orders.status.new": "Yeni",

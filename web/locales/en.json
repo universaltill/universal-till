@@ -1005,6 +1005,7 @@
   "orders.err.server": "Something went wrong. Please try again.",
   "orders.print.kitchen_failed": "Kitchen print failed",
   "orders.print.receipt_failed": "Receipt print failed",
+  "orders.print.kitchen_resend": "Resend kitchen ticket",
   "orders.status.cancelled": "Cancelled",
   "orders.status.collected": "Collected",
   "orders.status.new": "New",
