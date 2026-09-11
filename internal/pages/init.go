@@ -459,6 +459,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	StartEODScheduler(bgCtx, dp, wg)                        // background Z-report (docs: G30); joined by app.Run's drain
 	StartAutoUpdateScheduler(bgCtx, dp, wg)                 // background unattended update (ut-docs#79); joined by app.Run's drain
 	StartPluginUpdateScheduler(bgCtx, dp, wg)               // background installed-plugin update check + language-pack auto-apply (ut-docs#1953); joined by app.Run's drain
+	StartFiscalSignReconcileSweep(bgCtx, dp, wg)            // periodic fiscal.sign.reconcile.ask sweep over backend-failure unsigned sales (ADR-0077 D3, ut-docs#1520); joined by app.Run's drain
 	backfillLocaleConfirmedForDivergedPendingTills(ctx, dp) // ut-docs#1892: one-time backfill before any pending language install can silently override a pre-#1074 manual locale choice
 	StartBasePluginRetry(bgCtx, dp, wg)                     // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
 	StartTSEProvisionRetry(bgCtx, dp, wg)                   // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain

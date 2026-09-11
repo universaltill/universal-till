@@ -934,7 +934,7 @@
   "locations.col.status": "Status",
   "locations.deactivate": "Deactivate",
   "locations.error.create": "Could not create location (name already used?)",
-  "locations.error.in_use": "Cannot deactivate a location with existing inventory, stock movements, or a register",
+  "locations.error.in_use": "Cannot deactivate a location that still holds stock or has an active register",
   "locations.error.last_location": "Cannot deactivate the last active location",
   "locations.error.rename": "Could not rename location",
   "locations.error.replica_use_primary": "This till follows a primary till — manage stock locations on the primary till.",
