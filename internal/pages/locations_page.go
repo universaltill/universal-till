@@ -12,8 +12,10 @@ import (
 )
 
 // registerLocations wires the stock-locations admin page (universaltill/ut-docs#49).
-// Manager/admin only; a location with any inventory, stock movement, or
-// register history can't be deactivated (StockLocationInUse guard).
+// Manager/admin only; a location currently holding nonzero stock, or
+// assigned to a currently-active register, can't be deactivated
+// (StockLocationInUse guard) — past history alone no longer blocks it
+// (universaltill/ut-docs#2066).
 func registerLocations(mux *http.ServeMux, d *common.Deps) {
 	posRepo := data.NewPOSRepo(d.Db)
 

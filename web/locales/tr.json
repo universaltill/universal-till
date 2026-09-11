@@ -934,7 +934,7 @@
   "locations.col.status": "Durum",
   "locations.deactivate": "Devre dışı bırak",
   "locations.error.create": "Konum oluşturulamadı (ad zaten kullanılıyor mu?)",
-  "locations.error.in_use": "Envanteri, stok hareketi veya kasası olan bir konum devre dışı bırakılamaz",
+  "locations.error.in_use": "Hâlâ stoğu olan veya aktif kasası bulunan bir konum devre dışı bırakılamaz",
   "locations.error.last_location": "Son aktif konum devre dışı bırakılamaz",
   "locations.error.rename": "Konum yeniden adlandırılamadı",
   "locations.error.replica_use_primary": "Bu kasa bir ana kasayı takip ediyor — konumları ana kasada yönetin.",

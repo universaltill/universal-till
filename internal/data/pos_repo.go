@@ -6451,16 +6451,35 @@ func (r *POSRepo) SetStockLocationActive(ctx context.Context, id string, active 
 	return nil
 }
 
-// StockLocationInUse reports whether any inventory, stock movement, or
-// register still references this location — deactivating it would silently
-// orphan that history.
+// StockLocationInUse reports whether a location currently holds any nonzero
+// stock, or is assigned to a currently-active register — deactivating it in
+// either case would strand live stock or pull an in-service till's location
+// out from under it (ut-docs#2066).
+//
+// Historical activity alone does NOT count: is_active is never used to
+// filter a location out of low-stock, reports, export, or audit queries
+// (see the ut-docs#1610 comment on GetLowStockItems), so deactivating a
+// location neither hides nor orphans anything it has ever done. It only
+// changes whether the location can be picked for new stock work
+// (ListActiveStockLocations). A location that has been fully sold/moved
+// out (its inventory rows sit at quantity=0) or whose register has itself
+// been retired is safe to deactivate, and past stock_movements rows are a
+// pure append-only audit trail with nothing left to strand.
+//
+// "Zero" is an epsilon compare, not `quantity <> 0` (review of #2066):
+// inventory.quantity is a REAL accumulated in place by RecordStockMovement's
+// `quantity = quantity + ?`, and stock is enterable to 2dp, so clearing a
+// weighed line (0.1 + 0.2 - 0.3) leaves 5.55e-17 behind. That reads as
+// exactly 0.00 everywhere it is shown to a manager, so an exact compare
+// re-creates #2066's own dead end — refused with no visible reason and no
+// way to clear it. 1e-9 is the same epsilon refund_page.go uses for
+// quantity float compares, and is far below any real stock unit.
 func (r *POSRepo) StockLocationInUse(ctx context.Context, id string) (bool, error) {
 	var exists int
 	err := r.db.QueryRowContext(ctx, `
-SELECT 1 WHERE EXISTS (SELECT 1 FROM inventory WHERE location_id = ?)
-   OR EXISTS (SELECT 1 FROM stock_movements WHERE location_id = ?)
-   OR EXISTS (SELECT 1 FROM registers WHERE location_id = ?)`,
-		id, id, id).Scan(&exists)
+SELECT 1 WHERE EXISTS (SELECT 1 FROM inventory WHERE location_id = ? AND ABS(quantity) > 0.000000001)
+   OR EXISTS (SELECT 1 FROM registers WHERE location_id = ? AND is_active = 1)`,
+		id, id).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
