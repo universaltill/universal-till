@@ -237,6 +237,30 @@ func (l LowStockItem) IsRunningOut(rate float64) bool {
 	return l.DaysLeftAt(rate) <= l.EffectiveWarnDays()
 }
 
+// SellRate picks the rate this row's own prediction (DaysLeftAt/
+// IsRunningOut/an order-quantity suggestion) must use: a variant-scoped row
+// (VariantID set, ut-docs#2082) uses its OWN rate from variantRates
+// (POSRepo.VariantDailySellRates), keyed by variant id — never the parent
+// item's combined rate, which would apply sales from this item's OTHER
+// variants against just this one variant's quantity (ut-docs#2089). An
+// item-scoped row (VariantID empty) uses itemRates, keyed by item id — this
+// MUST be POSRepo.ItemDirectDailySellRates, never POSRepo.ItemDailySellRates:
+// the latter folds every variant's sales into the item total too, which
+// reproduces the identical bug shape on the item-scoped side for an item
+// that has BOTH its own item-level stock and variants (ut-docs#2089 review
+// finding — an item-scoped row's quantity never moves from a variant sale,
+// so applying the variant-inclusive rate against it is just as wrong as the
+// variant-row bug this method was first written to fix). The single shared
+// decision so the three call sites (inventory page, low-stock digest,
+// reports header chip) can't independently drift on which map/key a row
+// should read.
+func (l LowStockItem) SellRate(itemRates, variantRates map[string]float64) float64 {
+	if l.VariantID != "" {
+		return variantRates[l.VariantID]
+	}
+	return itemRates[l.ItemID]
+}
+
 // SearchActiveItems finds active items matching name/sku/barcode with optional pagination.
 func (r *POSRepo) SearchActiveItems(ctx context.Context, q string, offset, limit int) ([]catalogtypes.ItemInput, error) {
 	var err error
@@ -4512,13 +4536,24 @@ ORDER BY i.name, v.name, sl.name`)
 }
 
 // ItemDailySellRates returns each item's average units sold per day over
-// [from, to) (completed sales minus returns). Items with no movement are
-// absent. Drives the inventory page's "days of stock left" prediction. The
-// divisor is the window's own span (to - from in days), so a caller passing
-// a calendar period (e.g. a 31-day month) gets a rate scaled to that
-// period's real length rather than a hardcoded count. A non-positive span
-// (to <= from) has no meaningful daily rate, so it returns an empty map
-// rather than dividing by zero or a negative number.
+// [from, to) (completed sales minus returns), FOLDING a sale of any of the
+// item's variants into the parent item's own total. Items with no movement
+// are absent. The divisor is the window's own span (to - from in days), so
+// a caller passing a calendar period (e.g. a 31-day month) gets a rate
+// scaled to that period's real length rather than a hardcoded count. A
+// non-positive span (to <= from) has no meaningful daily rate, so it
+// returns an empty map rather than dividing by zero or a negative number.
+//
+// This folded-across-variants shape is deliberate and still correct for an
+// item-level aggregate view (e.g. the dead-stock/product report, which asks
+// "did this item move at all, regardless of which of its variants sold") —
+// see product_reports_test.go's own "variant sale must give the parent item
+// a sell rate" case. It is the WRONG rate for the /inventory low-stock
+// prediction's item-scoped rows, though: ItemDirectDailySellRates and
+// VariantDailySellRates below are that feature's own pair of ADR-0043
+// "additive, never folded" siblings — see LowStockItem.SellRate's own doc
+// comment for why the low-stock prediction never calls this method
+// directly.
 func (r *POSRepo) ItemDailySellRates(ctx context.Context, from, to time.Time) (map[string]float64, error) {
 	days := to.Sub(from).Hours() / 24
 	if days <= 0 {
@@ -4548,6 +4583,111 @@ GROUP BY iid`, fromStr, toStr)
 		}
 		if qty > 0 {
 			out[itemID] = qty / days
+		}
+	}
+	return out, rows.Err()
+}
+
+// ItemDirectDailySellRates is ItemDailySellRates' item-scoped-ONLY
+// counterpart, and VariantDailySellRates' sibling: an item's own average
+// units sold per day over [from, to), keyed by item id, computed from ONLY
+// the sale lines that recorded a DIRECT sale of the item itself (no
+// variant) — never including any of the item's variants' own sales.
+//
+// Needed because ItemDailySellRates folds variant sales into the parent
+// item's total (deliberately, for other item-level-aggregate callers — see
+// its own doc comment), which is wrong for an item-SCOPED LowStockItem row
+// (VariantID empty) belonging to an item that ALSO has variants (e.g. it
+// kept its own item-level inventory row from before variants were added —
+// GetLowStockItems' own doc comment names this case). Such a row's
+// quantity never moves from a variant sale (variant sales decrement a
+// variant-keyed inventory row, not this item-keyed one — internal/pos's
+// StockKey{ItemID, VariantID} keys them separately), so applying the
+// item's variant-inclusive combined rate against just this row's own
+// quantity reproduces ut-docs#2089's exact bug shape on the item-scoped
+// side: an item with healthy item-level stock and zero item-direct sales,
+// but with a busy variant, gets misreported as running out purely because
+// of sales it never actually supplied. See LowStockItem.SellRate, which is
+// what actually picks this map (never ItemDailySellRates) for an
+// item-scoped row. Same divide-by-zero/window-span handling as
+// ItemDailySellRates — see that method's doc comment.
+func (r *POSRepo) ItemDirectDailySellRates(ctx context.Context, from, to time.Time) (map[string]float64, error) {
+	days := to.Sub(from).Hours() / 24
+	if days <= 0 {
+		return map[string]float64{}, nil
+	}
+	fromStr, toStr := windowArgs(from, to)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT sl.item_id,
+       SUM(CASE WHEN s.sale_type = 'return' THEN -sl.quantity ELSE sl.quantity END)
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed'
+  AND sl.item_id IS NOT NULL AND sl.item_id != ''
+  AND (sl.variant_id IS NULL OR sl.variant_id = '')
+  AND datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) < datetime(?)
+GROUP BY sl.item_id`, fromStr, toStr)
+	if err != nil {
+		return nil, fmt.Errorf("query item-direct sell rates: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var itemID string
+		var qty float64
+		if err := rows.Scan(&itemID, &qty); err != nil {
+			return nil, fmt.Errorf("scan item-direct sell rate: %w", err)
+		}
+		if qty > 0 {
+			out[itemID] = qty / days
+		}
+	}
+	return out, rows.Err()
+}
+
+// VariantDailySellRates is ItemDailySellRates' variant-scoped counterpart —
+// the same ADR-0043 "additive, never folded" shape as variantStockLevels/
+// variantLowStockItems above: a variant's own average units sold per day
+// over [from, to), keyed by variant id, computed from ONLY the sale lines
+// that recorded that variant (never rolled up into its parent item's
+// total). Without this, a variant-scoped LowStockItem row (VariantID set —
+// ut-docs#2082) had no rate of its own to use and fell back to
+// ItemDailySellRates' item-keyed map, which sums ALL of the item's
+// variants' sales — so every variant of a multi-variant item independently
+// computed its days-left/running-out/reorder-suggestion prediction against
+// the item's COMBINED rate applied to just that one variant's own quantity
+// (ut-docs#2089: a T-Shirt selling 3/day total across S/M/L variants, each
+// holding a healthy 20 units, had all three variants individually
+// misreported as running out). Same divide-by-zero/window-span handling as
+// ItemDailySellRates — see that method's doc comment.
+func (r *POSRepo) VariantDailySellRates(ctx context.Context, from, to time.Time) (map[string]float64, error) {
+	days := to.Sub(from).Hours() / 24
+	if days <= 0 {
+		return map[string]float64{}, nil
+	}
+	fromStr, toStr := windowArgs(from, to)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT sl.variant_id,
+       SUM(CASE WHEN s.sale_type = 'return' THEN -sl.quantity ELSE sl.quantity END)
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed'
+  AND sl.variant_id IS NOT NULL AND sl.variant_id != ''
+  AND datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) < datetime(?)
+GROUP BY sl.variant_id`, fromStr, toStr)
+	if err != nil {
+		return nil, fmt.Errorf("query variant sell rates: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var variantID string
+		var qty float64
+		if err := rows.Scan(&variantID, &qty); err != nil {
+			return nil, fmt.Errorf("scan variant sell rate: %w", err)
+		}
+		if qty > 0 {
+			out[variantID] = qty / days
 		}
 	}
 	return out, rows.Err()

@@ -107,6 +107,86 @@ func TestInventoryPredictsDaysLeft(t *testing.T) {
 	}
 }
 
+// ut-docs#2089's own regression test: a multi-variant item whose COMBINED
+// stock is healthy relative to its COMBINED sell rate must not have every
+// variant individually flagged as running out against the item's total
+// rate. Reproduces the bug report's own worked example almost exactly — a
+// T-Shirt selling 3/day total (1/day per variant) across Small/Medium/
+// Large, each holding 20 units (60 total = ~20 days' cover, healthy). The
+// pre-fix bug applied the item's combined 3/day rate against each
+// variant's own 20-unit qty individually: floor(20/3)=6 <= the 7-day warn
+// default → every variant misreported as running out.
+func TestInventoryVariantSellRateIsPerVariantNotItemCombined(t *testing.T) {
+	chdirRoot(t)
+	f := filepath.Join(t.TempDir(), "variant-inv.db")
+	database, err := db.Open(f)
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer database.Close()
+	d := database.DB
+
+	i18n, err := config.NewI18n(filepath.Join("web", "locales"), "en")
+	if err != nil {
+		t.Fatalf("i18n: %v", err)
+	}
+	httpx.InitI18n(i18n, "en")
+
+	mustExec := func(q string, args ...any) {
+		t.Helper()
+		if _, err := d.Exec(q, args...); err != nil {
+			t.Fatalf("exec: %v (%s)", err, q)
+		}
+	}
+	mustExec(`INSERT INTO items (id, name, sku, base_price, is_active) VALUES ('it-tshirt','T-Shirt','TS',2000,1)`)
+	mustExec(`INSERT INTO stock_locations (id, name) VALUES ('loc-1','Shop floor')`)
+	for _, v := range []struct{ id, name string }{{"v-s", "Small"}, {"v-m", "Medium"}, {"v-l", "Large"}} {
+		mustExec(`INSERT INTO item_variants (id, item_id, name, price, is_active) VALUES (?, 'it-tshirt', ?, 2000, 1)`, v.id, v.name)
+		mustExec(`INSERT INTO inventory (id, variant_id, location_id, quantity) VALUES (?, ?, 'loc-1', 20)`, "inv-"+v.id, v.id)
+		// One sale of 28 units within the 28-day window → exactly 1.0/day
+		// for this variant alone (28/28 days).
+		saleID := "s-" + v.id
+		mustExec(`INSERT INTO sales (id, receipt_no, status, sale_type, subtotal, tax_total, total, created_at)
+		          VALUES (?, ?, 'completed', 'sale', 5600, 0, 5600, datetime('now', '-1 hours'))`, saleID, "R-"+v.id)
+		mustExec(`INSERT INTO sale_lines (id, sale_id, line_no, variant_id, name_snapshot, quantity, unit_price, line_discount, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+		          VALUES (?, ?, 1, ?, ?, 28, 2000, 0, 0, 0, 5600, 5600)`, "l-"+v.id, saleID, v.id, v.name)
+	}
+
+	// Sanity: each variant's own rate is 1.0/day, not the item's combined 3.0.
+	repo := data.NewPOSRepo(d)
+	variantRates, err := repo.VariantDailySellRates(context.Background(), pagesWinFrom(28), pagesWinTo())
+	if err != nil {
+		t.Fatalf("variant rates: %v", err)
+	}
+	for _, id := range []string{"v-s", "v-m", "v-l"} {
+		if r := variantRates[id]; r < 0.9 || r > 1.1 {
+			t.Fatalf("%s rate = %v, want ≈1.0 (its own rate, not the item's combined 3.0)", id, r)
+		}
+	}
+
+	state := common.LoadState(context.Background(), settings.NewStore(d), &config.Config{Theme: "default"})
+	dp := &common.Deps{Cfg: &config.Config{Theme: "default"}, Db: d, State: state,
+		Menu: []common.MenuItem{}, Settings: settings.NewStore(d)}
+	mux := http.NewServeMux()
+	registerInventoryPage(mux, dp)
+
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/inventory", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET /inventory: %d", rec.Code)
+	}
+	body := rec.Body.String()
+	// None of the three variants should carry the running-out warning: each
+	// holds 20 units at its own true 1/day rate → 20 days' cover, well past
+	// the 7-day default warn window.
+	if strings.Count(body, "days-warn") != 0 {
+		t.Fatalf("no variant should warn at its own true per-variant rate; body: %s", body)
+	}
+	if strings.Contains(body, "predicted to run out") {
+		t.Fatal("header must not show a running-out chip when every variant is individually healthy")
+	}
+}
+
 // A flat 7-day warning window is wrong once an item's real reorder lead
 // time is longer than that: warning only 7 days out for an item that takes
 // 10 days to restock guarantees a stockout. lead_time_days makes the warn

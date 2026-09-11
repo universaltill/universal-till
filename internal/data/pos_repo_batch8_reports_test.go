@@ -991,6 +991,159 @@ func TestPOSRepo_ItemDailySellRates_NetOfReturnsPerDay(t *testing.T) {
 	}
 }
 
+// TestPOSRepo_VariantDailySellRates_KeyedByVariantNotFolded is ut-docs#2089's
+// regression test at the data layer: VariantDailySellRates must key by the
+// variant that actually sold, never fold multiple variants of the same item
+// together, and must NOT appear under ItemDailySellRates' own item-keyed map
+// (that map's existing item-level fold-in behavior — see
+// TestPOSRepo_ItemDailySellRates_NetOfReturnsPerDay's "pear" case — is relied
+// on elsewhere, e.g. product/dead-stock reporting, so it must stay exactly as
+// it was; this is a genuinely separate, additive map, not a replacement).
+func TestPOSRepo_VariantDailySellRates_KeyedByVariantNotFolded(t *testing.T) {
+	d := b8OpenDB(t, "variantsellrates.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	b8Item(t, d, "tshirt", 2000, nil, 1)
+	mustExec(t, d, `INSERT INTO item_variants (id, item_id, name, price) VALUES ('v-s', 'tshirt', 'Small', 2000)`)
+	mustExec(t, d, `INSERT INTO item_variants (id, item_id, name, price) VALUES ('v-m', 'tshirt', 'Medium', 2000)`)
+	mustExec(t, d, `INSERT INTO item_variants (id, item_id, name, price) VALUES ('v-l', 'tshirt', 'Large', 2000)`)
+	b8Item(t, d, "mug", 500, nil, 1) // an item-direct sale must never leak into the variant map.
+
+	now := b8At(time.Now().Add(-2 * time.Hour))
+	seed := func(saleID, saleType, itemID, variantID string, qty float64) {
+		b8Sale(t, d, saleID, now, "completed", saleType, 0, 100)
+		b8Line(t, d, saleID, 1, itemID, variantID, "n-"+saleID, qty, 0, 0, 100, 100)
+	}
+	// Small: 14 sold in-window → 14/7 = 2.0.
+	seed("s1", "sale", "", "v-s", 14)
+	// Medium: 7 sold, 7 returned → net 0 → absent.
+	seed("s2", "sale", "", "v-m", 7)
+	seed("s3", "return", "", "v-m", 7)
+	// Large: no sales at all → absent.
+	// Mug: item-direct sale (no variant) → must never appear in this map.
+	seed("s4", "sale", "mug", "", 10)
+
+	sevenDayTo := winTo()
+	sevenDayFrom := sevenDayTo.Add(-7 * 24 * time.Hour)
+	rates, err := repo.VariantDailySellRates(ctx, sevenDayFrom, sevenDayTo)
+	if err != nil {
+		t.Fatalf("VariantDailySellRates: %v", err)
+	}
+	if len(rates) != 1 {
+		t.Fatalf("expected exactly 1 variant with net movement, got %#v", rates)
+	}
+	if rates["v-s"] != 2.0 {
+		t.Fatalf("v-s rate = %v, want 2.0", rates["v-s"])
+	}
+	if _, ok := rates["v-m"]; ok {
+		t.Fatalf("v-m netted to zero and must be absent: %#v", rates)
+	}
+	if _, ok := rates["v-l"]; ok {
+		t.Fatalf("v-l never sold and must be absent: %#v", rates)
+	}
+	if _, ok := rates["mug"]; ok {
+		t.Fatalf("an item-direct sale must never appear in the variant-keyed map: %#v", rates)
+	}
+	if _, ok := rates["tshirt"]; ok {
+		t.Fatalf("variant sales must never be folded/rolled up into the parent item id: %#v", rates)
+	}
+
+	// ItemDailySellRates itself is untouched by this change — it still folds
+	// every variant's sales into the parent item (relied on elsewhere).
+	itemRates, err := repo.ItemDailySellRates(ctx, sevenDayFrom, sevenDayTo)
+	if err != nil {
+		t.Fatalf("ItemDailySellRates: %v", err)
+	}
+	if itemRates["tshirt"] != 2.0 { // only v-s's net 14/7 survives Medium's netted-to-zero
+		t.Fatalf("tshirt (item-level fold) rate = %v, want 2.0", itemRates["tshirt"])
+	}
+
+	// SellRate: a variant-scoped row reads its own rate from variantRates,
+	// never the item's combined ItemDailySellRates rate. An item-scoped row
+	// reads ItemDirectDailySellRates (item-direct sales only), NEVER
+	// ItemDailySellRates — see TestPOSRepo_ItemScopedRowWithVariants_
+	// UsesItemDirectRateNotFoldedRate below for why the distinction matters
+	// in practice (an item that has both its own stock AND variants).
+	variantRow := LowStockItem{ItemID: "tshirt", VariantID: "v-s"}
+	if got := variantRow.SellRate(itemRates, rates); got != 2.0 {
+		t.Fatalf("variant row SellRate = %v, want its own 2.0 (not the item's combined rate)", got)
+	}
+	itemDirectRates, err := repo.ItemDirectDailySellRates(ctx, sevenDayFrom, sevenDayTo)
+	if err != nil {
+		t.Fatalf("ItemDirectDailySellRates: %v", err)
+	}
+	itemRow := LowStockItem{ItemID: "mug"}
+	if got := itemRow.SellRate(itemDirectRates, rates); got != itemDirectRates["mug"] {
+		t.Fatalf("item row SellRate = %v, want itemDirectRates[\"mug\"]=%v", got, itemDirectRates["mug"])
+	}
+}
+
+// TestPOSRepo_ItemScopedRowWithVariants_UsesItemDirectRateNotFoldedRate is
+// the mirror-image half of ut-docs#2089, found by independent review of the
+// variant-row fix above: an item that has BOTH its own item-scoped
+// inventory row AND variants (e.g. it kept item-level stock from before
+// variants were added — GetLowStockItems' own doc comment names this case)
+// must have its item-scoped row's prediction use ONLY its own item-direct
+// sales, never ItemDailySellRates' variant-inclusive folded total. An
+// item-scoped row's quantity never moves from a variant sale (variant sales
+// decrement a variant-keyed inventory row, not this item-keyed one), so
+// applying the folded rate against it reproduces the exact same bug shape
+// the variant-row fix above exists to prevent, just on the other side: an
+// item with healthy item-level stock and zero item-direct sales, but with a
+// busy variant, would get misreported as running out purely from sales it
+// never actually supplied.
+func TestPOSRepo_ItemScopedRowWithVariants_UsesItemDirectRateNotFoldedRate(t *testing.T) {
+	d := b8OpenDB(t, "itemwithvariants.db")
+	ctx := context.Background()
+	repo := NewPOSRepo(d.DB)
+
+	b8Item(t, d, "hybrid", 1000, nil, 1)
+	mustExec(t, d, `INSERT INTO item_variants (id, item_id, name, price) VALUES ('v-hybrid', 'hybrid', 'Only Variant', 1000)`)
+
+	now := b8At(time.Now().Add(-2 * time.Hour))
+	seed := func(saleID, itemID, variantID string, qty float64) {
+		b8Sale(t, d, saleID, now, "completed", "sale", 0, 100)
+		b8Line(t, d, saleID, 1, itemID, variantID, "n-"+saleID, qty, 0, 0, 100, 100)
+	}
+	// The item itself never sold directly — only its variant did, briskly
+	// (14/7 = 2.0/day). ItemDailySellRates folds this into "hybrid" too.
+	seed("s1", "", "v-hybrid", 14)
+
+	sevenDayTo := winTo()
+	sevenDayFrom := sevenDayTo.Add(-7 * 24 * time.Hour)
+
+	itemDirectRates, err := repo.ItemDirectDailySellRates(ctx, sevenDayFrom, sevenDayTo)
+	if err != nil {
+		t.Fatalf("ItemDirectDailySellRates: %v", err)
+	}
+	if _, ok := itemDirectRates["hybrid"]; ok {
+		t.Fatalf("item never sold directly — must be absent from ItemDirectDailySellRates, got %#v", itemDirectRates)
+	}
+
+	// Sanity: ItemDailySellRates (the OLD, still-folded map used elsewhere)
+	// really does fold the variant's sale into the item, confirming this
+	// test would have caught the bug had SellRate still read that map.
+	foldedRates, err := repo.ItemDailySellRates(ctx, sevenDayFrom, sevenDayTo)
+	if err != nil {
+		t.Fatalf("ItemDailySellRates: %v", err)
+	}
+	if foldedRates["hybrid"] != 2.0 {
+		t.Fatalf("foldedRates[\"hybrid\"] = %v, want 2.0 (sanity: ItemDailySellRates still folds variant sales)", foldedRates["hybrid"])
+	}
+
+	// The item-scoped row itself: healthy 40 units on hand, its own
+	// item-direct rate is absent (never sold directly) → no prediction, not
+	// a false running-out flag from the variant's busy rate.
+	itemRow := LowStockItem{ItemID: "hybrid", CurrentQty: 40}
+	if got := itemRow.SellRate(itemDirectRates, map[string]float64{}); got != 0 {
+		t.Fatalf("item-scoped row SellRate = %v, want 0 (absent — never sold directly, not the variant's 2.0)", got)
+	}
+	if itemRow.IsRunningOut(itemRow.SellRate(itemDirectRates, map[string]float64{})) {
+		t.Fatal("item-scoped row must not be flagged running out from a variant's sales it never supplied")
+	}
+}
+
 func TestPOSRepo_Reports_EmptyDB(t *testing.T) {
 	d := b8OpenDB(t, "empty.db")
 	ctx := context.Background()
