@@ -163,13 +163,13 @@
         "bold_leadins": 15
       },
       "english": {
-        "headings": 16,
-        "numbered_steps": 3,
+        "headings": 18,
+        "numbered_steps": 10,
         "sub_bullets": 0,
-        "top_bullets": 15,
-        "bold_leadins": 16
+        "top_bullets": 18,
+        "bold_leadins": 19
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr)."
     },
     {
       "locale": "ar",
@@ -220,13 +220,13 @@
         "bold_leadins": 15
       },
       "english": {
-        "headings": 16,
-        "numbered_steps": 3,
+        "headings": 18,
+        "numbered_steps": 10,
         "sub_bullets": 0,
-        "top_bullets": 15,
-        "bold_leadins": 16
+        "top_bullets": 18,
+        "bold_leadins": 19
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr)."
     },
     {
       "locale": "de",
@@ -790,13 +790,13 @@
         "bold_leadins": 17
       },
       "english": {
-        "headings": 16,
-        "numbered_steps": 3,
+        "headings": 18,
+        "numbered_steps": 10,
         "sub_bullets": 0,
-        "top_bullets": 15,
-        "bold_leadins": 16
+        "top_bullets": 18,
+        "bold_leadins": 19
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr)."
     },
     {
       "locale": "tr",
@@ -1025,6 +1025,101 @@
         "bold_leadins": 3
       },
       "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "fa",
+      "topic": "reports",
+      "signature": {
+        "headings": 16,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 15,
+        "bold_leadins": 16
+      },
+      "english": {
+        "headings": 18,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 18,
+        "bold_leadins": 19
+      },
+      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. fa matched English exactly before this change (no ut-docs#1962 drift existed on this locale/topic pair) — this entry is newly introduced by this card alone, not a fold-in of pre-existing drift. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "ar",
+      "topic": "invoices",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 2,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 6,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#331 — invoices.md was substantially rewritten in English (turning-it-on, issuing, credit notes, viewing/exporting, and error/empty-state sections added) as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "de",
+      "topic": "invoices",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 2,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 6,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#331 — invoices.md was substantially rewritten in English (turning-it-on, issuing, credit notes, viewing/exporting, and error/empty-state sections added) as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "fa",
+      "topic": "invoices",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 2,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 6,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#331 — invoices.md was substantially rewritten in English (turning-it-on, issuing, credit notes, viewing/exporting, and error/empty-state sections added) as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "tr",
+      "topic": "invoices",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 2,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 6,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#331 — invoices.md was substantially rewritten in English (turning-it-on, issuing, credit notes, viewing/exporting, and error/empty-state sections added) as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr)."
     }
   ]
 }
