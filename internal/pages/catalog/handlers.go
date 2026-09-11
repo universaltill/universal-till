@@ -197,6 +197,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 					costMajor = strconv.FormatFloat(float64(cost)/math.Pow(10, float64(decimals)), 'f', decimals, 64)
 				}
 				leadTimeDays, _ := repo.ItemLeadTimeDays(r.Context(), itemID)
+				reorderLevel, _ := repo.ItemReorderLevel(r.Context(), itemID)
 				// ADR-0020: shows deactivated groups/options too (unlike the
 				// sale-time ListGroupsForItem) so a manager can reactivate one.
 				modGroups, _ := data.NewModifierRepo(d.Db).ListAllGroupsForItem(r.Context(), itemID)
@@ -238,6 +239,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 					"ItemBarcodes":       itemBCs,
 					"CostMajor":          costMajor,
 					"LeadTimeDays":       leadTimeDays,
+					"ReorderLevel":       reorderLevel,
 					"ModifierGroups":     modGroups,
 					"ModifierGroupNames": strings.Join(activeModGroupNames, ", "),
 					"OptionSets":         optionSets,
@@ -497,6 +499,40 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			days = n
 		}
 		if err := repo.SetItemLeadTimeDays(r.Context(), itemID, days); err != nil {
+			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
+			return
+		}
+		renderVariantsPanel(w, r, itemID, false)
+	})
+
+	// Reorder level (the stock quantity below which an item counts as low) —
+	// feeds the stock table's "Reorder at" column and the inventory page's
+	// Low Stock list (GetLowStockItems, universaltill/ut-docs#2065). Plain
+	// integer, same validation shape as lead time above.
+	mux.HandleFunc("POST /api/catalog/item-reorder-level", func(w http.ResponseWriter, r *http.Request) {
+		if !requirePrimary(w, r, "catalog.error.item_replica_use_primary") {
+			return
+		}
+		_ = r.ParseForm()
+		itemID := strings.TrimSpace(r.Form.Get("panelItem"))
+		raw := strings.TrimSpace(r.Form.Get("reorderLevel"))
+		if itemID == "" {
+			http.Error(w, "item required", http.StatusBadRequest)
+			return
+		}
+		var level int
+		if raw != "" {
+			n, err := strconv.Atoi(raw)
+			// Upper bound is a sanity ceiling, same rationale as item-cost's
+			// 1_000_000 above (universaltill/ut-docs#276): nothing stops an
+			// absurd value otherwise, and it's not a real limit on shop stock.
+			if err != nil || n < 0 || n > 1_000_000 {
+				http.Error(w, "invalid reorder level", http.StatusBadRequest)
+				return
+			}
+			level = n
+		}
+		if err := repo.SetItemReorderLevel(r.Context(), itemID, level); err != nil {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "catalog.error.server", "catalog", err)
 			return
 		}

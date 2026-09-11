@@ -296,6 +296,8 @@
   "catalog.price_major": "Fiyat (₺)",
   "catalog.price_minor": "Fiyat (kuruş)",
   "catalog.primary": "Birincil",
+  "catalog.reorder_level": "Yeniden sipariş seviyesi",
+  "catalog.reorder_level_hint": "Bu ürünün düşük sayılacağı stok miktarı — stok tablosundaki Yeniden Sipariş sütununu ve Düşük Stok listesini belirler",
   "catalog.sample_badge": "ÖRNEK",
   "catalog.save_changes": "Değişiklikleri kaydet",
   "catalog.save_first_hint": "Önce bu ürünü kaydedin — bu bölüm ürün oluşturulduktan sonra kullanılabilir.",

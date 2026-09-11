@@ -296,6 +296,8 @@
   "catalog.price_major": "قیمت (£)",
   "catalog.price_minor": "قیمت (واحد خرد)",
   "catalog.primary": "اصلی",
+  "catalog.reorder_level": "حد سفارش",
+  "catalog.reorder_level_hint": "مقدار موجودی که کمتر از آن این کالا کم‌موجود شمرده می‌شود — ستون «حد سفارش» در جدول موجودی و فهرست موجودی کم را تعیین می‌کند",
   "catalog.sample_badge": "نمونه",
   "catalog.save_changes": "ذخیره تغییرات",
   "catalog.save_first_hint": "ابتدا این کالا را ذخیره کنید — این بخش پس از ایجاد کالا در دسترس خواهد بود.",

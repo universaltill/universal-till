@@ -1829,6 +1829,28 @@ func (r *CatalogRepo) SetItemLeadTimeDays(ctx context.Context, itemID string, da
 	return err
 }
 
+// ItemReorderLevel returns the item's configured reorder threshold (0 =
+// unset) — GetLowStockItems and the stock table's "Reorder at" column both
+// read this column directly (universaltill/ut-docs#2065).
+func (r *CatalogRepo) ItemReorderLevel(ctx context.Context, itemID string) (int, error) {
+	var level int
+	err := r.db.QueryRowContext(ctx, `SELECT reorder_level FROM items WHERE id = ?`, itemID).Scan(&level)
+	if err != nil {
+		return 0, err
+	}
+	return level, nil
+}
+
+// SetItemReorderLevel records the stock quantity below which this item
+// counts as low (universaltill/ut-docs#2065).
+func (r *CatalogRepo) SetItemReorderLevel(ctx context.Context, itemID string, level int) error {
+	if itemID == "" {
+		return errors.New("id required")
+	}
+	_, err := r.db.ExecContext(ctx, `UPDATE items SET reorder_level = ?, updated_at = datetime('now') WHERE id = ?`, level, itemID)
+	return err
+}
+
 func (r *CatalogRepo) UpdateItem(ctx context.Context, in catalogtypes.ItemInput) error {
 	return updateItemExec(ctx, r.db, in)
 }
