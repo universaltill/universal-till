@@ -73,7 +73,7 @@ func TestSync_ServiceShopType_InstallsAndActivatesSalonLayout(t *testing.T) {
 	// from the manifest bytes — Sync must have written them there, or the
 	// plugin's relabelled /items tile silently falls back to the core
 	// label with no error anywhere (ADR-0088 Decision G).
-	localeDir := paths.Plugins(SalonPluginID, "0.2.0", "locales")
+	localeDir := paths.Plugins(SalonPluginID, "0.3.0", "locales")
 	entries, err := os.ReadDir(localeDir)
 	if err != nil || len(entries) == 0 {
 		t.Fatalf("Sync must write plugins/layout-salon's locale files to %s: %v", localeDir, err)

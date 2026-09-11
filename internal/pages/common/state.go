@@ -521,12 +521,31 @@ func BuildMenuAmendments(pm *plugins.Manager, restored map[string]bool) []uislot
 // deliberate, flagged gap rather than an oversight), so every active hide
 // simply applies. Nil-safe on pm, same zero-plugin fast path as its twin.
 func BuildItemsAmendments(pm *plugins.Manager) []uislot.Amendment {
+	return buildSlotAmendments(pm, uislot.ItemsSlot)
+}
+
+// BuildRailAmendments is BuildItemsAmendments' twin for the rail slot
+// (ADR-0088 Decision J, ut-docs#1912): every active layout plugin's
+// RAIL-SLOT amendments out of the same flat pm.LayoutAmendments pool. No
+// restored-hides parameter for the same reason as Items — hide is refused
+// for this slot at install, so there is nothing to restore. Nil-safe on
+// pm, same zero-plugin fast path (nil result → uislot.Resolve's
+// length-check path, and httpx's prebuilt core rail view).
+func BuildRailAmendments(pm *plugins.Manager) []uislot.Amendment {
+	return buildSlotAmendments(pm, uislot.RailSlot)
+}
+
+// buildSlotAmendments is the shared body of the restore-less slot builders
+// (Items, Rail): filter the flat pool to one slot, nil when nothing
+// applies. Read pm.LayoutAmendments only under PluginMu (every caller does
+// — guard-plugin-menu-read.sh allowlists their call sites).
+func buildSlotAmendments(pm *plugins.Manager, slot string) []uislot.Amendment {
 	if pm == nil || len(pm.LayoutAmendments) == 0 {
 		return nil
 	}
 	out := make([]uislot.Amendment, 0, len(pm.LayoutAmendments))
 	for _, a := range pm.LayoutAmendments {
-		if a.Slot != uislot.ItemsSlot {
+		if a.Slot != slot {
 			continue
 		}
 		out = append(out, a)

@@ -487,7 +487,8 @@ _Checked against real code and the [ut-docs ADRs](https://github.com/universalti
 - [x] Plugin system architecture — in-process WASM runtime (wazero),
       Ed25519-signed manifests, 22-type plugin taxonomy (ADR-0001, ADR-0002;
       `language` and `layout` — ADR-0088's declarative UI slot registry, a
-      plugin can hide/reorder/re-label core Menu tiles — added since)
+      plugin can amend the Menu launcher, the /items section list and the
+      nav rail — added since)
 - [x] Plugin marketplace with one-click install (`ut-cloud`, ADR-0018) — live at [cloud.universaltill.com](https://cloud.universaltill.com)
 - [x] Payment plugins: Stripe, QR Pay, demo card terminal, SumUp (reader-driven)
 - [x] Language plugins: German, Spanish (core ships en/ar/fa/tr)

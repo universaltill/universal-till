@@ -276,17 +276,26 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		// ADR-0088 / ut-docs#1911: the Items-slot twin, same read-once-then-
 		// on-reload lifecycle.
 		ItemsAmendments: common.BuildItemsAmendments(pm),
-		Engine:          engine,
-		KioskEngine:     kioskEngine,
-		BtnStore:        btnStore,
-		CatalogRepo:     catalogRepo,
-		AuthSvc:         authSvc,
+		// ADR-0088 Decision J / ut-docs#1912: the rail-slot twin, same
+		// lifecycle; handed to httpx just below so nav.html can read it.
+		RailAmendments: common.BuildRailAmendments(pm),
+		Engine:         engine,
+		KioskEngine:    kioskEngine,
+		BtnStore:       btnStore,
+		CatalogRepo:    catalogRepo,
+		AuthSvc:        authSvc,
 		// Order-status pub/sub (ut-docs#526): one instance for the process —
 		// the one-tap endpoint publishes, future KDS/pager surfaces subscribe.
 		OrderStatus: pos.NewOrderStatusBroadcaster(),
 		WindowCtl:   windowCtl,
 		Shell:       shellChannel,
 	}
+	// ADR-0088 Decision J / ut-docs#1912: nav.html is a shared partial with
+	// no per-page data of its own, so its railEntries template func reads
+	// the rail-slot amendments through this PluginMu-locked accessor rather
+	// than a page handler threading them in — internal/httpx can't import
+	// common (common imports httpx), so the accessor is handed over here.
+	httpx.InitRailAmendments(dp.RailAmendmentsSnapshot)
 
 	// ut-docs#2001 (follow-up from the ut-docs#1902 independent review,
 	// finding 4): builtinlayouts.Sync was previously only called from the

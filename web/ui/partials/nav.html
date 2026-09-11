@@ -30,50 +30,54 @@
        width class already had its own hard-fought wrapping behavior
        (ut-docs#413) not worth re-litigating here. -->
   <div class="nav-primary">
-    <!-- ut-docs#1896 (product owner, comparing against the SumUp Business
+    <!-- ut-docs#1912 (ADR-0088 Decision J): the four links here -- Sell,
+         Menu, Inventory, Orders -- are a UI slot, no longer four hardcoded
+         <a> tags. Their hrefs/label keys/icons/order are DATA in
+         internal/uislot.CoreRail; a `layout` plugin may reorder any of
+         them and re-label Inventory/Orders (never Sell/Menu -- the only
+         two with no equivalent tile anywhere else, so relabelling them is
+         a dead end); hide/icon/group are refused at install. railEntries
+         (internal/httpx/rail.go) resolves core + amendments per request --
+         with no plugin installed it hands back one prebuilt slice, no
+         allocation, and renders byte-for-byte what the old literals did.
+         The per-link data-testid (e2e specs select on it) and the
+         phone-width .nav-rail-only class are render-only attributes mapped
+         from each key there, so a reorder never loses them.
+
+         Why each link is what it is (kept from the hardcoded era):
+         ut-docs#1896 (product owner, comparing against the SumUp Business
          app on the pilot tablet): SumUp's rail leads with a shopping-trolley
          icon that means "sell" -- a place-name tile ("Till"/receipt glyph)
          told the operator where they'd land, not what tapping it does.
          Reuses the "shopping-cart" glyph #1845 already vendored for the
          self-order kiosk's checkout button (index.html), and "nav.till"'s
-         own value is now the action ("Sell"), not the place. -->
-    <a href="/" class="nav-toggle" data-testid="nav-till">
-      <span class="nav-toggle-ico" aria-hidden="true">{{ icon "shopping-cart" }}</span>
-      <span class="nav-toggle-label">{{ T "nav.till" }}</span>
-    </a>
-    <a href="/menu" class="nav-toggle" data-testid="nav-menu">
-      <span class="nav-toggle-ico" aria-hidden="true">{{ icon "menu" }}</span>
-      <span class="nav-toggle-label">{{ T "nav.menu" }}</span>
-    </a>
-    <!-- Moved from index.html's own header row (was a second full-width
-         row above the product grid) -- Inventory is a plain link with no
+         own value is now the action ("Sell"), not the place.
+         Inventory moved here from index.html's own header row (was a second
+         full-width row above the product grid) -- a plain link with no
          page-specific DOM dependency, so it's safe to render on every
-         page, same as Till/Menu above.
+         page, same as Till/Menu.
          .nav-rail-only (app.css): hidden at <=480px. ut-docs#413 already
          fought hard to fit exactly Till/Menu/help/chips in the phone-width
          top bar's two-row wrap without this class's sale-screen bleed
          overflowing the fixed-height sale screen (confirmed live: adding
-         these three unconditionally clipped BASKET under a third nav row
-         at 360px) -- Inventory already has its own tile on the ☰ Menu
+         these unconditionally clipped BASKET under a third nav row at
+         360px) -- Inventory already has its own tile on the ☰ Menu
          launcher page, so hiding it here at phone width costs nothing.
          index.html still renders its OWN small phone-only fallback row for
-         Inventory, shown only at <=480px -- see index.html's own comment. -->
-    <a href="/inventory" class="nav-toggle nav-rail-only" data-testid="kiosk-inventory-link">
-      <span class="nav-toggle-ico" aria-hidden="true">{{ icon "package" }}</span>
-      <span class="nav-toggle-label">{{ T "kiosk.inventory" }}</span>
-    </a>
-    <!-- ut-docs#1349 (product owner, reported twice live): Orders was only
+         Inventory, shown only at <=480px -- see index.html's own comment.
+         ut-docs#1349 (product owner, reported twice live): Orders was only
          reachable via ☰ Menu → Orders (the tile itself, and its icon,
          already exist — ut-docs#1371/menu_page.go's iconSVGFor, since
-         ut-docs#1845 the only icon mechanism there). This
-         promotes it to a one-tap rail shortcut, same pattern and same
-         phone-width tradeoff as Inventory just above: .nav-rail-only
-         (hidden at <=480px) because the Menu tile already covers phone
-         width and ut-docs#413 has no spare budget in that top-bar wrap. -->
-    <a href="/orders" class="nav-toggle nav-rail-only" data-testid="nav-orders">
-      <span class="nav-toggle-ico" aria-hidden="true">{{ icon "bell" }}</span>
-      <span class="nav-toggle-label">{{ T "nav.orders" }}</span>
+         ut-docs#1845 the only icon mechanism there). Promoted to a one-tap
+         rail shortcut, same pattern and same phone-width tradeoff as
+         Inventory: .nav-rail-only because the Menu tile already covers
+         phone width and ut-docs#413 has no spare budget in that wrap. -->
+    {{- range railEntries }}
+    <a href="{{ .Href }}" class="nav-toggle{{ if .RailOnly }} nav-rail-only{{ end }}" data-testid="{{ .TestID }}">
+      <span class="nav-toggle-ico" aria-hidden="true">{{ icon .Icon }}</span>
+      <span class="nav-toggle-label">{{ T .LabelKey }}</span>
     </a>
+    {{- end }}
   </div>
   <div class="nav-right">
     <!-- Contextual help: resolves to the manual topic documenting THIS page
