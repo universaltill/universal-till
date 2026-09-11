@@ -415,7 +415,7 @@ func TestInit_ReconcilesBuiltinLayoutForPreExistingShopType(t *testing.T) {
 		t.Fatalf("plugins.Init: %v", err)
 	}
 	var wg sync.WaitGroup
-	Init(pctx, pctx, cfg, pm, d.DB, nil, &wg) // first boot after the setting was already there
+	_, dp := Init(pctx, pctx, cfg, pm, d.DB, nil, &wg) // first boot after the setting was already there
 
 	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, builtinlayouts.SalonPluginID); err != nil || !found {
 		t.Errorf("after boot, %s must be installed for a pre-existing shop_type=service, found=%v err=%v",
@@ -430,6 +430,116 @@ func TestInit_ReconcilesBuiltinLayoutForPreExistingShopType(t *testing.T) {
 	}
 	if !hidesTables {
 		t.Errorf("after boot, the salon layout must be active (hiding /tables) for a pre-existing shop_type=service, amendments %+v", pm.LayoutAmendments)
+	}
+
+	// ut-docs#1913 (independent review finding): every ADR-0088 slot twin
+	// must be populated straight off THIS boot path, not only after some
+	// later ReloadPlugins fires (boot only calls that conditionally,
+	// ut-docs#2006's "skip a genuine no-op reload" optimization) — the
+	// review's own repro showed SettingsAmendments came back empty here
+	// before init.go's Deps literal was fixed to set it. Menu/Items/Rail
+	// are already proven live by the /tables hide check above (part of
+	// this same salon-plugin activation); this asserts the fourth twin
+	// specifically, at boot, with no reload in between.
+	var settingsReordersTheme bool
+	for _, a := range dp.SettingsAmendmentsSnapshot() {
+		if a.PluginID == builtinlayouts.SalonPluginID && a.Key == "settings-theme" && a.Order != nil {
+			settingsReordersTheme = true
+		}
+	}
+	if !settingsReordersTheme {
+		t.Errorf("after boot, SettingsAmendmentsSnapshot() must already carry the salon layout's settings-theme reorder — got %+v", dp.SettingsAmendmentsSnapshot())
+	}
+}
+
+// TestInit_SteadyStateRebootPopulatesSettingsAmendmentsWithoutReload is the
+// scenario TestInit_ReconcilesBuiltinLayoutForPreExistingShopType's own
+// "settings-theme" assertion above does NOT actually exercise: on a FIRST
+// boot with a pre-existing shop_type, builtinlayouts.Sync installs the salon
+// layout for the first time (changed=true), so Init's own conditional
+// `if syncErr != nil || changed { dp.ReloadPlugins(ctx) }` (ut-docs#2006)
+// fires anyway and would silently mask a missing `SettingsAmendments:` line
+// in the Deps struct literal — ReloadPlugins is that field's OTHER
+// assignment site. A real till's STEADY-STATE reboot — shop_type=service
+// already reconciled, the salon layout already installed at its current
+// version — is exactly the case ut-docs#2006 optimizes: Sync reports
+// changed=false, ReloadPlugins never runs, and the struct literal is the
+// ONLY thing that can populate SettingsAmendments for this boot. Independent
+// review of this card found this scenario genuinely broken (Settings-slot
+// amendments dead until some unrelated later reload) before the literal was
+// fixed; this test reboots twice against the same DB to reproduce the real
+// steady-state case, not just the first-install one.
+func TestInit_SteadyStateRebootPopulatesSettingsAmendmentsWithoutReload(t *testing.T) {
+	chdirRoot(t)
+	paths.Init(t.TempDir())
+
+	d, err := db.Open(filepath.Join(t.TempDir(), "steady_state_reboot.db"))
+	if err != nil {
+		t.Fatalf("open db: %v", err)
+	}
+	defer d.Close()
+
+	store := settings.NewStore(d.DB)
+	ctx := context.Background()
+	if err := store.Set(ctx, common.KeyShopType, "service"); err != nil {
+		t.Fatalf("seed shop_type: %v", err)
+	}
+
+	cfg := &config.Config{Theme: "default", Locales: config.Locales{Currency: "GBP", TaxRate: 20}}
+
+	// First boot: installs + activates the salon layout (changed=true),
+	// which reloads regardless of whether the struct literal is correct —
+	// this boot proves nothing about the bug on its own, it only gets the
+	// DB into the steady state the second boot needs.
+	func() {
+		pctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		pm, err := plugins.Init(pctx, cfg, d.DB)
+		if err != nil {
+			t.Fatalf("plugins.Init (first boot): %v", err)
+		}
+		var wg sync.WaitGroup
+		Init(pctx, pctx, cfg, pm, d.DB, nil, &wg)
+	}()
+
+	if _, found, err := data.NewPluginRepo(d.DB).GetInstalledPluginVersion(ctx, builtinlayouts.SalonPluginID); err != nil || !found {
+		t.Fatalf("first boot must have installed %s, found=%v err=%v", builtinlayouts.SalonPluginID, found, err)
+	}
+
+	// Second boot: a fresh process (fresh plugins.Manager, fresh Deps) against
+	// the SAME already-reconciled DB — a real till restart. Sync must report
+	// changed=false here (nothing left to do), so ReloadPlugins never fires,
+	// and the struct literal is the only path left to populate
+	// SettingsAmendments.
+	pctx2, cancel2 := context.WithCancel(t.Context())
+	defer cancel2()
+	pm2, err := plugins.Init(pctx2, cfg, d.DB)
+	if err != nil {
+		t.Fatalf("plugins.Init (second boot): %v", err)
+	}
+	var wg2 sync.WaitGroup
+	_, dp2 := Init(pctx2, pctx2, cfg, pm2, d.DB, nil, &wg2)
+
+	var settingsReordersTheme bool
+	for _, a := range dp2.SettingsAmendmentsSnapshot() {
+		if a.PluginID == builtinlayouts.SalonPluginID && a.Key == "settings-theme" && a.Order != nil {
+			settingsReordersTheme = true
+		}
+	}
+	if !settingsReordersTheme {
+		t.Errorf("a steady-state reboot (no ReloadPlugins call) must still populate SettingsAmendmentsSnapshot() straight from Init's own Deps literal — got %+v", dp2.SettingsAmendmentsSnapshot())
+	}
+	// Sanity: RailAmendments (an existing, already-correct twin) must ALSO
+	// survive a steady-state reboot the same way — if this ever failed too,
+	// the bug would be in Sync/plugins.Init, not the Deps literal.
+	var railReordersOrders bool
+	for _, a := range dp2.RailAmendmentsSnapshot() {
+		if a.PluginID == builtinlayouts.SalonPluginID && a.Key == "/orders" && a.Order != nil {
+			railReordersOrders = true
+		}
+	}
+	if !railReordersOrders {
+		t.Errorf("sanity check failed: RailAmendmentsSnapshot() should also survive a steady-state reboot, got %+v", dp2.RailAmendmentsSnapshot())
 	}
 }
 

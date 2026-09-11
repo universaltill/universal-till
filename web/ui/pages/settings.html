@@ -19,6 +19,18 @@
     </form>
     <ul class="settings-tree" id="settings-tree"></ul>
     <p class="settings-noresults muted" id="settings-noresults" hidden>{{ T "settings.search.none" }}</p>
+    <!-- ADR-0088, ut-docs#1913: the sidebar's RESOLVED order/label/group
+         (uislot.CoreSettings + any active `layout` plugin's Settings-slot
+         amendment), rendered server-side so the JS below does no
+         translation of its own — same "already resolved by the server"
+         convention as .settings-tree itself (ut-docs#1960's own comment
+         above). Inert data, never shown directly; the script below reads
+         it once and correlates each row to the matching #settings-grid
+         card actually present in THIS render (a gated card that didn't
+         render this time is simply skipped). -->
+    <ul id="settings-nav-index" hidden aria-hidden="true">
+      {{ range .settingsNav }}<li data-key="{{ .Key }}"{{ if .Group }} data-group="{{ .Group }}"{{ end }}>{{ .Label }}</li>{{ end }}
+    </ul>
   </aside>
   <div class="settings-panel" id="settings-panel">
     <button type="button" class="btn secondary settings-back" id="settings-back">← {{ T "settings.nav.back" }}</button>
@@ -1866,25 +1878,72 @@
     return (clone.textContent || '').replace(/\s+/g, ' ').trim();
   }
 
-  // ---- Section nav (one <li> per rendered card, in DOM order) ----
+  // ---- Section nav (one <li> per rendered card, in RESOLVED order —
+  // ADR-0088, ut-docs#1913). internal/pages/settingsnav resolves the
+  // registry (core defaults + any active `layout` plugin's amendment)
+  // server-side into #settings-nav-index above; this just reads that
+  // already-localized data and correlates each row to the matching card.
+  // A card this render didn't include (isManager/payMethods/etc. gated it
+  // out) simply has no matching element and is skipped — same tolerance
+  // the old DOM-scan version had for "however many cards actually
+  // rendered". With no #settings-nav-index (an older fixture, or the
+  // element missing for some other reason) this reproduces the exact
+  // pre-#1913 DOM-scan behaviour instead, so nothing regresses silently. ----
   var navItems = []; // { id, card, li, a, title }
+  var cardById = {};
+  var nextAutoID = 1;
   cards.forEach(function (card) {
     if (!card.id) {
       // Every card in settings.html carries an id (settings_two_pane_test.go
       // pins that), so this is belt-and-braces: a card that somehow lacks
       // one still gets a nav entry instead of becoming unreachable.
-      card.id = 'settings-section-' + (navItems.length + 1);
+      card.id = 'settings-section-' + (nextAutoID++);
     }
+    cardById[card.id] = card;
+  });
+
+  var resolvedOrder = [];
+  var navIndexEl = document.getElementById('settings-nav-index');
+  if (navIndexEl) {
+    Array.prototype.forEach.call(navIndexEl.querySelectorAll('li'), function (li) {
+      resolvedOrder.push({
+        key: li.getAttribute('data-key'),
+        label: (li.textContent || '').replace(/\s+/g, ' ').trim(),
+        group: li.getAttribute('data-group') || ''
+      });
+    });
+  }
+  if (!resolvedOrder.length) {
+    cards.forEach(function (card) { resolvedOrder.push({ key: card.id, label: headingText(card), group: '' }); });
+  }
+
+  var prevGroup = '';
+  resolvedOrder.forEach(function (row) {
+    var card = cardById[row.key];
+    if (!card) return; // this render didn't include the card — nothing to link to
+    if (row.group && row.group !== prevGroup) {
+      var heading = document.createElement('li');
+      heading.className = 'settings-tree-group';
+      heading.setAttribute('role', 'presentation');
+      heading.textContent = row.group;
+      tree.appendChild(heading);
+    }
+    prevGroup = row.group;
     var li = document.createElement('li');
     var a = document.createElement('a');
     a.href = '#' + card.id;
     a.className = 'settings-tree-link';
     a.setAttribute('data-section', card.id);
-    a.textContent = headingText(card);
+    a.textContent = row.label;
     li.appendChild(a);
     tree.appendChild(li);
     navItems.push({ id: card.id, card: card, li: li, a: a, title: a.textContent });
   });
+  // Snapshot of the fully-built tree (nav-item <li>s AND group-heading
+  // <li>s) so a search restores the exact same markup afterwards — restoreNav
+  // below replays these same nodes rather than reconstructing from navItems
+  // alone, which would silently drop the group headings.
+  var initialTreeChildren = Array.prototype.slice.call(tree.children);
 
   var current = null;
 
@@ -2036,7 +2095,10 @@
     if (!showingResults) return;
     showingResults = false;
     tree.innerHTML = '';
-    navItems.forEach(function (item) { tree.appendChild(item.li); });
+    // Replay the ORIGINAL nodes (nav-item <li>s AND group-heading <li>s,
+    // ut-docs#1913) rather than rebuilding from navItems alone — appendChild
+    // moves an existing node, so this is the same markup, not a rebuild.
+    initialTreeChildren.forEach(function (node) { tree.appendChild(node); });
     tree.hidden = false;
     if (noResults) noResults.hidden = true;
   }

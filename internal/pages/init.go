@@ -279,11 +279,21 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		// ADR-0088 Decision J / ut-docs#1912: the rail-slot twin, same
 		// lifecycle; handed to httpx just below so nav.html can read it.
 		RailAmendments: common.BuildRailAmendments(pm),
-		Engine:         engine,
-		KioskEngine:    kioskEngine,
-		BtnStore:       btnStore,
-		CatalogRepo:    catalogRepo,
-		AuthSvc:        authSvc,
+		// ADR-0088 / ut-docs#1913: the fourth twin, for the /settings
+		// sidebar. Same read-once-then-on-reload lifecycle as the three
+		// above — independent review of this same card found this line
+		// missing on its first pass: without it, a `layout` plugin's
+		// Settings-slot amendment stayed silently inert until SOME other
+		// change happened to trigger ReloadPlugins (e.g. a shop_type
+		// switch), because ReloadPlugins is this field's only OTHER
+		// assignment site and boot only calls it conditionally
+		// (ut-docs#2006's "skip a genuine no-op reload" optimization).
+		SettingsAmendments: common.BuildSettingsAmendments(pm),
+		Engine:             engine,
+		KioskEngine:        kioskEngine,
+		BtnStore:           btnStore,
+		CatalogRepo:        catalogRepo,
+		AuthSvc:            authSvc,
 		// Order-status pub/sub (ut-docs#526): one instance for the process —
 		// the one-tap endpoint publishes, future KDS/pager surfaces subscribe.
 		OrderStatus: pos.NewOrderStatusBroadcaster(),
