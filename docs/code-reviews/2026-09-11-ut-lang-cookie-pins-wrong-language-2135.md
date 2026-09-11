@@ -118,6 +118,28 @@ new injection surface (the value reaches templates only as an
 attribute-escaped `<html lang>`, and the issue-report path still clamps to
 `isAvailableLocale`), and no repository/money/i18n rule violations.
 
+## A sixth call site, found by CI after merging main
+
+`items_page.go` synthesizes a `ut_lang` cookie for an in-process sub-request
+rather than copying the caller's, so a first-ever `?lang=fa` visit renders the
+embedded panel in Persian too (ut-docs#2114). It built that cookie as a bare
+locale, which this change treats as a stale pre-#2135 value and ignores — so
+the panel silently fell back to the shop default, undoing #2114.
+
+It was invisible until `main` was merged in, because #2114 and its test landed
+on `main` after this branch was cut: the branch was green, `main` was green,
+and only the combination was broken. Fixed by building that cookie through
+`httpx.LocaleOverrideValue` — which is exactly why that helper is exported and
+documented as the single definition of the format. Caught by the full suite
+locally and by CI's own `internal/pages` job, independently.
+
+The general lesson, and the reason this is written down rather than just
+fixed: changing a cookie's *format* is not confined to the code that reads it.
+Every place that WRITES one has to move too, including the ones that
+synthesize a request rather than serve one. The reviewer swept readers of
+`ut_lang`/`RequestLocale`/`ResolveLocale` thoroughly and still missed this,
+because it is a writer, and because its test did not exist on this branch yet.
+
 ## TDD verification, re-done personally on the shipping code
 
 The reviewer's own four mutations were run against the *first* design. After
