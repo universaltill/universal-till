@@ -45,17 +45,17 @@
         "headings": 4,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 8,
+        "top_bullets": 9,
         "bold_leadins": 1
       },
       "english": {
         "headings": 4,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 8,
+        "top_bullets": 9,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2098: a new bullet (per-station resend scoping) added to English and this locale keeps top_bullets in sync (8->9); the pre-existing bold_leadins gap is untouched."
     },
     {
       "locale": "ar",
@@ -311,17 +311,17 @@
         "headings": 4,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 8,
+        "top_bullets": 9,
         "bold_leadins": 1
       },
       "english": {
         "headings": 4,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 8,
+        "top_bullets": 9,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2098: a new bullet (per-station resend scoping) added to English and this locale keeps top_bullets in sync (8->9); the pre-existing bold_leadins gap is untouched."
     },
     {
       "locale": "fa",
@@ -634,17 +634,17 @@
         "headings": 4,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 8,
+        "top_bullets": 9,
         "bold_leadins": 2
       },
       "english": {
         "headings": 4,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 8,
+        "top_bullets": 9,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2098: a new bullet (per-station resend scoping) added to English and this locale keeps top_bullets in sync (8->9); the pre-existing bold_leadins gap is untouched."
     },
     {
       "locale": "tr",

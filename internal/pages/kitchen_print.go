@@ -211,7 +211,18 @@ type kitchenSendFailure struct {
 // line whose every resolved station is display-only joins the default
 // bucket rather than silently vanishing — exactly as it did before the
 // display type had a UI.
-func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo string) ([]kitchenTarget, error) {
+//
+// stationID, when non-empty, scopes the result to that ONE station's own
+// ticket (ut-docs#2098): a line that resolves to a real station but not
+// THIS one is dropped entirely — it still counts as "routed" so it never
+// leaks into the default bucket, it just isn't this station's business.
+// The default bucket itself is never returned under a station filter: it
+// has no real KitchenStation.ID to match, and a per-station board (the
+// only caller that ever passes one) never wants "everything unrouted"
+// mixed into its own resend. Empty stationID keeps the original
+// unfiltered, every-destination behavior used by the shop-wide /orders
+// board and by the automatic post-sale print.
+func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo, stationID string) ([]kitchenTarget, error) {
 	repo := data.NewPOSRepo(d.Db)
 	detail, ok, err := repo.GetSaleDetail(ctx, receiptNo)
 	if err != nil {
@@ -263,15 +274,18 @@ func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo string) 
 			if strings.TrimSpace(s.PrinterAddress) == "" {
 				continue
 			}
+			routed = true // a real destination exists, whether or not it matches the filter below — keeps this line out of the default bucket even when filtered out here (the default bucket itself is also unconditionally excluded under any filter, by stationID=="" in the check below, so this is defense-in-depth rather than load-bearing on its own)
+			if stationID != "" && s.ID != stationID {
+				continue // routed elsewhere, not to the station this call is scoped to (ut-docs#2098)
+			}
 			g, ok := groups[s.ID]
 			if !ok {
 				g = &group{station: s}
 				groups[s.ID] = g
 			}
 			g.lines = append(g.lines, l)
-			routed = true
 		}
-		if !routed {
+		if !routed && stationID == "" {
 			defaultLines = append(defaultLines, l)
 		}
 	}
@@ -324,9 +338,10 @@ func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo string) 
 // returned error is non-nil only when the tickets could not be built at all
 // (sale missing, DB error); per-target send failures come back in failures
 // so the manual print API can report partial success while
-// printKitchenAsync ignores them.
-func printKitchen(ctx context.Context, d *common.Deps, receiptNo, actorID string) (total int, failures []kitchenSendFailure, err error) {
-	targets, err := buildKitchenTargets(ctx, d, receiptNo)
+// printKitchenAsync ignores them. stationID scopes the resend to one
+// station — see buildKitchenTargets' own doc comment (ut-docs#2098).
+func printKitchen(ctx context.Context, d *common.Deps, receiptNo, actorID, stationID string) (total int, failures []kitchenSendFailure, err error) {
+	targets, err := buildKitchenTargets(ctx, d, receiptNo, stationID)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -432,7 +447,7 @@ func printKitchenAsync(d *common.Deps, receiptNo string, actorID string) {
 			// overwrite a real prior failure nor falsely clear one.
 			return
 		}
-		total, failures, err := printKitchenFn(ctx, d, receiptNo, actorID)
+		total, failures, err := printKitchenFn(ctx, d, receiptNo, actorID, "") // async post-sale print is always every destination, never station-scoped
 		if err != nil {
 			// Fresh context: a hung/out-of-paper printer burns the whole
 			// print budget before failing, so ctx is already expired here —
@@ -475,6 +490,11 @@ func registerKitchenPrintAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/print/kitchen", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		receiptNo := strings.TrimSpace(r.Form.Get("receipt_no"))
+		// ut-docs#2098: optional, set only by the per-station kitchen-display
+		// board (orders_list.html carries its own .StationID into every
+		// resend button it renders) — "" from the shop-wide /orders board
+		// keeps the original every-destination behavior.
+		stationID := strings.TrimSpace(r.Form.Get("station_id"))
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fail := func(status int, key string) {
@@ -491,22 +511,44 @@ func registerKitchenPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
-		total, failures, err := printKitchen(ctx, d, receiptNo, getSessionUserID(r))
-		ok := err == nil && len(failures) == 0
+		total, failures, err := printKitchen(ctx, d, receiptNo, getSessionUserID(r), stationID)
+		ok := err == nil && len(failures) == 0 && total > 0
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "sale", receiptNo, "kitchen_printed",
-			map[string]any{"ok": ok}, time.Now().UTC().Format(time.RFC3339), "")
-		// Keep the /orders warning honest (ut-docs#517a): any failure (total
-		// failure to build tickets, or a partial failure with some stations
-		// down) flags the sale; a fully successful manual print clears a
-		// stale flag, so a manually-fixed printer un-sticks the warning.
-		if ok {
+			map[string]any{"ok": ok, "station_id": stationID}, time.Now().UTC().Format(time.RFC3339), "")
+		// Keep the /orders warning honest (ut-docs#517a) — and, since
+		// ut-docs#2098, honest about what a STATION-SCOPED call can actually
+		// speak for. kitchen_print_failed is a flag on the whole SALE, not
+		// one per station (order_status_repo.go), so:
+		//   - total==0 (nothing routed to this call at all — the unfiltered
+		//     legacy "nothing to build" case, OR a station filter that
+		//     matched no target: a display-only station's own board, or a
+		//     stale/unknown station id) is NOT evidence either way about
+		//     the sale's real print state. Independent review (ut-docs#2098)
+		//     caught this reporting false success and silently clearing a
+		//     real warning — leave the flag untouched.
+		//   - a station-scoped SUCCESS never clears the flag: it only proves
+		//     THIS station is fine, and another station's ticket can still
+		//     be sitting unsent (independent review, ut-docs#2098) — only an
+		//     unfiltered call (the shop-wide /orders board, or the
+		//     automatic post-sale print) ever clears it clean.
+		//   - a station-scoped FAILURE still sets the flag: real evidence
+		//     the sale isn't fully printed, exactly as before.
+		switch {
+		case err == nil && total == 0:
+			// leave the flag alone — nothing was actually attempted
+		case ok && stationID == "":
 			_ = posRepo.SetKitchenPrintFailed(r.Context(), receiptNo, "")
-		} else {
+		case !ok:
 			_ = posRepo.SetKitchenPrintFailed(r.Context(), receiptNo, time.Now().UTC().Format(time.RFC3339))
 		}
 		switch {
 		case err != nil:
 			fail(http.StatusBadGateway, "kitchen.print.failed")
+		case total == 0:
+			// Never the ✓ span here (ut-docs#2098): a station-scoped call
+			// with nothing to send must read as distinctly "nothing to do",
+			// not as a false "printed".
+			fail(http.StatusBadRequest, "kitchen.print.station_nothing_to_send")
 		case len(failures) == 0:
 			fmt.Fprintf(w, `<span>✓ %s</span>`, httpx.T(locale, "kitchen.print.done"))
 		case len(failures) < total:

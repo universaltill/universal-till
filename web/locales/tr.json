@@ -876,6 +876,7 @@
   "kitchen.print.no_receipt": "Sipariş seçilmedi",
   "kitchen.print.off": "Mutfak yazıcısı yapılandırılmadı",
   "kitchen.print.partial": "Bazı mutfak fişleri yazdırılamadı",
+  "kitchen.print.station_nothing_to_send": "Bu istasyon için yazdırılacak bir şey yok",
   "kitchen.ticket.order_label": "SİPARİŞ",
   "kitchen.ticket.station_default": "MUTFAK",
   "kitchendisplay.empty": "Bu istasyon için sipariş yok",
