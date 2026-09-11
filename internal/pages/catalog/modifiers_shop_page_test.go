@@ -157,7 +157,10 @@ func TestModifiersPage_ShowsInactiveGroupsForReactivation(t *testing.T) {
 // exactly the "dead end, no way back except the main menu" the product
 // owner reported. This asserts the persistent link exists regardless of
 // whether the shop has any groups, matching tax_codes.html/option_sets.html's
-// own `<a class="btn secondary" href="/catalog">` convention.
+// own `<a class="btn secondary" href="/items">` convention (ut-docs#2090:
+// retargeted from bare /catalog to /items — bare /catalog renders
+// standalone with no /items rail, so it used to trade one railless page
+// for another; /items is the shell itself, default section Catalog).
 func TestModifiersPage_HasPersistentBackToCatalogLink(t *testing.T) {
 	chdirToRepoRoot(t)
 	db := setupCatalogPageDB(t)
@@ -188,7 +191,7 @@ func TestModifiersPage_HasPersistentBackToCatalogLink(t *testing.T) {
 	if end := strings.Index(head, "</div>"); end != -1 {
 		head = head[:end]
 	}
-	backLink := `<a class="btn secondary" href="/catalog">← ` + httpx.T("en", "nav.catalog") + `</a>`
+	backLink := `<a class="btn secondary" href="/items">← ` + httpx.T("en", "nav.catalog") + `</a>`
 	if !strings.Contains(head, backLink) {
 		t.Errorf("expected page-head to contain a persistent back-to-catalog link %q, got head region: %s", backLink, head)
 	}

@@ -1,7 +1,12 @@
 {{ define "content" }}
 <div class="page-head">
   <h1>{{ T "taxcodes.title" }} {{ helpLink "tax-codes" }}</h1>
-  <a class="btn secondary" href="/catalog">← {{ T "nav.catalog" }}</a>
+  <!-- ut-docs#2090: bare /catalog renders standalone (no /items rail) —
+       /items is the shell itself (default section = Catalog), so this is
+       never a railless landing. Tax codes isn't an /items rail section
+       yet (ut-docs#2095, follow-up), so unlike modifiers.html/
+       option_sets.html this is a plain link only, no in-panel swap. -->
+  <a class="btn secondary" href="/items">← {{ T "nav.catalog" }}</a>
 </div>
 
 <div class="catalog-layout">
