@@ -119,7 +119,7 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 		// plus an out-of-band refresh of the rail so its is-current highlight
 		// follows the click; a plain browser GET (deep link) still gets the
 		// exact same full standalone page as before this card.
-		if httpx.IsFragmentSwap(r) {
+		if httpx.IsFragmentSwap(w, r) {
 			httpx.RenderContentFragment("ui/pages/inventory.html", data)(w, r)
 			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/inventory", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return
