@@ -877,6 +877,7 @@
   "kitchen.print.no_receipt": "No order selected",
   "kitchen.print.off": "No kitchen printer configured",
   "kitchen.print.partial": "Some kitchen tickets failed to print",
+  "kitchen.print.station_nothing_to_send": "Nothing to print for this station",
   "kitchen.ticket.order_label": "ORDER",
   "kitchen.ticket.station_default": "KITCHEN",
   "kitchendisplay.empty": "No orders for this station",

@@ -525,6 +525,154 @@ func TestManualKitchenReprintSetsAndClearsPrintFailedFlag(t *testing.T) {
 	}
 }
 
+// ut-docs#2098 independent review, finding #1: a station-scoped resend
+// tapped from a DISPLAY-ONLY station's own board (kitchenDisplayStation
+// admits 'display' and 'both', but only 'printer'/'both' ever produce a
+// target — buildKitchenTargets, kitchen_print.go) resolves to zero targets.
+// Before the fix this read as a plain success: it rendered the ✓ span AND
+// cleared kitchen_print_failed_at, even though nothing was ever sent and
+// the sale's real failure was still real. It must instead render distinctly
+// (never ✓) and leave the flag exactly as it found it.
+func TestManualKitchenReprint_StationScopedNothingToSend_DoesNotFalselyClear(t *testing.T) {
+	dp := newPrintFlagTestDeps(t)
+	mux := http.NewServeMux()
+	registerKitchenPrintAPI(mux, dp)
+	ctx := context.Background()
+	repo := data.NewPOSRepo(dp.Db)
+
+	// A legacy default printer so kitchen printing overall reads as enabled
+	// — a real shop with a display-only screen always has some OTHER print
+	// destination too, or nothing would ever have set the flag in the first
+	// place. Without this the handler would 400 before ever reaching
+	// printKitchen, and the test would prove nothing about the real bug.
+	if err := dp.Settings.Set(ctx, keyPrinterKitchen, filepath.Join(t.TempDir(), "kitchen.prn")); err != nil {
+		t.Fatal(err)
+	}
+	seedReceiptSale(t, dp, "sale-disp", "R-DISP1", "sale", "", 120, 0, 0)
+
+	screen, err := repo.CreateKitchenStation(ctx, "Pass Screen", data.KitchenDestinationDisplay, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	// itm1 (seedReceiptSale's own line) routes ONLY to the display-only
+	// screen — this is the board a Pass Screen worker's tap comes from.
+	if err := repo.SetItemStationRoutes(ctx, "itm1", []string{screen}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetKitchenPrintFailed(ctx, "R-DISP1", "2026-09-11T10:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/print/kitchen", strings.NewReader("receipt_no=R-DISP1&station_id="+screen))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusOK || strings.Contains(rec.Body.String(), "✓") {
+		t.Fatalf("a display-only station's own board must never report success for a resend it cannot act on, got %d %q", rec.Code, rec.Body.String())
+	}
+	if entry := findRecentOrder(t, dp, "R-DISP1"); entry.KitchenPrintFailedAt == "" {
+		t.Fatal("a station-scoped call that sent nothing must NOT clear the sale's real still-failed kitchen warning")
+	}
+}
+
+// ut-docs#2098 independent review, finding #3: the same "nothing to send"
+// outcome as above, but via a station_id that doesn't resolve to anything
+// for this sale at all (unknown id, or a station since disabled/deleted —
+// the board simply left open) rather than a legitimately display-only one.
+// Same requirement: never a false success, never a false clear.
+func TestManualKitchenReprint_UnknownStationID_DoesNotFalselyClear(t *testing.T) {
+	dp := newPrintFlagTestDeps(t)
+	mux := http.NewServeMux()
+	registerKitchenPrintAPI(mux, dp)
+	ctx := context.Background()
+	repo := data.NewPOSRepo(dp.Db)
+
+	grill, err := repo.CreateKitchenStation(ctx, "Grill", data.KitchenDestinationPrinter, filepath.Join(t.TempDir(), "grill.prn"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	seedReceiptSale(t, dp, "sale-unk", "R-UNK1", "sale", "", 120, 0, 0)
+	if err := repo.SetItemStationRoutes(ctx, "itm1", []string{grill}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetKitchenPrintFailed(ctx, "R-UNK1", "2026-09-11T10:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/print/kitchen", strings.NewReader("receipt_no=R-UNK1&station_id=not-a-real-station"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code == http.StatusOK || strings.Contains(rec.Body.String(), "✓") {
+		t.Fatalf("an unknown station_id must never report success, got %d %q", rec.Code, rec.Body.String())
+	}
+	if entry := findRecentOrder(t, dp, "R-UNK1"); entry.KitchenPrintFailedAt == "" {
+		t.Fatal("an unknown station_id must not clear a real still-failed warning")
+	}
+}
+
+// ut-docs#2098 independent review, finding #2: kitchen_print_failed is a
+// flag on the whole SALE (order_status_repo.go), not one per station. A
+// station-scoped resend that succeeds for ITS OWN station used to clear
+// that sale-wide flag unconditionally — hiding a DIFFERENT station's ticket
+// that is still genuinely unsent. Only an unfiltered call may ever clear it
+// clean; a station-scoped success must leave it exactly as it found it.
+func TestManualKitchenReprint_StationScopedSuccess_DoesNotClearSaleWideFlag(t *testing.T) {
+	dp := newPrintFlagTestDeps(t)
+	mux := http.NewServeMux()
+	registerKitchenPrintAPI(mux, dp)
+	ctx := context.Background()
+	repo := data.NewPOSRepo(dp.Db)
+
+	seedReceiptSale(t, dp, "sale-part", "R-PART1", "sale", "", 120, 0, 0)
+	// A second line for a second item, routed to a second station —
+	// seedReceiptSale only ever creates the one itm1 line.
+	if _, err := dp.Db.Exec(`INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm2','DEF','Cola',250,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.Exec(`INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES('sale-part-line2','sale-part',2,'itm2','Cola','DEF',1,250,0,0,250,250)`); err != nil {
+		t.Fatal(err)
+	}
+
+	grillPrn := filepath.Join(t.TempDir(), "grill.prn")
+	if err := os.WriteFile(grillPrn, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+	grill, err := repo.CreateKitchenStation(ctx, "Grill", data.KitchenDestinationPrinter, grillPrn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Bar's own printer address is unopenable — its ticket genuinely fails.
+	bar, err := repo.CreateKitchenStation(ctx, "Bar", data.KitchenDestinationPrinter, filepath.Join(t.TempDir(), "missing-dir", "bar.prn"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetItemStationRoutes(ctx, "itm1", []string{grill}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetItemStationRoutes(ctx, "itm2", []string{bar}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetKitchenPrintFailed(ctx, "R-PART1", "2026-09-11T10:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodPost, "/api/print/kitchen", strings.NewReader("receipt_no=R-PART1&station_id="+grill))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+
+	if rec.Code != http.StatusOK || !strings.Contains(rec.Body.String(), "✓") {
+		t.Fatalf("Grill-scoped resend must itself succeed (Grill's own printer is healthy), got %d %q", rec.Code, rec.Body.String())
+	}
+	if entry := findRecentOrder(t, dp, "R-PART1"); entry.KitchenPrintFailedAt == "" {
+		t.Fatal("a Grill-scoped success must NOT clear the sale-wide warning while Bar's own ticket is still unsent")
+	}
+}
+
 // Independent review, ut-docs#517a: the failure this feature exists to
 // surface — an out-of-paper / unplugged / hung printer — does NOT fail fast.
 // Both transports block until the print context's own deadline (deviceTransport
