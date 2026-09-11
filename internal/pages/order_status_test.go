@@ -501,6 +501,12 @@ func TestOrdersListFragment_KitchenPrintFailed_HasResendButton(t *testing.T) {
 	if !strings.Contains(body, "Resend kitchen ticket") {
 		t.Fatalf("resend button must carry its translated label, got %q", body)
 	}
+	// ut-docs#2098: the shop-wide board is never station-scoped — an empty
+	// station_id keeps kitchen_print.go's original every-destination resend,
+	// unlike the per-station kitchen-display board's own resend button.
+	if !strings.Contains(body, `station_id&#34;:&#34;&#34;`) {
+		t.Fatalf("shop-wide board's resend button must carry an empty station_id, got %q", body)
+	}
 }
 
 // A healthy order (no kitchen-print failure) must not offer the resend

@@ -27,6 +27,7 @@ Eine Station mit dem Ziel **Anzeige** oder **Drucker und Anzeige** hat ihren eig
 - Der Status gehört zur ganzen Bestellung, nicht zu jedem Artikel: Eine Bestellung mit Artikeln für zwei Stationen erscheint auf beiden Bildschirmen, und das Markieren als Fertig oder Abgeholt auf einem der beiden Bildschirme aktualisiert beide.
 - Der Bildschirm zeigt nur Bestellungen, die an **dieser** Kasse aufgenommen wurden — anders als die eigene Bestellungsseite der Kasse zeigt er keine Bestellungen einer anderen Kasse an, auch nicht nach dem Synchronisieren. In einem Geschäft mit mehreren verbundenen Kassen öffnen Sie die Küchenanzeige an der Kasse, die die entsprechenden Bestellungen tatsächlich aufnimmt.
 - Der Bildschirm einer deaktivierten Station funktioniert nicht mehr, bis Sie sie reaktivieren; eine reine Druckerstation hat keinen Bildschirm.
+- Zeigt eine Bestellung hier die Warnung **⚠ Küchendruck fehlgeschlagen**, sendet **Bon erneut senden** nur den Bon DIESER Station erneut — nie den einer anderen Station, der bereits erfolgreich gedruckt wurde. Auf der geschäftsweiten Bestellungsseite sendet dieselbe Schaltfläche an jede Station, an die die Bestellung geleitet wird, da diese Seite an keine einzelne Station gebunden ist.
 
 ## Gut zu wissen
 
