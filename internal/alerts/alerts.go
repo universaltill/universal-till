@@ -79,9 +79,16 @@ func runningOutCount(ctx context.Context, db *sql.DB) (int, error) {
 	// Named nowPad rather than now to avoid shadowing the package-level
 	// now() helper.
 	nowPad := time.Now().Add(time.Second)
-	rates, err := repo.ItemDailySellRates(ctx, nowPad.Add(-28*24*time.Hour), nowPad)
-	if err != nil || len(rates) == 0 {
+	rates, err := repo.ItemDirectDailySellRates(ctx, nowPad.Add(-28*24*time.Hour), nowPad)
+	if err != nil {
 		return 0, err
+	}
+	variantRates, err := repo.VariantDailySellRates(ctx, nowPad.Add(-28*24*time.Hour), nowPad)
+	if err != nil {
+		return 0, err
+	}
+	if len(rates) == 0 && len(variantRates) == 0 {
+		return 0, nil
 	}
 	levels, err := repo.ListStockLevels(ctx)
 	if err != nil {
@@ -89,7 +96,7 @@ func runningOutCount(ctx context.Context, db *sql.DB) (int, error) {
 	}
 	n := 0
 	for _, l := range levels {
-		if l.IsRunningOut(rates[l.ItemID]) {
+		if l.IsRunningOut(l.SellRate(rates, variantRates)) {
 			n++
 		}
 	}

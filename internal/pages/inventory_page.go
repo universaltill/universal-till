@@ -37,7 +37,8 @@ func stockLevelsForDisplay(ctx context.Context, d *common.Deps) ([]stockRow, int
 	// exact-now exclusive upper bound can otherwise drop it (see
 	// reportNow's doc comment in reports_page.go).
 	sellRateNow := time.Now().Add(time.Second)
-	rates, _ := posRepo.ItemDailySellRates(ctx, sellRateNow.Add(-28*24*time.Hour), sellRateNow)
+	rates, _ := posRepo.ItemDirectDailySellRates(ctx, sellRateNow.Add(-28*24*time.Hour), sellRateNow)
+	variantRates, _ := posRepo.VariantDailySellRates(ctx, sellRateNow.Add(-28*24*time.Hour), sellRateNow)
 
 	// coverBufferDays is the safety-stock buffer added on top of the
 	// effective warn window (LowStockItem.EffectiveWarnDays — the item's
@@ -54,13 +55,14 @@ func stockLevelsForDisplay(ctx context.Context, d *common.Deps) ([]stockRow, int
 		}
 		effectiveWarnDays := l.EffectiveWarnDays()
 		effectiveCoverDays := effectiveWarnDays + coverBufferDays
-		if rate := rates[l.ItemID]; rate > 0 && l.CurrentQty > 0 {
+		rate := l.SellRate(rates, variantRates)
+		if rate > 0 && l.CurrentQty > 0 {
 			row.DaysLeft = l.DaysLeftAt(rate)
 		} else if rate > 0 && l.CurrentQty <= 0 {
 			row.DaysLeft = 0
 		}
-		row.RunsOut = l.IsRunningOut(rates[l.ItemID])
-		if rate := rates[l.ItemID]; row.RunsOut && rate > 0 {
+		row.RunsOut = l.IsRunningOut(rate)
+		if row.RunsOut && rate > 0 {
 			if need := rate*float64(effectiveCoverDays) - l.CurrentQty; need > 0 {
 				row.OrderQty = int(math.Ceil(need))
 			}
