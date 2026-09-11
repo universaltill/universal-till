@@ -211,7 +211,18 @@ type kitchenSendFailure struct {
 // line whose every resolved station is display-only joins the default
 // bucket rather than silently vanishing — exactly as it did before the
 // display type had a UI.
-func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo string) ([]kitchenTarget, error) {
+//
+// stationID, when non-empty, scopes the result to that ONE station's own
+// ticket (ut-docs#2098): a line that resolves to a real station but not
+// THIS one is dropped entirely — it still counts as "routed" so it never
+// leaks into the default bucket, it just isn't this station's business.
+// The default bucket itself is never returned under a station filter: it
+// has no real KitchenStation.ID to match, and a per-station board (the
+// only caller that ever passes one) never wants "everything unrouted"
+// mixed into its own resend. Empty stationID keeps the original
+// unfiltered, every-destination behavior used by the shop-wide /orders
+// board and by the automatic post-sale print.
+func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo, stationID string) ([]kitchenTarget, error) {
 	repo := data.NewPOSRepo(d.Db)
 	detail, ok, err := repo.GetSaleDetail(ctx, receiptNo)
 	if err != nil {
@@ -263,15 +274,18 @@ func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo string) 
 			if strings.TrimSpace(s.PrinterAddress) == "" {
 				continue
 			}
+			routed = true // a real destination exists, whether or not it matches the filter below — must never fall through to the default bucket
+			if stationID != "" && s.ID != stationID {
+				continue // routed elsewhere, not to the station this call is scoped to (ut-docs#2098)
+			}
 			g, ok := groups[s.ID]
 			if !ok {
 				g = &group{station: s}
 				groups[s.ID] = g
 			}
 			g.lines = append(g.lines, l)
-			routed = true
 		}
-		if !routed {
+		if !routed && stationID == "" {
 			defaultLines = append(defaultLines, l)
 		}
 	}
@@ -324,9 +338,10 @@ func buildKitchenTargets(ctx context.Context, d *common.Deps, receiptNo string) 
 // returned error is non-nil only when the tickets could not be built at all
 // (sale missing, DB error); per-target send failures come back in failures
 // so the manual print API can report partial success while
-// printKitchenAsync ignores them.
-func printKitchen(ctx context.Context, d *common.Deps, receiptNo, actorID string) (total int, failures []kitchenSendFailure, err error) {
-	targets, err := buildKitchenTargets(ctx, d, receiptNo)
+// printKitchenAsync ignores them. stationID scopes the resend to one
+// station — see buildKitchenTargets' own doc comment (ut-docs#2098).
+func printKitchen(ctx context.Context, d *common.Deps, receiptNo, actorID, stationID string) (total int, failures []kitchenSendFailure, err error) {
+	targets, err := buildKitchenTargets(ctx, d, receiptNo, stationID)
 	if err != nil {
 		return 0, nil, err
 	}
@@ -432,7 +447,7 @@ func printKitchenAsync(d *common.Deps, receiptNo string, actorID string) {
 			// overwrite a real prior failure nor falsely clear one.
 			return
 		}
-		total, failures, err := printKitchenFn(ctx, d, receiptNo, actorID)
+		total, failures, err := printKitchenFn(ctx, d, receiptNo, actorID, "") // async post-sale print is always every destination, never station-scoped
 		if err != nil {
 			// Fresh context: a hung/out-of-paper printer burns the whole
 			// print budget before failing, so ctx is already expired here —
@@ -475,6 +490,11 @@ func registerKitchenPrintAPI(mux *http.ServeMux, d *common.Deps) {
 	mux.HandleFunc("POST /api/print/kitchen", func(w http.ResponseWriter, r *http.Request) {
 		_ = r.ParseForm()
 		receiptNo := strings.TrimSpace(r.Form.Get("receipt_no"))
+		// ut-docs#2098: optional, set only by the per-station kitchen-display
+		// board (orders_list.html carries its own .StationID into every
+		// resend button it renders) — "" from the shop-wide /orders board
+		// keeps the original every-destination behavior.
+		stationID := strings.TrimSpace(r.Form.Get("station_id"))
 		locale := httpx.ResolveLocale(w, r)
 		w.Header().Set("Content-Type", "text/html; charset=utf-8")
 		fail := func(status int, key string) {
@@ -491,7 +511,7 @@ func registerKitchenPrintAPI(mux *http.ServeMux, d *common.Deps) {
 		}
 		ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
 		defer cancel()
-		total, failures, err := printKitchen(ctx, d, receiptNo, getSessionUserID(r))
+		total, failures, err := printKitchen(ctx, d, receiptNo, getSessionUserID(r), stationID)
 		ok := err == nil && len(failures) == 0
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "sale", receiptNo, "kitchen_printed",
 			map[string]any{"ok": ok}, time.Now().UTC().Format(time.RFC3339), "")

@@ -557,7 +557,7 @@ func TestAsyncPrintFailureIsRecordedWhenPrintCtxExpired(t *testing.T) {
 		<-ctx.Done()
 		return fmt.Errorf("printer write: %w", ctx.Err())
 	}
-	hangKitchen := func(ctx context.Context, _ *common.Deps, _, _ string) (int, []kitchenSendFailure, error) {
+	hangKitchen := func(ctx context.Context, _ *common.Deps, _, _, _ string) (int, []kitchenSendFailure, error) {
 		<-ctx.Done()
 		return 0, nil, fmt.Errorf("printer write: %w", ctx.Err())
 	}

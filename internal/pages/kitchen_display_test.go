@@ -178,6 +178,31 @@ func TestKitchenDisplayFragment_ListsOnlyThisStationsOrders(t *testing.T) {
 	}
 }
 
+// ut-docs#2098: the resend button rendered on a per-station board must
+// carry THAT station's own id, so a tap only resends its own ticket rather
+// than re-printing every other station's already-succeeded one too.
+func TestKitchenDisplayFragment_ResendButtonCarriesOwnStationID(t *testing.T) {
+	f := newKitchenDisplayFixture(t)
+	ctx := context.Background()
+	grill := f.station(t, "Grill", data.KitchenDestinationBoth, "g:9100")
+	if err := f.repo.SetCategoryStationRoutes(ctx, "cat-food", []string{grill}); err != nil {
+		t.Fatal(err)
+	}
+	seedKitchenSale(t, f.dbase, "R-2098d", "itm-steak")
+	if err := f.repo.SetKitchenPrintFailed(ctx, "R-2098d", "2026-09-11T10:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+
+	body := f.get("/ui/kitchen-display/" + grill).Body.String()
+	if !strings.Contains(body, `hx-post="/api/print/kitchen"`) {
+		t.Fatalf("kitchen-failed row must offer the resend button, got %q", body)
+	}
+	wantVals := `receipt_no&#34;:&#34;R-2098d&#34;,&#34;station_id&#34;:&#34;` + grill
+	if !strings.Contains(body, wantVals) {
+		t.Fatalf("resend button on the per-station board must carry this station's own id, got %q (want substring %q)", body, wantVals)
+	}
+}
+
 func TestKitchenDisplayFragment_EmptyStateAndTerminalTapClearsBoth(t *testing.T) {
 	f := newKitchenDisplayFixture(t)
 	ctx := context.Background()

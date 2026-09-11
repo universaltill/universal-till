@@ -8,8 +8,11 @@
      element for the same swap-replaces-the-trigger reason.
      Shared with the per-station kitchen display (ut-docs#544): the caller
      passes FragmentURL (its own re-fetch URL — /ui/orders, or
-     /ui/kitchen-display/{station_id}) and EmptyKey (its own empty-state
-     text); the rows, buttons and warnings are identical on both boards. */}}
+     /ui/kitchen-display/{station_id}), EmptyKey (its own empty-state
+     text) and StationID (ut-docs#2098: "" on /ui/orders, the real station
+     id on /ui/kitchen-display/{station_id}); the rows, buttons and
+     warnings are identical on both boards. */}}
+{{ $stationID := .StationID }}
 <div id="orders" hx-get="{{ .FragmentURL }}" hx-trigger="every 15s, orders-push from:body" hx-target="this" hx-swap="outerHTML">
   {{ if not .Orders }}
   <p class="muted">{{ T .EmptyKey }}</p>
@@ -70,8 +73,13 @@
                  clears on this fragment's own next 15s poll once the flag is
                  actually cleared, same as the receipt warning already does
                  today (it also doesn't clear instantly — the reprint button
-                 lives on a different page entirely). */}}
-            <button class="btn" type="button" hx-post="/api/print/kitchen" hx-vals='{{ jsonVals "receipt_no" $receiptNo }}' hx-target="#kitchen-resend-msg-{{ $receiptNo }}" hx-swap="innerHTML">{{ T "orders.print.kitchen_resend" }}</button>
+                 lives on a different page entirely).
+                 ut-docs#2098: station_id rides along so a tap from a
+                 per-station kitchen-display board only resends THAT
+                 station's own ticket, not every station's — kitchen_print.go
+                 treats "" (the /orders board's own StationID) as every
+                 destination, unchanged from before this card. */}}
+            <button class="btn" type="button" hx-post="/api/print/kitchen" hx-vals='{{ jsonVals "receipt_no" $receiptNo "station_id" $stationID }}' hx-target="#kitchen-resend-msg-{{ $receiptNo }}" hx-swap="innerHTML">{{ T "orders.print.kitchen_resend" }}</button>
             <span id="kitchen-resend-msg-{{ $receiptNo }}" aria-live="polite"></span>
           </div>
           {{ end }}
