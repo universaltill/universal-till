@@ -580,6 +580,16 @@ func BuildRailAmendments(pm *plugins.Manager) []uislot.Amendment {
 	return buildSlotAmendments(pm, uislot.RailSlot)
 }
 
+// BuildSettingsAmendments is BuildItemsAmendments' twin for the /settings
+// sidebar slot (ADR-0088, ut-docs#1913): every active layout plugin's
+// SETTINGS-SLOT amendments out of the same flat pm.LayoutAmendments pool.
+// No restored-hides parameter for the same reason as Items/Rail — hide is
+// refused for this slot at install (settingsSpec's allowHide is false), so
+// there is nothing to restore yet.
+func BuildSettingsAmendments(pm *plugins.Manager) []uislot.Amendment {
+	return buildSlotAmendments(pm, uislot.SettingsSlot)
+}
+
 // buildSlotAmendments is the shared body of the restore-less slot builders
 // (Items, Rail): filter the flat pool to one slot, nil when nothing
 // applies. Read pm.LayoutAmendments only under PluginMu (every caller does

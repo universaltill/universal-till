@@ -398,8 +398,11 @@ its own.
 
 ## Reconciling a card payment (receipt detail)
 
-Opening a receipt from the Journal shows its full payment detail — this is
-where a card payment gets reconciled after the fact, days after the sale.
+Opening a receipt from the Journal shows its full payment detail and a
+button to print that receipt again — **Print receipt** — for a customer
+without theirs, a faded slip, or a second copy for a delivery driver (see
+[Receipts & printing](/help/printing) if the reprint itself fails); this is
+also where a card payment gets reconciled after the fact, days after the sale.
 When a payment was taken on a card-present terminal, its payment row shows
 the masked card number and approval code (the same reconciliation line the
 printed receipt showed at the moment of tender), plus the terminal and

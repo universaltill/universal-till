@@ -771,7 +771,7 @@ func TestParseAmendmentsJSON_DispatchesRailSlot(t *testing.T) {
 	if err == nil {
 		t.Fatal("an unknown slot must be refused")
 	}
-	for _, name := range []string{MenuSlot, ItemsSlot, RailSlot} {
+	for _, name := range []string{MenuSlot, ItemsSlot, RailSlot, SettingsSlot} {
 		if !strings.Contains(err.Error(), name) {
 			t.Errorf("unsupported-slot error must name %q, got: %v", name, err)
 		}
@@ -799,5 +799,190 @@ func BenchmarkResolve_ZeroAmendments_Rail(b *testing.B) {
 	b.ReportAllocs()
 	for i := 0; i < b.N; i++ {
 		_ = Resolve(in, nil)
+	}
+}
+
+// CoreSettings must be well-formed (ADR-0088, ut-docs#1913): every key
+// unique, declared in strictly ascending Order (the zero-amendment path
+// never sorts — Decision I), no icon/subtitle/predicate/InNav (the
+// settings sidebar draws none of those), and every key resolvable via
+// CoreSettingsEntry.
+func TestCoreSettings_IsWellFormed(t *testing.T) {
+	if len(CoreSettings) == 0 {
+		t.Fatal("CoreSettings must declare at least one section")
+	}
+	seen := map[string]bool{}
+	prev := -1
+	for i, e := range CoreSettings {
+		if e.Key == "" || e.Href == "" || e.LabelKey == "" {
+			t.Errorf("CoreSettings[%d] missing key/href/label: %+v", i, e)
+		}
+		if seen[e.Key] {
+			t.Errorf("duplicate core key %q", e.Key)
+		}
+		seen[e.Key] = true
+		if e.Order <= prev {
+			t.Errorf("core table must be declared in ascending Order: %q has %d after %d", e.Key, e.Order, prev)
+		}
+		prev = e.Order
+		if e.Icon != "" || e.SubtitleKey != "" || e.VisibleIf != "" || e.InNav || e.Group != "" {
+			t.Errorf("settings rows carry no icon/subtitle/predicate/InNav/group in their CORE declaration: %+v", e)
+		}
+		if e.LabelFallback != "" || e.IconFallback != "" {
+			t.Errorf("fallbacks are set by Resolve, never declared: %+v", e)
+		}
+		if _, ok := CoreSettingsEntry(e.Key); !ok {
+			t.Errorf("CoreSettingsEntry must find declared key %q", e.Key)
+		}
+	}
+	if _, ok := CoreSettingsEntry("/tables"); ok {
+		t.Error("CoreSettingsEntry must not find a Menu-slot key")
+	}
+}
+
+// ADR-0088 Decision E, ut-docs#1913: settings-data/settings-retention/
+// settings-all are protected — compliance/destructive-data-adjacent or,
+// for settings-all, the raw unbounded key/value browser.
+func TestProtectedSettingsKeys_AreDataRetentionAndAll(t *testing.T) {
+	want := []string{"settings-data", "settings-retention", "settings-all"}
+	if len(ProtectedSettingsKeys) != len(want) {
+		t.Fatalf("want exactly %v, got %v", want, ProtectedSettingsKeys)
+	}
+	for _, k := range want {
+		if !IsProtectedSettingsKey(k) {
+			t.Errorf("%q must be a protected settings key", k)
+		}
+	}
+	for _, k := range []string{"settings-theme", "settings-printer", "settings-currency"} {
+		if IsProtectedSettingsKey(k) {
+			t.Errorf("%q must not be a protected settings key", k)
+		}
+	}
+	// Protected sets are per slot.
+	if IsProtectedMenuKey("settings-data") || IsProtectedItemsKey("settings-data") || IsProtectedRailKey("settings-data") {
+		t.Error("settings protection must not leak into the other slots' protected sets")
+	}
+}
+
+// The settings slot accepts reorder, relabel and group (the sidebar draws a
+// heading, unlike Items/Rail) — but not hide or icon.
+func TestParseSettingsAmendments_ReorderRelabelAndGroup(t *testing.T) {
+	fifty := 50
+	got, err := ParseSettingsAmendments("com.example.layout", map[string]any{
+		"slot": "settings",
+		"amendments": []any{
+			map[string]any{"key": "settings-theme", "order": float64(fifty)},
+			map[string]any{"key": "settings-printer", "label_key": "layout.salon.name"},
+			map[string]any{"key": "settings-tills", "group": "layout.salon.settings_group"},
+		},
+	})
+	if err != nil {
+		t.Fatalf("unexpected refusal: %v", err)
+	}
+	if len(got) != 3 {
+		t.Fatalf("want 3 parsed amendments, got %+v", got)
+	}
+	for _, a := range got {
+		if a.Slot != SettingsSlot {
+			t.Errorf("every parsed amendment must carry the settings slot: %+v", a)
+		}
+	}
+}
+
+// Hide and icon stay refused for the WHOLE settings slot (no findability/
+// restore surface for a hidden settings section exists yet — same
+// deferral as Items/Rail). The refusal comes from parseAmendment's existing
+// generic capability check wired through settingsSpec — no settings-
+// specific refusal code.
+func TestParseSettingsAmendments_RefusesHideAndIcon(t *testing.T) {
+	cases := []struct {
+		name   string
+		amend  map[string]any
+		wantIn string
+	}{
+		{"hide", map[string]any{"key": "settings-theme", "hide": true}, "hide"},
+		{"icon", map[string]any{"key": "settings-theme", "icon": "scissors"}, "icon"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			_, err := ParseSettingsAmendments("com.example.layout", map[string]any{
+				"amendments": []any{tc.amend},
+			})
+			if err == nil {
+				t.Fatalf("%s must be refused on the settings slot", tc.name)
+			}
+			if !strings.Contains(err.Error(), tc.wantIn) || !strings.Contains(err.Error(), "settings-theme") {
+				t.Fatalf("error should name %q and the key, got: %v", tc.wantIn, err)
+			}
+		})
+	}
+}
+
+// Decision E's protected set: relabelling a protected settings key is
+// refused (naming it), while reordering and re-grouping it stay allowed —
+// they move the section without disguising it. Hide is already refused for
+// the whole slot above, so this is the one capability protection actually
+// gates here.
+func TestParseSettingsAmendments_ProtectedKeysCannotBeRelabelledButCanBeReorderedAndRegrouped(t *testing.T) {
+	for _, key := range ProtectedSettingsKeys {
+		_, err := ParseSettingsAmendments("p", map[string]any{
+			"amendments": []any{map[string]any{"key": key, "label_key": "x.y"}},
+		})
+		if err == nil || !strings.Contains(err.Error(), key) || !strings.Contains(err.Error(), "re-labelled") {
+			t.Errorf("relabelling protected settings key %q must be refused naming it, got %v", key, err)
+		}
+		got, err := ParseSettingsAmendments("p", map[string]any{
+			"amendments": []any{map[string]any{"key": key, "order": 500}},
+		})
+		if err != nil || len(got) != 1 || *got[0].Order != 500 {
+			t.Errorf("reordering protected settings key %q must be allowed, got %+v, %v", key, got, err)
+		}
+		got, err = ParseSettingsAmendments("p", map[string]any{
+			"amendments": []any{map[string]any{"key": key, "group": "g.k"}},
+		})
+		if err != nil || len(got) != 1 || got[0].Group != "g.k" {
+			t.Errorf("re-grouping protected settings key %q must be allowed, got %+v, %v", key, got, err)
+		}
+	}
+	// And an unprotected settings key stays relabel-able — the protection is
+	// the named keys, not the slot.
+	if _, err := ParseSettingsAmendments("p", map[string]any{
+		"amendments": []any{map[string]any{"key": "settings-theme", "label_key": "x.y"}},
+	}); err != nil {
+		t.Errorf("relabelling an unprotected settings key must be allowed, got %v", err)
+	}
+}
+
+// A Menu-slot or Items-slot key is not a declared settings destination.
+func TestParseSettingsAmendments_RefusesOtherSlotsKeys(t *testing.T) {
+	for _, key := range []string{"/tables", "/catalog"} {
+		_, err := ParseSettingsAmendments("p", map[string]any{
+			"amendments": []any{map[string]any{"key": key, "order": 1}},
+		})
+		if err == nil || !strings.Contains(err.Error(), key) {
+			t.Errorf("expected a refusal naming %s, got %v", key, err)
+		}
+	}
+}
+
+// ParseAmendmentsJSON routes "slot":"settings" to the settings spec.
+func TestParseAmendmentsJSON_DispatchesSettingsSlot(t *testing.T) {
+	got, err := ParseAmendmentsJSON("p", `{"slot":"settings","amendments":[{"key":"settings-theme","order":50}]}`)
+	if err != nil || len(got) != 1 || got[0].Slot != SettingsSlot {
+		t.Fatalf("settings dispatch: got %+v, %v", got, err)
+	}
+}
+
+// Decision I for settings: with no amendments, Resolve hands back
+// CoreSettings itself — no copy, no sort, no allocation.
+func TestResolve_ZeroAmendmentsAllocatesNothing_Settings(t *testing.T) {
+	in := CoreSettings
+	var sink []Entry
+	allocs := testing.AllocsPerRun(1000, func() { sink = Resolve(in, nil) })
+	if allocs != 0 {
+		t.Fatalf("zero-amendment settings Resolve allocated %v times per run, want 0 (ADR-0088 Decision I)", allocs)
+	}
+	if len(sink) != len(CoreSettings) || &sink[0] != &CoreSettings[0] {
+		t.Fatal("zero amendments must return CoreSettings itself")
 	}
 }

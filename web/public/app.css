@@ -3122,6 +3122,12 @@ body.login-screen {
                          border-radius: var(--radius); background: var(--surface); color: inherit; }
 .settings-tree { list-style: none; margin: 0; padding: 0; }
 .settings-tree li { margin-block-end: .15rem; }
+/* ADR-0088, ut-docs#1913: a layout plugin's settings-sidebar group heading —
+   same role as .menu-group, restated for a <ul> sidebar instead of a grid. */
+.settings-tree-group { margin: .6rem 0 .15rem; padding-inline: .6rem;
+                       font-size: .8rem; font-weight: 600; text-transform: uppercase;
+                       letter-spacing: .02em; color: var(--muted); text-align: start; }
+.settings-tree-group:first-child { margin-block-start: 0; }
 /* Same shape as .manual-link: a full-width, touch-floor-height row. */
 .settings-tree-link { display: block; padding: .5rem .6rem; border-radius: .45rem;
                       text-decoration: none; color: inherit; line-height: 1.35;
