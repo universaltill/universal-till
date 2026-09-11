@@ -97,6 +97,15 @@ func TestCatalogPage_HXHistoryRestoreReturnsFullPage(t *testing.T) {
 	}
 }
 
+// TestCatalogPage_NonHXRequest_TopActionButtonsAreNotHXEnabled and
+// TestCatalogPage_HXRequest_TopActionButtonsAreHXEnabled (ut-docs#2090)
+// pinned catalog.html's own Modifiers/Option-sets top-action buttons'
+// .InItemsShell-conditioned hx-attributes. ut-docs#2092 removed both
+// buttons from the top row entirely (they duplicated the /items rail
+// exactly) — there is no bare-vs-shell distinction left to pin for them.
+// TestCatalogPage_TopRowHasNoRailDuplicateButtons (option_sets_test.go)
+// now asserts their absence instead.
+
 // ut-docs#1950: same htmx-fragment-plus-OOB-rail treatment for /modifiers,
 // the rail's second live section.
 func TestModifiersPage_HXRequestReturnsContentFragmentWithOOBRail(t *testing.T) {
