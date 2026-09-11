@@ -92,9 +92,20 @@
         <!-- ut-docs#1493: same known-offline short-circuit signal as
              refund.html/index.html -- see refund.html's identical comment. -->
         <input type="hidden" id="offline-flag" name="offline" value="0">
-        <label>{{ T "inventory.original_receipt" }} <input type="text" name="receipt_no" required placeholder="000000123"></label>
-        <label>{{ T "inventory.reason" }} <input type="text" name="reason" required placeholder="{{ T "inventory.return_reason_placeholder" }}"></label>
         <p class="muted" style="font-size:.8rem">{{ T "inventory.return_note" }}</p>
+        <label>{{ T "inventory.original_receipt" }}
+          <input type="text" name="receipt_no" required placeholder="000000123"
+                 hx-get="/api/inventory/return/lines" hx-trigger="change"
+                 hx-include="this" hx-target="#return-lines" hx-swap="innerHTML">
+        </label>
+        <!-- ut-docs#2064: populated by the receipt field's own hx-get above
+             once a receipt number is entered -- a per-line qty_N picker
+             (GetReturnLines/returnLinesTableHTML), same qty_N-by-position
+             convention refund.html already uses. Empty until then: there is
+             nothing to pick before a receipt is typed, same as the receipt
+             field's own placeholder already prompts. -->
+        <div id="return-lines"></div>
+        <label>{{ T "inventory.reason" }} <input type="text" name="reason" required placeholder="{{ T "inventory.return_reason_placeholder" }}"></label>
         <button type="submit" class="btn">{{ T "inventory.process_return" }}</button>
         <div id="return-result" class="muted" style="min-height:1.3rem; margin-top:.4rem"></div>
       </form>
@@ -354,6 +365,23 @@
   }
   search.addEventListener('input', applyStockFilter);
   document.getElementById('stock-levels-card').addEventListener('htmx:afterSwap', applyStockFilter);
+
+  // ut-docs#2069 (independent review of ut-docs#2064): the vendored htmx
+  // 1.9.12 build only ever swaps a 2xx response, so CreateReturn's own
+  // real validation errors (400 "at least one line required"/"invalid
+  // return quantity...", 409 from the fiscal gate) rendered server-side
+  // exactly like its 200 success response (writeHTML + errorHTML, both
+  // plain HTML meant for hx-swap="innerHTML") but never actually reached
+  // #return-result -- the operator pressed "Process Return" and, on any
+  // real rejection, saw nothing happen at all. Scoped to this one
+  // request path (same ev.detail.requestConfig.path check refund.html's
+  // own isRefundPreviewRequest uses) so the page's OTHER forms keep
+  // whatever behavior they already had, unrelated to this card.
+  document.body.addEventListener('htmx:responseError', function (ev) {
+    if (ev.detail.requestConfig && ev.detail.requestConfig.path === '/api/inventory/return') {
+      document.getElementById('return-result').innerHTML = ev.detail.xhr.responseText;
+    }
+  });
 })();
 </script>
 {{ end }}

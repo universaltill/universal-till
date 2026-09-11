@@ -27,7 +27,7 @@ The **Manager override — negative stock** panel is a paper trail, not a stock 
 
 ## Processing a return from here
 
-The **Process a return** panel takes a receipt number and a reason, and is meant to return an entire completed sale. As it stands, though, pressing **Process Return** always refuses with "at least one line required" for any receipt it does find — the panel doesn't yet let you pick which lines to return, so the request never actually carries anything to return (an unrecognised receipt number refuses earlier, with "original sale not found"). Until that's finished, use the full **Refund** screen instead (Journal → sale history → Refund) — it lets you pick which lines and how much of each to give back, and puts the stock back correctly; see **Selling & checkout** for the exact steps.
+The **Process a return** panel puts stock back and records a cash return against an original receipt, without going through the full Refund screen. Type the original receipt number and, once the till finds it, pick which lines and how many of each you're taking back — each line shows how many are still returnable, which drops once part of it has already been returned or refunded (through here or through Refund) so you can never take back more than was actually sold. Add a reason and press **Process Return**.
 
 ## How a sale and a refund change stock
 
