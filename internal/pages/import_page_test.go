@@ -1990,3 +1990,57 @@ func TestExport_RepoErrorIsLocalized(t *testing.T) {
 		t.Fatalf("export error body leaked raw SQL error text: %q", rec.Body.String())
 	}
 }
+
+// ut-docs#2067 regression guard: with no register location assigned, an
+// import's opening stock lands at Main exactly as before.
+func TestImport_CommitOpeningStockLandsAtMainWhenRegisterUnassigned(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	body, ct := multipartCSV(t, importCSV, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	var itemID string
+	if err := dp.Db.QueryRow(`SELECT id FROM items WHERE sku = 'W1'`).Scan(&itemID); err != nil {
+		t.Fatalf("Widget not created: %v", err)
+	}
+	if got := inventoryQtyAt(t, dp, itemID, "loc_main"); got != 7 {
+		t.Fatalf("expected Widget's opening stock 7 at loc_main, got %v", got)
+	}
+}
+
+// ut-docs#2067: the till's register is pinned to a second location, so the
+// import's opening-stock "receive" movement lands there, not at Main.
+func TestImport_CommitOpeningStockLandsAtRegisterLocation(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	dp := newImportTestDeps(t)
+	_, locID := pinTillRegisterToNewLocation(t, dp)
+	mux := http.NewServeMux()
+	registerImport(mux, dp)
+
+	body, ct := multipartCSV(t, importCSV, map[string]string{"commit": "1"})
+	req := httptest.NewRequest(http.MethodPost, "/api/import", body)
+	req.Header.Set("Content-Type", ct)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("commit: code %d body %s", rec.Code, rec.Body.String())
+	}
+	var itemID string
+	if err := dp.Db.QueryRow(`SELECT id FROM items WHERE sku = 'W1'`).Scan(&itemID); err != nil {
+		t.Fatalf("Widget not created: %v", err)
+	}
+	if got := inventoryQtyAt(t, dp, itemID, locID); got != 7 {
+		t.Fatalf("expected Widget's opening stock 7 at the pinned location %s, got %v", locID, got)
+	}
+	if got := inventoryQtyAt(t, dp, itemID, "loc_main"); got != 0 {
+		t.Fatalf("expected nothing at loc_main, got %v", got)
+	}
+}

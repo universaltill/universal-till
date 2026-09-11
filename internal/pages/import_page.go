@@ -887,9 +887,11 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		overridesPluginDisabled := false
 		if commit {
 			// Opening stock from the source file lands as a "receive"
-			// movement at the default location (same path as the
-			// inventory page), so the migration carries quantities too.
-			locID, locErr := posRepo.EnsureStockLocation(r.Context())
+			// movement at the location THIS till's register is assigned
+			// to (ut-docs#2067; Settings → Registers), falling back to the
+			// default Main location when none is, so the migration carries
+			// quantities too.
+			locID, locErr := pos.ResolveStockLocationID(r.Context(), d.Db, tillRegisterIDBestEffort(r.Context(), d))
 			// Local per-run caches (ut-docs#1322, perf audit
 			// 2026-08-30-performance-audit.md section F finding #3):
 			// EnsureCategoryUnder/FindOrCreateTaxCode are idempotent and

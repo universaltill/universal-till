@@ -2418,3 +2418,59 @@ func TestRefundPreview_NoManagerPINRequiredEvenWhenAuthEnabled(t *testing.T) {
 		t.Fatalf("expected 200 with no manager PIN required for a read-only preview, got %d: %s", rec.Code, rec.Body.String())
 	}
 }
+
+// ut-docs#2067 regression guard: with no register location assigned, a
+// refund restocks Main exactly as before.
+func TestPostRefund_RegisterWithoutLocationRestocksMain(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refund failed: %d %s", rec.Code, rec.Body.String())
+	}
+	var movementLoc string
+	if err := dp.Db.QueryRow(`SELECT location_id FROM stock_movements WHERE item_id = 'itm1' AND type = 'return'`).Scan(&movementLoc); err != nil {
+		t.Fatalf("read return movement: %v", err)
+	}
+	if movementLoc != "loc_main" {
+		t.Fatalf("expected the return movement at loc_main with no register location assigned, got %q", movementLoc)
+	}
+	if got := inventoryQtyAt(t, dp, "itm1", "loc_main"); got != 51 {
+		t.Fatalf("expected Main to go 50 -> 51, got %v", got)
+	}
+}
+
+// ut-docs#2067: the till's register is pinned to a second location, so the
+// returned unit goes back onto THAT location's shelf, not Main's.
+func TestPostRefund_RegisterPinnedToLocationRestocksThatLocation(t *testing.T) {
+	t.Setenv("UT_AUTH", "off")
+	mux, dp, _ := newRefundTestDeps(t)
+	_, receiptNo := seedCompletedSaleForRefund(t, dp)
+	_, locID := pinTillRegisterToNewLocation(t, dp)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/refund", strings.NewReader("receipt="+receiptNo+"&qty_0=1"))
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("refund failed: %d %s", rec.Code, rec.Body.String())
+	}
+	var movementLoc string
+	if err := dp.Db.QueryRow(`SELECT location_id FROM stock_movements WHERE item_id = 'itm1' AND type = 'return'`).Scan(&movementLoc); err != nil {
+		t.Fatalf("read return movement: %v", err)
+	}
+	if movementLoc != locID {
+		t.Fatalf("expected the return movement at the pinned location %s, got %q", locID, movementLoc)
+	}
+	if got := inventoryQtyAt(t, dp, "itm1", locID); got != 1 {
+		t.Fatalf("expected the pinned location to hold the 1 returned unit, got %v", got)
+	}
+	if got := inventoryQtyAt(t, dp, "itm1", "loc_main"); got != 50 {
+		t.Fatalf("expected Main untouched at 50, got %v", got)
+	}
+}

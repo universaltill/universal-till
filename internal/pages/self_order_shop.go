@@ -340,7 +340,12 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
-		locID, err := repo.EnsureStockLocation(r.Context())
+		// ut-docs#2067: a kiosk is its own register (Settings → Registers
+		// can pin it to a stock location), so the sale draws from THAT
+		// location, falling back to Main when none is assigned — same
+		// resolution as the cashier tender path.
+		registerID := tillRegisterIDBestEffort(r.Context(), d)
+		locID, err := pos.ResolveStockLocationID(r.Context(), d.Db, registerID)
 		if err != nil {
 			http.Error(w, "failed to prepare sale", http.StatusInternalServerError)
 			return
@@ -362,10 +367,16 @@ func registerSelfOrderShop(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 
-		registerID, err := repo.EnsureRegister(r.Context())
-		if err != nil {
-			http.Error(w, "failed to prepare sale", http.StatusInternalServerError)
-			return
+		// The EnsureRegister self-heal only remains for the ambiguous case
+		// (two-plus registers, nothing persisted) — today's behaviour there;
+		// otherwise the sale row records the same register the stock
+		// location above was resolved from.
+		if registerID == "" {
+			registerID, err = repo.EnsureRegister(r.Context())
+			if err != nil {
+				http.Error(w, "failed to prepare sale", http.StatusInternalServerError)
+				return
+			}
 		}
 
 		allowNegative := d.CurrentState().AllowNegativeInventory

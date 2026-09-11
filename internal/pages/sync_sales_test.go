@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"sync"
 	"testing"
 	"time"
@@ -679,5 +680,118 @@ func TestSyncPushTick_RejectedResponse_CursorNotAdvanced(t *testing.T) {
 	}
 	if v, _, _ := replicaDp.Settings.Get(ctx, "sync.push_cursor"); v != "" {
 		t.Fatalf("expected sync.push_cursor to stay at the start so the next tick retries, got %q", v)
+	}
+}
+
+// ut-docs#2067 regression guard: a journaled sale naming no register (an
+// older peer, or a shop that never assigned one) draws from Main exactly
+// as before.
+func TestApplyJournal_NoRegisterDrawsFromMain(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t)
+	ctx := context.Background()
+
+	j := seedJournalSale("remote-sale-2067a", "T2-R2067A", "sale", "", "itm1", 1, 100)
+	applied, _, err := applyJournal(ctx, dp, "till-1", j)
+	if err != nil || !applied {
+		t.Fatalf("expected the journal applied, got applied=%v err=%v", applied, err)
+	}
+	if got := inventoryQtyAt(t, dp, "itm1", "loc_main"); got != 49 {
+		t.Fatalf("expected Main to go 50 -> 49 with no register on the journal, got %v", got)
+	}
+}
+
+// ut-docs#2067: the REPORTING till's register (carried on the journal as
+// sale.register_id) is pinned to a second location on the primary, so the
+// replayed sale draws that location's stock down here — not the primary's
+// own register's location, and not Main.
+func TestApplyJournal_RemoteRegisterPinnedToLocationDrawsFromThatLocation(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t)
+	ctx := context.Background()
+	repo := data.NewPOSRepo(dp.Db)
+	locID, err := repo.CreateStockLocation(ctx, "Loading Bay")
+	if err != nil {
+		t.Fatal(err)
+	}
+	remoteReg, err := repo.CreateRegister(ctx, "Loading Bay Till", &locID)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	j := seedJournalSale("remote-sale-2067b", "T2-R2067B", "sale", "", "itm1", 1, 100)
+	j.Sale.RegisterID = remoteReg
+	applied, reason, err := applyJournal(ctx, dp, "till-1", j)
+	if err != nil || !applied || reason != "" {
+		t.Fatalf("expected the journal applied, got applied=%v reason=%q err=%v", applied, reason, err)
+	}
+	if got := inventoryQtyAt(t, dp, "itm1", locID); got != -1 {
+		t.Fatalf("expected the remote register's location to go 0 -> -1 (remote sale already happened, negative allowed), got %v", got)
+	}
+	if got := inventoryQtyAt(t, dp, "itm1", "loc_main"); got != 50 {
+		t.Fatalf("expected Main untouched at 50, got %v", got)
+	}
+}
+
+// ut-docs#2067: a register id the primary has never heard of (a peer whose
+// register never synced here) must fall back to Main AND must not
+// quarantine — applyJournal deliberately never sets SaleInput.RegisterID,
+// so no FK on sales.register_id is reachable from this field.
+func TestApplyJournal_UnknownRemoteRegisterFallsBackToMainNotQuarantined(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t)
+	ctx := context.Background()
+
+	j := seedJournalSale("remote-sale-2067c", "T2-R2067C", "sale", "", "itm1", 1, 100)
+	j.Sale.RegisterID = "reg-only-on-the-replica"
+	applied, reason, err := applyJournal(ctx, dp, "till-1", j)
+	if err != nil || !applied || reason != "" {
+		t.Fatalf("expected the journal applied with no quarantine, got applied=%v reason=%q err=%v", applied, reason, err)
+	}
+	if got := inventoryQtyAt(t, dp, "itm1", "loc_main"); got != 49 {
+		t.Fatalf("expected the unknown register to fall back to Main (50 -> 49), got %v", got)
+	}
+}
+
+// ut-docs#2067: the journal carries the originating sale's register so the
+// primary can resolve the reporting till's stock location — additive on
+// the wire (omitempty snake_case "register_id"), absent for a sale with none.
+func TestBuildJournal_CarriesRegisterID(t *testing.T) {
+	_, dp := newSyncSalesTestDeps(t)
+	ctx := context.Background()
+	repo := data.NewPOSRepo(dp.Db)
+	regID, err := repo.CreateRegister(ctx, "Loading Bay Till", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, register_id, created_at, completed_at)
+VALUES('sale-j2067', 'R-J2067', 'completed', 'sale', 'GBP', 100, 0, 20, 120, ?, '2026-01-01T10:00:00Z', '2026-01-01T10:00:00Z')`, regID); err != nil {
+		t.Fatal(err)
+	}
+	j, found, err := buildJournal(ctx, repo, "R-J2067")
+	if err != nil || !found {
+		t.Fatalf("expected the sale journaled, got found=%v err=%v", found, err)
+	}
+	if j.Sale.RegisterID != regID {
+		t.Fatalf("expected the journal to carry register_id %s, got %q", regID, j.Sale.RegisterID)
+	}
+	raw, err := json.Marshal(j)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var wire struct {
+		Sale map[string]any `json:"sale"`
+	}
+	if err := json.Unmarshal(raw, &wire); err != nil {
+		t.Fatal(err)
+	}
+	if got, ok := wire.Sale["register_id"]; !ok || got != regID {
+		t.Fatalf("expected snake_case register_id=%s on the wire, got %v (present=%v)", regID, got, ok)
+	}
+
+	// A sale with no register omits the key entirely (additive wire).
+	rawNone, err := json.Marshal(seedJournalSale("sale-none", "R-NONE", "sale", "", "itm1", 1, 100))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(rawNone), `"register_id"`) {
+		t.Fatalf("expected register_id omitted for a sale with none, got %s", rawNone)
 	}
 }

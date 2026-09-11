@@ -1270,3 +1270,60 @@ func TestSelfOrderShop_CheckoutFormCarriesOfflineFlag(t *testing.T) {
 		t.Fatalf("payment picker form must hx-include the offline flag: %s", rec.Body.String())
 	}
 }
+
+// ut-docs#2067 regression guard: a kiosk whose register has no location
+// assigned keeps drawing from Main, exactly as before.
+func TestSelfOrderShop_CheckoutRegisterWithoutLocationDrawsFromMain(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+	post("/api/self-order/scan", "code=5000001")
+	if rec := post("/api/self-order/checkout", "method=card"); rec.Code != http.StatusOK {
+		t.Fatalf("POST checkout: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := inventoryQtyAt(t, dp, "itm-coffee", "loc_main"); got != 9 {
+		t.Fatalf("expected Main to go 10 -> 9 with no register location assigned, got %v", got)
+	}
+}
+
+// ut-docs#2067: a kiosk (its own Pi, its own register) pinned to a second
+// location sells that location's stock, not Main's.
+func TestSelfOrderShop_CheckoutRegisterPinnedToLocationDrawsFromThatLocation(t *testing.T) {
+	dp, d := setupSelfOrderShopDeps(t)
+	seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+	seedStock(t, d, "itm-coffee", 10)
+	_, locID := pinTillRegisterToNewLocation(t, dp)
+	if _, err := d.DB.Exec(`INSERT INTO inventory (id, item_id, location_id, quantity) VALUES ('inv-2067', 'itm-coffee', ?, 4)`, locID); err != nil {
+		t.Fatal(err)
+	}
+
+	mux := http.NewServeMux()
+	registerSelfOrderShop(mux, dp)
+	post := func(path, body string) *httptest.ResponseRecorder {
+		req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(body))
+		req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		return rec
+	}
+	post("/api/self-order/scan", "code=5000001")
+	if rec := post("/api/self-order/checkout", "method=card"); rec.Code != http.StatusOK {
+		t.Fatalf("POST checkout: want 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	if got := inventoryQtyAt(t, dp, "itm-coffee", locID); got != 3 {
+		t.Fatalf("expected the pinned location to go 4 -> 3, got %v", got)
+	}
+	if got := inventoryQtyAt(t, dp, "itm-coffee", "loc_main"); got != 10 {
+		t.Fatalf("expected Main untouched at 10, got %v", got)
+	}
+}

@@ -419,3 +419,48 @@ func TestListRegistersForAdmin(t *testing.T) {
 		t.Fatalf("inactive register location_id = %v, want nil", gotInactive.LocationID)
 	}
 }
+
+// TestRegisterLocationID (ut-docs#2067) covers the read side of the
+// register→stock-location mapping the sale/refund/import/sync write paths
+// resolve through: only a register whose assigned location is set AND still
+// active reports ok=true — an unassigned register, an unknown register id,
+// and a register whose location has since been deactivated all report
+// ok=false with no error, which is what makes the caller fall back to
+// EnsureStockLocation (today's Main-only behaviour) rather than writing
+// against a retired location.
+func TestRegisterLocationID(t *testing.T) {
+	_, repo := openRegTestDB(t)
+	ctx := context.Background()
+
+	whID, err := repo.CreateStockLocation(ctx, "Loading Bay")
+	if err != nil {
+		t.Fatalf("create stock location: %v", err)
+	}
+	unassigned, err := repo.CreateRegister(ctx, "Unassigned Till", nil)
+	if err != nil {
+		t.Fatalf("create unassigned register: %v", err)
+	}
+	pinned, err := repo.CreateRegister(ctx, "Loading Bay Till", &whID)
+	if err != nil {
+		t.Fatalf("create pinned register: %v", err)
+	}
+
+	if loc, ok, err := repo.RegisterLocationID(ctx, unassigned); err != nil || ok || loc != "" {
+		t.Fatalf("unassigned register: got loc=%q ok=%v err=%v, want \"\",false,nil", loc, ok, err)
+	}
+	if loc, ok, err := repo.RegisterLocationID(ctx, "ghost"); err != nil || ok || loc != "" {
+		t.Fatalf("unknown register: got loc=%q ok=%v err=%v, want \"\",false,nil", loc, ok, err)
+	}
+	if loc, ok, err := repo.RegisterLocationID(ctx, pinned); err != nil || !ok || loc != whID {
+		t.Fatalf("pinned register: got loc=%q ok=%v err=%v, want %q,true,nil", loc, ok, err, whID)
+	}
+
+	// The assigned location is retired: the mapping must stop resolving
+	// (ok=false) rather than hand back the stale id.
+	if err := repo.SetStockLocationActive(ctx, whID, false); err != nil {
+		t.Fatalf("deactivate location: %v", err)
+	}
+	if loc, ok, err := repo.RegisterLocationID(ctx, pinned); err != nil || ok || loc != "" {
+		t.Fatalf("pinned register with deactivated location: got loc=%q ok=%v err=%v, want \"\",false,nil", loc, ok, err)
+	}
+}

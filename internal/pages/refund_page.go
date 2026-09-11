@@ -714,7 +714,10 @@ func registerRefund(mux *http.ServeMux, d *common.Deps, svc *auth.Service) {
 			common.LogAndLocalizedError(w, r, http.StatusInternalServerError, "refund.error.server", "refund", err)
 			return
 		}
-		locID, err := repo.EnsureStockLocation(r.Context())
+		// ut-docs#2067: the returned stock goes back onto the shelf of the
+		// location THIS till's register is assigned to (Settings →
+		// Registers), falling back to Main when none is assigned.
+		locID, err := pos.ResolveStockLocationID(r.Context(), d.Db, tillRegisterIDBestEffort(r.Context(), d))
 		if err != nil {
 			// Same generic internal-DB-failure class as the guard-state loads
 			// above, so it gets the same refund-flow key. Deliberately NOT
