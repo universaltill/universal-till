@@ -1594,6 +1594,13 @@ func registerSettings(mux *http.ServeMux, d *common.Deps) {
 			http.Error(w, "could not save", http.StatusInternalServerError)
 			return
 		}
+		// ut-docs#2099: keep httpx's live "selforder" template flag
+		// (record_dialog.html's status/lock/exit-to-OS withholding, §10)
+		// in step with the mode that was JUST persisted — without this the
+		// flag would only ever reflect the value pages.Init read at boot,
+		// stale until the till restarts. Mirrors httpx.InitOSKMode(mode)
+		// right above the OSK settings handler in this same file.
+		httpx.InitSelfOrderMode(rawMode == "self_order")
 		// ut-docs#1259: self_order is customer-facing and auth-exempt
 		// (/self-order, /api/self-order/*) — the browser that just made this
 		// switch must not keep a live session past it, or anyone with

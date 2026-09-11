@@ -6,18 +6,24 @@
      top-layer/inert-outside behaviour makes it unreachable on the till's
      own touchscreen (ut-docs#1385). Consequences record-dialog.js handles
      by hand: no native ::backdrop, and Escape is inert unless implemented
-     (which it is — settling ut-docs#1999 for every dialog on this pattern).
+     (which it is). Escape-to-close on its own does NOT settle ut-docs#1999
+     for this pattern — see .record-dialog-status-row below for the other
+     half that does (ut-docs#2099): #1999 also requires status/lock/exit-to-
+     OS to stay reachable while this dialog covers the nav rail, which
+     Escape alone says nothing about.
 
      Exactly two parts: .record-dialog-head is pinned (flex: none) and holds
      ONE row of chrome — nothing more, so it never eats a 360px screen the
      way ut-docs#2000 found catalog's head doing; .record-dialog-body is the
-     one scroll container. Its first child is the in-dialog message region
-     (#<id>-msg below, ut-docs#2020) — genuinely EMPTY by default (no
-     whitespace either — keep it on one line), so app.css's
-     `.record-dialog-msg:empty { display: none }` reserves no space until
-     there is actually something to say (the lesson from this exact
-     head-height finding: an EARLIER version of this region lived in the
-     head and stayed at its reserved height even empty).
+     one scroll container. (.record-dialog-status-row below is a SECOND,
+     much thinner line inside the still-pinned head — see its own comment
+     for why that doesn't reopen the #2000 finding.) Its first child is the
+     in-dialog message region (#<id>-msg below, ut-docs#2020) — genuinely
+     EMPTY by default (no whitespace either — keep it on one line), so
+     app.css's `.record-dialog-msg:empty { display: none }` reserves no
+     space until there is actually something to say (the lesson from this
+     exact head-height finding: an EARLIER version of this region lived in
+     the head and stayed at its reserved height even empty).
 
      The page's own record_dialog_fields form posts via hx-boost, targeting
      THIS SAME element with hx-swap="innerHTML": a refusal's response is
@@ -67,6 +73,54 @@
                         <select> of locations/roles ranges over
                         `.root.locations`, not `$.locations` (which is empty).
 
+     STATUS/LOCK/EXIT (ut-docs#2099, the implementation half of ut-docs#1999
+     — full rule in ut-docs/reference/coding-standards.md §10): this full-
+     screen dialog hides the nav rail outright, and with it the nav rail's
+     own lock button (session_chip.html), the footer status bar's sync/
+     offline indicator (base.html) and — on the one screen that carries it
+     today — Settings' exit-to-OS flow. §10 makes those three reachable on
+     EVERY surface, admin ones included, with exactly one inversion: a
+     device in self-order kiosk mode (display.mode="self_order") must
+     NEVER expose them — that's customer containment, not an oversight to
+     "fix" by rendering them anyway. `selforder` (httpx's template func,
+     backed by the same InitSelfOrderMode/live-update pair InitOSKMode
+     already uses for the OSK mode) is the axis: never admin-vs-sale, only
+     "is THIS device in kiosk mode right now". Built ONCE here so /categories
+     and every future ut-docs#2012 screen inherit it automatically — no
+     per-page wiring, no per-page opt-in.
+
+     .record-dialog-status-row lives INSIDE .record-dialog-head (still
+     `flex: none`, still pinned, still no second scroll container) as its
+     own thin second line below .record-dialog-head-row — not a duplicate
+     full-height bar the way ut-docs#2000 found catalog's un-slimmed head:
+     small font, icon-first controls, one line at any width this pattern
+     ships at. See ut-docs/reference/list-and-dialog-pattern.md's "The nav
+     rail is covered" section for the measured height cost at 360px.
+
+     Three controls, each reusing an existing mechanism rather than
+     inventing a second one:
+       - Lock: the EXACT SAME `<form method="post" action="/api/auth/
+         logout">` session_chip.html's nav-rail lock button already posts —
+         copy-pasted, not reimplemented, so both stay in lockstep with
+         auth_page.go's logout handler by construction. Deliberately does
+         NOT run the discard-confirm guard record-dialog.js's close() path
+         uses: locking the till is a safety action and must never be
+         delayed behind a "keep unsaved edits?" prompt, any more than the
+         nav rail's own lock button asks that today from any other screen.
+       - Status: the SAME sync/offline indicator base.html's
+         `#sb-conn` footer chip renders (data-conn-online/data-conn-offline
+         attributes, online/offline-event driven) — a second instance
+         (its own id, `{{ .id }}-conn`), not a re-skinned one; see
+         record-dialog.js for the online/offline binder that drives it
+         (base.html's own inline script only ever looks up `#sb-conn` by
+         its fixed id, so it can't double-bind this one).
+       - Exit-to-OS: a LINK to Settings' Display card
+         (`/settings#settings-display`, `settings.html`'s `#settings-display`
+         card id), not a one-tap duplicate of the PIN-gated exit-to-os-form
+         it contains. "Reachable" (§10's own word) is satisfied by getting
+         the operator there in one tap; the actual exit stays behind its
+         existing AuthorizeManager flow, unduplicated.
+
      THE SLOT CONTRACT. httpx.renderFiles parses this partial into EVERY
      page's own template set, and each page is its own set — so a page that
      uses this dialog MUST itself {{ define "record_dialog_fields" }} (the
@@ -107,6 +161,30 @@
           <button type="submit" class="btn primary record-dialog-save" form="{{ .formID }}">{{ T "common.save" }}</button>
         </div>
       </div>
+      {{/* ut-docs#2099 — withheld outright in self-order kiosk mode
+           (customer containment, coding-standards.md §10); see the file
+           header comment above for the full rationale and why each control
+           reuses an existing mechanism instead of a new one. */}}
+      {{ if not selforder }}
+      <div class="record-dialog-status-row" data-record-dialog-status-row>
+        <span class="record-dialog-conn sb-conn" id="{{ .id }}-conn" data-record-dialog-conn
+              data-conn-online="{{ T "status.online" }}" data-conn-offline="{{ T "status.offline" }}">
+          <span class="sb-dot"></span>
+          <span class="sb-conn-text">{{ T "status.online" }}</span>
+        </span>
+        <a class="record-dialog-exit btn secondary btn-icon" data-record-dialog-exit
+           href="/settings#settings-display"
+           aria-label="{{ T "settings.display.exit_to_os_btn" }}" title="{{ T "settings.display.exit_to_os_btn" }}">
+          <span class="btn-ico" aria-hidden="true">{{ icon "monitor" }}</span>
+        </a>
+        <form method="post" action="/api/auth/logout" class="record-dialog-lock" data-record-dialog-lock>
+          <button type="submit" class="btn secondary btn-icon btn-lock"
+                  aria-label="{{ T "auth.lock" }}" title="{{ T "auth.lock" }}">
+            <span class="btn-ico" aria-hidden="true">{{ icon "lock" }}</span>
+          </button>
+        </form>
+      </div>
+      {{ end }}
     </div>
     <div class="record-dialog-body">
       <div id="{{ .id }}-msg" class="record-dialog-msg" data-record-dialog-msg aria-live="polite"></div>

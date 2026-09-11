@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/auth"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/catalog"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -628,6 +629,83 @@ func TestCategoriesPage_RendersRecordDialogWithFieldsSlot(t *testing.T) {
 	if !strings.Contains(body, `data-icon="chevron-up"`) || !strings.Contains(body, `data-icon="chevron-down"`) {
 		t.Errorf("reorder buttons do not draw chevron icons")
 	}
+}
+
+// ut-docs#2099 (implementation half of ut-docs#1999, coding-standards.md
+// §10): the record dialog covers the nav rail, so it owes status/lock/
+// exit-to-OS a compact home of their own EXCEPT on a device in self-order
+// kiosk mode, where the universal rule inverts and all three must be
+// deliberately absent (customer containment). Lives once in
+// record_dialog.html (not per-page), so this test drives it purely through
+// httpx.InitSelfOrderMode — the same global toggle base.html's "kiosk" func
+// already uses for the unrelated window-chrome flag — never by threading a
+// per-page field through categories_page.go.
+func TestCategoriesPage_RecordDialogStatusLockExitAffordance(t *testing.T) {
+	mux, _ := newCategoriesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	dialogHTML := func(t *testing.T) string {
+		t.Helper()
+		req := auth.WithUser(httptest.NewRequest(http.MethodGet, "/categories", nil), manager)
+		rec := httptest.NewRecorder()
+		mux.ServeHTTP(rec, req)
+		if rec.Code != http.StatusOK {
+			t.Fatalf("GET /categories: %d %s", rec.Code, rec.Body.String())
+		}
+		body := rec.Body.String()
+		dlgStart := strings.Index(body, `<dialog id="category-dialog"`)
+		if dlgStart < 0 {
+			t.Fatalf("page has no #category-dialog:\n%s", body)
+		}
+		dlgEnd := strings.Index(body[dlgStart:], `</dialog>`)
+		if dlgEnd < 0 {
+			t.Fatalf("dialog is not closed")
+		}
+		return body[dlgStart : dlgStart+dlgEnd]
+	}
+
+	affordances := []string{
+		`data-record-dialog-conn`,
+		`data-record-dialog-lock`,
+		`data-record-dialog-exit`,
+	}
+
+	t.Run("not kiosk: affordance present", func(t *testing.T) {
+		httpx.InitSelfOrderMode(false)
+		t.Cleanup(func() { httpx.InitSelfOrderMode(false) })
+		dlg := dialogHTML(t)
+		for _, want := range affordances {
+			if !strings.Contains(dlg, want) {
+				t.Errorf("register-mode dialog is missing %s:\n%s", want, dlg)
+			}
+		}
+		// The lock control reuses session_chip.html's exact POST action.
+		if !strings.Contains(dlg, `action="/api/auth/logout"`) {
+			t.Errorf("dialog lock control does not post to /api/auth/logout:\n%s", dlg)
+		}
+		// The exit-to-OS control is reachable (a link to the PIN-gated
+		// settings flow), not a one-tap duplicate of it.
+		if !strings.Contains(dlg, `href="/settings#settings-display"`) {
+			t.Errorf("dialog has no reachable exit-to-OS link:\n%s", dlg)
+		}
+	})
+
+	t.Run("self_order kiosk: affordance absent", func(t *testing.T) {
+		httpx.InitSelfOrderMode(true)
+		t.Cleanup(func() { httpx.InitSelfOrderMode(false) })
+		dlg := dialogHTML(t)
+		for _, unwanted := range affordances {
+			if strings.Contains(dlg, unwanted) {
+				t.Errorf("self_order-mode dialog must NOT render %s (customer containment):\n%s", unwanted, dlg)
+			}
+		}
+		if strings.Contains(dlg, `action="/api/auth/logout"`) {
+			t.Errorf("self_order-mode dialog must not expose the lock form:\n%s", dlg)
+		}
+		if strings.Contains(dlg, `href="/settings#settings-display"`) {
+			t.Errorf("self_order-mode dialog must not expose the exit-to-OS link:\n%s", dlg)
+		}
+	})
 }
 
 // The no-results row for the client-side filter is server-rendered
