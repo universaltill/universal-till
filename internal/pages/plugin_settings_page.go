@@ -258,7 +258,13 @@ func writeTaxOverrides(ctx context.Context, repo *data.PluginRepo, pluginID stri
 // This is the surface the AI plugin's endpoint/model settings use, and
 // what payment-terminal plugins will use for sandbox toggles etc.
 func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
-	repo := data.NewPluginRepo(d.Db)
+	// A setting can feed a plugin's ".ask" answers (settings_get host fn) —
+	// cached answers must be dropped or the till keeps charging the old rate
+	// until an unrelated reload (ut-docs#222). The bump is wired into the
+	// repo itself (ut-docs#1941) so every write through it — the generic
+	// loop below AND writeTaxOverrides, which shares this instance — fires
+	// it structurally, instead of each call site remembering to.
+	repo := data.NewPluginRepo(d.Db).OnSettingsChanged(func() { plugins.SharedBus(d.Db).BumpGeneration() })
 	posRepo := data.NewPOSRepo(d.Db)
 	catalogRepo := data.NewCatalogRepo(d.Db)
 
@@ -413,12 +419,6 @@ func registerPluginSettings(mux *http.ServeMux, d *common.Deps) {
 				return
 			}
 			changed++
-		}
-		if changed > 0 {
-			// A setting can feed a plugin's ".ask" answers (settings_get host
-			// fn) — drop cached answers or the till keeps charging the old
-			// rate until an unrelated reload (ut-docs#222 review finding).
-			plugins.SharedBus(d.Db).BumpGeneration()
 		}
 		_ = posRepo.InsertAudit(r.Context(), nil, getSessionUserID(r), "plugin", pluginID, "plugin_settings_saved",
 			map[string]any{"changed": changed}, time.Now().UTC().Format(time.RFC3339), "")

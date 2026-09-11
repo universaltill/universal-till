@@ -17,10 +17,35 @@ import (
 
 type PluginRepo struct {
 	db *sql.DB
+	// onSettingsChanged, if set, is invoked after a successful, actually-
+	// changed write from UpsertPluginSetting/UpsertPluginSettingScoped/
+	// MergeAdditiveJSONMapSetting. internal/data cannot import
+	// internal/plugins (import cycle — plugins imports data), so this hook
+	// is how a caller that CAN see the event bus (internal/pages,
+	// internal/plugins) wires generation invalidation, with the bump itself
+	// now inside the writer instead of duplicated at every call site
+	// (ut-docs#1941). Attaching the hook is still a per-construction-site
+	// opt-in — scripts/ci/guard-plugin-settings-bump.sh enforces that every
+	// production caller of these three methods does it, retargeted from
+	// checking for a same-file BumpGeneration() call to checking for a
+	// same-file OnSettingsChanged( wiring.
+	onSettingsChanged func()
 }
 
 func NewPluginRepo(db *sql.DB) *PluginRepo {
 	return &PluginRepo{db: db}
+}
+
+// OnSettingsChanged attaches fn to be called after every plugin-settings
+// write through this repo that actually changed a stored value (see the
+// onSettingsChanged field). Chainable so a call site can construct and wire
+// in one expression: data.NewPluginRepo(db).OnSettingsChanged(bump). Set
+// this once, right after construction, before the repo is shared with any
+// concurrent caller — it is a plain unsynchronized field, not safe to
+// attach to a repo instance already in use.
+func (r *PluginRepo) OnSettingsChanged(fn func()) *PluginRepo {
+	r.onSettingsChanged = fn
+	return r
 }
 
 var pluginObs = newRepoObservability("plugin")
@@ -833,6 +858,24 @@ func (r *PluginRepo) UpsertPluginSettingScoped(ctx context.Context, pluginID, ke
 	}
 	defer tx.Rollback()
 
+	// ut-docs#1941: read the stored bytes BEFORE the write (inside the same
+	// write-locked transaction, so this can't race a concurrent writer) to
+	// decide whether this call actually changes anything. Compared on the
+	// stored (post-seal) form, so a sealed secret — fresh nonce every write —
+	// always counts as changed; a plain value re-submitted unchanged does
+	// not, mirroring the `raw == row.ValueJSON → skip` diff guard the
+	// settings editor applies caller-side. The write itself is unchanged
+	// either way (updated_at still moves on an identical re-write, exactly
+	// as before) — this only gates the onSettingsChanged hook.
+	var prior sql.NullString
+	if scanErr := tx.QueryRowContext(ctx, `
+SELECT value_json FROM plugin_settings WHERE plugin_id = ? AND key = ? AND scope = ?
+LIMIT 1`, pluginID, key, scope).Scan(&prior); scanErr != nil && !errors.Is(scanErr, sql.ErrNoRows) {
+		err = pluginObs.wrap("upsert_setting", scanErr)
+		return err
+	}
+	changed := !prior.Valid || prior.String != valueJSON
+
 	res, err := tx.ExecContext(ctx, `
 UPDATE plugin_settings SET value_json = ?, updated_at = datetime('now')
 WHERE plugin_id = ? AND key = ? AND scope = ?`,
@@ -847,9 +890,15 @@ VALUES (?, ?, ?, ?, ?)`,
 			uuid.NewString(), pluginID, key, valueJSON, scope); err != nil {
 			return pluginObs.wrap("upsert_setting", err)
 		}
+		changed = true
 	}
 	if err = tx.Commit(); err != nil {
 		return pluginObs.wrap("upsert_setting", err)
+	}
+	// Only after the commit has actually landed — a hook that fired before
+	// a failed commit would invalidate caches for a value that never stuck.
+	if changed && r.onSettingsChanged != nil {
+		r.onSettingsChanged()
 	}
 	return nil
 }
@@ -991,6 +1040,14 @@ VALUES (?, ?, ?, ?, 'global')`, uuid.NewString(), pluginID, key, toStore); insEr
 	if commitErr := tx.Commit(); commitErr != nil {
 		err = pluginObs.wrap("merge_additive_json_map_setting", commitErr)
 		return 0, err
+	}
+	// ut-docs#1941: added > 0 is guaranteed here (the added == 0 early
+	// return above skips the write entirely), so every commit that reaches
+	// this line changed what an .ask-hook asker would read — fire the hook,
+	// after the commit, same gate mergeTakeawayOverrides used to carry
+	// caller-side (ut-docs#1351).
+	if r.onSettingsChanged != nil {
+		r.onSettingsChanged()
 	}
 	return added, nil
 }

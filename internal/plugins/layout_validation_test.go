@@ -282,6 +282,24 @@ func TestLayoutSalonPlugin_InstallsAndDeclaresItsAmendments(t *testing.T) {
 		t.Fatalf("the rail reorder should land /orders between /menu (200) and /inventory (300), got %d", *ordersRow.Order)
 	}
 
+	// ut-docs#1913: the plugin also amends the SETTINGS slot (the
+	// /settings sidebar's own section list) — a fourth, independent
+	// demonstration of the same mechanism, this one exercising reorder AND
+	// re-group together (Menu/Items/Rail's own demos each exercise only a
+	// subset).
+	themeRow, ok := byKey["settings-theme"]
+	if !ok || themeRow.Slot != uislot.SettingsSlot || themeRow.Order == nil || themeRow.Hide || themeRow.LabelKey != "" {
+		t.Fatalf("salon layout must reorder (and only reorder) the settings-theme row, got %+v", themeRow)
+	}
+	printerRow, ok := byKey["settings-printer"]
+	if !ok || printerRow.Slot != uislot.SettingsSlot || printerRow.Group == "" {
+		t.Fatalf("salon layout must re-group the settings-printer row, got %+v", printerRow)
+	}
+	tillsRow, ok := byKey["settings-tills"]
+	if !ok || tillsRow.Slot != uislot.SettingsSlot || tillsRow.Group != printerRow.Group {
+		t.Fatalf("salon layout must group settings-tills with settings-printer under the SAME group key, got printer=%+v tills=%+v", printerRow, tillsRow)
+	}
+
 	// Every locale key the plugin introduces ships in its own locale files,
 	// for every core locale (Decision G: the label resolves through the
 	// same overlay mechanism language packs use).

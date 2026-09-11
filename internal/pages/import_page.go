@@ -887,9 +887,11 @@ func registerImport(mux *http.ServeMux, d *common.Deps) {
 		overridesPluginDisabled := false
 		if commit {
 			// Opening stock from the source file lands as a "receive"
-			// movement at the default location (same path as the
-			// inventory page), so the migration carries quantities too.
-			locID, locErr := posRepo.EnsureStockLocation(r.Context())
+			// movement at the location THIS till's register is assigned
+			// to (ut-docs#2067; Settings → Registers), falling back to the
+			// default Main location when none is, so the migration carries
+			// quantities too.
+			locID, locErr := pos.ResolveStockLocationID(r.Context(), d.Db, tillRegisterIDBestEffort(r.Context(), d))
 			// Local per-run caches (ut-docs#1322, perf audit
 			// 2026-08-30-performance-audit.md section F finding #3):
 			// EnsureCategoryUnder/FindOrCreateTaxCode are idempotent and
@@ -1763,26 +1765,19 @@ const taxDePluginID = data.FiscalRegisterDEPluginID
 // other's entry. Returns how many entries were added and whether the step
 // failed; failure is the caller's summary-line warning, never a row failure.
 func mergeTakeawayOverrides(ctx context.Context, db *sql.DB, discovered map[string]int) (added int, failed bool) {
-	added, err := data.NewPluginRepo(db).MergeAdditiveJSONMapSetting(ctx, taxDePluginID, "takeaway_rate_overrides", discovered)
+	// ut-docs#1351: a plugin-settings write changes what the tax plugin
+	// answers for a payload that hasn't changed, and pluginTaxRateAsker
+	// (tax_hook.go) memoizes answers per bus generation — a "no opinion"
+	// cached from a takeaway sale rung BEFORE the import configured the
+	// override kept being served (19% instead of the merged 7%) until an
+	// unrelated reload happened to bump. The bump is now attached to the
+	// repo itself (ut-docs#1941): MergeAdditiveJSONMapSetting fires it after
+	// its commit exactly when added > 0, so this path can't forget it again.
+	repo := data.NewPluginRepo(db).OnSettingsChanged(func() { plugins.SharedBus(db).BumpGeneration() })
+	added, err := repo.MergeAdditiveJSONMapSetting(ctx, taxDePluginID, "takeaway_rate_overrides", discovered)
 	if err != nil {
 		log.Printf("[import] merge takeaway_rate_overrides: %v", err)
 		return 0, true
-	}
-	if added > 0 {
-		// ut-docs#1351: a plugin-settings write changes what the tax plugin
-		// answers for a payload that hasn't changed, and pluginTaxRateAsker
-		// (tax_hook.go) memoizes answers per bus generation. Every other
-		// settings writer bumps — the settings editor
-		// (plugin_settings_page.go), the sync/directive rederive path
-		// (init.go), permission grant/revoke (plugin_api.go) — but this one
-		// didn't, so a "no opinion" cached from a takeaway sale rung BEFORE
-		// the import configured the override kept being served (19% instead
-		// of the merged 7%) until an unrelated reload happened to bump. The
-		// exact pilot shape: import with the plugin disabled seeds tax codes
-		// but skips overrides (ut-docs#531 branch); a later re-import merges
-		// them into the SAME tax-code ids, leaving every cached payload
-		// identical — only the generation bump makes the till re-ask.
-		plugins.SharedBus(db).BumpGeneration()
 	}
 	return added, false
 }

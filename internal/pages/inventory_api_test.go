@@ -2,6 +2,7 @@ package pages
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -720,6 +721,296 @@ func TestCreateReturn_ValidationErrors(t *testing.T) {
 	mux.ServeHTTP(rec, req)
 	if rec.Code != http.StatusUnauthorized {
 		t.Fatalf("expected 401 for an empty actor id, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestGetReturnLines_HTMLRendersQtyPicker is the regression test for
+// ut-docs#2064: GET /api/inventory/return/lines is the data source for the
+// inventory "Process a return" panel's own per-line qty_N picker (the
+// panel's <form> used to have no way to select lines at all, so
+// POST /api/inventory/return always refused with "at least one line
+// required" — see TestCreateReturn_FormBackfillsLinesFromQtyFields below
+// for the other half of this fix).
+func TestGetReturnLines_HTMLRendersQtyPicker(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	_, receiptNo, _ := seedCompletedSaleForReturn(t, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/inventory/return/lines?receipt_no="+receiptNo, nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `name="qty_0"`) {
+		t.Fatalf("expected a qty_0 input (positional, same convention as refund.html), got %s", body)
+	}
+	if !strings.Contains(body, "Apple") || !strings.Contains(body, "ABC") {
+		t.Fatalf("expected the seeded line's name/SKU in the picker, got %s", body)
+	}
+	// The seeded line sold qty 1 -- the picker must default/cap at that,
+	// never silently offer more than was actually sold.
+	if !strings.Contains(body, `value="1"`) || !strings.Contains(body, `max="1"`) {
+		t.Fatalf("expected the qty input defaulted+capped at the sold quantity (1), got %s", body)
+	}
+}
+
+// TestGetReturnLines_JSONShape covers the JSON branch (Accept:
+// application/json) — used by this test file rather than scraping HTML
+// wherever the data shape, not the markup, is what's being asserted.
+func TestGetReturnLines_JSONShape(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	_, receiptNo, lineID := seedCompletedSaleForReturn(t, dp)
+
+	req := httptest.NewRequest(http.MethodGet, "/api/inventory/return/lines?receipt_no="+receiptNo, nil)
+	req.Header.Set("Accept", "application/json")
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	data, hasData, errVal, hasError := envelopeOf(t, rec.Body.Bytes())
+	if !hasData || !hasError || string(errVal) != "null" {
+		t.Fatalf("expected a {data,error:null} envelope, got %s", rec.Body.String())
+	}
+	var parsed struct {
+		Lines []ReturnLineView `json:"lines"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("unmarshal data: %v (%s)", err, data)
+	}
+	if len(parsed.Lines) != 1 || parsed.Lines[0].LineID != lineID || parsed.Lines[0].Sold != 1 {
+		t.Fatalf("expected exactly the seeded line back, got %+v", parsed.Lines)
+	}
+}
+
+// TestGetReturnLines_UnknownReceipt covers both response modes for a
+// receipt that doesn't resolve to a returnable sale — an htmx swap target
+// must always get something sensible (never a bare error page, same
+// convention as refund.html's own live-total preview endpoint), while a
+// JSON caller gets a real 404 it can branch on.
+func TestGetReturnLines_UnknownReceipt(t *testing.T) {
+	mux, _ := newInventoryAPITestDeps(t)
+
+	htmlReq := httptest.NewRequest(http.MethodGet, "/api/inventory/return/lines?receipt_no=NO-SUCH-RECEIPT", nil)
+	htmlRec := httptest.NewRecorder()
+	mux.ServeHTTP(htmlRec, htmlReq)
+	if htmlRec.Code != http.StatusOK {
+		t.Fatalf("expected the HTML branch to always render 200 into the swap target, got %d: %s", htmlRec.Code, htmlRec.Body.String())
+	}
+	if strings.Contains(htmlRec.Body.String(), `name="qty_`) {
+		t.Fatalf("expected no qty picker for an unknown receipt, got %s", htmlRec.Body.String())
+	}
+
+	jsonReq := httptest.NewRequest(http.MethodGet, "/api/inventory/return/lines?receipt_no=NO-SUCH-RECEIPT", nil)
+	jsonReq.Header.Set("Accept", "application/json")
+	jsonRec := httptest.NewRecorder()
+	mux.ServeHTTP(jsonRec, jsonReq)
+	if jsonRec.Code != http.StatusNotFound {
+		t.Fatalf("expected 404 for the JSON branch, got %d: %s", jsonRec.Code, jsonRec.Body.String())
+	}
+}
+
+// TestCreateReturn_FormBackfillsLinesFromQtyFields is the regression test
+// for ut-docs#2064's actual bug: the inventory "Process a return" panel's
+// <form> only ever posted original_sale_id/receipt_no/reason, so this
+// endpoint always refused with "at least one line required" for any real
+// browser submission -- the JSON API path (exercised by every other test
+// in this file) was never the broken path. This asserts the FORM path,
+// with qty_N fields (same positional convention
+// GetReturnLines/returnLinesTableHTML renders), now actually succeeds.
+func TestCreateReturn_FormBackfillsLinesFromQtyFields(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	_, receiptNo, _ := seedCompletedSaleForReturn(t, dp)
+
+	rec := postInvForm(t, mux, "/api/inventory/return",
+		"receipt_no="+receiptNo+"&reason=faulty&qty_0=1", "application/json")
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+	respData, hasData, errVal, hasError := envelopeOf(t, rec.Body.Bytes())
+	if !hasData || !hasError || string(errVal) != "null" {
+		t.Fatalf("expected a {data,error:null} envelope, got %s", rec.Body.String())
+	}
+	if !strings.Contains(string(respData), `"success":true`) {
+		t.Fatalf("expected a successful return, got %s", respData)
+	}
+
+	var returnLineCount int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sale_lines l JOIN sales s ON s.id = l.sale_id WHERE s.sale_type = 'return'`).Scan(&returnLineCount); err != nil {
+		t.Fatalf("count persisted return lines: %v", err)
+	}
+	if returnLineCount != 1 {
+		t.Fatalf("expected exactly 1 persisted return line (from qty_0=1), got %d", returnLineCount)
+	}
+}
+
+// TestCreateReturn_FormAllZeroQuantities_StillRejected: a form submission
+// where the picker's qty_N fields are all zero/blank must still 400 "at
+// least one line required" -- the backfill above must never manufacture a
+// line the operator didn't actually select.
+func TestCreateReturn_FormAllZeroQuantities_StillRejected(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	_, receiptNo, _ := seedCompletedSaleForReturn(t, dp)
+
+	rec := postInvForm(t, mux, "/api/inventory/return",
+		"receipt_no="+receiptNo+"&reason=faulty&qty_0=0", "application/json")
+	if rec.Code != http.StatusBadRequest {
+		t.Fatalf("expected 400 for an all-zero picker submission, got %d: %s", rec.Code, rec.Body.String())
+	}
+}
+
+// TestCreateReturn_SetsRefundOfLineID is the regression test for
+// ut-docs#2069 (found by independent review of ut-docs#2064, before it
+// shipped): CreateReturn built its return lines from the original line's
+// own snapshot but never carried the original line's id onto
+// pos.SaleLineInput.RefundOfLineID -- the field refund_page.go's own
+// return lines always set (ut-docs#1560) and the field
+// repo.ReturnedQuantitiesByOriginalLine's query groups by. Without it, a
+// return created through THIS endpoint was invisible to that query, so
+// neither a second call to this endpoint nor the Refund screen's own
+// over-refund guard could ever see it -- see the next test for the
+// double-return this made possible.
+func TestCreateReturn_SetsRefundOfLineID(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	saleID, _, lineID := seedCompletedSaleForReturn(t, dp)
+
+	rec := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"faulty","lines":[{"line_id":"`+lineID+`","quantity":1}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	var refundOfLineID sql.NullString
+	if err := dp.Db.QueryRow(`SELECT l.refund_of_line_id FROM sale_lines l JOIN sales s ON s.id = l.sale_id WHERE s.sale_type = 'return'`).Scan(&refundOfLineID); err != nil {
+		t.Fatalf("fetch persisted return line: %v", err)
+	}
+	if !refundOfLineID.Valid || refundOfLineID.String != lineID {
+		t.Fatalf("expected the return line's refund_of_line_id to be the original line %q, got %+v", lineID, refundOfLineID)
+	}
+}
+
+// TestCreateReturn_SecondReturnAgainstSameLineIsCapped is the regression
+// test for the actual bug ut-docs#2069 filed: before this fix, the exact
+// same line could be returned an unlimited number of times -- verified
+// live against a real running till while driving ut-docs#2064's own fix
+// through a browser (the same receipt returned 3 times in a row, each
+// one succeeding for the full original quantity). CreateReturn's
+// validation only ever checked a requested quantity against the
+// ORIGINAL line's sold quantity, never against what a prior return
+// already took back.
+func TestCreateReturn_SecondReturnAgainstSameLineIsCapped(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	saleID, _, lineID := seedCompletedSaleForReturn(t, dp)
+
+	// seedCompletedSaleForReturn's line sold qty 1 -- return it in full
+	// once, which must succeed.
+	first := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"faulty","lines":[{"line_id":"`+lineID+`","quantity":1}]}`)
+	if first.Code != http.StatusOK {
+		t.Fatalf("expected the first return to succeed, got %d: %s", first.Code, first.Body.String())
+	}
+
+	// The exact same request again must now be refused -- nothing is left
+	// to return against this line.
+	second := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"faulty again","lines":[{"line_id":"`+lineID+`","quantity":1}]}`)
+	if second.Code != http.StatusBadRequest {
+		t.Fatalf("expected the second return against the same fully-returned line to be REJECTED, got %d: %s (this is the ut-docs#2069 double-return bug if it's 200)", second.Code, second.Body.String())
+	}
+
+	var returnCount int
+	if err := dp.Db.QueryRow(`SELECT COUNT(*) FROM sales WHERE sale_type = 'return'`).Scan(&returnCount); err != nil {
+		t.Fatalf("count return sales: %v", err)
+	}
+	if returnCount != 1 {
+		t.Fatalf("expected exactly 1 return sale to have been created, got %d", returnCount)
+	}
+}
+
+// seedCompletedSaleWithQtyForReturn is seedCompletedSaleForReturn's
+// multi-unit sibling: a single line sold at the given quantity, so a test
+// can return PART of it and still have something left to request against.
+func seedCompletedSaleWithQtyForReturn(t *testing.T, dp *common.Deps, qty int) (saleID, receiptNo, lineID string) {
+	t.Helper()
+	ctx := context.Background()
+	saleID, receiptNo = "sale-return-partial-1", "R-RETURN-PARTIAL-1"
+	total := 100 * qty
+	taxTotal := 20 * qty
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sales(id, receipt_no, status, sale_type, currency, subtotal, discount_total, tax_total, total, created_at, completed_at)
+VALUES(?, ?, 'completed', 'sale', 'GBP', ?, 0, ?, ?, datetime('now'), datetime('now'))`, saleID, receiptNo, total, taxTotal, total+taxTotal); err != nil {
+		t.Fatal(err)
+	}
+	lineID = "line-return-partial-1"
+	if _, err := dp.Db.ExecContext(ctx, `INSERT INTO sale_lines(id, sale_id, line_no, item_id, name_snapshot, sku_snapshot, quantity, unit_price, tax_rate_bp, tax_amount, total_before_tax, total_after_tax)
+VALUES(?, ?, 1, 'itm1', 'Apple', 'ABC', ?, 100, 2000, ?, ?, ?)`, lineID, saleID, qty, taxTotal, total, total+taxTotal); err != nil {
+		t.Fatal(err)
+	}
+	return saleID, receiptNo, lineID
+}
+
+// TestCreateReturn_PartialReturnThenOverLimitRejected is the other half of
+// ut-docs#2069's acceptance criteria that
+// TestCreateReturn_SecondReturnAgainstSameLineIsCapped above doesn't cover:
+// not just a second request for the FULL original quantity, but a partial
+// return followed by a request for more than what's actually left.
+func TestCreateReturn_PartialReturnThenOverLimitRejected(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	saleID, _, lineID := seedCompletedSaleWithQtyForReturn(t, dp, 3)
+
+	// Return 1 of the 3 sold -- must succeed, leaving 2 remaining.
+	partial := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"faulty","lines":[{"line_id":"`+lineID+`","quantity":1}]}`)
+	if partial.Code != http.StatusOK {
+		t.Fatalf("expected the partial return to succeed, got %d: %s", partial.Code, partial.Body.String())
+	}
+
+	// Only 2 remain -- requesting 3 more must be rejected, not silently
+	// capped or allowed.
+	over := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"too many","lines":[{"line_id":"`+lineID+`","quantity":3}]}`)
+	if over.Code != http.StatusBadRequest {
+		t.Fatalf("expected a request for more than the 2 remaining to be REJECTED, got %d: %s", over.Code, over.Body.String())
+	}
+
+	// Exactly the 2 remaining must still be accepted.
+	rest := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"faulty","lines":[{"line_id":"`+lineID+`","quantity":2}]}`)
+	if rest.Code != http.StatusOK {
+		t.Fatalf("expected the remaining 2 to be returnable, got %d: %s", rest.Code, rest.Body.String())
+	}
+}
+
+// TestGetReturnLines_RemainingNetsPriorReturn confirms the picker itself
+// never OFFERS a quantity the POST above would then refuse (ut-docs#2069)
+// -- Remaining must drop to 0 for a line already fully returned, not stay
+// at the original sold quantity.
+func TestGetReturnLines_RemainingNetsPriorReturn(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	saleID, receiptNo, lineID := seedCompletedSaleForReturn(t, dp)
+
+	rec := postInvJSON(t, mux, "/api/inventory/return",
+		`{"original_sale_id":"`+saleID+`","reason":"faulty","lines":[{"line_id":"`+lineID+`","quantity":1}]}`)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("expected the return to succeed, got %d: %s", rec.Code, rec.Body.String())
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/api/inventory/return/lines?receipt_no="+receiptNo, nil)
+	req.Header.Set("Accept", "application/json")
+	getRec := httptest.NewRecorder()
+	mux.ServeHTTP(getRec, req)
+	if getRec.Code != http.StatusOK {
+		t.Fatalf("expected 200, got %d: %s", getRec.Code, getRec.Body.String())
+	}
+	data, _, _, _ := envelopeOf(t, getRec.Body.Bytes())
+	var parsed struct {
+		Lines []ReturnLineView `json:"lines"`
+	}
+	if err := json.Unmarshal(data, &parsed); err != nil {
+		t.Fatalf("unmarshal data: %v (%s)", err, data)
+	}
+	if len(parsed.Lines) != 1 || parsed.Lines[0].Sold != 1 || parsed.Lines[0].Remaining != 0 {
+		t.Fatalf("expected Sold=1 (unchanged, historical) and Remaining=0 (netted against the prior return) got %+v", parsed.Lines)
 	}
 }
 

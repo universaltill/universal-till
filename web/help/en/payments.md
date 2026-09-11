@@ -4,7 +4,7 @@ title: Payments
 section: Everyday selling
 order: 20
 summary: Cash is built in; card and other payment methods come as plugins from the store — for example Stripe with a card reader (terminal) or QR-code payment.
-keywords: [cash, card, tender, change, split]
+keywords: [cash, card, tender, change, split, preferred method, provider fee, refund, plugin, stripe, sumup, qr pay]
 ---
 
 # Payments
@@ -13,10 +13,21 @@ Cash is built in; card and other payment methods come as plugins from the store 
 
 ## How to use it
 
-1. Install a payment plugin from the Plugin store and enter your account keys in its settings.
+1. Install a payment plugin from the store (Plugins → Store) and enter your account keys in its settings — Stripe with a card reader (terminal), SumUp, a QR-code payment provider, and others all install and configure the same way. A demo payment plugin is also available from the store for trying the payment panel out before a real provider is connected.
 2. If you use a card reader, set its id in the plugin settings on that till.
-3. At checkout, tap **Payment** to open the payment panel (the basket stays visible while it's open) — the preferred method leads and each button can show an estimated fee (set provider fees in Settings → Payments) — pick the cheaper one; a declined card leaves the basket untouched. The preferred method also gets a full-width ⚡ quick-pay button right on the sale screen, below the Payment button — one tap charges the exact amount owed in that method without opening the panel at all.
+3. At checkout, tap **Payment** to open the payment panel (the basket stays visible while it's open) — the preferred method leads and each button can show an estimated fee (set the preferred method and its fees in **Configuring payment methods** below) — pick the cheaper one; a declined card leaves the basket untouched. The preferred method also gets a full-width ⚡ quick-pay button right on the sale screen, below the Payment button — one tap charges the exact amount owed in that method without opening the panel at all.
 4. These quick buttons under the panel's **Pay** tab always charge the *exact* amount owed in that one method — there's nowhere on them to record change or to split the total. For anything else (change due, more than one method), use **Split** — see below.
+
+## Configuring payment methods
+
+Once at least one payment method exists on the till (cash, card, gift card and voucher are there out of the box; a payment plugin adds its own branded method alongside them), a **Payments** card appears on **Settings**:
+
+- **Preferred method** — which method leads at checkout: for cash, card and any payment-plugin method, it's the first button in the payment panel and the one the sale screen's own quick-pay ⚡ button charges. (Picking a gift-card or voucher method here doesn't do this — those never appear on the quick-pay grid, only under **Split**.) Pick it, then **Apply**. Leaving it at "—" lists every method in its normal order instead — cash first on a till with no payment plugin installed.
+- **Provider fees** — what each provider charges you, as a percent plus a fixed amount per transaction (e.g. `2.50` % + `0.10`). The checkout panel uses these to show an estimated fee next to each method's button, so the cashier can steer a customer toward the cheaper one when it doesn't matter to them. Set a method's fee and **Save** it — a blank or zero fee is fine and just shows no estimate.
+
+What can go wrong: a percent outside 0–100, or a negative fixed amount, is refused before it's saved — fix the number and try again.
+
+Changing either setting needs a manager's or admin's role — the same [manager-approval prompt](/help/elevation) as other settings changes.
 
 ## Giving change on a cash sale
 
@@ -48,3 +59,7 @@ What can go wrong:
 ## Gift vouchers
 
 To sell a gift voucher, or take one the till issued as payment, use the **Split** tab too — see [Gift vouchers](/help/vouchers).
+
+## Refunding a payment
+
+Refunds are started from the sale itself, not from this panel — open the original sale under Journal → sale history and choose **Refund**. The refund screen always offers cash, plus whichever other methods were actually used on that specific sale — so a split cash-and-card sale can be refunded into either, but the method list never grows an unrelated method the sale never used. See **[Selling & checkout](/help/sell)**'s refund step for the full walkthrough, including how a service charge is refunded proportionally.

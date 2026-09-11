@@ -279,11 +279,21 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 		// ADR-0088 Decision J / ut-docs#1912: the rail-slot twin, same
 		// lifecycle; handed to httpx just below so nav.html can read it.
 		RailAmendments: common.BuildRailAmendments(pm),
-		Engine:         engine,
-		KioskEngine:    kioskEngine,
-		BtnStore:       btnStore,
-		CatalogRepo:    catalogRepo,
-		AuthSvc:        authSvc,
+		// ADR-0088 / ut-docs#1913: the fourth twin, for the /settings
+		// sidebar. Same read-once-then-on-reload lifecycle as the three
+		// above — independent review of this same card found this line
+		// missing on its first pass: without it, a `layout` plugin's
+		// Settings-slot amendment stayed silently inert until SOME other
+		// change happened to trigger ReloadPlugins (e.g. a shop_type
+		// switch), because ReloadPlugins is this field's only OTHER
+		// assignment site and boot only calls it conditionally
+		// (ut-docs#2006's "skip a genuine no-op reload" optimization).
+		SettingsAmendments: common.BuildSettingsAmendments(pm),
+		Engine:             engine,
+		KioskEngine:        kioskEngine,
+		BtnStore:           btnStore,
+		CatalogRepo:        catalogRepo,
+		AuthSvc:            authSvc,
 		// Order-status pub/sub (ut-docs#526): one instance for the process —
 		// the one-tap endpoint publishes, future KDS/pager surfaces subscribe.
 		OrderStatus: pos.NewOrderStatusBroadcaster(),
@@ -449,6 +459,7 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	StartEODScheduler(bgCtx, dp, wg)                        // background Z-report (docs: G30); joined by app.Run's drain
 	StartAutoUpdateScheduler(bgCtx, dp, wg)                 // background unattended update (ut-docs#79); joined by app.Run's drain
 	StartPluginUpdateScheduler(bgCtx, dp, wg)               // background installed-plugin update check + language-pack auto-apply (ut-docs#1953); joined by app.Run's drain
+	StartFiscalSignReconcileSweep(bgCtx, dp, wg)            // periodic fiscal.sign.reconcile.ask sweep over backend-failure unsigned sales (ADR-0077 D3, ut-docs#1520); joined by app.Run's drain
 	backfillLocaleConfirmedForDivergedPendingTills(ctx, dp) // ut-docs#1892: one-time backfill before any pending language install can silently override a pre-#1074 manual locale choice
 	StartBasePluginRetry(bgCtx, dp, wg)                     // retry country base-plugin auto-install while offline (ut-docs#591); joined by app.Run's drain
 	StartTSEProvisionRetry(bgCtx, dp, wg)                   // retry German TSE provisioning kickoff while offline (ADR-0053, ut-docs#802); joined by app.Run's drain

@@ -470,6 +470,63 @@ func TestOrdersListFragment_ShowsPrintFailureWarnings(t *testing.T) {
 	}
 }
 
+// ut-docs#2063: unlike the receipt-print warning (cleared by reprinting from
+// the Journal), the kitchen-print warning had no clearing path anywhere in
+// the till — POST /api/print/kitchen already existed, tested, and already
+// clears the flag on a fully successful send, but nothing in web/ui called
+// it. This pins the fix: a kitchen-failed row offers a resend button wired
+// to that existing endpoint, carrying its own receipt number.
+func TestOrdersListFragment_KitchenPrintFailed_HasResendButton(t *testing.T) {
+	mux, dp, dbase := newOrderStatusTestDeps(t)
+	seedOrderStatusTestSale(t, dbase, "sale-1", "R-0100")
+
+	repo := data.NewPOSRepo(dp.Db)
+	if err := repo.SetKitchenPrintFailed(t.Context(), "R-0100", "2026-08-12T10:00:00Z"); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/orders", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200 (body %q)", rec.Code, rec.Body.String())
+	}
+	body := rec.Body.String()
+	if !strings.Contains(body, `hx-post="/api/print/kitchen"`) {
+		t.Fatalf("kitchen-failed row must offer a resend button posting to the existing kitchen print endpoint, got %q", body)
+	}
+	if !strings.Contains(body, `receipt_no&#34;:&#34;R-0100`) {
+		t.Fatalf("resend button must carry this row's own receipt number, got %q", body)
+	}
+	if !strings.Contains(body, "Resend kitchen ticket") {
+		t.Fatalf("resend button must carry its translated label, got %q", body)
+	}
+	// ut-docs#2098: the shop-wide board is never station-scoped — an empty
+	// station_id keeps kitchen_print.go's original every-destination resend,
+	// unlike the per-station kitchen-display board's own resend button.
+	if !strings.Contains(body, `station_id&#34;:&#34;&#34;`) {
+		t.Fatalf("shop-wide board's resend button must carry an empty station_id, got %q", body)
+	}
+}
+
+// A healthy order (no kitchen-print failure) must not offer the resend
+// button at all — it's a recovery action for a real failure, not a standing
+// control on every row.
+func TestOrdersListFragment_NoKitchenFailure_NoResendButton(t *testing.T) {
+	mux, _, dbase := newOrderStatusTestDeps(t)
+	seedOrderStatusTestSale(t, dbase, "sale-1", "R-0101")
+
+	req := httptest.NewRequest(http.MethodGet, "/ui/orders", nil)
+	rec := httptest.NewRecorder()
+	mux.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200", rec.Code)
+	}
+	if body := rec.Body.String(); strings.Contains(body, `hx-post="/api/print/kitchen"`) {
+		t.Fatalf("a row with no kitchen-print failure must not offer a resend button, got %q", body)
+	}
+}
+
 // The /orders page must actually POLL (ut-docs#517a) — the fragment swaps
 // itself with outerHTML, so the polling trigger has to live on the
 // fragment's own root (the pending_pairings.html pattern) or it would fire

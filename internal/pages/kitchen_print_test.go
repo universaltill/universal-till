@@ -483,7 +483,7 @@ func TestPrintKitchen_ZeroStations_ByteIdenticalLegacyTicket(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	total, failures, err := printKitchen(ctx, dp, "R-1000", "")
+	total, failures, err := printKitchen(ctx, dp, "R-1000", "", "")
 	if err != nil {
 		t.Fatalf("printKitchen: %v", err)
 	}
@@ -556,7 +556,7 @@ func TestPrintKitchen_MultiStationRoutingAndDuplication(t *testing.T) {
 
 	seedKitchenSale(t, dbase, "R-1001", "itm-steak", "itm-cola", "itm-combo", "itm-bread")
 
-	total, failures, err := printKitchen(ctx, dp, "R-1001", "")
+	total, failures, err := printKitchen(ctx, dp, "R-1001", "", "")
 	if err != nil {
 		t.Fatalf("printKitchen: %v", err)
 	}
@@ -603,6 +603,86 @@ func TestPrintKitchen_MultiStationRoutingAndDuplication(t *testing.T) {
 	assertHas(defOut, "default", "Combo", false)
 }
 
+// ut-docs#2098: a resend scoped to one station must send ONLY that
+// station's own ticket — not the other real station, and not the default
+// bucket either. Real precedent: the per-station kitchen-display board's
+// resend button used to always call the unfiltered path, so a Grill worker
+// fixing their own failed ticket also silently re-printed Bar's (and the
+// default bucket's) already-succeeded tickets — a duplicate-ticket risk on
+// any multi-station shop. Same fixture as
+// TestPrintKitchen_MultiStationRoutingAndDuplication (that test is the
+// unfiltered baseline this one scopes down from).
+func TestPrintKitchen_StationFilterOnlyPrintsThatStation(t *testing.T) {
+	dp, dbase := kitchenRoutingDeps(t)
+	ctx := context.Background()
+	repo := data.NewPOSRepo(dbase.DB)
+
+	grillPrn := printerFile(t, "grill.prn")
+	barPrn := printerFile(t, "bar.prn")
+	defaultPrn := printerFile(t, "kitchen.prn")
+	if err := dp.Settings.Set(ctx, keyPrinterKitchen, defaultPrn); err != nil {
+		t.Fatal(err)
+	}
+
+	grill, err := repo.CreateKitchenStation(ctx, "Grill", data.KitchenDestinationPrinter, grillPrn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bar, err := repo.CreateKitchenStation(ctx, "Bar", data.KitchenDestinationPrinter, barPrn)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Steak → Grill (item route); Cola → Bar (via Drinks category);
+	// Combo → BOTH (duplicated); Bread → unrouted (default bucket).
+	if err := repo.SetItemStationRoutes(ctx, "itm-steak", []string{grill}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetCategoryStationRoutes(ctx, "cat-drinks", []string{bar}); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.SetItemStationRoutes(ctx, "itm-combo", []string{grill, bar}); err != nil {
+		t.Fatal(err)
+	}
+
+	seedKitchenSale(t, dbase, "R-2098", "itm-steak", "itm-cola", "itm-combo", "itm-bread")
+
+	// buildKitchenTargets, filtered: exactly Grill's own target, nothing else.
+	targets, err := buildKitchenTargets(ctx, dp, "R-2098", grill)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(targets) != 1 {
+		t.Fatalf("station-filtered build must return exactly 1 target, got %d: %+v", len(targets), targets)
+	}
+	if targets[0].station != "Grill" || targets[0].isDefault {
+		t.Fatalf("filtered target must be Grill's own, non-default ticket, got %+v", targets[0])
+	}
+
+	total, failures, err := printKitchen(ctx, dp, "R-2098", "", grill)
+	if err != nil {
+		t.Fatalf("printKitchen: %v", err)
+	}
+	if len(failures) != 0 {
+		t.Fatalf("unexpected failures: %+v", failures)
+	}
+	if total != 1 {
+		t.Fatalf("station-filtered resend must send exactly 1 ticket, got %d", total)
+	}
+
+	grillOut, _ := os.ReadFile(grillPrn)
+	barOut, _ := os.ReadFile(barPrn)
+	defOut, _ := os.ReadFile(defaultPrn)
+	if !bytes.Contains(grillOut, []byte("Steak")) || !bytes.Contains(grillOut, []byte("Combo")) {
+		t.Fatalf("Grill must receive its own ticket (Steak + Combo), got %q", grillOut)
+	}
+	if len(barOut) != 0 {
+		t.Fatalf("Bar must receive NOTHING from a Grill-scoped resend, got %d bytes: %q", len(barOut), barOut)
+	}
+	if len(defOut) != 0 {
+		t.Fatalf("the default bucket (Bread) must receive NOTHING from a station-scoped resend, got %d bytes: %q", len(defOut), defOut)
+	}
+}
+
 // One target's send failure must not stop the others (offline-first): the
 // failing station is reported + audited, the healthy one still prints.
 func TestPrintKitchen_OneTargetFailureDoesNotBlockOthers(t *testing.T) {
@@ -628,7 +708,7 @@ func TestPrintKitchen_OneTargetFailureDoesNotBlockOthers(t *testing.T) {
 
 	seedKitchenSale(t, dbase, "R-1002", "itm-steak", "itm-cola")
 
-	total, failures, err := printKitchen(ctx, dp, "R-1002", "")
+	total, failures, err := printKitchen(ctx, dp, "R-1002", "", "")
 	if err != nil {
 		t.Fatalf("printKitchen must not hard-fail on a single dead target: %v", err)
 	}
@@ -684,7 +764,7 @@ func TestPrintKitchen_ItemOverrideBeatsCategory(t *testing.T) {
 
 	seedKitchenSale(t, dbase, "R-1003", "itm-steak")
 
-	total, failures, err := printKitchen(ctx, dp, "R-1003", "")
+	total, failures, err := printKitchen(ctx, dp, "R-1003", "", "")
 	if err != nil {
 		t.Fatalf("printKitchen: %v", err)
 	}
@@ -731,7 +811,7 @@ func TestPrintKitchen_BlankAddressStationFallsBackToDefault(t *testing.T) {
 
 	seedKitchenSale(t, dbase, "R-1004", "itm-steak")
 
-	total, failures, err := printKitchen(ctx, dp, "R-1004", "")
+	total, failures, err := printKitchen(ctx, dp, "R-1004", "", "")
 	if err != nil {
 		t.Fatalf("printKitchen: %v", err)
 	}
@@ -786,7 +866,7 @@ func TestPrintKitchen_ShopStationNamedKitchenStaysUntranslated(t *testing.T) {
 	}
 	seedKitchenSale(t, dbase, "R-1005", "itm-steak")
 
-	targets, err := buildKitchenTargets(ctx, dp, "R-1005")
+	targets, err := buildKitchenTargets(ctx, dp, "R-1005", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -819,7 +899,7 @@ func TestBuildKitchenTargets_SurfacesSettingsReadError(t *testing.T) {
 		t.Fatalf("drop settings table: %v", err)
 	}
 
-	if _, err := buildKitchenTargets(ctx, dp, "R-1533"); err == nil {
+	if _, err := buildKitchenTargets(ctx, dp, "R-1533", ""); err == nil {
 		t.Fatal("expected buildKitchenTargets to surface the settings read error, got nil")
 	}
 }

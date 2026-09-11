@@ -687,6 +687,10 @@ func registerOrderStatus(mux *http.ServeMux, d *common.Deps) {
 			"Orders":      rows,
 			"FragmentURL": "/ui/orders",
 			"EmptyKey":    "orders.empty",
+			// ut-docs#2098: the shop-wide board resends every destination,
+			// same as before — explicit "" (not an absent key) so the
+			// template's {{ .StationID }} never has to guess.
+			"StationID": "",
 		})(w, r)
 	})
 

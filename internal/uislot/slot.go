@@ -14,11 +14,17 @@
 // The first slot was the Menu launcher (MenuSlot); the second is the /items
 // section list (ItemsSlot, ut-docs#1911, generalizing what ut-docs#1897
 // shipped as a hardcoded list); the third is the nav rail (RailSlot,
-// ut-docs#1912, generalizing what #1332 shipped as hardcoded markup).
-// Further slots (settings groups) attach the same way: a new *Slot name, a
-// new declared core table, and a slotSpec passed to the shared
-// parse/validate path below — no redesign of
+// ut-docs#1912, generalizing what #1332 shipped as hardcoded markup); the
+// fourth is Settings groupings (SettingsSlot, ut-docs#1913) — all four
+// attach the same way: a new *Slot name, a new declared core table, and a
+// slotSpec passed to the shared parse/validate path below — no redesign of
 // Entry/Amendment/Resolve/FindConflict, which were already slot-agnostic.
+// No further slot candidate is identified today: ADR-0091 considered the
+// catalog list's own presentation (table vs. card grid) as a possible
+// fifth entry and declined it — that choice is one view/one axis/one value
+// at a time, not a list of keyed, orderable destinations like the four
+// above, so it stays a core-only default reachable through the theme seam
+// instead.
 package uislot
 
 import (
@@ -40,6 +46,17 @@ const ItemsSlot = "items"
 // .nav-primary block, ut-docs#1912) — rendered on every page, not just the
 // sale screen.
 const RailSlot = "rail"
+
+// SettingsSlot is the slot name for the /settings page's own section list
+// (web/ui/pages/settings.html's #settings-tree sidebar, ut-docs#1913 —
+// ADR-0088's "Scope of the first implementation" named this as the third
+// named follow-up slot after Items and Rail). Unlike those two, Settings is
+// a single scrolled page rather than separate routes per row, so this slot
+// resolves the SIDEBAR's order/label/grouping only — the on-page card
+// content keeps its own declared DOM order and heading text unchanged. See
+// CoreSettings' own doc comment for why that split is deliberate for this
+// first slice, not an oversight.
+const SettingsSlot = "settings"
 
 // PluginPagesOrder is the Order at which plugin `page` entries (ADR-0037)
 // are placed when the menu slot is assembled: after every core InNav entry
@@ -405,6 +422,101 @@ func CoreRailEntry(key string) (Entry, bool) {
 	return CoreRail[i], true
 }
 
+// ProtectedSettingsKeys is the Settings slot's ADR-0088 Decision E set
+// (ut-docs#1913). Unlike the Menu slot's statutory-page reasoning, none of
+// these is a legal filing surface — they are protected because a plugin
+// that could disguise them via re-label would strand a merchant exactly
+// the way a disguised /fiscal-register tile would (ADR-0088 Decision E's
+// independent-review tightening: the label IS the identity a merchant
+// recognises a surface by):
+//   - "settings-data": GDPR customer erase, demo-catalogue reset and
+//     backup restore — destructive, compliance-adjacent operations
+//     (internal/pages/settings_page.go's own doc comments on this card).
+//   - "settings-retention": the ADR-0040 report-retention mode and the
+//     archive export a shop's accountant relies on.
+//   - "settings-all": the unbounded, un-field-scoped raw settings
+//     key/value browser — this card's own template comment already flags
+//     it as a uniquely powerful, manager-only escape hatch.
+//
+// Hide is refused for this ENTIRE slot regardless of protection (see
+// settingsSpec below) — a plugin cannot hide any settings section yet,
+// protected or not — so this list currently only gates RE-LABEL (Group and
+// Order stay permitted on a protected key, same as Menu: they move a
+// section without disguising it).
+var ProtectedSettingsKeys = []string{"settings-data", "settings-retention", "settings-all"}
+
+// IsProtectedSettingsKey reports whether key is in ProtectedSettingsKeys.
+func IsProtectedSettingsKey(key string) bool {
+	return IsProtectedKey(ProtectedSettingsKeys, key)
+}
+
+// CoreSettings is the /settings page's declared section list (ADR-0088
+// Decision C, ut-docs#1913): the 25 `.card` sections
+// web/ui/pages/settings.html always declared as static, hand-ordered
+// markup, now ALSO available as data so a `layout` plugin can amend the
+// SIDEBAR's presentation of them. Key is the card's own `id` attribute
+// (settings_two_pane_test.go already pins every one of these as stable);
+// LabelKey is the exact locale key that card's own `<h2>` already renders,
+// so a zero-amendment resolution reproduces the sidebar's pre-#1913 text
+// verbatim. Declared in the SAME order the cards appear in the template, so
+// the zero-amendment path changes nothing (Decision I).
+//
+// Deliberately narrower than Menu/Items/Rail in one way: resolving this
+// slot only reorders/relabels/regroups the SIDEBAR nav — it does not move
+// or rewrite the on-page card content itself, and (like Items/Rail before
+// it) HIDE is refused entirely because no restore/findability surface
+// (Decision D) exists yet for a hidden settings section. Physically
+// reordering ~2,100 lines of interleaved elevation-gated forms, and
+// building that restore surface, is real further work — filed as its own
+// follow-up rather than folded into this slice (see this card's own PR
+// description / close-out comment for the tracking issue), matching how
+// ADR-0088 itself shipped one slot at a time.
+var CoreSettings = []Entry{
+	{Key: "registration", Href: "#registration", LabelKey: "settings.enrol.title", Order: 100},
+	{Key: "settings-issuereport", Href: "#settings-issuereport", LabelKey: "issuereport.title", Order: 200},
+	{Key: "settings-menulayout", Href: "#settings-menulayout", LabelKey: "menulayout.title", Order: 300},
+	{Key: "settings-update", Href: "#settings-update", LabelKey: "settings.update.title", Order: 400},
+	{Key: "settings-theme", Href: "#settings-theme", LabelKey: "settings.theme.title", Order: 500},
+	{Key: "settings-display", Href: "#settings-display", LabelKey: "settings.display.title", Order: 600},
+	{Key: "settings-payments", Href: "#settings-payments", LabelKey: "settings.payments.title", Order: 700},
+	{Key: "settings-order-no", Href: "#settings-order-no", LabelKey: "settings.order_no.title", Order: 800},
+	{Key: "settings-barcode", Href: "#settings-barcode", LabelKey: "settings.barcode.symbologies_title", Order: 900},
+	{Key: "settings-catalog-import-barcode-default", Href: "#settings-catalog-import-barcode-default", LabelKey: "settings.catalog_import_barcode_default.title", Order: 1000},
+	{Key: "settings-stock-tracking", Href: "#settings-stock-tracking", LabelKey: "settings.stock_tracking.title", Order: 1100},
+	{Key: "settings-backup", Href: "#settings-backup", LabelKey: "settings.backup.title", Order: 1200},
+	{Key: "settings-data", Href: "#settings-data", LabelKey: "settings.data.title", Order: 1300},
+	{Key: "settings-retention", Href: "#settings-retention", LabelKey: "settings.retention.title", Order: 1400},
+	{Key: "settings-printer", Href: "#settings-printer", LabelKey: "settings.printer.title", Order: 1500},
+	{Key: "settings-tills", Href: "#settings-tills", LabelKey: "tills.title", Order: 1600},
+	{Key: "settings-invoice", Href: "#settings-invoice", LabelKey: "settings.invoice.title", Order: 1700},
+	{Key: "settings-idle-lock", Href: "#settings-idle-lock", LabelKey: "settings.idle_lock.title", Order: 1800},
+	{Key: "settings-kiosk-idle-reset", Href: "#settings-kiosk-idle-reset", LabelKey: "settings.kiosk_idle_reset.title", Order: 1900},
+	{Key: "settings-kiosk-payment-mode", Href: "#settings-kiosk-payment-mode", LabelKey: "settings.kiosk.payment_mode", Order: 2000},
+	{Key: "settings-telemetry", Href: "#settings-telemetry", LabelKey: "settings.telemetry.title", Order: 2100},
+	{Key: "settings-currency", Href: "#settings-currency", LabelKey: "settings.currency.title", Order: 2200},
+	{Key: "settings-language", Href: "#settings-language", LabelKey: "settings.language.title", Order: 2300},
+	{Key: "settings-shop-type", Href: "#settings-shop-type", LabelKey: "settings.shop_type.title", Order: 2400},
+	{Key: "settings-all", Href: "#settings-all", LabelKey: "settings.all", Order: 2500},
+}
+
+var coreSettingsIndex = func() map[string]int {
+	m := make(map[string]int, len(CoreSettings))
+	for i, e := range CoreSettings {
+		m[e.Key] = i
+	}
+	return m
+}()
+
+// CoreSettingsEntry returns the declared core Settings-slot entry for key —
+// CoreMenuEntry's twin for SettingsSlot.
+func CoreSettingsEntry(key string) (Entry, bool) {
+	i, ok := coreSettingsIndex[key]
+	if !ok {
+		return Entry{}, false
+	}
+	return CoreSettings[i], true
+}
+
 // Resolve applies amendments to entries and returns the slot to render.
 //
 // Zero-plugin guarantee (ADR-0088 Decision I): with no amendments this is a
@@ -559,6 +671,8 @@ func ParseAmendmentsJSON(pluginID, configJSON string) ([]Amendment, error) {
 		return ParseItemsAmendments(pluginID, cfg)
 	case RailSlot:
 		return ParseRailAmendments(pluginID, cfg)
+	case SettingsSlot:
+		return ParseSettingsAmendments(pluginID, cfg)
 	case "", MenuSlot:
 		return ParseMenuAmendments(pluginID, cfg)
 	default:
@@ -568,7 +682,7 @@ func ParseAmendmentsJSON(pluginID, configJSON string) ([]Amendment, error) {
 		// slot check doesn't match either), but its error message only
 		// knows about menuSpec's own name, under-reporting what this
 		// dispatcher actually supports (independent review of ut-docs#1911).
-		return nil, fmt.Errorf("layout entry names unsupported slot %q (supported: %s, %s, %s)", slot, MenuSlot, ItemsSlot, RailSlot)
+		return nil, fmt.Errorf("layout entry names unsupported slot %q (supported: %s, %s, %s, %s)", slot, MenuSlot, ItemsSlot, RailSlot, SettingsSlot)
 	}
 }
 
@@ -604,6 +718,23 @@ var itemsSpec = slotSpec{name: ItemsSlot, lookup: CoreItemsEntry, protected: IsP
 // relabel and reorder are accepted, validated against railSpec.protected's
 // allowHide/allowIcon/allowGroup/protected checks the other two slots use.
 var railSpec = slotSpec{name: RailSlot, lookup: CoreRailEntry, protected: IsProtectedRailKey}
+
+// settingsSpec mirrors itemsSpec/railSpec's capability set (ut-docs#1913):
+// hide is refused (no restore/findability surface exists for this slot yet
+// — Decision D), icon is refused (the settings-tree draws no icon), and
+// group IS allowed — the sidebar draws a heading between consecutive
+// entries whose resolved Group differs, the same groupTogether/GroupHeading
+// mechanism the Menu slot already uses. Widen allowHide once a "Settings →
+// Hidden sections" restore page exists, mirroring menu_layout_settings_page.go.
+var settingsSpec = slotSpec{name: SettingsSlot, lookup: CoreSettingsEntry, protected: IsProtectedSettingsKey, allowGroup: true}
+
+// ParseSettingsAmendments is ParseMenuAmendments' twin for the /settings
+// sidebar (ADR-0088, ut-docs#1913): same schema and refusal shapes,
+// validated against uislot.CoreSettings / ProtectedSettingsKeys instead of
+// CoreMenu / ProtectedMenuKeys.
+func ParseSettingsAmendments(pluginID string, config map[string]any) ([]Amendment, error) {
+	return parseSlotAmendments(pluginID, settingsSpec, config)
+}
 
 // ParseMenuAmendments parses and validates a `layout` entry's config
 // document (the manifest entry's `config`):

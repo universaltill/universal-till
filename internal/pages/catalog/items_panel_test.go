@@ -97,6 +97,15 @@ func TestCatalogPage_HXHistoryRestoreReturnsFullPage(t *testing.T) {
 	}
 }
 
+// TestCatalogPage_NonHXRequest_TopActionButtonsAreNotHXEnabled and
+// TestCatalogPage_HXRequest_TopActionButtonsAreHXEnabled (ut-docs#2090)
+// pinned catalog.html's own Modifiers/Option-sets top-action buttons'
+// .InItemsShell-conditioned hx-attributes. ut-docs#2092 removed both
+// buttons from the top row entirely (they duplicated the /items rail
+// exactly) — there is no bare-vs-shell distinction left to pin for them.
+// TestCatalogPage_TopRowHasNoRailDuplicateButtons (option_sets_test.go)
+// now asserts their absence instead.
+
 // ut-docs#1950: same htmx-fragment-plus-OOB-rail treatment for /modifiers,
 // the rail's second live section.
 func TestModifiersPage_HXRequestReturnsContentFragmentWithOOBRail(t *testing.T) {
@@ -172,5 +181,111 @@ func TestOptionSetsPage_NonHXRequestStillRendersFullPage(t *testing.T) {
 	}
 	if body := rec.Body.String(); !strings.Contains(body, "<html") || !strings.Contains(body, `class="nav"`) {
 		t.Errorf("expected the full standalone page shell, got: %s", body)
+	}
+}
+
+// ut-docs#2091: /catalog, /modifiers and /catalog/option-sets all return a
+// different body depending on the HX-Request header (a bare fragment vs.
+// the full standalone page) — with no Vary header, a browser/WebView cache
+// keyed on the URL alone can serve one to a request that wanted the other
+// (the reported symptom: a cached fragment rendered unstyled on Android
+// Back). Both branches of all three routes must carry the header.
+func TestCatalogRailRoutes_VaryHXRequestOnBothBranches(t *testing.T) {
+	for _, path := range []string{"/catalog", "/modifiers", "/catalog/option-sets"} {
+		t.Run(path, func(t *testing.T) {
+			mux, _ := newCatalogMux(t)
+
+			fragRec := getHX(t, mux, path, "HX-Request", "true")
+			if got := fragRec.Header().Get("Vary"); got != "HX-Request" {
+				t.Errorf("fragment branch: Vary header = %q, want %q", got, "HX-Request")
+			}
+
+			fullRec := get(t, mux, path)
+			if got := fullRec.Header().Get("Vary"); got != "HX-Request" {
+				t.Errorf("full-page branch: Vary header = %q, want %q", got, "HX-Request")
+			}
+		})
+	}
+}
+
+// cacheEntry is what a Vary-respecting HTTP cache keeps per URL: the
+// response plus the request-header values it was served under, read from
+// the response's own Vary header at store time.
+type cacheEntry struct {
+	body       string
+	varyValues map[string]string
+}
+
+// varyAwareCache is a minimal stand-in for a browser/WebView HTTP cache,
+// just enough to prove the actual caching mechanism ut-docs#2091 is about.
+// A real cache keyed on the URL ALONE is exactly the pre-fix bug: it would
+// unconditionally return whatever body it first stored under that URL,
+// fragment or full page, regardless of what a later request actually
+// wanted. Honoring Vary means the cache key also has to include the
+// request's value for every header the response's own Vary lists — so a
+// fragment cached under "HX-Request: true" is never handed to a request
+// that has no such header.
+type varyAwareCache struct {
+	mux     *http.ServeMux
+	entries map[string]cacheEntry
+}
+
+func (c *varyAwareCache) get(t *testing.T, path string, reqHeaders map[string]string) string {
+	t.Helper()
+	if entry, ok := c.entries[path]; ok {
+		hit := true
+		for h, v := range entry.varyValues {
+			if reqHeaders[h] != v {
+				hit = false
+				break
+			}
+		}
+		if hit {
+			return entry.body
+		}
+	}
+	req := httptest.NewRequest(http.MethodGet, path, nil)
+	for h, v := range reqHeaders {
+		req.Header.Set(h, v)
+	}
+	rec := httptest.NewRecorder()
+	c.mux.ServeHTTP(rec, req)
+
+	entry := cacheEntry{body: rec.Body.String(), varyValues: map[string]string{}}
+	if vary := rec.Header().Get("Vary"); vary != "" {
+		for _, h := range strings.Split(vary, ",") {
+			h = strings.TrimSpace(h)
+			entry.varyValues[h] = reqHeaders[h]
+		}
+	}
+	c.entries[path] = entry
+	return entry.body
+}
+
+// ut-docs#2091's actual reported path: the /items rail fetches /catalog as
+// an htmx fragment and pushes /catalog into browser history; a later plain
+// navigation to that same URL (e.g. the Android hardware Back button) must
+// NOT be served the cached fragment. This drives that exact sequence
+// through a Vary-respecting cache in front of the real handler: without
+// Vary: HX-Request on the response, the cache's key would be the URL alone
+// and the second request would wrongly hit the first's cached fragment
+// (entry.varyValues would be empty, so every request "matches"); with it
+// present, the two requests key differently and the second is a genuine
+// cache miss that reaches the real handler for the full page.
+func TestCatalogFragmentCache_VaryPreventsFragmentServedToPlainNavigation(t *testing.T) {
+	mux, db := newCatalogMux(t)
+	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Cola", BasePrice: 100, IsActive: true})
+	testsupport.SeedTaxCode(t, db, "tax_std", "Standard", 2000)
+
+	cache := &varyAwareCache{mux: mux, entries: map[string]cacheEntry{}}
+
+	fragBody := cache.get(t, "/catalog", map[string]string{"HX-Request": "true"})
+	if strings.Contains(fragBody, "<html") {
+		t.Fatalf("expected a bare fragment from the first (htmx) request, got a full page: %s", fragBody)
+	}
+
+	fullBody := cache.get(t, "/catalog", map[string]string{})
+	if !strings.Contains(fullBody, "<html") || !strings.Contains(fullBody, `class="nav"`) {
+		t.Errorf("plain navigation after a cached fragment got the cached fragment back instead of the full page (ut-docs#2091's reported bug): %s", fullBody)
 	}
 }

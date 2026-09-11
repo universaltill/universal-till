@@ -171,6 +171,25 @@ func TestHelpTopicHistoryRestoreReturnsFullPage(t *testing.T) {
 	}
 }
 
+// ut-docs#2091: /help/{topic} returns a different body depending on the
+// HX-Request header (a bare fragment vs. the full standalone page) — with
+// no Vary header, a browser/WebView cache keyed on the URL alone can serve
+// one to a request that wanted the other (the reported symptom: a cached
+// fragment rendered unstyled on Android Back). Both branches must carry it.
+func TestHelpTopic_VaryHXRequestOnBothBranches(t *testing.T) {
+	mux := helpMux(t)
+
+	fragRec := get(t, mux, "/help/catalog", "HX-Request", "true")
+	if got := fragRec.Header().Get("Vary"); got != "HX-Request" {
+		t.Errorf("fragment branch: Vary header = %q, want %q", got, "HX-Request")
+	}
+
+	fullRec := get(t, mux, "/help/catalog")
+	if got := fullRec.Header().Get("Vary"); got != "HX-Request" {
+		t.Errorf("full-page branch: Vary header = %q, want %q", got, "HX-Request")
+	}
+}
+
 // A stale "?" link must be visible as a 404, not silently swallowed into the
 // index — otherwise a broken help link looks like a working one.
 func TestHelpUnknownTopicIs404(t *testing.T) {

@@ -423,6 +423,30 @@ func TestCategoriesPage_NonHXRequestStillRendersFullPage(t *testing.T) {
 	}
 }
 
+// ut-docs#2091: /categories returns a different body depending on the
+// HX-Request header (a bare fragment vs. the full standalone page) — with
+// no Vary header, a browser/WebView cache keyed on the URL alone can serve
+// one to a request that wanted the other. Both branches must carry it.
+func TestCategoriesPage_VaryHXRequestOnBothBranches(t *testing.T) {
+	mux, _ := newCategoriesTestMux(t)
+	manager := auth.User{ID: "m1", Role: "manager", DisplayName: "Manager"}
+
+	fragReq := auth.WithUser(httptest.NewRequest(http.MethodGet, "/categories", nil), manager)
+	fragReq.Header.Set("HX-Request", "true")
+	fragRec := httptest.NewRecorder()
+	mux.ServeHTTP(fragRec, fragReq)
+	if got := fragRec.Header().Get("Vary"); got != "HX-Request" {
+		t.Errorf("fragment branch: Vary header = %q, want %q", got, "HX-Request")
+	}
+
+	fullReq := auth.WithUser(httptest.NewRequest(http.MethodGet, "/categories", nil), manager)
+	fullRec := httptest.NewRecorder()
+	mux.ServeHTTP(fullRec, fullReq)
+	if got := fullRec.Header().Get("Vary"); got != "HX-Request" {
+		t.Errorf("full-page branch: Vary header = %q, want %q", got, "HX-Request")
+	}
+}
+
 // The card's own flagged edge case, verified rather than assumed: a bare
 // 303 Location redirect does not reliably re-trigger as an in-panel htmx
 // swap in every browser once /categories' own mutation forms can be

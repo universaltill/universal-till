@@ -55,10 +55,21 @@
   // doing the wide-screen in-panel swap, which is exactly the fallback this
   // exists to guarantee. `document` outlives every swap; the closest()
   // check below keeps it scoped to rail rows.
+  //
+  // ut-docs#2090 review finding: `a[hx-target="#items-panel"]` added
+  // alongside `a.items-row` — catalog.html's own Modifiers/Option-sets
+  // top-action buttons and their destinations' back-links now swap
+  // #items-panel too (same mechanism as the rail's rows, just not
+  // rendered inside #items-rail itself), so they need the identical
+  // narrow-width fallback or the panel silently stacks under an
+  // already-scrolled-past rail. The attribute selector matches every
+  // current and future #items-panel swapper without needing a shared
+  // class — a plain CSS attribute-equals selector, not a behavioural
+  // change to anything already covered by `a.items-row`.
   document.addEventListener('click', function (evt) {
     if (!window.matchMedia('(max-width: 52rem)').matches) return;
     var t = evt.target;
-    if (t && t.closest && t.closest('a.items-row')) evt.stopPropagation();
+    if (t && t.closest && t.closest('a.items-row, a[hx-target="#items-panel"]')) evt.stopPropagation();
   }, true);
 })();
 </script>

@@ -45,17 +45,17 @@
         "headings": 4,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 8,
+        "top_bullets": 9,
         "bold_leadins": 1
       },
       "english": {
         "headings": 4,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 8,
+        "top_bullets": 9,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2098: a new bullet (per-station resend scoping) added to English and this locale keeps top_bullets in sync (8->9); the pre-existing bold_leadins gap is untouched."
     },
     {
       "locale": "ar",
@@ -106,13 +106,13 @@
         "bold_leadins": 0
       },
       "english": {
-        "headings": 5,
+        "headings": 7,
         "numbered_steps": 12,
         "sub_bullets": 0,
-        "top_bullets": 4,
-        "bold_leadins": 5
+        "top_bullets": 6,
+        "bold_leadins": 7
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#333 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
     },
     {
       "locale": "ar",
@@ -163,13 +163,13 @@
         "bold_leadins": 15
       },
       "english": {
-        "headings": 16,
-        "numbered_steps": 3,
+        "headings": 18,
+        "numbered_steps": 10,
         "sub_bullets": 0,
-        "top_bullets": 15,
-        "bold_leadins": 16
+        "top_bullets": 18,
+        "bold_leadins": 19
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr)."
     },
     {
       "locale": "ar",
@@ -220,13 +220,13 @@
         "bold_leadins": 15
       },
       "english": {
-        "headings": 16,
-        "numbered_steps": 3,
+        "headings": 18,
+        "numbered_steps": 10,
         "sub_bullets": 0,
-        "top_bullets": 15,
-        "bold_leadins": 16
+        "top_bullets": 18,
+        "bold_leadins": 19
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr)."
     },
     {
       "locale": "de",
@@ -311,17 +311,17 @@
         "headings": 4,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 8,
+        "top_bullets": 9,
         "bold_leadins": 1
       },
       "english": {
         "headings": 4,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 8,
+        "top_bullets": 9,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2098: a new bullet (per-station resend scoping) added to English and this locale keeps top_bullets in sync (8->9); the pre-existing bold_leadins gap is untouched."
     },
     {
       "locale": "fa",
@@ -410,13 +410,13 @@
         "bold_leadins": 0
       },
       "english": {
-        "headings": 5,
+        "headings": 7,
         "numbered_steps": 12,
         "sub_bullets": 0,
-        "top_bullets": 4,
-        "bold_leadins": 5
+        "top_bullets": 6,
+        "bold_leadins": 7
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#333 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
     },
     {
       "locale": "fa",
@@ -653,17 +653,17 @@
         "headings": 4,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 8,
+        "top_bullets": 9,
         "bold_leadins": 2
       },
       "english": {
         "headings": 4,
         "numbered_steps": 4,
         "sub_bullets": 0,
-        "top_bullets": 8,
+        "top_bullets": 9,
         "bold_leadins": 0
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973. Updated ut-docs#2098: a new bullet (per-station resend scoping) added to English and this locale keeps top_bullets in sync (8->9); the pre-existing bold_leadins gap is untouched."
     },
     {
       "locale": "tr",
@@ -733,13 +733,13 @@
         "bold_leadins": 0
       },
       "english": {
-        "headings": 5,
+        "headings": 7,
         "numbered_steps": 12,
         "sub_bullets": 0,
-        "top_bullets": 4,
-        "bold_leadins": 5
+        "top_bullets": 6,
+        "bold_leadins": 7
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#333 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
     },
     {
       "locale": "tr",
@@ -809,13 +809,13 @@
         "bold_leadins": 17
       },
       "english": {
-        "headings": 16,
-        "numbered_steps": 3,
+        "headings": 18,
+        "numbered_steps": 10,
         "sub_bullets": 0,
-        "top_bullets": 15,
-        "bold_leadins": 16
+        "top_bullets": 18,
+        "bold_leadins": 19
       },
-      "reason": "ut-docs#1962 — pre-existing drift found by the initial sweep (2026-09-10), predating this guard; not yet fixed. Follow-up: ut-docs#1973."
+      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Pre-existing ut-docs#1962 drift on this topic is folded into this same entry rather than tracked twice. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr)."
     },
     {
       "locale": "tr",
@@ -1044,6 +1044,348 @@
         "bold_leadins": 3
       },
       "reason": "ut-docs#329 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "ar",
+      "topic": "inventory",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 10,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 3
+      },
+      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "de",
+      "topic": "inventory",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 10,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 3
+      },
+      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "fa",
+      "topic": "inventory",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 10,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 3
+      },
+      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "tr",
+      "topic": "inventory",
+      "signature": {
+        "headings": 4,
+        "numbered_steps": 4,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 10,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 3
+      },
+      "reason": "ut-docs#330 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "ar",
+      "topic": "designer",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 1,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 6,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "de",
+      "topic": "designer",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 1,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 6,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "fa",
+      "topic": "designer",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 1,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 6,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "tr",
+      "topic": "designer",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 1,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 4,
+        "numbered_steps": 6,
+        "sub_bullets": 0,
+        "top_bullets": 6,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "ar",
+      "topic": "printing",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 6,
+        "numbered_steps": 21,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 8
+      },
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "de",
+      "topic": "printing",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 6,
+        "numbered_steps": 21,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 8
+      },
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "fa",
+      "topic": "printing",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 6,
+        "numbered_steps": 21,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 8
+      },
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "tr",
+      "topic": "printing",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 9,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 1
+      },
+      "english": {
+        "headings": 6,
+        "numbered_steps": 21,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 8
+      },
+      "reason": "ut-docs#332 (Manual content: printing & the receipt designer, English-only per this card's scope, same convention as ut-docs#329/#341) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "de",
+      "topic": "payments",
+      "signature": {
+        "headings": 5,
+        "numbered_steps": 12,
+        "sub_bullets": 0,
+        "top_bullets": 4,
+        "bold_leadins": 5
+      },
+      "english": {
+        "headings": 7,
+        "numbered_steps": 12,
+        "sub_bullets": 0,
+        "top_bullets": 6,
+        "bold_leadins": 7
+      },
+      "reason": "ut-docs#333 (English-only manual content pass, per that card's own \"English only on this card\" instruction) — translation into ar/de/fa/tr deferred to ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "fa",
+      "topic": "reports",
+      "signature": {
+        "headings": 16,
+        "numbered_steps": 3,
+        "sub_bullets": 0,
+        "top_bullets": 15,
+        "bold_leadins": 16
+      },
+      "english": {
+        "headings": 18,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 18,
+        "bold_leadins": 19
+      },
+      "reason": "ut-docs#331 — reports.md gained two new English sections (\"Ask your till\" and \"The audit log\") as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. fa matched English exactly before this change (no ut-docs#1962 drift existed on this locale/topic pair) — this entry is newly introduced by this card alone, not a fold-in of pre-existing drift. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "ar",
+      "topic": "invoices",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 2,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 6,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#331 — invoices.md was substantially rewritten in English (turning-it-on, issuing, credit notes, viewing/exporting, and error/empty-state sections added) as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "de",
+      "topic": "invoices",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 2,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 6,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#331 — invoices.md was substantially rewritten in English (turning-it-on, issuing, credit notes, viewing/exporting, and error/empty-state sections added) as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "fa",
+      "topic": "invoices",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 2,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 6,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#331 — invoices.md was substantially rewritten in English (turning-it-on, issuing, credit notes, viewing/exporting, and error/empty-state sections added) as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr)."
+    },
+    {
+      "locale": "tr",
+      "topic": "invoices",
+      "signature": {
+        "headings": 2,
+        "numbered_steps": 2,
+        "sub_bullets": 0,
+        "top_bullets": 0,
+        "bold_leadins": 0
+      },
+      "english": {
+        "headings": 6,
+        "numbered_steps": 10,
+        "sub_bullets": 0,
+        "top_bullets": 3,
+        "bold_leadins": 5
+      },
+      "reason": "ut-docs#331 — invoices.md was substantially rewritten in English (turning-it-on, issuing, credit notes, viewing/exporting, and error/empty-state sections added) as part of this card's own scope; ar/de/fa/tr translation deferred per this card's own \"English only on this card\" instruction, same convention as ut-docs#329. Translation into ar/de/fa/tr tracked by ut-docs#341 (Manual: translate into fa / ar / tr)."
     }
   ]
 }

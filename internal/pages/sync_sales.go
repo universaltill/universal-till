@@ -275,7 +275,15 @@ func applyJournal(ctx context.Context, d *common.Deps, tillID string, j journalS
 	if exists, err := repo.SaleExists(ctx, j.Sale.ID); err != nil || exists {
 		return false, "", err
 	}
-	locID, err := repo.EnsureStockLocation(ctx)
+	// ut-docs#2067: the replayed sale draws from the location assigned to
+	// the REPORTING till's register (sale.register_id on the journal) — not
+	// this primary's own register, and not always Main. An empty id (a
+	// pre-#2067 peer's journal lacks the key) or one this primary has no
+	// active-location mapping for (a replica-only register, an unassigned
+	// one, a since-retired location) falls back to Main, today's behaviour.
+	// Only the LOCATION is resolved from it — SaleInput.RegisterID stays
+	// unset (see the FK-quarantine comment in permanentJournalFailureReason).
+	locID, err := pos.ResolveStockLocationID(ctx, d.Db, j.Sale.RegisterID)
 	if err != nil {
 		return false, "", err
 	}

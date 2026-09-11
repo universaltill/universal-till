@@ -148,6 +148,16 @@ WHERE status = 'completed' AND sale_type = 'sale'
 // ListStockLevels serves the inventory page, reshaped with JSON tags for
 // the wire; variant-level rows come from variantStockForExport (ut-docs#240)
 // and are appended, not merged into their parent's row.
+//
+// ut-docs#2082: ListStockLevels itself now ALSO returns variant-scoped rows
+// (its own variantStockLevels addition, same ADR-0043 shape) so the
+// /inventory page sees them too — this loop skips those here (VariantID
+// non-empty) so they aren't double-counted against variantStockForExport's
+// own, separately-filtered variant rows below. The two variant queries are
+// intentionally kept distinct rather than unified: this export path's
+// filters are ADR-0043's own (documented, tested, unchanged), and
+// collapsing them into one shared query risks silently drifting export
+// behavior as a side effect of an /inventory-page fix.
 func (r *POSRepo) StockForExport(ctx context.Context) ([]ExportStockRow, error) {
 	levels, err := r.ListStockLevels(ctx)
 	if err != nil {
@@ -155,6 +165,9 @@ func (r *POSRepo) StockForExport(ctx context.Context) ([]ExportStockRow, error) 
 	}
 	out := make([]ExportStockRow, 0, len(levels))
 	for _, l := range levels {
+		if l.VariantID != "" {
+			continue
+		}
 		out = append(out, ExportStockRow{
 			ItemID:       l.ItemID,
 			Name:         l.Name,

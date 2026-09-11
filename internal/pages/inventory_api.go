@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"html"
 	"log"
+	"math"
 	"net/http"
 	"strconv"
 	"strings"
@@ -396,7 +397,10 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			req.OriginalSaleID = r.FormValue("original_sale_id")
 			req.ReceiptNo = r.FormValue("receipt_no")
 			req.Reason = r.FormValue("reason")
-			// Note: Form handling for lines array would need custom parsing
+			// ut-docs#2064: lines[] is backfilled from qty_N form fields
+			// further down, once the original sale's own lines are known
+			// (same qty_N-by-position convention as refund.html/
+			// refundLinesFromForm) — see the backfill block below.
 			// ut-docs#1493: same "offline" form field as the refund/sale
 			// paths (#offline-flag, formFlagTruthy) — form-encoded submits
 			// go through r.Form here since ParseForm already ran above.
@@ -431,16 +435,15 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			respondReturnError(w, r, http.StatusBadRequest, "original_sale_id or receipt_no required")
 			return
 		}
-		if len(req.Lines) == 0 {
-			respondReturnError(w, r, http.StatusBadRequest, "at least one line required")
-			return
-		}
 
 		// Fetch the original sale's own currency/pricing-mode (ut-docs#1494):
 		// a return must be signed and persisted in the ORIGINAL sale's
 		// currency and inclusive/exclusive mode, not a hardcoded English-
 		// market default — same source refund_page.go's sibling flow
 		// already reads (saleIsTaxInclusive(detail)/detail.Currency).
+		// Moved ahead of the lines check below (ut-docs#2064) so a
+		// form-encoded submission's lines[] can be backfilled from the
+		// original sale's own line order first.
 		originalDetail, found, err := repo.GetSaleDetailByID(ctx, originalSaleID)
 		if err != nil {
 			respondReturnError(w, r, http.StatusInternalServerError, fmt.Sprintf("fetch original sale: %v", err))
@@ -458,6 +461,38 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			respondReturnError(w, r, http.StatusInternalServerError, fmt.Sprintf("fetch lines: %v", err))
 			return
 		}
+
+		// ut-docs#2064: the inventory "Process a return" panel's own <form>
+		// only ever posted original_sale_id/receipt_no/reason — never a
+		// lines[] selection, so this endpoint refused every real submission
+		// with "at least one line required" below. The panel now renders a
+		// per-line qty_N picker (GET /api/inventory/return/lines, same
+		// qty_N-by-position convention as refund.html/refundLinesFromForm)
+		// once a receipt is entered; backfill req.Lines from it here for a
+		// form-encoded submission that didn't already carry an explicit
+		// lines[] (the JSON API path is untouched by this block — its own
+		// empty-lines-array rejection, TestCreateReturn_ValidationErrors,
+		// stays exactly as tested, since a JSON request always has
+		// len(req.Lines)==0 mean "no lines", never "go look in the form").
+		if len(req.Lines) == 0 && !strings.Contains(contentType, "application/json") {
+			for i, s := range snapshots {
+				raw := strings.TrimSpace(r.Form.Get(fmt.Sprintf("qty_%d", i)))
+				if raw == "" {
+					continue
+				}
+				qty, qErr := strconv.ParseFloat(raw, 64)
+				if qErr != nil || qty <= 0 {
+					continue
+				}
+				req.Lines = append(req.Lines, ReturnLineRequest{LineID: s.ID, Quantity: qty})
+			}
+		}
+
+		if len(req.Lines) == 0 {
+			respondReturnError(w, r, http.StatusBadRequest, "at least one line required")
+			return
+		}
+
 		originalLines := make(map[string]pos.SaleLineInput)
 		for _, s := range snapshots {
 			originalLines[s.ID] = pos.SaleLineInput{
@@ -474,6 +509,22 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 			}
 		}
 
+		// ut-docs#2069 (found reviewing ut-docs#2064, which made this
+		// endpoint reachable through the UI for the first time): how much
+		// of each original line a PRIOR completed return (via this same
+		// endpoint OR via /refund — both write sale_type='return' rows
+		// linked through sale_links, which this query doesn't
+		// distinguish between) already took back. Same repo method
+		// refund_page.go's own loadRefundGuardState uses for its
+		// equivalent cap (returnedQtyByLine) — reused here so the two
+		// return-taking flows can never disagree about what's still
+		// returnable for a given original line.
+		alreadyReturned, err := repo.ReturnedQuantitiesByOriginalLine(ctx, originalSaleID)
+		if err != nil {
+			respondReturnError(w, r, http.StatusInternalServerError, fmt.Sprintf("fetch prior returns: %v", err))
+			return
+		}
+
 		// Build return sale lines
 		returnLines := []pos.SaleLineInput{}
 		for _, reqLine := range req.Lines {
@@ -482,12 +533,33 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 				respondReturnError(w, r, http.StatusBadRequest, fmt.Sprintf("line_id %s not found in original sale", reqLine.LineID))
 				return
 			}
-			if reqLine.Quantity <= 0 || reqLine.Quantity > origLine.Qty {
-				respondReturnError(w, r, http.StatusBadRequest, fmt.Sprintf("invalid return quantity %.2f for line %s (max %.2f)", reqLine.Quantity, reqLine.LineID, origLine.Qty))
+			if math.IsNaN(reqLine.Quantity) || math.IsInf(reqLine.Quantity, 0) {
+				// ut-docs#1711's guard on the sibling refund flow, mirrored
+				// here: a NaN/Inf quantity fails every ordinary comparison
+				// below (NaN <= 0 and NaN > max are both false), so without
+				// this explicit check it would fall through to "return
+				// total must be positive" — a confusing message for what is
+				// really a malformed-input rejection.
+				respondReturnError(w, r, http.StatusBadRequest, fmt.Sprintf("invalid return quantity for line %s", reqLine.LineID))
+				return
+			}
+			remaining := origLine.Qty - alreadyReturned[reqLine.LineID]
+			if remaining < 0 {
+				remaining = 0
+			}
+			if reqLine.Quantity <= 0 || reqLine.Quantity > remaining {
+				respondReturnError(w, r, http.StatusBadRequest, fmt.Sprintf("invalid return quantity %.2f for line %s (max %.2f remaining)", reqLine.Quantity, reqLine.LineID, remaining))
 				return
 			}
 			returnLine := origLine
 			returnLine.Qty = reqLine.Quantity
+			// ut-docs#2069: without this, the return persists with no
+			// traceable link back to which original line it returned, so
+			// NEITHER this endpoint's own next call NOR /refund's own
+			// over-refund guard (refund_page.go's returnedByLine, same
+			// repo method as alreadyReturned above) can ever see it —
+			// the exact gap that made an unbounded double-return possible.
+			returnLine.RefundOfLineID = reqLine.LineID
 			returnLines = append(returnLines, returnLine)
 		}
 
@@ -665,6 +737,214 @@ func CreateReturn(dp *common.Deps) http.HandlerFunc {
 	}
 }
 
+// ReturnLineView is one row of the inventory return panel's line-picker
+// (ut-docs#2064) — a plain read model, not pos.SaleLineInput, so this
+// read-only endpoint carries no fiscal/money-computation surface of its
+// own; it only describes what CreateReturn above would accept.
+type ReturnLineView struct {
+	LineID    string  `json:"line_id"`
+	Name      string  `json:"name"`
+	SKU       string  `json:"sku,omitempty"`
+	Sold      float64 `json:"sold"`
+	Remaining float64 `json:"remaining"`
+}
+
+// GetReturnLines handles GET /api/inventory/return/lines?receipt_no=... —
+// the inventory "Process a return" panel's line-picker data source
+// (ut-docs#2064). The panel's own <form> used to post only receipt_no +
+// reason, so CreateReturn above always refused with "at least one line
+// required": there was never a way to pick which lines to return. This
+// endpoint lets the panel fetch the original sale's lines (same lookup-by-
+// receipt CreateReturn itself uses) once a receipt number is entered, and
+// render a qty_N-per-line picker; CreateReturn's own form-path backfill
+// (ut-docs#2064, above) reads those qty_N fields back by the same
+// positional convention this handler renders them in.
+//
+// ut-docs#2069 (independent review of ut-docs#2064 found this before it
+// shipped): Remaining is netted against prior returns via
+// repo.ReturnedQuantitiesByOriginalLine — the same repo method
+// refund_page.go's own refundableLines uses for its equivalent cap — so
+// the picker can never offer a quantity CreateReturn's own now-matching
+// validation (same method, same cap) would then refuse.
+func GetReturnLines(dp *common.Deps) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		ctx := r.Context()
+		repo := data.NewPOSRepo(dp.Db)
+		locale := httpx.ResolveLocale(w, r)
+		wantsJSON := strings.Contains(r.Header.Get("Accept"), "application/json")
+
+		receiptNo := strings.TrimSpace(r.URL.Query().Get("receipt_no"))
+		if receiptNo == "" {
+			if wantsJSON {
+				writeJSON(w, http.StatusBadRequest, map[string]any{"data": nil, "error": "receipt_no required"})
+			} else {
+				writeHTML(w, http.StatusOK, returnLinesNoResultsHTML(locale))
+			}
+			return
+		}
+
+		saleID, ok, err := repo.FindSaleIDByReceipt(ctx, receiptNo)
+		if err != nil {
+			if wantsJSON {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"data": nil, "error": err.Error()})
+			} else {
+				writeHTML(w, http.StatusOK, returnLinesErrorHTML(locale))
+			}
+			return
+		}
+		if !ok {
+			if wantsJSON {
+				writeJSON(w, http.StatusNotFound, map[string]any{"data": nil, "error": "original sale not found"})
+			} else {
+				writeHTML(w, http.StatusOK, returnLinesNoResultsHTML(locale))
+			}
+			return
+		}
+
+		detail, found, err := repo.GetSaleDetailByID(ctx, saleID)
+		if err != nil {
+			if wantsJSON {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"data": nil, "error": err.Error()})
+			} else {
+				writeHTML(w, http.StatusOK, returnLinesErrorHTML(locale))
+			}
+			return
+		}
+		// Same eligibility CreateReturn implicitly requires (a completed
+		// sale to return lines FROM) and refund_page.go's own GET
+		// /refund/{receipt} checks explicitly (detail.SaleType != "sale" ||
+		// detail.Status != "completed") — a return, a voided sale, or an
+		// in-progress one has no returnable lines.
+		if !found || detail.SaleType != "sale" || detail.Status != "completed" {
+			if wantsJSON {
+				writeJSON(w, http.StatusNotFound, map[string]any{"data": nil, "error": "original sale not found"})
+			} else {
+				writeHTML(w, http.StatusOK, returnLinesNoResultsHTML(locale))
+			}
+			return
+		}
+
+		snapshots, err := repo.ListSaleLineSnapshots(ctx, saleID)
+		if err != nil {
+			if wantsJSON {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"data": nil, "error": err.Error()})
+			} else {
+				writeHTML(w, http.StatusOK, returnLinesErrorHTML(locale))
+			}
+			return
+		}
+		if len(snapshots) == 0 {
+			if wantsJSON {
+				writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"lines": []ReturnLineView{}}, "error": nil})
+			} else {
+				writeHTML(w, http.StatusOK, returnLinesNoResultsHTML(locale))
+			}
+			return
+		}
+
+		// ut-docs#2069: same netting CreateReturn's own validation now
+		// applies — see that function's identical call for why (shared
+		// with refund_page.go's own cap, so this can't offer a quantity
+		// the POST would then refuse).
+		alreadyReturned, err := repo.ReturnedQuantitiesByOriginalLine(ctx, saleID)
+		if err != nil {
+			if wantsJSON {
+				writeJSON(w, http.StatusInternalServerError, map[string]any{"data": nil, "error": err.Error()})
+			} else {
+				writeHTML(w, http.StatusOK, returnLinesErrorHTML(locale))
+			}
+			return
+		}
+
+		views := make([]ReturnLineView, len(snapshots))
+		for i, s := range snapshots {
+			remaining := s.Qty - alreadyReturned[s.ID]
+			if remaining < 0 {
+				remaining = 0
+			}
+			views[i] = ReturnLineView{LineID: s.ID, Name: s.Name, SKU: s.SKU, Sold: s.Qty, Remaining: remaining}
+		}
+
+		if wantsJSON {
+			writeJSON(w, http.StatusOK, map[string]any{"data": map[string]any{"lines": views}, "error": nil})
+			return
+		}
+		writeHTML(w, http.StatusOK, returnLinesTableHTML(locale, views))
+	}
+}
+
+// returnLinesTableHTML renders the qty_N-per-line picker — same
+// positional qty_N convention as refund.html/refundLinesFromForm (index
+// into the original sale's own line order, not the opaque line_id, so
+// nothing but a quantity needs to round-trip through the form). Item
+// name/SKU come from a persisted sale-line snapshot, not an immediate
+// request-echo, but are stored, shop-entered text all the same —
+// stored-XSS-shaped, so escaped here same as every other interpolated
+// value in this file (errorHTML, GetLowStock's table, ut-docs#1000/#1019).
+// `type="number"` (ut-docs#2069 review nit) so min/max actually cap
+// input, not just pattern -- same element type refund.html:43 uses for
+// its own qty_N inputs. Column headers reuse existing translated keys
+// where the semantics genuinely match (journal.detail.item,
+// refund.col.sold, refund.col.remaining) plus one new, purpose-built key
+// (inventory.return_col_qty) for the qty-to-return column — reusing
+// refund.col.refund_qty ("Refund qty") there read wrong inside a
+// "Process a return" panel that isn't a monetary refund.
+func returnLinesTableHTML(locale string, lines []ReturnLineView) string {
+	rowsHTML := ""
+	for i, l := range lines {
+		soldStr := strconv.FormatFloat(l.Sold, 'f', -1, 64)
+		remainingStr := strconv.FormatFloat(l.Remaining, 'f', -1, 64)
+		rowsHTML += fmt.Sprintf(
+			`<tr><td>%s%s</td><td>%s</td><td>%s</td><td><input type="number" inputmode="decimal" name="qty_%d" value="%s" min="0" max="%s" step="any" style="width:6rem"></td></tr>`,
+			html.EscapeString(l.Name),
+			skuSuffixHTML(l.SKU),
+			html.EscapeString(soldStr),
+			html.EscapeString(remainingStr),
+			i,
+			html.EscapeString(remainingStr),
+			html.EscapeString(remainingStr),
+		)
+	}
+	return fmt.Sprintf(
+		`<table class="table"><thead><tr><th>%s</th><th>%s</th><th>%s</th><th>%s</th></tr></thead><tbody>%s</tbody></table>`,
+		html.EscapeString(httpx.T(locale, "journal.detail.item")),
+		html.EscapeString(httpx.T(locale, "refund.col.sold")),
+		html.EscapeString(httpx.T(locale, "refund.col.remaining")),
+		html.EscapeString(httpx.T(locale, "inventory.return_col_qty")),
+		rowsHTML,
+	)
+}
+
+// skuSuffixHTML mirrors GetLowStock's/refund.html's own "name, then a
+// muted SKU aside" convention — only when there is one.
+func skuSuffixHTML(sku string) string {
+	if strings.TrimSpace(sku) == "" {
+		return ""
+	}
+	return fmt.Sprintf(` <span class="muted">%s</span>`, html.EscapeString(sku))
+}
+
+// returnLinesNoResultsHTML/returnLinesErrorHTML: an htmx swap target must
+// always get SOMETHING sensible, never a bare error page (same "always
+// render, never an error page, into a swap target" convention refund.html's
+// own POST /api/refund/preview already established). returnLinesErrorHTML
+// reuses the existing generic common.error.server key (a real, unexpected
+// server fault reads the same everywhere in this app). returnLinesNoResultsHTML
+// uses a dedicated inventory.return_no_lines key instead of reusing
+// common.no_results ("No matches — try a different search.") — ut-docs#2069
+// review nit: an operator who typed a receipt number isn't "searching",
+// and that copy covers three different real situations here (unknown
+// receipt, a sale that isn't eligible, a sale with no lines) that all
+// deserve the same honest "nothing to return here" wording rather than a
+// search hint that doesn't apply.
+func returnLinesNoResultsHTML(locale string) string {
+	return fmt.Sprintf(`<p class="muted">%s</p>`, html.EscapeString(httpx.T(locale, "inventory.return_no_lines")))
+}
+
+func returnLinesErrorHTML(locale string) string {
+	return fmt.Sprintf(`<p class="muted">%s</p>`, html.EscapeString(httpx.T(locale, "common.error.server")))
+}
+
 func defaultLocation(loc string) string {
 	if strings.TrimSpace(loc) == "" {
 		return "loc_main"
@@ -697,6 +977,7 @@ func registerInventoryAPI(mux *http.ServeMux, dp *common.Deps) {
 	mux.HandleFunc("POST /api/inventory/receipt", CreateStockReceipt(dp))
 	mux.HandleFunc("POST /api/inventory/override", CreateNegativeInventoryOverride(dp))
 	mux.HandleFunc("POST /api/inventory/return", CreateReturn(dp))
+	mux.HandleFunc("GET /api/inventory/return/lines", GetReturnLines(dp))
 	mux.HandleFunc("GET /api/inventory/low-stock", GetLowStock(dp))
 }
 
@@ -749,9 +1030,17 @@ func GetLowStock(dp *common.Deps) http.HandlerFunc {
 			// row too, with no separate JS. ItemID/LocationID are internal
 			// identifiers, not user text, but escaped anyway for the same
 			// defense-in-depth reason as Name/SKU/LocationName above.
-			tableHTML += fmt.Sprintf("<tr class='stock-row' data-item='%s' data-name='%s' data-sku='%s' data-location='%s' data-location-name='%s'><td>%s</td><td>%s</td><td>%s</td><td class='low-stock'>%.2f</td><td>%d</td></tr>",
-				html.EscapeString(item.ItemID), html.EscapeString(item.Name), html.EscapeString(item.SKU), html.EscapeString(item.LocationID), html.EscapeString(item.LocationName),
-				html.EscapeString(item.Name), html.EscapeString(item.SKU), html.EscapeString(item.LocationName), item.CurrentQty, item.ReorderLevel)
+			// ut-docs#2082: a variant-scoped row carries the parent item's own
+			// Name (so two rows of the same item are otherwise
+			// indistinguishable in this list) — suffix the visible cell with
+			// the variant's own name, same convention as the main stock table.
+			displayName := item.Name
+			if item.VariantName != "" {
+				displayName = item.Name + " — " + item.VariantName
+			}
+			tableHTML += fmt.Sprintf("<tr class='stock-row' data-item='%s' data-name='%s' data-sku='%s' data-location='%s' data-location-name='%s' data-variant='%s'><td>%s</td><td>%s</td><td>%s</td><td class='low-stock'>%.2f</td><td>%d</td></tr>",
+				html.EscapeString(item.ItemID), html.EscapeString(displayName), html.EscapeString(item.SKU), html.EscapeString(item.LocationID), html.EscapeString(item.LocationName), html.EscapeString(item.VariantID),
+				html.EscapeString(displayName), html.EscapeString(item.SKU), html.EscapeString(item.LocationName), item.CurrentQty, item.ReorderLevel)
 		}
 		tableHTML += "</tbody></table>"
 		tableHTML += fmt.Sprintf("<script>document.getElementById('low-stock-badge').textContent = '%d';</script>", len(items))

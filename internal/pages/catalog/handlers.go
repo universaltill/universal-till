@@ -319,6 +319,16 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 	// be reactivated). Used both for the page's own initial load and for a
 	// mutation whose originating form targets #modifiers-list (see
 	// renderModifierMutationResult below).
+	//
+	// ut-docs#2090 review finding: deliberately NO "InItemsShell" key here.
+	// A mutation POSTed from #modifiers-list always carries HX-Request:true
+	// (it's an htmx form submit), so httpx.IsFragmentSwap(w, r) would read
+	// true here even on a standalone, non-/items-shell /modifiers page —
+	// the wrong signal, since this response never targets #items-panel,
+	// only #modifiers-list. modifiers.html's own templates read
+	// .InItemsShell on a bare map[string]any as nil -> false when the key
+	// is absent, which is exactly the safe fallback (plain href="/items",
+	// no hx- attributes) — don't "fix" that by adding the key here.
 	renderModifiersList := func(w http.ResponseWriter, r *http.Request, notice string) {
 		funcs := httpx.FuncsFor(httpx.ResolveLocale(w, r))
 		groups, err := modRepo.ListAllShopModifierGroups(r.Context())
@@ -528,6 +538,12 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		barcodes, _ := repo.ItemBarcodes(r.Context())
 		variants, _ := repo.ItemVariants(r.Context())
 		thumbnails, _ := repo.ItemThumbnails(r.Context())
+		// ut-docs#2090: whether this render is an /items-shell fragment
+		// swap (true) or a bare/standalone page (false) — catalog.html's
+		// own Modifiers/Option-sets top-action buttons and their
+		// destinations' back-links use this to decide between an in-panel
+		// htmx swap (only meaningful when #items-panel actually exists,
+		// i.e. inside the shell) and a plain navigation.
 		data := map[string]any{
 			"title":        "Catalog",
 			"menuItems":    d.MenuSnapshot(),
@@ -539,6 +555,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			"SyncPrimary":  d.SyncPrimaryURL(r.Context()),
 			"BuiltinIcons": catimport.BuiltinIcons(),
 			"ItemColors":   catalogtypes.ItemColors(),
+			"InItemsShell": httpx.IsFragmentSwap(w, r),
 		}
 		catalogFiles := files(
 			filepath.Join("web", "ui", "layouts", "base.html"),
@@ -555,7 +572,7 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 		// plus an out-of-band refresh of the rail itself, so its is-current
 		// highlight follows the click; a plain browser GET (deep link) still
 		// gets the exact same full standalone page as before this card.
-		if httpx.IsFragmentSwap(r) {
+		if httpx.IsFragmentSwap(w, r) {
 			httpx.RenderWith(catalogFiles, funcs)("content", data)(w, r)
 			itemsnav.WriteRailOOB(w, r, funcs, "/catalog", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return
@@ -578,13 +595,14 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		modifiersData := map[string]any{
-			"title":     "Customization options",
-			"menuItems": d.MenuSnapshot(),
-			"theme":     d.CurrentState().Theme,
-			"Groups":    groupModifierAdminByItem(groups, "modifiers-list"),
+			"title":        "Customization options",
+			"menuItems":    d.MenuSnapshot(),
+			"theme":        d.CurrentState().Theme,
+			"Groups":       groupModifierAdminByItem(groups, "modifiers-list"),
+			"InItemsShell": httpx.IsFragmentSwap(w, r),
 		}
 		// ut-docs#1950: same /items rail embedding as /catalog above.
-		if httpx.IsFragmentSwap(r) {
+		if httpx.IsFragmentSwap(w, r) {
 			httpx.RenderContentFragment("ui/pages/modifiers.html", modifiersData)(w, r)
 			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/modifiers", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return
@@ -605,13 +623,14 @@ func Register(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		optionSetsData := map[string]any{
-			"title":     "Option sets",
-			"menuItems": d.MenuSnapshot(),
-			"theme":     d.CurrentState().Theme,
-			"Sets":      sets,
+			"title":        "Option sets",
+			"menuItems":    d.MenuSnapshot(),
+			"theme":        d.CurrentState().Theme,
+			"Sets":         sets,
+			"InItemsShell": httpx.IsFragmentSwap(w, r),
 		}
 		// ut-docs#1950: same /items rail embedding as /catalog above.
-		if httpx.IsFragmentSwap(r) {
+		if httpx.IsFragmentSwap(w, r) {
 			httpx.RenderContentFragment("ui/pages/option_sets.html", optionSetsData)(w, r)
 			itemsnav.WriteRailOOB(w, r, httpx.FuncsFor(httpx.RequestLocale(r)), "/catalog/option-sets", itemsnav.Resolve(httpx.RequestLocale(r), d.ItemsAmendmentsSnapshot()))
 			return

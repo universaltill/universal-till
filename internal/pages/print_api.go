@@ -691,6 +691,21 @@ func registerPrintAPI(mux *http.ServeMux, d *common.Deps) {
 			return
 		}
 		cfg := printerConfig(r.Context(), d)
+		// A label's whole content is a scannable barcode (RenderLabel below
+		// draws it via ESC/POS raster/barcode commands) — a "system" (CUPS
+		// `lp`, plain-text-only) printer can never render that, the same
+		// structural constraint RenderText already accepts for TSEQR on
+		// receipts (see its own comment, ut-docs#1245): there is no honest
+		// degraded rendering, so this is permanent, not a missing transport
+		// case. Check it explicitly, ahead of print.NewTransport (which has
+		// no "system" case at all and would otherwise surface this as an
+		// opaque "unknown printer mode" — ut-docs#2062), so the operator
+		// gets a message naming the actual constraint instead of a bare
+		// "Print failed".
+		if cfg.Mode == "system" {
+			fail(http.StatusBadRequest, "catalog.labels.system_unsupported")
+			return
+		}
 		tr, terr := print.NewTransport(cfg)
 		if terr != nil || tr == nil {
 			fail(http.StatusBadGateway, "settings.printer.test_failed")

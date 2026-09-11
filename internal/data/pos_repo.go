@@ -164,6 +164,15 @@ type LowStockItem struct {
 	CurrentQty   float64 `json:"current_qty"`
 	ReorderLevel int     `json:"reorder_level"`
 	LeadTimeDays int     `json:"lead_time_days"` // days to receive a reorder; 0 = unset
+	// VariantID/VariantName are set only on a row for a variant-scoped
+	// inventory row (item_id NULL, variant_id set — the 001_init.sql CHECK
+	// constraint), empty on an item-level row — same ADR-0043 convention as
+	// ExportStockRow. ut-docs#2082: added so GetLowStockItems/ListStockLevels
+	// can surface a variant's own stock as its own row, additive to the
+	// parent item's row, never folded into it (ADR-0043 Decision 3 — no
+	// double-counting).
+	VariantID   string `json:"variant_id,omitempty"`
+	VariantName string `json:"variant_name,omitempty"`
 }
 
 // defaultWarnDays is the running-out threshold for an item with no lead
@@ -226,6 +235,30 @@ func (l LowStockItem) IsRunningOut(rate float64) bool {
 		return true
 	}
 	return l.DaysLeftAt(rate) <= l.EffectiveWarnDays()
+}
+
+// SellRate picks the rate this row's own prediction (DaysLeftAt/
+// IsRunningOut/an order-quantity suggestion) must use: a variant-scoped row
+// (VariantID set, ut-docs#2082) uses its OWN rate from variantRates
+// (POSRepo.VariantDailySellRates), keyed by variant id — never the parent
+// item's combined rate, which would apply sales from this item's OTHER
+// variants against just this one variant's quantity (ut-docs#2089). An
+// item-scoped row (VariantID empty) uses itemRates, keyed by item id — this
+// MUST be POSRepo.ItemDirectDailySellRates, never POSRepo.ItemDailySellRates:
+// the latter folds every variant's sales into the item total too, which
+// reproduces the identical bug shape on the item-scoped side for an item
+// that has BOTH its own item-level stock and variants (ut-docs#2089 review
+// finding — an item-scoped row's quantity never moves from a variant sale,
+// so applying the variant-inclusive rate against it is just as wrong as the
+// variant-row bug this method was first written to fix). The single shared
+// decision so the three call sites (inventory page, low-stock digest,
+// reports header chip) can't independently drift on which map/key a row
+// should read.
+func (l LowStockItem) SellRate(itemRates, variantRates map[string]float64) float64 {
+	if l.VariantID != "" {
+		return variantRates[l.VariantID]
+	}
+	return itemRates[l.ItemID]
 }
 
 // SearchActiveItems finds active items matching name/sku/barcode with optional pagination.
@@ -663,7 +696,7 @@ VALUES (?, ?, 'inventory', ?, 'negative_inventory_override', ?, ?)
 // GetLowStockItems returns all items where current inventory is below reorder level.
 func (r *POSRepo) GetLowStockItems(ctx context.Context, locationID string) ([]LowStockItem, error) {
 	query := `
-SELECT 
+SELECT
 	i.id,
 	i.name,
 	COALESCE(i.sku, ''),
@@ -677,6 +710,25 @@ LEFT JOIN stock_locations sl ON sl.id = inv.location_id
 WHERE i.reorder_level > 0
   AND COALESCE(inv.quantity, 0) < i.reorder_level
   AND i.stock_untracked = 0
+  -- ut-docs#2082: a variant-tracked item (has rows in item_variants) with
+  -- no item-scoped inventory row of its own is NOT "never stocked" — its
+  -- stock lives entirely on its variants, reported separately below by
+  -- variantLowStockItems. Without this guard, inv.item_id IS NULL here
+  -- reads exactly like a genuinely untouched item and phantom-reports it
+  -- as low (qty 0) at every location, even one where its variants
+  -- actually hold plenty of stock. An item that ALSO keeps its own
+  -- item-scoped row despite having variants is untouched by this guard
+  -- (inv.item_id IS NOT NULL covers it). The NOT EXISTS is scoped to
+  -- ACTIVE variants only (independent review finding, #2082) — variantLowStockItems
+  -- below only ever reports an active variant (v.is_active = 1), so an item
+  -- whose only variant has since been deactivated has nothing left to
+  -- report it there; without this v.is_active filter here too, this guard
+  -- would still see "a variant exists" and suppress the item-scoped
+  -- phantom-zero branch, silently dropping the item from the reorder list
+  -- entirely instead of falling back to it.
+  AND (inv.item_id IS NOT NULL OR NOT EXISTS (
+    SELECT 1 FROM item_variants v WHERE v.item_id = i.id AND v.is_active = 1
+  ))
 `
 	args := []any{}
 	if locationID != "" {
@@ -714,6 +766,73 @@ WHERE i.reorder_level > 0
 		return nil, fmt.Errorf("iterate low stock: %w", err)
 	}
 
+	variants, err := r.variantLowStockItems(ctx, locationID)
+	if err != nil {
+		return nil, err
+	}
+	return append(items, variants...), nil
+}
+
+// variantLowStockItems is GetLowStockItems' variant-scoped counterpart,
+// same ADR-0043 shape as variantStockForExport below: a separate query
+// joined through item_variants instead of items, additive to (never folded
+// into) the parent item's own row — ut-docs#2082. Without this, a
+// variant-tracked item's stock (item_id NULL, variant_id set rows) never
+// matched GetLowStockItems' `inv.item_id = i.id` join, so it read as
+// permanently, unclearably low at a false qty of 0 once its reorder_level
+// was set, regardless of what its variants actually held.
+//
+// Mirrors the item-scoped query's own "never stocked anywhere" inclusion
+// (LEFT JOIN from item_variants, not an INNER JOIN starting at inventory):
+// a variant awaiting its first delivery belongs on the reorder list too,
+// same reasoning as an item-scoped row with no inventory row at all.
+func (r *POSRepo) variantLowStockItems(ctx context.Context, locationID string) ([]LowStockItem, error) {
+	query := `
+SELECT
+	i.id,
+	i.name,
+	COALESCE(v.sku, ''),
+	v.id,
+	v.name,
+	COALESCE(inv.location_id, ''),
+	COALESCE(sl.name, ''),
+	COALESCE(inv.quantity, 0),
+	i.reorder_level
+FROM item_variants v
+JOIN items i ON i.id = v.item_id
+LEFT JOIN inventory inv ON inv.variant_id = v.id
+LEFT JOIN stock_locations sl ON sl.id = inv.location_id
+WHERE i.reorder_level > 0
+  AND COALESCE(inv.quantity, 0) < i.reorder_level
+  AND i.stock_untracked = 0
+  AND v.is_active = 1
+`
+	args := []any{}
+	if locationID != "" {
+		query += ` AND (inv.location_id = ? OR inv.location_id IS NULL)`
+		args = append(args, locationID)
+	}
+	query += ` ORDER BY i.name, v.name`
+
+	rows, err := r.db.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("query variant low stock: %w", err)
+	}
+	defer rows.Close()
+
+	var items []LowStockItem
+	for rows.Next() {
+		var item LowStockItem
+		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.VariantID, &item.VariantName,
+			&item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel); err != nil {
+			return nil, fmt.Errorf("scan variant low stock item: %w", err)
+		}
+		item.LocationName = stripRetireMangle(item.LocationID, item.LocationName)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate variant low stock: %w", err)
+	}
 	return items, nil
 }
 
@@ -4195,6 +4314,29 @@ func (r *POSRepo) SetRegisterLocation(ctx context.Context, id string, locationID
 	return nil
 }
 
+// RegisterLocationID (ut-docs#2067) reports the stock location a register
+// is assigned to, for the sale/refund/import/sync write paths that resolve
+// which location a stock movement lands against. ok is true only when the
+// register has a location set AND that location is still active — an
+// unknown register, an unassigned one, or one whose location has since been
+// deactivated all report ok=false with no error, so the caller falls back to
+// EnsureStockLocation (the pre-#2067 Main-only behaviour) rather than writing
+// against a retired location. Read-only; never self-heals.
+func (r *POSRepo) RegisterLocationID(ctx context.Context, registerID string) (string, bool, error) {
+	var locationID string
+	err := r.db.QueryRowContext(ctx, `
+SELECT r.location_id FROM registers r
+JOIN stock_locations l ON l.id = r.location_id AND l.is_active = 1
+WHERE r.id = ? AND r.location_id IS NOT NULL`, registerID).Scan(&locationID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", false, nil
+	}
+	if err != nil {
+		return "", false, fmt.Errorf("register location: %w", err)
+	}
+	return locationID, locationID != "", nil
+}
+
 // SetRegisterActive soft-disables/re-enables a register, mirroring
 // SetStockLocationActive's pattern. Unlike a stock location, a register
 // with shift/sale history is still allowed to be deactivated (retiring a
@@ -4345,17 +4487,73 @@ ORDER BY i.name, sl.name`)
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterate stock levels: %w", err)
 	}
+
+	variants, err := r.variantStockLevels(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return append(items, variants...), nil
+}
+
+// variantStockLevels is ListStockLevels' variant-scoped counterpart, the
+// same ADR-0043 shape as variantStockForExport just below (own query,
+// additive rows, never folded into the parent item's row): without it, a
+// variant-tracked item's Reorder-at row never appeared on the /inventory
+// screen at all, since ListStockLevels' own item-scoped INNER JOIN never
+// matches a variant-scoped inventory row (item_id NULL — ut-docs#2082).
+// Filters mirror variantStockForExport's exactly (both variant and parent
+// active, parent not stock_untracked) since ListStockLevels' own item
+// branch applies the identical i.is_active/i.stock_untracked filters.
+func (r *POSRepo) variantStockLevels(ctx context.Context) ([]LowStockItem, error) {
+	rows, err := r.db.QueryContext(ctx, `
+SELECT i.id, i.name, COALESCE(v.sku, ''), v.id, v.name, inv.location_id, COALESCE(sl.name, ''),
+       COALESCE(inv.quantity, 0), COALESCE(i.reorder_level, 0), COALESCE(i.lead_time_days, 0)
+FROM inventory inv
+JOIN item_variants v ON v.id = inv.variant_id
+JOIN items i ON i.id = v.item_id
+LEFT JOIN stock_locations sl ON sl.id = inv.location_id
+WHERE i.is_active = 1 AND v.is_active = 1
+  AND i.stock_untracked = 0
+ORDER BY i.name, v.name, sl.name`)
+	if err != nil {
+		return nil, fmt.Errorf("query variant stock levels: %w", err)
+	}
+	defer rows.Close()
+	var items []LowStockItem
+	for rows.Next() {
+		var item LowStockItem
+		if err := rows.Scan(&item.ItemID, &item.Name, &item.SKU, &item.VariantID, &item.VariantName,
+			&item.LocationID, &item.LocationName, &item.CurrentQty, &item.ReorderLevel, &item.LeadTimeDays); err != nil {
+			return nil, fmt.Errorf("scan variant stock level: %w", err)
+		}
+		item.LocationName = stripRetireMangle(item.LocationID, item.LocationName)
+		items = append(items, item)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate variant stock levels: %w", err)
+	}
 	return items, nil
 }
 
 // ItemDailySellRates returns each item's average units sold per day over
-// [from, to) (completed sales minus returns). Items with no movement are
-// absent. Drives the inventory page's "days of stock left" prediction. The
-// divisor is the window's own span (to - from in days), so a caller passing
-// a calendar period (e.g. a 31-day month) gets a rate scaled to that
-// period's real length rather than a hardcoded count. A non-positive span
-// (to <= from) has no meaningful daily rate, so it returns an empty map
-// rather than dividing by zero or a negative number.
+// [from, to) (completed sales minus returns), FOLDING a sale of any of the
+// item's variants into the parent item's own total. Items with no movement
+// are absent. The divisor is the window's own span (to - from in days), so
+// a caller passing a calendar period (e.g. a 31-day month) gets a rate
+// scaled to that period's real length rather than a hardcoded count. A
+// non-positive span (to <= from) has no meaningful daily rate, so it
+// returns an empty map rather than dividing by zero or a negative number.
+//
+// This folded-across-variants shape is deliberate and still correct for an
+// item-level aggregate view (e.g. the dead-stock/product report, which asks
+// "did this item move at all, regardless of which of its variants sold") —
+// see product_reports_test.go's own "variant sale must give the parent item
+// a sell rate" case. It is the WRONG rate for the /inventory low-stock
+// prediction's item-scoped rows, though: ItemDirectDailySellRates and
+// VariantDailySellRates below are that feature's own pair of ADR-0043
+// "additive, never folded" siblings — see LowStockItem.SellRate's own doc
+// comment for why the low-stock prediction never calls this method
+// directly.
 func (r *POSRepo) ItemDailySellRates(ctx context.Context, from, to time.Time) (map[string]float64, error) {
 	days := to.Sub(from).Hours() / 24
 	if days <= 0 {
@@ -4385,6 +4583,111 @@ GROUP BY iid`, fromStr, toStr)
 		}
 		if qty > 0 {
 			out[itemID] = qty / days
+		}
+	}
+	return out, rows.Err()
+}
+
+// ItemDirectDailySellRates is ItemDailySellRates' item-scoped-ONLY
+// counterpart, and VariantDailySellRates' sibling: an item's own average
+// units sold per day over [from, to), keyed by item id, computed from ONLY
+// the sale lines that recorded a DIRECT sale of the item itself (no
+// variant) — never including any of the item's variants' own sales.
+//
+// Needed because ItemDailySellRates folds variant sales into the parent
+// item's total (deliberately, for other item-level-aggregate callers — see
+// its own doc comment), which is wrong for an item-SCOPED LowStockItem row
+// (VariantID empty) belonging to an item that ALSO has variants (e.g. it
+// kept its own item-level inventory row from before variants were added —
+// GetLowStockItems' own doc comment names this case). Such a row's
+// quantity never moves from a variant sale (variant sales decrement a
+// variant-keyed inventory row, not this item-keyed one — internal/pos's
+// StockKey{ItemID, VariantID} keys them separately), so applying the
+// item's variant-inclusive combined rate against just this row's own
+// quantity reproduces ut-docs#2089's exact bug shape on the item-scoped
+// side: an item with healthy item-level stock and zero item-direct sales,
+// but with a busy variant, gets misreported as running out purely because
+// of sales it never actually supplied. See LowStockItem.SellRate, which is
+// what actually picks this map (never ItemDailySellRates) for an
+// item-scoped row. Same divide-by-zero/window-span handling as
+// ItemDailySellRates — see that method's doc comment.
+func (r *POSRepo) ItemDirectDailySellRates(ctx context.Context, from, to time.Time) (map[string]float64, error) {
+	days := to.Sub(from).Hours() / 24
+	if days <= 0 {
+		return map[string]float64{}, nil
+	}
+	fromStr, toStr := windowArgs(from, to)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT sl.item_id,
+       SUM(CASE WHEN s.sale_type = 'return' THEN -sl.quantity ELSE sl.quantity END)
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed'
+  AND sl.item_id IS NOT NULL AND sl.item_id != ''
+  AND (sl.variant_id IS NULL OR sl.variant_id = '')
+  AND datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) < datetime(?)
+GROUP BY sl.item_id`, fromStr, toStr)
+	if err != nil {
+		return nil, fmt.Errorf("query item-direct sell rates: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var itemID string
+		var qty float64
+		if err := rows.Scan(&itemID, &qty); err != nil {
+			return nil, fmt.Errorf("scan item-direct sell rate: %w", err)
+		}
+		if qty > 0 {
+			out[itemID] = qty / days
+		}
+	}
+	return out, rows.Err()
+}
+
+// VariantDailySellRates is ItemDailySellRates' variant-scoped counterpart —
+// the same ADR-0043 "additive, never folded" shape as variantStockLevels/
+// variantLowStockItems above: a variant's own average units sold per day
+// over [from, to), keyed by variant id, computed from ONLY the sale lines
+// that recorded that variant (never rolled up into its parent item's
+// total). Without this, a variant-scoped LowStockItem row (VariantID set —
+// ut-docs#2082) had no rate of its own to use and fell back to
+// ItemDailySellRates' item-keyed map, which sums ALL of the item's
+// variants' sales — so every variant of a multi-variant item independently
+// computed its days-left/running-out/reorder-suggestion prediction against
+// the item's COMBINED rate applied to just that one variant's own quantity
+// (ut-docs#2089: a T-Shirt selling 3/day total across S/M/L variants, each
+// holding a healthy 20 units, had all three variants individually
+// misreported as running out). Same divide-by-zero/window-span handling as
+// ItemDailySellRates — see that method's doc comment.
+func (r *POSRepo) VariantDailySellRates(ctx context.Context, from, to time.Time) (map[string]float64, error) {
+	days := to.Sub(from).Hours() / 24
+	if days <= 0 {
+		return map[string]float64{}, nil
+	}
+	fromStr, toStr := windowArgs(from, to)
+	rows, err := r.db.QueryContext(ctx, `
+SELECT sl.variant_id,
+       SUM(CASE WHEN s.sale_type = 'return' THEN -sl.quantity ELSE sl.quantity END)
+FROM sale_lines sl
+JOIN sales s ON s.id = sl.sale_id
+WHERE s.status = 'completed'
+  AND sl.variant_id IS NOT NULL AND sl.variant_id != ''
+  AND datetime(s.created_at) >= datetime(?) AND datetime(s.created_at) < datetime(?)
+GROUP BY sl.variant_id`, fromStr, toStr)
+	if err != nil {
+		return nil, fmt.Errorf("query variant sell rates: %w", err)
+	}
+	defer rows.Close()
+	out := map[string]float64{}
+	for rows.Next() {
+		var variantID string
+		var qty float64
+		if err := rows.Scan(&variantID, &qty); err != nil {
+			return nil, fmt.Errorf("scan variant sell rate: %w", err)
+		}
+		if qty > 0 {
+			out[variantID] = qty / days
 		}
 	}
 	return out, rows.Err()
@@ -6428,16 +6731,35 @@ func (r *POSRepo) SetStockLocationActive(ctx context.Context, id string, active 
 	return nil
 }
 
-// StockLocationInUse reports whether any inventory, stock movement, or
-// register still references this location — deactivating it would silently
-// orphan that history.
+// StockLocationInUse reports whether a location currently holds any nonzero
+// stock, or is assigned to a currently-active register — deactivating it in
+// either case would strand live stock or pull an in-service till's location
+// out from under it (ut-docs#2066).
+//
+// Historical activity alone does NOT count: is_active is never used to
+// filter a location out of low-stock, reports, export, or audit queries
+// (see the ut-docs#1610 comment on GetLowStockItems), so deactivating a
+// location neither hides nor orphans anything it has ever done. It only
+// changes whether the location can be picked for new stock work
+// (ListActiveStockLocations). A location that has been fully sold/moved
+// out (its inventory rows sit at quantity=0) or whose register has itself
+// been retired is safe to deactivate, and past stock_movements rows are a
+// pure append-only audit trail with nothing left to strand.
+//
+// "Zero" is an epsilon compare, not `quantity <> 0` (review of #2066):
+// inventory.quantity is a REAL accumulated in place by RecordStockMovement's
+// `quantity = quantity + ?`, and stock is enterable to 2dp, so clearing a
+// weighed line (0.1 + 0.2 - 0.3) leaves 5.55e-17 behind. That reads as
+// exactly 0.00 everywhere it is shown to a manager, so an exact compare
+// re-creates #2066's own dead end — refused with no visible reason and no
+// way to clear it. 1e-9 is the same epsilon refund_page.go uses for
+// quantity float compares, and is far below any real stock unit.
 func (r *POSRepo) StockLocationInUse(ctx context.Context, id string) (bool, error) {
 	var exists int
 	err := r.db.QueryRowContext(ctx, `
-SELECT 1 WHERE EXISTS (SELECT 1 FROM inventory WHERE location_id = ?)
-   OR EXISTS (SELECT 1 FROM stock_movements WHERE location_id = ?)
-   OR EXISTS (SELECT 1 FROM registers WHERE location_id = ?)`,
-		id, id, id).Scan(&exists)
+SELECT 1 WHERE EXISTS (SELECT 1 FROM inventory WHERE location_id = ? AND ABS(quantity) > 0.000000001)
+   OR EXISTS (SELECT 1 FROM registers WHERE location_id = ? AND is_active = 1)`,
+		id, id).Scan(&exists)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
 	}
@@ -6644,11 +6966,22 @@ type SaleDetail struct {
 	// journal wire additive, same convention as the field above (a
 	// pre-migration-068 peer's journal simply lacks the key, which reads as
 	// 0 — correct, since such a peer cannot issue tracked vouchers yet).
-	VoucherIssueTotal int64               `json:"voucher_issue_total,omitempty"`
-	CreatedAt         string              `json:"created_at"`
-	CashierID         string              `json:"cashier_id"`
-	Lines             []SaleDetailLine    `json:"lines"`
-	Payments          []SaleDetailPayment `json:"payments"`
+	VoucherIssueTotal int64  `json:"voucher_issue_total,omitempty"`
+	CreatedAt         string `json:"created_at"`
+	CashierID         string `json:"cashier_id"`
+	// RegisterID (ut-docs#2067) is the register the sale was rung up on
+	// (sales.register_id), "" when none was recorded. It rides the LAN-sync
+	// journal so the primary can resolve the REPORTING till's stock
+	// location (pos.ResolveStockLocationID) when replaying the sale, rather
+	// than always drawing from Main; omitempty keeps the wire additive, same
+	// convention as the fields above — a pre-#2067 peer's journal simply
+	// lacks the key, which the primary reads as "no register", i.e. the
+	// Main fallback that peer's sales always got. applyJournal deliberately
+	// does NOT copy it onto SaleInput.RegisterID (see its FK-quarantine
+	// comment): a replica-only register id must never make the replay fail.
+	RegisterID string              `json:"register_id,omitempty"`
+	Lines      []SaleDetailLine    `json:"lines"`
+	Payments   []SaleDetailPayment `json:"payments"`
 	// Charges (ADR-0062, ut-docs#963/#984) is the itemized additive
 	// statutory charge list read from sale_charges, in seq order. Empty for
 	// every sale until step 2/3 of that ADR starts writing sale_charges rows
@@ -6759,13 +7092,13 @@ SELECT s.id, s.receipt_no, s.status, s.sale_type, s.tender_type, s.order_type, s
        s.currency, s.subtotal, s.discount_total, s.tax_total, s.total, s.service_charge_amount,
        s.service_charge_tax_basis_bp, s.voucher_issue_total, s.created_at,
        COALESCE(s.cashier_id, ''), COALESCE(s.table_id, ''), COALESCE(t.label, ''),
-       COALESCE(NULLIF(s.display_no, ''), s.receipt_no)
+       COALESCE(NULLIF(s.display_no, ''), s.receipt_no), COALESCE(s.register_id, '')
 FROM sales s LEFT JOIN tables t ON t.id = s.table_id
 WHERE s.receipt_no = ?`, receiptNo).Scan(
 		&d.ID, &d.ReceiptNo, &d.Status, &d.SaleType, &d.TenderType, &d.OrderType, &d.Offline,
 		&d.SyncStatus, &d.Currency, &d.Subtotal, &d.DiscountTotal, &d.TaxTotal,
 		&d.Total, &d.ServiceCharge, &d.ServiceChargeTaxBasisBP, &d.VoucherIssueTotal, &d.CreatedAt, &d.CashierID, &d.TableID, &d.TableLabel,
-		&d.DisplayNo)
+		&d.DisplayNo, &d.RegisterID)
 	if err == sql.ErrNoRows {
 		return SaleDetail{}, false, nil
 	}
