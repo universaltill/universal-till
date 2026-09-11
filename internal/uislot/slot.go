@@ -207,6 +207,15 @@ var CoreMenu = []Entry{
 	{Key: "/items", Href: "/items", LabelKey: "nav.items", Icon: "tag", Order: 800, InNav: true},
 
 	{Key: "/help", Href: "/help", LabelKey: "nav.help", Icon: "help", Order: 2000},
+	// ut-docs#582: the staff "pay at counter" board (kiosk.payment_mode
+	// "counter") — no VisibleIf, same as /orders above: any operator needs
+	// to see which orders are waiting to be called out/collected, not just
+	// a manager. Order 2050, not InNav: visible to every operator on the
+	// /menu grid (like /help just above), but not promoted into the
+	// space-constrained top nav rail (see nav.html's own "no spare budget"
+	// comment) — same non-InNav placement as every other non-rail tile
+	// below.
+	{Key: "/kiosk-counter-orders", Href: "/kiosk-counter-orders", LabelKey: "nav.kiosk_counter_orders", Icon: "check", Order: 2050},
 	{Key: "/users", Href: "/users", LabelKey: "users.title", Icon: "users", Order: 2100, VisibleIf: "settings"},
 	{Key: "/kitchen-stations", Href: "/kitchen-stations", LabelKey: "kitchenstations.title", Icon: "chef-hat", Order: 2200, VisibleIf: "settings"},
 	// bluetoothdevices.title, not a separate nav.bluetooth_devices key — it

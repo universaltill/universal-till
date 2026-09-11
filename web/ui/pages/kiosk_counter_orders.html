@@ -1,0 +1,11 @@
+{{ define "content" }}
+<div class="page-head">
+  <h1>{{ T "kiosk_counter_orders.title" }} {{ helpLink "kiosk-counter-orders" }}</h1>
+</div>
+<div class="card">
+  {{/* Loads once here; the fragment's own root then polls every 15s, same
+       shape as /orders (orders.html) — a kiosk "pay at counter" order must
+       appear on this board without anyone reloading the page. */}}
+  <div id="counter-orders" hx-get="/ui/kiosk-counter-orders" hx-trigger="load" hx-swap="outerHTML"></div>
+</div>
+{{ end }}

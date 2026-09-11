@@ -1,0 +1,41 @@
+{{/* Root re-arms the 15s poll on every swap — same self-re-arming pattern
+     as orders_list.html's own root div: the outerHTML swap replaces the
+     element that carried the trigger, so the trigger must travel with the
+     fragment. No SSE push here (ut-docs#582 explicit non-goal — 15s poll
+     only, no cross-till sync). */}}
+<div id="counter-orders" hx-get="/ui/kiosk-counter-orders" hx-trigger="every 15s" hx-target="this" hx-swap="outerHTML">
+  {{ if not .Orders }}
+  <p class="muted">{{ T "kiosk_counter_orders.empty" }}</p>
+  {{ else }}
+  <table class="table">
+    <thead>
+      <tr>
+        <th>{{ T "kiosk_counter_orders.col.ref" }}</th>
+        <th>{{ T "kiosk_counter_orders.col.order_type" }}</th>
+        <th>{{ T "kiosk_counter_orders.col.items" }}</th>
+        <th>{{ T "kiosk_counter_orders.col.age" }}</th>
+        <th></th>
+      </tr>
+    </thead>
+    <tbody>
+      {{ range .Orders }}
+      {{/* This row's own id is the target of the collect POST's htmx
+           out-of-band "delete" (kiosk_counter_orders_page.go) — once a tap
+           marks the order collected, the row removes itself immediately
+           instead of waiting for the next 15s poll. */}}
+      <tr id="counter-order-row-{{ .ID }}">
+        <td>{{ .DisplayNo }}</td>
+        <td>{{ if eq .OrderType "takeaway" }}{{ T "basket.order_type.takeaway" }}{{ else if eq .OrderType "mixed" }}{{ T "basket.order_type.mixed" }}{{ else }}{{ T "selforder.order_type.dine_in" }}{{ end }}</td>
+        <td>{{ .Items }}</td>
+        <td>{{ datetime .CreatedAt }}</td>
+        <td>
+          <div class="btn-actions">
+            <button class="btn" hx-post="/api/kiosk-counter-orders/{{ .ID }}/collect" hx-swap="none">{{ T "kiosk_counter_orders.mark_collected" }}</button>
+          </div>
+        </td>
+      </tr>
+      {{ end }}
+    </tbody>
+  </table>
+  {{ end }}
+</div>

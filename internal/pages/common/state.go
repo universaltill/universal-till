@@ -55,6 +55,15 @@ const (
 	KeyOSK            = "display.osk"
 	KeyIdleLock       = "auth.idle_lock_minutes"
 	KeyKioskIdleReset = "kiosk.idle_reset_seconds"
+	// KeyKioskPaymentMode is the self-order kiosk's checkout mode
+	// (universaltill/ut-docs#582): "kiosk" (default — the existing
+	// card/contactless payment-picker flow, ADR-0020) or "counter" (the
+	// kiosk takes the order and prints a kitchen ticket, but never charges
+	// anything — the customer pays a human at the till afterwards, so no
+	// sale/payment row is ever created for a counter-mode checkout). See
+	// internal/data/kiosk_counter_orders_repo.go for the record a
+	// counter-mode checkout creates instead of a sale.
+	KeyKioskPaymentMode = "kiosk.payment_mode"
 	// KeyWindowMode is the till's own window/process display mode (ut-docs#608
 	// scaffold): fullscreen|kiosk|maximized|normal. This card only stores and
 	// surfaces the setting — actually applying it to the OS window is
@@ -195,6 +204,39 @@ func IsChromeHiding(mode string) bool {
 	return mode == "fullscreen" || mode == "kiosk"
 }
 
+// KioskPaymentModeKiosk is the default self-order checkout mode: the
+// existing card/contactless payment-picker flow (ADR-0020). Note this is a
+// different axis from KeyWindowMode's own "kiosk" value above (that one is
+// the till's window/process display mode) — same word, unrelated settings.
+const KioskPaymentModeKiosk = "kiosk"
+
+// KioskPaymentModeCounter is the "pay at counter" self-order checkout mode
+// (ut-docs#582): the kiosk takes the order and sends it to the kitchen but
+// never charges anything.
+const KioskPaymentModeCounter = "counter"
+
+// DefaultKioskPaymentMode is KioskPaymentModeKiosk — an upgraded till with
+// no explicit choice yet must keep behaving exactly as it always has.
+const DefaultKioskPaymentMode = KioskPaymentModeKiosk
+
+// validKioskPaymentModes is the closed enum KeyKioskPaymentMode is allowed
+// to hold — same defensive-clamp shape as validWindowModes above.
+var validKioskPaymentModes = map[string]bool{
+	KioskPaymentModeKiosk:   true,
+	KioskPaymentModeCounter: true,
+}
+
+// ClampKioskPaymentMode returns mode unchanged if it's one of the two valid
+// values, else DefaultKioskPaymentMode — used when loading (defense against
+// corrupt/old stored data) and when saving (defense in depth, mirrors
+// ClampWindowMode).
+func ClampKioskPaymentMode(mode string) string {
+	if validKioskPaymentModes[mode] {
+		return mode
+	}
+	return DefaultKioskPaymentMode
+}
+
 // LoadState pulls settings from the DB-backed settings store with cfg defaults.
 func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) RuntimeState {
 	get := func(key, def string) string {
@@ -255,6 +297,8 @@ func LoadState(ctx context.Context, store *settings.Store, cfg *config.Config) R
 			st.KioskIdleResetSeconds = n
 		}
 	}
+
+	st.KioskPaymentMode = ClampKioskPaymentMode(get(KeyKioskPaymentMode, DefaultKioskPaymentMode))
 
 	st.WindowMode = ClampWindowMode(get(KeyWindowMode, DefaultWindowMode))
 
@@ -405,6 +449,7 @@ func SaveState(ctx context.Context, store *settings.Store, st RuntimeState) erro
 		KeyAllowNegativeInventory: strconv.FormatBool(st.AllowNegativeInventory),
 		KeyIdleLock:               strconv.Itoa(st.IdleLockMinutes),
 		KeyKioskIdleReset:         strconv.Itoa(st.KioskIdleResetSeconds),
+		KeyKioskPaymentMode:       ClampKioskPaymentMode(st.KioskPaymentMode),
 	}
 	if writeWindowMode {
 		kv[KeyWindowMode] = ClampWindowMode(st.WindowMode)

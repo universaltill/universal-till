@@ -207,8 +207,15 @@ type RuntimeState struct {
 	IdleLockMinutes              int     // idle auto-lock window in minutes (0 = off)
 	OSKMode                      string  // on-screen keyboard: auto|on|off ("" = auto)
 	KioskIdleResetSeconds        int     // self-order kiosk: reload to start after N idle seconds (ADR-0020); 0 = off
-	WindowMode                   string  // ut-docs#608 scaffold: fullscreen|kiosk|maximized|normal
-	LaunchOnStartup              bool    // ut-docs#608 scaffold: launch this till on OS boot
+	// KioskPaymentMode (ut-docs#582): "kiosk" (default, ADR-0020's own
+	// card/contactless payment picker) or "counter" ("pay at counter" — the
+	// kiosk takes the order, prints a kitchen ticket, and creates NO sale;
+	// the customer pays a human at the till). See
+	// common.KioskPaymentModeKiosk/KioskPaymentModeCounter and
+	// ClampKioskPaymentMode (state.go).
+	KioskPaymentMode string
+	WindowMode       string // ut-docs#608 scaffold: fullscreen|kiosk|maximized|normal
+	LaunchOnStartup  bool   // ut-docs#608 scaffold: launch this till on OS boot
 	// WindowModeChanged/LaunchOnStartupChanged mark that THIS save is
 	// deliberately setting a new WindowMode/LaunchOnStartup value, as
 	// opposed to carrying forward whatever CurrentState() happened to
