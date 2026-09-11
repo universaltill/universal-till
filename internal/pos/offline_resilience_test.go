@@ -309,12 +309,19 @@ func setupOfflineDB(t *testing.T) *sql.DB {
 			is_active INTEGER NOT NULL DEFAULT 1,
 			stock_untracked INTEGER NOT NULL DEFAULT 0
 		)`,
+		`CREATE TABLE item_variants (
+			id TEXT PRIMARY KEY,
+			item_id TEXT NOT NULL,
+			sku TEXT,
+			name TEXT NOT NULL,
+			is_active INTEGER NOT NULL DEFAULT 1
+		)`,
 		`CREATE TABLE inventory (
-			id TEXT PRIMARY KEY, 
-			item_id TEXT, 
-			variant_id TEXT, 
-			location_id TEXT NOT NULL, 
-			quantity REAL NOT NULL, 
+			id TEXT PRIMARY KEY,
+			item_id TEXT,
+			variant_id TEXT,
+			location_id TEXT NOT NULL,
+			quantity REAL NOT NULL,
 			updated_at TEXT NOT NULL,
 			UNIQUE(item_id, variant_id, location_id)
 		)`,
