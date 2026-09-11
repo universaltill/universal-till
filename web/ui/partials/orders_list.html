@@ -54,8 +54,27 @@
         {{/* One warning per LINE (div, not adjacent spans): a sale can carry
              both, and inline they run together into a single unreadable
              "⚠ Kitchen print failed ⚠ Receipt print failed" wrap. */}}
+        {{ $receiptNo := .ReceiptNo }}
         <td>
-          {{ if .KitchenPrintFailed }}<div class="muted" title="{{ T "orders.print.kitchen_failed" }}">⚠ {{ T "orders.print.kitchen_failed" }}</div>{{ end }}
+          {{ if .KitchenPrintFailed }}
+          <div class="muted" title="{{ T "orders.print.kitchen_failed" }}">
+            ⚠ {{ T "orders.print.kitchen_failed" }}
+            {{/* ut-docs#2063: unlike the receipt warning (cleared by
+                 reprinting from the Journal), the kitchen warning had NO
+                 clearing path anywhere in the till — POST /api/print/kitchen
+                 already existed, tested, and already clears the flag on a
+                 fully successful send (kitchen_print.go), nothing in web/ui
+                 ever called it. This wires that existing endpoint directly:
+                 the response (a ✓/✗ span, kitchen_print.go's own fail/success
+                 fragment) lands in the message span below; the ⚠ text itself
+                 clears on this fragment's own next 15s poll once the flag is
+                 actually cleared, same as the receipt warning already does
+                 today (it also doesn't clear instantly — the reprint button
+                 lives on a different page entirely). */}}
+            <button class="btn" type="button" hx-post="/api/print/kitchen" hx-vals='{{ jsonVals "receipt_no" $receiptNo }}' hx-target="#kitchen-resend-msg-{{ $receiptNo }}" hx-swap="innerHTML">{{ T "orders.print.kitchen_resend" }}</button>
+            <span id="kitchen-resend-msg-{{ $receiptNo }}" aria-live="polite"></span>
+          </div>
+          {{ end }}
           {{ if .ReceiptPrintFailed }}<div class="muted" title="{{ T "orders.print.receipt_failed" }}">⚠ {{ T "orders.print.receipt_failed" }}</div>{{ end }}
         </td>
         <td>
@@ -71,7 +90,6 @@
                compact row-action style (already used identically in
                catalog_row.html/tax_codes_table.html) — sized for a list
                row, not a page-level primary action. */}}
-          {{ $receiptNo := .ReceiptNo }}
           <div id="order-actions-{{ $receiptNo }}" class="btn-actions">
             {{ range .Actions }}
             <button class="btn{{ if .Danger }} danger{{ end }}" hx-post="/api/orders/{{ $receiptNo }}/status" hx-vals='{{ jsonVals "status" .TargetStatus }}' hx-target="#order-status-{{ $receiptNo }}" hx-swap="innerHTML">{{ T .Key }}</button>
