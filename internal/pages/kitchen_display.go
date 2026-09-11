@@ -114,6 +114,10 @@ func registerKitchenDisplay(mux *http.ServeMux, d *common.Deps) {
 			"Orders":      rows,
 			"FragmentURL": kitchenDisplayFragmentURL(station.ID),
 			"EmptyKey":    "kitchendisplay.empty",
+			// ut-docs#2098: the resend button on THIS board must only
+			// resend THIS station's own ticket — a duplicate-ticket risk on
+			// any multi-station shop otherwise (grill + bar, say).
+			"StationID": station.ID,
 		})(w, r)
 	})
 }

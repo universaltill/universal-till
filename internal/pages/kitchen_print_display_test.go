@@ -34,7 +34,7 @@ func TestPrintKitchen_BothStationGetsTicket(t *testing.T) {
 	}
 	seedKitchenSale(t, dbase, "R-2000", "itm-steak")
 
-	total, failures, err := printKitchen(ctx, dp, "R-2000", "")
+	total, failures, err := printKitchen(ctx, dp, "R-2000", "", "")
 	if err != nil {
 		t.Fatalf("printKitchen: %v", err)
 	}
@@ -71,7 +71,7 @@ func TestPrintKitchen_DisplayOnlyStationFallsThroughToDefault(t *testing.T) {
 	}
 	seedKitchenSale(t, dbase, "R-2001", "itm-steak")
 
-	targets, err := buildKitchenTargets(ctx, dp, "R-2001")
+	targets, err := buildKitchenTargets(ctx, dp, "R-2001", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -79,7 +79,7 @@ func TestPrintKitchen_DisplayOnlyStationFallsThroughToDefault(t *testing.T) {
 		t.Fatalf("want exactly the default bucket, got %+v", targets)
 	}
 
-	total, failures, err := printKitchen(ctx, dp, "R-2001", "")
+	total, failures, err := printKitchen(ctx, dp, "R-2001", "", "")
 	if err != nil {
 		t.Fatalf("printKitchen: %v", err)
 	}

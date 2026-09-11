@@ -27,6 +27,7 @@ A station whose destination is **Display** or **Printer and display** has its ow
 - Status belongs to the whole order, not to each item: an order with items for two stations shows on both screens, and marking it Ready or Collected on either screen updates both.
 - The screen only shows orders taken on **this** till — unlike the till's own Orders page, it does not show orders taken on another till, even once they've synced. On a shop with several linked tills, open the kitchen display on the till that actually takes the relevant orders.
 - A deactivated station's screen stops working until you reactivate it; a printer-only station has no screen.
+- If an order shows a **⚠ Kitchen print failed** warning here, **Resend kitchen ticket** sends only THIS station's own ticket — it never re-prints another station's ticket that already succeeded. From the shop-wide Orders page the same button resends to every station the order routes to, since that board isn't tied to one station.
 
 ## Good to know
 

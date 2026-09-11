@@ -876,6 +876,7 @@
   "kitchen.print.no_receipt": "هیچ سفارشی انتخاب نشده است",
   "kitchen.print.off": "چاپگر آشپزخانه پیکربندی نشده است",
   "kitchen.print.partial": "چاپ برخی تذکره‌های آشپزخانه ناموفق بود",
+  "kitchen.print.station_nothing_to_send": "چیزی برای چاپ در این ایستگاه نیست",
   "kitchen.ticket.order_label": "سفارش",
   "kitchen.ticket.station_default": "آشپزخانه",
   "kitchendisplay.empty": "سفارشی برای این ایستگاه نیست",

@@ -26,6 +26,7 @@ Hedefi **Ekran** veya **Yazıcı ve ekran** olan istasyonun kendi canlı sipari�
 - Durum her ürüne değil, siparişin tamamına aittir: iki istasyon için ürün içeren bir sipariş iki ekranda da görünür; birinde Hazır veya Teslim alındı işaretlemek ikisini de günceller.
 - Ekran yalnızca **bu** kasada alınan siparişleri gösterir — kasanın kendi Siparişler sayfasının aksine, eşitlendikten sonra bile başka bir kasada alınan siparişleri göstermez. Birden çok bağlı kasası olan bir dükkânda, mutfak ekranını ilgili siparişleri gerçekten alan kasada açın.
 - Devre dışı bırakılan istasyonun ekranı siz yeniden etkinleştirene kadar çalışmaz; yalnızca yazıcı olan istasyonun ekranı yoktur.
+- Burada bir sipariş **⚠ Mutfak fişi yazdırılamadı** uyarısı gösteriyorsa, **Mutfak fişini yeniden gönder** yalnızca BU istasyonun kendi fişini gönderir — zaten başarılı olmuş başka bir istasyonun fişini asla yeniden göndermez. Mağaza geneli Siparişler sayfasından aynı düğme, siparişin yönlendirildiği her istasyona gönderir; çünkü o sayfa tek bir istasyona bağlı değildir.
 
 ## Bilmekte fayda var
 

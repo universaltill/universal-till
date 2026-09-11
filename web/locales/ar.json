@@ -876,6 +876,7 @@
   "kitchen.print.no_receipt": "لم يتم اختيار طلب",
   "kitchen.print.off": "لم تُضبط طابعة المطبخ",
   "kitchen.print.partial": "فشلت طباعة بعض تذاكر المطبخ",
+  "kitchen.print.station_nothing_to_send": "لا شيء لطباعته لهذه المحطة",
   "kitchen.ticket.order_label": "الطلب",
   "kitchen.ticket.station_default": "المطبخ",
   "kitchendisplay.empty": "لا توجد طلبات لهذه المحطة",
