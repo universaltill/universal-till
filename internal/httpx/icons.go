@@ -182,6 +182,15 @@ var railIcons = map[string]string{
 	"landmark": `<path d="M10 18v-7"/><path d="M11.119 2.205a2 2 0 0 1 1.762 0l7.84 3.846A.5.5 0 0 1 20.5 7h-17a.5.5 0 0 1-.22-.949z"/><path d="M14 18v-7"/><path d="M18 18v-7"/><path d="M3 22h18"/><path d="M6 18v-7"/>`,
 	// Barcode backfill.
 	"scan-barcode": `<path d="M3 7V5a2 2 0 0 1 2-2h2"/><path d="M17 3h2a2 2 0 0 1 2 2v2"/><path d="M21 17v2a2 2 0 0 1-2 2h-2"/><path d="M7 21H5a2 2 0 0 1-2-2v-2"/><path d="M8 7v10"/><path d="M12 7v10"/><path d="M17 7v10"/>`,
+	// Exit to OS (ut-docs#2099's record-dialog status row) — "monitor" was
+	// this affordance's first choice, but ut-docs#1918 landed first and
+	// claimed "monitor" for /open-orders, so TestNoTwoNavDestinationsShareAnIcon
+	// would flag two destinations sharing a glyph the moment both merged.
+	// A door with an outward arrow is Lucide's own "log-out" convention —
+	// reads as "leave this app", distinct from "lock" (stay in-app, screen
+	// locked) and "monitor" (the open-orders board). Lucide's "log-out"
+	// path, unmodified.
+	"log-out": `<path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" x2="9" y1="12" y2="12"/>`,
 }
 
 // iconSVGOpen is the one shared wrapper every rail icon renders inside.

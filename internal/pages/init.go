@@ -149,6 +149,18 @@ func Init(ctx, bgCtx context.Context, cfg *config.Config, pm *plugins.Manager, d
 	}
 	httpx.InitUIScale(state.UIScale)
 	httpx.InitOSKMode(state.OSKMode)
+	// ut-docs#2099: publish this till's self-order kiosk status (ADR-0020,
+	// display.mode="self_order") so record_dialog.html's "selforder" check
+	// (coding-standards.md §10 — status/lock/exit-to-OS must be withheld on
+	// a kiosk device, customer containment) is correct from the very first
+	// request, not just after the first POST /api/settings/display-mode.
+	// Not part of RuntimeState (see common.LoadState) — read straight from
+	// the store here, same as authSvc.SetAnonymousRootRedirect below.
+	if mode, _, _ := setStore.Get(ctx, "display.mode"); mode == "self_order" {
+		httpx.InitSelfOrderMode(true)
+	} else {
+		httpx.InitSelfOrderMode(false)
+	}
 
 	// Boot sweep: drop THIS till's own live-basket table claims
 	// (ut-docs#1390). The engine constructed just below always starts with an
@@ -572,6 +584,20 @@ func newRederiveSettings(dp *common.Deps, authDisabled bool, i18n *config.I18n) 
 		}); dp.Engine.Config() != newCfg {
 			dp.Engine.SetConfig(newCfg)
 			dp.KioskEngine.SetConfig(newCfg)
+		}
+		// ut-docs#2099 review finding B1: display.mode is deliberately NOT
+		// part of RuntimeState (see the boot-time InitSelfOrderMode call
+		// above), so it gets no free ride from `*s = st` and needs its own
+		// re-derive here — the same shape as the window-mode push below.
+		// Without this, a cloud set_setting display.mode=self_order
+		// directive (ADR-0018) leaves the till's "selforder" template flag
+		// stale until the next process restart: record_dialog.html keeps
+		// rendering lock/status/exit-to-OS to a device an admin just
+		// declared customer-facing (coding-standards.md §10's containment
+		// requirement), or the reverse — a till taken OUT of kiosk mode
+		// keeps withholding those controls on an ordinary register.
+		if mode, _, err := dp.Settings.Get(c, "display.mode"); err == nil {
+			httpx.InitSelfOrderMode(mode == "self_order")
 		}
 		dp.AuthSvc.SetIdleLockMinutes(applied.IdleLockMinutes)
 		if !authDisabled {
