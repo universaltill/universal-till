@@ -131,7 +131,7 @@ func evaluateFiscalGate(ctx context.Context, d *common.Deps) (fiscal.Gate, error
 	return fiscal.EvaluateGate(ctx, fiscalSettingsReader(d), d.CurrentState().Country, time.Now())
 }
 
-// enforceFiscalGate evaluates the ADR-0048 German TSE hard gate and turns a
+// enforceFiscalGate evaluates the ADR-0048 DE+TR fiscal-signing-device hard gate (fiscal.RequiresHardGate) and turns a
 // blocking decision into the sentinel errors callers already switch on
 // (fiscalNeverConfiguredError / fiscalTSEFailingError). Shared by every
 // money-moving completion path, not just completeTender's own sale/kiosk
@@ -191,7 +191,7 @@ func releaseTableClaim(ctx context.Context, d *common.Deps, repo *data.POSRepo, 
 // kiosk checkout passes d.KioskEngine (ut-docs#449: an anonymous kiosk
 // checkout must never reset the cashier's live basket, and vice versa).
 func completeTender(ctx context.Context, d *common.Deps, engine *pos.Service, repo *data.POSRepo, saleInput pos.SaleInput, payments []pos.PaymentInput, actorID string) (string, error) {
-	// German TSE hard gate (ADR-0048, ut-docs#715) — evaluated BEFORE the
+	// DE+TR fiscal-signing-device hard gate (ADR-0048, ut-docs#715, fiscal.RequiresHardGate) — evaluated BEFORE the
 	// payment.<key>.authorize loop: "never configured" needs no plugin
 	// round trip, just local settings reads (never the network — a till
 	// that is merely offline is NOT a failing TSE, and checkout must never
@@ -1672,7 +1672,7 @@ func registerPOSAPI(mux *http.ServeMux, d *common.Deps) {
 				http.Error(w, httpx.T(httpx.ResolveLocale(w, r), "pos.toast.fiscal_device_no_receipt"), http.StatusPaymentRequired)
 				return
 			}
-			// German TSE hard gate (ADR-0048): same in-place, localized
+			// DE+TR fiscal-signing-device hard gate (ADR-0048, fiscal.RequiresHardGate): same in-place, localized
 			// notice surface as the insufficient-stock rejection below —
 			// never a modal blocker, the basket survives, no sale row was
 			// created. The two block states get their own copy: never-

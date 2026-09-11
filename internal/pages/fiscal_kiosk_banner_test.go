@@ -13,7 +13,7 @@ import (
 )
 
 // The self-order kiosk shares completeTender with the cashier path, so the
-// German TSE hard gate (ADR-0048) blocks an anonymous kiosk checkout the
+// DE+TR fiscal-signing-device hard gate (ADR-0048, fiscal.RequiresHardGate) blocks an anonymous kiosk checkout the
 // same way — translated inline message on the payment picker pointing the
 // customer to the counter, never a modal, no sale row.
 func TestFiscalGate_KioskCheckoutBlocked(t *testing.T) {
