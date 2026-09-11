@@ -196,10 +196,12 @@ func registerReportsPage(mux *http.ServeMux, d *common.Deps) {
 		// stock-runout prediction, not the report figures above.
 		sellRateNow := reportNow()
 		runningOut := 0
-		if rates, err := repo.ItemDailySellRates(r.Context(), sellRateNow.Add(-28*24*time.Hour), sellRateNow); err == nil && len(rates) > 0 {
+		rates, ratesErr := repo.ItemDirectDailySellRates(r.Context(), sellRateNow.Add(-28*24*time.Hour), sellRateNow)
+		variantRates, variantRatesErr := repo.VariantDailySellRates(r.Context(), sellRateNow.Add(-28*24*time.Hour), sellRateNow)
+		if ratesErr == nil && variantRatesErr == nil && (len(rates) > 0 || len(variantRates) > 0) {
 			if lvls, err := repo.ListStockLevels(r.Context()); err == nil {
 				for _, l := range lvls {
-					if l.IsRunningOut(rates[l.ItemID]) {
+					if l.IsRunningOut(l.SellRate(rates, variantRates)) {
 						runningOut++
 					}
 				}
