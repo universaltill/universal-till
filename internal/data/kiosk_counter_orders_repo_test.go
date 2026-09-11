@@ -102,6 +102,45 @@ func TestKioskCounterOrdersRepo_DisplayNoIncrementsAcrossOrders(t *testing.T) {
 	}
 }
 
+// A second MarkCollected on an ALREADY-collected order must not move
+// collected_at. The staff board polls every 15s, so two tills can both be
+// showing the same still-open row; the second tap must not rewrite when
+// the customer actually collected their order (review finding, ut-docs#582).
+func TestKioskCounterOrdersRepo_MarkCollectedTwiceKeepsFirstCollectedAt(t *testing.T) {
+	d := openKioskCounterOrdersDB(t, "counter_orders_recollect.db")
+	ctx := context.Background()
+	repo := NewKioskCounterOrdersRepo(d.DB)
+
+	created, err := repo.Create(ctx, KioskCounterOrder{Lines: []KioskCounterOrderLine{{Name: "Tea", Qty: "1"}}})
+	if err != nil {
+		t.Fatalf("Create: %v", err)
+	}
+	if err := repo.MarkCollected(ctx, created.ID); err != nil {
+		t.Fatalf("MarkCollected: %v", err)
+	}
+	var first string
+	if err := d.DB.QueryRow(`SELECT collected_at FROM kiosk_counter_orders WHERE id = ?`, created.ID).Scan(&first); err != nil {
+		t.Fatal(err)
+	}
+
+	// Backdate it so a re-stamp would be unmistakable rather than landing
+	// on the same RFC3339 second as the first call.
+	past := "2020-01-01T00:00:00Z"
+	if _, err := d.DB.Exec(`UPDATE kiosk_counter_orders SET collected_at = ? WHERE id = ?`, past, created.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.MarkCollected(ctx, created.ID); err != nil {
+		t.Fatalf("second MarkCollected: %v", err)
+	}
+	var second string
+	if err := d.DB.QueryRow(`SELECT collected_at FROM kiosk_counter_orders WHERE id = ?`, created.ID).Scan(&second); err != nil {
+		t.Fatal(err)
+	}
+	if second != past {
+		t.Fatalf("second MarkCollected rewrote collected_at: %q -> %q (first call recorded %q)", past, second, first)
+	}
+}
+
 // MarkCollected on an unknown id must not error — same silent-no-op
 // convention as a re-tapped "mark collected" button.
 func TestKioskCounterOrdersRepo_MarkCollectedUnknownIDIsNoop(t *testing.T) {

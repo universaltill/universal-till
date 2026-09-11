@@ -10,6 +10,7 @@ import (
 
 	"github.com/universaltill/universal-till/internal/data"
 	"github.com/universaltill/universal-till/internal/db"
+	"github.com/universaltill/universal-till/internal/httpx"
 	"github.com/universaltill/universal-till/internal/pages/common"
 	"github.com/universaltill/universal-till/internal/print"
 	"github.com/universaltill/universal-till/internal/settings"
@@ -87,6 +88,53 @@ func TestSelfOrderShop_CounterMode_CheckoutCreatesCounterOrderNoSale(t *testing.
 
 	if len(dp.KioskEngine.Basket().Lines) != 0 {
 		t.Fatal("basket should be reset after a completed counter-mode checkout")
+	}
+}
+
+// Review finding (ut-docs#582): the cart's own call-to-action must not
+// promise payment in counter mode. "selforder.checkout" is a neutral
+// "Checkout" in English but translates to a literal "Pay" in ar/fa/tr, so
+// counter mode renders "selforder.counter.place_order" instead. Kiosk mode
+// must keep the original label byte-for-byte.
+func TestSelfOrderShop_CartButtonLabelFollowsPaymentMode(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		mode      string
+		wantKey   string
+		refuseKey string
+	}{
+		{"counter", common.KioskPaymentModeCounter, "selforder.counter.place_order", "selforder.checkout"},
+		{"kiosk", common.KioskPaymentModeKiosk, "selforder.checkout", "selforder.counter.place_order"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dp, d := setupSelfOrderShopDeps(t)
+			dp.State.KioskPaymentMode = tc.mode
+			seedShopItem(t, d, "itm-coffee", "COFFEE", "5000001", "Flat White", 320)
+
+			mux := http.NewServeMux()
+			registerSelfOrderShop(mux, dp)
+
+			req := httptest.NewRequest(http.MethodPost, "/api/self-order/scan", strings.NewReader("code=5000001"))
+			req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+			mux.ServeHTTP(httptest.NewRecorder(), req)
+
+			rec := httptest.NewRecorder()
+			mux.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/self-order/cart", nil))
+			if rec.Code != http.StatusOK {
+				t.Fatalf("GET cart: want 200, got %d: %s", rec.Code, rec.Body.String())
+			}
+			// Compare the rendered English copy for each key, so this pins
+			// the visible text rather than the key name.
+			want := httpx.T("en", tc.wantKey)
+			refuse := httpx.T("en", tc.refuseKey)
+			body := rec.Body.String()
+			if !strings.Contains(body, want) {
+				t.Fatalf("%s mode: cart button must read %q, got: %s", tc.name, want, body)
+			}
+			if strings.Contains(body, refuse) {
+				t.Fatalf("%s mode: cart button must never read %q: %s", tc.name, refuse, body)
+			}
+		})
 	}
 }
 

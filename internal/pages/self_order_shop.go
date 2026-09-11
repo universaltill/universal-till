@@ -654,6 +654,15 @@ func renderKioskCartWithMessage(w http.ResponseWriter, r *http.Request, d *commo
 	}
 	httpx.RenderPartial("ui/partials/self_order_cart.html", map[string]any{
 		"Basket": b,
+		// CounterMode re-labels the cart's own call-to-action (review
+		// finding, ut-docs#582): "selforder.checkout" reads as a neutral
+		// "Checkout" in English, but its ar/fa/tr translations literally
+		// mean "Pay" (الدفع / پرداخت / Ödeme). In counter mode the kiosk
+		// never takes payment, so on those locales the button promised
+		// something the next screen immediately contradicts. Reuses the
+		// existing "selforder.counter.place_order" key rather than adding a
+		// new one, so this costs no extra language-pack follow-up.
+		"CounterMode": d.CurrentState().KioskPaymentMode == common.KioskPaymentModeCounter,
 	})(w, r)
 }
 

@@ -168,11 +168,20 @@ FROM kiosk_counter_orders WHERE status = ? ORDER BY created_at ASC`, KioskCounte
 // affected) — the caller (the mark-collected API) treats "not found" and
 // "already collected" the same way a re-tapped button should: nothing
 // left to do, not an error.
+//
+// The `status = open` clause is what actually makes the "already
+// collected" half of that true (review finding, ut-docs#582): the board
+// polls every 15s, so two tills can both be showing the same open row,
+// and without it the second tap would overwrite the FIRST tap's
+// collected_at with a later time — quietly rewriting when the customer
+// actually took their order. Collection time is the only timestamp this
+// row carries beyond created_at; it should record the first collection,
+// not the last tap.
 func (r *KioskCounterOrdersRepo) MarkCollected(ctx context.Context, id string) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	if _, err := r.db.ExecContext(ctx, `
-UPDATE kiosk_counter_orders SET status = ?, collected_at = ? WHERE id = ?`,
-		KioskCounterOrderStatusCollected, now, id); err != nil {
+UPDATE kiosk_counter_orders SET status = ?, collected_at = ? WHERE id = ? AND status = ?`,
+		KioskCounterOrderStatusCollected, now, id, KioskCounterOrderStatusOpen); err != nil {
 		return fmt.Errorf("mark counter order collected: %w", err)
 	}
 	return nil
