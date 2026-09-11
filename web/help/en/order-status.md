@@ -14,7 +14,7 @@ Mark each order's progress — preparing, ready, collected — with one tap, so 
 
 ## How to use it
 
-1. Open **Orders** — the 🛎️ icon in the rail on the sale screen, or from the ☰ menu. This is the *active* queue: recent, still-in-progress sales are listed newest first, each with its current status.
+1. Open **Order status** — the 🛎️ icon in the rail on the sale screen, or from the ☰ menu. This is the *active* queue: recent, still-in-progress sales are listed newest first, each with its current status.
 2. Scanning a customer's receipt barcode at the sale screen also opens their order directly, if it hasn't been collected yet — with the same one-tap **Collected** button, and a link to Refund if that's what they actually need instead. A receipt that's already collected, or was never tracked, opens Refund directly, exactly as scanning any other finished receipt does; a cancelled order, or a sale that never completed, just says so on the sale screen.
 3. Tap **Preparing** when the kitchen starts on an order, **Ready** when it can be picked up, and **Collected** when the customer has it. Any operator can do this — no manager PIN needed.
 4. Every change records who made it and when, next to the status. The number shown is the short order number your customer was given (see below) — tapping it opens the full receipt in the Journal, except for an order shown here because it was taken on a *different* till (see the note below), where the number is shown but isn't a link, since this till doesn't hold that receipt itself.

@@ -15,7 +15,13 @@ type HeldSale struct {
 	// TableID (ut-docs#820, ADR-0054) is the dining table this parked
 	// order is assigned to, or "" when none. The column itself predates
 	// this field (migration 054_tables.sql, forward-compat for this card).
-	TableID   string
+	TableID string
+	// CreatedAt is when the order was FIRST parked (schema default
+	// datetime('now'), UTC "2006-01-02 15:04:05"). Read by List/Get; Insert
+	// leaves it to the default. Upsert (ut-docs#1918) writes it explicitly
+	// when set, so a re-park that recreates a row the resume handler
+	// deleted keeps the original first-parked time -- the "age" the Open
+	// orders page shows must not reset every time an order is touched.
 	CreatedAt string
 }
 
@@ -39,6 +45,36 @@ INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id) V
 `, h.ID, h.Label, h.TotalMinor, h.LineCount, h.Payload, nullIfEmpty(h.TableID))
 	if err != nil {
 		return heldSalesObs.wrapf("insert", "insert held sale %s", err, h.ID)
+	}
+	return nil
+}
+
+// Upsert (ut-docs#1918) writes a held sale under a caller-chosen, STABLE id:
+// a re-park of an order that was resumed from an existing row. Insert-or-
+// update on the id, so it is correct whether the resume handler's delete of
+// the original row went through (the normal case -- this recreates it) or
+// silently failed ("a stale row is the lesser evil" there -- this then
+// refreshes it in place instead of tripping the primary key). created_at
+// is honoured from h.CreatedAt when set (the original first-parked time
+// the caller remembered across the delete) and defaults to now otherwise;
+// on the update path it is deliberately left alone, so the row's age
+// always counts from the first park.
+func (r *HeldSalesRepo) Upsert(ctx context.Context, h HeldSale) error {
+	var err error
+	done := heldSalesObs.trace("upsert")
+	defer func() { done(err) }()
+	_, err = r.db.ExecContext(ctx, `
+INSERT INTO held_sales (id, label, total_minor, line_count, payload, table_id, created_at)
+VALUES (?, ?, ?, ?, ?, ?, COALESCE(NULLIF(?, ''), datetime('now')))
+ON CONFLICT(id) DO UPDATE SET
+	label = excluded.label,
+	total_minor = excluded.total_minor,
+	line_count = excluded.line_count,
+	payload = excluded.payload,
+	table_id = excluded.table_id
+`, h.ID, h.Label, h.TotalMinor, h.LineCount, h.Payload, nullIfEmpty(h.TableID), h.CreatedAt)
+	if err != nil {
+		return heldSalesObs.wrapf("upsert", "upsert held sale %s", err, h.ID)
 	}
 	return nil
 }

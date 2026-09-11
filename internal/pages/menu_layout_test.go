@@ -51,6 +51,7 @@ func getMenu(t *testing.T, mux *http.ServeMux) string {
 // tree page listing those same six destinations instead.
 var goldenManagerTiles = []string{
 	"/designer", "/shifts", "/journal", "/orders", "/reports", "/settings", "/plugins", "/items",
+	"/open-orders",
 	"/help", "/kiosk-counter-orders",
 	"/users", "/kitchen-stations", "/bluetooth-devices", "/tables", "/report-issue", "/admin",
 }
@@ -59,12 +60,14 @@ func TestMenuPage_GoldenZeroPluginTileOrder(t *testing.T) {
 	// baseMenu is production's boot-time list (init.go), not a fixture.
 	mux, _ := newMenuPageTestDeps(t, baseMenu)
 
-	// No session, UT_AUTH unset: a cashier sees the nav tiles and Help only
-	// — no /admin either, since visibleAdminEntries is empty for a cashier
-	// (every one of the six it gates behind is itself settings/fiscal/
-	// stock_location_management-gated).
+	// No session, UT_AUTH unset: a cashier sees the nav tiles, Open orders
+	// (ut-docs#1918 -- an ungated cashier surface), Help and Kiosk counter
+	// orders (ut-docs#582 -- also ungated, any operator needs to see which
+	// orders are waiting) — no /admin either, since visibleAdminEntries is
+	// empty for a cashier (every one of the six it gates behind is itself
+	// settings/fiscal/stock_location_management-gated).
 	cashier := menuTileHrefs(getMenu(t, mux))
-	wantCashier := goldenManagerTiles[:10]
+	wantCashier := goldenManagerTiles[:11]
 	if strings.Join(cashier, " ") != strings.Join(wantCashier, " ") {
 		t.Fatalf("zero-plugin cashier tiles drifted:\n got %v\nwant %v", cashier, wantCashier)
 	}

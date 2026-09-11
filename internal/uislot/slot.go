@@ -185,16 +185,16 @@ func IsProtectedMenuKey(key string) bool {
 //
 // Order bands (documented so a `layout` author knows what a reorder value
 // lands against): 100–800 the InNav entries, PluginPagesOrder (1000)+ the
-// plugin `page` tiles, 2000 help, 2100–2550 the manager-gated destinations
-// with no Group (2550 is /admin, see below), 2600–3100 the same gated band
-// but still grouped under "menu.group.administration" (ut-docs#1959) —
-// set-once/onboarding destinations (country, translations, the two
-// statutory fiscal-device pages, stock locations/registers). Kept
-// contiguous deliberately: Resolve only re-runs groupTogether when an
-// AMENDMENT regroups something (Decision I), so with no plugin installed
-// the renderer walks CoreMenu as declared — an ungrouped entry landing
-// between two same-Group entries here would split one heading into two
-// identical ones.
+// plugin `page` tiles, 1900 open orders, 2000 help, 2100–2550 the
+// manager-gated destinations with no Group (2550 is /admin, see below),
+// 2600–3100 the same gated band but still grouped under
+// "menu.group.administration" (ut-docs#1959) — set-once/onboarding
+// destinations (country, translations, the two statutory fiscal-device
+// pages, stock locations/registers). Kept contiguous deliberately: Resolve
+// only re-runs groupTogether when an AMENDMENT regroups something (Decision
+// I), so with no plugin installed the renderer walks CoreMenu as declared —
+// an ungrouped entry landing between two same-Group entries here would
+// split one heading into two identical ones.
 //
 // ut-docs#2008: the six Group: "menu.group.administration" entries no
 // longer render as tiles on the flat /menu grid at all (menu_page.go's
@@ -229,6 +229,12 @@ var CoreMenu = []Entry{
 	// ut-docs#1897: the "Items" tile that replaced the flat "Catalog" one.
 	{Key: "/items", Href: "/items", LabelKey: "nav.items", Icon: "tag", Order: 800, InNav: true},
 
+	// ut-docs#1918: parked baskets -- a cashier surface (the sale screen's
+	// held strip as a full list), so it sits ungated, not in baseMenu (which
+	// also feeds the top nav rail, where a second orders entry next to the
+	// bell would just be clutter). Not part of d.MenuSnapshot() either, so
+	// it must be declared here to render at all.
+	{Key: "/open-orders", Href: "/open-orders", LabelKey: "open_orders.title", Icon: "monitor", Order: 1900},
 	{Key: "/help", Href: "/help", LabelKey: "nav.help", Icon: "help", Order: 2000},
 	// ut-docs#582: the staff "pay at counter" board (kiosk.payment_mode
 	// "counter") — no VisibleIf, same as /orders above: any operator needs

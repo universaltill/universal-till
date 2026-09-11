@@ -62,7 +62,7 @@ func zeroPluginRail() string {
 		link("/", "nav-toggle", "nav-till", "shopping-cart", "Sell") +
 		link("/menu", "nav-toggle", "nav-menu", "menu", "Menu") +
 		link("/inventory", "nav-toggle nav-rail-only", "kiosk-inventory-link", "package", "Inventory") +
-		link("/orders", "nav-toggle nav-rail-only", "nav-orders", "bell", "Orders") +
+		link("/orders", "nav-toggle nav-rail-only", "nav-orders", "bell", "Order status") +
 		`</div>`
 }
 
@@ -145,7 +145,7 @@ func TestNavRail_ReorderAmendmentMovesTheAnchor(t *testing.T) {
 	want := `<div class="nav-primary">` +
 		link("/", "nav-toggle", "nav-till", "shopping-cart", "Sell") +
 		link("/menu", "nav-toggle", "nav-menu", "menu", "Menu") +
-		link("/orders", "nav-toggle nav-rail-only", "nav-orders", "bell", "Orders") +
+		link("/orders", "nav-toggle nav-rail-only", "nav-orders", "bell", "Order status") +
 		link("/inventory", "nav-toggle nav-rail-only", "kiosk-inventory-link", "package", "Inventory") +
 		`</div>`
 	if got != want {
