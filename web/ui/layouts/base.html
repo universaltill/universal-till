@@ -42,6 +42,13 @@
          attribute-driven and a no-op on any page without that markup — see
          web/public/record-dialog.js's own header. -->
     <script defer src="/public/record-dialog.js?v={{ assetv "public/record-dialog.js" }}"></script>
+    <!-- ut-docs#2119: the /catalog + /inventory category-filter chip row's
+         shared expand()/matches()/bind() logic (parent-includes-children
+         tree walk, empty-selection-means-all match, generic chip click
+         wiring) — attribute-driven off web/ui/partials/category_filter.html,
+         a no-op on any page without that markup, same pattern as
+         record-dialog.js above. -->
+    <script defer src="/public/category-filter.js?v={{ assetv "public/category-filter.js" }}"></script>
   </head>
   <body class="{{ if kiosk }}kiosk{{ end }}{{ if .saleScreen }} sale-screen{{ end }}{{ if .menuScreen }} menu-screen{{ end }}"
         data-currency="{{ currency.Code }}" data-currency-decimals="{{ currency.Decimals }}"

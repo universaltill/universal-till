@@ -23,6 +23,33 @@ type stockRow struct {
 	OrderQty int  // suggested order to reach coverDays of stock; 0 = none
 }
 
+// inventoryCategoryNode is one data.CategoryNode as /inventory's
+// category-filter chip row's client-side JS needs it (ut-docs#2119):
+// id/name/parentId only. See catalog/handlers.go's categoryFilterNodeJSON
+// (same shape, same reason) — kept as its own small copy here rather than
+// a cross-package export since both packages need only these three fields
+// and the type is otherwise unused outside its own file.
+type inventoryCategoryNode struct {
+	ID       string `json:"id"`
+	Name     string `json:"name"`
+	ParentID string `json:"parentId"`
+}
+
+// inventoryCategoryNodesJSON serializes the full flat category list (the
+// same slice CategoryFilterOptions renders chips from) for
+// category-filter.js's expand() tree walk to consume client-side.
+func inventoryCategoryNodesJSON(nodes []data.CategoryNode) template.JS {
+	out := make([]inventoryCategoryNode, 0, len(nodes))
+	for _, n := range nodes {
+		out = append(out, inventoryCategoryNode{ID: n.ID, Name: n.Name, ParentID: n.ParentID})
+	}
+	b, err := json.Marshal(out)
+	if err != nil {
+		return template.JS("[]")
+	}
+	return template.JS(b)
+}
+
 // stockLevelsForDisplay computes the /inventory table's rows and the
 // running-out count — shared by the full page render and the
 // stock-updated-triggered partial refresh (registerInventoryPage's
@@ -90,6 +117,17 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 			Name string `json:"name"`
 			SKU  string `json:"sku"`
 		}
+		// ut-docs#2119: deliberately NOT via the item-edit unfiltered
+		// lookup catRepo already backs elsewhere on this page (there isn't
+		// one here today) — same reasoning as catalog/handlers.go's own
+		// CategoryFilterOptions: a deactivated category has no items a
+		// shop owner should be able to filter INTO.
+		categoryFilterOptions, err := catRepo.ListActiveCategories(ctx)
+		if err != nil {
+			httpx.RenderError(w, r, http.StatusInternalServerError, "catalog.error.server", err)
+			return
+		}
+
 		picker := make([]pickerItem, 0, len(items))
 		for _, it := range items {
 			// ut-docs#1850: an item flagged stock_untracked never carries an
@@ -104,14 +142,16 @@ func registerInventoryPage(mux *http.ServeMux, d *common.Deps) {
 		pickerJSON, _ := json.Marshal(picker)
 
 		data := map[string]any{
-			"title":       "Inventory",
-			"theme":       d.CurrentState().Theme,
-			"menuItems":   d.MenuSnapshot(),
-			"StockLevels": levels,
-			"RunningOut":  runningOut,
-			"Locations":   locations,
-			"ItemsJSON":   template.JS(pickerJSON),
-			"SyncPrimary": d.SyncPrimaryURL(r.Context()),
+			"title":                 "Inventory",
+			"theme":                 d.CurrentState().Theme,
+			"menuItems":             d.MenuSnapshot(),
+			"StockLevels":           levels,
+			"RunningOut":            runningOut,
+			"Locations":             locations,
+			"ItemsJSON":             template.JS(pickerJSON),
+			"SyncPrimary":           d.SyncPrimaryURL(r.Context()),
+			"CategoryFilterOptions": categoryFilterOptions,
+			"CategoryNodesJSON":     inventoryCategoryNodesJSON(categoryFilterOptions),
 		}
 		// ut-docs#1950: /inventory is one of the /items rail's five section
 		// destinations — an htmx request from that panel (NOT a stale history
