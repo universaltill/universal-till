@@ -5,7 +5,7 @@ section: Running the business
 order: 210
 summary: Sales totals by day, department and payment type; best and slow sellers; dead stock; busiest days and hours; margins; tax summary; year-over-year — plus the end-of-day (Z) report for cashing up.
 routes: [/reports, /journal, /journal/{receipt}, /shifts, /audit]
-keywords: [z report, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation]
+keywords: [z report, end of day, takings, journal, shift, audit, tips, tronc, service charge, worker allocation, ask your till, ai]
 ---
 
 # Reports & end of day
@@ -17,6 +17,46 @@ Sales totals by day, department and payment type; best and slow sellers; dead st
 1. Open Reports: the row at the top always shows your key numbers for the chosen period (revenue, sales, average sale, tax, discounts, refunds, net, last year) and a low-stock warning.
 2. Pick a tab below it — Sales trend, Items, Tax, Forecast, Payments & channels, Tips, or Day-end (EOD) — and that report loads when you open it.
 3. Run End of day (in the Day-end tab) when you close: it totals everything **since your last close** — not the calendar day — and can print for your records. A café that closed at 19:19 yesterday and closes at 19:19 today gets every sale in between on today's report, including last night's after-19:19 sales that a calendar-day report would have left stranded; anything rung up after tonight's close belongs to the next one. Each close records the exact moment it runs from and to, so you can always see precisely what a report covers: the printed report carries a **Zeitraum** line, and the archive list shows the same two timestamps side by side (`2026-08-23T19:10:00+02:00 – 2026-08-24T19:19:00+02:00`), in your own local time. Your very first close has no earlier close to start from, so it covers everything up to the moment you closed and shows just that one end timestamp.
+
+## Ask your till
+
+When your shop's AI is turned on, a question box — **Ask your till** —
+appears on Reports, above the report tabs (below the top figures and the
+Audit trail button, for a manager). Type a plain question — "What sold
+best this week?", "How did we do today?" — and get an answer worked out
+from your own sales, stock and till-activity figures.
+
+1. Type your question and press **Ask**.
+2. The answer appears below the box in a few seconds (a **Thinking…**
+   indicator shows while it works).
+3. Ask another question any time — each one is answered on its own, with
+   no memory of earlier questions in the conversation. The question text
+   itself is still recorded in the audit log (see The audit log, below),
+   the same as any other action.
+
+It only answers from a fixed set of figures — daily sales totals, best
+sellers, takings by payment method, stock levels, and till activity
+(logins, voids, overrides) by staff member — never raw customer data, and
+it can't do anything to the till, only answer questions about it.
+
+**If the box doesn't appear**, one of three things is true:
+
+- Your shop's AI isn't turned on yet — an administrator can turn it on
+  under Plugins → AI Assistant → its settings page. By default it runs
+  entirely on your own hardware (self-hosted, via Ollama), so nothing
+  about your sales leaves the premises; choosing a hosted provider
+  instead sends the figures needed to answer each question to that
+  provider — the plugin's own settings page explains exactly what is
+  sent for each choice before you pick one.
+- The AI is turned on with the **Claude** provider — that one answers
+  "Identify by camera" questions but doesn't yet support Ask your till,
+  so the box stays hidden even though the rest of the AI features work.
+- You're signed in as a till operator rather than a manager — Ask your
+  till is manager-only, same as the reports it draws on.
+
+If a question can't be answered (the AI server isn't reachable, or it
+genuinely doesn't know), the box says so rather than guessing — try again
+in a moment.
 
 ## Report periods
 
@@ -286,6 +326,35 @@ primary and never receives siblings' sales back down. Picking "All tills"
 or a specific other till on a replica shows a message explaining that
 cross-till sales are only available on the shop's primary till, instead of
 a table that's quietly empty with nothing to explain why.
+
+## The audit log
+
+The Audit trail page keeps a record of who did what, across the whole
+shop — logins, voided sales, stock overrides, PIN/manager overrides,
+settings changes, invoices and credit notes issued, and exports taken —
+not something scoped to one till or one shift. Reach for it when a report
+number looks wrong and you need to see the actions behind it, or a
+manager needs to check who did something and when.
+
+1. Press **📜 Audit trail** — it's above the Ask your till box on Reports,
+   visible to a manager. The list shows every entry, newest first: when,
+   who did it (or **System** for something the till did on its own, e.g.
+   a scheduled automatic close), what it was done to, the action, and its
+   details.
+2. Narrow it with the filters above the list — entity type, who (actor),
+   a free-text match on the action, and a from/to date range — then
+   **Filter**. **Clear** removes every filter and shows everything again.
+3. Use **Previous**/**Next** to page through — the list shows 50 entries
+   at a time.
+4. **Export CSV** downloads the currently-filtered entries as a CSV, for
+   handing to an accountant or auditor. A very large export is capped and
+   clearly marked **TRUNCATED** in the file (with a note of how many rows
+   it kept) rather than silently dropping older rows without saying so —
+   narrow the date range if you need those too.
+
+An empty list (no entries match the current filters) shows a plain
+message rather than a blank table — try widening the date range or
+clearing a filter.
 
 ## Worker tip and service-charge payouts (Tips tab)
 
