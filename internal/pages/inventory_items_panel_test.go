@@ -77,3 +77,26 @@ func TestInventoryPage_HXHistoryRestoreReturnsFullPage(t *testing.T) {
 		t.Errorf("history-restore response did not render the full page shell: %s", body)
 	}
 }
+
+// ut-docs#2091: /inventory returns a different body depending on the
+// HX-Request header (a bare fragment vs. the full standalone page) — with
+// no Vary header, a browser/WebView cache keyed on the URL alone can serve
+// one to a request that wanted the other. Both branches must carry it.
+func TestInventoryPage_VaryHXRequestOnBothBranches(t *testing.T) {
+	mux, dp := newInventoryAPITestDeps(t)
+	registerInventoryPage(mux, dp)
+
+	fragReq := httptest.NewRequest(http.MethodGet, "/inventory", nil)
+	fragReq.Header.Set("HX-Request", "true")
+	fragRec := httptest.NewRecorder()
+	mux.ServeHTTP(fragRec, fragReq)
+	if got := fragRec.Header().Get("Vary"); got != "HX-Request" {
+		t.Errorf("fragment branch: Vary header = %q, want %q", got, "HX-Request")
+	}
+
+	fullRec := httptest.NewRecorder()
+	mux.ServeHTTP(fullRec, httptest.NewRequest(http.MethodGet, "/inventory", nil))
+	if got := fullRec.Header().Get("Vary"); got != "HX-Request" {
+		t.Errorf("full-page branch: Vary header = %q, want %q", got, "HX-Request")
+	}
+}
