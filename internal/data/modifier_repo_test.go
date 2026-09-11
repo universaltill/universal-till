@@ -3,6 +3,7 @@ package data_test
 import (
 	"context"
 	"path/filepath"
+	"sync"
 	"testing"
 
 	"github.com/universaltill/universal-till/internal/data"
@@ -667,5 +668,222 @@ func TestModifierRepo_ItemIDsWithModifiers_SeesLinkedGroups(t *testing.T) {
 	}
 	if got["itm-c"] {
 		t.Fatalf("an item whose only group is inactive must not be flagged: %#v", got)
+	}
+}
+
+// The "attach an existing group" picker must offer a group linked elsewhere
+// but not to THIS item, must never offer a group already linked to this
+// item (nothing to attach twice), and must never offer an inactive group.
+func TestModifierRepo_ListAttachableModifierGroups(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	repo := data.NewModifierRepo(d.DB)
+	seedSharedGroupFixture(t, ctx, d, repo) // g-milk linked to itm-a and itm-b
+	if _, err := d.DB.ExecContext(ctx, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm-c','SKU-C','Mocha',380,1)`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateGroup(ctx, "g-retired", "itm-c", "Retired", false, 0, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if err := repo.UpdateGroup(ctx, "g-retired", "Retired", false, 0, 1, 0, false); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := repo.ListAttachableModifierGroups(ctx, "itm-c")
+	if err != nil {
+		t.Fatalf("ListAttachableModifierGroups: %v", err)
+	}
+	if len(got) != 1 || got[0].ID != "g-milk" || got[0].Name != "Milk" {
+		t.Fatalf("expected only the active, not-yet-linked g-milk, got %+v", got)
+	}
+	if !got[0].IsActive {
+		t.Fatalf("attachable groups must always report active: %+v", got[0])
+	}
+
+	// Already linked to itm-a — must not offer it again there.
+	gotA, err := repo.ListAttachableModifierGroups(ctx, "itm-a")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(gotA) != 0 {
+		t.Fatalf("itm-a already has g-milk, expected nothing attachable, got %+v", gotA)
+	}
+
+	if _, err := repo.ListAttachableModifierGroups(ctx, ""); err == nil {
+		t.Fatal("empty item id must be rejected")
+	}
+}
+
+// A prior detach can leave an item's own sort_orders sparse (e.g. 0 and 2
+// after its middle group was removed) — NextGroupSortOrderForItem must
+// still hand out a value that doesn't collide with an existing one
+// (independent-review finding: a plain COUNT of the item's links would
+// compute 2 here too, the same as the still-occupied slot).
+func TestModifierRepo_NextGroupSortOrderForItem_HandlesSparseOrder(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	repo := data.NewModifierRepo(d.DB)
+	if _, err := d.DB.ExecContext(ctx, `INSERT INTO items (id, sku, name, base_price, is_active) VALUES ('itm1','SKU1','Flat White',320,1)`); err != nil {
+		t.Fatal(err)
+	}
+
+	next, err := repo.NextGroupSortOrderForItem(ctx, "itm1")
+	if err != nil {
+		t.Fatalf("NextGroupSortOrderForItem (empty item): %v", err)
+	}
+	if next != 0 {
+		t.Fatalf("expected 0 for an item with no groups yet, got %d", next)
+	}
+
+	if _, err := repo.CreateGroup(ctx, "g0", "itm1", "Zero", false, 0, 1, 0); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateGroup(ctx, "g1", "itm1", "One", false, 0, 1, 1); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := repo.CreateGroup(ctx, "g2", "itm1", "Two", false, 0, 1, 2); err != nil {
+		t.Fatal(err)
+	}
+	// Remove the middle one — sort_orders 0 and 2 remain, 1 is now a gap.
+	if err := repo.UnlinkGroupFromItem(ctx, "itm1", "g1"); err != nil {
+		t.Fatal(err)
+	}
+
+	next, err = repo.NextGroupSortOrderForItem(ctx, "itm1")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if next != 3 {
+		t.Fatalf("expected MAX(sort_order)+1 = 3 (not len()-based 2, which would collide with g2's own sort_order), got %d", next)
+	}
+
+	if _, err := repo.NextGroupSortOrderForItem(ctx, ""); err == nil {
+		t.Fatal("empty item id must be rejected")
+	}
+}
+
+func TestModifierRepo_GroupLinkCount(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	repo := data.NewModifierRepo(d.DB)
+	seedSharedGroupFixture(t, ctx, d, repo) // g-milk linked to itm-a and itm-b
+
+	n, err := repo.GroupLinkCount(ctx, "g-milk")
+	if err != nil {
+		t.Fatalf("GroupLinkCount: %v", err)
+	}
+	if n != 2 {
+		t.Fatalf("expected 2 links, got %d", n)
+	}
+
+	if err := repo.UnlinkGroupFromItem(ctx, "itm-a", "g-milk"); err != nil {
+		t.Fatal(err)
+	}
+	n, err = repo.GroupLinkCount(ctx, "g-milk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("expected 1 link after unlinking one, got %d", n)
+	}
+
+	if _, err := repo.GroupLinkCount(ctx, ""); err == nil {
+		t.Fatal("empty group id must be rejected")
+	}
+	if n, err := repo.GroupLinkCount(ctx, "nonexistent"); err != nil || n != 0 {
+		t.Fatalf("unknown group id should count 0, got n=%d err=%v", n, err)
+	}
+}
+
+// UnlinkGroupFromItemUnlessLastLink is the atomic guard behind the detach
+// handler (ut-docs#2046, independent-review finding): a naive
+// count-then-delete has a TOCTOU window between the two statements. This
+// pins the single-statement replacement's own correctness directly: it
+// unlinks when >1 link exists, refuses (returns false, changes nothing) at
+// exactly 1, and the "wins the race" case is exercised for real by firing
+// two unlinks concurrently against a group with exactly 2 links and
+// asserting exactly one succeeds and one link always survives.
+func TestModifierRepo_UnlinkGroupFromItemUnlessLastLink(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	repo := data.NewModifierRepo(d.DB)
+	seedSharedGroupFixture(t, ctx, d, repo) // g-milk linked to itm-a and itm-b
+
+	ok, err := repo.UnlinkGroupFromItemUnlessLastLink(ctx, "itm-a", "g-milk")
+	if err != nil {
+		t.Fatalf("UnlinkGroupFromItemUnlessLastLink: %v", err)
+	}
+	if !ok {
+		t.Fatal("expected the unlink to succeed with 2 links present")
+	}
+	var n int
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_group_links WHERE group_id = 'g-milk'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("expected exactly 1 remaining link, got n=%d err=%v", n, err)
+	}
+
+	// Now only itm-b's link remains — refuse to remove it.
+	ok, err = repo.UnlinkGroupFromItemUnlessLastLink(ctx, "itm-b", "g-milk")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ok {
+		t.Fatal("expected the last remaining link to be refused")
+	}
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_group_links WHERE group_id = 'g-milk'`).Scan(&n); err != nil || n != 1 {
+		t.Fatalf("the last link must survive a refused unlink, got n=%d err=%v", n, err)
+	}
+
+	if _, err := repo.UnlinkGroupFromItemUnlessLastLink(ctx, "", "g-milk"); err == nil {
+		t.Fatal("empty item id must be rejected")
+	}
+	if _, err := repo.UnlinkGroupFromItemUnlessLastLink(ctx, "itm-b", ""); err == nil {
+		t.Fatal("empty group id must be rejected")
+	}
+}
+
+// The real TOCTOU scenario: two goroutines racing to unlink a 2-link
+// group's own two different items concurrently. A naive count-then-delete
+// could let both observe count==2, both pass their check, and both delete —
+// orphaning the group. The atomic conditional DELETE must let exactly one
+// through.
+func TestModifierRepo_UnlinkGroupFromItemUnlessLastLink_ConcurrentRaceLeavesOneLink(t *testing.T) {
+	d := openModifierTestDB(t)
+	ctx := context.Background()
+	repo := data.NewModifierRepo(d.DB)
+	seedSharedGroupFixture(t, ctx, d, repo) // g-milk linked to itm-a and itm-b
+
+	var wg sync.WaitGroup
+	results := make([]bool, 2)
+	errs := make([]error, 2)
+	items := []string{"itm-a", "itm-b"}
+	wg.Add(2)
+	for i := 0; i < 2; i++ {
+		go func(i int) {
+			defer wg.Done()
+			results[i], errs[i] = repo.UnlinkGroupFromItemUnlessLastLink(ctx, items[i], "g-milk")
+		}(i)
+	}
+	wg.Wait()
+
+	for i, err := range errs {
+		if err != nil {
+			t.Fatalf("goroutine %d: %v", i, err)
+		}
+	}
+	succeeded := 0
+	for _, ok := range results {
+		if ok {
+			succeeded++
+		}
+	}
+	if succeeded != 1 {
+		t.Fatalf("expected exactly 1 of the 2 concurrent unlinks to succeed, got %d (results=%v)", succeeded, results)
+	}
+	var n int
+	if err := d.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM item_modifier_group_links WHERE group_id = 'g-milk'`).Scan(&n); err != nil {
+		t.Fatal(err)
+	}
+	if n != 1 {
+		t.Fatalf("the group must never end up with 0 links: found %d", n)
 	}
 }

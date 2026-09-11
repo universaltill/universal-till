@@ -40,6 +40,18 @@
       <input type="hidden" name="isActive" value="0">
       <label><input type="checkbox" name="isActive" value="1" {{ if .IsActive }}checked{{ end }}> {{ T "catalog.active" }}</label>
       <button class="btn secondary" type="submit">{{ T "common.save" }}</button>
+      <!-- ut-docs#2046: detach-from-this-item-only, distinct from the
+           Active checkbox above (deactivate = gone from sale everywhere but
+           still owned by this item) and from DeleteGroup (not wired to any
+           handler — removes a group from EVERY item, never offered here).
+           A standalone hx-post button, not a second <form>, matching the
+           barcode-remove convention (catalog_variants.html) rather than
+           nesting two different POST targets in one <form>. -->
+      <button type="button" class="btn secondary"
+              hx-post="/api/catalog/modifier-group/detach"
+              hx-vals='{{ jsonVals "itemId" $.ItemID "groupId" .ID "panelItem" $.ItemID }}'
+              hx-confirm="{{ T "catalog.modifiers.detach_confirm" }}"
+              hx-target="#{{ $.Target }}" hx-swap="outerHTML">{{ T "catalog.modifiers.detach" }}</button>
     </form>
 
     <div class="modifier-admin-options">
@@ -84,6 +96,26 @@
     <button class="btn" type="submit">{{ T "catalog.modifiers.add_group" }}</button>
   </form>
 
+  {{/* ut-docs#2046 / ADR-0090 §5: attach an existing shop-wide group to this
+       item instead of recreating it. Only rendered when there is something
+       left to attach (a shop with one group, already linked here, has
+       nothing to offer) — AttachableGroups is every OTHER active group not
+       already linked to .ItemID, computed server-side
+       (ModifierRepo.ListAttachableModifierGroups). */}}
+  {{ if .AttachableGroups }}
+  <form hx-post="/api/catalog/modifier-group/attach" hx-target="#{{ .Target }}" hx-swap="outerHTML" class="modifier-admin-group-row modifier-admin-group-attach">
+    <input type="hidden" name="panelItem" value="{{ .ItemID }}">
+    <input type="hidden" name="itemId" value="{{ .ItemID }}">
+    <select name="groupId" required>
+      <option value="" disabled selected>{{ T "catalog.modifiers.attach_placeholder" }}</option>
+      {{ range .AttachableGroups }}
+      <option value="{{ .ID }}">{{ .Name }}</option>
+      {{ end }}
+    </select>
+    <button class="btn secondary" type="submit">{{ T "catalog.modifiers.attach" }}</button>
+  </form>
+  {{ end }}
+
   <script>
     (function () {
       // Scoped to THIS invocation only via currentScript — this partial can
@@ -113,6 +145,13 @@
      wrapping id, not the target value itself. */}}
 {{ define "modifier_groups_item_panel" }}
 <div id="modifier-groups-modal-list">
+  {{/* ut-docs#2046, independent-review finding: a refused mutation (e.g.
+       the detach-guard's last-link refusal) answers through this SAME
+       fragment with .Notice set — see modifiers_list's matching comment in
+       modifiers.html for why (app.js's htmx:beforeSwap never force-swaps a
+       non-text/html error response, and this dialog has no #pos-alert
+       fallback to fall through to). */}}
+  {{ if .Notice }}<p class="field-error-msg" role="alert">{{ .Notice }}</p>{{ end }}
   {{ template "modifier_group_admin" . }}
 </div>
 {{ end }}
