@@ -1,76 +1,93 @@
 {{ define "content" }}
-<div class="page-head">
+<!-- ut-docs#2092: catalog's .page-head carries a real action row alongside
+     the title, unlike most .page-head usages (title only, or title + one
+     small control) — the shared .page-head rule has no flex-wrap, so at
+     narrow widths the title and row were forced onto one line and squeezed
+     each other (measured: the row had only ~245px to work with at a 360px
+     viewport, well under what even one properly-shrunk control needs).
+     page-head-wrap is a page-scoped override, not a change to the shared
+     rule every other .page-head usage relies on. -->
+<div class="page-head page-head-wrap">
   <h1>{{ T "nav.catalog" }}</h1>
-  <!-- flex-wrap (ut-docs#1900): with the Option sets button (and #1901's
-       new Add-item button) this row no longer fits 1024px in one line —
-       it wraps instead of pushing the search box off-screen. -->
+  <!-- ut-docs#2092: Modifiers and Option sets were removed from this row —
+       both duplicated the /items left rail exactly (ut-docs#1950 promoted
+       them to rail sections; #1957's in-context "Manage customization
+       groups" shortcut in the item detail panel below still reaches
+       Modifiers CRUD without leaving this page). The rest went from
+       full-width text buttons to icon-only .btn-icon (ut-docs#2010's
+       vocabulary — icon + aria-label + title, no separate visible caption;
+       reuses each control's existing i18n key rather than adding new
+       locale strings) specifically so this row fits one line at 1024x600
+       without wrapping — flex-wrap stays only as a phone-width safety net,
+       not the primary fix it was before. -->
   <div style="display:flex; flex-wrap:wrap; gap:.5rem; align-items:center">
     <!-- ut-docs#1901: the add/edit-item form is now a full-screen
          <dialog> (#item-form-modal, below) instead of an always-visible
          360px side panel, so creating a NEW item needs an explicit
          trigger — clearForm() resets it to create-mode before opening. -->
-    <button id="item-form-add-btn" class="btn primary" type="button">{{ T "catalog.add_item_btn" }}</button>
-    <!-- ut-docs#2095: Import and Tax codes are NOT /items rail sections
-         (itemsnav.Resolve's five rows are Catalog/Categories/Inventory/
-         Modifiers/Option sets only) — the ut-docs#2090 in-panel-swap
-         pattern above (hx-target="#items-panel") is deliberately wrong
-         for these two, since neither handler ever replaces #items-panel.
-         Instead, inside the /items shell (.InItemsShell), they open as a
-         closable full-screen dialog overlay floating ABOVE the shell.
+    <button id="item-form-add-btn" class="btn primary btn-icon" type="button"
+            aria-label="{{ T "catalog.add_item_btn" }}" title="{{ T "catalog.add_item_btn" }}">
+      <span class="btn-ico" aria-hidden="true">{{ icon "plus" }}</span>
+    </button>
+    <!-- ut-docs#2095 (merge of #2092's icon-only row + this card's dialog
+         behaviour — #2092's own comment on this button anticipated exactly
+         this): Import is NOT an /items rail section (itemsnav.Resolve's
+         five rows are Catalog/Categories/Inventory/Modifiers/Option sets
+         only), so the #2090 in-panel-swap pattern (hx-target="#items-panel")
+         used by Modifiers/Option-sets below would be wrong here — this
+         handler never replaces #items-panel. Instead, inside the /items
+         shell (.InItemsShell), it opens as a closable full-screen dialog
+         overlay floating ABOVE the shell.
 
          Deliberately NOT the #catalog-barcode-backfill-btn/showModal()
-         pattern (independent review, F1): both dialogs contain real
-         text inputs (tax-code name/rate fields; the import file picker),
-         and showModal()'s top-layer/inert-outside behaviour makes the
-         custom on-screen keyboard (#osk, appended to <body>, never
-         re-parented into whichever dialog is open) completely
-         unreachable — the exact #1385 bug, and on kiosk hardware (no OS
-         keyboard at all) this would make a tax code impossible to type.
-         So these two instead reuse the .show()/.item-form-modal
-         treatment #item-form-modal/#modifier-groups-modal already use
-         for the identical reason.
+         pattern below (independent review, F1): this dialog contains a
+         real file input and the import wizard's own fields, and
+         showModal()'s top-layer/inert-outside behaviour makes the custom
+         on-screen keyboard (#osk, appended to <body>, never re-parented
+         into whichever dialog is open) completely unreachable — the exact
+         #1385 bug. So it reuses the .show()/.item-form-modal treatment
+         #item-form-modal itself uses for the identical reason.
 
          hx-on::after-request is also guarded on event.detail.successful
-         (independent review, F2) — unguarded, a non-2xx response (e.g.
-         the permission check below denying a cashier) still fired
-         .show(), opening an empty/erroring modal with no close control
-         reachable on a touch-only till (CLAUDE.md §10, ut-docs#1999: an
-         admin surface may never trap the operator with no way out). Same
-         guard idiom already used by catalog_variants.html/
-         self_order_cart.html's own hx-on::after-request calls. -->
-    <a id="catalog-import-btn" class="btn secondary" href="/import"{{ if .InItemsShell }} hx-get="/import" hx-target="#import-modal" hx-swap="innerHTML" hx-on::after-request="if (event.detail.successful) { document.getElementById('import-modal').show(); }"{{ end }}>{{ T "import.title" }}</a>
-    <a id="catalog-taxcodes-btn" class="btn secondary" href="/catalog/tax-codes"{{ if .InItemsShell }} hx-get="/catalog/tax-codes" hx-target="#tax-codes-modal" hx-swap="innerHTML" hx-on::after-request="if (event.detail.successful) { document.getElementById('tax-codes-modal').show(); }"{{ end }}>{{ T "taxcodes.title" }}</a>
-    <!-- ut-docs#1899/#1957: /modifiers is the shop-wide, full-CRUD home for
-         modifier groups — the item detail panel below (catalog_variants.html)
-         only shows a compact read-only summary plus its own "Manage
-         customization groups" control (opens #modifier-groups-modal,
-         below), which is the in-context shortcut to the very same CRUD
-         without leaving this page.
-         ut-docs#2090: /modifiers IS an /items rail section (its handler
-         already answers httpx.IsFragmentSwap with itemsnav.WriteRailOOB,
-         same as /catalog above) — when this button is rendered inside the
-         /items shell (.InItemsShell), swap #items-panel in place instead
-         of a full navigation, exactly like the rail's own row. Outside the
-         shell (a bare GET /catalog), .InItemsShell is false and this stays
-         a plain link, same as before. -->
-    <a id="catalog-modifiers-btn" class="btn secondary" href="/modifiers"{{ if .InItemsShell }} hx-get="/modifiers" hx-target="#items-panel" hx-push-url="true"{{ end }}>{{ T "modifiers.title" }}</a>
-    <!-- ut-docs#1900: reusable option sets ("Size: S / M / L") are defined
-         once on their own screen and applied per item from the detail
-         panel below — a sibling of the Modifiers button, same placement
-         the #1899 review settled on, not a new top-level nav tile.
-         ut-docs#2090: same rail-preserving treatment as Modifiers above —
-         /catalog/option-sets is also a rail section already answering
-         httpx.IsFragmentSwap. -->
-    <a id="catalog-option-sets-btn" class="btn secondary" href="/catalog/option-sets"{{ if .InItemsShell }} hx-get="/catalog/option-sets" hx-target="#items-panel" hx-push-url="true"{{ end }}>{{ T "catalog.option_sets.button" }}</a>
-    <button id="catalog-export-btn" class="btn secondary" hx-post="/api/catalog/export-save" hx-target="#export-msg" hx-swap="innerHTML">{{ T "import.export_btn" }}</button>
+         (independent review, F2) — unguarded, a non-2xx response (e.g. a
+         cashier without import_export) still fired .show(), opening an
+         empty/erroring modal with no close control reachable on a
+         touch-only till (CLAUDE.md §10, ut-docs#1999). Same guard idiom
+         already used by catalog_variants.html/self_order_cart.html's own
+         hx-on::after-request calls. Outside the shell (a bare GET
+         /catalog), .InItemsShell is false and this stays a plain icon
+         link, unchanged from #2092. -->
+    <a id="catalog-import-btn" class="btn secondary btn-icon" href="/import"
+       aria-label="{{ T "import.title" }}" title="{{ T "import.title" }}"
+       {{ if .InItemsShell }}hx-get="/import" hx-target="#import-modal" hx-swap="innerHTML" hx-on::after-request="if (event.detail.successful) { document.getElementById('import-modal').show(); }"{{ end }}>
+      <span class="btn-ico" aria-hidden="true">{{ icon "upload" }}</span>
+    </a>
+    <!-- ut-docs#2095: same dialog treatment as Import above, for the
+         identical reason (Tax codes isn't an /items rail section either,
+         and its form fields need the OSK reachable too) — see that
+         button's comment for the full reasoning. -->
+    <a id="catalog-taxcodes-btn" class="btn secondary btn-icon" href="/catalog/tax-codes"
+       aria-label="{{ T "taxcodes.title" }}" title="{{ T "taxcodes.title" }}"
+       {{ if .InItemsShell }}hx-get="/catalog/tax-codes" hx-target="#tax-codes-modal" hx-swap="innerHTML" hx-on::after-request="if (event.detail.successful) { document.getElementById('tax-codes-modal').show(); }"{{ end }}>
+      <span class="btn-ico" aria-hidden="true">{{ icon "landmark" }}</span>
+    </a>
+    <button id="catalog-export-btn" class="btn secondary btn-icon"
+            hx-post="/api/catalog/export-save" hx-target="#export-msg" hx-swap="innerHTML"
+            aria-label="{{ T "import.export_btn" }}" title="{{ T "import.export_btn" }}">
+      <span class="btn-ico" aria-hidden="true">{{ icon "download" }}</span>
+    </button>
     <div id="export-msg" class="muted" aria-live="polite"></div>
     <!-- ut-docs#1356: bulk backfill, preview-before-apply — same
          hx-get/hx-target/showModal() pattern as #modifier-modal
-         (buttons.html) and #table-modal (table_picker.html). -->
-    <button id="catalog-barcode-backfill-btn" class="btn secondary"
+         (buttons.html) and #table-modal (table_picker.html). Already a
+         small, closable, non-full-viewport dialog (.modifier-modal), so
+         ut-docs#1999's persistent status/lock/exit-affordance rule for
+         full-screen surfaces doesn't apply here — icon-only styling only. -->
+    <button id="catalog-barcode-backfill-btn" class="btn secondary btn-icon"
             hx-get="/api/catalog/barcode-backfill" hx-target="#barcode-backfill-modal" hx-swap="innerHTML"
-            hx-on::after-request="document.getElementById('barcode-backfill-modal').showModal()">
-      {{ T "catalog.barcode_backfill.btn" }}
+            hx-on::after-request="document.getElementById('barcode-backfill-modal').showModal()"
+            aria-label="{{ T "catalog.barcode_backfill.btn" }}" title="{{ T "catalog.barcode_backfill.btn" }}">
+      <span class="btn-ico" aria-hidden="true">{{ icon "scan-barcode" }}</span>
     </button>
     <input type="search" id="catalog-search" placeholder="{{ T "catalog.search_placeholder" }}" autocomplete="off">
   </div>

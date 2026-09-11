@@ -240,16 +240,39 @@ func TestOptionSets_MutationsRefusedOnReplica(t *testing.T) {
 	}
 }
 
-// The Catalog page's button row gains the launch button for the new screen,
-// as a sibling of the Customization options button (same placement the
-// ut-docs#1899 review settled on), not a new top-level nav tile.
-func TestCatalogPage_HasOptionSetsButton(t *testing.T) {
+// ut-docs#2092 superseded the ut-docs#1899 placement this test used to pin:
+// Option sets (and Modifiers) duplicated the /items left rail exactly once
+// ut-docs#1950 promoted both to rail sections, so the top action row drops
+// them entirely rather than keeping a second way to reach the same screen.
+// Rail reachability is covered elsewhere (items_page_test.go,
+// items_panel_test.go); this asserts the row itself no longer offers a
+// second, redundant path.
+func TestCatalogPage_TopRowHasNoRailDuplicateButtons(t *testing.T) {
 	mux, _ := newCatalogMux(t)
 	rec := get(t, mux, "/catalog")
 	if rec.Code != http.StatusOK {
 		t.Fatalf("want 200, got %d", rec.Code)
 	}
-	if !strings.Contains(rec.Body.String(), `href="/catalog/option-sets"`) {
-		t.Fatal("catalog page must link to /catalog/option-sets next to the Modifiers button")
+	body := rec.Body.String()
+	// Scoped to the top action row itself, not the whole page — catalog
+	// page's own item-detail panel (catalog_variants.html) legitimately
+	// carries its own href="/catalog/option-sets" link elsewhere on the
+	// page (the "apply an option set" flow), and a whole-body substring
+	// check would wrongly blame the top row if that link ever starts
+	// rendering on a bare GET /catalog.
+	start := strings.Index(body, `class="page-head`)
+	if start < 0 {
+		t.Fatal("no .page-head found on /catalog")
+	}
+	end := strings.Index(body[start:], `<dialog id="barcode-backfill-modal"`)
+	if end < 0 {
+		t.Fatal("could not find the end of the top action row (#barcode-backfill-modal marker)")
+	}
+	topRow := body[start : start+end]
+	if strings.Contains(topRow, `href="/catalog/option-sets"`) {
+		t.Fatal("catalog page's top action row must not link to /catalog/option-sets — it duplicates the /items rail section (ut-docs#2092)")
+	}
+	if strings.Contains(topRow, `href="/modifiers"`) {
+		t.Fatal("catalog page's top action row must not link to /modifiers — it duplicates the /items rail section (ut-docs#2092)")
 	}
 }

@@ -97,66 +97,14 @@ func TestCatalogPage_HXHistoryRestoreReturnsFullPage(t *testing.T) {
 	}
 }
 
-// ut-docs#2090 review finding: nothing previously asserted the NEGATIVE
-// branch of catalog.html's own Modifiers/Option-sets top-action buttons —
-// every existing test only checked the htmx-fragment (.InItemsShell=true)
-// case. htmx 1.9.x preventDefault()s a click on an <a href> carrying
-// hx-get BEFORE resolving hx-target; on failure it fires htmx:targetError
-// and does nothing else. So if the .InItemsShell guard were ever dropped
-// or inverted, a bare (non-shell) /catalog visitor would get two silently
-// dead buttons — no navigation, no swap, just a console error — and every
-// test that only exercises the htmx-fragment branch would stay green.
-// This pins the bare-page case: plain hrefs, no hx- attributes at all.
-func TestCatalogPage_NonHXRequest_TopActionButtonsAreNotHXEnabled(t *testing.T) {
-	mux, db := newCatalogMux(t)
-	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Cola", BasePrice: 100, IsActive: true})
-	testsupport.SeedTaxCode(t, db, "tax_std", "Standard", 2000)
-
-	rec := get(t, mux, "/catalog")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("GET /catalog: %d %s", rec.Code, rec.Body.String())
-	}
-	body := rec.Body.String()
-	for _, id := range []string{"catalog-modifiers-btn", "catalog-option-sets-btn"} {
-		tagStart := strings.Index(body, `id="`+id+`"`)
-		if tagStart < 0 {
-			t.Fatalf("button #%s not found in bare /catalog response: %s", id, body)
-		}
-		tagEnd := strings.Index(body[tagStart:], ">") + tagStart
-		tag := body[tagStart:tagEnd]
-		if strings.Contains(tag, "hx-get") || strings.Contains(tag, "hx-target") {
-			t.Errorf("#%s must stay a plain link on a bare (non-shell) /catalog page, got: %s", id, tag)
-		}
-	}
-}
-
-// The htmx-fragment (.InItemsShell=true) mirror of the test above: inside
-// the /items shell, both buttons DO carry the in-panel-swap attributes.
-func TestCatalogPage_HXRequest_TopActionButtonsAreHXEnabled(t *testing.T) {
-	mux, db := newCatalogMux(t)
-	testsupport.SeedItem(t, db, testsupport.ItemSeed{ID: "i1", SKU: "S1", Name: "Cola", BasePrice: 100, IsActive: true})
-	testsupport.SeedTaxCode(t, db, "tax_std", "Standard", 2000)
-
-	rec := getHX(t, mux, "/catalog", "HX-Request", "true")
-	if rec.Code != http.StatusOK {
-		t.Fatalf("htmx GET /catalog: %d %s", rec.Code, rec.Body.String())
-	}
-	body := rec.Body.String()
-	for _, tc := range []struct{ id, href string }{
-		{"catalog-modifiers-btn", "/modifiers"},
-		{"catalog-option-sets-btn", "/catalog/option-sets"},
-	} {
-		tagStart := strings.Index(body, `id="`+tc.id+`"`)
-		if tagStart < 0 {
-			t.Fatalf("button #%s not found in htmx-fragment /catalog response: %s", tc.id, body)
-		}
-		tagEnd := strings.Index(body[tagStart:], ">") + tagStart
-		tag := body[tagStart:tagEnd]
-		if !strings.Contains(tag, `hx-get="`+tc.href+`"`) || !strings.Contains(tag, `hx-target="#items-panel"`) {
-			t.Errorf("#%s must swap #items-panel in place inside the /items shell, got: %s", tc.id, tag)
-		}
-	}
-}
+// TestCatalogPage_NonHXRequest_TopActionButtonsAreNotHXEnabled and
+// TestCatalogPage_HXRequest_TopActionButtonsAreHXEnabled (ut-docs#2090)
+// pinned catalog.html's own Modifiers/Option-sets top-action buttons'
+// .InItemsShell-conditioned hx-attributes. ut-docs#2092 removed both
+// buttons from the top row entirely (they duplicated the /items rail
+// exactly) — there is no bare-vs-shell distinction left to pin for them.
+// TestCatalogPage_TopRowHasNoRailDuplicateButtons (option_sets_test.go)
+// now asserts their absence instead.
 
 // ut-docs#1950: same htmx-fragment-plus-OOB-rail treatment for /modifiers,
 // the rail's second live section.

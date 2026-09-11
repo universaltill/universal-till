@@ -434,6 +434,11 @@ body.sale-screen .session-admin-link { display: none; }
 /* ---------- Back-office pages (catalog / inventory) ---------- */
 .page-head { display: flex; align-items: center; justify-content: space-between;
              gap: 1rem; margin: .25rem 0 1rem; }
+/* ut-docs#2092: page-scoped override for .page-head usages whose action
+   row is more than a title + one small control (currently just catalog.html)
+   — lets the row drop to its own line at narrow widths instead of both
+   flex children being squeezed onto one, never-wrapping line. */
+.page-head-wrap { flex-wrap: wrap; }
 .page-head input[type="search"] { min-width: 260px; }
 
 /* ---------- Plugin content pages (FAQ etc.) ---------- */
@@ -3414,7 +3419,6 @@ body.login-screen {
 .btn-icon .btn-ico svg { inline-size: 1.3rem; block-size: 1.3rem; }
 .btn-icon:focus-visible { outline: 2px solid var(--focus-border, var(--accent)); outline-offset: 2px; }
 .btn-icon-danger, .btn-icon-danger:hover { color: var(--danger); }
-
 /* --- The list: a card whose wide table scrolls inside it (same escape
    hatch as .users-list / .settings-grid .card .table) and tap-to-edit rows
    that read as tappable. Attribute selectors, so no page has to carry an
